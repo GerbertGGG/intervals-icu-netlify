@@ -1,4 +1,6 @@
-export async function handler(event, context) {
+const fetch = require("node-fetch");
+
+exports.handler = async function (event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -13,8 +15,8 @@ export async function handler(event, context) {
   };
 
   try {
-    // Step 1: Check if API key is valid by requesting athlete info
-    const authCheck = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
+    // Step 1: Check if API key is valid
+    const authCheck = await fetch("https://intervals.icu/api/v1/athlete", {
       method: "GET",
       headers,
     });
@@ -34,4 +36,35 @@ export async function handler(event, context) {
     const athleteId = athleteData.id;
 
     // Step 2: Fetch workouts
-    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlet
+    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlete/i105857/workouts`, {
+      method: "GET",
+      headers,
+    });
+
+    if (!workoutsRes.ok) {
+      const errorText = await workoutsRes.text();
+      return {
+        statusCode: workoutsRes.status,
+        body: JSON.stringify({ error: errorText }),
+      };
+    }
+
+    const workouts = await workoutsRes.json();
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        athlete: {
+          id: athleteId,
+          name: athleteData.firstname + " " + athleteData.lastname,
+        },
+        workouts,
+      }),
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: error.message }),
+    };
+  }
+};
+
