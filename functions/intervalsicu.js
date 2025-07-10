@@ -10,7 +10,7 @@ export async function handler(event, context) {
   const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
 
   try {
-    const res = await fetch("https://intervals.icu/api/v1/athletes/i105857/workouts", {
+    const res = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
       method: "POST",
       headers: {
         Authorization: `Basic ${basicAuth}`,
