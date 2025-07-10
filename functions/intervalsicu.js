@@ -10,14 +10,16 @@ exports.handler = async function (event, context) {
   }
 
   const athleteId = "i105857"; // fest eingetragene Athlete-ID
-  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
+  const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64"); // Benutzername ist wörtlich: API_KEY
   const headers = {
     Authorization: `Basic ${basicAuth}`,
     "Content-Type": "application/json",
   };
 
   try {
-    const workoutsRes = await fetch("https://intervals.icu/api/v1/athlete/0/workouts?per_page=100", {
+    const url = `https://intervals.icu/api/v1/athlete/${athleteId}/workouts?per_page=100`;
+
+    const workoutsRes = await fetch(url, {
       method: "GET",
       headers,
     });
