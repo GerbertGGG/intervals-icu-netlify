@@ -5,38 +5,58 @@ exports.handler = async function (event, context) {
   if (!API_KEY) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: "API key missing in environment variables" }),
+      body: JSON.stringify({ error: "API key missing in environment variables" })
     };
   }
 
-  const athleteId = "i105857";
-  const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
+  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
+  const headers = {
+    Authorization: `Basic ${basicAuth}`,
+    "Content-Type": "application/json"
+  };
+
+  const baseUrl = "https://intervals.icu/api/v1/athlete/i105857";
 
   try {
-    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlete/${athleteId}/activities?oldest=2025-06-01`, {
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const [activitiesRes, plannedRes] = await Promise.all([
+      fetch(`${baseUrl}/activities?oldest=2024-05-01&limit=100`, {
+        method: "GET",
+        headers
+      }),
+      fetch(`${baseUrl}/planned_activities?limit=50`, {
+        method: "GET",
+        headers
+      })
+    ]);
 
-    if (!workoutsRes.ok) {
-      const errorText = await workoutsRes.text();
+    const [activitiesData, plannedData] = await Promise.all([
+      activitiesRes.ok ? activitiesRes.json() : activitiesRes.text(),
+      plannedRes.ok ? plannedRes.json() : plannedRes.text()
+    ]);
+
+    if (!activitiesRes.ok || !plannedRes.ok) {
       return {
-        statusCode: workoutsRes.status,
-        body: JSON.stringify({ error: errorText }),
+        statusCode: 500,
+        body: JSON.stringify({
+          error: "Failed to fetch data",
+          activitiesError: activitiesRes.ok ? null : activitiesData,
+          plannedError: plannedRes.ok ? null : plannedData
+        })
       };
     }
 
-    const workouts = await workoutsRes.json();
     return {
       statusCode: 200,
-      body: JSON.stringify(workouts),
+      body: JSON.stringify({
+        athlete: "i105857",
+        activities: activitiesData,
+        planned_workouts: plannedData
+      })
     };
   } catch (error) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
+      body: JSON.stringify({ error: error.message })
     };
   }
 };
