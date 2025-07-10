@@ -17,11 +17,11 @@ exports.handler = async function (event, context) {
 
   try {
     const [activitiesRes, eventsRes] = await Promise.all([
-      fetch("https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2025-06-01&limit=20", {
+      fetch("https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2025-06-01&limit=10", {
         method: "GET",
         headers,
       }),
-      fetch("https://intervals.icu/api/v1/athlete/i105857/events", {
+      fetch("https://intervals.icu/api/v1/athlete/i105857/events&limit=10", {
         method: "GET",
         headers,
       }),
