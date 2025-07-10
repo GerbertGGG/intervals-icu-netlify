@@ -21,7 +21,7 @@ exports.handler = async function (event, context) {
         method: "GET",
         headers,
       }),
-      fetch("https://intervals.icu/api/v1/athlete/i105857/events&limit=10", {
+      fetch("https://intervals.icu/api/v1/athlete/i105857/events?limit=10", {
         method: "GET",
         headers,
       }),
