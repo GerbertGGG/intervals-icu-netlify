@@ -1,12 +1,12 @@
 export async function handler() {
   const API_KEY = process.env.INTERVALS_API_KEY;
-  const athleteId = "105857"; // <== deine echte ID hier
+  const athleteId = "i105857"; // <== deine echte ID hier
 
   if (!API_KEY) {
     return { statusCode: 500, body: JSON.stringify({ error: "API key missing" }) };
   }
 
-  const url = `https://intervals.icu/api/v1/athletes/${athleteId}/workouts`;
+  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/workouts`;
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
 
   try {
