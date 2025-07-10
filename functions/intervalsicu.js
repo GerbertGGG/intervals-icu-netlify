@@ -17,7 +17,7 @@ exports.handler = async function (event, context) {
   };
 
   try {
-    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlete/i105857/workouts`, {
+    const workoutsRes = await fetch("https://intervals.icu/api/v1/athlete/0/workouts?per_page=100", {
       method: "GET",
       headers,
     });
