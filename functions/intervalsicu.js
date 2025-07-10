@@ -9,19 +9,15 @@ exports.handler = async function (event, context) {
     };
   }
 
-  const athleteId = "i105857"; // fest eingetragene Athlete-ID
-  const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64"); // Benutzername ist wörtlich: API_KEY
-  const headers = {
-    Authorization: `Basic ${basicAuth}`,
-    "Content-Type": "application/json",
-  };
+  const athleteId = "i105857";
+  const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
 
   try {
-    const url = `https://intervals.icu/api/v1/athlete/${athleteId}/workouts?per_page=100`;
-
-    const workoutsRes = await fetch(url, {
-      method: "GET",
-      headers,
+    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlete/${athleteId}/workouts?per_page=100`, {
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/json",
+      },
     });
 
     if (!workoutsRes.ok) {
@@ -35,10 +31,7 @@ exports.handler = async function (event, context) {
     const workouts = await workoutsRes.json();
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        athleteId,
-        workouts,
-      }),
+      body: JSON.stringify(workouts),
     };
   } catch (error) {
     return {
