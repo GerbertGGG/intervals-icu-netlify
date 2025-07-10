@@ -1,44 +1,35 @@
 import fetch from 'node-fetch';
 
 export async function handler(event, context) {
-  const API_KEY = process.env.INTERVALS_API_KEY;
-  if (!API_KEY) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'API key not set in environment variables.' })
-    };
-  }
+  const API_KEY = process.env.INTERVALS_API_KEY; // Dein Intervals API Key als Env-Variable
+  const athleteId = 'i105857'; // Deine Athlete-ID
 
-  const url = 'https://intervals.icu/api/v1/athlete/i105857/planned_activities';
-
-  // Basic Auth Header: "API_KEY:<your_api_key>"
-  const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString('base64');
+  const headers = {
+    'Authorization': 'Basic ' + Buffer.from(`${API_KEY}:`).toString('base64'),
+    'Content-Type': 'application/json',
+  };
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Basic ${basicAuth}`
-      }
-    });
+    const res = await fetch(`https://intervals.icu/api/v1/athlete/${athleteId}/workouts`, { headers });
 
-    if (!response.ok) {
+    if (!res.ok) {
       return {
-        statusCode: response.status,
-        body: JSON.stringify({ error: `Intervals API error: ${response.statusText}` })
+        statusCode: res.status,
+        body: JSON.stringify({ error: `Intervals API error: ${res.statusText}` }),
       };
     }
 
-    const data = await response.json();
+    const workouts = await res.json();
 
     return {
       statusCode: 200,
-      body: JSON.stringify(data)
+      body: JSON.stringify(workouts),
+      headers: { 'Content-Type': 'application/json' },
     };
-
   } catch (error) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: error.message })
+      body: JSON.stringify({ error: error.message }),
     };
   }
 }
