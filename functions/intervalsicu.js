@@ -24,7 +24,7 @@ exports.handler = async function (event, context) {
   try {
     const [activitiesRes, plannedRes] = await Promise.all([
       fetch(`${baseUrl}/activities?oldest=${oldestStr}&limit=50`, { headers }),
-      fetch(`${baseUrl}/planned_activities`, { headers })
+      fetch(`${baseUrl}/events`, { headers })
     ]);
 
     const result = { activities: [], planned: [] };
