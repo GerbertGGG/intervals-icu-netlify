@@ -1,6 +1,6 @@
 export async function handler() {
   const API_KEY = process.env.INTERVALS_API_KEY;
-  const athleteId = "i105857"; // <== deine echte ID hier
+  const athleteId = "105857"; // <== deine echte ID hier
 
   if (!API_KEY) {
     return { statusCode: 500, body: JSON.stringify({ error: "API key missing" }) };
