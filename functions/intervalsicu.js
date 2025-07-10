@@ -1,8 +1,9 @@
 // netlify/functions/getWorkouts.js
-import fetch from 'node-fetch';
+import axios from 'axios';
 
 export async function handler(event, context) {
-  const API_KEY = process.env.INTERVALS_API_KEY; // Setze das in Netlify!
+  const API_KEY = process.env.INTERVALS_API_KEY;
+  const athleteId = 'i105857'; // oder deine tatsächliche ID
 
   if (!API_KEY) {
     return {
@@ -11,40 +12,30 @@ export async function handler(event, context) {
     };
   }
 
-  const athleteId = 'i105857';
   const url = `https://intervals.icu/api/v1/athlete/${athleteId}/workouts`;
 
-  const headers = {
-    'Authorization': 'Basic ' + Buffer.from(`${API_KEY}:`).toString('base64'),
-    'Content-Type': 'application/json',
-  };
-
   try {
-    const response = await fetch(url, { method: 'GET', headers });
-
-    if (!response.ok) {
-      return {
-        statusCode: response.status,
-        body: JSON.stringify({
-          error: `Intervals API error: ${response.statusText}`,
-          status: response.status
-        }),
-      };
-    }
-
-    const data = await response.json();
+    const response = await axios.get(url, {
+      headers: {
+        'Authorization': 'Basic ' + Buffer.from(`${API_KEY}:`).toString('base64'),
+        'Content-Type': 'application/json',
+      }
+    });
 
     return {
       statusCode: 200,
-      body: JSON.stringify(data),
+      body: JSON.stringify(response.data),
       headers: {
         'Content-Type': 'application/json',
       },
     };
   } catch (error) {
     return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
+      statusCode: error.response?.status || 500,
+      body: JSON.stringify({
+        error: `Intervals API error: ${error.response?.statusText || error.message}`,
+        details: error.response?.data || null
+      }),
     };
   }
 }
