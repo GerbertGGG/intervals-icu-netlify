@@ -1,6 +1,6 @@
-const fetch = require("node-fetch"); // falls fetch nicht global ist
+const fetch = require("node-fetch"); // Falls node-fetch noch nicht installiert, sonst entferne
 
-module.exports = async function handler(event, context) {
+module.exports.handler = async function(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -12,7 +12,7 @@ module.exports = async function handler(event, context) {
   const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
 
   try {
-    const res = await fetch(`https://intervals.icu/api/v1/athletes/i105857/workouts`, {
+    const res = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
       method: "GET",
       headers: {
         Authorization: `Basic ${basicAuth}`,
