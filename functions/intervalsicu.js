@@ -1,23 +1,21 @@
-import fetch from 'node-fetch';
-
 export async function handler(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
+  const athleteId = "i105857"; // <== deine echte Athleten-ID hier
+
   if (!API_KEY) {
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'API key not set in environment variables.' })
+      body: JSON.stringify({ error: "API key not set in environment variables." })
     };
   }
 
-  const url = 'https://intervals.icu/api/v1/athletes/i105857/workouts';
-
-  // Basic Auth Header: "API_KEY:<your_api_key>"
+  const url = `https://intervals.icu/api/v1/athletes/${athleteId}/workouts`;
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString('base64');
 
   try {
     const response = await fetch(url, {
       headers: {
-        'Authorization': `Basic ${basicAuth}`
+        Authorization: `Basic ${basicAuth}`
       }
     });
 
