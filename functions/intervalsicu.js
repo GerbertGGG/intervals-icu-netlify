@@ -1,4 +1,6 @@
-export async function handler(event, context) {
+const fetch = require("node-fetch"); // falls fetch nicht global ist
+
+module.exports = async function handler(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -7,9 +9,14 @@ export async function handler(event, context) {
     };
   }
 
-  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64"),
+  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
+
   try {
-    const res = await fetch(`https://intervals.icu/api/v1/athlete/i105857/workouts`, { method: "GET", headers: { Authorization: ... } })
+    const res = await fetch(`https://intervals.icu/api/v1/athletes/i105857/workouts`, {
+      method: "GET",
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+      },
     });
 
     if (!res.ok) {
@@ -31,4 +38,4 @@ export async function handler(event, context) {
       body: JSON.stringify({ error: error.message }),
     };
   }
-}
+};
