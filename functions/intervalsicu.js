@@ -9,29 +9,47 @@ exports.handler = async function (event, context) {
     };
   }
 
-  const athleteId = "i105857";
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
+  const headers = {
+    Authorization: `Basic ${basicAuth}`,
+    "Content-Type": "application/json",
+  };
 
   try {
-    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlete/i105857/events`, {
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        "Content-Type": "application/json",
-      },
-    });
+    const [activitiesRes, eventsRes] = await Promise.all([
+      fetch("https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2024-01-01&limit=100", {
+        method: "GET",
+        headers,
+      }),
+      fetch("https://intervals.icu/api/v1/athlete/i105857/events", {
+        method: "GET",
+        headers,
+      }),
+    ]);
 
-    if (!workoutsRes.ok) {
-      const errorText = await workoutsRes.text();
+    const activitiesError = !activitiesRes.ok ? await activitiesRes.text() : null;
+    const eventsError = !eventsRes.ok ? await eventsRes.text() : null;
+
+    if (activitiesError || eventsError) {
       return {
-        statusCode: workoutsRes.status,
-        body: JSON.stringify({ error: errorText }),
+        statusCode: 500,
+        body: JSON.stringify({
+          error: "Failed to fetch data",
+          activitiesError,
+          eventsError,
+        }),
       };
     }
 
-    const workouts = await workoutsRes.json();
+    const activities = await activitiesRes.json();
+    const events = await eventsRes.json();
+
     return {
       statusCode: 200,
-      body: JSON.stringify(workouts),
+      body: JSON.stringify({
+        activities,
+        events,
+      }),
     };
   } catch (error) {
     return {
