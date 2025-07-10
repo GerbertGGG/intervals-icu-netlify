@@ -11,7 +11,7 @@ export async function handler(event, context) {
 
   try {
     const res = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
-      method: "POST",
+      method: "GET", // ← geändert
       headers: {
         Authorization: `Basic ${basicAuth}`,
       },
