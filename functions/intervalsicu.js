@@ -12,8 +12,7 @@ export async function handler() {
   const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
 
   try {
-    // Workouts holen
-    const workoutsRes = await fetch(
+    const res = await fetch(
       `https://intervals.icu/api/v1/athlete/${athleteId}/workouts`,
       {
         method: "GET",
@@ -23,41 +22,18 @@ export async function handler() {
       }
     );
 
-    if (!workoutsRes.ok) {
-      const text = await workoutsRes.text();
+    if (!res.ok) {
+      const text = await res.text();
       return {
-        statusCode: workoutsRes.status,
+        statusCode: res.status,
         body: JSON.stringify({ error: text }),
       };
     }
-    const workouts = await workoutsRes.json();
 
-    // Geplante Workouts holen
-    const plannedRes = await fetch(
-      `https://intervals.icu/api/v1/athlete/${athleteId}/planned_activities`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${basicAuth}`,
-        },
-      }
-    );
-
-    if (!plannedRes.ok) {
-      const text = await plannedRes.text();
-      return {
-        statusCode: plannedRes.status,
-        body: JSON.stringify({ error: text }),
-      };
-    }
-    const plannedActivities = await plannedRes.json();
-
+    const workouts = await res.json();
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        workouts,
-        plannedActivities,
-      }),
+      body: JSON.stringify(workouts),
     };
   } catch (error) {
     return {
