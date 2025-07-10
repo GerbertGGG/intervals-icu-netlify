@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1",
+  "name_for_human": "Intervals Workouts",
+  "name_for_model": "intervalsicu",
+  "description_for_human": "API für meine Intervals.icu Trainingsdaten",
+  "description_for_model": "Diese API liefert Trainings-Workouts vom Intervals.icu Konto des Nutzers.",
+  "auth": {
+    "type": "none"
+  },
+  "api": {
+    "type": "openapi",
+    "url": "https://gery.netlify.app/openapi.yaml",
+    "is_user_authenticated": false
+  },
+  "logo_url": "https://gery.netlify.app/logo.png",
+  "contact_email": "deine-email@example.com",
+  "legal_info_url": "https://deine-domain.de/impressum"
+}
