@@ -1,0 +1,35 @@
+openapi: 3.0.0
+info:
+  title: Intervals.icu Workout API
+  version: 1.0.0
+servers:
+  - url: https://gery.netlify.app/.netlify/functions/intervalsicu
+paths:
+  /:
+    get:
+      summary: Holt alle geplanten und vergangenen Workouts
+      responses:
+        '200':
+          description: Liste der Workouts im JSON-Format
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    athlete_id:
+                      type: string
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    type:
+                      type: string
+                    moving_time:
+                      type: integer
+                    updated:
+                      type: string
+                      format: date-time
