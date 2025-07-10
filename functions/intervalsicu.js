@@ -1,6 +1,5 @@
 export async function handler(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
-  const athleteId = "i105857"; // <== deine echte Athleten-ID hier
 
   if (!API_KEY) {
     return {
@@ -19,17 +18,10 @@ export async function handler(event, context) {
       }
     });
 
-    if (!response.ok) {
-      return {
-        statusCode: response.status,
-        body: JSON.stringify({ error: `Intervals API error: ${response.statusText}` })
-      };
-    }
-
     const data = await response.json();
 
     return {
-      statusCode: 200,
+      statusCode: response.status,
       body: JSON.stringify(data)
     };
 
