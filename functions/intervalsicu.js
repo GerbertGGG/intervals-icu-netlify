@@ -19,11 +19,11 @@ exports.handler = async function (event, context) {
 
   try {
     const [activitiesRes, plannedRes] = await Promise.all([
-      fetch(`${baseUrl}/activities?oldest=2024-05-01&limit=100`, {
+      fetch(`${baseUrl}/activities?oldest=2024-05-01`, {
         method: "GET",
         headers
       }),
-      fetch(`${baseUrl}/planned_activities?limit=50`, {
+      fetch(`${baseUrl}/planned_activities`, {
         method: "GET",
         headers
       })
