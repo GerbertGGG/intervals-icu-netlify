@@ -9,7 +9,7 @@ export async function handler(event, context) {
     };
   }
 
-  const url = 'https://api.intervals.icu/api/v1/athletes/0/planned_activities';
+  const url = 'https://intervals.icu/api/v1/athletes/0/planned_activities';
 
   // Basic Auth Header: "API_KEY:<your_api_key>"
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString('base64');
