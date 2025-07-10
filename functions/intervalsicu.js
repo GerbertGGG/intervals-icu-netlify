@@ -1,6 +1,4 @@
-const fetch = require("node-fetch");
-
-exports.handler = async function (event, context) {
+export async function handler(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -9,34 +7,23 @@ exports.handler = async function (event, context) {
     };
   }
 
-  const athleteId = "i105857"; // fest eingetragene Athlete-ID
-  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
-  const headers = {
-    Authorization: `Basic ${basicAuth}`,
-    "Content-Type": "application/json",
-  };
-
+  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64"),
   try {
-    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlete/i105857/workouts`, {
-      method: "GET",
-      headers,
+    const res = await fetch(`https://intervals.icu/api/v1/athlete/i105857/workouts`, { method: "GET", headers: { Authorization: ... } })
     });
 
-    if (!workoutsRes.ok) {
-      const errorText = await workoutsRes.text();
+    if (!res.ok) {
+      const text = await res.text();
       return {
-        statusCode: workoutsRes.status,
-        body: JSON.stringify({ error: errorText }),
+        statusCode: res.status,
+        body: JSON.stringify({ error: text }),
       };
     }
 
-    const workouts = await workoutsRes.json();
+    const data = await res.json();
     return {
       statusCode: 200,
-      body: JSON.stringify({
-        athleteId,
-        workouts,
-      }),
+      body: JSON.stringify(data),
     };
   } catch (error) {
     return {
@@ -44,4 +31,4 @@ exports.handler = async function (event, context) {
       body: JSON.stringify({ error: error.message }),
     };
   }
-};
+}
