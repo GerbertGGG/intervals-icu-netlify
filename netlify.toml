@@ -1,4 +1,3 @@
-[build.environment]
-  NODE_VERSION = "18"
+[build]
   functions = "functions"
   command = "npm install"
