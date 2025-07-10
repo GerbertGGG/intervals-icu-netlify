@@ -4,7 +4,7 @@ export async function handler() {
     return { statusCode: 500, body: JSON.stringify({ error: "API key missing" }) };
   }
 
-  const url = "https://intervals.icu/api/v1/athletes/0";
+  const url = "https://intervals.icu/api/v1/athletes/i105857";
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
 
   try {
