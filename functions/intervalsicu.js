@@ -8,7 +8,7 @@ export async function handler(event, context) {
     };
   }
 
-  const url = "https://intervals.icu/api/v1/athlete";
+  const url = 'https://intervals.icu/api/v1/athletes/0';
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString('base64');
 
   try {
