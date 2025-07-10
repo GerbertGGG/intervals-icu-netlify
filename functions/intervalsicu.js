@@ -8,33 +8,30 @@ export async function handler(event, context) {
   }
 
   const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
+  const headers = {
+    Authorization: `Basic ${basicAuth}`,
+  };
 
   try {
-    const res = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
+    // Step 1: Check if API key is valid by requesting athlete info
+    const authCheck = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
       method: "GET",
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-      },
+      headers,
     });
 
-    if (!res.ok) {
-      const text = await res.text();
+    if (!authCheck.ok) {
+      const authError = await authCheck.text();
       return {
-        statusCode: res.status,
-        body: JSON.stringify({ error: text }),
+        statusCode: authCheck.status,
+        body: JSON.stringify({
+          error: "Auth check failed",
+          details: authError,
+        }),
       };
     }
 
-    const data = await res.json();
-    return {
-      statusCode: 200,
-      body: JSON.stringify(data),
-    };
-  } catch (error) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
-    };
-  }
-}
+    const athleteData = await authCheck.json();
+    const athleteId = athleteData.id;
 
+    // Step 2: Fetch workouts
+    const workoutsRes = await fetch(`https://intervals.icu/api/v1/athlet
