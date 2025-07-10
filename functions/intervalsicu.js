@@ -1,28 +1,39 @@
-export async function handler() {
+export async function handler(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
-  const athleteId = "i105857"; // <== deine echte ID hier
-
   if (!API_KEY) {
-    return { statusCode: 500, body: JSON.stringify({ error: "API key missing" }) };
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "API key missing in environment variables" }),
+    };
   }
 
-  const url = `https://intervals.icu/api/v1/athlete/${athleteId}/workouts`;
-  const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
+  const basicAuth = Buffer.from(`${API_KEY}:`).toString("base64");
 
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Basic ${basicAuth}` }
+    const res = await fetch("https://intervals.icu/api/v1/athlete/i105857/workouts", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+      },
     });
 
     if (!res.ok) {
       const text = await res.text();
-      return { statusCode: res.status, body: JSON.stringify({ error: text }) };
+      return {
+        statusCode: res.status,
+        body: JSON.stringify({ error: text }),
+      };
     }
 
     const data = await res.json();
-
-    return { statusCode: 200, body: JSON.stringify(data) };
-  } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return {
+      statusCode: 200,
+      body: JSON.stringify(data),
+    };
+  } catch (error) {
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: error.message }),
+    };
   }
 }
