@@ -1,6 +1,6 @@
 const fetch = require("node-fetch");
 
-exports.getActivities = async function (event, context) {
+exports.handler = async function(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -16,10 +16,18 @@ exports.getActivities = async function (event, context) {
   };
 
   try {
-    const activitiesRes = await fetch(
-      "https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2025-06-01&limit=10",
-      { method: "GET", headers }
-    );
+    // Füge ein console.log hinzu um die URL zu prüfen
+    const url = "https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2025-06-01&limit=10";
+    console.log("Fetching URL:", url);
+
+    const activitiesRes = await fetch(url, { method: "GET", headers });
+
+    if (!activitiesRes || typeof activitiesRes.ok === "undefined") {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: "Keine Antwort von Intervals.icu API" }),
+      };
+    }
 
     if (!activitiesRes.ok) {
       const error = await activitiesRes.text();
