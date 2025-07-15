@@ -5,6 +5,12 @@ exports.handler = async function(event, context) {
   if (!API_KEY) {
     return {
       statusCode: 500,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Access-Control-Allow-Methods": "GET,OPTIONS",
+        "Content-Type": "application/json"
+      },
       body: JSON.stringify({ error: "API key missing in environment variables" }),
     };
   }
@@ -16,7 +22,6 @@ exports.handler = async function(event, context) {
   };
 
   try {
-    // Füge ein console.log hinzu um die URL zu prüfen
     const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=30";
     console.log("Fetching URL:", url);
 
@@ -25,18 +30,34 @@ exports.handler = async function(event, context) {
     if (!activitiesRes || typeof activitiesRes.ok === "undefined") {
       return {
         statusCode: 500,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "Content-Type,Authorization",
+          "Access-Control-Allow-Methods": "GET,OPTIONS",
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({ error: "Keine Antwort von Intervals.icu API" }),
       };
     }
 
     if (!activitiesRes.ok) {
       const error = await activitiesRes.text();
-      return { statusCode: 500, body: JSON.stringify({ error }) };
+      return {
+        statusCode: 500,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Headers": "Content-Type,Authorization",
+          "Access-Control-Allow-Methods": "GET,OPTIONS",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ error })
+      };
     }
 
     const activities = await activitiesRes.json();
-    return { statusCode: 200, body: JSON.stringify({ activities }) };
-  } catch (error) {
-    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
-  }
-};
+    return {
+      statusCode: 200,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+
