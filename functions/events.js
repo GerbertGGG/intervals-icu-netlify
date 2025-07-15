@@ -1,6 +1,6 @@
 const fetch = require("node-fetch");
 
-exports.getEvents = async function (event, context) {
+exports.handler = async function (event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -16,19 +16,41 @@ exports.getEvents = async function (event, context) {
   };
 
   try {
-    const eventsRes = await fetch(
-      "https://intervals.icu/api/v1/athlete/i105857/events?limit=30",
-      { method: "GET", headers }
-    );
+    const [activitiesRes, eventsRes] = await Promise.all([
+            fetch("https://intervals.icu/api/v1/athlete/i105857/events?limit=30", {
+        method: "GET",
+        headers,
+      }),
+    ]);
 
-    if (!eventsRes.ok) {
-      const error = await eventsRes.text();
-      return { statusCode: 500, body: JSON.stringify({ error }) };
+    const activitiesError = !activitiesRes.ok ? await activitiesRes.text() : null;
+    const eventsError = !eventsRes.ok ? await eventsRes.text() : null;
+
+    if (activitiesError || eventsError) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          error: "Failed to fetch data",
+          activitiesError,
+          eventsError,
+        }),
+      };
     }
 
+    const activities = await activitiesRes.json();
     const events = await eventsRes.json();
-    return { statusCode: 200, body: JSON.stringify({ events }) };
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({
+        activities,
+        events,
+      }),
+    };
   } catch (error) {
-    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: error.message }),
+    };
   }
 };
