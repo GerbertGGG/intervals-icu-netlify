@@ -1,6 +1,6 @@
 const fetch = require("node-fetch");
 
-exports.handler = async function (event, context) {
+exports.handler = async function(event, context) {
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -16,41 +16,27 @@ exports.handler = async function (event, context) {
   };
 
   try {
-    const [activitiesRes, eventsRes] = await Promise.all([
-            fetch("https://intervals.icu/api/v1/athlete/i105857/events?limit=30", {
-        method: "GET",
-        headers,
-      }),
-    ]);
+    // Füge ein console.log hinzu um die URL zu prüfen
+    const url = "https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2025-06-01&limit=10";
+    console.log("Fetching URL:", url);
 
-    const activitiesError = !activitiesRes.ok ? await activitiesRes.text() : null;
-    const eventsError = !eventsRes.ok ? await eventsRes.text() : null;
+    const activitiesRes = await fetch(url, { method: "GET", headers });
 
-    if (activitiesError || eventsError) {
+    if (!activitiesRes || typeof activitiesRes.ok === "undefined") {
       return {
         statusCode: 500,
-        body: JSON.stringify({
-          error: "Failed to fetch data",
-          activitiesError,
-          eventsError,
-        }),
+        body: JSON.stringify({ error: "Keine Antwort von Intervals.icu API" }),
       };
     }
 
-    const activities = await activitiesRes.json();
-    const events = await eventsRes.json();
+    if (!activitiesRes.ok) {
+      const error = await activitiesRes.text();
+      return { statusCode: 500, body: JSON.stringify({ error }) };
+    }
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        activities,
-        events,
-      }),
-    };
+    const activities = await activitiesRes.json();
+    return { statusCode: 200, body: JSON.stringify({ activities }) };
   } catch (error) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
-    };
+    return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
   }
 };
