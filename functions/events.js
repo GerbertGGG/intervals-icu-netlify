@@ -1,6 +1,19 @@
 const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
+  // CORS Preflight-Handler
+  if (event.httpMethod === "OPTIONS") {
+    return {
+      statusCode: 200,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Access-Control-Allow-Methods": "GET,OPTIONS"
+      },
+      body: ""
+    };
+  }
+
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -39,25 +52,3 @@ exports.handler = async function(event, context) {
         body: JSON.stringify({ error: "Keine Antwort von Intervals.icu API" }),
       };
     }
-
-    if (!activitiesRes.ok) {
-      const error = await activitiesRes.text();
-      return {
-        statusCode: 500,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Headers": "Content-Type,Authorization",
-          "Access-Control-Allow-Methods": "GET,OPTIONS",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ error })
-      };
-    }
-
-    const activities = await activitiesRes.json();
-    return {
-      statusCode: 200,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization",
-
