@@ -37,14 +37,13 @@ exports.handler = async function(event, context) {
   const headers = {
     Authorization: `Basic ${basicAuth}`,
     "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" // <- User-Agent hinzugefügt!
   };
 
   const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=30";
   console.log("DEBUG - Verwende URL:", url);
   console.log("DEBUG - Authorization-Header (gekürzt):", headers.Authorization.slice(0, 14) + "...");
-  console.log("DEBUG - Event: ", JSON.stringify(event, null, 2));
-console.log("DEBUG - Event: ", JSON.stringify(event, null, 2));
-
+  console.log("DEBUG - User-Agent:", headers["User-Agent"]);
 
   try {
     const activitiesRes = await fetch(url, { method: "GET", headers });
@@ -82,7 +81,7 @@ console.log("DEBUG - Event: ", JSON.stringify(event, null, 2));
     console.log("DEBUG - Events erfolgreich geladen! Anzahl:", Array.isArray(activities) ? activities.length : "unbekannt");
     console.log("DEBUG - Response Preview:", JSON.stringify(activities).slice(0,200));
 
-    // GIBT JETZT EIN REINES ARRAY ZURÜCK!
+    // Gibt ein reines Array zurück!
     return {
       statusCode: 200,
       headers: {
