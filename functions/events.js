@@ -42,6 +42,9 @@ exports.handler = async function(event, context) {
   const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=30";
   console.log("DEBUG - Verwende URL:", url);
   console.log("DEBUG - Authorization-Header (gekürzt):", headers.Authorization.slice(0, 14) + "...");
+  console.log("DEBUG - Event: ", JSON.stringify(event, null, 2));
+console.log("DEBUG - Event: ", JSON.stringify(event, null, 2));
+
 
   try {
     const activitiesRes = await fetch(url, { method: "GET", headers });
