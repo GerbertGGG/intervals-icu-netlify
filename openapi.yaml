@@ -3,33 +3,37 @@ info:
   title: Intervals.icu Workout API
   version: 1.0.0
 servers:
-  - url: https://gery.netlify.app/.netlify/functions/intervalsicu
+  - url: https://gery.netlify.app/.netlify/functions
 paths:
-  /:
+  /activities:
     get:
-      summary: Holt alle geplanten und vergangenen Workouts
+      summary: Holt alle Aktivitäten (Workouts)
       responses:
         '200':
-          description: Liste der Workouts im JSON-Format
+          description: Liste der Aktivitäten im JSON-Format
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    athlete_id:
-                      type: string
-                    id:
-                      type: integer
-                    name:
-                      type: string
-                    description:
-                      type: string
-                    type:
-                      type: string
-                    moving_time:
-                      type: integer
-                    updated:
-                      type: string
-                      format: date-time
+                type: object
+                properties:
+                  activities:
+                    type: array
+                    items:
+                      type: object
+                      # hier deine Felder wie oben
+  /events:
+    get:
+      summary: Holt alle geplanten Events
+      responses:
+        '200':
+          description: Liste der Events im JSON-Format
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      # hier deine Felder wie oben
