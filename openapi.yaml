@@ -37,24 +37,59 @@ paths:
                     items:
                       type: object
                       # hier deine Felder wie oben
-  /wellness:
-    get:
-      summary: Holt Wellness-Daten für ein bestimmtes Datum
-      description: |
-        Holt Wellness-Informationen (z.B. Schlaf, Stress, Müdigkeit, Stimmung) für ein bestimmtes Datum. Das Datum kann als YYYY-MM-DD angegeben werden oder in natürlicher Sprache (z.B. "heute", "gestern").
-      parameters:
-        - in: query
-          name: date
-          required: false
-          schema:
-            type: string
-            example: "2025-07-14"
-            description: Das Datum im Format YYYY-MM-DD. Optional: "heute", "gestern", oder ein relativer Ausdruck.
-      responses:
-        '200':
-          description: Wellness-Daten im JSON-Format
-          content:
-            application/json:
-              schema:
-                type: object
-                # hier weitere Felder je nach API-Response
+ /wellness:
+  get:
+    summary: Wellness-Daten für ein bestimmtes Datum abrufen
+    description: |
+      Gibt Wellness-Informationen für ein bestimmtes Datum zurück.
+      Das Datum kann im Format 'YYYY-MM-DD' (z.B. 2025-07-14) oder als natürlicher Ausdruck angegeben werden:
+      - "heute" → aktuelles Datum
+      - "gestern" → Vortag
+      - "vorgestern" → zwei Tage zurück
+      
+      Beispiel-Anfragen:
+      - "Wie ist mein Wellness-Status heute?"
+      - "Zeig mir die Wellnessdaten von gestern."
+      - "Wellness am 2025-07-12 anzeigen."
+    parameters:
+      - in: query
+        name: date
+        required: false
+        schema:
+          type: string
+          example: "heute"
+          description: |
+            Datum im Format 'YYYY-MM-DD' oder als natürliche Sprache ("heute", "gestern", "vorgestern").
+    responses:
+      '200':
+        description: Wellness-Daten für das angegebene Datum.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                date:
+                  type: string
+                  description: Datum der Daten
+                  example: "2025-07-14"
+                sleepQuality:
+                  type: integer
+                  description: Schlafqualität (1–10)
+                  example: 7
+                stress:
+                  type: integer
+                  description: Stresslevel (1–10)
+                  example: 3
+                fatigue:
+                  type: integer
+                  description: Müdigkeit (1–10)
+                  example: 5
+                soreness:
+                  type: integer
+                  description: Muskelkater (1–10)
+                  example: 2
+                mood:
+                  type: integer
+                  description: Stimmung (1–10)
+                  example: 8
+                # ... je nach Feldern aus deiner API
