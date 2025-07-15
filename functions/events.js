@@ -14,7 +14,7 @@ exports.handler = async function(event, context) {
     };
   }
 
-  // Debug: Prüfe, ob der API_KEY gesetzt ist
+  // API Key nur innerhalb der Funktion deklarieren!
   const API_KEY = process.env.INTERVALS_API_KEY;
   console.log("DEBUG - API_KEY gesetzt:", !!API_KEY);
 
@@ -32,6 +32,7 @@ exports.handler = async function(event, context) {
     };
   }
 
+  // Basic Auth nur innerhalb der Funktion deklarieren!
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
   const headers = {
     Authorization: `Basic ${basicAuth}`,
@@ -39,7 +40,6 @@ exports.handler = async function(event, context) {
   };
 
   const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=30";
-  // Debug: Zeige URL und Teile des Headers (nicht den kompletten Key!)
   console.log("DEBUG - Verwende URL:", url);
   console.log("DEBUG - Authorization-Header (gekürzt):", headers.Authorization.slice(0, 14) + "...");
 
@@ -77,7 +77,9 @@ exports.handler = async function(event, context) {
 
     const activities = await activitiesRes.json();
     console.log("DEBUG - Events erfolgreich geladen! Anzahl:", Array.isArray(activities) ? activities.length : "unbekannt");
+    console.log("DEBUG - Response Preview:", JSON.stringify(activities).slice(0,200));
 
+    // GIBT JETZT EIN REINES ARRAY ZURÜCK!
     return {
       statusCode: 200,
       headers: {
@@ -86,7 +88,7 @@ exports.handler = async function(event, context) {
         "Access-Control-Allow-Methods": "GET,OPTIONS",
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ activities })
+      body: JSON.stringify(activities)
     };
   } catch (error) {
     console.error("DEBUG - Exception:", error.message);
