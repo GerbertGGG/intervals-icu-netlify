@@ -1,3 +1,6 @@
+console.log("API_KEY: ", API_KEY ? "Vorhanden" : "FEHLT");
+console.log("headers: ", headers);
+
 const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
