@@ -8,7 +8,9 @@ paths:
   /:
     get:
       summary: Holt alle geplanten und vergangenen Workouts
-      operationId: getAllWorkouts           # <--- Diese Zeile ist neu!
+      operationId: getAllWorkouts
+      security:
+        - ApiKeyAuth: []
       responses:
         '200':
           description: Liste der Workouts im JSON-Format
@@ -34,3 +36,9 @@ paths:
                     updated:
                       type: string
                       format: date-time
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
