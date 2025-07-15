@@ -37,3 +37,24 @@ paths:
                     items:
                       type: object
                       # hier deine Felder wie oben
+  /wellness:
+    get:
+      summary: Holt Wellness-Daten für ein bestimmtes Datum
+      description: |
+        Holt Wellness-Informationen (z.B. Schlaf, Stress, Müdigkeit, Stimmung) für ein bestimmtes Datum. Das Datum kann als YYYY-MM-DD angegeben werden oder in natürlicher Sprache (z.B. "heute", "gestern").
+      parameters:
+        - in: query
+          name: date
+          required: false
+          schema:
+            type: string
+            example: "2025-07-14"
+            description: Das Datum im Format YYYY-MM-DD. Optional: "heute", "gestern", oder ein relativer Ausdruck.
+      responses:
+        '200':
+          description: Wellness-Daten im JSON-Format
+          content:
+            application/json:
+              schema:
+                type: object
+                # hier weitere Felder je nach API-Response
