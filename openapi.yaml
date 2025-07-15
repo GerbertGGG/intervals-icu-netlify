@@ -1,77 +1,36 @@
-openapi: 3.1.0
+openapi: 3.0.0
 info:
   title: Intervals.icu Workout API
   version: 1.0.0
 servers:
-  - url: https://gery.netlify.app
+  - url: https://gery.netlify.app/.netlify/functions/intervalsicu
 paths:
-  /.netlify/functions/activities:
+  /:
     get:
-      summary: Holt alle Aktivitäten (Workouts)
+      summary: Holt alle geplanten und vergangenen Workouts
       responses:
         '200':
-          description: Liste der Aktivitäten im JSON-Format
+          description: Liste der Workouts im JSON-Format
           content:
             application/json:
               schema:
                 type: array
                 items:
                   type: object
-                  # hier deine Felder wie oben
-  /.netlify/functions/events:
-    get:
-      summary: Holt alle geplanten Events
-      responses:
-        '200':
-          description: Liste der Events im JSON-Format
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  # hier deine Felder wie oben
-  /.netlify/functions/wellness:
-    get:
-      summary: Wellness-Daten für ein bestimmtes Datum abrufen
-      description: |
-        Gibt Wellness-Informationen für ein bestimmtes Datum zurück.
-        Das Datum kann im Format 'YYYY-MM-DD' (z.B. 2025-07-14) oder als natürlicher Ausdruck angegeben werden:
-        - "heute" → aktuelles Datum
-        - "gestern" → Vortag
-        - "vorgestern" → zwei Tage zurück
-        
-        Beispiel-Anfragen:
-        - "Wie ist mein Wellness-Status heute?"
-        - "Zeig mir die Wellnessdaten von gestern."
-        - "Wellness am 2025-07-12 anzeigen."
-      parameters:
-        - in: query
-          name: date
-          required: false
-          schema:
-            type: string
-            example: "heute"
-            description: |
-              Datum im Format 'YYYY-MM-DD' oder als natürliche Sprache ("heute", "gestern", "vorgestern").
-      responses:
-        '200':
-          description: Wellness-Daten für das angegebene Datum.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  date:
-                    type: string
-                  sleepQuality:
-                    type: integer
-                  stress:
-                    type: integer
-                  fatigue:
-                    type: integer
-                  soreness:
-                    type: integer
-                  mood:
-                    type: integer
+                  properties:
+                    athlete_id:
+                      type: string
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    type:
+                      type: string
+                    moving_time:
+                      type: integer
+                    updated:
+                      type: string
+                      format: date-time
 
