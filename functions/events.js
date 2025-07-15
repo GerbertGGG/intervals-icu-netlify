@@ -17,7 +17,7 @@ exports.handler = async function(event, context) {
 
   try {
     // Füge ein console.log hinzu um die URL zu prüfen
-    const url = "https://intervals.icu/api/v1/athlete/i105857/activities?oldest=2025-06-01&limit=10";
+    const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=30";
     console.log("Fetching URL:", url);
 
     const activitiesRes = await fetch(url, { method: "GET", headers });
