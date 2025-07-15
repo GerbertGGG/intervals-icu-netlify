@@ -1,39 +1,85 @@
 openapi: 3.1.0
 info:
-  title: Intervals.icu Workout API
+  title: Intervals.icu Multi-Endpoint API
   version: 1.0.0
 servers:
   - url: https://gery.netlify.app/.netlify/functions/intervalsicu
 paths:
-  /:
+  /events:
     get:
-      operationId: getWorkouts
-      summary: Holt alle geplanten und vergangenen Workouts
+      operationId: getEvents
+      summary: Holt geplante Workouts (Events)
       security:
         - ApiKeyAuth: []
       responses:
         '200':
-          description: Liste der Workouts im JSON-Format
+          description: Liste der geplanten Workouts
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    athlete_id:
-                      type: string
-                    id:
-                      type: integer
-                    name:
-                      type: string
-                    description:
-                      type: string
-                    type:
-                      type: string
-                    moving_time:
-                      type: integer
-                    updated:
-                      type: string
-                      format: date-time
-
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        start_date:
+                          type: string
+                        # weitere Properties für geplante Workouts
+  /activities:
+    get:
+      operationId: getActivities
+      summary: Holt absolvierte Workouts (Activities)
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Liste der abgeschlossenen Workouts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  activities:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        start_date:
+                          type: string
+                        # weitere Properties für abgeschlossene Workouts
+  /wellness:
+    get:
+      operationId: getWellness
+      summary: Holt Wellnessdaten (z.B. Schlaf)
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Wellnessdaten wie Schlaf, HRV etc.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wellness:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                        sleep:
+                          type: number
+                        hrv:
+                          type: number
+                        # weitere Properties für Wellnessdaten
