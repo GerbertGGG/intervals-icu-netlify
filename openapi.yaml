@@ -7,7 +7,10 @@ servers:
 paths:
   /:
     get:
+      operationId: getWorkouts
       summary: Holt alle geplanten und vergangenen Workouts
+      security:
+        - ApiKeyAuth: []
       responses:
         '200':
           description: Liste der Workouts im JSON-Format
@@ -33,3 +36,4 @@ paths:
                     updated:
                       type: string
                       format: date-time
+
