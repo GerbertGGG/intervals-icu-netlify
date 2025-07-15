@@ -1,10 +1,7 @@
-console.log("API_KEY: ", API_KEY ? "Vorhanden" : "FEHLT");
-console.log("headers: ", headers);
-
 const fetch = require("node-fetch");
 
 exports.handler = async function(event, context) {
-  // CORS Preflight-Handler
+  // CORS Preflight-Handler für OPTIONS-Anfragen
   if (event.httpMethod === "OPTIONS") {
     return {
       statusCode: 200,
@@ -17,6 +14,7 @@ exports.handler = async function(event, context) {
     };
   }
 
+  // API Key nur innerhalb der Funktion deklarieren!
   const API_KEY = process.env.INTERVALS_API_KEY;
   if (!API_KEY) {
     return {
@@ -31,6 +29,7 @@ exports.handler = async function(event, context) {
     };
   }
 
+  // Basic Auth nur innerhalb der Funktion deklarieren!
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
   const headers = {
     Authorization: `Basic ${basicAuth}`,
@@ -94,3 +93,4 @@ exports.handler = async function(event, context) {
     };
   }
 };
+
