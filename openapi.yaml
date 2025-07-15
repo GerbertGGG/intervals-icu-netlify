@@ -1,4 +1,4 @@
-openapi: 3.1.0
+penapi: 3.0.0
 info:
   title: Intervals.icu Workout API
   version: 1.0.0
@@ -8,9 +8,6 @@ paths:
   /:
     get:
       summary: Holt alle geplanten und vergangenen Workouts
-      operationId: getAllWorkouts
-      security:
-        - ApiKeyAuth: []
       responses:
         '200':
           description: Liste der Workouts im JSON-Format
@@ -36,9 +33,3 @@ paths:
                     updated:
                       type: string
                       format: date-time
-components:
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: Authorization
