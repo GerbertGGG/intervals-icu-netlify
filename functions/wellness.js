@@ -9,15 +9,26 @@ exports.handler = async function(event, context) {
     };
   }
 
-  // Datum aus Query-Parameter holen
+  // Datum parsen
   const params = event.queryStringParameters || {};
   let date = params.date;
 
-  // Wenn kein Datum angegeben, nimm heute (im Format YYYY-MM-DD)
-  if (!date) {
-    const today = new Date();
-    date = today.toISOString().slice(0, 10);
+  function toISO(daysAgo = 0) {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return d.toISOString().slice(0, 10);
   }
+
+  if (!date) {
+    date = toISO(0); // heute
+  } else if (/^heute$/i.test(date)) {
+    date = toISO(0);
+  } else if (/^gestern$/i.test(date)) {
+    date = toISO(1);
+  } else if (/^vorgestern$/i.test(date)) {
+    date = toISO(2);
+  }
+  // Sonst: bleibt wie übergeben (z.B. ISO-String)
 
   const url = `https://intervals.icu/api/v1/athlete/i105857/wellness/${date}`;
   const basicAuth = Buffer.from(`API_KEY:${API_KEY}`).toString("base64");
