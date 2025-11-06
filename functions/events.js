@@ -40,7 +40,7 @@ exports.handler = async function(event, context) {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" // <- User-Agent hinzugefügt!
   };
 
-  const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=30";
+  const url = "https://intervals.icu/api/v1/athlete/i105857/events?limit=300";
   console.log("DEBUG - Verwende URL:", url);
   console.log("DEBUG - Authorization-Header (gekürzt):", headers.Authorization.slice(0, 14) + "...");
   console.log("DEBUG - User-Agent:", headers["User-Agent"]);
