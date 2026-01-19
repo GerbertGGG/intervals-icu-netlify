@@ -1,20 +1,17 @@
 // src/index.js
 // Cloudflare Worker
 // - Berechnet VDOT_like + Drift (GA), EF (sonstige), TTT (Intervall)
+// - Zusätzlich: Overall Score (0..100) pro Tag (QUALITY-dominiert + Consistency aus icu_training_load)
 // - Schreibt AUSSCHLIESSLICH in Intervals Wellnessfelder
 // - Schreiben NUR wenn ?write=true
 // - Debug-Ausgabe NUR wenn ?debug=true (gibt berechnete Werte als JSON zurück)
 // - Steuerung über URL: ?date=YYYY-MM-DD | ?from=...&to=... | ?days=N
 //
-// Verbesserungen:
-// - Streams-Response wird normalisiert (Objekt/Wrapper/Array-Formate)
-// - Fallbacks aus Activity-Summary, falls Streams fehlen:
-//   - EF = average_speed / average_heartrate
-//   - TTT = compliance (%)
-//   - Drift optional aus decoupling/pahr_decoupling/pwhr_decoupling falls vorhanden
-//
 // Required secret:
 // - INTERVALS_API_KEY
+//
+// Wellness Custom Fields (numeric) in Intervals anlegen (Codes exakt so):
+// - VDOT, Drift, EF, TTT, Score
 
 export default {
   async scheduled(event, env, ctx) {
@@ -67,8 +64,6 @@ export default {
         return json({ ok: false, error: "Date too old (max 365 days back)" }, 400);
       }
 
-      // If debug=true, run synchronously and return results.
-      // Otherwise run async via waitUntil and return quickly.
       if (debug) {
         const result = await syncRange(env, oldest, newest, write, true);
         return json(result);
@@ -89,6 +84,7 @@ const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_EF = "EF";
 const FIELD_TTT = "TTT";
+const FIELD_SCORE = "Score";
 
 // ================= SYNC =================
 async function sync(env, days, write) {
@@ -111,39 +107,30 @@ async function syncRange(env, oldest, newest, write, debug = false) {
     activitiesSeen++;
 
     if (!isRun(a)) {
-      if (debug) addDebug(debugOut, a, null, null, null, "skip:not_run");
+      if (debug) addDebug(debugOut, a, null, null, null, null, "skip:not_run");
       continue;
     }
 
     const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!day) {
-      if (debug) addDebug(debugOut, a, null, null, null, "skip:no_day");
+      if (debug) addDebug(debugOut, a, null, null, null, null, "skip:no_day");
       continue;
     }
 
     const patch = dayPatch.get(day) || {};
 
-    // ---- Prefer summary fallbacks where possible ----
-    // EF from summary (always available if HR+speed exist)
-    const efSummary = extractActivityEF(a);
+    // ===== Summary fallbacks =====
+    const efSummary = extractActivityEF(a);            // average_speed / average_heartrate
+    const tttSummary = extractActivityTTT(a);          // compliance (%)
+    const driftSummary = extractActivityDecoupling(a); // optional
+    const load = extractActivityLoad(a);               // icu_training_load (preferred)
 
-    // TTT from summary (Intervals compliance is already a %)
-    const tttSummary = extractActivityTTT(a);
-
-    // Drift from summary if present (not in your sample, but supported)
-    const driftSummary = extractActivityDecoupling(a);
-
-    // ---- Streams path (for drift and/or better TTT) ----
+    // ===== Streams path (only if we might need them) =====
     let streams = null;
     let qStreams = null;
     let tttStreams = null;
 
-    // Only call streams if we might need them:
-    // - For GA: drift is important; if driftSummary missing, try streams
-    // - For interval workouts: if compliance missing, try streams TTT
-    // - If EF summary missing but streams might have it (rare)
-    const mightNeedDrift =
-      isProbablyGA(a) && (driftSummary == null); // GA heuristic without q yet
+    const mightNeedDrift = isProbablyGA(a) && (driftSummary == null);
     const mightNeedTTT = (tttSummary == null);
     const mightNeedEF = (efSummary == null);
 
@@ -157,8 +144,7 @@ async function syncRange(env, oldest, newest, write, debug = false) {
           "time",
           "distance",
         ]);
-      } catch (e) {
-        // Streams failed - we'll rely on summary fallbacks
+      } catch {
         streams = null;
       }
 
@@ -168,25 +154,16 @@ async function syncRange(env, oldest, newest, write, debug = false) {
       }
     }
 
-    // ---- Determine EF ----
-    const ef = qStreams?.ef_overall ?? efSummary;
-
-    // ---- Determine Drift ----
-    // For GA: prefer summary drift if present, else stream-based drift
+    // ===== Final metric selection =====
+    const ef = qStreams?.ef_overall ?? efSummary ?? null;
     const drift = driftSummary ?? qStreams?.drift_pct ?? null;
-
-    // ---- Determine TTT ----
-    // Prefer compliance (Intervals own target compliance) if present, else stream heuristic
     const ttt = tttSummary ?? (tttStreams?.isIntervalWorkout ? tttStreams.ttt_pct : null);
 
-    // ---- Decide GA vs non-GA (now that we might have drift) ----
-    // If we have streams drift, use it. Otherwise fall back to tags/duration only.
+    // ===== Classification =====
     const ga = isGrundlageWithOptionalDrift(a, drift);
+    const isKey = hasKeyTag(a);
 
-    // ---- Write fields into patch ----
-    // GA -> VDOT_like + Drift
-    // Non-GA -> EF
-    // Interval workout -> TTT
+    // ===== Write base fields =====
     let wroteSomething = false;
 
     if (ga) {
@@ -205,21 +182,63 @@ async function syncRange(env, oldest, newest, write, debug = false) {
       }
     }
 
-    // Always allow TTT to be written if present (it is "intervallleistung" signal)
+    // TTT is always allowed if present
     if (ttt != null) {
       patch[FIELD_TTT] = round(ttt, 1);
       wroteSomething = true;
     }
 
+    // ===== Overall Score (0..100) =====
+    // Consistency C from icu_training_load, capped at 70
+    const C = scoreConsistency(load);
+
+    // Quality depends on day type:
+    // - GA (no key): AQ from Drift (lower better)
+    // - Key days: IQ from TTT (higher better)
+    //
+    // If the preferred metric is missing, we degrade gracefully:
+    // - GA without drift -> AQ = 70 (neutral-ish)
+    // - Key without ttt -> IQ = 60 (below-neutral)
+    const AQ = (drift != null) ? scoreAerobicQuality(drift) : 70;
+    const IQ = (ttt != null) ? scoreIntervalQuality(ttt) : 60;
+
+    let overall;
+    if (isKey) {
+      overall = 0.75 * IQ + 0.25 * C;
+    } else if (ga) {
+      overall = 0.75 * AQ + 0.25 * C;
+    } else {
+      // non-key, non-GA: use EF as a mild quality proxy (optional).
+      // We keep it simple: treat as "mixed day" -> use IQ if TTT exists else AQ if drift exists else neutral 65.
+      const Q = (ttt != null) ? IQ : (drift != null ? AQ : 65);
+      overall = 0.75 * Q + 0.25 * C;
+    }
+
+    patch[FIELD_SCORE] = round(clamp(overall, 0, 100), 1);
+    wroteSomething = true;
+
     if (!wroteSomething) {
-      if (debug) addDebug(debugOut, a, ef, drift, ttt, streams ? "skip:no_metrics" : "skip:no_metrics_no_streams");
+      if (debug) addDebug(debugOut, a, ef, drift, ttt, load, streams ? "skip:no_metrics" : "skip:no_metrics_no_streams");
       continue;
     }
 
     dayPatch.set(day, patch);
     activitiesUsed++;
 
-    if (debug) addDebug(debugOut, a, ef, drift, ttt, streams ? "ok" : "ok:summary_only");
+    if (debug) {
+      addDebug(debugOut, a, ef, drift, ttt, load, streams ? "ok" : "ok:summary_only");
+      // also include score components per activity for transparency
+      const dayKey = day;
+      const last = debugOut[dayKey][debugOut[dayKey].length - 1];
+      last.score = {
+        C,
+        AQ: isKey ? null : AQ,
+        IQ: isKey ? IQ : null,
+        overall: patch[FIELD_SCORE],
+        isKey,
+        ga,
+      };
+    }
   }
 
   let daysWritten = 0;
@@ -244,7 +263,7 @@ async function syncRange(env, oldest, newest, write, debug = false) {
   };
 }
 
-function addDebug(debugOut, a, ef, drift, ttt, status) {
+function addDebug(debugOut, a, ef, drift, ttt, load, status) {
   if (!debugOut) return;
   const day = String(a.start_date_local || a.start_date || "").slice(0, 10) || "unknown-day";
   debugOut[day] ??= [];
@@ -259,32 +278,36 @@ function addDebug(debugOut, a, ef, drift, ttt, status) {
     average_speed: a.average_speed ?? null,
     average_heartrate: a.average_heartrate ?? null,
     compliance: a.compliance ?? null,
+    icu_training_load: a.icu_training_load ?? null,
     status,
     ga: isGrundlageWithOptionalDrift(a, drift),
+    isKey: hasKeyTag(a),
     ef,
     drift,
     vdot_like: ef != null ? vdotLikeFromEf(ef) : null,
     ttt,
+    load,
   });
 }
 
 // ================= CLASSIFICATION =================
 function isRun(a) {
-  // strict-ish, but robust for Intervals
   const t = String(a?.type ?? "").toLowerCase();
   return t === "run" || t === "running" || t.includes("run") || t.includes("laufen");
 }
 
+function hasKeyTag(a) {
+  return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
+}
+
 function isProbablyGA(a) {
-  // used only to decide whether to try streams for drift
   const tags = (a.tags || []).map(String);
   if (tags.some((t) => GA_TAGS.includes(t))) return true;
 
   const dur = Number(a.moving_time || a.elapsed_time || 0);
   if (dur < 30 * 60) return false;
 
-  // If it's a keyed workout (like your "key:schwelle"), likely not GA
-  if ((a.tags || []).some((t) => String(t).startsWith("key:"))) return false;
+  if (hasKeyTag(a)) return false;
 
   return true;
 }
@@ -293,16 +316,13 @@ function isGrundlageWithOptionalDrift(a, driftMaybe) {
   const tags = (a.tags || []).map(String);
   if (tags.some((t) => GA_TAGS.includes(t))) return true;
 
-  // if it's a key workout -> not GA
-  if (tags.some((t) => String(t).startsWith("key:"))) return false;
+  if (hasKeyTag(a)) return false;
 
   const dur = Number(a.moving_time || a.elapsed_time || 0);
   if (dur < 30 * 60) return false;
 
-  // if we have drift, use it to filter GA
   if (driftMaybe != null) return driftMaybe <= 10;
 
-  // otherwise just accept as GA by duration (fallback)
   return true;
 }
 
@@ -317,9 +337,8 @@ function extractActivityEF(a) {
 }
 
 function extractActivityTTT(a) {
-  // Intervals "compliance" is already a percent (0..100) in your sample
   const c = Number(a?.compliance);
-  if (Number.isFinite(c) && c > 0) return c;
+  if (Number.isFinite(c) && c > 0) return c; // percent 0..100
   return null;
 }
 
@@ -334,6 +353,62 @@ function extractActivityDecoupling(a) {
   if (Number.isFinite(v3) && v3 > 0) return v3;
 
   return null;
+}
+
+function extractActivityLoad(a) {
+  const l1 = Number(a?.icu_training_load);
+  if (Number.isFinite(l1) && l1 >= 0) return l1;
+
+  // optional fallbacks
+  const l2 = Number(a?.hr_load);
+  if (Number.isFinite(l2) && l2 >= 0) return l2;
+
+  return 0;
+}
+
+// ================= SCORE FUNCTIONS (0..100) =================
+// Consistency: cap at 70 so "more load is always better" is prevented
+function scoreConsistency(load) {
+  if (!Number.isFinite(load) || load <= 0) return 0;
+  return clamp(load, 0, 70);
+}
+
+// Aerobic quality from Drift (%): lower drift better.
+// We map:
+//   drift <= 3  -> 100
+//   drift = 6   -> 90
+//   drift = 10  -> 70
+//   drift = 15  -> 45
+//   drift >= 20 -> 20
+function scoreAerobicQuality(driftPct) {
+  const d = driftPct;
+  if (!Number.isFinite(d)) return 70;
+
+  if (d <= 3) return 100;
+  if (d <= 6) return lerp(100, 90, (d - 3) / 3);
+  if (d <= 10) return lerp(90, 70, (d - 6) / 4);
+  if (d <= 15) return lerp(70, 45, (d - 10) / 5);
+  if (d <= 20) return lerp(45, 20, (d - 15) / 5);
+  return 20;
+}
+
+// Interval quality from TTT (%): higher is better.
+// Map:
+//   ttt >= 95 -> 100
+//   90..95    -> 80..95
+//   80..90    -> 50..80
+//   <80       -> 0..50 (linear down to 60% = 0)
+function scoreIntervalQuality(tttPct) {
+  const t = tttPct;
+  if (!Number.isFinite(t)) return 60;
+
+  if (t >= 95) return clamp(95 + (t - 95) * 1, 95, 100);
+  if (t >= 90) return lerp(80, 95, (t - 90) / 5);
+  if (t >= 80) return lerp(50, 80, (t - 80) / 10);
+
+  // below 80: map 60..80 -> 0..50, below 60 -> 0
+  if (t <= 60) return 0;
+  return lerp(0, 50, (t - 60) / 20);
 }
 
 // ================= METRICS FROM STREAMS =================
@@ -371,7 +446,6 @@ function calcEfAndDriftFromStreams(streams) {
   };
 }
 
-// TTT with flexible streams (speed from velocity/velocity_smooth or pace)
 function calcTTTFromStreamsFlexible(streams) {
   const speed = pickSpeedFromStreams(streams); // m/s
   if (!speed) return null;
@@ -381,28 +455,19 @@ function calcTTTFromStreamsFlexible(streams) {
 function pickSpeedFromStreams(streams) {
   if (!streams) return null;
 
-  // Preferred: velocity_smooth (m/s)
   if (Array.isArray(streams.velocity_smooth) && streams.velocity_smooth.length) {
     return streams.velocity_smooth;
   }
-
-  // Fallback: velocity (m/s)
   if (Array.isArray(streams.velocity) && streams.velocity.length) {
     return streams.velocity;
   }
-
-  // Fallback: pace (likely sec/km in Intervals; convert to m/s)
   if (Array.isArray(streams.pace) && streams.pace.length) {
-    // If pace is already m/s, conversion would break.
-    // We assume pace is sec/km (common). We add heuristic:
-    // - if typical values are > 20, it's likely sec/km
-    // - if typical values are < 15, it might already be m/s (rare)
     const p = streams.pace;
     const p50 = percentile(p.filter((x) => typeof x === "number" && x > 0), 50);
+    // assume sec/km if values look like seconds
     if (p50 && p50 > 20) {
       return p.map((secPerKm) => (secPerKm > 0 ? 1000 / secPerKm : 0));
     }
-    // Otherwise, assume it's already speed-like
     return p;
   }
 
@@ -601,4 +666,12 @@ function json(o, status = 200) {
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * clamp(t, 0, 1);
 }
