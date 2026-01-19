@@ -11,8 +11,8 @@
 
 export default {
   async scheduled(event, env, ctx) {
-    // Daily cron: resync last N days (handles late sync/edits)
-    ctx.waitUntil(sync(env, 14));
+    // Cron schreibt immer (wie gehabt)
+    ctx.waitUntil(sync(env, 14, true));
   },
 
   async fetch(req, env, ctx) {
@@ -20,31 +20,60 @@ export default {
 
     if (url.pathname === "/") return new Response("ok");
 
-    // Manual backfill:
-    //   GET /sync?days=60
-    //   GET /sync?from=2025-12-01&to=2026-01-19
-    // Auth:
-    //   Authorization: Bearer <SYNC_TOKEN>
     if (url.pathname === "/sync") {
-      const auth = req.headers.get("Authorization") || "";
-      if (auth !== `Bearer ${env.SYNC_TOKEN}`) {
-        return new Response("Unauthorized", { status: 401 });
+      // --- Params ---
+      const write = (url.searchParams.get("write") || "").toLowerCase() === "true";
+
+      const date = url.searchParams.get("date"); // YYYY-MM-DD
+      const from = url.searchParams.get("from"); // YYYY-MM-DD
+      const to = url.searchParams.get("to");     // YYYY-MM-DD
+      const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31); // hard cap
+
+      // --- Build range ---
+      let oldest, newest;
+
+      if (date) {
+        // single-day sync
+        oldest = date;
+        newest = date;
+      } else if (from && to) {
+        oldest = from;
+        newest = to;
+      } else {
+        newest = isoDate(new Date());
+        oldest = isoDate(new Date(Date.now() - days * 86400000));
       }
 
-      const days = clampInt(url.searchParams.get("days") ?? "14", 1, 365);
-      const from = url.searchParams.get("from"); // YYYY-MM-DD optional
-      const to = url.searchParams.get("to"); // YYYY-MM-DD optional
+      // --- Safety rails (recommended) ---
+      if (!isIsoDate(oldest) || !isIsoDate(newest)) {
+        return json({ ok: false, error: "Invalid date format. Use YYYY-MM-DD." }, 400);
+      }
 
-      const newest = to || isoDate(new Date());
-      const oldest = from || isoDate(new Date(Date.now() - days * 86400000));
+      if (newest < oldest) {
+        return json({ ok: false, error: "`to/newest` must be >= `from/oldest`." }, 400);
+      }
 
-      ctx.waitUntil(syncRange(env, oldest, newest));
-      return json({ ok: true, oldest, newest });
+      // limit range length to 31 days
+      const rangeDays = diffDays(oldest, newest);
+      if (rangeDays > 31) {
+        return json({ ok: false, error: "Range too large. Max 31 days." }, 400);
+      }
+
+      // optional: don't allow very old dates
+      const oldestAllowed = isoDate(new Date(Date.now() - 365 * 86400000));
+      if (oldest < oldestAllowed) {
+        return json({ ok: false, error: "Date too old. Max 365 days back." }, 400);
+      }
+
+      // --- Run ---
+      ctx.waitUntil(syncRange(env, oldest, newest, write));
+      return json({ ok: true, oldest, newest, write });
     }
 
     return new Response("Not found", { status: 404 });
   },
 };
+  
 
 // ====== CONFIG ======
 const GA_TAGS = ["GA", "Z2", "Easy"]; // optional, if you use tags in Intervals
