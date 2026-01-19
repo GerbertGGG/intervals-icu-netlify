@@ -1,4 +1,3 @@
-
 // src/index.js
 // Cloudflare Worker
 // - Berechnet VDOT_like + Drift (GA), EF (sonstige), TTT (Intervall)
@@ -6,6 +5,16 @@
 // - Schreiben NUR wenn ?write=true
 // - Debug-Ausgabe NUR wenn ?debug=true (gibt berechnete Werte als JSON zurück)
 // - Steuerung über URL: ?date=YYYY-MM-DD | ?from=...&to=... | ?days=N
+//
+// Verbesserungen:
+// - Streams-Response wird normalisiert (Objekt/Wrapper/Array-Formate)
+// - Fallbacks aus Activity-Summary, falls Streams fehlen:
+//   - EF = average_speed / average_heartrate
+//   - TTT = compliance (%)
+//   - Drift optional aus decoupling/pahr_decoupling/pwhr_decoupling falls vorhanden
+//
+// Required secret:
+// - INTERVALS_API_KEY
 
 export default {
   async scheduled(event, env, ctx) {
@@ -46,16 +55,13 @@ export default {
       if (!isIsoDate(oldest) || !isIsoDate(newest)) {
         return json({ ok: false, error: "Invalid date format (YYYY-MM-DD)" }, 400);
       }
-
       if (newest < oldest) {
         return json({ ok: false, error: "`to` must be >= `from`" }, 400);
       }
-
       const rangeDays = diffDays(oldest, newest);
       if (rangeDays > 31) {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
-
       const oldestAllowed = isoDate(new Date(Date.now() - 365 * 86400000));
       if (oldest < oldestAllowed) {
         return json({ ok: false, error: "Date too old (max 365 days back)" }, 400);
@@ -105,62 +111,115 @@ async function syncRange(env, oldest, newest, write, debug = false) {
     activitiesSeen++;
 
     if (!isRun(a)) {
-      if (debug) addDebug(debugOut, a, null, null, "skip:not_run");
+      if (debug) addDebug(debugOut, a, null, null, null, "skip:not_run");
       continue;
     }
 
     const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!day) {
-      if (debug) addDebug(debugOut, a, null, null, "skip:no_day");
-      continue;
-    }
-
-    let streams;
-    try {
-      streams = await fetchIntervalsStreams(env, a.id, ["heartrate", "velocity_smooth"]);
-    } catch (e) {
-      if (debug) addDebug(debugOut, a, null, null, `error:streams:${String(e)}`);
-      continue;
-    }
-
-    if (!streams?.heartrate || !streams?.velocity_smooth) {
-      if (debug) addDebug(debugOut, a, null, null, "skip:missing_streams");
+      if (debug) addDebug(debugOut, a, null, null, null, "skip:no_day");
       continue;
     }
 
     const patch = dayPatch.get(day) || {};
 
-    // EF + Drift (from streams)
-    const q = calcEfAndDrift(streams);
+    // ---- Prefer summary fallbacks where possible ----
+    // EF from summary (always available if HR+speed exist)
+    const efSummary = extractActivityEF(a);
 
-    // TTT (interval workouts) from speed only
-    const ttt = calcTTTFromSpeed(streams.velocity_smooth);
+    // TTT from summary (Intervals compliance is already a %)
+    const tttSummary = extractActivityTTT(a);
 
-    if (!q && !ttt?.isIntervalWorkout) {
-      if (debug) addDebug(debugOut, a, q, ttt, "skip:no_metrics");
-      continue;
-    }
+    // Drift from summary if present (not in your sample, but supported)
+    const driftSummary = extractActivityDecoupling(a);
 
-    if (q) {
-      const ga = isGrundlage(a, q);
-      if (ga) {
-        patch[FIELD_VDOT] = round(vdotLikeFromEf(q.ef_overall), 1);
-        patch[FIELD_DRIFT] = round(q.drift_pct, 1);
-      } else {
-        patch[FIELD_EF] = round(q.ef_overall, 5);
+    // ---- Streams path (for drift and/or better TTT) ----
+    let streams = null;
+    let qStreams = null;
+    let tttStreams = null;
+
+    // Only call streams if we might need them:
+    // - For GA: drift is important; if driftSummary missing, try streams
+    // - For interval workouts: if compliance missing, try streams TTT
+    // - If EF summary missing but streams might have it (rare)
+    const mightNeedDrift =
+      isProbablyGA(a) && (driftSummary == null); // GA heuristic without q yet
+    const mightNeedTTT = (tttSummary == null);
+    const mightNeedEF = (efSummary == null);
+
+    if (mightNeedDrift || mightNeedTTT || mightNeedEF) {
+      try {
+        streams = await fetchIntervalsStreams(env, a.id, [
+          "heartrate",
+          "velocity_smooth",
+          "velocity",
+          "pace",
+          "time",
+          "distance",
+        ]);
+      } catch (e) {
+        // Streams failed - we'll rely on summary fallbacks
+        streams = null;
+      }
+
+      if (streams) {
+        qStreams = calcEfAndDriftFromStreams(streams);
+        tttStreams = calcTTTFromStreamsFlexible(streams);
       }
     }
 
-    if (ttt?.isIntervalWorkout) {
-      patch[FIELD_TTT] = round(ttt.ttt_pct, 1);
+    // ---- Determine EF ----
+    const ef = qStreams?.ef_overall ?? efSummary;
+
+    // ---- Determine Drift ----
+    // For GA: prefer summary drift if present, else stream-based drift
+    const drift = driftSummary ?? qStreams?.drift_pct ?? null;
+
+    // ---- Determine TTT ----
+    // Prefer compliance (Intervals own target compliance) if present, else stream heuristic
+    const ttt = tttSummary ?? (tttStreams?.isIntervalWorkout ? tttStreams.ttt_pct : null);
+
+    // ---- Decide GA vs non-GA (now that we might have drift) ----
+    // If we have streams drift, use it. Otherwise fall back to tags/duration only.
+    const ga = isGrundlageWithOptionalDrift(a, drift);
+
+    // ---- Write fields into patch ----
+    // GA -> VDOT_like + Drift
+    // Non-GA -> EF
+    // Interval workout -> TTT
+    let wroteSomething = false;
+
+    if (ga) {
+      if (ef != null) {
+        patch[FIELD_VDOT] = round(vdotLikeFromEf(ef), 1);
+        wroteSomething = true;
+      }
+      if (drift != null) {
+        patch[FIELD_DRIFT] = round(drift, 1);
+        wroteSomething = true;
+      }
+    } else {
+      if (ef != null) {
+        patch[FIELD_EF] = round(ef, 5);
+        wroteSomething = true;
+      }
     }
 
-    if (Object.keys(patch).length) {
-      dayPatch.set(day, patch);
-      activitiesUsed++;
+    // Always allow TTT to be written if present (it is "intervallleistung" signal)
+    if (ttt != null) {
+      patch[FIELD_TTT] = round(ttt, 1);
+      wroteSomething = true;
     }
 
-    if (debug) addDebug(debugOut, a, q, ttt, "ok");
+    if (!wroteSomething) {
+      if (debug) addDebug(debugOut, a, ef, drift, ttt, streams ? "skip:no_metrics" : "skip:no_metrics_no_streams");
+      continue;
+    }
+
+    dayPatch.set(day, patch);
+    activitiesUsed++;
+
+    if (debug) addDebug(debugOut, a, ef, drift, ttt, streams ? "ok" : "ok:summary_only");
   }
 
   let daysWritten = 0;
@@ -185,47 +244,105 @@ async function syncRange(env, oldest, newest, write, debug = false) {
   };
 }
 
-function addDebug(debugOut, a, q, ttt, status) {
+function addDebug(debugOut, a, ef, drift, ttt, status) {
   if (!debugOut) return;
   const day = String(a.start_date_local || a.start_date || "").slice(0, 10) || "unknown-day";
   debugOut[day] ??= [];
   debugOut[day].push({
     activityId: a.id ?? null,
     start: a.start_date ?? null,
+    start_local: a.start_date_local ?? null,
     type: a.type ?? a.activity_type ?? null,
     tags: a.tags ?? [],
+    stream_types: a.stream_types ?? [],
+    has_heartrate: a.has_heartrate ?? null,
+    average_speed: a.average_speed ?? null,
+    average_heartrate: a.average_heartrate ?? null,
+    compliance: a.compliance ?? null,
     status,
-    ga: q ? isGrundlage(a, q) : null,
-    ef: q?.ef_overall ?? null,
-    drift: q?.drift_pct ?? null,
-    vdot_like: q ? vdotLikeFromEf(q.ef_overall) : null,
-    ttt: ttt?.isIntervalWorkout ? ttt.ttt_pct : null,
+    ga: isGrundlageWithOptionalDrift(a, drift),
+    ef,
+    drift,
+    vdot_like: ef != null ? vdotLikeFromEf(ef) : null,
+    ttt,
   });
 }
 
 // ================= CLASSIFICATION =================
 function isRun(a) {
-  const t = String(a.type || a.activity_type || "").toLowerCase();
-  return t.includes("run") || t.includes("laufen");
+  // strict-ish, but robust for Intervals
+  const t = String(a?.type ?? "").toLowerCase();
+  return t === "run" || t === "running" || t.includes("run") || t.includes("laufen");
 }
 
-function isGrundlage(a, q) {
+function isProbablyGA(a) {
+  // used only to decide whether to try streams for drift
   const tags = (a.tags || []).map(String);
   if (tags.some((t) => GA_TAGS.includes(t))) return true;
 
   const dur = Number(a.moving_time || a.elapsed_time || 0);
   if (dur < 30 * 60) return false;
 
-  return q.drift_pct <= 10;
+  // If it's a keyed workout (like your "key:schwelle"), likely not GA
+  if ((a.tags || []).some((t) => String(t).startsWith("key:"))) return false;
+
+  return true;
 }
 
-// ================= METRICS =================
-function calcEfAndDrift(streams) {
-  const hr = streams.heartrate;
-  const v = streams.velocity_smooth;
-  if (!hr || !v) return null;
+function isGrundlageWithOptionalDrift(a, driftMaybe) {
+  const tags = (a.tags || []).map(String);
+  if (tags.some((t) => GA_TAGS.includes(t))) return true;
 
-  const n = Math.min(hr.length, v.length);
+  // if it's a key workout -> not GA
+  if (tags.some((t) => String(t).startsWith("key:"))) return false;
+
+  const dur = Number(a.moving_time || a.elapsed_time || 0);
+  if (dur < 30 * 60) return false;
+
+  // if we have drift, use it to filter GA
+  if (driftMaybe != null) return driftMaybe <= 10;
+
+  // otherwise just accept as GA by duration (fallback)
+  return true;
+}
+
+// ================= SUMMARY FALLBACK EXTRACTORS =================
+function extractActivityEF(a) {
+  const sp = Number(a?.average_speed);
+  const hr = Number(a?.average_heartrate);
+  if (Number.isFinite(sp) && sp > 0 && Number.isFinite(hr) && hr > 0) {
+    return sp / hr;
+  }
+  return null;
+}
+
+function extractActivityTTT(a) {
+  // Intervals "compliance" is already a percent (0..100) in your sample
+  const c = Number(a?.compliance);
+  if (Number.isFinite(c) && c > 0) return c;
+  return null;
+}
+
+function extractActivityDecoupling(a) {
+  const v1 = Number(a?.pahr_decoupling);
+  if (Number.isFinite(v1) && v1 > 0) return v1;
+
+  const v2 = Number(a?.pwhr_decoupling);
+  if (Number.isFinite(v2) && v2 > 0) return v2;
+
+  const v3 = Number(a?.decoupling);
+  if (Number.isFinite(v3) && v3 > 0) return v3;
+
+  return null;
+}
+
+// ================= METRICS FROM STREAMS =================
+function calcEfAndDriftFromStreams(streams) {
+  const hr = streams.heartrate;
+  const speed = pickSpeedFromStreams(streams); // m/s
+  if (!hr || !speed) return null;
+
+  const n = Math.min(hr.length, speed.length);
   if (n < 300) return null;
 
   const half = Math.floor(n / 2);
@@ -235,7 +352,7 @@ function calcEfAndDrift(streams) {
       c = 0;
     for (let i = a; i < b; i++) {
       const h = hr[i];
-      const sp = v[i];
+      const sp = speed[i];
       if (!h || h < 40) continue;
       if (!sp || sp <= 0) continue;
       s += sp / h;
@@ -254,11 +371,50 @@ function calcEfAndDrift(streams) {
   };
 }
 
+// TTT with flexible streams (speed from velocity/velocity_smooth or pace)
+function calcTTTFromStreamsFlexible(streams) {
+  const speed = pickSpeedFromStreams(streams); // m/s
+  if (!speed) return null;
+  return calcTTTFromSpeed(speed);
+}
+
+function pickSpeedFromStreams(streams) {
+  if (!streams) return null;
+
+  // Preferred: velocity_smooth (m/s)
+  if (Array.isArray(streams.velocity_smooth) && streams.velocity_smooth.length) {
+    return streams.velocity_smooth;
+  }
+
+  // Fallback: velocity (m/s)
+  if (Array.isArray(streams.velocity) && streams.velocity.length) {
+    return streams.velocity;
+  }
+
+  // Fallback: pace (likely sec/km in Intervals; convert to m/s)
+  if (Array.isArray(streams.pace) && streams.pace.length) {
+    // If pace is already m/s, conversion would break.
+    // We assume pace is sec/km (common). We add heuristic:
+    // - if typical values are > 20, it's likely sec/km
+    // - if typical values are < 15, it might already be m/s (rare)
+    const p = streams.pace;
+    const p50 = percentile(p.filter((x) => typeof x === "number" && x > 0), 50);
+    if (p50 && p50 > 20) {
+      return p.map((secPerKm) => (secPerKm > 0 ? 1000 / secPerKm : 0));
+    }
+    // Otherwise, assume it's already speed-like
+    return p;
+  }
+
+  return null;
+}
+
+// “VDOT_like” as trend proxy from EF (scale factor only for readability)
 function vdotLikeFromEf(ef) {
   return ef * 1200;
 }
 
-// ================= TTT =================
+// ================= TTT (from speed array) =================
 function calcTTTFromSpeed(speed) {
   if (!speed || speed.length < 600) return null;
   const v = speed.filter((x) => typeof x === "number" && x > 0);
@@ -336,7 +492,9 @@ function meanSegmentSpeed(speed, segs) {
 }
 
 function percentile(arr, p) {
-  const a = [...arr].sort((x, y) => x - y);
+  const clean = arr.filter((x) => typeof x === "number" && Number.isFinite(x));
+  if (!clean.length) return null;
+  const a = [...clean].sort((x, y) => x - y);
   const i = (p / 100) * (a.length - 1);
   const lo = Math.floor(i),
     hi = Math.ceil(i);
@@ -357,7 +515,46 @@ async function fetchIntervalsStreams(env, id, types) {
   )}`;
   const r = await fetch(url, { headers: { Authorization: auth(env) } });
   if (!r.ok) throw new Error(`streams ${r.status}: ${await r.text()}`);
-  return r.json();
+
+  const raw = await r.json();
+  return normalizeStreams(raw);
+}
+
+function normalizeStreams(raw) {
+  if (!raw) return null;
+
+  // Case 1: already direct object with arrays
+  if (
+    raw.heartrate ||
+    raw.velocity_smooth ||
+    raw.velocity ||
+    raw.pace ||
+    raw.time ||
+    raw.distance
+  ) {
+    return raw;
+  }
+
+  // Case 2: wrapper objects
+  if (raw.streams && (raw.streams.heartrate || raw.streams.velocity_smooth || raw.streams.velocity || raw.streams.pace)) {
+    return raw.streams;
+  }
+  if (raw.data && (raw.data.heartrate || raw.data.velocity_smooth || raw.data.velocity || raw.data.pace)) {
+    return raw.data;
+  }
+
+  // Case 3: array format
+  if (Array.isArray(raw)) {
+    const out = {};
+    for (const item of raw) {
+      const type = item?.type ?? item?.name ?? item?.key;
+      const data = item?.data ?? item?.values ?? item?.stream;
+      if (type && Array.isArray(data)) out[String(type)] = data;
+    }
+    return out;
+  }
+
+  return raw;
 }
 
 async function putWellnessDay(env, day, patch) {
@@ -394,7 +591,6 @@ function isIsoDate(s) {
 }
 
 function diffDays(a, b) {
-  // a,b = YYYY-MM-DD
   const da = new Date(a + "T00:00:00Z").getTime();
   const db = new Date(b + "T00:00:00Z").getTime();
   return Math.round((db - da) / 86400000);
