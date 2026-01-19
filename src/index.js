@@ -1,39 +1,34 @@
 // src/index.js
-// Cloudflare Worker: Intervals streams -> compute VDOT_like + Drift (GA), EF (non-GA), TTT (interval workouts)
-// Write results ONLY into Intervals custom Wellness fields (per-day PUT).
-//
-// Required secrets (wrangler secret put):
-// - INTERVALS_API_KEY
-// - SYNC_TOKEN   (for /sync endpoint)
-//
-// In Intervals (UI): create Custom Wellness Fields (numeric) with these codes (or adjust below):
-// - VDOT, Drift, EF, TTT
+// Cloudflare Worker
+// - Berechnet VDOT_like + Drift (GA), EF (sonstige), TTT (Intervall)
+// - Schreibt AUSSCHLIESSLICH in Intervals Wellnessfelder
+// - Schreiben NUR wenn ?write=true
+// - Steuerung über URL: ?date=YYYY-MM-DD | ?from=...&to=... | ?days=N
 
 export default {
   async scheduled(event, env, ctx) {
-    // Cron schreibt immer (wie gehabt)
+    // Cron schreibt IMMER (letzte 14 Tage)
     ctx.waitUntil(sync(env, 14, true));
   },
 
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
 
-    if (url.pathname === "/") return new Response("ok");
+    if (url.pathname === "/") {
+      return new Response("ok");
+    }
 
     if (url.pathname === "/sync") {
-      // --- Params ---
       const write = (url.searchParams.get("write") || "").toLowerCase() === "true";
 
       const date = url.searchParams.get("date"); // YYYY-MM-DD
       const from = url.searchParams.get("from"); // YYYY-MM-DD
       const to = url.searchParams.get("to");     // YYYY-MM-DD
-      const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31); // hard cap
+      const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
 
-      // --- Build range ---
       let oldest, newest;
 
       if (date) {
-        // single-day sync
         oldest = date;
         newest = date;
       } else if (from && to) {
@@ -44,28 +39,25 @@ export default {
         oldest = isoDate(new Date(Date.now() - days * 86400000));
       }
 
-      // --- Safety rails (recommended) ---
+      // ---- Safety Rails ----
       if (!isIsoDate(oldest) || !isIsoDate(newest)) {
-        return json({ ok: false, error: "Invalid date format. Use YYYY-MM-DD." }, 400);
+        return json({ ok: false, error: "Invalid date format (YYYY-MM-DD)" }, 400);
       }
 
       if (newest < oldest) {
-        return json({ ok: false, error: "`to/newest` must be >= `from/oldest`." }, 400);
+        return json({ ok: false, error: "`to` must be >= `from`" }, 400);
       }
 
-      // limit range length to 31 days
       const rangeDays = diffDays(oldest, newest);
       if (rangeDays > 31) {
-        return json({ ok: false, error: "Range too large. Max 31 days." }, 400);
+        return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
 
-      // optional: don't allow very old dates
       const oldestAllowed = isoDate(new Date(Date.now() - 365 * 86400000));
       if (oldest < oldestAllowed) {
-        return json({ ok: false, error: "Date too old. Max 365 days back." }, 400);
+        return json({ ok: false, error: "Date too old (max 365 days back)" }, 400);
       }
 
-      // --- Run ---
       ctx.waitUntil(syncRange(env, oldest, newest, write));
       return json({ ok: true, oldest, newest, write });
     }
@@ -73,29 +65,26 @@ export default {
     return new Response("Not found", { status: 404 });
   },
 };
-  
 
-// ====== CONFIG ======
-const GA_TAGS = ["GA", "Z2", "Easy"]; // optional, if you use tags in Intervals
+// ================= CONFIG =================
+const GA_TAGS = ["GA", "Z2", "Easy"];
+
 const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_EF = "EF";
 const FIELD_TTT = "TTT";
 
-// ====== SYNC ======
-async function sync(env, days) {
+// ================= SYNC =================
+async function sync(env, days, write) {
   const newest = isoDate(new Date());
   const oldest = isoDate(new Date(Date.now() - days * 86400000));
-  return syncRange(env, oldest, newest);
+  return syncRange(env, oldest, newest, write);
 }
 
-async function syncRange(env, oldest, newest) {
+async function syncRange(env, oldest, newest, write) {
   const acts = await fetchIntervalsActivities(env, oldest, newest);
-
-  // Sort stable by start date so "later activity overwrites earlier" in same day patch
   acts.sort((a, b) => String(a.start_date || "").localeCompare(String(b.start_date || "")));
 
-  // day -> patch object containing only our fields
   const dayPatch = new Map();
 
   for (const a of acts) {
@@ -104,17 +93,14 @@ async function syncRange(env, oldest, newest) {
     const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!day) continue;
 
-    // Streams we need
     const streams = await fetchIntervalsStreams(env, a.id, ["heartrate", "velocity_smooth"]);
     if (!streams) continue;
 
     const patch = dayPatch.get(day) || {};
 
-    // EF + Drift (from streams)
     const q = calcEfAndDrift(streams);
     if (q) {
       const ga = isGrundlage(a, q);
-
       if (ga) {
         patch[FIELD_VDOT] = round(vdotLikeFromEf(q.ef_overall), 1);
         patch[FIELD_DRIFT] = round(q.drift_pct, 1);
@@ -123,124 +109,104 @@ async function syncRange(env, oldest, newest) {
       }
     }
 
-    // TTT (interval workouts) from speed only
     const ttt = calcTTTFromSpeed(streams.velocity_smooth);
     if (ttt?.isIntervalWorkout) {
       patch[FIELD_TTT] = round(ttt.ttt_pct, 1);
     }
 
-    if (Object.keys(patch).length) dayPatch.set(day, patch);
+    if (Object.keys(patch).length) {
+      dayPatch.set(day, patch);
+    }
   }
 
-  // Write patches day-by-day (PUT /wellness/YYYY-MM-DD)
-  for (const [day, patch] of dayPatch.entries()) {
-    await putWellnessDay(env, day, patch);
+  if (write) {
+    for (const [day, patch] of dayPatch.entries()) {
+      await putWellnessDay(env, day, patch);
+    }
   }
 
-  return { ok: true, oldest, newest, daysWritten: dayPatch.size };
+  return { ok: true, oldest, newest, write, daysComputed: dayPatch.size };
 }
 
-// ====== CLASSIFICATION ======
+// ================= CLASSIFICATION =================
 function isRun(a) {
   const t = String(a.type || a.activity_type || "").toLowerCase();
   return t.includes("run") || t.includes("laufen");
 }
 
 function isGrundlage(a, q) {
-  // Tag-based first (most robust)
   const tags = (a.tags || []).map(String);
-  if (tags.some((t) => GA_TAGS.includes(t))) return true;
+  if (tags.some(t => GA_TAGS.includes(t))) return true;
 
-  // Fallback heuristic: >=30 min and not huge drift
   const dur = Number(a.moving_time || a.elapsed_time || 0);
   if (dur < 30 * 60) return false;
 
-  if (q.drift_pct > 10) return false;
-
-  return true;
+  return q.drift_pct <= 10;
 }
 
-// ====== METRICS: EF + DRIFT ======
+// ================= METRICS =================
 function calcEfAndDrift(streams) {
   const hr = streams.heartrate;
-  const v = streams.velocity_smooth; // m/s
+  const v = streams.velocity_smooth;
   if (!hr || !v) return null;
 
   const n = Math.min(hr.length, v.length);
-  if (n < 300) return null; // <~5min insufficient
+  if (n < 300) return null;
 
   const half = Math.floor(n / 2);
 
-  const efRange = (from, to) => {
-    let sum = 0;
-    let cnt = 0;
-    for (let i = from; i < to; i++) {
-      const h = hr[i];
-      const s = v[i];
-      if (!h || h < 40) continue;
-      if (!s || s <= 0) continue;
-      sum += s / h; // (m/s)/bpm
-      cnt++;
+  const ef = (a, b) => {
+    let s = 0, c = 0;
+    for (let i = a; i < b; i++) {
+      if (hr[i] > 40 && v[i] > 0) {
+        s += v[i] / hr[i];
+        c++;
+      }
     }
-    return cnt ? sum / cnt : null;
+    return c ? s / c : null;
   };
 
-  const ef1 = efRange(0, half);
-  const ef2 = efRange(half, n);
+  const ef1 = ef(0, half);
+  const ef2 = ef(half, n);
   if (ef1 == null || ef2 == null) return null;
-
-  const driftPct = ((ef2 - ef1) / ef1) * 100;
 
   return {
     ef_overall: (ef1 + ef2) / 2,
-    drift_pct: driftPct,
+    drift_pct: ((ef2 - ef1) / ef1) * 100,
   };
 }
 
-// “VDOT_like” as trend proxy from EF (scale factor only for readability)
 function vdotLikeFromEf(ef) {
-  const K = 1200;
-  return ef * K;
+  return ef * 1200;
 }
 
-// ====== METRICS: TTT (Time-to-Target) ======
+// ================= TTT =================
 function calcTTTFromSpeed(speed) {
-  if (!speed || speed.length < 600) return null; // <10min
-  const v = speed.filter((x) => typeof x === "number" && x > 0);
+  if (!speed || speed.length < 600) return null;
+  const v = speed.filter(x => x > 0);
   if (v.length < 600) return null;
 
   const p50 = percentile(v, 50);
   const p90 = percentile(v, 90);
+  if (p90 <= p50 * 1.08) return { isIntervalWorkout: false };
 
-  // "Spikiness" check: if not much faster than median, likely no intervals
-  if (!p50 || !p90 || p90 <= p50 * 1.08) return { isIntervalWorkout: false };
-
-  // Adaptive work threshold
   const workThr = (p50 + p90) / 2;
-
-  // Detect "work" segments above threshold
-  const segs = detectSegments(speed, workThr, { minLen: 60, maxDrop: 25 });
+  const segs = detectSegments(speed, workThr, 60, 25);
   if (segs.length < 3) return { isIntervalWorkout: false };
 
-  // Target center from first two work segments
   const center = meanSegmentSpeed(speed, segs.slice(0, 2));
   if (!center) return { isIntervalWorkout: false };
 
-  // Target band ±3%
   const low = center * 0.97;
   const high = center * 1.03;
 
-  let planned = 0;
-  let hit = 0;
-
+  let planned = 0, hit = 0;
   for (const [a, b] of segs) {
     planned += b - a;
     for (let i = a; i < b; i++) {
-      const s = speed[i];
-      if (s >= low && s <= high) hit++;
+      if (speed[i] >= low && speed[i] <= high) hit++;
     }
   }
-  if (!planned) return { isIntervalWorkout: false };
 
   return {
     isIntervalWorkout: true,
@@ -248,7 +214,7 @@ function calcTTTFromSpeed(speed) {
   };
 }
 
-function detectSegments(speed, thr, { minLen, maxDrop }) {
+function detectSegments(speed, thr, minLen, maxDrop) {
   const segs = [];
   let i = 0;
 
@@ -262,78 +228,65 @@ function detectSegments(speed, thr, { minLen, maxDrop }) {
     while (i < speed.length) {
       if (speed[i] >= thr) below = 0;
       else below++;
-      if (below > maxDrop) break; // ended by sustained drop
+      if (below > maxDrop) break;
       i++;
     }
 
     const end = i - below;
     if (end - start >= minLen) segs.push([start, end]);
   }
-
   return segs;
 }
 
 function meanSegmentSpeed(speed, segs) {
-  let sum = 0;
-  let cnt = 0;
+  let s = 0, c = 0;
   for (const [a, b] of segs) {
     for (let i = a; i < b; i++) {
-      const s = speed[i];
-      if (typeof s === "number" && s > 0) {
-        sum += s;
-        cnt++;
+      if (speed[i] > 0) {
+        s += speed[i];
+        c++;
       }
     }
   }
-  return cnt ? sum / cnt : null;
+  return c ? s / c : null;
 }
 
 function percentile(arr, p) {
-  if (!arr.length) return null;
   const a = [...arr].sort((x, y) => x - y);
-  const idx = (p / 100) * (a.length - 1);
-  const lo = Math.floor(idx);
-  const hi = Math.ceil(idx);
-  if (lo === hi) return a[lo];
-  return a[lo] + (a[hi] - a[lo]) * (idx - lo);
+  const i = (p / 100) * (a.length - 1);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? a[lo] : a[lo] + (a[hi] - a[lo]) * (i - lo);
 }
 
-// ====== INTERVALS API ======
+// ================= INTERVALS API =================
 async function fetchIntervalsActivities(env, oldest, newest) {
   const url = `https://intervals.icu/api/v1/athlete/0/activities?oldest=${oldest}&newest=${newest}`;
-  const res = await fetch(url, { headers: { Authorization: intervalsAuth(env) } });
-  if (!res.ok) throw new Error(`Intervals activities ${res.status}: ${await res.text()}`);
-  return res.json();
+  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
-async function fetchIntervalsStreams(env, activityId, typesArr) {
-  const types = encodeURIComponent(typesArr.join(","));
-  const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${types}`;
-  const res = await fetch(url, { headers: { Authorization: intervalsAuth(env) } });
-  if (!res.ok) throw new Error(`Intervals streams ${res.status}: ${await res.text()}`);
-  return res.json();
+async function fetchIntervalsStreams(env, id, types) {
+  const url = `https://intervals.icu/api/v1/activity/${id}/streams?types=${types.join(",")}`;
+  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
-// Write day wellness: PUT /api/v1/athlete/0/wellness/YYYY-MM-DD
 async function putWellnessDay(env, day, patch) {
   const url = `https://intervals.icu/api/v1/athlete/0/wellness/${day}`;
-  const res = await fetch(url, {
+  await fetch(url, {
     method: "PUT",
-    headers: {
-      Authorization: intervalsAuth(env),
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: auth(env), "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
-  if (!res.ok) throw new Error(`wellness PUT ${day} ${res.status}: ${await res.text()}`);
 }
 
-function intervalsAuth(env) {
-  // Intervals API uses Basic auth: username "API_KEY", password = your key
+function auth(env) {
   return "Basic " + btoa(`API_KEY:${env.INTERVALS_API_KEY}`);
 }
 
-// ====== HELPERS ======
+// ================= HELPERS =================
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -343,15 +296,22 @@ function round(x, n) {
   return Math.round(x * p) / p;
 }
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
-
 function clampInt(x, min, max) {
   const n = Number(x);
-  if (!Number.isFinite(n)) return min;
-  return Math.max(min, Math.min(max, Math.floor(n)));
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : min;
+}
+
+function isIsoDate(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+}
+
+function diffDays(a, b) {
+  return Math.round((new Date(b) - new Date(a)) / 86400000);
+}
+
+function json(o, status = 200) {
+  return new Response(JSON.stringify(o), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
