@@ -20,6 +20,7 @@ export default {
 
     if (url.pathname === "/sync") {
       const write = (url.searchParams.get("write") || "").toLowerCase() === "true";
+const debug = (url.searchParams.get("debug") || "").toLowerCase() === "true";
 
       const date = url.searchParams.get("date"); // YYYY-MM-DD
       const from = url.searchParams.get("from"); // YYYY-MM-DD
