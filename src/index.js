@@ -1,3 +1,4 @@
+
 // src/index.js
 // Cloudflare Worker
 // - Berechnet VDOT_like + Drift (GA), EF (sonstige), TTT (Intervall)
