@@ -824,6 +824,17 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
 }
 
 // ================= BENCH REPORTS =================
+
+function getBenchType(benchName) {
+  const s = benchName.toLowerCase();
+  if (s.startsWith("vo2")) return "VO2";
+  if (s.startsWith("th") || s.startsWith("schwelle")) return "THRESHOLD";
+  if (s.startsWith("int")) return "INTERVAL";
+  if (s.startsWith("rsd") || s.startsWith("sprint")) return "RSD";
+  return "GA";
+}
+
+
 function getBenchTag(a) {
   const tags = a?.tags || [];
   for (const t of tags) {
@@ -833,13 +844,14 @@ function getBenchTag(a) {
   return null;
 }
 
+
 async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   const dayIso = String(activity.start_date_local || activity.start_date || "").slice(0, 10);
   if (!dayIso) return null;
 
+  const benchType = getBenchType(benchName);
   const end = new Date(dayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000);
-
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
 
   const same = acts
@@ -847,40 +859,63 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     .sort((a, b) => new Date(b.start_date_local || b.start_date) - new Date(a.start_date_local || a.start_date));
 
   const today = await computeBenchMetrics(env, activity, warmupSkipSec);
-  if (!today) return `🧪 bench:${benchName}\nHeute: n/a (fehlende EF/Streams).`;
+  if (!today) return `🧪 bench:${benchName}\nHeute: n/a`;
 
-  if (!same.length) return `🧪 bench:${benchName}\nErster Benchmark – noch kein Vergleich.`;
-
-  const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
-
-  const pool = same.slice(0, BENCH_MAX_HISTORY);
-  const poolMetrics = [];
-  for (const a of pool) {
-    const m = await computeBenchMetrics(env, a, warmupSkipSec);
-    if (m) poolMetrics.push(m);
+  let intervalMetrics = null;
+  if (benchType !== "GA") {
+    intervalMetrics = await computeIntervalBenchMetrics(env, activity, warmupSkipSec);
   }
-
-  const med =
-    poolMetrics.length >= BENCH_MIN_FOR_MEDIAN
-      ? { ef: median(poolMetrics.map((x) => x.ef)), drift: medianOrNull(poolMetrics.map((x) => x.drift)) }
-      : null;
-
-  const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
-  const efVsMed = med?.ef != null ? pct(today.ef, med.ef) : null;
-
-  const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
-  const dVsMed = today.drift != null && med?.drift != null ? today.drift - med.drift : null;
-
-  const verdict = interpretBench(efVsLast, dVsLast, efVsMed, dVsMed);
 
   const lines = [];
   lines.push(`🧪 bench:${benchName}`);
-  lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte | ${fmtSigned1(efVsMed)}% vs Median`);
-  lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte | ${fmtSigned1(dVsMed)}%-Pkt vs Median`);
-  lines.push(`Fazit: ${verdict}`);
 
+  if (!same.length) {
+    lines.push("Erster Benchmark – noch kein Vergleich.");
+  } else {
+    const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
+
+    const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
+    const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
+
+    lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
+    lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
+  }
+
+  if (intervalMetrics) {
+    if (intervalMetrics.hrr60 != null) {
+      lines.push(`Erholung: HRR60 ${intervalMetrics.hrr60.toFixed(0)} bpm`);
+    }
+    if (intervalMetrics.vo2min != null) {
+      lines.push(`VO₂-Zeit ≥90% HFmax: ${intervalMetrics.vo2min.toFixed(1)} min`);
+    }
+  }
+
+  let verdict = "Stabil / innerhalb Normalrauschen.";
+  if (intervalMetrics?.hrr60 != null && intervalMetrics.hrr60 < 15) {
+    verdict = "Hohe Belastung – Erholung limitiert.";
+  } else if (intervalMetrics?.vo2min != null && intervalMetrics.vo2min >= 4) {
+    verdict = "VO₂-Reiz ausreichend gesetzt.";
+  }
+
+  lines.push(`Fazit: ${verdict}`);
   return lines.join("\n");
 }
+
+
+
+async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
+  const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+  if (!streams) return null;
+
+  const hrr60 = hrr60FromStreams(streams);
+  const vo2sec = timeAtHrPct(streams, 0.9);
+
+  return {
+    hrr60,
+    vo2min: vo2sec ? vo2sec / 60 : null,
+  };
+}
+
 
 async function computeBenchMetrics(env, a, warmupSkipSec) {
   const ef = extractEF(a);
@@ -945,6 +980,44 @@ function interpretBench(efVsLast, dVsLast, efVsMed, dVsMed) {
 }
 
 // ================= STREAMS METRICS =================
+function timeAtHrPct(streams, pct, hfmax = HFMAX) {
+  const hr = streams?.heartrate;
+  const t = streams?.time;
+  if (!Array.isArray(hr) || !Array.isArray(t)) return 0;
+
+  const thr = pct * hfmax;
+  let sec = 0;
+
+  for (let i = 1; i < hr.length; i++) {
+    const dt = Number(t[i]) - Number(t[i - 1]);
+    if (Number(hr[i]) >= thr && Number.isFinite(dt)) sec += dt;
+  }
+  return sec;
+}
+
+function hrr60FromStreams(streams) {
+  const hr = streams?.heartrate;
+  const t = streams?.time;
+  if (!Array.isArray(hr) || !Array.isArray(t)) return null;
+
+  let peak = -Infinity;
+  let idx = -1;
+
+  for (let i = 0; i < hr.length; i++) {
+    if (hr[i] > peak) {
+      peak = hr[i];
+      idx = i;
+    }
+  }
+  if (idx < 0) return null;
+
+  const tPeak = t[idx];
+  for (let i = idx; i < t.length; i++) {
+    if (t[i] >= tPeak + 60) return peak - hr[i];
+  }
+  return null;
+}
+
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
   if (!streams) return null;
 
