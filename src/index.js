@@ -118,7 +118,7 @@ export default {
 // ================= CONFIG =================
 const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 40 * 60; // stricter filter for motor stats
-const MIN_STIMULUS_7D_RUN_LOAD = 100;
+const MIN_STIMULUS_7D_RUN_LOAD = 150;
 
 // Trend windows (GA-only)
 const TREND_WINDOW_DAYS = 28;
