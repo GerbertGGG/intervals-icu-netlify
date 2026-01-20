@@ -168,7 +168,7 @@ async function syncRange(env, oldest, newest, write, debug) {
       // GA fields
       if (ga && !isKey) {
         if (ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(ef), 1);
-        if (drift != null) patch[FIELD_DRIFT] = round(drift, 1);
+        if (drift != null) patch[FIELD_DRIFT] = round(Math.abs(drift), 1);
       }
 
       // Key fields
@@ -368,7 +368,7 @@ async function computeMinStimulus(env, dayIso) {
 // ================= SCORE =================
 function computeScore({ ga, isKey, drift, ttt, load }) {
   const C = clamp(Number(load) || 0, 0, 70);
-
+const absDrift = Number.isFinite(drift) ? Math.abs(drift) : null;
   let Q = 65;
 
   if (isKey) {
@@ -381,7 +381,7 @@ function computeScore({ ga, isKey, drift, ttt, load }) {
       Q = 60;
     }
   } else if (ga) {
-    if (Number.isFinite(drift)) {
+    if (Number.isFinite(absdrift)) {
       if (drift <= 3) Q = 98;
       else if (drift <= 6) Q = 88;
       else if (drift <= 10) Q = 70;
