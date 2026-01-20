@@ -682,7 +682,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       const benchName = getBenchTag(a);
       if (!benchName) continue;
       try {
-        const rep = await computeBenchReport(ctx, a, benchName);
+        const rep = await computeBenchReport(env, a, benchName, ctx.warmupSkipSec);
         if (rep) benchReports.push(rep);
       } catch (e) {
         benchReports.push(`🧪 bench:${benchName}\nFehler: ${String(e?.message ?? e)}`);
