@@ -112,7 +112,7 @@ async function syncRange(env, from, to, write, debug) {
 
     // ----- Minimum stimulus (Run-TSS only) -----
     const runLoad7 = await runLoadLast7Days(env, day);
-    const minOk = runLoad7 >= 100;
+    const minOk = runLoad7 >= 150;
 
     // ----- Comment -----
     patch.comments = renderComment({
