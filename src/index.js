@@ -225,6 +225,9 @@ function createCtx(env, warmupSkipSec, debug) {
 
 // ================= HELPERS =================
 // ================= KEY CAP + FATIGUE (NEW) =================
+function isFiniteNumber(x) {
+  return Number.isFinite(Number(x));
+}
 
 async function computeKeyCount7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
