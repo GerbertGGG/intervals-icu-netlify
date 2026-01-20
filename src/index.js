@@ -104,6 +104,22 @@ export default {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
+const BASE_URL = "https://intervals.icu/api/v1";
+
+function mustEnv(env, key) {
+  const v = env?.[key];
+  if (!v) throw new Error(`Missing env: ${key}`);
+  return String(v);
+}
+
+// Local YYYY-MM-DD (Europe/Berlin kompatibel genug für Intervals events query)
+function toLocalYMD(d) {
+  const x = new Date(d);
+  const y = x.getFullYear();
+  const m = String(x.getMonth() + 1).padStart(2, "0");
+  const day = String(x.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 // Fatigue override thresholds (tune later)
 const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
@@ -460,7 +476,7 @@ for (const a of ctx.activitiesAll) {
 let modeInfo;
 let policy;
 try {
-  modeInfo = await determineMode(env, day);
+  modeInfo = await determineMode(env, day, ctx.debug);
   policy = getModePolicy(modeInfo);
 } catch (e) {
   modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
@@ -1610,48 +1626,29 @@ function addDebug(debugOut, day, a, status, computed) {
 }
 // ================= EVENTS -> MODE (NEW) =================
 
-async function fetchNextEvent(env, fromIso, lookaheadDays = EVENT_LOOKAHEAD_DAYS) {
-  const toIso = isoDate(new Date(new Date(fromIso + "T00:00:00Z").getTime() + lookaheadDays * 86400000));
-  const events = await fetchIntervalsEvents(env, fromIso, toIso);
+async function determineMode(env, dayIso, debug = false) {
+  const auth = authHeader(env);
+  const races = await fetchUpcomingRaces(env, auth, debug, 8000);
 
-  // "Race" events in Intervals are typically category "RACE".
-  // If your account uses different categories, extend this filter.
-  const races = (events || []).filter((e) => String(e?.category || "").toUpperCase() === "RACE");
+  // sort by start date (local)
+  const normDay = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
+  const future = (races || [])
+    .map((e) => ({ e, day: normDay(e) }))
+    .filter((x) => isIsoDate(x.day))
+    .sort((a, b) => a.day.localeCompare(b.day));
 
-  races.sort((a, b) => {
-    const da = String(a?.start_date_local || a?.start_date || "");
-    const db = String(b?.start_date_local || b?.start_date || "");
-    return da.localeCompare(db);
-  });
+  const next = future.find((x) => x.day >= dayIso)?.e || null;
 
-  return races[0] || null;
-}
-
-function inferSportFromEvent(ev) {
-  const name = String(ev?.name || ev?.description || "").toLowerCase();
-
-  // crude but works: you can refine based on your naming conventions
-  const bikeHints = ["bike", "rad", "ride", "cycling", "velo", "granfondo", "tt", "zeitfahren"];
-  const runHints = ["run", "lauf", "running", "5k", "10k", "halb", "marathon", "hm", "trail"];
-
-  if (bikeHints.some((h) => name.includes(h))) return "bike";
-  if (runHints.some((h) => name.includes(h))) return "run";
-
-  // fallback: unknown -> open-ish behavior but still "event"
-  return "unknown";
-}
-
-async function determineMode(env, dayIso) {
-  const next = await fetchNextEvent(env, dayIso, EVENT_LOOKAHEAD_DAYS);
-  if (!next) return { mode: "OPEN", primary: "open", nextEvent: null };
+  if (!next) return { mode: "OPEN", primary: "open", nextEvent: null, eventError: null };
 
   const primary = inferSportFromEvent(next);
-  if (primary === "bike") return { mode: "EVENT", primary: "bike", nextEvent: next };
-  if (primary === "run") return { mode: "EVENT", primary: "run", nextEvent: next };
+  if (primary === "bike") return { mode: "EVENT", primary: "bike", nextEvent: next, eventError: null };
+  // Default RACE_A bei dir ist sehr wahrscheinlich Lauf – aber wir bleiben bei heuristics:
+  if (primary === "run" || primary === "unknown") return { mode: "EVENT", primary: "run", nextEvent: next, eventError: null };
 
-  // unknown event: treat like OPEN but show event info
-  return { mode: "OPEN", primary: "open", nextEvent: next };
+  return { mode: "OPEN", primary: "open", nextEvent: next, eventError: null };
 }
+
 
 function getModePolicy(modeInfo) {
   // Returns thresholds + what "min stimulus" means today
@@ -1760,8 +1757,29 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
   return r.json();
 }
 
-function auth(env) {
-  return "Basic " + btoa(`API_KEY:${env.INTERVALS_API_KEY}`);
+function authHeader(env) {
+  return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
+export async function fetchUpcomingRaces(env, auth, debug, timeoutMs) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const start = new Date();
+  start.setDate(start.getDate() - 21); // include last 3 weeks
+  const end = new Date();
+  end.setDate(end.getDate() + 180);
+
+  const oldest = toLocalYMD(start);
+  const newest = toLocalYMD(end);
+
+  const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
+  const res = await fetch(url, { headers: { Authorization: auth } });
+  if (!res.ok) {
+    if (debug) console.log("⚠️ Event-API fehlgeschlagen:", res.status);
+    return [];
+  }
+  const payload = await res.json();
+  const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
+  return events.filter((e) => String(e.category ?? "").toUpperCase() === "RACE_A");
+}
+
 
 
