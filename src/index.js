@@ -1696,7 +1696,7 @@ async function fetchIntervalsActivities(env, oldest, newest) {
 
 async function fetchIntervalsStreams(env, activityId, types) {
   const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
-  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`streams ${r.status}: ${await r.text()}`);
   const raw = await r.json();
   return normalizeStreams(raw);
@@ -1726,7 +1726,7 @@ async function putWellnessDay(env, day, patch) {
   const url = `https://intervals.icu/api/v1/athlete/0/wellness/${day}`;
   const r = await fetch(url, {
     method: "PUT",
-    headers: { Authorization: auth(env), "Content-Type": "application/json" },
+    headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
@@ -1736,7 +1736,7 @@ async function putWellnessDay(env, day, patch) {
 async function fetchIntervalsEvents(env, oldest, newest) {
   // local dates (yyyy-MM-dd)
   const url = `https://intervals.icu/api/v1/athlete/0/events?oldest=${oldest}&newest=${newest}`;
-  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
   return r.json();
 }
@@ -1745,7 +1745,7 @@ async function createIntervalsEvent(env, eventObj) {
   const url = `https://intervals.icu/api/v1/athlete/0/events`;
   const r = await fetch(url, {
     method: "POST",
-    headers: { Authorization: auth(env), "Content-Type": "application/json" },
+    headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(eventObj),
   });
   if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
