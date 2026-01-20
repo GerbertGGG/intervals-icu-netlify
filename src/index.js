@@ -115,6 +115,21 @@ const MOTOR_NEED_N_PER_HALF = 2;
 const MOTOR_DRIFT_WINDOW_DAYS = 14;
 
 const HFMAX = 173;
+// ================= MODE / EVENTS (NEW) =================
+const EVENT_LOOKAHEAD_DAYS = 365; // how far we look for next event
+const BIKE_EQ_FACTOR = 0.65;      // Bike load to "run-equivalent" factor
+
+// Minimum stimulus thresholds per mode (tune later)
+const MIN_STIMULUS_7D_RUN_EVENT = 150;   // your current value (5k/run blocks)
+const MIN_STIMULUS_7D_BIKE_EVENT = 220;  // bike primary
+const MIN_STIMULUS_7D_AEROBIC_OPEN = 220;// open mode: run + bike*factor
+
+// Maintenance anchors (soft hints, not hard fails)
+const RUN_MAINTENANCE_14D_MIN = 1;
+const BIKE_MAINTENANCE_14D_MIN = 1;
+
+// Streams/types
+const STREAM_TYPES_BIKE = ["time", "heartrate", "watts"]; // watts optional
 
 // "Trainingslehre" detective
 const LONGRUN_MIN_SECONDS = 60 * 60; // >= 60 minutes
@@ -172,6 +187,7 @@ function createCtx(env, warmupSkipSec, debug) {
     activitiesAll: [],
     byDayRuns: new Map(), // YYYY-MM-DD -> run activities
     // streams memo
+    byDayBikes: new Map(), // NEW
     streamsCache: new Map(), // activityId -> Promise(streams)
     // derived GA samples cache (for windows)
     gaSampleCache: new Map(), // key: `${endIso}|${windowDays}|${mode}` -> result
@@ -295,23 +311,34 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
 
   // 2) Build byDayRuns for quick access
-  let activitiesSeen = 0;
-  let activitiesUsed = 0;
-  for (const a of ctx.activitiesAll) {
-    activitiesSeen++;
-    const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!day) {
-      if (debug) addDebug(ctx.debugOut, "unknown-day", a, "skip:no_day", null);
-      continue;
-    }
-    if (!isRun(a)) {
-      if (debug) addDebug(ctx.debugOut, day, a, `skip:not_run:${a.type ?? "unknown"}`, null);
-      continue;
-    }
+  // 2) Build byDayRuns / byDayBikes for quick access
+let activitiesSeen = 0;
+let activitiesUsed = 0;
+
+for (const a of ctx.activitiesAll) {
+  activitiesSeen++;
+  const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
+  if (!day) {
+    if (debug) addDebug(ctx.debugOut, "unknown-day", a, "skip:no_day", null);
+    continue;
+  }
+
+  if (isRun(a)) {
     if (!ctx.byDayRuns.has(day)) ctx.byDayRuns.set(day, []);
     ctx.byDayRuns.get(day).push(a);
     activitiesUsed++;
+    continue;
   }
+
+  if (isBike(a)) {
+    if (!ctx.byDayBikes.has(day)) ctx.byDayBikes.set(day, []);
+    ctx.byDayBikes.get(day).push(a);
+    continue;
+  }
+
+  if (debug) addDebug(ctx.debugOut, day, a, `skip:unsupported:${a.type ?? "unknown"}`, null);
+}
+
 
   const patches = {};
   const notesPreview = debug ? {} : null;
@@ -320,6 +347,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const daysList = listIsoDaysInclusive(oldest, newest);
 
   for (const day of daysList) {
+    // NEW: mode + policy for this day (based on next event)
+let modeInfo;
+let policy;
+try {
+  modeInfo = await determineMode(env, day);
+  policy = getModePolicy(modeInfo);
+} catch (e) {
+  modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
+  policy = getModePolicy(modeInfo);
+}
+
     const runs = ctx.byDayRuns.get(day) ?? [];
     const patch = {};
     const perRunInfo = [];
@@ -408,13 +446,60 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
     }
 
-    // Minimum stimulus (always)
-    let min;
-    try {
-      min = await computeMinStimulus(ctx, day);
-    } catch {
-      min = { runLoad7: 0, minOk: false };
-    }
+    // NEW: loads + min stimulus depends on mode
+let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
+let maint14 = { runCount14: 0, bikeCount14: 0 };
+
+try { loads7 = await computeLoads7d(ctx, day); } catch {}
+try { maint14 = await computeMaintenance14d(ctx, day); } catch {}
+
+let minValue = 0;
+if (policy.minKind === "run") minValue = loads7.runLoad7;
+else if (policy.minKind === "bike") minValue = loads7.bikeLoad7;
+else minValue = loads7.aerobicEq7;
+
+const minOk = minValue >= policy.minThreshold;
+
+
+// ================= LOAD SUPPORT (NEW) =================
+
+async function computeLoads7d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const endIso = dayIso;
+
+  let runLoad7 = 0;
+  let bikeLoad7 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+
+    const load = extractLoad(a);
+    if (isRun(a)) runLoad7 += load;
+    else if (isBike(a)) bikeLoad7 += load;
+  }
+
+  const aerobicEq7 = runLoad7 + BIKE_EQ_FACTOR * bikeLoad7;
+  return { runLoad7, bikeLoad7, aerobicEq7 };
+}
+
+async function computeMaintenance14d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const endIso = dayIso;
+
+  let runCount14 = 0;
+  let bikeCount14 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (isRun(a)) runCount14++;
+    else if (isBike(a)) bikeCount14++;
+  }
+  return { runCount14, bikeCount14 };
+}
 
     // Bench reports only on bench days
     const benchReports = [];
@@ -431,13 +516,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     // Daily comment ALWAYS (includes min stimulus ALWAYS)
     patch.comments = renderWellnessComment({
-      perRunInfo,
-      trend,
-      motor,
-      runLoad7: min.runLoad7,
-      minOk: min.minOk,
-      benchReports,
-    });
+  perRunInfo,
+  trend,
+  motor,
+  benchReports,
+  modeInfo,
+  policy,
+  loads7,
+  maint14,
+  minOk,
+  minValue,
+});
+
 
     patches[day] = patch;
 
@@ -493,7 +583,18 @@ function pickRepresentativeGARun(perRunInfo) {
 }
 
 // ================= COMMENT =================
-function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, benchReports }) {
+function renderWellnessComment({
+  perRunInfo,
+  trend,
+  motor,
+  benchReports,
+  modeInfo,
+  policy,
+  loads7,
+  maint14,
+  minOk,
+  minValue,
+}) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
@@ -502,11 +603,24 @@ function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, benc
   lines.push("ℹ️ Tages-Status");
   lines.push("");
 
+  // Today label (run-centric, but ok)
   if (!hadAnyRun) lines.push("Heute: Kein Lauf");
   else if (hadKey && !hadGA) lines.push("Heute: Schlüsseltraining (Key)");
   else if (hadGA && !hadKey) lines.push("Heute: Grundlage (GA)");
   else if (hadKey && hadGA) lines.push("Heute: Gemischt (GA + Key)");
   else lines.push("Heute: Lauf");
+
+  // NEW: Mode header + next event preview
+  lines.push("");
+  lines.push(`🧭 Mode: ${policy?.label ?? "OPEN"}`);
+
+  if (modeInfo?.nextEvent) {
+    const d = String(modeInfo.nextEvent.start_date_local || modeInfo.nextEvent.start_date || "").slice(0, 10);
+    const n = String(modeInfo.nextEvent.name || "RACE");
+    lines.push(`Nächstes Event: ${d} – ${n}`);
+  } else {
+    lines.push("Nächstes Event: keines → OPEN MODE");
+  }
 
   lines.push("");
   lines.push(trend?.text ?? "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a");
@@ -519,19 +633,43 @@ function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, benc
     lines.push(benchReports.join("\n\n"));
   }
 
+  // NEW: Load block (run/bike/aerobic)
+  lines.push("");
+  lines.push("📦 Load (7 Tage)");
+  lines.push(
+    `Run: ${Math.round(loads7?.runLoad7 ?? 0)} | Bike: ${Math.round(loads7?.bikeLoad7 ?? 0)} | AerobicEq: ${Math.round(
+      loads7?.aerobicEq7 ?? 0
+    )} (Bike×${BIKE_EQ_FACTOR})`
+  );
+
+  // NEW: Minimum stimulus by mode
   lines.push("");
   if (minOk) {
-    lines.push("ℹ️ Mindest-Laufreiz erreicht");
-    lines.push(`7-Tage Lauf-Load ≥ ${MIN_STIMULUS_7D_RUN_LOAD} (${Math.round(runLoad7)})`);
+    lines.push(`ℹ️ ${policy.minLabel} erreicht`);
+    lines.push(`7-Tage Wert ≥ ${policy.minThreshold} (${Math.round(minValue)})`);
   } else {
-    lines.push("ℹ️ Mindest-Laufreiz unterschritten");
-    lines.push(`7-Tage Lauf-Load < ${MIN_STIMULUS_7D_RUN_LOAD} (${Math.round(runLoad7)})`);
+    lines.push(`ℹ️ ${policy.minLabel} unterschritten`);
+    lines.push(`7-Tage Wert < ${policy.minThreshold} (${Math.round(minValue)})`);
     lines.push("➡️ Kurzfristig ok – langfristig kein Aufbau.");
+  }
+
+  // NEW: Maintenance hints in OPEN / opposite sport
+  if (maint14) {
+    const runOk = (maint14.runCount14 ?? 0) >= RUN_MAINTENANCE_14D_MIN;
+    const bikeOk = (maint14.bikeCount14 ?? 0) >= BIKE_MAINTENANCE_14D_MIN;
+
+    lines.push("");
+    lines.push("🧩 Erhalt (14 Tage)");
+    lines.push(`Lauf: ${maint14.runCount14 ?? 0}/${RUN_MAINTENANCE_14D_MIN} ${runOk ? "✅" : "⚠️"}`);
+    lines.push(`Rad:  ${maint14.bikeCount14 ?? 0}/${BIKE_MAINTENANCE_14D_MIN} ${bikeOk ? "✅" : "⚠️"}`);
+
+    if (!runOk) lines.push("Hinweis: 1× easy Lauf (20–40min) hält Laufrobustheit stabil.");
+    if (!bikeOk) lines.push("Hinweis: 1× lockere Ausfahrt hält Bike-Fitness/Ökonomie lebendig.");
   }
 
   return lines.join("\n");
 }
-// ====== src/index.js (PART 3/4) ======
+
 
 // ================= TREND (GA-only) =================
 async function computeAerobicTrend(ctx, dayIso) {
@@ -1255,7 +1393,18 @@ function isRun(a) {
   const t = String(a?.type ?? "").toLowerCase();
   return t === "run" || t === "running" || t.includes("run") || t.includes("laufen");
 }
-
+function isBike(a) {
+  const t = String(a?.type ?? "").toLowerCase();
+  return (
+    t === "ride" ||
+    t === "cycling" ||
+    t.includes("ride") ||
+    t.includes("bike") ||
+    t.includes("cycling") ||
+    t.includes("rad") ||
+    t.includes("velo")
+  );
+}
 function hasKeyTag(a) {
   return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
 }
@@ -1300,6 +1449,80 @@ function addDebug(debugOut, day, a, status, computed) {
     status,
     computed,
   });
+}
+// ================= EVENTS -> MODE (NEW) =================
+
+async function fetchNextEvent(env, fromIso, lookaheadDays = EVENT_LOOKAHEAD_DAYS) {
+  const toIso = isoDate(new Date(new Date(fromIso + "T00:00:00Z").getTime() + lookaheadDays * 86400000));
+  const events = await fetchIntervalsEvents(env, fromIso, toIso);
+
+  // "Race" events in Intervals are typically category "RACE".
+  // If your account uses different categories, extend this filter.
+  const races = (events || []).filter((e) => String(e?.category || "").toUpperCase() === "RACE");
+
+  races.sort((a, b) => {
+    const da = String(a?.start_date_local || a?.start_date || "");
+    const db = String(b?.start_date_local || b?.start_date || "");
+    return da.localeCompare(db);
+  });
+
+  return races[0] || null;
+}
+
+function inferSportFromEvent(ev) {
+  const name = String(ev?.name || ev?.description || "").toLowerCase();
+
+  // crude but works: you can refine based on your naming conventions
+  const bikeHints = ["bike", "rad", "ride", "cycling", "velo", "granfondo", "tt", "zeitfahren"];
+  const runHints = ["run", "lauf", "running", "5k", "10k", "halb", "marathon", "hm", "trail"];
+
+  if (bikeHints.some((h) => name.includes(h))) return "bike";
+  if (runHints.some((h) => name.includes(h))) return "run";
+
+  // fallback: unknown -> open-ish behavior but still "event"
+  return "unknown";
+}
+
+async function determineMode(env, dayIso) {
+  const next = await fetchNextEvent(env, dayIso, EVENT_LOOKAHEAD_DAYS);
+  if (!next) return { mode: "OPEN", primary: "open", nextEvent: null };
+
+  const primary = inferSportFromEvent(next);
+  if (primary === "bike") return { mode: "EVENT", primary: "bike", nextEvent: next };
+  if (primary === "run") return { mode: "EVENT", primary: "run", nextEvent: next };
+
+  // unknown event: treat like OPEN but show event info
+  return { mode: "OPEN", primary: "open", nextEvent: next };
+}
+
+function getModePolicy(modeInfo) {
+  // Returns thresholds + what "min stimulus" means today
+  if (modeInfo.mode === "EVENT" && modeInfo.primary === "run") {
+    return {
+      label: "EVENT:RUN",
+      minLabel: "Mindest-Laufreiz",
+      minThreshold: MIN_STIMULUS_7D_RUN_EVENT,
+      // support is bike
+      supportLabel: "Aerober Stützreiz (Run + Bike)",
+      minKind: "run",
+    };
+  }
+  if (modeInfo.mode === "EVENT" && modeInfo.primary === "bike") {
+    return {
+      label: "EVENT:BIKE",
+      minLabel: "Mindest-Radreiz",
+      minThreshold: MIN_STIMULUS_7D_BIKE_EVENT,
+      supportLabel: "Aerober Stützreiz (Bike + Run)",
+      minKind: "bike",
+    };
+  }
+  return {
+    label: "OPEN",
+    minLabel: "Aerober Mindestreiz (Run + Bike)",
+    minThreshold: MIN_STIMULUS_7D_AEROBIC_OPEN,
+    supportLabel: "Reizvielfalt / Erhalt",
+    minKind: "aerobic",
+  };
 }
 
 // ================= INTERVALS API =================
