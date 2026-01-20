@@ -155,7 +155,7 @@ const FIELD_MOTOR = "Motor";
 // ================= MAIN =================
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const acts = await fetchIntervalsActivities(env, oldest, newest);
-
+const notesPreview = debug ? {} : null;
   const byDay = new Map();
   const debugOut = debug ? {} : null;
 
@@ -323,7 +323,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       }
       if (debug) {
         // surface in debug response (not in comments)
-        patches[day].monday_note_preview = detectiveNoteText;
+        if (debug) notesPreview[day] = detectiveNoteText;
+
       }
     }
 
@@ -338,6 +339,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     oldest,
     newest,
     write,
+    notesPreview: debug ? notesPreview : undefined,
     activitiesSeen,
     activitiesUsed,
     daysComputed: Object.keys(patches).length,
