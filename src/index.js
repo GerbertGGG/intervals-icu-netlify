@@ -10,15 +10,18 @@
 // Run-only logic:
 // - GA (no key:*, >=30min):
 //     - VDOT_like (from EF summary)
-//     - Drift (decoupling): from summary if available, otherwise stream fallback
+//     - Drift = HR-Drift (%), computed from streams with warmup skip (default 10min)
 //     - Do NOT write TTT
 // - Key (tag key:*):
-//     - EF (summary)
-//     - TTT (compliance)
+//     - EF (summary) + TTT (compliance)
 //     - Do NOT write VDOT/Drift
-// - Score = execution quality (GA uses drift if available; Key uses TTT)
-// - Aerobic trend (comment): GA-only (requires EF + drift), guarded by min sample sizes
-// - Minimum stimulus (comment only): 100 Run-load (icu_training_load) over last 7 days
+// - Score = execution quality (GA uses HR-Drift; Key uses TTT), plus capped load
+// - Aerobic trend (comment): GA-only (requires EF + HR-Drift), guarded by sample sizes
+// - Minimum stimulus (comment only): 100 Run-load over last 7 days
+//
+// URL:
+//   /sync?date=YYYY-MM-DD&write=true&debug=true
+//   /sync?days=14&write=true&debug=true
 
 export default {
   async fetch(req, env, ctx) {
@@ -34,6 +37,9 @@ export default {
       const from = url.searchParams.get("from");
       const to = url.searchParams.get("to");
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
+
+      // optional override for drift warmup skip
+      const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
 
       let oldest, newest;
       if (date) {
@@ -57,14 +63,35 @@ export default {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
 
-      // In debug mode run synchronously to surface errors & show patches
+      // In debug mode: run synchronously and return errors as JSON instead of 1101
       if (debug) {
-        const result = await syncRange(env, oldest, newest, write, true);
-        return json(result);
+        try {
+          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec);
+          return json(result);
+        } catch (e) {
+          return json(
+            {
+              ok: false,
+              error: "Worker exception",
+              message: String(e?.message ?? e),
+              stack: String(e?.stack ?? ""),
+              oldest,
+              newest,
+              write,
+              warmupSkipSec,
+            },
+            500
+          );
+        }
       }
 
-      ctx?.waitUntil?.(syncRange(env, oldest, newest, write, false));
-      return json({ ok: true, oldest, newest, write });
+      // Non-debug: background execution
+      ctx?.waitUntil?.(
+        syncRange(env, oldest, newest, write, false, warmupSkipSec).catch(() => {
+          // swallow to avoid unhandled promise rejection
+        })
+      );
+      return json({ ok: true, oldest, newest, write, warmupSkipSec });
     }
 
     return new Response("Not found", { status: 404 });
@@ -77,8 +104,9 @@ export default {
         isoDate(new Date(Date.now() - 14 * 86400000)),
         isoDate(new Date()),
         true,
-        false
-      )
+        false,
+        600
+      ).catch(() => {})
     );
   },
 };
@@ -89,7 +117,7 @@ const MIN_STIMULUS_7D_RUN_LOAD = 100;
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
 
-// Wellness field codes (must match your Intervals custom fields exactly)
+// Wellness field codes
 const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_EF = "EF";
@@ -97,10 +125,9 @@ const FIELD_TTT = "TTT";
 const FIELD_SCORE = "Score";
 
 // ================= MAIN =================
-async function syncRange(env, oldest, newest, write, debug) {
+async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const acts = await fetchIntervalsActivities(env, oldest, newest);
 
-  // group RUN activities by local day
   const byDay = new Map();
   const debugOut = debug ? {} : null;
 
@@ -137,38 +164,38 @@ async function syncRange(env, oldest, newest, write, debug) {
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
 
-      // Summary values
       const ef = extractEF(a);
-      const ttt = extractTTT(a); // we will only write on Key
+      const ttt = extractTTT(a);
       const load = extractLoad(a);
 
-      // Drift: summary first, then stream fallback (only meaningful on GA, and only if not key)
+      // HR-Drift only for GA non-key
       let drift = null;
       let drift_source = "none";
-      if (ga && !isKey) {
-        drift = extractDriftFromSummary(a);
-        drift_source = drift != null ? "summary" : "streams";
 
-        if (drift == null) {
-          try {
-            const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
-            const driftObj = computeDriftFromStreams(streams);
-            drift = Number.isFinite(driftObj?.drift_pct) ? driftObj.drift_pct : null;
-            if (drift == null) drift_source = "streams_failed";
-          } catch {
-            drift = null;
-            drift_source = "streams_failed";
+      if (ga && !isKey) {
+        // If Intervals provides a decoupling field, it's NOT necessarily HR-drift.
+        // We'll ignore summary decoupling for "HR Drift" semantics and rely on streams.
+        drift_source = "streams";
+        try {
+          const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+          const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
+          drift = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
+          if (drift == null) drift_source = "streams_insufficient";
+        } catch (e) {
+          drift = null;
+          drift_source = "streams_failed";
+          if (debug) {
+            addDebug(debugOut, day, a, "warn:streams_failed", { message: String(e?.message ?? e) });
           }
         }
       }
 
-      // Score (execution only)
       const score = computeScore({ ga, isKey, drift, ttt, load });
 
       // GA fields
       if (ga && !isKey) {
         if (ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(ef), 1);
-        if (drift != null) patch[FIELD_DRIFT] = round(Math.abs(drift), 1);
+        if (drift != null) patch[FIELD_DRIFT] = round(drift, 1); // HR-drift can be +/-; keep sign
       }
 
       // Key fields
@@ -177,7 +204,7 @@ async function syncRange(env, oldest, newest, write, debug) {
         if (ttt != null) patch[FIELD_TTT] = round(ttt, 1);
       }
 
-      // Always write Score
+      // Always score
       patch[FIELD_SCORE] = score;
 
       perRunInfo.push({
@@ -197,14 +224,29 @@ async function syncRange(env, oldest, newest, write, debug) {
       if (debug) addDebug(debugOut, day, a, "ok", { ga, isKey, ef, drift, drift_source, ttt, load, score });
     }
 
-    const trend = await computeAerobicTrend(env, day);
-    const { runLoad7, minOk } = await computeMinStimulus(env, day);
+    // Trend + Minimum + comment (each in a try/catch so one failure doesn't kill the whole day)
+    let trend;
+    try {
+      trend = await computeAerobicTrend(env, day, warmupSkipSec);
+    } catch (e) {
+      trend = {
+        ok: false,
+        text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})`,
+      };
+    }
+
+    let min;
+    try {
+      min = await computeMinStimulus(env, day);
+    } catch (e) {
+      min = { runLoad7: 0, minOk: false };
+    }
 
     patch.comments = renderWellnessComment({
       perRunInfo,
       trend,
-      runLoad7,
-      minOk,
+      runLoad7: min.runLoad7,
+      minOk: min.minOk,
     });
 
     patches[day] = patch;
@@ -234,13 +276,12 @@ function renderWellnessComment({ perRunInfo, trend, runLoad7, minOk }) {
   const scores = perRunInfo.map((x) => x.score).filter((x) => Number.isFinite(x));
   const scoreAvg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
 
-  const lines = [];
-
-  lines.push(`${scoreEmoji(scoreAvg)} Trainingausführung`);
-  if (scoreAvg != null) lines.push(`Score Ø: ${scoreAvg}/100`);
-
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
+
+  const lines = [];
+  lines.push(`${scoreEmoji(scoreAvg)} Trainingausführung`);
+  if (scoreAvg != null) lines.push(`Score Ø: ${scoreAvg}/100`);
 
   lines.push("");
   if (hadKey && !hadGA) lines.push("Heute: Schlüsseltraining (Key)");
@@ -273,14 +314,13 @@ function scoreEmoji(score) {
 }
 
 // ================= TREND (GA-only) =================
-async function computeAerobicTrend(env, dayIso) {
+async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const end = new Date(dayIso + "T00:00:00Z");
   const mid = new Date(end.getTime() - TREND_WINDOW_DAYS * 86400000);
   const start = new Date(end.getTime() - 2 * TREND_WINDOW_DAYS * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
 
-  // GA-only, needs EF + Drift (Drift may come from summary OR streams)
   const gaActs = [];
 
   for (const a of acts) {
@@ -291,19 +331,17 @@ async function computeAerobicTrend(env, dayIso) {
     const ef = extractEF(a);
     if (ef == null) continue;
 
-    let drift = extractDriftFromSummary(a);
-    if (drift == null) {
-      // best effort stream fallback for trend computation
-      try {
-        const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
-        const driftObj = computeDriftFromStreams(streams);
-        drift = Number.isFinite(driftObj?.drift_pct) ? driftObj.drift_pct : null;
-      } catch {
-        drift = null;
-      }
+    // compute HR drift from streams (best effort; skip if fails)
+    let drift = null;
+    try {
+      const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+      const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
+      drift = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
+    } catch {
+      drift = null;
     }
-
     if (drift == null) continue;
+
     gaActs.push({ a, ef, drift });
   }
 
@@ -329,9 +367,10 @@ async function computeAerobicTrend(env, dayIso) {
     };
   }
 
-  const dv = ((ef1 - ef0) / ef0) * 100; // EF proxy for VDOT_like trend
-  const dd = d1 - d0; // drift delta in %-points
+  const dv = ((ef1 - ef0) / ef0) * 100;
+  const dd = d1 - d0;
 
+  // Ampel (Kontext!)
   let emoji = "🟡";
   let label = "Stabil / gemischt";
   if (dv > 1.5 && dd <= 0) {
@@ -348,7 +387,7 @@ async function computeAerobicTrend(env, dayIso) {
     dd,
     text:
       `${emoji} ${label}\n` +
-      `Aerober Kontext (nur GA): VDOT ~ ${dv.toFixed(1)}% | Drift ${dd > 0 ? "↑" : "↓"} ${Math.abs(dd).toFixed(
+      `Aerober Kontext (nur GA): VDOT ~ ${dv.toFixed(1)}% | HR-Drift ${dd > 0 ? "↑" : "↓"} ${Math.abs(dd).toFixed(
         1
       )}%-Pkt`,
   };
@@ -368,7 +407,7 @@ async function computeMinStimulus(env, dayIso) {
 // ================= SCORE =================
 function computeScore({ ga, isKey, drift, ttt, load }) {
   const C = clamp(Number(load) || 0, 0, 70);
-const absDrift = Number.isFinite(drift) ? Math.abs(drift) : null;
+
   let Q = 65;
 
   if (isKey) {
@@ -381,11 +420,14 @@ const absDrift = Number.isFinite(drift) ? Math.abs(drift) : null;
       Q = 60;
     }
   } else if (ga) {
-    if (Number.isFinite(absdrift)) {
-      if (drift <= 3) Q = 98;
-      else if (drift <= 6) Q = 88;
-      else if (drift <= 10) Q = 70;
-      else if (drift <= 15) Q = 50;
+    // For scoring, negative HR-drift shouldn't be treated as "super good".
+    const d = Number.isFinite(drift) ? Math.max(0, drift) : null;
+
+    if (Number.isFinite(d)) {
+      if (d <= 3) Q = 98;
+      else if (d <= 6) Q = 88;
+      else if (d <= 10) Q = 70;
+      else if (d <= 15) Q = 50;
       else Q = 30;
     } else {
       Q = 65;
@@ -399,42 +441,67 @@ function vdotLikeFromEf(ef) {
   return ef * 1200;
 }
 
-// ================= STREAM DRIFT =================
-// Drift = EF(second half) vs EF(first half) as % change, EF = speed/hr
-function computeDriftFromStreams(streams) {
+// ================= HR-DRIFT FROM STREAMS =================
+// HR Drift: compare mean HR in 2 halves, after warmup skip, using moving samples (speed>0)
+function computeHRDriftFromStreams(streams, warmupSkipSec = 600) {
   if (!streams) return null;
 
   const hr = streams.heartrate;
   const speed = streams.velocity_smooth;
+  const time = streams.time;
 
   if (!Array.isArray(hr) || !Array.isArray(speed)) return null;
 
   const n = Math.min(hr.length, speed.length);
-  if (n < 600) return null; // need enough samples (~10min+ at 1s)
+  if (n < 300) return null;
 
-  const half = Math.floor(n / 2);
+  // Determine start index for warmup skip.
+  // If time is present and monotonic (seconds), use it; otherwise approximate by index.
+  let startIdx = 0;
+  if (Array.isArray(time) && time.length >= n) {
+    // find first index where time >= warmupSkipSec
+    startIdx = 0;
+    while (startIdx < n && Number(time[startIdx]) < warmupSkipSec) startIdx++;
+  } else {
+    // assume ~1s sampling
+    startIdx = Math.min(n - 1, warmupSkipSec);
+  }
 
-  const meanEF = (a, b) => {
+  // Collect valid moving indices after warmup
+  const idx = [];
+  for (let i = startIdx; i < n; i++) {
+    const h = Number(hr[i]);
+    const v = Number(speed[i]);
+    if (!Number.isFinite(h) || h < 40) continue;
+    if (!Number.isFinite(v) || v <= 0) continue;
+    idx.push(i);
+  }
+
+  // need enough points
+  if (idx.length < 300) return null;
+
+  const half = Math.floor(idx.length / 2);
+
+  const meanHR = (a, b) => {
     let s = 0;
     let c = 0;
-    for (let i = a; i < b; i++) {
-      const h = hr[i];
-      const v = speed[i];
+    for (let k = a; k < b; k++) {
+      const i = idx[k];
+      const h = Number(hr[i]);
       if (!Number.isFinite(h) || h < 40) continue;
-      if (!Number.isFinite(v) || v <= 0) continue;
-      s += v / h;
+      s += h;
       c++;
     }
     return c ? s / c : null;
   };
 
-  const ef1 = meanEF(0, half);
-  const ef2 = meanEF(half, n);
+  const hr1 = meanHR(0, half);
+  const hr2 = meanHR(half, idx.length);
 
-  if (ef1 == null || ef2 == null || ef1 <= 0) return null;
+  if (hr1 == null || hr2 == null || hr1 <= 0) return null;
 
-  const drift_pct = ((ef2 - ef1) / ef1) * 100;
-  return { ef1, ef2, drift_pct };
+  const hr_drift_pct = ((hr2 - hr1) / hr1) * 100;
+  return { hr1, hr2, hr_drift_pct, used_points: idx.length, warmupSkipSec };
 }
 
 // ================= EXTRACTORS =================
@@ -442,19 +509,6 @@ function extractEF(a) {
   const sp = Number(a?.average_speed);
   const hr = Number(a?.average_heartrate);
   if (Number.isFinite(sp) && sp > 0 && Number.isFinite(hr) && hr > 0) return sp / hr;
-  return null;
-}
-
-function extractDriftFromSummary(a) {
-  const v1 = Number(a?.pahr_decoupling);
-  if (Number.isFinite(v1) && v1 > 0) return v1;
-
-  const v2 = Number(a?.pwhr_decoupling);
-  if (Number.isFinite(v2) && v2 > 0) return v2;
-
-  const v3 = Number(a?.decoupling);
-  if (Number.isFinite(v3) && v3 > 0) return v3;
-
   return null;
 }
 
@@ -523,14 +577,10 @@ async function fetchIntervalsStreams(env, activityId, types) {
 function normalizeStreams(raw) {
   if (!raw) return null;
 
-  // direct object
   if (raw.heartrate || raw.velocity_smooth || raw.time) return raw;
-
-  // wrapper keys
   if (raw.streams && (raw.streams.heartrate || raw.streams.velocity_smooth)) return raw.streams;
   if (raw.data && (raw.data.heartrate || raw.data.velocity_smooth)) return raw.data;
 
-  // array format -> { type: data[] }
   if (Array.isArray(raw)) {
     const out = {};
     for (const item of raw) {
