@@ -681,7 +681,7 @@ async function computeMaintenance14d(ctx, dayIso) {
     if (isMondayIso(day)) {
       let detectiveNoteText = null;
       try {
-        detectiveNoteText = await computeDetectiveNoteAdaptive(ctx, day);
+        detectiveNoteText = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
       } catch (e) {
         detectiveNoteText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
       }
