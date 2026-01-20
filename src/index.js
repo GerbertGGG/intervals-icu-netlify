@@ -8,14 +8,15 @@
 // VDOT, Drift, Motor
 //
 // Daily behavior:
-// - Writes a comment for EVERY day in the range (even if no run).
-// - Minimum stimulus (7d run-load) is ALWAYS included in the comment.
-// - Monday detective is included every Monday, even if no run.
+// - Writes a wellness comment for EVERY day in range (even if no run).
+// - Minimum stimulus block is ALWAYS included in the comment.
+// - Monday detective is written as a CALENDAR NOTE (category NOTE), not in comments.
+//   It is created/updated even if no run on Monday.
 //
 // GA (no key:*, >=30min):
 // - VDOT_like from EF = avg_speed/avg_hr
 // - Drift from streams (warmup skip default 10min)
-// - Negative drift => null (dropped; not written; not used in stats)
+// - Negative drift => null (dropped)
 //
 // Motor Index:
 // - GA comparable only (no key, >=35min, steady pace)
@@ -131,9 +132,11 @@ const MOTOR_DRIFT_WINDOW_DAYS = 14;
 
 const HFMAX = 173;
 
-const DETECTIVE_LOOKBACK_DAYS = 14;
-const DETECTIVE_MIN_RECENT = 2;
-const DETECTIVE_MIN_PREV = 2;
+// "Trainingslehre" detective
+const LONGRUN_MIN_SECONDS = 60 * 60; // FIX >= 60 minutes (your choice)
+const DETECTIVE_WINDOWS = [14, 28, 42, 56, 84]; // adaptive
+const DETECTIVE_MIN_RUNS = 3; // minimum runs to say something meaningful
+const DETECTIVE_MIN_WEEKS = 2; // for weekly-rate interpretation
 
 const MIN_RUN_SPEED = 1.8;
 const MIN_POINTS = 300;
@@ -246,6 +249,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         drift_raw,
         drift_source,
         load,
+        moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
       if (debug) {
@@ -277,14 +281,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       min = { runLoad7: 0, minOk: false };
     }
 
-    // Monday detective ALWAYS on Mondays (even if no run)
-    let detectiveText = null;
-    try {
-      if (isMondayIso(day)) detectiveText = await computeDetectiveReport(env, day, warmupSkipSec);
-    } catch (e) {
-      detectiveText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
-    }
-
     // Bench reports only on bench days
     const benchReports = [];
     for (const a of runs) {
@@ -299,18 +295,37 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       }
     }
 
+    // Daily comment ALWAYS (includes min stimulus ALWAYS)
     patch.comments = renderWellnessComment({
-      day,
       perRunInfo,
       trend,
       motor,
       runLoad7: min.runLoad7,
       minOk: min.minOk,
-      detectiveText,
       benchReports,
     });
 
     patches[day] = patch;
+
+    // Monday detective NOTE (calendar) – always on Mondays, even if no run
+    let detectiveNoteText = null;
+    if (isMondayIso(day)) {
+      try {
+        detectiveNoteText = await computeDetectiveNoteAdaptive(env, day, warmupSkipSec);
+        if (write) {
+          await upsertMondayDetectiveNote(env, day, detectiveNoteText);
+        }
+      } catch (e) {
+        detectiveNoteText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
+        if (write) {
+          await upsertMondayDetectiveNote(env, day, detectiveNoteText);
+        }
+      }
+      if (debug) {
+        // surface in debug response (not in comments)
+        patches[day].monday_note_preview = detectiveNoteText;
+      }
+    }
 
     if (write) {
       await putWellnessDay(env, day, patch);
@@ -333,7 +348,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 }
 
 // ================= COMMENT =================
-function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, detectiveText, benchReports }) {
+function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, benchReports }) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
@@ -359,6 +374,7 @@ function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, dete
     lines.push(benchReports.join("\n\n"));
   }
 
+  // ALWAYS minimum stimulus block
   lines.push("");
   if (minOk) {
     lines.push("ℹ️ Mindest-Laufreiz erreicht");
@@ -367,12 +383,6 @@ function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, dete
     lines.push("ℹ️ Mindest-Laufreiz unterschritten");
     lines.push(`7-Tage Lauf-Load < ${MIN_STIMULUS_7D_RUN_LOAD} (${Math.round(runLoad7)})`);
     lines.push("➡️ Kurzfristig ok – langfristig kein Aufbau.");
-  }
-
-  if (detectiveText) {
-    lines.push("");
-    lines.push("— — —");
-    lines.push(detectiveText);
   }
 
   return lines.join("\n");
@@ -552,14 +562,173 @@ async function computeMinStimulus(env, dayIso) {
   return { runLoad7, minOk: runLoad7 >= MIN_STIMULUS_7D_RUN_LOAD };
 }
 
-// ================= MONDAY DETECTIVE =================
-async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
+// ================= MONDAY DETECTIVE NOTE (TRAININGSLEHRE V2) =================
+async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
+  for (const w of DETECTIVE_WINDOWS) {
+    const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w);
+    if (rep.ok) return rep.text;
+  }
+  // fallback: last attempt (most info)
+  const last = await computeDetectiveNote(env, mondayIso, warmupSkipSec, DETECTIVE_WINDOWS[DETECTIVE_WINDOWS.length - 1]);
+  return last.text;
+}
+
+async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const end = new Date(mondayIso + "T00:00:00Z");
-  const start = new Date(end.getTime() - DETECTIVE_LOOKBACK_DAYS * 86400000);
+  const start = new Date(end.getTime() - windowDays * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+  const runs = acts.filter((a) => isRun(a)).map((a) => ({
+    id: a.id,
+    date: String(a.start_date_local || a.start_date || "").slice(0, 10),
+    moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    load: extractLoad(a),
+    isKey: hasKeyTag(a),
+    keyType: getKeyType(a),
+    isGA: !hasKeyTag(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= GA_MIN_SECONDS,
+    isLong: Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= LONGRUN_MIN_SECONDS,
+    avgHR: Number(a?.average_heartrate),
+    ef: extractEF(a),
+  })).filter((x) => x.date);
 
-  const ga = [];
+  const weeks = Math.max(1, windowDays / 7);
+
+  // Distribution stats
+  const totalRuns = runs.length;
+  const totalMin = sum(runs.map((x) => x.moving_time)) / 60;
+  const totalLoad = sum(runs.map((x) => x.load));
+
+  const longRuns = runs.filter((x) => x.isLong);
+  const keyRuns = runs.filter((x) => x.isKey);
+  const gaRuns = runs.filter((x) => x.isGA && !x.isKey);
+  const shortRuns = runs.filter((x) => x.moving_time > 0 && x.moving_time < GA_MIN_SECONDS);
+
+  const longPerWeek = longRuns.length / weeks;
+  const keyPerWeek = keyRuns.length / weeks;
+  const runsPerWeek = totalRuns / weeks;
+
+  // Monotony/strain (simple)
+  const dailyLoads = bucketLoadsByDay(runs); // {day: loadSum}
+  const loadArr = Object.values(dailyLoads);
+  const meanLoad = avg(loadArr) ?? 0;
+  const sdLoad = std(loadArr) ?? 0;
+  const monotony = sdLoad > 0 ? meanLoad / sdLoad : (meanLoad > 0 ? 99 : 0);
+  const strain = monotony * sum(loadArr);
+
+  // Optional: comparable GA evidence (EF/Drift)
+  const comp = await gatherComparableGASamples(env, mondayIso, warmupSkipSec, windowDays);
+  // comp: { n, efMed, driftMed, droppedNegCount, cvTooHighCount, insufficientCount }
+
+  // Findings (Trainingslehre)
+  const findings = [];
+  const actions = [];
+
+  // Absolute: too little training
+  if (totalRuns === 0) {
+    findings.push("Kein Lauf im Analysefenster → keine belastbare Diagnose möglich.");
+    actions.push("Starte mit 2–3 lockeren Läufen/Woche (30–50min), bevor du harte Schlüsse ziehst.");
+  } else {
+    // Longrun
+    if (longRuns.length === 0) {
+      findings.push(`Zu wenig Longruns: 0× ≥60min in ${windowDays} Tagen.`);
+      actions.push("1×/Woche Longrun ≥60–75min (locker) als Basisbaustein.");
+    } else if (longPerWeek < 0.8 && windowDays >= 14) {
+      findings.push(`Longrun-Frequenz niedrig: ${longRuns.length}× in ${windowDays} Tagen (~${longPerWeek.toFixed(1)}/Woche).`);
+      actions.push("Longrun-Frequenz Richtung 1×/Woche stabilisieren.");
+    }
+
+    // Key
+    if (keyRuns.length === 0) {
+      findings.push(`Zu wenig Qualität: 0× Key (key:*) in ${windowDays} Tagen.`);
+      actions.push("Wenn Aufbau/Spezifisch: 1× Key/Woche (Schwelle ODER VO2) einbauen.");
+    } else if (keyPerWeek < 0.6 && windowDays >= 14) {
+      findings.push(`Key-Frequenz niedrig: ${keyRuns.length}× in ${windowDays} Tagen (~${keyPerWeek.toFixed(1)}/Woche).`);
+      actions.push("Key-Frequenz auf 1×/Woche anheben (wenn Regeneration ok).");
+    }
+
+    // Volume / frequency
+    if (runsPerWeek < 2.0 && windowDays >= 14) {
+      findings.push(`Lauffrequenz niedrig: Ø ${runsPerWeek.toFixed(1)}/Woche.`);
+      actions.push("Wenn möglich: erst Frequenz hoch (kurze easy Läufe), dann Intensität.");
+    }
+
+    // Too many shorts (no base)
+    const shortShare = totalRuns ? (shortRuns.length / totalRuns) * 100 : 0;
+    if (shortRuns.length >= 3 && shortShare >= 45) {
+      findings.push(`Viele kurze Läufe (<30min): ${shortRuns.length}/${totalRuns} (${shortShare.toFixed(0)}%).`);
+      actions.push("Mind. 2 Einheiten/Woche auf 35–50min verlängern (ruhig).");
+    }
+  }
+
+  // Load-based “minimum stimulus” insight
+  // (We don't re-use the 7d load from wellness; compute 28d mean weekly load here)
+  const weeklyLoad = totalLoad / weeks;
+  if (windowDays >= 14) {
+    if (weeklyLoad < 120) {
+      findings.push(`Wöchentlicher Laufreiz niedrig: ~${Math.round(weeklyLoad)}/Woche (Load).`);
+      actions.push("Motor-Aufbau braucht Kontinuität: 2–4 Wochen stabilen Reiz setzen, erst dann bewerten.");
+    }
+  }
+
+  // Comparable GA evidence
+  if (comp.n > 0) {
+    findings.push(`Messbasis (GA comparable): n=${comp.n} | EF(med)=${comp.efMed != null ? comp.efMed.toFixed(5) : "n/a"} | Drift(med)=${comp.driftMed != null ? comp.driftMed.toFixed(1) + "%" : "n/a"}`);
+    if (comp.droppedNegCount > 0) findings.push(`Hinweis: negative Drift verworfen: ${comp.droppedNegCount}× (Sensor/Stop&Go möglich).`);
+  } else {
+    findings.push("GA comparable: keine/zu wenig saubere Läufe → EF/Drift-Belege schwach (Trend/Signal fragil).");
+    actions.push("Für Diagnose: 1×/Woche steady GA 45–60min (oder bench:GA45) auf möglichst ähnlicher Strecke.");
+  }
+
+  // Key type distribution (if tagged)
+  const keyTypeCounts = countBy(keyRuns.map((x) => x.keyType).filter(Boolean));
+  const keyTypeLine = Object.keys(keyTypeCounts).length
+    ? `Key-Typen: ${Object.entries(keyTypeCounts).map(([k, v]) => `${k}=${v}`).join(", ")}`
+    : "Key-Typen: n/a (keine key:<type> Untertags genutzt)";
+
+  // Compose note
+  const title = `🕵️‍♂️ Montags-Detektiv (${windowDays}T)`;
+  const lines = [];
+  lines.push(title);
+  lines.push("");
+  lines.push("Struktur (Trainingslehre):");
+  lines.push(`- Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`- Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
+  lines.push(`- Longruns (≥60min): ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`- Key (key:*): ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`- GA (≥30min, nicht key): ${gaRuns.length}`);
+  lines.push(`- Kurz (<30min): ${shortRuns.length}`);
+  lines.push(`- ${keyTypeLine}`);
+  lines.push("");
+  lines.push("Belastungsbild:");
+  lines.push(`- Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
+  lines.push("");
+
+  lines.push("Fundstücke:");
+  if (!findings.length) lines.push("- Keine klaren strukturellen Probleme gefunden.");
+  else for (const f of findings.slice(0, 8)) lines.push(`- ${f}`);
+
+  lines.push("");
+  lines.push("Nächste Schritte:");
+  if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
+  else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
+
+  // ok criteria: enough runs OR strong structural issue
+  const ok = totalRuns >= DETECTIVE_MIN_RUNS || longRuns.length === 0 || weeklyLoad < 120;
+
+  return { ok, text: lines.join("\n") };
+}
+
+async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays) {
+  const end = new Date(endDayIso + "T00:00:00Z");
+  const start = new Date(end.getTime() - windowDays * 86400000);
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+
+  let droppedNegCount = 0;
+  let cvTooHighCount = 0;
+  let insufficientCount = 0;
+
+  const samples = [];
+
   for (const a of acts) {
     if (!isRun(a)) continue;
     if (hasKeyTag(a)) continue;
@@ -568,98 +737,71 @@ async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
     const ef = extractEF(a);
     if (ef == null) continue;
 
-    let drift = null;
-    let cv = null;
     try {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
-      drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
-      cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
-      if (drift != null && drift < 0) drift = null;
-    } catch {}
+      let drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
+      const cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
 
-    if (drift == null) continue;
-    if (cv == null || cv > GA_SPEED_CV_MAX) continue;
+      if (drift == null || cv == null) {
+        insufficientCount++;
+        continue;
+      }
+      if (drift < 0) {
+        droppedNegCount++;
+        continue;
+      }
+      if (cv > GA_SPEED_CV_MAX) {
+        cvTooHighCount++;
+        continue;
+      }
 
-    const hr = Number(a?.average_heartrate);
-    const date = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!date) continue;
-
-    ga.push({
-      date,
-      ef,
-      drift,
-      hrPct: Number.isFinite(hr) ? (hr / HFMAX) * 100 : null,
-      load: extractLoad(a),
-    });
+      samples.push({ ef, drift });
+    } catch {
+      insufficientCount++;
+    }
   }
 
-  const mid = new Date(end.getTime() - 7 * 86400000);
-  const recent = ga.filter((x) => new Date(x.date + "T00:00:00Z") >= mid);
-  const prev = ga.filter((x) => new Date(x.date + "T00:00:00Z") < mid);
-
-  if (recent.length < DETECTIVE_MIN_RECENT || prev.length < DETECTIVE_MIN_PREV) {
-    return `🕵️‍♂️ Montags-Detektiv\nZu wenig vergleichbare GA-Daten (recent=${recent.length}, prev=${prev.length}).`;
-  }
-
-  const ef1 = median(recent.map((x) => x.ef));
-  const ef0 = median(prev.map((x) => x.ef));
-  const d1 = median(recent.map((x) => x.drift));
-  const d0 = median(prev.map((x) => x.drift));
-  const hrp1 = avg(recent.map((x) => x.hrPct));
-  const hrp0 = avg(prev.map((x) => x.hrPct));
-  const l1 = recent.reduce((s, x) => s + (x.load || 0), 0);
-  const l0 = prev.reduce((s, x) => s + (x.load || 0), 0);
-
-  const dv = ef0 && ef1 ? ((ef1 - ef0) / ef0) * 100 : null;
-  const dd = d0 != null && d1 != null ? d1 - d0 : null;
-  const dhr = hrp0 != null && hrp1 != null ? dhrDelta(hrp1, hrp0) : null;
-
-  const efDown = dv != null && dv < -1.0;
-  const driftUp = dd != null && dd > 1.0;
-
-  const intensityCreep = dhr != null && dhr > 1.0;
-  const fatigueLoad = l1 > l0 * 1.15;
-
-  let verdict = "Motor stabil/unklar (kein klares Negativmuster).";
-  if (efDown && driftUp) {
-    if (fatigueLoad) verdict = "Signal klar: EF ↓ & Drift ↑ – sehr wahrscheinlich Ermüdung / Dichte (Load ↑).";
-    else if (intensityCreep) verdict = "Signal klar: EF ↓ & Drift ↑ – sehr wahrscheinlich GA zu hart (HR%max ↑).";
-    else verdict = "Signal klar: EF ↓ & Drift ↑ – Ursache gemischt (Ermüdung/Intensität/Bedingungen prüfen).";
-  } else if (efDown && !driftUp) {
-    verdict = "EF ↓ ohne Drift-Anstieg: eher Bedingungen/Route als Aerobik-Problem.";
-  } else if (!efDown && driftUp) {
-    verdict = "Drift ↑ bei stabiler EF: Ausführung aktuell schlechter (Müdigkeit/Fueling/Bedingungen).";
-  }
-
-  const lines = [];
-  lines.push("🕵️‍♂️ Montags-Detektiv (GA comparable, 14 Tage)");
-  lines.push(verdict);
-  lines.push("");
-  lines.push("Belege (letzte 7T vs davor):");
-  lines.push(`- EF: ${dv != null ? dv.toFixed(1) + "%" : "n/a"}`);
-  lines.push(`- HR-Drift: ${dd != null ? (dd > 0 ? "+" : "") + dd.toFixed(1) + "%-Pkt" : "n/a"}`);
-  lines.push(`- HR%max: ${dhr != null ? (dhr > 0 ? "+" : "") + dhr.toFixed(1) + "%-Pkt" : "n/a"}`);
-  lines.push(`- GA-Load: ${Math.round(l1)} vs ${Math.round(l0)}`);
-
-  lines.push("");
-  lines.push("Nächste Schritte:");
-  if (verdict.includes("GA zu hart")) {
-    lines.push("- 7–10 Tage GA lockerer (HR% runter); Pace egal.");
-    lines.push("- 1 Benchmark-Run flach/steady (45–60min) zur Bestätigung.");
-  } else if (verdict.includes("Ermüdung")) {
-    lines.push("- Dichte senken: 1 Ruhetag mehr ODER 1 Einheit sehr kurz+easy.");
-    lines.push("- Key nicht mit hartem GA am Folgetag verschärfen.");
-  } else {
-    lines.push("- Like-for-like prüfen (gleiche Route/Dauer/steady).");
-    lines.push("- Prüfe unbewussten Pace-Creep (HR%max ↑?).");
-  }
-
-  return lines.join("\n");
+  return {
+    n: samples.length,
+    efMed: samples.length ? median(samples.map((x) => x.ef)) : null,
+    driftMed: samples.length ? median(samples.map((x) => x.drift)) : null,
+    droppedNegCount,
+    cvTooHighCount,
+    insufficientCount,
+  };
 }
 
-function dhrDelta(a, b) {
-  return a - b;
+// Create/update a NOTE event for the Monday detective
+async function upsertMondayDetectiveNote(env, dayIso, noteText) {
+  const external_id = `detektiv-${dayIso}`;
+  const name = "Montags-Detektiv";
+  const description = noteText;
+
+  // Find existing note by external_id on that day
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
+
+  if (existing?.id) {
+    await updateIntervalsEvent(env, existing.id, {
+      category: "NOTE",
+      start_date_local: `${dayIso}T00:00:00`,
+      name,
+      description,
+      color: "orange",
+      external_id,
+    });
+    return;
+  }
+
+  await createIntervalsEvent(env, {
+    category: "NOTE",
+    start_date_local: `${dayIso}T00:00:00`,
+    name,
+    description,
+    color: "orange",
+    external_id,
+  });
 }
 
 // ================= BENCH REPORTS =================
@@ -667,7 +809,7 @@ function getBenchTag(a) {
   const tags = a?.tags || [];
   for (const t of tags) {
     const s = String(t || "").trim();
-    if (s.toLowerCase().startsWith("bench:")) return s.slice(6).trim(); // e.g. "GA45"
+    if (s.toLowerCase().startsWith("bench:")) return s.slice(6).trim();
   }
   return null;
 }
@@ -692,7 +834,6 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
 
-  // Median from last 3–5
   const pool = same.slice(0, BENCH_MAX_HISTORY);
   const poolMetrics = [];
   for (const a of pool) {
@@ -731,7 +872,7 @@ async function computeBenchMetrics(env, a, warmupSkipSec) {
     const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
     const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
     drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
-    if (drift != null && drift < 0) drift = null; // drop negative
+    if (drift != null && drift < 0) drift = null;
   } catch {
     drift = null;
   }
@@ -754,13 +895,11 @@ function medianOrNull(arr) {
 }
 
 function interpretBench(efVsLast, dVsLast, efVsMed, dVsMed) {
-  // prefer median if available
   const ef = Number.isFinite(efVsMed) ? efVsMed : efVsLast;
   const dd = Number.isFinite(dVsMed) ? dVsMed : dVsLast;
 
   if (!Number.isFinite(ef) && !Number.isFinite(dd)) return "Gemischt/unklar (zu wenig Vergleichsdaten).";
 
-  // EF: + good, Drift delta: - good
   if (Number.isFinite(ef) && Number.isFinite(dd)) {
     if (ef >= +1.0 && dd <= -0.5) return "Motor besser (mehr Output + stabiler).";
     if (ef <= -1.0 && dd >= +0.5) return "Motor schlechter (weniger Output + instabiler).";
@@ -866,6 +1005,16 @@ function hasKeyTag(a) {
   return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
 }
 
+function getKeyType(a) {
+  // key:schwelle, key:vo2, key:tempo, ...
+  const tags = a?.tags || [];
+  for (const t of tags) {
+    const s = String(t || "").toLowerCase().trim();
+    if (s.startsWith("key:")) return s.slice(4).trim() || "key";
+  }
+  return "key";
+}
+
 function isGA(a) {
   if (hasKeyTag(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
@@ -944,6 +1093,37 @@ async function putWellnessDay(env, day, patch) {
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
 
+// Events (for NOTE)
+async function fetchIntervalsEvents(env, oldest, newest) {
+  // local dates (yyyy-MM-dd)
+  const url = `https://intervals.icu/api/v1/athlete/0/events?oldest=${oldest}&newest=${newest}`;
+  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function createIntervalsEvent(env, eventObj) {
+  const url = `https://intervals.icu/api/v1/athlete/0/events`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: auth(env), "Content-Type": "application/json" },
+    body: JSON.stringify(eventObj),
+  });
+  if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function updateIntervalsEvent(env, eventId, eventObj) {
+  const url = `https://intervals.icu/api/v1/athlete/0/events/${encodeURIComponent(String(eventId))}`;
+  const r = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: auth(env), "Content-Type": "application/json" },
+    body: JSON.stringify(eventObj),
+  });
+  if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 function auth(env) {
   return "Basic " + btoa(`API_KEY:${env.INTERVALS_API_KEY}`);
 }
@@ -1007,4 +1187,53 @@ function median(arr) {
   if (!v.length) return null;
   const m = Math.floor(v.length / 2);
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+function sum(arr) {
+  let s = 0;
+  for (const x of arr) s += Number(x) || 0;
+  return s;
+}
+
+function std(arr) {
+  const v = arr.filter((x) => x != null && Number.isFinite(x));
+  if (v.length < 2) return null;
+  const m = v.reduce((a, b) => a + b, 0) / v.length;
+  const vv = v.reduce((a, b) => a + (b - m) * (b - m), 0) / v.length;
+  return Math.sqrt(vv);
+}
+
+function isFiniteNumber(x) {
+  return Number.isFinite(x);
+}
+
+function uniq(arr) {
+  const out = [];
+  const seen = new Set();
+  for (const x of arr) {
+    const k = String(x);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out;
+}
+
+function countBy(arr) {
+  const m = {};
+  for (const x of arr) {
+    const k = String(x);
+    m[k] = (m[k] || 0) + 1;
+  }
+  return m;
+}
+
+function bucketLoadsByDay(runs) {
+  const m = {};
+  for (const r of runs) {
+    const d = r.date;
+    if (!d) continue;
+    m[d] = (m[d] || 0) + (Number(r.load) || 0);
+  }
+  return m;
 }
