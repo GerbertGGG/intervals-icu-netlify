@@ -102,6 +102,15 @@ export default {
 };
 
 // ================= CONFIG =================
+// ================= GUARDRAILS (NEW) =================
+const MAX_KEYS_7D = 2;
+
+// Fatigue override thresholds (tune later)
+const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
+const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
+const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
+
+
 const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
 const MOTOR_STALE_DAYS = 5;
@@ -199,6 +208,106 @@ function createCtx(env, warmupSkipSec, debug) {
 }
 
 // ================= HELPERS =================
+// ================= KEY CAP + FATIGUE (NEW) =================
+
+async function computeKeyCount7d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const endIso = dayIso;
+
+  let keyCount7 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (hasKeyTag(a)) keyCount7++;
+  }
+  return keyCount7;
+}
+
+function bucketAllLoadsByDay(acts) {
+  const m = {};
+  for (const a of acts) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d) continue;
+    m[d] = (m[d] || 0) + extractLoad(a);
+  }
+  return m;
+}
+
+async function computeFatigue7d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+
+  const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const endIso = dayIso;
+
+  const acts14 = ctx.activitiesAll.filter((a) => {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    return d && d >= start14Iso && d < endIso;
+  });
+
+  const dailyLoads = bucketAllLoadsByDay(acts14); // day -> load
+  const days = Object.keys(dailyLoads).sort();
+
+  // split prev7 and last7 deterministically
+  let prev7 = 0;
+  let last7 = 0;
+
+  for (const d of days) {
+    const v = Number(dailyLoads[d]) || 0;
+    if (d >= start7Iso) last7 += v;
+    else prev7 += v;
+  }
+
+  // monotony/strain for last7 only (need daily values in last7)
+  const last7Vals = [];
+  for (let i = 0; i < 7; i++) {
+    const di = isoDate(new Date(new Date(start7Iso + "T00:00:00Z").getTime() + i * 86400000));
+    last7Vals.push(Number(dailyLoads[di]) || 0);
+  }
+  const mean = avg(last7Vals) ?? 0;
+  const sd = std(last7Vals) ?? 0;
+  const monotony = sd > 0 ? mean / sd : mean > 0 ? 99 : 0;
+  const strain = monotony * (sum(last7Vals) || 0);
+
+  const rampPct = prev7 > 0 ? (last7 - prev7) / prev7 : last7 > 0 ? 999 : 0;
+
+  const keyCount7 = await computeKeyCount7d(ctx, dayIso);
+
+  const reasons = [];
+  if (keyCount7 > MAX_KEYS_7D) reasons.push(`Key-Cap: ${keyCount7}/${MAX_KEYS_7D} Key in 7 Tagen`);
+  if (rampPct > RAMP_PCT_7D_LIMIT) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+  if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
+  if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
+
+  const override = reasons.length > 0;
+
+  return {
+    override,
+    reasons,
+    keyCount7,
+    rampPct,
+    monotony,
+    strain,
+    last7Load: last7,
+    prev7Load: prev7,
+  };
+}
+
+function applyRecoveryOverride(policy, fatigue) {
+  if (!fatigue?.override) return policy;
+  // override policy only for the comment + min stimulus semantics
+  return {
+    ...policy,
+    label: "RECOVERY",
+    minLabel: "Regeneration (Override aktiv)",
+    minThreshold: 0,
+    minKind: "aerobic",
+  };
+}
+
+
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -357,6 +466,14 @@ try {
   modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
   policy = getModePolicy(modeInfo);
 }
+// NEW: fatigue / key-cap override
+let fatigue = null;
+try {
+  fatigue = await computeFatigue7d(ctx, day);
+  policy = applyRecoveryOverride(policy, fatigue);
+} catch {
+  fatigue = null;
+}
 
     const runs = ctx.byDayRuns.get(day) ?? [];
     const patch = {};
@@ -459,6 +576,34 @@ else if (policy.minKind === "bike") minValue = loads7.bikeLoad7;
 else minValue = loads7.aerobicEq7;
 
 const minOk = minValue >= policy.minThreshold;
+// ================= KEY CAP + FATIGUE (NEW) =================
+
+async function computeKeyCount7d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const endIso = dayIso;
+
+  let keyCount7 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (hasKeyTag(a)) keyCount7++;
+  }
+  return keyCount7;
+}
+
+function bucketAllLoadsByDay(acts) {
+  const m = {};
+  for (const a of acts) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d) continue;
+    m[d] = (m[d] || 0) + extractLoad(a);
+  }
+  return m;
+}
+
+
 
 
 // ================= LOAD SUPPORT (NEW) =================
@@ -525,6 +670,7 @@ async function computeMaintenance14d(ctx, dayIso) {
   loads7,
   maint14,
   minOk,
+  fatigue,
   minValue,
 });
 
@@ -594,6 +740,7 @@ function renderWellnessComment({
   maint14,
   minOk,
   minValue,
+  fatigue
 }) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
@@ -631,6 +778,17 @@ function renderWellnessComment({
   if (Array.isArray(benchReports) && benchReports.length) {
     lines.push("");
     lines.push(benchReports.join("\n\n"));
+  }
+  // NEW: Recovery banner
+  if (fatigue?.override) {
+    lines.push("");
+    lines.push("🛡️ Fatigue Override: RECOVERY");
+    for (const r of fatigue.reasons.slice(0, 5)) lines.push(`- ${r}`);
+    lines.push("➡️ Empfehlung: heute keine harte Einheit. Fokus: easy / locker / Technik / frei.");
+  } else if (fatigue?.keyCount7 != null) {
+    // show key count always (useful feedback even if ok)
+    lines.push("");
+    lines.push(`🧨 Keys (7 Tage): ${fatigue.keyCount7}/${MAX_KEYS_7D}`);
   }
 
   // NEW: Load block (run/bike/aerobic)
