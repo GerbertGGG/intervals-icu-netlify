@@ -228,6 +228,12 @@ function createCtx(env, warmupSkipSec, debug) {
 function isFiniteNumber(x) {
   return Number.isFinite(Number(x));
 }
+function inferSportFromEvent(ev) {
+  const t = String(ev?.type || "").toLowerCase();
+  if (t.includes("run")) return "run";
+  if (t.includes("ride") || t.includes("bike") || t.includes("cycling")) return "bike";
+  return "unknown";
+}
 
 async function computeKeyCount7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
@@ -1636,7 +1642,7 @@ function addDebug(debugOut, day, a, status, computed) {
 
 async function determineMode(env, dayIso, debug = false) {
   const auth = authHeader(env);
-  const races = await fetchUpcomingRaces(env, auth, debug, 8000);
+  const races = await fetchUpcomingRaces(env, auth, debug, 8000, dayIso);
 
   // sort by start date (local)
   const normDay = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
@@ -1771,26 +1777,48 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
 }
 
 
-export async function fetchUpcomingRaces(env, auth, debug, timeoutMs) {
+export async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
-  const start = new Date();
-  start.setDate(start.getDate() - 21); // include last 3 weeks
-  const end = new Date();
-  end.setDate(end.getDate() + 180);
+
+  // window relative to the day we are computing
+  const start = new Date(dayIso + "T00:00:00Z");
+  start.setDate(start.getDate() - 21);
+
+  const end = new Date(dayIso + "T00:00:00Z");
+  end.setDate(end.getDate() + EVENT_LOOKAHEAD_DAYS); // use your config (365)
 
   const oldest = toLocalYMD(start);
   const newest = toLocalYMD(end);
 
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
   const res = await fetch(url, { headers: { Authorization: auth } });
+
   if (!res.ok) {
-    if (debug) console.log("⚠️ Event-API fehlgeschlagen:", res.status);
+    if (debug) console.log("⚠️ Event-API fehlgeschlagen:", res.status, "url:", url);
     return [];
   }
+
   const payload = await res.json();
   const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
-  return events.filter((e) => String(e.category ?? "").toUpperCase() === "RACE_A");
+
+  // IMPORTANT: sort + deterministic pick later
+  const races = events.filter((e) => String(e.category ?? "").toUpperCase() === "RACE_A");
+
+  if (debug) {
+    console.log(
+      "🏁 races preview:",
+      races.slice(0, 5).map((e) => ({
+        day: String(e.start_date_local || e.start_date || "").slice(0, 10),
+        cat: e.category,
+        type: e.type,
+        name: e.name,
+      }))
+    );
+  }
+
+  return races;
 }
+
 
 
 
