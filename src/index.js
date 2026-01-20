@@ -348,6 +348,11 @@ function json(o, status = 200) {
     headers: { "content-type": "application/json; charset=utf-8" },
   });
 }
+
+function authHeader(env) {
+  return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
+}
+
 function clampInt(x, min, max) {
   const n = Number(x);
   return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.floor(n))) : min;
@@ -1682,8 +1687,9 @@ function getModePolicy(modeInfo) {
 
 // ================= INTERVALS API =================
 async function fetchIntervalsActivities(env, oldest, newest) {
-  const url = `https://intervals.icu/api/v1/athlete/0/activities?oldest=${oldest}&newest=${newest}`;
-  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}`;
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
   return r.json();
 }
@@ -1757,9 +1763,7 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
   return r.json();
 }
 
-function authHeader(env) {
-  return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
-}
+
 export async function fetchUpcomingRaces(env, auth, debug, timeoutMs) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const start = new Date();
