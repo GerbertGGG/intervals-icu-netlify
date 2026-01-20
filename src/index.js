@@ -4,29 +4,27 @@
 // Required Secret:
 // INTERVALS_API_KEY
 //
-// Wellness custom numeric fields (exact codes you create in Intervals):
+// Wellness custom numeric fields (create these in Intervals):
 // VDOT, Drift, Motor
 //
-// What this does (daily):
-// - For each Run day:
-//   - GA (no key:*, >=30min):
-//       - VDOT_like (from EF = avg_speed/avg_hr)
-//       - Drift = HR-Drift (%) from streams (warmup skip default 10min)
-//       - Drift NEGATIVE => null (ignored / not written)  ✅ (sensor switch etc.)
-//   - Key (tag key:*):
-//       - No special numeric fields (we removed TTT/Score)
-//   - Comment always includes:
-//       - Aerobic context trend (GA-only) (28d vs prev 28d) based on EF + Drift
-//       - Motor Index (single number 0..100) derived from EF-trend + Drift-trend (GA comparable runs only)
-//       - Minimum stimulus (7d run-load)
+// Daily behavior:
+// - Always writes a comment for every day in range (even if no run).
+// - Minimum stimulus (7d run-load) always included in comment.
+// - Monday detective is included every Monday, even if no run.
 //
-// Monday extra:
-// - Adds a "Montags-Detektiv" block (GA-only, 14d: last 7d vs prev 7d)
+// GA logic (no key:*, >=30min):
+// - VDOT_like from EF = avg_speed/avg_hr
+// - Drift from streams (warmup skip default 10min)
+// - Negative drift => null (dropped; not written; not used in stats)
+//
+// Motor Index:
+// - GA comparable only (no key, >=35–40min, steady pace)
+// - EF trend (28d) + Drift trend (14d), 0..100
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
 //   /sync?days=14&write=true&debug=true
-//   /sync?days=14&write=true&debug=true&warmup_skip=600
+//   /sync?from=YYYY-MM-DD&to=YYYY-MM-DD&write=true&debug=true
 
 export default {
   async fetch(req, env, ctx) {
@@ -89,11 +87,8 @@ export default {
       }
 
       ctx?.waitUntil?.(
-        syncRange(env, oldest, newest, write, false, warmupSkipSec).catch(() => {
-          // swallow
-        })
+        syncRange(env, oldest, newest, write, false, warmupSkipSec).catch(() => {})
       );
-
       return json({ ok: true, oldest, newest, write, warmupSkipSec });
     }
 
@@ -101,7 +96,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // keep daily sync so you see "what's up" after each unit
+    // Daily sync so you always get at least the minimum-stimulus comment.
     ctx.waitUntil(
       syncRange(
         env,
@@ -117,31 +112,25 @@ export default {
 
 // ================= CONFIG =================
 const GA_MIN_SECONDS = 30 * 60;
-const GA_COMPARABLE_MIN_SECONDS = 40 * 60; // stricter filter for motor stats
+const GA_COMPARABLE_MIN_SECONDS = 35 * 60; // comparable GA threshold (slightly relaxed)
 const MIN_STIMULUS_7D_RUN_LOAD = 150;
 
-// Trend windows (GA-only)
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
 
-// Motor Index windows
 const MOTOR_WINDOW_DAYS = 28;
-const MOTOR_NEED_N_PER_HALF = 3;
+const MOTOR_NEED_N_PER_HALF = 2; // more robust (was 3)
+const MOTOR_DRIFT_WINDOW_DAYS = 14;
 
-// Your max HR (known)
 const HFMAX = 173;
 
-// Monday detective
 const DETECTIVE_LOOKBACK_DAYS = 14;
 const DETECTIVE_MIN_RECENT = 2;
 const DETECTIVE_MIN_PREV = 2;
 
-// Streams filtering
-const MIN_RUN_SPEED = 1.8; // m/s ~ 9:15 min/km
+const MIN_RUN_SPEED = 1.8;
 const MIN_POINTS = 300;
-
-// Comparable GA stability threshold (speed CV)
-const GA_SPEED_CV_MAX = 0.08; // 8% coefficient of variation (fairly steady)
+const GA_SPEED_CV_MAX = 0.10; // relaxed from 0.08
 
 // Wellness field codes
 const FIELD_VDOT = "VDOT";
@@ -160,18 +149,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
   for (const a of acts) {
     activitiesSeen++;
-
     const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!day) {
       if (debug) addDebug(debugOut, day || "unknown-day", a, "skip:no_day", null);
       continue;
     }
-
     if (!isRun(a)) {
       if (debug) addDebug(debugOut, day, a, `skip:not_run:${a.type ?? "unknown"}`, null);
       continue;
     }
-
     if (!byDay.has(day)) byDay.set(day, []);
     byDay.get(day).push(a);
     activitiesUsed++;
@@ -180,19 +166,24 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const patches = {};
   let daysWritten = 0;
 
-  for (const [day, runs] of byDay.entries()) {
+  // NEW: iterate *every day* in the requested range
+  const daysList = listIsoDaysInclusive(oldest, newest);
+
+  for (const day of daysList) {
+    const runs = byDay.get(day) ?? [];
     const patch = {};
     const perRunInfo = [];
 
-    // Compute Motor Index once per day (GA-only comparable history)
+    // Motor Index computed per day (works even if no run that day)
     let motor = null;
     try {
       motor = await computeMotorIndex(env, day, warmupSkipSec);
       if (motor?.value != null) patch[FIELD_MOTOR] = round(motor.value, 1);
     } catch (e) {
-      motor = { ok: false, text: `Motor: n/a – Fehler (${String(e?.message ?? e)})` };
+      motor = { ok: false, value: null, text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})` };
     }
 
+    // Process runs (if any)
     for (const a of runs) {
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
@@ -200,20 +191,19 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       const ef = extractEF(a);
       const load = extractLoad(a);
 
-      // HR-Drift only for GA non-key
       let drift = null;
-      let drift_source = "none";
       let drift_raw = null;
+      let drift_source = "none";
 
       if (ga && !isKey) {
         drift_source = "streams";
         try {
           const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
-          const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
-          drift_raw = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
+          const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
+          drift_raw = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
           drift = drift_raw;
 
-          // NEW: negative drift => null (drop so it doesn't pollute stats)
+          // Negative drift => null (dropped)
           if (drift != null && drift < 0) {
             drift = null;
             drift_source = "streams_negative_dropped";
@@ -223,17 +213,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         } catch (e) {
           drift = null;
           drift_source = "streams_failed";
-          if (debug) {
-            addDebug(debugOut, day, a, "warn:streams_failed", { message: String(e?.message ?? e) });
-          }
+          if (debug) addDebug(debugOut, day, a, "warn:streams_failed", { message: String(e?.message ?? e) });
         }
       }
 
-      // GA numeric fields
+      // Write GA fields
       if (ga && !isKey) {
         if (ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(ef), 1);
         if (drift != null) patch[FIELD_DRIFT] = round(drift, 1);
-        // if drift is null (e.g. negative or insufficient) we do NOT write Drift
       }
 
       perRunInfo.push({
@@ -262,17 +249,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       }
     }
 
-    // Trend + Minimum + comment
+    // Aerobic trend (works regardless of run day)
     let trend;
     try {
       trend = await computeAerobicTrend(env, day, warmupSkipSec);
     } catch (e) {
-      trend = {
-        ok: false,
-        text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})`,
-      };
+      trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
     }
 
+    // Minimum stimulus always
     let min;
     try {
       min = await computeMinStimulus(env, day);
@@ -280,17 +265,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       min = { runLoad7: 0, minOk: false };
     }
 
-    // Monday detective (only when this day is Monday)
+    // Monday detective ALWAYS on Mondays (even if no run)
     let detectiveText = null;
     try {
-      if (isMondayIso(day)) {
-        detectiveText = await computeDetectiveReport(env, day, warmupSkipSec);
-      }
+      if (isMondayIso(day)) detectiveText = await computeDetectiveReport(env, day, warmupSkipSec);
     } catch (e) {
       detectiveText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
     }
 
     patch.comments = renderWellnessComment({
+      day,
       perRunInfo,
       trend,
       motor,
@@ -322,21 +306,23 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 }
 
 // ================= COMMENT =================
-function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, detectiveText }) {
+function renderWellnessComment({ day, perRunInfo, trend, motor, runLoad7, minOk, detectiveText }) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
+  const hadAnyRun = perRunInfo.length > 0;
 
   const lines = [];
   lines.push("ℹ️ Tages-Status");
-
   lines.push("");
-  if (hadKey && !hadGA) lines.push("Heute: Schlüsseltraining (Key)");
+
+  if (!hadAnyRun) lines.push("Heute: Kein Lauf");
+  else if (hadKey && !hadGA) lines.push("Heute: Schlüsseltraining (Key)");
   else if (hadGA && !hadKey) lines.push("Heute: Grundlage (GA)");
   else if (hadKey && hadGA) lines.push("Heute: Gemischt (GA + Key)");
   else lines.push("Heute: Lauf");
 
   lines.push("");
-  lines.push(trend.text);
+  lines.push(trend?.text ?? "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a");
 
   lines.push("");
   lines.push(motor?.text ?? "🏎️ Motor-Index: n/a");
@@ -367,7 +353,6 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const start = new Date(end.getTime() - 2 * TREND_WINDOW_DAYS * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
-
   const gaActs = [];
 
   for (const a of acts) {
@@ -381,10 +366,8 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
     let drift = null;
     try {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
-      const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
-      drift = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
-
-      // NEW: negative drift => null
+      const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
+      drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
       if (drift != null && drift < 0) drift = null;
     } catch {
       drift = null;
@@ -410,14 +393,11 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const d0 = median(prev.map((x) => x.drift));
 
   if (ef0 == null || ef1 == null || d0 == null || d1 == null) {
-    return {
-      ok: false,
-      text: "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – fehlende Werte",
-    };
+    return { ok: false, text: "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – fehlende Werte" };
   }
 
-  const dv = ((ef1 - ef0) / ef0) * 100; // EF% change
-  const dd = d1 - d0; // drift %-pt change
+  const dv = ((ef1 - ef0) / ef0) * 100;
+  const dd = d1 - d0;
 
   let emoji = "🟡";
   let label = "Stabil / gemischt";
@@ -442,23 +422,16 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
 }
 
 // ================= MOTOR INDEX (GA comparable only) =================
-// Goal: single number that answers "is my motor better?" (not stress).
-// Uses:
-// - EF trend (28d recent vs 28d prev) from comparable GA runs
-// - Drift trend (14d recent vs 14d prev) from comparable GA runs
 async function computeMotorIndex(env, dayIso, warmupSkipSec) {
   const end = new Date(dayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - 2 * MOTOR_WINDOW_DAYS * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
-
   const samples = [];
 
   for (const a of acts) {
     if (!isRun(a)) continue;
     if (hasKeyTag(a)) continue;
-
-    // stricter GA for motor stats
     if (!isGAComparable(a)) continue;
 
     const ef = extractEF(a);
@@ -466,21 +439,17 @@ async function computeMotorIndex(env, dayIso, warmupSkipSec) {
 
     let drift = null;
     let cv = null;
-
     try {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
       drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
       cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
-
-      // negative drift => drop
       if (drift != null && drift < 0) drift = null;
     } catch {
       drift = null;
       cv = null;
     }
 
-    // need drift to judge aerobic stability; also enforce steady running
     if (drift == null) continue;
     if (cv == null || cv > GA_SPEED_CV_MAX) continue;
 
@@ -504,42 +473,34 @@ async function computeMotorIndex(env, dayIso, warmupSkipSec) {
 
   const ef1 = median(recent.map((x) => x.ef));
   const ef0 = median(prev.map((x) => x.ef));
+  if (ef0 == null || ef1 == null) {
+    return { ok: false, value: null, text: "🏎️ Motor-Index: n/a (fehlende EF-Werte)" };
+  }
 
-  // Drift trend: 14d vs 14d within the 28d windows
-  const mid14 = new Date(end.getTime() - 14 * 86400000);
+  // Drift trend uses last 14d vs previous 14d within the last 28d
+  const mid14 = new Date(end.getTime() - MOTOR_DRIFT_WINDOW_DAYS * 86400000);
   const recent14 = samples.filter((x) => new Date(x.date + "T00:00:00Z") >= mid14);
   const prev14 = samples.filter((x) => {
     const t = new Date(x.date + "T00:00:00Z");
-    return t < mid14 && t >= new Date(end.getTime() - 28 * 86400000);
+    return t < mid14 && t >= new Date(end.getTime() - 2 * MOTOR_DRIFT_WINDOW_DAYS * 86400000);
   });
 
   const d1 = recent14.length ? median(recent14.map((x) => x.drift)) : null;
   const d0 = prev14.length ? median(prev14.map((x) => x.drift)) : null;
 
-  if (ef0 == null || ef1 == null) {
-    return { ok: false, value: null, text: "🏎️ Motor-Index: n/a (fehlende EF-Werte)" };
-  }
+  const dv = ((ef1 - ef0) / ef0) * 100; // + good
+  const dd = d0 != null && d1 != null ? (d1 - d0) : null; // + bad
 
-  const dv = ((ef1 - ef0) / ef0) * 100; // + is good
-  const dd = d0 != null && d1 != null ? (d1 - d0) : null; // + is bad
-
-  // Map to 0..100:
-  // - base 50
-  // - EF improvement moves it (moderately)
-  // - drift reduction adds; drift increase subtracts (also moderately)
+  // Map to 0..100
   let val = 50;
-  val += clamp(dv, -6, 6) * 4; // +/-6% EF -> +/-24 points
-  if (dd != null) val += clamp(-dd, -6, 6) * 2; // drift down (negative dd) -> plus points
+  val += clamp(dv, -6, 6) * 4; // EF: +/-6% -> +/-24 pts
+  if (dd != null) val += clamp(-dd, -6, 6) * 2; // drift down -> plus
 
   val = clamp(val, 0, 100);
 
   const arrow = dv > 0.5 ? "↑" : dv < -0.5 ? "↓" : "→";
   const label = val >= 70 ? "stark" : val >= 55 ? "stabil" : val >= 40 ? "fragil" : "schwach";
-
-  const extra =
-    dd == null
-      ? ""
-      : ` | Drift Δ ${dd > 0 ? "+" : ""}${dd.toFixed(1)}%-Pkt (14d)`;
+  const extra = dd == null ? "" : ` | Drift Δ ${dd > 0 ? "+" : ""}${dd.toFixed(1)}%-Pkt (14d)`;
 
   return {
     ok: true,
@@ -577,13 +538,11 @@ async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
 
     let drift = null;
     let cv = null;
-
     try {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
       drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
       cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
-
       if (drift != null && drift < 0) drift = null;
     } catch {}
 
@@ -668,8 +627,6 @@ async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
 }
 
 // ================= STREAMS METRICS =================
-// Drift: compare mean HR in 2 halves, after warmup skip, using moving samples (speed>min)
-// Also returns speed coefficient of variation for "steady" filter.
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
   if (!streams) return null;
 
@@ -682,7 +639,6 @@ function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
   const n = Math.min(hr.length, speed.length);
   if (n < MIN_POINTS) return null;
 
-  // Determine warmup start index
   let startIdx = 0;
   if (Array.isArray(time) && time.length >= n) {
     while (startIdx < n && Number(time[startIdx]) < warmupSkipSec) startIdx++;
@@ -690,7 +646,6 @@ function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
     startIdx = Math.min(n - 1, warmupSkipSec);
   }
 
-  // valid moving indices
   const idx = [];
   for (let i = startIdx; i < n; i++) {
     const h = Number(hr[i]);
@@ -706,16 +661,15 @@ function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
 
   const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
 
-  // HR means
   const hr1 = mean(idx.slice(0, half).map((i) => Number(hr[i])));
   const hr2 = mean(idx.slice(half).map((i) => Number(hr[i])));
   if (hr1 == null || hr2 == null || hr1 <= 0) return null;
 
   const hr_drift_pct = ((hr2 - hr1) / hr1) * 100;
 
-  // speed CV (steady)
   const vs = idx.map((i) => Number(speed[i]));
   const vMean = mean(vs);
+
   let speed_cv = null;
   if (vMean != null && vMean > 0) {
     const vVar = mean(vs.map((v) => (v - vMean) * (v - vMean)));
@@ -724,13 +678,6 @@ function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
   }
 
   return { hr1, hr2, hr_drift_pct, used_points: idx.length, warmupSkipSec, speed_cv };
-}
-
-// Kept for backwards compatibility in other code paths
-function computeHRDriftFromStreams(streams, warmupSkipSec = 600) {
-  const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
-  if (!ds) return null;
-  return { hr1: ds.hr1, hr2: ds.hr2, hr_drift_pct: ds.hr_drift_pct, used_points: ds.used_points, warmupSkipSec };
 }
 
 // ================= EXTRACTORS =================
@@ -859,6 +806,14 @@ function diffDays(a, b) {
   const da = new Date(a + "T00:00:00Z").getTime();
   const db = new Date(b + "T00:00:00Z").getTime();
   return Math.round((db - da) / 86400000);
+}
+
+function listIsoDaysInclusive(oldest, newest) {
+  const out = [];
+  const start = new Date(oldest + "T00:00:00Z").getTime();
+  const end = new Date(newest + "T00:00:00Z").getTime();
+  for (let t = start; t <= end; t += 86400000) out.push(isoDate(new Date(t)));
+  return out;
 }
 
 function json(o, status = 200) {
