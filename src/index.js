@@ -1756,7 +1756,7 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
   const url = `https://intervals.icu/api/v1/athlete/0/events/${encodeURIComponent(String(eventId))}`;
   const r = await fetch(url, {
     method: "PUT",
-    headers: { Authorization: auth(env), "Content-Type": "application/json" },
+    headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(eventObj),
   });
   if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
