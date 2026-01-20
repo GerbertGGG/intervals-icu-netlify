@@ -8,23 +8,31 @@
 // VDOT, Drift, Motor
 //
 // Daily behavior:
-// - Always writes a comment for every day in range (even if no run).
-// - Minimum stimulus (7d run-load) always included in comment.
+// - Writes a comment for EVERY day in the range (even if no run).
+// - Minimum stimulus (7d run-load) is ALWAYS included in the comment.
 // - Monday detective is included every Monday, even if no run.
 //
-// GA logic (no key:*, >=30min):
+// GA (no key:*, >=30min):
 // - VDOT_like from EF = avg_speed/avg_hr
 // - Drift from streams (warmup skip default 10min)
 // - Negative drift => null (dropped; not written; not used in stats)
 //
 // Motor Index:
-// - GA comparable only (no key, >=35–40min, steady pace)
-// - EF trend (28d) + Drift trend (14d), 0..100
+// - GA comparable only (no key, >=35min, steady pace)
+// - EF trend (28d) + Drift trend (14d), mapped to 0..100
+//
+// Bench reports (only on Bench days):
+// - Use tag "bench:<name>" or "Bench:<name>" (case-insensitive).
+// - On Bench day, posts a short report comparing:
+//     - today vs last same bench
+//     - today vs median of last 3–5 same bench
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
 //   /sync?days=14&write=true&debug=true
 //   /sync?from=YYYY-MM-DD&to=YYYY-MM-DD&write=true&debug=true
+// Optional:
+//   &warmup_skip=600
 
 export default {
   async fetch(req, env, ctx) {
@@ -86,9 +94,7 @@ export default {
         }
       }
 
-      ctx?.waitUntil?.(
-        syncRange(env, oldest, newest, write, false, warmupSkipSec).catch(() => {})
-      );
+      ctx?.waitUntil?.(syncRange(env, oldest, newest, write, false, warmupSkipSec).catch(() => {}));
       return json({ ok: true, oldest, newest, write, warmupSkipSec });
     }
 
@@ -112,14 +118,15 @@ export default {
 
 // ================= CONFIG =================
 const GA_MIN_SECONDS = 30 * 60;
-const GA_COMPARABLE_MIN_SECONDS = 35 * 60; // comparable GA threshold (slightly relaxed)
+const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
+
 const MIN_STIMULUS_7D_RUN_LOAD = 150;
 
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
 
 const MOTOR_WINDOW_DAYS = 28;
-const MOTOR_NEED_N_PER_HALF = 2; // more robust (was 3)
+const MOTOR_NEED_N_PER_HALF = 2;
 const MOTOR_DRIFT_WINDOW_DAYS = 14;
 
 const HFMAX = 173;
@@ -130,7 +137,12 @@ const DETECTIVE_MIN_PREV = 2;
 
 const MIN_RUN_SPEED = 1.8;
 const MIN_POINTS = 300;
-const GA_SPEED_CV_MAX = 0.10; // relaxed from 0.08
+const GA_SPEED_CV_MAX = 0.10;
+
+// Bench
+const BENCH_LOOKBACK_DAYS = 180;
+const BENCH_MAX_HISTORY = 5;
+const BENCH_MIN_FOR_MEDIAN = 3;
 
 // Wellness field codes
 const FIELD_VDOT = "VDOT";
@@ -166,7 +178,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const patches = {};
   let daysWritten = 0;
 
-  // NEW: iterate *every day* in the requested range
+  // Iterate *every day* in range (even if no run)
   const daysList = listIsoDaysInclusive(oldest, newest);
 
   for (const day of daysList) {
@@ -174,7 +186,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const patch = {};
     const perRunInfo = [];
 
-    // Motor Index computed per day (works even if no run that day)
+    // Motor Index (works even if no run today)
     let motor = null;
     try {
       motor = await computeMotorIndex(env, day, warmupSkipSec);
@@ -183,7 +195,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       motor = { ok: false, value: null, text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})` };
     }
 
-    // Process runs (if any)
+    // Process runs
     for (const a of runs) {
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
@@ -249,7 +261,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       }
     }
 
-    // Aerobic trend (works regardless of run day)
+    // Aerobic trend
     let trend;
     try {
       trend = await computeAerobicTrend(env, day, warmupSkipSec);
@@ -257,7 +269,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
     }
 
-    // Minimum stimulus always
+    // Minimum stimulus (always)
     let min;
     try {
       min = await computeMinStimulus(env, day);
@@ -273,6 +285,20 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       detectiveText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
     }
 
+    // Bench reports only on bench days
+    const benchReports = [];
+    for (const a of runs) {
+      const benchName = getBenchTag(a); // case-insensitive "bench:"
+      if (!benchName) continue;
+
+      try {
+        const rep = await computeBenchReport(env, a, benchName, warmupSkipSec);
+        if (rep) benchReports.push(rep);
+      } catch (e) {
+        benchReports.push(`🧪 bench:${benchName}\nFehler: ${String(e?.message ?? e)}`);
+      }
+    }
+
     patch.comments = renderWellnessComment({
       day,
       perRunInfo,
@@ -281,6 +307,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       runLoad7: min.runLoad7,
       minOk: min.minOk,
       detectiveText,
+      benchReports,
     });
 
     patches[day] = patch;
@@ -306,7 +333,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 }
 
 // ================= COMMENT =================
-function renderWellnessComment({ day, perRunInfo, trend, motor, runLoad7, minOk, detectiveText }) {
+function renderWellnessComment({ perRunInfo, trend, motor, runLoad7, minOk, detectiveText, benchReports }) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
@@ -326,6 +353,11 @@ function renderWellnessComment({ day, perRunInfo, trend, motor, runLoad7, minOk,
 
   lines.push("");
   lines.push(motor?.text ?? "🏎️ Motor-Index: n/a");
+
+  if (Array.isArray(benchReports) && benchReports.length) {
+    lines.push("");
+    lines.push(benchReports.join("\n\n"));
+  }
 
   lines.push("");
   if (minOk) {
@@ -489,7 +521,7 @@ async function computeMotorIndex(env, dayIso, warmupSkipSec) {
   const d0 = prev14.length ? median(prev14.map((x) => x.drift)) : null;
 
   const dv = ((ef1 - ef0) / ef0) * 100; // + good
-  const dd = d0 != null && d1 != null ? (d1 - d0) : null; // + bad
+  const dd = d0 != null && d1 != null ? d1 - d0 : null; // + bad
 
   // Map to 0..100
   let val = 50;
@@ -509,7 +541,7 @@ async function computeMotorIndex(env, dayIso, warmupSkipSec) {
   };
 }
 
-// ================= MINIMUM STIMULUS (Run-only) =================
+// ================= MINIMUM STIMULUS =================
 async function computeMinStimulus(env, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - 7 * 86400000);
@@ -581,7 +613,7 @@ async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
 
   const dv = ef0 && ef1 ? ((ef1 - ef0) / ef0) * 100 : null;
   const dd = d0 != null && d1 != null ? d1 - d0 : null;
-  const dhr = hrp0 != null && hrp1 != null ? hrp1 - hrp0 : null;
+  const dhr = hrp0 != null && hrp1 != null ? dhrDelta(hrp1, hrp0) : null;
 
   const efDown = dv != null && dv < -1.0;
   const driftUp = dd != null && dd > 1.0;
@@ -624,6 +656,134 @@ async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
   }
 
   return lines.join("\n");
+}
+
+function dhrDelta(a, b) {
+  return a - b;
+}
+
+// ================= BENCH REPORTS =================
+function getBenchTag(a) {
+  const tags = a?.tags || [];
+  for (const t of tags) {
+    const s = String(t || "").trim();
+    if (s.toLowerCase().startsWith("bench:")) return s.slice(6).trim(); // e.g. "GA45"
+  }
+  return null;
+}
+
+async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
+  const dayIso = String(activity.start_date_local || activity.start_date || "").slice(0, 10);
+  if (!dayIso) return null;
+
+  const end = new Date(dayIso + "T00:00:00Z");
+  const start = new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000);
+
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+
+  const same = acts
+    .filter((a) => isRun(a) && getBenchTag(a) === benchName && a.id !== activity.id)
+    .sort((a, b) => new Date(b.start_date_local || b.start_date) - new Date(a.start_date_local || a.start_date));
+
+  const today = await computeBenchMetrics(env, activity, warmupSkipSec);
+  if (!today) return `🧪 bench:${benchName}\nHeute: n/a (fehlende EF/Streams).`;
+
+  if (!same.length) return `🧪 bench:${benchName}\nErster Benchmark – noch kein Vergleich.`;
+
+  const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
+
+  // Median from last 3–5
+  const pool = same.slice(0, BENCH_MAX_HISTORY);
+  const poolMetrics = [];
+  for (const a of pool) {
+    const m = await computeBenchMetrics(env, a, warmupSkipSec);
+    if (m) poolMetrics.push(m);
+  }
+
+  const med =
+    poolMetrics.length >= BENCH_MIN_FOR_MEDIAN
+      ? { ef: median(poolMetrics.map((x) => x.ef)), drift: medianOrNull(poolMetrics.map((x) => x.drift)) }
+      : null;
+
+  const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
+  const efVsMed = med?.ef != null ? pct(today.ef, med.ef) : null;
+
+  const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
+  const dVsMed = today.drift != null && med?.drift != null ? today.drift - med.drift : null;
+
+  const verdict = interpretBench(efVsLast, dVsLast, efVsMed, dVsMed);
+
+  const lines = [];
+  lines.push(`🧪 bench:${benchName}`);
+  lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte | ${fmtSigned1(efVsMed)}% vs Median`);
+  lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte | ${fmtSigned1(dVsMed)}%-Pkt vs Median`);
+  lines.push(`Fazit: ${verdict}`);
+
+  return lines.join("\n");
+}
+
+async function computeBenchMetrics(env, a, warmupSkipSec) {
+  const ef = extractEF(a);
+  if (ef == null) return null;
+
+  let drift = null;
+  try {
+    const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+    const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
+    drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
+    if (drift != null && drift < 0) drift = null; // drop negative
+  } catch {
+    drift = null;
+  }
+
+  return { ef, drift };
+}
+
+function pct(a, b) {
+  return a != null && b != null && Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? ((a - b) / b) * 100 : null;
+}
+
+function fmtSigned1(x) {
+  if (!Number.isFinite(x)) return "n/a";
+  return (x > 0 ? "+" : "") + x.toFixed(1);
+}
+
+function medianOrNull(arr) {
+  const v = arr.filter((x) => x != null && Number.isFinite(x));
+  return v.length ? median(v) : null;
+}
+
+function interpretBench(efVsLast, dVsLast, efVsMed, dVsMed) {
+  // prefer median if available
+  const ef = Number.isFinite(efVsMed) ? efVsMed : efVsLast;
+  const dd = Number.isFinite(dVsMed) ? dVsMed : dVsLast;
+
+  if (!Number.isFinite(ef) && !Number.isFinite(dd)) return "Gemischt/unklar (zu wenig Vergleichsdaten).";
+
+  // EF: + good, Drift delta: - good
+  if (Number.isFinite(ef) && Number.isFinite(dd)) {
+    if (ef >= +1.0 && dd <= -0.5) return "Motor besser (mehr Output + stabiler).";
+    if (ef <= -1.0 && dd >= +0.5) return "Motor schlechter (weniger Output + instabiler).";
+    if (ef >= +1.0) return "Output besser, Stabilität gemischt.";
+    if (dd <= -0.5) return "Stabilität besser, Output gemischt.";
+    if (ef <= -1.0) return "Output schlechter, Stabilität gemischt.";
+    if (dd >= +0.5) return "Stabilität schlechter, Output gemischt.";
+    return "Stabil / innerhalb Normalrauschen.";
+  }
+
+  if (Number.isFinite(ef)) {
+    if (ef >= +1.0) return "Output besser (EF ↑).";
+    if (ef <= -1.0) return "Output schlechter (EF ↓).";
+    return "EF stabil / Normalrauschen.";
+  }
+
+  if (Number.isFinite(dd)) {
+    if (dd <= -0.5) return "Stabilität besser (Drift ↓).";
+    if (dd >= +0.5) return "Stabilität schlechter (Drift ↑).";
+    return "Drift stabil / Normalrauschen.";
+  }
+
+  return "Gemischt/unklar.";
 }
 
 // ================= STREAMS METRICS =================
