@@ -1,21 +1,21 @@
 // src/index.js
-// Cloudflare Worker – Run only
+// Cloudflare Worker – Run only (TTT fully removed)
 //
 // Required Secret:
 // INTERVALS_API_KEY
 //
 // Wellness custom numeric fields (exact codes):
-// VDOT, Drift, EF, TTT, Score
+// VDOT, Drift, EF, Score
 //
 // Run-only logic:
 // - GA (no key:*, >=30min):
 //     - VDOT_like (from EF summary)
 //     - Drift = HR-Drift (%), computed from streams with warmup skip (default 10min)
-//     - Do NOT write TTT
+//     - Do NOT write EF
 // - Key (tag key:*):
-//     - EF (summary) + TTT (compliance)
-//     - Do NOT write VDOT/Drift
-// - Score = execution quality (GA uses HR-Drift; Key uses TTT), plus capped load
+//     - EF (summary)
+//     - (TTT removed: no plan/compliance)
+// - Score = execution quality (GA uses HR-Drift; Key uses fixed quality baseline), plus capped load
 // - Aerobic trend (comment): GA-only (requires EF + HR-Drift), guarded by sample sizes
 // - Minimum stimulus (comment only): 100 Run-load over last 7 days
 //
@@ -121,7 +121,6 @@ const TREND_MIN_N = 3;
 const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_EF = "EF";
-const FIELD_TTT = "TTT";
 const FIELD_SCORE = "Score";
 
 // ================= MAIN =================
@@ -165,7 +164,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       const ga = isGA(a);
 
       const ef = extractEF(a);
-      const ttt = extractTTT(a);
       const load = extractLoad(a);
 
       // HR-Drift only for GA non-key
@@ -173,8 +171,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       let drift_source = "none";
 
       if (ga && !isKey) {
-        // If Intervals provides a decoupling field, it's NOT necessarily HR-drift.
-        // We'll ignore summary decoupling for "HR Drift" semantics and rely on streams.
         drift_source = "streams";
         try {
           const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
@@ -190,18 +186,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         }
       }
 
-      const score = computeScore({ ga, isKey, drift, ttt, load });
+      const score = computeScore({ ga, isKey, drift, load });
 
       // GA fields
       if (ga && !isKey) {
         if (ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(ef), 1);
-        if (drift != null) patch[FIELD_DRIFT] = round(drift, 1); // HR-drift can be +/-; keep sign
+        if (drift != null) patch[FIELD_DRIFT] = round(drift, 1);
       }
 
-      // Key fields
+      // Key fields (TTT removed)
       if (isKey) {
         if (ef != null) patch[FIELD_EF] = round(ef, 5);
-        if (ttt != null) patch[FIELD_TTT] = round(ttt, 1);
       }
 
       // Always score
@@ -216,15 +211,24 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         ef,
         drift,
         drift_source,
-        ttt,
         load,
         score,
       });
 
-      if (debug) addDebug(debugOut, day, a, "ok", { ga, isKey, ef, drift, drift_source, ttt, load, score });
+      if (debug) {
+        addDebug(debugOut, day, a, "ok", {
+          ga,
+          isKey,
+          ef,
+          drift,
+          drift_source,
+          load,
+          score,
+        });
+      }
     }
 
-    // Trend + Minimum + comment (each in a try/catch so one failure doesn't kill the whole day)
+    // Trend + Minimum + comment
     let trend;
     try {
       trend = await computeAerobicTrend(env, day, warmupSkipSec);
@@ -238,7 +242,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     let min;
     try {
       min = await computeMinStimulus(env, day);
-    } catch (e) {
+    } catch {
       min = { runLoad7: 0, minOk: false };
     }
 
@@ -320,7 +324,6 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const start = new Date(end.getTime() - 2 * TREND_WINDOW_DAYS * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
-
   const gaActs = [];
 
   for (const a of acts) {
@@ -331,7 +334,6 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
     const ef = extractEF(a);
     if (ef == null) continue;
 
-    // compute HR drift from streams (best effort; skip if fails)
     let drift = null;
     try {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
@@ -361,16 +363,12 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const d0 = median(prev.map((x) => x.drift));
 
   if (ef0 == null || ef1 == null || d0 == null || d1 == null) {
-    return {
-      ok: false,
-      text: "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – fehlende Werte",
-    };
+    return { ok: false, text: "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – fehlende Werte" };
   }
 
   const dv = ((ef1 - ef0) / ef0) * 100;
   const dd = d1 - d0;
 
-  // Ampel (Kontext!)
   let emoji = "🟡";
   let label = "Stabil / gemischt";
   if (dv > 1.5 && dd <= 0) {
@@ -405,22 +403,15 @@ async function computeMinStimulus(env, dayIso) {
 }
 
 // ================= SCORE =================
-function computeScore({ ga, isKey, drift, ttt, load }) {
+function computeScore({ ga, isKey, drift, load }) {
   const C = clamp(Number(load) || 0, 0, 70);
 
   let Q = 65;
 
   if (isKey) {
-    if (Number.isFinite(ttt)) {
-      if (ttt >= 95) Q = 98;
-      else if (ttt >= 90) Q = 88;
-      else if (ttt >= 80) Q = 68;
-      else Q = 45;
-    } else {
-      Q = 60;
-    }
+    // No plan/compliance -> no TTT. Use a fixed baseline quality for Key.
+    Q = 75;
   } else if (ga) {
-    // For scoring, negative HR-drift shouldn't be treated as "super good".
     const d = Number.isFinite(drift) ? Math.max(0, drift) : null;
 
     if (Number.isFinite(d)) {
@@ -442,7 +433,6 @@ function vdotLikeFromEf(ef) {
 }
 
 // ================= HR-DRIFT FROM STREAMS =================
-// HR Drift: compare mean HR in 2 halves, after warmup skip, using moving samples (speed>0)
 function computeHRDriftFromStreams(streams, warmupSkipSec = 600) {
   if (!streams) return null;
 
@@ -455,31 +445,24 @@ function computeHRDriftFromStreams(streams, warmupSkipSec = 600) {
   const n = Math.min(hr.length, speed.length);
   if (n < 300) return null;
 
-  // Determine start index for warmup skip.
-  // If time is present and monotonic (seconds), use it; otherwise approximate by index.
   let startIdx = 0;
   if (Array.isArray(time) && time.length >= n) {
-    // find first index where time >= warmupSkipSec
     startIdx = 0;
     while (startIdx < n && Number(time[startIdx]) < warmupSkipSec) startIdx++;
   } else {
-    // assume ~1s sampling
     startIdx = Math.min(n - 1, warmupSkipSec);
   }
 
-  // Collect valid moving indices after warmup
   const idx = [];
   for (let i = startIdx; i < n; i++) {
     const h = Number(hr[i]);
     const v = Number(speed[i]);
     if (!Number.isFinite(h) || h < 40) continue;
-    const MIN_RUN_SPEED = 1.8; // m/s ~ 9:15 min/km (anpassen falls nötig)
+    const MIN_RUN_SPEED = 1.8; // m/s ~ 9:15 min/km
     if (!Number.isFinite(v) || v < MIN_RUN_SPEED) continue;
-
     idx.push(i);
   }
 
-  // need enough points
   if (idx.length < 300) return null;
 
   const half = Math.floor(idx.length / 2);
@@ -511,12 +494,6 @@ function extractEF(a) {
   const sp = Number(a?.average_speed);
   const hr = Number(a?.average_heartrate);
   if (Number.isFinite(sp) && sp > 0 && Number.isFinite(hr) && hr > 0) return sp / hr;
-  return null;
-}
-
-function extractTTT(a) {
-  const c = Number(a?.compliance);
-  if (Number.isFinite(c) && c >= 0) return c;
   return null;
 }
 
