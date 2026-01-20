@@ -188,6 +188,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
           const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
           drift = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
+          if (drift != null && drift < 0) {
+  drift = null;
+  drift_source = "streams_negative_dropped";
+}
           if (drift == null) drift_source = "streams_insufficient";
         } catch (e) {
           drift = null;
@@ -361,6 +365,9 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
       drift = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
+      if (drift != null && drift < 0) drift = null;
+
+if (drift == null) continue;
     } catch {
       drift = null;
     }
