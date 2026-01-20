@@ -1723,7 +1723,8 @@ function normalizeStreams(raw) {
 }
 
 async function putWellnessDay(env, day, patch) {
-  const url = `https://intervals.icu/api/v1/athlete/0/wellness/${day}`;
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
   const r = await fetch(url, {
     method: "PUT",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
@@ -1735,14 +1736,16 @@ async function putWellnessDay(env, day, patch) {
 // Events (for NOTE)
 async function fetchIntervalsEvents(env, oldest, newest) {
   // local dates (yyyy-MM-dd)
-  const url = `https://intervals.icu/api/v1/athlete/0/events?oldest=${oldest}&newest=${newest}`;
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
   const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
 async function createIntervalsEvent(env, eventObj) {
-  const url = `https://intervals.icu/api/v1/athlete/0/events`;
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/events`;
   const r = await fetch(url, {
     method: "POST",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
@@ -1753,7 +1756,8 @@ async function createIntervalsEvent(env, eventObj) {
 }
 
 async function updateIntervalsEvent(env, eventId, eventObj) {
-  const url = `https://intervals.icu/api/v1/athlete/0/events/${encodeURIComponent(String(eventId))}`;
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/events/${encodeURIComponent(String(eventId))}`;
   const r = await fetch(url, {
     method: "PUT",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
