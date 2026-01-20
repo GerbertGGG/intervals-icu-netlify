@@ -1,23 +1,24 @@
 // src/index.js
-// Cloudflare Worker – Run only (TTT fully removed)
+// Cloudflare Worker – Run only
 //
 // Required Secret:
 // INTERVALS_API_KEY
 //
 // Wellness custom numeric fields (exact codes):
-// VDOT, Drift, EF, Score
+// VDOT, Drift, EF, TTT, Score
 //
 // Run-only logic:
 // - GA (no key:*, >=30min):
 //     - VDOT_like (from EF summary)
 //     - Drift = HR-Drift (%), computed from streams with warmup skip (default 10min)
-//     - Do NOT write EF
+//     - Do NOT write TTT
 // - Key (tag key:*):
-//     - EF (summary)
-//     - (TTT removed: no plan/compliance)
-// - Score = execution quality (GA uses HR-Drift; Key uses fixed quality baseline), plus capped load
+//     - EF (summary) + TTT (compliance)
+//     - Do NOT write VDOT/Drift
+// - Score = execution quality (GA uses HR-Drift; Key uses TTT), plus capped load
 // - Aerobic trend (comment): GA-only (requires EF + HR-Drift), guarded by sample sizes
 // - Minimum stimulus (comment only): 100 Run-load over last 7 days
+// - Monday Detective (comment add-on): GA-only diagnostics last 14 days (7d vs prev 7d)
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
@@ -98,6 +99,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    // keep daily: comments after each unit + monday detective add-on
     ctx.waitUntil(
       syncRange(
         env,
@@ -117,10 +119,19 @@ const MIN_STIMULUS_7D_RUN_LOAD = 100;
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
 
+// Your max HR
+const HFMAX = 173;
+
+// Monday detective
+const DETECTIVE_LOOKBACK_DAYS = 14;
+const DETECTIVE_MIN_RECENT = 2; // min GA runs in last 7d
+const DETECTIVE_MIN_PREV = 2; // min GA runs in prev 7d
+
 // Wellness field codes
 const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_EF = "EF";
+const FIELD_TTT = "TTT";
 const FIELD_SCORE = "Score";
 
 // ================= MAIN =================
@@ -164,6 +175,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       const ga = isGA(a);
 
       const ef = extractEF(a);
+      const ttt = extractTTT(a);
       const load = extractLoad(a);
 
       // HR-Drift only for GA non-key
@@ -186,7 +198,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         }
       }
 
-      const score = computeScore({ ga, isKey, drift, load });
+      const score = computeScore({ ga, isKey, drift, ttt, load });
 
       // GA fields
       if (ga && !isKey) {
@@ -194,9 +206,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         if (drift != null) patch[FIELD_DRIFT] = round(drift, 1);
       }
 
-      // Key fields (TTT removed)
+      // Key fields
       if (isKey) {
         if (ef != null) patch[FIELD_EF] = round(ef, 5);
+        if (ttt != null) patch[FIELD_TTT] = round(ttt, 1);
       }
 
       // Always score
@@ -211,21 +224,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         ef,
         drift,
         drift_source,
+        ttt,
         load,
         score,
       });
 
-      if (debug) {
-        addDebug(debugOut, day, a, "ok", {
-          ga,
-          isKey,
-          ef,
-          drift,
-          drift_source,
-          load,
-          score,
-        });
-      }
+      if (debug) addDebug(debugOut, day, a, "ok", { ga, isKey, ef, drift, drift_source, ttt, load, score });
     }
 
     // Trend + Minimum + comment
@@ -242,8 +246,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     let min;
     try {
       min = await computeMinStimulus(env, day);
-    } catch {
+    } catch (e) {
       min = { runLoad7: 0, minOk: false };
+    }
+
+    // Monday Detective (only when this day is Monday)
+    let detectiveText = null;
+    try {
+      if (isMondayIso(day)) {
+        detectiveText = await computeDetectiveReport(env, day, warmupSkipSec);
+      }
+    } catch (e) {
+      detectiveText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
     }
 
     patch.comments = renderWellnessComment({
@@ -251,6 +265,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       trend,
       runLoad7: min.runLoad7,
       minOk: min.minOk,
+      detectiveText,
     });
 
     patches[day] = patch;
@@ -276,7 +291,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 }
 
 // ================= COMMENT =================
-function renderWellnessComment({ perRunInfo, trend, runLoad7, minOk }) {
+function renderWellnessComment({ perRunInfo, trend, runLoad7, minOk, detectiveText }) {
   const scores = perRunInfo.map((x) => x.score).filter((x) => Number.isFinite(x));
   const scoreAvg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
 
@@ -306,6 +321,12 @@ function renderWellnessComment({ perRunInfo, trend, runLoad7, minOk }) {
     lines.push("➡️ Kurzfristig ok – langfristig kein Aufbau.");
   }
 
+  if (detectiveText) {
+    lines.push("");
+    lines.push("— — —");
+    lines.push(detectiveText);
+  }
+
   return lines.join("\n");
 }
 
@@ -324,6 +345,7 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const start = new Date(end.getTime() - 2 * TREND_WINDOW_DAYS * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+
   const gaActs = [];
 
   for (const a of acts) {
@@ -363,7 +385,10 @@ async function computeAerobicTrend(env, dayIso, warmupSkipSec) {
   const d0 = median(prev.map((x) => x.drift));
 
   if (ef0 == null || ef1 == null || d0 == null || d1 == null) {
-    return { ok: false, text: "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – fehlende Werte" };
+    return {
+      ok: false,
+      text: "ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – fehlende Werte",
+    };
   }
 
   const dv = ((ef1 - ef0) / ef0) * 100;
@@ -402,15 +427,141 @@ async function computeMinStimulus(env, dayIso) {
   return { runLoad7, minOk: runLoad7 >= MIN_STIMULUS_7D_RUN_LOAD };
 }
 
+// ================= MONDAY DETECTIVE =================
+async function computeDetectiveReport(env, mondayIso, warmupSkipSec) {
+  const end = new Date(mondayIso + "T00:00:00Z");
+  const start = new Date(end.getTime() - DETECTIVE_LOOKBACK_DAYS * 86400000);
+
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+
+  const ga = [];
+  for (const a of acts) {
+    if (!isRun(a)) continue;
+    if (hasKeyTag(a)) continue;
+    if (!isGA(a)) continue;
+
+    const ef = extractEF(a);
+    if (ef == null) continue;
+
+    let drift = null;
+    try {
+      const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+      const hrDriftObj = computeHRDriftFromStreams(streams, warmupSkipSec);
+      drift = Number.isFinite(hrDriftObj?.hr_drift_pct) ? hrDriftObj.hr_drift_pct : null;
+    } catch {}
+
+    if (drift == null) continue;
+
+    const hr = Number(a?.average_heartrate);
+    const sp = Number(a?.average_speed);
+
+    const temp = Number(a?.average_temp ?? a?.avg_temp ?? a?.temperature);
+    const elev = Number(a?.elevation_gain ?? a?.total_elevation_gain);
+
+    const date = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!date) continue;
+
+    ga.push({
+      date,
+      ef,
+      drift,
+      hr: Number.isFinite(hr) ? hr : null,
+      sp: Number.isFinite(sp) ? sp : null,
+      hrPct: Number.isFinite(hr) ? (hr / HFMAX) * 100 : null,
+      temp: Number.isFinite(temp) ? temp : null,
+      elev: Number.isFinite(elev) ? elev : null,
+      load: extractLoad(a),
+    });
+  }
+
+  const mid = new Date(end.getTime() - 7 * 86400000);
+  const recent = ga.filter((x) => new Date(x.date + "T00:00:00Z") >= mid);
+  const prev = ga.filter((x) => new Date(x.date + "T00:00:00Z") < mid);
+
+  if (recent.length < DETECTIVE_MIN_RECENT || prev.length < DETECTIVE_MIN_PREV) {
+    return `🕵️‍♂️ Montags-Detektiv\nZu wenig vergleichbare GA-Daten (recent=${recent.length}, prev=${prev.length}).`;
+  }
+
+  const ef1 = avg(recent.map((x) => x.ef));
+  const ef0 = avg(prev.map((x) => x.ef));
+  const d1 = median(recent.map((x) => x.drift));
+  const d0 = median(prev.map((x) => x.drift));
+  const hrp1 = avg(recent.map((x) => x.hrPct));
+  const hrp0 = avg(prev.map((x) => x.hrPct));
+  const t1 = avg(recent.map((x) => x.temp));
+  const t0 = avg(prev.map((x) => x.temp));
+  const l1 = recent.reduce((s, x) => s + (x.load || 0), 0);
+  const l0 = prev.reduce((s, x) => s + (x.load || 0), 0);
+
+  const dv = ef0 && ef1 ? ((ef1 - ef0) / ef0) * 100 : null;
+  const dd = d0 != null && d1 != null ? d1 - d0 : null;
+  const dhr = hrp0 != null && hrp1 != null ? hrp1 - hrp0 : null;
+  const dt = t0 != null && t1 != null ? t1 - t0 : null;
+
+  const efDown = dv != null && dv < -1.0;
+  const driftUp = dd != null && dd > 1.0;
+
+  const intensityCreep = dhr != null && dhr > 1.0;
+  const fatigueLoad = l1 > l0 * 1.15;
+  const heat = dt != null && dt >= 3;
+
+  let verdict = "Trend stabil/unklar (kein klares Negativmuster).";
+  if (efDown && driftUp) {
+    if (heat) verdict = "Signal klar: EF ↓ & Drift ↑ – sehr wahrscheinlich Bedingungen/Hitze/Dehydration.";
+    else if (fatigueLoad) verdict = "Signal klar: EF ↓ & Drift ↑ – sehr wahrscheinlich Ermüdung / Dichte (Load ↑).";
+    else if (intensityCreep) verdict = "Signal klar: EF ↓ & Drift ↑ – sehr wahrscheinlich GA zu hart (HR%max ↑).";
+    else verdict = "Signal klar: EF ↓ & Drift ↑ – Ursache gemischt (Ermüdung/Bedingungen/Intensität prüfen).";
+  } else if (efDown && !driftUp) {
+    verdict = "EF ↓ ohne Drift-Anstieg: eher Tempo-/Route-/Untergrund-Kontext als Aerobik-Problem.";
+  } else if (!efDown && driftUp) {
+    verdict = "Drift ↑ bei stabiler EF: Ausführung aktuell schlechter (Müdigkeit/Hitze/Fueling) bei stabiler Ökonomie.";
+  }
+
+  const lines = [];
+  lines.push("🕵️‍♂️ Montags-Detektiv (GA-only, 14 Tage)");
+  lines.push(verdict);
+  lines.push("");
+  lines.push("Belege (letzte 7T vs davor):");
+  lines.push(`- EF/VDOT-like: ${dv != null ? dv.toFixed(1) + "%" : "n/a"}`);
+  lines.push(`- HR-Drift: ${dd != null ? (dd > 0 ? "+" : "") + dd.toFixed(1) + "%-Pkt" : "n/a"}`);
+  lines.push(`- HR%max: ${dhr != null ? (dhr > 0 ? "+" : "") + dhr.toFixed(1) + "%-Pkt" : "n/a"}`);
+  if (dt != null) lines.push(`- Temp: ${(dt > 0 ? "+" : "") + dt.toFixed(1)}°C`);
+  lines.push(`- GA-Load: ${Math.round(l1)} vs ${Math.round(l0)}`);
+
+  lines.push("");
+  lines.push("Nächste Schritte:");
+  if (verdict.includes("GA zu hart")) {
+    lines.push("- 7–10 Tage GA konsequent lockerer (HR% runter); Pace egal.");
+    lines.push("- 1 Benchmark-Run flach/steady (45–60min) zur Bestätigung.");
+  } else if (verdict.includes("Ermüdung")) {
+    lines.push("- Dichte senken: 1 echter Ruhetag mehr ODER 1 Einheit sehr kurz+easy.");
+    lines.push("- Key nicht „mit hartem GA“ am Folgetag verschärfen.");
+  } else if (verdict.includes("Hitze")) {
+    lines.push("- Bei Wärme Pace bewusst senken + trinken/Salz; Vergleiche nur ähnliche Bedingungen.");
+    lines.push("- Wenn möglich, kühler laufen (früh/spät).");
+  } else {
+    lines.push("- Like-for-like vergleichen (gleiche Route/Dauer/steady) → Artefakt vs echter Trend trennen.");
+    lines.push("- Prüfe, ob GA in den letzten 7T unbewusst schneller wurde (HR%max ↑?).");
+  }
+
+  return lines.join("\n");
+}
+
 // ================= SCORE =================
-function computeScore({ ga, isKey, drift, load }) {
+function computeScore({ ga, isKey, drift, ttt, load }) {
   const C = clamp(Number(load) || 0, 0, 70);
 
   let Q = 65;
 
   if (isKey) {
-    // No plan/compliance -> no TTT. Use a fixed baseline quality for Key.
-    Q = 75;
+    if (Number.isFinite(ttt)) {
+      if (ttt >= 95) Q = 98;
+      else if (ttt >= 90) Q = 88;
+      else if (ttt >= 80) Q = 68;
+      else Q = 45;
+    } else {
+      Q = 60;
+    }
   } else if (ga) {
     const d = Number.isFinite(drift) ? Math.max(0, drift) : null;
 
@@ -460,6 +611,7 @@ function computeHRDriftFromStreams(streams, warmupSkipSec = 600) {
     if (!Number.isFinite(h) || h < 40) continue;
     const MIN_RUN_SPEED = 1.8; // m/s ~ 9:15 min/km
     if (!Number.isFinite(v) || v < MIN_RUN_SPEED) continue;
+
     idx.push(i);
   }
 
@@ -494,6 +646,12 @@ function extractEF(a) {
   const sp = Number(a?.average_speed);
   const hr = Number(a?.average_heartrate);
   if (Number.isFinite(sp) && sp > 0 && Number.isFinite(hr) && hr > 0) return sp / hr;
+  return null;
+}
+
+function extractTTT(a) {
+  const c = Number(a?.compliance);
+  if (Number.isFinite(c) && c >= 0) return c;
   return null;
 }
 
@@ -594,6 +752,11 @@ function isoDate(d) {
 
 function isIsoDate(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+}
+
+function isMondayIso(dayIso) {
+  const d = new Date(dayIso + "T00:00:00Z");
+  return d.getUTCDay() === 1;
 }
 
 function diffDays(a, b) {
