@@ -473,7 +473,9 @@ function computeHRDriftFromStreams(streams, warmupSkipSec = 600) {
     const h = Number(hr[i]);
     const v = Number(speed[i]);
     if (!Number.isFinite(h) || h < 40) continue;
-    if (!Number.isFinite(v) || v <= 0) continue;
+    const MIN_RUN_SPEED = 1.8; // m/s ~ 9:15 min/km (anpassen falls nötig)
+    if (!Number.isFinite(v) || v < MIN_RUN_SPEED) continue;
+
     idx.push(i);
   }
 
