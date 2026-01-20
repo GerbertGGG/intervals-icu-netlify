@@ -120,7 +120,7 @@ export default {
 // ================= CONFIG =================
 const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
-const MOTOR_STALE_DAYS = 10;
+const MOTOR_STALE_DAYS = 5;
 const MIN_STIMULUS_7D_RUN_LOAD = 150;
 
 const TREND_WINDOW_DAYS = 28;
