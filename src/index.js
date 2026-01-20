@@ -120,7 +120,7 @@ export default {
 // ================= CONFIG =================
 const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
-
+const MOTOR_STALE_DAYS = 10;
 const MIN_STIMULUS_7D_RUN_LOAD = 150;
 
 const TREND_WINDOW_DAYS = 28;
@@ -501,6 +501,23 @@ async function computeMotorIndex(env, dayIso, warmupSkipSec) {
     if (!date) continue;
 
     samples.push({ date, ef, drift });
+  }
+  // --- Option 1: Wenn keine aktuellen comparable GA-Daten, dann Motor = n/a ---
+  const lastDate = samples.length ? samples.map((s) => s.date).sort().at(-1) : null;
+  if (!lastDate) {
+    return {
+      ok: false,
+      value: null,
+      text: "🏎️ Motor-Index: n/a (keine vergleichbaren GA-Läufe im Fenster)",
+    };
+  }
+  const ageDays = diffDays(lastDate, dayIso);
+  if (ageDays > MOTOR_STALE_DAYS) {
+    return {
+      ok: false,
+      value: null,
+      text: `🏎️ Motor-Index: n/a (letzter vergleichbarer GA-Lauf vor ${ageDays} Tagen: ${lastDate})`,
+    };
   }
 
   const mid = new Date(end.getTime() - MOTOR_WINDOW_DAYS * 86400000);
