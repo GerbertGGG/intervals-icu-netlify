@@ -1,6 +1,5 @@
 // src/index.js
 // Cloudflare Worker – Run only
-// Writes metrics + explanatory comments into Intervals Wellness
 //
 // Required Secret:
 // INTERVALS_API_KEY
@@ -8,21 +7,18 @@
 // Wellness custom numeric fields (exact codes):
 // VDOT, Drift, EF, TTT, Score
 //
-// Logic summary (Run-only):
-// - Only Run activities (VirtualRide etc. ignored)
+// Run-only logic:
 // - GA (no key:*, >=30min):
-//     - Write VDOT_like (derived from EF) and Drift (decoupling if available)
+//     - VDOT_like (from EF summary)
+//     - Drift (decoupling): from summary if available, otherwise stream fallback
 //     - Do NOT write TTT
 // - Key (tag key:*):
-//     - Write EF and TTT (compliance)
+//     - EF (summary)
+//     - TTT (compliance)
 //     - Do NOT write VDOT/Drift
-// - Score = execution quality (not progress) – uses GA drift or Key TTT, plus capped load
-// - Progress context (comment): GA-only trends (28d vs prev 28d) with sample guard
-// - Minimum stimulus (comment only): 100 Run-TSS (icu_training_load) over last 7 days
-//
-// URL:
-//   /sync?date=YYYY-MM-DD&write=true&debug=true
-//   /sync?days=14&write=true&debug=true
+// - Score = execution quality (GA uses drift if available; Key uses TTT)
+// - Aerobic trend (comment): GA-only (requires EF + drift), guarded by min sample sizes
+// - Minimum stimulus (comment only): 100 Run-load (icu_training_load) over last 7 days
 
 export default {
   async fetch(req, env, ctx) {
@@ -51,7 +47,6 @@ export default {
         oldest = isoDate(new Date(Date.now() - days * 86400000));
       }
 
-      // basic validation
       if (!isIsoDate(oldest) || !isIsoDate(newest)) {
         return json({ ok: false, error: "Invalid date format (YYYY-MM-DD)" }, 400);
       }
@@ -62,13 +57,12 @@ export default {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
 
-      // Run synchronously in debug mode so errors surface immediately
+      // In debug mode run synchronously to surface errors & show patches
       if (debug) {
         const result = await syncRange(env, oldest, newest, write, true);
         return json(result);
       }
 
-      // Otherwise fire-and-forget
       ctx?.waitUntil?.(syncRange(env, oldest, newest, write, false));
       return json({ ok: true, oldest, newest, write });
     }
@@ -77,8 +71,15 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Daily cron: last 14 days, write=true
-    ctx.waitUntil(syncRange(env, isoDate(new Date(Date.now() - 14 * 86400000)), isoDate(new Date()), true, false));
+    ctx.waitUntil(
+      syncRange(
+        env,
+        isoDate(new Date(Date.now() - 14 * 86400000)),
+        isoDate(new Date()),
+        true,
+        false
+      )
+    );
   },
 };
 
@@ -129,7 +130,6 @@ async function syncRange(env, oldest, newest, write, debug) {
   let daysWritten = 0;
 
   for (const [day, runs] of byDay.entries()) {
-    // Compute one patch per day (if multiple runs, we keep the "best/most relevant" fields)
     const patch = {};
     const perRunInfo = [];
 
@@ -138,31 +138,46 @@ async function syncRange(env, oldest, newest, write, debug) {
       const ga = isGA(a);
 
       // Summary values
-      const ef = extractEF(a); // speed/hr
-      const drift = extractDrift(a); // decoupling (may be null)
-      const ttt = extractTTT(a); // compliance (%)
-      const load = extractLoad(a); // icu_training_load
+      const ef = extractEF(a);
+      const ttt = extractTTT(a); // we will only write on Key
+      const load = extractLoad(a);
 
-      // Compute score using the most relevant signal:
-      // - GA: drift (if present) else neutral Q
-      // - Key: TTT (if present) else neutral Q
+      // Drift: summary first, then stream fallback (only meaningful on GA, and only if not key)
+      let drift = null;
+      let drift_source = "none";
+      if (ga && !isKey) {
+        drift = extractDriftFromSummary(a);
+        drift_source = drift != null ? "summary" : "streams";
+
+        if (drift == null) {
+          try {
+            const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+            const driftObj = computeDriftFromStreams(streams);
+            drift = Number.isFinite(driftObj?.drift_pct) ? driftObj.drift_pct : null;
+            if (drift == null) drift_source = "streams_failed";
+          } catch {
+            drift = null;
+            drift_source = "streams_failed";
+          }
+        }
+      }
+
+      // Score (execution only)
       const score = computeScore({ ga, isKey, drift, ttt, load });
 
       // GA fields
       if (ga && !isKey) {
         if (ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(ef), 1);
         if (drift != null) patch[FIELD_DRIFT] = round(drift, 1);
-        // IMPORTANT: no TTT on GA
       }
 
       // Key fields
       if (isKey) {
         if (ef != null) patch[FIELD_EF] = round(ef, 5);
         if (ttt != null) patch[FIELD_TTT] = round(ttt, 1);
-        // IMPORTANT: no VDOT/Drift on Key
       }
 
-      // Always write Score (it is day-level)
+      // Always write Score
       patch[FIELD_SCORE] = score;
 
       perRunInfo.push({
@@ -173,23 +188,19 @@ async function syncRange(env, oldest, newest, write, debug) {
         isKey,
         ef,
         drift,
+        drift_source,
         ttt,
         load,
         score,
       });
 
-      if (debug) addDebug(debugOut, day, a, "ok", { ga, isKey, ef, drift, ttt, load, score });
+      if (debug) addDebug(debugOut, day, a, "ok", { ga, isKey, ef, drift, drift_source, ttt, load, score });
     }
 
-    // Add comment blocks:
-    // 1) Execution (Score)
-    // 2) Aerobic context (GA-only trend, guarded)
-    // 3) Minimum stimulus (Run-only 7d load)
     const trend = await computeAerobicTrend(env, day);
     const { runLoad7, minOk } = await computeMinStimulus(env, day);
 
     patch.comments = renderWellnessComment({
-      day,
       perRunInfo,
       trend,
       runLoad7,
@@ -220,30 +231,26 @@ async function syncRange(env, oldest, newest, write, debug) {
 
 // ================= COMMENT =================
 function renderWellnessComment({ perRunInfo, trend, runLoad7, minOk }) {
-  // Score section: average score for the day
   const scores = perRunInfo.map((x) => x.score).filter((x) => Number.isFinite(x));
   const scoreAvg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
 
   const lines = [];
 
-  // 1) Execution
   lines.push(`${scoreEmoji(scoreAvg)} Trainingausführung`);
   if (scoreAvg != null) lines.push(`Score Ø: ${scoreAvg}/100`);
 
-  // Optional: add 1-line context what was trained today
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
+
   lines.push("");
   if (hadKey && !hadGA) lines.push("Heute: Schlüsseltraining (Key)");
   else if (hadGA && !hadKey) lines.push("Heute: Grundlage (GA)");
   else if (hadKey && hadGA) lines.push("Heute: Gemischt (GA + Key)");
   else lines.push("Heute: Lauf");
 
-  // 2) Aerobic trend context (GA-only, guarded)
   lines.push("");
   lines.push(trend.text);
 
-  // 3) Minimum stimulus (comment only)
   lines.push("");
   if (minOk) {
     lines.push("ℹ️ Mindest-Laufreiz erreicht");
@@ -267,24 +274,41 @@ function scoreEmoji(score) {
 
 // ================= TREND (GA-only) =================
 async function computeAerobicTrend(env, dayIso) {
-  // Compare last 28d vs previous 28d, GA-only (no key:*), needs EF + drift
   const end = new Date(dayIso + "T00:00:00Z");
   const mid = new Date(end.getTime() - TREND_WINDOW_DAYS * 86400000);
   const start = new Date(end.getTime() - 2 * TREND_WINDOW_DAYS * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
 
-  const ga = acts.filter((a) => {
-    if (!isRun(a)) return false;
-    if (hasKeyTag(a)) return false;
-    if (!isGA(a)) return false;
-    const ef = extractEF(a);
-    const d = extractDrift(a);
-    return ef != null && d != null;
-  });
+  // GA-only, needs EF + Drift (Drift may come from summary OR streams)
+  const gaActs = [];
 
-  const recent = ga.filter((a) => new Date(a.start_date_local || a.start_date) >= mid);
-  const prev = ga.filter((a) => new Date(a.start_date_local || a.start_date) < mid);
+  for (const a of acts) {
+    if (!isRun(a)) continue;
+    if (hasKeyTag(a)) continue;
+    if (!isGA(a)) continue;
+
+    const ef = extractEF(a);
+    if (ef == null) continue;
+
+    let drift = extractDriftFromSummary(a);
+    if (drift == null) {
+      // best effort stream fallback for trend computation
+      try {
+        const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+        const driftObj = computeDriftFromStreams(streams);
+        drift = Number.isFinite(driftObj?.drift_pct) ? driftObj.drift_pct : null;
+      } catch {
+        drift = null;
+      }
+    }
+
+    if (drift == null) continue;
+    gaActs.push({ a, ef, drift });
+  }
+
+  const recent = gaActs.filter((x) => new Date(x.a.start_date_local || x.a.start_date) >= mid);
+  const prev = gaActs.filter((x) => new Date(x.a.start_date_local || x.a.start_date) < mid);
 
   if (recent.length < TREND_MIN_N || prev.length < TREND_MIN_N) {
     return {
@@ -293,10 +317,10 @@ async function computeAerobicTrend(env, dayIso) {
     };
   }
 
-  const ef1 = avg(recent.map((a) => extractEF(a)));
-  const ef0 = avg(prev.map((a) => extractEF(a)));
-  const d1 = median(recent.map((a) => extractDrift(a)));
-  const d0 = median(prev.map((a) => extractDrift(a)));
+  const ef1 = avg(recent.map((x) => x.ef));
+  const ef0 = avg(prev.map((x) => x.ef));
+  const d1 = median(recent.map((x) => x.drift));
+  const d0 = median(prev.map((x) => x.drift));
 
   if (ef0 == null || ef1 == null || d0 == null || d1 == null) {
     return {
@@ -308,7 +332,6 @@ async function computeAerobicTrend(env, dayIso) {
   const dv = ((ef1 - ef0) / ef0) * 100; // EF proxy for VDOT_like trend
   const dd = d1 - d0; // drift delta in %-points
 
-  // Ampel
   let emoji = "🟡";
   let label = "Stabil / gemischt";
   if (dv > 1.5 && dd <= 0) {
@@ -325,7 +348,9 @@ async function computeAerobicTrend(env, dayIso) {
     dd,
     text:
       `${emoji} ${label}\n` +
-      `Aerober Kontext (nur GA): VDOT ~ ${dv.toFixed(1)}% | Drift ${dd > 0 ? "↑" : "↓"} ${Math.abs(dd).toFixed(1)}%-Pkt`,
+      `Aerober Kontext (nur GA): VDOT ~ ${dv.toFixed(1)}% | Drift ${dd > 0 ? "↑" : "↓"} ${Math.abs(dd).toFixed(
+        1
+      )}%-Pkt`,
   };
 }
 
@@ -335,18 +360,16 @@ async function computeMinStimulus(env, dayIso) {
   const start = new Date(end.getTime() - 7 * 86400000);
 
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
-  const runLoad7 = acts
-    .filter((a) => isRun(a))
-    .reduce((s, a) => s + extractLoad(a), 0);
+  const runLoad7 = acts.filter((a) => isRun(a)).reduce((s, a) => s + extractLoad(a), 0);
 
   return { runLoad7, minOk: runLoad7 >= MIN_STIMULUS_7D_RUN_LOAD };
 }
 
-// ================= SCORING =================
+// ================= SCORE =================
 function computeScore({ ga, isKey, drift, ttt, load }) {
-  const C = clamp(Number(load) || 0, 0, 70); // capped load contribution
+  const C = clamp(Number(load) || 0, 0, 70);
 
-  let Q = 65; // neutral quality baseline
+  let Q = 65;
 
   if (isKey) {
     if (Number.isFinite(ttt)) {
@@ -376,6 +399,44 @@ function vdotLikeFromEf(ef) {
   return ef * 1200;
 }
 
+// ================= STREAM DRIFT =================
+// Drift = EF(second half) vs EF(first half) as % change, EF = speed/hr
+function computeDriftFromStreams(streams) {
+  if (!streams) return null;
+
+  const hr = streams.heartrate;
+  const speed = streams.velocity_smooth;
+
+  if (!Array.isArray(hr) || !Array.isArray(speed)) return null;
+
+  const n = Math.min(hr.length, speed.length);
+  if (n < 600) return null; // need enough samples (~10min+ at 1s)
+
+  const half = Math.floor(n / 2);
+
+  const meanEF = (a, b) => {
+    let s = 0;
+    let c = 0;
+    for (let i = a; i < b; i++) {
+      const h = hr[i];
+      const v = speed[i];
+      if (!Number.isFinite(h) || h < 40) continue;
+      if (!Number.isFinite(v) || v <= 0) continue;
+      s += v / h;
+      c++;
+    }
+    return c ? s / c : null;
+  };
+
+  const ef1 = meanEF(0, half);
+  const ef2 = meanEF(half, n);
+
+  if (ef1 == null || ef2 == null || ef1 <= 0) return null;
+
+  const drift_pct = ((ef2 - ef1) / ef1) * 100;
+  return { ef1, ef2, drift_pct };
+}
+
 // ================= EXTRACTORS =================
 function extractEF(a) {
   const sp = Number(a?.average_speed);
@@ -384,20 +445,22 @@ function extractEF(a) {
   return null;
 }
 
-function extractDrift(a) {
-  // Intervals activity JSON may store decoupling as `decoupling` or `pahr_decoupling` etc.
+function extractDriftFromSummary(a) {
   const v1 = Number(a?.pahr_decoupling);
   if (Number.isFinite(v1) && v1 > 0) return v1;
+
   const v2 = Number(a?.pwhr_decoupling);
   if (Number.isFinite(v2) && v2 > 0) return v2;
+
   const v3 = Number(a?.decoupling);
   if (Number.isFinite(v3) && v3 > 0) return v3;
+
   return null;
 }
 
 function extractTTT(a) {
   const c = Number(a?.compliance);
-  if (Number.isFinite(c) && c >= 0) return c; // percent 0..100
+  if (Number.isFinite(c) && c >= 0) return c;
   return null;
 }
 
@@ -447,6 +510,38 @@ async function fetchIntervalsActivities(env, oldest, newest) {
   const r = await fetch(url, { headers: { Authorization: auth(env) } });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
   return r.json();
+}
+
+async function fetchIntervalsStreams(env, activityId, types) {
+  const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
+  const r = await fetch(url, { headers: { Authorization: auth(env) } });
+  if (!r.ok) throw new Error(`streams ${r.status}: ${await r.text()}`);
+  const raw = await r.json();
+  return normalizeStreams(raw);
+}
+
+function normalizeStreams(raw) {
+  if (!raw) return null;
+
+  // direct object
+  if (raw.heartrate || raw.velocity_smooth || raw.time) return raw;
+
+  // wrapper keys
+  if (raw.streams && (raw.streams.heartrate || raw.streams.velocity_smooth)) return raw.streams;
+  if (raw.data && (raw.data.heartrate || raw.data.velocity_smooth)) return raw.data;
+
+  // array format -> { type: data[] }
+  if (Array.isArray(raw)) {
+    const out = {};
+    for (const item of raw) {
+      const type = item?.type ?? item?.name ?? item?.key;
+      const data = item?.data ?? item?.values ?? item?.stream;
+      if (type && Array.isArray(data)) out[String(type)] = data;
+    }
+    return out;
+  }
+
+  return raw;
 }
 
 async function putWellnessDay(env, day, patch) {
