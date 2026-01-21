@@ -832,7 +832,7 @@ function renderWellnessComment({
 
   // NEW: Minimum stimulus by mode
   lines.push("");
-  if (minOk) {
+    if (minOk) {
     lines.push(`ℹ️ ${policy.minLabel} erreicht`);
     lines.push(`7-Tage Wert ≥ ${policy.minThreshold} (${Math.round(minValue)})`);
   } else {
@@ -841,11 +841,12 @@ function renderWellnessComment({
     lines.push("➡️ Kurzfristig ok – langfristig kein Aufbau.");
   }
 
-  
-
+  return lines.join("\n");
+}
 
 // ================= TREND (GA-only) =================
 async function computeAerobicTrend(ctx, dayIso) {
+
   const endIso = dayIso;
 
   // We compare last 28d vs previous 28d (within last 56d)
@@ -1786,7 +1787,8 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
 }
 
 
-export async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
+async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
+
   const athleteId = mustEnv(env, "ATHLETE_ID");
 
   // window relative to the day we are computing
