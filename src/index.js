@@ -108,7 +108,7 @@ const BASE_URL = "https://intervals.icu/api/v1";
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
-const AEROBIC_K_DEFAULT = 2.8;       // AerobicFloor = k * Intensity7
+
 
 // Specific floors (Startwerte – bleiben deine Werte)
 const MIN_STIMULUS_7D_RUN_EVENT = 150;
@@ -921,7 +921,7 @@ if (policy?.useAerobicFloor) {
   lines.push(`AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(loads7?.intensity7 ?? 0)})`);
 }
 
-  );
+  
 
   // NEW: Minimum stimulus by mode
   lines.push("");
