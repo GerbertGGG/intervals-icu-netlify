@@ -1085,7 +1085,7 @@ async function computeMotorIndex(ctx, dayIso) {
   };
 }
 
-/
+
 // ================= GA SAMPLE GATHERER (shared + cached) =================
 async function gatherGASamples(ctx, endIso, windowDays, opts) {
   const mode = `${opts?.comparable ? "comp" : "ga"}|${opts?.needCv ? "cv" : "nocv"}`;
