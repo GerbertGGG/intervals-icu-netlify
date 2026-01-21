@@ -110,9 +110,7 @@ const BASE_URL = "https://intervals.icu/api/v1";
 
 
 
-// Specific floors (Startwerte – bleiben deine Werte)
-const MIN_STIMULUS_7D_RUN_EVENT = 150;
-const MIN_STIMULUS_7D_BIKE_EVENT = 220;
+
 
 // Deload mechanics (für 3+1 Blöcke – optional, aber wir hatten es so besprochen)
 const DELOAD_FACTOR = 0.65;
