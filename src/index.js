@@ -595,10 +595,8 @@ try {
 
     // NEW: loads + min stimulus depends on mode
 let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
-let maint14 = { runCount14: 0, bikeCount14: 0 };
-
 try { loads7 = await computeLoads7d(ctx, day); } catch {}
-try { maint14 = await computeMaintenance14d(ctx, day); } catch {}
+
 
 let minValue = 0;
 if (policy.minKind === "run") minValue = loads7.runLoad7;
@@ -698,11 +696,11 @@ async function computeMaintenance14d(ctx, dayIso) {
   modeInfo,
   policy,
   loads7,
-  maint14,
   minOk,
   fatigue,
   minValue,
 });
+
 
 
     patches[day] = patch;
@@ -767,11 +765,11 @@ function renderWellnessComment({
   modeInfo,
   policy,
   loads7,
-  maint14,
   minOk,
   minValue,
   fatigue
 }) {
+
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
@@ -841,22 +839,7 @@ function renderWellnessComment({
     lines.push("➡️ Kurzfristig ok – langfristig kein Aufbau.");
   }
 
-  // NEW: Maintenance hints in OPEN / opposite sport
-  if (maint14) {
-    const runOk = (maint14.runCount14 ?? 0) >= RUN_MAINTENANCE_14D_MIN;
-    const bikeOk = (maint14.bikeCount14 ?? 0) >= BIKE_MAINTENANCE_14D_MIN;
-
-    lines.push("");
-    lines.push("🧩 Erhalt (14 Tage)");
-    lines.push(`Lauf: ${maint14.runCount14 ?? 0}/${RUN_MAINTENANCE_14D_MIN} ${runOk ? "✅" : "⚠️"}`);
-    lines.push(`Rad:  ${maint14.bikeCount14 ?? 0}/${BIKE_MAINTENANCE_14D_MIN} ${bikeOk ? "✅" : "⚠️"}`);
-
-    if (!runOk) lines.push("Hinweis: 1× easy Lauf (20–40min) hält Laufrobustheit stabil.");
-    if (!bikeOk) lines.push("Hinweis: 1× lockere Ausfahrt hält Bike-Fitness/Ökonomie lebendig.");
-  }
-
-  return lines.join("\n");
-}
+  
 
 
 // ================= TREND (GA-only) =================
