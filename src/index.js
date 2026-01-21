@@ -547,10 +547,16 @@ drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : nu
           }
           if (drift == null && drift_source === "streams") drift_source = "streams_insufficient";
         } catch (e) {
-          drift = null;
-          drift_source = "streams_failed";
-          if (debug) addDebug(ctx.debugOut, day, a, "warn:streams_failed", { message: String(e?.message ?? e) });
-        }
+  drift = null;
+  drift_source = "streams_failed";
+  if (debug) addDebug(ctx.debugOut, day, a, "warn:streams_failed", {
+    message: String(e?.message ?? e),
+    stack: String(e?.stack ?? ""),
+    activityId: a.id,
+    streamTypes: a?.stream_types ?? null,
+  });
+}
+
       }
 
       perRunInfo.push({
@@ -1716,7 +1722,11 @@ async function fetchIntervalsActivities(env, oldest, newest) {
 async function fetchIntervalsStreams(env, activityId, types) {
   const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
   const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
-  if (!r.ok) throw new Error(`streams ${r.status}: ${await r.text()}`);
+  if (!r.ok) {
+  const txt = await r.text().catch(() => "");
+  throw new Error(`streams ${r.status}: ${txt.slice(0, 400)}`);
+}
+
   const raw = await r.json();
   return normalizeStreams(raw);
 }
