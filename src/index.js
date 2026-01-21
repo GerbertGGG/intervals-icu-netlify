@@ -228,6 +228,20 @@ function createCtx(env, warmupSkipSec, debug) {
 function isFiniteNumber(x) {
   return Number.isFinite(Number(x));
 }
+async function getStreams(ctx, activityId, types) {
+  const key = `${activityId}|${(types || []).join(",")}`;
+
+  if (ctx.streamsCache.has(key)) return ctx.streamsCache.get(key);
+
+  const p = ctx.limit(async () => {
+    // nutzt env aus ctx, damit authHeader funktioniert
+    return fetchIntervalsStreams(ctx.env, activityId, types);
+  });
+
+  ctx.streamsCache.set(key, p);
+  return p;
+}
+
 function inferSportFromEvent(ev) {
   const t = String(ev?.type || "").toLowerCase();
   if (t.includes("run")) return "run";
