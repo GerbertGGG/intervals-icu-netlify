@@ -155,7 +155,13 @@ const MOTOR_DRIFT_WINDOW_DAYS = 14;
 const HFMAX = 173;
 // ================= MODE / EVENTS (NEW) =================
 const EVENT_LOOKAHEAD_DAYS = 365; // how far we look for next event
-const BIKE_EQ_FACTOR = 0.65;      // Bike load to "run-equivalent" factor
+
+// AerobicFloor = k * Intensity7  (Bike & Run zählen aerob gleichwertig)
+const AEROBIC_K_DEFAULT = 2.8;
+const DELOAD_FACTOR = 0.65;
+const BLOCK_GROWTH = 1.10;
+const BLOCK_HIT_WEEKS = 3;
+
 
 // Minimum stimulus thresholds per mode (tune later)
 const MIN_STIMULUS_7D_RUN_EVENT = 150;   // your current value (5k/run blocks)
@@ -354,10 +360,11 @@ function applyRecoveryOverride(policy, fatigue) {
     ...policy,
     label: "RECOVERY",
     specificThreshold: 0,
-    useAerobicFloor: false, // keine Floors in Recovery erzwingen
+    useAerobicFloor: false,
     recovery: true,
   };
 }
+
 
 
 
@@ -768,6 +775,7 @@ async function computeMaintenance14d(ctx, dayIso) {
 
 
 
+
     patches[day] = patch;
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
@@ -830,10 +838,13 @@ function renderWellnessComment({
   modeInfo,
   policy,
   loads7,
-  minOk,
-  minValue,
-  fatigue
+  fatigue,
+  specificOk,
+  specificValue,
+  aerobicOk,
+  aerobicFloor
 }) {
+
 
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
@@ -914,14 +925,34 @@ if (policy?.useAerobicFloor) {
 
   // NEW: Minimum stimulus by mode
   lines.push("");
-    if (minOk) {
-    lines.push(`ℹ️ ${policy.minLabel} erreicht`);
-    lines.push(`7-Tage Wert ≥ ${policy.minThreshold} (${Math.round(minValue)})`);
-  } else {
-    lines.push(`ℹ️ ${policy.minLabel} unterschritten`);
-    lines.push(`7-Tage Wert < ${policy.minThreshold} (${Math.round(minValue)})`);
-    lines.push("➡️ Kurzfristig ok – langfristig kein Aufbau.");
-  }
+    lines.push("");
+lines.push("🎯 Floors (7 Tage)");
+
+// SpecificFloor
+if ((policy?.specificThreshold ?? 0) > 0) {
+  const label = policy?.specificLabel ?? "SpecificFloor";
+  lines.push(`${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`);
+}
+
+// AerobicFloor
+if (policy?.useAerobicFloor) {
+  lines.push(
+    `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(loads7?.intensity7 ?? 0)})`
+  );
+}
+
+// Empfehlungen
+lines.push("");
+if (policy?.recovery) {
+  lines.push("➡️ RECOVERY aktiv: keine Floors erzwungen. Fokus: locker / Technik / frei.");
+} else if (!aerobicOk) {
+  lines.push("➡️ AerobicFloor verfehlt: Intensität diese Woche deckeln (max 1× Key), mehr locker/aerob auffüllen (Run oder Bike).");
+} else if (!specificOk && (policy?.specificThreshold ?? 0) > 0) {
+  lines.push("➡️ SpecificFloor verfehlt: mehr sport-spezifisches, locker/steady Volumen (nicht mit Intensität kompensieren).");
+} else {
+  lines.push("➡️ Grün: Floors ok. Qualität möglich (phaseabhängig), Rest locker.");
+}
+
 
   return lines.join("\n");
 }
@@ -1054,23 +1085,7 @@ async function computeMotorIndex(ctx, dayIso) {
   };
 }
 
-// ================= MINIMUM STIMULUS =================
-async function computeMinStimulus(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const endIso = dayIso;
-
-  // sum runs from cached activities
-  const runLoad7 = ctx.activitiesAll
-    .filter((a) => {
-      const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-      return d && d >= startIso && d < endIso && isRun(a);
-    })
-    .reduce((s, a) => s + extractLoad(a), 0);
-
-  return { runLoad7, minOk: runLoad7 >= MIN_STIMULUS_7D_RUN_LOAD };
-}
-
+/
 // ================= GA SAMPLE GATHERER (shared + cached) =================
 async function gatherGASamples(ctx, endIso, windowDays, opts) {
   const mode = `${opts?.comparable ? "comp" : "ga"}|${opts?.needCv ? "cv" : "nocv"}`;
@@ -1777,6 +1792,7 @@ function getModePolicy(modeInfo) {
       specificThreshold: MIN_STIMULUS_7D_RUN_EVENT,
       aerobicK: AEROBIC_K_DEFAULT,
       useAerobicFloor: true,
+      recovery: false,
     };
   }
 
@@ -1788,18 +1804,21 @@ function getModePolicy(modeInfo) {
       specificThreshold: MIN_STIMULUS_7D_BIKE_EVENT,
       aerobicK: AEROBIC_K_DEFAULT,
       useAerobicFloor: true,
+      recovery: false,
     };
   }
 
   return {
     label: "OPEN",
-    specificLabel: "Spezifik-Floor (OPEN)",
+    specificLabel: "SpecificFloor (OPEN)",
     specificKind: "open",
-    specificThreshold: 0,           // OPEN hat keinen harten Spezifik-Floor
+    specificThreshold: 0, // OPEN: kein harter spezifischer Floor
     aerobicK: AEROBIC_K_DEFAULT,
     useAerobicFloor: true,
+    recovery: false,
   };
 }
+
 
 
 // ================= INTERVALS API =================
