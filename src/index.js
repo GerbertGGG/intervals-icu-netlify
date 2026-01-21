@@ -535,7 +535,9 @@ try {
         try {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
           const ds = computeDriftAndStabilityFromStreams(streams, ctx.warmupSkipSec);
-          drift_raw = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
+drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
+
+
           drift = drift_raw;
 
           // Negative drift => do not write numeric, but keep raw and source
@@ -1018,7 +1020,8 @@ async function gatherGASamples(ctx, endIso, windowDays, opts) {
       try {
         const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
         const ds = computeDriftAndStabilityFromStreams(streams, ctx.warmupSkipSec);
-        let drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
+        let drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
+
         const cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
 
         if (drift == null) continue;
@@ -1236,7 +1239,8 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
     try {
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
-      let drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
+      let drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
+
       const cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
 
       if (drift == null || cv == null) {
@@ -1397,7 +1401,8 @@ async function computeBenchMetrics(env, a, warmupSkipSec) {
   try {
     const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
     const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
-    drift = Number.isFinite(ds?.hr_drift_pct) ? ds.hr_drift_pct : null;
+    drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
+
     if (drift != null && drift < 0) drift = null;
   } catch {
     drift = null;
@@ -1526,10 +1531,19 @@ function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
 
   const hr1 = mean(idx.slice(0, half).map((i) => Number(hr[i])));
   const hr2 = mean(idx.slice(half).map((i) => Number(hr[i])));
-  if (hr1 == null || hr2 == null || hr1 <= 0) return null;
+  if (hr1 == null || hr2 == null || hr1 <= 0 || hr2 <= 0) return null;
 
-  const hr_drift_pct = ((hr2 - hr1) / hr1) * 100;
+  const v1 = mean(idx.slice(0, half).map((i) => Number(speed[i])));
+  const v2 = mean(idx.slice(half).map((i) => Number(speed[i])));
+  if (v1 == null || v2 == null || v1 <= 0 || v2 <= 0) return null;
 
+  const ef1 = v1 / hr1;
+  const ef2 = v2 / hr2;
+
+  // Pa:HR Decoupling (positiv = schlechter, weil EF droppt)
+  const pa_hr_decouple_pct = ef1 > 0 ? ((ef1 - ef2) / ef1) * 100 : null;
+
+  // speed stability (CV) wie gehabt
   const vs = idx.map((i) => Number(speed[i]));
   const vMean = mean(vs);
 
@@ -1540,8 +1554,20 @@ function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
     speed_cv = vSd != null ? vSd / vMean : null;
   }
 
-  return { hr1, hr2, hr_drift_pct, used_points: idx.length, warmupSkipSec, speed_cv };
+  return {
+    hr1,
+    hr2,
+    v1,
+    v2,
+    ef1,
+    ef2,
+    pa_hr_decouple_pct,
+    used_points: idx.length,
+    warmupSkipSec,
+    speed_cv,
+  };
 }
+
 
 // ================= EXTRACTORS =================
 function extractEF(a) {
