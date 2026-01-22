@@ -839,8 +839,6 @@ function renderWellnessComment({
   aerobicOk,
   aerobicFloor
 }) {
-
-
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
@@ -849,14 +847,12 @@ function renderWellnessComment({
   lines.push("ℹ️ Tages-Status");
   lines.push("");
 
-  // Today label (run-centric, but ok)
   if (!hadAnyRun) lines.push("Heute: Kein Lauf");
   else if (hadKey && !hadGA) lines.push("Heute: Schlüsseltraining (Key)");
   else if (hadGA && !hadKey) lines.push("Heute: Grundlage (GA)");
   else if (hadKey && hadGA) lines.push("Heute: Gemischt (GA + Key)");
   else lines.push("Heute: Lauf");
 
-  // NEW: Mode header + next event preview
   lines.push("");
   lines.push(`🧭 Mode: ${policy?.label ?? "OPEN"}`);
 
@@ -878,79 +874,72 @@ function renderWellnessComment({
     lines.push("");
     lines.push(benchReports.join("\n\n"));
   }
-  // NEW: Recovery banner
+
   if (fatigue?.override) {
     lines.push("");
     lines.push("🛡️ Fatigue Override: RECOVERY");
     for (const r of fatigue.reasons.slice(0, 5)) lines.push(`- ${r}`);
     lines.push("➡️ Empfehlung: heute keine harte Einheit. Fokus: easy / locker / Technik / frei.");
   } else if (fatigue?.keyCount7 != null) {
-    // show key count always (useful feedback even if ok)
     lines.push("");
     lines.push(`🧨 Keys (7 Tage): ${fatigue.keyCount7}/${MAX_KEYS_7D}`);
   }
 
-  // NEW: Load block (run/bike/aerobic)
+  // Load block
   lines.push("");
   lines.push("📦 Load (7 Tage)");
+  lines.push(`Run: ${Math.round(loads7?.runTotal7 ?? 0)} | Bike: ${Math.round(loads7?.bikeTotal7 ?? 0)}`);
   lines.push(
-  `Run: ${Math.round(loads7?.runTotal7 ?? 0)} | Bike: ${Math.round(loads7?.bikeTotal7 ?? 0)}`
-);
-lines.push(
-  `AerobicEq: ${Math.round(loads7?.aerobicEq7 ?? 0)} (AerobicRun ${Math.round(loads7?.aerobicRun7 ?? 0)} + AerobicBike ${Math.round(loads7?.aerobicBike7 ?? 0)})`
-);
-lines.push(
-  `Intensity: ${Math.round(loads7?.intensity7 ?? 0)}`
-);
-lines.push("");
-lines.push("🎯 Floors (7 Tage)");
-
-// Specific
-if (policy?.specificThreshold > 0) {
-  const label = policy?.specificLabel ?? "SpecificFloor";
-  lines.push(`${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`);
-}
-
-// Aerobic floor (Intensitätsbremse)
-if (policy?.useAerobicFloor) {
-  lines.push(`AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(loads7?.intensity7 ?? 0)})`);
-}
-
-  
-
-  // NEW: Minimum stimulus by mode
-  lines.push("");
-    lines.push("");
-lines.push("🎯 Floors (7 Tage)");
-
-// SpecificFloor
-if ((policy?.specificThreshold ?? 0) > 0) {
-  const label = policy?.specificLabel ?? "SpecificFloor";
-  lines.push(`${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`);
-}
-
-// AerobicFloor
-if (policy?.useAerobicFloor) {
-  lines.push(
-    `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(loads7?.intensity7 ?? 0)})`
+    `AerobicEq: ${Math.round(loads7?.aerobicEq7 ?? 0)} (AerobicRun ${Math.round(loads7?.aerobicRun7 ?? 0)} + AerobicBike ${Math.round(loads7?.aerobicBike7 ?? 0)})`
   );
-}
+  lines.push(`Intensity: ${Math.round(loads7?.intensity7 ?? 0)}`);
 
-// Empfehlungen
-lines.push("");
-if (policy?.recovery) {
-  lines.push("➡️ RECOVERY aktiv: keine Floors erzwungen. Fokus: locker / Technik / frei.");
-} else if (!aerobicOk) {
-  lines.push("➡️ AerobicFloor verfehlt: Intensität diese Woche deckeln (max 1× Key), mehr locker/aerob auffüllen (Run oder Bike).");
-} else if (!specificOk && (policy?.specificThreshold ?? 0) > 0) {
-  lines.push("➡️ SpecificFloor verfehlt: mehr sport-spezifisches, locker/steady Volumen (nicht mit Intensität kompensieren).");
-} else {
-  lines.push("➡️ Grün: Floors ok. Qualität möglich (phaseabhängig), Rest locker.");
-}
+  // Floors (nur EINMAL – du hattest es doppelt)
+  lines.push("");
+  lines.push("🎯 Floors (7 Tage)");
 
+  // Specific (z.B. RunFloor / BikeFloor)
+  if ((policy?.specificThreshold ?? 0) > 0) {
+    const label = policy?.specificLabel ?? "SpecificFloor";
+    lines.push(`${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`);
+  }
+
+  // AerobicFloor (Intensity Guard)
+  if (policy?.useAerobicFloor) {
+    lines.push(
+      `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(loads7?.intensity7 ?? 0)})`
+    );
+  }
+
+  // ================= OPTION B: Interpretation (ohne "SpecificFloor verfehlt") =================
+  const hasSpecific = (policy?.specificThreshold ?? 0) > 0;
+  if (!policy?.recovery && hasSpecific && !specificOk && aerobicOk) {
+    lines.push("");
+    lines.push("💬 Interpretation");
+    lines.push(
+      "Zu wenig sportartspezifisches Volumen im betrachteten Zeitraum. " +
+        "Die Intensitätsverteilung ist aktuell unkritisch – fehlendes Volumen sollte " +
+        "durch mehr lockere/steady Dauer in der Ziel-Sportart ergänzt werden, " +
+        "nicht durch höhere Intensität."
+    );
+  }
+
+  // Empfehlungen (ohne redundantes SpecificFloor-Prosa)
+  lines.push("");
+  if (policy?.recovery) {
+    lines.push("➡️ RECOVERY aktiv: keine Floors erzwungen. Fokus: locker / Technik / frei.");
+  } else if (!aerobicOk) {
+    lines.push("➡️ AerobicFloor verfehlt: Intensität diese Woche deckeln (max 1× Key), mehr locker/aerob auffüllen (Run oder Bike).");
+  } else if (!specificOk && hasSpecific) {
+    // bewusst kurz halten, weil Interpretation den Inhalt liefert
+    lines.push("➡️ Fokus: mehr lockere/steady Dauer in der Ziel-Sportart.");
+  } else {
+    lines.push("➡️ Grün: Floors ok. Qualität möglich (phaseabhängig), Rest locker.");
+  }
 
   return lines.join("\n");
 }
+
 
 // ================= TREND (GA-only) =================
 async function computeAerobicTrend(ctx, dayIso) {
