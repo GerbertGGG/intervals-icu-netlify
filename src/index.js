@@ -869,6 +869,7 @@ function buildIntensityLine(loads7) {
   if ((sources.nonGa ?? 0) > 0) parts.push(`non-GA ${Math.round(sources.nonGa)}`);
 
   const signal = loads7?.intensitySignal ?? "none";
+  if (signal === "low" && total === 0) return "Intensity: low (numeric=0)";
   if (signal === "low") return `Intensity: ${total} (Signal niedrig: nur GA/fehlendes HR)`;
   if (signal === "none") return `Intensity: ${total} (keine Daten)`;
   if (!parts.length) return `Intensity: ${total}`;
@@ -911,7 +912,16 @@ function buildBottomLine({
     next = "Schwelle (20–30min) ODER 45–60min GA – je nach Frische";
   }
 
-  return { today, next };
+  let trigger = "keine Abweichung";
+  if (fatigue?.override) {
+    trigger = "Fatigue Override (RECOVERY)";
+  } else if (hasSpecific && !specificOk) {
+    trigger = `${policy?.specificLabel ?? "RunFloor"} unterschritten`;
+  } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
+    trigger = "AerobicFloor unterschritten";
+  }
+
+  return { today, next, trigger };
 }
 
 // ================= COMMENT =================
@@ -1052,6 +1062,7 @@ function renderWellnessComment({
     aerobicOk,
     intensitySignal,
   });
+  lines.push(`Trigger: ${bottomLine.trigger}`);
   lines.push(`Heute: ${bottomLine.today}`);
   lines.push(`Nächster Lauf: ${bottomLine.next}`);
 
@@ -1106,7 +1117,7 @@ async function computeAerobicTrend(ctx, dayIso) {
     emoji = "🟢";
     label = "Aerober Fortschritt";
   } else if (dv < -1.5 && dd > 1) {
-    emoji = "🔴";
+    emoji = "🟠";
     label = "Warnsignal";
   }
 
@@ -1116,7 +1127,7 @@ async function computeAerobicTrend(ctx, dayIso) {
     dv,
     dd,
     text:
-      `${emoji} ${label}\n` +
+      `${emoji} ${label}${label === "Warnsignal" && confidence === "mittel" ? " (Confidence: mittel)" : ""}\n` +
       `Aerober Kontext (nur GA): VDOT ~ ${dv.toFixed(1)}% | HR-Drift ${dd > 0 ? "↑" : "↓"} ${Math.abs(dd).toFixed(
         1
       )}%-Pkt\n` +
