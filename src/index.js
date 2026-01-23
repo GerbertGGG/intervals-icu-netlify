@@ -1152,6 +1152,8 @@ function buildDetectiveWhyInsights(current, previous) {
   const improvements = [];
   const regressions = [];
   const context = [];
+  const actions = [];
+  const helped = [];
 
   const pct = (a, b) => (a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null);
 
@@ -1160,14 +1162,26 @@ function buildDetectiveWhyInsights(current, previous) {
 
   if (efPct != null && efPct >= 1 && driftDelta != null && driftDelta <= -1) {
     improvements.push(`Ökonomie besser: EF +${efPct.toFixed(1)}% & Drift ${driftDelta.toFixed(1)}%-Pkt.`);
+    helped.push("Stabilere, ökonomischere GA-Läufe (EF ↑, Drift ↓).");
   } else if (efPct != null && efPct <= -1 && driftDelta != null && driftDelta >= 1) {
     regressions.push(`Ökonomie schlechter: EF ${efPct.toFixed(1)}% & Drift +${driftDelta.toFixed(1)}%-Pkt.`);
+    actions.push("Mehr ruhige GA-Läufe für Ökonomie & Stabilität (konstant, nicht hart).");
   } else {
     if (efPct != null && Math.abs(efPct) >= 1) {
       (efPct > 0 ? improvements : regressions).push(`EF ${efPct > 0 ? "+" : ""}${efPct.toFixed(1)}% (Ökonomie).`);
+      if (efPct > 0) {
+        helped.push("Bessere Laufökonomie (EF ↑) – das hat geholfen.");
+      } else {
+        actions.push("Mehr Grundlagentempo (GA) für bessere Ökonomie.");
+      }
     }
     if (driftDelta != null && Math.abs(driftDelta) >= 1) {
       (driftDelta < 0 ? improvements : regressions).push(`Drift ${driftDelta.toFixed(1)}%-Pkt (Stabilität).`);
+      if (driftDelta < 0) {
+        helped.push("Stabilere GA-Läufe mit weniger Drift.");
+      } else {
+        actions.push("Mehr stabile, gleichmäßige GA-Läufe (weniger Drift).");
+      }
     }
   }
 
@@ -1177,9 +1191,11 @@ function buildDetectiveWhyInsights(current, previous) {
 
   if (loadPct != null && loadPct >= 10 && (longDelta == null || longDelta >= 0)) {
     improvements.push(`Reizaufbau: Wochenload +${loadPct.toFixed(0)}% (Longruns stabil/↑).`);
+    helped.push("Mehr Wochenreiz mit stabilen/mehr Longruns.");
   }
   if (loadPct != null && loadPct <= -10 && runFreqDelta != null && runFreqDelta <= -0.5) {
     regressions.push(`Reizverlust: Wochenload ${loadPct.toFixed(0)}% & Frequenz ↓ (${runFreqDelta.toFixed(1)}/Woche).`);
+    actions.push("Frequenz & Wochenload wieder stabil erhöhen (zuerst kurz & locker).");
   }
 
   const monotonyDelta =
@@ -1190,8 +1206,10 @@ function buildDetectiveWhyInsights(current, previous) {
   if (monotonyDelta != null && strainDelta != null) {
     if (monotonyDelta >= 0.3 && strainDelta >= 150) {
       regressions.push("Belastungsdichte hoch: Monotonie ↑ & Strain ↑ → Erholungsrisiko.");
+      actions.push("Mehr Variabilität/Erholung einbauen (Monotonie senken).");
     } else if (monotonyDelta <= -0.3 && strainDelta <= -150) {
       improvements.push("Belastungsdichte entspannt: Monotonie ↓ & Strain ↓.");
+      helped.push("Entspanntere Belastungsdichte (Monotonie/Strain ↓).");
     }
   }
 
@@ -1206,6 +1224,8 @@ function buildDetectiveWhyInsights(current, previous) {
     improvements,
     regressions,
     context,
+    actions,
+    helped,
   };
 }
 
@@ -1213,6 +1233,7 @@ function appendWhySection(lines, insights) {
   if (!insights) return;
   lines.push("");
   lines.push(insights.title);
+  lines.push(`- Kurz gesagt: ${buildWhySummary(insights)}.`);
   if (!insights.improvements.length && !insights.regressions.length) {
     lines.push("- Keine klaren Veränderungen.");
   } else {
@@ -1229,6 +1250,30 @@ function appendWhySection(lines, insights) {
     lines.push("- Kontext:");
     for (const item of insights.context) lines.push(`  - ${item}`);
   }
+  if (insights.actions.length) {
+    lines.push("- So wirst du besser:");
+    for (const item of insights.actions) lines.push(`  - ${item}`);
+  }
+  if (insights.helped.length) {
+    lines.push("- Das hat zuletzt geholfen:");
+    for (const item of insights.helped) lines.push(`  - ${item}`);
+  }
+}
+
+function buildWhySummary(insights) {
+  const hasImprovements = insights.improvements.length > 0;
+  const hasRegressions = insights.regressions.length > 0;
+
+  if (hasImprovements && hasRegressions) {
+    return "gemischtes Bild – einige Fortschritte, aber auch spürbare Rückschritte";
+  }
+  if (hasImprovements) {
+    return "überwiegend Fortschritte gegenüber der Vorwoche";
+  }
+  if (hasRegressions) {
+    return "überwiegend Rückschritte gegenüber der Vorwoche";
+  }
+  return "keine klaren Veränderungen zur Vorwoche";
 }
 
 function applyDetectiveWhy(rep, insights) {
