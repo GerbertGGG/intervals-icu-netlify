@@ -105,6 +105,9 @@ export default {
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
 const BASE_URL = "https://intervals.icu/api/v1";
+const DETECTIVE_KV_PREFIX = "detective:week:";
+const DETECTIVE_KV_HISTORY_KEY = "detective:history";
+const DETECTIVE_HISTORY_LIMIT = 12;
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
@@ -429,6 +432,26 @@ function json(o, status = 200) {
   });
 }
 
+function hasKv(env) {
+  return Boolean(env?.KV && typeof env.KV.get === "function" && typeof env.KV.put === "function");
+}
+
+async function readKvJson(env, key) {
+  if (!hasKv(env)) return null;
+  const raw = await env.KV.get(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeKvJson(env, key, value) {
+  if (!hasKv(env)) return;
+  await env.KV.put(key, JSON.stringify(value));
+}
+
 function authHeader(env) {
   return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
@@ -747,7 +770,11 @@ async function computeMaintenance14d(ctx, dayIso) {
     if (isMondayIso(day)) {
       let detectiveNoteText = null;
       try {
-        detectiveNoteText = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
+        const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
+        detectiveNoteText = detectiveNote?.text ?? "";
+        if (write) {
+          await persistDetectiveSummary(env, day, detectiveNote?.summary);
+        }
       } catch (e) {
         detectiveNoteText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
       }
@@ -1096,10 +1123,129 @@ async function gatherGASamples(ctx, endIso, windowDays, opts) {
   return p;
 }
 // ================= MONDAY DETECTIVE NOTE (TRAININGSLEHRE V2) =================
+async function persistDetectiveSummary(env, mondayIso, summary) {
+  if (!summary || !hasKv(env)) return;
+  const key = `${DETECTIVE_KV_PREFIX}${mondayIso}`;
+  await writeKvJson(env, key, summary);
+
+  const history = (await readKvJson(env, DETECTIVE_KV_HISTORY_KEY)) || [];
+  const next = [key, ...history.filter((k) => k !== key)].slice(0, DETECTIVE_HISTORY_LIMIT);
+  await writeKvJson(env, DETECTIVE_KV_HISTORY_KEY, next);
+}
+
+async function loadDetectiveHistory(env, mondayIso) {
+  if (!hasKv(env)) return [];
+  const key = `${DETECTIVE_KV_PREFIX}${mondayIso}`;
+  const history = (await readKvJson(env, DETECTIVE_KV_HISTORY_KEY)) || [];
+  const keys = history.filter((k) => k !== key).slice(0, DETECTIVE_HISTORY_LIMIT);
+  const summaries = [];
+  for (const k of keys) {
+    const s = await readKvJson(env, k);
+    if (s) summaries.push(s);
+  }
+  return summaries;
+}
+
+function buildDetectiveWhyInsights(current, previous) {
+  if (!current || !previous) return null;
+
+  const improvements = [];
+  const regressions = [];
+  const context = [];
+
+  const pct = (a, b) => (a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null);
+
+  const efPct = pct(current.efMed, previous.efMed);
+  const driftDelta = current.driftMed != null && previous.driftMed != null ? current.driftMed - previous.driftMed : null;
+
+  if (efPct != null && efPct >= 1 && driftDelta != null && driftDelta <= -1) {
+    improvements.push(`Ökonomie besser: EF +${efPct.toFixed(1)}% & Drift ${driftDelta.toFixed(1)}%-Pkt.`);
+  } else if (efPct != null && efPct <= -1 && driftDelta != null && driftDelta >= 1) {
+    regressions.push(`Ökonomie schlechter: EF ${efPct.toFixed(1)}% & Drift +${driftDelta.toFixed(1)}%-Pkt.`);
+  } else {
+    if (efPct != null && Math.abs(efPct) >= 1) {
+      (efPct > 0 ? improvements : regressions).push(`EF ${efPct > 0 ? "+" : ""}${efPct.toFixed(1)}% (Ökonomie).`);
+    }
+    if (driftDelta != null && Math.abs(driftDelta) >= 1) {
+      (driftDelta < 0 ? improvements : regressions).push(`Drift ${driftDelta.toFixed(1)}%-Pkt (Stabilität).`);
+    }
+  }
+
+  const loadPct = pct(current.weeklyLoad, previous.weeklyLoad);
+  const runFreqDelta = current.runsPerWeek != null && previous.runsPerWeek != null ? current.runsPerWeek - previous.runsPerWeek : null;
+  const longDelta = current.longPerWeek != null && previous.longPerWeek != null ? current.longPerWeek - previous.longPerWeek : null;
+
+  if (loadPct != null && loadPct >= 10 && (longDelta == null || longDelta >= 0)) {
+    improvements.push(`Reizaufbau: Wochenload +${loadPct.toFixed(0)}% (Longruns stabil/↑).`);
+  }
+  if (loadPct != null && loadPct <= -10 && runFreqDelta != null && runFreqDelta <= -0.5) {
+    regressions.push(`Reizverlust: Wochenload ${loadPct.toFixed(0)}% & Frequenz ↓ (${runFreqDelta.toFixed(1)}/Woche).`);
+  }
+
+  const monotonyDelta =
+    current.monotony != null && previous.monotony != null ? current.monotony - previous.monotony : null;
+  const strainDelta =
+    current.strain != null && previous.strain != null ? current.strain - previous.strain : null;
+
+  if (monotonyDelta != null && strainDelta != null) {
+    if (monotonyDelta >= 0.3 && strainDelta >= 150) {
+      regressions.push("Belastungsdichte hoch: Monotonie ↑ & Strain ↑ → Erholungsrisiko.");
+    } else if (monotonyDelta <= -0.3 && strainDelta <= -150) {
+      improvements.push("Belastungsdichte entspannt: Monotonie ↓ & Strain ↓.");
+    }
+  }
+
+  if (current.compN != null && current.compN < 2) {
+    context.push("Messbasis dünn: wenige GA comparable → Trends unsicher.");
+  }
+
+  if (!improvements.length && !regressions.length && !context.length) return null;
+
+  return {
+    title: `Warum (Vergleich zu ${previous.week})`,
+    improvements,
+    regressions,
+    context,
+  };
+}
+
+function appendWhySection(lines, insights) {
+  if (!insights) return;
+  lines.push("");
+  lines.push(insights.title);
+  if (!insights.improvements.length && !insights.regressions.length) {
+    lines.push("- Keine klaren Veränderungen.");
+  } else {
+    if (insights.improvements.length) {
+      lines.push("- Verbesserungen:");
+      for (const item of insights.improvements) lines.push(`  - ${item}`);
+    }
+    if (insights.regressions.length) {
+      lines.push("- Verschlechterungen:");
+      for (const item of insights.regressions) lines.push(`  - ${item}`);
+    }
+  }
+  if (insights.context.length) {
+    lines.push("- Kontext:");
+    for (const item of insights.context) lines.push(`  - ${item}`);
+  }
+}
+
+function applyDetectiveWhy(rep, insights) {
+  if (!insights) return rep;
+  const lines = rep.text.split("\n");
+  appendWhySection(lines, insights);
+  return { ...rep, text: lines.join("\n"), insights };
+}
+
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   for (const w of DETECTIVE_WINDOWS) {
     const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w);
-    if (rep.ok) return rep.text;
+    if (rep.ok) {
+      const history = await loadDetectiveHistory(env, mondayIso);
+      const insights = buildDetectiveWhyInsights(rep.summary, history[0]);
+      return applyDetectiveWhy(rep, insights);
+    }
   }
   // fallback: last attempt (most info)
   const last = await computeDetectiveNote(
@@ -1108,7 +1254,9 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
     warmupSkipSec,
     DETECTIVE_WINDOWS[DETECTIVE_WINDOWS.length - 1]
   );
-  return last.text;
+  const history = await loadDetectiveHistory(env, mondayIso);
+  const insights = buildDetectiveWhyInsights(last.summary, history[0]);
+  return applyDetectiveWhy(last, insights);
 }
 
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
@@ -1263,10 +1411,27 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
   else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
 
+  const summary = {
+    week: mondayIso,
+    windowDays,
+    totalRuns,
+    totalLoad,
+    weeklyLoad,
+    runsPerWeek,
+    longPerWeek,
+    keyPerWeek,
+    gaPerWeek: gaRuns.length / weeks,
+    monotony,
+    strain,
+    efMed: comp.efMed ?? null,
+    driftMed: comp.driftMed ?? null,
+    compN: comp.n ?? 0,
+  };
+
   // ok criteria: enough runs OR strong structural issue
   const ok = totalRuns >= DETECTIVE_MIN_RUNS || longRuns.length === 0 || weeklyLoad < 120;
 
-  return { ok, text: lines.join("\n") };
+  return { ok, text: lines.join("\n"), summary };
 }
 
 async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays) {
