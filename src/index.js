@@ -367,8 +367,8 @@ function applyRecoveryOverride(policy, fatigue) {
 // ================= LOAD SUPPORT =================
 async function computeLoads7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const endIso = dayIso;
+  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let runTotal7 = 0;
   let bikeTotal7 = 0;
