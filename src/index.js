@@ -1810,34 +1810,48 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   const lines = [];
   lines.push(`🧪 bench:${benchName}`);
 
+  const last = same.length
+    ? await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: benchType === "GA" && !isKey })
+    : null;
+
   if (!same.length) {
     lines.push("Erster Benchmark – noch kein Vergleich.");
-  } else if (benchType === "GA" && !isKey) {
-    const last = await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: true });
-
-    const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
-    const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
-
-    lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
-    lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
-  } else if (isKey) {
-    const last = await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: false });
-    const speedVsLast = last?.avgSpeed != null ? pct(today.avgSpeed, last.avgSpeed) : null;
-    const hrVsLast = today.avgHr != null && last?.avgHr != null ? today.avgHr - last.avgHr : null;
-
-    lines.push(`Tempo: ${fmtSigned1(speedVsLast)}% vs letzte`);
-    lines.push(`HFØ: ${fmtSigned1(hrVsLast)} bpm vs letzte`);
-  } else {
-    lines.push("Vergleich: Intervall-Bench → EF/Drift nicht bewertet.");
   }
 
-  if (intervalMetrics) {
-    if (intervalMetrics.hrr60 != null) {
-      lines.push(`Erholung: HRR60 ${intervalMetrics.hrr60.toFixed(0)} bpm`);
+  if (today.ef != null) {
+    if (same.length && last?.ef != null) {
+      const efVsLast = pct(today.ef, last.ef);
+      lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
+    } else {
+      lines.push(`EF: ${today.ef.toFixed(3)}`);
     }
-    if (intervalMetrics.vo2min != null) {
-      lines.push(`VO₂-Zeit ≥90% HFmax: ${intervalMetrics.vo2min.toFixed(1)} min`);
+  } else {
+    lines.push("EF: n/a");
+  }
+
+  let secondaryLine = null;
+  if (benchType === "GA" && !isKey) {
+    if (same.length && today.drift != null && last?.drift != null) {
+      const dVsLast = today.drift - last.drift;
+      secondaryLine = `Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`;
+    } else if (today.drift != null) {
+      secondaryLine = `Drift: ${fmtSigned1(today.drift)}%-Pkt`;
     }
+  } else if (intervalMetrics?.hrr60 != null) {
+    secondaryLine = `Erholung: HRR60 ${intervalMetrics.hrr60.toFixed(0)} bpm`;
+  } else if (isKey) {
+    if (same.length && last?.avgSpeed != null) {
+      const speedVsLast = pct(today.avgSpeed, last.avgSpeed);
+      secondaryLine = `Tempo: ${fmtSigned1(speedVsLast)}% vs letzte`;
+    } else if (today.avgSpeed != null) {
+      secondaryLine = `Tempo: ${today.avgSpeed.toFixed(2)} m/s`;
+    }
+  } else if (intervalMetrics?.vo2min != null) {
+    secondaryLine = `VO₂-Zeit ≥90% HFmax: ${intervalMetrics.vo2min.toFixed(1)} min`;
+  }
+
+  if (secondaryLine) {
+    lines.push(secondaryLine);
   }
 
   let verdict = "Stabil / innerhalb Normalrauschen.";
