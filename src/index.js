@@ -360,6 +360,47 @@ function applyRecoveryOverride(policy, fatigue) {
   };
 }
 
+// ================= LOAD SUPPORT =================
+async function computeLoads7d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const endIso = dayIso;
+
+  let runTotal7 = 0;
+  let bikeTotal7 = 0;
+
+  let aerobicRun7 = 0;
+  let aerobicBike7 = 0;
+
+  let intensity7 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+
+    const load = extractLoad(a);
+
+    const run = isRun(a);
+    const bike = isBike(a);
+
+    if (run) runTotal7 += load;
+    if (bike) bikeTotal7 += load;
+
+    if (isIntensity(a)) {
+      intensity7 += load;
+      continue;
+    }
+
+    if (isAerobic(a)) {
+      if (run) aerobicRun7 += load;
+      else if (bike) aerobicBike7 += load;
+    }
+  }
+
+  const aerobicEq7 = aerobicRun7 + aerobicBike7; // Bike = 1.0 !
+  return { runTotal7, bikeTotal7, aerobicRun7, aerobicBike7, aerobicEq7, intensity7 };
+}
+
 
 
 
@@ -479,34 +520,33 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   // 1) Fetch ALL activities once
   ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
 
-  // 2) Build byDayRuns for quick access
   // 2) Build byDayRuns / byDayBikes for quick access
-let activitiesSeen = 0;
-let activitiesUsed = 0;
+  let activitiesSeen = 0;
+  let activitiesUsed = 0;
 
-for (const a of ctx.activitiesAll) {
-  activitiesSeen++;
-  const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
-  if (!day) {
-    if (debug) addDebug(ctx.debugOut, "unknown-day", a, "skip:no_day", null);
-    continue;
+  for (const a of ctx.activitiesAll) {
+    activitiesSeen++;
+    const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!day) {
+      if (debug) addDebug(ctx.debugOut, "unknown-day", a, "skip:no_day", null);
+      continue;
+    }
+
+    if (isRun(a)) {
+      if (!ctx.byDayRuns.has(day)) ctx.byDayRuns.set(day, []);
+      ctx.byDayRuns.get(day).push(a);
+      activitiesUsed++;
+      continue;
+    }
+
+    if (isBike(a)) {
+      if (!ctx.byDayBikes.has(day)) ctx.byDayBikes.set(day, []);
+      ctx.byDayBikes.get(day).push(a);
+      continue;
+    }
+
+    if (debug) addDebug(ctx.debugOut, day, a, `skip:unsupported:${a.type ?? "unknown"}`, null);
   }
-
-  if (isRun(a)) {
-    if (!ctx.byDayRuns.has(day)) ctx.byDayRuns.set(day, []);
-    ctx.byDayRuns.get(day).push(a);
-    activitiesUsed++;
-    continue;
-  }
-
-  if (isBike(a)) {
-    if (!ctx.byDayBikes.has(day)) ctx.byDayBikes.set(day, []);
-    ctx.byDayBikes.get(day).push(a);
-    continue;
-  }
-
-  if (debug) addDebug(ctx.debugOut, day, a, `skip:unsupported:${a.type ?? "unknown"}`, null);
-}
 
 
   const patches = {};
@@ -517,23 +557,23 @@ for (const a of ctx.activitiesAll) {
 
   for (const day of daysList) {
     // NEW: mode + policy for this day (based on next event)
-let modeInfo;
-let policy;
-try {
-  modeInfo = await determineMode(env, day, ctx.debug);
-  policy = getModePolicy(modeInfo);
-} catch (e) {
-  modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
-  policy = getModePolicy(modeInfo);
-}
-// NEW: fatigue / key-cap override
-let fatigue = null;
-try {
-  fatigue = await computeFatigue7d(ctx, day);
-  policy = applyRecoveryOverride(policy, fatigue);
-} catch {
-  fatigue = null;
-}
+    let modeInfo;
+    let policy;
+    try {
+      modeInfo = await determineMode(env, day, ctx.debug);
+      policy = getModePolicy(modeInfo);
+    } catch (e) {
+      modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
+      policy = getModePolicy(modeInfo);
+    }
+    // NEW: fatigue / key-cap override
+    let fatigue = null;
+    try {
+      fatigue = await computeFatigue7d(ctx, day);
+      policy = applyRecoveryOverride(policy, fatigue);
+    } catch {
+      fatigue = null;
+    }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
     const patch = {};
@@ -565,8 +605,7 @@ try {
         try {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
           const ds = computeDriftAndStabilityFromStreams(streams, ctx.warmupSkipSec);
-drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
-
+          drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
 
           drift = drift_raw;
 
@@ -577,15 +616,17 @@ drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : nu
           }
           if (drift == null && drift_source === "streams") drift_source = "streams_insufficient";
         } catch (e) {
-  drift = null;
-  drift_source = "streams_failed";
-  if (debug) addDebug(ctx.debugOut, day, a, "warn:streams_failed", {
-    message: String(e?.message ?? e),
-    stack: String(e?.stack ?? ""),
-    activityId: a.id,
-    streamTypes: a?.stream_types ?? null,
-  });
-}
+          drift = null;
+          drift_source = "streams_failed";
+          if (debug) {
+            addDebug(ctx.debugOut, day, a, "warn:streams_failed", {
+              message: String(e?.message ?? e),
+              stack: String(e?.stack ?? ""),
+              activityId: a.id,
+              streamTypes: a?.stream_types ?? null,
+            });
+          }
+        }
 
       }
 
@@ -632,93 +673,22 @@ drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : nu
     }
 
     // NEW: loads + min stimulus depends on mode
-let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
-try { loads7 = await computeLoads7d(ctx, day); } catch {}
+    let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
+    try {
+      loads7 = await computeLoads7d(ctx, day);
+    } catch {}
 
+    let specificValue = 0;
+    if (policy.specificKind === "run") specificValue = loads7.runTotal7;
+    else if (policy.specificKind === "bike") specificValue = loads7.bikeTotal7;
+    else specificValue = 0;
 
-let specificValue = 0;
-if (policy.specificKind === "run") specificValue = loads7.runTotal7;
-else if (policy.specificKind === "bike") specificValue = loads7.bikeTotal7;
-else specificValue = 0;
+    const specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
+    const aerobicEq = loads7.aerobicEq7 ?? 0;
+    const intensity = loads7.intensity7 ?? 0;
 
-const specificOk = policy.specificThreshold > 0 ? (specificValue >= policy.specificThreshold) : true;
-const aerobicEq = loads7.aerobicEq7 ?? 0;
-const intensity = loads7.intensity7 ?? 0;
-
-const aerobicFloor = policy.useAerobicFloor ? (policy.aerobicK * intensity) : 0;
-const aerobicOk = policy.useAerobicFloor ? (aerobicEq >= aerobicFloor) : true;
-
-// ================= KEY CAP + FATIGUE (NEW) =================
-
-async function computeKeyCount7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const endIso = dayIso;
-
-  let keyCount7 = 0;
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (hasKeyTag(a)) keyCount7++;
-  }
-  return keyCount7;
-}
-
-function bucketAllLoadsByDay(acts) {
-  const m = {};
-  for (const a of acts) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d) continue;
-    m[d] = (m[d] || 0) + extractLoad(a);
-  }
-  return m;
-}
-
-
-
-
-// ================= LOAD SUPPORT (NEW) =================
-
-async function computeLoads7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const endIso = dayIso;
-
-  let runTotal7 = 0;
-  let bikeTotal7 = 0;
-
-  let aerobicRun7 = 0;
-  let aerobicBike7 = 0;
-
-  let intensity7 = 0;
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-
-    const load = extractLoad(a);
-
-    const run = isRun(a);
-    const bike = isBike(a);
-
-    if (run) runTotal7 += load;
-    if (bike) bikeTotal7 += load;
-
-    if (isIntensity(a)) {
-      intensity7 += load;
-      continue;
-    }
-
-    if (isAerobic(a)) {
-      if (run) aerobicRun7 += load;
-      else if (bike) aerobicBike7 += load;
-    }
-  }
-
-  const aerobicEq7 = aerobicRun7 + aerobicBike7; // Bike = 1.0 !
-  return { runTotal7, bikeTotal7, aerobicRun7, aerobicBike7, aerobicEq7, intensity7 };
-}
+    const aerobicFloor = policy.useAerobicFloor ? policy.aerobicK * intensity : 0;
+    const aerobicOk = policy.useAerobicFloor ? aerobicEq >= aerobicFloor : true;
 
 
 async function computeMaintenance14d(ctx, dayIso) {
@@ -1934,7 +1904,3 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
 
   return races;
 }
-
-
-
-
