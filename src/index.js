@@ -1844,7 +1844,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   if (intervalMetrics?.hrr60 != null && intervalMetrics.hrr60 < 15) {
     verdict = "Hohe Belastung – Erholung limitiert.";
   } else if (intervalMetrics?.vo2min != null && intervalMetrics.vo2min >= 4) {
-    verdict = "VO₂-Reiz ausreichend gesetzt.";
+    verdict = "Intervall-Reiz ausreichend gesetzt.";
   }
 
   lines.push(`Fazit: ${verdict}`);
