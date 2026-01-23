@@ -159,6 +159,7 @@ const AEROBIC_K_DEFAULT = 2.8;
 const DELOAD_FACTOR = 0.65;
 const BLOCK_GROWTH = 1.10;
 const BLOCK_HIT_WEEKS = 3;
+const INTENSITY_HR_PCT = 0.85;
 
 
 // Minimum stimulus thresholds per mode (tune later)
@@ -376,21 +377,40 @@ async function computeLoads7d(ctx, dayIso) {
   let aerobicBike7 = 0;
 
   let intensity7 = 0;
+  let intensityKey7 = 0;
+  let intensityHr7 = 0;
+  let intensityOther7 = 0;
 
   for (const a of ctx.activitiesAll) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
 
     const load = extractLoad(a);
+    const totalLoad = Number.isFinite(load) ? load : 0;
 
     const run = isRun(a);
     const bike = isBike(a);
 
-    if (run) runTotal7 += load;
-    if (bike) bikeTotal7 += load;
+    if (run) runTotal7 += totalLoad;
+    if (bike) bikeTotal7 += totalLoad;
 
-    if (isIntensity(a)) {
-      intensity7 += load;
+    const intensityKey = isIntensity(a);
+    const intensityHr = isIntensityByHr(a);
+    const nonGa = !isAerobic(a);
+
+    if (intensityKey) {
+      intensityKey7 += totalLoad;
+      intensity7 += totalLoad;
+      continue;
+    }
+    if (intensityHr) {
+      intensityHr7 += totalLoad;
+      intensity7 += totalLoad;
+      continue;
+    }
+    if (nonGa) {
+      intensityOther7 += totalLoad;
+      intensity7 += totalLoad;
       continue;
     }
 
@@ -401,7 +421,23 @@ async function computeLoads7d(ctx, dayIso) {
   }
 
   const aerobicEq7 = aerobicRun7 + aerobicBike7; // Bike = 1.0 !
-  return { runTotal7, bikeTotal7, aerobicRun7, aerobicBike7, aerobicEq7, intensity7 };
+  const totalLoad7 = runTotal7 + bikeTotal7;
+  const intensitySignal = intensity7 > 0 ? "ok" : totalLoad7 > 0 ? "low" : "none";
+  return {
+    runTotal7,
+    bikeTotal7,
+    aerobicRun7,
+    aerobicBike7,
+    aerobicEq7,
+    intensity7,
+    totalLoad7,
+    intensitySignal,
+    intensitySources: {
+      key: intensityKey7,
+      hr: intensityHr7,
+      nonGa: intensityOther7,
+    },
+  };
 }
 
 
@@ -709,9 +745,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
     const aerobicEq = loads7.aerobicEq7 ?? 0;
     const intensity = loads7.intensity7 ?? 0;
+    const intensitySignal = loads7.intensitySignal ?? "none";
+    const aerobicFloorActive = policy.useAerobicFloor && intensitySignal === "ok";
 
-    const aerobicFloor = policy.useAerobicFloor ? policy.aerobicK * intensity : 0;
-    const aerobicOk = policy.useAerobicFloor ? aerobicEq >= aerobicFloor : true;
+    const aerobicFloor = aerobicFloorActive ? policy.aerobicK * intensity : 0;
+    const aerobicOk = aerobicFloorActive ? aerobicEq >= aerobicFloor : true;
 
 
 async function computeMaintenance14d(ctx, dayIso) {
@@ -746,19 +784,20 @@ async function computeMaintenance14d(ctx, dayIso) {
 
     // Daily comment ALWAYS (includes min stimulus ALWAYS)
     patch.comments = renderWellnessComment({
-  perRunInfo,
-  trend,
-  motor,
-  benchReports,
-  modeInfo,
-  policy,
-  loads7,
-  fatigue,
-  specificOk,
-  specificValue,
-  aerobicOk,
-  aerobicFloor,
-});
+      perRunInfo,
+      trend,
+      motor,
+      benchReports,
+      modeInfo,
+      policy,
+      loads7,
+      fatigue,
+      specificOk,
+      specificValue,
+      aerobicOk,
+      aerobicFloor,
+      aerobicFloorActive,
+    });
 
 
 
@@ -821,6 +860,60 @@ function pickRepresentativeGARun(perRunInfo) {
   return ga[0] || null;
 }
 
+function buildIntensityLine(loads7) {
+  const total = Math.round(loads7?.intensity7 ?? 0);
+  const sources = loads7?.intensitySources || {};
+  const parts = [];
+  if ((sources.key ?? 0) > 0) parts.push(`key ${Math.round(sources.key)}`);
+  if ((sources.hr ?? 0) > 0) parts.push(`HR≥${Math.round(INTENSITY_HR_PCT * 100)}% ${Math.round(sources.hr)}`);
+  if ((sources.nonGa ?? 0) > 0) parts.push(`non-GA ${Math.round(sources.nonGa)}`);
+
+  const signal = loads7?.intensitySignal ?? "none";
+  if (signal === "low") return `Intensity: ${total} (Signal niedrig: nur GA/fehlendes HR)`;
+  if (signal === "none") return `Intensity: ${total} (keine Daten)`;
+  if (!parts.length) return `Intensity: ${total}`;
+  return `Intensity: ${total} (${parts.join(" + ")})`;
+}
+
+function buildBottomLine({
+  hadAnyRun,
+  hadKey,
+  hadGA,
+  fatigue,
+  policy,
+  specificOk,
+  hasSpecific,
+  aerobicOk,
+  intensitySignal,
+}) {
+  let today = "Rest oder locker (nach Gefühl)";
+  if (fatigue?.override) {
+    const reason = fatigue.reasons?.[0] ? ` – ${fatigue.reasons[0]}` : "";
+    today = `Rest/Recovery${reason}`;
+  } else if (hadKey) {
+    today = "Key erledigt ✅ (qualitativ)";
+  } else if (hadGA) {
+    today = "Easy/GA ✅ (locker)";
+  } else if (hadAnyRun) {
+    today = "Easy ✅";
+  } else {
+    today = "Rest (kein Lauf)";
+  }
+
+  let next = "45–60min GA locker";
+  if (fatigue?.override) {
+    next = "25–40min locker nach Ruhetag";
+  } else if (hasSpecific && !specificOk) {
+    next = "35–50min locker/steady (Run) – Volumen auffüllen";
+  } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
+    next = "30–45min locker (kein Key) – Intensität deckeln";
+  } else if ((fatigue?.keyCount7 ?? 0) === 0) {
+    next = "Schwelle (20–30min) ODER 45–60min GA – je nach Frische";
+  }
+
+  return { today, next };
+}
+
 // ================= COMMENT =================
 function renderWellnessComment({
   perRunInfo,
@@ -834,11 +927,14 @@ function renderWellnessComment({
   specificOk,
   specificValue,
   aerobicOk,
-  aerobicFloor
+  aerobicFloor,
+  aerobicFloorActive
 }) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
+  const hasSpecific = (policy?.specificThreshold ?? 0) > 0;
+  const intensitySignal = loads7?.intensitySignal ?? "none";
 
   const lines = [];
   lines.push("ℹ️ Tages-Status");
@@ -889,27 +985,36 @@ function renderWellnessComment({
   lines.push(
     `AerobicEq: ${Math.round(loads7?.aerobicEq7 ?? 0)} (AerobicRun ${Math.round(loads7?.aerobicRun7 ?? 0)} + AerobicBike ${Math.round(loads7?.aerobicBike7 ?? 0)})`
   );
-  lines.push(`Intensity: ${Math.round(loads7?.intensity7 ?? 0)}`);
+  const intensityLine = buildIntensityLine(loads7);
+  lines.push(intensityLine);
 
   // Floors (nur EINMAL – du hattest es doppelt)
   lines.push("");
   lines.push("🎯 Floors (7 Tage)");
 
   // Specific (z.B. RunFloor / BikeFloor)
-  if ((policy?.specificThreshold ?? 0) > 0) {
+  if (hasSpecific) {
     const label = policy?.specificLabel ?? "SpecificFloor";
-    lines.push(`${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`);
+    lines.push(
+      `${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`
+    );
   }
 
   // AerobicFloor (Intensity Guard)
   if (policy?.useAerobicFloor) {
-    lines.push(
-      `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(loads7?.intensity7 ?? 0)})`
-    );
+    if (!aerobicFloorActive) {
+      lines.push("AerobicFloor: n/a (Intensity-Signal zu schwach)");
+    } else {
+      lines.push(
+        `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(
+          loads7?.intensity7 ?? 0
+        )})`
+      );
+    }
   }
+  lines.push("Hinweis: RunFloor basiert nur auf Run-Load; Bike zählt nur für AerobicEq.");
 
   // ================= OPTION B: Interpretation (ohne "SpecificFloor verfehlt") =================
-  const hasSpecific = (policy?.specificThreshold ?? 0) > 0;
   if (!policy?.recovery && hasSpecific && !specificOk && aerobicOk) {
     lines.push("");
     lines.push("💬 Interpretation");
@@ -925,7 +1030,7 @@ function renderWellnessComment({
   lines.push("");
   if (policy?.recovery) {
     lines.push("➡️ RECOVERY aktiv: keine Floors erzwungen. Fokus: locker / Technik / frei.");
-  } else if (!aerobicOk) {
+  } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     lines.push("➡️ AerobicFloor verfehlt: Intensität diese Woche deckeln (max 1× Key), mehr locker/aerob auffüllen (Run oder Bike).");
   } else if (!specificOk && hasSpecific) {
     // bewusst kurz halten, weil Interpretation den Inhalt liefert
@@ -934,11 +1039,34 @@ function renderWellnessComment({
     lines.push("➡️ Grün: Floors ok. Qualität möglich (phaseabhängig), Rest locker.");
   }
 
+  lines.push("");
+  lines.push("✅ Bottom line");
+  const bottomLine = buildBottomLine({
+    hadAnyRun,
+    hadKey,
+    hadGA,
+    fatigue,
+    policy,
+    specificOk,
+    hasSpecific,
+    aerobicOk,
+    intensitySignal,
+  });
+  lines.push(`Heute: ${bottomLine.today}`);
+  lines.push(`Nächster Lauf: ${bottomLine.next}`);
+
   return lines.join("\n");
 }
 
 
 // ================= TREND (GA-only) =================
+function trendConfidence(nRecent, nPrev) {
+  const n = Math.min(nRecent ?? 0, nPrev ?? 0);
+  if (n >= 6) return "hoch";
+  if (n >= 3) return "mittel";
+  return "niedrig";
+}
+
 async function computeAerobicTrend(ctx, dayIso) {
 
   const endIso = dayIso;
@@ -982,6 +1110,7 @@ async function computeAerobicTrend(ctx, dayIso) {
     label = "Warnsignal";
   }
 
+  const confidence = trendConfidence(recent.length, prev.length);
   return {
     ok: true,
     dv,
@@ -990,11 +1119,20 @@ async function computeAerobicTrend(ctx, dayIso) {
       `${emoji} ${label}\n` +
       `Aerober Kontext (nur GA): VDOT ~ ${dv.toFixed(1)}% | HR-Drift ${dd > 0 ? "↑" : "↓"} ${Math.abs(dd).toFixed(
         1
-      )}%-Pkt`,
+      )}%-Pkt\n` +
+      `Confidence: ${confidence} (recent=${recent.length}, prev=${prev.length})`,
   };
 }
 
 // ================= MOTOR INDEX (GA comparable only) =================
+async function buildMotorFallback(ctx, dayIso) {
+  const samples = await gatherGASamples(ctx, dayIso, MOTOR_WINDOW_DAYS, { comparable: false });
+  if (!samples.length) return null;
+  const last = samples.slice().sort((a, b) => a.date.localeCompare(b.date)).at(-1);
+  if (!last) return null;
+  return `↪️ Fallback: letzter GA-Lauf ${last.date} | EF ${last.ef.toFixed(5)} | Drift ${last.drift.toFixed(1)}%`;
+}
+
 async function computeMotorIndex(ctx, dayIso) {
   const endIso = dayIso;
 
@@ -1004,14 +1142,22 @@ async function computeMotorIndex(ctx, dayIso) {
   // stale check: most recent sample date
   const lastDate = samples.length ? samples.map((s) => s.date).sort().at(-1) : null;
   if (!lastDate) {
-    return { ok: false, value: null, text: "🏎️ Motor-Index: n/a (keine vergleichbaren GA-Läufe im Fenster)" };
-  }
-  const ageDays = diffDays(lastDate, dayIso);
-  if (ageDays > MOTOR_STALE_DAYS) {
+    const fallback = await buildMotorFallback(ctx, dayIso);
     return {
       ok: false,
       value: null,
-      text: `🏎️ Motor-Index: n/a (letzter vergleichbarer GA-Lauf vor ${ageDays} Tagen: ${lastDate})`,
+      text: `🏎️ Motor-Index: n/a (keine vergleichbaren GA-Läufe im Fenster)${fallback ? `\n${fallback}` : ""}`,
+    };
+  }
+  const ageDays = diffDays(lastDate, dayIso);
+  if (ageDays > MOTOR_STALE_DAYS) {
+    const fallback = await buildMotorFallback(ctx, dayIso);
+    return {
+      ok: false,
+      value: null,
+      text: `🏎️ Motor-Index: n/a (letzter vergleichbarer GA-Lauf vor ${ageDays} Tagen: ${lastDate})${
+        fallback ? `\n${fallback}` : ""
+      }`,
     };
   }
 
@@ -1022,17 +1168,25 @@ async function computeMotorIndex(ctx, dayIso) {
   const prev = samples.filter((x) => x.date < midIso && x.date >= prevStartIso);
 
   if (recent.length < MOTOR_NEED_N_PER_HALF || prev.length < MOTOR_NEED_N_PER_HALF) {
+    const fallback = await buildMotorFallback(ctx, dayIso);
     return {
       ok: false,
       value: null,
-      text: `🏎️ Motor-Index: n/a (zu wenig vergleichbare GA-Läufe: recent=${recent.length}, prev=${prev.length})`,
+      text: `🏎️ Motor-Index: n/a (zu wenig vergleichbare GA-Läufe: recent=${recent.length}, prev=${prev.length})${
+        fallback ? `\n${fallback}` : ""
+      }`,
     };
   }
 
   const ef1 = median(recent.map((x) => x.ef));
   const ef0 = median(prev.map((x) => x.ef));
   if (ef0 == null || ef1 == null) {
-    return { ok: false, value: null, text: "🏎️ Motor-Index: n/a (fehlende EF-Werte)" };
+    const fallback = await buildMotorFallback(ctx, dayIso);
+    return {
+      ok: false,
+      value: null,
+      text: `🏎️ Motor-Index: n/a (fehlende EF-Werte)${fallback ? `\n${fallback}` : ""}`,
+    };
   }
 
   // Drift trend: last 14d vs previous 14d within last 28d
@@ -1304,6 +1458,28 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   return applyDetectiveWhy(last, insights);
 }
 
+function buildMiniPlanTargets({ runsPerWeek, weeklyLoad }) {
+  let runTarget = "3–4";
+  if (runsPerWeek < 2) runTarget = "2–3";
+  else if (runsPerWeek < 3) runTarget = "3";
+
+  let loadTarget = "150–210";
+  if (weeklyLoad < 120) loadTarget = "110–160";
+  else if (weeklyLoad < 180) loadTarget = "140–200";
+  else if (weeklyLoad >= 180) {
+    const low = Math.max(120, Math.round(weeklyLoad * 0.9));
+    const high = Math.round(weeklyLoad * 1.1);
+    loadTarget = `${low}–${high}`;
+  }
+
+  const exampleWeek =
+    runTarget === "2–3"
+      ? ["Mi 30–35′ easy", "So 60–75′ longrun"]
+      : ["Mi 30–35′ easy", "Fr 40–50′ GA", "So 60–75′ longrun"];
+
+  return { runTarget, loadTarget, exampleWeek };
+}
+
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const end = new Date(mondayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - windowDays * 86400000);
@@ -1341,9 +1517,12 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const keyPerWeek = keyRuns.length / weeks;
   const runsPerWeek = totalRuns / weeks;
 
-  // Monotony/strain (simple)
-  const dailyLoads = bucketLoadsByDay(runs); // {day: loadSum}
-  const loadArr = Object.values(dailyLoads);
+  // Monotony/strain (simple) – include zero days for the full window
+  const dailyLoads = bucketLoadsByDay(runs); // {day: loadSum} (runs only)
+  const startIso = isoDate(start);
+  const endIso = isoDate(new Date(end.getTime() - 86400000));
+  const daysAll = listIsoDaysInclusive(startIso, endIso);
+  const loadArr = daysAll.map((d) => Number(dailyLoads[d]) || 0);
   const meanLoad = avg(loadArr) ?? 0;
   const sdLoad = std(loadArr) ?? 0;
   const monotony = sdLoad > 0 ? meanLoad / sdLoad : meanLoad > 0 ? 99 : 0;
@@ -1445,6 +1624,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   lines.push("");
   lines.push("Belastungsbild:");
   lines.push(`- Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
+  lines.push(`- Basis: tägliche Run-Loads inkl. 0-Tage (Fenster: ${windowDays} Tage, nur Run).`);
   lines.push("");
 
   lines.push("Fundstücke:");
@@ -1455,6 +1635,14 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   lines.push("Nächste Schritte:");
   if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
   else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
+
+  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad });
+  lines.push("");
+  lines.push("Konkrete nächste Woche (Mini-Plan):");
+  lines.push(
+    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
+  );
+  lines.push(`- Beispielwoche: ${miniPlan.exampleWeek.join(" · ")}`);
 
   const summary = {
     week: mondayIso,
@@ -1853,6 +2041,12 @@ function isIntensity(a) {
   return hasKeyTag(a);
 }
 
+function isIntensityByHr(a) {
+  const hr = Number(a?.average_heartrate);
+  if (!Number.isFinite(hr) || hr <= 0) return false;
+  return hr >= HFMAX * INTENSITY_HR_PCT;
+}
+
 function isAerobic(a) {
   // MVP: nicht key und ausreichend lang
   if (hasKeyTag(a)) return false;
@@ -1909,6 +2103,15 @@ function vdotLikeFromEf(ef) {
 // ================= DEBUG =================
 function addDebug(debugOut, day, a, status, computed) {
   if (!debugOut) return;
+  if (String(status).startsWith("skip:unsupported")) {
+    const type = String(a?.type ?? "unknown");
+    debugOut.__summary ??= {};
+    debugOut.__summary.skippedUnsupported ??= {};
+    debugOut.__summary.skippedUnsupported[type] = (debugOut.__summary.skippedUnsupported[type] || 0) + 1;
+    debugOut.__summary.skippedUnsupportedTotal =
+      (debugOut.__summary.skippedUnsupportedTotal || 0) + 1;
+    return;
+  }
   debugOut[day] ??= [];
   debugOut[day].push({
     activityId: a?.id ?? null,
