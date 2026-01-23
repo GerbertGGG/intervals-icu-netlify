@@ -1838,7 +1838,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       secondaryLine = `Drift: ${fmtSigned1(today.drift)}%-Pkt`;
     }
   } else if (intervalMetrics?.hrr60 != null) {
-    secondaryLine = `Erholung: HRR60 ${intervalMetrics.hrr60.toFixed(0)} bpm`;
+    secondaryLine = `Erholung: HRR60 ${intervalMetrics.hrr60.toFixed(0)} bpm (HF-Abfall in 60s)`;
   } else if (isKey) {
     if (same.length && last?.avgSpeed != null) {
       const speedVsLast = pct(today.avgSpeed, last.avgSpeed);
@@ -1855,10 +1855,39 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   }
 
   let verdict = "Stabil / innerhalb Normalrauschen.";
-  if (intervalMetrics?.hrr60 != null && intervalMetrics.hrr60 < 15) {
-    verdict = "Hohe Belastung – Erholung limitiert.";
-  } else if (intervalMetrics?.vo2min != null && intervalMetrics.vo2min >= 4) {
-    verdict = "Intervall-Reiz ausreichend gesetzt.";
+  let lastIntervalMetrics = null;
+  if (same.length && (benchType !== "GA" || isKey)) {
+    lastIntervalMetrics = await computeIntervalBenchMetrics(env, same[0], warmupSkipSec);
+  }
+
+  if (same.length && intervalMetrics && lastIntervalMetrics) {
+    if (intervalMetrics.hrr60 != null && lastIntervalMetrics.hrr60 != null) {
+      const hrr60Delta = intervalMetrics.hrr60 - lastIntervalMetrics.hrr60;
+      if (hrr60Delta >= 3) {
+        verdict = `Einheit besser – schnellere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+      } else if (hrr60Delta <= -3) {
+        verdict = `Einheit schlechter – langsamere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+      } else {
+        verdict = `Einheit ähnlich – Erholung nahezu gleich (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+      }
+    } else if (intervalMetrics.vo2min != null && lastIntervalMetrics.vo2min != null) {
+      const vo2Delta = intervalMetrics.vo2min - lastIntervalMetrics.vo2min;
+      if (vo2Delta >= 0.5) {
+        verdict = `Einheit besser – mehr Zeit ≥90% HFmax (${fmtSigned1(vo2Delta)} min vs letzte).`;
+      } else if (vo2Delta <= -0.5) {
+        verdict = `Einheit schlechter – weniger Zeit ≥90% HFmax (${fmtSigned1(vo2Delta)} min vs letzte).`;
+      } else {
+        verdict = `Einheit ähnlich – Reiz vergleichbar (${fmtSigned1(vo2Delta)} min vs letzte).`;
+      }
+    }
+  }
+
+  if (verdict === "Stabil / innerhalb Normalrauschen.") {
+    if (intervalMetrics?.hrr60 != null && intervalMetrics.hrr60 < 15) {
+      verdict = "Hohe Belastung – Erholung limitiert.";
+    } else if (intervalMetrics?.vo2min != null && intervalMetrics.vo2min >= 4) {
+      verdict = "Intervall-Reiz ausreichend gesetzt.";
+    }
   }
 
   lines.push(`Fazit: ${verdict}`);
