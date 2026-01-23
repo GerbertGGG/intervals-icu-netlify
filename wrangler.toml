@@ -7,5 +7,5 @@ triggers = { crons = ["0 20 * * *", "0 6 * * *"] }
 
 [[kv_namespaces]]
 binding = "KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+id = "ID"
+preview_id = "preview_id"
