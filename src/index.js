@@ -270,7 +270,7 @@ function inferSportFromEvent(ev) {
 async function computeKeyCount7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const endIso = dayIso;
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let keyCount7 = 0;
 
@@ -297,7 +297,7 @@ async function computeFatigue7d(ctx, dayIso) {
 
   const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
-  const endIso = dayIso;
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   const acts14 = ctx.activitiesAll.filter((a) => {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
@@ -368,7 +368,7 @@ function applyRecoveryOverride(policy, fatigue) {
 async function computeLoads7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const endIso = dayIso;
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let runTotal7 = 0;
   let bikeTotal7 = 0;
@@ -1811,7 +1811,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   if (!same.length) {
     lines.push("Erster Benchmark – noch kein Vergleich.");
-  } else {
+  } else if (benchType === "GA") {
     const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
 
     const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
@@ -1819,6 +1819,8 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
     lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
     lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
+  } else {
+    lines.push("Vergleich: Intervall-Bench → EF/Drift nicht bewertet.");
   }
 
   if (intervalMetrics) {
