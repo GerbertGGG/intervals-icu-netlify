@@ -1799,7 +1799,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     .filter((a) => isRun(a) && getBenchTag(a) === benchName && a.id !== activity.id)
     .sort((a, b) => new Date(b.start_date_local || b.start_date) - new Date(a.start_date_local || a.start_date));
 
-  const today = await computeBenchMetrics(env, activity, warmupSkipSec);
+  const today = await computeBenchMetrics(env, activity, warmupSkipSec, { allowDrift: !isKey });
   if (!today) return `🧪 bench:${benchName}\nHeute: n/a`;
 
   let intervalMetrics = null;
@@ -1813,7 +1813,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   if (!same.length) {
     lines.push("Erster Benchmark – noch kein Vergleich.");
   } else if (benchType === "GA" && !isKey) {
-    const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
+    const last = await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: true });
 
     const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
     const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
@@ -1821,7 +1821,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
     lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
   } else if (isKey) {
-    const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
+    const last = await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: false });
     const speedVsLast = last?.avgSpeed != null ? pct(today.avgSpeed, last.avgSpeed) : null;
     const hrVsLast = today.avgHr != null && last?.avgHr != null ? today.avgHr - last.avgHr : null;
 
@@ -1864,7 +1864,7 @@ async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
   };
 }
 
-async function computeBenchMetrics(env, a, warmupSkipSec) {
+async function computeBenchMetrics(env, a, warmupSkipSec, { allowDrift = true } = {}) {
   const ef = extractEF(a);
   if (ef == null) return null;
 
@@ -1872,14 +1872,16 @@ async function computeBenchMetrics(env, a, warmupSkipSec) {
   const avgHr = Number(a?.average_heartrate);
 
   let drift = null;
-  try {
-    const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
-    const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
-    drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
+  if (allowDrift) {
+    try {
+      const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+      const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
+      drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
 
-    if (drift != null && drift < 0) drift = null;
-  } catch {
-    drift = null;
+      if (drift != null && drift < 0) drift = null;
+    } catch {
+      drift = null;
+    }
   }
 
   return {
