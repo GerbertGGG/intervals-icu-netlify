@@ -187,6 +187,8 @@ Der Worker erzeugt im Kommentar einen Report:
 Zusätzliche Metriken bei nicht-GA Bench (z.B. VO2/Schwelle/Interval):
 - HRR60: Herzfrequenzabfall 60 Sekunden nach Peak
 - VO2-Zeit: Zeit >= 90% HFmax (HFMAX ist fest im Code: 173)
+- VDOT (Intervalle): VDOT-ähnlicher Wert nur aus Intervall-Abschnitten
+- HF-Response (Intervalle): ØHF in Intervallen (inkl. Peak)
 
 9) MONTAGS-DETEKTIV (KALENDER NOTE)
 ----------------------------------

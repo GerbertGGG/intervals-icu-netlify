@@ -1814,11 +1814,34 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   } else {
     const last = await computeBenchMetrics(env, same[0], warmupSkipSec);
 
-    const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
-    const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
+    if (benchType === "GA") {
+      const efVsLast = last?.ef != null ? pct(today.ef, last.ef) : null;
+      const dVsLast = today.drift != null && last?.drift != null ? today.drift - last.drift : null;
 
-    lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
-    lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
+      lines.push(`EF: ${fmtSigned1(efVsLast)}% vs letzte`);
+      lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
+    } else if (intervalMetrics) {
+      const lastIntervals = await computeIntervalBenchMetrics(env, same[0], warmupSkipSec);
+
+      if (intervalMetrics.intervalVdot != null) {
+        if (lastIntervals?.intervalVdot != null) {
+          const delta = intervalMetrics.intervalVdot - lastIntervals.intervalVdot;
+          lines.push(`VDOT (Intervalle): ${intervalMetrics.intervalVdot.toFixed(1)} (${fmtSigned1(delta)} vs letzte)`);
+        } else {
+          lines.push(`VDOT (Intervalle): ${intervalMetrics.intervalVdot.toFixed(1)}`);
+        }
+      }
+
+      if (intervalMetrics.intervalAvgHr != null) {
+        const delta = lastIntervals?.intervalAvgHr != null ? intervalMetrics.intervalAvgHr - lastIntervals.intervalAvgHr : null;
+        const peak = intervalMetrics.intervalPeakHr != null ? `, Peak ${intervalMetrics.intervalPeakHr.toFixed(0)} bpm` : "";
+        if (delta != null) {
+          lines.push(`HF-Response (Intervalle): Ø${intervalMetrics.intervalAvgHr.toFixed(0)} bpm (${fmtSigned1(delta)} vs letzte)${peak}`);
+        } else {
+          lines.push(`HF-Response (Intervalle): Ø${intervalMetrics.intervalAvgHr.toFixed(0)} bpm${peak}`);
+        }
+      }
+    }
   }
 
   if (intervalMetrics) {
@@ -1847,10 +1870,14 @@ async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
 
   const hrr60 = hrr60FromStreams(streams);
   const vo2sec = timeAtHrPct(streams, 0.9);
+  const intervalStats = intervalStatsFromStreams(streams);
 
   return {
     hrr60,
     vo2min: vo2sec ? vo2sec / 60 : null,
+    intervalVdot: intervalStats?.ef != null ? vdotLikeFromEf(intervalStats.ef) : null,
+    intervalAvgHr: intervalStats?.avgHr ?? null,
+    intervalPeakHr: intervalStats?.peakHr ?? null,
   };
 }
 
@@ -1879,6 +1906,60 @@ function pct(a, b) {
 function fmtSigned1(x) {
   if (!Number.isFinite(x)) return "n/a";
   return (x > 0 ? "+" : "") + x.toFixed(1);
+}
+
+function percentile(values, p) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  const frac = idx - lo;
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * frac;
+}
+
+function intervalStatsFromStreams(streams) {
+  const speed = Array.isArray(streams.velocity_smooth) ? streams.velocity_smooth : streams.velocity_smooth?.data;
+  const hr = Array.isArray(streams.heartrate) ? streams.heartrate : streams.heartrate?.data;
+  if (!Array.isArray(speed) || !Array.isArray(hr)) return null;
+
+  const count = Math.min(speed.length, hr.length);
+  if (!count) return null;
+
+  const valid = [];
+  for (let i = 0; i < count; i += 1) {
+    const v = Number(speed[i]);
+    const h = Number(hr[i]);
+    if (!Number.isFinite(v) || v < MIN_RUN_SPEED) continue;
+    if (!Number.isFinite(h) || h < 40) continue;
+    valid.push({ v, h });
+  }
+
+  if (valid.length < 30) return null;
+
+  const threshold = percentile(
+    valid.map((p) => p.v),
+    0.7
+  );
+  if (!Number.isFinite(threshold)) return null;
+
+  const interval = valid.filter((p) => p.v >= threshold);
+  if (interval.length < 10) return null;
+
+  const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+  const avgSpeed = mean(interval.map((p) => p.v));
+  const avgHr = mean(interval.map((p) => p.h));
+  const peakHr = interval.reduce((max, p) => (p.h > max ? p.h : max), -Infinity);
+
+  if (!Number.isFinite(avgSpeed) || !Number.isFinite(avgHr) || avgHr <= 0) return null;
+
+  return {
+    avgSpeed,
+    avgHr,
+    peakHr: Number.isFinite(peakHr) ? peakHr : null,
+    ef: avgSpeed / avgHr,
+  };
 }
 
 function medianOrNull(arr) {
