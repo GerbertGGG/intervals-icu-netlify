@@ -195,6 +195,7 @@ const FIELD_EF = "EF";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
+const STREAM_TYPES_INTERVAL = ["time", "heartrate", "velocity_smooth", "watts"];
 
 // ================= CONTEXT / CACHES =================
 function createLimiter(max = 6) {
@@ -660,8 +661,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       let drift = null;
       let drift_raw = null;
       let drift_source = "none";
-      let hrr60 = null;
-      let hrr60Drops = null;
+      let intervalMetrics = null;
 
       if (ga && !isKey) {
         drift_source = "streams";
@@ -694,12 +694,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       }
       if (isKey) {
         try {
-          const streams = await getStreams(ctx, a.id, ["time", "heartrate"]);
-          hrr60 = hrr60FromStreams(streams);
-          hrr60Drops = hrr60DropsFromStreams(streams);
+          const streams = await getStreams(ctx, a.id, STREAM_TYPES_INTERVAL);
+          intervalMetrics = computeIntervalMetricsFromStreams(streams, {
+            intervalType: getIntervalTypeFromActivity(a),
+          });
         } catch {
-          hrr60 = null;
-          hrr60Drops = null;
+          intervalMetrics = null;
         }
       }
 
@@ -715,8 +715,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         drift_raw,
         drift_source,
         load,
-        hrr60,
-        hrr60Drops,
+        intervalMetrics,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -1849,29 +1848,32 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lines.push("EF: n/a");
   }
 
-  let secondaryLine = null;
   if (benchType === "GA" && !isKey) {
     if (same.length && today.drift != null && last?.drift != null) {
       const dVsLast = today.drift - last.drift;
-      secondaryLine = `Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`;
+      lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
     } else if (today.drift != null) {
-      secondaryLine = `Drift: ${fmtSigned1(today.drift)}%-Pkt`;
+      lines.push(`Drift: ${fmtSigned1(today.drift)}%-Pkt`);
     }
-  } else if (intervalMetrics?.hrr60 != null) {
-    secondaryLine = `Erholung: HRR60 ${intervalMetrics.hrr60.toFixed(0)} bpm (HF-Abfall in 60s)`;
-  } else if (isKey) {
-    if (same.length && last?.avgSpeed != null) {
-      const speedVsLast = pct(today.avgSpeed, last.avgSpeed);
-      secondaryLine = `Tempo: ${fmtSigned1(speedVsLast)}% vs letzte`;
-    } else if (today.avgSpeed != null) {
-      secondaryLine = `Tempo: ${today.avgSpeed.toFixed(2)} m/s`;
+  } else {
+    if (intervalMetrics?.HR_Drift_bpm != null) {
+      const driftPct = intervalMetrics.HR_Drift_pct;
+      const driftFlagLabel = formatDriftFlag(intervalMetrics.drift_flag);
+      const driftFlag = driftFlagLabel ? ` (${driftFlagLabel})` : "";
+      const driftPctText = Number.isFinite(driftPct) ? `, ${fmtSigned1(driftPct)}%` : "";
+      lines.push(`HF-Drift (Intervall): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
     }
-  } else if (intervalMetrics?.vo2min != null) {
-    secondaryLine = `VO₂-Zeit ≥90% HFmax: ${intervalMetrics.vo2min.toFixed(1)} min`;
-  }
-
-  if (secondaryLine) {
-    lines.push(secondaryLine);
+    if (intervalMetrics?.HRR60_median != null) {
+      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
+    }
+    if (!intervalMetrics?.HR_Drift_bpm && isKey) {
+      if (same.length && last?.avgSpeed != null) {
+        const speedVsLast = pct(today.avgSpeed, last.avgSpeed);
+        lines.push(`Tempo: ${fmtSigned1(speedVsLast)}% vs letzte`);
+      } else if (today.avgSpeed != null) {
+        lines.push(`Tempo: ${today.avgSpeed.toFixed(2)} m/s`);
+      }
+    }
   }
 
   let verdict = "Stabil / innerhalb Normalrauschen.";
@@ -1881,8 +1883,8 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   }
 
   if (same.length && intervalMetrics && lastIntervalMetrics) {
-    if (intervalMetrics.hrr60 != null && lastIntervalMetrics.hrr60 != null) {
-      const hrr60Delta = intervalMetrics.hrr60 - lastIntervalMetrics.hrr60;
+    if (intervalMetrics.HRR60_median != null && lastIntervalMetrics.HRR60_median != null) {
+      const hrr60Delta = intervalMetrics.HRR60_median - lastIntervalMetrics.HRR60_median;
       if (hrr60Delta >= 3) {
         verdict = `Einheit besser – schnellere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
       } else if (hrr60Delta <= -3) {
@@ -1890,23 +1892,25 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       } else {
         verdict = `Einheit ähnlich – Erholung nahezu gleich (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
       }
-    } else if (intervalMetrics.vo2min != null && lastIntervalMetrics.vo2min != null) {
-      const vo2Delta = intervalMetrics.vo2min - lastIntervalMetrics.vo2min;
-      if (vo2Delta >= 0.5) {
-        verdict = `Einheit besser – mehr Zeit ≥90% HFmax (${fmtSigned1(vo2Delta)} min vs letzte).`;
-      } else if (vo2Delta <= -0.5) {
-        verdict = `Einheit schlechter – weniger Zeit ≥90% HFmax (${fmtSigned1(vo2Delta)} min vs letzte).`;
+    } else if (intervalMetrics.HR_Drift_bpm != null && lastIntervalMetrics.HR_Drift_bpm != null) {
+      const driftDelta = intervalMetrics.HR_Drift_bpm - lastIntervalMetrics.HR_Drift_bpm;
+      if (driftDelta >= 3) {
+        verdict = `Einheit härter – HF-Drift höher (${fmtSigned1(driftDelta)} bpm vs letzte).`;
+      } else if (driftDelta <= -3) {
+        verdict = `Einheit leichter – HF-Drift niedriger (${fmtSigned1(driftDelta)} bpm vs letzte).`;
       } else {
-        verdict = `Einheit ähnlich – Reiz vergleichbar (${fmtSigned1(vo2Delta)} min vs letzte).`;
+        verdict = `Einheit ähnlich – HF-Drift vergleichbar (${fmtSigned1(driftDelta)} bpm vs letzte).`;
       }
     }
   }
 
   if (verdict === "Stabil / innerhalb Normalrauschen.") {
-    if (intervalMetrics?.hrr60 != null && intervalMetrics.hrr60 < 15) {
+    if (intervalMetrics?.HRR60_median != null && intervalMetrics.HRR60_median < 15) {
       verdict = "Hohe Belastung – Erholung limitiert.";
-    } else if (intervalMetrics?.vo2min != null && intervalMetrics.vo2min >= 4) {
-      verdict = "Intervall-Reiz ausreichend gesetzt.";
+    } else if (intervalMetrics?.drift_flag === "too_hard") {
+      verdict = "Hohe Belastung – HF-Drift zu hoch.";
+    } else if (intervalMetrics?.drift_flag === "overreaching") {
+      verdict = "Überzogen – HF-Drift spricht für Overreaching.";
     }
   }
 
@@ -1915,18 +1919,12 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 }
 
 async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
-  const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+  const streams = await fetchIntervalsStreams(env, a.id, STREAM_TYPES_INTERVAL);
   if (!streams) return null;
 
-  const hrr60 = hrr60FromStreams(streams);
-  const hrr60Drops = hrr60DropsFromStreams(streams);
-  const vo2sec = timeAtHrPct(streams, 0.9);
-
-  return {
-    hrr60,
-    hrr60Drops,
-    vo2min: vo2sec ? vo2sec / 60 : null,
-  };
+  return computeIntervalMetricsFromStreams(streams, {
+    intervalType: getIntervalTypeFromActivity(a),
+  });
 }
 
 async function computeBenchMetrics(env, a, warmupSkipSec, { allowDrift = true } = {}) {
@@ -2003,85 +2001,206 @@ function interpretBench(efVsLast, dVsLast, efVsMed, dVsMed) {
 }
 
 // ================= STREAMS METRICS =================
-function timeAtHrPct(streams, pct, hfmax = HFMAX) {
-  const hr = streams?.heartrate;
-  const t = streams?.time;
-  if (!Array.isArray(hr) || !Array.isArray(t)) return 0;
-
-  const thr = pct * hfmax;
-  let sec = 0;
-
-  for (let i = 1; i < hr.length; i++) {
-    const dt = Number(t[i]) - Number(t[i - 1]);
-    if (Number(hr[i]) >= thr && Number.isFinite(dt)) sec += dt;
-  }
-  return sec;
+function quantile(arr, q) {
+  const v = arr.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const pos = (v.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (v[base + 1] != null) return v[base] + rest * (v[base + 1] - v[base]);
+  return v[base];
 }
 
-function hrr60FromStreams(streams) {
-  const hr = streams?.heartrate;
-  const t = streams?.time;
-  if (!Array.isArray(hr) || !Array.isArray(t)) return null;
+function pickIntervalIntensity(streams) {
+  const watts = streams?.watts;
+  const speed = streams?.velocity_smooth;
+  if (Array.isArray(watts) && watts.some((x) => Number.isFinite(x))) return { data: watts, kind: "watts" };
+  if (Array.isArray(speed) && speed.some((x) => Number.isFinite(x))) return { data: speed, kind: "speed" };
+  return null;
+}
 
-  let peak = -Infinity;
-  let idx = -1;
+function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 5 } = {}) {
+  const n = Math.min(time.length, intensity.length);
+  if (n < 2) return [];
 
-  for (let i = 0; i < hr.length; i++) {
-    if (hr[i] > peak) {
-      peak = hr[i];
-      idx = i;
+  const intervals = [];
+  let startIdx = null;
+  let lastAboveIdx = null;
+  let gapStart = null;
+
+  const timeAt = (i) => {
+    const t = Number(time[i]);
+    return Number.isFinite(t) ? t : i;
+  };
+
+  for (let i = 0; i < n; i++) {
+    const v = Number(intensity[i]);
+    if (Number.isFinite(v) && v >= threshold) {
+      if (startIdx == null) startIdx = i;
+      lastAboveIdx = i;
+      gapStart = null;
+      continue;
+    }
+
+    if (startIdx != null) {
+      if (gapStart == null) gapStart = timeAt(i);
+      if (timeAt(i) - gapStart > maxGapSec) {
+        const startTime = timeAt(startIdx);
+        const endTime = timeAt(lastAboveIdx);
+        const duration = endTime - startTime;
+        if (duration >= minIntervalSec) {
+          intervals.push({ startIdx, endIdx: lastAboveIdx, startTime, endTime, duration });
+        }
+        startIdx = null;
+        lastAboveIdx = null;
+        gapStart = null;
+      }
     }
   }
-  if (idx < 0) return null;
 
-  const tPeak = t[idx];
-  for (let i = idx; i < t.length; i++) {
-    if (t[i] >= tPeak + 60) return peak - hr[i];
+  if (startIdx != null && lastAboveIdx != null) {
+    const startTime = timeAt(startIdx);
+    const endTime = timeAt(lastAboveIdx);
+    const duration = endTime - startTime;
+    if (duration >= minIntervalSec) {
+      intervals.push({ startIdx, endIdx: lastAboveIdx, startTime, endTime, duration });
+    }
+  }
+
+  return intervals;
+}
+
+function classifyIntervalDrift(intervalType, driftBpm) {
+  if (!Number.isFinite(driftBpm)) return null;
+  if (intervalType === "threshold") {
+    if (driftBpm <= 5) return "controlled";
+    if (driftBpm <= 8) return "acceptable";
+    return "too_hard";
+  }
+  if (intervalType === "vo2") {
+    return driftBpm > 10 ? "overreaching" : "acceptable";
   }
   return null;
 }
 
-function hrr60DropsFromStreams(streams, { minPeakHr = HFMAX * 0.85, minPeakSeparationSec = 120 } = {}) {
-  const hr = streams?.heartrate;
-  const t = streams?.time;
-  if (!Array.isArray(hr) || !Array.isArray(t)) return null;
+function formatDriftFlag(flag) {
+  if (!flag) return null;
+  if (flag === "controlled") return "kontrolliert";
+  if (flag === "acceptable") return "akzeptabel";
+  if (flag === "too_hard") return "zu hart";
+  if (flag === "overreaching") return "Überreizung";
+  return flag;
+}
 
-  const peaks = [];
-  for (let i = 1; i < hr.length - 1; i++) {
-    const h = Number(hr[i]);
-    if (!Number.isFinite(h) || h < minPeakHr) continue;
-    const prev = Number(hr[i - 1]);
-    const next = Number(hr[i + 1]);
-    if (!Number.isFinite(prev) || !Number.isFinite(next)) continue;
-    if (h >= prev && h >= next) {
-      const time = Number(t[i]);
-      if (!Number.isFinite(time)) continue;
-      const last = peaks[peaks.length - 1];
-      if (last && time - last.time < minPeakSeparationSec) {
-        if (h > last.hr) peaks[peaks.length - 1] = { time, hr: h };
-      } else {
-        peaks.push({ time, hr: h });
+function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
+  const hr = streams?.heartrate;
+  const time = streams?.time;
+  if (!Array.isArray(hr) || !Array.isArray(time)) return null;
+
+  const intensityInfo = pickIntervalIntensity(streams);
+  if (!intensityInfo) return null;
+
+  const n = Math.min(hr.length, time.length, intensityInfo.data.length);
+  if (n < 2) return null;
+
+  const timeSlice = time.slice(0, n);
+  const intensity = intensityInfo.data.slice(0, n);
+  const hrSlice = hr.slice(0, n);
+
+  const intensityVals = intensity.filter((x) => Number.isFinite(x));
+  const threshold = quantile(intensityVals, 0.75);
+  if (!Number.isFinite(threshold)) return null;
+
+  const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
+  if (intervals.length < 2) return null;
+
+  const durations = intervals.map((i) => i.duration);
+  const minDur = Math.min(...durations);
+  const maxDur = Math.max(...durations);
+  if (minDur <= 0 || maxDur / minDur > 1.1) return null;
+
+  const intensityMeans = intervals.map((interval) => {
+    let sum = 0;
+    let count = 0;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const v = Number(intensity[i]);
+      if (Number.isFinite(v)) {
+        sum += v;
+        count++;
       }
     }
-  }
+    return count ? sum / count : null;
+  });
 
-  const drops = [];
-  for (const peak of peaks) {
-    const target = peak.time + 60;
-    let drop = null;
-    for (let i = 0; i < t.length; i++) {
-      const time = Number(t[i]);
-      if (!Number.isFinite(time)) continue;
-      if (time >= target) {
-        const h = Number(hr[i]);
-        if (Number.isFinite(h)) drop = peak.hr - h;
+  const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
+  if (validIntensity.length !== intervals.length) return null;
+  const minIntensity = Math.min(...validIntensity);
+  const maxIntensity = Math.max(...validIntensity);
+  if (minIntensity <= 0 || maxIntensity / minIntensity > 1.1) return null;
+
+  const timeAt = (i) => {
+    const t = Number(timeSlice[i]);
+    return Number.isFinite(t) ? t : i;
+  };
+
+  const intervalHr = intervals.map((interval) => {
+    const startTime = interval.startTime;
+    const endTime = interval.endTime;
+    const duration = interval.duration;
+    const lateStart = startTime + duration * 0.6;
+
+    let lateSum = 0;
+    let lateCount = 0;
+    let peak = -Infinity;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const t = timeAt(i);
+      const h = Number(hrSlice[i]);
+      if (!Number.isFinite(h)) continue;
+      if (h > peak) peak = h;
+      if (t >= lateStart && t <= endTime) {
+        lateSum += h;
+        lateCount++;
+      }
+    }
+    const lateAvg = lateCount ? lateSum / lateCount : null;
+
+    const target = endTime + 60;
+    let hr60 = null;
+    for (let i = interval.endIdx; i < n; i++) {
+      const t = timeAt(i);
+      if (t >= target) {
+        const h = Number(hrSlice[i]);
+        if (Number.isFinite(h)) hr60 = h;
         break;
       }
     }
-    if (drop != null && Number.isFinite(drop)) drops.push(drop);
-  }
 
-  return drops.length ? drops : null;
+    return {
+      lateAvg,
+      peak: Number.isFinite(peak) ? peak : null,
+      hr60,
+    };
+  });
+
+  const first = intervalHr[0]?.lateAvg;
+  const last = intervalHr[intervalHr.length - 1]?.lateAvg;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
+
+  const hrDriftBpm = last - first;
+  const hrDriftPct = ((last - first) / first) * 100;
+
+  const hrr60Drops = intervalHr
+    .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
+    .filter((x) => Number.isFinite(x));
+  const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
+
+  return {
+    HR_Drift_bpm: hrDriftBpm,
+    HR_Drift_pct: hrDriftPct,
+    HRR60_median: hrr60Median,
+    drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
+    interval_type: intervalType ?? null,
+  };
 }
 
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
@@ -2221,6 +2340,15 @@ function getKeyType(a) {
     if (s.startsWith("key:")) return s.slice(4).trim() || "key";
   }
   return "key";
+}
+
+function getIntervalTypeFromActivity(a) {
+  const keyType = getKeyType(a);
+  if (!keyType) return null;
+  const s = String(keyType).toLowerCase();
+  if (s.includes("vo2") || s.includes("v02")) return "vo2";
+  if (s.includes("schwelle") || s.includes("threshold")) return "threshold";
+  return null;
 }
 
 function isGA(a) {
