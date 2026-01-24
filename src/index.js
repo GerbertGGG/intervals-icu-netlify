@@ -862,9 +862,11 @@ async function computeMaintenance14d(ctx, dayIso) {
   };
 }
 
-// Representative GA run: longest GA (not key), tie-breaker: has drift, then higher moving_time
+// Representative GA run: prefer non-key GA; fallback to key GA for EF/VDOT.
+// Longest GA wins, tie-breaker: has drift, then higher moving_time
 function pickRepresentativeGARun(perRunInfo) {
-  const ga = perRunInfo.filter((x) => x.ga && !x.isKey);
+  const nonKeyGA = perRunInfo.filter((x) => x.ga && !x.isKey);
+  const ga = nonKeyGA.length ? nonKeyGA : perRunInfo.filter((x) => x.ga);
   if (!ga.length) return null;
   ga.sort((a, b) => {
     const ta = Number(a.moving_time) || 0;
