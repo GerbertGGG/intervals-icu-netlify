@@ -5,7 +5,7 @@
 // INTERVALS_API_KEY
 //
 // Wellness custom numeric fields (create these in Intervals):
-// VDOT, Drift, Motor
+// VDOT, Drift, Motor, EF
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
@@ -191,6 +191,7 @@ const BENCH_LOOKBACK_DAYS = 180;
 const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
+const FIELD_EF = "EF";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -661,7 +662,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       let drift_source = "none";
       let hrr60 = null;
       let hrr60Drops = null;
-      let hrr60Pattern = null;
 
       if (ga && !isKey) {
         drift_source = "streams";
@@ -697,11 +697,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           const streams = await getStreams(ctx, a.id, ["time", "heartrate"]);
           hrr60 = hrr60FromStreams(streams);
           hrr60Drops = hrr60DropsFromStreams(streams);
-          hrr60Pattern = interpretHrr60Drops(hrr60Drops);
         } catch {
           hrr60 = null;
           hrr60Drops = null;
-          hrr60Pattern = null;
         }
       }
 
@@ -719,7 +717,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         load,
         hrr60,
         hrr60Drops,
-        hrr60Pattern,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -740,6 +737,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const rep = pickRepresentativeGARun(perRunInfo);
     if (rep) {
       if (rep.ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(rep.ef), 1);
+      if (rep.ef != null) patch[FIELD_EF] = round(rep.ef, 3);
       if (rep.drift != null) patch[FIELD_DRIFT] = round(rep.drift, 1);
     }
 
@@ -944,40 +942,6 @@ function buildBottomLine({
   return { today, next, trigger };
 }
 
-function renderKeyHrr60Section(perRunInfo) {
-  const keyRuns = perRunInfo.filter((x) => x.isKey);
-  if (!keyRuns.length) return [];
-
-  const lines = [];
-  lines.push("🔑 HRR60 speziell im Intervalltraining");
-  lines.push("");
-  lines.push("Beobachte:");
-  lines.push("• Drop Intervall 1 → 2 → 3 → 4");
-  lines.push("");
-  lines.push("Typische Muster:");
-  lines.push("• 🟢 stabiler Drop (z. B. immer ~22–25 bpm) → gute Belastungsverträglichkeit");
-  lines.push("• 🟡 langsam sinkender Drop (25 → 18 → 12 bpm) → Ermüdung baut sich auf");
-  lines.push("• 🔴 Einbruch (<10 bpm) → Einheit kippt, Qualität leidet");
-  lines.push("");
-
-  keyRuns.forEach((run, idx) => {
-    const label = run.keyType ? `key:${run.keyType}` : "key";
-    const title = `Key ${idx + 1} (${label})`;
-    const hrrLine =
-      run.hrr60 != null ? `${title}: HRR60 ${run.hrr60.toFixed(0)} bpm (HF-Abfall in 60s)` : `${title}: HRR60 n/a`;
-    lines.push(hrrLine);
-
-    if (Array.isArray(run.hrr60Drops) && run.hrr60Drops.length >= 2) {
-      lines.push(`Drops: ${formatHrr60Drops(run.hrr60Drops)} bpm`);
-      if (run.hrr60Pattern) lines.push(run.hrr60Pattern);
-    }
-    lines.push("");
-  });
-
-  lines.push("👉 Goldene Regel: Wenn HRR60 stark einbricht, bringen weitere Wiederholungen kaum noch Trainingsreiz.");
-  return lines;
-}
-
 // ================= COMMENT =================
 function renderWellnessComment({
   perRunInfo,
@@ -1030,12 +994,6 @@ function renderWellnessComment({
   if (Array.isArray(benchReports) && benchReports.length) {
     lines.push("");
     lines.push(benchReports.join("\n\n"));
-  }
-
-  const keyHrr60Lines = renderKeyHrr60Section(perRunInfo);
-  if (keyHrr60Lines.length) {
-    lines.push("");
-    lines.push(...keyHrr60Lines);
   }
 
   if (fatigue?.override) {
@@ -1914,20 +1872,6 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lines.push(secondaryLine);
   }
 
-  if (isKey && Array.isArray(intervalMetrics?.hrr60Drops) && intervalMetrics.hrr60Drops.length >= 2) {
-    lines.push("");
-    lines.push("HRR60 speziell im Intervalltraining");
-    lines.push("Beobachte: Drop Intervall 1 → 2 → 3 → 4");
-    lines.push("Typische Muster:");
-    lines.push("• 🟢 stabiler Drop (z. B. immer ~22–25 bpm) → gute Belastungsverträglichkeit");
-    lines.push("• 🟡 langsam sinkender Drop (25 → 18 → 12 bpm) → Ermüdung baut sich auf");
-    lines.push("• 🔴 Einbruch (<10 bpm) → Einheit kippt, Qualität leidet");
-    lines.push(`Drops: ${formatHrr60Drops(intervalMetrics.hrr60Drops)} bpm`);
-    const pattern = interpretHrr60Drops(intervalMetrics.hrr60Drops);
-    if (pattern) lines.push(pattern);
-    lines.push("👉 Goldene Regel: Wenn HRR60 stark einbricht, bringen weitere Wiederholungen kaum noch Trainingsreiz.");
-  }
-
   let verdict = "Stabil / innerhalb Normalrauschen.";
   let lastIntervalMetrics = null;
   if (same.length && (benchType !== "GA" || isKey)) {
@@ -2136,34 +2080,6 @@ function hrr60DropsFromStreams(streams, { minPeakHr = HFMAX * 0.85, minPeakSepar
   }
 
   return drops.length ? drops : null;
-}
-
-function formatHrr60Drops(drops) {
-  if (!Array.isArray(drops) || !drops.length) return "n/a";
-  return drops.map((d) => Math.round(d)).join(" → ");
-}
-
-function interpretHrr60Drops(drops) {
-  if (!Array.isArray(drops) || drops.length < 2) return null;
-
-  const nums = drops.map((d) => Number(d)).filter((d) => Number.isFinite(d));
-  if (nums.length < 2) return null;
-
-  const min = Math.min(...nums);
-  const max = Math.max(...nums);
-  const first = nums[0];
-  const last = nums[nums.length - 1];
-  const avg = nums.reduce((a, b) => a + b, 0) / nums.length;
-
-  if (min < 10) return "🔴 Einbruch (<10 bpm) → Einheit kippt, Qualität leidet";
-  if (nums.length >= 3 && last <= first - 6) {
-    return "🟡 langsam sinkender Drop → Ermüdung baut sich auf";
-  }
-  if (max - min <= 4 && avg >= 20 && avg <= 26) {
-    return "🟢 stabiler Drop → gute Belastungsverträglichkeit";
-  }
-
-  return null;
 }
 
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
