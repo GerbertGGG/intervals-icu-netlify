@@ -711,6 +711,25 @@ function getNextBlock(block, wave, weeksToEvent) {
   return weeksToEvent < 0 ? "RESET" : "RACE";
 }
 
+function computeWeeksToEvent(todayISO, eventDateISO, reasons) {
+  const weeksToEventRaw = weeksBetween(todayISO, eventDateISO);
+  let weeksToEvent = weeksToEventRaw;
+  const needsGuard =
+    !Number.isFinite(weeksToEvent) || weeksToEvent < -2 || weeksToEvent > 104;
+  if (needsGuard) {
+    if (Array.isArray(reasons)) {
+      const rawText = Number.isFinite(weeksToEventRaw) ? weeksToEventRaw.toFixed(2) : "n/a";
+      reasons.push(`weeksToEvent unplausibel (${rawText}) → neu berechnet`);
+    }
+    weeksToEvent = weeksBetween(todayISO, eventDateISO);
+  }
+  if (!Number.isFinite(weeksToEvent)) {
+    if (Array.isArray(reasons)) reasons.push("weeksToEvent konnte nicht berechnet werden");
+    return { weeksToEventRaw, weeksToEvent: null };
+  }
+  return { weeksToEventRaw, weeksToEvent };
+}
+
 function determineBlockState({
   today,
   eventDate,
@@ -720,36 +739,100 @@ function determineBlockState({
 }) {
   const reasons = [];
   const eventDistanceNorm = eventDistance || "10k";
+  const todayISO = today;
+  const eventDateISO = eventDate || null;
 
-  if (!eventDate || !isIsoDate(eventDate)) {
+  const persistedStart = previousState?.startDate || null;
+  const clampedStart = clampStartDate(persistedStart, todayISO);
+  const startWasReset = clampedStart == null;
+  let startDate = clampedStart || todayISO;
+  if (startWasReset && persistedStart) {
+    reasons.push("Block-Startdatum unplausibel → Start neu gesetzt");
+  }
+
+  if (!eventDateISO || !parseISODateSafe(eventDateISO)) {
+    const timeInBlockWeeks = weeksBetween(startDate, todayISO);
     return {
       block: "BASE",
       wave: 0,
       weeksToEvent: null,
+      weeksToEventRaw: null,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: startDate,
+      startWasReset,
       reasons: ["Kein Event-Datum gefunden → BASE"],
       readinessScore: 50,
       forcedSwitch: false,
       nextSuggestedBlock: "BUILD",
-      timeInBlockWeeks: null,
-      startDate: previousState?.startDate || today,
+      timeInBlockWeeks: Number.isFinite(timeInBlockWeeks) ? timeInBlockWeeks : null,
+      startDate,
       eventDistance: eventDistanceNorm,
     };
   }
 
-  const daysToEvent = diffDays(today, eventDate);
-  const weeksToEvent = Math.ceil(daysToEvent / 7);
+  const { weeksToEventRaw, weeksToEvent } = computeWeeksToEvent(todayISO, eventDateISO, reasons);
+  if (weeksToEvent == null) {
+    const timeInBlockWeeks = weeksBetween(startDate, todayISO);
+    return {
+      block: "BASE",
+      wave: 0,
+      weeksToEvent: null,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: startDate,
+      startWasReset,
+      reasons,
+      readinessScore: 50,
+      forcedSwitch: false,
+      nextSuggestedBlock: "BUILD",
+      timeInBlockWeeks: Number.isFinite(timeInBlockWeeks) ? timeInBlockWeeks : null,
+      startDate,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
+  if (weeksToEvent <= 4 && weeksToEvent >= 0) {
+    return {
+      block: "RACE",
+      wave: 0,
+      weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: todayISO,
+      startWasReset,
+      reasons: [...reasons, "Event sehr nah (≤4 Wochen) → RACE"],
+      readinessScore: 90,
+      forcedSwitch: false,
+      nextSuggestedBlock: "RESET",
+      timeInBlockWeeks: 0,
+      startDate: todayISO,
+      eventDistance: eventDistanceNorm,
+    };
+  }
 
   if (weeksToEvent <= BLOCK_CONFIG.cutoffs.forceRaceWeeks && weeksToEvent >= 0) {
     return {
       block: "RACE",
       wave: weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0,
       weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: todayISO,
+      startWasReset,
       reasons: ["Event sehr nah → sofort RACE"],
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockWeeks: null,
-      startDate: today,
+      timeInBlockWeeks: 0,
+      startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
   }
@@ -760,12 +843,18 @@ function determineBlockState({
         block: "RESET",
         wave: 0,
         weeksToEvent,
+        weeksToEventRaw,
+        todayISO,
+        eventDateISO,
+        blockStartPersisted: persistedStart,
+        blockStartEffective: todayISO,
+        startWasReset,
         reasons: ["Event vorbei → RESET"],
         readinessScore: 60,
         forcedSwitch: false,
         nextSuggestedBlock: "BASE",
-        timeInBlockWeeks: null,
-        startDate: today,
+        timeInBlockWeeks: 0,
+        startDate: todayISO,
         eventDistance: eventDistanceNorm,
       };
     }
@@ -773,26 +862,50 @@ function determineBlockState({
       block: "BASE",
       wave: 0,
       weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: todayISO,
+      startWasReset,
       reasons: ["Event vorbei → Re-Entry BASE"],
       readinessScore: 50,
       forcedSwitch: false,
       nextSuggestedBlock: "BUILD",
-      timeInBlockWeeks: null,
-      startDate: today,
+      timeInBlockWeeks: 0,
+      startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
   }
 
   let wave = weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0;
   if (previousState?.wave === 2) wave = 2;
+  if (weeksToEvent <= 8 && wave === 1) {
+    wave = 0;
+    reasons.push("Event ≤8 Wochen → Wave 1 deaktiviert");
+  }
 
   let block = previousState?.block || (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
-  let startDate = previousState?.startDate || today;
-
-  const timeInBlockWeeks = Math.floor(diffDays(startDate, today) / 7);
-  const blockLimits = BLOCK_CONFIG.durations[block] || { min: 1, max: 8 };
 
   const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
+  const runFloorIsLow =
+    runFloorTarget > 0 && (historyMetrics?.runFloor7 ?? 0) < runFloorTarget * 0.5;
+  if (weeksToEvent <= 8 && block === "BASE") {
+    if (runFloorIsLow) {
+      reasons.push("BASE bleibt trotz Event-Nähe: RunFloor extrem niedrig");
+    } else {
+      block = "BUILD";
+      startDate = todayISO;
+      reasons.push("Event ≤8 Wochen → BASE zu spät, Wechsel zu BUILD");
+    }
+  }
+
+  let timeInBlockWeeks = weeksBetween(startDate, todayISO);
+  if (!Number.isFinite(timeInBlockWeeks) || timeInBlockWeeks < 0) {
+    timeInBlockWeeks = 0;
+  }
+  const blockLimits = BLOCK_CONFIG.durations[block] || { min: 1, max: 8 };
+
   const runFloorReady =
     runFloorTarget > 0
       ? historyMetrics.runFloor7 >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct &&
@@ -820,6 +933,12 @@ function determineBlockState({
       block,
       wave,
       weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: startDate,
+      startWasReset,
       reasons,
       readinessScore,
       forcedSwitch,
@@ -834,11 +953,18 @@ function determineBlockState({
     forcedSwitch = true;
     reasons.push(`Maxdauer ${blockLimits.max} Wochen überschritten → Wechsel erzwungen`);
     block = nextSuggestedBlock;
-    startDate = today;
+    startDate = todayISO;
+    timeInBlockWeeks = 0;
     return {
       block,
       wave: block === "BASE" && wave === 1 ? 2 : wave,
       weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: startDate,
+      startWasReset,
       reasons,
       readinessScore,
       forcedSwitch,
@@ -853,7 +979,8 @@ function determineBlockState({
     if (runFloorReady && aerobicReady && driftReady && fatigueOk) {
       reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
       block = "BUILD";
-      startDate = today;
+      startDate = todayISO;
+      timeInBlockWeeks = 0;
     } else {
       if (!runFloorReady) reasons.push("BASE bleibt: RunFloor noch instabil");
       if (!aerobicReady) reasons.push("BASE bleibt: AerobicEq/Floor noch instabil");
@@ -874,14 +1001,16 @@ function determineBlockState({
       if (keysOk) {
         reasons.push("BUILD I abgeschlossen → RESET (Wave 1)");
         block = "RESET";
-        startDate = today;
+        startDate = todayISO;
+        timeInBlockWeeks = 0;
       } else {
         reasons.push("BUILD bleibt: zu wenige Keys für Wave-Reset");
       }
     } else if (buildReady || eventForcesRace) {
       reasons.push(eventForcesRace ? "Event rückt näher → RACE" : "BUILD Exit: Keys ok + Plateau erreicht");
       block = "RACE";
-      startDate = today;
+      startDate = todayISO;
+      timeInBlockWeeks = 0;
     } else {
       if (!keyCompliance?.freqOk) reasons.push("BUILD bleibt: Key-Frequenz zu niedrig/hoch");
       if (!keyCompliance?.typeOk) reasons.push("BUILD bleibt: Key-Typen passen nicht");
@@ -892,7 +1021,8 @@ function determineBlockState({
       reasons.push("RESET erfüllt → BASE II");
       block = "BASE";
       wave = 2;
-      startDate = today;
+      startDate = todayISO;
+      timeInBlockWeeks = 0;
     } else {
       reasons.push("RESET bleibt: Ermüdungssignale noch aktiv");
     }
@@ -900,7 +1030,8 @@ function determineBlockState({
     if (weeksToEvent <= 0) {
       reasons.push("Event erreicht → RESET");
       block = "RESET";
-      startDate = today;
+      startDate = todayISO;
+      timeInBlockWeeks = 0;
     } else {
       reasons.push("RACE bleibt: Taper/Peak läuft");
     }
@@ -910,6 +1041,12 @@ function determineBlockState({
     block,
     wave,
     weeksToEvent,
+    weeksToEventRaw,
+    todayISO,
+    eventDateISO,
+    blockStartPersisted: persistedStart,
+    blockStartEffective: startDate,
+    startWasReset,
     reasons,
     readinessScore,
     forcedSwitch,
@@ -992,8 +1129,32 @@ function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, histo
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
+function parseISODateSafe(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
+  const [y, m, d] = String(iso).split("-").map((v) => Number(v));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(date.getTime())) return null;
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() + 1 !== m || date.getUTCDate() !== d) return null;
+  return date;
+}
 function isIsoDate(s) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(s));
+}
+function weeksBetween(dateAISO, dateBISO) {
+  const a = parseISODateSafe(dateAISO);
+  const b = parseISODateSafe(dateBISO);
+  if (!a || !b) return NaN;
+  return (b.getTime() - a.getTime()) / (7 * 86400000);
+}
+function clampStartDate(startISO, todayISO, maxAgeDays = 180) {
+  const start = parseISODateSafe(startISO);
+  const today = parseISODateSafe(todayISO);
+  if (!start || !today) return null;
+  if (start.getTime() > today.getTime()) return null;
+  const ageDays = (today.getTime() - start.getTime()) / 86400000;
+  if (ageDays > maxAgeDays) return null;
+  return isoDate(start);
 }
 function diffDays(a, b) {
   const da = new Date(a + "T00:00:00Z").getTime();
@@ -1334,8 +1495,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
 
-    const weeksToEvent = eventDate && isIsoDate(eventDate) ? Math.ceil(diffDays(day, eventDate) / 7) : null;
-    const baseBlock = previousBlockState?.block || (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
+    const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
+    const weeksToEvent = weeksInfo.weeksToEvent ?? null;
+    const baseBlock =
+      previousBlockState?.block ||
+      (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
     const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14);
 
@@ -1629,13 +1793,19 @@ function renderWellnessComment({
     lines.push("");
     lines.push("🎯 Block");
     const weeksToEventText =
-      blockState.weeksToEvent == null ? "n/a" : `${blockState.weeksToEvent} Wochen`;
+      blockState.weeksToEvent == null ? "n/a" : `${blockState.weeksToEvent.toFixed(1)} Wochen`;
+    const timeInBlockText =
+      blockState.timeInBlockWeeks == null ? "n/a" : `${blockState.timeInBlockWeeks.toFixed(1)} Wochen`;
     lines.push(
       `Block: ${blockState.block} | Wave: ${blockState.wave ?? 0} | Wochen bis Event: ${weeksToEventText}`
     );
+    lines.push(`Zeit im Block: ${timeInBlockText}`);
     lines.push(
       `Readiness: ${blockState.readinessScore ?? 0}/100${blockState.forcedSwitch ? " ⚠️ erzwungen" : ""}`
     );
+    if (blockState.startWasReset) {
+      lines.push("Block-Startdatum war unplausibel und wurde neu gesetzt.");
+    }
     if (Array.isArray(blockState.reasons) && blockState.reasons.length) {
       for (const reason of blockState.reasons.slice(0, 5)) lines.push(`- ${reason}`);
     }
