@@ -104,10 +104,14 @@ export default {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
+const STRENGTH_MIN_7D = 2;
+const STRIDES_MIN_7D = 1;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
+const BENCH_KV_LAST_KEY = "bench:last";
+const PROGRESS_KV_LAST_LONGRUN_BUMP = "progress:lastLongrunBumpISO";
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
@@ -320,7 +324,7 @@ function bucketAllLoadsByDay(acts) {
   return m;
 }
 
-async function computeFatigue7d(ctx, dayIso) {
+async function computeFatigue7d(ctx, dayIso, options = {}) {
   const end = new Date(dayIso + "T00:00:00Z");
 
   const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
@@ -359,9 +363,10 @@ async function computeFatigue7d(ctx, dayIso) {
   const rampPct = prev7 > 0 ? (last7 - prev7) / prev7 : last7 > 0 ? 999 : 0;
 
   const keyCount7 = await computeKeyCount7d(ctx, dayIso);
+  const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : MAX_KEYS_7D;
 
   const reasons = [];
-  if (keyCount7 > MAX_KEYS_7D) reasons.push(`Key-Cap: ${keyCount7}/${MAX_KEYS_7D} Key in 7 Tagen`);
+  if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
   if (rampPct > RAMP_PCT_7D_LIMIT) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
   if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
   if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
@@ -372,11 +377,82 @@ async function computeFatigue7d(ctx, dayIso) {
     override,
     reasons,
     keyCount7,
+    keyCap,
+    keyCapExceeded: keyCount7 > keyCap,
     rampPct,
     monotony,
     strain,
     last7Load: last7,
     prev7Load: prev7,
+  };
+}
+
+function computeRobustness(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let strength7 = 0;
+  let strength14 = 0;
+  let strides7 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d >= endIso) continue;
+    if (d >= start14Iso && isStrength(a)) strength14 += 1;
+    if (d >= start7Iso && isStrength(a)) strength7 += 1;
+    if (d >= start7Iso && isStridesSession(a)) strides7 += 1;
+  }
+
+  const strengthOk = strength7 >= STRENGTH_MIN_7D;
+  const stridesOk = strides7 >= STRIDES_MIN_7D;
+  const reasons = [];
+  if (!strengthOk) reasons.push("Kraft/Stabi fehlt");
+  if (!stridesOk) reasons.push("Strides fehlen");
+
+  return {
+    strengthSessions7d: strength7,
+    strengthSessions14d: strength14,
+    strides7d: strides7,
+    strengthOk,
+    stridesOk,
+    reasons,
+  };
+}
+
+function computeKeySpacing(ctx, dayIso, windowDays = 14) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const keyDates = [];
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (hasKeyTag(a)) keyDates.push(d);
+  }
+  keyDates.sort();
+
+  let ok = true;
+  let violation = null;
+  for (let i = 1; i < keyDates.length; i++) {
+    const gap = diffDays(keyDates[i - 1], keyDates[i]);
+    if (gap < 2) {
+      ok = false;
+      violation = { prev: keyDates[i - 1], next: keyDates[i], gapDays: gap };
+      break;
+    }
+  }
+
+  const lastKeyIso = keyDates.length ? keyDates[keyDates.length - 1] : null;
+  const nextAllowedIso = lastKeyIso ? isoDate(new Date(new Date(lastKeyIso + "T00:00:00Z").getTime() + 2 * 86400000)) : null;
+
+  return {
+    ok,
+    violation,
+    lastKeyIso,
+    nextAllowedIso,
   };
 }
 
@@ -740,6 +816,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const actual7 = keyStats7.count;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
+  const maxKeysCap = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : maxKeys;
+  const capExceeded = actual7 > maxKeysCap;
 
   const actualTypes7 = keyStats7.list || [];
   const actualTypes14 = keyStats14.list || [];
@@ -760,7 +838,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
 
-  if (bannedHits.length) {
+  if (capExceeded) {
+    suggestion = "Kein weiterer Key diese Woche.";
+  } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!freqOk) {
     suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
@@ -772,11 +852,18 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = "Kein Key geplant – locker/steady.";
   }
 
-  const status = freqOk && typeOk ? "ok" : "warn";
+  const keySpacingOk = context.keySpacing?.ok ?? true;
+  const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
+  if (!capExceeded && !keySpacingOk && nextKeyEarliest) {
+    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand).`;
+  }
+
+  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
 
   return {
     expected,
     maxKeys,
+    maxKeysCap,
     actual7,
     actual14,
     perWeek14,
@@ -791,6 +878,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     status,
     suggestion,
     basedOn: "7T",
+    capExceeded,
+    keySpacingOk,
+    nextKeyEarliest,
   };
 }
 
@@ -1451,11 +1541,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       policy = getModePolicy(modeInfo);
     }
     // NEW: fatigue / key-cap metrics (keine RECOVERY-Logik mehr)
-    let fatigue = null;
+    let fatigueBase = null;
     try {
-      fatigue = await computeFatigue7d(ctx, day);
+      fatigueBase = await computeFatigue7d(ctx, day);
     } catch {
-      fatigue = null;
+      fatigueBase = null;
+    }
+
+    let robustness = null;
+    try {
+      robustness = computeRobustness(ctx, day);
+    } catch {
+      robustness = null;
     }
 
     const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
@@ -1621,6 +1718,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
+    const keySpacing = computeKeySpacing(ctx, day);
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
@@ -1645,7 +1743,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       efDeltaPct: trend?.dv ?? null,
       motorValue: motor?.value ?? null,
       motorDelta: null,
-      fatigue,
+      fatigue: fatigueBase,
       keyStats14,
       keyCompliance: keyCompliancePre,
     };
@@ -1676,10 +1774,46 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     blockState.recoveryUntil = recoveryState.recoveryUntil;
     blockState.lastStreakUpdateISO = recoveryState.lastStreakUpdateISO;
 
-    const keyRules = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
+    const dynamicKeyCap = {
+      maxKeys7d: MAX_KEYS_7D,
+      reasons: [],
+    };
+
+    if (recoveryState.recoveryActive) {
+      dynamicKeyCap.maxKeys7d = 0;
+      dynamicKeyCap.reasons.push("Recovery aktiv");
+    } else if (fatigueBase?.override) {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Fatigue/Overload");
+    } else if (robustness && (!robustness.strengthOk || !robustness.stridesOk)) {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Robustheit fehlt");
+    } else if ((motor?.value ?? 0) >= 70) {
+      dynamicKeyCap.maxKeys7d = 2;
+      dynamicKeyCap.reasons.push("Motor stark");
+    } else {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Motor <70");
+    }
+
+    let fatigue = fatigueBase;
+    try {
+      fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: dynamicKeyCap.maxKeys7d });
+    } catch {
+      fatigue = fatigueBase;
+    }
+    historyMetrics.fatigueCap = fatigue;
+
+    const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
+    const keyRules = {
+      ...keyRulesBase,
+      maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
+    };
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
       block: blockState.block,
       eventDistance,
+      maxKeys7d: dynamicKeyCap.maxKeys7d,
+      keySpacing,
     });
 
     patch[FIELD_BLOCK] = blockState.block;
@@ -1704,6 +1838,24 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       modeAfter: policy.label,
       reasons: recoveryState.reasons,
     });
+
+    let raceBenchmark = null;
+    try {
+      raceBenchmark = findLatestBenchmark(ctx, day);
+      if (write && raceBenchmark && hasKv(env)) {
+        await writeKvJson(env, BENCH_KV_LAST_KEY, raceBenchmark);
+      }
+    } catch {
+      raceBenchmark = null;
+    }
+    const raceOutlook = computeRaceOutlook(day, raceBenchmark, eventDistance);
+
+    let progression = null;
+    try {
+      progression = await computeProgression(ctx, env, day, motor, fatigueBase, write);
+    } catch {
+      progression = null;
+    }
 
 
 async function computeMaintenance14d(ctx, dayIso) {
@@ -1742,10 +1894,15 @@ async function computeMaintenance14d(ctx, dayIso) {
       trend,
       motor,
       benchReports,
+      robustness,
+      raceOutlook,
+      progression,
       modeInfo,
       blockState,
       keyRules,
       keyCompliance,
+      dynamicKeyCap,
+      keySpacing,
       policy,
       loads7,
       recoveryState,
@@ -1845,6 +2002,8 @@ function buildBottomLine({
   hasSpecific,
   aerobicOk,
   intensitySignal,
+  keyCapExceeded,
+  keySpacingOk,
 }) {
   let today = "Rest oder locker (nach Gefühl)";
   if (recoveryState?.recoveryActive) {
@@ -1867,6 +2026,11 @@ function buildBottomLine({
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45min locker (kein Key) – Intensität deckeln";
   }
+  if (keyCapExceeded) {
+    next = "Kein weiterer Key diese Woche – locker/steady.";
+  } else if (!keySpacingOk) {
+    next = "Nächster Key frühestens in 48h – bis dahin locker/steady.";
+  }
 
   let trigger = "keine Abweichung";
   if (recoveryState?.recoveryActive) {
@@ -1876,8 +2040,213 @@ function buildBottomLine({
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     trigger = "AerobicFloor unterschritten";
   }
+  if (keyCapExceeded) {
+    trigger = "Key-Cap überschritten";
+  } else if (!keySpacingOk) {
+    trigger = "Key-Abstand <48h";
+  }
 
   return { today, next, trigger };
+}
+
+function formatRaceTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "n/a";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function formatMinutes(mins) {
+  if (!Number.isFinite(mins) || mins <= 0) return "n/a";
+  return `${Math.round(mins)}′`;
+}
+
+function parseBenchDistanceKm(benchTag) {
+  const s = String(benchTag || "").toLowerCase().trim();
+  if (s === "5k") return 5;
+  if (s === "10k") return 10;
+  if (s === "hm") return 21.097;
+  if (s === "m") return 42.195;
+  return null;
+}
+
+function predictTime(distanceKmTarget, benchDistanceKm, benchTimeSec) {
+  if (!Number.isFinite(distanceKmTarget) || !Number.isFinite(benchDistanceKm) || !Number.isFinite(benchTimeSec)) {
+    return null;
+  }
+  if (benchDistanceKm <= 0 || benchTimeSec <= 0) return null;
+  return benchTimeSec * (distanceKmTarget / benchDistanceKm) ** 1.06;
+}
+
+function findLatestBenchmark(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  const benchActs = ctx.activitiesAll
+    .filter((a) => {
+      const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+      if (!d || d < startIso || d >= endIso) return false;
+      if (!isRun(a)) return false;
+      return Boolean(getBenchTag(a));
+    })
+    .sort((a, b) => new Date(b.start_date_local || b.start_date) - new Date(a.start_date_local || a.start_date));
+
+  for (const a of benchActs) {
+    const benchTag = getBenchTag(a);
+    if (!benchTag) continue;
+    const benchTagLower = benchTag.toLowerCase();
+    const distanceKm = parseBenchDistanceKm(benchTagLower);
+    const timeSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (!Number.isFinite(timeSec) || timeSec <= 0) continue;
+
+    if (distanceKm != null) {
+      return {
+        benchTag: benchTagLower,
+        date: String(a.start_date_local || a.start_date || "").slice(0, 10),
+        distanceKm,
+        timeSec,
+      };
+    }
+
+    if (benchTagLower === "tt20" || benchTagLower === "tt30") {
+      const avgSpeed = Number(a?.average_speed);
+      if (!Number.isFinite(avgSpeed) || avgSpeed <= 0) continue;
+      const distKm = (avgSpeed * timeSec) / 1000;
+      if (distKm <= 0) continue;
+      return {
+        benchTag: benchTagLower,
+        date: String(a.start_date_local || a.start_date || "").slice(0, 10),
+        distanceKm: distKm,
+        timeSec,
+      };
+    }
+  }
+
+  return null;
+}
+
+function computeRaceOutlook(dayIso, benchmark, eventDistance) {
+  if (!benchmark) return { status: "na", text: "Race Outlook: n/a – bitte bench:tt30 oder bench:5k in den nächsten 14 Tagen." };
+
+  const benchDate = benchmark.date;
+  const ageDays = Math.max(0, diffDays(benchDate, dayIso));
+  const confidence = ageDays <= 42 ? "hoch" : ageDays <= 90 ? "mittel" : "niedrig";
+
+  const targets = ["5k", "10k", "hm", "m"];
+  const targetDistanceMap = { "5k": 5, "10k": 10, hm: 21.097, m: 42.195 };
+  const predictions = {};
+  for (const t of targets) {
+    const sec = predictTime(targetDistanceMap[t], benchmark.distanceKm, benchmark.timeSec);
+    if (sec != null) predictions[t] = sec;
+  }
+
+  const eventDistanceNorm = eventDistance && targetDistanceMap[eventDistance] ? eventDistance : null;
+  const targetLabel = eventDistanceNorm ?? "10k";
+  const targetSec = eventDistanceNorm ? predictions[eventDistanceNorm] : predictions["10k"];
+  const timeText = formatRaceTime(targetSec);
+  const benchLabel = `${benchmark.benchTag} am ${benchDate}`;
+
+  return {
+    status: "ok",
+    confidence,
+    benchLabel,
+    targetLabel,
+    timeText,
+    predictions,
+  };
+}
+
+function computeRunMinutesWindow(ctx, startIso, endIso) {
+  let total = 0;
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (Number.isFinite(sec) && sec > 0) total += sec / 60;
+  }
+  return total;
+}
+
+function computeLongrunMinutesWindow(ctx, startIso, endIso) {
+  let maxSec = 0;
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (Number.isFinite(sec) && sec > maxSec) maxSec = sec;
+  }
+  return maxSec / 60;
+}
+
+async function computeProgression(ctx, env, dayIso, motor, fatigue, write) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
+
+  const runMinutes7d = computeRunMinutesWindow(ctx, start7Iso, endIso);
+  const runMinutesPrev7d = computeRunMinutesWindow(ctx, start14Iso, start7Iso);
+
+  const weeklyMinutes = [];
+  for (let i = 0; i < 4; i++) {
+    const weekEnd = new Date(end.getTime() - i * 7 * 86400000);
+    const weekEndIso = isoDate(new Date(weekEnd.getTime() + 86400000));
+    const weekStartIso = isoDate(new Date(weekEnd.getTime() - 7 * 86400000));
+    weeklyMinutes.push(computeRunMinutesWindow(ctx, weekStartIso, weekEndIso));
+  }
+  const baseline = median(weeklyMinutes) ?? runMinutes7d;
+
+  const deload = Boolean(fatigue?.override) || motor?.ok === false || (motor?.value ?? 0) < 55;
+  let targetMinutes = baseline * (deload ? 0.7 : 1.0);
+  let targetReason = deload ? "Deload (Fatigue/Motor)" : "Progression";
+
+  if (!deload && baseline > 0) {
+    const increment = clamp(baseline * 0.05, 10, 20);
+    targetMinutes = baseline + increment;
+    const maxIncrease = baseline * 1.08;
+    if (targetMinutes > maxIncrease) targetMinutes = maxIncrease;
+  } else if (!deload && baseline <= 0) {
+    targetMinutes = 0;
+  }
+
+  const longrunThisWeek = computeLongrunMinutesWindow(ctx, start7Iso, endIso);
+  let longrunTarget = longrunThisWeek;
+  let longrunReason = "halten";
+
+  if (deload) {
+    longrunTarget = longrunThisWeek * 0.75;
+    longrunReason = "Deload";
+  } else if (longrunThisWeek > 0) {
+    const lastBump = await readKvJson(env, PROGRESS_KV_LAST_LONGRUN_BUMP);
+    const canBump = !lastBump || (isIsoDate(lastBump) && diffDays(lastBump, dayIso) >= 14);
+    if (canBump) {
+      longrunTarget = Math.min(longrunThisWeek + 10, longrunThisWeek * 1.1);
+      longrunReason = "Bump ok";
+      if (write && hasKv(env) && longrunTarget > longrunThisWeek) {
+        await writeKvJson(env, PROGRESS_KV_LAST_LONGRUN_BUMP, dayIso);
+      }
+    } else {
+      longrunReason = "Bump gesperrt (14T-Regel)";
+    }
+  }
+
+  return {
+    runMinutes7d,
+    runMinutesPrev7d,
+    baseline,
+    targetMinutes,
+    longrunThisWeek,
+    longrunTarget,
+    deload,
+    targetReason,
+    longrunReason,
+  };
 }
 
 // ================= COMMENT =================
@@ -1886,10 +2255,15 @@ function renderWellnessComment({
   trend,
   motor,
   benchReports,
+  robustness,
+  raceOutlook,
+  progression,
   modeInfo,
   blockState,
   keyRules,
   keyCompliance,
+  dynamicKeyCap,
+  keySpacing,
   policy,
   loads7,
   recoveryState,
@@ -1931,6 +2305,59 @@ function renderWellnessComment({
 
   lines.push("");
   lines.push(motor?.text ?? "🏎️ Motor-Index: n/a");
+
+  if (robustness) {
+    lines.push("");
+    lines.push("🧱 Robustheit");
+    lines.push(`Strength: ${robustness.strengthSessions7d}/${STRENGTH_MIN_7D} (7T)`);
+    lines.push(`Strides: ${robustness.strides7d}/${STRIDES_MIN_7D} (7T)`);
+    const robustOk = robustness.strengthOk && robustness.stridesOk;
+    lines.push(`Status: ${robustOk ? "✅" : "⚠️"}`);
+    if (!robustOk) {
+      lines.push("➡️ Pflicht: Diese Woche 2x Kraft (15–25min) + 1x Strides (6–10×10–20s).");
+    } else {
+      lines.push("➡️ Robustheit erfüllt – Kraft/Strides halten.");
+    }
+  }
+
+  if (raceOutlook) {
+    lines.push("");
+    lines.push("🏁 Race Outlook");
+    if (raceOutlook.status === "ok") {
+      lines.push(
+        `Aktuell realistisch: ${raceOutlook.targetLabel} ~ ${raceOutlook.timeText} (Confidence: ${raceOutlook.confidence}; Benchmark: ${raceOutlook.benchLabel})`
+      );
+      const distKnown = Boolean(modeInfo?.nextEvent && blockState?.eventDistance);
+      if (!distKnown && raceOutlook.predictions) {
+        const predLines = [];
+        const order = ["5k", "10k", "hm", "m"];
+        for (const k of order) {
+          if (raceOutlook.predictions[k]) {
+            predLines.push(`${k.toUpperCase()}: ${formatRaceTime(raceOutlook.predictions[k])}`);
+          }
+        }
+        if (predLines.length) lines.push(`Set: ${predLines.join(" | ")}`);
+      }
+    } else {
+      lines.push(raceOutlook.text);
+    }
+  }
+
+  if (progression) {
+    lines.push("");
+    lines.push("📈 Progression");
+    lines.push(
+      `Run-Minuten (7T): ${Math.round(progression.runMinutes7d)} | Ziel nächste Woche: ${Math.round(
+        progression.targetMinutes
+      )}`
+    );
+    lines.push(
+      `Longrun: diese Woche ${formatMinutes(progression.longrunThisWeek)} | Ziel nächste Woche: ${formatMinutes(
+        progression.longrunTarget
+      )}`
+    );
+    lines.push(`Gate: ${progression.deload ? "deload ⚠️" : "motor/fatigue ok ✅"} (${progression.targetReason})`);
+  }
 
   if (Array.isArray(benchReports) && benchReports.length) {
     lines.push("");
@@ -1998,6 +2425,10 @@ function renderWellnessComment({
       const reasonText =
         reasonParts.length === 0 ? "7T erfüllt und Typ ok" : reasonParts.join(" und ");
       lines.push(`Distanz: ${distanceText}`);
+      if (dynamicKeyCap) {
+        const capReason = dynamicKeyCap.reasons.length ? dynamicKeyCap.reasons.join(", ") : "n/a";
+        lines.push(`Key cap diese Woche: ${dynamicKeyCap.maxKeys7d} (Reason: ${capReason})`);
+      }
       lines.push(
         `Erwartet/Woche: ${keyRules.expectedKeysPerWeek} (Max ${keyRules.maxKeysPerWeek}) | Ist: ${
           keyCompliance.actual7
@@ -2010,8 +2441,19 @@ function renderWellnessComment({
         `Ist-Typen: ${keyCompliance.actualTypes.length ? keyCompliance.actualTypes.join(", ") : "n/a"}`
       );
       lines.push(
-        `Bewertung: ${keyCompliance.status === "ok" ? "✅" : "⚠️"} ${reasonText}.`
+        `Bewertung: ${
+          keyCompliance.status === "ok" ? "✅" : keyCompliance.status === "red" ? "⚠️" : "⚠️"
+        } ${reasonText}.`
       );
+      if (keyCompliance.capExceeded) {
+        lines.push("⚠️ Key-Cap überschritten: kein weiterer Key diese Woche.");
+      }
+      if (keyCompliance.keySpacingOk === false && keyCompliance.nextKeyEarliest) {
+        lines.push(`⚠️ Key-Abstand <48h – nächster Key frühestens ${keyCompliance.nextKeyEarliest}.`);
+      }
+      if (!policy?.recovery && dynamicKeyCap?.maxKeys7d === 2 && !["BUILD", "RACE"].includes(blockState?.block)) {
+        lines.push("Hinweis: zweiter Key möglichst leicht (strides/vo2_touch).");
+      }
       if (keyCompliance.suggestion) lines.push(`➡️ ${keyCompliance.suggestion}`);
     }
   }
@@ -2093,6 +2535,8 @@ function renderWellnessComment({
     hasSpecific,
     aerobicOk,
     intensitySignal,
+    keyCapExceeded: keyCompliance?.capExceeded ?? false,
+    keySpacingOk: keyCompliance?.keySpacingOk ?? true,
   });
   lines.push(`Trigger: ${bottomLine.trigger}`);
   lines.push(`Heute: ${bottomLine.today}`);
@@ -3327,6 +3771,28 @@ function isAerobic(a) {
   if (hasKeyTag(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_MIN_SECONDS;
+}
+
+function normalizeTags(tags) {
+  return (tags || []).map((t) => String(t || "").toLowerCase().trim()).filter(Boolean);
+}
+
+function isStrength(a) {
+  const type = String(a?.type ?? "").toLowerCase();
+  const typeHit =
+    type.includes("strength") || type.includes("gym") || type.includes("workout") || type.includes("training");
+  if (typeHit) return true;
+  const tags = normalizeTags(a?.tags);
+  const strengthTags = new Set(["strength", "stabi", "kraft", "gym", "core", "mobility"]);
+  return tags.some((t) => strengthTags.has(t));
+}
+
+function isStridesSession(a) {
+  const tags = normalizeTags(a?.tags);
+  if (tags.some((t) => t.includes("strides") || t.includes("hill"))) return true;
+  const keyType = normalizeKeyType(getKeyType(a));
+  if (keyType === "strides") return true;
+  return false;
 }
 
 function isRun(a) {
