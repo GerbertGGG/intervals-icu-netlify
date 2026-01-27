@@ -554,18 +554,9 @@ function normalizeEventDistance(value) {
 
 function getEventDistanceFromEvent(event) {
   if (!event) return null;
-
-  // ✅ Primärquelle: echtes Feld aus API
-  const raw = event?.Distance ?? null;
-
-  const fromField = normalizeEventDistance(raw);
-  if (fromField) return fromField;
-
-  // Fallback: Name/Typ parsen (nur wenn Distance unbrauchbar ist)
-  const name = String(event?.name ?? "");
-  const type = String(event?.type ?? "");
-  return normalizeEventDistance(`${name} ${type}`);
+  return normalizeEventDistance(event?.Distance);
 }
+
 
 
 function normalizeKeyType(rawType, workoutMeta = {}) {
@@ -833,6 +824,17 @@ function determineBlockState({
 }) {
   const reasons = [];
   const eventDistanceNorm = eventDistance || "10k";
+  if (ctx.debug) {
+  console.log("[debug:eventDistance]", {
+    day,
+    eventName: modeInfo?.nextEvent?.name,
+    eventType: modeInfo?.nextEvent?.type,
+    DistanceRaw: modeInfo?.nextEvent?.Distance,
+    DistanceType: typeof modeInfo?.nextEvent?.Distance,
+    computedEventDistance: eventDistance,
+  });
+}
+
   const todayISO = today;
   const eventDateISO = eventDate || null;
 
