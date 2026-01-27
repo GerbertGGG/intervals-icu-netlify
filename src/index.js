@@ -2043,12 +2043,34 @@ function buildNextRunRecommendation({
   return next;
 }
 
-function buildBottomLineTrigger({ recoveryState, aerobicOk, policy, intensitySignal, keyCapExceeded, keySpacingOk }) {
-  if (keyCapExceeded) return "Key-Cap überschritten";
-  if (!keySpacingOk) return "Key-Abstand <48h";
-  if (recoveryState?.recoveryActive) return "Recovery-Zyklus (3:1)";
-  if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) return "AerobicFloor unterschritten";
-  return "keine Abweichung";
+function buildBottomLineCoachMessage({
+  recoveryState,
+  hasSpecific,
+  specificOk,
+  policy,
+  intensitySignal,
+  aerobicOk,
+  keyCapExceeded,
+  keySpacingOk,
+  todayText,
+  nextText,
+}) {
+  if (recoveryState?.recoveryActive) {
+    return `Heute ist Entlastung angesagt. ${todayText}. Wenn du läufst: ${nextText}.`;
+  }
+  if (keyCapExceeded) {
+    return `Key ist für diese Woche abgehakt. Halte den Rest locker/steady. ${nextText}.`;
+  }
+  if (!keySpacingOk) {
+    return `Gib dem Körper 48h zwischen Keys. Heute ruhig bleiben. ${nextText}.`;
+  }
+  if (hasSpecific && !specificOk) {
+    return `Volumen fehlt noch ein Stück. Fülle locker/steady auf. ${nextText}.`;
+  }
+  if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
+    return `GA ist heute der Fokus – Intensität deckeln. ${nextText}.`;
+  }
+  return `Alles im grünen Bereich. ${todayText}. ${nextText}.`;
 }
 
 // ================= COMMENT =================
@@ -2118,7 +2140,7 @@ function buildComments(
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   lines.push(`7T Laufminuten: ${runMinutes7} (Ziel nächste Woche: ${runTargetText})`);
   lines.push(`Longrun: ${Math.round(longRunMinutes ?? 0)}′ → Ziel: ${longRunTarget}′`);
-  lines.push(`Status: ${fatigue?.override ? "Deload empfohlen (Fatigue)" : "ok"}`);
+  lines.push(`Status: ${recoveryState?.recoveryActive ? "Entlastungswoche aktiv" : "im Plan"}`);
   lines.push("");
   lines.push("🎯 Key-Check");
   if (policy?.recovery) {
@@ -2171,18 +2193,20 @@ function buildComments(
     keyCapExceeded: keyCompliance?.capExceeded ?? false,
     keySpacingOk: keyCompliance?.keySpacingOk ?? true,
   });
-  lines.push(
-    `Trigger: ${buildBottomLineTrigger({
-      recoveryState,
-      aerobicOk,
-      policy,
-      intensitySignal,
-      keyCapExceeded: keyCompliance?.capExceeded ?? false,
-      keySpacingOk: keyCompliance?.keySpacingOk ?? true,
-    })}`
-  );
-  lines.push(`Heute: ${buildBottomLineToday({ hadAnyRun, hadKey, hadGA, recoveryState, totalMinutesToday })}`);
-  lines.push(`Nächster Lauf: ${next}`);
+  const todayText = buildBottomLineToday({ hadAnyRun, hadKey, hadGA, recoveryState, totalMinutesToday });
+  const coachLine = buildBottomLineCoachMessage({
+    recoveryState,
+    hasSpecific,
+    specificOk,
+    policy,
+    intensitySignal,
+    aerobicOk,
+    keyCapExceeded: keyCompliance?.capExceeded ?? false,
+    keySpacingOk: keyCompliance?.keySpacingOk ?? true,
+    todayText,
+    nextText: `Nächster Lauf: ${next}`,
+  });
+  lines.push(`Coach: ${coachLine}`);
 
   if (debug) {
     const debugLines = [];
