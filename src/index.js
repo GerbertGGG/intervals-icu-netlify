@@ -4,8 +4,8 @@
 // Required Secret:
 // INTERVALS_API_KEY
 //
-// Wellness custom numeric fields (create these in Intervals):
-// VDOT, Drift, Motor, EF
+// Wellness custom fields (create these in Intervals):
+// VDOT, Drift, Motor, EF, Block
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
@@ -111,6 +111,29 @@ const DETECTIVE_HISTORY_LIMIT = 12;
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
+// ================= BLOCK CONFIG (NEW) =================
+const BLOCK_CONFIG = {
+  durations: {
+    BASE: { min: 4, max: 12 },
+    BUILD: { min: 3, max: 8 },
+    RACE: { min: 2, max: 4 },
+    RESET: { min: 1, max: 2 },
+  },
+  cutoffs: {
+    wave1Weeks: 20,
+    wave2StartWeeks: 12,
+    forceRaceWeeks: 2,
+    raceStartWeeks: 6,
+    postEventResetWeeks: 2,
+  },
+  thresholds: {
+    runFloorPct: 0.9,
+    hrDriftMax: 1.0,
+    plateauEfDeltaPct: 1.0,
+    plateauMotorDelta: 3,
+    keyGrace: 0.25,
+  },
+};
 
 
 
@@ -192,6 +215,7 @@ const FIELD_VDOT = "VDOT";
 const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
+const FIELD_BLOCK = "Block";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -236,6 +260,8 @@ function createCtx(env, warmupSkipSec, debug) {
     streamsCache: new Map(), // activityId -> Promise(streams)
     // derived GA samples cache (for windows)
     gaSampleCache: new Map(), // key: `${endIso}|${windowDays}|${mode}` -> result
+    wellnessCache: new Map(), // dayIso -> wellness payload
+    blockStateCache: new Map(), // dayIso -> block state
     // concurrency limiter
     limit: createLimiter(6),
     // debug accumulator
@@ -442,7 +468,525 @@ async function computeLoads7d(ctx, dayIso) {
   };
 }
 
+// ================= BLOCK / KEY LOGIC (NEW) =================
+function normalizeEventDistance(value) {
+  const s = String(value || "").toLowerCase();
+  if (!s) return null;
+  if (s.includes("5k") || s.includes("5 km") || s.includes("5km")) return "5k";
+  if (s.includes("10k") || s.includes("10 km") || s.includes("10km")) return "10k";
+  if (s.includes("half") || s.includes("hm") || s.includes("halb")) return "hm";
+  if (s.includes("marathon") || s === "m" || s.includes("42")) return "m";
+  return null;
+}
 
+function getEventDistanceFromEvent(event) {
+  if (!event) return null;
+  const name = String(event?.name ?? "");
+  const type = String(event?.type ?? "");
+  const dist = normalizeEventDistance(`${name} ${type}`);
+  return dist;
+}
+
+function normalizeKeyType(type) {
+  const s = String(type || "").toLowerCase();
+  if (!s) return "key";
+  if (s.includes("vo2") || s.includes("v02")) return "vo2";
+  if (s.includes("schwelle") || s.includes("threshold")) return "schwelle";
+  if (s.includes("race") || s.includes("wettkampf") || s.includes("pace")) return "racepace";
+  if (s.includes("steady") || s.includes("tempo")) return "steady";
+  if (s.includes("strides")) return "strides";
+  if (s.includes("mp") || s.includes("marathon")) return "mp";
+  if (s.includes("light") && s.includes("schwelle")) return "schwelle_light";
+  if (s.includes("light") && s.includes("mp")) return "mp_light";
+  if (s.includes("hart") && s.includes("vo2")) return "vo2_hart";
+  return s;
+}
+
+function getKeyRules(block, eventDistance, weeksToEvent) {
+  const dist = eventDistance || "10k";
+  if (block === "RESET") {
+    return {
+      expectedKeysPerWeek: 0,
+      maxKeysPerWeek: 0.5,
+      allowedKeyTypes: ["steady", "strides", "schwelle_light"],
+      preferredKeyTypes: ["steady"],
+      bannedKeyTypes: ["vo2", "racepace", "schwelle", "mp"],
+    };
+  }
+
+  if (block === "BASE") {
+    if (dist === "5k" || dist === "10k") {
+      return {
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["steady", "schwelle_light", "strides"],
+        preferredKeyTypes: ["steady", "strides"],
+        bannedKeyTypes: ["vo2", "vo2_hart", "racepace"],
+      };
+    }
+    if (dist === "m") {
+      return {
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["steady", "schwelle_light", "mp_light"],
+        preferredKeyTypes: ["steady", "mp_light"],
+        bannedKeyTypes: ["vo2", "racepace"],
+      };
+    }
+    return {
+      expectedKeysPerWeek: 0.5,
+      maxKeysPerWeek: 1,
+      allowedKeyTypes: ["steady", "schwelle_light"],
+      preferredKeyTypes: ["steady"],
+      bannedKeyTypes: ["vo2", "racepace"],
+    };
+  }
+
+  if (block === "BUILD") {
+    if (dist === "5k") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: ["vo2", "schwelle", "racepace", "steady"],
+        preferredKeyTypes: ["vo2"],
+        bannedKeyTypes: [],
+      };
+    }
+    if (dist === "10k") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: ["schwelle", "racepace", "steady", "vo2"],
+        preferredKeyTypes: ["schwelle"],
+        bannedKeyTypes: [],
+      };
+    }
+    if (dist === "hm") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: ["schwelle", "racepace", "steady", "vo2"],
+        preferredKeyTypes: ["schwelle", "racepace"],
+        bannedKeyTypes: [],
+      };
+    }
+    if (dist === "m") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: ["mp", "schwelle", "steady", "mp_light"],
+        preferredKeyTypes: ["mp", "schwelle"],
+        bannedKeyTypes: ["vo2"],
+      };
+    }
+  }
+
+  if (block === "RACE") {
+    if (dist === "5k") {
+      return {
+        expectedKeysPerWeek: 1.5,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: ["racepace", "vo2", "schwelle"],
+        preferredKeyTypes: ["racepace", "vo2"],
+        bannedKeyTypes: [],
+      };
+    }
+    if (dist === "10k") {
+      return {
+        expectedKeysPerWeek: 1.5,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: ["racepace", "schwelle", "steady"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: [],
+      };
+    }
+    if (dist === "hm") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1.5,
+        allowedKeyTypes: ["racepace", "steady", "schwelle"],
+        preferredKeyTypes: ["racepace", "steady"],
+        bannedKeyTypes: ["vo2"],
+      };
+    }
+    if (dist === "m") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1.2,
+        allowedKeyTypes: ["mp", "steady", "mp_light"],
+        preferredKeyTypes: ["mp"],
+        bannedKeyTypes: ["vo2", "racepace"],
+      };
+    }
+  }
+
+  return {
+    expectedKeysPerWeek: 0.5,
+    maxKeysPerWeek: 1,
+    allowedKeyTypes: ["steady"],
+    preferredKeyTypes: ["steady"],
+    bannedKeyTypes: [],
+  };
+}
+
+function collectKeyStats(ctx, dayIso, windowDays) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let count = 0;
+  const types = {};
+  const list = [];
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!hasKeyTag(a)) continue;
+    count++;
+    const rawType = getKeyType(a);
+    const type = normalizeKeyType(rawType);
+    types[type] = (types[type] || 0) + 1;
+    list.push(type);
+  }
+  return { count, types, list };
+}
+
+function evaluateKeyCompliance(keyRules, keyStats7, keyStats14) {
+  const expected = keyRules.expectedKeysPerWeek;
+  const maxKeys = keyRules.maxKeysPerWeek;
+  const actual7 = keyStats7.count;
+  const actual14 = keyStats14.count;
+  const perWeek14 = actual14 / 2;
+
+  const grace = BLOCK_CONFIG.thresholds.keyGrace;
+  const freqOk = perWeek14 + grace >= expected && perWeek14 - grace <= maxKeys;
+
+  const actualTypes = Object.keys(keyStats14.types);
+  const bannedHits = actualTypes.filter((t) => keyRules.bannedKeyTypes.includes(t));
+  const allowedHits = actualTypes.filter((t) => keyRules.allowedKeyTypes.includes(t));
+  const preferredHits = actualTypes.filter((t) => keyRules.preferredKeyTypes.includes(t));
+
+  const typeOk = bannedHits.length === 0;
+  const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
+
+  let suggestion = "";
+  if (expected > 0 && perWeek14 < expected - grace) {
+    suggestion = `Nächster Key: ${keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady"}`;
+  } else if (bannedHits.length) {
+    suggestion = `Alternative statt ${bannedHits[0]}: ${keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady"}`;
+  } else if (preferredMissing) {
+    suggestion = `Nächster Key bevorzugt: ${keyRules.preferredKeyTypes[0]}`;
+  }
+
+  const status = freqOk && typeOk ? "ok" : "warn";
+
+  return {
+    expected,
+    maxKeys,
+    actual7,
+    actual14,
+    perWeek14,
+    freqOk,
+    typeOk,
+    preferredMissing,
+    bannedHits,
+    allowedHits,
+    preferredHits,
+    actualTypes,
+    status,
+    suggestion,
+  };
+}
+
+function getNextBlock(block, wave, weeksToEvent) {
+  if (block === "BASE") return "BUILD";
+  if (block === "BUILD") {
+    if (wave === 1 && weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) return "RESET";
+    return "RACE";
+  }
+  if (block === "RESET") {
+    if (weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) return "BASE";
+    return "BUILD";
+  }
+  return weeksToEvent < 0 ? "RESET" : "RACE";
+}
+
+function determineBlockState({
+  today,
+  eventDate,
+  eventDistance,
+  historyMetrics,
+  previousState,
+}) {
+  const reasons = [];
+  const eventDistanceNorm = eventDistance || "10k";
+
+  if (!eventDate || !isIsoDate(eventDate)) {
+    return {
+      block: "BASE",
+      wave: 0,
+      weeksToEvent: null,
+      reasons: ["Kein Event-Datum gefunden → BASE"],
+      readinessScore: 50,
+      forcedSwitch: false,
+      nextSuggestedBlock: "BUILD",
+      timeInBlockWeeks: null,
+      startDate: previousState?.startDate || today,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
+  const daysToEvent = diffDays(today, eventDate);
+  const weeksToEvent = Math.ceil(daysToEvent / 7);
+
+  if (weeksToEvent <= BLOCK_CONFIG.cutoffs.forceRaceWeeks && weeksToEvent >= 0) {
+    return {
+      block: "RACE",
+      wave: weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0,
+      weeksToEvent,
+      reasons: ["Event sehr nah → sofort RACE"],
+      readinessScore: 90,
+      forcedSwitch: false,
+      nextSuggestedBlock: "RESET",
+      timeInBlockWeeks: null,
+      startDate: today,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
+  if (weeksToEvent < 0) {
+    if (Math.abs(weeksToEvent) <= BLOCK_CONFIG.cutoffs.postEventResetWeeks) {
+      return {
+        block: "RESET",
+        wave: 0,
+        weeksToEvent,
+        reasons: ["Event vorbei → RESET"],
+        readinessScore: 60,
+        forcedSwitch: false,
+        nextSuggestedBlock: "BASE",
+        timeInBlockWeeks: null,
+        startDate: today,
+        eventDistance: eventDistanceNorm,
+      };
+    }
+    return {
+      block: "BASE",
+      wave: 0,
+      weeksToEvent,
+      reasons: ["Event vorbei → Re-Entry BASE"],
+      readinessScore: 50,
+      forcedSwitch: false,
+      nextSuggestedBlock: "BUILD",
+      timeInBlockWeeks: null,
+      startDate: today,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
+  let wave = weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0;
+  if (previousState?.wave === 2) wave = 2;
+
+  let block = previousState?.block || (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
+  let startDate = previousState?.startDate || today;
+
+  const timeInBlockWeeks = Math.floor(diffDays(startDate, today) / 7);
+  const blockLimits = BLOCK_CONFIG.durations[block] || { min: 1, max: 8 };
+
+  const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
+  const runFloorReady =
+    runFloorTarget > 0
+      ? historyMetrics.runFloor7 >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct &&
+        historyMetrics.runFloorPrev7 >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct
+      : true;
+
+  const aerobicReady = historyMetrics?.aerobicOk && historyMetrics?.aerobicOkPrev;
+  const driftReady =
+    historyMetrics?.hrDriftDelta == null || historyMetrics.hrDriftDelta <= BLOCK_CONFIG.thresholds.hrDriftMax;
+  const fatigueOk = !historyMetrics?.fatigue?.override;
+
+  let readinessScore = 40;
+  if (runFloorReady) readinessScore += 20;
+  if (aerobicReady) readinessScore += 15;
+  if (driftReady) readinessScore += 10;
+  if (fatigueOk) readinessScore += 10;
+  readinessScore = clamp(readinessScore, 0, 100);
+
+  let forcedSwitch = false;
+  let nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent);
+
+  if (timeInBlockWeeks < blockLimits.min) {
+    reasons.push(`Mindestdauer ${blockLimits.min} Wochen noch nicht erreicht`);
+    return {
+      block,
+      wave,
+      weeksToEvent,
+      reasons,
+      readinessScore,
+      forcedSwitch,
+      nextSuggestedBlock,
+      timeInBlockWeeks,
+      startDate,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
+  if (timeInBlockWeeks >= blockLimits.max) {
+    forcedSwitch = true;
+    reasons.push(`Maxdauer ${blockLimits.max} Wochen überschritten → Wechsel erzwungen`);
+    block = nextSuggestedBlock;
+    startDate = today;
+    return {
+      block,
+      wave: block === "BASE" && wave === 1 ? 2 : wave,
+      weeksToEvent,
+      reasons,
+      readinessScore,
+      forcedSwitch,
+      nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
+      timeInBlockWeeks,
+      startDate,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
+  if (block === "BASE") {
+    if (runFloorReady && aerobicReady && driftReady && fatigueOk) {
+      reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
+      block = "BUILD";
+      startDate = today;
+    } else {
+      if (!runFloorReady) reasons.push("BASE bleibt: RunFloor noch instabil");
+      if (!aerobicReady) reasons.push("BASE bleibt: AerobicEq/Floor noch instabil");
+      if (!driftReady) reasons.push("BASE bleibt: HR-Drift steigt");
+      if (!fatigueOk) reasons.push("BASE bleibt: Overload/Monotony");
+    }
+  } else if (block === "BUILD") {
+    const keyCompliance = historyMetrics?.keyCompliance;
+    const plateauEf = Math.abs(historyMetrics?.efDeltaPct ?? 0) <= BLOCK_CONFIG.thresholds.plateauEfDeltaPct;
+    const plateauMotor =
+      historyMetrics?.motorDelta == null || Math.abs(historyMetrics.motorDelta) <= BLOCK_CONFIG.thresholds.plateauMotorDelta;
+
+    const buildReady = keyCompliance?.freqOk && keyCompliance?.typeOk && (plateauEf || plateauMotor);
+    const eventForcesRace = weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks;
+
+    if (wave === 1 && weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) {
+      const keysOk = (historyMetrics?.keyStats14?.count ?? 0) >= 3;
+      if (keysOk) {
+        reasons.push("BUILD I abgeschlossen → RESET (Wave 1)");
+        block = "RESET";
+        startDate = today;
+      } else {
+        reasons.push("BUILD bleibt: zu wenige Keys für Wave-Reset");
+      }
+    } else if (buildReady || eventForcesRace) {
+      reasons.push(eventForcesRace ? "Event rückt näher → RACE" : "BUILD Exit: Keys ok + Plateau erreicht");
+      block = "RACE";
+      startDate = today;
+    } else {
+      if (!keyCompliance?.freqOk) reasons.push("BUILD bleibt: Key-Frequenz zu niedrig/hoch");
+      if (!keyCompliance?.typeOk) reasons.push("BUILD bleibt: Key-Typen passen nicht");
+      if (!(plateauEf || plateauMotor)) reasons.push("BUILD bleibt: Leistungsmarker steigen noch");
+    }
+  } else if (block === "RESET") {
+    if (fatigueOk || timeInBlockWeeks >= BLOCK_CONFIG.durations.RESET.max) {
+      reasons.push("RESET erfüllt → BASE II");
+      block = "BASE";
+      wave = 2;
+      startDate = today;
+    } else {
+      reasons.push("RESET bleibt: Ermüdungssignale noch aktiv");
+    }
+  } else if (block === "RACE") {
+    if (weeksToEvent <= 0) {
+      reasons.push("Event erreicht → RESET");
+      block = "RESET";
+      startDate = today;
+    } else {
+      reasons.push("RACE bleibt: Taper/Peak läuft");
+    }
+  }
+
+  return {
+    block,
+    wave,
+    weeksToEvent,
+    reasons,
+    readinessScore,
+    forcedSwitch,
+    nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
+    timeInBlockWeeks,
+    startDate,
+    eventDistance: eventDistanceNorm,
+  };
+}
+
+function buildBlockStateLine(state) {
+  if (!state) return "";
+  const payload = {
+    block: state.block,
+    wave: state.wave,
+    start: state.startDate,
+    eventDate: state.eventDate,
+    eventDistance: state.eventDistance,
+  };
+  return `BlockState: ${JSON.stringify(payload)}`;
+}
+
+function parseBlockStateFromComment(comment) {
+  if (!comment) return null;
+  const line = String(comment)
+    .split("\n")
+    .find((l) => l.trim().startsWith("BlockState:"));
+  if (!line) return null;
+  const raw = line.replace("BlockState:", "").trim();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed?.block || !parsed?.start) return null;
+    return {
+      block: parsed.block,
+      wave: parsed.wave ?? 0,
+      startDate: parsed.start,
+      eventDate: parsed.eventDate ?? null,
+      eventDistance: parsed.eventDistance ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWellnessDay(ctx, env, dayIso) {
+  if (ctx.wellnessCache.has(dayIso)) return ctx.wellnessCache.get(dayIso);
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/wellness/${dayIso}`;
+  const p = fetch(url, { headers: { Authorization: authHeader(env) } })
+    .then(async (r) => {
+      if (!r.ok) return null;
+      return r.json();
+    })
+    .catch(() => null);
+  ctx.wellnessCache.set(dayIso, p);
+  return p;
+}
+
+async function getPersistedBlockState(ctx, env, dayIso) {
+  if (ctx.blockStateCache.has(dayIso)) return ctx.blockStateCache.get(dayIso);
+  const wellness = await fetchWellnessDay(ctx, env, dayIso);
+  const comment = wellness?.comments || wellness?.comment || null;
+  const parsed = parseBlockStateFromComment(comment);
+  ctx.blockStateCache.set(dayIso, parsed);
+  return parsed;
+}
+
+function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics) {
+  if (!debugOut) return;
+  debugOut.__blocks ??= {};
+  debugOut.__blocks[day] = {
+    blockState,
+    keyRules,
+    keyCompliance,
+    historyMetrics,
+  };
+}
 
 
 function isoDate(d) {
@@ -615,6 +1159,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
   let daysWritten = 0;
   const daysList = listIsoDaysInclusive(oldest, newest);
+  let previousBlockState = null;
 
   for (const day of daysList) {
     // NEW: mode + policy for this day (based on next event)
@@ -634,6 +1179,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       policy = applyRecoveryOverride(policy, fatigue);
     } catch {
       fatigue = null;
+    }
+
+    const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
+    const eventDistance = getEventDistanceFromEvent(modeInfo?.nextEvent);
+    if (!previousBlockState) {
+      const prevDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 86400000));
+      previousBlockState = await getPersistedBlockState(ctx, env, prevDay);
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
@@ -768,6 +1320,66 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const aerobicFloor = aerobicFloorActive ? policy.aerobicK * intensity : 0;
     const aerobicOk = aerobicFloorActive ? aerobicEq >= aerobicFloor : true;
 
+    const prevWindowDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 7 * 86400000));
+    let loads7Prev = { runTotal7: 0, bikeTotal7: 0, aerobicEq7: 0, intensity7: 0, intensitySignal: "none" };
+    try {
+      loads7Prev = await computeLoads7d(ctx, prevWindowDay);
+    } catch {}
+
+    const prevIntensitySignal = loads7Prev.intensitySignal ?? "none";
+    const prevAerobicFloorActive = policy.useAerobicFloor && prevIntensitySignal === "ok";
+    const prevAerobicFloor = prevAerobicFloorActive ? policy.aerobicK * (loads7Prev.intensity7 ?? 0) : 0;
+    const aerobicOkPrev = prevAerobicFloorActive ? (loads7Prev.aerobicEq7 ?? 0) >= prevAerobicFloor : true;
+
+    const keyStats7 = collectKeyStats(ctx, day, 7);
+    const keyStats14 = collectKeyStats(ctx, day, 14);
+
+    const weeksToEvent = eventDate && isIsoDate(eventDate) ? Math.ceil(diffDays(day, eventDate) / 7) : null;
+    const baseBlock = previousBlockState?.block || (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
+    const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
+    const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14);
+
+    const historyMetrics = {
+      runFloor7: loads7.runTotal7 ?? 0,
+      runFloorPrev7: loads7Prev.runTotal7 ?? 0,
+      runFloorTarget: policy.specificKind === "run" ? policy.specificThreshold : 0,
+      aerobicOk,
+      aerobicOkPrev,
+      aerobicEq7: loads7.aerobicEq7 ?? 0,
+      intensity7: loads7.intensity7 ?? 0,
+      hrDriftDelta: trend?.dd ?? null,
+      efDeltaPct: trend?.dv ?? null,
+      motorValue: motor?.value ?? null,
+      motorDelta: null,
+      fatigue,
+      keyStats14,
+      keyCompliance: keyCompliancePre,
+    };
+
+    const blockState = determineBlockState({
+      today: day,
+      eventDate: eventDate || null,
+      eventDistance,
+      historyMetrics,
+      previousState: previousBlockState,
+    });
+    blockState.eventDate = eventDate || null;
+    blockState.eventDistance = eventDistance || blockState.eventDistance;
+
+    const keyRules = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
+    const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14);
+
+    patch[FIELD_BLOCK] = blockState.block;
+    previousBlockState = {
+      block: blockState.block,
+      wave: blockState.wave,
+      startDate: blockState.startDate || day,
+      eventDate,
+      eventDistance,
+    };
+
+    addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
+
 
 async function computeMaintenance14d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
@@ -806,6 +1418,9 @@ async function computeMaintenance14d(ctx, dayIso) {
       motor,
       benchReports,
       modeInfo,
+      blockState,
+      keyRules,
+      keyCompliance,
       policy,
       loads7,
       fatigue,
@@ -950,6 +1565,9 @@ function renderWellnessComment({
   motor,
   benchReports,
   modeInfo,
+  blockState,
+  keyRules,
+  keyCompliance,
   policy,
   loads7,
   fatigue,
@@ -1005,6 +1623,42 @@ function renderWellnessComment({
   } else if (fatigue?.keyCount7 != null) {
     lines.push("");
     lines.push(`🧨 Keys (7 Tage): ${fatigue.keyCount7}/${MAX_KEYS_7D}`);
+  }
+
+  if (blockState) {
+    lines.push("");
+    lines.push("🎯 Block");
+    const weeksToEventText =
+      blockState.weeksToEvent == null ? "n/a" : `${blockState.weeksToEvent} Wochen`;
+    lines.push(
+      `Block: ${blockState.block} | Wave: ${blockState.wave ?? 0} | Wochen bis Event: ${weeksToEventText}`
+    );
+    lines.push(
+      `Readiness: ${blockState.readinessScore ?? 0}/100${blockState.forcedSwitch ? " ⚠️ erzwungen" : ""}`
+    );
+    if (Array.isArray(blockState.reasons) && blockState.reasons.length) {
+      for (const reason of blockState.reasons.slice(0, 5)) lines.push(`- ${reason}`);
+    }
+  }
+
+  if (keyRules && keyCompliance) {
+    lines.push("");
+    lines.push("🎯 Key-Check");
+    lines.push(
+      `Erwartet/Woche: ${keyRules.expectedKeysPerWeek} (Max ${keyRules.maxKeysPerWeek}) | Ist: ${
+        keyCompliance.actual7
+      } (7T) / ${keyCompliance.actual14} (14T ≈ ${keyCompliance.perWeek14.toFixed(1)}/W)`
+    );
+    lines.push(
+      `Typen: erlaubt ${keyRules.allowedKeyTypes.join(", ")} | bevorzugt ${keyRules.preferredKeyTypes.join(
+        ", "
+      )} | verboten ${keyRules.bannedKeyTypes.join(", ")}`
+    );
+    lines.push(
+      `Ist-Typen: ${keyCompliance.actualTypes.length ? keyCompliance.actualTypes.join(", ") : "n/a"}`
+    );
+    lines.push(`Bewertung: ${keyCompliance.status === "ok" ? "✅ ok" : "⚠️ prüfen"}`);
+    if (keyCompliance.suggestion) lines.push(`➡️ ${keyCompliance.suggestion}`);
   }
 
   // Load block
@@ -1084,6 +1738,10 @@ function renderWellnessComment({
   lines.push(`Trigger: ${bottomLine.trigger}`);
   lines.push(`Heute: ${bottomLine.today}`);
   lines.push(`Nächster Lauf: ${bottomLine.next}`);
+  if (blockState) {
+    lines.push("");
+    lines.push(buildBlockStateLine(blockState));
+  }
 
   return lines.join("\n");
 }
