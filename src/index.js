@@ -554,8 +554,19 @@ function normalizeEventDistance(value) {
 
 function getEventDistanceFromEvent(event) {
   if (!event) return null;
-  return normalizeEventDistance(event?.Distance);
+
+  // ✅ Primär: echtes Feld aus Intervals
+  const raw = event?.distance ?? event?.distance_target ?? null;
+
+  const fromField = normalizeEventDistance(raw);
+  if (fromField) return fromField;
+
+  // Fallback: Name/Typ (nur wenn distance fehlt/unbrauchbar)
+  const name = String(event?.name ?? "");
+  const type = String(event?.type ?? "");
+  return normalizeEventDistance(`${name} ${type}`);
 }
+
 
 
 
