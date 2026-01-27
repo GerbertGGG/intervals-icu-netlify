@@ -114,10 +114,10 @@ const DETECTIVE_HISTORY_LIMIT = 12;
 // ================= BLOCK CONFIG (NEW) =================
 const BLOCK_CONFIG = {
   durations: {
-    BASE: { min: 4, max: 12 },
-    BUILD: { min: 3, max: 8 },
-    RACE: { min: 2, max: 4 },
-    RESET: { min: 1, max: 2 },
+    BASE: { minDays: 28, maxDays: 84 },
+    BUILD: { minDays: 21, maxDays: 56 },
+    RACE: { minDays: 14, maxDays: 28 },
+    RESET: { minDays: 7, maxDays: 14 },
   },
   cutoffs: {
     wave1Weeks: 20,
@@ -849,7 +849,7 @@ function determineBlockState({
   }
 
   if (!eventDateISO || !parseISODateSafe(eventDateISO)) {
-    const timeInBlockWeeks = weeksBetween(startDate, todayISO);
+    const timeInBlockDays = daysBetween(startDate, todayISO);
     return {
       block: "BASE",
       wave: 0,
@@ -864,7 +864,7 @@ function determineBlockState({
       readinessScore: 50,
       forcedSwitch: false,
       nextSuggestedBlock: "BUILD",
-      timeInBlockWeeks: Number.isFinite(timeInBlockWeeks) ? timeInBlockWeeks : null,
+      timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
       eventDistance: eventDistanceNorm,
     };
@@ -872,7 +872,7 @@ function determineBlockState({
 
   const { weeksToEventRaw, weeksToEvent } = computeWeeksToEvent(todayISO, eventDateISO, reasons);
   if (weeksToEvent == null) {
-    const timeInBlockWeeks = weeksBetween(startDate, todayISO);
+    const timeInBlockDays = daysBetween(startDate, todayISO);
     return {
       block: "BASE",
       wave: 0,
@@ -887,7 +887,7 @@ function determineBlockState({
       readinessScore: 50,
       forcedSwitch: false,
       nextSuggestedBlock: "BUILD",
-      timeInBlockWeeks: Number.isFinite(timeInBlockWeeks) ? timeInBlockWeeks : null,
+      timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
       eventDistance: eventDistanceNorm,
     };
@@ -908,7 +908,7 @@ function determineBlockState({
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockWeeks: 0,
+      timeInBlockDays: 0,
       startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
@@ -929,7 +929,7 @@ function determineBlockState({
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockWeeks: 0,
+      timeInBlockDays: 0,
       startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
@@ -951,7 +951,7 @@ function determineBlockState({
         readinessScore: 60,
         forcedSwitch: false,
         nextSuggestedBlock: "BASE",
-        timeInBlockWeeks: 0,
+        timeInBlockDays: 0,
         startDate: todayISO,
         eventDistance: eventDistanceNorm,
       };
@@ -970,7 +970,7 @@ function determineBlockState({
       readinessScore: 50,
       forcedSwitch: false,
       nextSuggestedBlock: "BUILD",
-      timeInBlockWeeks: 0,
+      timeInBlockDays: 0,
       startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
@@ -998,11 +998,12 @@ function determineBlockState({
     }
   }
 
-  let timeInBlockWeeks = weeksBetween(startDate, todayISO);
-  if (!Number.isFinite(timeInBlockWeeks) || timeInBlockWeeks < 0) {
-    timeInBlockWeeks = 0;
+  let timeInBlockDays = daysBetween(startDate, todayISO);
+  if (!Number.isFinite(timeInBlockDays) || timeInBlockDays < 0) {
+    timeInBlockDays = 0;
   }
-  const blockLimits = BLOCK_CONFIG.durations[block] || { min: 1, max: 8 };
+  const blockLimits = BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
+  
 
   const runFloorReady =
     runFloorTarget > 0
@@ -1025,8 +1026,8 @@ function determineBlockState({
   let forcedSwitch = false;
   let nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent);
 
-  if (timeInBlockWeeks < blockLimits.min) {
-    reasons.push(`Mindestdauer ${blockLimits.min} Wochen noch nicht erreicht`);
+  if (timeInBlockDays < blockLimits.minDays) {
+    reasons.push(`Mindestdauer ${blockLimits.minDays} Tage noch nicht erreicht`);
     return {
       block,
       wave,
@@ -1041,18 +1042,18 @@ function determineBlockState({
       readinessScore,
       forcedSwitch,
       nextSuggestedBlock,
-      timeInBlockWeeks,
+      timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
     };
   }
 
-  if (timeInBlockWeeks >= blockLimits.max) {
+  if (timeInBlockDays >= blockLimits.maxDays) {
     forcedSwitch = true;
-    reasons.push(`Maxdauer ${blockLimits.max} Wochen überschritten → Wechsel erzwungen`);
+    reasons.push(`Maxdauer ${blockLimits.maxDays} Tage überschritten → Wechsel erzwungen`);
     block = nextSuggestedBlock;
     startDate = todayISO;
-    timeInBlockWeeks = 0;
+    timeInBlockDays = 0;
     return {
       block,
       wave: block === "BASE" && wave === 1 ? 2 : wave,
@@ -1067,7 +1068,7 @@ function determineBlockState({
       readinessScore,
       forcedSwitch,
       nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
-      timeInBlockWeeks,
+      timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
     };
@@ -1078,7 +1079,7 @@ function determineBlockState({
       reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
       block = "BUILD";
       startDate = todayISO;
-      timeInBlockWeeks = 0;
+      timeInBlockDays = 0;
     } else {
       if (!runFloorReady) reasons.push("BASE bleibt: RunFloor noch instabil");
       if (!aerobicReady) reasons.push("BASE bleibt: AerobicEq/Floor noch instabil");
@@ -1100,7 +1101,7 @@ function determineBlockState({
         reasons.push("BUILD I abgeschlossen → RESET (Wave 1)");
         block = "RESET";
         startDate = todayISO;
-        timeInBlockWeeks = 0;
+        timeInBlockDays = 0;
       } else {
         reasons.push("BUILD bleibt: zu wenige Keys für Wave-Reset");
       }
@@ -1108,19 +1109,19 @@ function determineBlockState({
       reasons.push(eventForcesRace ? "Event rückt näher → RACE" : "BUILD Exit: Keys ok + Plateau erreicht");
       block = "RACE";
       startDate = todayISO;
-      timeInBlockWeeks = 0;
+      timeInBlockDays = 0;
     } else {
       if (!keyCompliance?.freqOk) reasons.push("BUILD bleibt: Key-Frequenz zu niedrig/hoch");
       if (!keyCompliance?.typeOk) reasons.push("BUILD bleibt: Key-Typen passen nicht");
       if (!(plateauEf || plateauMotor)) reasons.push("BUILD bleibt: Leistungsmarker steigen noch");
     }
   } else if (block === "RESET") {
-    if (fatigueOk || timeInBlockWeeks >= BLOCK_CONFIG.durations.RESET.max) {
+   if (fatigueOk || timeInBlockDays >= BLOCK_CONFIG.durations.RESET.maxDays) {
       reasons.push("RESET erfüllt → BASE II");
       block = "BASE";
       wave = 2;
       startDate = todayISO;
-      timeInBlockWeeks = 0;
+      timeInBlockDays = 0;
     } else {
       reasons.push("RESET bleibt: Ermüdungssignale noch aktiv");
     }
@@ -1129,7 +1130,7 @@ function determineBlockState({
       reasons.push("Event erreicht → RESET");
       block = "RESET";
       startDate = todayISO;
-      timeInBlockWeeks = 0;
+      timeInBlockDays = 0;
     } else {
       reasons.push("RACE bleibt: Taper/Peak läuft");
     }
@@ -1149,7 +1150,7 @@ function determineBlockState({
     readinessScore,
     forcedSwitch,
     nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
-    timeInBlockWeeks,
+    timeInBlockDays,
     startDate,
     eventDistance: eventDistanceNorm,
   };
@@ -1256,6 +1257,12 @@ function weeksBetween(dateAISO, dateBISO) {
   const b = parseISODateSafe(dateBISO);
   if (!a || !b) return NaN;
   return (b.getTime() - a.getTime()) / (7 * 86400000);
+}
+function daysBetween(dateAISO, dateBISO) {
+  const a = parseISODateSafe(dateAISO);
+  const b = parseISODateSafe(dateBISO);
+  if (!a || !b) return NaN;
+  return (b.getTime() - a.getTime()) / 86400000;
 }
 function clampStartDate(startISO, todayISO, maxAgeDays = 180) {
   const start = parseISODateSafe(startISO);
@@ -1956,7 +1963,7 @@ function renderWellnessComment({
     const weeksToEventText =
       blockState.weeksToEvent == null ? "n/a" : `${blockState.weeksToEvent.toFixed(1)} Wochen`;
     const timeInBlockText =
-      blockState.timeInBlockWeeks == null ? "n/a" : `${blockState.timeInBlockWeeks.toFixed(1)} Wochen`;
+      blockState.timeInBlockDays == null ? "n/a" : `${Math.round(blockState.timeInBlockDays)} Tage`;
     lines.push(
       `Block: ${blockState.block} | Wave: ${blockState.wave ?? 0} | Wochen bis Event: ${weeksToEventText}`
     );
