@@ -109,7 +109,6 @@ const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
-const PROGRESS_KV_LAST_LONGRUN_BUMP = "progress:lastLongrunBumpISO";
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
@@ -1831,14 +1830,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       reasons: recoveryState.reasons,
     });
 
-    let progression = null;
-    try {
-      progression = await computeProgression(ctx, env, day, motor, fatigueBase, write);
-    } catch {
-      progression = null;
-    }
-
-
 async function computeMaintenance14d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
@@ -1876,7 +1867,6 @@ async function computeMaintenance14d(ctx, dayIso) {
       motor,
       benchReports,
       robustness,
-      progression,
       modeInfo,
       blockState,
       keyRules,
@@ -2029,100 +2019,6 @@ function buildBottomLine({
   return { today, next, trigger };
 }
 
-function formatMinutes(mins) {
-  if (!Number.isFinite(mins) || mins <= 0) return "n/a";
-  return `${Math.round(mins)}′`;
-}
-
-function computeRunMinutesWindow(ctx, startIso, endIso) {
-  let total = 0;
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!isRun(a)) continue;
-    const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (Number.isFinite(sec) && sec > 0) total += sec / 60;
-  }
-  return total;
-}
-
-function computeLongrunMinutesWindow(ctx, startIso, endIso) {
-  let maxSec = 0;
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!isRun(a)) continue;
-    const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (Number.isFinite(sec) && sec > maxSec) maxSec = sec;
-  }
-  return maxSec / 60;
-}
-
-async function computeProgression(ctx, env, dayIso, motor, fatigue, write) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
-
-  const runMinutes7d = computeRunMinutesWindow(ctx, start7Iso, endIso);
-  const runMinutesPrev7d = computeRunMinutesWindow(ctx, start14Iso, start7Iso);
-
-  const weeklyMinutes = [];
-  for (let i = 0; i < 4; i++) {
-    const weekEnd = new Date(end.getTime() - i * 7 * 86400000);
-    const weekEndIso = isoDate(new Date(weekEnd.getTime() + 86400000));
-    const weekStartIso = isoDate(new Date(weekEnd.getTime() - 7 * 86400000));
-    weeklyMinutes.push(computeRunMinutesWindow(ctx, weekStartIso, weekEndIso));
-  }
-  const baseline = median(weeklyMinutes) ?? runMinutes7d;
-
-  const deload = Boolean(fatigue?.override) || motor?.ok === false || (motor?.value ?? 0) < 55;
-  let targetMinutes = baseline * (deload ? 0.7 : 1.0);
-  let targetReason = deload ? "Deload (Fatigue/Motor)" : "Progression";
-
-  if (!deload && baseline > 0) {
-    const increment = clamp(baseline * 0.05, 10, 20);
-    targetMinutes = baseline + increment;
-    const maxIncrease = baseline * 1.08;
-    if (targetMinutes > maxIncrease) targetMinutes = maxIncrease;
-  } else if (!deload && baseline <= 0) {
-    targetMinutes = 0;
-  }
-
-  const longrunThisWeek = computeLongrunMinutesWindow(ctx, start7Iso, endIso);
-  let longrunTarget = longrunThisWeek;
-  let longrunReason = "halten";
-
-  if (deload) {
-    longrunTarget = longrunThisWeek * 0.75;
-    longrunReason = "Deload";
-  } else if (longrunThisWeek > 0) {
-    const lastBump = await readKvJson(env, PROGRESS_KV_LAST_LONGRUN_BUMP);
-    const canBump = !lastBump || (isIsoDate(lastBump) && diffDays(lastBump, dayIso) >= 14);
-    if (canBump) {
-      longrunTarget = Math.min(longrunThisWeek + 10, longrunThisWeek * 1.1);
-      longrunReason = "Bump ok";
-      if (write && hasKv(env) && longrunTarget > longrunThisWeek) {
-        await writeKvJson(env, PROGRESS_KV_LAST_LONGRUN_BUMP, dayIso);
-      }
-    } else {
-      longrunReason = "Bump gesperrt (14T-Regel)";
-    }
-  }
-
-  return {
-    runMinutes7d,
-    runMinutesPrev7d,
-    baseline,
-    targetMinutes,
-    longrunThisWeek,
-    longrunTarget,
-    deload,
-    targetReason,
-    longrunReason,
-  };
-}
-
 // ================= COMMENT =================
 function renderWellnessComment({
   perRunInfo,
@@ -2130,7 +2026,6 @@ function renderWellnessComment({
   motor,
   benchReports,
   robustness,
-  progression,
   modeInfo,
   blockState,
   keyRules,
@@ -2190,22 +2085,6 @@ function renderWellnessComment({
     } else {
       lines.push("➡️ Robustheit erfüllt – Kraft halten.");
     }
-  }
-
-  if (progression) {
-    lines.push("");
-    lines.push("📈 Progression");
-    lines.push(
-      `Run-Minuten (7T): ${Math.round(progression.runMinutes7d)} | Ziel nächste Woche: ${Math.round(
-        progression.targetMinutes
-      )}`
-    );
-    lines.push(
-      `Longrun: diese Woche ${formatMinutes(progression.longrunThisWeek)} | Ziel nächste Woche: ${formatMinutes(
-        progression.longrunTarget
-      )}`
-    );
-    lines.push(`Gate: ${progression.deload ? "deload ⚠️" : "motor/fatigue ok ✅"} (${progression.targetReason})`);
   }
 
   if (Array.isArray(benchReports) && benchReports.length) {
