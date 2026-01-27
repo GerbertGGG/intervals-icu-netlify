@@ -105,12 +105,10 @@ export default {
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
 const STRENGTH_MIN_7D = 2;
-const STRIDES_MIN_7D = 1;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
-const BENCH_KV_LAST_KEY = "bench:last";
 const PROGRESS_KV_LAST_LONGRUN_BUMP = "progress:lastLongrunBumpISO";
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
@@ -395,28 +393,22 @@ function computeRobustness(ctx, dayIso) {
 
   let strength7 = 0;
   let strength14 = 0;
-  let strides7 = 0;
 
   for (const a of ctx.activitiesAll) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d >= endIso) continue;
     if (d >= start14Iso && isStrength(a)) strength14 += 1;
     if (d >= start7Iso && isStrength(a)) strength7 += 1;
-    if (d >= start7Iso && isStridesSession(a)) strides7 += 1;
   }
 
   const strengthOk = strength7 >= STRENGTH_MIN_7D;
-  const stridesOk = strides7 >= STRIDES_MIN_7D;
   const reasons = [];
   if (!strengthOk) reasons.push("Kraft/Stabi fehlt");
-  if (!stridesOk) reasons.push("Strides fehlen");
 
   return {
     strengthSessions7d: strength7,
     strengthSessions14d: strength14,
-    strides7d: strides7,
     strengthOk,
-    stridesOk,
     reasons,
   };
 }
@@ -1785,7 +1777,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     } else if (fatigueBase?.override) {
       dynamicKeyCap.maxKeys7d = 1;
       dynamicKeyCap.reasons.push("Fatigue/Overload");
-    } else if (robustness && (!robustness.strengthOk || !robustness.stridesOk)) {
+    } else if (robustness && !robustness.strengthOk) {
       dynamicKeyCap.maxKeys7d = 1;
       dynamicKeyCap.reasons.push("Robustheit fehlt");
     } else if ((motor?.value ?? 0) >= 70) {
@@ -1839,17 +1831,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       reasons: recoveryState.reasons,
     });
 
-    let raceBenchmark = null;
-    try {
-      raceBenchmark = findLatestBenchmark(ctx, day);
-      if (write && raceBenchmark && hasKv(env)) {
-        await writeKvJson(env, BENCH_KV_LAST_KEY, raceBenchmark);
-      }
-    } catch {
-      raceBenchmark = null;
-    }
-    const raceOutlook = computeRaceOutlook(day, raceBenchmark, eventDistance);
-
     let progression = null;
     try {
       progression = await computeProgression(ctx, env, day, motor, fatigueBase, write);
@@ -1895,7 +1876,6 @@ async function computeMaintenance14d(ctx, dayIso) {
       motor,
       benchReports,
       robustness,
-      raceOutlook,
       progression,
       modeInfo,
       blockState,
@@ -2049,115 +2029,9 @@ function buildBottomLine({
   return { today, next, trigger };
 }
 
-function formatRaceTime(seconds) {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "n/a";
-  const total = Math.round(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 function formatMinutes(mins) {
   if (!Number.isFinite(mins) || mins <= 0) return "n/a";
   return `${Math.round(mins)}′`;
-}
-
-function parseBenchDistanceKm(benchTag) {
-  const s = String(benchTag || "").toLowerCase().trim();
-  if (s === "5k") return 5;
-  if (s === "10k") return 10;
-  if (s === "hm") return 21.097;
-  if (s === "m") return 42.195;
-  return null;
-}
-
-function predictTime(distanceKmTarget, benchDistanceKm, benchTimeSec) {
-  if (!Number.isFinite(distanceKmTarget) || !Number.isFinite(benchDistanceKm) || !Number.isFinite(benchTimeSec)) {
-    return null;
-  }
-  if (benchDistanceKm <= 0 || benchTimeSec <= 0) return null;
-  return benchTimeSec * (distanceKmTarget / benchDistanceKm) ** 1.06;
-}
-
-function findLatestBenchmark(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  const benchActs = ctx.activitiesAll
-    .filter((a) => {
-      const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-      if (!d || d < startIso || d >= endIso) return false;
-      if (!isRun(a)) return false;
-      return Boolean(getBenchTag(a));
-    })
-    .sort((a, b) => new Date(b.start_date_local || b.start_date) - new Date(a.start_date_local || a.start_date));
-
-  for (const a of benchActs) {
-    const benchTag = getBenchTag(a);
-    if (!benchTag) continue;
-    const benchTagLower = benchTag.toLowerCase();
-    const distanceKm = parseBenchDistanceKm(benchTagLower);
-    const timeSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (!Number.isFinite(timeSec) || timeSec <= 0) continue;
-
-    if (distanceKm != null) {
-      return {
-        benchTag: benchTagLower,
-        date: String(a.start_date_local || a.start_date || "").slice(0, 10),
-        distanceKm,
-        timeSec,
-      };
-    }
-
-    if (benchTagLower === "tt20" || benchTagLower === "tt30") {
-      const avgSpeed = Number(a?.average_speed);
-      if (!Number.isFinite(avgSpeed) || avgSpeed <= 0) continue;
-      const distKm = (avgSpeed * timeSec) / 1000;
-      if (distKm <= 0) continue;
-      return {
-        benchTag: benchTagLower,
-        date: String(a.start_date_local || a.start_date || "").slice(0, 10),
-        distanceKm: distKm,
-        timeSec,
-      };
-    }
-  }
-
-  return null;
-}
-
-function computeRaceOutlook(dayIso, benchmark, eventDistance) {
-  if (!benchmark) return { status: "na", text: "Race Outlook: n/a – bitte bench:tt30 oder bench:5k in den nächsten 14 Tagen." };
-
-  const benchDate = benchmark.date;
-  const ageDays = Math.max(0, diffDays(benchDate, dayIso));
-  const confidence = ageDays <= 42 ? "hoch" : ageDays <= 90 ? "mittel" : "niedrig";
-
-  const targets = ["5k", "10k", "hm", "m"];
-  const targetDistanceMap = { "5k": 5, "10k": 10, hm: 21.097, m: 42.195 };
-  const predictions = {};
-  for (const t of targets) {
-    const sec = predictTime(targetDistanceMap[t], benchmark.distanceKm, benchmark.timeSec);
-    if (sec != null) predictions[t] = sec;
-  }
-
-  const eventDistanceNorm = eventDistance && targetDistanceMap[eventDistance] ? eventDistance : null;
-  const targetLabel = eventDistanceNorm ?? "10k";
-  const targetSec = eventDistanceNorm ? predictions[eventDistanceNorm] : predictions["10k"];
-  const timeText = formatRaceTime(targetSec);
-  const benchLabel = `${benchmark.benchTag} am ${benchDate}`;
-
-  return {
-    status: "ok",
-    confidence,
-    benchLabel,
-    targetLabel,
-    timeText,
-    predictions,
-  };
 }
 
 function computeRunMinutesWindow(ctx, startIso, endIso) {
@@ -2256,7 +2130,6 @@ function renderWellnessComment({
   motor,
   benchReports,
   robustness,
-  raceOutlook,
   progression,
   modeInfo,
   blockState,
@@ -2310,36 +2183,12 @@ function renderWellnessComment({
     lines.push("");
     lines.push("🧱 Robustheit");
     lines.push(`Strength: ${robustness.strengthSessions7d}/${STRENGTH_MIN_7D} (7T)`);
-    lines.push(`Strides: ${robustness.strides7d}/${STRIDES_MIN_7D} (7T)`);
-    const robustOk = robustness.strengthOk && robustness.stridesOk;
+    const robustOk = robustness.strengthOk;
     lines.push(`Status: ${robustOk ? "✅" : "⚠️"}`);
     if (!robustOk) {
-      lines.push("➡️ Pflicht: Diese Woche 2x Kraft (15–25min) + 1x Strides (6–10×10–20s).");
+      lines.push("➡️ Pflicht: Diese Woche 2x Kraft (15–25min).");
     } else {
-      lines.push("➡️ Robustheit erfüllt – Kraft/Strides halten.");
-    }
-  }
-
-  if (raceOutlook) {
-    lines.push("");
-    lines.push("🏁 Race Outlook");
-    if (raceOutlook.status === "ok") {
-      lines.push(
-        `Aktuell realistisch: ${raceOutlook.targetLabel} ~ ${raceOutlook.timeText} (Confidence: ${raceOutlook.confidence}; Benchmark: ${raceOutlook.benchLabel})`
-      );
-      const distKnown = Boolean(modeInfo?.nextEvent && blockState?.eventDistance);
-      if (!distKnown && raceOutlook.predictions) {
-        const predLines = [];
-        const order = ["5k", "10k", "hm", "m"];
-        for (const k of order) {
-          if (raceOutlook.predictions[k]) {
-            predLines.push(`${k.toUpperCase()}: ${formatRaceTime(raceOutlook.predictions[k])}`);
-          }
-        }
-        if (predLines.length) lines.push(`Set: ${predLines.join(" | ")}`);
-      }
-    } else {
-      lines.push(raceOutlook.text);
+      lines.push("➡️ Robustheit erfüllt – Kraft halten.");
     }
   }
 
@@ -3785,14 +3634,6 @@ function isStrength(a) {
   const tags = normalizeTags(a?.tags);
   const strengthTags = new Set(["strength", "stabi", "kraft", "gym", "core", "mobility"]);
   return tags.some((t) => strengthTags.has(t));
-}
-
-function isStridesSession(a) {
-  const tags = normalizeTags(a?.tags);
-  if (tags.some((t) => t.includes("strides") || t.includes("hill"))) return true;
-  const keyType = normalizeKeyType(getKeyType(a));
-  if (keyType === "strides") return true;
-  return false;
 }
 
 function isRun(a) {
