@@ -824,16 +824,7 @@ function determineBlockState({
 }) {
   const reasons = [];
   const eventDistanceNorm = eventDistance || "10k";
-  if (ctx.debug) {
-  console.log("[debug:eventDistance]", {
-    day,
-    eventName: modeInfo?.nextEvent?.name,
-    eventType: modeInfo?.nextEvent?.type,
-    DistanceRaw: modeInfo?.nextEvent?.Distance,
-    DistanceType: typeof modeInfo?.nextEvent?.Distance,
-    computedEventDistance: eventDistance,
-  });
-}
+  
 
   const todayISO = today;
   const eventDateISO = eventDate || null;
@@ -1451,6 +1442,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
     const eventDistance = getEventDistanceFromEvent(modeInfo?.nextEvent);
+    if (ctx.debug) {
+  console.log("[debug:eventDistance]", {
+    day,
+    eventName: modeInfo?.nextEvent?.name,
+    eventType: modeInfo?.nextEvent?.type,
+    DistanceRaw: modeInfo?.nextEvent?.Distance,
+    DistanceType: typeof modeInfo?.nextEvent?.Distance,
+    computedEventDistance: eventDistance,
+  });
+}
+
     if (!previousBlockState) {
       const prevDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 86400000));
       previousBlockState = await getPersistedBlockState(ctx, env, prevDay);
