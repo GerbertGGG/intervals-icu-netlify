@@ -535,12 +535,20 @@ async function computeLoads7d(ctx, dayIso) {
 
 // ================= BLOCK / KEY LOGIC (NEW) =================
 function normalizeEventDistance(value) {
-  const s = String(value || "").toLowerCase();
+  const s = String(value || "").toLowerCase().trim();
   if (!s) return null;
   if (s.includes("5k") || s.includes("5 km") || s.includes("5km")) return "5k";
   if (s.includes("10k") || s.includes("10 km") || s.includes("10km")) return "10k";
   if (s.includes("half") || s.includes("hm") || s.includes("halb")) return "hm";
   if (s.includes("marathon") || s === "m" || s.includes("42")) return "m";
+  const numeric = Number(s.replace(/[^0-9.]/g, ""));
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const meters = numeric < 1000 ? numeric * 1000 : numeric;
+    if (meters >= 4900 && meters <= 5100) return "5k";
+    if (meters >= 9500 && meters <= 10500) return "10k";
+    if (meters >= 20500 && meters <= 21500) return "hm";
+    if (meters >= 41000 && meters <= 43000) return "m";
+  }
   return null;
 }
 
