@@ -3558,16 +3558,31 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   const races = events.filter((e) => String(e.category ?? "").toUpperCase() === "RACE_A");
 
   if (debug) {
-    console.log(
-      "🏁 races preview:",
-      races.slice(0, 5).map((e) => ({
-        day: String(e.start_date_local || e.start_date || "").slice(0, 10),
-        cat: e.category,
-        type: e.type,
-        name: e.name,
-      }))
-    );
-  }
+  console.log(
+    "🏁 races preview:",
+    races.slice(0, 5).map((e) => ({
+      day: String(e.start_date_local || e.start_date || "").slice(0, 10),
+      cat: e.category,
+      type: e.type,
+      name: e.name,
+
+      // ✅ NEU: Distanzfelder dumpen
+      distance: e.distance,
+      Distance: e.Distance,
+      raceDistance: e.raceDistance,
+      plannedDistance: e.plannedDistance,
+      eventDistance: e.eventDistance,
+      targetDistance: e.targetDistance,
+      distanceMeters: e.distanceMeters,
+      distance_metres: e.distance_metres,
+      distance_km: e.distance_km,
+      details_distance: e.details?.distance,
+      details_distanceMeters: e.details?.distanceMeters,
+      race_distance: e.race?.distance,
+      race_distanceMeters: e.race?.distanceMeters,
+    }))
+  );
+}
 
   return races;
 }
