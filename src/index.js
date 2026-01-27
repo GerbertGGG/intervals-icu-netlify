@@ -554,11 +554,19 @@ function normalizeEventDistance(value) {
 
 function getEventDistanceFromEvent(event) {
   if (!event) return null;
+
+  // ✅ Primärquelle: echtes Feld aus API
+  const raw = event?.Distance ?? null;
+
+  const fromField = normalizeEventDistance(raw);
+  if (fromField) return fromField;
+
+  // Fallback: Name/Typ parsen (nur wenn Distance unbrauchbar ist)
   const name = String(event?.name ?? "");
   const type = String(event?.type ?? "");
-  const dist = normalizeEventDistance(`${name} ${type}`);
-  return dist;
+  return normalizeEventDistance(`${name} ${type}`);
 }
+
 
 function normalizeKeyType(rawType, workoutMeta = {}) {
   const s = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
