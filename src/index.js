@@ -552,19 +552,16 @@ function getEventDistanceFromEvent(event) {
   return dist;
 }
 
-function normalizeKeyType(type) {
-  const s = String(type || "").toLowerCase();
-  if (!s) return "key";
-  if (s.includes("vo2") || s.includes("v02")) return "vo2";
-  if (s.includes("schwelle") || s.includes("threshold")) return "schwelle";
-  if (s.includes("race") || s.includes("wettkampf") || s.includes("pace")) return "racepace";
-  if (s.includes("steady") || s.includes("tempo")) return "steady";
-  if (s.includes("strides")) return "strides";
-  if (s.includes("mp") || s.includes("marathon")) return "mp";
-  if (s.includes("light") && s.includes("schwelle")) return "schwelle_light";
-  if (s.includes("light") && s.includes("mp")) return "mp_light";
-  if (s.includes("hart") && s.includes("vo2")) return "vo2_hart";
-  return s;
+function normalizeKeyType(rawType, workoutMeta = {}) {
+  const s = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
+  if (!s) return "steady";
+
+  const racepaceRegex = /\b(race|rp|5k pace|10k pace|hm pace|mp)\b/;
+  if (racepaceRegex.test(s) || s.includes("race pace") || s.includes("wettkampf")) return "racepace";
+  if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) return "schwelle";
+  if (s.includes("vo2") || s.includes("v02")) return "vo2_touch";
+  if (s.includes("strides") || s.includes("hill sprint")) return "strides";
+  return "steady";
 }
 
 function getKeyRules(block, eventDistance, weeksToEvent) {
@@ -572,10 +569,10 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   if (block === "RESET") {
     return {
       expectedKeysPerWeek: 0,
-      maxKeysPerWeek: 0.5,
-      allowedKeyTypes: ["steady", "strides", "schwelle_light"],
+      maxKeysPerWeek: 0,
+      allowedKeyTypes: ["steady", "strides"],
       preferredKeyTypes: ["steady"],
-      bannedKeyTypes: ["vo2", "racepace", "schwelle", "mp"],
+      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
     };
   }
 
@@ -584,26 +581,26 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 0.5,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["steady", "schwelle_light", "strides"],
-        preferredKeyTypes: ["steady", "strides"],
-        bannedKeyTypes: ["vo2", "vo2_hart", "racepace"],
+        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
+        preferredKeyTypes: ["vo2_touch"],
+        bannedKeyTypes: ["schwelle", "racepace"],
       };
     }
-    if (dist === "m") {
+    if (dist === "m" || dist === "hm") {
       return {
         expectedKeysPerWeek: 0.5,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["steady", "schwelle_light", "mp_light"],
-        preferredKeyTypes: ["steady", "mp_light"],
-        bannedKeyTypes: ["vo2", "racepace"],
+        allowedKeyTypes: ["steady", "strides"],
+        preferredKeyTypes: ["steady"],
+        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
       };
     }
     return {
       expectedKeysPerWeek: 0.5,
       maxKeysPerWeek: 1,
-      allowedKeyTypes: ["steady", "schwelle_light"],
+      allowedKeyTypes: ["steady", "strides"],
       preferredKeyTypes: ["steady"],
-      bannedKeyTypes: ["vo2", "racepace"],
+      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
     };
   }
 
@@ -611,37 +608,37 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "5k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["vo2", "schwelle", "racepace", "steady"],
-        preferredKeyTypes: ["vo2"],
-        bannedKeyTypes: [],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "steady"],
+        preferredKeyTypes: ["schwelle"],
+        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "racepace", "steady", "vo2"],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "steady"],
         preferredKeyTypes: ["schwelle"],
-        bannedKeyTypes: [],
+        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
       };
     }
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "racepace", "steady", "vo2"],
-        preferredKeyTypes: ["schwelle", "racepace"],
-        bannedKeyTypes: [],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "steady"],
+        preferredKeyTypes: ["schwelle"],
+        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
       };
     }
     if (dist === "m") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["mp", "schwelle", "steady", "mp_light"],
-        preferredKeyTypes: ["mp", "schwelle"],
-        bannedKeyTypes: ["vo2"],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "steady"],
+        preferredKeyTypes: ["schwelle"],
+        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
       };
     }
   }
@@ -649,38 +646,38 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   if (block === "RACE") {
     if (dist === "5k") {
       return {
-        expectedKeysPerWeek: 1.5,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "vo2", "schwelle"],
-        preferredKeyTypes: ["racepace", "vo2"],
-        bannedKeyTypes: [],
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
       };
     }
     if (dist === "10k") {
       return {
-        expectedKeysPerWeek: 1.5,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "steady"],
-        preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: [],
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
       };
     }
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1.5,
-        allowedKeyTypes: ["racepace", "steady", "schwelle"],
-        preferredKeyTypes: ["racepace", "steady"],
-        bannedKeyTypes: ["vo2"],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
       };
     }
     if (dist === "m") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1.2,
-        allowedKeyTypes: ["mp", "steady", "mp_light"],
-        preferredKeyTypes: ["mp"],
-        bannedKeyTypes: ["vo2", "racepace"],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
       };
     }
   }
@@ -688,9 +685,9 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   return {
     expectedKeysPerWeek: 0.5,
     maxKeysPerWeek: 1,
-    allowedKeyTypes: ["steady"],
+    allowedKeyTypes: ["steady", "strides"],
     preferredKeyTypes: ["steady"],
-    bannedKeyTypes: [],
+    bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
   };
 }
 
@@ -709,38 +706,52 @@ function collectKeyStats(ctx, dayIso, windowDays) {
     if (!hasKeyTag(a)) continue;
     count++;
     const rawType = getKeyType(a);
-    const type = normalizeKeyType(rawType);
+    const type = normalizeKeyType(rawType, {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
     types[type] = (types[type] || 0) + 1;
     list.push(type);
   }
   return { count, types, list };
 }
 
-function evaluateKeyCompliance(keyRules, keyStats7, keyStats14) {
+function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
   const actual7 = keyStats7.count;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
 
-  const grace = BLOCK_CONFIG.thresholds.keyGrace;
-  const freqOk = perWeek14 + grace >= expected && perWeek14 - grace <= maxKeys;
+  const actualTypes7 = keyStats7.list || [];
+  const actualTypes14 = keyStats14.list || [];
+  const typesForOutput = actualTypes7.length ? actualTypes7 : actualTypes14;
+  const uniqueTypes = [...new Set(typesForOutput)];
+  const uniqueTypes7 = [...new Set(actualTypes7)];
+  const bannedHits = uniqueTypes7.filter((t) => keyRules.bannedKeyTypes.includes(t));
+  const allowedHits = uniqueTypes7.filter((t) => keyRules.allowedKeyTypes.includes(t));
+  const preferredHits = uniqueTypes7.filter((t) => keyRules.preferredKeyTypes.includes(t));
+  const disallowedHits = uniqueTypes7.filter((t) => !keyRules.allowedKeyTypes.includes(t));
 
-  const actualTypes = Object.keys(keyStats14.types);
-  const bannedHits = actualTypes.filter((t) => keyRules.bannedKeyTypes.includes(t));
-  const allowedHits = actualTypes.filter((t) => keyRules.allowedKeyTypes.includes(t));
-  const preferredHits = actualTypes.filter((t) => keyRules.preferredKeyTypes.includes(t));
-
-  const typeOk = bannedHits.length === 0;
+  const freqOk = actual7 >= expected;
+  const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
   let suggestion = "";
-  if (expected > 0 && perWeek14 < expected - grace) {
-    suggestion = `Nächster Key: ${keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady"}`;
-  } else if (bannedHits.length) {
-    suggestion = `Alternative statt ${bannedHits[0]}: ${keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady"}`;
+  const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
+  const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
+
+  if (bannedHits.length) {
+    suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
+  } else if (!freqOk) {
+    suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
+  } else if (actual7 >= 1 && typeOk) {
+    suggestion = "Key diese Woche erledigt ✅ – restliche Einheiten locker/steady.";
   } else if (preferredMissing) {
-    suggestion = `Nächster Key bevorzugt: ${keyRules.preferredKeyTypes[0]}`;
+    suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
+  } else {
+    suggestion = "Kein Key geplant – locker/steady.";
   }
 
   const status = freqOk && typeOk ? "ok" : "warn";
@@ -757,9 +768,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14) {
     bannedHits,
     allowedHits,
     preferredHits,
-    actualTypes,
+    actualTypes: uniqueTypes,
+    disallowedHits,
     status,
     suggestion,
+    basedOn: "7T",
   };
 }
 
@@ -1577,7 +1590,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
     const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
-    const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14);
+    const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
+      block: baseBlock,
+      eventDistance,
+    });
 
     const historyMetrics = {
       runFloor7: loads7.runTotal7 ?? 0,
@@ -1623,7 +1639,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     blockState.lastStreakUpdateISO = recoveryState.lastStreakUpdateISO;
 
     const keyRules = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
-    const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14);
+    const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
+      block: blockState.block,
+      eventDistance,
+    });
 
     patch[FIELD_BLOCK] = blockState.block;
     previousBlockState = {
@@ -1928,20 +1947,33 @@ function renderWellnessComment({
     if (policy?.recovery) {
       lines.push("Key-Plan pausiert (Recovery).");
     } else {
+      const distanceText = blockState?.eventDistance ?? "n/a";
+      const bannedText =
+        keyRules.bannedKeyTypes.length > 0 ? keyRules.bannedKeyTypes.join(", ") : "(keine)";
+      const preferredText =
+        keyRules.preferredKeyTypes.length > 0 ? keyRules.preferredKeyTypes.join(", ") : "(keine)";
+      const allowedText =
+        keyRules.allowedKeyTypes.length > 0 ? keyRules.allowedKeyTypes.join(", ") : "(keine)";
+      const reasonParts = [];
+      if (!keyCompliance.freqOk) reasonParts.push("7T nicht erfüllt");
+      if (!keyCompliance.typeOk) reasonParts.push("Typen nicht im erlaubten Korridor");
+      const reasonText =
+        reasonParts.length === 0 ? "7T erfüllt und Typ ok" : reasonParts.join(" und ");
+      lines.push(`Distanz: ${distanceText}`);
       lines.push(
         `Erwartet/Woche: ${keyRules.expectedKeysPerWeek} (Max ${keyRules.maxKeysPerWeek}) | Ist: ${
           keyCompliance.actual7
         } (7T) / ${keyCompliance.actual14} (14T ≈ ${keyCompliance.perWeek14.toFixed(1)}/W)`
       );
       lines.push(
-        `Typen: erlaubt ${keyRules.allowedKeyTypes.join(", ")} | bevorzugt ${keyRules.preferredKeyTypes.join(
-          ", "
-        )} | verboten ${keyRules.bannedKeyTypes.join(", ")}`
+        `Typen: erlaubt ${allowedText} | bevorzugt ${preferredText} | verboten ${bannedText}`
       );
       lines.push(
         `Ist-Typen: ${keyCompliance.actualTypes.length ? keyCompliance.actualTypes.join(", ") : "n/a"}`
       );
-      lines.push(`Bewertung: ${keyCompliance.status === "ok" ? "✅ ok" : "⚠️ prüfen"}`);
+      lines.push(
+        `Bewertung: ${keyCompliance.status === "ok" ? "✅" : "⚠️"} ${reasonText}.`
+      );
       if (keyCompliance.suggestion) lines.push(`➡️ ${keyCompliance.suggestion}`);
     }
   }
