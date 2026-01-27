@@ -380,15 +380,80 @@ async function computeFatigue7d(ctx, dayIso) {
   };
 }
 
-function applyRecoveryOverride(policy, fatigue) {
-  if (!fatigue?.override) return policy;
-
+function applyRecoveryPolicy(policy) {
   return {
     ...policy,
     label: "RECOVERY",
     specificThreshold: 0,
     useAerobicFloor: false,
     recovery: true,
+  };
+}
+
+function evaluateRecoveryCycle({
+  todayISO,
+  runLoad7,
+  runFloorTarget,
+  previousState,
+  weeksToEvent,
+}) {
+  const reasons = [];
+  const weekMeetsRunFloor =
+    Number.isFinite(runFloorTarget) && runFloorTarget > 0
+      ? (Number(runLoad7) || 0) >= runFloorTarget
+      : false;
+
+  let runFloorStreak = Number.isFinite(previousState?.runFloorStreak) ? previousState.runFloorStreak : 0;
+  let recoveryUntil = isIsoDate(previousState?.recoveryUntil) ? previousState.recoveryUntil : null;
+  let lastStreakUpdateISO = isIsoDate(previousState?.lastStreakUpdateISO) ? previousState.lastStreakUpdateISO : null;
+
+  if (recoveryUntil && todayISO >= recoveryUntil) {
+    recoveryUntil = null;
+    runFloorStreak = 0;
+    reasons.push("Recovery abgelaufen → Streak zurückgesetzt");
+  }
+
+  const eventTooClose = weeksToEvent != null && weeksToEvent <= 2;
+  if (eventTooClose && recoveryUntil && todayISO < recoveryUntil) {
+    recoveryUntil = null;
+    runFloorStreak = 0;
+    reasons.push("Recovery unterdrückt (Eventnähe ≤ 2 Wochen)");
+  }
+
+  let recoveryActive = !eventTooClose && recoveryUntil && todayISO < recoveryUntil;
+  if (recoveryActive) {
+    reasons.push("Recovery läuft (3:1 Entlastungswoche)");
+  }
+
+  if (!recoveryActive) {
+    const shouldUpdateStreak =
+      !lastStreakUpdateISO || diffDays(lastStreakUpdateISO, todayISO) >= 7;
+    if (shouldUpdateStreak) {
+      runFloorStreak = weekMeetsRunFloor ? runFloorStreak + 1 : 0;
+      lastStreakUpdateISO = todayISO;
+    }
+  }
+
+  if (!recoveryActive && runFloorStreak >= 3) {
+    if (eventTooClose) {
+      runFloorStreak = 0;
+      recoveryUntil = null;
+      reasons.push("Recovery unterdrückt (Eventnähe ≤ 2 Wochen)");
+    } else {
+      recoveryUntil = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 7 * 86400000));
+      recoveryActive = true;
+      reasons.push("3:1 Streak erreicht → RECOVERY aktiviert");
+    }
+  }
+
+  return {
+    weekMeetsRunFloor,
+    runFloorStreak,
+    lastStreakUpdateISO,
+    recoveryUntil,
+    recoveryActive,
+    runFloorTarget,
+    reasons,
   };
 }
 
@@ -1065,6 +1130,9 @@ function buildBlockStateLine(state) {
     start: state.startDate,
     eventDate: state.eventDate,
     eventDistance: state.eventDistance,
+    runFloorStreak: Number.isFinite(state.runFloorStreak) ? state.runFloorStreak : 0,
+    recoveryUntil: isIsoDate(state.recoveryUntil) ? state.recoveryUntil : null,
+    lastStreakUpdateISO: isIsoDate(state.lastStreakUpdateISO) ? state.lastStreakUpdateISO : null,
   };
   return `BlockState: ${JSON.stringify(payload)}`;
 }
@@ -1085,6 +1153,9 @@ function parseBlockStateFromComment(comment) {
       startDate: parsed.start,
       eventDate: parsed.eventDate ?? null,
       eventDistance: parsed.eventDistance ?? null,
+      runFloorStreak: Number.isFinite(parsed.runFloorStreak) ? parsed.runFloorStreak : 0,
+      recoveryUntil: isIsoDate(parsed.recoveryUntil) ? parsed.recoveryUntil : null,
+      lastStreakUpdateISO: isIsoDate(parsed.lastStreakUpdateISO) ? parsed.lastStreakUpdateISO : null,
     };
   } catch {
     return null;
@@ -1123,6 +1194,12 @@ function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, histo
     keyCompliance,
     historyMetrics,
   };
+}
+
+function addRecoveryDebug(debugOut, day, payload) {
+  if (!debugOut) return;
+  debugOut.__recovery ??= {};
+  debugOut.__recovery[day] = payload;
 }
 
 
@@ -1333,11 +1410,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
       policy = getModePolicy(modeInfo);
     }
-    // NEW: fatigue / key-cap override
+    // NEW: fatigue / key-cap metrics (keine RECOVERY-Logik mehr)
     let fatigue = null;
     try {
       fatigue = await computeFatigue7d(ctx, day);
-      policy = applyRecoveryOverride(policy, fatigue);
     } catch {
       fatigue = null;
     }
@@ -1520,6 +1596,19 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       keyCompliance: keyCompliancePre,
     };
 
+    const recoveryState = evaluateRecoveryCycle({
+      todayISO: day,
+      runLoad7: loads7.runTotal7 ?? 0,
+      runFloorTarget: policy.specificKind === "run" ? policy.specificThreshold : 0,
+      previousState: previousBlockState,
+      weeksToEvent,
+    });
+
+    const policyBeforeRecovery = { ...policy };
+    if (recoveryState.recoveryActive) {
+      policy = applyRecoveryPolicy(policy);
+    }
+
     const blockState = determineBlockState({
       today: day,
       eventDate: eventDate || null,
@@ -1529,6 +1618,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     });
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
+    blockState.runFloorStreak = recoveryState.runFloorStreak;
+    blockState.recoveryUntil = recoveryState.recoveryUntil;
+    blockState.lastStreakUpdateISO = recoveryState.lastStreakUpdateISO;
 
     const keyRules = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14);
@@ -1540,9 +1632,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       startDate: blockState.startDate || day,
       eventDate,
       eventDistance,
+      runFloorStreak: blockState.runFloorStreak,
+      recoveryUntil: blockState.recoveryUntil,
+      lastStreakUpdateISO: blockState.lastStreakUpdateISO,
     };
 
     addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
+    addRecoveryDebug(ctx.debugOut, day, {
+      weekMeetsRunFloor: recoveryState.weekMeetsRunFloor,
+      runFloorStreak: recoveryState.runFloorStreak,
+      lastStreakUpdateISO: recoveryState.lastStreakUpdateISO,
+      recoveryUntil: recoveryState.recoveryUntil,
+      modeBefore: policyBeforeRecovery.label,
+      modeAfter: policy.label,
+      reasons: recoveryState.reasons,
+    });
 
 
 async function computeMaintenance14d(ctx, dayIso) {
@@ -1587,7 +1691,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       keyCompliance,
       policy,
       loads7,
-      fatigue,
+      recoveryState,
       specificOk,
       specificValue,
       aerobicOk,
@@ -1678,7 +1782,7 @@ function buildBottomLine({
   hadAnyRun,
   hadKey,
   hadGA,
-  fatigue,
+  recoveryState,
   policy,
   specificOk,
   hasSpecific,
@@ -1686,9 +1790,8 @@ function buildBottomLine({
   intensitySignal,
 }) {
   let today = "Rest oder locker (nach Gefühl)";
-  if (fatigue?.override) {
-    const reason = fatigue.reasons?.[0] ? ` – ${fatigue.reasons[0]}` : "";
-    today = `Rest/Recovery${reason}`;
+  if (recoveryState?.recoveryActive) {
+    today = "Rest/Recovery (3:1)";
   } else if (hadKey) {
     today = "Key erledigt ✅ (qualitativ)";
   } else if (hadGA) {
@@ -1700,19 +1803,17 @@ function buildBottomLine({
   }
 
   let next = "45–60min GA locker";
-  if (fatigue?.override) {
-    next = "25–40min locker nach Ruhetag";
+  if (recoveryState?.recoveryActive) {
+    next = "25–45min locker / Technik / frei";
   } else if (hasSpecific && !specificOk) {
     next = "35–50min locker/steady (Run) – Volumen auffüllen";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45min locker (kein Key) – Intensität deckeln";
-  } else if ((fatigue?.keyCount7 ?? 0) === 0) {
-    next = "Schwelle (20–30min) ODER 45–60min GA – je nach Frische";
   }
 
   let trigger = "keine Abweichung";
-  if (fatigue?.override) {
-    trigger = "Fatigue Override (RECOVERY)";
+  if (recoveryState?.recoveryActive) {
+    trigger = "Recovery-Zyklus (3:1)";
   } else if (hasSpecific && !specificOk) {
     trigger = `${policy?.specificLabel ?? "RunFloor"} unterschritten`;
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
@@ -1734,7 +1835,7 @@ function renderWellnessComment({
   keyCompliance,
   policy,
   loads7,
-  fatigue,
+  recoveryState,
   specificOk,
   specificValue,
   aerobicOk,
@@ -1779,14 +1880,24 @@ function renderWellnessComment({
     lines.push(benchReports.join("\n\n"));
   }
 
-  if (fatigue?.override) {
+  if (recoveryState) {
+    const runFloorTarget = recoveryState.runFloorTarget ?? 0;
+    const runFloorReachedText =
+      runFloorTarget > 0
+        ? recoveryState.weekMeetsRunFloor
+          ? "ja"
+          : "nein"
+        : "n/a (kein RunFloor aktiv)";
     lines.push("");
-    lines.push("🛡️ Fatigue Override: RECOVERY");
-    for (const r of fatigue.reasons.slice(0, 5)) lines.push(`- ${r}`);
-    lines.push("➡️ Empfehlung: heute keine harte Einheit. Fokus: easy / locker / Technik / frei.");
-  } else if (fatigue?.keyCount7 != null) {
-    lines.push("");
-    lines.push(`🧨 Keys (7 Tage): ${fatigue.keyCount7}/${MAX_KEYS_7D}`);
+    lines.push("🛡️ Recovery-Zyklus (3:1)");
+    lines.push(`RunFloor erreicht diese Woche: ${runFloorReachedText}`);
+    lines.push(`Streak: ${recoveryState.runFloorStreak}/3`);
+    if (recoveryState.recoveryActive && recoveryState.recoveryUntil) {
+      lines.push(`RECOVERY aktiv bis ${recoveryState.recoveryUntil} (3:1 Entlastungswoche)`);
+      lines.push("➡️ Empfehlung: keine harte Einheit, locker/Technik/frei.");
+    } else {
+      lines.push("➡️ Ziel: RunFloor erreichen, dann nach 3/3 eine Entlastungswoche.");
+    }
   }
 
   if (blockState) {
@@ -1814,21 +1925,25 @@ function renderWellnessComment({
   if (keyRules && keyCompliance) {
     lines.push("");
     lines.push("🎯 Key-Check");
-    lines.push(
-      `Erwartet/Woche: ${keyRules.expectedKeysPerWeek} (Max ${keyRules.maxKeysPerWeek}) | Ist: ${
-        keyCompliance.actual7
-      } (7T) / ${keyCompliance.actual14} (14T ≈ ${keyCompliance.perWeek14.toFixed(1)}/W)`
-    );
-    lines.push(
-      `Typen: erlaubt ${keyRules.allowedKeyTypes.join(", ")} | bevorzugt ${keyRules.preferredKeyTypes.join(
-        ", "
-      )} | verboten ${keyRules.bannedKeyTypes.join(", ")}`
-    );
-    lines.push(
-      `Ist-Typen: ${keyCompliance.actualTypes.length ? keyCompliance.actualTypes.join(", ") : "n/a"}`
-    );
-    lines.push(`Bewertung: ${keyCompliance.status === "ok" ? "✅ ok" : "⚠️ prüfen"}`);
-    if (keyCompliance.suggestion) lines.push(`➡️ ${keyCompliance.suggestion}`);
+    if (policy?.recovery) {
+      lines.push("Key-Plan pausiert (Recovery).");
+    } else {
+      lines.push(
+        `Erwartet/Woche: ${keyRules.expectedKeysPerWeek} (Max ${keyRules.maxKeysPerWeek}) | Ist: ${
+          keyCompliance.actual7
+        } (7T) / ${keyCompliance.actual14} (14T ≈ ${keyCompliance.perWeek14.toFixed(1)}/W)`
+      );
+      lines.push(
+        `Typen: erlaubt ${keyRules.allowedKeyTypes.join(", ")} | bevorzugt ${keyRules.preferredKeyTypes.join(
+          ", "
+        )} | verboten ${keyRules.bannedKeyTypes.join(", ")}`
+      );
+      lines.push(
+        `Ist-Typen: ${keyCompliance.actualTypes.length ? keyCompliance.actualTypes.join(", ") : "n/a"}`
+      );
+      lines.push(`Bewertung: ${keyCompliance.status === "ok" ? "✅ ok" : "⚠️ prüfen"}`);
+      if (keyCompliance.suggestion) lines.push(`➡️ ${keyCompliance.suggestion}`);
+    }
   }
 
   // Load block
@@ -1845,27 +1960,31 @@ function renderWellnessComment({
   lines.push("");
   lines.push("🎯 Floors (7 Tage)");
 
-  // Specific (z.B. RunFloor / BikeFloor)
-  if (hasSpecific) {
-    const label = policy?.specificLabel ?? "SpecificFloor";
-    lines.push(
-      `${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`
-    );
-  }
-
-  // AerobicFloor (Intensity Guard)
-  if (policy?.useAerobicFloor) {
-    if (!aerobicFloorActive) {
-      lines.push("AerobicFloor: n/a (Intensity-Signal zu schwach)");
-    } else {
+  if (policy?.recovery) {
+    lines.push("➡️ RECOVERY aktiv: keine Floors erzwungen.");
+  } else {
+    // Specific (z.B. RunFloor / BikeFloor)
+    if (hasSpecific) {
+      const label = policy?.specificLabel ?? "SpecificFloor";
       lines.push(
-        `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(
-          loads7?.intensity7 ?? 0
-        )})`
+        `${label}: ${Math.round(policy.specificThreshold)} ${specificOk ? "✅" : "⚠️"} (${Math.round(specificValue)})`
       );
     }
+
+    // AerobicFloor (Intensity Guard)
+    if (policy?.useAerobicFloor) {
+      if (!aerobicFloorActive) {
+        lines.push("AerobicFloor: n/a (Intensity-Signal zu schwach)");
+      } else {
+        lines.push(
+          `AerobicFloor: ${Math.round(aerobicFloor)} ${aerobicOk ? "✅" : "⚠️"} (k=${policy.aerobicK} × Intensity ${Math.round(
+            loads7?.intensity7 ?? 0
+          )})`
+        );
+      }
+    }
+    lines.push("Hinweis: RunFloor basiert nur auf Run-Load; Bike zählt nur für AerobicEq.");
   }
-  lines.push("Hinweis: RunFloor basiert nur auf Run-Load; Bike zählt nur für AerobicEq.");
 
   // ================= OPTION B: Interpretation (ohne "SpecificFloor verfehlt") =================
   if (!policy?.recovery && hasSpecific && !specificOk && aerobicOk) {
@@ -1898,7 +2017,7 @@ function renderWellnessComment({
     hadAnyRun,
     hadKey,
     hadGA,
-    fatigue,
+    recoveryState,
     policy,
     specificOk,
     hasSpecific,
