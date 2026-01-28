@@ -2046,10 +2046,12 @@ function buildAerobicTrendLine(trend) {
 
   const vdotArrow = dv > 0.5 ? "↑" : dv < -0.5 ? "↓" : "↔";
   const driftArrow = dd > 0.5 ? "↑" : dd < -0.5 ? "↓" : "↔";
+  const dvText = `${dv > 0 ? "+" : ""}${dv.toFixed(1)}%`;
+  const ddText = `${dd > 0 ? "+" : ""}${dd.toFixed(1)}%`;
 
-  if (dv <= -1.5 && dd >= 1) return "GA-Form rückläufig (VDOT ↓, HR-Drift ↑)";
-  if (dv >= 1.5 && dd <= 0) return "GA-Form verbessert (VDOT ↑, HR-Drift ↓)";
-  return `GA-Form stabil/gemischt (VDOT ${vdotArrow}, HR-Drift ${driftArrow})`;
+  if (dv <= -1.5 && dd >= 1) return `GA-Form rückläufig (VDOT ↓ ${dvText}, HR-Drift ↑ ${ddText})`;
+  if (dv >= 1.5 && dd <= 0) return `GA-Form verbessert (VDOT ↑ ${dvText}, HR-Drift ↓ ${ddText})`;
+  return `GA-Form stabil/gemischt (VDOT ${vdotArrow} ${dvText}, HR-Drift ${driftArrow} ${ddText})`;
 }
 
 function buildNextRunRecommendation({
@@ -2080,6 +2082,8 @@ function buildNextRunRecommendation({
 }
 
 function buildBottomLineCoachMessage({
+  hadAnyRun,
+  hadGA,
   recoveryState,
   hasSpecific,
   specificOk,
@@ -2104,6 +2108,12 @@ function buildBottomLineCoachMessage({
     return `Volumen fehlt noch ein Stück. Fülle locker/steady auf. ${nextText}.`;
   }
   if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
+    if (hadAnyRun && hadGA) {
+      return `GA heute erledigt (${todayText}). ${nextText}.`;
+    }
+    if (hadAnyRun) {
+      return `Heute schon gelaufen (${todayText}) – Fokus GA & Intensität deckeln. ${nextText}.`;
+    }
     return `GA ist heute der Fokus – Intensität deckeln. ${nextText}.`;
   }
   return `Alles im grünen Bereich. ${todayText}. ${nextText}.`;
@@ -2231,6 +2241,8 @@ function buildComments(
   });
   const todayText = buildBottomLineToday({ hadAnyRun, hadKey, hadGA, recoveryState, totalMinutesToday });
   const coachLine = buildBottomLineCoachMessage({
+    hadAnyRun,
+    hadGA,
     recoveryState,
     hasSpecific,
     specificOk,
