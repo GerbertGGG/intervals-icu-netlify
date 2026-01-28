@@ -53,6 +53,19 @@ export default {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
 if (url.pathname === "/watchface") {
+  // CORS preflight (sicher ist sicher)
+  if (req.method === "OPTIONS") {
+    return new Response("", {
+      status: 204,
+      headers: {
+        "access-control-allow-origin": "*",
+        "access-control-allow-methods": "GET, OPTIONS",
+        "access-control-allow-headers": "content-type",
+        "access-control-max-age": "86400",
+      },
+    });
+  }
+
   // optional: ?date=YYYY-MM-DD zum Testen, sonst "heute"
   const date = url.searchParams.get("date");
   const endIso = (date && isIsoDate(date)) ? date : isoDate(new Date());
@@ -77,17 +90,24 @@ if (url.pathname === "/watchface") {
     ctx?.waitUntil?.(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
-    return json(
-      {
+    return new Response(
+      JSON.stringify({
         ok: false,
         error: "watchface_failed",
         message: String(e?.message ?? e),
         endIso,
-      },
-      500
+      }),
+      {
+        status: 500,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "access-control-allow-origin": "*",
+        },
+      }
     );
   }
 }
+
 
       if (debug) {
         try {
@@ -3556,57 +3576,54 @@ function isStrength(a) {
   return tags.some((t) => strengthTags.has(t));
 }
 async function buildWatchfacePayload(env, endIso) {
-  // Rolling 7 Tage: endIso ist "heute" (oder Testdatum)
-  const end = new Date(endIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000)); // inkl. heute => 7 tage
+  const end = parseISODateSafe(endIso) ? endIso : isoDate(new Date());
+  const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 6 * 86400000));
 
-  // wir holen Activities im Bereich [startIso .. endIso+1)
-  const newestIso = isoDate(new Date(end.getTime() + 86400000));
+  // Fetch activities only for these 7 days (klein halten)
+  const acts = await fetchIntervalsActivities(env, startIso, end);
 
-  const acts = await fetchIntervalsActivities(env, startIso, newestIso);
-
-  // Buckets: YYYY-MM-DD -> value
-  const tssByDay = {};
+  const days = listIsoDaysInclusive(startIso, end); // genau 7
+  const runLoadByDay = {};
   const strengthMinByDay = {};
+
+  for (const d of days) { runLoadByDay[d] = 0; strengthMinByDay[d] = 0; }
 
   for (const a of acts) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d > endIso) continue;
+    if (!d || !(d in runLoadByDay)) continue;
 
-    // "TSS" / Load: nutzt bei dir icu_training_load -> hr_load fallback
-    tssByDay[d] = (tssByDay[d] || 0) + (Number(extractLoad(a)) || 0);
+    if (isRun(a)) {
+      runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
+      continue;
+    }
 
-    // Strength-Minuten: summe moving_time (oder elapsed_time) in Minuten
     if (isStrength(a)) {
-      const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-      if (Number.isFinite(sec) && sec > 0) {
-        strengthMinByDay[d] = (strengthMinByDay[d] || 0) + sec / 60;
-      }
+      const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+      strengthMinByDay[d] += sec / 60;
+      continue;
     }
   }
 
-  const days = listIsoDaysInclusive(startIso, endIso); // ältester -> heute
+  const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
+  const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
-  const tssDays = days.map((d) => Math.max(0, Math.round(tssByDay[d] || 0)));
-  const strengthDays = days.map((d) => Math.max(0, Math.round(strengthMinByDay[d] || 0)));
-
-  const labels = days.map((d, idx) => (idx === days.length - 1 ? "Heute" : dowShortDE(d)));
-
-  const tssSum7 = tssDays.reduce((a, b) => a + b, 0);
-  const strengthMin7 = strengthDays.reduce((a, b) => a + b, 0);
+  const runSum7 = runLoad.reduce((a, b) => a + b, 0);
+  const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
 
   return {
     ok: true,
-    endIso,
-    labels,
-    tssDays,
-    tssSum7,
-    tssGoal7: 150,
-    strengthMin7,
-    strengthGoal7: 45,
-    updatedAt: Math.floor(Date.now() / 1000),
+    endIso: end,
+    days,
+    runLoad,
+    runSum7,
+    runGoal: 150,
+    strengthMin,
+    strengthSum7,
+    strengthGoal: 45,
+    updatedAt: new Date().toISOString(),
   };
 }
+
 
 function dowShortDE(yyyy_mm_dd) {
   const d = new Date(yyyy_mm_dd + "T00:00:00Z");
