@@ -354,7 +354,7 @@ function inferSportFromEvent(ev) {
 
 async function computeKeyCount7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let keyCount7 = 0;
@@ -380,8 +380,8 @@ function bucketAllLoadsByDay(acts) {
 async function computeFatigue7d(ctx, dayIso, options = {}) {
   const end = new Date(dayIso + "T00:00:00Z");
 
-  const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
+  const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   const acts14 = ctx.activitiesAll.filter((a) => {
@@ -442,8 +442,8 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 
 function computeRobustness(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const start7Iso = isoDate(new Date(end.getTime() - 7 * 86400000));
-  const start14Iso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
+  const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let strength7 = 0;
@@ -583,7 +583,7 @@ function evaluateRecoveryCycle({
 // ================= LOAD SUPPORT =================
 async function computeLoads7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let runTotal7 = 0;
@@ -658,7 +658,7 @@ async function computeLoads7d(ctx, dayIso) {
 
 function computeLongRunMinutes7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 7 * 86400000));
+  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
   let maxSeconds = 0;
