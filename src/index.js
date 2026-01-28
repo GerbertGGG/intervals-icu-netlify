@@ -19,40 +19,7 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === "/") return new Response("ok");
-
-    if (url.pathname === "/sync") {
-      const write = (url.searchParams.get("write") || "").toLowerCase() === "true";
-      const debug = (url.searchParams.get("debug") || "").toLowerCase() === "true";
-
-      const date = url.searchParams.get("date");
-      const from = url.searchParams.get("from");
-      const to = url.searchParams.get("to");
-      const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
-
-      const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
-
-      let oldest, newest;
-      if (date) {
-        oldest = date;
-        newest = date;
-      } else if (from && to) {
-        oldest = from;
-        newest = to;
-      } else {
-        newest = isoDate(new Date());
-        oldest = isoDate(new Date(Date.now() - days * 86400000));
-      }
-
-      if (!isIsoDate(oldest) || !isIsoDate(newest)) {
-        return json({ ok: false, error: "Invalid date format (YYYY-MM-DD)" }, 400);
-      }
-      if (newest < oldest) {
-        return json({ ok: false, error: "`to` must be >= `from`" }, 400);
-      }
-      if (diffDays(oldest, newest) > 31) {
-        return json({ ok: false, error: "Max range is 31 days" }, 400);
-      }
-if (url.pathname === "/watchface" || url.pathname === "/watchface/") {
+  if (url.pathname === "/watchface" || url.pathname === "/watchface/") {
   // CORS preflight (sicher ist sicher)
   if (req.method === "OPTIONS") {
     return new Response("", {
@@ -108,6 +75,39 @@ if (url.pathname === "/watchface" || url.pathname === "/watchface/") {
   }
 }
 
+
+    if (url.pathname === "/sync") {
+      const write = (url.searchParams.get("write") || "").toLowerCase() === "true";
+      const debug = (url.searchParams.get("debug") || "").toLowerCase() === "true";
+
+      const date = url.searchParams.get("date");
+      const from = url.searchParams.get("from");
+      const to = url.searchParams.get("to");
+      const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
+
+      const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
+
+      let oldest, newest;
+      if (date) {
+        oldest = date;
+        newest = date;
+      } else if (from && to) {
+        oldest = from;
+        newest = to;
+      } else {
+        newest = isoDate(new Date());
+        oldest = isoDate(new Date(Date.now() - days * 86400000));
+      }
+
+      if (!isIsoDate(oldest) || !isIsoDate(newest)) {
+        return json({ ok: false, error: "Invalid date format (YYYY-MM-DD)" }, 400);
+      }
+      if (newest < oldest) {
+        return json({ ok: false, error: "`to` must be >= `from`" }, 400);
+      }
+      if (diffDays(oldest, newest) > 31) {
+        return json({ ok: false, error: "Max range is 31 days" }, 400);
+      }
 
       if (debug) {
         try {
