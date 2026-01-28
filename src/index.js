@@ -52,7 +52,7 @@ export default {
       if (diffDays(oldest, newest) > 31) {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
-if (url.pathname === "/watchface") {
+if (url.pathname === "/watchface" || url.pathname === "/watchface/") {
   // CORS preflight (sicher ist sicher)
   if (req.method === "OPTIONS") {
     return new Response("", {
