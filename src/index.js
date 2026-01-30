@@ -160,7 +160,7 @@ export default {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
-const STRENGTH_MIN_7D = 2;
+const STRENGTH_MIN_7D = 45;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -452,8 +452,11 @@ function computeRobustness(ctx, dayIso) {
   for (const a of ctx.activitiesAll) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d >= endIso) continue;
-    if (d >= start14Iso && isStrength(a)) strength14 += 1;
-    if (d >= start7Iso && isStrength(a)) strength7 += 1;
+    if (isStrength(a)) {
+      const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+      if (d >= start14Iso) strength14 += sec / 60;
+      if (d >= start7Iso) strength7 += sec / 60;
+    }
   }
 
   const strengthOk = strength7 >= STRENGTH_MIN_7D;
@@ -461,8 +464,8 @@ function computeRobustness(ctx, dayIso) {
   if (!strengthOk) reasons.push("Kraft/Stabi fehlt");
 
   return {
-    strengthSessions7d: strength7,
-    strengthSessions14d: strength14,
+    strengthMinutes7d: Math.round(strength7),
+    strengthMinutes14d: Math.round(strength14),
     strengthOk,
     reasons,
   };
@@ -2188,11 +2191,12 @@ function buildComments(
   lines.push("");
   lines.push("🧱 Robustheit");
   if (robustness) {
+    const strengthMinutes7d = robustness.strengthMinutes7d ?? 0;
     lines.push(
-      `Krafttraining: ${robustness.strengthSessions7d}/${STRENGTH_MIN_7D} (7T)${robustness.strengthOk ? "" : " ⚠️"}`
+      `Krafttraining: ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T)${robustness.strengthOk ? "" : " ⚠️"}`
     );
     lines.push(
-      `➡️ ${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 2x Kraft (15–25min)."}`
+      `➡️ ${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 45 min Kraft/Stabi."}`
     );
   } else {
     lines.push("Krafttraining: n/a");
