@@ -683,12 +683,14 @@ async function computeLoads7d(ctx, dayIso) {
 
     const load = extractLoad(a);
     const totalLoad = Number.isFinite(load) ? load : 0;
+    const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    const minutes = Number.isFinite(seconds) ? seconds / 60 : 0;
 
     const run = isRun(a);
     const bike = isBike(a);
 
-    if (run) runTotal7 += totalLoad;
-    if (bike) bikeTotal7 += totalLoad;
+    if (run) runTotal7 += minutes;
+    if (bike) bikeTotal7 += minutes;
 
     const intensityKey = isIntensity(a);
     const intensityHr = isIntensityByHr(a);
