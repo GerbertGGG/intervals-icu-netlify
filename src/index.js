@@ -506,79 +506,156 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   };
 }
 
-function applyRecoveryPolicy(policy) {
-  return {
-    ...policy,
-    label: "RECOVERY",
-    specificThreshold: 0,
-    useAerobicFloor: false,
-    recovery: true,
-  };
+const RUN_FLOOR_LOAD_DAY_PCT = 0.9;
+const RUN_FLOOR_LOAD_DAY_TOLERANCE = 0.02;
+const RUN_FLOOR_LOAD_DAYS_TRIGGER = 21;
+const RUN_FLOOR_DELOAD_DAYS = 7;
+const RUN_FLOOR_TAPER_START_DAYS = 14;
+const RUN_FLOOR_TAPER_END_DAYS = 2;
+const RUN_FLOOR_RECOVER_DAYS = 9;
+const RUN_FLOOR_DELOAD_FACTOR = {
+  BASE: 0.75,
+  BUILD: 0.7,
+};
+const RUN_FLOOR_RECOVER_FACTOR = 0.65;
+const RUN_FLOOR_FLOOR_STEP = {
+  BASE: 6,
+  BUILD: 10,
+};
+const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
+
+function mapBlockToPhase(block) {
+  if (block === "BASE") return "BASE";
+  if (block === "BUILD") return "BUILD";
+  if (block === "RACE") return "PEAK";
+  if (block === "RESET") return "RECOVER";
+  return "BASE";
 }
 
-function evaluateRecoveryCycle({
+function computeTaperFactor(eventInDays) {
+  if (!Number.isFinite(eventInDays)) return 1;
+  if (eventInDays <= RUN_FLOOR_TAPER_END_DAYS) return 0.6;
+  if (eventInDays >= RUN_FLOOR_TAPER_START_DAYS) return 0.9;
+  const span = RUN_FLOOR_TAPER_START_DAYS - RUN_FLOOR_TAPER_END_DAYS;
+  const ratio = (eventInDays - RUN_FLOOR_TAPER_END_DAYS) / span;
+  return 0.6 + ratio * (0.9 - 0.6);
+}
+
+function evaluateRunFloorState({
   todayISO,
-  runLoad7,
-  runFloorTarget,
+  runLoad7d,
+  floorTarget,
+  phase,
+  eventInDays,
+  eventDateISO,
   previousState,
-  weeksToEvent,
 }) {
   const reasons = [];
-  const weekMeetsRunFloor =
-    Number.isFinite(runFloorTarget) && runFloorTarget > 0
-      ? (Number(runLoad7) || 0) >= runFloorTarget
-      : false;
+  const safeEventInDays = Number.isFinite(eventInDays) ? Math.round(eventInDays) : 9999;
+  const prevFloorTarget = Number.isFinite(previousState?.floorTarget) ? previousState.floorTarget : null;
+  const baseFloorTarget = Number.isFinite(floorTarget) ? floorTarget : prevFloorTarget ?? 0;
 
-  let runFloorStreak = Number.isFinite(previousState?.runFloorStreak) ? previousState.runFloorStreak : 0;
-  let recoveryUntil = isIsoDate(previousState?.recoveryUntil) ? previousState.recoveryUntil : null;
-  let lastStreakUpdateISO = isIsoDate(previousState?.lastStreakUpdateISO) ? previousState.lastStreakUpdateISO : null;
+  let updatedFloorTarget = Number.isFinite(prevFloorTarget) ? prevFloorTarget : baseFloorTarget;
+  let loadDays = Number.isFinite(previousState?.loadDays) ? previousState.loadDays : 0;
+  let deloadStartDate = isIsoDate(previousState?.deloadStartDate) ? previousState.deloadStartDate : null;
+  let lastDeloadCompletedISO = isIsoDate(previousState?.lastDeloadCompletedISO)
+    ? previousState.lastDeloadCompletedISO
+    : null;
+  let lastFloorIncreaseDate = isIsoDate(previousState?.lastFloorIncreaseDate)
+    ? previousState.lastFloorIncreaseDate
+    : null;
+  let lastEventDate = isIsoDate(previousState?.lastEventDate) ? previousState.lastEventDate : null;
 
-  if (recoveryUntil && todayISO >= recoveryUntil) {
-    recoveryUntil = null;
-    runFloorStreak = 0;
-    reasons.push("Recovery abgelaufen → Streak zurückgesetzt");
+  if (eventDateISO && safeEventInDays <= 0) {
+    lastEventDate = eventDateISO;
   }
 
-  const eventTooClose = weeksToEvent != null && weeksToEvent <= 2;
-  if (eventTooClose && recoveryUntil && todayISO < recoveryUntil) {
-    recoveryUntil = null;
-    runFloorStreak = 0;
-    reasons.push("Recovery unterdrückt (Eventnähe ≤ 2 Wochen)");
+  let daysSinceEvent = null;
+  if (lastEventDate) {
+    const delta = daysBetween(lastEventDate, todayISO);
+    if (Number.isFinite(delta) && delta >= 0) daysSinceEvent = Math.round(delta);
   }
 
-  let recoveryActive = !eventTooClose && recoveryUntil && todayISO < recoveryUntil;
-  if (recoveryActive) {
-    reasons.push("Recovery läuft (3:1 Entlastungswoche)");
+  if (deloadStartDate && diffDays(deloadStartDate, todayISO) >= RUN_FLOOR_DELOAD_DAYS) {
+    deloadStartDate = null;
+    loadDays = 0;
+    lastDeloadCompletedISO = todayISO;
+    reasons.push("Deload beendet → Load-Days zurückgesetzt");
   }
 
-  if (!recoveryActive) {
-    const shouldUpdateStreak =
-      !lastStreakUpdateISO || diffDays(lastStreakUpdateISO, todayISO) >= 7;
-    if (shouldUpdateStreak) {
-      runFloorStreak = weekMeetsRunFloor ? runFloorStreak + 1 : 0;
-      lastStreakUpdateISO = todayISO;
-    }
+  let overlayMode = "NORMAL";
+  if (safeEventInDays >= 0 && safeEventInDays <= RUN_FLOOR_TAPER_START_DAYS) {
+    overlayMode = "TAPER";
+    reasons.push("Taper aktiv (Event in ≤14 Tagen)");
+  } else if (daysSinceEvent != null && daysSinceEvent <= RUN_FLOOR_RECOVER_DAYS) {
+    overlayMode = "RECOVER_OVERLAY";
+    reasons.push("Recover-Overlay aktiv (Event gerade passiert)");
+  } else if (deloadStartDate && diffDays(deloadStartDate, todayISO) < RUN_FLOOR_DELOAD_DAYS) {
+    overlayMode = "DELOAD";
+    reasons.push("Deload läuft");
+  } else if (
+    loadDays >= RUN_FLOOR_LOAD_DAYS_TRIGGER &&
+    (phase === "BASE" || phase === "BUILD") &&
+    safeEventInDays > RUN_FLOOR_LOAD_DAYS_TRIGGER
+  ) {
+    overlayMode = "DELOAD";
+    deloadStartDate = todayISO;
+    reasons.push("Deload ausgelöst (21 Load-Days erreicht)");
   }
 
-  if (!recoveryActive && runFloorStreak >= 3) {
-    if (eventTooClose) {
-      runFloorStreak = 0;
-      recoveryUntil = null;
-      reasons.push("Recovery unterdrückt (Eventnähe ≤ 2 Wochen)");
-    } else {
-      recoveryUntil = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 7 * 86400000));
-      recoveryActive = true;
-      reasons.push("3:1 Streak erreicht → RECOVERY aktiviert");
+  const loadDayThreshold = updatedFloorTarget * Math.max(0, RUN_FLOOR_LOAD_DAY_PCT - RUN_FLOOR_LOAD_DAY_TOLERANCE);
+  const isLoadDay =
+    overlayMode === "NORMAL" &&
+    Number.isFinite(updatedFloorTarget) &&
+    updatedFloorTarget > 0 &&
+    (Number(runLoad7d) || 0) >= loadDayThreshold;
+
+  if (overlayMode === "NORMAL" && isLoadDay) {
+    loadDays += 1;
+  }
+
+  let effectiveFloorTarget = updatedFloorTarget;
+  if (overlayMode === "DELOAD") {
+    const factor = RUN_FLOOR_DELOAD_FACTOR[phase] ?? 0.7;
+    effectiveFloorTarget = updatedFloorTarget * factor;
+  } else if (overlayMode === "TAPER") {
+    effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays);
+  } else if (overlayMode === "RECOVER_OVERLAY") {
+    effectiveFloorTarget = updatedFloorTarget * RUN_FLOOR_RECOVER_FACTOR;
+  }
+
+  const deloadCompletedSinceIncrease =
+    lastDeloadCompletedISO && (!lastFloorIncreaseDate || lastDeloadCompletedISO > lastFloorIncreaseDate);
+
+  if (
+    (phase === "BASE" || phase === "BUILD") &&
+    overlayMode === "NORMAL" &&
+    safeEventInDays > 28 &&
+    deloadCompletedSinceIncrease
+  ) {
+    const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
+    const maxIncrease = Math.max(1, Math.round(updatedFloorTarget * RUN_FLOOR_MAX_INCREASE_PCT));
+    const increase = Math.min(step, maxIncrease);
+    if (increase > 0) {
+      updatedFloorTarget += increase;
+      lastFloorIncreaseDate = todayISO;
+      reasons.push(`RunFloor erhöht (+${increase}) nach Deload`);
     }
   }
 
   return {
-    weekMeetsRunFloor,
-    runFloorStreak,
-    lastStreakUpdateISO,
-    recoveryUntil,
-    recoveryActive,
-    runFloorTarget,
+    overlayMode,
+    effectiveFloorTarget,
+    floorTarget: updatedFloorTarget,
+    useAerobicFloor: true,
+    loadDays,
+    deloadStartDate,
+    lastDeloadCompletedISO,
+    lastFloorIncreaseDate,
+    lastEventDate,
+    daysSinceEvent,
+    loadDayThreshold,
+    isLoadDay,
     reasons,
   };
 }
@@ -1321,9 +1398,12 @@ function buildBlockStateLine(state) {
     start: state.startDate,
     eventDate: state.eventDate,
     eventDistance: state.eventDistance,
-    runFloorStreak: Number.isFinite(state.runFloorStreak) ? state.runFloorStreak : 0,
-    recoveryUntil: isIsoDate(state.recoveryUntil) ? state.recoveryUntil : null,
-    lastStreakUpdateISO: isIsoDate(state.lastStreakUpdateISO) ? state.lastStreakUpdateISO : null,
+    floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
+    loadDays: Number.isFinite(state.loadDays) ? state.loadDays : 0,
+    deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
+    lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
+    lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
+    lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
   };
   return `BlockState: ${JSON.stringify(payload)}`;
 }
@@ -1344,9 +1424,12 @@ function parseBlockStateFromComment(comment) {
       startDate: parsed.start,
       eventDate: parsed.eventDate ?? null,
       eventDistance: parsed.eventDistance ?? null,
-      runFloorStreak: Number.isFinite(parsed.runFloorStreak) ? parsed.runFloorStreak : 0,
-      recoveryUntil: isIsoDate(parsed.recoveryUntil) ? parsed.recoveryUntil : null,
-      lastStreakUpdateISO: isIsoDate(parsed.lastStreakUpdateISO) ? parsed.lastStreakUpdateISO : null,
+      floorTarget: Number.isFinite(parsed.floorTarget) ? parsed.floorTarget : null,
+      loadDays: Number.isFinite(parsed.loadDays) ? parsed.loadDays : 0,
+      deloadStartDate: isIsoDate(parsed.deloadStartDate) ? parsed.deloadStartDate : null,
+      lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
+      lastFloorIncreaseDate: isIsoDate(parsed.lastFloorIncreaseDate) ? parsed.lastFloorIncreaseDate : null,
+      lastEventDate: isIsoDate(parsed.lastEventDate) ? parsed.lastEventDate : null,
     };
   } catch {
     return null;
@@ -1387,10 +1470,10 @@ function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, histo
   };
 }
 
-function addRecoveryDebug(debugOut, day, payload) {
+function addRunFloorDebug(debugOut, day, payload) {
   if (!debugOut) return;
-  debugOut.__recovery ??= {};
-  debugOut.__recovery[day] = payload;
+  debugOut.__runFloor ??= {};
+  debugOut.__runFloor[day] = payload;
 }
 
 
@@ -1767,7 +1850,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     else if (policy.specificKind === "bike") specificValue = loads7.bikeTotal7;
     else specificValue = 0;
 
-    const specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
+    let specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
     const aerobicEq = loads7.aerobicEq7 ?? 0;
     const intensity = loads7.intensity7 ?? 0;
     const intensitySignal = loads7.intensitySignal ?? "none";
@@ -1802,10 +1885,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDistance,
     });
 
+    const baseRunFloorTarget =
+      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
+        ? previousBlockState.floorTarget
+        : MIN_STIMULUS_7D_RUN_EVENT;
+
     const historyMetrics = {
       runFloor7: loads7.runTotal7 ?? 0,
       runFloorPrev7: loads7Prev.runTotal7 ?? 0,
-      runFloorTarget: policy.specificKind === "run" ? policy.specificThreshold : 0,
+      runFloorTarget: baseRunFloorTarget,
       aerobicOk,
       aerobicOkPrev,
       aerobicEq7: loads7.aerobicEq7 ?? 0,
@@ -1819,19 +1907,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       keyCompliance: keyCompliancePre,
     };
 
-    const recoveryState = evaluateRecoveryCycle({
-      todayISO: day,
-      runLoad7: loads7.runTotal7 ?? 0,
-      runFloorTarget: policy.specificKind === "run" ? policy.specificThreshold : 0,
-      previousState: previousBlockState,
-      weeksToEvent,
-    });
-
-    const policyBeforeRecovery = { ...policy };
-    if (recoveryState.recoveryActive) {
-      policy = applyRecoveryPolicy(policy);
-    }
-
     const blockState = determineBlockState({
       today: day,
       eventDate: eventDate || null,
@@ -1841,18 +1916,47 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     });
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
-    blockState.runFloorStreak = recoveryState.runFloorStreak;
-    blockState.recoveryUntil = recoveryState.recoveryUntil;
-    blockState.lastStreakUpdateISO = recoveryState.lastStreakUpdateISO;
+
+    const phase = mapBlockToPhase(blockState.block);
+    const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
+    const runFloorState = evaluateRunFloorState({
+      todayISO: day,
+      runLoad7d: loads7.runTotal7 ?? 0,
+      floorTarget: baseRunFloorTarget,
+      phase,
+      eventInDays,
+      eventDateISO: eventDate || null,
+      previousState: previousBlockState,
+    });
+
+    if (policy.specificKind === "run" || policy.specificKind === "open") {
+      policy = {
+        ...policy,
+        specificThreshold: runFloorState.effectiveFloorTarget,
+      };
+    }
+    specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
+    blockState.floorTarget = runFloorState.floorTarget;
+    blockState.loadDays = runFloorState.loadDays;
+    blockState.deloadStartDate = runFloorState.deloadStartDate;
+    blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
+    blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
+    blockState.lastEventDate = runFloorState.lastEventDate;
 
     const dynamicKeyCap = {
       maxKeys7d: MAX_KEYS_7D,
       reasons: [],
     };
 
-    if (recoveryState.recoveryActive) {
+    if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
       dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push("Recovery aktiv");
+      dynamicKeyCap.reasons.push("Recover-Overlay aktiv");
+    } else if (runFloorState.overlayMode === "TAPER") {
+      dynamicKeyCap.maxKeys7d = 0;
+      dynamicKeyCap.reasons.push("Taper aktiv");
+    } else if (runFloorState.overlayMode === "DELOAD") {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Deload aktiv");
     } else if (fatigueBase?.override) {
       dynamicKeyCap.maxKeys7d = 1;
       dynamicKeyCap.reasons.push("Fatigue/Overload");
@@ -1894,20 +1998,28 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       startDate: blockState.startDate || day,
       eventDate,
       eventDistance,
-      runFloorStreak: blockState.runFloorStreak,
-      recoveryUntil: blockState.recoveryUntil,
-      lastStreakUpdateISO: blockState.lastStreakUpdateISO,
+      floorTarget: blockState.floorTarget,
+      loadDays: blockState.loadDays,
+      deloadStartDate: blockState.deloadStartDate,
+      lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
+      lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
+      lastEventDate: blockState.lastEventDate,
     };
 
     addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
-    addRecoveryDebug(ctx.debugOut, day, {
-      weekMeetsRunFloor: recoveryState.weekMeetsRunFloor,
-      runFloorStreak: recoveryState.runFloorStreak,
-      lastStreakUpdateISO: recoveryState.lastStreakUpdateISO,
-      recoveryUntil: recoveryState.recoveryUntil,
-      modeBefore: policyBeforeRecovery.label,
-      modeAfter: policy.label,
-      reasons: recoveryState.reasons,
+    addRunFloorDebug(ctx.debugOut, day, {
+      overlayMode: runFloorState.overlayMode,
+      effectiveFloorTarget: runFloorState.effectiveFloorTarget,
+      floorTarget: runFloorState.floorTarget,
+      loadDays: runFloorState.loadDays,
+      deloadStartDate: runFloorState.deloadStartDate,
+      lastDeloadCompletedISO: runFloorState.lastDeloadCompletedISO,
+      lastFloorIncreaseDate: runFloorState.lastFloorIncreaseDate,
+      lastEventDate: runFloorState.lastEventDate,
+      daysSinceEvent: runFloorState.daysSinceEvent,
+      isLoadDay: runFloorState.isLoadDay,
+      loadDayThreshold: runFloorState.loadDayThreshold,
+      reasons: runFloorState.reasons,
     });
 
 async function computeMaintenance14d(ctx, dayIso) {
@@ -1955,7 +2067,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       keySpacing,
       policy,
       loads7,
-      recoveryState,
+      runFloorState,
       specificOk,
       specificValue,
       aerobicOk,
@@ -2093,7 +2205,7 @@ function buildAerobicTrendLine(trend) {
 }
 
 function buildNextRunRecommendation({
-  recoveryState,
+  runFloorState,
   policy,
   specificOk,
   hasSpecific,
@@ -2103,8 +2215,13 @@ function buildNextRunRecommendation({
   keySpacingOk,
 }) {
   let next = "45–60 min locker/steady";
-  if (recoveryState?.recoveryActive) {
-    next = "25–45 min locker / Technik / frei";
+  const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  if (overlay === "RECOVER_OVERLAY") {
+    next = "25–40 min locker / Technik / frei";
+  } else if (overlay === "TAPER") {
+    next = "20–35 min locker (Taper)";
+  } else if (overlay === "DELOAD") {
+    next = "30–45 min locker / Technik (Deload)";
   } else if (hasSpecific && !specificOk) {
     next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
@@ -2122,7 +2239,7 @@ function buildNextRunRecommendation({
 function buildBottomLineCoachMessage({
   hadAnyRun,
   hadGA,
-  recoveryState,
+  runFloorState,
   hasSpecific,
   specificOk,
   policy,
@@ -2133,8 +2250,15 @@ function buildBottomLineCoachMessage({
   todayText,
   nextText,
 }) {
-  if (recoveryState?.recoveryActive) {
-    return `Heute ist Entlastung angesagt. ${todayText}. Wenn du läufst: ${nextText}.`;
+  const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  if (overlay === "RECOVER_OVERLAY") {
+    return `Heute ist Recovery angesagt. ${todayText}. Wenn du läufst: ${nextText}.`;
+  }
+  if (overlay === "TAPER") {
+    return `Taper-Phase: Frische schützen. ${todayText}. ${nextText}.`;
+  }
+  if (overlay === "DELOAD") {
+    return `Deload aktiv: locker & Technik. ${todayText}. ${nextText}.`;
   }
   if (keyCapExceeded) {
     return `Key ist für diese Woche abgehakt. Halte den Rest locker/steady. ${nextText}.`;
@@ -2173,7 +2297,7 @@ function buildComments(
     keySpacing,
     policy,
     loads7,
-    recoveryState,
+    runFloorState,
     specificOk,
     specificValue,
     aerobicOk,
@@ -2220,62 +2344,56 @@ function buildComments(
   lines.push("");
   lines.push("📉 Belastung & Progression");
   const runMinutes7 = Math.round(loads7?.runTotal7 ?? 0);
-  const runTarget = recoveryState?.runFloorTarget ?? 0;
+  const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   lines.push(`7T Laufminuten: ${runMinutes7} (Ziel nächste Woche: ${runTargetText})`);
   lines.push(`Longrun: ${Math.round(longRunMinutes ?? 0)}′ → Ziel: ${longRunTarget}′`);
-  lines.push(`Status: ${recoveryState?.recoveryActive ? "Entlastungswoche aktiv" : "im Plan"}`);
+  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
+  lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
   lines.push("");
   lines.push("🎯 Key-Check");
-  if (policy?.recovery) {
-    lines.push("Key diese Woche: 0/0 ⚠️ (Recovery)");
-    lines.push("➡️ Key-Plan pausiert (Recovery).");
-  } else {
-    const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
-    const actualKeys = keyCompliance?.actual7 ?? 0;
-    const keyStatusIcon = keyCompliance?.capExceeded
-      ? "⚠️"
-      : keyCompliance?.status === "ok"
-        ? "✅"
-        : "⚠️";
-    const keyTypes = keyCompliance?.actualTypes?.length
-      ? keyCompliance.actualTypes.map(formatKeyType).join("/")
-      : "n/a";
-    lines.push(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`);
-    const keyRuleLine = buildKeyRuleLine({
-      keyRules,
-      block: blockState?.block,
-      eventDistance,
-    });
-    if (keyRuleLine) lines.push(keyRuleLine);
-    lines.push(
-      `➡️ ${buildKeyConsequence({
-        keyCompliance,
-        keySpacing,
-        keyCap,
-      })}`
-    );
-  }
-  lines.push("");
-  lines.push("🛡️ Recovery-Zyklus (3:1)");
-  const runFloorTarget = recoveryState?.runFloorTarget ?? 0;
-  const runFloorReached = runFloorTarget > 0 ? (recoveryState?.weekMeetsRunFloor ? "erreicht" : "nicht erreicht") : "n/a";
-  const runFloorActualText = runFloorTarget > 0 ? `${Math.round(loads7?.runTotal7 ?? 0)} / ${Math.round(runFloorTarget)}` : "n/a";
+  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
+  const actualKeys = keyCompliance?.actual7 ?? 0;
+  const keyStatusIcon = keyCompliance?.capExceeded
+    ? "⚠️"
+    : keyCompliance?.status === "ok"
+      ? "✅"
+      : "⚠️";
+  const keyTypes = keyCompliance?.actualTypes?.length
+    ? keyCompliance.actualTypes.map(formatKeyType).join("/")
+    : "n/a";
+  lines.push(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`);
+  const keyRuleLine = buildKeyRuleLine({
+    keyRules,
+    block: blockState?.block,
+    eventDistance,
+  });
+  if (keyRuleLine) lines.push(keyRuleLine);
   lines.push(
-    `RunFloor diese Woche ${runFloorReached} (${runFloorActualText})${runFloorTarget > 0 && !recoveryState?.weekMeetsRunFloor ? " ⚠️" : ""}`
+    `➡️ ${buildKeyConsequence({
+      keyCompliance,
+      keySpacing,
+      keyCap,
+    })}`
   );
+  lines.push("");
+  lines.push("🧩 RunFloor-Overlay");
+  const runFloorTarget = runFloorState?.floorTarget ?? 0;
+  const loadDays = runFloorState?.loadDays ?? 0;
+  const effectiveTargetText = runFloorTarget > 0 ? Math.round(runTarget) : "n/a";
+  lines.push(`Overlay: ${overlayMode} | Target: ${effectiveTargetText}`);
+  lines.push(`Load-Days: ${loadDays}/${RUN_FLOOR_LOAD_DAYS_TRIGGER}`);
   lines.push(
-    `➡️ ${buildRecoveryConsequence({
-      recoveryState,
+    `➡️ ${buildRunFloorConsequence({
+      runFloorState,
       runFloorTarget,
-      runFloorMet: recoveryState?.weekMeetsRunFloor ?? false,
     })}`
   );
   lines.push("");
   lines.push("✅ Bottom Line");
   const next = buildNextRunRecommendation({
-    recoveryState,
+    runFloorState,
     policy,
     specificOk,
     hasSpecific,
@@ -2284,11 +2402,11 @@ function buildComments(
     keyCapExceeded: keyCompliance?.capExceeded ?? false,
     keySpacingOk: keyCompliance?.keySpacingOk ?? true,
   });
-  const todayText = buildBottomLineToday({ hadAnyRun, hadKey, hadGA, recoveryState, totalMinutesToday });
+  const todayText = buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday });
   const coachLine = buildBottomLineCoachMessage({
     hadAnyRun,
     hadGA,
-    recoveryState,
+    runFloorState,
     hasSpecific,
     specificOk,
     policy,
@@ -2300,6 +2418,11 @@ function buildComments(
     nextText: `Nächster Lauf: ${next}`,
   });
   lines.push(`Coach: ${coachLine}`);
+  const blockStateLine = buildBlockStateLine(blockState);
+  if (blockStateLine) {
+    lines.push("");
+    lines.push(blockStateLine);
+  }
 
   return lines.join("\n");
 }
@@ -2313,8 +2436,11 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   return `Lauf: ${minutesText}Lauf`;
 }
 
-function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, recoveryState, totalMinutesToday }) {
-  if (recoveryState?.recoveryActive) return "Rest/Recovery (3:1)";
+function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
+  const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  if (overlay === "RECOVER_OVERLAY") return "Rest/Recovery";
+  if (overlay === "TAPER") return "Taper/Frische";
+  if (overlay === "DELOAD") return "Deload";
   if (hadKey) return "Training absolviert";
   if (hadGA) return totalMinutesToday > 0 ? `GA ${totalMinutesToday}′` : "GA";
   if (hadAnyRun) return totalMinutesToday > 0 ? `Lauf ${totalMinutesToday}′` : "Lauf";
@@ -2328,11 +2454,13 @@ function buildKeyConsequence({ keyCompliance, keySpacing, keyCap }) {
   return "Weitere Einheiten nur locker/steady.";
 }
 
-function buildRecoveryConsequence({ recoveryState, runFloorTarget, runFloorMet }) {
-  if (recoveryState?.recoveryActive) return "Entlastungswoche aktiv: locker/Technik/frei.";
-  if (runFloorTarget > 0 && !runFloorMet) return "Volumen auffüllen (locker/steady).";
-  if ((recoveryState?.runFloorStreak ?? 0) > 0) return `Streak halten: ${recoveryState.runFloorStreak}/3.`;
-  return "Streak starten mit konsistenten Wochen.";
+function buildRunFloorConsequence({ runFloorState, runFloorTarget }) {
+  const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  if (overlay === "RECOVER_OVERLAY") return "Recovery-Overlay: locker/Technik/frei.";
+  if (overlay === "TAPER") return "Taper: Intensität niedrig halten, Frische priorisieren.";
+  if (overlay === "DELOAD") return "Deload: Volumen senken, sauber laufen.";
+  if (runFloorTarget > 0 && !runFloorState?.isLoadDay) return "Load-Day fehlt: locker/steady Volumen auffüllen.";
+  return "Load-Days konsistent sammeln.";
 }
 
 
