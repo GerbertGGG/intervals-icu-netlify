@@ -2062,6 +2062,21 @@ function formatKeyType(type) {
   return type || "n/a";
 }
 
+function formatKeyTypeList(types = []) {
+  if (!types.length) return "n/a";
+  return types.map(formatKeyType).join("/");
+}
+
+function buildKeyRuleLine({ keyRules, block, eventDistance }) {
+  if (!keyRules) return null;
+  const blockLabel = block || "n/a";
+  const distLabel = eventDistance || "n/a";
+  const allowed = formatKeyTypeList(keyRules.allowedKeyTypes);
+  const preferred = formatKeyTypeList(keyRules.preferredKeyTypes);
+  const banned = keyRules.bannedKeyTypes?.length ? formatKeyTypeList(keyRules.bannedKeyTypes) : null;
+  return `Key-Regel (${blockLabel}, ${distLabel}): erlaubt ${allowed}, bevorzugt ${preferred}${banned ? `, tabu ${banned}` : ""}.`;
+}
+
 function buildAerobicTrendLine(trend) {
   const dv = Number.isFinite(trend?.dv) ? trend.dv : null;
   const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
@@ -2228,6 +2243,12 @@ function buildComments(
       ? keyCompliance.actualTypes.map(formatKeyType).join("/")
       : "n/a";
     lines.push(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`);
+    const keyRuleLine = buildKeyRuleLine({
+      keyRules,
+      block: blockState?.block,
+      eventDistance,
+    });
+    if (keyRuleLine) lines.push(keyRuleLine);
     lines.push(
       `➡️ ${buildKeyConsequence({
         keyCompliance,
