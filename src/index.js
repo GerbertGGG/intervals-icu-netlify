@@ -37,24 +37,19 @@ export default {
   const date = url.searchParams.get("date");
   const endIso = (date && isIsoDate(date)) ? date : isoDate(new Date());
 
-  // 1h Cache (Cloudflare cache)
-  const cache = caches.default;
-  const cacheKey = new Request(url.toString(), req);
-  const cached = await cache.match(cacheKey);
-  if (cached) return cached;
+  // Watchface should always reflect the latest data, so do not cache.
 
   try {
     const payload = await buildWatchfacePayload(env, endIso);
 
+    const cacheControl = "no-store";
     const res = new Response(JSON.stringify(payload), {
       headers: {
         "content-type": "application/json; charset=utf-8",
-        "cache-control": "public, max-age=3600",
+        "cache-control": cacheControl,
         "access-control-allow-origin": "*",
       },
     });
-
-    ctx?.waitUntil?.(cache.put(cacheKey, res.clone()));
     return res;
   } catch (e) {
     return new Response(
