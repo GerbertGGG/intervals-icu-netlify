@@ -501,16 +501,21 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   };
 }
 
-const RUN_FLOOR_LOAD_DAY_PCT = 0.9;
-const RUN_FLOOR_LOAD_DAY_TOLERANCE = 0.02;
-const RUN_FLOOR_LOAD_DAYS_TRIGGER = 21;
+const RUN_FLOOR_DELOAD_AVG21_PCT = 1.03;
+const RUN_FLOOR_DELOAD_AVG7_PCT = 0.9;
+const RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS = 14;
+const RUN_FLOOR_DELOAD_LOAD_GAP_PCT = 0.25;
+const RUN_FLOOR_DELOAD_LOAD_GAP_MAX = 3;
+const RUN_FLOOR_DELOAD_WINDOW_DAYS = 21;
 const RUN_FLOOR_DELOAD_DAYS = 7;
 const RUN_FLOOR_TAPER_START_DAYS = 14;
 const RUN_FLOOR_TAPER_END_DAYS = 2;
 const RUN_FLOOR_RECOVER_DAYS = 9;
+const RUN_FLOOR_DELOAD_RANGE = { min: 0.6, max: 0.7 };
 const RUN_FLOOR_DELOAD_FACTOR = {
-  BASE: 0.75,
-  BUILD: 0.7,
+  BASE: 0.7,
+  BUILD: 0.65,
+  DEFAULT: 0.65,
 };
 const RUN_FLOOR_RECOVER_FACTOR = 0.65;
 const RUN_FLOOR_FLOOR_STEP = {
@@ -536,14 +541,67 @@ function computeTaperFactor(eventInDays) {
   return 0.6 + ratio * (0.9 - 0.6);
 }
 
+function computeAvg(windowDays, dailyLoads) {
+  if (!Array.isArray(dailyLoads) || windowDays <= 0) return 0;
+  const slice = dailyLoads.slice(-windowDays);
+  const total = slice.reduce((acc, v) => acc + (Number(v) || 0), 0);
+  return total / windowDays;
+}
+
+function computeStability(last14Days, floorDaily) {
+  if (!Array.isArray(last14Days) || last14Days.length === 0 || !(floorDaily > 0)) {
+    return { loadGap: 0, stabilityOK: true };
+  }
+  const gapThreshold = floorDaily * RUN_FLOOR_DELOAD_LOAD_GAP_PCT;
+  const loadGap = last14Days.reduce((acc, v) => acc + ((Number(v) || 0) < gapThreshold ? 1 : 0), 0);
+  return { loadGap, stabilityOK: loadGap <= RUN_FLOOR_DELOAD_LOAD_GAP_MAX };
+}
+
+function shouldTriggerDeload(avg21, avg7, stabilityOK, deloadActive, floorDaily = 0) {
+  if (deloadActive || !(floorDaily > 0)) return false;
+  return (
+    avg21 >= floorDaily * RUN_FLOOR_DELOAD_AVG21_PCT &&
+    avg7 >= floorDaily * RUN_FLOOR_DELOAD_AVG7_PCT &&
+    stabilityOK === true
+  );
+}
+
+function applyDeloadRules(currentTargets) {
+  const floorTarget = Number(currentTargets?.floorTarget) || 0;
+  const phase = currentTargets?.phase ?? "BASE";
+  const factor = RUN_FLOOR_DELOAD_FACTOR[phase] ?? RUN_FLOOR_DELOAD_FACTOR.DEFAULT;
+  return {
+    effectiveFloorTarget: floorTarget * factor,
+    deloadTargetLow: floorTarget * RUN_FLOOR_DELOAD_RANGE.min,
+    deloadTargetHigh: floorTarget * RUN_FLOOR_DELOAD_RANGE.max,
+  };
+}
+
+function buildRunDailyLoads(ctx, todayISO, windowDays) {
+  const end = new Date(todayISO + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - (windowDays - 1) * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  const dailyLoads = {};
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    dailyLoads[d] = (dailyLoads[d] || 0) + extractLoad(a);
+  }
+
+  const days = listIsoDaysInclusive(startIso, todayISO);
+  return days.map((d) => Number(dailyLoads[d]) || 0);
+}
+
 function evaluateRunFloorState({
   todayISO,
-  runLoad7d,
   floorTarget,
   phase,
   eventInDays,
   eventDateISO,
   previousState,
+  dailyRunLoads,
 }) {
   const reasons = [];
   const safeEventInDays = Number.isFinite(eventInDays) ? Math.round(eventInDays) : 9999;
@@ -551,7 +609,6 @@ function evaluateRunFloorState({
   const baseFloorTarget = Number.isFinite(floorTarget) ? floorTarget : prevFloorTarget ?? 0;
 
   let updatedFloorTarget = Number.isFinite(prevFloorTarget) ? prevFloorTarget : baseFloorTarget;
-  let loadDays = Number.isFinite(previousState?.loadDays) ? previousState.loadDays : 0;
   let deloadStartDate = isIsoDate(previousState?.deloadStartDate) ? previousState.deloadStartDate : null;
   let lastDeloadCompletedISO = isIsoDate(previousState?.lastDeloadCompletedISO)
     ? previousState.lastDeloadCompletedISO
@@ -573,10 +630,27 @@ function evaluateRunFloorState({
 
   if (deloadStartDate && diffDays(deloadStartDate, todayISO) >= RUN_FLOOR_DELOAD_DAYS) {
     deloadStartDate = null;
-    loadDays = 0;
     lastDeloadCompletedISO = todayISO;
-    reasons.push("Deload beendet → Load-Days zurückgesetzt");
+    reasons.push("Deload beendet → neue Aufbauphase");
   }
+
+  let deloadEndDate = null;
+  let deloadActive = false;
+  if (deloadStartDate) {
+    deloadEndDate = isoDate(new Date(new Date(deloadStartDate + "T00:00:00Z").getTime() + 6 * 86400000));
+    deloadActive = diffDays(deloadStartDate, todayISO) < RUN_FLOOR_DELOAD_DAYS;
+  }
+
+  const safeDailyLoads = Array.isArray(dailyRunLoads)
+    ? dailyRunLoads.slice(-RUN_FLOOR_DELOAD_WINDOW_DAYS)
+    : [];
+  const floorDaily = baseFloorTarget > 0 ? baseFloorTarget / 7 : 0;
+  const avg21 = computeAvg(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
+  const avg7 = computeAvg(7, safeDailyLoads);
+  const last14Loads = safeDailyLoads.slice(-RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS);
+  const { loadGap, stabilityOK } = computeStability(last14Loads, floorDaily);
+  const deloadReady = shouldTriggerDeload(avg21, avg7, stabilityOK, deloadActive, floorDaily);
+  const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
 
   let overlayMode = "NORMAL";
   if (safeEventInDays >= 0 && safeEventInDays <= RUN_FLOOR_TAPER_START_DAYS) {
@@ -585,34 +659,22 @@ function evaluateRunFloorState({
   } else if (daysSinceEvent != null && daysSinceEvent <= RUN_FLOOR_RECOVER_DAYS) {
     overlayMode = "RECOVER_OVERLAY";
     reasons.push("Recover-Overlay aktiv (Event gerade passiert)");
-  } else if (deloadStartDate && diffDays(deloadStartDate, todayISO) < RUN_FLOOR_DELOAD_DAYS) {
+  } else if (deloadActive) {
     overlayMode = "DELOAD";
     reasons.push("Deload läuft");
-  } else if (
-    loadDays >= RUN_FLOOR_LOAD_DAYS_TRIGGER &&
-    (phase === "BASE" || phase === "BUILD") &&
-    safeEventInDays > RUN_FLOOR_LOAD_DAYS_TRIGGER
-  ) {
+  } else if (deloadReady && (phase === "BASE" || phase === "BUILD") && safeEventInDays > RUN_FLOOR_DELOAD_DAYS) {
     overlayMode = "DELOAD";
     deloadStartDate = todayISO;
-    reasons.push("Deload ausgelöst (21 Load-Days erreicht)");
-  }
-
-  const loadDayThreshold = updatedFloorTarget * Math.max(0, RUN_FLOOR_LOAD_DAY_PCT - RUN_FLOOR_LOAD_DAY_TOLERANCE);
-  const isLoadDay =
-    overlayMode === "NORMAL" &&
-    Number.isFinite(updatedFloorTarget) &&
-    updatedFloorTarget > 0 &&
-    (Number(runLoad7d) || 0) >= loadDayThreshold;
-
-  if (overlayMode === "NORMAL" && isLoadDay) {
-    loadDays += 1;
+    deloadEndDate = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 6 * 86400000));
+    deloadActive = true;
+    reasons.push("Deload ausgelöst (rollende Last + Stabilität)");
+  } else if (stabilityWarn) {
+    reasons.push("Aufgebaut aber instabil → erst stabilisieren");
   }
 
   let effectiveFloorTarget = updatedFloorTarget;
   if (overlayMode === "DELOAD") {
-    const factor = RUN_FLOOR_DELOAD_FACTOR[phase] ?? 0.7;
-    effectiveFloorTarget = updatedFloorTarget * factor;
+    effectiveFloorTarget = applyDeloadRules({ floorTarget: updatedFloorTarget, phase }).effectiveFloorTarget;
   } else if (overlayMode === "TAPER") {
     effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays);
   } else if (overlayMode === "RECOVER_OVERLAY") {
@@ -643,14 +705,26 @@ function evaluateRunFloorState({
     effectiveFloorTarget,
     floorTarget: updatedFloorTarget,
     useAerobicFloor: true,
-    loadDays,
     deloadStartDate,
+    deloadEndDate,
+    deloadActive,
+    avg21,
+    avg7,
+    floorDaily,
+    loadGap,
+    stabilityOK,
+    decisionText:
+      overlayMode === "RECOVER_OVERLAY"
+        ? "Recover"
+        : overlayMode === "DELOAD"
+          ? "Deload"
+          : stabilityWarn
+            ? "Warn: Instabil"
+            : "Build",
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
     daysSinceEvent,
-    loadDayThreshold,
-    isLoadDay,
     reasons,
   };
 }
@@ -663,6 +737,8 @@ async function computeLoads7d(ctx, dayIso) {
 
   let runTotal7 = 0;
   let bikeTotal7 = 0;
+  let runMinutes7 = 0;
+  let bikeMinutes7 = 0;
 
   let aerobicRun7 = 0;
   let aerobicBike7 = 0;
@@ -684,8 +760,14 @@ async function computeLoads7d(ctx, dayIso) {
     const run = isRun(a);
     const bike = isBike(a);
 
-    if (run) runTotal7 += minutes;
-    if (bike) bikeTotal7 += minutes;
+    if (run) {
+      runMinutes7 += minutes;
+      runTotal7 += totalLoad;
+    }
+    if (bike) {
+      bikeMinutes7 += minutes;
+      bikeTotal7 += totalLoad;
+    }
 
     const intensityKey = isIntensity(a);
     const intensityHr = isIntensityByHr(a);
@@ -719,6 +801,8 @@ async function computeLoads7d(ctx, dayIso) {
   return {
     runTotal7,
     bikeTotal7,
+    runMinutes7,
+    bikeMinutes7,
     aerobicRun7,
     aerobicBike7,
     aerobicEq7,
@@ -1396,7 +1480,6 @@ function buildBlockStateLine(state) {
     eventDate: state.eventDate,
     eventDistance: state.eventDistance,
     floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
-    loadDays: Number.isFinite(state.loadDays) ? state.loadDays : 0,
     deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
@@ -1916,14 +1999,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
+    const dailyRunLoads = buildRunDailyLoads(ctx, day, RUN_FLOOR_DELOAD_WINDOW_DAYS);
     const runFloorState = evaluateRunFloorState({
       todayISO: day,
-      runLoad7d: loads7.runTotal7 ?? 0,
       floorTarget: baseRunFloorTarget,
       phase,
       eventInDays,
       eventDateISO: eventDate || null,
       previousState: previousBlockState,
+      dailyRunLoads,
     });
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
@@ -1934,7 +2018,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     }
     specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
     blockState.floorTarget = runFloorState.floorTarget;
-    blockState.loadDays = runFloorState.loadDays;
     blockState.deloadStartDate = runFloorState.deloadStartDate;
     blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
@@ -1996,7 +2079,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDate,
       eventDistance,
       floorTarget: blockState.floorTarget,
-      loadDays: blockState.loadDays,
       deloadStartDate: blockState.deloadStartDate,
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
@@ -2008,14 +2090,19 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       overlayMode: runFloorState.overlayMode,
       effectiveFloorTarget: runFloorState.effectiveFloorTarget,
       floorTarget: runFloorState.floorTarget,
-      loadDays: runFloorState.loadDays,
       deloadStartDate: runFloorState.deloadStartDate,
+      deloadEndDate: runFloorState.deloadEndDate,
+      deloadActive: runFloorState.deloadActive,
+      avg21: runFloorState.avg21,
+      avg7: runFloorState.avg7,
+      floorDaily: runFloorState.floorDaily,
+      loadGap: runFloorState.loadGap,
+      stabilityOK: runFloorState.stabilityOK,
+      decisionText: runFloorState.decisionText,
       lastDeloadCompletedISO: runFloorState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: runFloorState.lastFloorIncreaseDate,
       lastEventDate: runFloorState.lastEventDate,
       daysSinceEvent: runFloorState.daysSinceEvent,
-      isLoadDay: runFloorState.isLoadDay,
-      loadDayThreshold: runFloorState.loadDayThreshold,
       reasons: runFloorState.reasons,
     });
 
@@ -2340,11 +2427,11 @@ function buildComments(
   }
   lines.push("");
   lines.push("📉 Belastung & Progression");
-  const runMinutes7 = Math.round(loads7?.runTotal7 ?? 0);
+  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
-  lines.push(`7T Laufminuten: ${runMinutes7} (Ziel nächste Woche: ${runTargetText})`);
+  lines.push(`7T Lauf-Load: ${runLoad7} (Ziel nächste Woche: ${runTargetText})`);
   lines.push(`Longrun: ${Math.round(longRunMinutes ?? 0)}′ → Ziel: ${longRunTarget}′`);
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
@@ -2377,10 +2464,12 @@ function buildComments(
   lines.push("");
   lines.push("🧩 RunFloor-Overlay");
   const runFloorTarget = runFloorState?.floorTarget ?? 0;
-  const loadDays = runFloorState?.loadDays ?? 0;
   const effectiveTargetText = runFloorTarget > 0 ? Math.round(runTarget) : "n/a";
   lines.push(`Overlay: ${overlayMode} | Target: ${effectiveTargetText}`);
-  lines.push(`Load-Days: ${loadDays}/${RUN_FLOOR_LOAD_DAYS_TRIGGER}`);
+  const avg21Text = Number.isFinite(runFloorState?.avg21) ? Math.round(runFloorState.avg21) : "n/a";
+  const avg7Text = Number.isFinite(runFloorState?.avg7) ? Math.round(runFloorState.avg7) : "n/a";
+  const stabilityText = runFloorState?.stabilityOK ? "stabil" : "instabil";
+  lines.push(`Avg21: ${avg21Text} | Avg7: ${avg7Text} | ${stabilityText}`);
   lines.push(
     `➡️ ${buildRunFloorConsequence({
       runFloorState,
@@ -2456,8 +2545,11 @@ function buildRunFloorConsequence({ runFloorState, runFloorTarget }) {
   if (overlay === "RECOVER_OVERLAY") return "Recovery-Overlay: locker/Technik/frei.";
   if (overlay === "TAPER") return "Taper: Intensität niedrig halten, Frische priorisieren.";
   if (overlay === "DELOAD") return "Deload: Volumen senken, sauber laufen.";
-  if (runFloorTarget > 0 && !runFloorState?.isLoadDay) return "Load-Day fehlt: locker/steady Volumen auffüllen.";
-  return "Load-Days konsistent sammeln.";
+  if (runFloorState?.decisionText === "Warn: Instabil") {
+    return "Instabil: erst 1 Woche stabilisieren, dann Deload.";
+  }
+  if (runFloorTarget > 0) return "Build: stabil weiter aufbauen.";
+  return "Build: lockerer Aufbau ohne Floor-Ziel.";
 }
 
 
