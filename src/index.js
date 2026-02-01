@@ -2497,6 +2497,8 @@ function buildComments(
   const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
   const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
+  const avg21 = Math.round(runFloorState?.avg21 ?? 0);
+  const avg7 = Math.round(runFloorState?.avg7 ?? 0);
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
@@ -2504,6 +2506,7 @@ function buildComments(
   } else {
     lines.push(`7T Lauf-Load: ${runLoad7}`);
   }
+  lines.push(`21T Ø-Load/Tag: ${avg21} (7T Ø: ${avg7})`);
   lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
@@ -2511,6 +2514,8 @@ function buildComments(
   lines.push(`Longrun-Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
+  const deloadExplanation = buildDeloadExplanation(runFloorState);
+  if (deloadExplanation) lines.push(`Deload-Hinweis: ${deloadExplanation}`);
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
   if (transitionLine) lines.push(transitionLine);
   lines.push("");
@@ -2599,6 +2604,16 @@ function buildKeyConsequence({ keyCompliance, keySpacing, keyCap }) {
   if (keySpacing?.ok === false) return "Weitere Einheiten nur locker/steady (Key-Abstand <48h).";
   if ((keyCompliance?.actual7 ?? 0) < keyCap) return "1 Key noch möglich.";
   return "Weitere Einheiten nur locker/steady.";
+}
+
+function buildDeloadExplanation(runFloorState) {
+  if (!runFloorState || runFloorState.overlayMode !== "DELOAD") return null;
+  const reason =
+    runFloorState.reasons?.find((r) => r.startsWith("Deload ausgelöst")) ||
+    runFloorState.reasons?.find((r) => r.startsWith("Deload läuft")) ||
+    "Deload aktiv";
+  const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
+  return `${reason}${endText}`;
 }
 
 // ================= TREND (GA-only) =================
