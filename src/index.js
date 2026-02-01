@@ -2202,7 +2202,7 @@ async function computeMaintenance14d(ctx, dayIso) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
         }
       } catch (e) {
-        detectiveNoteText = `🕵️‍♂️ Montags-Detektiv\nFehler: ${String(e?.message ?? e)}`;
+        detectiveNoteText = `🕵️‍♂️ Montags-Report\nFehler: ${String(e?.message ?? e)}`;
       }
       if (write) {
         await upsertMondayDetectiveNote(env, day, detectiveNoteText);
@@ -3160,7 +3160,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     : "Key-Typen: n/a (keine key:<type> Untertags genutzt)";
 
   // Compose note
-  const title = `🕵️‍♂️ Montags-Detektiv (${windowDays}T)`;
+  const title = `🕵️‍♂️ Montags-Report (${windowDays}T)`;
   const lines = [];
   lines.push(title);
   lines.push("");
@@ -3276,7 +3276,7 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
 // Create/update a NOTE event for the Monday detective
 async function upsertMondayDetectiveNote(env, dayIso, noteText) {
   const external_id = `detektiv-${dayIso}`;
-  const name = "Montags-Detektiv";
+  const name = "Montags-Report";
   const description = noteText;
 
   // Find existing note by external_id on that day
