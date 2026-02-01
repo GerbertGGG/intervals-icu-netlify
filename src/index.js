@@ -3427,7 +3427,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     }
   }
 
-  let verdict = "Stabil / innerhalb Normalrauschen.";
+  let verdict = "Stabil – Basis bestätigt (Trend intakt).";
   let lastIntervalMetrics = null;
   if (same.length && (benchType !== "GA" || isKey)) {
     lastIntervalMetrics = await computeIntervalBenchMetrics(env, same[0], warmupSkipSec);
@@ -3455,7 +3455,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     }
   }
 
-  if (verdict === "Stabil / innerhalb Normalrauschen.") {
+  if (verdict === "Stabil – Basis bestätigt (Trend intakt).") {
     if (intervalMetrics?.HRR60_median != null && intervalMetrics.HRR60_median < 15) {
       verdict = "Hohe Belastung – Erholung limitiert.";
     } else if (intervalMetrics?.drift_flag === "too_hard") {
