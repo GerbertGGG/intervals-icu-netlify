@@ -155,7 +155,7 @@ export default {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
-const STRENGTH_MIN_7D = 45;
+const STRENGTH_MIN_7D = 60;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -3952,7 +3952,7 @@ async function buildWatchfacePayload(env, endIso) {
     runGoal: 150,
     strengthMin,
     strengthSum7,
-    strengthGoal: 45,
+    strengthGoal: 60,
     updatedAt: new Date().toISOString(),
   };
 }
