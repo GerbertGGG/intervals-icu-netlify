@@ -235,6 +235,12 @@ const DELOAD_FACTOR = 0.65;
 const BLOCK_GROWTH = 1.10;
 const BLOCK_HIT_WEEKS = 3;
 const INTENSITY_HR_PCT = 0.85;
+const TRANSITION_BIKE_EQ = {
+  startWeeks: 24,
+  endWeeks: 12,
+  startFactor: 1.0,
+  endFactor: 0.0,
+};
 
 
 // Minimum stimulus thresholds per mode (tune later)
@@ -539,6 +545,17 @@ function computeTaperFactor(eventInDays) {
   const span = RUN_FLOOR_TAPER_START_DAYS - RUN_FLOOR_TAPER_END_DAYS;
   const ratio = (eventInDays - RUN_FLOOR_TAPER_END_DAYS) / span;
   return 0.6 + ratio * (0.9 - 0.6);
+}
+
+function computeBikeSubstitutionFactor(weeksToEvent) {
+  if (!Number.isFinite(weeksToEvent)) return 0;
+  if (weeksToEvent >= TRANSITION_BIKE_EQ.startWeeks) return TRANSITION_BIKE_EQ.startFactor;
+  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return TRANSITION_BIKE_EQ.endFactor;
+  const span = TRANSITION_BIKE_EQ.startWeeks - TRANSITION_BIKE_EQ.endWeeks;
+  if (span <= 0) return TRANSITION_BIKE_EQ.endFactor;
+  const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.endWeeks) / span;
+  const raw = TRANSITION_BIKE_EQ.endFactor + ratio * (TRANSITION_BIKE_EQ.startFactor - TRANSITION_BIKE_EQ.endFactor);
+  return clamp(raw, 0, 1);
 }
 
 function computeAvg(windowDays, dailyLoads) {
@@ -1925,8 +1942,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       longRunMinutes = computeLongRunMinutes7d(ctx, day);
     } catch {}
 
+    const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
+    const weeksToEvent = weeksInfo.weeksToEvent ?? null;
+    const bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
+    const runEquivalent7 = (loads7.runTotal7 ?? 0) + (loads7.bikeTotal7 ?? 0) * bikeSubFactor;
+
     let specificValue = 0;
-    if (policy.specificKind === "run") specificValue = loads7.runTotal7;
+    if (policy.specificKind === "run") specificValue = runEquivalent7;
     else if (policy.specificKind === "bike") specificValue = loads7.bikeTotal7;
     else specificValue = 0;
 
@@ -1944,6 +1966,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       loads7Prev = await computeLoads7d(ctx, prevWindowDay);
     } catch {}
+    const weeksPrev = eventDate ? computeWeeksToEvent(prevWindowDay, eventDate, null) : { weeksToEvent: null };
+    const bikeSubFactorPrev = computeBikeSubstitutionFactor(weeksPrev.weeksToEvent ?? null);
+    const runEquivalentPrev7 = (loads7Prev.runTotal7 ?? 0) + (loads7Prev.bikeTotal7 ?? 0) * bikeSubFactorPrev;
 
     const prevIntensitySignal = loads7Prev.intensitySignal ?? "none";
     const prevAerobicFloorActive = policy.useAerobicFloor && prevIntensitySignal === "ok";
@@ -1953,9 +1978,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const keySpacing = computeKeySpacing(ctx, day);
-
-    const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
-    const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
@@ -1971,8 +1993,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         : MIN_STIMULUS_7D_RUN_EVENT;
 
     const historyMetrics = {
-      runFloor7: loads7.runTotal7 ?? 0,
-      runFloorPrev7: loads7Prev.runTotal7 ?? 0,
+      runFloor7: runEquivalent7 ?? 0,
+      runFloorPrev7: runEquivalentPrev7 ?? 0,
       runFloorTarget: baseRunFloorTarget,
       aerobicOk,
       aerobicOkPrev,
@@ -2151,6 +2173,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       keySpacing,
       policy,
       loads7,
+      runEquivalent7,
       runFloorState,
       specificOk,
       specificValue,
@@ -2159,6 +2182,8 @@ async function computeMaintenance14d(ctx, dayIso) {
       aerobicFloorActive,
       fatigue,
       longRunMinutes,
+      bikeSubFactor,
+      weeksToEvent,
     }, { debug });
 
 
@@ -2349,6 +2374,13 @@ function buildBottomLineCoachMessage({
   return `Alles im grünen Bereich. ${todayText}. ${nextText}.`;
 }
 
+function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
+  if (!(bikeSubFactor > 0)) return null;
+  const pct = Math.round(bikeSubFactor * 100);
+  const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
+  return `Übergang aktiv: Rad zählt ${pct}% zum RunFloor (aktuell ${weeksText} bis Event, 0% ab ≤${TRANSITION_BIKE_EQ.endWeeks} Wochen).`;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -2365,6 +2397,7 @@ function buildComments(
     keySpacing,
     policy,
     loads7,
+    runEquivalent7,
     runFloorState,
     specificOk,
     specificValue,
@@ -2373,6 +2406,8 @@ function buildComments(
     aerobicFloorActive,
     fatigue,
     longRunMinutes,
+    bikeSubFactor,
+    weeksToEvent,
   },
   { debug = false } = {}
 ) {
@@ -2412,13 +2447,23 @@ function buildComments(
   lines.push("");
   lines.push("📉 Belastung & Progression");
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
+  const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
+  const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
   const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
-  lines.push(`7T Lauf-Load: ${runLoad7} (Ziel nächste Woche: ${runTargetText})`);
+  if (bikeSubFactor > 0) {
+    const pct = Math.round(bikeSubFactor * 100);
+    lines.push(`7T RunFloor-Äquivalent: ${runEq7} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
+  } else {
+    lines.push(`7T Lauf-Load: ${runLoad7}`);
+  }
+  lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
   lines.push(`Longrun: ${Math.round(longRunMinutes ?? 0)}′ → Ziel: ${longRunTarget}′`);
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
+  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
+  if (transitionLine) lines.push(transitionLine);
   lines.push("");
   lines.push("🎯 Key-Check");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
