@@ -2504,16 +2504,6 @@ function buildComments(
   } else {
     lines.push(`7T Lauf-Load: ${runLoad7}`);
   }
-  if (fatigue) {
-    const rampPct = Number.isFinite(fatigue.rampPct) ? (fatigue.rampPct * 100).toFixed(0) : "n/a";
-    const acwr = Number.isFinite(fatigue.acwr) ? fatigue.acwr.toFixed(2) : "n/a";
-    const monotony = Number.isFinite(fatigue.monotony) ? fatigue.monotony.toFixed(2) : "n/a";
-    const strain = Number.isFinite(fatigue.strain) ? fatigue.strain.toFixed(0) : "n/a";
-    lines.push(`Progression: Ramp ${rampPct}% | ACWR ${acwr} | Monotony ${monotony} | Strain ${strain}`);
-    if (fatigue.override && fatigue.reasons?.length) {
-      lines.push(`⚠️ Progressions-Warnung: ${fatigue.reasons.join("; ")}`);
-    }
-  }
   lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
@@ -2523,23 +2513,6 @@ function buildComments(
   lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
   if (transitionLine) lines.push(transitionLine);
-  const totalLoad7 = loads7?.totalLoad7 ?? 0;
-  const intensity7 = loads7?.intensity7 ?? 0;
-  if (totalLoad7 > 0) {
-    const gaLoad = Math.max(0, totalLoad7 - intensity7);
-    const intensityPct = Math.round((intensity7 / totalLoad7) * 100);
-    const gaPct = Math.round((gaLoad / totalLoad7) * 100);
-    const intensitySources = loads7?.intensitySources ?? {};
-    const keyPct = Math.round(((intensitySources.key ?? 0) / totalLoad7) * 100);
-    const hrPct = Math.round(((intensitySources.hr ?? 0) / totalLoad7) * 100);
-    const otherPct = Math.round(((intensitySources.nonGa ?? 0) / totalLoad7) * 100);
-    const intensityFlag = intensityPct > 25 ? " ⚠️" : intensityPct < 5 ? " ⚠️" : "";
-    lines.push(
-      `Intensitätsverteilung: GA ${gaPct}% | Int ${intensityPct}%${intensityFlag} (Key ${keyPct}%, HF ${hrPct}%, Other ${otherPct}%)`
-    );
-  } else {
-    lines.push("Intensitätsverteilung: n/a");
-  }
   lines.push("");
   lines.push("🎯 Key-Check");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
@@ -2566,21 +2539,10 @@ function buildComments(
       keyCap,
     })}`
   );
-  lines.push("");
-  lines.push("🧩 RunFloor-Overlay");
-  const runFloorTarget = runFloorState?.floorTarget ?? 0;
-  const effectiveTargetText = runFloorTarget > 0 ? Math.round(runTarget) : "n/a";
-  lines.push(`Overlay: ${overlayMode} | Target: ${effectiveTargetText}`);
-  const avg21Text = Number.isFinite(runFloorState?.avg21) ? Math.round(runFloorState.avg21) : "n/a";
-  const avg7Text = Number.isFinite(runFloorState?.avg7) ? Math.round(runFloorState.avg7) : "n/a";
-  const stabilityText = runFloorState?.stabilityOK ? "stabil" : "instabil";
-  lines.push(`Avg21: ${avg21Text} | Avg7: ${avg7Text} | ${stabilityText}`);
-  lines.push(
-    `➡️ ${buildRunFloorConsequence({
-      runFloorState,
-      runFloorTarget,
-    })}`
-  );
+  if (benchReports?.length) {
+    lines.push("");
+    lines.push(...benchReports);
+  }
   lines.push("");
   lines.push("✅ Bottom Line");
   const next = buildNextRunRecommendation({
@@ -2609,12 +2571,6 @@ function buildComments(
     nextText: `Nächster Lauf: ${next}`,
   });
   lines.push(`Coach: ${coachLine}`);
-  const blockStateLine = buildBlockStateLine(blockState);
-  if (blockStateLine) {
-    lines.push("");
-    lines.push(blockStateLine);
-  }
-
   return lines.join("\n");
 }
 
@@ -2644,19 +2600,6 @@ function buildKeyConsequence({ keyCompliance, keySpacing, keyCap }) {
   if ((keyCompliance?.actual7 ?? 0) < keyCap) return "1 Key noch möglich.";
   return "Weitere Einheiten nur locker/steady.";
 }
-
-function buildRunFloorConsequence({ runFloorState, runFloorTarget }) {
-  const overlay = runFloorState?.overlayMode ?? "NORMAL";
-  if (overlay === "RECOVER_OVERLAY") return "Recovery-Overlay: locker/Technik/frei.";
-  if (overlay === "TAPER") return "Taper: Intensität niedrig halten, Frische priorisieren.";
-  if (overlay === "DELOAD") return "Deload: Volumen senken, sauber laufen.";
-  if (runFloorState?.decisionText === "Warn: Instabil") {
-    return "Instabil: erst 1 Woche stabilisieren, dann Deload.";
-  }
-  if (runFloorTarget > 0) return "Build: stabil weiter aufbauen.";
-  return "Build: lockerer Aufbau ohne Floor-Ziel.";
-}
-
 
 // ================= TREND (GA-only) =================
 function trendConfidence(nRecent, nPrev) {
