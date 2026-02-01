@@ -34,6 +34,8 @@ In Intervals.icu musst du diese numeric custom fields anlegen (Codes exakt so):
 - VDOT
 - Drift
 - Motor
+- EF
+- Block
 
 Diese Felder werden in Wellness-Tagen gesetzt.
 
@@ -45,10 +47,12 @@ Für jeden Tag im Range wird mindestens geschrieben:
 
 Optional, wenn ein GA-Lauf vorhanden und geeignet:
 - VDOT (aus EF)
+- EF (Efficiency Factor)
 - Drift (HR-Drift % aus Streams)
 
 Optional, wenn berechenbar:
 - Motor (0..100)
+- Block (aktuelle Block-Phase, z.B. BASE/BUILD/RACE/RESET)
 
 Technik:
 - Der Worker nutzt PUT /wellness/<YYYY-MM-DD> und schreibt das Patch-Objekt.
@@ -219,7 +223,14 @@ Adaptive Fenster:
 GET /
 Antwort: "ok"
 
-10.2 Sync Endpoint
+10.2 Watchface Endpoint
+GET /watchface
+Antwort: JSON (CORS-freundlich, kein Cache).
+
+Optional:
+- date=YYYY-MM-DD (sonst „heute“)
+
+10.3 Sync Endpoint
 GET /sync
 
 Parameter:
@@ -256,7 +267,7 @@ Beispiele:
 ---------------------
 Der Worker hat scheduled():
 - läuft täglich
-- syncRange über die letzten 14 Tage
+- syncRange über gestern + heute
 - write=true
 - warmup_skip=600
 
@@ -284,7 +295,6 @@ C) Drift-Probleme debuggen
 ----------------------
 - Negative Drift wird verworfen (Drift < 0 => null).
 - Bei mehreren GA-Läufen am Tag können VDOT/Drift überschrieben werden.
-- Scheduled Sync über 14 Tage kann API-lastig sein (viele Streams-Calls).
 - Monday-Erkennung basiert auf UTC.
 
 14) GLOSSAR
