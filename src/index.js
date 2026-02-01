@@ -2224,22 +2224,6 @@ function pickRepresentativeGARun(perRunInfo) {
   return ga[0] || null;
 }
 
-function buildIntensityLine(loads7) {
-  const total = Math.round(loads7?.intensity7 ?? 0);
-  const sources = loads7?.intensitySources || {};
-  const parts = [];
-  if ((sources.key ?? 0) > 0) parts.push(`key ${Math.round(sources.key)}`);
-  if ((sources.hr ?? 0) > 0) parts.push(`HR≥${Math.round(INTENSITY_HR_PCT * 100)}% ${Math.round(sources.hr)}`);
-  if ((sources.nonGa ?? 0) > 0) parts.push(`non-GA ${Math.round(sources.nonGa)}`);
-
-  const signal = loads7?.intensitySignal ?? "none";
-  if (signal === "low" && total === 0) return "Intensity: low (numeric=0)";
-  if (signal === "low") return `Intensity: ${total} (Signal niedrig: nur GA/fehlendes HR)`;
-  if (signal === "none") return `Intensity: ${total} (keine Daten)`;
-  if (!parts.length) return `Intensity: ${total}`;
-  return `Intensity: ${total} (${parts.join(" + ")})`;
-}
-
 function formatEventDistance(dist) {
   if (!dist) return "n/a";
   if (dist === "5k") return "5 km";
@@ -3456,42 +3440,6 @@ function fmtSigned1(x) {
   return (x > 0 ? "+" : "") + x.toFixed(1);
 }
 
-function medianOrNull(arr) {
-  const v = arr.filter((x) => x != null && Number.isFinite(x));
-  return v.length ? median(v) : null;
-}
-
-function interpretBench(efVsLast, dVsLast, efVsMed, dVsMed) {
-  const ef = Number.isFinite(efVsMed) ? efVsMed : efVsLast;
-  const dd = Number.isFinite(dVsMed) ? dVsMed : dVsLast;
-
-  if (!Number.isFinite(ef) && !Number.isFinite(dd)) return "Gemischt/unklar (zu wenig Vergleichsdaten).";
-
-  if (Number.isFinite(ef) && Number.isFinite(dd)) {
-    if (ef >= +1.0 && dd <= -0.5) return "Motor besser (mehr Output + stabiler).";
-    if (ef <= -1.0 && dd >= +0.5) return "Motor schlechter (weniger Output + instabiler).";
-    if (ef >= +1.0) return "Output besser, Stabilität gemischt.";
-    if (dd <= -0.5) return "Stabilität besser, Output gemischt.";
-    if (ef <= -1.0) return "Output schlechter, Stabilität gemischt.";
-    if (dd >= +0.5) return "Stabilität schlechter, Output gemischt.";
-    return "Stabil / innerhalb Normalrauschen.";
-  }
-
-  if (Number.isFinite(ef)) {
-    if (ef >= +1.0) return "Output besser (EF ↑).";
-    if (ef <= -1.0) return "Output schlechter (EF ↓).";
-    return "EF stabil / Normalrauschen.";
-  }
-
-  if (Number.isFinite(dd)) {
-    if (dd <= -0.5) return "Stabilität besser (Drift ↓).";
-    if (dd >= +0.5) return "Stabilität schlechter (Drift ↑).";
-    return "Drift stabil / Normalrauschen.";
-  }
-
-  return "Gemischt/unklar.";
-}
-
 // ================= STREAMS METRICS =================
 function quantile(arr, q) {
   const v = arr.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
@@ -3866,12 +3814,6 @@ async function buildWatchfacePayload(env, endIso) {
   };
 }
 
-
-function dowShortDE(yyyy_mm_dd) {
-  const d = new Date(yyyy_mm_dd + "T00:00:00Z");
-  const map = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
-  return map[d.getUTCDay()];
-}
 
 function isRun(a) {
   const t = String(a?.type ?? "").toLowerCase();
