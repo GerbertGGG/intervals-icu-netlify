@@ -211,6 +211,8 @@ function toLocalYMD(d) {
 const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
+const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
+const ACWR_LOW_LIMIT = 0.8;        // underload threshold
 
 
 const GA_MIN_SECONDS = 30 * 60;
@@ -383,14 +385,15 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 
   const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
+  const start28Iso = isoDate(new Date(end.getTime() - 27 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
-  const acts14 = ctx.activitiesAll.filter((a) => {
+  const acts28 = ctx.activitiesAll.filter((a) => {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    return d && d >= start14Iso && d < endIso;
+    return d && d >= start28Iso && d < endIso;
   });
 
-  const dailyLoads = bucketAllLoadsByDay(acts14); // day -> load
+  const dailyLoads = bucketAllLoadsByDay(acts28); // day -> load
   const days = Object.keys(dailyLoads).sort();
 
   // split prev7 and last7 deterministically
@@ -400,7 +403,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   for (const d of days) {
     const v = Number(dailyLoads[d]) || 0;
     if (d >= start7Iso) last7 += v;
-    else prev7 += v;
+    else if (d >= start14Iso) prev7 += v;
   }
 
   // monotony/strain for last7 only (need daily values in last7)
@@ -416,12 +419,24 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 
   const rampPct = prev7 > 0 ? (last7 - prev7) / prev7 : last7 > 0 ? 999 : 0;
 
+  // chronic (28d) load and ACWR
+  let last28 = 0;
+  for (const d of days) {
+    const v = Number(dailyLoads[d]) || 0;
+    if (d >= start28Iso) last28 += v;
+  }
+  const chronicWeekly = last28 > 0 ? last28 / 4 : 0;
+  const acwr = chronicWeekly > 0 ? last7 / chronicWeekly : null;
+
   const keyCount7 = await computeKeyCount7d(ctx, dayIso);
   const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : MAX_KEYS_7D;
 
   const reasons = [];
   if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
   if (rampPct > RAMP_PCT_7D_LIMIT) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+  if (acwr != null && acwr > ACWR_HIGH_LIMIT) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${ACWR_HIGH_LIMIT})`);
+  if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0)
+    reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${ACWR_LOW_LIMIT})`);
   if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
   if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
 
@@ -436,6 +451,8 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     rampPct,
     monotony,
     strain,
+    acwr,
+    chronicWeekly,
     last7Load: last7,
     prev7Load: prev7,
   };
@@ -834,21 +851,41 @@ async function computeLoads7d(ctx, dayIso) {
   };
 }
 
-function computeLongRunMinutes7d(ctx, dayIso) {
+function computeLongRunSummary7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
-  let maxSeconds = 0;
+  let longest = null;
   for (const a of ctx.activitiesAll) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (seconds > maxSeconds) maxSeconds = seconds;
+    if (!longest || seconds > longest.seconds) {
+      longest = {
+        seconds,
+        date: d,
+        isKey: hasKeyTag(a),
+        ga: isGA(a),
+        intensity: isIntensity(a) || isIntensityByHr(a) || !isAerobic(a),
+      };
+    }
   }
 
-  return Math.round(maxSeconds / 60);
+  if (!longest) return { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false };
+  const minutes = Math.round(longest.seconds / 60);
+  let quality = "locker/steady";
+  if (longest.isKey) quality = "Key/Intensität";
+  else if (longest.intensity) quality = "mit Intensität";
+  else if (!longest.ga) quality = "gemischt";
+  return {
+    minutes,
+    date: longest.date,
+    quality,
+    isKey: longest.isKey,
+    intensity: longest.intensity,
+  };
 }
 
 // ================= BLOCK / KEY LOGIC (NEW) =================
@@ -945,36 +982,38 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "steady"],
-        preferredKeyTypes: ["schwelle"],
-        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["vo2_touch", "schwelle"],
+        bannedKeyTypes: ["racepace"],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "steady"],
-        preferredKeyTypes: ["schwelle"],
-        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["schwelle", "vo2_touch"],
+        bannedKeyTypes: ["racepace"],
       };
     }
     if (dist === "hm") {
+      const allowRacePace = weeksToEvent != null && weeksToEvent <= 8;
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "steady"],
-        preferredKeyTypes: ["schwelle"],
-        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
+        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
+        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
       };
     }
     if (dist === "m") {
+      const allowRacePace = weeksToEvent != null && weeksToEvent <= 10;
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "steady"],
-        preferredKeyTypes: ["schwelle"],
-        bannedKeyTypes: ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
+        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
+        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
       };
     }
   }
@@ -984,36 +1023,36 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "steady"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
+        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle"],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "steady"],
+        allowedKeyTypes: ["racepace", "schwelle", "strides", "steady"],
         preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
+        bannedKeyTypes: ["vo2_touch"],
       };
     }
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "steady"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
+        allowedKeyTypes: ["racepace", "schwelle", "steady"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: ["vo2_touch", "strides"],
       };
     }
     if (dist === "m") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "steady"],
+        allowedKeyTypes: ["racepace", "schwelle", "steady"],
         preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["schwelle", "vo2_touch", "strides"],
+        bannedKeyTypes: ["vo2_touch", "strides"],
       };
     }
   }
@@ -1937,9 +1976,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       loads7 = await computeLoads7d(ctx, day);
     } catch {}
-    let longRunMinutes = 0;
+    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false };
     try {
-      longRunMinutes = computeLongRunMinutes7d(ctx, day);
+      longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
@@ -2181,7 +2220,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       aerobicFloor,
       aerobicFloorActive,
       fatigue,
-      longRunMinutes,
+      longRunSummary,
       bikeSubFactor,
       weeksToEvent,
     }, { debug });
@@ -2405,7 +2444,7 @@ function buildComments(
     aerobicFloor,
     aerobicFloorActive,
     fatigue,
-    longRunMinutes,
+    longRunSummary,
     bikeSubFactor,
     weeksToEvent,
   },
@@ -2430,6 +2469,13 @@ function buildComments(
   lines.push(`🟠 Aerober Status (Confidence: ${confidence})`);
   lines.push(buildAerobicTrendLine(trend));
   lines.push(`→ letzter vergleichbarer GA-Lauf: ${trend?.lastComparableDate ?? "n/a"}`);
+  if (trend?.recentCount != null && trend?.prevCount != null) {
+    const windowText =
+      trend?.prevStart && trend?.recentStart && trend?.windowEnd
+        ? `${trend.prevStart}–${trend.recentStart}–${trend.windowEnd}`
+        : "n/a";
+    lines.push(`Messbasis: ${trend.recentCount}/${trend.prevCount} GA | Fenster: ${windowText}`);
+  }
   lines.push("");
   lines.push("🧱 Robustheit");
   if (robustness) {
@@ -2458,12 +2504,42 @@ function buildComments(
   } else {
     lines.push(`7T Lauf-Load: ${runLoad7}`);
   }
+  if (fatigue) {
+    const rampPct = Number.isFinite(fatigue.rampPct) ? (fatigue.rampPct * 100).toFixed(0) : "n/a";
+    const acwr = Number.isFinite(fatigue.acwr) ? fatigue.acwr.toFixed(2) : "n/a";
+    const monotony = Number.isFinite(fatigue.monotony) ? fatigue.monotony.toFixed(2) : "n/a";
+    const strain = Number.isFinite(fatigue.strain) ? fatigue.strain.toFixed(0) : "n/a";
+    lines.push(`Progression: Ramp ${rampPct}% | ACWR ${acwr} | Monotony ${monotony} | Strain ${strain}`);
+    if (fatigue.override && fatigue.reasons?.length) {
+      lines.push(`⚠️ Progressions-Warnung: ${fatigue.reasons.join("; ")}`);
+    }
+  }
   lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
-  lines.push(`Longrun: ${Math.round(longRunMinutes ?? 0)}′ → Ziel: ${longRunTarget}′`);
+  const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
+  const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
+  lines.push(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`);
+  lines.push(`Longrun-Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
   if (transitionLine) lines.push(transitionLine);
+  const totalLoad7 = loads7?.totalLoad7 ?? 0;
+  const intensity7 = loads7?.intensity7 ?? 0;
+  if (totalLoad7 > 0) {
+    const gaLoad = Math.max(0, totalLoad7 - intensity7);
+    const intensityPct = Math.round((intensity7 / totalLoad7) * 100);
+    const gaPct = Math.round((gaLoad / totalLoad7) * 100);
+    const intensitySources = loads7?.intensitySources ?? {};
+    const keyPct = Math.round(((intensitySources.key ?? 0) / totalLoad7) * 100);
+    const hrPct = Math.round(((intensitySources.hr ?? 0) / totalLoad7) * 100);
+    const otherPct = Math.round(((intensitySources.nonGa ?? 0) / totalLoad7) * 100);
+    const intensityFlag = intensityPct > 25 ? " ⚠️" : intensityPct < 5 ? " ⚠️" : "";
+    lines.push(
+      `Intensitätsverteilung: GA ${gaPct}% | Int ${intensityPct}%${intensityFlag} (Key ${keyPct}%, HF ${hrPct}%, Other ${otherPct}%)`
+    );
+  } else {
+    lines.push("Intensitätsverteilung: n/a");
+  }
   lines.push("");
   lines.push("🎯 Key-Check");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
@@ -3349,6 +3425,17 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   const lines = [];
   lines.push(`🧪 bench:${benchName}`);
+  const contextParts = [];
+  const durationText = fmtDurationMin(Number(activity?.moving_time ?? activity?.elapsed_time ?? 0));
+  if (durationText) contextParts.push(`Dauer ${durationText}`);
+  const distanceMeters = Number(activity?.distance ?? activity?.distance_metres ?? activity?.distanceMeters);
+  const distanceText = fmtDistanceKm(distanceMeters);
+  if (distanceText) contextParts.push(`Dist ${distanceText}`);
+  if (Number.isFinite(activity?.average_heartrate)) contextParts.push(`ØHF ${Math.round(activity.average_heartrate)} bpm`);
+  if (Number.isFinite(activity?.average_temp)) contextParts.push(`Temp ${activity.average_temp.toFixed(1)}°C`);
+  const load = extractLoad(activity);
+  if (Number.isFinite(load) && load > 0) contextParts.push(`Load ${Math.round(load)}`);
+  if (contextParts.length) lines.push(`Kontext: ${contextParts.join(" | ")}`);
 
   const last = same.length
     ? await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: benchType === "GA" && !isKey })
@@ -3483,6 +3570,17 @@ function pct(a, b) {
 function fmtSigned1(x) {
   if (!Number.isFinite(x)) return "n/a";
   return (x > 0 ? "+" : "") + x.toFixed(1);
+}
+
+function fmtDurationMin(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return `${Math.round(seconds / 60)}′`;
+}
+
+function fmtDistanceKm(distanceMeters) {
+  if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return null;
+  if (distanceMeters >= 1000) return `${(distanceMeters / 1000).toFixed(1)} km`;
+  return `${distanceMeters.toFixed(0)} m`;
 }
 
 // ================= STREAMS METRICS =================
