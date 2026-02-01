@@ -2484,7 +2484,7 @@ function buildComments(
       `Krafttraining: ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T)${robustness.strengthOk ? "" : " ⚠️"}`
     );
     lines.push(
-      `➡️ ${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 45 min Kraft/Stabi."}`
+      `➡️ ${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 60 min Kraft/Stabi."}`
     );
   } else {
     lines.push("Krafttraining: n/a");
