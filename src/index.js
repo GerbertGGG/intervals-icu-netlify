@@ -524,8 +524,8 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   };
 }
 
-const RUN_FLOOR_DELOAD_AVG21_PCT = 1.03;
-const RUN_FLOOR_DELOAD_AVG7_PCT = 0.9;
+const RUN_FLOOR_DELOAD_SUM21_MIN = 450;
+const RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN = 14;
 const RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS = 14;
 const RUN_FLOOR_DELOAD_LOAD_GAP_PCT = 0.25;
 const RUN_FLOOR_DELOAD_LOAD_GAP_MAX = 3;
@@ -582,6 +582,18 @@ function computeAvg(windowDays, dailyLoads) {
   return total / windowDays;
 }
 
+function computeSum(windowDays, dailyLoads) {
+  if (!Array.isArray(dailyLoads) || windowDays <= 0) return 0;
+  const slice = dailyLoads.slice(-windowDays);
+  return slice.reduce((acc, v) => acc + (Number(v) || 0), 0);
+}
+
+function countActiveDays(windowDays, dailyLoads) {
+  if (!Array.isArray(dailyLoads) || windowDays <= 0) return 0;
+  const slice = dailyLoads.slice(-windowDays);
+  return slice.reduce((acc, v) => acc + ((Number(v) || 0) > 0 ? 1 : 0), 0);
+}
+
 function computeStability(last14Days, floorDaily) {
   if (!Array.isArray(last14Days) || last14Days.length === 0 || !(floorDaily > 0)) {
     return { loadGap: 0, stabilityOK: true };
@@ -591,12 +603,10 @@ function computeStability(last14Days, floorDaily) {
   return { loadGap, stabilityOK: loadGap <= RUN_FLOOR_DELOAD_LOAD_GAP_MAX };
 }
 
-function shouldTriggerDeload(avg21, avg7, stabilityOK, deloadActive, floorDaily = 0) {
-  if (deloadActive || !(floorDaily > 0)) return false;
+function shouldTriggerDeload(sum21, activeDays21, deloadActive) {
+  if (deloadActive) return false;
   return (
-    avg21 >= floorDaily * RUN_FLOOR_DELOAD_AVG21_PCT &&
-    avg7 >= floorDaily * RUN_FLOOR_DELOAD_AVG7_PCT &&
-    stabilityOK === true
+    sum21 >= RUN_FLOOR_DELOAD_SUM21_MIN && activeDays21 >= RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN
   );
 }
 
@@ -681,9 +691,11 @@ function evaluateRunFloorState({
   const floorDaily = baseFloorTarget > 0 ? baseFloorTarget / 7 : 0;
   const avg21 = computeAvg(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
   const avg7 = computeAvg(7, safeDailyLoads);
+  const sum21 = computeSum(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
+  const activeDays21 = countActiveDays(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
   const last14Loads = safeDailyLoads.slice(-RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS);
   const { loadGap, stabilityOK } = computeStability(last14Loads, floorDaily);
-  const deloadReady = shouldTriggerDeload(avg21, avg7, stabilityOK, deloadActive, floorDaily);
+  const deloadReady = shouldTriggerDeload(sum21, activeDays21, deloadActive);
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
 
   let overlayMode = "NORMAL";
@@ -701,7 +713,7 @@ function evaluateRunFloorState({
     deloadStartDate = todayISO;
     deloadEndDate = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 6 * 86400000));
     deloadActive = true;
-    reasons.push("Deload ausgelöst (rollende Last + Stabilität)");
+    reasons.push("Deload ausgelöst (21T Summe + 14 aktive Tage)");
   } else if (stabilityWarn) {
     reasons.push("Aufgebaut aber instabil → erst stabilisieren");
   }
@@ -744,6 +756,8 @@ function evaluateRunFloorState({
     deloadActive,
     avg21,
     avg7,
+    sum21,
+    activeDays21,
     floorDaily,
     loadGap,
     stabilityOK,
@@ -2503,12 +2517,11 @@ function buildComments(
   const avg7Raw = Number(runFloorState?.avg7 ?? 0);
   const avg21 = Math.round(avg21Raw);
   const avg7 = Math.round(avg7Raw);
+  const sum21Raw = Number(runFloorState?.sum21 ?? 0);
+  const sum21 = Math.round(sum21Raw);
+  const activeDays21 = Number(runFloorState?.activeDays21 ?? 0);
   const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
-  const deloadReady =
-    floorDaily > 0
-      ? shouldTriggerDeload(avg21Raw, avg7Raw, runFloorState?.stabilityOK, runFloorState?.deloadActive, floorDaily)
-      : false;
-  const runFloorStreakOk = floorDaily > 0 ? avg21Raw >= floorDaily : false;
+  const deloadReady = shouldTriggerDeload(sum21Raw, activeDays21, runFloorState?.deloadActive);
   const deloadTargetRange =
     runFloorWeekly > 0
       ? `${Math.round(runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.min)}–${Math.round(
@@ -2530,16 +2543,18 @@ function buildComments(
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
   lines.push(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`);
   lines.push(`• Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
-  lines.push("Progression (RunFloor → Deload nach 3 Wochen):");
+  lines.push("Progression (Deload bei 21T Summe + aktive Tage):");
   if (runFloorState?.deloadActive) {
     const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
     lines.push(`• Deload läuft${endText} (Ziel: ${deloadTargetRange} Run-Load/Woche).`);
   } else if (deloadReady) {
-    lines.push(`• 21T RunFloor erreicht → Deload wird ausgelöst (Ziel: ${deloadTargetRange} Run-Load/Woche).`);
+    lines.push(
+      `• 21T Summe ${sum21} ≥ ${RUN_FLOOR_DELOAD_SUM21_MIN} & aktive Tage ${activeDays21} ≥ ${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} → Deload (Ziel: ${deloadTargetRange} Run-Load/Woche).`
+    );
   } else {
     const stabilityText = runFloorState?.stabilityOK ? "Stabilität ok" : "Stabilität wackelig";
     lines.push(
-      `• 21T RunFloor ${runFloorStreakOk ? "erreicht" : "noch nicht"} (${avg21}/${floorDaily} Ø/Tag) – ${stabilityText}.`
+      `• 21T Summe ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN}, aktive Tage ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} – ${stabilityText}.`
     );
   }
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
