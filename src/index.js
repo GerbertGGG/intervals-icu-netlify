@@ -2520,13 +2520,12 @@ function buildComments(
     const pct = Math.round(bikeSubFactor * 100);
     lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
     lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
-    lines.push(`• 7T RunFloor-Äquivalent: ${runEq7} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
+    lines.push(`• 7T RunFloor-Äquivalent: Ist ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
   } else {
     lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
     lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
-    lines.push(`• 7T Lauf-Load: ${runLoad7}`);
+    lines.push(`• 7T Run-Floor: Ist ${runLoad7} / Soll ${runTargetText}`);
   }
-  lines.push(`• Ziel nächste Woche (RunFloor): ${runTargetText}`);
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
   lines.push(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`);
