@@ -2499,6 +2499,7 @@ function buildComments(
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
   const avg21 = Math.round(runFloorState?.avg21 ?? 0);
   const avg7 = Math.round(runFloorState?.avg7 ?? 0);
+  const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
@@ -2506,7 +2507,7 @@ function buildComments(
   } else {
     lines.push(`7T Lauf-Load: ${runLoad7}`);
   }
-  lines.push(`21T Ø-Load/Tag: ${avg21} (7T Ø: ${avg7})`);
+  lines.push(`21T Ø-Load/Tag: ${avg21} (7T Ø: ${avg7}, Ziel/Tag: ${floorDaily})`);
   lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
