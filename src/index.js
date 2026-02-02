@@ -2497,23 +2497,52 @@ function buildComments(
   const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
   const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
-  const avg21 = Math.round(runFloorState?.avg21 ?? 0);
-  const avg7 = Math.round(runFloorState?.avg7 ?? 0);
+  const runFloorWeekly = Math.round(runFloorState?.floorTarget ?? 0);
+  const runFloorWeeklyText = runFloorWeekly > 0 ? runFloorWeekly : "n/a";
+  const avg21Raw = Number(runFloorState?.avg21 ?? 0);
+  const avg7Raw = Number(runFloorState?.avg7 ?? 0);
+  const avg21 = Math.round(avg21Raw);
+  const avg7 = Math.round(avg7Raw);
   const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
+  const deloadReady =
+    floorDaily > 0
+      ? shouldTriggerDeload(avg21Raw, avg7Raw, runFloorState?.stabilityOK, runFloorState?.deloadActive, floorDaily)
+      : false;
+  const runFloorStreakOk = floorDaily > 0 ? avg21Raw >= floorDaily : false;
+  const deloadTargetRange =
+    runFloorWeekly > 0
+      ? `${Math.round(runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.min)}–${Math.round(
+          runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.max
+        )}`
+      : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
-    lines.push(`7T RunFloor-Äquivalent: ${runEq7} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
+    lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
+    lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
+    lines.push(`• 7T RunFloor-Äquivalent: ${runEq7} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
   } else {
-    lines.push(`7T Lauf-Load: ${runLoad7}`);
+    lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
+    lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
+    lines.push(`• 7T Lauf-Load: ${runLoad7}`);
   }
-  lines.push(`7T Ø-Load/Tag: Ist ${avg7} / Soll ${floorDaily}`);
-  lines.push(`21T Ø-Load/Tag: Ist ${avg21} / Soll ${floorDaily}`);
-  lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
+  lines.push(`• Ziel nächste Woche (RunFloor): ${runTargetText}`);
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
   lines.push(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`);
-  lines.push(`Longrun-Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
+  lines.push(`• Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
+  lines.push("Progression (RunFloor → Deload nach 3 Wochen):");
+  if (runFloorState?.deloadActive) {
+    const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
+    lines.push(`• Deload läuft${endText} (Ziel: ${deloadTargetRange} Run-Load/Woche).`);
+  } else if (deloadReady) {
+    lines.push(`• 21T RunFloor erreicht → Deload wird ausgelöst (Ziel: ${deloadTargetRange} Run-Load/Woche).`);
+  } else {
+    const stabilityText = runFloorState?.stabilityOK ? "Stabilität ok" : "Stabilität wackelig";
+    lines.push(
+      `• 21T RunFloor ${runFloorStreakOk ? "erreicht" : "noch nicht"} (${avg21}/${floorDaily} Ø/Tag) – ${stabilityText}.`
+    );
+  }
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
   const deloadExplanation = buildDeloadExplanation(runFloorState);
