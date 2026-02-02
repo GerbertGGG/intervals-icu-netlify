@@ -3074,7 +3074,7 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   return applyDetectiveWhy(last, insights);
 }
 
-function buildMiniPlanTargets({ runsPerWeek, weeklyLoad }) {
+function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
   let runTarget = "3–4";
   if (runsPerWeek < 2) runTarget = "2–3";
   else if (runsPerWeek < 3) runTarget = "3";
@@ -3088,9 +3088,12 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad }) {
     loadTarget = `${low}–${high}`;
   }
 
+  const includeKey = keyPerWeek >= 0.6 || (runsPerWeek >= 3 && weeklyLoad >= 140);
   const exampleWeek =
     runTarget === "2–3"
       ? ["Mi 30–35′ easy", "So 60–75′ longrun"]
+      : includeKey
+      ? ["Di 35–45′ key (Schwelle/VO2)", "Fr 40–50′ GA", "So 60–75′ longrun"]
       : ["Mi 30–35′ easy", "Fr 40–50′ GA", "So 60–75′ longrun"];
 
   return { runTarget, loadTarget, exampleWeek };
@@ -3252,7 +3255,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
   else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
 
-  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad });
+  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek });
   lines.push("");
   lines.push("Konkrete nächste Woche (Mini-Plan):");
   lines.push(
