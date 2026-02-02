@@ -2507,7 +2507,8 @@ function buildComments(
   } else {
     lines.push(`7T Lauf-Load: ${runLoad7}`);
   }
-  lines.push(`21T Ø-Load/Tag: ${avg21} (7T Ø: ${avg7}, Ziel/Tag: ${floorDaily})`);
+  lines.push(`7T Ø-Load/Tag: Ist ${avg7} / Soll ${floorDaily}`);
+  lines.push(`21T Ø-Load/Tag: Ist ${avg21} / Soll ${floorDaily}`);
   lines.push(`Ziel nächste Woche (RunFloor): ${runTargetText}`);
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
