@@ -2504,11 +2504,11 @@ function buildComments(
   const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
 
   const lines = [];
-  lines.push("1) Tagesstatus");
+  lines.push("1) 🧭 Tagesstatus");
   lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
-  lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | Datum ${eventDateText} | Distanz ${eventDistance}`);
+  lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
   lines.push("");
-  lines.push("2) Aerober Status");
+  lines.push("2) 🫁 Aerober Status");
   if (dv == null || dd == null) {
     lines.push(`Diagnose: keine belastbare GA-Tendenz (Confidence ${confidence}).`);
   } else {
@@ -2538,26 +2538,25 @@ function buildComments(
   const steadyAllowed = runFloorState?.stabilityOK && avg7Raw >= floorDaily && activeDays21 >= activeGoalDays;
   aerobicRules.push(steadyAllowed ? "Regel: max. 1× steady kurz (20–25′) nur wenn frisch." : "Regel: kein steady push in den nächsten 3–5 Tagen.");
   aerobicRules.push("Regel: Strides optional nach easy, nur wenn frisch.");
-  lines.push(...aerobicRules.slice(0, 3));
+  lines.push(...aerobicRules.slice(0, 2));
   lines.push("");
-  lines.push("3) Robustheit");
+  lines.push("3) 💪 Robustheit");
   if (robustness) {
     const strengthMinutes7d = Math.round(robustness.strengthMinutes7d ?? 0);
     const remaining = Math.max(STRENGTH_MIN_7D - strengthMinutes7d, 0);
     const robustnessLabel = robustness.strengthOk ? "im Aufbau, aber stabil" : "im Aufbau, aber wackelig";
     lines.push(`Diagnose: Kraft/Stabi ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T) – ${robustnessLabel}.`);
     if (robustness.strengthOk) {
-      lines.push("To-do: 2×20–30′ Kraft/Stabi halten (Core/Beine/Mobilität).");
+      lines.push("To-do: 2×20–30′ Kraft/Stabi halten.");
     } else {
       lines.push(`To-do: diese Woche noch ${remaining} min Kraft/Stabi.`);
-      lines.push("Minimalplan: 2×20–30′ (Core/Beine/Mobilität).");
     }
   } else {
     lines.push("Diagnose: Kraft/Stabi nicht verfügbar.");
     lines.push("To-do: 2×20–30′ Kraft/Stabi einplanen.");
   }
   lines.push("");
-  lines.push("4) Belastung & Progression");
+  lines.push("4) 📈 Belastung & Key-Check");
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
   const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
@@ -2588,15 +2587,11 @@ function buildComments(
       ? `Ursache: zu wenige aktive Tage (${activeDays21}/${activeGoalDays}) → Häufigkeit fehlt.`
       : `Ursache: Laufdauer/Load pro Tag zu niedrig (aktive Tage ${activeDays21}/${activeGoalDays} ok).`;
   lines.push(causeLine);
-  const loadTodos = [];
   if (activeDays21 < activeGoalDays) {
-    loadTodos.push("To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
-    loadTodos.push("To-do: restliche Läufe 30–40′ easy, keine Zusatzintensität.");
+    lines.push("To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
   } else {
-    loadTodos.push("To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
-    loadTodos.push(`To-do: Wochenziel ${runFloorWeeklyText} RunFloor anpeilen (schrittweise).`);
+    lines.push("To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
   }
-  lines.push(...loadTodos.slice(0, 2));
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   if (eventDistance === "5 km" && longRunMinutes > 0) {
     lines.push(`Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
@@ -2610,24 +2605,15 @@ function buildComments(
   }
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
   if (transitionLine) lines.push(transitionLine);
-  lines.push("");
-  lines.push("5) Key-Check");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
   const actualKeys = keyCompliance?.actual7 ?? 0;
   const keyTypes = keyCompliance?.actualTypes?.length
     ? keyCompliance.actualTypes.map(formatKeyType).join("/")
     : "n/a";
   lines.push(`Key diese Woche: ${actualKeys}/${keyCap} (${keyTypes}).`);
-  lines.push("Key-Logik: VO2/Schwelle bevorzugt; Racepace tabu.");
-  lines.push(
-    `Regel: ${buildKeyConsequence({
-      keyCompliance,
-      keySpacing,
-      keyCap,
-    })}`
-  );
+  lines.push(`Key-Regel: ${buildKeyConsequence({ keyCompliance, keySpacing, keyCap })}`);
   lines.push("");
-  lines.push("6) Bottom Line");
+  lines.push("5) ✅ Fazit");
   const bottomLineTodos = [];
   bottomLineTodos.push(activeDays21 < activeGoalDays ? "2× easy 35–45′ zusätzlich für Häufigkeit." : "1–2 Läufe um 10–15′ verlängern (easy).");
   if (robustness?.strengthOk) {
@@ -2637,18 +2623,10 @@ function buildComments(
   }
   bottomLineTodos.push("Steady nur wenn frisch; nach Key 24–48h nur locker.");
   lines.push(...bottomLineTodos.slice(0, 3).map((item) => `- ${item}`));
-  lines.push("");
-  lines.push("7) Trainer-Fazit");
   const statusLabel = runFloorState?.stabilityOK ? "stabil" : "wackelig";
   const frequencyLabel = activeDays21 >= activeGoalDays ? "ok" : "zu niedrig";
-  lines.push(`Du machst Dinge richtig: es gibt Bewegung und die 7T-Last ist ${avg7 >= avg21 ? "über" : "unter"} dem 21T-Schnitt.`);
-  lines.push(`Engpass bleibt die Basis: Häufigkeit ist ${frequencyLabel}, Stabilität wirkt ${statusLabel}.`);
-  lines.push("Priorität bleibt klar: Häufigkeit → Volumen → Spezifität.");
-  lines.push("Nächste 2 Wochen: zuerst 2 zusätzliche easy-Läufe etablieren und erst dann vorsichtig verlängern.");
-  lines.push("Intensität bleibt gedeckelt, solange die aktiven Tage nicht stabil sind.");
-  lines.push("Wenn Drift steigt, Tempo sofort runter oder Lauf kürzen.");
-  lines.push("Kraft/Stabi ist Pflichtbaustein, nicht optional.");
-  lines.push("Longrun bleibt Basis/Robustheit und immer easy, falls geplant.");
+  lines.push(`- Fokus: Häufigkeit ${frequencyLabel}, Stabilität ${statusLabel}.`);
+  lines.push("- Priorität: Häufigkeit → Volumen → Spezifität.");
   return lines.join("\n");
 }
 
