@@ -1411,6 +1411,32 @@ function determineBlockState({
   let forcedSwitch = false;
   let nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent);
 
+  if (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks && weeksToEvent >= 0 && block !== "RACE") {
+    forcedSwitch = true;
+    reasons.push("Event ≤6 Wochen → sofort RACE (Taper-Puffer)");
+    block = "RACE";
+    startDate = todayISO;
+    timeInBlockDays = 0;
+    return {
+      block,
+      wave,
+      weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: startDate,
+      startWasReset,
+      reasons,
+      readinessScore,
+      forcedSwitch,
+      nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
+      timeInBlockDays,
+      startDate,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
   if (timeInBlockDays < blockLimits.minDays) {
     reasons.push(`Mindestdauer ${blockLimits.minDays} Tage noch nicht erreicht`);
     return {
