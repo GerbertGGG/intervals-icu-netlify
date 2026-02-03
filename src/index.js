@@ -3274,36 +3274,33 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const lines = [];
   lines.push(title);
   lines.push("");
-  lines.push("Struktur (Trainingslehre):");
-  lines.push(`- Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`- Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
-  lines.push(`- Longruns (≥60min): ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`- Key (key:*): ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`- GA (≥30min, nicht key): ${gaRuns.length}`);
-  lines.push(`- Kurz (<30min): ${shortRuns.length}`);
-  lines.push(`- ${keyTypeLine}`);
+  lines.push("🏗️ Struktur:");
+  lines.push(`• 🏃 Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`• ⏱️ Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
+  lines.push(`• 🧱 Longruns: ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche) | 🎯 Key: ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`• 🌿 GA (≥30′, nicht key): ${gaRuns.length} | ⚡ Kurz (<30′): ${shortRuns.length}`);
+  lines.push(`• 🧭 ${keyTypeLine}`);
   lines.push("");
-  lines.push("Belastungsbild:");
-  lines.push(`- Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
-  lines.push(`- Basis: tägliche Run-Loads inkl. 0-Tage (Fenster: ${windowDays} Tage, nur Run).`);
+  lines.push("📈 Belastung:");
+  lines.push(`• 📊 Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
   lines.push("");
 
-  lines.push("Fundstücke:");
-  if (!findings.length) lines.push("- Keine klaren strukturellen Probleme gefunden.");
-  else for (const f of findings.slice(0, 8)) lines.push(`- ${f}`);
+  lines.push("🔍 Highlights:");
+  if (!findings.length) lines.push("• ✅ Keine klaren strukturellen Probleme.");
+  else for (const f of findings.slice(0, 4)) lines.push(`• 🧩 ${f}`);
 
   lines.push("");
-  lines.push("Nächste Schritte:");
-  if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
-  else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
+  lines.push("✅ Nächste Schritte:");
+  if (!actions.length) lines.push("• 📌 Struktur halten, Bench/GA comparable sammeln.");
+  else for (const a of uniq(actions).slice(0, 4)) lines.push(`• 🛠️ ${a}`);
 
   const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek });
   lines.push("");
-  lines.push("Konkrete nächste Woche (Mini-Plan):");
+  lines.push("🗓️ Mini-Plan nächste Woche:");
   lines.push(
-    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
+    `• 🎯 Ziele: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
   );
-  lines.push(`- Beispielwoche: ${miniPlan.exampleWeek.join(" · ")}`);
+  lines.push(`• 📅 Beispiel: ${miniPlan.exampleWeek.join(" · ")}`);
 
   const summary = {
     week: mondayIso,
