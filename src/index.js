@@ -2506,6 +2506,7 @@ function buildComments(
   const lines = [];
   lines.push("1) 🧭 Tagesstatus");
   lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
+  lines.push(`Einordnung: ${buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
   lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
   lines.push("");
   lines.push("2) 🫁 Aerober Status");
@@ -2557,6 +2558,7 @@ function buildComments(
   }
   lines.push("");
   lines.push("4) 📈 Belastung & Key-Check");
+  lines.push("Belastung:");
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
   const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
@@ -2576,42 +2578,43 @@ function buildComments(
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
-    lines.push(`Interpretation: 7T Ø ${avg7}/Tag vs 21T Ø ${avg21}/Tag → kurzfristig ${avg7 >= avg21 ? "höher" : "niedriger/gleich"}.`);
-    lines.push(`RunFloor: 7T RunFloor-Äquivalent ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%).`);
+    lines.push(`- Interpretation: 7T Ø ${avg7}/Tag vs 21T Ø ${avg21}/Tag → kurzfristig ${avg7 >= avg21 ? "höher" : "niedriger/gleich"}.`);
+    lines.push(`- RunFloor: 7T RunFloor-Äquivalent ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%).`);
   } else {
-    lines.push(`Interpretation: 7T Ø ${avg7}/Tag vs 21T Ø ${avg21}/Tag → kurzfristig ${avg7 >= avg21 ? "höher" : "niedriger/gleich"}.`);
-    lines.push(`RunFloor: 7T Run-Floor ${runLoad7} / Soll ${runTargetText}.`);
+    lines.push(`- Interpretation: 7T Ø ${avg7}/Tag vs 21T Ø ${avg21}/Tag → kurzfristig ${avg7 >= avg21 ? "höher" : "niedriger/gleich"}.`);
+    lines.push(`- RunFloor: 7T Run-Floor ${runLoad7} / Soll ${runTargetText}.`);
   }
   const causeLine =
     activeDays21 < activeGoalDays
       ? `Ursache: zu wenige aktive Tage (${activeDays21}/${activeGoalDays}) → Häufigkeit fehlt.`
       : `Ursache: Laufdauer/Load pro Tag zu niedrig (aktive Tage ${activeDays21}/${activeGoalDays} ok).`;
-  lines.push(causeLine);
+  lines.push(`- ${causeLine}`);
   if (activeDays21 < activeGoalDays) {
-    lines.push("To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
+    lines.push("- To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
   } else {
-    lines.push("To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
+    lines.push("- To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
   }
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   if (eventDistance === "5 km" && longRunMinutes > 0) {
-    lines.push(`Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
+    lines.push(`- Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
   }
   if (runFloorState?.deloadActive) {
-    lines.push(`Hinweis: Deload aktiv (Ziel ${deloadTargetRange} Run-Load/Woche).`);
+    lines.push(`- Hinweis: Deload aktiv (Ziel ${deloadTargetRange} Run-Load/Woche).`);
   } else if (deloadReady) {
     lines.push(
-      `Hinweis: Deload bereit (21T Summe ${sum21} & aktive Tage ${activeDays21}) → Ziel ${deloadTargetRange} Run-Load/Woche.`
+      `- Hinweis: Deload bereit (21T Summe ${sum21} & aktive Tage ${activeDays21}) → Ziel ${deloadTargetRange} Run-Load/Woche.`
     );
   }
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
-  if (transitionLine) lines.push(transitionLine);
+  if (transitionLine) lines.push(`- ${transitionLine}`);
+  lines.push("Key-Check:");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
   const actualKeys = keyCompliance?.actual7 ?? 0;
   const keyTypes = keyCompliance?.actualTypes?.length
     ? keyCompliance.actualTypes.map(formatKeyType).join("/")
     : "n/a";
-  lines.push(`Key diese Woche: ${actualKeys}/${keyCap} (${keyTypes}).`);
-  lines.push(`Key-Regel: ${buildKeyConsequence({ keyCompliance, keySpacing, keyCap })}`);
+  lines.push(`- Key diese Woche: ${actualKeys}/${keyCap} (${keyTypes}).`);
+  lines.push(`- Key-Regel: ${buildKeyConsequence({ keyCompliance, keySpacing, keyCap })}`);
   lines.push("");
   lines.push("5) ✅ Fazit");
   const bottomLineTodos = [];
@@ -2637,6 +2640,14 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   if (hadGA && !hadKey) return `Lauf: ${minutesText}locker`;
   if (hadKey && hadGA) return `Lauf: ${minutesText}GA + Key`;
   return `Lauf: ${minutesText}Lauf`;
+}
+
+function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
+  if (!hadAnyRun) return "Ruhetag (kein Lauf)";
+  if (hadKey && hadGA) return "GA + Key (gemischt)";
+  if (hadKey) return "Key (intensiv)";
+  if (hadGA) return totalMinutesToday > 0 ? `Easy/GA ${totalMinutesToday}′` : "Easy/GA";
+  return totalMinutesToday > 0 ? `Lauf ${totalMinutesToday}′` : "Lauf";
 }
 
 function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
