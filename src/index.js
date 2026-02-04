@@ -2506,7 +2506,6 @@ function buildComments(
   const lines = [];
   lines.push("1) 🧭 Tagesstatus");
   lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
-  lines.push(`Einordnung: ${buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
   lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
   lines.push("");
   lines.push("2) 🫁 Aerober Status");
@@ -2544,17 +2543,10 @@ function buildComments(
   lines.push("3) 💪 Robustheit");
   if (robustness) {
     const strengthMinutes7d = Math.round(robustness.strengthMinutes7d ?? 0);
-    const remaining = Math.max(STRENGTH_MIN_7D - strengthMinutes7d, 0);
     const robustnessLabel = robustness.strengthOk ? "im Aufbau, aber stabil" : "im Aufbau, aber wackelig";
     lines.push(`Diagnose: Kraft/Stabi ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T) – ${robustnessLabel}.`);
-    if (robustness.strengthOk) {
-      lines.push("To-do: 2×20–30′ Kraft/Stabi halten.");
-    } else {
-      lines.push(`To-do: diese Woche noch ${remaining} min Kraft/Stabi.`);
-    }
   } else {
     lines.push("Diagnose: Kraft/Stabi nicht verfügbar.");
-    lines.push("To-do: 2×20–30′ Kraft/Stabi einplanen.");
   }
   lines.push("");
   lines.push("4) 📈 Belastung & Key-Check");
@@ -2578,10 +2570,8 @@ function buildComments(
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
-    lines.push(`- Interpretation: 7T Ø ${avg7}/Tag vs 21T Ø ${avg21}/Tag → kurzfristig ${avg7 >= avg21 ? "höher" : "niedriger/gleich"}.`);
     lines.push(`- RunFloor: 7T RunFloor-Äquivalent ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%).`);
   } else {
-    lines.push(`- Interpretation: 7T Ø ${avg7}/Tag vs 21T Ø ${avg21}/Tag → kurzfristig ${avg7 >= avg21 ? "höher" : "niedriger/gleich"}.`);
     lines.push(`- RunFloor: 7T Run-Floor ${runLoad7} / Soll ${runTargetText}.`);
   }
   const causeLine =
