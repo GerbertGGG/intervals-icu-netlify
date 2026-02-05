@@ -2799,6 +2799,8 @@ function buildComments(
   const daysToEvent = eventDate ? daysBetween(isoDate(new Date()), eventDate) : null;
 
   const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
+  const repEf = Number.isFinite(repRun?.ef) ? repRun.ef : null;
+  const repVdot = repEf != null ? vdotLikeFromEf(repEf) : null;
   const personalDriftWarn = 6;
   const personalDriftCritical = 8;
   const driftSignal = drift == null ? "unknown" : drift >= personalDriftCritical ? "red" : drift >= personalDriftWarn ? "orange" : "green";
@@ -2952,8 +2954,10 @@ function buildComments(
 
   lines.push('');
   lines.push('3) 🫁 Aerober Status (personalisiert)');
+  lines.push(`- EF/VDOT (repr. GA): ${repEf != null ? repEf.toFixed(3) : 'n/a'} / ${repVdot != null ? repVdot.toFixed(1) : 'n/a'}.`);
+  lines.push(`- VDOT-Trend (28d vs 28d): ${Number.isFinite(trend?.dv) ? `${trend.dv >= 0 ? '+' : ''}${trend.dv.toFixed(1)}%` : 'n/a'}${trend?.confidence ? ` (Confidence ${trend.confidence})` : ''}.`);
   lines.push(`- Drift: ${drift != null ? drift.toFixed(1) + '%' : 'unknown'} vs persönlich ${personalDriftWarn}/${personalDriftCritical}% -> ${driftSignal === 'green' ? '🟢' : driftSignal === 'orange' ? '🟠' : driftSignal === 'red' ? '🔴' : '🟠'}.`);
-  lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, nur kontrolliert belasten' : 'stabil genug für planmäßiges easy'}.`);
+  lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, nur kontrolliert belasten' : 'stabil genug für planmäßiges easy'}${Number.isFinite(trend?.dv) ? trend.dv <= -1.5 ? '; VDOT trendet rückläufig -> Fokus auf easy Qualität + Erholung.' : trend.dv >= 1.5 ? '; VDOT trendet positiv -> Reize wie geplant halten, nicht unnötig erhöhen.' : '; VDOT aktuell stabil.' : ''}.`);
   lines.push(`- Confidence: ${aerobicConf.bucket}`);
   lines.push(`- If-Then: Wenn Drift > ${personalDriftWarn}% bei easy, dann Pace runter oder Einheit um 10-15' kürzen.`);
 
