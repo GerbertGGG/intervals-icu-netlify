@@ -2564,6 +2564,59 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
   return `Übergang aktiv: Rad zählt ${pct}% zum RunFloor (aktuell ${weeksText} bis Event, 0% ab ≤${TRANSITION_BIKE_EQ.endWeeks} Wochen).`;
 }
 
+function classifyGaDriftPct(driftPct) {
+  if (!Number.isFinite(driftPct) || driftPct < 0) return null;
+  if (driftPct <= 3) {
+    return {
+      zone: "🟢",
+      label: "sehr gut",
+      summary: "saubere aerobe Basis",
+      action: "Perfekter GA-Lauf.",
+    };
+  }
+  if (driftPct <= 5) {
+    return {
+      zone: "🟡",
+      label: "ok / Grenzbereich",
+      summary: "aerob solide, aber nur begrenzt steigerbar",
+      action: "Noch akzeptabel – ggf. Dauer oder Tempo leicht anpassen.",
+    };
+  }
+  if (driftPct <= 8) {
+    return {
+      zone: "🟠",
+      label: "Warnsignal",
+      summary: "über aktueller aerober Kapazität",
+      action: "Kein klassischer GA-Lauf mehr – eher Tempo senken oder kürzen.",
+    };
+  }
+  return {
+    zone: "🔴",
+    label: "klar anaerob geprägt",
+    summary: "deutliche Entkopplung",
+    action: "Für GA-Ziel zu hoch, Erholungskosten steigen.",
+  };
+}
+
+function buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary }) {
+  const rep = pickRepresentativeGARun(perRunInfo);
+  if (!rep || !Number.isFinite(rep.drift) || rep.drift < 0) return [];
+  const drift = rep.drift;
+  const bucket = classifyGaDriftPct(drift);
+  if (!bucket) return [];
+  const lines = [];
+  lines.push(`Drift heute: ${bucket.zone} ${drift.toFixed(1)}% (${bucket.label}) – ${bucket.summary}.`);
+  const context = [];
+  if (recoverySignals?.hrvLow) context.push("HRV niedriger als 7T");
+  if (recoverySignals?.sleepLow) context.push("Schlaf niedriger als 7T");
+  if ((longRunSummary?.minutes ?? 0) >= 75) context.push("längerer Lauf");
+  if (context.length) {
+    lines.push(`Kontext: erhöhte Drift kann auch durch ${context.join(" / ")} erklärt sein (nicht automatisch "schlechte Form").`);
+  }
+  lines.push(`Einordnung: ${bucket.action}`);
+  return lines;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -2630,6 +2683,10 @@ function buildComments(
   const recoveryLines = buildRecoverySignalLines(recoverySignals);
   if (recoveryLines.length) {
     lines.push(...recoveryLines);
+  }
+  const driftTodayLines = buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary });
+  if (driftTodayLines.length) {
+    lines.push(...driftTodayLines);
   }
   const aerobicRules = [];
   if (dd != null && dd > 0.5) {
