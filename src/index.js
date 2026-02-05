@@ -2943,6 +2943,9 @@ function buildComments(
   lines.push(`- Ampel: ${readinessAmpel}`);
   lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
   lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
+  if (freqSignal === 'orange' || freqSignal === 'red') {
+    lines.push('- Frequenzsignal: Hinweis auf Trainingsstruktur (Taktung/Häufigkeit) und nicht automatisch auf eine akute Tages-Überlastung.');
+  }
   lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
   lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
   lines.push(`- Entscheidung: ${readinessDecision}`);
@@ -2972,6 +2975,7 @@ function buildComments(
   lines.push('');
   lines.push('4) 📈 Belastung & Frequenz');
   lines.push(`- Frequenz: ${freqCount14 ?? 'unknown'} Läufe/14d vs Sweetspot ${sweetspotLow}-${sweetspotHigh}, Limit ${upperLimit} -> ${freqSignal === 'green' ? '🟢' : freqSignal === 'red' ? '🔴' : '🟠'}.`);
+  lines.push('- Frequenzsignal = Steuerung der Belastungsdichte (wie oft/eng harte Reize gesetzt werden), nicht primär Intensität eines einzelnen Tages.');
   lines.push(`- AerobicFloor 7T: Ist ${runLoad7} / Soll ${runTarget || 'n/a'} (Basisziel ${runBaseTarget || 'n/a'}) -> ${runFloorGap ? 'unter Soll, über Häufigkeit schließen' : 'im Zielkorridor'}.`);
   lines.push(`- Floor-Logik: ${floorModeText}.`);
   lines.push(`- RunFloor/Volumen: ${runLoad7}/${runTarget || 'n/a'} -> ${runFloorGap ? 'heute nicht über Intensität kompensieren, eher Umfang stabilisieren' : 'Volumen im Korridor halten'}.`);
