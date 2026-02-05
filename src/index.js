@@ -1924,6 +1924,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       let drift = null;
       let drift_raw = null;
       let drift_source = "none";
+      let speed_cv = null;
       let intervalMetrics = null;
 
       if (ga && !isKey) {
@@ -1932,6 +1933,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
           const ds = computeDriftAndStabilityFromStreams(streams, ctx.warmupSkipSec);
           drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
+          speed_cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
 
           drift = drift_raw;
 
@@ -1977,6 +1979,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         drift,
         drift_raw,
         drift_source,
+        speed_cv,
         load,
         intervalMetrics,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
@@ -2564,6 +2567,31 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
   return `Übergang aktiv: Rad zählt ${pct}% zum RunFloor (aktuell ${weeksText} bis Event, 0% ab ≤${TRANSITION_BIKE_EQ.endWeeks} Wochen).`;
 }
 
+function formatWeeksOut(weeksToEvent) {
+  if (!Number.isFinite(weeksToEvent)) return "n/a";
+  return `${Math.max(0, Math.round(weeksToEvent))}`;
+}
+
+function inferWeekIntent({ blockState, runFloorState, eventDistance }) {
+  const phase = blockState?.activeBlock || "BASE";
+  const stabilityOK = !!runFloorState?.stabilityOK;
+  if (phase === "RACE") return `Primäres Ziel dieser Woche: Spezifität schärfen + Frische schützen (${eventDistance || "Event"}-Fokus).`;
+  if (phase === "BUILD") return "Primäres Ziel dieser Woche: aerobe Stabilisierung + Frequenzaufbau mit kontrollierter Spezifität.";
+  if (phase === "RESET") return "Primäres Ziel dieser Woche: Erholung sichern + technische Sauberkeit wiederherstellen.";
+  return stabilityOK
+    ? "Primäres Ziel dieser Woche: Belastbarkeit stabil halten und den aeroben Unterbau festigen."
+    : "Primäres Ziel dieser Woche: aerobe Stabilisierung + Frequenzaufbau (nicht über Tempo erzwingen).";
+}
+
+function inferNotImportantNow({ blockState, weeksToEvent }) {
+  const phase = blockState?.activeBlock || "BASE";
+  if (phase === "BASE" || phase === "RESET") return "Aktuell NICHT wichtig: harte Pace-Ziele oder zusätzliche VO2-Spitzen.";
+  if (phase === "BUILD" && Number.isFinite(weeksToEvent) && weeksToEvent > 4) {
+    return "Aktuell NICHT wichtig: Race-Pace ausreizen – zuerst Tragfähigkeit aufbauen.";
+  }
+  return "Aktuell NICHT wichtig: unnötiger Zusatzreiz außerhalb des Wochenziels.";
+}
+
 function classifyGaDriftPct(driftPct) {
   if (!Number.isFinite(driftPct) || driftPct < 0) return null;
   if (driftPct <= 3) {
@@ -2613,6 +2641,9 @@ function buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunS
   if (context.length) {
     lines.push(`Kontext: erhöhte Drift kann auch durch ${context.join(" / ")} erklärt sein (nicht automatisch "schlechte Form").`);
   }
+  if (drift > 7) {
+    lines.push("Coach-Logik: Drift >7% signalisiert limitierte aerobe Effizienz – metabolische Kosten steigen schneller als der Nutzen.");
+  }
   lines.push(`Einordnung: ${bucket.action}`);
   return lines;
 }
@@ -2657,6 +2688,7 @@ function buildComments(
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
   const eventDateText = eventDate ? eventDate : "n/a";
+  const weeksOut = Number.isFinite(modeInfo?.weeksToEvent) ? modeInfo.weeksToEvent : null;
   const confidence = trend?.confidence ?? "niedrig";
   const dv = Number.isFinite(trend?.dv) ? trend.dv : null;
   const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
@@ -2665,6 +2697,9 @@ function buildComments(
   lines.push("1) 🧭 Tagesstatus");
   lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
   lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
+  lines.push(`Makrozyklus: ${blockState?.activeBlock || "BASE"} | ${formatWeeksOut(weeksOut)} Wochen out.`);
+  lines.push(inferWeekIntent({ blockState, runFloorState, eventDistance }));
+  lines.push(inferNotImportantNow({ blockState, weeksToEvent: weeksOut }));
   lines.push("");
   lines.push("2) 🫁 Aerober Status");
   if (dv == null || dd == null) {
@@ -2687,6 +2722,19 @@ function buildComments(
   const driftTodayLines = buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary });
   if (driftTodayLines.length) {
     lines.push(...driftTodayLines);
+  }
+  const repRun = pickRepresentativeGARun(perRunInfo);
+  if (repRun) {
+    const subjectiveLoad = Number.isFinite(repRun.drift) && repRun.drift > 6
+      ? "wirkte schwerer als geplant"
+      : "wirkte voraussichtlich kontrolliert";
+    lines.push(`Subjektiv (Proxy): Einheit ${subjectiveLoad}; bitte RPE + Beinstatus kurz notieren.`);
+    if (Number.isFinite(repRun.speed_cv)) {
+      const economyLabel = repRun.speed_cv <= 0.1 ? "technisch sauber" : "ökonomisch unruhig";
+      lines.push(`Technik/Ökonomie: Pace-CV ${(repRun.speed_cv * 100).toFixed(1)}% (${economyLabel}) – lieber kurz & sauber statt lang und schlurfend.`);
+    }
+  } else {
+    lines.push("Subjektiv: Kein GA-Check heute – optional RPE, Beinstatus und mentale Frische im Kommentar erfassen.");
   }
   const aerobicRules = [];
   if (dd != null && dd > 0.5) {
@@ -2750,6 +2798,8 @@ function buildComments(
   } else {
     lines.push("- To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
   }
+  lines.push("- Reaktionsregel: Wenn Drift bei Easy erneut >6% ist → Lauf kürzen/abbrechen und Folgetag max. 30′ locker.");
+  lines.push("- Reaktionsregel: Wenn HRV/Schlaf klar unter 7T liegt → nur easy + Technik, kein steady.");
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   if (eventDistance === "5 km" && longRunMinutes > 0) {
     lines.push(`- Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
@@ -2786,6 +2836,7 @@ function buildComments(
   const frequencyLabel = activeDays21 >= activeGoalDays ? "ok" : "zu niedrig";
   lines.push(`- Fokus: Häufigkeit ${frequencyLabel}, Stabilität ${statusLabel}.`);
   lines.push("- Priorität: Häufigkeit → Volumen → Spezifität.");
+  lines.push("- Leitlinie der Woche: Nicht fitter werden erzwingen – Belastbarkeit schaffen, damit Tempo später tragfähig ist.");
   return lines.join("\n");
 }
 
