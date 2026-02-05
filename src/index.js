@@ -2936,6 +2936,19 @@ function buildComments(
   lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
   lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
   lines.push(`- Entscheidung: ${readinessDecision}`);
+  let guardrailLine = null;
+  if (keySpacing?.ok === false) {
+    guardrailLine = 'Guardrail aktiv: Nach Key-Einheit keine zweite Intensität innerhalb von 48h – schützt die Erholung nach hohem Reiz.';
+  } else if (hasHardRedFlag || warningCount >= 2) {
+    guardrailLine = 'Guardrail aktiv: Kumulierte Warnsignale – zusätzlicher Belastungsreiz wird heute bewusst vermieden.';
+  }
+  if (guardrailLine) lines.push(`- ${guardrailLine}`);
+
+  const subjectiveMissing = recoverySignals?.legsNegative == null && recoverySignals?.moodNegative == null;
+  const borderlineDecision = readinessAmpel === '🟠';
+  if (subjectiveMissing && borderlineDecision && (readinessBucket === 'medium' || readinessBucket === 'low')) {
+    lines.push('- Wie fühlen sich deine Beine heute an? (fresh / ok / heavy)');
+  }
 
   lines.push('');
   lines.push('3) 🫁 Aerober Status (personalisiert)');
@@ -2958,7 +2971,17 @@ function buildComments(
   lines.push(`- 1) ${readinessAmpel === '🔴' ? 'Intensität pausieren, nur easy/recovery.' : 'Geplanten Reiz halten, aber nicht eskalieren.'}`);
   lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt kommt über Konsistenz.'}`);
   lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : "20-30' Kraft/Stabi einplanen."}`);
-  lines.push(`- Warum (1 Satz): Safety-first priorisiert ${highPattern ? highPattern.id : hrv2dNegative ? 'Recovery-Status' : 'Belastungsstabilität'} vor Tempo.`);
+
+  let decisionTag = 'recovery_guardrail';
+  let decisionRationaleSentence = 'Wir entscheiden uns heute für Stabilisieren statt Eskalieren, weil deine Regel nach Key-Einheiten zuerst 24-48h easy priorisiert.';
+  if (hasHardRedFlag || driftSignal === 'orange' || driftSignal === 'red') {
+    decisionTag = 'shorten_not_push';
+    decisionRationaleSentence = 'Wir entscheiden uns heute für Kürzen statt Pace-Halten, weil bei dir Drift ein frühes Ermüdungssignal ist.';
+  } else if (runFloorGap) {
+    decisionTag = 'frequency_over_intensity';
+    decisionRationaleSentence = 'Wir entscheiden uns heute für Häufigkeit statt Tempo, weil du auf kumulierten Stress robuster reagierst als auf Intensität.';
+  }
+  lines.push(`- ${decisionRationaleSentence}`);
 
   lines.push('');
   lines.push('6) 🧬 Ich-Regeln & Lernen (MVP)');
@@ -2971,6 +2994,7 @@ function buildComments(
       highest_priority_trigger: highPattern?.id || (hrv2dNegative ? 'HRV_2D_NEGATIVE' : 'none'),
       overruled_signals: highPattern && driftSignal === 'green' ? ['drift_ok'] : [],
       guardrail_applied: readinessAmpel !== '🟢',
+      decision_tag: decisionTag,
     };
     lines.push('');
     lines.push(`DecisionTrace: ${JSON.stringify(trace)}`);
