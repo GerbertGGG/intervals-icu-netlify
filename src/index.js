@@ -2246,8 +2246,8 @@ async function computeMaintenance14d(ctx, dayIso) {
       }
     }
 
-    // Daily comment ALWAYS (includes min stimulus ALWAYS)
-    patch.comments = buildComments({
+    // Daily report text ALWAYS (includes min stimulus ALWAYS)
+    const dailyReportText = buildComments({
       perRunInfo,
       trend,
       motor,
@@ -2275,11 +2275,19 @@ async function computeMaintenance14d(ctx, dayIso) {
       weeksToEvent,
     }, { debug });
 
+    // Do not write into wellness comment field anymore.
+    patch.comments = "";
+
 
 
 
 
     patches[day] = patch;
+
+    if (write) {
+      await upsertDailyReportNote(env, day, dailyReportText);
+    }
+    if (debug) notesPreview[`${day}:daily`] = dailyReportText;
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
     if (isMondayIso(day)) {
@@ -2318,6 +2326,37 @@ async function computeMaintenance14d(ctx, dayIso) {
     patches: debug ? patches : undefined,
     debug: debug ? ctx.debugOut : undefined,
   };
+}
+
+// Create/update a NOTE event for the daily report
+async function upsertDailyReportNote(env, dayIso, noteText) {
+  const external_id = `daily-report-${dayIso}`;
+  const name = "Daily-Report";
+  const description = noteText;
+
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
+
+  if (existing?.id) {
+    await updateIntervalsEvent(env, existing.id, {
+      category: "NOTE",
+      start_date_local: `${dayIso}T00:00:00`,
+      name,
+      description,
+      color: "orange",
+      external_id,
+    });
+    return;
+  }
+
+  await createIntervalsEvent(env, {
+    category: "NOTE",
+    start_date_local: `${dayIso}T00:00:00`,
+    name,
+    description,
+    color: "orange",
+    external_id,
+  });
 }
 
 // Representative GA run: prefer non-key GA; fallback to key GA for EF/VDOT.
