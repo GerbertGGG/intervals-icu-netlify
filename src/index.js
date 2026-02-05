@@ -2343,7 +2343,7 @@ async function upsertDailyReportNote(env, dayIso, noteText) {
       start_date_local: `${dayIso}T00:00:00`,
       name,
       description,
-      color: "orange",
+      color: "blue",
       external_id,
     });
     return;
@@ -2354,7 +2354,7 @@ async function upsertDailyReportNote(env, dayIso, noteText) {
     start_date_local: `${dayIso}T00:00:00`,
     name,
     description,
-    color: "orange",
+    color: "blue",
     external_id,
   });
 }
