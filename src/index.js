@@ -219,6 +219,33 @@ const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
 const MOTOR_STALE_DAYS = 5;
 const MIN_STIMULUS_7D_RUN_LOAD = 150;
+const HRV_NEGATIVE_THRESHOLD_PCT = -5;
+const PERSONAL_OVERLOAD_PATTERNS = [
+  {
+    id: "PAT_001",
+    signals: ["drift_high", "hrv_down", "key_felt_hard"],
+    window_days: 7,
+    match_rule: { required: 2, out_of: 3 },
+    severity: "high",
+    action: "keine Intensität für 5-7 Tage",
+  },
+  {
+    id: "PAT_002",
+    signals: ["hrv_2d_negative", "sleep_low", "fatigue_override"],
+    window_days: 3,
+    match_rule: { required: 2, out_of: 3 },
+    severity: "high",
+    action: "nur easy, Volumen reduzieren (24-48h)",
+  },
+  {
+    id: "PAT_003",
+    signals: ["frequency_high", "runfloor_gap", "drift_high"],
+    window_days: 14,
+    match_rule: { required: 2, out_of: 3 },
+    severity: "medium",
+    action: "Dichte runter, keine Zusatzreize",
+  },
+];
 
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
@@ -2216,42 +2243,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       reasons: runFloorState.reasons,
     });
 
-async function computeMaintenance14d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
-  const endIso = dayIso;
-
-  let runCount14 = 0;
-  let bikeCount14 = 0;
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (isRun(a)) runCount14++;
-    else if (isBike(a)) bikeCount14++;
-  }
-  return { runCount14, bikeCount14 };
-}
-
-    // Bench reports only on bench days
-    const benchReports = [];
-    for (const a of runs) {
-      const benchName = getBenchTag(a);
-      if (!benchName) continue;
-      try {
-        const rep = await computeBenchReport(env, a, benchName, ctx.warmupSkipSec);
-        if (rep) benchReports.push(rep);
-      } catch (e) {
-        benchReports.push(`🧪 bench:${benchName}\nFehler: ${String(e?.message ?? e)}`);
-      }
-    }
+    const maintenance14d = computeMaintenance14d(ctx, day);
 
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
     const dailyReportText = buildComments({
       perRunInfo,
       trend,
       motor,
-      benchReports,
       robustness,
       modeInfo,
       blockState,
@@ -2271,8 +2269,8 @@ async function computeMaintenance14d(ctx, dayIso) {
       fatigue,
       longRunSummary,
       recoverySignals,
-      bikeSubFactor,
       weeksToEvent,
+      maintenance14d,
     }, { debug });
 
     // Do not write into wellness comment field anymore.
@@ -2508,6 +2506,10 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const hrvBaseline = hrvVals.length ? avg(hrvVals) : null;
   const sleepDeltaPct = sleepBaseline ? ((sleepToday - sleepBaseline) / sleepBaseline) * 100 : 0;
   const hrvDeltaPct = hrvBaseline ? ((hrvToday - hrvBaseline) / hrvBaseline) * 100 : 0;
+  const ydayIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - 86400000));
+  const yday = await fetchWellnessDay(ctx, env, ydayIso);
+  const ydayHrv = extractHrvFromWellness(yday);
+  const ydayHrvDeltaPct = hrvBaseline && ydayHrv ? ((ydayHrv - hrvBaseline) / hrvBaseline) * 100 : null;
   const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
   const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
   return {
@@ -2517,9 +2519,27 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     hrv: hrvToday,
     hrvBaseline,
     hrvDeltaPct,
+    ydayHrvDeltaPct,
     sleepLow,
     hrvLow,
   };
+}
+
+function computeMaintenance14d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let runCount14 = 0;
+  let bikeCount14 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (isRun(a)) runCount14++;
+    else if (isBike(a)) bikeCount14++;
+  }
+  return { runCount14, bikeCount14 };
 }
 
 function buildNextRunRecommendation({
@@ -2687,13 +2707,48 @@ function buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunS
   return lines;
 }
 
+function confidenceBucket(score) {
+  if (score >= 70) return "high";
+  if (score >= 40) return "medium";
+  return "low";
+}
+
+function computeSectionConfidence({ hasDrift, hasHrv, hasLoad, consistent, subjectiveAligned, contradictions, hasHistory }) {
+  let score = 0;
+  if (hasDrift) score += 15;
+  if (hasHrv) score += 15;
+  if (hasLoad) score += 10;
+  if (consistent) score += 20;
+  if (subjectiveAligned) score += 10;
+  if (!contradictions) score += 10;
+  if (hasHistory) score += 10;
+  return { score, bucket: confidenceBucket(score) };
+}
+
+function matchOverloadPatterns(signalMap) {
+  const matches = [];
+  for (const pattern of PERSONAL_OVERLOAD_PATTERNS) {
+    const outOf = pattern?.match_rule?.out_of || pattern?.signals?.length || 0;
+    const required = pattern?.match_rule?.required || outOf;
+    const hitSignals = (pattern.signals || []).filter((s) => !!signalMap[s]);
+    if (hitSignals.length >= required && outOf > 0) {
+      matches.push({
+        id: pattern.id,
+        severity: pattern.severity,
+        action: pattern.action,
+        hitSignals,
+      });
+    }
+  }
+  return matches;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
     perRunInfo,
     trend,
     motor,
-    benchReports,
     robustness,
     modeInfo,
     blockState,
@@ -2705,177 +2760,172 @@ function buildComments(
     loads7,
     runEquivalent7,
     runFloorState,
-    specificOk,
-    specificValue,
-    aerobicOk,
-    aerobicFloor,
-    aerobicFloorActive,
     fatigue,
     longRunSummary,
     recoverySignals,
-    bikeSubFactor,
     weeksToEvent,
+    maintenance14d,
   },
   { debug = false } = {}
 ) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
-  const hasSpecific = (policy?.specificThreshold ?? 0) > 0;
-  const intensitySignal = loads7?.intensitySignal ?? "none";
   const totalMinutesToday = Math.round(sum(perRunInfo.map((x) => x.moving_time || 0)) / 60);
+  const repRun = pickRepresentativeGARun(perRunInfo);
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
-  const eventDateText = eventDate ? eventDate : "n/a";
-  const weeksOut = Number.isFinite(modeInfo?.weeksToEvent) ? modeInfo.weeksToEvent : null;
-  const confidence = trend?.confidence ?? "niedrig";
-  const dv = Number.isFinite(trend?.dv) ? trend.dv : null;
-  const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
+  const daysToEvent = eventDate ? daysBetween(isoDate(new Date()), eventDate) : null;
+
+  const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
+  const personalDriftWarn = 6;
+  const personalDriftCritical = 8;
+  const driftSignal = drift == null ? "unknown" : drift >= personalDriftCritical ? "red" : drift >= personalDriftWarn ? "orange" : "green";
+
+  const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
+  const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
+  const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+  const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+  const counterIndicator = !hadKey && driftSignal === "green";
+
+  const freqCount14 = maintenance14d?.runCount14 ?? null;
+  const sweetspotLow = 7;
+  const sweetspotHigh = 11;
+  const upperLimit = 12;
+  const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > upperLimit ? "red" : (freqCount14 < sweetspotLow || freqCount14 > sweetspotHigh ? "orange" : "green");
+
+  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
+  const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+  const runBaseTarget = Math.round(runFloorState?.floorTarget ?? 0);
+  const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
+  const floorModeText =
+    overlayMode === "DELOAD"
+      ? "Deload aktiv (Soll fällt automatisch)"
+      : overlayMode === "TAPER"
+        ? "Taper aktiv (Soll reduziert)"
+        : overlayMode === "RECOVER_OVERLAY"
+          ? "Recovery-Overlay (Soll abgesenkt)"
+          : "Build-Modus (Soll kann stufenweise steigen)";
+
+  const signalMap = {
+    drift_high: driftSignal !== "green" && driftSignal !== "unknown",
+    hrv_down: hrv1dNegative,
+    hrv_2d_negative: hrv2dNegative,
+    key_felt_hard: hadKey && driftSignal !== "green",
+    sleep_low: !!recoverySignals?.sleepLow,
+    fatigue_override: !!fatigue?.override,
+    frequency_high: freqSignal === "red",
+    runfloor_gap: runFloorGap,
+  };
+  const patternMatches = matchOverloadPatterns(signalMap);
+  const highPattern = patternMatches.find((p) => p.severity === "high");
+  const mediumPattern = patternMatches.find((p) => p.severity === "medium");
+
+  const warningCount = [driftSignal === "orange", hrv1dNegative, freqSignal === "orange", !!recoverySignals?.sleepLow].filter(Boolean).length;
+
+  let readinessAmpel = "🟢";
+  let readinessDecision = "heute wie geplant mit kontrollierter Intensität";
+  if (highPattern || (hrv2dNegative && !counterIndicator)) {
+    readinessAmpel = "🔴";
+    readinessDecision = "keine Intensität, kein steady, kein push";
+  } else if (warningCount >= 2 || mediumPattern || hrv1dNegative) {
+    readinessAmpel = "🟠";
+    readinessDecision = "nur easy, optional 10-20% kürzen";
+  }
+
+  const readinessConf = computeSectionConfidence({
+    hasDrift: drift != null,
+    hasHrv: hrvDeltaPct != null,
+    hasLoad: Number.isFinite(runLoad7),
+    consistent: !(driftSignal === "green" && (hrv1dNegative || !!fatigue?.override)),
+    subjectiveAligned: hadKey || !counterIndicator,
+    contradictions: driftSignal === "green" && hrv2dNegative,
+    hasHistory: Number.isFinite(trend?.recentN) || Number.isFinite(trend?.prevN),
+  });
+  const aerobicConf = computeSectionConfidence({
+    hasDrift: drift != null,
+    hasHrv: hrvDeltaPct != null,
+    hasLoad: true,
+    consistent: driftSignal !== "unknown",
+    subjectiveAligned: true,
+    contradictions: false,
+    hasHistory: Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd),
+  });
+  const loadConf = computeSectionConfidence({
+    hasDrift: drift != null,
+    hasHrv: hrvDeltaPct != null,
+    hasLoad: true,
+    consistent: freqSignal !== "unknown",
+    subjectiveAligned: true,
+    contradictions: false,
+    hasHistory: true,
+  });
+
+  const confirmedRules = [];
+  if (keySpacing && keySpacing.ok) confirmedRules.push("Nach Key immer 24-48h easy");
+  if (freqSignal !== "red") confirmedRules.push("Frequenz halten, Intensität dosieren");
+
+  const proposedRules = [];
+  if (hrv1dNegative) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
+  if (driftSignal !== "green") proposedRules.push("Wenn Easy-Drift > Warnschwelle, dann Pace senken oder Lauf kürzen (3 Beobachtungen sammeln).");
 
   const lines = [];
-  lines.push("1) 🧭 Tagesstatus");
-  lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
-  lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
-  lines.push(`Makrozyklus: ${blockState?.activeBlock || "BASE"} | ${formatWeeksOut(weeksOut)} Wochen out.`);
-  lines.push(inferWeekIntent({ blockState, runFloorState, eventDistance }));
-  lines.push(inferNotImportantNow({ blockState, weeksToEvent: weeksOut }));
-  lines.push("");
-  lines.push("2) 🫁 Aerober Status");
-  if (dv == null || dd == null) {
-    lines.push(`Diagnose: keine belastbare GA-Tendenz (Confidence ${confidence}).`);
-  } else {
-    const vdotText = `${dv > 0 ? "+" : ""}${dv.toFixed(1)}%`;
-    const driftText = `${dd > 0 ? "+" : ""}${dd.toFixed(1)}%-Pkt`;
-    if (dv <= -1.5 && dd >= 1) {
-      lines.push(`Diagnose: aerober Status rückläufig (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
-    } else if (dv >= 1.5 && dd <= 0) {
-      lines.push(`Diagnose: aerober Status verbessert (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
-    } else {
-      lines.push(`Diagnose: aerober Status gemischt/stabil (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
-    }
+  lines.push('1) 🧭 Tagesstatus');
+  lines.push(`- Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })} -> ${readinessDecision}.`);
+  lines.push(`- Kontext: ${eventDistance} am ${eventDate || "n/a"}${Number.isFinite(daysToEvent) ? ` (${daysToEvent} Tage)` : ""}.`);
+
+  lines.push('');
+  lines.push('2) 🚦 Readiness (safety-first)');
+  const reasons = [];
+  if (highPattern) reasons.push(`Pattern ${highPattern.id} (${highPattern.hitSignals.join('+')})`);
+  if (hrv2dNegative) reasons.push('HRV 2 Tage negativ');
+  if (driftSignal === 'red') reasons.push('Drift kritisch');
+  if (warningCount >= 2) reasons.push('2+ Warnsignale');
+  lines.push(`- Ampel: ${readinessAmpel}`);
+  lines.push(`- Gründe (max 3): ${(reasons.slice(0,3).join(' | ') || 'keine harten Red Flags')}.`);
+  lines.push(`- Confidence: ${readinessConf.bucket}`);
+  lines.push(`- Entscheidung: ${readinessAmpel === '🟢' ? 'keine Eskalation' : 'heute keine zweite Qualitätseinheit, kein Push'}.`);
+
+  lines.push('');
+  lines.push('3) 🫁 Aerober Status (personalisiert)');
+  lines.push(`- Drift: ${drift != null ? drift.toFixed(1) + '%' : 'unknown'} vs persönlich ${personalDriftWarn}/${personalDriftCritical}% -> ${driftSignal === 'green' ? '🟢' : driftSignal === 'orange' ? '🟠' : driftSignal === 'red' ? '🔴' : '🟠'}.`);
+  lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, nur kontrolliert belasten' : 'stabil genug für planmäßiges easy'}.`);
+  lines.push(`- Confidence: ${aerobicConf.bucket}`);
+  lines.push(`- If-Then: Wenn Drift > ${personalDriftWarn}% bei easy, dann Pace runter oder Einheit um 10-15' kürzen.`);
+
+  lines.push('');
+  lines.push('4) 📈 Belastung & Frequenz');
+  lines.push(`- Frequenz: ${freqCount14 ?? 'unknown'} Läufe/14d vs Sweetspot ${sweetspotLow}-${sweetspotHigh}, Limit ${upperLimit} -> ${freqSignal === 'green' ? '🟢' : freqSignal === 'red' ? '🔴' : '🟠'}.`);
+  lines.push(`- AerobicFloor 7T: Ist ${runLoad7} / Soll ${runTarget || 'n/a'} (Basisziel ${runBaseTarget || 'n/a'}) -> ${runFloorGap ? 'unter Soll, über Häufigkeit schließen' : 'im Zielkorridor'}.`);
+  lines.push(`- Floor-Logik: ${floorModeText}.`);
+  lines.push(`- RunFloor/Volumen: ${runLoad7}/${runTarget || 'n/a'} -> ${runFloorGap ? 'heute nicht über Intensität kompensieren, eher Umfang stabilisieren' : 'Volumen im Korridor halten'}.`);
+  lines.push(`- Confidence: ${loadConf.bucket}`);
+  lines.push(`- If-Then: Wenn 2+ Warnsignale gleichzeitig, dann nur easy + optional kürzen.`);
+
+  lines.push('');
+  lines.push('5) ✅ Top-3 Coaching-Entscheidungen (heute/48h)');
+  lines.push(`- 1) ${readinessAmpel === '🔴' ? 'Intensität pausieren, nur easy/recovery.' : 'Geplanten Reiz halten, aber nicht eskalieren.'}`);
+  lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt kommt über Konsistenz.'}`);
+  lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : '20-30' Kraft/Stabi einplanen.'}`);
+  lines.push(`- Warum (1 Satz): Safety-first priorisiert ${highPattern ? highPattern.id : hrv2dNegative ? 'Recovery-Status' : 'Belastungsstabilität'} vor Tempo.`);
+
+  lines.push('');
+  lines.push('6) 🧬 Ich-Regeln & Lernen (MVP)');
+  lines.push(`- Confirmed (anwenden): ${(confirmedRules.slice(0,2).join(' | ') || 'noch keine bestätigte Regel mit hoher Evidenz')}.`);
+  lines.push(`- Proposed/Updated (testen): ${(proposedRules.slice(0,2).join(' | ') || 'keine neue Hypothese heute')}.`);
+  lines.push(`- Learning today: Du reagierst auf kumulierten Stress robuster mit Frequenzsteuerung als mit zusätzlicher Intensität.`);
+
+  if (debug) {
+    const trace = {
+      highest_priority_trigger: highPattern?.id || (hrv2dNegative ? 'HRV_2D_NEGATIVE' : 'none'),
+      overruled_signals: highPattern && driftSignal === 'green' ? ['drift_ok'] : [],
+      guardrail_applied: readinessAmpel !== '🟢',
+    };
+    lines.push('');
+    lines.push(`DecisionTrace: ${JSON.stringify(trace)}`);
   }
-  const recoveryLines = buildRecoverySignalLines(recoverySignals);
-  if (recoveryLines.length) {
-    lines.push(...recoveryLines);
-  }
-  const driftTodayLines = buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary });
-  if (driftTodayLines.length) {
-    lines.push(...driftTodayLines);
-  }
-  const repRun = pickRepresentativeGARun(perRunInfo);
-  if (repRun) {
-    const subjectiveLoad = Number.isFinite(repRun.drift) && repRun.drift > 6
-      ? "wirkte schwerer als geplant"
-      : "wirkte voraussichtlich kontrolliert";
-    lines.push(`Subjektiv (Proxy): Einheit ${subjectiveLoad}; bitte RPE + Beinstatus kurz notieren.`);
-    if (Number.isFinite(repRun.speed_cv)) {
-      const economyLabel = repRun.speed_cv <= 0.1 ? "technisch sauber" : "ökonomisch unruhig";
-      lines.push(`Technik/Ökonomie: Pace-CV ${(repRun.speed_cv * 100).toFixed(1)}% (${economyLabel}) – lieber kurz & sauber statt lang und schlurfend.`);
-    }
-  } else {
-    lines.push("Subjektiv: Kein GA-Check heute – optional RPE, Beinstatus und mentale Frische im Kommentar erfassen.");
-  }
-  const aerobicRules = [];
-  if (dd != null && dd > 0.5) {
-    aerobicRules.push("Regel: Easy-Tempo runter oder Lauf um 10–15′ kürzen (nächste 3–5 Tage).");
-  } else {
-    aerobicRules.push("Regel: Easy-Tempo halten, kein Tempo-Drift provozieren (nächste 3–5 Tage).");
-  }
-  const avg7Raw = Number(runFloorState?.avg7 ?? 0);
-  const avg21Raw = Number(runFloorState?.avg21 ?? 0);
-  const avg7 = Math.round(avg7Raw);
-  const avg21 = Math.round(avg21Raw);
-  const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
-  const activeDays21 = Number(runFloorState?.activeDays21 ?? 0);
-  const activeGoalDays = RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN;
-  const steadyAllowed = runFloorState?.stabilityOK && avg7Raw >= floorDaily && activeDays21 >= activeGoalDays;
-  aerobicRules.push(steadyAllowed ? "Regel: max. 1× steady kurz (20–25′) nur wenn frisch." : "Regel: kein steady push in den nächsten 3–5 Tagen.");
-  aerobicRules.push("Regel: Strides optional nach easy, nur wenn frisch.");
-  lines.push(...aerobicRules.slice(0, 2));
-  lines.push("");
-  lines.push("3) 💪 Robustheit");
-  if (robustness) {
-    const strengthMinutes7d = Math.round(robustness.strengthMinutes7d ?? 0);
-    const robustnessLabel = robustness.strengthOk ? "im Aufbau, aber stabil" : "im Aufbau, aber wackelig";
-    lines.push(`Diagnose: Kraft/Stabi ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T) – ${robustnessLabel}.`);
-  } else {
-    lines.push("Diagnose: Kraft/Stabi nicht verfügbar.");
-  }
-  lines.push("");
-  lines.push("4) 📈 Belastung & Key-Check");
-  lines.push("Belastung:");
-  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-  const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
-  const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
-  const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
-  const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
-  const runFloorWeekly = Math.round(runFloorState?.floorTarget ?? 0);
-  const runFloorWeeklyText = runFloorWeekly > 0 ? runFloorWeekly : "n/a";
-  const sum21Raw = Number(runFloorState?.sum21 ?? 0);
-  const sum21 = Math.round(sum21Raw);
-  const deloadReady = shouldTriggerDeload(sum21Raw, activeDays21, runFloorState?.deloadActive);
-  const deloadTargetRange =
-    runFloorWeekly > 0
-      ? `${Math.round(runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.min)}–${Math.round(
-          runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.max
-        )}`
-      : "n/a";
-  const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
-  if (bikeSubFactor > 0) {
-    const pct = Math.round(bikeSubFactor * 100);
-    lines.push(`- RunFloor: 7T RunFloor-Äquivalent ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%).`);
-  } else {
-    lines.push(`- RunFloor: 7T Run-Floor ${runLoad7} / Soll ${runTargetText}.`);
-  }
-  const causeLine =
-    activeDays21 < activeGoalDays
-      ? `Ursache: zu wenige aktive Tage (${activeDays21}/${activeGoalDays}) → Häufigkeit fehlt.`
-      : `Ursache: Laufdauer/Load pro Tag zu niedrig (aktive Tage ${activeDays21}/${activeGoalDays} ok).`;
-  lines.push(`- ${causeLine}`);
-  if (activeDays21 < activeGoalDays) {
-    lines.push("- To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
-  } else {
-    lines.push("- To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
-  }
-  lines.push("- Reaktionsregel: Wenn Drift bei Easy erneut >6% ist → Lauf kürzen/abbrechen und Folgetag max. 30′ locker.");
-  lines.push("- Reaktionsregel: Wenn HRV/Schlaf klar unter 7T liegt → nur easy + Technik, kein steady.");
-  const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
-  if (eventDistance === "5 km" && longRunMinutes > 0) {
-    lines.push(`- Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
-  }
-  if (runFloorState?.deloadActive) {
-    lines.push(`- Hinweis: Deload aktiv (Ziel ${deloadTargetRange} Run-Load/Woche).`);
-  } else if (deloadReady) {
-    lines.push(
-      `- Hinweis: Deload bereit (21T Summe ${sum21} & aktive Tage ${activeDays21}) → Ziel ${deloadTargetRange} Run-Load/Woche.`
-    );
-  }
-  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
-  if (transitionLine) lines.push(`- ${transitionLine}`);
-  lines.push("Key-Check:");
-  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
-  const actualKeys = keyCompliance?.actual7 ?? 0;
-  const keyTypes = keyCompliance?.actualTypes?.length
-    ? keyCompliance.actualTypes.map(formatKeyType).join("/")
-    : "n/a";
-  lines.push(`- Key diese Woche: ${actualKeys}/${keyCap} (${keyTypes}).`);
-  lines.push(`- Key-Regel: ${buildKeyConsequence({ keyCompliance, keySpacing, keyCap })}`);
-  lines.push("");
-  lines.push("5) ✅ Fazit");
-  const bottomLineTodos = [];
-  bottomLineTodos.push(activeDays21 < activeGoalDays ? "2× easy 35–45′ zusätzlich für Häufigkeit." : "1–2 Läufe um 10–15′ verlängern (easy).");
-  if (robustness?.strengthOk) {
-    bottomLineTodos.push("Kraft/Stabi 2×20–30′ halten.");
-  } else {
-    bottomLineTodos.push("Noch fehlende Kraft/Stabi-Minuten diese Woche schließen.");
-  }
-  bottomLineTodos.push("Steady nur wenn frisch; nach Key 24–48h nur locker.");
-  lines.push(...bottomLineTodos.slice(0, 3).map((item) => `- ${item}`));
-  const statusLabel = runFloorState?.stabilityOK ? "stabil" : "wackelig";
-  const frequencyLabel = activeDays21 >= activeGoalDays ? "ok" : "zu niedrig";
-  lines.push(`- Fokus: Häufigkeit ${frequencyLabel}, Stabilität ${statusLabel}.`);
-  lines.push("- Priorität: Häufigkeit → Volumen → Spezifität.");
-  lines.push("- Leitlinie der Woche: Nicht fitter werden erzwingen – Belastbarkeit schaffen, damit Tempo später tragfähig ist.");
+
   return lines.join("\n");
 }
 
