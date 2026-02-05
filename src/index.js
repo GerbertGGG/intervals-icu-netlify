@@ -2907,7 +2907,7 @@ function buildComments(
   lines.push('5) ✅ Top-3 Coaching-Entscheidungen (heute/48h)');
   lines.push(`- 1) ${readinessAmpel === '🔴' ? 'Intensität pausieren, nur easy/recovery.' : 'Geplanten Reiz halten, aber nicht eskalieren.'}`);
   lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt kommt über Konsistenz.'}`);
-  lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : '20-30' Kraft/Stabi einplanen.'}`);
+  lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : "20-30' Kraft/Stabi einplanen."}`);
   lines.push(`- Warum (1 Satz): Safety-first priorisiert ${highPattern ? highPattern.id : hrv2dNegative ? 'Recovery-Status' : 'Belastungsstabilität'} vor Tempo.`);
 
   lines.push('');
