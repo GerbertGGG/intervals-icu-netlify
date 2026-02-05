@@ -2853,6 +2853,13 @@ function buildComments(
   ];
   const warningCount = warningSignals.filter(Boolean).length;
   const subjectiveNegative = !!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative;
+  const warningSignalStates = [
+    { label: 'Drift erhöht (🟠/🔴)', active: driftSignal === "orange" || driftSignal === "red" },
+    { label: 'HRV 1T negativ', active: hrv1dNegative },
+    { label: 'Frequenzsignal kritisch (🟠/🔴)', active: freqSignal === "orange" || freqSignal === "red" },
+    { label: 'Schlaf/Erholung suboptimal', active: !!recoverySignals?.sleepLow },
+    { label: 'Subjektive Ermüdung erhöht', active: !!fatigue?.override },
+  ];
 
   const hardRedFlags = {
     hrv2dNegative: hrv2dNegative && !counterIndicator,
@@ -2878,7 +2885,7 @@ function buildComments(
   const readinessDecision =
     readinessAmpel === "🔴"
       ? "Heute gibt es keine Intensität und keinen zusätzlichen Belastungspush."
-      : "Heute gibt es keine Eskalation über den geplanten Reiz hinaus.";
+      : "Heute bleiben wir beim geplanten Reiz und setzen keinen zusätzlichen Belastungsreiz.";
 
   const readinessConf = computeSectionConfidence({
     hasDrift: drift != null,
@@ -2935,6 +2942,7 @@ function buildComments(
       : '';
   lines.push(`- Ampel: ${readinessAmpel}`);
   lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
+  lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
   lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
   lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
   lines.push(`- Entscheidung: ${readinessDecision}`);
