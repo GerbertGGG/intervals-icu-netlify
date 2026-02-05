@@ -2456,6 +2456,18 @@ function extractHrvFromWellness(wellness) {
   return null;
 }
 
+function extractSubjectiveTag(wellness, keys) {
+  if (!wellness || !Array.isArray(keys)) return null;
+  for (const key of keys) {
+    const raw = wellness?.[key];
+    if (raw == null) continue;
+    const value = String(raw).trim().toLowerCase();
+    if (!value) continue;
+    return value;
+  }
+  return null;
+}
+
 function buildRecoverySignalLines(recoverySignals) {
   if (!recoverySignals) return [];
   const lines = [];
@@ -2512,6 +2524,12 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const ydayHrvDeltaPct = hrvBaseline && ydayHrv ? ((ydayHrv - hrvBaseline) / hrvBaseline) * 100 : null;
   const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
   const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
+  const legsTag = extractSubjectiveTag(today, ["legs", "legs_feel", "leg_feel", "muscle_feel", "fatigue_feel"]);
+  const moodTag = extractSubjectiveTag(today, ["mood", "mood_state", "readiness_mood"]);
+  const painTag = extractSubjectiveTag(today, ["pain", "injury", "injury_flag", "pain_flag"]);
+  const legsNegative = !!legsTag && /heavy|schwer|dead|tired|müde|low/.test(legsTag);
+  const moodNegative = !!moodTag && /low|down|bad|schlecht|negativ/.test(moodTag);
+  const painInjury = !!painTag && !/none|no|0|false|ok/.test(painTag);
   return {
     sleepHours: sleepToday,
     sleepBaseline,
@@ -2522,6 +2540,9 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     ydayHrvDeltaPct,
     sleepLow,
     hrvLow,
+    legsNegative,
+    moodNegative,
+    painInjury,
   };
 }
 
@@ -2820,19 +2841,42 @@ function buildComments(
   };
   const patternMatches = matchOverloadPatterns(signalMap);
   const highPattern = patternMatches.find((p) => p.severity === "high");
-  const mediumPattern = patternMatches.find((p) => p.severity === "medium");
 
-  const warningCount = [driftSignal === "orange", hrv1dNegative, freqSignal === "orange", !!recoverySignals?.sleepLow].filter(Boolean).length;
+  const warningSignals = [
+    driftSignal === "orange" || driftSignal === "red",
+    hrv1dNegative,
+    freqSignal === "orange" || freqSignal === "red",
+    !!recoverySignals?.sleepLow,
+    !!fatigue?.override,
+  ];
+  const warningCount = warningSignals.filter(Boolean).length;
+  const subjectiveNegative = !!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative;
+
+  const hardRedFlags = {
+    hrv2dNegative: hrv2dNegative && !counterIndicator,
+    confirmedOverloadHigh: !!highPattern,
+    multiWarningPlusSubjectiveNegative: warningCount >= 2 && subjectiveNegative,
+    painInjury: !!recoverySignals?.painInjury,
+  };
+  const hasHardRedFlag = Object.values(hardRedFlags).some(Boolean);
+
+  const softRedFlags = {
+    frequencyBelowSweetspot: freqCount14 != null && freqCount14 < sweetspotLow,
+    driftNearWarn: drift != null && drift >= personalDriftWarn - 1 && drift < personalDriftCritical,
+    runFloorBelowTarget: runFloorGap,
+    sleepStressSuboptimal: !!recoverySignals?.sleepLow || hrv1dNegative,
+    isolatedWarningSignal: warningCount === 1,
+  };
+  const hasSoftRedFlag = Object.values(softRedFlags).some(Boolean);
 
   let readinessAmpel = "🟢";
-  let readinessDecision = "heute wie geplant mit kontrollierter Intensität";
-  if (highPattern || (hrv2dNegative && !counterIndicator)) {
-    readinessAmpel = "🔴";
-    readinessDecision = "keine Intensität, kein steady, kein push";
-  } else if (warningCount >= 2 || mediumPattern || hrv1dNegative) {
-    readinessAmpel = "🟠";
-    readinessDecision = "nur easy, optional 10-20% kürzen";
-  }
+  if (hasHardRedFlag) readinessAmpel = "🔴";
+  else if (hasSoftRedFlag) readinessAmpel = "🟠";
+
+  const readinessDecision =
+    readinessAmpel === "🔴"
+      ? "Heute gibt es keine Intensität und keinen zusätzlichen Belastungspush."
+      : "Heute gibt es keine Eskalation über den geplanten Reiz hinaus.";
 
   const readinessConf = computeSectionConfidence({
     hasDrift: drift != null,
@@ -2877,15 +2921,21 @@ function buildComments(
 
   lines.push('');
   lines.push('2) 🚦 Readiness (safety-first)');
-  const reasons = [];
-  if (highPattern) reasons.push(`Pattern ${highPattern.id} (${highPattern.hitSignals.join('+')})`);
-  if (hrv2dNegative) reasons.push('HRV 2 Tage negativ');
-  if (driftSignal === 'red') reasons.push('Drift kritisch');
-  if (warningCount >= 2) reasons.push('2+ Warnsignale');
+  const readinessMissing = [];
+  if (drift == null) readinessMissing.push('Drift heute nicht messbar');
+  if (hrvDeltaPct == null) readinessMissing.push('HRV heute fehlt');
+  let readinessBucket = readinessConf.bucket;
+  if (readinessMissing.length && readinessBucket === 'high') readinessBucket = 'medium';
+  const readinessSummary = hasHardRedFlag ? 'harte Red Flag aktiv' : 'keine harte Red Flag aktiv';
+  const whyNotRed =
+    readinessAmpel !== '🔴' && warningCount > 0
+      ? ' Warnsignale betreffen aktuell die Trainingsstruktur, nicht die akute Belastbarkeit.'
+      : '';
   lines.push(`- Ampel: ${readinessAmpel}`);
-  lines.push(`- Gründe (max 3): ${(reasons.slice(0,3).join(' | ') || 'keine harten Red Flags')}.`);
-  lines.push(`- Confidence: ${readinessConf.bucket}`);
-  lines.push(`- Entscheidung: ${readinessAmpel === '🟢' ? 'keine Eskalation' : 'heute keine zweite Qualitätseinheit, kein Push'}.`);
+  lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '✅' : '❌'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '✅' : '❌'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '✅' : '❌'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '✅' : '❌'}.`);
+  lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
+  lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
+  lines.push(`- Entscheidung: ${readinessDecision}`);
 
   lines.push('');
   lines.push('3) 🫁 Aerober Status (personalisiert)');
