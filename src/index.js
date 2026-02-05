@@ -2020,6 +2020,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
+    let recoverySignals = null;
+    try {
+      recoverySignals = await computeRecoverySignals(ctx, env, day);
+    } catch {
+      recoverySignals = null;
+    }
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
@@ -2261,6 +2267,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       aerobicFloorActive,
       fatigue,
       longRunSummary,
+      recoverySignals,
       bikeSubFactor,
       weeksToEvent,
     }, { debug });
@@ -2376,6 +2383,103 @@ function buildAerobicTrendLine(trend) {
   return `GA-Form stabil/gemischt (VDOT ${vdotArrow} ${dvText}, HR-Drift ${driftArrow} ${ddText})`;
 }
 
+function extractSleepHoursFromWellness(wellness) {
+  if (!wellness) return null;
+  const candidates = [
+    wellness.sleep,
+    wellness.sleep_hours,
+    wellness.sleep_duration,
+    wellness.sleep_time,
+    wellness.sleep_hr,
+  ];
+  for (const value of candidates) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) continue;
+    if (num > 24) return round(num / 60, 2);
+    return num;
+  }
+  return null;
+}
+
+function extractHrvFromWellness(wellness) {
+  if (!wellness) return null;
+  const candidates = [
+    wellness.hrv,
+    wellness.hrv_rmssd,
+    wellness.hrv_sdnn,
+  ];
+  for (const value of candidates) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) continue;
+    return num;
+  }
+  return null;
+}
+
+function buildRecoverySignalLines(recoverySignals) {
+  if (!recoverySignals) return [];
+  const lines = [];
+  const { sleepHours, sleepBaseline, sleepDeltaPct, hrv, hrvBaseline, hrvDeltaPct, sleepLow, hrvLow } = recoverySignals;
+  const hasSleep = sleepHours != null;
+  const hasHrv = hrv != null;
+  if (!hasSleep && !hasHrv) return [];
+  const parts = [];
+  if (hasSleep) {
+    const sleepDeltaText = sleepBaseline != null ? ` (${sleepDeltaPct > 0 ? "+" : ""}${sleepDeltaPct.toFixed(0)}% vs 7T)` : "";
+    parts.push(`Schlaf ${sleepHours.toFixed(1)}h${sleepDeltaText}`);
+  }
+  if (hasHrv) {
+    const hrvDeltaText = hrvBaseline != null ? ` (${hrvDeltaPct > 0 ? "+" : ""}${hrvDeltaPct.toFixed(0)}% vs 7T)` : "";
+    parts.push(`HRV ${Math.round(hrv)}${hrvDeltaText}`);
+  }
+  lines.push(`Recovery-Check: ${parts.join(" | ")}.`);
+  if (sleepLow || hrvLow) {
+    const issues = [];
+    if (sleepLow) issues.push("Schlaf");
+    if (hrvLow) issues.push("HRV");
+    lines.push(`Hinweis: ${issues.join(" & ")} niedriger als üblich → Ermüdung wahrscheinlicher.`);
+  }
+  return lines;
+}
+
+async function computeRecoverySignals(ctx, env, dayIso) {
+  const today = await fetchWellnessDay(ctx, env, dayIso);
+  const sleepToday = extractSleepHoursFromWellness(today);
+  const hrvToday = extractHrvFromWellness(today);
+  if (sleepToday == null && hrvToday == null) {
+    return null;
+  }
+  const priorDays = [];
+  for (let i = 1; i <= 7; i += 1) {
+    priorDays.push(isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000)));
+  }
+  const sleepVals = [];
+  const hrvVals = [];
+  for (const iso of priorDays) {
+    const wellness = await fetchWellnessDay(ctx, env, iso);
+    const sleep = extractSleepHoursFromWellness(wellness);
+    const hrv = extractHrvFromWellness(wellness);
+    if (sleep != null) sleepVals.push(sleep);
+    if (hrv != null) hrvVals.push(hrv);
+  }
+  const sleepBaseline = sleepVals.length ? avg(sleepVals) : null;
+  const hrvBaseline = hrvVals.length ? avg(hrvVals) : null;
+  const sleepDeltaPct = sleepBaseline ? ((sleepToday - sleepBaseline) / sleepBaseline) * 100 : 0;
+  const hrvDeltaPct = hrvBaseline ? ((hrvToday - hrvBaseline) / hrvBaseline) * 100 : 0;
+  const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
+  const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
+  return {
+    sleepHours: sleepToday,
+    sleepBaseline,
+    sleepDeltaPct,
+    hrv: hrvToday,
+    hrvBaseline,
+    hrvDeltaPct,
+    sleepLow,
+    hrvLow,
+  };
+}
+
 function buildNextRunRecommendation({
   runFloorState,
   policy,
@@ -2485,6 +2589,7 @@ function buildComments(
     aerobicFloorActive,
     fatigue,
     longRunSummary,
+    recoverySignals,
     bikeSubFactor,
     weeksToEvent,
   },
@@ -2521,6 +2626,10 @@ function buildComments(
     } else {
       lines.push(`Diagnose: aerober Status gemischt/stabil (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
     }
+  }
+  const recoveryLines = buildRecoverySignalLines(recoverySignals);
+  if (recoveryLines.length) {
+    lines.push(...recoveryLines);
   }
   const aerobicRules = [];
   if (dd != null && dd > 0.5) {

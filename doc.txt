@@ -146,6 +146,37 @@ Stale-Logik:
 Motor-Text im Kommentar z.B.:
 - "🏎️ Motor-Index: 68/100 (stabil) ↑ | EF Δ +1.2% (28d) | Drift Δ -0.7%-Pkt (14d)"
 
+6.6 Drift-Interpretation (Coach-Perspektive)
+Für die Einordnung der Drift hilft ein einfacher Coach-Check:
+
+Wie erkennt der Worker einen Longrun?
+- Longrun = Lauf mit moving_time/elapsed_time >= 60 min (LONGRUN_MIN_SECONDS).
+- Es gibt kein spezielles Tag; die Erkennung ist rein über die Dauer.
+
+Für GA-Läufe
+- Ziel: < 5 % Drift
+- Wenn regelmäßig > 5 %:
+  - Tempo minimal senken
+  - oder Dauer kürzen
+
+Für Longruns
+- Erste Hälfte: niedrige Drift
+- Zweite Hälfte darf steigen
+  => Progression ≠ Problem (solange Pace stabil bleibt und die HR nicht „wegläuft“)
+
+Ermüdung vs. Form – so deutet es ein Coach
+- Ermüdungssignal, wenn bei vergleichbarem Lauf (gleiche Strecke, Pace, Bedingungen)
+  - Drift plötzlich höher als sonst ist
+  - und/oder die HF bei gleicher Pace früher ansteigt
+  => häufig Schlaf, Stress, Hitze, Dehydrierung oder kumulative Last
+- Recovery-Check: Schlaf/HRV berücksichtigen (wenn vorhanden)
+  - Niedriger Schlaf oder HRV im Vergleich zum 7-Tage-Schnitt => Ermüdung wahrscheinlicher
+- Formsignal, wenn über mehrere vergleichbare GA-Läufe
+  - Drift tendenziell sinkt oder stabil bleibt
+  - und EF gleichzeitig stabil bleibt oder steigt
+  => spricht für aerobe Stabilität/Verbesserung
+- Einzelwert ≠ Diagnose: immer 2–3 ähnliche Läufe vergleichen und Kontext prüfen
+
 7) WELLNESS-KOMMENTAR: AUFBAU
 -----------------------------
 Jeder Tag bekommt einen Kommentar mit folgenden Blöcken:
