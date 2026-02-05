@@ -2932,7 +2932,7 @@ function buildComments(
       ? ' Warnsignale betreffen aktuell die Trainingsstruktur, nicht die akute Belastbarkeit.'
       : '';
   lines.push(`- Ampel: ${readinessAmpel}`);
-  lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '✅' : '❌'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '✅' : '❌'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '✅' : '❌'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '✅' : '❌'}.`);
+  lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
   lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
   lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
   lines.push(`- Entscheidung: ${readinessDecision}`);
