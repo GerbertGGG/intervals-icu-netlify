@@ -2976,13 +2976,10 @@ function buildComments(
   lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt kommt über Konsistenz.'}`);
   lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : "20-30' Kraft/Stabi einplanen."}`);
 
-  let decisionTag = 'recovery_guardrail';
   let decisionRationaleSentence = 'Wir entscheiden uns heute für Stabilisieren statt Eskalieren, weil deine Regel nach Key-Einheiten zuerst 24-48h easy priorisiert.';
   if (hasHardRedFlag || driftSignal === 'orange' || driftSignal === 'red') {
-    decisionTag = 'shorten_not_push';
     decisionRationaleSentence = 'Wir entscheiden uns heute für Kürzen statt Pace-Halten, weil bei dir Drift ein frühes Ermüdungssignal ist.';
   } else if (runFloorGap) {
-    decisionTag = 'frequency_over_intensity';
     decisionRationaleSentence = 'Wir entscheiden uns heute für Häufigkeit statt Tempo, weil du auf kumulierten Stress robuster reagierst als auf Intensität.';
   }
   lines.push(`- ${decisionRationaleSentence}`);
@@ -2992,17 +2989,6 @@ function buildComments(
   lines.push(`- Confirmed (anwenden): ${(confirmedRules.slice(0,2).join(' | ') || 'noch keine bestätigte Regel mit hoher Evidenz')}.`);
   lines.push(`- Proposed/Updated (testen): ${(proposedRules.slice(0,2).join(' | ') || 'keine neue Hypothese heute')}.`);
   lines.push(`- Learning today: Du reagierst auf kumulierten Stress robuster mit Frequenzsteuerung als mit zusätzlicher Intensität.`);
-
-  if (debug) {
-    const trace = {
-      highest_priority_trigger: highPattern?.id || (hrv2dNegative ? 'HRV_2D_NEGATIVE' : 'none'),
-      overruled_signals: highPattern && driftSignal === 'green' ? ['drift_ok'] : [],
-      guardrail_applied: readinessAmpel !== '🟢',
-      decision_tag: decisionTag,
-    };
-    lines.push('');
-    lines.push(`DecisionTrace: ${JSON.stringify(trace)}`);
-  }
 
   return lines.join("\n");
 }
