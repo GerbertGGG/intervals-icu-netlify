@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  applyTextGate,
   buildLearningNarrative,
   computeLearningEvidence,
   computeLearningStats,
@@ -223,7 +224,28 @@ function makeEvent({
   assert.ok(!narrative.includes("robuster als"));
   assert.ok(!narrative.includes("besser als"));
   assert.ok(!narrative.includes("als die Alternativen"));
+  assert.ok(narrative.includes("gut verträglich gezeigt"));
   assert.ok(narrative.includes("zu wenig getestet, um einen Vergleich zu ziehen"));
+}
+
+// T1b) Text-Gate rewrite for comparisons when only one arm has data
+{
+  const gated = applyTextGate(
+    "Wir entscheiden uns heute für Häufigkeit statt Tempo, weil du auf kumulierten Stress robuster reagierst als auf Intensität.",
+    {
+      recommendedArm: "FREQ_UP",
+      nEffRec: 19.3,
+      nEffSecond: 0,
+      nArmsWithData: 1,
+      confidenceRec: 0.76,
+      confidenceContext: 0.76,
+      explorationNeed: false,
+      policyReason: "RUN_FLOOR_GAP_HIGH_STRESS",
+    }
+  );
+  assert.ok(!gated.includes("robuster als"));
+  assert.ok(gated.includes("Häufigkeit statt Tempo"));
+  assert.ok(gated.includes("Runload unter dem Ziel"));
 }
 
 // T2) Zwei Arme mit Daten -> vorsichtiger Vergleich mit Hedge (Level 2)
@@ -240,10 +262,26 @@ function makeEvent({
   ];
   const evidence = computeLearningEvidence(events, endDay, contextKey);
   const narrative = buildLearningNarrative(evidence);
-  assert.ok(narrative.includes("spricht derzeit mehr für") || narrative.includes("robuster als"));
-  if (narrative.includes("spricht derzeit mehr für")) {
-    assert.ok(narrative.includes("vorläufig"));
-  }
+  assert.ok(narrative.includes("spricht derzeit mehr für"));
+  assert.ok(narrative.includes("vorläufig"));
+  assert.ok(!narrative.includes("robuster als"));
+}
+
+// T2b) Hohe Confidence -> starker Vergleich erlaubt (Level 3)
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=T|stress=MED|hrv=LOW|drift=WARN|sleep=LOW|mono=HIGH";
+  const events = [
+    ...Array.from({ length: 8 }, () =>
+      makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "GOOD", contextKey })
+    ),
+    ...Array.from({ length: 8 }, () =>
+      makeEvent({ day: endDay, strategyArm: "INTENSITY_SHIFT", outcomeClass: "BAD", contextKey })
+    ),
+  ];
+  const evidence = computeLearningEvidence(events, endDay, contextKey);
+  const narrative = buildLearningNarrative(evidence);
+  assert.ok(narrative.includes("robuster als"));
 }
 
 // T3) recommendedArm == NEUTRAL -> keine robuste/bewährt Sprache

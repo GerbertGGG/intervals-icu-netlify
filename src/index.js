@@ -153,6 +153,7 @@ export default {
 };
 
 export {
+  applyTextGate,
   computeLearningEvidence,
   computeLearningOutcomeScore,
   computeLearningStats,
@@ -164,7 +165,10 @@ export {
   deriveMonotonyBucket,
   deriveSleepBucket,
   deriveStressBucket,
+  formatNeff,
+  formatPct,
   formatContextSummary,
+  getClaimsLevel,
   normalizeOutcomeClass,
   normalizeStrategyArm,
   buildLearningNarrative,
@@ -2075,9 +2079,9 @@ function computeLearningEvidence(events, endDayIso, contextKey) {
 
 function buildLearningNarrativeState(evidence) {
   const recommendation = evidence?.recommendation;
-  const nEffArm = Number.isFinite(recommendation?.nEffArm) ? recommendation.nEffArm : 0;
+  const nEffRec = Number.isFinite(recommendation?.nEffArm) ? recommendation.nEffArm : 0;
   const nEffTotal = Number.isFinite(recommendation?.nEffTotal) ? recommendation.nEffTotal : 0;
-  const confidenceArm = Number.isFinite(recommendation?.confidenceArm) ? recommendation.confidenceArm : 0;
+  const confidenceRec = Number.isFinite(recommendation?.confidenceArm) ? recommendation.confidenceArm : 0;
   const confidenceContext = Number.isFinite(recommendation?.confidenceContext) ? recommendation.confidenceContext : 0;
   const baseExplorationNeed = recommendation?.explorationNeed ?? true;
   const isGlobalFallback = recommendation?.globalFallback ?? false;
@@ -2089,31 +2093,30 @@ function buildLearningNarrativeState(evidence) {
   for (const arm of STRATEGY_ARMS) {
     nEffByArm[arm] = Number.isFinite(arms[arm]?.nEff) ? arms[arm].nEff : 0;
   }
-  const nArmsWithData = STRATEGY_ARMS.filter((arm) => nEffByArm[arm] >= LEARNING_TEXT_MIN_ARM_NEFF).length;
-  const secondArm = recommendation?.secondArm || recommendedArm;
+  const rankedArms = STRATEGY_ARMS
+    .filter((arm) => nEffByArm[arm] >= LEARNING_TEXT_MIN_ARM_NEFF)
+    .slice()
+    .sort((a, b) => (arms[b]?.utilityMean ?? -Infinity) - (arms[a]?.utilityMean ?? -Infinity));
+  const secondArm = rankedArms.find((arm) => arm !== recommendedArm) || recommendedArm;
   const nEffSecond = Number.isFinite(nEffByArm[secondArm]) ? nEffByArm[secondArm] : 0;
-  const utilityDiff = Number.isFinite(recommendation?.utilityDiff) ? recommendation.utilityDiff : null;
-  const explorationNeed = baseExplorationNeed && nEffArm < LEARNING_TEXT_MIN_ARM_NEFF;
-  const hasSufficientEvidence = !explorationNeed
-    && nEffArm >= LEARNING_TEXT_MIN_ARM_NEFF
-    && nEffTotal >= LEARNING_MIN_NEFF;
+  const nArmsWithData = rankedArms.length;
+
+  const explorationNeed = baseExplorationNeed && (nEffRec < LEARNING_TEXT_MIN_ARM_NEFF || confidenceRec < 0.4);
 
   return {
-    hasSufficientEvidence,
-    explorationNeed,
-    isGlobalFallback,
-    nEffArm,
-    nEffTotal,
-    confidenceArm,
-    confidenceContext,
-    contextSummary,
     contextKey,
+    contextSummary,
+    isGlobalFallback,
     recommendedArm,
     secondArm,
-    nEffSecond,
+    nEffTotal,
     nEffByArm,
     nArmsWithData,
-    utilityDiff,
+    nEffRec,
+    nEffSecond,
+    confidenceRec,
+    confidenceContext,
+    explorationNeed,
   };
 }
 
@@ -2129,7 +2132,7 @@ function formatLearningEvidenceLines(evidence, narrativeState) {
     return `- ${label}: ${formatNeff(nEff)} Beobachtungen`;
   });
 
-  const confArmPct = formatPct(narrativeState.confidenceArm);
+  const confArmPct = formatPct(narrativeState.confidenceRec);
   const confContextPct = formatPct(narrativeState.confidenceContext);
   const confidenceLine = `- Confidence (Datenmenge): Arm ${confArmPct} | Kontext ${confContextPct}`;
 
@@ -2162,32 +2165,73 @@ function sanitizeLearningText(text) {
   return out.trim();
 }
 
-function computeClaimsLevel(state) {
-  if (state.explorationNeed || state.nEffArm < LEARNING_TEXT_MIN_ARM_NEFF || state.confidenceArm < 0.4) return 0;
+function getClaimsLevel(state) {
+  if (state.explorationNeed || state.nEffRec < LEARNING_TEXT_MIN_ARM_NEFF || state.confidenceRec < 0.4) return 0;
   const hasCompareArms = state.nArmsWithData >= LEARNING_TEXT_MIN_COMPARE_ARMS
+    && state.nEffRec >= LEARNING_TEXT_MIN_COMPARE_NEFF
     && state.nEffSecond >= LEARNING_TEXT_MIN_COMPARE_NEFF;
   if (!hasCompareArms) return 1;
-  if (state.confidenceContext < 0.5) return 1;
-  if (
-    state.confidenceContext >= LEARNING_TEXT_MIN_CONF_FOR_STRONG
-    && (state.utilityDiff == null || state.utilityDiff >= LEARNING_TEXT_UTILITY_EPS)
-  ) {
-    return 3;
+  const level = state.confidenceContext >= LEARNING_TEXT_MIN_CONF_FOR_STRONG ? 3 : 2;
+  return state.recommendedArm === "NEUTRAL" ? Math.min(level, 1) : level;
+}
+
+function applyTextGate(text, state) {
+  const claimsLevel = getClaimsLevel(state);
+  const isNeutral = state.recommendedArm === "NEUTRAL";
+  const blocklist = [
+    "robuster als",
+    "besser als",
+    "als Intensität",
+    "als die Alternativen",
+    "reagierst robuster",
+    "robuster reagierst",
+  ];
+  const neutralBlocklist = ["robust", "bewährt", "stabiler"];
+  let out = String(text || "");
+
+  if (claimsLevel <= 1) {
+    const hasBlocked = blocklist.some((phrase) => out.toLowerCase().includes(phrase));
+    if (hasBlocked) {
+      if (state.policyReason === "RUN_FLOOR_GAP_HIGH_STRESS") {
+        out =
+          "Wir entscheiden uns heute für Häufigkeit statt Tempo, weil dein Runload unter dem Ziel liegt und der Gesamtstress erhöht ist – so schließen wir die Lücke kontrolliert, ohne zusätzliche Intensität zu erzwingen.";
+      } else {
+        out =
+          "Wir priorisieren heute Häufigkeit und Kontrolle, weil das in dieser Situation die sicherste und plan-stabile Option ist.";
+      }
+    }
   }
-  return 2;
+
+  if (claimsLevel <= 1) {
+    for (const phrase of blocklist) {
+      const rx = new RegExp(phrase, "gi");
+      out = out.replace(rx, "");
+    }
+  }
+
+  if (isNeutral) {
+    for (const phrase of neutralBlocklist) {
+      const rx = new RegExp(phrase, "gi");
+      out = out.replace(rx, "");
+    }
+  }
+
+  return sanitizeLearningText(out);
 }
 
 function getLearningText(state) {
   const armLabel = STRATEGY_LABELS[state.recommendedArm] || state.recommendedArm || "keine Anpassung";
   const secondArmLabel = STRATEGY_LABELS[state.secondArm] || state.secondArm || "Alternative";
-  const confArmPct = formatPct(state.confidenceArm);
+  const confArmPct = formatPct(state.confidenceRec);
   const confCtxPct = formatPct(state.confidenceContext);
-  const nEffArm = formatNeff(state.nEffArm);
+  const nEffArm = formatNeff(state.nEffRec);
   const nEffSecond = formatNeff(state.nEffSecond);
   const contextText = state.contextSummary || "aktueller Kontext";
-  const suffix = state.isGlobalFallback ? " (basierend auf globalen Daten)" : "";
+  const suffix = state.isGlobalFallback || state.contextKey === LEARNING_GLOBAL_CONTEXT_KEY
+    ? " (basierend auf globalen Daten)"
+    : "";
   const isNeutral = state.recommendedArm === "NEUTRAL";
-  let level = computeClaimsLevel(state);
+  let level = getClaimsLevel(state);
   if (isNeutral) level = Math.min(level, 1);
   let text = "";
 
@@ -2203,7 +2247,7 @@ function getLearningText(state) {
     text = `Learning today:\nIn (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\n(n_eff=${nEffArm}/${nEffSecond}, Confidence=${confCtxPct}).`;
   }
 
-  return sanitizeLearningText(`${text}${suffix}`);
+  return applyTextGate(`${text}${suffix}`, state);
 }
 
 function buildLearningNarrative(payload) {
@@ -2778,6 +2822,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       monotony: fatigue?.monotony,
     });
     const learningEvidence = computeLearningEvidence(pastLearningEvents, day, contextKey);
+    const learningNarrativeState = buildLearningNarrativeState(learningEvidence);
     const learningEvent = {
       day,
       decisionArm: strategyDecision.strategyArm === "FREQ_UP" ? "frequency" : strategyDecision.strategyArm === "INTENSITY_SHIFT" ? "intensity" : "neutral",
@@ -3748,7 +3793,11 @@ function buildComments(
   } else if (runFloorGap) {
     decisionRationaleSentence = 'Wir entscheiden uns heute für Häufigkeit statt Tempo, weil du auf kumulierten Stress robuster reagierst als auf Intensität.';
   }
-  lines.push(`- ${decisionRationaleSentence}`);
+  const gatedDecisionRationale = applyTextGate(decisionRationaleSentence, {
+    ...learningNarrativeState,
+    policyReason: strategyDecision?.policyReason || null,
+  });
+  lines.push(`- ${gatedDecisionRationale}`);
 
   lines.push('');
   lines.push('6) 🧬 Ich-Regeln & Lernen');
