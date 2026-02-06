@@ -164,6 +164,7 @@ export {
   deriveMonotonyBucket,
   deriveSleepBucket,
   deriveStressBucket,
+  formatContextSummary,
   normalizeOutcomeClass,
   normalizeStrategyArm,
   buildLearningNarrative,
@@ -278,6 +279,9 @@ const LEARNING_CONFIDENCE_K = 6;
 const LEARNING_MIN_CONF = 0.4;
 const LEARNING_UTILITY_EPS = 0.05;
 const LEARNING_UTILITY_LAMBDA = 1.5;
+const LEARNING_MIN_ARM_NEFF = 0.5;
+const LEARNING_SAFE_FALLBACK_ARMS = ["HOLD_ABSORB", "FREQ_UP", "NEUTRAL"];
+const LEARNING_EXPLORE_UNTRIED = false;
 const LEARNING_GLOBAL_CONTEXT_KEY = "ALL";
 
 const STRATEGY_ARMS = [
@@ -1918,47 +1922,79 @@ function computeLearningStats(events, endDayIso) {
     const goodPosterior = betaPosteriorMean(1 + goodSuccess, 1 + goodFail);
     const badPosterior = betaPosteriorMean(1 + badSuccess, 1 + badFail);
     const utilityMean = computeLearningUtility(goodPosterior, badPosterior);
-    const confidence = clamp(nEff / (nEff + LEARNING_CONFIDENCE_K), 0, 1);
+    const confidenceArm = clamp(nEff / (nEff + LEARNING_CONFIDENCE_K), 0, 1);
 
     armStats[arm] = {
       nEff,
       goodPosterior,
       badPosterior,
       utilityMean,
-      confidence,
+      confidenceArm,
     };
   }
 
   const totalEff = sum(Object.values(armStats).map((x) => x.nEff || 0));
-  const sortedByUtility = STRATEGY_ARMS.slice().sort((a, b) => armStats[b].utilityMean - armStats[a].utilityMean);
+  const contextConfidence = clamp(totalEff / (totalEff + LEARNING_CONFIDENCE_K), 0, 1);
+  const armsWithData = STRATEGY_ARMS.filter((arm) => (armStats[arm]?.nEff || 0) >= LEARNING_MIN_ARM_NEFF);
+  const rankingPool = armsWithData.length > 0 ? armsWithData : LEARNING_SAFE_FALLBACK_ARMS.slice();
+  const sortedByUtility = rankingPool.slice().sort((a, b) => armStats[b].utilityMean - armStats[a].utilityMean);
   const bestArm = sortedByUtility[0] || "NEUTRAL";
   const secondArm = sortedByUtility[1] || bestArm;
   const utilityDiff = Math.abs(armStats[bestArm].utilityMean - armStats[secondArm].utilityMean);
-  const topConfidence = armStats[bestArm]?.confidence ?? 0;
-  const explorationNeed = utilityDiff < LEARNING_UTILITY_EPS || topConfidence < LEARNING_MIN_CONF;
+  const nArmsWithData = armsWithData.length;
+  const explorationNeed = contextConfidence < LEARNING_MIN_CONF
+    || nArmsWithData < 2
+    || utilityDiff < LEARNING_UTILITY_EPS;
 
   return {
     totalEff,
+    contextConfidence,
     armStats,
+    rankingPool,
+    armsWithData,
+    nArmsWithData,
     bestArm,
     secondArm,
     utilityDiff,
     explorationNeed,
-    topConfidence,
   };
 }
 
 function chooseLearningRecommendation(stats, contextKey, contextSummary) {
-  const recommended = stats.bestArm || "NEUTRAL";
-  const confidence = stats.topConfidence ?? 0;
   const explorationNeed = stats.explorationNeed ?? true;
-  const nEff = stats.totalEff ?? 0;
+  const recommended = stats.bestArm || "NEUTRAL";
+  const nEffTotal = stats.totalEff ?? 0;
+  const nEffArm = stats.armStats?.[recommended]?.nEff ?? 0;
+  const confidenceContext = stats.contextConfidence ?? 0;
+  const confidenceArm = stats.armStats?.[recommended]?.confidenceArm ?? 0;
   const isGlobal = contextKey === LEARNING_GLOBAL_CONTEXT_KEY;
+  const exploreUntried = LEARNING_EXPLORE_UNTRIED;
+  let recommendationMode = explorationNeed ? "CONSERVATIVE" : "EXPLOIT";
+  let chosenArm = recommended;
+  let chosenEff = nEffArm;
+  let chosenConfidence = confidenceArm;
+
+  if (explorationNeed && exploreUntried) {
+    const untried = stats.rankingPool?.filter((arm) => (stats.armStats?.[arm]?.nEff || 0) <= 0) || [];
+    const safeUntried = untried.filter((arm) => LEARNING_SAFE_FALLBACK_ARMS.includes(arm));
+    const exploreArm = safeUntried[0];
+    if (exploreArm) {
+      chosenArm = exploreArm;
+      chosenEff = stats.armStats?.[exploreArm]?.nEff ?? 0;
+      chosenConfidence = stats.armStats?.[exploreArm]?.confidenceArm ?? 0;
+      recommendationMode = "EXPLORATION";
+    }
+  }
+
   return {
-    strategyArm: recommended,
-    confidence,
+    strategyArm: chosenArm,
+    confidenceContext,
+    confidenceArm: chosenConfidence,
     explorationNeed,
-    nEff,
+    recommendationMode,
+    exploreUntried,
+    nEffTotal,
+    nEffArm: chosenEff,
     contextKey,
     contextSummary,
     globalFallback: isGlobal,
@@ -2036,12 +2072,16 @@ function buildLearningNarrative(evidence) {
 
   const armLabel = STRATEGY_LABELS[recommendation.strategyArm] || recommendation.strategyArm;
   const contextText = recommendation.contextSummary || "aktueller Kontext";
-  const confPct = Math.round((recommendation.confidence || 0) * 100);
-  const nEffText = Number.isFinite(recommendation.nEff) ? recommendation.nEff.toFixed(1) : "0.0";
+  const confPct = Math.round((recommendation.confidenceArm || 0) * 100);
+  const nEffText = Number.isFinite(recommendation.nEffArm) ? recommendation.nEffArm.toFixed(1) : "0.0";
   const fallbackNote = recommendation.globalFallback ? " (basierend auf globalen Daten, da Kontext noch wenig Historie hat)" : "";
 
+  if (recommendation.explorationNeed && recommendation.exploreUntried) {
+    return `Learning today: Wir sind noch unsicher in (${contextText}); wir testen ${armLabel} klein dosiert (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
+  }
+
   if (recommendation.explorationNeed) {
-    return `Learning today: Wir sind noch unsicher in (${contextText}); wir testen ${armLabel} konservativ (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
+    return `Learning today: Wir sind noch unsicher in (${contextText}); wir bleiben konservativ bei ${armLabel} (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
   }
 
   const bestArm = STRATEGY_LABELS[recommendation.strategyArm] || recommendation.strategyArm;
