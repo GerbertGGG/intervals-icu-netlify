@@ -2064,28 +2064,93 @@ function computeLearningEvidence(events, endDayIso, contextKey) {
   };
 }
 
-function buildLearningNarrative(evidence) {
+function buildLearningNarrativeState(evidence) {
   const recommendation = evidence?.recommendation;
-  if (!recommendation) {
-    return "Learning today: Noch zu wenig Evidenz – wir sammeln weiter strukturierte Beobachtungen.";
+  const nEffArm = Number.isFinite(recommendation?.nEffArm) ? recommendation.nEffArm : 0;
+  const nEffTotal = Number.isFinite(recommendation?.nEffTotal) ? recommendation.nEffTotal : 0;
+  const confidenceArm = Number.isFinite(recommendation?.confidenceArm) ? recommendation.confidenceArm : 0;
+  const confidenceContext = Number.isFinite(recommendation?.confidenceContext) ? recommendation.confidenceContext : 0;
+  const explorationNeed = recommendation?.explorationNeed ?? true;
+  const isGlobalFallback = recommendation?.globalFallback ?? false;
+  const hasSufficientEvidence = !explorationNeed
+    && nEffArm >= LEARNING_MIN_ARM_NEFF
+    && nEffTotal >= LEARNING_MIN_NEFF;
+
+  return {
+    hasSufficientEvidence,
+    explorationNeed,
+    isGlobalFallback,
+    nEffArm,
+    nEffTotal,
+    confidenceArm,
+    confidenceContext,
+  };
+}
+
+function learningEvidenceLabel(isGlobal) {
+  return isGlobal ? "Evidenz (global)" : "Evidenz (Kontext)";
+}
+
+function formatLearningEvidenceLines(evidence, narrativeState) {
+  const arms = evidence?.arms || {};
+  const armLines = STRATEGY_ARMS.map((arm) => {
+    const label = STRATEGY_LABELS[arm] || arm;
+    const nEff = Number.isFinite(arms[arm]?.nEff) ? arms[arm].nEff : 0;
+    return `- ${label}: ${nEff.toFixed(1)} Beobachtungen`;
+  });
+
+  const confArmPct = Math.round(clamp(narrativeState.confidenceArm, 0, 1) * 100);
+  const confContextPct = Math.round(clamp(narrativeState.confidenceContext, 0, 1) * 100);
+  const confidenceLine = `- Confidence (Datenmenge): Arm ${confArmPct}% | Kontext ${confContextPct}%`;
+
+  return [learningEvidenceLabel(narrativeState.isGlobalFallback), ...armLines, confidenceLine];
+}
+
+function buildLearningTodayLine(recommendation, narrativeState) {
+  const contextText = recommendation?.contextSummary || "aktueller Kontext";
+  const armLabel = STRATEGY_LABELS[recommendation?.strategyArm] || recommendation?.strategyArm || "keine Anpassung";
+  const fallbackNote = narrativeState.isGlobalFallback ? " (Hinweis: noch wenig kontextspezifische Daten, daher globaler Überblick.)" : "";
+
+  if (narrativeState.explorationNeed && recommendation?.exploreUntried) {
+    return `Learning today:\nWir haben aktuell noch zu wenig Vergleichsdaten im (${contextText}).\nWir testen ${armLabel} klein dosiert und sammeln gezielt weitere Beobachtungen.${fallbackNote}`;
   }
 
-  const armLabel = STRATEGY_LABELS[recommendation.strategyArm] || recommendation.strategyArm;
-  const contextText = recommendation.contextSummary || "aktueller Kontext";
-  const confPct = Math.round((recommendation.confidenceArm || 0) * 100);
-  const nEffText = Number.isFinite(recommendation.nEffArm) ? recommendation.nEffArm.toFixed(1) : "0.0";
-  const fallbackNote = recommendation.globalFallback ? " (basierend auf globalen Daten, da Kontext noch wenig Historie hat)" : "";
-
-  if (recommendation.explorationNeed && recommendation.exploreUntried) {
-    return `Learning today: Wir sind noch unsicher in (${contextText}); wir testen ${armLabel} klein dosiert (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
+  if (narrativeState.explorationNeed) {
+    return `Learning today:\nDie Datenlage ist noch unsicher im (${contextText}).\nWir bleiben vorerst bei ${armLabel} und beobachten weiter.${fallbackNote}`;
   }
 
-  if (recommendation.explorationNeed) {
-    return `Learning today: Wir sind noch unsicher in (${contextText}); wir bleiben konservativ bei ${armLabel} (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
+  if (!narrativeState.hasSufficientEvidence) {
+    return `Learning today:\nWir beobachten weiter im (${contextText}).\nAktuell reicht die Evidenz noch nicht für eine klare Aussage.${fallbackNote}`;
   }
 
-  const bestArm = STRATEGY_LABELS[recommendation.strategyArm] || recommendation.strategyArm;
-  return `Learning today: In Situationen wie (${contextText}) war ${bestArm} für dich stabiler (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
+  if (recommendation?.strategyArm === "NEUTRAL") {
+    return `Learning today:\nIn Situationen wie (${contextText}) gab es bei dir unter ${armLabel} bisher keine Hinweise auf Probleme.\nDas ist eine Beobachtung – keine aktive Steigerung.${fallbackNote}`;
+  }
+
+  return `Learning today:\nIn Situationen wie (${contextText}) war ${armLabel} für dich robuster als die Alternativen.\nDas basiert auf dem aktuellen Vergleich innerhalb der verfügbaren Daten.${fallbackNote}`;
+}
+
+function buildLearningNarrative({ evidence, confirmedRules = [], proposedRules = [] }) {
+  const recommendation = evidence?.recommendation;
+  const narrativeState = buildLearningNarrativeState(evidence);
+  const confirmedText = confirmedRules.length ? confirmedRules.slice(0, 2).join(" | ") : "Noch keine bestätigte Regel.";
+  const proposedText = proposedRules.length ? proposedRules.slice(0, 2).join(" | ") : "Aktuell keine neue Hypothese.";
+  const evidenceLines = formatLearningEvidenceLines(evidence, narrativeState);
+  const learningToday = buildLearningTodayLine(recommendation, narrativeState);
+
+  return [
+    "1) 🧭 Ich-Regeln (Confirmed)",
+    confirmedText,
+    "",
+    "2) 🔬 Beobachtung / Test (Proposed)",
+    proposedText,
+    "",
+    "3) 📊 Evidenz (deskriptiv)",
+    ...evidenceLines,
+    "",
+    "4) 🧠 Learning today (menschlich & ehrlich)",
+    learningToday,
+  ].join("\n");
 }
 
 function authHeader(env) {
@@ -3610,17 +3675,7 @@ function buildComments(
 
   lines.push('');
   lines.push('6) 🧬 Ich-Regeln & Lernen');
-  lines.push(`- Confirmed (anwenden): ${(confirmedRules.slice(0,2).join(' | ') || 'noch keine bestätigte Regel mit hoher Evidenz')}.`);
-  lines.push(`- Proposed/Updated (testen): ${(proposedRules.slice(0,2).join(' | ') || 'keine neue Hypothese heute')}.`);
-  if (learningEvidence?.arms) {
-    const armEff = STRATEGY_ARMS.map((arm) => `${arm}: ${(learningEvidence.arms[arm]?.nEff || 0).toFixed(1)}`);
-    lines.push(`- Evidenz (n_eff): ${armEff.join(' | ')}.`);
-  }
-  if (learningEvidence?.recommendation) {
-    const rec = learningEvidence.recommendation;
-    lines.push(`- Lernmodus: Confidence ${(rec.confidence * 100).toFixed(0)}% | Exploration-Need ${rec.explorationNeed ? 'ja' : 'nein'} | Kontext ${rec.contextSummary}.`);
-  }
-  lines.push(`- ${buildLearningNarrative(learningEvidence)}`);
+  lines.push(buildLearningNarrative({ evidence: learningEvidence, confirmedRules, proposedRules }));
 
   return lines.join("\n");
 }
