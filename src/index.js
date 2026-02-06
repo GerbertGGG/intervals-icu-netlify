@@ -2468,6 +2468,20 @@ function extractSubjectiveTag(wellness, keys) {
   return null;
 }
 
+function subjectiveTagIsNegative(tag, type) {
+  if (!tag) return null;
+  if (type === "pain") return !/none|no|0|false|ok/.test(tag);
+  if (type === "legs") return /heavy|schwer|dead|tired|müde|low/.test(tag);
+  if (type === "mood") return /low|down|bad|schlecht|negativ/.test(tag);
+  return null;
+}
+
+function subjectiveRollingFlag(entries, minShare = 0.5) {
+  if (!entries.length) return null;
+  const negatives = entries.filter(Boolean).length;
+  return negatives / entries.length >= minShare;
+}
+
 function buildRecoverySignalLines(recoverySignals) {
   if (!recoverySignals) return [];
   const lines = [];
@@ -2498,15 +2512,17 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const today = await fetchWellnessDay(ctx, env, dayIso);
   const sleepToday = extractSleepHoursFromWellness(today);
   const hrvToday = extractHrvFromWellness(today);
-  if (sleepToday == null && hrvToday == null) {
-    return null;
-  }
+
   const priorDays = [];
   for (let i = 1; i <= 7; i += 1) {
     priorDays.push(isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000)));
   }
+  const subjectiveWindow = [dayIso, ...priorDays.slice(0, 3)];
   const sleepVals = [];
   const hrvVals = [];
+  const legsEntries = [];
+  const moodEntries = [];
+  const painEntries = [];
   for (const iso of priorDays) {
     const wellness = await fetchWellnessDay(ctx, env, iso);
     const sleep = extractSleepHoursFromWellness(wellness);
@@ -2514,6 +2530,24 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     if (sleep != null) sleepVals.push(sleep);
     if (hrv != null) hrvVals.push(hrv);
   }
+  for (const iso of subjectiveWindow) {
+    const wellness = iso === dayIso ? today : await fetchWellnessDay(ctx, env, iso);
+    if (!wellness) continue;
+    const legsTag = extractSubjectiveTag(wellness, ["legs", "legs_feel", "leg_feel", "muscle_feel", "fatigue_feel"]);
+    const moodTag = extractSubjectiveTag(wellness, ["mood", "mood_state", "readiness_mood"]);
+    const painTag = extractSubjectiveTag(wellness, ["pain", "injury", "injury_flag", "pain_flag"]);
+    const legsNeg = subjectiveTagIsNegative(legsTag, "legs");
+    const moodNeg = subjectiveTagIsNegative(moodTag, "mood");
+    const painNeg = subjectiveTagIsNegative(painTag, "pain");
+    if (legsNeg != null) legsEntries.push(legsNeg);
+    if (moodNeg != null) moodEntries.push(moodNeg);
+    if (painNeg != null) painEntries.push(painNeg);
+  }
+
+  if (sleepToday == null && hrvToday == null && !legsEntries.length && !moodEntries.length && !painEntries.length) {
+    return null;
+  }
+
   const sleepBaseline = sleepVals.length ? avg(sleepVals) : null;
   const hrvBaseline = hrvVals.length ? avg(hrvVals) : null;
   const sleepDeltaPct = sleepBaseline ? ((sleepToday - sleepBaseline) / sleepBaseline) * 100 : 0;
@@ -2524,12 +2558,9 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const ydayHrvDeltaPct = hrvBaseline && ydayHrv ? ((ydayHrv - hrvBaseline) / hrvBaseline) * 100 : null;
   const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
   const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
-  const legsTag = extractSubjectiveTag(today, ["legs", "legs_feel", "leg_feel", "muscle_feel", "fatigue_feel"]);
-  const moodTag = extractSubjectiveTag(today, ["mood", "mood_state", "readiness_mood"]);
-  const painTag = extractSubjectiveTag(today, ["pain", "injury", "injury_flag", "pain_flag"]);
-  const legsNegative = !!legsTag && /heavy|schwer|dead|tired|müde|low/.test(legsTag);
-  const moodNegative = !!moodTag && /low|down|bad|schlecht|negativ/.test(moodTag);
-  const painInjury = !!painTag && !/none|no|0|false|ok/.test(painTag);
+  const legsNegative = subjectiveRollingFlag(legsEntries);
+  const moodNegative = subjectiveRollingFlag(moodEntries);
+  const painInjury = painEntries.length ? painEntries.some(Boolean) : null;
   return {
     sleepHours: sleepToday,
     sleepBaseline,
@@ -2847,7 +2878,6 @@ function buildComments(
   const warningSignals = [
     driftSignal === "orange" || driftSignal === "red",
     hrv1dNegative,
-    freqSignal === "orange" || freqSignal === "red",
     !!recoverySignals?.sleepLow,
     !!fatigue?.override,
   ];
@@ -2856,9 +2886,8 @@ function buildComments(
   const warningSignalStates = [
     { label: 'Drift erhöht (🟠/🔴)', active: driftSignal === "orange" || driftSignal === "red" },
     { label: 'HRV 1T negativ', active: hrv1dNegative },
-    { label: 'Frequenzsignal kritisch (🟠/🔴)', active: freqSignal === "orange" || freqSignal === "red" },
-    { label: 'Schlaf/Erholung suboptimal', active: !!recoverySignals?.sleepLow },
-    { label: 'Subjektive Ermüdung erhöht', active: !!fatigue?.override },
+    { label: recoverySignals?.sleepLow ? 'Schlaf/Erholung suboptimal' : 'Schlaf/Erholung im Zielbereich', active: !!recoverySignals?.sleepLow },
+    { label: fatigue?.override ? 'Belastung strukturell erhöht' : 'Belastung strukturell im Rahmen', active: !!fatigue?.override },
   ];
 
   const hardRedFlags = {
@@ -2943,9 +2972,6 @@ function buildComments(
   lines.push(`- Ampel: ${readinessAmpel}`);
   lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
   lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
-  if (freqSignal === 'orange' || freqSignal === 'red') {
-    lines.push('- Frequenzsignal: Hinweis auf Trainingsstruktur (Taktung/Häufigkeit) und nicht automatisch auf eine akute Tages-Überlastung.');
-  }
   lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
   lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
   lines.push(`- Entscheidung: ${readinessDecision}`);
