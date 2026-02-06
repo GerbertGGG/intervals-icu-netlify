@@ -2134,7 +2134,7 @@ function formatLearningEvidenceLines(evidence, narrativeState) {
 
   const confArmPct = formatPct(narrativeState.confidenceRec);
   const confContextPct = formatPct(narrativeState.confidenceContext);
-  const confidenceLine = `- Confidence (Datenmenge): Arm ${confArmPct} | Kontext ${confContextPct}`;
+  const confidenceLine = `- Evidence-Confidence: Kontext ${confContextPct} | Arm ${confArmPct}`;
 
   return [learningEvidenceLabel(narrativeState.isGlobalFallback), ...armLines, confidenceLine];
 }
@@ -2236,15 +2236,15 @@ function getLearningText(state) {
   let text = "";
 
   if (isNeutral) {
-    text = `Learning today:\nWir halten die Strategie konservativ im (${contextText}).\nAktuell gibt es keine klare Anpassung, wir stabilisieren und beobachten weiter.\n(n_eff=${nEffArm}, Confidence=${confArmPct}).`;
+    text = `Learning heute:\nWir halten die Strategie konservativ im (${contextText}).\nAktuell gibt es keine klare Anpassung, wir stabilisieren und beobachten weiter.\n(n_eff=${nEffArm}, Evidence-Confidence=${confArmPct}).`;
   } else if (level === 0) {
-    text = `Learning today:\nWir haben aktuell noch zu wenig Vergleichsdaten in (${contextText}).\nWir bleiben konservativ bei ${armLabel} und sammeln weitere Beobachtungen.\n(n_eff=${nEffArm}, Confidence=${confArmPct}).`;
+    text = `Learning heute:\nWir haben aktuell noch zu wenig Vergleichsdaten in (${contextText}).\nWir bleiben konservativ bei ${armLabel} und sammeln weitere Beobachtungen.\n(n_eff=${nEffArm}, Evidence-Confidence=${confArmPct}).`;
   } else if (level === 1) {
-    text = `Learning today:\nIn (${contextText}) hat sich ${armLabel} bisher gut verträglich gezeigt.\nAndere Strategien sind noch zu wenig getestet, um einen Vergleich zu ziehen.\n(n_eff=${nEffArm}, Confidence=${confArmPct}).`;
+    text = `Learning heute:\nIn (${contextText}) hat sich ${armLabel} bisher gut verträglich gezeigt.\nAndere Strategien sind noch zu wenig getestet, um einen Vergleich zu ziehen.\n(n_eff=${nEffArm}, Evidence-Confidence=${confArmPct}).`;
   } else if (level === 2) {
-    text = `Learning today:\nIn (${contextText}) spricht derzeit mehr für ${armLabel} als für ${secondArmLabel}.\nDer Vergleich ist noch vorläufig.\n(n_eff=${nEffArm}/${nEffSecond}, Confidence=${confCtxPct}).`;
+    text = `Learning heute:\nIn (${contextText}) spricht derzeit mehr für ${armLabel} als für ${secondArmLabel}.\nDer Vergleich ist noch vorläufig.\n(n_eff=${nEffArm}/${nEffSecond}, Evidence-Confidence=${confCtxPct}).`;
   } else {
-    text = `Learning today:\nIn (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\n(n_eff=${nEffArm}/${nEffSecond}, Confidence=${confCtxPct}).`;
+    text = `Learning heute:\nIn (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\n(n_eff=${nEffArm}/${nEffSecond}, Evidence-Confidence=${confCtxPct}).`;
   }
 
   return applyTextGate(`${text}${suffix}`, state);
@@ -2269,7 +2269,7 @@ function buildLearningNarrative(payload) {
     "3) 📊 Evidenz (deskriptiv)",
     ...evidenceLines,
     "",
-    "4) 🧠 Learning today (menschlich & ehrlich)",
+    "4) 🧠 Learning heute (menschlich & ehrlich)",
     learningToday,
   ].join("\n");
 }
@@ -3716,7 +3716,8 @@ function buildComments(
 
   const lines = [];
   lines.push('1) 🧭 Tagesstatus');
-  lines.push(`- Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })} -> ${readinessDecision}.`);
+  lines.push(`- Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
+  lines.push(`- Decision Statement: ${readinessDecision}`);
   lines.push(`- Kontext: ${eventDistance} am ${eventDate || "n/a"}${Number.isFinite(daysToEvent) ? ` (${daysToEvent} Tage)` : ""}.`);
 
   lines.push('');
@@ -3735,8 +3736,8 @@ function buildComments(
   lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
   lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
   lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
-  lines.push(`- Confidence: ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''}`);
-  lines.push(`- Entscheidung: ${readinessDecision}`);
+  lines.push(`- System-Confidence: Readiness ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''} | Aerob ${aerobicConf.bucket} | Load ${loadConf.bucket}`);
+  lines.push(`- Entscheidung: siehe Decision Statement`);
   let guardrailLine = null;
   if (keySpacing?.ok === false) {
     guardrailLine = 'Guardrail aktiv: Nach Key-Einheit keine zweite Intensität innerhalb von 48h – schützt die Erholung nach hohem Reiz.';
@@ -3756,11 +3757,11 @@ function buildComments(
   if (Number.isFinite(trend?.efDeltaPct)) {
     lines.push(
       `- EF-Trend (28d vs 28d): ${trend.efDeltaPct >= 0 ? '+' : ''}${trend.efDeltaPct.toFixed(1)}%${
-        trend?.confidence ? ` (Confidence ${trend.confidence})` : ''
+        trend?.confidence ? ` (Konfidenz ${trend.confidence})` : ''
       }.`
     );
   } else {
-    lines.push(`- EF-Trend (28d vs 28d): aktuell nicht belastbar${trend?.confidence ? ` (Confidence ${trend.confidence})` : ''}.`);
+    lines.push(`- EF-Trend (28d vs 28d): aktuell nicht belastbar${trend?.confidence ? ` (Konfidenz ${trend.confidence})` : ''}.`);
   }
   if (Number.isFinite(trend?.dv)) {
     lines.push(`- VDOT-Trend (28d vs 28d): ${trend.dv >= 0 ? '+' : ''}${trend.dv.toFixed(1)}%.`);
@@ -3769,8 +3770,7 @@ function buildComments(
   }
   lines.push(`- Drift: ${drift != null ? drift.toFixed(1) + '%' : 'unknown'} vs persönlich ${personalDriftWarn}/${personalDriftCritical}% -> ${driftSignal === 'green' ? '🟢' : driftSignal === 'orange' ? '🟠' : driftSignal === 'red' ? '🔴' : '🟠'}.`);
   lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, nur kontrolliert belasten' : 'stabil genug für planmäßiges easy'}${Number.isFinite(trend?.dv) ? trend.dv <= -1.5 ? '; VDOT trendet rückläufig -> Fokus auf easy Qualität + Erholung.' : trend.dv >= 1.5 ? '; VDOT trendet positiv -> Reize wie geplant halten, nicht unnötig erhöhen.' : '; VDOT aktuell stabil.' : ''}.`);
-  lines.push(`- Confidence: ${aerobicConf.bucket}`);
-  lines.push(`- If-Then: Wenn Drift > ${personalDriftWarn}% bei easy, dann Pace runter oder Einheit um 10-15' kürzen.`);
+  lines.push(`- Wenn–Dann: Wenn Drift > ${personalDriftWarn}% bei easy, dann Pace runter oder Einheit um 10-15' kürzen.`);
 
   lines.push('');
   lines.push('4) 📈 Belastung & Frequenz');
@@ -3779,8 +3779,7 @@ function buildComments(
   lines.push(`- AerobicFloor 7T: Ist ${runLoad7} / Soll ${runTarget || 'n/a'} (Basisziel ${runBaseTarget || 'n/a'}) -> ${runFloorGap ? 'unter Soll, über Häufigkeit schließen' : 'im Zielkorridor'}.`);
   lines.push(`- Floor-Logik: ${floorModeText}.`);
   lines.push(`- RunFloor/Volumen: ${runLoad7}/${runTarget || 'n/a'} -> ${runFloorGap ? 'heute nicht über Intensität kompensieren, eher Umfang stabilisieren' : 'Volumen im Korridor halten'}.`);
-  lines.push(`- Confidence: ${loadConf.bucket}`);
-  lines.push(`- If-Then: Wenn 2+ Warnsignale gleichzeitig, dann nur easy + optional kürzen.`);
+  lines.push(`- Wenn–Dann: Wenn 2+ Warnsignale gleichzeitig, dann nur easy + optional kürzen.`);
 
   lines.push('');
   lines.push('5) ✅ Top-3 Coaching-Entscheidungen (heute/48h)');
@@ -3801,6 +3800,7 @@ function buildComments(
     policyReason: strategyDecision?.policyReason || null,
   });
   lines.push(`- ${gatedDecisionRationale}`);
+  lines.push(`- Decision-Confidence: ${formatPct(learningNarrativeContext.confidenceRec)}`);
 
   lines.push('');
   lines.push('6) 🧬 Ich-Regeln & Lernen');
