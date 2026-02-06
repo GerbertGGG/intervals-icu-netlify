@@ -2473,10 +2473,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const warningCount = warningSignals.filter(Boolean).length;
     const hasHardRedFlag = hrv2dNegative || (warningCount >= 2 && (!!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative));
     const decisionArm = inferDecisionArm({
+      dayIso: day,
       runFloorGap,
       hasHardRedFlag,
       hadKey: perRunInfo.some((x) => !!x.isKey),
       freqSignal,
+      learningEvidence,
     });
     const outcomeScore = computeLearningOutcomeScore({
       driftSignal: driftSignalForLearning,
@@ -3014,11 +3016,43 @@ function matchOverloadPatterns(signalMap) {
   return matches;
 }
 
-function inferDecisionArm({ runFloorGap, hasHardRedFlag, hadKey, freqSignal }) {
+function deterministicRoll(seed) {
+  const text = String(seed ?? "seed");
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % 10000) / 10000;
+}
+
+function inferDecisionArm({ dayIso, runFloorGap, hasHardRedFlag, hadKey, freqSignal, learningEvidence }) {
   if (hasHardRedFlag) return "neutral";
-  if (runFloorGap) return "frequency";
-  if (hadKey && freqSignal !== "red") return "intensity";
-  return "neutral";
+
+  const canChooseFrequency = true;
+  const canChooseIntensity = !runFloorGap && freqSignal !== "red";
+
+  let baseArm = "neutral";
+  if (runFloorGap) baseArm = "frequency";
+  else if (hadKey && canChooseIntensity) baseArm = "intensity";
+
+  const recommendation = learningEvidence?.recommendation ?? "neutral";
+  let exploitArm = baseArm;
+  if (recommendation === "frequency" && canChooseFrequency) exploitArm = "frequency";
+  if (recommendation === "intensity" && canChooseIntensity) exploitArm = "intensity";
+
+  const explorationNeedRaw = Number(learningEvidence?.explorationNeed);
+  const explorationNeed = Number.isFinite(explorationNeedRaw) ? clamp(explorationNeedRaw, 0, 1) : 0;
+  const exploreProb = explorationNeed * 0.35;
+  const shouldExplore = exploreProb > 0 && deterministicRoll(`${dayIso}:${recommendation}:${baseArm}`) < exploreProb;
+
+  if (shouldExplore) {
+    if (exploitArm === "frequency" && canChooseIntensity) return "intensity";
+    if (exploitArm === "intensity" && canChooseFrequency) return "frequency";
+    if (canChooseFrequency) return "frequency";
+  }
+
+  return exploitArm;
 }
 
 function computeLearningOutcomeScore({ driftSignal, hrv1dNegative, hrv2dNegative, fatigueOverride, warningCount }) {
