@@ -3828,7 +3828,7 @@ function buildComments(
   const warningCount = warningSignals.filter(Boolean).length;
   const subjectiveNegative = !!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative;
   const warningSignalStates = [
-    { label: 'Drift erhöht (🟠/🔴)', active: driftSignal === "orange" || driftSignal === "red" },
+    { label: 'Drift-Trend auffällig (🟠/🔴)', active: driftSignal === "orange" || driftSignal === "red" },
     { label: 'HRV 1T negativ', active: hrv1dNegative },
     { label: recoverySignals?.sleepLow ? 'Schlaf/Erholung suboptimal' : 'Schlaf/Erholung im Zielbereich', active: !!recoverySignals?.sleepLow },
     { label: fatigue?.override ? 'Belastung strukturell erhöht' : 'Belastung strukturell im Rahmen', active: !!fatigue?.override },
