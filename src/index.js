@@ -269,6 +269,51 @@ const PERSONAL_OVERLOAD_PATTERNS = [
   },
 ];
 
+const POLICY_REGISTRY = {
+  PAT_PAT_001__NO_INTENSITY_7D: {
+    short: "Keine Intensität für 5–7 Tage",
+    why: "Kombination aus Drift/HRV/Key-Signal deutet auf Überlastungsrisiko hin.",
+    effect: "Intensität pausieren, Fokus auf Erholung.",
+    severity: "high",
+    tags: ["guardrail"],
+  },
+  PAT_PAT_002__EASY_ONLY_TODAY: {
+    short: "Nur easy (24–48h)",
+    why: "Akute Stressmarker sind erhöht.",
+    effect: "Nur lockere Einheiten in den nächsten 24–48h.",
+    severity: "high",
+    tags: ["guardrail"],
+  },
+  PAT_PAT_002__REDUCE_VOL_15: {
+    short: "Volumen reduzieren (10–15%)",
+    why: "Akute Belastungssignale sprechen für eine Volumenreduktion.",
+    effect: "Gesamtvolumen für 24–48h um ~10–15% senken.",
+    severity: "medium",
+    tags: ["load"],
+  },
+  PAT_PAT_003__ACTION_GENERIC_MEDIUM: {
+    short: "Belastungsdichte reduzieren",
+    why: "Häufung von Warnsignalen bei hohem Dichteprofil.",
+    effect: "Zusatzreize vermeiden, Dichte runterfahren.",
+    severity: "medium",
+    tags: ["guardrail"],
+  },
+  SIG__hrv_2d_negative__HIGH: {
+    short: "HRV 2 Tage negativ",
+    why: "HRV ist über 2 Tage deutlich gesunken.",
+    effect: "Belastung temporär reduzieren.",
+    severity: "high",
+    tags: ["signal"],
+  },
+  SIG__fatigue_override__MEDIUM: {
+    short: "Fatigue-Schwelle überschritten",
+    why: "Kumulierte Last überschreitet deine Schwelle.",
+    effect: "Zusatzreize vermeiden.",
+    severity: "medium",
+    tags: ["signal"],
+  },
+};
+
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
 
@@ -3392,6 +3437,37 @@ function computeSectionConfidence({ hasDrift, hasHrv, hasLoad, consistent, subje
   return { score, bucket: confidenceBucket(score) };
 }
 
+function normalizeActionKey(action, severity) {
+  const text = String(action || "").toLowerCase();
+  if (text.includes("keine intens") || text.includes("no intensity")) {
+    if (text.includes("5-7") || text.includes("5–7") || text.includes("7")) return "NO_INTENSITY_7D";
+    return "NO_INTENSITY";
+  }
+  if (text.includes("nur easy") || text.includes("easy only") || text.includes("easy")) {
+    return "EASY_ONLY_TODAY";
+  }
+  if (text.includes("volumen reduzieren") || text.includes("reduce volume")) {
+    return "REDUCE_VOL_15";
+  }
+  if (text.includes("dichte runter") || text.includes("keine zusatzreize")) {
+    return `ACTION_GENERIC_${String(severity || "medium").toUpperCase()}`;
+  }
+  return `ACTION_GENERIC_${String(severity || "medium").toUpperCase()}`;
+}
+
+function extractActionKeys(action, severity) {
+  if (Array.isArray(action)) {
+    return action.map((a) => normalizeActionKey(a, severity));
+  }
+  const text = String(action || "").toLowerCase();
+  const keys = new Set();
+  if (text.includes("keine intens") || text.includes("no intensity")) keys.add(normalizeActionKey("no intensity", severity));
+  if (text.includes("nur easy") || text.includes("easy only") || text.includes("easy")) keys.add("EASY_ONLY_TODAY");
+  if (text.includes("volumen reduzieren") || text.includes("reduce volume")) keys.add("REDUCE_VOL_15");
+  if (!keys.size) keys.add(normalizeActionKey(action, severity));
+  return Array.from(keys);
+}
+
 function matchOverloadPatterns(signalMap) {
   const matches = [];
   for (const pattern of PERSONAL_OVERLOAD_PATTERNS) {
@@ -3408,6 +3484,83 @@ function matchOverloadPatterns(signalMap) {
     }
   }
   return matches;
+}
+
+function patternToPolicies(matchedPatterns) {
+  const policies = [];
+  for (const pattern of matchedPatterns) {
+    const actionKeys = extractActionKeys(pattern.action, pattern.severity);
+    actionKeys.forEach((actionKey, idx) => {
+      const id = `PAT_${pattern.id}__${actionKey}`;
+      policies.push({
+        id,
+        severity: pattern.severity,
+        primary: idx === 0,
+        guardrail: actionKey.includes("NO_INTENSITY"),
+        actionKey,
+      });
+    });
+  }
+  return policies;
+}
+
+function signalToPolicies(signalMap) {
+  const candidates = [];
+  if (signalMap?.hrv_2d_negative) {
+    candidates.push({ id: "SIG__hrv_2d_negative__HIGH", severity: "high", guardrail: true });
+  }
+  if (signalMap?.fatigue_override) {
+    candidates.push({ id: "SIG__fatigue_override__MEDIUM", severity: "medium", guardrail: false });
+  }
+  return candidates;
+}
+
+function mergeAndRankPolicies(policies) {
+  const severityRank = { high: 3, medium: 2, low: 1 };
+  const dedup = new Map();
+  for (const p of policies) {
+    const existing = dedup.get(p.id);
+    if (!existing || severityRank[p.severity] > severityRank[existing.severity]) {
+      dedup.set(p.id, p);
+    }
+  }
+  return Array.from(dedup.values())
+    .sort((a, b) => {
+      if (severityRank[b.severity] !== severityRank[a.severity]) {
+        return severityRank[b.severity] - severityRank[a.severity];
+      }
+      if (b.guardrail !== a.guardrail) return b.guardrail ? 1 : -1;
+      return a.id.localeCompare(b.id);
+    })
+    .map((p) => p.id);
+}
+
+function buildPolicyDecision({ matchedPatterns, signalMap, confidenceScore }) {
+  const patternPolicies = patternToPolicies(matchedPatterns);
+  const signalPolicies = patternPolicies.length ? [] : signalToPolicies(signalMap);
+  const rankedIds = mergeAndRankPolicies([...patternPolicies, ...signalPolicies]);
+  if (!rankedIds.length) return null;
+
+  const primaryId = rankedIds[0];
+  const primary = POLICY_REGISTRY[primaryId];
+  const confidence = confidenceScore ?? 0;
+  const bucket = confidenceBucket(confidence);
+  const primaryPattern = matchedPatterns.find((p) => primaryId.startsWith(`PAT_${p.id}__`));
+  const intensityLock = Boolean(primaryPattern?.severity === "high" && String(primaryPattern?.action || "").toLowerCase().includes("keine intens"));
+  const reasonSuffix =
+    confidence < 40
+      ? "Wenn die Signale zutreffen, ist dies eine vorsichtige Empfehlung."
+      : "Zusatzsignal: mindestens ein Warnsignal im Kontext aktiv.";
+
+  return {
+    title: primary?.short || primaryId,
+    reason: `${primary?.why || "Signalbasierte Entscheidung."} ${reasonSuffix}`,
+    effect: primary?.effect || "Belastung anpassen.",
+    confidence: { score: confidence, bucket },
+    intensity_lock: intensityLock,
+    policies_applied: rankedIds,
+    decision_trace: { primaryId, matchedPatterns: matchedPatterns.length },
+  };
 }
 
 function deterministicRoll(seed) {
@@ -3687,6 +3840,11 @@ function buildComments(
     contradictions: driftSignal === "green" && hrv2dNegative,
     hasHistory: Number.isFinite(trend?.recentN) || Number.isFinite(trend?.prevN),
   });
+  const policyDecision = buildPolicyDecision({
+    matchedPatterns: patternMatches,
+    signalMap,
+    confidenceScore: readinessConf.score,
+  });
   const aerobicConf = computeSectionConfidence({
     hasDrift: drift != null,
     hasHrv: hrvDeltaPct != null,
@@ -3745,6 +3903,11 @@ function buildComments(
     guardrailLine = 'Guardrail aktiv: Kumulierte Warnsignale – zusätzlicher Belastungsreiz wird heute bewusst vermieden.';
   }
   if (guardrailLine) lines.push(`- ${guardrailLine}`);
+  if (policyDecision) {
+    lines.push(`- Policy-Decision: ${policyDecision.title} (${policyDecision.confidence.bucket}, ${policyDecision.confidence.score}).`);
+    lines.push(`- Policy-Grund: ${policyDecision.reason}`);
+    if (policyDecision.intensity_lock) lines.push("- Guardrail: intensity_lock aktiv (keine Intensität).");
+  }
 
   const subjectiveMissing = recoverySignals?.legsNegative == null && recoverySignals?.moodNegative == null;
   const borderlineDecision = readinessAmpel === '🟠';
