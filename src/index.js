@@ -143,9 +143,37 @@ export default {
     // This keeps cost low and still ensures minimum-stimulus comment exists.
     const today = isoDate(new Date());
     const yday = isoDate(new Date(Date.now() - 86400000));
+    const cron = String(event?.cron || "");
+    const isMorningRun = cron === "0 6 * * *";
+    const isEveningWatcher = !isMorningRun;
+    let latestActivityIso = null;
+
+    try {
+      latestActivityIso = await fetchLatestActivityIso(env, yday, today);
+    } catch (e) {
+      console.error("scheduled latest activity fetch failed", e);
+    }
+
+    if (isEveningWatcher) {
+      if (!latestActivityIso) {
+        console.log("scheduled evening sync skipped: no recent activity");
+        return;
+      }
+
+      const lastSeen = await readKvJson(env, LAST_ACTIVITY_SYNC_KEY);
+      if (lastSeen && new Date(latestActivityIso) <= new Date(lastSeen)) {
+        console.log("scheduled evening sync skipped: no new activity");
+        return;
+      }
+    }
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600).catch((e) => {
+      (async () => {
+        await syncRange(env, yday, today, true, false, 600);
+        if (latestActivityIso) {
+          await writeKvJson(env, LAST_ACTIVITY_SYNC_KEY, latestActivityIso);
+        }
+      })().catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
@@ -182,6 +210,7 @@ const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
+const LAST_ACTIVITY_SYNC_KEY = "scheduled:last-activity-iso";
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
@@ -5469,6 +5498,23 @@ async function fetchIntervalsActivities(env, oldest, newest) {
   const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
   return r.json();
+}
+
+async function fetchLatestActivityIso(env, oldest, newest) {
+  const activities = await fetchIntervalsActivities(env, oldest, newest);
+  if (!Array.isArray(activities) || activities.length === 0) return null;
+
+  let latestIso = null;
+  for (const activity of activities) {
+    const raw = activity?.start_date_local || activity?.start_date;
+    if (!raw) continue;
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) continue;
+    const iso = parsed.toISOString();
+    if (!latestIso || parsed > new Date(latestIso)) latestIso = iso;
+  }
+
+  return latestIso;
 }
 
 async function fetchIntervalsStreams(env, activityId, types) {
