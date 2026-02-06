@@ -152,6 +152,23 @@ export default {
   },
 };
 
+export {
+  computeLearningEvidence,
+  computeLearningOutcomeScore,
+  computeLearningStats,
+  decayWeight,
+  deriveContextKey,
+  deriveStrategyArm,
+  deriveDriftBucket,
+  deriveHrvBucket,
+  deriveMonotonyBucket,
+  deriveSleepBucket,
+  deriveStressBucket,
+  normalizeOutcomeClass,
+  normalizeStrategyArm,
+  buildLearningNarrative,
+};
+
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
@@ -255,8 +272,31 @@ const MOTOR_NEED_N_PER_HALF = 2;
 const MOTOR_DRIFT_WINDOW_DAYS = 14;
 const LEARNING_LOOKBACK_DAYS = 120;
 const LEARNING_DECAY_DAYS = 45;
-const LEARNING_MIN_SAMPLES = 8;
 const LEARNING_GOOD_OUTCOME_THRESHOLD = 2;
+const LEARNING_MIN_NEFF = 3;
+const LEARNING_CONFIDENCE_K = 6;
+const LEARNING_MIN_CONF = 0.4;
+const LEARNING_UTILITY_EPS = 0.05;
+const LEARNING_UTILITY_LAMBDA = 1.5;
+const LEARNING_GLOBAL_CONTEXT_KEY = "ALL";
+
+const STRATEGY_ARMS = [
+  "FREQ_UP",
+  "INTENSITY_SHIFT",
+  "VOLUME_ADJUST",
+  "HOLD_ABSORB",
+  "PROTECT_DELOAD",
+  "NEUTRAL",
+];
+
+const STRATEGY_LABELS = {
+  FREQ_UP: "Häufiger, kürzer, locker",
+  INTENSITY_SHIFT: "Qualitätsreiz statt mehr Umfang",
+  VOLUME_ADJUST: "Umfang gezielt anpassen",
+  HOLD_ABSORB: "Stabilisieren & absorbieren",
+  PROTECT_DELOAD: "Schützen & deloaden",
+  NEUTRAL: "Neutral (keine klare Strategie)",
+};
 
 const HFMAX = 173;
 // ================= MODE / EVENTS (NEW) =================
@@ -1764,7 +1804,7 @@ async function appendLearningEvent(env, event) {
   if (!event || !isIsoDate(event.day)) return;
   const key = `learning:event:${event.day}`;
   await writeKvJson(env, key, {
-    schema: 1,
+    schema: 2,
     ...event,
   });
 }
@@ -1795,6 +1835,134 @@ function betaPosteriorMean(alpha, beta) {
   const denom = a + b;
   if (denom <= 0) return 0.5;
   return a / denom;
+}
+
+function formatContextSummary(contextKey) {
+  if (!contextKey || contextKey === "LEGACY") return "Legacy-Kontext";
+  if (contextKey === LEARNING_GLOBAL_CONTEXT_KEY) return "globaler Kontext";
+  const parts = String(contextKey).split("|");
+  return parts.slice(0, 3).map((part) => {
+    const [key, value] = part.split("=");
+    if (!value) return part;
+    if (key === "RFgap") return `RunFloorGap ${value === "T" ? "ja" : "nein"}`;
+    if (key === "stress") return `Stress ${value}`;
+    if (key === "hrv") return `HRV ${value}`;
+    if (key === "drift") return `Drift ${value}`;
+    if (key === "sleep") return `Schlaf ${value}`;
+    if (key === "mono") return `Monotony ${value}`;
+    return `${key} ${value}`;
+  }).join(", ");
+}
+
+function normalizeOutcomeClass(outcomeClass, outcomeScore, outcomeGood) {
+  if (outcomeClass === "GOOD" || outcomeClass === "NEUTRAL" || outcomeClass === "BAD") return outcomeClass;
+  if (typeof outcomeGood === "boolean") return outcomeGood ? "GOOD" : "BAD";
+  if (Number.isFinite(outcomeScore)) {
+    if (outcomeScore >= 2) return "GOOD";
+    if (outcomeScore === 1) return "NEUTRAL";
+    return "BAD";
+  }
+  return "NEUTRAL";
+}
+
+function normalizeStrategyArm(strategyArm, decisionArm) {
+  if (STRATEGY_ARMS.includes(strategyArm)) return strategyArm;
+  if (decisionArm === "frequency") return "FREQ_UP";
+  if (decisionArm === "intensity") return "INTENSITY_SHIFT";
+  if (decisionArm === "neutral") return "NEUTRAL";
+  return "NEUTRAL";
+}
+
+function computeLearningUtility(goodPosterior, badPosterior) {
+  const pGood = Number.isFinite(goodPosterior) ? goodPosterior : 0.5;
+  const pBad = Number.isFinite(badPosterior) ? badPosterior : 0.5;
+  return pGood - LEARNING_UTILITY_LAMBDA * pBad;
+}
+
+function computeLearningStats(events, endDayIso) {
+  const valid = Array.isArray(events) ? events.filter((e) => e && isIsoDate(e.day)) : [];
+  const withWeights = valid.map((e) => ({
+    ...e,
+    w: decayWeight(e.day, endDayIso, LEARNING_DECAY_DAYS),
+  })).filter((e) => e.w > 0);
+
+  const byArm = {};
+  for (const arm of STRATEGY_ARMS) {
+    byArm[arm] = withWeights.filter((e) => normalizeStrategyArm(e.strategyArm, e.decisionArm) === arm);
+  }
+
+  const armStats = {};
+  for (const arm of STRATEGY_ARMS) {
+    const sample = byArm[arm];
+    let goodSuccess = 0;
+    let goodFail = 0;
+    let badSuccess = 0;
+    let badFail = 0;
+    let nEff = 0;
+    for (const item of sample) {
+      const outcome = normalizeOutcomeClass(item.outcomeClass, item.outcomeScore, item.outcomeGood);
+      const w = item.w || 0;
+      nEff += w;
+      if (outcome === "GOOD") {
+        goodSuccess += w;
+        badFail += w;
+      } else if (outcome === "NEUTRAL") {
+        goodFail += w;
+        badFail += w;
+      } else {
+        goodFail += w;
+        badSuccess += w;
+      }
+    }
+
+    const goodPosterior = betaPosteriorMean(1 + goodSuccess, 1 + goodFail);
+    const badPosterior = betaPosteriorMean(1 + badSuccess, 1 + badFail);
+    const utilityMean = computeLearningUtility(goodPosterior, badPosterior);
+    const confidence = clamp(nEff / (nEff + LEARNING_CONFIDENCE_K), 0, 1);
+
+    armStats[arm] = {
+      nEff,
+      goodPosterior,
+      badPosterior,
+      utilityMean,
+      confidence,
+    };
+  }
+
+  const totalEff = sum(Object.values(armStats).map((x) => x.nEff || 0));
+  const sortedByUtility = STRATEGY_ARMS.slice().sort((a, b) => armStats[b].utilityMean - armStats[a].utilityMean);
+  const bestArm = sortedByUtility[0] || "NEUTRAL";
+  const secondArm = sortedByUtility[1] || bestArm;
+  const utilityDiff = Math.abs(armStats[bestArm].utilityMean - armStats[secondArm].utilityMean);
+  const topConfidence = armStats[bestArm]?.confidence ?? 0;
+  const explorationNeed = utilityDiff < LEARNING_UTILITY_EPS || topConfidence < LEARNING_MIN_CONF;
+
+  return {
+    totalEff,
+    armStats,
+    bestArm,
+    secondArm,
+    utilityDiff,
+    explorationNeed,
+    topConfidence,
+  };
+}
+
+function chooseLearningRecommendation(stats, contextKey, contextSummary) {
+  const recommended = stats.bestArm || "NEUTRAL";
+  const confidence = stats.topConfidence ?? 0;
+  const explorationNeed = stats.explorationNeed ?? true;
+  const nEff = stats.totalEff ?? 0;
+  const isGlobal = contextKey === LEARNING_GLOBAL_CONTEXT_KEY;
+  return {
+    strategyArm: recommended,
+    confidence,
+    explorationNeed,
+    nEff,
+    contextKey,
+    contextSummary,
+    globalFallback: isGlobal,
+  };
 }
 
 function zScoreForConfidence(level) {
@@ -1833,91 +2001,51 @@ function weightedAverage(values, weights) {
   return den > 0 ? num / den : null;
 }
 
-function computeLearningEvidence(events, endDayIso) {
+function computeLearningEvidence(events, endDayIso, contextKey) {
   const valid = Array.isArray(events) ? events.filter((e) => e && isIsoDate(e.day)) : [];
-  const withWeights = valid.map((e) => ({
-    ...e,
-    w: decayWeight(e.day, endDayIso, LEARNING_DECAY_DAYS),
-  })).filter((e) => e.w > 0);
-
-  const byArm = {
-    frequency: withWeights.filter((e) => e.decisionArm === 'frequency'),
-    intensity: withWeights.filter((e) => e.decisionArm === 'intensity'),
-    neutral: withWeights.filter((e) => e.decisionArm === 'neutral'),
-  };
-
-  const armStats = {};
-  for (const arm of ['frequency', 'intensity', 'neutral']) {
-    const sample = byArm[arm];
-    const nEff = sum(sample.map((x) => x.w));
-    const goodEff = sum(sample.map((x) => (x.outcomeGood ? x.w : 0)));
-    const outcomeScores = sample.map((x) => Number(x.outcomeScore));
-    const weights = sample.map((x) => x.w);
-    const avgOutcome = weightedAverage(outcomeScores, weights);
-    const postMean = betaPosteriorMean(1 + goodEff, 1 + Math.max(0, nEff - goodEff));
-    const interval = wilsonInterval(goodEff, Math.max(nEff, 1e-6), 0.95);
-    armStats[arm] = {
-      nEff,
-      goodEff,
-      badEff: Math.max(0, nEff - goodEff),
-      goodRate: nEff > 0 ? goodEff / nEff : 0.5,
-      avgOutcome,
-      posteriorMean: postMean,
-      ciLow: interval.low,
-      ciHigh: interval.high,
-    };
-  }
-
-  const freq = armStats.frequency;
-  const inten = armStats.intensity;
-  const deltaPosterior = (freq?.posteriorMean ?? 0.5) - (inten?.posteriorMean ?? 0.5);
-  const quality = Math.min(1, (freq.nEff + inten.nEff) / Math.max(LEARNING_MIN_SAMPLES, 1));
-  const explorationNeed = Math.max(0, 1 - quality);
-
-  let recommendation = 'neutral';
-  if (freq.nEff >= 2 && inten.nEff >= 2) {
-    if (deltaPosterior > 0.08) recommendation = 'frequency';
-    else if (deltaPosterior < -0.08) recommendation = 'intensity';
-  } else if (freq.nEff >= LEARNING_MIN_SAMPLES && freq.posteriorMean > 0.6) {
-    recommendation = 'frequency';
-  } else if (inten.nEff >= LEARNING_MIN_SAMPLES && inten.posteriorMean > 0.6) {
-    recommendation = 'intensity';
-  }
+  const redFlagCount = valid.filter((e) => e.learningEligible === false).length;
+  const eligible = valid.filter((e) => e.learningEligible !== false);
+  const contextEvents = eligible.filter((e) => (e.contextKey || "LEGACY") === contextKey);
+  const stats = computeLearningStats(contextEvents, endDayIso);
+  const useGlobal = stats.totalEff < LEARNING_MIN_NEFF && contextKey !== LEARNING_GLOBAL_CONTEXT_KEY;
+  const fallbackEvents = useGlobal ? eligible : contextEvents;
+  const fallbackStats = useGlobal ? computeLearningStats(fallbackEvents, endDayIso) : stats;
+  const finalContextKey = useGlobal ? LEARNING_GLOBAL_CONTEXT_KEY : contextKey;
+  const contextSummary = formatContextSummary(finalContextKey);
+  const recommendation = chooseLearningRecommendation(fallbackStats, finalContextKey, contextSummary);
 
   return {
     lookbackDays: LEARNING_LOOKBACK_DAYS,
     decayDays: LEARNING_DECAY_DAYS,
-    sampleCount: valid.length,
-    effectiveSamples: freq.nEff + inten.nEff + armStats.neutral.nEff,
-    arms: armStats,
-    deltaPosterior,
+    sampleCount: eligible.length,
+    effectiveSamples: fallbackStats.totalEff,
+    contextKey: finalContextKey,
+    contextSummary,
+    globalFallback: useGlobal,
+    redFlagCount,
+    arms: fallbackStats.armStats,
     recommendation,
-    confidence: quality >= 0.8 ? 'high' : quality >= 0.4 ? 'medium' : 'low',
-    explorationNeed,
   };
 }
 
-function buildLearningNarrative(evidence, runFloorGap) {
-  const freq = evidence?.arms?.frequency;
-  const inten = evidence?.arms?.intensity;
-  if (!freq || !inten) {
-    return 'Learning today: Noch zu wenig Evidenz – wir sammeln weiter strukturierte Beobachtungen.';
+function buildLearningNarrative(evidence) {
+  const recommendation = evidence?.recommendation;
+  if (!recommendation) {
+    return "Learning today: Noch zu wenig Evidenz – wir sammeln weiter strukturierte Beobachtungen.";
   }
 
-  const fmtPct = (v) => `${Math.round((Number(v) || 0) * 100)}%`;
-  const totalEff = (freq.nEff || 0) + (inten.nEff || 0);
-  if (totalEff < 2) {
-    return 'Learning today: Kaum verwertbare Vergleichsfälle (Frequenz vs Intensität) – Hypothese bleibt offen.';
+  const armLabel = STRATEGY_LABELS[recommendation.strategyArm] || recommendation.strategyArm;
+  const contextText = recommendation.contextSummary || "aktueller Kontext";
+  const confPct = Math.round((recommendation.confidence || 0) * 100);
+  const nEffText = Number.isFinite(recommendation.nEff) ? recommendation.nEff.toFixed(1) : "0.0";
+  const fallbackNote = recommendation.globalFallback ? " (basierend auf globalen Daten, da Kontext noch wenig Historie hat)" : "";
+
+  if (recommendation.explorationNeed) {
+    return `Learning today: Wir sind noch unsicher in (${contextText}); wir testen ${armLabel} konservativ (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
   }
 
-  if (evidence.recommendation === 'frequency') {
-    return `Learning today: Evidenz spricht für Frequenzsteuerung (Posterior ${fmtPct(freq.posteriorMean)} vs ${fmtPct(inten.posteriorMean)} bei Intensität; Confidence ${evidence.confidence}, n_eff ${totalEff.toFixed(1)}).`;
-  }
-  if (evidence.recommendation === 'intensity') {
-    return `Learning today: Evidenz spricht für gezielte Intensität (Posterior ${fmtPct(inten.posteriorMean)} vs ${fmtPct(freq.posteriorMean)} bei Frequenz; Confidence ${evidence.confidence}, n_eff ${totalEff.toFixed(1)}).`;
-  }
-
-  return `Learning today: Frequenz vs Intensität aktuell ausgeglichen (Posterior ${fmtPct(freq.posteriorMean)} vs ${fmtPct(inten.posteriorMean)}; Confidence ${evidence.confidence}). ${runFloorGap ? 'Heute priorisieren wir trotzdem Frequenz wegen RunFloor-Gap.' : 'Wir bleiben bei stabiler Laststeuerung.'}`;
+  const bestArm = STRATEGY_LABELS[recommendation.strategyArm] || recommendation.strategyArm;
+  return `Learning today: In Situationen wie (${contextText}) war ${bestArm} für dich stabiler (n_eff=${nEffText}, Confidence=${confPct}%).${fallbackNote}`;
 }
 
 function authHeader(env) {
@@ -2411,7 +2539,99 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const maintenance14d = computeMaintenance14d(ctx, day);
     const pastLearningEvents = learningEvents.filter((e) => String(e.day) < day);
-    const learningEvidence = computeLearningEvidence(pastLearningEvents, day);
+    const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
+    const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
+    const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+    const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+
+    const repGARun = pickRepresentativeGARun(perRunInfo);
+    const repDrift = Number.isFinite(repGARun?.drift) ? repGARun.drift : null;
+    const driftSignalForLearning = repDrift == null ? "unknown" : repDrift >= 8 ? "red" : repDrift >= 6 ? "orange" : "green";
+    const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
+    const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+    const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+    const freqCount14 = maintenance14d?.runCount14 ?? null;
+    const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
+    const warningSignals = [
+      driftSignalForLearning === "orange" || driftSignalForLearning === "red",
+      hrv1dNegative,
+      freqSignal === "orange" || freqSignal === "red",
+      !!recoverySignals?.sleepLow,
+      !!fatigue?.override,
+    ];
+    const warningCount = warningSignals.filter(Boolean).length;
+    const hasHardRedFlag = hrv2dNegative || (warningCount >= 2 && (!!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative));
+    const lifeStress = deriveStressBucket({ fatigueOverride: !!fatigue?.override, warningCount });
+    const hrvState = deriveHrvBucket(hrvDeltaPct);
+    const driftState = deriveDriftBucket(driftSignalForLearning);
+    const highMonotony = deriveMonotonyBucket(fatigue?.monotony) === "HIGH";
+    const freqNotRed = freqSignal !== "red";
+    const strategyDecision = deriveStrategyArm({
+      runFloorGap,
+      lifeStress,
+      hrvState,
+      driftState,
+      hadKey: perRunInfo.some((x) => !!x.isKey),
+      freqNotRed,
+      highMonotony,
+      fatigueHigh: !!fatigue?.override,
+      hasHardRedFlag,
+    });
+    const outcomeScore = computeLearningOutcomeScore({
+      driftSignal: driftSignalForLearning,
+      hrv1dNegative,
+      hrv2dNegative,
+      fatigueOverride: !!fatigue?.override,
+      warningCount,
+    });
+    const outcomeClass =
+      outcomeScore >= 2 ? "GOOD" : outcomeScore === 1 ? "NEUTRAL" : "BAD";
+    const contextKey = deriveContextKey({
+      runFloorGap,
+      fatigueOverride: !!fatigue?.override,
+      warningCount,
+      hrvDeltaPct,
+      driftSignal: driftSignalForLearning,
+      recoverySignals,
+      monotony: fatigue?.monotony,
+    });
+    const learningEvidence = computeLearningEvidence(pastLearningEvents, day, contextKey);
+    const learningEvent = {
+      day,
+      decisionArm: strategyDecision.strategyArm === "FREQ_UP" ? "frequency" : strategyDecision.strategyArm === "INTENSITY_SHIFT" ? "intensity" : "neutral",
+      strategyArm: strategyDecision.strategyArm,
+      policyReason: strategyDecision.policyReason,
+      contextKey,
+      runFloorGap,
+      outcomeScore,
+      outcomeGood: outcomeScore >= LEARNING_GOOD_OUTCOME_THRESHOLD,
+      outcomeClass,
+      learningEligible: strategyDecision.learningEligible,
+      warningCount,
+      signalsSnapshot: {
+        runFloorGap,
+        lifeStress,
+        hrvState,
+        driftState,
+        sleepState: deriveSleepBucket(recoverySignals),
+        monotonyState: deriveMonotonyBucket(fatigue?.monotony),
+        freqSignal,
+        warningCount,
+        hasHardRedFlag,
+      },
+      outcomeVector: {
+        hrvDeltaBucket: hrvState,
+        driftDeltaBucket: driftState,
+        fatigueBucket: fatigue?.override ? "HIGH" : "OK",
+        adherenceBucket: freqSignal === "red" ? "LOW" : freqSignal === "orange" ? "MED" : "OK",
+      },
+      context: {
+        hadKey: perRunInfo.some((x) => !!x.isKey),
+        hadGA: perRunInfo.some((x) => !!x.ga && !x.isKey),
+        fatigueOverride: !!fatigue?.override,
+      },
+    };
+    learningEvents.push(learningEvent);
 
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
     const dailyReportText = buildComments({
@@ -2440,67 +2660,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       weeksToEvent,
       maintenance14d,
       learningEvidence,
+      strategyDecision,
     }, { debug });
 
     // Do not write into wellness comment field anymore.
     patch.comments = "";
 
-
-
-
-
     patches[day] = patch;
-
-    const repGARun = pickRepresentativeGARun(perRunInfo);
-    const repDrift = Number.isFinite(repGARun?.drift) ? repGARun.drift : null;
-    const driftSignalForLearning = repDrift == null ? "unknown" : repDrift >= 8 ? "red" : repDrift >= 6 ? "orange" : "green";
-    const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
-    const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
-    const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
-    const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
-    const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-    const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
-    const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
-    const freqCount14 = maintenance14d?.runCount14 ?? null;
-    const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
-    const warningSignals = [
-      driftSignalForLearning === "orange" || driftSignalForLearning === "red",
-      hrv1dNegative,
-      freqSignal === "orange" || freqSignal === "red",
-      !!recoverySignals?.sleepLow,
-      !!fatigue?.override,
-    ];
-    const warningCount = warningSignals.filter(Boolean).length;
-    const hasHardRedFlag = hrv2dNegative || (warningCount >= 2 && (!!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative));
-    const decisionArm = inferDecisionArm({
-      dayIso: day,
-      runFloorGap,
-      hasHardRedFlag,
-      hadKey: perRunInfo.some((x) => !!x.isKey),
-      freqSignal,
-      learningEvidence,
-    });
-    const outcomeScore = computeLearningOutcomeScore({
-      driftSignal: driftSignalForLearning,
-      hrv1dNegative,
-      hrv2dNegative,
-      fatigueOverride: !!fatigue?.override,
-      warningCount,
-    });
-    const learningEvent = {
-      day,
-      decisionArm,
-      runFloorGap,
-      outcomeScore,
-      outcomeGood: outcomeScore >= LEARNING_GOOD_OUTCOME_THRESHOLD,
-      warningCount,
-      context: {
-        hadKey: perRunInfo.some((x) => !!x.isKey),
-        hadGA: perRunInfo.some((x) => !!x.ga && !x.isKey),
-        fatigueOverride: !!fatigue?.override,
-      },
-    };
-    learningEvents.push(learningEvent);
 
     if (write) {
       await appendLearningEvent(env, learningEvent);
@@ -3026,33 +3192,122 @@ function deterministicRoll(seed) {
   return ((hash >>> 0) % 10000) / 10000;
 }
 
-function inferDecisionArm({ dayIso, runFloorGap, hasHardRedFlag, hadKey, freqSignal, learningEvidence }) {
-  if (hasHardRedFlag) return "neutral";
+function deriveStressBucket({ fatigueOverride, warningCount }) {
+  if (fatigueOverride || warningCount >= 3) return "HIGH";
+  if (warningCount >= 1) return "MED";
+  return "LOW";
+}
 
-  const canChooseFrequency = true;
-  const canChooseIntensity = !runFloorGap && freqSignal !== "red";
+function deriveHrvBucket(hrvDeltaPct) {
+  if (!Number.isFinite(hrvDeltaPct)) return "UNK";
+  if (hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT) return "LOW";
+  if (hrvDeltaPct >= 5) return "HIGH";
+  return "NORMAL";
+}
 
-  let baseArm = "neutral";
-  if (runFloorGap) baseArm = "frequency";
-  else if (hadKey && canChooseIntensity) baseArm = "intensity";
+function deriveDriftBucket(driftSignal) {
+  if (!driftSignal || driftSignal === "unknown") return "UNK";
+  if (driftSignal === "red") return "BAD";
+  if (driftSignal === "orange") return "WARN";
+  return "OK";
+}
 
-  const recommendation = learningEvidence?.recommendation ?? "neutral";
-  let exploitArm = baseArm;
-  if (recommendation === "frequency" && canChooseFrequency) exploitArm = "frequency";
-  if (recommendation === "intensity" && canChooseIntensity) exploitArm = "intensity";
+function deriveSleepBucket(recoverySignals) {
+  if (!recoverySignals) return "UNK";
+  if (recoverySignals.sleepLow) return "LOW";
+  if (Number.isFinite(recoverySignals.sleepDeltaPct)) {
+    if (recoverySignals.sleepDeltaPct >= 10) return "HIGH";
+    if (recoverySignals.sleepDeltaPct <= -10) return "LOW";
+  }
+  return "OK";
+}
 
-  const explorationNeedRaw = Number(learningEvidence?.explorationNeed);
-  const explorationNeed = Number.isFinite(explorationNeedRaw) ? clamp(explorationNeedRaw, 0, 1) : 0;
-  const exploreProb = explorationNeed * 0.35;
-  const shouldExplore = exploreProb > 0 && deterministicRoll(`${dayIso}:${recommendation}:${baseArm}`) < exploreProb;
+function deriveMonotonyBucket(monotony) {
+  if (!Number.isFinite(monotony)) return "UNK";
+  return monotony > MONOTONY_7D_LIMIT ? "HIGH" : "LOW";
+}
 
-  if (shouldExplore) {
-    if (exploitArm === "frequency" && canChooseIntensity) return "intensity";
-    if (exploitArm === "intensity" && canChooseFrequency) return "frequency";
-    if (canChooseFrequency) return "frequency";
+function deriveContextKey({
+  runFloorGap,
+  fatigueOverride,
+  warningCount,
+  hrvDeltaPct,
+  driftSignal,
+  recoverySignals,
+  monotony,
+}) {
+  const lifeStress = deriveStressBucket({ fatigueOverride, warningCount });
+  const hrvState = deriveHrvBucket(hrvDeltaPct);
+  const driftState = deriveDriftBucket(driftSignal);
+  const sleepState = deriveSleepBucket(recoverySignals);
+  const monotonyState = deriveMonotonyBucket(monotony);
+  return `RFgap=${runFloorGap ? "T" : "F"}|stress=${lifeStress}|hrv=${hrvState}|drift=${driftState}|sleep=${sleepState}|mono=${monotonyState}`;
+}
+
+function deriveStrategyArm({
+  runFloorGap,
+  lifeStress,
+  hrvState,
+  driftState,
+  hadKey,
+  freqNotRed,
+  highMonotony,
+  fatigueHigh,
+  hasHardRedFlag,
+}) {
+  if (hasHardRedFlag) {
+    return {
+      strategyArm: "NEUTRAL",
+      policyReason: "RED_FLAG",
+      learningEligible: false,
+    };
   }
 
-  return exploitArm;
+  if (runFloorGap && (lifeStress === "MED" || lifeStress === "HIGH")) {
+    return {
+      strategyArm: "FREQ_UP",
+      policyReason: "RUN_FLOOR_GAP_HIGH_STRESS",
+      learningEligible: true,
+    };
+  }
+
+  if (runFloorGap && lifeStress === "LOW") {
+    return {
+      strategyArm: "VOLUME_ADJUST",
+      policyReason: "RUN_FLOOR_GAP_LOW_STRESS",
+      learningEligible: true,
+    };
+  }
+
+  if (hadKey && freqNotRed) {
+    return {
+      strategyArm: "INTENSITY_SHIFT",
+      policyReason: "QUALITY_OK",
+      learningEligible: true,
+    };
+  }
+
+  if (highMonotony || driftState === "BAD") {
+    return {
+      strategyArm: fatigueHigh ? "PROTECT_DELOAD" : "HOLD_ABSORB",
+      policyReason: fatigueHigh ? "HIGH_MONOTONY_FATIGUE" : "HIGH_MONOTONY_OR_DRIFT",
+      learningEligible: true,
+    };
+  }
+
+  if (fatigueHigh || (hrvState === "LOW" && lifeStress === "HIGH")) {
+    return {
+      strategyArm: "PROTECT_DELOAD",
+      policyReason: "HIGH_STRESS",
+      learningEligible: true,
+    };
+  }
+
+  return {
+    strategyArm: "HOLD_ABSORB",
+    policyReason: "DEFAULT_HOLD",
+    learningEligible: true,
+  };
 }
 
 function computeLearningOutcomeScore({ driftSignal, hrv1dNegative, hrv2dNegative, fatigueOverride, warningCount }) {
@@ -3094,6 +3349,7 @@ function buildComments(
     weeksToEvent,
     maintenance14d,
     learningEvidence,
+    strategyDecision,
   },
   { debug = false } = {}
 ) {
@@ -3299,7 +3555,8 @@ function buildComments(
 
   lines.push('');
   lines.push('5) ✅ Top-3 Coaching-Entscheidungen (heute/48h)');
-  lines.push(`- 1) ${readinessAmpel === '🔴' ? 'Intensität pausieren, nur easy/recovery.' : 'Geplanten Reiz halten, aber nicht eskalieren.'}`);
+  const strategyLabel = STRATEGY_LABELS[strategyDecision?.strategyArm] || STRATEGY_LABELS.NEUTRAL;
+  lines.push(`- 1) ${strategyLabel}${strategyDecision?.policyReason ? ` (Policy: ${strategyDecision.policyReason})` : ''}.`);
   lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt kommt über Konsistenz.'}`);
   lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : "20-30' Kraft/Stabi einplanen."}`);
 
@@ -3315,14 +3572,15 @@ function buildComments(
   lines.push('6) 🧬 Ich-Regeln & Lernen');
   lines.push(`- Confirmed (anwenden): ${(confirmedRules.slice(0,2).join(' | ') || 'noch keine bestätigte Regel mit hoher Evidenz')}.`);
   lines.push(`- Proposed/Updated (testen): ${(proposedRules.slice(0,2).join(' | ') || 'keine neue Hypothese heute')}.`);
-  if (learningEvidence?.arms?.frequency && learningEvidence?.arms?.intensity) {
-    const freqEff = learningEvidence.arms.frequency.nEff || 0;
-    const intensityEff = learningEvidence.arms.intensity.nEff || 0;
-    const neutralEff = learningEvidence.arms.neutral?.nEff || 0;
-    lines.push(`- Evidenz (n_eff): Frequenz ${freqEff.toFixed(1)} | Intensität ${intensityEff.toFixed(1)} | Neutral ${neutralEff.toFixed(1)}.`);
-    lines.push(`- Lernmodus: ${learningEvidence.confidence} Confidence | Exploration-Need ${(learningEvidence.explorationNeed * 100).toFixed(0)}%.`);
+  if (learningEvidence?.arms) {
+    const armEff = STRATEGY_ARMS.map((arm) => `${arm}: ${(learningEvidence.arms[arm]?.nEff || 0).toFixed(1)}`);
+    lines.push(`- Evidenz (n_eff): ${armEff.join(' | ')}.`);
   }
-  lines.push(`- ${buildLearningNarrative(learningEvidence, runFloorGap)}`);
+  if (learningEvidence?.recommendation) {
+    const rec = learningEvidence.recommendation;
+    lines.push(`- Lernmodus: Confidence ${(rec.confidence * 100).toFixed(0)}% | Exploration-Need ${rec.explorationNeed ? 'ja' : 'nein'} | Kontext ${rec.contextSummary}.`);
+  }
+  lines.push(`- ${buildLearningNarrative(learningEvidence)}`);
 
   return lines.join("\n");
 }
