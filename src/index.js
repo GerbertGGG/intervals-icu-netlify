@@ -2887,6 +2887,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       weeksToEvent,
       maintenance14d,
       learningEvidence,
+      learningNarrativeState,
       strategyDecision,
     }, { debug });
 
@@ -3576,6 +3577,7 @@ function buildComments(
     weeksToEvent,
     maintenance14d,
     learningEvidence,
+    learningNarrativeState,
     strategyDecision,
   },
   { debug = false } = {}
@@ -3793,8 +3795,9 @@ function buildComments(
   } else if (runFloorGap) {
     decisionRationaleSentence = 'Wir entscheiden uns heute für Häufigkeit statt Tempo, weil du auf kumulierten Stress robuster reagierst als auf Intensität.';
   }
+  const learningNarrativeContext = learningNarrativeState || buildLearningNarrativeState(learningEvidence);
   const gatedDecisionRationale = applyTextGate(decisionRationaleSentence, {
-    ...learningNarrativeState,
+    ...learningNarrativeContext,
     policyReason: strategyDecision?.policyReason || null,
   });
   lines.push(`- ${gatedDecisionRationale}`);
