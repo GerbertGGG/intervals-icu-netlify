@@ -253,6 +253,10 @@ const TREND_MIN_N = 3;
 const MOTOR_WINDOW_DAYS = 28;
 const MOTOR_NEED_N_PER_HALF = 2;
 const MOTOR_DRIFT_WINDOW_DAYS = 14;
+const LEARNING_LOOKBACK_DAYS = 120;
+const LEARNING_DECAY_DAYS = 45;
+const LEARNING_MIN_SAMPLES = 8;
+const LEARNING_GOOD_OUTCOME_THRESHOLD = 2;
 
 const HFMAX = 173;
 // ================= MODE / EVENTS (NEW) =================
@@ -1755,6 +1759,167 @@ async function writeKvJson(env, key, value) {
   await env.KV.put(key, JSON.stringify(value));
 }
 
+async function appendLearningEvent(env, event) {
+  if (!hasKv(env)) return;
+  if (!event || !isIsoDate(event.day)) return;
+  const key = `learning:event:${event.day}`;
+  await writeKvJson(env, key, {
+    schema: 1,
+    ...event,
+  });
+}
+
+async function loadLearningEvents(env, endDay, lookbackDays = LEARNING_LOOKBACK_DAYS) {
+  if (!hasKv(env) || !isIsoDate(endDay) || !Number.isFinite(lookbackDays) || lookbackDays <= 0) return [];
+  const end = parseISODateSafe(endDay);
+  if (!end) return [];
+  const out = [];
+  for (let i = 0; i <= lookbackDays; i++) {
+    const day = isoDate(new Date(end.getTime() - i * 86400000));
+    const item = await readKvJson(env, `learning:event:${day}`);
+    if (item && isIsoDate(item.day)) out.push(item);
+  }
+  return out.sort((a, b) => String(a.day).localeCompare(String(b.day)));
+}
+
+function decayWeight(dayIso, endDayIso, decayDays = LEARNING_DECAY_DAYS) {
+  const d = daysBetween(dayIso, endDayIso);
+  if (!Number.isFinite(d) || d < 0) return 0;
+  const tau = Number.isFinite(decayDays) && decayDays > 0 ? decayDays : LEARNING_DECAY_DAYS;
+  return Math.exp(-d / tau);
+}
+
+function betaPosteriorMean(alpha, beta) {
+  const a = Number(alpha) || 0;
+  const b = Number(beta) || 0;
+  const denom = a + b;
+  if (denom <= 0) return 0.5;
+  return a / denom;
+}
+
+function zScoreForConfidence(level) {
+  if (level >= 0.99) return 2.576;
+  if (level >= 0.95) return 1.96;
+  if (level >= 0.90) return 1.645;
+  return 1.96;
+}
+
+function wilsonInterval(success, total, confidence = 0.95) {
+  const n = Number(total) || 0;
+  const k = Number(success) || 0;
+  if (n <= 0) return { low: 0, high: 1 };
+  const z = zScoreForConfidence(confidence);
+  const phat = k / n;
+  const denom = 1 + (z * z) / n;
+  const centre = phat + (z * z) / (2 * n);
+  const margin = z * Math.sqrt((phat * (1 - phat) + (z * z) / (4 * n)) / n);
+  return {
+    low: Math.max(0, (centre - margin) / denom),
+    high: Math.min(1, (centre + margin) / denom),
+  };
+}
+
+function weightedAverage(values, weights) {
+  if (!Array.isArray(values) || !Array.isArray(weights) || values.length !== weights.length) return null;
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < values.length; i++) {
+    const v = Number(values[i]);
+    const w = Number(weights[i]);
+    if (!Number.isFinite(v) || !Number.isFinite(w) || w <= 0) continue;
+    num += v * w;
+    den += w;
+  }
+  return den > 0 ? num / den : null;
+}
+
+function computeLearningEvidence(events, endDayIso) {
+  const valid = Array.isArray(events) ? events.filter((e) => e && isIsoDate(e.day)) : [];
+  const withWeights = valid.map((e) => ({
+    ...e,
+    w: decayWeight(e.day, endDayIso, LEARNING_DECAY_DAYS),
+  })).filter((e) => e.w > 0);
+
+  const byArm = {
+    frequency: withWeights.filter((e) => e.decisionArm === 'frequency'),
+    intensity: withWeights.filter((e) => e.decisionArm === 'intensity'),
+    neutral: withWeights.filter((e) => e.decisionArm === 'neutral'),
+  };
+
+  const armStats = {};
+  for (const arm of ['frequency', 'intensity', 'neutral']) {
+    const sample = byArm[arm];
+    const nEff = sum(sample.map((x) => x.w));
+    const goodEff = sum(sample.map((x) => (x.outcomeGood ? x.w : 0)));
+    const outcomeScores = sample.map((x) => Number(x.outcomeScore));
+    const weights = sample.map((x) => x.w);
+    const avgOutcome = weightedAverage(outcomeScores, weights);
+    const postMean = betaPosteriorMean(1 + goodEff, 1 + Math.max(0, nEff - goodEff));
+    const interval = wilsonInterval(goodEff, Math.max(nEff, 1e-6), 0.95);
+    armStats[arm] = {
+      nEff,
+      goodEff,
+      badEff: Math.max(0, nEff - goodEff),
+      goodRate: nEff > 0 ? goodEff / nEff : 0.5,
+      avgOutcome,
+      posteriorMean: postMean,
+      ciLow: interval.low,
+      ciHigh: interval.high,
+    };
+  }
+
+  const freq = armStats.frequency;
+  const inten = armStats.intensity;
+  const deltaPosterior = (freq?.posteriorMean ?? 0.5) - (inten?.posteriorMean ?? 0.5);
+  const quality = Math.min(1, (freq.nEff + inten.nEff) / Math.max(LEARNING_MIN_SAMPLES, 1));
+  const explorationNeed = Math.max(0, 1 - quality);
+
+  let recommendation = 'neutral';
+  if (freq.nEff >= 2 && inten.nEff >= 2) {
+    if (deltaPosterior > 0.08) recommendation = 'frequency';
+    else if (deltaPosterior < -0.08) recommendation = 'intensity';
+  } else if (freq.nEff >= LEARNING_MIN_SAMPLES && freq.posteriorMean > 0.6) {
+    recommendation = 'frequency';
+  } else if (inten.nEff >= LEARNING_MIN_SAMPLES && inten.posteriorMean > 0.6) {
+    recommendation = 'intensity';
+  }
+
+  return {
+    lookbackDays: LEARNING_LOOKBACK_DAYS,
+    decayDays: LEARNING_DECAY_DAYS,
+    sampleCount: valid.length,
+    effectiveSamples: freq.nEff + inten.nEff + armStats.neutral.nEff,
+    arms: armStats,
+    deltaPosterior,
+    recommendation,
+    confidence: quality >= 0.8 ? 'high' : quality >= 0.4 ? 'medium' : 'low',
+    explorationNeed,
+  };
+}
+
+function buildLearningNarrative(evidence, runFloorGap) {
+  const freq = evidence?.arms?.frequency;
+  const inten = evidence?.arms?.intensity;
+  if (!freq || !inten) {
+    return 'Learning today: Noch zu wenig Evidenz – wir sammeln weiter strukturierte Beobachtungen.';
+  }
+
+  const fmtPct = (v) => `${Math.round((Number(v) || 0) * 100)}%`;
+  const totalEff = (freq.nEff || 0) + (inten.nEff || 0);
+  if (totalEff < 2) {
+    return 'Learning today: Kaum verwertbare Vergleichsfälle (Frequenz vs Intensität) – Hypothese bleibt offen.';
+  }
+
+  if (evidence.recommendation === 'frequency') {
+    return `Learning today: Evidenz spricht für Frequenzsteuerung (Posterior ${fmtPct(freq.posteriorMean)} vs ${fmtPct(inten.posteriorMean)} bei Intensität; Confidence ${evidence.confidence}, n_eff ${totalEff.toFixed(1)}).`;
+  }
+  if (evidence.recommendation === 'intensity') {
+    return `Learning today: Evidenz spricht für gezielte Intensität (Posterior ${fmtPct(inten.posteriorMean)} vs ${fmtPct(freq.posteriorMean)} bei Frequenz; Confidence ${evidence.confidence}, n_eff ${totalEff.toFixed(1)}).`;
+  }
+
+  return `Learning today: Frequenz vs Intensität aktuell ausgeglichen (Posterior ${fmtPct(freq.posteriorMean)} vs ${fmtPct(inten.posteriorMean)}; Confidence ${evidence.confidence}). ${runFloorGap ? 'Heute priorisieren wir trotzdem Frequenz wegen RunFloor-Gap.' : 'Wir bleiben bei stabiler Laststeuerung.'}`;
+}
+
 function authHeader(env) {
   return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
@@ -1881,6 +2046,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   let daysWritten = 0;
   const daysList = listIsoDaysInclusive(oldest, newest);
   let previousBlockState = null;
+  const learningEvents = await loadLearningEvents(env, newest, LEARNING_LOOKBACK_DAYS);
 
   for (const day of daysList) {
     // NEW: mode + policy for this day (based on next event)
@@ -2244,6 +2410,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     });
 
     const maintenance14d = computeMaintenance14d(ctx, day);
+    const pastLearningEvents = learningEvents.filter((e) => String(e.day) < day);
+    const learningEvidence = computeLearningEvidence(pastLearningEvents, day);
 
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
     const dailyReportText = buildComments({
@@ -2271,6 +2439,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       recoverySignals,
       weeksToEvent,
       maintenance14d,
+      learningEvidence,
     }, { debug });
 
     // Do not write into wellness comment field anymore.
@@ -2282,7 +2451,57 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     patches[day] = patch;
 
+    const repGARun = pickRepresentativeGARun(perRunInfo);
+    const repDrift = Number.isFinite(repGARun?.drift) ? repGARun.drift : null;
+    const driftSignalForLearning = repDrift == null ? "unknown" : repDrift >= 8 ? "red" : repDrift >= 6 ? "orange" : "green";
+    const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
+    const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
+    const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+    const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+    const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
+    const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+    const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+    const freqCount14 = maintenance14d?.runCount14 ?? null;
+    const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
+    const warningSignals = [
+      driftSignalForLearning === "orange" || driftSignalForLearning === "red",
+      hrv1dNegative,
+      freqSignal === "orange" || freqSignal === "red",
+      !!recoverySignals?.sleepLow,
+      !!fatigue?.override,
+    ];
+    const warningCount = warningSignals.filter(Boolean).length;
+    const hasHardRedFlag = hrv2dNegative || (warningCount >= 2 && (!!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative));
+    const decisionArm = inferDecisionArm({
+      runFloorGap,
+      hasHardRedFlag,
+      hadKey: perRunInfo.some((x) => !!x.isKey),
+      freqSignal,
+    });
+    const outcomeScore = computeLearningOutcomeScore({
+      driftSignal: driftSignalForLearning,
+      hrv1dNegative,
+      hrv2dNegative,
+      fatigueOverride: !!fatigue?.override,
+      warningCount,
+    });
+    const learningEvent = {
+      day,
+      decisionArm,
+      runFloorGap,
+      outcomeScore,
+      outcomeGood: outcomeScore >= LEARNING_GOOD_OUTCOME_THRESHOLD,
+      warningCount,
+      context: {
+        hadKey: perRunInfo.some((x) => !!x.isKey),
+        hadGA: perRunInfo.some((x) => !!x.ga && !x.isKey),
+        fatigueOverride: !!fatigue?.override,
+      },
+    };
+    learningEvents.push(learningEvent);
+
     if (write) {
+      await appendLearningEvent(env, learningEvent);
       await upsertDailyReportNote(env, day, dailyReportText);
     }
     if (debug) notesPreview[`${day}:daily`] = dailyReportText;
@@ -2764,6 +2983,29 @@ function matchOverloadPatterns(signalMap) {
   return matches;
 }
 
+function inferDecisionArm({ runFloorGap, hasHardRedFlag, hadKey, freqSignal }) {
+  if (hasHardRedFlag) return "neutral";
+  if (runFloorGap) return "frequency";
+  if (hadKey && freqSignal !== "red") return "intensity";
+  return "neutral";
+}
+
+function computeLearningOutcomeScore({ driftSignal, hrv1dNegative, hrv2dNegative, fatigueOverride, warningCount }) {
+  let score = 0;
+  if (driftSignal === "green") score += 2;
+  else if (driftSignal === "orange") score += 0;
+  else if (driftSignal === "red") score -= 2;
+
+  if (!hrv1dNegative) score += 1;
+  if (!hrv2dNegative) score += 1;
+  if (!fatigueOverride) score += 1;
+
+  if (warningCount >= 3) score -= 2;
+  else if (warningCount === 2) score -= 1;
+
+  return score;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -2786,6 +3028,7 @@ function buildComments(
     recoverySignals,
     weeksToEvent,
     maintenance14d,
+    learningEvidence,
   },
   { debug = false } = {}
 ) {
@@ -2997,10 +3240,17 @@ function buildComments(
   lines.push(`- ${decisionRationaleSentence}`);
 
   lines.push('');
-  lines.push('6) 🧬 Ich-Regeln & Lernen (MVP)');
+  lines.push('6) 🧬 Ich-Regeln & Lernen');
   lines.push(`- Confirmed (anwenden): ${(confirmedRules.slice(0,2).join(' | ') || 'noch keine bestätigte Regel mit hoher Evidenz')}.`);
   lines.push(`- Proposed/Updated (testen): ${(proposedRules.slice(0,2).join(' | ') || 'keine neue Hypothese heute')}.`);
-  lines.push(`- Learning today: Du reagierst auf kumulierten Stress robuster mit Frequenzsteuerung als mit zusätzlicher Intensität.`);
+  if (learningEvidence?.arms?.frequency && learningEvidence?.arms?.intensity) {
+    const freqEff = learningEvidence.arms.frequency.nEff || 0;
+    const intensityEff = learningEvidence.arms.intensity.nEff || 0;
+    const neutralEff = learningEvidence.arms.neutral?.nEff || 0;
+    lines.push(`- Evidenz (n_eff): Frequenz ${freqEff.toFixed(1)} | Intensität ${intensityEff.toFixed(1)} | Neutral ${neutralEff.toFixed(1)}.`);
+    lines.push(`- Lernmodus: ${learningEvidence.confidence} Confidence | Exploration-Need ${(learningEvidence.explorationNeed * 100).toFixed(0)}%.`);
+  }
+  lines.push(`- ${buildLearningNarrative(learningEvidence, runFloorGap)}`);
 
   return lines.join("\n");
 }
