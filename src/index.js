@@ -3904,7 +3904,7 @@ function buildComments(
   const lines = [];
   lines.push('1) 🧭 Tagesstatus');
   lines.push(`- Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
-  lines.push(`- Decision Statement: ${readinessDecision}`);
+  lines.push(`- Decision: ${readinessDecision}`);
   lines.push(`- Kontext: ${eventDistance} am ${eventDate || "n/a"}${Number.isFinite(daysToEvent) ? ` (${daysToEvent} Tage)` : ""}.`);
 
   lines.push('');
@@ -3919,22 +3919,19 @@ function buildComments(
     readinessAmpel !== '🔴' && warningCount > 0
       ? ' Warnsignale betreffen aktuell die Trainingsstruktur, nicht die akute Belastbarkeit.'
       : '';
-  lines.push(`- Ampel: ${readinessAmpel}`);
-  lines.push(`- Red-Flag-Check: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Bestätigtes Overload-Pattern ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
+  lines.push(`- Ampel: ${readinessAmpel} | Kurzfazit: ${readinessSummary}.${whyNotRed} | Confidence: Readiness ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''} | Aerob ${aerobicConf.bucket} | Load ${loadConf.bucket}`);
+  lines.push(`- Red-Flags: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Overload-Pattern bestätigt ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
   lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
-  lines.push(`- Zusammenfassung: ${readinessSummary}.${whyNotRed}`);
-  lines.push(`- System-Confidence: Readiness ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''} | Aerob ${aerobicConf.bucket} | Load ${loadConf.bucket}`);
-  lines.push(`- Entscheidung: siehe Decision Statement`);
   let guardrailLine = null;
   if (keySpacing?.ok === false) {
-    guardrailLine = 'Guardrail aktiv: Nach Key-Einheit keine zweite Intensität innerhalb von 48h – schützt die Erholung nach hohem Reiz.';
+    guardrailLine = 'Guardrail: Nach Key keine zweite Intensität innerhalb von 48h – schützt die Erholung.';
   } else if (hasHardRedFlag || warningCount >= 2) {
-    guardrailLine = 'Guardrail aktiv: Kumulierte Warnsignale – zusätzlicher Belastungsreiz wird heute bewusst vermieden.';
+    guardrailLine = 'Guardrail: Kumulierte Warnsignale – zusätzlicher Belastungsreiz wird heute vermieden.';
   }
   if (guardrailLine) lines.push(`- ${guardrailLine}`);
   if (policyDecision) {
-    lines.push(`- Policy-Decision: ${policyDecision.title} (${policyDecision.confidence.bucket}, ${policyDecision.confidence.score}).`);
-    lines.push(`- Policy-Grund: ${policyDecision.reason}`);
+    lines.push(`- Policy: ${policyDecision.title} (${policyDecision.confidence.bucket}, ${policyDecision.confidence.score}).`);
+    lines.push(`- Grund: ${policyDecision.reason}`);
     if (policyDecision.intensity_lock) lines.push("- Guardrail: intensity_lock aktiv (keine Intensität).");
   }
 
@@ -3961,23 +3958,22 @@ function buildComments(
     lines.push('- VDOT-Trend (28d vs 28d): aktuell nicht belastbar.');
   }
   lines.push(`- Drift: ${drift != null ? drift.toFixed(1) + '%' : 'unknown'} vs persönlich ${personalDriftWarn}/${personalDriftCritical}% -> ${driftSignal === 'green' ? '🟢' : driftSignal === 'orange' ? '🟠' : driftSignal === 'red' ? '🔴' : '🟠'}.`);
-  lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, nur kontrolliert belasten' : 'stabil genug für planmäßiges easy'}${Number.isFinite(trend?.dv) ? trend.dv <= -1.5 ? '; VDOT trendet rückläufig -> Fokus auf easy Qualität + Erholung.' : trend.dv >= 1.5 ? '; VDOT trendet positiv -> Reize wie geplant halten, nicht unnötig erhöhen.' : '; VDOT aktuell stabil.' : ''}.`);
+  lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, kontrolliert belasten' : 'stabil genug für planmäßiges easy'}${Number.isFinite(trend?.dv) ? trend.dv <= -1.5 ? '; VDOT rückläufig -> Fokus auf easy Qualität + Erholung.' : trend.dv >= 1.5 ? '; VDOT positiv -> Reize wie geplant halten, nicht unnötig erhöhen.' : '; VDOT stabil.' : ''}.`);
   lines.push(`- Wenn–Dann: Wenn Drift > ${personalDriftWarn}% bei easy, dann Pace runter oder Einheit um 10-15' kürzen.`);
 
   lines.push('');
   lines.push('4) 📈 Belastung & Frequenz');
   lines.push(`- Frequenz: ${freqCount14 ?? 'unknown'} Läufe/14d vs Sweetspot ${sweetspotLow}-${sweetspotHigh}, Limit ${upperLimit} -> ${freqSignal === 'green' ? '🟢' : freqSignal === 'red' ? '🔴' : '🟠'}.`);
-  lines.push('- Frequenzsignal = Steuerung der Belastungsdichte (wie oft/eng harte Reize gesetzt werden), nicht primär Intensität eines einzelnen Tages.');
-  lines.push(`- AerobicFloor 7T: Ist ${runLoad7} / Soll ${runTarget || 'n/a'} (Basisziel ${runBaseTarget || 'n/a'}) -> ${runFloorGap ? 'unter Soll, über Häufigkeit schließen' : 'im Zielkorridor'}.`);
-  lines.push(`- Floor-Logik: ${floorModeText}.`);
+  lines.push('- Frequenzsignal = Belastungsdichte (wie oft/eng harte Reize), nicht primär Tages-Intensität.');
+  lines.push(`- AerobicFloor 7T: Ist ${runLoad7} / Soll ${runTarget || 'n/a'} (Basisziel ${runBaseTarget || 'n/a'}) -> ${runFloorGap ? 'unter Soll, über Häufigkeit schließen' : 'im Zielkorridor'} | Floor-Logik: ${floorModeText}.`);
   lines.push(`- RunFloor/Volumen: ${runLoad7}/${runTarget || 'n/a'} -> ${runFloorGap ? 'heute nicht über Intensität kompensieren, eher Umfang stabilisieren' : 'Volumen im Korridor halten'}.`);
-  lines.push(`- Wenn–Dann: Wenn 2+ Warnsignale gleichzeitig, dann nur easy + optional kürzen.`);
+  lines.push(`- Wenn–Dann: 2+ Warnsignale -> nur easy + optional kürzen.`);
 
   lines.push('');
   lines.push('5) ✅ Top-3 Coaching-Entscheidungen (heute/48h)');
   const strategyLabel = STRATEGY_LABELS[strategyDecision?.strategyArm] || STRATEGY_LABELS.NEUTRAL;
   lines.push(`- 1) ${strategyLabel}${strategyDecision?.policyReason ? ` (Policy: ${strategyDecision.policyReason})` : ''}.`);
-  lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt kommt über Konsistenz.'}`);
+  lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt über Konsistenz.'}`);
   lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : "20-30' Kraft/Stabi einplanen."}`);
 
   let decisionRationaleSentence = 'Wir entscheiden uns heute für Stabilisieren statt Eskalieren, weil deine Regel nach Key-Einheiten zuerst 24-48h easy priorisiert.';
