@@ -6,6 +6,8 @@ import {
   decayWeight,
   deriveContextKey,
   deriveStrategyArm,
+  formatContextSummary,
+  normalizeOutcomeClass,
 } from "../src/index.js";
 
 function isoDaysAgo(days) {
@@ -130,6 +132,83 @@ function makeEvent({
   assert.ok(narrative.includes("n_eff="));
   assert.ok(narrative.includes("Confidence"));
   assert.ok(narrative.includes("RunFloorGap"));
+}
+
+// Arm ohne Daten darf nicht empfohlen werden (exploreUntried=false)
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=F|stress=LOW|hrv=NORMAL|drift=OK|sleep=OK|mono=LOW";
+  const evidence = computeLearningEvidence([
+    makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "BAD", contextKey }),
+    makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "BAD", contextKey }),
+  ], endDay, contextKey);
+  assert.equal(evidence.recommendation.strategyArm, "FREQ_UP");
+}
+
+// nEffTotal groß + untried Arm (nEff=0) -> Empfehlung bleibt auf Arm mit Daten
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=T|stress=MED|hrv=LOW|drift=WARN|sleep=LOW|mono=HIGH";
+  const events = Array.from({ length: 6 }, () =>
+    makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "BAD", contextKey })
+  );
+  const evidence = computeLearningEvidence(events, endDay, contextKey);
+  assert.equal(evidence.recommendation.strategyArm, "FREQ_UP");
+  assert.ok(evidence.recommendation.nEffTotal > 0);
+  assert.ok(evidence.recommendation.nEffArm > 0);
+}
+
+// Confidence mit n_eff > 0 ist > 0 und gerundet (nicht floor)
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=T|stress=MED|hrv=NORMAL|drift=OK|sleep=OK|mono=LOW";
+  const events = Array.from({ length: 10 }, () =>
+    makeEvent({ day: endDay, strategyArm: "HOLD_ABSORB", outcomeClass: "GOOD", contextKey })
+  );
+  const evidence = computeLearningEvidence(events, endDay, contextKey);
+  const confPct = Math.round((evidence.recommendation.confidenceArm || 0) * 100);
+  assert.ok(confPct > 0);
+  assert.ok(confPct >= 60);
+}
+
+// explorationNeed true wenn <2 Arms Daten haben, aber Confidence bleibt > 0
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=F|stress=LOW|hrv=NORMAL|drift=OK|sleep=OK|mono=LOW";
+  const evidence = computeLearningEvidence([
+    makeEvent({ day: endDay, strategyArm: "HOLD_ABSORB", outcomeClass: "GOOD", contextKey }),
+    makeEvent({ day: endDay, strategyArm: "HOLD_ABSORB", outcomeClass: "GOOD", contextKey }),
+  ], endDay, contextKey);
+  assert.ok(evidence.recommendation.explorationNeed);
+  assert.ok(evidence.recommendation.confidenceArm > 0);
+}
+
+// OutcomeScore Mapping (>=2 GOOD, ==1 NEUTRAL, <=0 BAD)
+{
+  assert.equal(normalizeOutcomeClass(null, 2, null), "GOOD");
+  assert.equal(normalizeOutcomeClass(null, 1, null), "NEUTRAL");
+  assert.equal(normalizeOutcomeClass(null, 0, null), "BAD");
+}
+
+// formatContextSummary: max 3 Tags, ALL/LEGACY korrekt
+{
+  assert.equal(formatContextSummary("LEGACY"), "Legacy-Kontext");
+  assert.equal(formatContextSummary("ALL"), "globaler Kontext");
+  const summary = formatContextSummary("RFgap=T|stress=HIGH|hrv=LOW|drift=WARN|sleep=LOW|mono=HIGH");
+  assert.ok(summary.split(",").length === 3);
+  assert.ok(summary.includes("RunFloorGap"));
+}
+
+// RedFlag learningEligible=false wird aus Aggregation ausgeschlossen
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=F|stress=LOW|hrv=NORMAL|drift=OK|sleep=OK|mono=LOW";
+  const evidence = computeLearningEvidence([
+    makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "GOOD", contextKey, learningEligible: false }),
+    makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "GOOD", contextKey, learningEligible: true }),
+  ], endDay, contextKey);
+  assert.equal(evidence.sampleCount, 1);
+  assert.equal(evidence.redFlagCount, 1);
 }
 
 console.log("learning_v2 tests passed");
