@@ -2991,8 +2991,20 @@ function buildComments(
 
   lines.push('');
   lines.push('3) 🫁 Aerober Status (personalisiert)');
-  lines.push(`- EF/VDOT (repr. GA): ${repEf != null ? repEf.toFixed(3) : 'n/a'} / ${repVdot != null ? repVdot.toFixed(1) : 'n/a'}.`);
-  lines.push(`- VDOT-Trend (28d vs 28d): ${Number.isFinite(trend?.dv) ? `${trend.dv >= 0 ? '+' : ''}${trend.dv.toFixed(1)}%` : 'n/a'}${trend?.confidence ? ` (Confidence ${trend.confidence})` : ''}.`);
+  if (Number.isFinite(trend?.efDeltaPct)) {
+    lines.push(
+      `- EF-Trend (28d vs 28d): ${trend.efDeltaPct >= 0 ? '+' : ''}${trend.efDeltaPct.toFixed(1)}%${
+        trend?.confidence ? ` (Confidence ${trend.confidence})` : ''
+      }.`
+    );
+  } else {
+    lines.push(`- EF-Trend (28d vs 28d): aktuell nicht belastbar${trend?.confidence ? ` (Confidence ${trend.confidence})` : ''}.`);
+  }
+  if (Number.isFinite(trend?.dv)) {
+    lines.push(`- VDOT-Trend (28d vs 28d): ${trend.dv >= 0 ? '+' : ''}${trend.dv.toFixed(1)}%.`);
+  } else {
+    lines.push('- VDOT-Trend (28d vs 28d): aktuell nicht belastbar.');
+  }
   lines.push(`- Drift: ${drift != null ? drift.toFixed(1) + '%' : 'unknown'} vs persönlich ${personalDriftWarn}/${personalDriftCritical}% -> ${driftSignal === 'green' ? '🟢' : driftSignal === 'orange' ? '🟠' : driftSignal === 'red' ? '🔴' : '🟠'}.`);
   lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, nur kontrolliert belasten' : 'stabil genug für planmäßiges easy'}${Number.isFinite(trend?.dv) ? trend.dv <= -1.5 ? '; VDOT trendet rückläufig -> Fokus auf easy Qualität + Erholung.' : trend.dv >= 1.5 ? '; VDOT trendet positiv -> Reize wie geplant halten, nicht unnötig erhöhen.' : '; VDOT aktuell stabil.' : ''}.`);
   lines.push(`- Confidence: ${aerobicConf.bucket}`);
@@ -3135,7 +3147,8 @@ async function computeAerobicTrend(ctx, dayIso) {
     };
   }
 
-  const dv = ((ef1 - ef0) / ef0) * 100;
+  const efDeltaPct = ((ef1 - ef0) / ef0) * 100;
+  const dv = efDeltaPct;
   const dd = d1 - d0;
 
   let emoji = "🟡";
@@ -3151,6 +3164,7 @@ async function computeAerobicTrend(ctx, dayIso) {
   const confidence = trendConfidence(recent.length, prev.length);
   return {
     ok: true,
+    efDeltaPct,
     dv,
     dd,
     confidence,
