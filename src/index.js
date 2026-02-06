@@ -280,6 +280,11 @@ const LEARNING_MIN_CONF = 0.4;
 const LEARNING_UTILITY_EPS = 0.05;
 const LEARNING_UTILITY_LAMBDA = 1.5;
 const LEARNING_MIN_ARM_NEFF = 0.5;
+const LEARNING_TEXT_MIN_ARM_NEFF = 3.0;
+const LEARNING_TEXT_MIN_COMPARE_NEFF = 3.0;
+const LEARNING_TEXT_MIN_COMPARE_ARMS = 2;
+const LEARNING_TEXT_MIN_CONF_FOR_STRONG = 0.6;
+const LEARNING_TEXT_UTILITY_EPS = 0.05;
 const LEARNING_SAFE_FALLBACK_ARMS = ["HOLD_ABSORB", "FREQ_UP", "NEUTRAL"];
 const LEARNING_EXPLORE_UNTRIED = false;
 const LEARNING_GLOBAL_CONTEXT_KEY = "ALL";
@@ -1969,6 +1974,8 @@ function chooseLearningRecommendation(stats, contextKey, contextSummary) {
   const confidenceArm = stats.armStats?.[recommended]?.confidenceArm ?? 0;
   const isGlobal = contextKey === LEARNING_GLOBAL_CONTEXT_KEY;
   const exploreUntried = LEARNING_EXPLORE_UNTRIED;
+  const secondArm = stats.secondArm || recommended;
+  const utilityDiff = stats.utilityDiff ?? null;
   let recommendationMode = explorationNeed ? "CONSERVATIVE" : "EXPLOIT";
   let chosenArm = recommended;
   let chosenEff = nEffArm;
@@ -1995,6 +2002,8 @@ function chooseLearningRecommendation(stats, contextKey, contextSummary) {
     exploreUntried,
     nEffTotal,
     nEffArm: chosenEff,
+    secondArm,
+    utilityDiff,
     contextKey,
     contextSummary,
     globalFallback: isGlobal,
@@ -2070,10 +2079,23 @@ function buildLearningNarrativeState(evidence) {
   const nEffTotal = Number.isFinite(recommendation?.nEffTotal) ? recommendation.nEffTotal : 0;
   const confidenceArm = Number.isFinite(recommendation?.confidenceArm) ? recommendation.confidenceArm : 0;
   const confidenceContext = Number.isFinite(recommendation?.confidenceContext) ? recommendation.confidenceContext : 0;
-  const explorationNeed = recommendation?.explorationNeed ?? true;
+  const baseExplorationNeed = recommendation?.explorationNeed ?? true;
   const isGlobalFallback = recommendation?.globalFallback ?? false;
+  const recommendedArm = recommendation?.strategyArm || "NEUTRAL";
+  const contextSummary = recommendation?.contextSummary || evidence?.contextSummary || "aktueller Kontext";
+  const contextKey = recommendation?.contextKey || evidence?.contextKey || "LEGACY";
+  const arms = evidence?.arms || {};
+  const nEffByArm = {};
+  for (const arm of STRATEGY_ARMS) {
+    nEffByArm[arm] = Number.isFinite(arms[arm]?.nEff) ? arms[arm].nEff : 0;
+  }
+  const nArmsWithData = STRATEGY_ARMS.filter((arm) => nEffByArm[arm] >= LEARNING_TEXT_MIN_ARM_NEFF).length;
+  const secondArm = recommendation?.secondArm || recommendedArm;
+  const nEffSecond = Number.isFinite(nEffByArm[secondArm]) ? nEffByArm[secondArm] : 0;
+  const utilityDiff = Number.isFinite(recommendation?.utilityDiff) ? recommendation.utilityDiff : null;
+  const explorationNeed = baseExplorationNeed && nEffArm < LEARNING_TEXT_MIN_ARM_NEFF;
   const hasSufficientEvidence = !explorationNeed
-    && nEffArm >= LEARNING_MIN_ARM_NEFF
+    && nEffArm >= LEARNING_TEXT_MIN_ARM_NEFF
     && nEffTotal >= LEARNING_MIN_NEFF;
 
   return {
@@ -2084,6 +2106,14 @@ function buildLearningNarrativeState(evidence) {
     nEffTotal,
     confidenceArm,
     confidenceContext,
+    contextSummary,
+    contextKey,
+    recommendedArm,
+    secondArm,
+    nEffSecond,
+    nEffByArm,
+    nArmsWithData,
+    utilityDiff,
   };
 }
 
@@ -2096,47 +2126,94 @@ function formatLearningEvidenceLines(evidence, narrativeState) {
   const armLines = STRATEGY_ARMS.map((arm) => {
     const label = STRATEGY_LABELS[arm] || arm;
     const nEff = Number.isFinite(arms[arm]?.nEff) ? arms[arm].nEff : 0;
-    return `- ${label}: ${nEff.toFixed(1)} Beobachtungen`;
+    return `- ${label}: ${formatNeff(nEff)} Beobachtungen`;
   });
 
-  const confArmPct = Math.round(clamp(narrativeState.confidenceArm, 0, 1) * 100);
-  const confContextPct = Math.round(clamp(narrativeState.confidenceContext, 0, 1) * 100);
-  const confidenceLine = `- Confidence (Datenmenge): Arm ${confArmPct}% | Kontext ${confContextPct}%`;
+  const confArmPct = formatPct(narrativeState.confidenceArm);
+  const confContextPct = formatPct(narrativeState.confidenceContext);
+  const confidenceLine = `- Confidence (Datenmenge): Arm ${confArmPct} | Kontext ${confContextPct}`;
 
   return [learningEvidenceLabel(narrativeState.isGlobalFallback), ...armLines, confidenceLine];
 }
 
-function buildLearningTodayLine(recommendation, narrativeState) {
-  const contextText = recommendation?.contextSummary || "aktueller Kontext";
-  const armLabel = STRATEGY_LABELS[recommendation?.strategyArm] || recommendation?.strategyArm || "keine Anpassung";
-  const fallbackNote = narrativeState.isGlobalFallback ? " (Hinweis: noch wenig kontextspezifische Daten, daher globaler Überblick.)" : "";
-
-  if (narrativeState.explorationNeed && recommendation?.exploreUntried) {
-    return `Learning today:\nWir haben aktuell noch zu wenig Vergleichsdaten im (${contextText}).\nWir testen ${armLabel} klein dosiert und sammeln gezielt weitere Beobachtungen.${fallbackNote}`;
-  }
-
-  if (narrativeState.explorationNeed) {
-    return `Learning today:\nDie Datenlage ist noch unsicher im (${contextText}).\nWir bleiben vorerst bei ${armLabel} und beobachten weiter.${fallbackNote}`;
-  }
-
-  if (!narrativeState.hasSufficientEvidence) {
-    return `Learning today:\nWir beobachten weiter im (${contextText}).\nAktuell reicht die Evidenz noch nicht für eine klare Aussage.${fallbackNote}`;
-  }
-
-  if (recommendation?.strategyArm === "NEUTRAL") {
-    return `Learning today:\nIn Situationen wie (${contextText}) gab es bei dir unter ${armLabel} bisher keine Hinweise auf Probleme.\nDas ist eine Beobachtung – keine aktive Steigerung.${fallbackNote}`;
-  }
-
-  return `Learning today:\nIn Situationen wie (${contextText}) war ${armLabel} für dich robuster als die Alternativen.\nDas basiert auf dem aktuellen Vergleich innerhalb der verfügbaren Daten.${fallbackNote}`;
+function formatPct(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0%";
+  return `${Math.round(n * 100)}%`;
 }
 
-function buildLearningNarrative({ evidence, confirmedRules = [], proposedRules = [] }) {
-  const recommendation = evidence?.recommendation;
+function formatNeff(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0.0";
+  return n.toFixed(1);
+}
+
+function sanitizeLearningText(text) {
+  let out = String(text || "");
+  out = out.replace(/NaN|undefined|null/g, "");
+  out = out.replace(/[ \t]{2,}/g, " ");
+  out = out.replace(/\s+\n/g, "\n").replace(/\n\s+/g, "\n");
+  out = out.replace(/\s+([.,;:])/g, "$1");
+  const suffix = "(basierend auf globalen Daten)";
+  const firstIndex = out.indexOf(suffix);
+  if (firstIndex >= 0) {
+    out = out.slice(0, firstIndex + suffix.length) + out.slice(firstIndex + suffix.length).replaceAll(suffix, "");
+  }
+  return out.trim();
+}
+
+function computeClaimsLevel(state) {
+  if (state.explorationNeed || state.nEffArm < LEARNING_TEXT_MIN_ARM_NEFF || state.confidenceArm < 0.4) return 0;
+  const hasCompareArms = state.nArmsWithData >= LEARNING_TEXT_MIN_COMPARE_ARMS
+    && state.nEffSecond >= LEARNING_TEXT_MIN_COMPARE_NEFF;
+  if (!hasCompareArms) return 1;
+  if (state.confidenceContext < 0.5) return 1;
+  if (
+    state.confidenceContext >= LEARNING_TEXT_MIN_CONF_FOR_STRONG
+    && (state.utilityDiff == null || state.utilityDiff >= LEARNING_TEXT_UTILITY_EPS)
+  ) {
+    return 3;
+  }
+  return 2;
+}
+
+function getLearningText(state) {
+  const armLabel = STRATEGY_LABELS[state.recommendedArm] || state.recommendedArm || "keine Anpassung";
+  const secondArmLabel = STRATEGY_LABELS[state.secondArm] || state.secondArm || "Alternative";
+  const confArmPct = formatPct(state.confidenceArm);
+  const confCtxPct = formatPct(state.confidenceContext);
+  const nEffArm = formatNeff(state.nEffArm);
+  const nEffSecond = formatNeff(state.nEffSecond);
+  const contextText = state.contextSummary || "aktueller Kontext";
+  const suffix = state.isGlobalFallback ? " (basierend auf globalen Daten)" : "";
+  const isNeutral = state.recommendedArm === "NEUTRAL";
+  let level = computeClaimsLevel(state);
+  if (isNeutral) level = Math.min(level, 1);
+  let text = "";
+
+  if (isNeutral) {
+    text = `Learning today:\nWir halten die Strategie konservativ im (${contextText}).\nAktuell gibt es keine klare Anpassung, wir stabilisieren und beobachten weiter.\n(n_eff=${nEffArm}, Confidence=${confArmPct}).`;
+  } else if (level === 0) {
+    text = `Learning today:\nWir haben aktuell noch zu wenig Vergleichsdaten in (${contextText}).\nWir bleiben konservativ bei ${armLabel} und sammeln weitere Beobachtungen.\n(n_eff=${nEffArm}, Confidence=${confArmPct}).`;
+  } else if (level === 1) {
+    text = `Learning today:\nIn (${contextText}) hat sich ${armLabel} bisher gut verträglich gezeigt.\nAndere Strategien sind noch zu wenig getestet, um einen Vergleich zu ziehen.\n(n_eff=${nEffArm}, Confidence=${confArmPct}).`;
+  } else if (level === 2) {
+    text = `Learning today:\nIn (${contextText}) spricht derzeit mehr für ${armLabel} als für ${secondArmLabel}.\nDer Vergleich ist noch vorläufig.\n(n_eff=${nEffArm}/${nEffSecond}, Confidence=${confCtxPct}).`;
+  } else {
+    text = `Learning today:\nIn (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\n(n_eff=${nEffArm}/${nEffSecond}, Confidence=${confCtxPct}).`;
+  }
+
+  return sanitizeLearningText(`${text}${suffix}`);
+}
+
+function buildLearningNarrative(payload) {
+  const normalized = payload?.evidence ? payload : { evidence: payload };
+  const { evidence, confirmedRules = [], proposedRules = [] } = normalized || {};
   const narrativeState = buildLearningNarrativeState(evidence);
   const confirmedText = confirmedRules.length ? confirmedRules.slice(0, 2).join(" | ") : "Noch keine bestätigte Regel.";
   const proposedText = proposedRules.length ? proposedRules.slice(0, 2).join(" | ") : "Aktuell keine neue Hypothese.";
   const evidenceLines = formatLearningEvidenceLines(evidence, narrativeState);
-  const learningToday = buildLearningTodayLine(recommendation, narrativeState);
+  const learningToday = getLearningText(narrativeState);
 
   return [
     "1) 🧭 Ich-Regeln (Confirmed)",

@@ -211,4 +211,101 @@ function makeEvent({
   assert.equal(evidence.redFlagCount, 1);
 }
 
+// T1) Nur ein Arm mit Daten -> kein Vergleich, Level 1 Text
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=F|stress=LOW|hrv=NORMAL|drift=OK|sleep=OK|mono=LOW";
+  const events = Array.from({ length: 4 }, () =>
+    makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "GOOD", contextKey })
+  );
+  const evidence = computeLearningEvidence(events, endDay, contextKey);
+  const narrative = buildLearningNarrative(evidence);
+  assert.ok(!narrative.includes("robuster als"));
+  assert.ok(!narrative.includes("besser als"));
+  assert.ok(!narrative.includes("als die Alternativen"));
+  assert.ok(narrative.includes("zu wenig getestet, um einen Vergleich zu ziehen"));
+}
+
+// T2) Zwei Arme mit Daten -> vorsichtiger Vergleich mit Hedge (Level 2)
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=T|stress=MED|hrv=LOW|drift=WARN|sleep=LOW|mono=HIGH";
+  const events = [
+    ...Array.from({ length: 4 }, () =>
+      makeEvent({ day: endDay, strategyArm: "FREQ_UP", outcomeClass: "GOOD", contextKey })
+    ),
+    ...Array.from({ length: 4 }, () =>
+      makeEvent({ day: endDay, strategyArm: "INTENSITY_SHIFT", outcomeClass: "BAD", contextKey })
+    ),
+  ];
+  const evidence = computeLearningEvidence(events, endDay, contextKey);
+  const narrative = buildLearningNarrative(evidence);
+  assert.ok(narrative.includes("spricht derzeit mehr für") || narrative.includes("robuster als"));
+  if (narrative.includes("spricht derzeit mehr für")) {
+    assert.ok(narrative.includes("vorläufig"));
+  }
+}
+
+// T3) recommendedArm == NEUTRAL -> keine robuste/bewährt Sprache
+{
+  const endDay = isoDaysAgo(0);
+  const contextKey = "RFgap=T|stress=HIGH|hrv=LOW|drift=BAD|sleep=LOW|mono=HIGH";
+  const events = Array.from({ length: 4 }, () =>
+    makeEvent({ day: endDay, strategyArm: "NEUTRAL", outcomeClass: "GOOD", contextKey })
+  );
+  const evidence = computeLearningEvidence(events, endDay, contextKey);
+  const narrative = buildLearningNarrative(evidence);
+  assert.ok(!narrative.includes("robust"));
+  assert.ok(!narrative.includes("bewährt"));
+  assert.ok(!narrative.includes("stabiler"));
+  assert.ok(narrative.includes("konservativ") || narrative.includes("stabilisieren"));
+}
+
+// T4) Confidence NaN -> formatPct 0%, kein NaN im Text
+{
+  const evidence = {
+    recommendation: {
+      strategyArm: "FREQ_UP",
+      confidenceArm: Number.NaN,
+      confidenceContext: Number.NaN,
+      nEffArm: 4.2,
+      nEffTotal: 4.2,
+      explorationNeed: false,
+      contextSummary: "RunFloorGap ja, Stress LOW, HRV NORMAL",
+      contextKey: "LEGACY",
+      globalFallback: false,
+    },
+    arms: {
+      FREQ_UP: { nEff: Number.NaN },
+    },
+  };
+  const narrative = buildLearningNarrative(evidence);
+  assert.ok(!narrative.includes("NaN"));
+  assert.ok(narrative.includes("Confidence=0%"));
+}
+
+// T5) Global fallback suffix max einmal
+{
+  const evidence = {
+    recommendation: {
+      strategyArm: "FREQ_UP",
+      confidenceArm: 0.5,
+      confidenceContext: 0.5,
+      nEffArm: 4,
+      nEffTotal: 4,
+      explorationNeed: false,
+      contextSummary: "globaler Kontext",
+      contextKey: "ALL",
+      globalFallback: true,
+    },
+    arms: {
+      FREQ_UP: { nEff: 4 },
+    },
+  };
+  const narrative = buildLearningNarrative(evidence);
+  const suffix = "(basierend auf globalen Daten)";
+  const count = narrative.split(suffix).length - 1;
+  assert.ok(count <= 1);
+}
+
 console.log("learning_v2 tests passed");
