@@ -2296,10 +2296,6 @@ function applyTextGate(text, state) {
 function getLearningText(state) {
   const armLabel = STRATEGY_LABELS[state.recommendedArm] || state.recommendedArm || "keine Anpassung";
   const secondArmLabel = STRATEGY_LABELS[state.secondArm] || state.secondArm || "Alternative";
-  const confArmPct = formatPct(state.confidenceRec);
-  const confCtxPct = formatPct(state.confidenceContext);
-  const nEffArm = formatNeff(state.nEffRec);
-  const nEffSecond = formatNeff(state.nEffSecond);
   const contextText = state.contextSummary || "aktueller Kontext";
   const suffix = state.isGlobalFallback || state.contextKey === LEARNING_GLOBAL_CONTEXT_KEY
     ? " (basierend auf globalen Daten)"
@@ -2310,15 +2306,15 @@ function getLearningText(state) {
   let text = "";
 
   if (isNeutral) {
-    text = `Learning heute:\nWir halten die Strategie konservativ im (${contextText}).\nAktuell gibt es keine klare Anpassung, wir stabilisieren und beobachten weiter.\n(n_eff=${nEffArm}, Evidence-Confidence=${confArmPct}).`;
+    text = `Learning heute:\nWir halten die Strategie im (${contextText}) konservativ.\nEs gibt heute keinen klaren Grund umzusteuern, daher stabilisieren wir und beobachten weiter.`;
   } else if (level === 0) {
-    text = `Learning heute:\nWir haben aktuell noch zu wenig Vergleichsdaten in (${contextText}).\nWir bleiben konservativ bei ${armLabel} und sammeln weitere Beobachtungen.\n(n_eff=${nEffArm}, Evidence-Confidence=${confArmPct}).`;
+    text = `Learning heute:\nWir haben im (${contextText}) noch zu wenig Vergleich, um sicher umzuschalten.\nWir bleiben vorerst bei ${armLabel} und sammeln weitere Beobachtungen.`;
   } else if (level === 1) {
-    text = `Learning heute:\nIn (${contextText}) hat sich ${armLabel} bisher gut verträglich gezeigt.\nAndere Strategien sind noch zu wenig getestet, um einen Vergleich zu ziehen.\n(n_eff=${nEffArm}, Evidence-Confidence=${confArmPct}).`;
+    text = `Learning heute:\n${armLabel} wirkt im (${contextText}) bislang stabil.\nFür einen fairen Vergleich fehlen noch Tests der Alternativen.`;
   } else if (level === 2) {
-    text = `Learning heute:\nIn (${contextText}) spricht derzeit mehr für ${armLabel} als für ${secondArmLabel}.\nDer Vergleich ist noch vorläufig.\n(n_eff=${nEffArm}/${nEffSecond}, Evidence-Confidence=${confCtxPct}).`;
+    text = `Learning heute:\nIm (${contextText}) spricht aktuell mehr für ${armLabel} als für ${secondArmLabel}.\nDer Vergleich ist noch vorläufig, deshalb bleiben wir vorsichtig.`;
   } else {
-    text = `Learning heute:\nIn (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\n(n_eff=${nEffArm}/${nEffSecond}, Evidence-Confidence=${confCtxPct}).`;
+    text = `Learning heute:\nIm (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\nDas ist unser Grund, die Empfehlung beizubehalten.`;
   }
 
   return applyTextGate(`${text}${suffix}`, state);
