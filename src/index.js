@@ -206,6 +206,21 @@ export {
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
 const STRENGTH_MIN_7D = 60;
+const DRIFT_WARN_PCT = 6; // Adjust steady_t drift warning threshold here
+const DRIFT_CRITICAL_PCT = 8; // Adjust critical drift threshold here
+const DRIFT_STEADY_T_MAX_PCT = 6.5; // Adjust expected steady_t drift ceiling here
+const DRIFT_TREND_WORSENING_PCT = 1.0; // Δ drift (recent-prev) that triggers delay
+const STEADY_T_MAX_PER_7D = 1;
+const KEY_HARD_MAX_PER_7D = 1;
+const STEADY_T_DELAY_DAYS_RANGE = { min: 5, max: 7 };
+const STEADY_T_QUALITY_MIN_MINUTES = 20;
+const STEADY_T_QUALITY_MAX_MINUTES = 30;
+const STEADY_T_TAGS = new Set(["steady_t", "steady-t", "steady:t", "steady t"]);
+const INTENSITY_CLASS = {
+  EASY: "EASY",
+  STEADY_T: "STEADY_T",
+  KEY_HARD: "KEY_HARD",
+};
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -1023,6 +1038,46 @@ async function computeLoads7d(ctx, dayIso) {
   };
 }
 
+function computeIntensityBudget(ctx, dayIso, windowDays = 7) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - (windowDays - 1) * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let steadyCount = 0;
+  let keyHardCount = 0;
+  let lastSteadyIso = null;
+  let lastKeyIso = null;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+
+    const intensityClass = getIntensityClassForActivity(a);
+    if (intensityClass === INTENSITY_CLASS.KEY_HARD) {
+      keyHardCount += 1;
+      if (!lastKeyIso || d > lastKeyIso) lastKeyIso = d;
+    } else if (intensityClass === INTENSITY_CLASS.STEADY_T) {
+      steadyCount += 1;
+      if (!lastSteadyIso || d > lastSteadyIso) lastSteadyIso = d;
+    }
+  }
+
+  return {
+    windowDays,
+    startIso,
+    endIso,
+    steadyCount,
+    keyHardCount,
+    lastSteadyIso,
+    lastKeyIso,
+    limits: {
+      steadyMax: STEADY_T_MAX_PER_7D,
+      keyHardMax: KEY_HARD_MAX_PER_7D,
+    },
+  };
+}
+
 function computeLongRunSummary7d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
@@ -1810,6 +1865,12 @@ function addRunFloorDebug(debugOut, day, payload) {
   debugOut.__runFloor[day] = payload;
 }
 
+function addDecisionDebug(debugOut, day, payload) {
+  if (!debugOut) return;
+  debugOut.__decision ??= {};
+  debugOut.__decision[day] = payload;
+}
+
 
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
@@ -2585,12 +2646,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         }
       }
 
+      const intensityClass = getIntensityClassForActivity(a);
       perRunInfo.push({
         activityId: a.id,
         type: a.type,
         tags: a.tags ?? [],
         ga,
         isKey,
+        intensityClass,
+        excludeFromTrends: intensityClass === INTENSITY_CLASS.STEADY_T,
         keyType,
         ef,
         drift,
@@ -2606,6 +2670,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         addDebug(ctx.debugOut, day, a, "ok", {
           ga,
           isKey,
+          intensityClass,
           ef,
           drift,
           drift_raw,
@@ -2842,7 +2907,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const repGARun = pickRepresentativeGARun(perRunInfo);
     const repDrift = Number.isFinite(repGARun?.drift) ? repGARun.drift : null;
-    const driftSignalForLearning = repDrift == null ? "unknown" : repDrift >= 8 ? "red" : repDrift >= 6 ? "orange" : "green";
+    const driftSignalForLearning =
+      repDrift == null
+        ? "unknown"
+        : repDrift >= DRIFT_CRITICAL_PCT
+          ? "red"
+          : repDrift >= DRIFT_WARN_PCT
+            ? "orange"
+            : "green";
     const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
     const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
     const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
@@ -2857,6 +2929,55 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     ];
     const warningCount = warningSignals.filter(Boolean).length;
     const hasHardRedFlag = hrv2dNegative || (warningCount >= 2 && (!!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative));
+    const intensityBudget = computeIntensityBudget(ctx, day, 7);
+    const driftRecentMedian = Number.isFinite(trend?.driftRecentMed) ? trend.driftRecentMed : null;
+    const driftTrendWorsening = Number.isFinite(trend?.dd) ? trend.dd > DRIFT_TREND_WORSENING_PCT : false;
+    const motorTrendDownStrong = Number.isFinite(motor?.dv) ? motor.dv < -1.5 : false;
+    const loadState = fatigue?.override ? "overreached" : "ok";
+    const noHardGuardrailActive = !hasHardRedFlag && warningCount < 2 && keySpacing?.ok !== false;
+    const hrvNegativeDays = hrv2dNegative ? 2 : hrv1dNegative ? 1 : 0;
+    const steadyDecision = computeBuildSteadyDecision({
+      phase: blockState.block,
+      noHardGuardrailActive,
+      hrvNegativeDays,
+      hrv2dNegative,
+      driftRecentMedian,
+      driftTrendWorsening,
+      loadState,
+      motorTrendDownStrong,
+      intensityBudget,
+    });
+    const keyHardDecision = computeKeyHardDecision({
+      noHardGuardrailActive,
+      loadState,
+      keySpacingOk: keySpacing?.ok,
+      keyCompliance,
+      intensityBudget,
+    });
+    const overruledSignals = [];
+    if (steadyDecision?.delaySteady && steadyDecision?.allowConditionsMet) {
+      overruledSignals.push("BUILD_STEADY_ALLOWED");
+    }
+    if (!noHardGuardrailActive) overruledSignals.push("HARD_GUARDRAIL");
+    const decisionTrace = buildDecisionTrace({
+      steadyDecision,
+      guardrailApplied: noHardGuardrailActive ? null : "hard_guardrail",
+      overruledSignals,
+    });
+    const intensityClassToday = deriveDailyIntensityClass(perRunInfo);
+    const excludeFromTrends = {
+      motorTrend: intensityClassToday === INTENSITY_CLASS.STEADY_T,
+      vdotTrend: intensityClassToday === INTENSITY_CLASS.STEADY_T,
+      efDriftTrend: intensityClassToday === INTENSITY_CLASS.STEADY_T,
+    };
+    addDecisionDebug(ctx.debugOut, day, buildIntensityDebugPayload({
+      intensityClassToday,
+      intensityBudget,
+      steadyDecision,
+      keyHardDecision,
+      decisionTrace,
+      excludeFromTrends,
+    }));
     const lifeStress = deriveStressBucket({ fatigueOverride: !!fatigue?.override, warningCount });
     const hrvState = deriveHrvBucket(hrvDeltaPct);
     const driftState = deriveDriftBucket(driftSignalForLearning);
@@ -2959,6 +3080,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       learningEvidence,
       learningNarrativeState,
       strategyDecision,
+      intensityBudget,
+      steadyDecision,
+      keyHardDecision,
+      decisionTrace,
+      intensityClassToday,
     }, { debug });
 
     // Do not write into wellness comment field anymore.
@@ -3732,6 +3858,145 @@ function computeLearningOutcomeScore({ driftSignal, hrv1dNegative, hrv2dNegative
   return score;
 }
 
+function computeBuildSteadyDecision({
+  phase,
+  noHardGuardrailActive,
+  hrvNegativeDays,
+  hrv2dNegative,
+  driftRecentMedian,
+  driftTrendWorsening,
+  loadState,
+  motorTrendDownStrong,
+  intensityBudget,
+}) {
+  const inBuild = phase === "BUILD";
+  const driftOk = Number.isFinite(driftRecentMedian) ? driftRecentMedian <= DRIFT_WARN_PCT : false;
+  const hrvOk = hrvNegativeDays <= 1;
+  const loadOk = loadState !== "overreached";
+  const steadyBudgetOk = intensityBudget.steadyCount < STEADY_T_MAX_PER_7D;
+  const keyConflict = intensityBudget.keyHardCount > 0;
+  const budgetOk = steadyBudgetOk && !keyConflict;
+
+  const delaySignals = {
+    drift_trend_worsening: !!driftTrendWorsening,
+    hrv_negative_2days: !!hrv2dNegative,
+    motor_trend_down_strong: !!motorTrendDownStrong,
+  };
+  const delayActive = Object.values(delaySignals).some(Boolean);
+
+  const allowConditionsMet = inBuild && noHardGuardrailActive && loadOk && budgetOk && driftOk && hrvOk;
+
+  let status = "blocked";
+  let reasonId = "UNKNOWN";
+  let reasonText = "Steady-T heute nicht freigegeben.";
+
+  if (!inBuild) {
+    reasonId = "PHASE_NOT_BUILD";
+    reasonText = "Block ist nicht BUILD.";
+  } else if (!noHardGuardrailActive) {
+    reasonId = "HARD_GUARDRAIL";
+    reasonText = "Harter Guardrail aktiv.";
+  } else if (!loadOk) {
+    reasonId = "LOAD_OVERREACHED";
+    reasonText = "Belastungsstatus: overreached.";
+  } else if (!budgetOk) {
+    reasonId = keyConflict ? "KEY_HARD_IN_LAST_7D" : "STEADY_T_BUDGET_USED";
+    reasonText = keyConflict
+      ? "Key-Hard in den letzten 7 Tagen."
+      : `STEADY_T-Limit (${STEADY_T_MAX_PER_7D}/7T) erreicht.`;
+  } else if (delayActive) {
+    status = "delay";
+    reasonId = "BUILD_STEADY_BLOCK";
+    reasonText = "Build aktiv, aber System absorbiert noch – Schwellenreiz wird verschoben, nicht gestrichen.";
+  } else if (!hrvOk) {
+    reasonId = "HRV_NEGATIVE_2D";
+    reasonText = "HRV an 2 Tagen negativ.";
+  } else if (!driftOk) {
+    reasonId = "DRIFT_HIGH";
+    reasonText = `Drift-Median > ${DRIFT_WARN_PCT}%.`;
+  } else {
+    status = "allowed";
+    reasonId = "BUILD_STEADY_ALLOWED";
+    reasonText = "Kontrollierter Schwellenreiz erlaubt (Signal setzen, kein Ermüdungsaufbau).";
+  }
+
+  const delayReasons = Object.entries(delaySignals)
+    .filter(([, active]) => active)
+    .map(([key]) => key);
+
+  return {
+    status,
+    allowSteady: status === "allowed",
+    delaySteady: status === "delay",
+    reasonId,
+    reasonText,
+    delayRange: STEADY_T_DELAY_DAYS_RANGE,
+    delayReasons,
+    allowConditionsMet,
+  };
+}
+
+function computeKeyHardDecision({
+  noHardGuardrailActive,
+  loadState,
+  keySpacingOk,
+  keyCompliance,
+  intensityBudget,
+}) {
+  if (!noHardGuardrailActive) {
+    return { allowed: false, reason: "Harter Guardrail aktiv." };
+  }
+  if (loadState === "overreached") {
+    return { allowed: false, reason: "Belastungsstatus: overreached." };
+  }
+  if (keySpacingOk === false) {
+    return { allowed: false, reason: "Key-Abstand <48h." };
+  }
+  if (keyCompliance?.capExceeded) {
+    return { allowed: false, reason: "Key-Cap diese Woche erreicht." };
+  }
+  if (intensityBudget?.steadyCount > 0) {
+    return { allowed: false, reason: "STEADY_T in den letzten 7 Tagen." };
+  }
+  if (intensityBudget?.keyHardCount >= KEY_HARD_MAX_PER_7D) {
+    return { allowed: false, reason: `KEY_HARD-Limit (${KEY_HARD_MAX_PER_7D}/7T) erreicht.` };
+  }
+  return { allowed: true, reason: "Key-Hard möglich (Budget frei)." };
+}
+
+function buildDecisionTrace({ steadyDecision, guardrailApplied, overruledSignals }) {
+  return {
+    highest_priority_trigger: steadyDecision?.reasonId ?? null,
+    guardrail_applied: guardrailApplied ?? null,
+    overruled_signals: overruledSignals ?? [],
+  };
+}
+
+function buildIntensityDebugPayload({
+  intensityClassToday,
+  intensityBudget,
+  steadyDecision,
+  keyHardDecision,
+  decisionTrace,
+  excludeFromTrends,
+}) {
+  return {
+    intensity_class: intensityClassToday,
+    intensity_budget: intensityBudget,
+    steady_decision: steadyDecision,
+    key_hard_decision: keyHardDecision,
+    decision_trace: decisionTrace,
+    exclude_from: excludeFromTrends,
+  };
+}
+
+function applyConfidenceTone(sentence, bucket) {
+  if (!sentence) return sentence;
+  if (bucket === "low") return `Beobachtung (Test): ${sentence}`;
+  if (bucket === "medium") return `Beobachtung: ${sentence}`;
+  return sentence;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -3757,6 +4022,11 @@ function buildComments(
     learningEvidence,
     learningNarrativeState,
     strategyDecision,
+    intensityBudget,
+    steadyDecision,
+    keyHardDecision,
+    decisionTrace,
+    intensityClassToday,
   },
   { debug = false } = {}
 ) {
@@ -3772,8 +4042,8 @@ function buildComments(
   const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
   const repEf = Number.isFinite(repRun?.ef) ? repRun.ef : null;
   const repVdot = repEf != null ? vdotLikeFromEf(repEf) : null;
-  const personalDriftWarn = 6;
-  const personalDriftCritical = 8;
+  const personalDriftWarn = DRIFT_WARN_PCT;
+  const personalDriftCritical = DRIFT_CRITICAL_PCT;
   const driftSignal = drift == null ? "unknown" : drift >= personalDriftCritical ? "red" : drift >= personalDriftWarn ? "orange" : "green";
 
   const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
@@ -3938,6 +4208,41 @@ function buildComments(
   }
 
   lines.push('');
+  lines.push('2b) 🧱 Build-Status & Intensität');
+  const steadyStatus = steadyDecision?.allowSteady
+    ? '✔ STEADY_T erlaubt'
+    : steadyDecision?.delaySteady
+      ? '⏳ STEADY_T verschoben'
+      : '✖ STEADY_T gesperrt';
+  const keyStatus = keyHardDecision?.allowed ? '✔ KEY_HARD erlaubt' : '✖ KEY_HARD gesperrt';
+  lines.push(`- Build-Status: ${steadyStatus} / ${keyStatus}.`);
+  if (steadyDecision) {
+    const steadyReason = applyConfidenceTone(steadyDecision.reasonText, readinessBucket);
+    const delayText = steadyDecision.delaySteady
+      ? ` (Delay ${steadyDecision.delayRange.min}–${steadyDecision.delayRange.max} Tage)`
+      : '';
+    lines.push(`- STEADY_T: ${steadyReason}${delayText}.`);
+    if (steadyDecision.delaySteady && steadyDecision.delayReasons?.length) {
+      const delayLabels = {
+        drift_trend_worsening: 'Drift-Trend verschlechtert',
+        hrv_negative_2days: 'HRV 2 Tage negativ',
+        motor_trend_down_strong: 'Motor-Trend deutlich negativ',
+      };
+      const delayDetails = steadyDecision.delayReasons.map((r) => delayLabels[r] || r).join(', ');
+      lines.push(`- Delay-Trigger: ${applyConfidenceTone(delayDetails, readinessBucket)}.`);
+    }
+  }
+  if (keyHardDecision && !keyHardDecision.allowed) {
+    lines.push(`- KEY_HARD: ${applyConfidenceTone(keyHardDecision.reason, readinessBucket)}`);
+  }
+  if (steadyDecision?.allowSteady) {
+    lines.push(
+      `- Empfehlung STEADY_T: ${STEADY_T_QUALITY_MIN_MINUTES}–${STEADY_T_QUALITY_MAX_MINUTES}′ Qualität (z.B. 3×6′ oder 4×4′), fühlt sich wie Arbeit an, nicht wie Mutprobe – danach 24–48h easy („hätte noch eins gekonnt“).`
+    );
+    lines.push(`- Drift-Erwartung: ≤ ${DRIFT_STEADY_T_MAX_PCT}% (sonst Pace runter oder kürzen).`);
+  }
+
+  lines.push('');
   lines.push('3) 🫁 Aerober Status (personalisiert)');
   if (Number.isFinite(trend?.efDeltaPct)) {
     lines.push(
@@ -3988,6 +4293,10 @@ function buildComments(
 
   lines.push('');
   lines.push('6) 🧬 Ich-Regeln & Lernen');
+  if (intensityClassToday === INTENSITY_CLASS.STEADY_T) {
+    lines.push('- Heute STEADY_T (kein Key): Trends (Motor/VDOT/EF/Drift) nicht werten, zählt für Frequenz/Load.');
+    lines.push(`- Ich-Regel: nächste 24–48h easy; wenn Drift > ${DRIFT_STEADY_T_MAX_PCT}% → Pace runter oder Einheit kürzen.`);
+  }
   lines.push(buildLearningNarrative({ evidence: learningEvidence, confirmedRules, proposedRules }));
 
   return lines.join("\n");
@@ -4008,6 +4317,17 @@ function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday 
   if (hadKey) return "Key (intensiv)";
   if (hadGA) return totalMinutesToday > 0 ? `Easy/GA ${totalMinutesToday}′` : "Easy/GA";
   return totalMinutesToday > 0 ? `Lauf ${totalMinutesToday}′` : "Lauf";
+}
+
+function deriveDailyIntensityClass(perRunInfo) {
+  if (!perRunInfo?.length) return null;
+  if (perRunInfo.some((run) => run.intensityClass === INTENSITY_CLASS.KEY_HARD)) {
+    return INTENSITY_CLASS.KEY_HARD;
+  }
+  if (perRunInfo.some((run) => run.intensityClass === INTENSITY_CLASS.STEADY_T)) {
+    return INTENSITY_CLASS.STEADY_T;
+  }
+  return INTENSITY_CLASS.EASY;
 }
 
 function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
@@ -4117,6 +4437,8 @@ async function computeAerobicTrend(ctx, dayIso) {
     efDeltaPct,
     dv,
     dd,
+    driftRecentMed: d1,
+    driftPrevMed: d0,
     confidence,
     recentCount: recent.length,
     prevCount: prev.length,
@@ -4225,6 +4547,8 @@ async function computeMotorIndex(ctx, dayIso) {
   return {
     ok: true,
     value: val,
+    dv,
+    dd,
     text: `🏎️ Motor-Index: ${val.toFixed(0)}/100 (${label}) ${arrow} | EF Δ ${dv.toFixed(1)}% (28d)${extra}`,
   };
 }
@@ -5270,9 +5594,24 @@ function isIntensityByHr(a) {
   return hr >= HFMAX * INTENSITY_HR_PCT;
 }
 
+function hasSteadyTTag(a) {
+  const tags = normalizeTags(a?.tags);
+  return tags.some((t) => STEADY_T_TAGS.has(t));
+}
+
+function getIntensityClassForActivity(a) {
+  if (hasKeyTag(a)) return INTENSITY_CLASS.KEY_HARD;
+  if (hasSteadyTTag(a)) return INTENSITY_CLASS.STEADY_T;
+  return INTENSITY_CLASS.EASY;
+}
+
+function isSteadyTActivity(a) {
+  return getIntensityClassForActivity(a) === INTENSITY_CLASS.STEADY_T;
+}
+
 function isAerobic(a) {
   // MVP: nicht key und ausreichend lang
-  if (hasKeyTag(a)) return false;
+  if (hasKeyTag(a) || isSteadyTActivity(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_MIN_SECONDS;
 }
@@ -5380,13 +5719,13 @@ function getIntervalTypeFromActivity(a) {
 }
 
 function isGA(a) {
-  if (hasKeyTag(a)) return false;
+  if (hasKeyTag(a) || isSteadyTActivity(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_MIN_SECONDS;
 }
 
 function isGAComparable(a) {
-  if (hasKeyTag(a)) return false;
+  if (hasKeyTag(a) || isSteadyTActivity(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_COMPARABLE_MIN_SECONDS;
 }
