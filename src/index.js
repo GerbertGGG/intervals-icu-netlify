@@ -216,6 +216,7 @@ const STEADY_T_DELAY_DAYS_RANGE = { min: 5, max: 7 };
 const DECISION_CONF_MIN = 40; // NEW: STEADY_T decision confidence threshold
 const STEADY_T_QUALITY_MIN_MINUTES = 20;
 const STEADY_T_QUALITY_MAX_MINUTES = 30;
+const STEADY_T_KEY_HARD_CONFLICT_BLOCK = true; // NEW: guardrail severity / budget conflict
 const STEADY_T_TAGS = new Set(["steady_t", "steady-t", "steady:t", "steady t"]);
 const INTENSITY_CLASS = {
   EASY: "EASY",
@@ -275,10 +276,12 @@ function toLocalYMD(d) {
 }
 
 // Fatigue override thresholds (tune later)
-const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
+const RAMP_HARD_PCT = 0.5;         // NEW: guardrail severity (hard)
+const RAMP_SOFT_PCT = 0.3;         // NEW: guardrail severity (soft)
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
-const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
+const ACWR_HARD = 1.6;             // NEW: guardrail severity (hard)
+const ACWR_SOFT = 1.3;             // NEW: guardrail severity (soft)
 const ACWR_LOW_LIMIT = 0.8;        // underload threshold
 
 
@@ -606,19 +609,54 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : MAX_KEYS_7D;
 
   const reasons = [];
-  if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
-  if (rampPct > RAMP_PCT_7D_LIMIT) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
-  if (acwr != null && acwr > ACWR_HIGH_LIMIT) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${ACWR_HIGH_LIMIT})`);
-  if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0)
+  const guardrailReasons = [];
+  let guardrailSeverity = "none";
+  let fatigueSeverity = "low";
+  const severityRank = { none: 0, soft: 1, hard: 2 };
+  const upgradeSeverity = (next) => {
+    if (severityRank[next] > severityRank[guardrailSeverity]) guardrailSeverity = next;
+    if (next === "hard") fatigueSeverity = "high";
+    else if (next === "soft" && fatigueSeverity === "low") fatigueSeverity = "medium";
+  };
+  const guardrailReasonText = (id, value) => `${id}:${value}`;
+
+  if (keyCount7 > keyCap) {
+    reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
+    upgradeSeverity("soft");
+  }
+  if (rampPct > RAMP_SOFT_PCT) {
+    const isHard = rampPct >= RAMP_HARD_PCT;
+    reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+    guardrailReasons.push(guardrailReasonText("ramp_pct", rampPct.toFixed(2)));
+    upgradeSeverity(isHard ? "hard" : "soft"); // NEW: guardrail severity
+  }
+  if (acwr != null && acwr > ACWR_SOFT) {
+    const isHard = acwr >= ACWR_HARD;
+    reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${isHard ? ACWR_HARD : ACWR_SOFT})`);
+    guardrailReasons.push(guardrailReasonText("acwr", acwr.toFixed(2)));
+    upgradeSeverity(isHard ? "hard" : "soft"); // NEW: guardrail severity
+  }
+  if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0) {
     reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${ACWR_LOW_LIMIT})`);
-  if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
-  if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
+    upgradeSeverity("soft");
+  }
+  if (monotony > MONOTONY_7D_LIMIT) {
+    reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
+    upgradeSeverity("soft");
+  }
+  if (strain > STRAIN_7D_LIMIT) {
+    reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
+    upgradeSeverity("soft");
+  }
 
   const override = reasons.length > 0;
 
   return {
     override,
     reasons,
+    guardrailSeverity,
+    guardrailReasons,
+    severity: fatigueSeverity,
     keyCount7,
     keyCap,
     keyCapExceeded: keyCount7 > keyCap,
@@ -1319,7 +1357,23 @@ function collectKeyStats(ctx, dayIso, windowDays) {
   return { count, types, list };
 }
 
+// FIX: key policy source-of-truth
+function normalizeKeyPolicy(keyRules, source = "blockState.keyRules") {
+  const allowedKeyTypes = Array.from(new Set(keyRules?.allowedKeyTypes || []));
+  const preferredKeyTypes = Array.from(new Set(keyRules?.preferredKeyTypes || []));
+  const bannedKeyTypes = Array.from(new Set(keyRules?.bannedKeyTypes || []))
+    .filter((t) => !allowedKeyTypes.includes(t));
+  return {
+    source,
+    allowedKeyTypes,
+    preferredKeyTypes,
+    bannedKeyTypes,
+  };
+}
+
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
+  const policySource = context.keyPolicySource || "blockState.keyRules";
+  const keyPolicy = normalizeKeyPolicy(keyRules, policySource);
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
   const actual7 = keyStats7.count;
@@ -1333,17 +1387,17 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typesForOutput = actualTypes7.length ? actualTypes7 : actualTypes14;
   const uniqueTypes = [...new Set(typesForOutput)];
   const uniqueTypes7 = [...new Set(actualTypes7)];
-  const bannedHits = uniqueTypes7.filter((t) => keyRules.bannedKeyTypes.includes(t));
-  const allowedHits = uniqueTypes7.filter((t) => keyRules.allowedKeyTypes.includes(t));
-  const preferredHits = uniqueTypes7.filter((t) => keyRules.preferredKeyTypes.includes(t));
-  const disallowedHits = uniqueTypes7.filter((t) => !keyRules.allowedKeyTypes.includes(t));
+  const bannedHits = uniqueTypes7.filter((t) => keyPolicy.bannedKeyTypes.includes(t));
+  const allowedHits = uniqueTypes7.filter((t) => keyPolicy.allowedKeyTypes.includes(t));
+  const preferredHits = uniqueTypes7.filter((t) => keyPolicy.preferredKeyTypes.includes(t));
+  const disallowedHits = uniqueTypes7.filter((t) => !keyPolicy.allowedKeyTypes.includes(t));
 
   const freqOk = actual7 >= expected;
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
-  const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
+  const preferredMissing = keyPolicy.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
   let suggestion = "";
-  const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const preferred = keyPolicy.preferredKeyTypes[0] || keyPolicy.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
 
@@ -1390,6 +1444,10 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     capExceeded,
     keySpacingOk,
     nextKeyEarliest,
+    keyPolicySource: keyPolicy.source,
+    allowedKeyTypes: keyPolicy.allowedKeyTypes,
+    bannedKeyTypes: keyPolicy.bannedKeyTypes,
+    computedDisallowed: disallowedHits,
   };
 }
 
@@ -1613,7 +1671,7 @@ function determineBlockState({
   const aerobicReady = historyMetrics?.aerobicOk && historyMetrics?.aerobicOkPrev;
   const driftReady =
     historyMetrics?.hrDriftDelta == null || historyMetrics.hrDriftDelta <= BLOCK_CONFIG.thresholds.hrDriftMax;
-  const fatigueOk = !historyMetrics?.fatigue?.override;
+  const fatigueOk = historyMetrics?.fatigue?.severity !== "high";
 
   let readinessScore = 40;
   if (runFloorReady) readinessScore += 20;
@@ -1855,6 +1913,12 @@ function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, histo
   debugOut.__blocks[day] = {
     blockState,
     keyRules,
+    keyPolicy: {
+      keyPolicySource: keyCompliance?.keyPolicySource ?? "blockState.keyRules",
+      allowedKeyTypes: keyCompliance?.allowedKeyTypes ?? keyRules?.allowedKeyTypes ?? [],
+      bannedKeyTypes: keyCompliance?.bannedKeyTypes ?? keyRules?.bannedKeyTypes ?? [],
+      computedDisallowed: keyCompliance?.computedDisallowed ?? [],
+    },
     keyCompliance,
     historyMetrics,
   };
@@ -2785,6 +2849,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
       block: baseBlock,
       eventDistance,
+      keyPolicySource: "baseBlock.keyRules",
     });
 
     const baseRunFloorTarget =
@@ -2891,7 +2956,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDistance,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
+      keyPolicySource: "blockState.keyRules",
     });
+    historyMetrics.keyCompliance = keyCompliance;
 
     patch[FIELD_BLOCK] = blockState.block;
     previousBlockState = {
@@ -2963,7 +3030,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const driftRecentMedian = Number.isFinite(trend?.driftRecentMed) ? trend.driftRecentMed : null;
     const driftTrendWorsening = Number.isFinite(trend?.dd) ? trend.dd > DRIFT_TREND_WORSENING_PCT : false;
     const motorTrendDownStrong = Number.isFinite(motor?.dv) ? motor.dv < -1.5 : false;
-    const loadState = fatigue?.override ? "overreached" : "ok";
+    const loadState = fatigue?.severity === "high" ? "overreached" : "ok";
     const guardrailState = buildGuardrailState({
       hasHardRedFlag,
       hrv2dNegative,
@@ -2971,8 +3038,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       loadState,
       painInjury: !!recoverySignals?.painInjury,
       keySpacingOk: keySpacing?.ok,
+      fatigueGuardrailSeverity: fatigue?.guardrailSeverity ?? "none",
+      fatigueGuardrailReasons: fatigue?.guardrailReasons ?? [],
     });
-    const hrvNegativeDays = hrv2dNegative ? 2 : hrv1dNegative ? 1 : 0;
+    const hrvNegativeDays = hrvDeltaPct == null ? null : hrv2dNegative ? 2 : hrv1dNegative ? 1 : 0;
     const hadKey = perRunInfo.some((x) => !!x.isKey);
     const decisionConfidence = computeReadinessConfidence({
       driftSignal: driftSignalForLearning,
@@ -2988,6 +3057,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const steadyDecision = computeBuildSteadyDecision({
       phase: blockState.block,
       guardrailHardActive: guardrailState.hardActive,
+      guardrailSoftActive: guardrailState.mediumActive,
       hrvNegativeDays,
       hrv2dNegative,
       driftRecentMedian,
@@ -3952,14 +4022,30 @@ function buildGuardrailState({
   loadState,
   painInjury,
   keySpacingOk,
+  fatigueGuardrailSeverity,
+  fatigueGuardrailReasons,
 }) {
   const hardReasons = [];
+  const softReasons = [];
+  const guardrailReasons = [];
   if (painInjury) hardReasons.push("pain_injury");
+  if (hrv2dNegative) hardReasons.push("hrv_2d_negative");
   if (loadState === "overreached") hardReasons.push("overreached");
   if (hasHardRedFlag && !hrv2dNegative) hardReasons.push("hard_red_flag");
+  if (fatigueGuardrailSeverity === "hard") hardReasons.push("fatigue_hard");
+  if (fatigueGuardrailSeverity === "soft") softReasons.push("fatigue_soft");
+  if (warningCount >= 2) softReasons.push("cumulative_warnings");
 
-  const hardActive = hardReasons.length > 0;
-  const mediumActive = warningCount >= 2;
+  if (Array.isArray(fatigueGuardrailReasons)) {
+    guardrailReasons.push(...fatigueGuardrailReasons);
+  }
+  if (hrv2dNegative) guardrailReasons.push("hrv_2d_negative");
+  if (painInjury) guardrailReasons.push("pain_injury");
+  if (warningCount >= 2) guardrailReasons.push(`warning_count:${warningCount}`);
+
+  const guardrailSeverity = hardReasons.length > 0 ? "hard" : softReasons.length > 0 ? "soft" : "none"; // NEW: guardrail severity
+  const hardActive = guardrailSeverity === "hard";
+  const mediumActive = guardrailSeverity === "soft";
 
   const blocksKeyHard = new Set();
   const blocksSteady = new Set();
@@ -3967,15 +4053,20 @@ function buildGuardrailState({
   if (hardActive) {
     blocksKeyHard.add("HARD_GUARDRAIL");
     blocksSteady.add("HARD_GUARDRAIL");
+  } else if (mediumActive) {
+    blocksKeyHard.add("SOFT_GUARDRAIL");
   }
   if (hrv2dNegative) blocksKeyHard.add("HRV_2D_NEGATIVE");
-  if (mediumActive) blocksKeyHard.add("CUMULATIVE_WARNINGS");
+  if (warningCount >= 2) blocksKeyHard.add("CUMULATIVE_WARNINGS");
   if (keySpacingOk === false) blocksKeyHard.add("KEY_SPACING");
 
   return {
+    guardrailSeverity,
     hardActive,
     mediumActive,
     hardReasons,
+    softReasons,
+    guardrailReasons,
     blocks: {
       keyHard: Array.from(blocksKeyHard),
       steady: Array.from(blocksSteady),
@@ -3986,6 +4077,7 @@ function buildGuardrailState({
 function computeBuildSteadyDecision({
   phase,
   guardrailHardActive,
+  guardrailSoftActive,
   hrvNegativeDays,
   hrv2dNegative,
   driftRecentMedian,
@@ -3997,10 +4089,11 @@ function computeBuildSteadyDecision({
 }) {
   const inBuild = phase === "BUILD";
   const driftOk = Number.isFinite(driftRecentMedian) ? driftRecentMedian <= DRIFT_WARN_PCT : false;
-  const hrvOk = hrvNegativeDays <= 1;
+  const hrvOk = Number.isFinite(hrvNegativeDays) ? hrvNegativeDays <= 1 : false;
   const loadOk = loadState !== "overreached";
   const steadyBudgetOk = intensityBudget.steadyCount < STEADY_T_MAX_PER_7D;
-  const keyConflict = intensityBudget.keyHardCount > 0;
+  const keyHardCount = intensityBudget.keyHardCount ?? 0;
+  const keyConflict = STEADY_T_KEY_HARD_CONFLICT_BLOCK ? keyHardCount >= KEY_HARD_MAX_PER_7D : false;
   const budgetOk = steadyBudgetOk && !keyConflict;
 
   const delaySignals = {
@@ -4012,6 +4105,18 @@ function computeBuildSteadyDecision({
 
   const confidenceOk = Number.isFinite(decisionConfidenceScore) ? decisionConfidenceScore >= DECISION_CONF_MIN : false; // NEW: STEADY_T confidence gate
   const allowConditionsMet = inBuild && !guardrailHardActive && loadOk && budgetOk && driftOk && hrvOk;
+  const eligibility = {
+    inBuild,
+    guardrailHardActive,
+    guardrailSoftActive,
+    loadOk,
+    budgetOk,
+    driftOk,
+    hrvOk,
+    steadyBudgetOk,
+    keyConflict,
+    confidenceOk,
+  };
 
   let status = "blocked";
   let reasonId = "UNKNOWN";
@@ -4022,7 +4127,9 @@ function computeBuildSteadyDecision({
     reasonText = "Block ist nicht BUILD.";
   } else if (guardrailHardActive) {
     reasonId = "HARD_GUARDRAIL";
-    reasonText = "Harter Guardrail aktiv.";
+    reasonText = hrv2dNegative
+      ? "Harter Guardrail aktiv (HRV 2 Tage negativ)."
+      : "Harter Guardrail aktiv.";
   } else if (!loadOk) {
     reasonId = "LOAD_OVERREACHED";
     reasonText = "Belastungsstatus: overreached.";
@@ -4032,8 +4139,8 @@ function computeBuildSteadyDecision({
       ? "Key-Hard in den letzten 7 Tagen."
       : `STEADY_T-Limit (${STEADY_T_MAX_PER_7D}/7T) erreicht.`;
   } else if (delayActive) {
-    status = "delay";
-    reasonId = "BUILD_STEADY_BLOCK";
+    status = "delayed";
+    reasonId = "BUILD_STEADY_DELAY";
     reasonText = "Build aktiv, aber System absorbiert noch – Schwellenreiz wird verschoben, nicht gestrichen.";
   } else if (!hrvOk) {
     reasonId = "HRV_NEGATIVE_2D";
@@ -4044,7 +4151,9 @@ function computeBuildSteadyDecision({
   } else {
     status = "allowed";
     reasonId = "BUILD_STEADY_ALLOWED";
-    reasonText = "Kontrollierter Schwellenreiz erlaubt (Signal setzen, kein Ermüdungsaufbau).";
+    reasonText = guardrailSoftActive
+      ? "Soft Guardrail aktiv: kontrollierter Schwellenreiz erlaubt (Signal setzen, kein Ermüdungsaufbau)."
+      : "Kontrollierter Schwellenreiz erlaubt (Signal setzen, kein Ermüdungsaufbau).";
   }
 
   const delayReasons = Object.entries(delaySignals)
@@ -4054,13 +4163,14 @@ function computeBuildSteadyDecision({
   return {
     status,
     allowSteady: status === "allowed",
-    delaySteady: status === "delay",
+    delaySteady: status === "delayed",
     reasonId,
     reasonText,
     delayRange: STEADY_T_DELAY_DAYS_RANGE,
     delayReasons,
     allowConditionsMet,
     confidenceOk,
+    eligibility,
   };
 }
 
@@ -4077,7 +4187,7 @@ function computeKeyHardDecision({
     return { allowed: false, reason: "Harter Guardrail aktiv." };
   }
   if (guardrailMediumActive) {
-    return { allowed: false, reason: "Kumulierte Warnsignale – Key-Hard heute gesperrt." };
+    return { allowed: false, reason: "Soft Guardrail aktiv – Key-Hard heute gesperrt." };
   }
   if (loadState === "overreached") {
     return { allowed: false, reason: "Belastungsstatus: overreached." };
@@ -4114,7 +4224,13 @@ function buildDecisionTrace({
     else guardrailApplied.allows.push("KEY_HARD");
     if (steadyBlocked) guardrailApplied.blocks.push("STEADY_T");
     else guardrailApplied.allows.push("STEADY_T");
+    guardrailApplied.guardrailSeverity = guardrailState.guardrailSeverity || "none";
+    guardrailApplied.guardrailReasons = guardrailState.guardrailReasons || [];
+    guardrailApplied.steadyEligibility = steadyDecision?.eligibility || null;
   }
+  if (!guardrailApplied.guardrailSeverity) guardrailApplied.guardrailSeverity = "none";
+  if (!guardrailApplied.guardrailReasons) guardrailApplied.guardrailReasons = [];
+  if (!("steadyEligibility" in guardrailApplied)) guardrailApplied.steadyEligibility = steadyDecision?.eligibility || null;
 
   const excluded = Object.entries(excludeFromTrends || {})
     .filter(([, value]) => value)
@@ -4355,11 +4471,23 @@ function buildComments(
   lines.push(`- Ampel: ${readinessAmpel} | Kurzfazit: ${readinessSummary}.${whyNotRed} | Confidence: Readiness ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''} | Aerob ${aerobicConf.bucket} | Load ${loadConf.bucket}`);
   lines.push(`- Red-Flags: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Overload-Pattern bestätigt ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
   lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
+  const guardrailApplied = decisionTrace?.guardrail_applied ?? {};
+  const guardrailSeverity = guardrailApplied.guardrailSeverity || "none";
+  const guardrailReasonLabels = (guardrailApplied.guardrailReasons || []).map((reason) => {
+    if (reason.startsWith("ramp_pct:")) return `Ramp ${(Number(reason.split(":")[1]) * 100).toFixed(0)}%`;
+    if (reason.startsWith("acwr:")) return `ACWR ${reason.split(":")[1]}`;
+    if (reason === "hrv_2d_negative") return "HRV 2 Tage negativ";
+    if (reason === "pain_injury") return "Schmerz/Verletzung";
+    if (reason.startsWith("warning_count:")) return "Warnsignale kumuliert";
+    return reason;
+  });
   let guardrailLine = null;
   if (keySpacing?.ok === false) {
     guardrailLine = 'Guardrail: Nach Key keine zweite Intensität innerhalb von 48h – schützt die Erholung.';
-  } else if (hasHardRedFlag || warningCount >= 2) {
-    guardrailLine = 'Guardrail: Kumulierte Warnsignale – KEY_HARD wird heute vermieden (STEADY_T nur kontrolliert).';
+  } else if (guardrailSeverity === "hard") {
+    guardrailLine = `Guardrail (HARD): KEY_HARD + STEADY_T gesperrt${guardrailReasonLabels.length ? ` (${guardrailReasonLabels.join(", ")})` : ""}.`;
+  } else if (guardrailSeverity === "soft") {
+    guardrailLine = `Guardrail (SOFT): KEY_HARD gesperrt, STEADY_T kontrolliert möglich${guardrailReasonLabels.length ? ` (${guardrailReasonLabels.join(", ")})` : ""}.`;
   }
   if (guardrailLine) lines.push(`- ${guardrailLine}`);
   if (policyDecision) {
@@ -4377,7 +4505,9 @@ function buildComments(
   lines.push('');
   lines.push('2b) 🧱 Build-Status & Intensität');
   const steadyStatus = steadyDecision?.allowSteady
-    ? '✔ STEADY_T erlaubt'
+    ? guardrailSeverity === "soft"
+      ? '✔ STEADY_T erlaubt (kontrolliert)'
+      : '✔ STEADY_T erlaubt'
     : steadyDecision?.delaySteady
       ? '⏳ STEADY_T verschoben'
       : '✖ STEADY_T gesperrt';
@@ -4389,7 +4519,7 @@ function buildComments(
       : steadyDecision.reasonText;
     const steadyReason = applyConfidenceTone(steadyReasonBase, readinessBucket);
     const delayText = steadyDecision.delaySteady
-      ? ` (Delay ${steadyDecision.delayRange.min}–${steadyDecision.delayRange.max} Tage)`
+      ? ` (verschoben ${steadyDecision.delayRange.min}–${steadyDecision.delayRange.max} Tage)`
       : '';
     lines.push(`- STEADY_T: ${steadyReason}${delayText}.`);
     if (steadyDecision.delaySteady && steadyDecision.delayReasons?.length) {
