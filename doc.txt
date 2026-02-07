@@ -418,7 +418,19 @@ Intern kann die Engine eine DecisionTrace führen:
 {
   "highest_priority_trigger": "PAT_001",
   "overruled_signals": ["drift_ok"],
-  "guardrail_applied": true
+  "guardrail_applied": {
+    "guardrailSeverity": "soft",
+    "blocks": ["KEY_HARD"],
+    "allows": ["STEADY_T"],
+    "guardrailReasons": ["ramp_pct:0.34"],
+    "steadyEligibility": {
+      "inBuild": true,
+      "loadOk": true,
+      "budgetOk": true,
+      "driftOk": true,
+      "hrvOk": true
+    }
+  }
 }
 
 Extern reicht ein Satz zur Konfliktauflösung:
