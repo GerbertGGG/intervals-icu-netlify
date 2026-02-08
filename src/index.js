@@ -221,7 +221,9 @@ const LAST_ACTIVITY_SYNC_KEY = "scheduled:last-activity-iso";
 const HRR60_INTERVAL_CONFIG = {
   minIntervalSec: 90,
   detectionMinIntervalSec: 10,
+  detectedMinIntervalSec: 75,
   maxGapSec: 5,
+  mergeGapSec: 12,
   minValidHrWindowSec: 75,
   maxHrDropoutSec: 5,
   hrZoneZ4Ratio: 0.88,
@@ -7262,6 +7264,35 @@ function buildWorkIntervalsFromSignal(time, signal, { minIntervalSec = 60, maxGa
   return intervals;
 }
 
+function mergeWorkIntervals(intervals, { mergeGapSec = 12, detectedMinIntervalSec = 75 } = {}) {
+  if (!Array.isArray(intervals) || intervals.length < 2) return intervals ?? [];
+  const merged = [];
+  let current = { ...intervals[0] };
+
+  for (let i = 1; i < intervals.length; i++) {
+    const next = intervals[i];
+    const gapSec = next.startTime - current.endTime;
+    if (gapSec <= mergeGapSec) {
+      const combinedDuration = next.endTime - current.startTime;
+      if (combinedDuration >= detectedMinIntervalSec) {
+        current = {
+          startIdx: current.startIdx,
+          endIdx: next.endIdx,
+          startTime: current.startTime,
+          endTime: next.endTime,
+          duration: combinedDuration,
+        };
+        continue;
+      }
+    }
+    merged.push(current);
+    current = { ...next };
+  }
+
+  merged.push(current);
+  return merged;
+}
+
 function classifyIntervalDrift(intervalType, driftBpm) {
   if (!Number.isFinite(driftBpm)) return null;
   if (intervalType === "threshold") {
@@ -7358,7 +7389,11 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
     too_short: 0,
     no_hr_peak: 0,
   };
-  const intervalsDetectedCount = intervals.length;
+  const mergedIntervals = mergeWorkIntervals(intervals, config);
+  const detectedIntervals = mergedIntervals.filter(
+    (interval) => interval.duration >= config.detectedMinIntervalSec,
+  );
+  const intervalsDetectedCount = detectedIntervals.length;
 
   const buildExcludedSummaryText = (reasons) => {
     const labels = {
@@ -7384,7 +7419,7 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
     return parts.length ? parts.join(", ") : null;
   };
 
-  if (!intervals.length) {
+  if (!detectedIntervals.length) {
     return {
       HRR60_median: null,
       HRR60_count: 0,
@@ -7410,7 +7445,7 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
   const peaks = [];
   const hr60s = [];
 
-  for (const interval of intervals) {
+  for (const interval of detectedIntervals) {
     if (interval.duration < config.minIntervalSec) {
       excludedReasonsCount.too_short += 1;
       continue;
