@@ -3504,6 +3504,23 @@ function buildAerobicTrendLine(trend) {
   return `GA-Form stabil/gemischt (VDOT ${vdotArrow} ${dvText}, HR-Drift ${driftArrow} ${ddText})`;
 }
 
+function formatSignedPct(value) {
+  if (!Number.isFinite(value)) return "n/a";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function buildAerobicStatusLines(trend) {
+  const efTrend = Number.isFinite(trend?.efDeltaPct) ? trend.efDeltaPct : Number.isFinite(trend?.dv) ? trend.dv : null;
+  const vdotTrend = efTrend;
+  const confidence = trend?.confidence ?? null;
+  const confidenceText = confidence ? ` (Confidence ${confidence})` : "";
+  return [
+    "🫁 Aerober Status (personalisiert)",
+    `• EF-Trend (28d vs 28d): ${formatSignedPct(efTrend)}${confidenceText}.`,
+    `• VDOT-Trend (28d vs 28d): ${formatSignedPct(vdotTrend)}.`,
+  ];
+}
+
 function extractSleepHoursFromWellness(wellness) {
   if (!wellness) return null;
   const candidates = [
@@ -4891,6 +4908,9 @@ function buildComments(
   }
   lines.push(`- Warum: ${loadReasonText}`);
   lines.push(`- Konsequenz: ${loadConsequence}`);
+  lines.push("");
+  const aerobicStatusLines = buildAerobicStatusLines(trend);
+  aerobicStatusLines.forEach((line) => lines.push(line));
   lines.push("");
   lines.push("✅ HEUTIGE ENTSCHEIDUNG");
   lines.push(`- Was heute tun: ${todayAction}`);
