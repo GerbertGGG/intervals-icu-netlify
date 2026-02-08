@@ -740,6 +740,44 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   };
 }
 
+function keyTypeToFamily(keyType) {
+  if (keyType === "racepace") return "racepace";
+  if (keyType === "vo2_touch") return "vo2_touch";
+  if (keyType === "strides") return "strides";
+  if (keyType === "steady") return "steady";
+  return null;
+}
+
+function computeLastKeyInfo(ctx, dayIso, windowDays = 14) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const keyHistory = [];
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!hasKeyTag(a)) continue;
+    const rawType = getKeyType(a);
+    const keyType = normalizeKeyType(rawType, {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    const family = keyTypeToFamily(keyType);
+    keyHistory.push({ date: d, keyType, family });
+  }
+
+  keyHistory.sort((a, b) => a.date.localeCompare(b.date));
+  const lastEntry = keyHistory.length ? keyHistory[keyHistory.length - 1] : null;
+  return {
+    windowDays,
+    keyHistory,
+    lastKeyIso: lastEntry?.date ?? null,
+    lastKeyType: lastEntry?.keyType ?? null,
+    lastKeyFamily: lastEntry?.family ?? null,
+  };
+}
+
 const RUN_FLOOR_DELOAD_SUM21_MIN = 450;
 const RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN = 14;
 const RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS = 14;
@@ -1948,6 +1986,12 @@ function addDecisionDebug(debugOut, day, payload) {
   debugOut.__decision[day] = payload;
 }
 
+function addWorkoutDebug(debugOut, day, payload) {
+  if (!debugOut) return;
+  debugOut.__workout ??= {};
+  debugOut.__workout[day] = payload;
+}
+
 
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
@@ -2860,6 +2904,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const keySpacing = computeKeySpacing(ctx, day);
+    const lastKeyInfo = computeLastKeyInfo(ctx, day, 14);
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
@@ -3249,15 +3294,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       steadyDecision,
       keyHardDecision,
       decisionTrace,
+      guardrailState,
       intensityClassToday,
       intensitySelection,
       readinessConfidence: decisionConfidence,
       latestGaSample,
+      lastKeyInfo,
     }, { debug });
 
     const dailyReportText = commentBundle.dailyReportText;
 
     patches[day] = patch;
+
+    if (debug && commentBundle.workoutDebug) {
+      addWorkoutDebug(ctx.debugOut, day, commentBundle.workoutDebug);
+    }
 
     if (write) {
       // NEW: STEADY_T learning exposure/outcome (no circular "0 observations")
@@ -4703,6 +4754,404 @@ function buildIntensityDebugPayload({
   };
 }
 
+// ================= WORKOUT BUILDER (Key-Reiz Konkret) =================
+const WORKOUT_TEMPLATE_LIBRARY = {
+  racepace: [
+    {
+      id: "RP1",
+      family: "racepace",
+      label: "6×2′ @ racepace",
+      baseReps: 6,
+      baseWorkSec: 120,
+      baseRecSec: 120,
+      warmupRangeMin: [10, 15],
+      cooldownRangeMin: [8, 12],
+    },
+    {
+      id: "RP2",
+      family: "racepace",
+      label: "5×3′ @ racepace",
+      baseReps: 5,
+      baseWorkSec: 180,
+      baseRecSec: 120,
+      warmupRangeMin: [10, 15],
+      cooldownRangeMin: [8, 12],
+    },
+    {
+      id: "RP3",
+      family: "racepace",
+      label: "3×5′ @ racepace",
+      baseReps: 3,
+      baseWorkSec: 300,
+      baseRecSec: 180,
+      warmupRangeMin: [10, 15],
+      cooldownRangeMin: [8, 12],
+    },
+  ],
+  vo2_touch: [
+    {
+      id: "VO2_1",
+      family: "vo2_touch",
+      label: "10×1′ @ vo2_touch",
+      baseReps: 10,
+      baseWorkSec: 60,
+      baseRecSec: 60,
+      warmupRangeMin: [10, 15],
+      cooldownRangeMin: [8, 12],
+    },
+    {
+      id: "VO2_2",
+      family: "vo2_touch",
+      label: "8×90s @ vo2_touch",
+      baseReps: 8,
+      baseWorkSec: 90,
+      baseRecSec: 90,
+      warmupRangeMin: [10, 15],
+      cooldownRangeMin: [8, 12],
+    },
+  ],
+  strides: {
+    id: "STRIDES",
+    family: "strides",
+    label: "8×20s fast/relaxed",
+    baseReps: 8,
+    baseWorkSec: 20,
+    baseRecSec: 75,
+    warmupRangeMin: [10, 15],
+    cooldownRangeMin: [8, 12],
+  },
+};
+
+function normalizeConfidenceLevel(confidenceLevel) {
+  const text = String(confidenceLevel || "").toLowerCase();
+  if (text === "hoch" || text === "high") return "high";
+  if (text === "mittel" || text === "medium") return "medium";
+  if (text === "niedrig" || text === "low") return "low";
+  return "unknown";
+}
+
+function clamp(num, min, max) {
+  return Math.min(Math.max(num, min), max);
+}
+
+function toMinutes(seconds) {
+  return seconds / 60;
+}
+
+function formatIntervalSeconds(seconds) {
+  if (seconds % 60 === 0) return `${seconds / 60}′`;
+  return `${seconds}s`;
+}
+
+function formatMinuteBlock(minutes) {
+  return `${Math.round(minutes)}′`;
+}
+
+function computeReadinessTier({ readinessAmpel, readinessScore, fatigueSeverity, guardrailSeverity }) {
+  if (guardrailSeverity === "hard" || readinessAmpel === "🔴") return "BAD";
+  if (fatigueSeverity === "high" || (readinessAmpel === "🟠" && readinessScore < 55)) return "LOW";
+  if (readinessAmpel === "🟢" || readinessScore >= 70) return "GOOD";
+  if (readinessAmpel === "🟠" && readinessScore >= 55 && readinessScore <= 69) return "OK";
+  return "OK";
+}
+
+function computeWorkoutProgressIndex({
+  family,
+  lastKeyInfo,
+  readinessTier,
+  guardrailSeverity,
+  runFloorGap,
+  hrvDeltaPct,
+  driftCapActive,
+}) {
+  const familyHistory = (lastKeyInfo?.keyHistory || []).filter((entry) => entry.family === family);
+  let index = familyHistory.length >= 3 ? 2 : familyHistory.length >= 2 ? 1 : 0;
+  if (lastKeyInfo?.lastKeyFamily === family && readinessTier !== "LOW" && guardrailSeverity !== "hard" && !runFloorGap) {
+    index += 1;
+  }
+  if (readinessTier === "LOW" || (hrvDeltaPct != null && hrvDeltaPct <= -12) || driftCapActive) {
+    index -= 1;
+  }
+  return clamp(index, -1, 2);
+}
+
+function selectTemplateForFamily(family, progressIndex, lastWorkoutSignature) {
+  const templates = WORKOUT_TEMPLATE_LIBRARY[family] || [];
+  if (!templates.length) return null;
+  const index = Math.min(Math.max(progressIndex, 0), templates.length - 1);
+  let template = templates[index];
+  if (lastWorkoutSignature && template?.id && lastWorkoutSignature === template.id && templates.length > 1) {
+    template = templates[(index + 1) % templates.length];
+  }
+  return template;
+}
+
+function pickWarmupCooldown(template, { runFloorGap, scalingLevel }) {
+  const [wuMin, wuMax] = template.warmupRangeMin;
+  const [cdMin, cdMax] = template.cooldownRangeMin;
+  if (runFloorGap || scalingLevel < 0) {
+    return { warmupMin: wuMin, cooldownMin: cdMin };
+  }
+  const warmupMin = Math.round((wuMin + wuMax) / 2);
+  const cooldownMin = Math.round((cdMin + cdMax) / 2);
+  return { warmupMin, cooldownMin };
+}
+
+function computeIntensityCaps(keyType, scalingLevel) {
+  if (scalingLevel >= 2) return 22;
+  if (keyType === "vo2_touch") return 14;
+  if (keyType === "racepace") return 18;
+  return 18;
+}
+
+function applyScalingToTemplate({
+  template,
+  scalingLevel,
+  keyType,
+  weeksToEvent,
+  readinessTier,
+  runFloorGap,
+}) {
+  const baseReps = template.baseReps;
+  const baseWorkSec = template.baseWorkSec;
+  const baseRecSec = template.baseRecSec;
+
+  let reps = baseReps;
+  let workSec = baseWorkSec;
+  let recSec = baseRecSec;
+
+  if (scalingLevel === -2) {
+    reps = Math.max(4, Math.round(baseReps * 0.6));
+  } else if (scalingLevel === -1) {
+    reps = Math.max(5, Math.round(baseReps * 0.8));
+  } else if (scalingLevel >= 1) {
+    const intensityCap = computeIntensityCaps(keyType, scalingLevel);
+    const baseIntensityMin = toMinutes(baseReps * baseWorkSec);
+    const canAddRep = toMinutes((baseReps + 1) * baseWorkSec) <= intensityCap;
+    const canAddTwoRep = toMinutes((baseReps + 2) * baseWorkSec) <= intensityCap;
+    const canAddWork = toMinutes(baseReps * (baseWorkSec + 30)) <= intensityCap;
+
+    if (scalingLevel === 2 && weeksToEvent != null && weeksToEvent > 4 && readinessTier === "GOOD" && !runFloorGap) {
+      if (canAddTwoRep) reps = baseReps + 2;
+      else if (canAddRep) reps = baseReps + 1;
+      else if (canAddWork) workSec = baseWorkSec + 30;
+    } else if (scalingLevel >= 1) {
+      if (canAddRep) reps = baseReps + 1;
+      else if (canAddWork) workSec = baseWorkSec + 30;
+    }
+    if (baseIntensityMin > intensityCap) {
+      reps = baseReps;
+      workSec = baseWorkSec;
+    }
+  }
+
+  const intensityMinutes = toMinutes(reps * workSec);
+
+  return {
+    reps,
+    workSec,
+    recSec,
+    intensityMinutes,
+  };
+}
+
+function computeTotalMinutes({ warmupMin, cooldownMin, reps, workSec, recSec }) {
+  return warmupMin + cooldownMin + toMinutes(reps * (workSec + recSec));
+}
+
+function buildWorkoutPlan({
+  decisionKeyType,
+  weeksToEvent,
+  readinessAmpel,
+  readinessScore,
+  guardrailSeverity,
+  hrvDeltaPct,
+  driftPct,
+  confidenceLevel,
+  fatigueSeverity,
+  keyBudget,
+  runFloorGap,
+  lastKeyInfo,
+  lastWorkoutSignature,
+}) {
+  const reasonIds = [];
+  const guardrailBlock = guardrailSeverity === "hard";
+  if (guardrailBlock || readinessAmpel === "🔴") {
+    return { plan: null, reasonIds };
+  }
+
+  const readinessTier = computeReadinessTier({
+    readinessAmpel,
+    readinessScore,
+    fatigueSeverity,
+    guardrailSeverity,
+  });
+
+  if (readinessTier === "BAD") {
+    return { plan: null, reasonIds };
+  }
+
+  const spacingOk = keyBudget?.spacingOk !== false;
+  const keyBudgetAvailable =
+    (keyBudget?.keyHardCount7 ?? 0) < (keyBudget?.keyHardMax ?? KEY_HARD_MAX_PER_7D) && !keyBudget?.capExceeded;
+  if (!spacingOk || !keyBudgetAvailable) {
+    return { plan: null, reasonIds };
+  }
+
+  let keyType = decisionKeyType;
+  if (keyType === "vo2_touch" && guardrailSeverity === "soft") {
+    keyType = "racepace";
+    reasonIds.push("SOFT_GUARDRAIL_SWITCH_VO2_TO_RP");
+  }
+
+  const driftCapActive = driftPct != null && driftPct >= 5.5 && normalizeConfidenceLevel(confidenceLevel) !== "high";
+  let scalingLevel = readinessTier === "GOOD" ? 1 : readinessTier === "LOW" ? -1 : 0;
+
+  if (runFloorGap && scalingLevel > 0) {
+    scalingLevel = 0;
+    reasonIds.push("FLOOR_GAP_CAPS_PROGRESSION");
+  }
+  if (hrvDeltaPct != null && hrvDeltaPct <= -12 && scalingLevel > -1) {
+    scalingLevel = -1;
+    reasonIds.push("HRV_CAPS_WORKOUT");
+  }
+  if (driftCapActive && scalingLevel > -1) {
+    scalingLevel = -1;
+    reasonIds.push("DRIFT_CAPS_WORKOUT");
+  }
+
+  if (scalingLevel <= -2 && keyType === "vo2_touch") {
+    keyType = "racepace";
+  }
+
+  const family = keyType === "vo2_touch" ? "vo2_touch" : "racepace";
+  const progressIndex = computeWorkoutProgressIndex({
+    family,
+    lastKeyInfo,
+    readinessTier,
+    guardrailSeverity,
+    runFloorGap,
+    hrvDeltaPct,
+    driftCapActive,
+  });
+  const template = selectTemplateForFamily(family, progressIndex, lastWorkoutSignature);
+  if (!template) {
+    return { plan: null, reasonIds: ["FALLBACK_STRIDES_NO_KEY_SLOT"] };
+  }
+
+  const { warmupMin, cooldownMin } = pickWarmupCooldown(template, { runFloorGap, scalingLevel });
+  let scaled = applyScalingToTemplate({
+    template,
+    scalingLevel,
+    keyType,
+    weeksToEvent,
+    readinessTier,
+    runFloorGap,
+  });
+
+  if (scalingLevel === -2 && scaled.intensityMinutes < 6) {
+    const strides = WORKOUT_TEMPLATE_LIBRARY.strides;
+    scaled = applyScalingToTemplate({
+      template: strides,
+      scalingLevel: 0,
+      keyType: "strides",
+      weeksToEvent,
+      readinessTier,
+      runFloorGap,
+    });
+    const warmupCooldown = pickWarmupCooldown(strides, { runFloorGap, scalingLevel: 0 });
+    const totalMinutes = computeTotalMinutes({
+      warmupMin: warmupCooldown.warmupMin,
+      cooldownMin: warmupCooldown.cooldownMin,
+      reps: scaled.reps,
+      workSec: scaled.workSec,
+      recSec: scaled.recSec,
+    });
+    return {
+      plan: {
+        templateId: strides.id,
+        keyType: "strides",
+        family: "strides",
+        reps: scaled.reps,
+        workSec: scaled.workSec,
+        recSec: scaled.recSec,
+        warmupMin: warmupCooldown.warmupMin,
+        cooldownMin: warmupCooldown.cooldownMin,
+        intensityMinutes: scaled.intensityMinutes,
+        totalMinutes,
+        scalingLevel: 0,
+      },
+      reasonIds: ["FALLBACK_STRIDES_NO_KEY_SLOT"],
+    };
+  }
+
+  let totalMinutes = computeTotalMinutes({
+    warmupMin,
+    cooldownMin,
+    reps: scaled.reps,
+    workSec: scaled.workSec,
+    recSec: scaled.recSec,
+  });
+
+  if (runFloorGap && totalMinutes > 55) {
+    let reps = scaled.reps;
+    const minReps = Math.max(4, Math.min(reps, template.baseReps));
+    while (reps > minReps) {
+      reps -= 1;
+      totalMinutes = computeTotalMinutes({
+        warmupMin,
+        cooldownMin,
+        reps,
+        workSec: scaled.workSec,
+        recSec: scaled.recSec,
+      });
+      if (totalMinutes <= 55) break;
+    }
+    scaled.reps = reps;
+    totalMinutes = computeTotalMinutes({
+      warmupMin,
+      cooldownMin,
+      reps: scaled.reps,
+      workSec: scaled.workSec,
+      recSec: scaled.recSec,
+    });
+  }
+
+  reasonIds.push(`WORKOUT_TEMPLATE_CHOSEN_${template.id}`);
+  reasonIds.push(`WORKOUT_SCALED_${scalingLevel}`);
+
+  return {
+    plan: {
+      templateId: template.id,
+      keyType,
+      family,
+      reps: scaled.reps,
+      workSec: scaled.workSec,
+      recSec: scaled.recSec,
+      warmupMin,
+      cooldownMin,
+      intensityMinutes: scaled.intensityMinutes,
+      totalMinutes,
+      scalingLevel,
+    },
+    reasonIds,
+  };
+}
+
+function formatWorkoutKonkret(plan) {
+  if (!plan) return null;
+  const warmup = `${formatMinuteBlock(plan.warmupMin)} EL`;
+  const cooldown = `${formatMinuteBlock(plan.cooldownMin)} AL`;
+  if (plan.keyType === "strides") {
+    const work = formatIntervalSeconds(plan.workSec);
+    const rec = formatIntervalSeconds(plan.recSec);
+    return `${warmup}, ${plan.reps}×${work} zügig/locker (${rec} trab), ${cooldown}.`;
+  }
+  const work = formatIntervalSeconds(plan.workSec);
+  const rec = formatIntervalSeconds(plan.recSec);
+  return `${warmup}, ${plan.reps}×${work} @ ${plan.keyType} (${rec} trab), ${cooldown}.`;
+}
+
 function applyConfidenceTone(sentence, bucket) {
   if (!sentence) return sentence;
   if (bucket === "low") return `Beobachtung (Test): ${sentence}`;
@@ -4856,9 +5305,11 @@ function buildComments(
     steadyDecision,
     keyHardDecision,
     decisionTrace,
+    guardrailState,
     intensityClassToday,
     intensitySelection,
     readinessConfidence,
+    lastKeyInfo,
   },
   { debug = false } = {}
 ) {
@@ -5116,6 +5567,50 @@ function buildComments(
             ? "Qualitätsreiz passt heute in den Block und die Leitplanken."
         : "Heute zählt entspanntes Durchbewegen ohne Risiko.";
 
+  const decisionKeyType =
+    intensitySelection?.keyType ??
+    (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE
+      ? "racepace"
+      : intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH
+        ? "vo2_touch"
+        : null);
+  const guardrailSeverity = guardrailState?.guardrailSeverity ?? "none";
+  let workoutPlan = null;
+  let workoutDebug = null;
+  if (todayAction === "locker + Key-Reiz" && decisionKeyType) {
+    const planResult = buildWorkoutPlan({
+      decisionKeyType,
+      weeksToEvent,
+      readinessAmpel,
+      readinessScore: readinessConf?.score ?? 0,
+      guardrailSeverity,
+      hrvDeltaPct,
+      driftPct: displayDrift,
+      confidenceLevel: trend?.confidence ?? null,
+      fatigueSeverity: fatigue?.severity ?? "low",
+      keyBudget: {
+        keyHardMax: KEY_HARD_MAX_PER_7D,
+        keyHardCount7: intensityBudget?.keyHardCount ?? 0,
+        spacingOk: keySpacing?.ok !== false,
+        nextKeyEarliest: keySpacing?.nextAllowedIso ?? null,
+        capExceeded: keyCompliance?.capExceeded ?? false,
+      },
+      runFloorGap,
+      lastKeyInfo,
+      lastWorkoutSignature: null,
+    });
+    workoutPlan = planResult.plan;
+    workoutDebug = workoutPlan
+      ? {
+        chosenTemplateId: workoutPlan.templateId,
+        scalingLevel: workoutPlan.scalingLevel,
+        computedTotalMinutes: workoutPlan.totalMinutes,
+        intensityMinutes: workoutPlan.intensityMinutes,
+        reasonIds: planResult.reasonIds,
+      }
+      : { chosenTemplateId: null, scalingLevel: null, computedTotalMinutes: null, intensityMinutes: null, reasonIds: planResult.reasonIds };
+  }
+
   const todayStatusLine = buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday });
   const modeLabel = modeInfo?.mode === "EVENT" ? "Event" : "Open";
   const nextEventLine = eventDate
@@ -5214,7 +5709,7 @@ function buildComments(
         : todayAction === "locker + Steigerungen"
           ? "35–55′ locker (GA1) + 4–6 kurze Steigerungen, jederzeit abbrechbar."
           : todayAction === "locker + Key-Reiz"
-            ? "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
+            ? formatWorkoutKonkret(workoutPlan) || "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
         : "35–55′ locker (GA1), jederzeit abbrechbar.";
   lines.push(`- Konkret: ${dailySuggestion}`);
 
@@ -5222,6 +5717,7 @@ function buildComments(
     dailyReportText: lines.join("\n"),
     weeklyReportLines,
     wellnessComment: null,
+    workoutDebug,
   };
 }
 
