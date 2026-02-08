@@ -218,6 +218,23 @@ const LAST_ACTIVITY_SYNC_KEY = "scheduled:last-activity-iso";
 // const BIKE_EQ_FACTOR = 0.65;
 
 // ================= BLOCK CONFIG (NEW) =================
+const HRR60_INTERVAL_CONFIG = {
+  minIntervalSec: 90,
+  detectionMinIntervalSec: 10,
+  maxGapSec: 5,
+  minValidHrWindowSec: 75,
+  maxHrDropoutSec: 5,
+  hrZoneZ4Ratio: 0.88,
+  hrZoneZ4Quantile: 0.85,
+  racepaceToleranceSecPerKm: 10,
+  racepaceSpeedQuantile: 0.85,
+  vo2PowerQuantile: 0.9,
+  tagSpeedQuantile: 0.7,
+  tagPowerQuantile: 0.8,
+  hrr60ExactToleranceSec: 3,
+  hrr60FallbackWindowSec: { start: 45, end: 75 },
+};
+
 const BLOCK_CONFIG = {
   durations: {
     BASE: { minDays: 28, maxDays: 84 },
@@ -807,6 +824,7 @@ async function computeLastKeyIntervalInsights(ctx, dayIso, windowDays = 21) {
     const streams = await getStreams(ctx, lastEntry.activity.id, STREAM_TYPES_INTERVAL);
     const intervalMetrics = computeIntervalMetricsFromStreams(streams, {
       intervalType: getIntervalTypeFromActivity(lastEntry.activity),
+      activity: lastEntry.activity,
     });
     if (!intervalMetrics) return null;
     const paceText = formatPaceSeconds(intervalMetrics.interval_pace_sec_per_km);
@@ -2836,6 +2854,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_INTERVAL);
           intervalMetrics = computeIntervalMetricsFromStreams(streams, {
             intervalType: getIntervalTypeFromActivity(a),
+            activity: a,
           });
         } catch {
           intervalMetrics = null;
@@ -4926,11 +4945,6 @@ function applyIntervalInsightsToWorkoutPlan(plan, intervalInsights) {
   const adjustmentNotes = [];
   let recBonus = 0;
 
-  if (metrics.HRR60_median != null && metrics.HRR60_median < 15) {
-    recBonus += 30;
-    adjustmentNotes.push("Pausen +30s (Erholung limitiert)");
-  }
-
   if (metrics.drift_flag === "too_hard" || metrics.drift_flag === "overreaching") {
     if (adjusted.reps > 4) {
       adjusted.reps -= 1;
@@ -5816,7 +5830,11 @@ function buildComments(
       ? intervalToday.HR_Drift_bpm - intervalPrev.HR_Drift_bpm
       : null;
   const intervalDriftDeltaText = intervalDriftDelta != null ? ` (Δ ${fmtSigned1(intervalDriftDelta)} vs letzte)` : "";
-  const intervalHrr60Text = intervalToday?.HRR60_median != null ? `${intervalToday.HRR60_median.toFixed(0)} bpm` : "n/a";
+  const intervalHrr60Count = intervalToday?.HRR60_count ?? 0;
+  const intervalHrr60Text =
+    intervalToday?.HRR60_median != null
+      ? `${intervalToday.HRR60_median.toFixed(0)} bpm (${intervalHrr60Count} Intervalle)`
+      : "n/a";
   const intervalHrr60Delta =
     intervalToday?.HRR60_median != null && intervalPrev?.HRR60_median != null
       ? intervalToday.HRR60_median - intervalPrev.HRR60_median
@@ -5832,13 +5850,17 @@ function buildComments(
   const intervalDetailLine = intervalToday
     ? [
         `HF-Drift ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"}`,
-        `HRR60 ${intervalToday.HRR60_median != null ? `${intervalToday.HRR60_median.toFixed(0)} bpm` : "n/a"}`,
+        `HRR60 ${
+          intervalToday.HRR60_median != null
+            ? `${intervalToday.HRR60_median.toFixed(0)} bpm (${intervalHrr60Count} Intervalle)`
+            : "n/a"
+        }`,
       ].join(" | ")
     : null;
   const keyMetricsLine =
     intervalDetailLine || `HF-Drift ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
-  const todayHrr60 = extractTodayHrr60(perRunInfo);
+  const todayHrr60Summary = extractTodayHrr60(perRunInfo);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
 
   const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
@@ -5900,7 +5922,11 @@ function buildComments(
     lines.push(`- Laufbewertung: ${runEvaluationText}`);
   }
   if (intervalToday) {
-    lines.push(`- HRR60: ${todayHrr60 != null ? `${todayHrr60.toFixed(0)} bpm (HF-Abfall in 60s)` : "n/a"}`);
+    const todayHrr60Text =
+      todayHrr60Summary?.median != null
+        ? `${todayHrr60Summary.median.toFixed(0)} bpm (${todayHrr60Summary.count} Intervalle)`
+        : "n/a (keine geeigneten Intervalle)";
+    lines.push(`- HRR60: ${todayHrr60Text}`);
   }
   if (hadGA) {
     const driftContext = ga21Context ? `${driftText} (Ø21T ${ga21Context.driftAvg.toFixed(1)}%)` : driftText;
@@ -5985,10 +6011,22 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
 
 function extractTodayHrr60(perRunInfo) {
   const values = perRunInfo
-    .map((run) => run.intervalMetrics?.HRR60_median)
+    .flatMap((run) => run.intervalMetrics?.HRR60_values ?? [])
     .filter((value) => Number.isFinite(value));
-  if (!values.length) return null;
-  return median(values);
+  if (!values.length) {
+    return {
+      median: null,
+      count: 0,
+      min: null,
+      max: null,
+    };
+  }
+  return {
+    median: median(values),
+    count: values.length,
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
 }
 
 function buildRunEvaluationText({ hadAnyRun, repRun, trend }) {
@@ -6365,6 +6403,7 @@ async function computePreviousKeyIntervalInsights(ctx, dayIso, windowDays, exclu
     const streams = await getStreams(ctx, lastEntry.activity.id, STREAM_TYPES_INTERVAL);
     const intervalMetrics = computeIntervalMetricsFromStreams(streams, {
       intervalType: getIntervalTypeFromActivity(lastEntry.activity),
+      activity: lastEntry.activity,
     });
     if (!intervalMetrics) return null;
     return {
@@ -6959,7 +6998,10 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       lines.push(`HF-Drift (Intervall): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
     }
     if (intervalMetrics?.HRR60_median != null) {
-      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
+      const hrr60Count = intervalMetrics.HRR60_count ?? 0;
+      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (${hrr60Count} Intervalle)`);
+    } else if (intervalMetrics) {
+      lines.push("Erholung: HRR60 n/a (keine geeigneten Intervalle)");
     }
     if (!intervalMetrics?.HR_Drift_bpm && isKey) {
       if (same.length && last?.avgSpeed != null) {
@@ -7019,6 +7061,7 @@ async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
 
   return computeIntervalMetricsFromStreams(streams, {
     intervalType: getIntervalTypeFromActivity(a),
+    activity: a,
   });
 }
 
@@ -7109,6 +7152,30 @@ function pickIntervalIntensity(streams) {
   return null;
 }
 
+function hasIntervalKeyTag(activity) {
+  const tags = activity?.tags || [];
+  return tags.some((t) => {
+    const s = String(t || "").toLowerCase().trim();
+    return s === "key:vo2" || s === "key:racepace" || s === "key:interval";
+  });
+}
+
+function extractRacepaceSecPerKm(activity) {
+  const candidates = [
+    activity?.racepace_sec_per_km,
+    activity?.race_pace_sec_per_km,
+    activity?.racepaceSecPerKm,
+    activity?.racePaceSecPerKm,
+    activity?.race_pace,
+    activity?.racepace,
+  ];
+  for (const value of candidates) {
+    const v = Number(value);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return null;
+}
+
 function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 5 } = {}) {
   const n = Math.min(time.length, intensity.length);
   if (n < 2) return [];
@@ -7126,6 +7193,57 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   for (let i = 0; i < n; i++) {
     const v = Number(intensity[i]);
     if (Number.isFinite(v) && v >= threshold) {
+      if (startIdx == null) startIdx = i;
+      lastAboveIdx = i;
+      gapStart = null;
+      continue;
+    }
+
+    if (startIdx != null) {
+      if (gapStart == null) gapStart = timeAt(i);
+      if (timeAt(i) - gapStart > maxGapSec) {
+        const startTime = timeAt(startIdx);
+        const endTime = timeAt(lastAboveIdx);
+        const duration = endTime - startTime;
+        if (duration >= minIntervalSec) {
+          intervals.push({ startIdx, endIdx: lastAboveIdx, startTime, endTime, duration });
+        }
+        startIdx = null;
+        lastAboveIdx = null;
+        gapStart = null;
+      }
+    }
+  }
+
+  if (startIdx != null && lastAboveIdx != null) {
+    const startTime = timeAt(startIdx);
+    const endTime = timeAt(lastAboveIdx);
+    const duration = endTime - startTime;
+    if (duration >= minIntervalSec) {
+      intervals.push({ startIdx, endIdx: lastAboveIdx, startTime, endTime, duration });
+    }
+  }
+
+  return intervals;
+}
+
+function buildWorkIntervalsFromSignal(time, signal, { minIntervalSec = 60, maxGapSec = 5 } = {}) {
+  const n = Math.min(time.length, signal.length);
+  if (n < 2) return [];
+
+  const intervals = [];
+  let startIdx = null;
+  let lastAboveIdx = null;
+  let gapStart = null;
+
+  const timeAt = (i) => {
+    const t = Number(time[i]);
+    return Number.isFinite(t) ? t : i;
+  };
+
+  for (let i = 0; i < n; i++) {
+    const isWork = !!signal[i];
+    if (isWork) {
       if (startIdx == null) startIdx = i;
       lastAboveIdx = i;
       gapStart = null;
@@ -7182,127 +7300,317 @@ function formatDriftFlag(flag) {
   return flag;
 }
 
-function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
+function deriveSpeedThreshold(speed, config, activity, tagPresent) {
+  if (!Array.isArray(speed)) return null;
+  const speedVals = speed.filter((x) => Number.isFinite(x));
+  if (!speedVals.length) return null;
+  const racepaceSecPerKm = extractRacepaceSecPerKm(activity);
+  if (Number.isFinite(racepaceSecPerKm)) {
+    const thresholdSec = racepaceSecPerKm + config.racepaceToleranceSecPerKm;
+    return thresholdSec > 0 ? 1000 / thresholdSec : null;
+  }
+  const fallback = quantile(speedVals, tagPresent ? config.tagSpeedQuantile : config.racepaceSpeedQuantile);
+  return Number.isFinite(fallback) ? fallback : null;
+}
+
+function derivePowerThreshold(watts, config, tagPresent) {
+  if (!Array.isArray(watts)) return null;
+  const vals = watts.filter((x) => Number.isFinite(x));
+  if (!vals.length) return null;
+  const threshold = quantile(vals, tagPresent ? config.tagPowerQuantile : config.vo2PowerQuantile);
+  return Number.isFinite(threshold) ? threshold : null;
+}
+
+function deriveHrThreshold(hr, config) {
+  if (!Array.isArray(hr)) return null;
+  const vals = hr.filter((x) => Number.isFinite(x) && x > 0);
+  if (!vals.length) return null;
+  const maxHr = Math.max(...vals);
+  const ratioThreshold = Number.isFinite(maxHr) ? maxHr * config.hrZoneZ4Ratio : null;
+  if (Number.isFinite(ratioThreshold)) return ratioThreshold;
+  const fallback = quantile(vals, config.hrZoneZ4Quantile);
+  return Number.isFinite(fallback) ? fallback : null;
+}
+
+function buildHrr60IntervalsFromStreams({ time, speed, watts, hr, activity, config }) {
+  const tagPresent = hasIntervalKeyTag(activity);
+  const speedThreshold = deriveSpeedThreshold(speed, config, activity, tagPresent);
+  const powerThreshold = derivePowerThreshold(watts, config, tagPresent);
+  const hrThreshold = deriveHrThreshold(hr, config);
+
+  const n = Math.min(time.length, hr.length, speed?.length ?? time.length, watts?.length ?? time.length);
+  if (n < 2) return { intervals: [], hrThreshold };
+
+  if (!Number.isFinite(speedThreshold) && !Number.isFinite(powerThreshold) && !Number.isFinite(hrThreshold)) {
+    return { intervals: [], hrThreshold };
+  }
+
+  const signal = new Array(n).fill(false);
+  const hasSpeedThreshold = Number.isFinite(speedThreshold);
+  const hasPowerThreshold = Number.isFinite(powerThreshold);
+  const useHrSignal = !hasSpeedThreshold && !hasPowerThreshold;
+  for (let i = 0; i < n; i++) {
+    const vSpeed = Number(speed?.[i]);
+    const vWatts = Number(watts?.[i]);
+    const vHr = Number(hr[i]);
+    const speedOk = hasSpeedThreshold && Number.isFinite(vSpeed) && vSpeed >= speedThreshold;
+    const powerOk = hasPowerThreshold && Number.isFinite(vWatts) && vWatts >= powerThreshold;
+    const hrOk = Number.isFinite(hrThreshold) && Number.isFinite(vHr) && vHr >= hrThreshold;
+    signal[i] = speedOk || powerOk || (useHrSignal && hrOk);
+  }
+
+  const intervals = buildWorkIntervalsFromSignal(time, signal, {
+    minIntervalSec: config.detectionMinIntervalSec,
+    maxGapSec: config.maxGapSec,
+  });
+
+  return { intervals, hrThreshold };
+}
+
+function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
+  if (!intervals.length) {
+    return {
+      HRR60_median: null,
+      HRR60_count: 0,
+      HRR60_min: null,
+      HRR60_max: null,
+      HR_peak_median: null,
+      HR_60s_median: null,
+      HRR60_values: [],
+    };
+  }
+
+  const n = Math.min(hr.length, time.length);
+  const timeAt = (i) => {
+    const t = Number(time[i]);
+    return Number.isFinite(t) ? t : i;
+  };
+
+  const hrr60Drops = [];
+  const peaks = [];
+  const hr60s = [];
+
+  for (const interval of intervals) {
+    if (interval.duration < config.minIntervalSec) continue;
+
+    let peak = -Infinity;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const h = Number(hr[i]);
+      if (!Number.isFinite(h) || h <= 0) continue;
+      if (h > peak) peak = h;
+    }
+    if (!Number.isFinite(peak)) continue;
+    if (Number.isFinite(hrThreshold) && peak < hrThreshold) continue;
+
+    const windowEnd = interval.endTime + config.minValidHrWindowSec;
+    let firstValidTime = null;
+    let lastValidTime = null;
+    let dropoutTooLong = false;
+
+    for (let i = interval.endIdx; i < n; i++) {
+      const t = timeAt(i);
+      if (t < interval.endTime) continue;
+      if (t > windowEnd) break;
+      const h = Number(hr[i]);
+      if (!Number.isFinite(h) || h <= 0) continue;
+      if (firstValidTime == null) {
+        if (t - interval.endTime > config.maxHrDropoutSec) dropoutTooLong = true;
+        firstValidTime = t;
+        lastValidTime = t;
+      } else {
+        if (t - lastValidTime > config.maxHrDropoutSec) dropoutTooLong = true;
+        lastValidTime = t;
+      }
+    }
+
+    if (dropoutTooLong || firstValidTime == null || lastValidTime == null) continue;
+    if (lastValidTime - interval.endTime < config.minValidHrWindowSec) continue;
+
+    const target = interval.endTime + 60;
+    let hr60 = null;
+    let bestDelta = Infinity;
+    const tol = config.hrr60ExactToleranceSec;
+    for (let i = interval.endIdx; i < n; i++) {
+      const t = timeAt(i);
+      if (t < target - tol) continue;
+      if (t > target + tol) break;
+      const h = Number(hr[i]);
+      if (!Number.isFinite(h) || h <= 0) continue;
+      const delta = Math.abs(t - target);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        hr60 = h;
+      }
+    }
+
+    if (!Number.isFinite(hr60)) {
+      const start = interval.endTime + config.hrr60FallbackWindowSec.start;
+      const end = interval.endTime + config.hrr60FallbackWindowSec.end;
+      let minHr = null;
+      for (let i = interval.endIdx; i < n; i++) {
+        const t = timeAt(i);
+        if (t < start) continue;
+        if (t > end) break;
+        const h = Number(hr[i]);
+        if (!Number.isFinite(h) || h <= 0) continue;
+        if (minHr == null || h < minHr) minHr = h;
+      }
+      hr60 = minHr;
+    }
+
+    if (!Number.isFinite(hr60)) continue;
+
+    hrr60Drops.push(peak - hr60);
+    peaks.push(peak);
+    hr60s.push(hr60);
+  }
+
+  const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
+  const hrPeakMedian = median(peaks.filter((x) => Number.isFinite(x)));
+  const hr60Median = median(hr60s.filter((x) => Number.isFinite(x)));
+
+  return {
+    HRR60_median: Number.isFinite(hrr60Median) ? hrr60Median : null,
+    HRR60_count: hrr60Drops.length,
+    HRR60_min: hrr60Drops.length ? Math.min(...hrr60Drops) : null,
+    HRR60_max: hrr60Drops.length ? Math.max(...hrr60Drops) : null,
+    HR_peak_median: Number.isFinite(hrPeakMedian) ? hrPeakMedian : null,
+    HR_60s_median: Number.isFinite(hr60Median) ? hr60Median : null,
+    HRR60_values: hrr60Drops,
+  };
+}
+
+function computeIntervalMetricsFromStreams(streams, { intervalType, activity } = {}) {
   const hr = streams?.heartrate;
   const time = streams?.time;
   if (!Array.isArray(hr) || !Array.isArray(time)) return null;
 
   const intensityInfo = pickIntervalIntensity(streams);
-  if (!intensityInfo) return null;
+  const speed = streams?.velocity_smooth;
+  const watts = streams?.watts;
 
-  const n = Math.min(hr.length, time.length, intensityInfo.data.length);
+  const n = Math.min(hr.length, time.length, speed?.length ?? time.length, watts?.length ?? time.length);
   if (n < 2) return null;
 
   const timeSlice = time.slice(0, n);
-  const intensity = intensityInfo.data.slice(0, n);
   const hrSlice = hr.slice(0, n);
+  const speedSlice = Array.isArray(speed) ? speed.slice(0, n) : null;
+  const wattsSlice = Array.isArray(watts) ? watts.slice(0, n) : null;
 
-  const intensityVals = intensity.filter((x) => Number.isFinite(x));
-  const threshold = quantile(intensityVals, 0.75);
-  if (!Number.isFinite(threshold)) return null;
-
-  const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
-  if (intervals.length < 2) return null;
-
-  const durations = intervals.map((i) => i.duration);
-  const minDur = Math.min(...durations);
-  const maxDur = Math.max(...durations);
-  if (minDur <= 0 || maxDur / minDur > 1.1) return null;
-
-  const intensityMeans = intervals.map((interval) => {
-    let sum = 0;
-    let count = 0;
-    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-      const v = Number(intensity[i]);
-      if (Number.isFinite(v)) {
-        sum += v;
-        count++;
-      }
-    }
-    return count ? sum / count : null;
+  const hrr60Intervals = buildHrr60IntervalsFromStreams({
+    time: timeSlice,
+    speed: speedSlice,
+    watts: wattsSlice,
+    hr: hrSlice,
+    activity,
+    config: HRR60_INTERVAL_CONFIG,
+  });
+  const hrr60Summary = computeHrr60Summary({
+    intervals: hrr60Intervals.intervals,
+    hr: hrSlice,
+    time: timeSlice,
+    hrThreshold: hrr60Intervals.hrThreshold,
+    config: HRR60_INTERVAL_CONFIG,
   });
 
-  const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
-  if (validIntensity.length !== intervals.length) return null;
-  const minIntensity = Math.min(...validIntensity);
-  const maxIntensity = Math.max(...validIntensity);
-  if (minIntensity <= 0 || maxIntensity / minIntensity > 1.1) return null;
-  const avgIntensity = avg(validIntensity);
-  const intervalAvgSpeedMps = intensityInfo.kind === "speed" && Number.isFinite(avgIntensity) ? avgIntensity : null;
-  const intervalPaceSecPerKm =
-    intervalAvgSpeedMps != null && intervalAvgSpeedMps > 0 ? 1000 / intervalAvgSpeedMps : null;
+  let driftMetrics = null;
+  if (intensityInfo) {
+    const intensity = intensityInfo.data.slice(0, n);
+    const intensityVals = intensity.filter((x) => Number.isFinite(x));
+    const threshold = quantile(intensityVals, 0.75);
+    if (Number.isFinite(threshold)) {
+      const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
+      if (intervals.length >= 2) {
+        const durations = intervals.map((i) => i.duration);
+        const minDur = Math.min(...durations);
+        const maxDur = Math.max(...durations);
+        if (minDur > 0 && maxDur / minDur <= 1.1) {
+          const intensityMeans = intervals.map((interval) => {
+            let sum = 0;
+            let count = 0;
+            for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+              const v = Number(intensity[i]);
+              if (Number.isFinite(v)) {
+                sum += v;
+                count++;
+              }
+            }
+            return count ? sum / count : null;
+          });
 
-  const timeAt = (i) => {
-    const t = Number(timeSlice[i]);
-    return Number.isFinite(t) ? t : i;
-  };
+          const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
+          if (validIntensity.length === intervals.length) {
+            const minIntensity = Math.min(...validIntensity);
+            const maxIntensity = Math.max(...validIntensity);
+            if (minIntensity > 0 && maxIntensity / minIntensity <= 1.1) {
+              const avgIntensity = avg(validIntensity);
+              const intervalAvgSpeedMps =
+                intensityInfo.kind === "speed" && Number.isFinite(avgIntensity) ? avgIntensity : null;
+              const intervalPaceSecPerKm =
+                intervalAvgSpeedMps != null && intervalAvgSpeedMps > 0 ? 1000 / intervalAvgSpeedMps : null;
 
-  const intervalHr = intervals.map((interval) => {
-    const startTime = interval.startTime;
-    const endTime = interval.endTime;
-    const duration = interval.duration;
-    const lateStart = startTime + duration * 0.6;
+              const timeAt = (i) => {
+                const t = Number(timeSlice[i]);
+                return Number.isFinite(t) ? t : i;
+              };
 
-    let lateSum = 0;
-    let lateCount = 0;
-    let peak = -Infinity;
-    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-      const t = timeAt(i);
-      const h = Number(hrSlice[i]);
-      if (!Number.isFinite(h)) continue;
-      if (h > peak) peak = h;
-      if (t >= lateStart && t <= endTime) {
-        lateSum += h;
-        lateCount++;
+              const intervalHr = intervals.map((interval) => {
+                const startTime = interval.startTime;
+                const endTime = interval.endTime;
+                const duration = interval.duration;
+                const lateStart = startTime + duration * 0.6;
+
+                let lateSum = 0;
+                let lateCount = 0;
+                for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+                  const t = timeAt(i);
+                  const h = Number(hrSlice[i]);
+                  if (!Number.isFinite(h)) continue;
+                  if (t >= lateStart && t <= endTime) {
+                    lateSum += h;
+                    lateCount++;
+                  }
+                }
+                const lateAvg = lateCount ? lateSum / lateCount : null;
+
+                return {
+                  lateAvg,
+                };
+              });
+
+              const first = intervalHr[0]?.lateAvg;
+              const last = intervalHr[intervalHr.length - 1]?.lateAvg;
+              if (Number.isFinite(first) && Number.isFinite(last) && first > 0) {
+                const hrDriftBpm = last - first;
+                const hrDriftPct = ((last - first) / first) * 100;
+                driftMetrics = {
+                  HR_Drift_bpm: hrDriftBpm,
+                  HR_Drift_pct: hrDriftPct,
+                  drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
+                  interval_avg_speed_mps: intervalAvgSpeedMps,
+                  interval_pace_sec_per_km: intervalPaceSecPerKm,
+                };
+              }
+            }
+          }
+        }
       }
     }
-    const lateAvg = lateCount ? lateSum / lateCount : null;
+  }
 
-    const target = endTime + 60;
-    const targetWindowEnd = target + 30;
-    let hr60 = null;
-    for (let i = interval.endIdx; i < n; i++) {
-      const t = timeAt(i);
-      if (t < target) continue;
-      if (t > targetWindowEnd) break;
-      const h = Number(hrSlice[i]);
-      if (Number.isFinite(h)) {
-        hr60 = h;
-        break;
-      }
-    }
-
-    return {
-      lateAvg,
-      peak: Number.isFinite(peak) ? peak : null,
-      hr60,
-    };
-  });
-
-  const first = intervalHr[0]?.lateAvg;
-  const last = intervalHr[intervalHr.length - 1]?.lateAvg;
-  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
-
-  const hrDriftBpm = last - first;
-  const hrDriftPct = ((last - first) / first) * 100;
-
-  const hrr60Drops = intervalHr
-    .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
-    .filter((x) => Number.isFinite(x));
-  const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
-  const hrPeakMedian = median(intervalHr.map((x) => x.peak).filter((x) => Number.isFinite(x)));
-  const hr60Median = median(intervalHr.map((x) => x.hr60).filter((x) => Number.isFinite(x)));
+  const hasIntervals = hrr60Intervals.intervals.length > 0;
+  if (!driftMetrics && !hasIntervals) return null;
 
   return {
-    HR_Drift_bpm: hrDriftBpm,
-    HR_Drift_pct: hrDriftPct,
-    HRR60_median: hrr60Median,
-    HR_peak_median: Number.isFinite(hrPeakMedian) ? hrPeakMedian : null,
-    HR_60s_median: Number.isFinite(hr60Median) ? hr60Median : null,
-    drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
+    ...(driftMetrics || {
+      HR_Drift_bpm: null,
+      HR_Drift_pct: null,
+      drift_flag: null,
+      interval_avg_speed_mps: null,
+      interval_pace_sec_per_km: null,
+    }),
+    ...hrr60Summary,
     interval_type: intervalType ?? null,
-    interval_avg_speed_mps: intervalAvgSpeedMps,
-    interval_pace_sec_per_km: intervalPaceSecPerKm,
   };
 }
 
@@ -7839,3 +8147,5 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
 
   return races;
 }
+
+export { computeIntervalMetricsFromStreams };
