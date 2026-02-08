@@ -2873,6 +2873,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           drift_raw,
           drift_source,
           load,
+          intervalMetrics,
         });
       }
     }
@@ -7289,11 +7290,15 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
     .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
     .filter((x) => Number.isFinite(x));
   const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
+  const hrPeakMedian = median(intervalHr.map((x) => x.peak).filter((x) => Number.isFinite(x)));
+  const hr60Median = median(intervalHr.map((x) => x.hr60).filter((x) => Number.isFinite(x)));
 
   return {
     HR_Drift_bpm: hrDriftBpm,
     HR_Drift_pct: hrDriftPct,
     HRR60_median: hrr60Median,
+    HR_peak_median: Number.isFinite(hrPeakMedian) ? hrPeakMedian : null,
+    HR_60s_median: Number.isFinite(hr60Median) ? hr60Median : null,
     drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
     interval_type: intervalType ?? null,
     interval_avg_speed_mps: intervalAvgSpeedMps,
