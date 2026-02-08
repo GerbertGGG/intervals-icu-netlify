@@ -4505,14 +4505,21 @@ function buildComments(
   if (hrv1dNegative) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
   if (driftSignal !== "green") proposedRules.push("Wenn Easy-Drift > Warnschwelle, dann Pace senken oder Lauf kürzen (3 Beobachtungen sammeln).");
 
+  const baseBlockLabel = blockState?.block === "BASE" ? "Base" : blockState?.block === "RACE" ? "Race" : blockState?.block === "RESET" ? "Reset" : "Build";
   const blockStatus =
-    overlayMode === "DELOAD" ? "Deload" : overlayMode === "RECOVER_OVERLAY" || overlayMode === "TAPER" ? "Stabilisieren/Absorb" : "Build";
+    overlayMode === "DELOAD" ? "Deload" : overlayMode === "RECOVER_OVERLAY" || overlayMode === "TAPER" ? "Stabilisieren/Absorb" : baseBlockLabel;
   const blockGoal =
     blockStatus === "Deload"
       ? "Erholung priorisieren und Systeme beruhigen."
       : blockStatus === "Stabilisieren/Absorb"
         ? "Belastung aufnehmen und den Körper ruhig festigen."
-        : "Kapazität behutsam ausbauen, ohne unnötigen Druck.";
+        : blockStatus === "Base"
+          ? "Fundament stabilisieren und Belastung ruhig aufbauen."
+          : blockStatus === "Race"
+            ? "Form zuspitzen, Frische schützen, keine Eskalation."
+            : blockStatus === "Reset"
+              ? "Reset und Systeme beruhigen, bevor neu aufgebaut wird."
+              : "Kapazität behutsam ausbauen, ohne unnötigen Druck.";
   const blockRisk =
     hasHardRedFlag || recoverySignals?.painInjury
       ? "Zu viel Druck trotz Warnzeichen."
@@ -4525,14 +4532,34 @@ function buildComments(
       ? ["Erholung schützen", "Leichte Bewegung", "Schlaf und Ruhe"]
       : blockStatus === "Stabilisieren/Absorb"
         ? ["Ruhige Kontinuität", "Saubere Erholung", "Belastung dosieren"]
-        : ["Ruhige Kontinuität", "Gezielte Reize", "Erholung absichern"];
+        : blockStatus === "Base"
+          ? ["Ruhige Kontinuität", "Grundlage festigen", "Erholung absichern"]
+          : blockStatus === "Race"
+            ? ["Frische schützen", "Gezielte Schärfe", "Erholung absichern"]
+            : blockStatus === "Reset"
+              ? ["Erholung schützen", "Systeme beruhigen", "Geduld"]
+              : ["Ruhige Kontinuität", "Gezielte Reize", "Erholung absichern"];
   const unimportantBlock = ["Tempojagd", "Vergleiche", "Zusatzstress"];
+
+  const readinessReasons = [];
+  if (hrv2dNegative) readinessReasons.push("HRV 2T unter 7T-Niveau");
+  else if (hrv1dNegative) readinessReasons.push("HRV 1T unter 7T-Niveau");
+  if (driftSignal === "orange" || driftSignal === "red") readinessReasons.push("Drift erhöht");
+  if (recoverySignals?.sleepLow) readinessReasons.push("Schlaf/Erholung angespannt");
+  if (fatigue?.override) readinessReasons.push("Belastung strukturell erhöht");
+  if (runFloorGap) readinessReasons.push("Runfloor-Lücke");
+  if (recoverySignals?.painInjury) readinessReasons.push("Schmerz/Verletzung");
+  if (subjectiveNegative) readinessReasons.push("subjektiv schwer");
 
   const readinessReason =
     readinessAmpel === "🔴"
-      ? "Mehrere Warnsignale sprechen gegen Belastung."
+      ? readinessReasons.length
+        ? `Heute entlasten: ${readinessReasons.join(", ")}.`
+        : "Heute entlasten, um Sicherheit zu halten."
       : readinessAmpel === "🟠"
-        ? "Einige Signale sind angespannt, heute vorsichtig."
+        ? readinessReasons.length
+          ? `Heute vorsichtig: ${readinessReasons.join(", ")}.`
+          : "Einige Signale sind angespannt, heute vorsichtig."
         : "Keine klaren Warnsignale, stabil für ruhige Belastung.";
 
   let fatigueSignalLine = null;
@@ -4541,6 +4568,15 @@ function buildComments(
   else if (subjectiveNegative) fatigueSignalLine = "Gefühl";
 
   const loadLevel = hasHardRedFlag || recoverySignals?.painInjury || freqSignal === "red" || fatigue?.override ? "hoch" : warningCount > 0 ? "moderat" : "niedrig";
+  const loadReasons = [];
+  if (hasHardRedFlag) loadReasons.push("kritische Warnsignale");
+  if (recoverySignals?.painInjury) loadReasons.push("Schmerz/Verletzung");
+  if (freqSignal === "red") loadReasons.push("Frequenz > Obergrenze");
+  if (fatigue?.override) loadReasons.push("Fatigue-Override");
+  if (driftSignal === "orange" || driftSignal === "red") loadReasons.push("Drift erhöht");
+  if (hrv2dNegative) loadReasons.push("HRV 2T niedrig");
+  if (runFloorGap) loadReasons.push("Runfloor-Lücke");
+  const loadReasonText = loadReasons.length ? loadReasons.join(", ") : "keine zusätzlichen Warnsignale";
   const loadConsequence =
     loadLevel === "hoch"
       ? "Heute nicht kompensieren, Erholung hat Priorität."
@@ -4578,6 +4614,10 @@ function buildComments(
   lines.push("");
   lines.push("📈 BELASTUNG");
   lines.push(`- Belastung heute: ${loadLevel}`);
+  if (runTarget > 0) {
+    lines.push(`- Runfloor 7T: ${runLoad7} / Soll ${runTarget}${runFloorGap ? " (Lücke)" : ""}`);
+  }
+  lines.push(`- Warum: ${loadReasonText}`);
   lines.push(`- Konsequenz: ${loadConsequence}`);
   lines.push("");
   lines.push("✅ HEUTIGE ENTSCHEIDUNG");
