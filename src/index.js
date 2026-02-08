@@ -4887,49 +4887,85 @@ function buildComments(
         ? "Du wirkst stabil genug für einen kleinen Reiz ohne Druck."
         : "Heute zählt entspanntes Durchbewegen ohne Risiko.";
 
+  const todayStatusLine = buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday });
+  const modeLabel = modeInfo?.mode === "EVENT" ? "Event" : "Open";
+  const nextEventLine = eventDate
+    ? `${eventDistance || "Event"} am ${eventDate}${daysToEvent != null ? ` (in ${daysToEvent}T)` : ""}`
+    : "kein Event geplant";
+  const driftText = drift == null ? "n/a" : `${drift.toFixed(1)}%`;
+  const efText = repEf == null ? "n/a" : repEf.toFixed(2);
+  const vdotText = repVdot == null ? "n/a" : repVdot.toFixed(1);
+  const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
+  const minStimulusText =
+    policy?.specificThreshold > 0
+      ? `Mindest-Reiz: ${policy.specificLabel} ${runLoad7}/${policy.specificThreshold}`
+      : "Mindest-Reiz: n/a (Open)";
+
+  const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
+  if (runFloorGap) activeWarnings.push("Runfloor-Lücke");
+  if (recoverySignals?.painInjury) activeWarnings.push("Schmerz/Verletzung");
+
+  const subjectiveAvgLine = buildSubjectiveAverageLine(recoverySignals);
+  const subjectiveLine = subjectiveAvgLine ? subjectiveAvgLine : "Subjektiv: n/a.";
+
+  const aerobicContextAvailable =
+    Number.isFinite(trend?.efDeltaPct) || Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd);
+
   const lines = [];
-  lines.push("Block-Status: " + blockStatus);
-  lines.push("Block-Ziel: " + blockGoal);
-  lines.push("Block-Risiko: " + blockRisk);
+  lines.push("🌤️ DAILY SNAPSHOT");
+  lines.push(`- Tages-Status: ${todayStatusLine}`);
+  lines.push(`- Mode: ${modeLabel} | Nächstes Event: ${nextEventLine}`);
+  lines.push(`- Aerob: VDOT ${vdotText} | Drift ${driftText} | EF ${efText}`);
+  lines.push(`- Motor-Index: ${motorText}`);
+  lines.push(`- 7T-Load: ${runLoad7}`);
+  lines.push(`- Trend: ${warningCount > 0 ? "gemischt" : "stabil"}`);
+  lines.push(`- ${minStimulusText}`);
+
+  lines.push("");
+  lines.push("🧭 DAILY STATUS – Entscheidungsebene");
+  lines.push(`- Readiness-Ampel: ${readinessAmpel}`);
+  lines.push(`- Aktive Warnsignale: ${activeWarnings.length ? activeWarnings.join(", ") : "keine"}`);
+  lines.push(`- ${subjectiveLine}`);
+
+  lines.push("");
+  lines.push("📈 BELASTUNG & KONSEQUENZ");
+  lines.push(`- Heutige Belastung: ${loadLevel}`);
+  if (runTarget > 0) {
+    lines.push(`- Runfloor-Status: ${runLoad7} / Soll ${runTarget}${runFloorGap ? " (Lücke)" : ""}`);
+  } else {
+    lines.push("- Runfloor-Status: n/a");
+  }
+  lines.push(`- Konsequenz: ${loadConsequence}`);
+
+  if (aerobicContextAvailable) {
+    lines.push("");
+    lines.push("🫁 AEROBER KONTEXT");
+    lines.push(`- GA-Form: ${buildAerobicTrendLine(trend)}`);
+    if (trend?.confidence) lines.push(`- Confidence-Level: ${trend.confidence}`);
+  }
+
+  lines.push("");
+  lines.push("🎯 HEUTIGE EMPFEHLUNG");
+  lines.push(`- Empfehlung: ${todayAction}`);
+  lines.push(`- Begründung: ${todayWhy}`);
+  const dailySuggestion =
+    todayAction === "kein Lauf"
+      ? "Ruhe oder 20–40′ Spaziergang/Mobility, jederzeit abbrechbar."
+      : todayAction === "locker mit kontrolliertem Reiz"
+        ? "45–60′ locker + 2–3×8–10′ steady (Schwelle-), jederzeit abbrechbar."
+        : "35–55′ locker (GA1), jederzeit abbrechbar.";
+  lines.push(`- Konkret: ${dailySuggestion}`);
+
+  lines.push("");
+  lines.push("🗓️ WEEKLY REPORT (BLOCK- & RACE-KONTEXT)");
+  lines.push(`- Aktueller Block: ${blockStatus}`);
+  lines.push(`- Block-Ziel: ${blockGoal}`);
+  lines.push(`- Block-Risiko: ${blockRisk}`);
+  lines.push(`- Leitplanken: Volumen ${runTarget > 0 ? `Runfloor ${runTarget} (7T Soll)` : "n/a"}, Intensität max ${KEY_HARD_MAX_PER_7D} Key/7T, ${STEADY_T_MAX_PER_7D} steady/7T.`);
   if (blockDescriptionLines?.length) {
     lines.push("");
     blockDescriptionLines.forEach((line) => lines.push(line));
   }
-  lines.push("");
-  lines.push("🧭 DAILY STATUS (Entscheidungsebene)");
-  lines.push("1) Readiness");
-  lines.push(`- Ampel: ${readinessAmpel}`);
-  lines.push(`- ${readinessReason}`);
-  const subjectiveAvgLine = buildSubjectiveAverageLine(recoverySignals);
-  if (subjectiveAvgLine) lines.push(`- ${subjectiveAvgLine}`);
-  if (fatigueSignalLine) lines.push(`- Ermüdungssignal: ${fatigueSignalLine}`);
-  lines.push("");
-  lines.push("📈 BELASTUNG");
-  lines.push(`- Belastung heute: ${loadLevel}`);
-  if (runTarget > 0) {
-    lines.push(`- Runfloor 7T: ${runLoad7} / Soll ${runTarget}${runFloorGap ? " (Lücke)" : ""}`);
-  }
-  lines.push(`- Warum: ${loadReasonText}`);
-  lines.push(`- Konsequenz: ${loadConsequence}`);
-  lines.push("");
-  const aerobicStatusLines = buildAerobicStatusLines(trend);
-  aerobicStatusLines.forEach((line) => lines.push(line));
-  lines.push("");
-  lines.push("✅ HEUTIGE ENTSCHEIDUNG");
-  lines.push(`- Was heute tun: ${todayAction}`);
-  lines.push(`- Warum: ${todayWhy}`);
-  lines.push("");
-  const trainingSuggestionLines = buildDailyTrainingSuggestionLines({
-    todayAction,
-    readinessAmpel,
-    steadyDecision,
-    keyHardDecision,
-    blockState,
-    eventDistanceRaw,
-  });
-  trainingSuggestionLines.forEach((line) => lines.push(line));
-  lines.push("");
-  lines.push("Die learnings in den Weekly Report packen");
 
   return lines.join("\n");
 }
