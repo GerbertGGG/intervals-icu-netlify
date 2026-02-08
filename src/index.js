@@ -548,6 +548,22 @@ async function computeKeyCount7d(ctx, dayIso) {
   return keyCount7;
 }
 
+async function computeKeyTypeCounts7d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  const keyTypes = [];
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!hasKeyTag(a)) continue;
+    const keyType = getKeyType(a);
+    if (keyType) keyTypes.push(keyType);
+  }
+  return countBy(keyTypes);
+}
+
 function bucketAllLoadsByDay(acts) {
   const m = {};
   for (const a of acts) {
@@ -607,6 +623,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const acwr = chronicWeekly > 0 ? last7 / chronicWeekly : null;
 
   const keyCount7 = await computeKeyCount7d(ctx, dayIso);
+  const keyTypeCounts7d = await computeKeyTypeCounts7d(ctx, dayIso);
   const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : MAX_KEYS_7D;
 
   const reasons = [];
@@ -659,6 +676,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     guardrailReasons,
     severity: fatigueSeverity,
     keyCount7,
+    keyTypeCounts7d,
     keyCap,
     keyCapExceeded: keyCount7 > keyCap,
     rampPct,
@@ -4869,6 +4887,13 @@ function buildComments(
   const proposedRules = [];
   if (hrv1dConcern) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
   if (driftSignal !== "green") proposedRules.push("Wenn Easy-Drift > Warnschwelle, dann Pace senken oder Lauf kürzen (3 Beobachtungen sammeln).");
+  const keyTypeCounts7d = fatigue?.keyTypeCounts7d ? Object.keys(fatigue.keyTypeCounts7d).length : 0;
+  if (keyTypeCounts7d > 1) {
+    proposedRules.push("Pro Woche nur 1 Schwerpunkt: nur einen Key-Typ setzen, alles andere unterstützt.");
+  }
+  if (Number.isFinite(fatigue?.rampPct) && fatigue.rampPct > 0.1 && (intensityBudget?.keyHardCount ?? 0) > 0) {
+    proposedRules.push("Nur eine Variable steigern: wenn Umfang steigt, Intensität stabil halten.");
+  }
 
   const baseBlockLabel = blockState?.block === "BASE" ? "Base" : blockState?.block === "RACE" ? "Race" : blockState?.block === "RESET" ? "Reset" : "Build";
   const blockStatus =
