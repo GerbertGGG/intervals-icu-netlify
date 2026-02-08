@@ -1997,8 +1997,7 @@ function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
 function getHistoryWindowEnd(dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  return new Date(end.getTime() - 86400000);
+  return new Date(dayIso + "T00:00:00Z");
 }
 function parseISODateSafe(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
