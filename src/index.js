@@ -4625,6 +4625,16 @@ function buildDailyTrainingSuggestionLines({
   ];
 }
 
+function buildWellnessRecommendation({ readinessAmpel, warningCount, hasHardRedFlag }) {
+  if (hasHardRedFlag || readinessAmpel === "🔴") {
+    return "Die Erholungsmarker sind deutlich angespannt und die Woche war fordernd.\n👉 Heute keine Intervalle – Fokus auf Ruhe und Regeneration.";
+  }
+  if (readinessAmpel === "🟠" || warningCount > 0) {
+    return "Die Erholungsmarker sind gemischt und die Woche wirkt spürbar belastet.\n👉 Heute nur sehr lockere Belastung, Intervalle besser verschieben.";
+  }
+  return "Die Erholungsmarker sind stabil und die Woche hat sich noch nicht übermäßig angespannt.\n👉 Heute sind kurze Intervalle möglich, aber streng kontrolliert.";
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -4966,6 +4976,15 @@ function buildComments(
     lines.push("");
     blockDescriptionLines.forEach((line) => lines.push(line));
   }
+
+  const wellnessRecommendation = buildWellnessRecommendation({
+    readinessAmpel,
+    warningCount,
+    hasHardRedFlag,
+  });
+  lines.push("");
+  lines.push("💬 WELLNESS KOMMENTAR");
+  lines.push(wellnessRecommendation);
 
   return lines.join("\n");
 }
