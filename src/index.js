@@ -180,28 +180,6 @@ export default {
   },
 };
 
-export {
-  applyTextGate,
-  computeLearningEvidence,
-  computeLearningOutcomeScore,
-  computeLearningStats,
-  decayWeight,
-  deriveContextKey,
-  deriveStrategyArm,
-  deriveDriftBucket,
-  deriveHrvBucket,
-  deriveMonotonyBucket,
-  deriveSleepBucket,
-  deriveStressBucket,
-  formatNeff,
-  formatPct,
-  formatContextSummary,
-  getClaimsLevel,
-  normalizeOutcomeClass,
-  normalizeStrategyArm,
-  buildLearningNarrative,
-};
-
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
