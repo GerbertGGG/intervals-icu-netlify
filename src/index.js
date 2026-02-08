@@ -3340,6 +3340,133 @@ function formatEventDistance(dist) {
   return String(dist);
 }
 
+const BLOCK_DESCRIPTION_LIBRARY = {
+  "5k": {
+    distanceLabel: "5 KM",
+    blocks: {
+      BASE: {
+        title: "BASE – 5 KM",
+        goal: ["Aerobe Basis", "Laufökonomie & Grundtempo", "Technik, Kraft, Sehnenrobustheit"],
+        content: ["GA1/GA2-Läufe", "Kurze Steigerungen", "Lockeres Tempogefühl (keine harte Schwelle)"],
+        week: ["40–50 min locker", "6×20 s Steigerungen (voll erholt)", "45 min locker", "Krafttraining (Beine/Core)", "60 min locker"],
+      },
+      BUILD: {
+        title: "BUILD – 5 KM",
+        goal: ["VO2max & Tempohärte", "Schnelligkeitsausdauer", "Nähe zur Wettkampfpace"],
+        content: ["Intervalle leicht schneller als 5-km-Pace", "Kurze Schwellenblöcke", "Intensität > Umfang"],
+        week: ["6×800 m @ 5-km-Pace (2–3 min Pause)", "40 min locker", "10×200 m schnell, locker traben", "50 min locker"],
+      },
+      RACE: {
+        title: "RACE – 5 KM",
+        goal: ["Ermüdung abbauen", "Nervensystem scharf", "Pace-Gefühl konservieren"],
+        content: ["Volumen ↓", "Intensität bleibt kurz erhalten"],
+        week: ["3×1000 m @ 5-km-Pace", "30 min locker", "4×200 m flott", "Wettkampf"],
+      },
+    },
+  },
+  "10k": {
+    distanceLabel: "10 KM",
+    blocks: {
+      BASE: {
+        title: "BASE – 10 KM",
+        goal: ["Aerobe Kapazität", "Schwellenbasis", "Effizienz im mittleren Tempo"],
+        content: ["GA1 + GA2", "Lange Läufe moderat", "Leichte Tempodauerläufe"],
+        week: ["60 min locker", "3×10 min @ zügig (unter Schwelle)", "45 min locker", "75 min locker"],
+      },
+      BUILD: {
+        title: "BUILD – 10 KM",
+        goal: ["Schwelle anheben", "Tempo über längere Dauer halten"],
+        content: ["Längere Intervalle", "Schwellenläufe nahe Wettkampfpace"],
+        week: ["5×1200 m @ 10-km-Pace", "40 min locker", "25 min @ knapp unter Schwelle", "70 min locker"],
+      },
+      RACE: {
+        title: "RACE – 10 KM",
+        goal: ["Frische + Tempogefühl"],
+        content: [],
+        week: ["2×3000 m @ 10-km-Pace", "30 min locker", "4×200 m", "Wettkampf"],
+      },
+    },
+  },
+  hm: {
+    distanceLabel: "HALBMARATHON",
+    blocks: {
+      BASE: {
+        title: "BASE – HM",
+        goal: ["Große aerobe Basis", "Fettstoffwechsel", "Belastungsverträglichkeit"],
+        content: ["Viel GA1", "Langer Lauf", "Kurze Schwellenimpulse"],
+        week: ["70 min locker", "4×12 min @ Schwelle locker", "50 min locker", "90–110 min locker"],
+      },
+      BUILD: {
+        title: "BUILD – HM",
+        goal: ["HM-Pace ökonomisch halten", "Schwelle stabilisieren"],
+        content: ["Längere Tempoblöcke", "Pace-nahe Dauerläufe"],
+        week: ["3×5 km @ HM-Pace", "50 min locker", "40 min @ Schwelle-", "100 min locker"],
+      },
+      RACE: {
+        title: "RACE – HM",
+        goal: ["Ermüdung raus", "Pace sichern"],
+        content: [],
+        week: ["2×6 km @ HM-Pace", "40 min locker", "3×1000 m flott", "Wettkampf"],
+      },
+    },
+  },
+  m: {
+    distanceLabel: "MARATHON",
+    blocks: {
+      BASE: {
+        title: "BASE – MARATHON",
+        goal: ["Aerobe Tiefe", "Muskuloskelettale Robustheit", "Umfangsverträglichkeit"],
+        content: ["Viel GA1", "Lange Läufe", "Technik & Kraft"],
+        week: ["80 min locker", "60 min locker + Steigerungen", "100 min locker", "150–180 min locker"],
+      },
+      BUILD: {
+        title: "BUILD – MARATHON",
+        goal: ["Marathonpace stabilisieren", "Ermüdungsresistenz"],
+        content: ["Lange Läufe mit MP-Anteilen", "Schwelle moderat"],
+        week: ["2×10 km @ Marathonpace", "60 min locker", "30 min @ Schwelle-", "28–32 km langer Lauf mit MP-Ende"],
+      },
+      RACE: {
+        title: "RACE – MARATHON",
+        goal: ["Glykogenspeicher füllen", "Frische & Fokus"],
+        content: [],
+        week: ["12 km @ Marathonpace", "45 min locker", "6×100 m Steigerungen", "Wettkampf"],
+      },
+    },
+  },
+};
+
+function buildBlockDescriptionLines({ block, eventDistance }) {
+  if (!block || !eventDistance) return null;
+  if (!["BASE", "BUILD", "RACE"].includes(block)) return null;
+  const libraryEntry = BLOCK_DESCRIPTION_LIBRARY[eventDistance];
+  if (!libraryEntry) return null;
+  const blockEntry = libraryEntry.blocks?.[block];
+  if (!blockEntry) return null;
+
+  const lines = [];
+  lines.push("TRAININGSBLÖCKE – BASE / BUILD / RACE");
+  lines.push(`für ${libraryEntry.distanceLabel}`);
+  lines.push("Grundidee der Blöcke:");
+  lines.push("- BASE = Fundament aufbauen (Aerob, Technik, Robustheit)");
+  lines.push("- BUILD = Wettkampfspezifische Leistungsfähigkeit entwickeln");
+  lines.push("- RACE = Form zuspitzen, Frische maximieren, Leistung abrufen");
+  lines.push("");
+  lines.push(blockEntry.title);
+  lines.push("Ziel:");
+  blockEntry.goal.forEach((item) => lines.push(`- ${item}`));
+  if (blockEntry.content?.length) {
+    lines.push("");
+    lines.push("Inhalt:");
+    blockEntry.content.forEach((item) => lines.push(`- ${item}`));
+  }
+  if (blockEntry.week?.length) {
+    lines.push("");
+    lines.push("Beispielwoche:");
+    blockEntry.week.forEach((item) => lines.push(`- ${item}`));
+  }
+  return lines;
+}
+
 function formatKeyType(type) {
   if (type === "schwelle") return "Schwelle";
   if (type === "racepace") return "Racepace";
@@ -4370,7 +4497,8 @@ function buildComments(
   const totalMinutesToday = Math.round(sum(perRunInfo.map((x) => x.moving_time || 0)) / 60);
   const repRun = pickRepresentativeGARun(perRunInfo);
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
-  const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
+  const eventDistanceRaw = blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent);
+  const eventDistance = formatEventDistance(eventDistanceRaw);
   const daysToEvent = eventDate ? daysBetween(isoDate(new Date()), eventDate) : null;
 
   const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
@@ -4540,6 +4668,10 @@ function buildComments(
               ? ["Erholung schützen", "Systeme beruhigen", "Geduld"]
               : ["Ruhige Kontinuität", "Gezielte Reize", "Erholung absichern"];
   const unimportantBlock = ["Tempojagd", "Vergleiche", "Zusatzstress"];
+  const blockDescriptionLines = buildBlockDescriptionLines({
+    block: blockState?.block,
+    eventDistance: eventDistanceRaw,
+  });
 
   const readinessReasons = [];
   if (hrv2dNegative) readinessReasons.push("HRV 2T unter 7T-Niveau");
@@ -4605,6 +4737,10 @@ function buildComments(
   lines.push("");
   lines.push("Unwichtig in diesem Block:");
   unimportantBlock.forEach((item) => lines.push(`- ${item}`));
+  if (blockDescriptionLines?.length) {
+    lines.push("");
+    blockDescriptionLines.forEach((line) => lines.push(line));
+  }
   lines.push("");
   lines.push("🧭 DAILY STATUS (Entscheidungsebene)");
   lines.push("1) Readiness");
