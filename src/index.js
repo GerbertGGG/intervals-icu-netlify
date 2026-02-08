@@ -2958,6 +2958,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     } catch {
       lastKeyIntervalInsights = null;
     }
+    let ga21Context = null;
+    try {
+      ga21Context = await computeGa21DayContext(ctx, day);
+    } catch {
+      ga21Context = null;
+    }
+    let intervalContext = null;
+    try {
+      intervalContext = await computeIntervalContext(ctx, day, perRunInfo);
+    } catch {
+      intervalContext = null;
+    }
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
@@ -3352,8 +3364,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       intensitySelection,
       readinessConfidence: decisionConfidence,
       latestGaSample,
+      ga21Context,
       lastKeyInfo,
       lastKeyIntervalInsights,
+      intervalContext,
     }, { debug });
 
     const dailyReportText = commentBundle.dailyReportText;
@@ -3466,6 +3480,10 @@ function pickRepresentativeGARun(perRunInfo) {
     return 0;
   });
   return ga[0] || null;
+}
+
+function pickRepresentativeIntervalRun(perRunInfo) {
+  return perRunInfo.find((x) => x.isKey && x.intervalMetrics) || null;
 }
 
 async function getLatestGaSample(ctx, endIso, windowDays) {
@@ -5468,6 +5486,8 @@ function buildComments(
     readinessConfidence,
     lastKeyInfo,
     lastKeyIntervalInsights,
+    ga21Context,
+    intervalContext,
   },
   { debug = false } = {}
 ) {
@@ -5787,6 +5807,26 @@ function buildComments(
   const efText = displayEf == null ? "n/a" : displayEf.toFixed(2);
   const vdotText = displayVdot == null ? "n/a" : displayVdot.toFixed(1);
   const gaDataNote = repDisplayDate ? ` (letzter GA-Lauf ${repDisplayDate})` : "";
+  const intervalToday = intervalContext?.today ?? null;
+  const intervalPrev = intervalContext?.prev?.intervalMetrics ?? null;
+  const intervalPaceText = formatPaceSeconds(intervalToday?.interval_pace_sec_per_km) ?? "n/a";
+  const intervalPaceDelta =
+    intervalToday?.interval_pace_sec_per_km != null && intervalPrev?.interval_pace_sec_per_km != null
+      ? intervalToday.interval_pace_sec_per_km - intervalPrev.interval_pace_sec_per_km
+      : null;
+  const intervalPaceDeltaText = formatPaceDeltaSeconds(intervalPaceDelta);
+  const intervalDriftText = intervalToday?.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a";
+  const intervalDriftDelta =
+    intervalToday?.HR_Drift_bpm != null && intervalPrev?.HR_Drift_bpm != null
+      ? intervalToday.HR_Drift_bpm - intervalPrev.HR_Drift_bpm
+      : null;
+  const intervalDriftDeltaText = intervalDriftDelta != null ? ` (Δ ${fmtSigned1(intervalDriftDelta)} vs letzte)` : "";
+  const intervalHrr60Text = intervalToday?.HRR60_median != null ? `${intervalToday.HRR60_median.toFixed(0)} bpm` : "n/a";
+  const intervalHrr60Delta =
+    intervalToday?.HRR60_median != null && intervalPrev?.HRR60_median != null
+      ? intervalToday.HRR60_median - intervalPrev.HRR60_median
+      : null;
+  const intervalHrr60DeltaText = intervalHrr60Delta != null ? ` (Δ ${fmtSigned1(intervalHrr60Delta)} vs letzte)` : "";
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
   const todayHrr60 = extractTodayHrr60(perRunInfo);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
@@ -5846,6 +5886,16 @@ function buildComments(
   lines.push(`- Kontext: ${nextEventLine}`);
   lines.push(`- Laufbewertung: ${runEvaluationText}`);
   lines.push(`- HRR60: ${todayHrr60 != null ? `${todayHrr60.toFixed(0)} bpm (HF-Abfall in 60s)` : "n/a"}`);
+  if (hadGA) {
+    const driftContext = ga21Context ? `${driftText} (Ø21T ${ga21Context.driftAvg.toFixed(1)}%)` : driftText;
+    const efContext = ga21Context ? `${efText} (Ø21T ${ga21Context.efAvg.toFixed(2)})` : efText;
+    const vdotContext = ga21Context ? `${vdotText} (Ø21T ${ga21Context.vdotAvg.toFixed(1)})` : vdotText;
+    lines.push(`- GA-Kontext: Drift ${driftContext} | EF ${efContext} | VDOT ${vdotContext}${gaDataNote}`);
+  }
+  if (intervalToday) {
+    const paceContext = intervalPaceDeltaText ? `${intervalPaceText} (Δ ${intervalPaceDeltaText} vs letzte)` : intervalPaceText;
+    lines.push(`- Intervall-Kontext: HRR60 ${intervalHrr60Text}${intervalHrr60DeltaText} | HF-Drift ${intervalDriftText}${intervalDriftDeltaText} | Pace ${paceContext}`);
+  }
 
   lines.push("");
   lines.push("📈 BELASTUNG & KONSEQUENZ");
@@ -6093,6 +6143,24 @@ async function computeAerobicTrend(ctx, dayIso) {
   };
 }
 
+async function computeGa21DayContext(ctx, dayIso) {
+  const end = getHistoryWindowEnd(dayIso);
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const samples = await gatherGASamples(ctx, endIso, 21, { comparable: false });
+  if (!samples.length) return null;
+
+  const efAvg = avg(samples.map((x) => x.ef));
+  const driftAvg = avg(samples.map((x) => x.drift));
+  if (efAvg == null || driftAvg == null) return null;
+
+  return {
+    count: samples.length,
+    efAvg,
+    driftAvg,
+    vdotAvg: vdotLikeFromEf(efAvg),
+  };
+}
+
 // ================= MOTOR INDEX (GA comparable only) =================
 async function buildMotorFallback(ctx, dayIso) {
   const samples = await gatherGASamples(ctx, dayIso, MOTOR_WINDOW_DAYS, { comparable: false });
@@ -6246,6 +6314,61 @@ async function gatherGASamples(ctx, endIso, windowDays, opts) {
 
   ctx.gaSampleCache.set(key, p);
   return p;
+}
+
+async function computePreviousKeyIntervalInsights(ctx, dayIso, windowDays, excludeActivityIds) {
+  const end = getHistoryWindowEnd(dayIso);
+  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const keyHistory = [];
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (d >= dayIso) continue;
+    if (!hasKeyTag(a)) continue;
+    if (excludeActivityIds?.has?.(a.id)) continue;
+    const rawType = getKeyType(a);
+    const keyType = normalizeKeyType(rawType, {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    keyHistory.push({ date: d, keyType, activity: a });
+  }
+
+  if (!keyHistory.length) return null;
+  keyHistory.sort((a, b) => a.date.localeCompare(b.date));
+  const lastEntry = keyHistory[keyHistory.length - 1];
+  if (!lastEntry?.activity) return null;
+
+  try {
+    const streams = await getStreams(ctx, lastEntry.activity.id, STREAM_TYPES_INTERVAL);
+    const intervalMetrics = computeIntervalMetricsFromStreams(streams, {
+      intervalType: getIntervalTypeFromActivity(lastEntry.activity),
+    });
+    if (!intervalMetrics) return null;
+    return {
+      activityId: lastEntry.activity.id,
+      date: lastEntry.date,
+      keyType: lastEntry.keyType,
+      intervalMetrics,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function computeIntervalContext(ctx, dayIso, perRunInfo) {
+  const todayRun = pickRepresentativeIntervalRun(perRunInfo);
+  if (!todayRun?.intervalMetrics) return null;
+
+  const excludeIds = new Set([todayRun.activityId]);
+  const prev = await computePreviousKeyIntervalInsights(ctx, dayIso, 21, excludeIds);
+  return {
+    today: todayRun.intervalMetrics,
+    todayKeyType: todayRun.keyType,
+    prev,
+  };
 }
 // ================= MONDAY DETECTIVE NOTE (TRAININGSLEHRE V2) =================
 async function persistDetectiveSummary(env, mondayIso, summary) {
@@ -6933,6 +7056,13 @@ function formatPaceSeconds(secPerKm) {
   const minutes = Math.floor(totalSec / 60);
   const seconds = totalSec % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+}
+
+function formatPaceDeltaSeconds(deltaSec) {
+  if (!Number.isFinite(deltaSec)) return null;
+  const rounded = Math.round(deltaSec);
+  const sign = rounded > 0 ? "+" : "";
+  return `${sign}${rounded}s/km`;
 }
 
 function formatPaceFromSpeed(speedMps) {
