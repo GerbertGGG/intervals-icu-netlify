@@ -3449,13 +3449,6 @@ function buildBlockDescriptionLines({ block, eventDistance }) {
   if (!blockEntry) return null;
 
   const lines = [];
-  lines.push("TRAININGSBLÖCKE – BASE / BUILD / RACE");
-  lines.push(`für ${libraryEntry.distanceLabel}`);
-  lines.push("Grundidee der Blöcke:");
-  lines.push("- BASE = Fundament aufbauen (Aerob, Technik, Robustheit)");
-  lines.push("- BUILD = Wettkampfspezifische Leistungsfähigkeit entwickeln");
-  lines.push("- RACE = Form zuspitzen, Frische maximieren, Leistung abrufen");
-  lines.push("");
   lines.push(blockEntry.title);
   lines.push("Ziel:");
   blockEntry.goal.forEach((item) => lines.push(`- ${item}`));
@@ -4815,19 +4808,6 @@ function buildComments(
         ? "Zu viel Tempo statt sauberer Erholung."
         : "Zu viel Ehrgeiz ohne saubere Basis.";
 
-  const importantBlock =
-    blockStatus === "Deload"
-      ? ["Erholung schützen", "Leichte Bewegung", "Schlaf und Ruhe"]
-      : blockStatus === "Stabilisieren/Absorb"
-        ? ["Ruhige Kontinuität", "Saubere Erholung", "Belastung dosieren"]
-        : blockStatus === "Base"
-          ? ["Ruhige Kontinuität", "Grundlage festigen", "Erholung absichern"]
-          : blockStatus === "Race"
-            ? ["Frische schützen", "Gezielte Schärfe", "Erholung absichern"]
-            : blockStatus === "Reset"
-              ? ["Erholung schützen", "Systeme beruhigen", "Geduld"]
-              : ["Ruhige Kontinuität", "Gezielte Reize", "Erholung absichern"];
-  const unimportantBlock = ["Tempojagd", "Vergleiche", "Zusatzstress"];
   const blockDescriptionLines = buildBlockDescriptionLines({
     block: blockState?.block,
     eventDistance: eventDistanceRaw,
@@ -4891,12 +4871,6 @@ function buildComments(
   lines.push("Block-Status: " + blockStatus);
   lines.push("Block-Ziel: " + blockGoal);
   lines.push("Block-Risiko: " + blockRisk);
-  lines.push("");
-  lines.push("Wichtig in diesem Block:");
-  importantBlock.forEach((item) => lines.push(`- ${item}`));
-  lines.push("");
-  lines.push("Unwichtig in diesem Block:");
-  unimportantBlock.forEach((item) => lines.push(`- ${item}`));
   if (blockDescriptionLines?.length) {
     lines.push("");
     blockDescriptionLines.forEach((line) => lines.push(line));
