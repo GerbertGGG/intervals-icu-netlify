@@ -7252,12 +7252,15 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
     const lateAvg = lateCount ? lateSum / lateCount : null;
 
     const target = endTime + 60;
+    const targetWindowEnd = target + 30;
     let hr60 = null;
     for (let i = interval.endIdx; i < n; i++) {
       const t = timeAt(i);
-      if (t >= target) {
-        const h = Number(hrSlice[i]);
-        if (Number.isFinite(h)) hr60 = h;
+      if (t < target) continue;
+      if (t > targetWindowEnd) break;
+      const h = Number(hrSlice[i]);
+      if (Number.isFinite(h)) {
+        hr60 = h;
         break;
       }
     }
