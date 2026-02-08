@@ -778,6 +778,50 @@ function computeLastKeyInfo(ctx, dayIso, windowDays = 14) {
   };
 }
 
+async function computeLastKeyIntervalInsights(ctx, dayIso, windowDays = 21) {
+  const end = getHistoryWindowEnd(dayIso);
+  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const keyHistory = [];
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!hasKeyTag(a)) continue;
+    const rawType = getKeyType(a);
+    const keyType = normalizeKeyType(rawType, {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    keyHistory.push({ date: d, keyType, activity: a });
+  }
+
+  if (!keyHistory.length) return null;
+  keyHistory.sort((a, b) => a.date.localeCompare(b.date));
+
+  const racepaceCandidates = keyHistory.filter((entry) => entry.keyType === "racepace");
+  const lastEntry = racepaceCandidates.length ? racepaceCandidates[racepaceCandidates.length - 1] : keyHistory[keyHistory.length - 1];
+  if (!lastEntry?.activity) return null;
+
+  try {
+    const streams = await getStreams(ctx, lastEntry.activity.id, STREAM_TYPES_INTERVAL);
+    const intervalMetrics = computeIntervalMetricsFromStreams(streams, {
+      intervalType: getIntervalTypeFromActivity(lastEntry.activity),
+    });
+    if (!intervalMetrics) return null;
+    const paceText = formatPaceSeconds(intervalMetrics.interval_pace_sec_per_km);
+    return {
+      activityId: lastEntry.activity.id,
+      date: lastEntry.date,
+      keyType: lastEntry.keyType,
+      intervalMetrics,
+      paceText,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const RUN_FLOOR_DELOAD_SUM21_MIN = 450;
 const RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN = 14;
 const RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS = 14;
@@ -2908,6 +2952,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const keySpacing = computeKeySpacing(ctx, day);
     const lastKeyInfo = computeLastKeyInfo(ctx, day, 14);
+    let lastKeyIntervalInsights = null;
+    try {
+      lastKeyIntervalInsights = await computeLastKeyIntervalInsights(ctx, day, 21);
+    } catch {
+      lastKeyIntervalInsights = null;
+    }
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
@@ -3303,6 +3353,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       readinessConfidence: decisionConfidence,
       latestGaSample,
       lastKeyInfo,
+      lastKeyIntervalInsights,
     }, { debug });
 
     const dailyReportText = commentBundle.dailyReportText;
@@ -4846,6 +4897,49 @@ function formatMinuteBlock(minutes) {
   return `${Math.round(minutes)}′`;
 }
 
+function applyIntervalInsightsToWorkoutPlan(plan, intervalInsights) {
+  if (!plan || !intervalInsights) return { plan, adjustmentNotes: [] };
+  const metrics = intervalInsights.intervalMetrics;
+  if (!metrics) return { plan, adjustmentNotes: [] };
+  if (plan.keyType === "strides") return { plan, adjustmentNotes: [] };
+
+  let adjusted = { ...plan };
+  const adjustmentNotes = [];
+  let recBonus = 0;
+
+  if (metrics.HRR60_median != null && metrics.HRR60_median < 15) {
+    recBonus += 30;
+    adjustmentNotes.push("Pausen +30s (Erholung limitiert)");
+  }
+
+  if (metrics.drift_flag === "too_hard" || metrics.drift_flag === "overreaching") {
+    if (adjusted.reps > 4) {
+      adjusted.reps -= 1;
+      adjustmentNotes.push("1 Wdh weniger (HF-Drift hoch)");
+    } else {
+      recBonus += 30;
+      adjustmentNotes.push("Pausen +30s (HF-Drift hoch)");
+    }
+  }
+
+  if (recBonus > 0) {
+    adjusted.recSec = Math.min(adjusted.recSec + recBonus, 240);
+  }
+
+  if (adjustmentNotes.length) {
+    adjusted.intensityMinutes = toMinutes(adjusted.reps * adjusted.workSec);
+    adjusted.totalMinutes = computeTotalMinutes({
+      warmupMin: adjusted.warmupMin,
+      cooldownMin: adjusted.cooldownMin,
+      reps: adjusted.reps,
+      workSec: adjusted.workSec,
+      recSec: adjusted.recSec,
+    });
+  }
+
+  return { plan: adjusted, adjustmentNotes };
+}
+
 function computeReadinessTier({ readinessAmpel, readinessScore, fatigueSeverity, guardrailSeverity }) {
   if (guardrailSeverity === "hard" || readinessAmpel === "🔴") return "BAD";
   if (fatigueSeverity === "high" || (readinessAmpel === "🟠" && readinessScore < 55)) return "LOW";
@@ -5137,7 +5231,7 @@ function buildWorkoutPlan({
   };
 }
 
-function formatWorkoutKonkret(plan) {
+function formatWorkoutKonkret(plan, { paceText = null, adjustmentNotes = [] } = {}) {
   if (!plan) return null;
   const warmup = `${formatMinuteBlock(plan.warmupMin)} EL`;
   const cooldown = `${formatMinuteBlock(plan.cooldownMin)} AL`;
@@ -5148,7 +5242,9 @@ function formatWorkoutKonkret(plan) {
   }
   const work = formatIntervalSeconds(plan.workSec);
   const rec = formatIntervalSeconds(plan.recSec);
-  return `${warmup}, ${plan.reps}×${work} @ ${plan.keyType} (${rec} trab), ${cooldown}.`;
+  const paceSuffix = plan.keyType === "racepace" && paceText ? ` Zielpace ca. ${paceText}.` : "";
+  const adjustmentSuffix = adjustmentNotes.length ? ` Anpassung: ${adjustmentNotes.join(" | ")}.` : "";
+  return `${warmup}, ${plan.reps}×${work} @ ${plan.keyType} (${rec} trab), ${cooldown}.${paceSuffix}${adjustmentSuffix}`;
 }
 
 function applyConfidenceTone(sentence, bucket) {
@@ -5371,6 +5467,7 @@ function buildComments(
     intensitySelection,
     readinessConfidence,
     lastKeyInfo,
+    lastKeyIntervalInsights,
   },
   { debug = false } = {}
 ) {
@@ -5638,6 +5735,9 @@ function buildComments(
   const guardrailSeverity = guardrailState?.guardrailSeverity ?? "none";
   let workoutPlan = null;
   let workoutDebug = null;
+  let workoutAdjustmentNotes = [];
+  let workoutDisplayPlan = null;
+  const lastRacePaceText = lastKeyIntervalInsights?.keyType === "racepace" ? lastKeyIntervalInsights?.paceText : null;
   if (todayAction === "locker + Key-Reiz" && decisionKeyType) {
     const planResult = buildWorkoutPlan({
       decisionKeyType,
@@ -5661,6 +5761,9 @@ function buildComments(
       lastWorkoutSignature: null,
     });
     workoutPlan = planResult.plan;
+    const adjusted = applyIntervalInsightsToWorkoutPlan(workoutPlan, lastKeyIntervalInsights);
+    workoutDisplayPlan = adjusted.plan;
+    workoutAdjustmentNotes = adjusted.adjustmentNotes;
     workoutDebug = workoutPlan
       ? {
         chosenTemplateId: workoutPlan.templateId,
@@ -5668,6 +5771,9 @@ function buildComments(
         computedTotalMinutes: workoutPlan.totalMinutes,
         intensityMinutes: workoutPlan.intensityMinutes,
         reasonIds: planResult.reasonIds,
+        adjustmentNotes: workoutAdjustmentNotes,
+        adjustedRecSec: workoutDisplayPlan?.recSec ?? null,
+        adjustedReps: workoutDisplayPlan?.reps ?? null,
       }
       : { chosenTemplateId: null, scalingLevel: null, computedTotalMinutes: null, intensityMinutes: null, reasonIds: planResult.reasonIds };
   }
@@ -5750,6 +5856,10 @@ function buildComments(
   lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
   lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
   lines.push(`- Key 7T: ${fatigue?.keyCount7 ?? keyCompliance?.actual7 ?? "n/a"} / Cap ${dynamicKeyCap ?? fatigue?.keyCap ?? "n/a"} | Spacing ${keySpacing?.ok === false ? "zu eng" : "ok"}`);
+  if (lastRacePaceText) {
+    const racePaceDate = lastKeyIntervalInsights?.date ? ` (${lastKeyIntervalInsights.date})` : "";
+    lines.push(`- Racepace (letzte Intervalle${racePaceDate}): ${lastRacePaceText}`);
+  }
 
   if (aerobicContextAvailable) {
     lines.push("");
@@ -5770,7 +5880,10 @@ function buildComments(
         : todayAction === "locker + Steigerungen"
           ? "35–55′ locker (GA1) + 4–6 kurze Steigerungen, jederzeit abbrechbar."
           : todayAction === "locker + Key-Reiz"
-            ? formatWorkoutKonkret(workoutPlan) || "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
+            ? formatWorkoutKonkret(workoutDisplayPlan ?? workoutPlan, {
+                paceText: lastRacePaceText,
+                adjustmentNotes: workoutAdjustmentNotes,
+              }) || "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
         : "35–55′ locker (GA1), jederzeit abbrechbar.";
   lines.push(`- Konkret: ${dailySuggestion}`);
 
@@ -6769,6 +6882,19 @@ function fmtDistanceKm(distanceMeters) {
   return `${distanceMeters.toFixed(0)} m`;
 }
 
+function formatPaceSeconds(secPerKm) {
+  if (!Number.isFinite(secPerKm) || secPerKm <= 0) return null;
+  const totalSec = Math.round(secPerKm);
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = totalSec % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+}
+
+function formatPaceFromSpeed(speedMps) {
+  if (!Number.isFinite(speedMps) || speedMps <= 0) return null;
+  return formatPaceSeconds(1000 / speedMps);
+}
+
 // ================= STREAMS METRICS =================
 function quantile(arr, q) {
   const v = arr.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
@@ -6906,6 +7032,10 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
   const minIntensity = Math.min(...validIntensity);
   const maxIntensity = Math.max(...validIntensity);
   if (minIntensity <= 0 || maxIntensity / minIntensity > 1.1) return null;
+  const avgIntensity = avg(validIntensity);
+  const intervalAvgSpeedMps = intensityInfo.kind === "speed" && Number.isFinite(avgIntensity) ? avgIntensity : null;
+  const intervalPaceSecPerKm =
+    intervalAvgSpeedMps != null && intervalAvgSpeedMps > 0 ? 1000 / intervalAvgSpeedMps : null;
 
   const timeAt = (i) => {
     const t = Number(timeSlice[i]);
@@ -6969,6 +7099,8 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
     HRR60_median: hrr60Median,
     drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
     interval_type: intervalType ?? null,
+    interval_avg_speed_mps: intervalAvgSpeedMps,
+    interval_pace_sec_per_km: intervalPaceSecPerKm,
   };
 }
 
