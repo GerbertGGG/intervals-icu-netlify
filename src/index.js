@@ -4830,10 +4830,6 @@ function normalizeConfidenceLevel(confidenceLevel) {
   return "unknown";
 }
 
-function clamp(num, min, max) {
-  return Math.min(Math.max(num, min), max);
-}
-
 function toMinutes(seconds) {
   return seconds / 60;
 }
