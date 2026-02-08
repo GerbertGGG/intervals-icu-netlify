@@ -5834,6 +5834,8 @@ function buildComments(
         `HRR60 ${intervalToday.HRR60_median != null ? `${intervalToday.HRR60_median.toFixed(0)} bpm` : "n/a"}`,
       ].join(" | ")
     : null;
+  const keyMetricsLine =
+    intervalDetailLine || `HF-Drift ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
   const todayHrr60 = extractTodayHrr60(perRunInfo);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
@@ -5891,7 +5893,11 @@ function buildComments(
   lines.push("🧭 TAGESSTATUS");
   lines.push(`- Heute: ${todayStatusLine}`);
   lines.push(`- Kontext: ${nextEventLine}`);
-  lines.push(`- Laufbewertung: ${runEvaluationText}`);
+  if (hadKey && !hadGA) {
+    lines.push(`- Key-Metriken: ${keyMetricsLine}`);
+  } else {
+    lines.push(`- Laufbewertung: ${runEvaluationText}`);
+  }
   if (intervalToday) {
     lines.push(`- HRR60: ${todayHrr60 != null ? `${todayHrr60.toFixed(0)} bpm (HF-Abfall in 60s)` : "n/a"}`);
   }
