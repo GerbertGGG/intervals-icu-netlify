@@ -5788,6 +5788,8 @@ function buildComments(
   const vdotText = displayVdot == null ? "n/a" : displayVdot.toFixed(1);
   const gaDataNote = repDisplayDate ? ` (letzter GA-Lauf ${repDisplayDate})` : "";
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
+  const todayHrr60 = extractTodayHrr60(perRunInfo);
+  const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
 
   const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
   if (runFloorGap) activeWarnings.push("Runfloor-Lücke");
@@ -5837,6 +5839,13 @@ function buildComments(
   lines.push(`- Readiness-Ampel: ${readinessAmpel}`);
   lines.push(`- Aktive Warnsignale: ${activeWarnings.length ? activeWarnings.join(", ") : "keine"}`);
   lines.push(`- ${subjectiveLine}`);
+
+  lines.push("");
+  lines.push("🧭 TAGESSTATUS");
+  lines.push(`- Heute: ${todayStatusLine}`);
+  lines.push(`- Kontext: ${nextEventLine}`);
+  lines.push(`- Laufbewertung: ${runEvaluationText}`);
+  lines.push(`- HRR60: ${todayHrr60 != null ? `${todayHrr60.toFixed(0)} bpm (HF-Abfall in 60s)` : "n/a"}`);
 
   lines.push("");
   lines.push("📈 BELASTUNG & KONSEQUENZ");
@@ -5902,6 +5911,36 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   if (hadGA && !hadKey) return `Lauf: ${minutesText}locker`;
   if (hadKey && hadGA) return `Lauf: ${minutesText}GA + Key`;
   return `Lauf: ${minutesText}Lauf`;
+}
+
+function extractTodayHrr60(perRunInfo) {
+  const values = perRunInfo
+    .map((run) => run.intervalMetrics?.HRR60_median)
+    .filter((value) => Number.isFinite(value));
+  if (!values.length) return null;
+  return median(values);
+}
+
+function buildRunEvaluationText({ hadAnyRun, repRun, trend }) {
+  if (!hadAnyRun) return "kein Lauf";
+  if (!repRun) return "n/a (kein GA-Lauf für Vergleich)";
+  const efAvg = trend?.efRecentAvg;
+  const driftAvg = trend?.driftRecentMed;
+  const efDelta = pct(repRun.ef, efAvg);
+  const driftDelta = repRun.drift != null && driftAvg != null ? repRun.drift - driftAvg : null;
+  const parts = [];
+  if (efDelta != null) parts.push(`EF ${fmtSigned1(efDelta)}% vs Ø 28d`);
+  if (driftDelta != null) parts.push(`Drift ${fmtSigned1(driftDelta)}%-Pkt vs Ø 28d`);
+  if (!parts.length) return "n/a (zu wenig Vergleichsdaten)";
+  let verdict = "gemischt";
+  if (efDelta != null && driftDelta != null) {
+    if (efDelta >= 1 && driftDelta <= -0.5) verdict = "besser";
+    else if (efDelta <= -1 && driftDelta >= 0.5) verdict = "schwächer";
+  } else if (efDelta != null) {
+    if (efDelta >= 1) verdict = "besser";
+    else if (efDelta <= -1) verdict = "schwächer";
+  }
+  return `${verdict} (${parts.join(" | ")})`;
 }
 
 function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
@@ -5987,6 +6026,10 @@ async function computeAerobicTrend(ctx, dayIso) {
       prevStart,
       windowEnd: endIso,
       lastComparableDate,
+      efRecentAvg: null,
+      efPrevAvg: null,
+      driftRecentMed: null,
+      driftPrevMed: null,
       text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – zu wenig GA-Daten (recent=${recent.length}, prev=${prev.length})`,
     };
   }
@@ -6030,6 +6073,8 @@ async function computeAerobicTrend(ctx, dayIso) {
     efDeltaPct,
     dv,
     dd,
+    efRecentAvg: ef1,
+    efPrevAvg: ef0,
     driftRecentMed: d1,
     driftPrevMed: d0,
     confidence,
