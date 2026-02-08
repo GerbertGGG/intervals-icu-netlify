@@ -3607,6 +3607,7 @@ function buildSubjectiveAverageLine(recoverySignals, label = "4T") {
   const formatShare = (share) => (typeof share === "number" ? `${Math.round(share * 100)}%` : null);
   const parts = [];
   const { pain, legs, mood, motivation } = recoverySignals.subjectiveShares;
+  const shareValues = [pain, legs, mood, motivation].filter((share) => typeof share === "number");
   const painText = formatShare(pain);
   if (painText) parts.push(`Schmerz ${painText}`);
   const legsText = formatShare(legs);
@@ -3616,7 +3617,9 @@ function buildSubjectiveAverageLine(recoverySignals, label = "4T") {
   const motivationText = formatShare(motivation);
   if (motivationText) parts.push(`Motivation ${motivationText}`);
   if (!parts.length) return null;
-  return `Subjektiv Ø ${label} negativ: ${parts.join(" | ")}.`;
+  const hasZero = shareValues.some((share) => share === 0);
+  const zeroHint = hasZero ? " (0% = keine negativen Einträge im Zeitraum)" : "";
+  return `Subjektiv Ø ${label} negativ: ${parts.join(" | ")}.${zeroHint}`;
 }
 
 async function computeRecoverySignals(ctx, env, dayIso) {
@@ -4830,8 +4833,8 @@ function buildComments(
         : "Heute entlasten, um Sicherheit zu halten."
       : readinessAmpel === "🟠"
         ? readinessReasons.length
-          ? `Heute vorsichtig: ${readinessReasons.join(", ")}.`
-          : "Einige Signale sind angespannt, heute vorsichtig."
+          ? `Heute vorsichtig: ${readinessReasons.join(", ")}. 🟠 = mindestens ein weiches Warnsignal (z.B. Runfloor-Lücke).`
+          : "Einige Signale sind angespannt, heute vorsichtig. 🟠 = mindestens ein weiches Warnsignal."
         : "Keine klaren Warnsignale, stabil für ruhige Belastung.";
 
   let fatigueSignalLine = null;
