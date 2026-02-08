@@ -2798,6 +2798,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     } catch (e) {
       trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
     }
+    let latestGaSample = null;
+    try {
+      latestGaSample = await getLatestGaSample(ctx, day, TREND_WINDOW_DAYS * 2);
+    } catch {
+      latestGaSample = null;
+    }
 
     // NEW: loads + min stimulus depends on mode
     let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
@@ -3228,10 +3234,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       decisionTrace,
       intensityClassToday,
       readinessConfidence: decisionConfidence,
+      latestGaSample,
     }, { debug });
 
     const dailyReportText = commentBundle.dailyReportText;
-    patch.comments = commentBundle.wellnessComment;
 
     patches[day] = patch;
 
@@ -3337,6 +3343,13 @@ function pickRepresentativeGARun(perRunInfo) {
     return 0;
   });
   return ga[0] || null;
+}
+
+async function getLatestGaSample(ctx, endIso, windowDays) {
+  const samples = await gatherGASamples(ctx, endIso, windowDays, { comparable: false });
+  if (!samples.length) return null;
+  const latest = samples.slice().sort((a, b) => a.date.localeCompare(b.date)).at(-1);
+  return latest || null;
 }
 
 function formatEventDistance(dist) {
@@ -3524,6 +3537,47 @@ function buildAerobicStatusLines(trend) {
   ];
 }
 
+function parseWellnessNumber(value) {
+  if (value == null) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const normalized = trimmed.replace(",", ".");
+    const num = Number(normalized);
+    return Number.isFinite(num) ? num : null;
+  }
+  return null;
+}
+
+function parseSleepHours(value) {
+  if (value == null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return null;
+    const timeMatch = trimmed.match(/^(\d+)\s*[:h]\s*(\d{1,2})$/);
+    if (timeMatch) {
+      const hours = Number(timeMatch[1]);
+      const minutes = Number(timeMatch[2]);
+      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+        return hours + minutes / 60;
+      }
+    }
+    const hourMinuteMatch = trimmed.match(/(\d+)\s*h(?:\s*(\d{1,2}))?/);
+    if (hourMinuteMatch) {
+      const hours = Number(hourMinuteMatch[1]);
+      const minutes = hourMinuteMatch[2] ? Number(hourMinuteMatch[2]) : 0;
+      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
+        return hours + minutes / 60;
+      }
+    }
+  }
+  const num = parseWellnessNumber(value);
+  if (num == null || num <= 0) return null;
+  if (num > 24) return round(num / 60, 2);
+  return num;
+}
+
 function extractSleepHoursFromWellness(wellness) {
   if (!wellness) return null;
   const candidates = [
@@ -3532,12 +3586,13 @@ function extractSleepHoursFromWellness(wellness) {
     wellness.sleep_duration,
     wellness.sleep_time,
     wellness.sleep_hr,
+    wellness.sleep_min,
+    wellness.sleep_minutes,
+    wellness.sleep_mins,
   ];
   for (const value of candidates) {
-    const num = Number(value);
-    if (!Number.isFinite(num) || num <= 0) continue;
-    if (num > 24) return round(num / 60, 2);
-    return num;
+    const parsed = parseSleepHours(value);
+    if (parsed != null) return parsed;
   }
   return null;
 }
@@ -3550,8 +3605,8 @@ function extractHrvFromWellness(wellness) {
     wellness.hrv_sdnn,
   ];
   for (const value of candidates) {
-    const num = Number(value);
-    if (!Number.isFinite(num) || num <= 0) continue;
+    const num = parseWellnessNumber(value);
+    if (num == null || num <= 0) continue;
     return num;
   }
   return null;
@@ -4632,6 +4687,7 @@ function buildDailyTrainingSuggestionLines({
 function buildComments(
   {
     perRunInfo,
+    latestGaSample,
     trend,
     motor,
     robustness,
@@ -4667,14 +4723,19 @@ function buildComments(
   const hadAnyRun = perRunInfo.length > 0;
   const totalMinutesToday = Math.round(sum(perRunInfo.map((x) => x.moving_time || 0)) / 60);
   const repRun = pickRepresentativeGARun(perRunInfo);
+  const repDisplayRun = repRun ?? latestGaSample;
+  const repDisplayDate = repRun ? null : latestGaSample?.date ?? null;
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const eventDistanceRaw = blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent);
   const eventDistance = formatEventDistance(eventDistanceRaw);
   const daysToEvent = eventDate ? daysBetween(isoDate(new Date()), eventDate) : null;
 
   const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
+  const displayDrift = Number.isFinite(repDisplayRun?.drift) ? repDisplayRun.drift : null;
+  const displayEf = Number.isFinite(repDisplayRun?.ef) ? repDisplayRun.ef : null;
   const repEf = Number.isFinite(repRun?.ef) ? repRun.ef : null;
   const repVdot = repEf != null ? vdotLikeFromEf(repEf) : null;
+  const displayVdot = displayEf != null ? vdotLikeFromEf(displayEf) : null;
   const personalDriftWarn = DRIFT_WARN_PCT;
   const personalDriftCritical = DRIFT_CRITICAL_PCT;
   const driftSignal = drift == null ? "unknown" : drift >= personalDriftCritical ? "red" : drift >= personalDriftWarn ? "orange" : "green";
@@ -4895,14 +4956,11 @@ function buildComments(
   const nextEventLine = eventDate
     ? `${eventDistance || "Event"} am ${eventDate}${daysToEvent != null ? ` (in ${daysToEvent}T)` : ""}`
     : "kein Event geplant";
-  const driftText = drift == null ? "n/a" : `${drift.toFixed(1)}%`;
-  const efText = repEf == null ? "n/a" : repEf.toFixed(2);
-  const vdotText = repVdot == null ? "n/a" : repVdot.toFixed(1);
+  const driftText = displayDrift == null ? "n/a" : `${displayDrift.toFixed(1)}%`;
+  const efText = displayEf == null ? "n/a" : displayEf.toFixed(2);
+  const vdotText = displayVdot == null ? "n/a" : displayVdot.toFixed(1);
+  const gaDataNote = repDisplayDate ? ` (letzter GA-Lauf ${repDisplayDate})` : "";
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
-  const minStimulusText =
-    policy?.specificThreshold > 0
-      ? `Mindest-Reiz: ${policy.specificLabel} ${runLoad7}/${policy.specificThreshold}`
-      : "Mindest-Reiz: n/a (Open)";
 
   const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
   if (runFloorGap) activeWarnings.push("Runfloor-Lücke");
@@ -4914,46 +4972,8 @@ function buildComments(
   const aerobicContextAvailable =
     Number.isFinite(trend?.efDeltaPct) || Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd);
 
-  const wellnessCommentLines = [];
-  wellnessCommentLines.push("🌤️ WELLNESS-KOMMENTAR (heute auf einen Blick)");
-  wellnessCommentLines.push(`- Heute: ${todayStatusLine} | Readiness ${readinessAmpel}`);
-  wellnessCommentLines.push(`- Fokus: ${todayAction} – ${todayWhy}`);
-  wellnessCommentLines.push(`- Schlüsselzahlen: Runload 7T ${runLoad7}/${runTarget || "n/a"} | HRV Δ ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"} | Drift ${driftText}`);
-  wellnessCommentLines.push(`- ${minStimulusText}`);
-  wellnessCommentLines.push(`- Kontext: ${modeLabel} | Nächstes Event: ${nextEventLine}`);
-  if (repEf == null && drift == null) {
-    wellnessCommentLines.push("- Hinweis: VDOT/EF/Drift nur bei GA-Läufen (≥30′, kein key) mit Daten; Trend basiert auf GA-Historie.");
-  }
   const needsKey = keyCompliance?.freqOk === false || keyCompliance?.preferredMissing;
   const needsLongRun = (longRunSummary?.minutes ?? 0) < 60;
-  const recoveryLine =
-    readinessAmpel === "🔴"
-      ? "Die Erholungsmarker sind angespannt und die Woche wirkt bereits belastet."
-      : readinessAmpel === "🟠" || warningCount > 0
-        ? "Die Erholungsmarker sind leicht angespannt, die Woche wirkt moderat belastet."
-        : "Die Erholungsmarker sind stabil und die Woche hat sich noch nicht übermäßig angespannt.";
-  let actionLine = "👉 Locker bleiben und den Plan stabil abarbeiten.";
-  if (readinessAmpel === "🔴") {
-    actionLine = "👉 Heute kein Intervall/Longrun; Erholung priorisieren.";
-  } else if (needsKey && needsLongRun) {
-    actionLine =
-      readinessAmpel === "🟢"
-        ? "👉 Diese Woche fehlen Intervall & Longrun: priorisiere Longrun locker, Intervalle kurz und streng kontrolliert an einem frischen Tag."
-        : "👉 Diese Woche fehlen Intervall & Longrun: priorisiere Longrun locker, Intervalle erst wenn erholt.";
-  } else if (needsKey) {
-    actionLine =
-      readinessAmpel === "🟢"
-        ? "👉 Heute sind kurze Intervalle möglich, aber streng kontrolliert."
-        : "👉 Intervalltraining fehlt noch, aber heute nur locker/steady.";
-  } else if (needsLongRun) {
-    actionLine = "👉 Longrun fehlt noch – plane den nächsten Lauf als langen, lockeren Dauerlauf.";
-  } else if (steadyDecision?.allowSteady && readinessAmpel === "🟢") {
-    actionLine = "👉 Kurzer steady-Reiz möglich, sonst locker bleiben.";
-  }
-  wellnessCommentLines.push("");
-  wellnessCommentLines.push("💡 EMPFEHLUNG");
-  wellnessCommentLines.push(`- ${recoveryLine}`);
-  wellnessCommentLines.push(`- ${actionLine}`);
 
   const learningArmLabel = STRATEGY_LABELS[learningNarrativeState?.recommendedArm] || "Neutral";
   const learningContext = learningNarrativeState?.contextSummary || "aktueller Kontext";
@@ -5005,7 +5025,7 @@ function buildComments(
   lines.push("🔎 BEGRÜNDUNG & ZAHLEN");
   lines.push(`- HRV Δ (vs 7T): ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"}${hrv2dConcern ? " (2T negativ)" : ""}`);
   lines.push(`- Schlaf: ${recoverySignals?.sleepHours != null ? `${recoverySignals.sleepHours.toFixed(1)}h` : "n/a"}${recoverySignals?.sleepLow ? " (unter Basis)" : ""}`);
-  lines.push(`- Drift (GA): ${driftText} | EF ${efText} | VDOT ${vdotText}`);
+  lines.push(`- Drift (GA): ${driftText} | EF ${efText} | VDOT ${vdotText}${gaDataNote}`);
   lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
   lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
   lines.push(`- Key 7T: ${fatigue?.keyCount7 ?? keyCompliance?.actual7 ?? "n/a"} / Cap ${dynamicKeyCap ?? fatigue?.keyCap ?? "n/a"} | Spacing ${keySpacing?.ok === false ? "zu eng" : "ok"}`);
@@ -5032,7 +5052,7 @@ function buildComments(
   return {
     dailyReportText: lines.join("\n"),
     weeklyReportLines,
-    wellnessComment: wellnessCommentLines.join("\n"),
+    wellnessComment: null,
   };
 }
 
