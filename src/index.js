@@ -5827,6 +5827,30 @@ function buildComments(
       ? intervalToday.HRR60_median - intervalPrev.HRR60_median
       : null;
   const intervalHrr60DeltaText = intervalHrr60Delta != null ? ` (Δ ${fmtSigned1(intervalHrr60Delta)} vs letzte)` : "";
+  const gaDetailLine =
+    repDisplayRun || repRun
+      ? [
+          `Drift ${displayDrift != null ? `${displayDrift.toFixed(1)}%` : "n/a"}`,
+          `EF ${displayEf != null ? displayEf.toFixed(2) : "n/a"}`,
+          `VDOT ${displayVdot != null ? displayVdot.toFixed(1) : "n/a"}`,
+          `Dauer ${repRun?.moving_time ? `${Math.round(repRun.moving_time / 60)}′` : "n/a"}`,
+          `Load ${repRun?.load != null ? Math.round(repRun.load) : "n/a"}`,
+          `Speed-CV ${repRun?.speed_cv != null ? repRun.speed_cv.toFixed(3) : "n/a"}`,
+          `Drift-Roh ${repRun?.drift_raw != null ? `${repRun.drift_raw.toFixed(1)}%` : "n/a"}`,
+          `Drift-Quelle ${repRun?.drift_source ?? "n/a"}`,
+        ].join(" | ")
+      : "n/a (kein GA-Lauf für Vergleich)";
+  const intervalDetailLine = intervalToday
+    ? [
+        `Typ ${intervalToday.interval_type ?? "n/a"}`,
+        `Pace ${formatPaceSeconds(intervalToday.interval_pace_sec_per_km) ?? "n/a"}`,
+        `Speed ${intervalToday.interval_avg_speed_mps != null ? intervalToday.interval_avg_speed_mps.toFixed(2) + " m/s" : "n/a"}`,
+        `HF-Drift ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"}`,
+        `HF-Drift % ${intervalToday.HR_Drift_pct != null ? `${fmtSigned1(intervalToday.HR_Drift_pct)}%` : "n/a"}`,
+        `HRR60 ${intervalToday.HRR60_median != null ? `${intervalToday.HRR60_median.toFixed(0)} bpm` : "n/a"}`,
+        `Flag ${formatDriftFlag(intervalToday.drift_flag) ?? "n/a"}`,
+      ].join(" | ")
+    : null;
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
   const todayHrr60 = extractTodayHrr60(perRunInfo);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
@@ -5892,9 +5916,15 @@ function buildComments(
     const vdotContext = ga21Context ? `${vdotText} (Ø21T ${ga21Context.vdotAvg.toFixed(1)})` : vdotText;
     lines.push(`- GA-Kontext: Drift ${driftContext} | EF ${efContext} | VDOT ${vdotContext}${gaDataNote}`);
   }
+  if (gaDetailLine) {
+    lines.push(`- GA-Werte: ${gaDetailLine}${gaDataNote}`);
+  }
   if (intervalToday) {
     const paceContext = intervalPaceDeltaText ? `${intervalPaceText} (Δ ${intervalPaceDeltaText} vs letzte)` : intervalPaceText;
     lines.push(`- Intervall-Kontext: HRR60 ${intervalHrr60Text}${intervalHrr60DeltaText} | HF-Drift ${intervalDriftText}${intervalDriftDeltaText} | Pace ${paceContext}`);
+  }
+  if (intervalDetailLine) {
+    lines.push(`- Intervall-Werte: ${intervalDetailLine}`);
   }
 
   lines.push("");
