@@ -3010,6 +3010,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
     const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
     const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
+    const subjectiveAvgNegative = recoverySignals?.subjectiveAvgNegative ?? null;
+    const subjectiveNegative = recoverySignals?.subjectiveNegative ?? false;
+    const hrv1dConcern = hrv1dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
+    const hrv2dConcern = hrv2dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
 
     const repGARun = pickRepresentativeGARun(perRunInfo);
     const repDrift = Number.isFinite(repGARun?.drift) ? repGARun.drift : null;
@@ -3028,13 +3032,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
     const warningSignals = [
       driftSignalForLearning === "orange" || driftSignalForLearning === "red",
-      hrv1dNegative,
+      hrv1dConcern,
       freqSignal === "orange" || freqSignal === "red",
       !!recoverySignals?.sleepLow,
       !!fatigue?.override,
+      subjectiveNegative,
     ];
     const warningCount = warningSignals.filter(Boolean).length;
-    const hasHardRedFlag = hrv2dNegative || (warningCount >= 2 && (!!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative)) || !!recoverySignals?.painInjury;
+    const hasHardRedFlag = hrv2dConcern || (warningCount >= 2 && subjectiveNegative) || !!recoverySignals?.painInjury;
     const intensityBudget = computeIntensityBudget(ctx, day, 7);
     const driftRecentMedian = Number.isFinite(trend?.driftRecentMed) ? trend.driftRecentMed : null;
     const driftTrendWorsening = Number.isFinite(trend?.dd) ? trend.dd > DRIFT_TREND_WORSENING_PCT : false;
@@ -3043,7 +3048,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const loadState = fatigueHigh ? "overreached" : "ok";
     const guardrailState = buildGuardrailState({
       hasHardRedFlag,
-      hrv2dNegative,
+      hrv2dNegative: hrv2dConcern,
       warningCount,
       loadState,
       painInjury: !!recoverySignals?.painInjury,
@@ -3051,7 +3056,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       fatigueGuardrailSeverity: fatigue?.guardrailSeverity ?? "none",
       fatigueGuardrailReasons: fatigue?.guardrailReasons ?? [],
     });
-    const hrvNegativeDays = hrvDeltaPct == null ? null : hrv2dNegative ? 2 : hrv1dNegative ? 1 : 0;
+    const hrvNegativeDays = hrvDeltaPct == null ? null : hrv2dConcern ? 2 : hrv1dConcern ? 1 : 0;
     const hadKey = perRunInfo.some((x) => !!x.isKey);
     const decisionConfidence = computeReadinessConfidence({
       driftSignal: driftSignalForLearning,
@@ -3060,8 +3065,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       fatigueOverride: !!fatigue?.override,
       hadKey,
       counterIndicator: !hadKey && driftSignalForLearning === "green",
-      hrv1dNegative,
-      hrv2dNegative,
+      hrv1dNegative: hrv1dConcern,
+      hrv2dNegative: hrv2dConcern,
       trend,
     });
     const steadyDecision = computeBuildSteadyDecision({
@@ -3069,7 +3074,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       guardrailHardActive: guardrailState.hardActive,
       guardrailSoftActive: guardrailState.mediumActive,
       hrvNegativeDays,
-      hrv2dNegative,
+      hrv2dNegative: hrv2dConcern,
       driftRecentMedian,
       driftTrendWorsening,
       loadState,
@@ -3081,7 +3086,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyHardDecision = computeKeyHardDecision({
       guardrailHardActive: guardrailState.hardActive,
       guardrailMediumActive: guardrailState.mediumActive,
-      hrv2dNegative,
+      hrv2dNegative: hrv2dConcern,
       loadState,
       keySpacingOk: keySpacing?.ok,
       keyCompliance,
@@ -3429,6 +3434,7 @@ function subjectiveTagIsNegative(tag, type) {
   if (type === "pain") return !/none|no|0|false|ok/.test(tag);
   if (type === "legs") return /heavy|schwer|dead|tired|müde|low/.test(tag);
   if (type === "mood") return /low|down|bad|schlecht|negativ/.test(tag);
+  if (type === "motivation") return /low|down|bad|schlecht|negativ|unmotiv/.test(tag);
   return null;
 }
 
@@ -3436,6 +3442,18 @@ function subjectiveRollingFlag(entries, minShare = 0.5) {
   if (!entries.length) return null;
   const negatives = entries.filter(Boolean).length;
   return negatives / entries.length >= minShare;
+}
+
+function subjectiveShare(entries) {
+  if (!entries.length) return null;
+  const negatives = entries.filter(Boolean).length;
+  return negatives / entries.length;
+}
+
+function averageSubjectiveShare(shares) {
+  const usable = shares.filter((share) => typeof share === "number");
+  if (!usable.length) return null;
+  return avg(usable);
 }
 
 function buildRecoverySignalLines(recoverySignals) {
@@ -3464,6 +3482,23 @@ function buildRecoverySignalLines(recoverySignals) {
   return lines;
 }
 
+function buildSubjectiveAverageLine(recoverySignals, label = "4T") {
+  if (!recoverySignals?.subjectiveShares) return null;
+  const formatShare = (share) => (typeof share === "number" ? `${Math.round(share * 100)}%` : null);
+  const parts = [];
+  const { pain, legs, mood, motivation } = recoverySignals.subjectiveShares;
+  const painText = formatShare(pain);
+  if (painText) parts.push(`Schmerz ${painText}`);
+  const legsText = formatShare(legs);
+  if (legsText) parts.push(`Ermüdung ${legsText}`);
+  const moodText = formatShare(mood);
+  if (moodText) parts.push(`Stimmung ${moodText}`);
+  const motivationText = formatShare(motivation);
+  if (motivationText) parts.push(`Motivation ${motivationText}`);
+  if (!parts.length) return null;
+  return `Subjektiv Ø ${label} negativ: ${parts.join(" | ")}.`;
+}
+
 async function computeRecoverySignals(ctx, env, dayIso) {
   const today = await fetchWellnessDay(ctx, env, dayIso);
   const sleepToday = extractSleepHoursFromWellness(today);
@@ -3479,6 +3514,7 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const legsEntries = [];
   const moodEntries = [];
   const painEntries = [];
+  const motivationEntries = [];
   for (const iso of priorDays) {
     const wellness = await fetchWellnessDay(ctx, env, iso);
     const sleep = extractSleepHoursFromWellness(wellness);
@@ -3492,15 +3528,18 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     const legsTag = extractSubjectiveTag(wellness, ["legs", "legs_feel", "leg_feel", "muscle_feel", "fatigue_feel"]);
     const moodTag = extractSubjectiveTag(wellness, ["mood", "mood_state", "readiness_mood"]);
     const painTag = extractSubjectiveTag(wellness, ["pain", "injury", "injury_flag", "pain_flag"]);
+    const motivationTag = extractSubjectiveTag(wellness, ["motivation", "motivation_level", "motivation_state", "motivation_score"]);
     const legsNeg = subjectiveTagIsNegative(legsTag, "legs");
     const moodNeg = subjectiveTagIsNegative(moodTag, "mood");
     const painNeg = subjectiveTagIsNegative(painTag, "pain");
+    const motivationNeg = subjectiveTagIsNegative(motivationTag, "motivation");
     if (legsNeg != null) legsEntries.push(legsNeg);
     if (moodNeg != null) moodEntries.push(moodNeg);
     if (painNeg != null) painEntries.push(painNeg);
+    if (motivationNeg != null) motivationEntries.push(motivationNeg);
   }
 
-  if (sleepToday == null && hrvToday == null && !legsEntries.length && !moodEntries.length && !painEntries.length) {
+  if (sleepToday == null && hrvToday == null && !legsEntries.length && !moodEntries.length && !painEntries.length && !motivationEntries.length) {
     return null;
   }
 
@@ -3517,6 +3556,16 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const legsNegative = subjectiveRollingFlag(legsEntries);
   const moodNegative = subjectiveRollingFlag(moodEntries);
   const painInjury = painEntries.length ? painEntries.some(Boolean) : null;
+  const motivationNegative = subjectiveRollingFlag(motivationEntries);
+  const legsShare = subjectiveShare(legsEntries);
+  const moodShare = subjectiveShare(moodEntries);
+  const painShare = subjectiveShare(painEntries);
+  const motivationShare = subjectiveShare(motivationEntries);
+  const subjectiveAvgNegative = averageSubjectiveShare([legsShare, moodShare, painShare, motivationShare]);
+  const subjectiveNegative =
+    subjectiveAvgNegative != null
+      ? subjectiveAvgNegative >= 0.5
+      : !!legsNegative || !!moodNegative || !!motivationNegative || !!painInjury;
   return {
     sleepHours: sleepToday,
     sleepBaseline,
@@ -3530,6 +3579,15 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     legsNegative,
     moodNegative,
     painInjury,
+    motivationNegative,
+    subjectiveAvgNegative,
+    subjectiveNegative,
+    subjectiveShares: {
+      legs: legsShare,
+      mood: moodShare,
+      pain: painShare,
+      motivation: motivationShare,
+    },
   };
 }
 
@@ -4406,10 +4464,15 @@ function buildComments(
           ? "Recovery-Overlay (Soll abgesenkt)"
           : "Build-Modus (Soll kann stufenweise steigen)";
 
+  const subjectiveAvgNegative = recoverySignals?.subjectiveAvgNegative ?? null;
+  const subjectiveNegative = recoverySignals?.subjectiveNegative ?? false;
+  const hrv1dConcern = hrv1dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
+  const hrv2dConcern = hrv2dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
+
   const signalMap = {
     drift_high: driftSignal !== "green" && driftSignal !== "unknown",
-    hrv_down: hrv1dNegative,
-    hrv_2d_negative: hrv2dNegative,
+    hrv_down: hrv1dConcern,
+    hrv_2d_negative: hrv2dConcern,
     key_felt_hard: hadKey && driftSignal !== "green",
     sleep_low: !!recoverySignals?.sleepLow,
     fatigue_override: !!fatigue?.override,
@@ -4421,21 +4484,21 @@ function buildComments(
 
   const warningSignals = [
     driftSignal === "orange" || driftSignal === "red",
-    hrv1dNegative,
+    hrv1dConcern,
     !!recoverySignals?.sleepLow,
     !!fatigue?.override,
+    subjectiveNegative,
   ];
   const warningCount = warningSignals.filter(Boolean).length;
-  const subjectiveNegative = !!recoverySignals?.legsNegative || !!recoverySignals?.moodNegative;
   const warningSignalStates = [
     { label: 'Drift-Trend auffällig (🟠/🔴)', active: driftSignal === "orange" || driftSignal === "red" },
-    { label: 'HRV 1T negativ', active: hrv1dNegative },
+    { label: 'HRV 1T negativ', active: hrv1dConcern },
     { label: recoverySignals?.sleepLow ? 'Schlaf/Erholung suboptimal' : 'Schlaf/Erholung im Zielbereich', active: !!recoverySignals?.sleepLow },
     { label: fatigue?.override ? 'Belastung strukturell erhöht' : 'Belastung strukturell im Rahmen', active: !!fatigue?.override },
   ];
 
   const hardRedFlags = {
-    hrv2dNegative: hrv2dNegative && !counterIndicator,
+    hrv2dNegative: hrv2dConcern && !counterIndicator,
     confirmedOverloadHigh: !!highPattern,
     multiWarningPlusSubjectiveNegative: warningCount >= 2 && subjectiveNegative,
     painInjury: !!recoverySignals?.painInjury,
@@ -4446,7 +4509,7 @@ function buildComments(
     frequencyBelowSweetspot: freqCount14 != null && freqCount14 < sweetspotLow,
     driftNearWarn: drift != null && drift >= personalDriftWarn - 1 && drift < personalDriftCritical,
     runFloorBelowTarget: runFloorGap,
-    sleepStressSuboptimal: !!recoverySignals?.sleepLow || hrv1dNegative,
+    sleepStressSuboptimal: !!recoverySignals?.sleepLow || hrv1dConcern,
     isolatedWarningSignal: warningCount === 1,
   };
   const hasSoftRedFlag = Object.values(softRedFlags).some(Boolean);
@@ -4469,8 +4532,8 @@ function buildComments(
     fatigueOverride: !!fatigue?.override,
     hadKey,
     counterIndicator,
-    hrv1dNegative,
-    hrv2dNegative,
+    hrv1dNegative: hrv1dConcern,
+    hrv2dNegative: hrv2dConcern,
     trend,
   });
   const policyDecision = buildPolicyDecision({
@@ -4502,7 +4565,7 @@ function buildComments(
   if (freqSignal !== "red") confirmedRules.push("Frequenz halten, Intensität dosieren");
 
   const proposedRules = [];
-  if (hrv1dNegative) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
+  if (hrv1dConcern) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
   if (driftSignal !== "green") proposedRules.push("Wenn Easy-Drift > Warnschwelle, dann Pace senken oder Lauf kürzen (3 Beobachtungen sammeln).");
 
   const baseBlockLabel = blockState?.block === "BASE" ? "Base" : blockState?.block === "RACE" ? "Race" : blockState?.block === "RESET" ? "Reset" : "Build";
@@ -4542,8 +4605,8 @@ function buildComments(
   const unimportantBlock = ["Tempojagd", "Vergleiche", "Zusatzstress"];
 
   const readinessReasons = [];
-  if (hrv2dNegative) readinessReasons.push("HRV 2T unter 7T-Niveau");
-  else if (hrv1dNegative) readinessReasons.push("HRV 1T unter 7T-Niveau");
+  if (hrv2dConcern) readinessReasons.push("HRV 2T unter 7T-Niveau");
+  else if (hrv1dConcern) readinessReasons.push("HRV 1T unter 7T-Niveau");
   if (driftSignal === "orange" || driftSignal === "red") readinessReasons.push("Drift erhöht");
   if (recoverySignals?.sleepLow) readinessReasons.push("Schlaf/Erholung angespannt");
   if (fatigue?.override) readinessReasons.push("Belastung strukturell erhöht");
@@ -4574,7 +4637,7 @@ function buildComments(
   if (freqSignal === "red") loadReasons.push("Frequenz > Obergrenze");
   if (fatigue?.override) loadReasons.push("Fatigue-Override");
   if (driftSignal === "orange" || driftSignal === "red") loadReasons.push("Drift erhöht");
-  if (hrv2dNegative) loadReasons.push("HRV 2T niedrig");
+  if (hrv2dConcern) loadReasons.push("HRV 2T niedrig");
   if (runFloorGap) loadReasons.push("Runfloor-Lücke");
   const loadReasonText = loadReasons.length ? loadReasons.join(", ") : "keine zusätzlichen Warnsignale";
   const loadConsequence =
@@ -4610,6 +4673,8 @@ function buildComments(
   lines.push("1) Readiness");
   lines.push(`- Ampel: ${readinessAmpel}`);
   lines.push(`- ${readinessReason}`);
+  const subjectiveAvgLine = buildSubjectiveAverageLine(recoverySignals);
+  if (subjectiveAvgLine) lines.push(`- ${subjectiveAvgLine}`);
   if (fatigueSignalLine) lines.push(`- Ermüdungssignal: ${fatigueSignalLine}`);
   lines.push("");
   lines.push("📈 BELASTUNG");
