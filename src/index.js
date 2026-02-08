@@ -202,6 +202,13 @@ const INTENSITY_CLASS = {
   STEADY_T: "STEADY_T",
   KEY_HARD: "KEY_HARD",
 };
+const INTENSITY_RECOMMENDATION_CLASS = {
+  EASY_BASE: "EASY_BASE",
+  STEADY: "STEADY",
+  STRIDES: "STRIDES",
+  RACEPACE: "RACEPACE",
+  VO2_TOUCH: "VO2_TOUCH",
+};
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -1303,27 +1310,27 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "schwelle", "strides", "steady"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["vo2_touch"],
+        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle"],
       };
     }
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "schwelle", "steady"],
-        preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["vo2_touch", "strides"],
+        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle"],
       };
     }
     if (dist === "m") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "schwelle", "steady"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["vo2_touch", "strides"],
+        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle"],
       };
     }
   }
@@ -3099,11 +3106,23 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       overruledSignals.push("BUILD_STEADY_ALLOWED");
     }
     if (guardrailState.hardActive) overruledSignals.push("HARD_GUARDRAIL");
-    const intensityClassToday = deriveDailyIntensityClass(perRunInfo);
+    const intensitySelection = selectIntensityRecommendation({
+      blockState,
+      weeksToEvent,
+      guardrailState,
+      keyRules,
+      keyCompliance,
+      intensityBudget,
+      keySpacing,
+      steadyDecision,
+      runFloorGap,
+    });
+    const intensityClassActual = deriveDailyIntensityClass(perRunInfo);
+    const intensityClassToday = intensityClassActual ?? intensitySelection?.intensityClass ?? null;
     const excludeFromTrends = {
-      motorTrend: intensityClassToday === INTENSITY_CLASS.STEADY_T,
-      vdotTrend: intensityClassToday === INTENSITY_CLASS.STEADY_T,
-      efDriftTrend: intensityClassToday === INTENSITY_CLASS.STEADY_T,
+      motorTrend: intensityClassActual === INTENSITY_CLASS.STEADY_T,
+      vdotTrend: intensityClassActual === INTENSITY_CLASS.STEADY_T,
+      efDriftTrend: intensityClassActual === INTENSITY_CLASS.STEADY_T,
     };
     const decisionTrace = buildDecisionTrace({
       steadyDecision,
@@ -3112,6 +3131,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       intensityClassToday,
       intensityBudget,
       excludeFromTrends,
+      intensitySelection,
     });
     addDecisionDebug(ctx.debugOut, day, buildIntensityDebugPayload({
       intensityClassToday,
@@ -3121,6 +3141,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       decisionTrace,
       guardrailState,
       excludeFromTrends,
+      intensitySelection,
     }));
     const lifeStress = deriveStressBucket({ fatigueOverride: !!fatigue?.override, warningCount });
     const hrvState = deriveHrvBucket(hrvDeltaPct);
@@ -3229,6 +3250,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       keyHardDecision,
       decisionTrace,
       intensityClassToday,
+      intensitySelection,
       readinessConfidence: decisionConfidence,
       latestGaSample,
     }, { debug });
@@ -4352,7 +4374,6 @@ function computeBuildSteadyDecision({
   intensityBudget,
   decisionConfidenceScore,
 }) {
-  const inBuild = phase === "BUILD";
   const driftOk = Number.isFinite(driftRecentMedian) ? driftRecentMedian <= DRIFT_WARN_PCT : false;
   const hrvOk = Number.isFinite(hrvNegativeDays) ? hrvNegativeDays <= 1 : false;
   const loadOk = loadState !== "overreached";
@@ -4373,9 +4394,8 @@ function computeBuildSteadyDecision({
 
   const confidenceOk = Number.isFinite(decisionConfidenceScore) ? decisionConfidenceScore >= DECISION_CONF_MIN : false; // NEW: STEADY_T confidence gate
   const replacementOk = budgetMode !== "replacement" || !keyConflict || replacementEligible;
-  const allowConditionsMet = inBuild && !guardrailHardActive && loadOk && budgetOk && driftOk && hrvOk && replacementOk;
+  const allowConditionsMet = !guardrailHardActive && loadOk && budgetOk && driftOk && hrvOk && replacementOk;
   const eligibility = {
-    inBuild,
     guardrailHardActive,
     guardrailSoftActive,
     loadOk,
@@ -4395,10 +4415,7 @@ function computeBuildSteadyDecision({
   let reasonId = "UNKNOWN";
   let reasonText = "Steady-T heute nicht freigegeben.";
 
-  if (!inBuild) {
-    reasonId = "BUILD_STEADY_DELAY";
-    reasonText = "Block ist nicht BUILD.";
-  } else if (guardrailHardActive) {
+  if (guardrailHardActive) {
     reasonId = "HARD_GUARDRAIL";
     reasonText = hrv2dNegative
       ? "Harter Guardrail aktiv (HRV 2 Tage negativ)."
@@ -4488,6 +4505,132 @@ function computeKeyHardDecision({
   return { allowed: true, reason: "Key-Hard möglich (Budget frei)." };
 }
 
+function mapKeyTypeToIntensityClass(keyType) {
+  if (keyType === "racepace") return INTENSITY_RECOMMENDATION_CLASS.RACEPACE;
+  if (keyType === "vo2_touch") return INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH;
+  if (keyType === "strides") return INTENSITY_RECOMMENDATION_CLASS.STRIDES;
+  return INTENSITY_RECOMMENDATION_CLASS.STEADY;
+}
+
+function computeFloorGapPolicy({ runFloorGap, guardrailSeverity, keyBudgetAvailable, spacingOk }) {
+  const blockVolumeEscalationDueToFloorGap = !!runFloorGap;
+  const allowIntensityDespiteFloorGap = runFloorGap
+    ? guardrailSeverity !== "hard" && keyBudgetAvailable && spacingOk
+    : true;
+  return {
+    blockVolumeEscalationDueToFloorGap,
+    allowIntensityDespiteFloorGap,
+    reasonId: runFloorGap ? "FLOOR_GAP_BLOCKS_VOLUME_ONLY" : null,
+    reasonText: runFloorGap
+      ? "Runfloor-Lücke: Volumen nicht erhöhen, Intensität möglich wenn Guardrails/Budget ok."
+      : null,
+  };
+}
+
+function selectIntensityRecommendation({
+  blockState,
+  weeksToEvent,
+  guardrailState,
+  keyRules,
+  keyCompliance,
+  intensityBudget,
+  keySpacing,
+  steadyDecision,
+  runFloorGap,
+}) {
+  const guardrailSeverity = guardrailState?.guardrailSeverity ?? "none";
+  const hardGuardrail = guardrailSeverity === "hard";
+  const spacingOk = keySpacing?.ok !== false;
+  const keyBudgetAvailable =
+    (intensityBudget?.keyHardCount ?? 0) < KEY_HARD_MAX_PER_7D && !keyCompliance?.capExceeded;
+  const floorGapPolicy = computeFloorGapPolicy({
+    runFloorGap,
+    guardrailSeverity,
+    keyBudgetAvailable,
+    spacingOk,
+  });
+  const keyEligible = guardrailSeverity !== "hard" && spacingOk && keyBudgetAvailable;
+  const allowedKeyTypes = keyCompliance?.allowedKeyTypes ?? keyRules?.allowedKeyTypes ?? [];
+  const preferredKeyTypes = keyRules?.preferredKeyTypes ?? [];
+  const bannedKeyTypes = keyCompliance?.bannedKeyTypes ?? keyRules?.bannedKeyTypes ?? [];
+  const disallowedKeyTypes = keyCompliance?.computedDisallowed ?? [];
+  const bannedHits = keyCompliance?.bannedHits ?? [];
+  const bannedLast = bannedHits.length ? bannedHits[0] : null;
+
+  const isTypeAllowed = (type) =>
+    allowedKeyTypes.includes(type) && !bannedKeyTypes.includes(type) && !disallowedKeyTypes.includes(type);
+  const softDowngradeBlock = guardrailSeverity === "soft" ? new Set(["vo2_touch"]) : new Set();
+  const filterForGuardrails = (types) => types.filter((type) => isTypeAllowed(type) && !softDowngradeBlock.has(type));
+
+  const availablePreferred = filterForGuardrails(preferredKeyTypes);
+  const availableAllowed = filterForGuardrails(allowedKeyTypes);
+
+  const block = blockState?.block || "BASE";
+  const preferRaceKey = block === "RACE" && weeksToEvent != null && weeksToEvent <= 6;
+
+  if (hardGuardrail) {
+    return {
+      intensityClass: INTENSITY_RECOMMENDATION_CLASS.EASY_BASE,
+      reasonId: "POSITIVE_SELECT_EASY_BASE",
+      reasonText: "Positive Auswahl: EASY_BASE (Hard-Guardrail aktiv).",
+      floorGapPolicy,
+    };
+  }
+
+  if (bannedLast && keyEligible) {
+    const altKey = availablePreferred[0] ?? availableAllowed[0] ?? null;
+    if (altKey) {
+      return {
+        intensityClass: mapKeyTypeToIntensityClass(altKey),
+        keyType: altKey,
+        reasonId: `POSITIVE_SELECT_${mapKeyTypeToIntensityClass(altKey)}`,
+        reasonText: `Alternative statt verbotener Key-Typ: ${altKey} (statt ${bannedLast}).`,
+        floorGapPolicy,
+      };
+    }
+  }
+
+  if (block === "RACE" && keyEligible) {
+    const chosenKey = availablePreferred[0] ?? availableAllowed[0] ?? null;
+    if (chosenKey) {
+      return {
+        intensityClass: mapKeyTypeToIntensityClass(chosenKey),
+        keyType: chosenKey,
+        reasonId: preferRaceKey ? "RACE_PREF_KEY_CHOSEN" : `POSITIVE_SELECT_${mapKeyTypeToIntensityClass(chosenKey)}`,
+        reasonText: preferRaceKey
+          ? `RACE-Block: bevorzuge ${chosenKey} (wettkampfnah).`
+          : `Positive Auswahl: ${mapKeyTypeToIntensityClass(chosenKey)} (Guardrails ok, Budget ok, Spacing ok).`,
+        floorGapPolicy,
+      };
+    }
+  }
+
+  if (steadyDecision?.allowSteady && steadyDecision?.eligibility?.steadyBudgetOk) {
+    return {
+      intensityClass: INTENSITY_RECOMMENDATION_CLASS.STEADY,
+      reasonId: "POSITIVE_SELECT_STEADY",
+      reasonText: "Positive Auswahl: STEADY (Guardrails ok, Budget ok, Spacing ok).",
+      floorGapPolicy,
+    };
+  }
+
+  if (spacingOk && availableAllowed.includes("strides")) {
+    return {
+      intensityClass: INTENSITY_RECOMMENDATION_CLASS.STRIDES,
+      reasonId: "POSITIVE_SELECT_STRIDES",
+      reasonText: "Positive Auswahl: STRIDES (Guardrails ok, Budget ok, Spacing ok).",
+      floorGapPolicy,
+    };
+  }
+
+  return {
+    intensityClass: INTENSITY_RECOMMENDATION_CLASS.EASY_BASE,
+    reasonId: "POSITIVE_SELECT_EASY_BASE",
+    reasonText: "Positive Auswahl: EASY_BASE (Guardrails ok, Budget ok, Spacing ok).",
+    floorGapPolicy,
+  };
+}
+
 function buildDecisionTrace({
   steadyDecision,
   guardrailState,
@@ -4495,6 +4638,7 @@ function buildDecisionTrace({
   intensityClassToday,
   intensityBudget,
   excludeFromTrends,
+  intensitySelection,
 }) {
   // NEW: STEADY_T decision trace payload
   const guardrailApplied = { blocks: [], allows: [] };
@@ -4524,6 +4668,7 @@ function buildDecisionTrace({
     guardrail_applied: guardrailApplied,
     intensity_class_today: intensityClassToday ?? null,
     intensity_budget: intensityBudget ?? null,
+    intensity_recommendation: intensitySelection ?? null,
     delayed: {
       steady: !!steadyDecision?.delaySteady,
       days: steadyDecision?.delaySteady ? steadyDecision?.delayRange?.max ?? null : null,
@@ -4541,6 +4686,7 @@ function buildIntensityDebugPayload({
   decisionTrace,
   guardrailState,
   excludeFromTrends,
+  intensitySelection,
 }) {
   return {
     intensity_class: intensityClassToday,
@@ -4548,6 +4694,7 @@ function buildIntensityDebugPayload({
     steady_decision: steadyDecision,
     steadyEligibility: steadyDecision?.eligibility ?? null,
     key_hard_decision: keyHardDecision,
+    intensity_selection: intensitySelection ?? null,
     decision_trace: decisionTrace,
     computedGuardrail: guardrailState
       ? { severity: guardrailState.guardrailSeverity, reasons: guardrailState.guardrailReasons }
@@ -4710,6 +4857,7 @@ function buildComments(
     keyHardDecision,
     decisionTrace,
     intensityClassToday,
+    intensitySelection,
     readinessConfidence,
   },
   { debug = false } = {}
@@ -4944,14 +5092,28 @@ function buildComments(
         : "Heute stabil bleiben und nicht eskalieren.";
 
   let todayAction = "locker + abbrechbar";
-  if (recoverySignals?.painInjury || readinessAmpel === "🔴") todayAction = "kein Lauf";
-  else if (steadyDecision?.allowSteady && readinessAmpel === "🟢") todayAction = "locker mit kontrolliertem Reiz";
+  if (recoverySignals?.painInjury || readinessAmpel === "🔴") {
+    todayAction = "kein Lauf";
+  } else if (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.STEADY) {
+    todayAction = "locker mit kontrolliertem Reiz";
+  } else if (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.STRIDES) {
+    todayAction = "locker + Steigerungen";
+  } else if (
+    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
+    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH
+  ) {
+    todayAction = "locker + Key-Reiz";
+  }
 
   const todayWhy =
     todayAction === "kein Lauf"
       ? "Dein Körper braucht heute Ruhe, Sicherheit geht vor."
       : todayAction === "locker mit kontrolliertem Reiz"
         ? "Du wirkst stabil genug für einen kleinen Reiz ohne Druck."
+        : todayAction === "locker + Steigerungen"
+          ? "Kurzer neuromuskulärer Reiz hält die Spannung ohne hohe Belastung."
+          : todayAction === "locker + Key-Reiz"
+            ? "Qualitätsreiz passt heute in den Block und die Leitplanken."
         : "Heute zählt entspanntes Durchbewegen ohne Risiko.";
 
   const todayStatusLine = buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday });
@@ -5049,6 +5211,10 @@ function buildComments(
       ? "Ruhe oder 20–40′ Spaziergang/Mobility, jederzeit abbrechbar."
       : todayAction === "locker mit kontrolliertem Reiz"
         ? "45–60′ locker + 2–3×8–10′ steady (Schwelle-), jederzeit abbrechbar."
+        : todayAction === "locker + Steigerungen"
+          ? "35–55′ locker (GA1) + 4–6 kurze Steigerungen, jederzeit abbrechbar."
+          : todayAction === "locker + Key-Reiz"
+            ? "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
         : "35–55′ locker (GA1), jederzeit abbrechbar.";
   lines.push(`- Konkret: ${dailySuggestion}`);
 
