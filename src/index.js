@@ -4915,14 +4915,12 @@ function buildComments(
     Number.isFinite(trend?.efDeltaPct) || Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd);
 
   const wellnessCommentLines = [];
-  wellnessCommentLines.push("🌤️ DAILY SNAPSHOT");
-  wellnessCommentLines.push(`- Tages-Status: ${todayStatusLine}`);
-  wellnessCommentLines.push(`- Mode: ${modeLabel} | Nächstes Event: ${nextEventLine}`);
-  wellnessCommentLines.push(`- Aerob: VDOT ${vdotText} | Drift ${driftText} | EF ${efText}`);
-  wellnessCommentLines.push(`- Motor-Index: ${motorText}`);
-  wellnessCommentLines.push(`- 7T-Load: ${runLoad7}`);
-  wellnessCommentLines.push(`- Trend: ${warningCount > 0 ? "gemischt" : "stabil"}`);
+  wellnessCommentLines.push("🌤️ WELLNESS-KOMMENTAR (heute auf einen Blick)");
+  wellnessCommentLines.push(`- Heute: ${todayStatusLine} | Readiness ${readinessAmpel}`);
+  wellnessCommentLines.push(`- Fokus: ${todayAction} – ${todayWhy}`);
+  wellnessCommentLines.push(`- Schlüsselzahlen: Runload 7T ${runLoad7}/${runTarget || "n/a"} | HRV Δ ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"} | Drift ${driftText}`);
   wellnessCommentLines.push(`- ${minStimulusText}`);
+  wellnessCommentLines.push(`- Kontext: ${modeLabel} | Nächstes Event: ${nextEventLine}`);
   if (repEf == null && drift == null) {
     wellnessCommentLines.push("- Hinweis: VDOT/EF/Drift nur bei GA-Läufen (≥30′, kein key) mit Daten; Trend basiert auf GA-Historie.");
   }
@@ -4957,19 +4955,38 @@ function buildComments(
   wellnessCommentLines.push(`- ${recoveryLine}`);
   wellnessCommentLines.push(`- ${actionLine}`);
 
+  const learningArmLabel = STRATEGY_LABELS[learningNarrativeState?.recommendedArm] || "Neutral";
+  const learningContext = learningNarrativeState?.contextSummary || "aktueller Kontext";
+  const learningConfidence = formatPct(learningNarrativeState?.confidenceRec);
+  const learningSamples = Number.isFinite(learningEvidence?.effectiveSamples)
+    ? `${learningEvidence.effectiveSamples.toFixed(1)} eff. Beobachtungen`
+    : "Evidenz n/a";
+  const learningFocus = confirmedRules.length ? confirmedRules.slice(0, 2).join(" | ") : "Stabilisieren & beobachten.";
+  const learningNext = proposedRules.length ? proposedRules.slice(0, 2).join(" | ") : "Aktuell keine neue Hypothese.";
+  const learningBrake =
+    warningCount > 0 || recoverySignals?.painInjury || runFloorGap
+      ? [loadReasonText, runFloorGap ? `Runfloor ${runLoad7}/${runTarget}` : null]
+        .filter(Boolean)
+        .join(" | ")
+      : "Keine klaren Bremser aktuell.";
+  const trendLine =
+    aerobicContextAvailable
+      ? `VDOT ${formatSignedPct(trend?.dv)} | Drift ${formatSignedPct(trend?.dd)} | EF ${formatSignedPct(trend?.efDeltaPct)}`
+      : "Trend n/a (zu wenig GA-Daten)";
+
   const weeklyReportLines = [];
-  weeklyReportLines.push("🗓️ WEEKLY REPORT (BLOCK- & RACE-KONTEXT)");
-  weeklyReportLines.push(`- Aktueller Block: ${blockStatus}`);
-  weeklyReportLines.push(`- Block-Ziel: ${blockGoal}`);
-  weeklyReportLines.push(`- Block-Risiko: ${blockRisk}`);
-  weeklyReportLines.push(`- Leitplanken: Volumen ${runTarget > 0 ? `Runfloor ${runTarget} (7T Soll)` : "n/a"}, Intensität max ${KEY_HARD_MAX_PER_7D} Key/7T, ${STEADY_T_MAX_PER_7D} steady/7T.`);
-  if (blockDescriptionLines?.length) {
-    weeklyReportLines.push("");
-    blockDescriptionLines.forEach((line) => weeklyReportLines.push(line));
-  }
+  weeklyReportLines.push("🧠 MONTAGS-REPORT – Learnings");
+  weeklyReportLines.push(`- Kontext: Block ${blockStatus} | Ziel: ${blockGoal}`);
+  weeklyReportLines.push(`- Was tut dir gut: ${learningArmLabel} (${learningContext}).`);
+  weeklyReportLines.push(`- Evidenz: ${learningSamples} | Confidence ${learningConfidence}.`);
+  weeklyReportLines.push(`- Was dich bremst: ${learningBrake}`);
+  weeklyReportLines.push(`- Historischer Trend (28d): ${trendLine}`);
+  weeklyReportLines.push(`- Bestätigt: ${learningFocus}`);
+  weeklyReportLines.push(`- Nächster Lernfokus: ${learningNext}`);
+  weeklyReportLines.push(`- Leitplanken: Runfloor ${runTarget > 0 ? runTarget : "n/a"} (7T Soll) | max ${KEY_HARD_MAX_PER_7D} Key/7T | ${STEADY_T_MAX_PER_7D} steady/7T.`);
 
   const lines = [];
-  lines.push("🧭 DAILY STATUS – Entscheidungsebene");
+  lines.push("🧭 DAILY REPORT – Entscheidungsebene");
   lines.push(`- Readiness-Ampel: ${readinessAmpel}`);
   lines.push(`- Aktive Warnsignale: ${activeWarnings.length ? activeWarnings.join(", ") : "keine"}`);
   lines.push(`- ${subjectiveLine}`);
@@ -4983,6 +5000,15 @@ function buildComments(
     lines.push("- Runfloor-Status: n/a");
   }
   lines.push(`- Konsequenz: ${loadConsequence}`);
+
+  lines.push("");
+  lines.push("🔎 BEGRÜNDUNG & ZAHLEN");
+  lines.push(`- HRV Δ (vs 7T): ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"}${hrv2dConcern ? " (2T negativ)" : ""}`);
+  lines.push(`- Schlaf: ${recoverySignals?.sleepHours != null ? `${recoverySignals.sleepHours.toFixed(1)}h` : "n/a"}${recoverySignals?.sleepLow ? " (unter Basis)" : ""}`);
+  lines.push(`- Drift (GA): ${driftText} | EF ${efText} | VDOT ${vdotText}`);
+  lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
+  lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
+  lines.push(`- Key 7T: ${fatigue?.keyCount7 ?? keyCompliance?.actual7 ?? "n/a"} / Cap ${dynamicKeyCap ?? fatigue?.keyCap ?? "n/a"} | Spacing ${keySpacing?.ok === false ? "zu eng" : "ok"}`);
 
   if (aerobicContextAvailable) {
     lines.push("");
