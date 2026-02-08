@@ -5180,34 +5180,94 @@ function formatSteadyDecisionStatus(steadyDecision, { includeReason = false, inc
 
 const INTERVAL_TEMPLATE_LIBRARY = {
   "5k": {
-    BASE: "6×400–600 m @ 5-km-Pace (2′ traben)",
-    BUILD: "6×800 m @ 5-km-Pace (2–3′ traben)",
-    RACE: "3×1000 m @ 5-km-Pace (3′ traben)",
-    RESET: "6×200 m flott (voll erholt)",
+    BASE: [
+      "GA5-1: 45–60′ GA locker",
+      "STR5-1: 6–8×20″ Steigerungen, volle Erholung",
+      "ST5-1: 3×6′ @ Schwelle-, 2′ locker",
+      "GA5-2: 40′ locker + Lauf-ABC",
+    ],
+    BUILD: [
+      "VO25-1: 6×2′ @ 3–5-km-Pace, 2′ Trab",
+      "VO25-2: 5×3′ @ 5-km-Pace, 2–3′ Trab",
+      "ST5-2: 2×10′ @ Schwelle, 3′ Trab",
+      "STR5-2: 8×100 m flott, locker zurück",
+    ],
+    RACE: [
+      "RP5-1: 6×2′ @ 5-km-Pace, 2′ Trab",
+      "RP5-2: 3×5′ @ 5-km-Pace",
+      "SHARP5-1: 4×200 m @ schneller als RP, voll erholt",
+    ],
+    RESET: ["GA5-1: 45–60′ GA locker", "STR5-1: 6–8×20″ Steigerungen, volle Erholung"],
   },
   "10k": {
-    BASE: "3×8′ @ zügig (unter Schwelle), 3′ traben",
-    BUILD: "5×1200 m @ 10-km-Pace (2–3′ traben)",
-    RACE: "2×3 km @ 10-km-Pace (4′ traben)",
-    RESET: "4×3′ zügig (locker traben)",
+    BASE: [
+      "GA10-1: 60–75′ locker",
+      "ST10-1: 3×8′ @ Schwelle-, 2′ Trab",
+      "ST10-2: 20′ @ gleichmäßig zügig",
+      "STR10-1: 6×20″ Steigerungen",
+    ],
+    BUILD: [
+      "ST10-3: 4×10′ @ Schwelle, 2′ Trab",
+      "RP10-1: 5×3′ @ 10-km-Pace, 2′ Trab",
+      "RP10-2: 3×6′ @ 10-km-Pace",
+      "VO210-1: 6×2′ @ 5-km-Pace",
+    ],
+    RACE: ["RP10-3: 2×10′ @ 10-km-Pace", "RP10-4: 3×3 km @ 10-km-Pace", "SHARP10-1: 4×200 m flott"],
+    RESET: ["GA10-1: 60–75′ locker", "STR10-1: 6×20″ Steigerungen"],
   },
   hm: {
-    BASE: "4×10′ @ Schwelle- (2′ traben)",
-    BUILD: "3×5 km @ HM-Pace (4′ traben)",
-    RACE: "2×6 km @ HM-Pace (4′ traben)",
-    RESET: "3×8′ zügig (2′ traben)",
+    BASE: [
+      "GAHM-1: 75–90′ locker",
+      "LLHM-1: 100–120′ locker",
+      "STHM-1: 3×12′ @ Schwelle-, 3′ Trab",
+      "GAHM-2: 60′ locker + STR",
+    ],
+    BUILD: [
+      "RPHM-1: 3×15′ @ HM-Pace, 3′ Trab",
+      "RPHM-2: 2×25′ @ HM-Pace",
+      "STHM-2: 30–40′ @ Schwelle-",
+      "LLHM-2: 120′ mit 20–30′ @ HM-Pace am Ende",
+    ],
+    RACE: [
+      "RPHM-3: 2×20′ @ HM-Pace",
+      "RPHM-4: 12–14 km @ HM-Pace",
+      "SHARPHM-1: 3×1000 m @ 10-km-Pace",
+    ],
+    RESET: ["GAHM-1: 75–90′ locker", "GAHM-2: 60′ locker + STR"],
   },
   m: {
-    BASE: "3×12′ @ Schwelle- (3′ traben)",
-    BUILD: "2×6–8 km @ MP (4′ traben)",
-    RACE: "2×5 km @ MP (4′ traben)",
-    RESET: "3×10′ zügig (3′ traben)",
+    BASE: [
+      "GAM-1: 80–100′ locker",
+      "LLM-1: 140–180′ locker",
+      "STM-1: 3×15′ @ Schwelle-, 3′ Trab",
+      "STRM-1: 6×20″ Steigerungen",
+    ],
+    BUILD: [
+      "MPM-1: 3×8 km @ Marathonpace",
+      "MPM-2: 16–24 km @ Marathonpace gesamt",
+      "STM-2: 40′ @ Schwelle-",
+      "LLM-2: 28–32 km mit 10–16 km @ MP",
+    ],
+    RACE: [
+      "MPM-3: 12–16 km @ Marathonpace",
+      "MPM-4: 2×6 km @ Marathonpace",
+      "SHARPM-1: 6×100 m Steigerungen",
+    ],
+    RESET: ["GAM-1: 80–100′ locker", "STRM-1: 6×20″ Steigerungen"],
   },
   default: {
-    BASE: "3×10′ @ zügig (unter Schwelle), 3′ traben",
-    BUILD: "5×1000 m @ 10-km-Pace (2–3′ traben)",
-    RACE: "3×2 km @ 10-km-Pace (3′ traben)",
-    RESET: "4×5′ zügig (2′ traben)",
+    BASE: [
+      "GA: 45–60′ locker",
+      "STR: 6×20″ Steigerungen",
+      "ST: 3×8′ @ Schwelle-, 2′ Trab",
+    ],
+    BUILD: [
+      "RP: 5×3′ @ Racepace, 2′ Trab",
+      "ST: 3×10′ @ Schwelle, 2′ Trab",
+      "VO2: 6×2′ zügig, 2′ Trab",
+    ],
+    RACE: ["RP: 3×6′ @ Racepace", "SHARP: 4×200 m flott"],
+    RESET: ["GA: 45–60′ locker", "STR: 6×20″ Steigerungen"],
   },
 };
 
@@ -5236,7 +5296,9 @@ function normalizeBlockKey(block) {
 }
 
 function getTemplateByBlock(library, distanceKey, blockKey) {
-  return (library[distanceKey] || library.default || {})[blockKey] || library.default?.BASE || "";
+  const selection = (library[distanceKey] || library.default || {})[blockKey] || library.default?.BASE || "";
+  if (Array.isArray(selection)) return selection.join(" | ");
+  return selection;
 }
 
 function buildDailyTrainingSuggestionLines({
