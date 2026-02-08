@@ -72,6 +72,9 @@ runTest("VO2-touch 5x2' yields HRR60 median and count", () => {
   assert.ok(metrics);
   assert.equal(metrics.HRR60_count, 5);
   assert.ok(metrics.HRR60_median != null && metrics.HRR60_median > 0);
+  assert.equal(metrics.intervals_detected_count, 5);
+  assert.equal(metrics.intervals_eligible_count, 5);
+  assert.equal(metrics.excluded_summary_text, null);
 });
 
 runTest("Short strides keep HRR60 null due to duration guardrail", () => {
@@ -95,6 +98,11 @@ runTest("Short strides keep HRR60 null due to duration guardrail", () => {
   assert.ok(metrics);
   assert.equal(metrics.HRR60_count, 0);
   assert.equal(metrics.HRR60_median, null);
+  assert.ok(metrics.intervals_detected_count >= 1);
+  assert.equal(metrics.intervals_eligible_count, 0);
+  const excludedTotal = Object.values(metrics.excluded_reasons_count).reduce((sum, count) => sum + count, 0);
+  assert.equal(excludedTotal, metrics.intervals_detected_count);
+  assert.ok(metrics.excluded_summary_text);
 });
 
 runTest("Threshold intervals yield consistent HRR60 values", () => {
@@ -168,4 +176,8 @@ runTest("HR dropouts invalidate affected intervals", () => {
 
   assert.ok(metrics);
   assert.equal(metrics.HRR60_count, 1);
+  assert.equal(metrics.intervals_detected_count, 2);
+  assert.equal(metrics.intervals_eligible_count, 1);
+  assert.equal(metrics.excluded_reasons_count.hr_dropout, 1);
+  assert.ok(metrics.excluded_summary_text?.includes("HR-Dropout"));
 });

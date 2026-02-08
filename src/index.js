@@ -5829,17 +5829,26 @@ function buildComments(
     intervalToday?.HR_Drift_bpm != null && intervalPrev?.HR_Drift_bpm != null
       ? intervalToday.HR_Drift_bpm - intervalPrev.HR_Drift_bpm
       : null;
-  const intervalDriftDeltaText = intervalDriftDelta != null ? ` (Δ ${fmtSigned1(intervalDriftDelta)} vs letzte)` : "";
   const intervalHrr60Count = intervalToday?.HRR60_count ?? 0;
-  const intervalHrr60Text =
-    intervalToday?.HRR60_median != null
-      ? `${intervalToday.HRR60_median.toFixed(0)} bpm (${intervalHrr60Count} Intervalle)`
-      : "n/a";
+  const intervalDetectedCount = intervalToday?.intervals_detected_count;
+  const intervalEligibleCount = intervalToday?.intervals_eligible_count ?? intervalHrr60Count;
+  const intervalExcludedSummary = intervalToday?.excluded_summary_text ?? null;
+  const intervalHrr60Text = (() => {
+    if (intervalToday?.HRR60_median == null) return "n/a";
+    const countText =
+      Number.isFinite(intervalDetectedCount) &&
+      intervalDetectedCount > 0 &&
+      Number.isFinite(intervalEligibleCount) &&
+      intervalEligibleCount !== intervalDetectedCount
+        ? `${intervalEligibleCount}/${intervalDetectedCount} Intervalle`
+        : `${intervalEligibleCount} Intervalle`;
+    const summaryText = intervalExcludedSummary ? `; ${intervalExcludedSummary}` : "";
+    return `${intervalToday.HRR60_median.toFixed(0)} bpm (${countText}${summaryText})`;
+  })();
   const intervalHrr60Delta =
     intervalToday?.HRR60_median != null && intervalPrev?.HRR60_median != null
       ? intervalToday.HRR60_median - intervalPrev.HRR60_median
       : null;
-  const intervalHrr60DeltaText = intervalHrr60Delta != null ? ` (Δ ${fmtSigned1(intervalHrr60Delta)} vs letzte)` : "";
   const gaDetailLine =
     repDisplayRun || repRun
       ? [
@@ -5847,20 +5856,22 @@ function buildComments(
           `EF ${displayEf != null ? displayEf.toFixed(2) : "n/a"}`,
         ].join(" | ")
       : "n/a (kein GA-Lauf für Vergleich)";
-  const intervalDetailLine = intervalToday
-    ? [
-        `HF-Drift ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"}`,
-        `HRR60 ${
-          intervalToday.HRR60_median != null
-            ? `${intervalToday.HRR60_median.toFixed(0)} bpm (${intervalHrr60Count} Intervalle)`
-            : "n/a"
-        }`,
-      ].join(" | ")
+  const intervalKeyMetricsLine = intervalToday
+    ? `HF-Drift ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"} | HRR60 ${intervalHrr60Text}`
     : null;
-  const keyMetricsLine =
-    intervalDetailLine || `HF-Drift ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
+  const keyMetricsLine = intervalKeyMetricsLine || `HF-Drift ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
+  const intervalContextParts = [];
+  if (intervalHrr60Delta != null) {
+    intervalContextParts.push(`Δ HRR60 ${fmtSigned1(intervalHrr60Delta)} bpm vs letzte`);
+  }
+  if (intervalDriftDelta != null) {
+    intervalContextParts.push(`Δ HF-Drift ${fmtSigned1(intervalDriftDelta)} bpm vs letzte`);
+  }
+  if (intervalExcludedSummary && intervalToday?.HRR60_median == null) {
+    intervalContextParts.push(`Ausschluss: ${intervalExcludedSummary}`);
+  }
+  const intervalContextLine = intervalContextParts.length ? `Intervall-Kontext: ${intervalContextParts.join(" | ")}` : null;
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
-  const todayHrr60Summary = extractTodayHrr60(perRunInfo);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
 
   const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
@@ -5920,13 +5931,9 @@ function buildComments(
     lines.push(`- Key-Metriken: ${keyMetricsLine}`);
   } else {
     lines.push(`- Laufbewertung: ${runEvaluationText}`);
-  }
-  if (intervalToday) {
-    const todayHrr60Text =
-      todayHrr60Summary?.median != null
-        ? `${todayHrr60Summary.median.toFixed(0)} bpm (${todayHrr60Summary.count} Intervalle)`
-        : "n/a (keine geeigneten Intervalle)";
-    lines.push(`- HRR60: ${todayHrr60Text}`);
+    if (intervalKeyMetricsLine) {
+      lines.push(`- Key-Metriken: ${intervalKeyMetricsLine}`);
+    }
   }
   if (hadGA) {
     const driftContext = ga21Context ? `${driftText} (Ø21T ${ga21Context.driftAvg.toFixed(1)}%)` : driftText;
@@ -5936,11 +5943,8 @@ function buildComments(
       lines.push(`- GA-Werte: ${gaDetailLine}${gaDataNote}`);
     }
   }
-  if (intervalToday) {
-    lines.push(`- Intervall-Kontext: HRR60 ${intervalHrr60Text}${intervalHrr60DeltaText} | HF-Drift ${intervalDriftText}${intervalDriftDeltaText}`);
-    if (intervalDetailLine) {
-      lines.push(`- Intervall-Werte: ${intervalDetailLine}`);
-    }
+  if (intervalContextLine) {
+    lines.push(`- ${intervalContextLine}`);
   }
 
   lines.push("");
@@ -6007,26 +6011,6 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   if (hadGA && !hadKey) return `Lauf: ${minutesText}locker`;
   if (hadKey && hadGA) return `Lauf: ${minutesText}GA + Key`;
   return `Lauf: ${minutesText}Lauf`;
-}
-
-function extractTodayHrr60(perRunInfo) {
-  const values = perRunInfo
-    .flatMap((run) => run.intervalMetrics?.HRR60_values ?? [])
-    .filter((value) => Number.isFinite(value));
-  if (!values.length) {
-    return {
-      median: null,
-      count: 0,
-      min: null,
-      max: null,
-    };
-  }
-  return {
-    median: median(values),
-    count: values.length,
-    min: Math.min(...values),
-    max: Math.max(...values),
-  };
 }
 
 function buildRunEvaluationText({ hadAnyRun, repRun, trend }) {
@@ -7368,6 +7352,38 @@ function buildHrr60IntervalsFromStreams({ time, speed, watts, hr, activity, conf
 }
 
 function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
+  const excludedReasonsCount = {
+    insufficient_recovery_data: 0,
+    hr_dropout: 0,
+    too_short: 0,
+    no_hr_peak: 0,
+  };
+  const intervalsDetectedCount = intervals.length;
+
+  const buildExcludedSummaryText = (reasons) => {
+    const labels = {
+      insufficient_recovery_data: "zu wenig Recovery-Daten",
+      hr_dropout: "HR-Dropout",
+      too_short: "Belastung zu kurz",
+      no_hr_peak: "kein HF-Peak",
+    };
+    const entries = Object.entries(reasons)
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+    if (!entries.length) return null;
+    const parts = [];
+    for (const [key, count] of entries) {
+      const label = labels[key];
+      if (!label) continue;
+      const part = `${count}× ${label}`;
+      const nextText = parts.length ? `${parts.join(", ")}, ${part}` : part;
+      if (nextText.length > 40) break;
+      parts.push(part);
+      if (parts.length >= 2) break;
+    }
+    return parts.length ? parts.join(", ") : null;
+  };
+
   if (!intervals.length) {
     return {
       HRR60_median: null,
@@ -7377,6 +7393,10 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
       HR_peak_median: null,
       HR_60s_median: null,
       HRR60_values: [],
+      intervals_detected_count: 0,
+      intervals_eligible_count: 0,
+      excluded_reasons_count: excludedReasonsCount,
+      excluded_summary_text: null,
     };
   }
 
@@ -7391,7 +7411,10 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
   const hr60s = [];
 
   for (const interval of intervals) {
-    if (interval.duration < config.minIntervalSec) continue;
+    if (interval.duration < config.minIntervalSec) {
+      excludedReasonsCount.too_short += 1;
+      continue;
+    }
 
     let peak = -Infinity;
     for (let i = interval.startIdx; i <= interval.endIdx; i++) {
@@ -7399,8 +7422,14 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
       if (!Number.isFinite(h) || h <= 0) continue;
       if (h > peak) peak = h;
     }
-    if (!Number.isFinite(peak)) continue;
-    if (Number.isFinite(hrThreshold) && peak < hrThreshold) continue;
+    if (!Number.isFinite(peak)) {
+      excludedReasonsCount.no_hr_peak += 1;
+      continue;
+    }
+    if (Number.isFinite(hrThreshold) && peak < hrThreshold) {
+      excludedReasonsCount.no_hr_peak += 1;
+      continue;
+    }
 
     const windowEnd = interval.endTime + config.minValidHrWindowSec;
     let firstValidTime = null;
@@ -7423,8 +7452,14 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
       }
     }
 
-    if (dropoutTooLong || firstValidTime == null || lastValidTime == null) continue;
-    if (lastValidTime - interval.endTime < config.minValidHrWindowSec) continue;
+    if (dropoutTooLong || firstValidTime == null || lastValidTime == null) {
+      excludedReasonsCount.hr_dropout += 1;
+      continue;
+    }
+    if (lastValidTime - interval.endTime < config.minValidHrWindowSec) {
+      excludedReasonsCount.insufficient_recovery_data += 1;
+      continue;
+    }
 
     const target = interval.endTime + 60;
     let hr60 = null;
@@ -7458,7 +7493,10 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
       hr60 = minHr;
     }
 
-    if (!Number.isFinite(hr60)) continue;
+    if (!Number.isFinite(hr60)) {
+      excludedReasonsCount.insufficient_recovery_data += 1;
+      continue;
+    }
 
     hrr60Drops.push(peak - hr60);
     peaks.push(peak);
@@ -7477,6 +7515,10 @@ function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
     HR_peak_median: Number.isFinite(hrPeakMedian) ? hrPeakMedian : null,
     HR_60s_median: Number.isFinite(hr60Median) ? hr60Median : null,
     HRR60_values: hrr60Drops,
+    intervals_detected_count: intervalsDetectedCount,
+    intervals_eligible_count: hrr60Drops.length,
+    excluded_reasons_count: excludedReasonsCount,
+    excluded_summary_text: buildExcludedSummaryText(excludedReasonsCount),
   };
 }
 
