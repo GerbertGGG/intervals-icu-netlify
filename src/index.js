@@ -3194,7 +3194,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     learningEvents.push(learningEvent);
 
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
-    const dailyReportText = buildComments({
+    const commentBundle = buildComments({
       perRunInfo,
       trend,
       motor,
@@ -3230,8 +3230,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       readinessConfidence: decisionConfidence,
     }, { debug });
 
-    // Do not write into wellness comment field anymore.
-    patch.comments = "";
+    const dailyReportText = commentBundle.dailyReportText;
+    patch.comments = commentBundle.wellnessComment;
 
     patches[day] = patch;
 
@@ -3254,6 +3254,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
         detectiveNoteText = detectiveNote?.text ?? "";
+        if (commentBundle.weeklyReportLines?.length) {
+          detectiveNoteText = `${detectiveNoteText}\n\n${commentBundle.weeklyReportLines.join("\n")}`;
+        }
         if (write) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
         }
@@ -4911,17 +4914,31 @@ function buildComments(
   const aerobicContextAvailable =
     Number.isFinite(trend?.efDeltaPct) || Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd);
 
-  const lines = [];
-  lines.push("🌤️ DAILY SNAPSHOT");
-  lines.push(`- Tages-Status: ${todayStatusLine}`);
-  lines.push(`- Mode: ${modeLabel} | Nächstes Event: ${nextEventLine}`);
-  lines.push(`- Aerob: VDOT ${vdotText} | Drift ${driftText} | EF ${efText}`);
-  lines.push(`- Motor-Index: ${motorText}`);
-  lines.push(`- 7T-Load: ${runLoad7}`);
-  lines.push(`- Trend: ${warningCount > 0 ? "gemischt" : "stabil"}`);
-  lines.push(`- ${minStimulusText}`);
+  const wellnessCommentLines = [];
+  wellnessCommentLines.push("🌤️ DAILY SNAPSHOT");
+  wellnessCommentLines.push(`- Tages-Status: ${todayStatusLine}`);
+  wellnessCommentLines.push(`- Mode: ${modeLabel} | Nächstes Event: ${nextEventLine}`);
+  wellnessCommentLines.push(`- Aerob: VDOT ${vdotText} | Drift ${driftText} | EF ${efText}`);
+  wellnessCommentLines.push(`- Motor-Index: ${motorText}`);
+  wellnessCommentLines.push(`- 7T-Load: ${runLoad7}`);
+  wellnessCommentLines.push(`- Trend: ${warningCount > 0 ? "gemischt" : "stabil"}`);
+  wellnessCommentLines.push(`- ${minStimulusText}`);
+  if (repEf == null && drift == null) {
+    wellnessCommentLines.push("- Hinweis: VDOT/EF/Drift nur bei GA-Läufen (≥30′, kein key) mit Daten; Trend basiert auf GA-Historie.");
+  }
 
-  lines.push("");
+  const weeklyReportLines = [];
+  weeklyReportLines.push("🗓️ WEEKLY REPORT (BLOCK- & RACE-KONTEXT)");
+  weeklyReportLines.push(`- Aktueller Block: ${blockStatus}`);
+  weeklyReportLines.push(`- Block-Ziel: ${blockGoal}`);
+  weeklyReportLines.push(`- Block-Risiko: ${blockRisk}`);
+  weeklyReportLines.push(`- Leitplanken: Volumen ${runTarget > 0 ? `Runfloor ${runTarget} (7T Soll)` : "n/a"}, Intensität max ${KEY_HARD_MAX_PER_7D} Key/7T, ${STEADY_T_MAX_PER_7D} steady/7T.`);
+  if (blockDescriptionLines?.length) {
+    weeklyReportLines.push("");
+    blockDescriptionLines.forEach((line) => weeklyReportLines.push(line));
+  }
+
+  const lines = [];
   lines.push("🧭 DAILY STATUS – Entscheidungsebene");
   lines.push(`- Readiness-Ampel: ${readinessAmpel}`);
   lines.push(`- Aktive Warnsignale: ${activeWarnings.length ? activeWarnings.join(", ") : "keine"}`);
@@ -4956,18 +4973,11 @@ function buildComments(
         : "35–55′ locker (GA1), jederzeit abbrechbar.";
   lines.push(`- Konkret: ${dailySuggestion}`);
 
-  lines.push("");
-  lines.push("🗓️ WEEKLY REPORT (BLOCK- & RACE-KONTEXT)");
-  lines.push(`- Aktueller Block: ${blockStatus}`);
-  lines.push(`- Block-Ziel: ${blockGoal}`);
-  lines.push(`- Block-Risiko: ${blockRisk}`);
-  lines.push(`- Leitplanken: Volumen ${runTarget > 0 ? `Runfloor ${runTarget} (7T Soll)` : "n/a"}, Intensität max ${KEY_HARD_MAX_PER_7D} Key/7T, ${STEADY_T_MAX_PER_7D} steady/7T.`);
-  if (blockDescriptionLines?.length) {
-    lines.push("");
-    blockDescriptionLines.forEach((line) => lines.push(line));
-  }
-
-  return lines.join("\n");
+  return {
+    dailyReportText: lines.join("\n"),
+    weeklyReportLines,
+    wellnessComment: wellnessCommentLines.join("\n"),
+  };
 }
 
 function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
