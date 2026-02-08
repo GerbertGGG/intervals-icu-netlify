@@ -4926,6 +4926,36 @@ function buildComments(
   if (repEf == null && drift == null) {
     wellnessCommentLines.push("- Hinweis: VDOT/EF/Drift nur bei GA-Läufen (≥30′, kein key) mit Daten; Trend basiert auf GA-Historie.");
   }
+  const needsKey = keyCompliance?.freqOk === false || keyCompliance?.preferredMissing;
+  const needsLongRun = (longRunSummary?.minutes ?? 0) < 60;
+  const recoveryLine =
+    readinessAmpel === "🔴"
+      ? "Die Erholungsmarker sind angespannt und die Woche wirkt bereits belastet."
+      : readinessAmpel === "🟠" || warningCount > 0
+        ? "Die Erholungsmarker sind leicht angespannt, die Woche wirkt moderat belastet."
+        : "Die Erholungsmarker sind stabil und die Woche hat sich noch nicht übermäßig angespannt.";
+  let actionLine = "👉 Locker bleiben und den Plan stabil abarbeiten.";
+  if (readinessAmpel === "🔴") {
+    actionLine = "👉 Heute kein Intervall/Longrun; Erholung priorisieren.";
+  } else if (needsKey && needsLongRun) {
+    actionLine =
+      readinessAmpel === "🟢"
+        ? "👉 Diese Woche fehlen Intervall & Longrun: priorisiere Longrun locker, Intervalle kurz und streng kontrolliert an einem frischen Tag."
+        : "👉 Diese Woche fehlen Intervall & Longrun: priorisiere Longrun locker, Intervalle erst wenn erholt.";
+  } else if (needsKey) {
+    actionLine =
+      readinessAmpel === "🟢"
+        ? "👉 Heute sind kurze Intervalle möglich, aber streng kontrolliert."
+        : "👉 Intervalltraining fehlt noch, aber heute nur locker/steady.";
+  } else if (needsLongRun) {
+    actionLine = "👉 Longrun fehlt noch – plane den nächsten Lauf als langen, lockeren Dauerlauf.";
+  } else if (steadyDecision?.allowSteady && readinessAmpel === "🟢") {
+    actionLine = "👉 Kurzer steady-Reiz möglich, sonst locker bleiben.";
+  }
+  wellnessCommentLines.push("");
+  wellnessCommentLines.push("💡 EMPFEHLUNG");
+  wellnessCommentLines.push(`- ${recoveryLine}`);
+  wellnessCommentLines.push(`- ${actionLine}`);
 
   const weeklyReportLines = [];
   weeklyReportLines.push("🗓️ WEEKLY REPORT (BLOCK- & RACE-KONTEXT)");
