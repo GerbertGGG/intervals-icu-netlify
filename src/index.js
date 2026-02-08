@@ -519,7 +519,7 @@ function inferSportFromEvent(ev) {
 }
 
 async function computeKeyCount7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -534,7 +534,7 @@ async function computeKeyCount7d(ctx, dayIso) {
 }
 
 async function computeKeyTypeCounts7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -560,7 +560,7 @@ function bucketAllLoadsByDay(acts) {
 }
 
 async function computeFatigue7d(ctx, dayIso, options = {}) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
 
   const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
@@ -675,7 +675,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 }
 
 function computeRobustness(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
@@ -706,7 +706,7 @@ function computeRobustness(ctx, dayIso) {
 }
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
   const keyDates = [];
@@ -749,7 +749,7 @@ function keyTypeToFamily(keyType) {
 }
 
 function computeLastKeyInfo(ctx, dayIso, windowDays = 14) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
   const keyHistory = [];
@@ -876,7 +876,7 @@ function applyDeloadRules(currentTargets) {
 }
 
 function buildRunDailyLoads(ctx, todayISO, windowDays) {
-  const end = new Date(todayISO + "T00:00:00Z");
+  const end = getHistoryWindowEnd(todayISO);
   const startIso = isoDate(new Date(end.getTime() - (windowDays - 1) * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -888,7 +888,7 @@ function buildRunDailyLoads(ctx, todayISO, windowDays) {
     dailyLoads[d] = (dailyLoads[d] || 0) + extractLoad(a);
   }
 
-  const days = listIsoDaysInclusive(startIso, todayISO);
+  const days = listIsoDaysInclusive(startIso, isoDate(end));
   return days.map((d) => Number(dailyLoads[d]) || 0);
 }
 
@@ -1033,7 +1033,7 @@ function evaluateRunFloorState({
 
 // ================= LOAD SUPPORT =================
 async function computeLoads7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1120,7 +1120,7 @@ async function computeLoads7d(ctx, dayIso) {
 }
 
 function computeIntensityBudget(ctx, dayIso, windowDays = 7) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - (windowDays - 1) * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1168,7 +1168,7 @@ function computeIntensityBudget(ctx, dayIso, windowDays = 7) {
 }
 
 function computeLongRunSummary7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1383,7 +1383,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
 }
 
 function collectKeyStats(ctx, dayIso, windowDays) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1995,6 +1995,10 @@ function addWorkoutDebug(debugOut, day, payload) {
 
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
+}
+function getHistoryWindowEnd(dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  return new Date(end.getTime() - 86400000);
 }
 function parseISODateSafe(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
@@ -3859,7 +3863,7 @@ async function computeRecoverySignals(ctx, env, dayIso) {
 }
 
 function computeMaintenance14d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
+  const end = getHistoryWindowEnd(dayIso);
   const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
