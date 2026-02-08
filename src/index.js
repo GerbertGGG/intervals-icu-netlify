@@ -4505,146 +4505,86 @@ function buildComments(
   if (hrv1dNegative) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
   if (driftSignal !== "green") proposedRules.push("Wenn Easy-Drift > Warnschwelle, dann Pace senken oder Lauf kürzen (3 Beobachtungen sammeln).");
 
+  const blockStatus =
+    overlayMode === "DELOAD" ? "Deload" : overlayMode === "RECOVER_OVERLAY" || overlayMode === "TAPER" ? "Stabilisieren/Absorb" : "Build";
+  const blockGoal =
+    blockStatus === "Deload"
+      ? "Erholung priorisieren und Systeme beruhigen."
+      : blockStatus === "Stabilisieren/Absorb"
+        ? "Belastung aufnehmen und den Körper ruhig festigen."
+        : "Kapazität behutsam ausbauen, ohne unnötigen Druck.";
+  const blockRisk =
+    hasHardRedFlag || recoverySignals?.painInjury
+      ? "Zu viel Druck trotz Warnzeichen."
+      : warningCount > 0
+        ? "Zu viel Tempo statt sauberer Erholung."
+        : "Zu viel Ehrgeiz ohne saubere Basis.";
+
+  const importantBlock =
+    blockStatus === "Deload"
+      ? ["Erholung schützen", "Leichte Bewegung", "Schlaf und Ruhe"]
+      : blockStatus === "Stabilisieren/Absorb"
+        ? ["Ruhige Kontinuität", "Saubere Erholung", "Belastung dosieren"]
+        : ["Ruhige Kontinuität", "Gezielte Reize", "Erholung absichern"];
+  const unimportantBlock = ["Tempojagd", "Vergleiche", "Zusatzstress"];
+
+  const readinessReason =
+    readinessAmpel === "🔴"
+      ? "Mehrere Warnsignale sprechen gegen Belastung."
+      : readinessAmpel === "🟠"
+        ? "Einige Signale sind angespannt, heute vorsichtig."
+        : "Keine klaren Warnsignale, stabil für ruhige Belastung.";
+
+  let fatigueSignalLine = null;
+  if (recoverySignals?.painInjury) fatigueSignalLine = "Schmerz";
+  else if (driftSignal === "red" || driftSignal === "orange") fatigueSignalLine = "Drift";
+  else if (subjectiveNegative) fatigueSignalLine = "Gefühl";
+
+  const loadLevel = hasHardRedFlag || recoverySignals?.painInjury || freqSignal === "red" || fatigue?.override ? "hoch" : warningCount > 0 ? "moderat" : "niedrig";
+  const loadConsequence =
+    loadLevel === "hoch"
+      ? "Heute nicht kompensieren, Erholung hat Priorität."
+      : loadLevel === "moderat"
+        ? "Heute ruhig bleiben und nichts erzwingen."
+        : "Heute stabil bleiben und nicht eskalieren.";
+
+  let todayAction = "locker + abbrechbar";
+  if (recoverySignals?.painInjury || readinessAmpel === "🔴") todayAction = "kein Lauf";
+  else if (steadyDecision?.allowSteady && readinessAmpel === "🟢") todayAction = "locker mit kontrolliertem Reiz";
+
+  const todayWhy =
+    todayAction === "kein Lauf"
+      ? "Dein Körper braucht heute Ruhe, Sicherheit geht vor."
+      : todayAction === "locker mit kontrolliertem Reiz"
+        ? "Du wirkst stabil genug für einen kleinen Reiz ohne Druck."
+        : "Heute zählt entspanntes Durchbewegen ohne Risiko.";
+
   const lines = [];
-  lines.push('1) 🧭 Tagesstatus');
-  lines.push(`- Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
-  lines.push(`- Decision: ${readinessDecision}`);
-  lines.push(`- Kontext: ${eventDistance} am ${eventDate || "n/a"}${Number.isFinite(daysToEvent) ? ` (${daysToEvent} Tage)` : ""}.`);
-
-  lines.push('');
-  lines.push('2) 🚦 Readiness (safety-first)');
-  const readinessMissing = [];
-  if (drift == null) readinessMissing.push('Drift heute nicht messbar');
-  if (hrvDeltaPct == null) readinessMissing.push('HRV heute fehlt');
-  let readinessBucket = readinessConf.bucket;
-  if (readinessMissing.length && readinessBucket === 'high') readinessBucket = 'medium';
-  const readinessSummary = hasHardRedFlag ? 'harte Red Flag aktiv' : 'keine harte Red Flag aktiv';
-  const whyNotRed =
-    readinessAmpel !== '🔴' && warningCount > 0
-      ? ' Warnsignale betreffen aktuell die Trainingsstruktur, nicht die akute Belastbarkeit.'
-      : '';
-  lines.push(`- Ampel: ${readinessAmpel} | Kurzfazit: ${readinessSummary}.${whyNotRed} | Confidence: Readiness ${readinessBucket}${readinessMissing.length ? ` (${readinessMissing.join('; ')})` : ''} | Aerob ${aerobicConf.bucket} | Load ${loadConf.bucket}`);
-  lines.push(`- Red-Flags: HRV ≥2 Tage negativ ${hardRedFlags.hrv2dNegative ? '🔴' : '🟢'} | Overload-Pattern bestätigt ${hardRedFlags.confirmedOverloadHigh ? '🔴' : '🟢'} | Mehrere Warnsignale + subjektiv negativ ${hardRedFlags.multiWarningPlusSubjectiveNegative ? '🔴' : '🟢'} | Schmerz/Verletzung ${hardRedFlags.painInjury ? '🔴' : '🟢'}.`);
-  lines.push(`- Warnsignale: ${warningSignalStates.map((signal) => `${signal.label} ${signal.active ? '🔶' : '✅'}`).join(' | ')}.`);
-  const guardrailApplied = decisionTrace?.guardrail_applied ?? {};
-  const guardrailSeverity = guardrailApplied.guardrailSeverity || "none";
-  const guardrailReasonLabels = (guardrailApplied.guardrailReasons || []).map((reason) => {
-    if (reason.startsWith("ramp_pct:")) return `Ramp ${(Number(reason.split(":")[1]) * 100).toFixed(0)}%`;
-    if (reason.startsWith("acwr:")) return `ACWR ${reason.split(":")[1]}`;
-    if (reason === "hrv_2d_negative") return "HRV 2 Tage negativ";
-    if (reason === "pain_injury") return "Schmerz/Verletzung";
-    if (reason.startsWith("warning_count:")) return "Warnsignale kumuliert";
-    return reason;
-  });
-  let guardrailLine = null;
-  if (keySpacing?.ok === false) {
-    guardrailLine = 'Guardrail: Nach Key keine zweite Intensität innerhalb von 48h – schützt die Erholung.';
-  } else if (guardrailSeverity === "hard") {
-    guardrailLine = `Guardrail (HARD): KEY_HARD + STEADY_T gesperrt${guardrailReasonLabels.length ? ` (${guardrailReasonLabels.join(", ")})` : ""}.`;
-  } else if (guardrailSeverity === "soft") {
-    if (steadyDecision?.status === "blocked") {
-      guardrailLine = `Guardrail (SOFT): KEY_HARD gesperrt; STEADY_T heute nicht möglich: ${normalizeReasonText(steadyDecision.reasonText)}.`;
-    } else if (steadyDecision?.status === "delayed") {
-      guardrailLine = `Guardrail (SOFT): KEY_HARD gesperrt; STEADY_T verschoben.`;
-    } else {
-      guardrailLine = `Guardrail (SOFT): KEY_HARD gesperrt; STEADY_T erlaubt.`;
-    }
-    if (guardrailReasonLabels.length) guardrailLine = `${guardrailLine.replace(/\.$/, "")} (${guardrailReasonLabels.join(", ")}).`;
-  }
-  if (guardrailLine) lines.push(`- ${guardrailLine}`);
-  if (policyDecision) {
-    lines.push(`- Policy: ${policyDecision.title} (${policyDecision.confidence.bucket}, ${policyDecision.confidence.score}).`);
-    lines.push(`- Grund: ${policyDecision.reason}`);
-    if (policyDecision.intensity_lock) lines.push("- Guardrail: intensity_lock aktiv (keine Intensität).");
-  }
-
-  const subjectiveMissing = recoverySignals?.legsNegative == null && recoverySignals?.moodNegative == null;
-  const borderlineDecision = readinessAmpel === '🟠';
-  if (subjectiveMissing && borderlineDecision && (readinessBucket === 'medium' || readinessBucket === 'low')) {
-    lines.push('- Wie fühlen sich deine Beine heute an? (fresh / ok / heavy)');
-  }
-
-  lines.push('');
-  lines.push('2b) 🧱 Build-Status & Intensität');
-  // FIX: single source of truth for build status text
-  const steadyStatus = formatSteadyDecisionStatus(steadyDecision, { includeReason: true, includeDelayRange: true });
-  const keyStatus = keyHardDecision?.allowed ? '✔ KEY_HARD erlaubt' : '✖ KEY_HARD gesperrt';
-  lines.push(`- Build-Status: ${steadyStatus} (${STEADY_T_MAX_PER_7D}x/7T) | ${keyStatus} (${KEY_HARD_MAX_PER_7D}x/7T).`);
-  if (steadyDecision?.delaySteady && steadyDecision.delayReasons?.length) {
-    const delayLabels = {
-      drift_trend_worsening: 'Drift-Trend verschlechtert',
-      hrv_negative_2days: 'HRV 2 Tage negativ',
-      motor_trend_down_strong: 'Motor-Trend deutlich negativ',
-    };
-    const delayDetails = steadyDecision.delayReasons.map((r) => delayLabels[r] || r).join(', ');
-    lines.push(`- Delay-Trigger: ${delayDetails}.`);
-  }
-  if (keyHardDecision && !keyHardDecision.allowed) {
-    lines.push(`- KEY_HARD: ${applyConfidenceTone(keyHardDecision.reason, readinessBucket)}`);
-  }
-  if (steadyDecision?.allowSteady) {
-    lines.push(
-      `- Empfehlung STEADY_T: ${STEADY_T_QUALITY_MIN_MINUTES}–${STEADY_T_QUALITY_MAX_MINUTES}′ Qualität (z.B. 3×6′ oder 4×4′), fühlt sich wie Arbeit an, nicht wie Mutprobe – danach 24–48h easy („hätte noch eins gekonnt“).`
-    );
-    lines.push(`- Drift-Erwartung: ≤ ${DRIFT_STEADY_T_MAX_PCT}% (sonst Pace runter oder kürzen).`);
-  }
-
-  lines.push('');
-  lines.push('3) 🫁 Aerober Status (personalisiert)');
-  if (Number.isFinite(trend?.efDeltaPct)) {
-    lines.push(
-      `- EF-Trend (28d vs 28d): ${trend.efDeltaPct >= 0 ? '+' : ''}${trend.efDeltaPct.toFixed(1)}%${
-        trend?.confidence ? ` (Konfidenz ${trend.confidence})` : ''
-      }.`
-    );
-  } else {
-    lines.push(`- EF-Trend (28d vs 28d): aktuell nicht belastbar${trend?.confidence ? ` (Konfidenz ${trend.confidence})` : ''}.`);
-  }
-  if (Number.isFinite(trend?.dv)) {
-    lines.push(`- VDOT-Trend (28d vs 28d): ${trend.dv >= 0 ? '+' : ''}${trend.dv.toFixed(1)}%.`);
-  } else {
-    lines.push('- VDOT-Trend (28d vs 28d): aktuell nicht belastbar.');
-  }
-  lines.push(`- Drift: ${drift != null ? drift.toFixed(1) + '%' : 'unknown'} vs persönlich ${personalDriftWarn}/${personalDriftCritical}% -> ${driftSignal === 'green' ? '🟢' : driftSignal === 'orange' ? '🟠' : driftSignal === 'red' ? '🔴' : '🟠'}.`);
-  lines.push(`- Einordnung: ${driftSignal === 'red' ? 'aerober Preis zu hoch, heute entlasten' : driftSignal === 'orange' ? 'Grenzbereich, kontrolliert belasten' : 'stabil genug für planmäßiges easy'}${Number.isFinite(trend?.dv) ? trend.dv <= -1.5 ? '; VDOT rückläufig -> Fokus auf easy Qualität + Erholung.' : trend.dv >= 1.5 ? '; VDOT positiv -> Reize wie geplant halten, nicht unnötig erhöhen.' : '; VDOT stabil.' : ''}.`);
-  lines.push(`- Wenn–Dann: Wenn Drift > ${personalDriftWarn}% bei easy, dann Pace runter oder Einheit um 10-15' kürzen.`);
-
-  lines.push('');
-  lines.push('4) 📈 Belastung & Frequenz');
-  lines.push(`- Frequenz: ${freqCount14 ?? 'unknown'} Läufe/14d vs Sweetspot ${sweetspotLow}-${sweetspotHigh}, Limit ${upperLimit} -> ${freqSignal === 'green' ? '🟢' : freqSignal === 'red' ? '🔴' : '🟠'}.`);
-  lines.push('- Frequenzsignal = Belastungsdichte (wie oft/eng harte Reize), nicht primär Tages-Intensität.');
-  lines.push(`- AerobicFloor 7T: Ist ${runLoad7} / Soll ${runTarget || 'n/a'} (Basisziel ${runBaseTarget || 'n/a'}) -> ${runFloorGap ? 'unter Soll, über Häufigkeit schließen' : 'im Zielkorridor'} | Floor-Logik: ${floorModeText}.`);
-  lines.push(`- RunFloor/Volumen: ${runLoad7}/${runTarget || 'n/a'} -> ${runFloorGap ? 'heute nicht über Intensität kompensieren, eher Umfang stabilisieren' : 'Volumen im Korridor halten'}.`);
-  lines.push(`- Wenn–Dann: 2+ Warnsignale -> nur easy + optional kürzen.`);
-
-  lines.push('');
-  lines.push('5) ✅ Top-3 Coaching-Entscheidungen (heute/48h)');
-  const strategyLabel = STRATEGY_LABELS[strategyDecision?.strategyArm] || STRATEGY_LABELS.NEUTRAL;
-  lines.push(`- 1) ${strategyLabel}${strategyDecision?.policyReason ? ` (Policy: ${strategyDecision.policyReason})` : ''}.`);
-  lines.push(`- 2) ${runFloorGap ? 'AerobicFloor über Häufigkeit auffüllen statt Tempo erzwingen.' : 'AerobicFloor stabil halten, nächster Schritt über Konsistenz.'}`);
-  lines.push(`- 3) ${robustness?.strengthOk ? 'Kraft/Stabi normal fortführen.' : "20-30' Kraft/Stabi einplanen."}`);
-
-  let decisionRationaleSentence = 'Wir entscheiden uns heute für Stabilisieren statt Eskalieren, weil deine Regel nach Key-Einheiten zuerst 24-48h easy priorisiert.';
-  if (hasHardRedFlag || driftSignal === 'orange' || driftSignal === 'red') {
-    decisionRationaleSentence = 'Wir entscheiden uns heute für Kürzen statt Pace-Halten, weil bei dir Drift ein frühes Ermüdungssignal ist.';
-  } else if (runFloorGap) {
-    decisionRationaleSentence = 'Wir entscheiden uns heute für Häufigkeit statt Tempo, weil du auf kumulierten Stress robuster reagierst als auf Intensität.';
-  }
-  const learningNarrativeContext = learningNarrativeState || buildLearningNarrativeState(learningEvidence);
-  const gatedDecisionRationale = applyTextGate(decisionRationaleSentence, {
-    ...learningNarrativeContext,
-    policyReason: strategyDecision?.policyReason || null,
-  });
-  lines.push(`- ${gatedDecisionRationale}`);
-  lines.push(`- Decision-Confidence: ${formatPct(learningNarrativeContext.confidenceRec)}`);
-
-  lines.push('');
-  lines.push('6) 🧬 Ich-Regeln & Lernen');
-  if (intensityClassToday === INTENSITY_CLASS.STEADY_T) {
-    lines.push('- Heute STEADY_T (kein Key): Trends (Motor/VDOT/EF/Drift) nicht werten, zählt für Frequenz/Load.');
-    lines.push(`- Ich-Regel: nächste 24–48h easy; wenn Drift > ${DRIFT_STEADY_T_MAX_PCT}% → Pace runter oder Einheit kürzen.`);
-  }
-  lines.push(buildLearningNarrative({ evidence: learningEvidence, confirmedRules, proposedRules }));
+  lines.push("Block-Status: " + blockStatus);
+  lines.push("Block-Ziel: " + blockGoal);
+  lines.push("Block-Risiko: " + blockRisk);
+  lines.push("");
+  lines.push("Wichtig in diesem Block:");
+  importantBlock.forEach((item) => lines.push(`- ${item}`));
+  lines.push("");
+  lines.push("Unwichtig in diesem Block:");
+  unimportantBlock.forEach((item) => lines.push(`- ${item}`));
+  lines.push("");
+  lines.push("🧭 DAILY STATUS (Entscheidungsebene)");
+  lines.push("1) Readiness");
+  lines.push(`- Ampel: ${readinessAmpel}`);
+  lines.push(`- ${readinessReason}`);
+  if (fatigueSignalLine) lines.push(`- Ermüdungssignal: ${fatigueSignalLine}`);
+  lines.push("");
+  lines.push("📈 BELASTUNG");
+  lines.push(`- Belastung heute: ${loadLevel}`);
+  lines.push(`- Konsequenz: ${loadConsequence}`);
+  lines.push("");
+  lines.push("✅ HEUTIGE ENTSCHEIDUNG");
+  lines.push(`- Was heute tun: ${todayAction}`);
+  lines.push(`- Warum: ${todayWhy}`);
+  lines.push("");
+  lines.push("Die learnings in den Weekly Report packen");
 
   return lines.join("\n");
 }
