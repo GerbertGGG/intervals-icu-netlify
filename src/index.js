@@ -4515,6 +4515,103 @@ function formatSteadyDecisionStatus(steadyDecision, { includeReason = false, inc
   return `✖ STEADY_T gesperrt${reasonSuffix}`;
 }
 
+const INTERVAL_TEMPLATE_LIBRARY = {
+  "5k": {
+    BASE: "6×400–600 m @ 5-km-Pace (2′ traben)",
+    BUILD: "6×800 m @ 5-km-Pace (2–3′ traben)",
+    RACE: "3×1000 m @ 5-km-Pace (3′ traben)",
+    RESET: "6×200 m flott (voll erholt)",
+  },
+  "10k": {
+    BASE: "3×8′ @ zügig (unter Schwelle), 3′ traben",
+    BUILD: "5×1200 m @ 10-km-Pace (2–3′ traben)",
+    RACE: "2×3 km @ 10-km-Pace (4′ traben)",
+    RESET: "4×3′ zügig (locker traben)",
+  },
+  hm: {
+    BASE: "4×10′ @ Schwelle- (2′ traben)",
+    BUILD: "3×5 km @ HM-Pace (4′ traben)",
+    RACE: "2×6 km @ HM-Pace (4′ traben)",
+    RESET: "3×8′ zügig (2′ traben)",
+  },
+  m: {
+    BASE: "3×12′ @ Schwelle- (3′ traben)",
+    BUILD: "2×6–8 km @ MP (4′ traben)",
+    RACE: "2×5 km @ MP (4′ traben)",
+    RESET: "3×10′ zügig (3′ traben)",
+  },
+  default: {
+    BASE: "3×10′ @ zügig (unter Schwelle), 3′ traben",
+    BUILD: "5×1000 m @ 10-km-Pace (2–3′ traben)",
+    RACE: "3×2 km @ 10-km-Pace (3′ traben)",
+    RESET: "4×5′ zügig (2′ traben)",
+  },
+};
+
+const LONGRUN_TARGET_LIBRARY = {
+  "5k": { BASE: "60–75′", BUILD: "65–80′", RACE: "50–60′", RESET: "60–70′" },
+  "10k": { BASE: "70–85′", BUILD: "75–90′", RACE: "60–75′", RESET: "70–80′" },
+  hm: { BASE: "90–110′", BUILD: "95–120′", RACE: "75–95′", RESET: "85–100′" },
+  m: { BASE: "120–150′", BUILD: "140–180′", RACE: "90–120′", RESET: "110–140′" },
+  default: { BASE: "70–90′", BUILD: "75–95′", RACE: "60–75′", RESET: "70–85′" },
+};
+
+function normalizeEventDistanceKey(distance) {
+  const raw = String(distance || "").toLowerCase();
+  if (!raw) return "default";
+  if (raw.includes("5k")) return "5k";
+  if (raw.includes("10k")) return "10k";
+  if (raw.includes("hm") || raw.includes("halb")) return "hm";
+  if (raw.includes("marathon") || raw === "m") return "m";
+  return "default";
+}
+
+function normalizeBlockKey(block) {
+  const key = String(block || "").toUpperCase();
+  if (key === "BASE" || key === "BUILD" || key === "RACE" || key === "RESET") return key;
+  return "BASE";
+}
+
+function getTemplateByBlock(library, distanceKey, blockKey) {
+  return (library[distanceKey] || library.default || {})[blockKey] || library.default?.BASE || "";
+}
+
+function buildDailyTrainingSuggestionLines({
+  todayAction,
+  readinessAmpel,
+  steadyDecision,
+  keyHardDecision,
+  blockState,
+  eventDistanceRaw,
+}) {
+  const blockKey = normalizeBlockKey(blockState?.block);
+  const distanceKey = normalizeEventDistanceKey(eventDistanceRaw);
+  const intervalTemplate = getTemplateByBlock(INTERVAL_TEMPLATE_LIBRARY, distanceKey, blockKey);
+  const longrunTarget = getTemplateByBlock(LONGRUN_TARGET_LIBRARY, distanceKey, blockKey);
+
+  let todaySuggestion = "35–55′ locker (GA1) + 4–6 lockere Steigerungen optional.";
+  if (todayAction === "kein Lauf") {
+    todaySuggestion = "Ruhetag oder 20–40′ Spaziergang/Mobility.";
+  } else if (todayAction === "locker mit kontrolliertem Reiz") {
+    todaySuggestion = "45–60′ locker + 2–3×8–10′ steady (Schwelle-), 2–3′ traben.";
+  }
+
+  const allowKeyHard = keyHardDecision?.allowed && readinessAmpel === "🟢";
+  const allowSteady = steadyDecision?.allowSteady && readinessAmpel === "🟢";
+  const intervalSuggestion = allowKeyHard
+    ? intervalTemplate
+    : allowSteady
+      ? "2–3×10′ steady (Schwelle-), 2–3′ traben"
+      : "Heute keine Intervalle (locker/Regeneration).";
+
+  return [
+    "🎯 TRAININGSVORSCHLAG",
+    `- Heute: ${todaySuggestion}`,
+    `- Intervalle (wenn Key erlaubt): ${intervalSuggestion}`,
+    `- Longrun (wenn dran): ${longrunTarget} locker`,
+  ];
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -4824,6 +4921,16 @@ function buildComments(
   lines.push("✅ HEUTIGE ENTSCHEIDUNG");
   lines.push(`- Was heute tun: ${todayAction}`);
   lines.push(`- Warum: ${todayWhy}`);
+  lines.push("");
+  const trainingSuggestionLines = buildDailyTrainingSuggestionLines({
+    todayAction,
+    readinessAmpel,
+    steadyDecision,
+    keyHardDecision,
+    blockState,
+    eventDistanceRaw,
+  });
+  trainingSuggestionLines.forEach((line) => lines.push(line));
   lines.push("");
   lines.push("Die learnings in den Weekly Report packen");
 
