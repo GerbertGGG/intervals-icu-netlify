@@ -6572,6 +6572,7 @@ function buildComments(
   }
   const intervalContextLine = intervalContextParts.length ? `Intervall-Kontext: ${intervalContextParts.join(" | ")}` : null;
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
+  const motorCoach = buildMotorCoachingComment(motor);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
   const keyCount7 = keyCompliance?.actual7 ?? fatigue?.keyCount7 ?? intensityBudget?.keyAnyCount ?? null;
   const keyCapValue = formatKeyCapValue(dynamicKeyCap, fatigue?.keyCap ?? null);
@@ -6878,6 +6879,7 @@ function buildComments(
     lines.push("- Hinweis: Schlafdaten fehlen → Confidence -1 Stufe.");
   }
   lines.push(`- GA-Drift${gaSourceDate ? ` (letzter GA-Lauf ${gaSourceDate})` : ""}: ${driftText} | EF ${efText} | VDOT ${vdotText}`);
+  lines.push(`- Motor-Index: ${motorText} – ${motorCoach}`);
   lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
   lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
   lines.push(
@@ -6958,6 +6960,20 @@ function buildRunEvaluationText({ hadAnyRun, repRun, trend }) {
     else if (efDelta <= -1) verdict = "schwächer";
   }
   return `${verdict} (${parts.join(" | ")})`;
+}
+
+function buildMotorCoachingComment(motor) {
+  if (!Number.isFinite(motor?.value)) {
+    return "kein belastbarer Wert – erst mehr vergleichbare GA-Läufe sammeln.";
+  }
+  const value = motor.value;
+  const trendDown = Number.isFinite(motor?.dv) && motor.dv <= -1.5;
+  const driftWorse = Number.isFinite(motor?.dd) && motor.dd >= 1;
+  const trendNote = trendDown || driftWorse ? " Trend zeigt nach unten." : "";
+  if (value >= 70) return `stark – Qualität halten, Progression dosiert möglich.${trendNote}`;
+  if (value >= 55) return `stabil – Kontinuität sichern, keine Eskalation nötig.${trendNote}`;
+  if (value >= 40) return `fragil – Basis stabilisieren, Reize klein halten.${trendNote}`;
+  return `schwach – Fokus auf ruhige GA-Kontinuität und Erholung.${trendNote}`;
 }
 
 function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
