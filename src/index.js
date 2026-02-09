@@ -2070,6 +2070,12 @@ function addDecisionDebug(debugOut, day, payload) {
   debugOut.__decision[day] = payload;
 }
 
+function addHrr60Debug(debugOut, day, payload) {
+  if (!debugOut || !payload) return;
+  debugOut.__hrr60 ??= {};
+  debugOut.__hrr60[day] = payload;
+}
+
 function addWorkoutDebug(debugOut, day, payload) {
   if (!debugOut) return;
   debugOut.__workout ??= {};
@@ -3435,6 +3441,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     if (debug && commentBundle.workoutDebug) {
       addWorkoutDebug(ctx.debugOut, day, commentBundle.workoutDebug);
+    }
+    if (debug && commentBundle.hrr60Readiness) {
+      addHrr60Debug(ctx.debugOut, day, commentBundle.hrr60Readiness);
     }
 
     if (write) {
@@ -5504,6 +5513,169 @@ function buildDailyTrainingSuggestionLines({
   ];
 }
 
+function buildHrr60ReadinessOutput({
+  intervalMetrics,
+  prevIntervalMetrics,
+  isKeySession,
+  hrv2dNegative,
+  rampPct,
+  acwr,
+  intensityBudget,
+}) {
+  if (!intervalMetrics || !isKeySession) {
+    return {
+      machine: {
+        hrr60: {
+          status: "n/a",
+          badge: "⚪",
+          value: "n/a",
+          zone: "n/a",
+          trend: "n/a",
+          confidence: "low",
+          ruleHits: ["not_key_or_missing"],
+          coachOneLiner: "HRR60 n/a – nur bei Key-Einheiten.",
+          action: "n/a.",
+        },
+      },
+      human: "HRR60 ⚪ n/a (Trend n/a) | Confidence: low | Action: n/a.",
+      report: ["- HRR60 n/a (nur bei Key-Einheiten)."],
+    };
+  }
+
+  const value = Number.isFinite(intervalMetrics?.HRR60_median) ? intervalMetrics.HRR60_median : null;
+  const count = Number.isFinite(intervalMetrics?.HRR60_count) ? intervalMetrics.HRR60_count : 0;
+  const min = Number.isFinite(intervalMetrics?.HRR60_min) ? intervalMetrics.HRR60_min : null;
+  const max = Number.isFinite(intervalMetrics?.HRR60_max) ? intervalMetrics.HRR60_max : null;
+  const prevValue = Number.isFinite(prevIntervalMetrics?.HRR60_median) ? prevIntervalMetrics.HRR60_median : null;
+  const trendDelta = value != null && prevValue != null ? value - prevValue : null;
+  const hasEnough = count >= 2;
+  const ruleHits = [];
+
+  const contextActive =
+    !!hrv2dNegative ||
+    (Number.isFinite(rampPct) && rampPct > 0.5) ||
+    (Number.isFinite(acwr) && acwr > 1.2);
+  if (hrv2dNegative) ruleHits.push("context:hrv_2d_negative");
+  if (Number.isFinite(rampPct) && rampPct > 0.5) ruleHits.push("context:ramp_gt_50pct");
+  if (Number.isFinite(acwr) && acwr > 1.2) ruleHits.push("context:acwr_gt_1_2");
+
+  let zone = "n/a";
+  let badge = "⚪";
+  let status = "n/a";
+
+  if (value != null && hasEnough) {
+    if (value <= 5) {
+      zone = "Extreme Red";
+      badge = "🟥";
+      status = "extreme_red";
+      ruleHits.push("zone:extreme_red");
+    } else if (value < 10) {
+      zone = "Red";
+      badge = "🔴";
+      status = "red";
+      ruleHits.push("zone:red");
+    } else if (value < 20) {
+      zone = "Caution";
+      badge = "🟠";
+      status = "caution";
+      ruleHits.push("zone:caution");
+    } else {
+      zone = "Good";
+      badge = "🟢";
+      status = "ok";
+      ruleHits.push("zone:good");
+    }
+  } else if (value != null && !hasEnough) {
+    ruleHits.push("count_lt_2");
+  }
+
+  if (contextActive && (status === "red" || status === "extreme_red")) {
+    status = "block";
+    ruleHits.push("context:escalated");
+  }
+
+  let confidenceIndex = 0;
+  if (value != null && hasEnough) {
+    confidenceIndex = count >= 4 ? 2 : 1;
+    if (min != null && max != null) {
+      const spread = max - min;
+      if (Number.isFinite(spread) && spread >= 12) {
+        confidenceIndex = Math.max(confidenceIndex - 1, 0);
+        ruleHits.push("stability:wide_range");
+      }
+      if (Number.isFinite(spread) && spread >= 18) {
+        confidenceIndex = 0;
+        ruleHits.push("stability:very_wide_range");
+      }
+    }
+  }
+  const confidence = confidenceIndex === 2 ? "high" : confidenceIndex === 1 ? "medium" : "low";
+
+  const budgetOk =
+    intensityBudget?.limits?.keyHardMax != null && intensityBudget?.keyHardCount != null
+      ? intensityBudget.keyHardCount < intensityBudget.limits.keyHardMax
+      : null;
+
+  let coachOneLiner = "HRR60 n/a – kein verlässliches Signal.";
+  let action = "n/a.";
+
+  if (value != null && !hasEnough) {
+    coachOneLiner = "HRR60 unsicher – zu wenig Intervalle.";
+    action = "Kein harter Entscheid nur aus HRR60; andere Signale nutzen.";
+  } else if (value != null) {
+    if (status === "block") {
+      coachOneLiner = "Erholung deutlich limitiert, Kontext verschärft.";
+      action = "Keine Intensität für 48–72h, nur EASY/REST.";
+    } else if (status === "extreme_red" || status === "red") {
+      coachOneLiner = "Erholung klar limitiert.";
+      action = "Heute nur easy, keine harte Intensität (24–48h).";
+    } else if (status === "caution") {
+      coachOneLiner = "Erholung verhalten – Vorsicht.";
+      action = contextActive
+        ? "Intensität verschieben, heute easy/locker."
+        : "Intensität nur wenn Budget ok; nur „touch“, kein „hard“.";
+    } else if (status === "ok") {
+      coachOneLiner = "Erholung gut – aber kein Freifahrtschein.";
+      action =
+        budgetOk === false
+          ? "Budget/Leitplanken begrenzen Intensität heute."
+          : "Intensität ok, wenn Budget/Guardrails ok.";
+    }
+  }
+
+  const valueText = value != null ? `${Math.round(value)}` : "n/a";
+  const trendText =
+    trendDelta == null
+      ? "Trend n/a"
+      : `${trendDelta > 0 ? "↑" : trendDelta < 0 ? "↓" : "→"} ${trendDelta > 0 ? "+" : ""}${Math.round(trendDelta)} vs last`;
+
+  const humanLine = `HRR60 ${badge} ${valueText} bpm (${trendText}) | Confidence: ${confidence} | Action: ${action}`;
+
+  const reportLines = [
+    `- HRR60 ${badge} ${valueText} bpm (${trendText}).`,
+    `- Confidence: ${confidence}${!hasEnough ? " (zu wenig Intervalle)" : ""}.`,
+    `- Konsequenz: ${action}`,
+  ];
+
+  return {
+    machine: {
+      hrr60: {
+        status,
+        badge,
+        value: value != null ? Math.round(value) : "n/a",
+        zone,
+        trend: trendDelta != null ? Math.round(trendDelta) : "n/a",
+        confidence,
+        ruleHits,
+        coachOneLiner,
+        action,
+      },
+    },
+    human: humanLine,
+    report: reportLines,
+  };
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -5598,6 +5770,15 @@ function buildComments(
   const subjectiveNegative = recoverySignals?.subjectiveNegative ?? false;
   const hrv1dConcern = hrv1dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
   const hrv2dConcern = hrv2dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
+  const hrr60Readiness = buildHrr60ReadinessOutput({
+    intervalMetrics: intervalContext?.today ?? null,
+    prevIntervalMetrics: intervalContext?.prev?.intervalMetrics ?? null,
+    isKeySession: hadKey,
+    hrv2dNegative: hrv2dConcern,
+    rampPct: fatigue?.rampPct ?? null,
+    acwr: fatigue?.acwr ?? null,
+    intensityBudget,
+  });
 
   const signalMap = {
     drift_high: driftSignal !== "green" && driftSignal !== "unknown",
@@ -6050,6 +6231,7 @@ function buildComments(
     weeklyReportLines,
     wellnessComment: null,
     workoutDebug,
+    hrr60Readiness,
   };
 }
 
