@@ -5775,6 +5775,10 @@ function buildComments(
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runBaseTarget = Math.round(runFloorState?.floorTarget ?? 0);
   const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+  const deloadSum21 = Number.isFinite(runFloorState?.sum21) ? Math.round(runFloorState.sum21) : null;
+  const deloadTargetSum = RUN_FLOOR_DELOAD_SUM21_MIN;
+  const deloadDelta = deloadSum21 != null ? deloadSum21 - deloadTargetSum : null;
+  const deloadActiveDays = Number.isFinite(runFloorState?.activeDays21) ? runFloorState.activeDays21 : null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   const floorModeText =
     overlayMode === "DELOAD"
@@ -6239,6 +6243,11 @@ function buildComments(
   } else {
     lines.push("- Runfloor-Status: n/a");
   }
+  lines.push(
+    `- Deload-Status (21T): ${deloadSum21 ?? "n/a"} / Ziel ${deloadTargetSum}${
+      deloadDelta != null ? ` (Δ ${deloadDelta >= 0 ? "+" : ""}${Math.round(deloadDelta)})` : ""
+    }${deloadActiveDays != null ? ` | aktive Tage ${deloadActiveDays}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN}` : ""}`
+  );
   lines.push(`- Konsequenz: ${loadConsequence}`);
 
   lines.push("");
