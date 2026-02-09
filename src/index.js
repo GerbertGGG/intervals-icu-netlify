@@ -4221,6 +4221,25 @@ function computeReadinessConfidence({
   });
 }
 
+function downgradeConfidenceOneStep(confidence) {
+  if (!confidence) return confidence;
+  const currentBucket = confidence.bucket || confidenceBucket(confidence.score ?? 0);
+  if (currentBucket === "low") return { ...confidence, bucket: "low", score: Math.min(confidence.score ?? 0, 39) };
+  if (currentBucket === "medium") return { ...confidence, bucket: "low", score: Math.min(confidence.score ?? 0, 39) };
+  return { ...confidence, bucket: "medium", score: Math.min(confidence.score ?? 0, 69) };
+}
+
+function formatKeyCapValue(dynamicKeyCap, fallbackCap) {
+  if (Number.isFinite(dynamicKeyCap?.maxKeys7d)) return dynamicKeyCap.maxKeys7d;
+  if (Number.isFinite(fallbackCap)) return fallbackCap;
+  return null;
+}
+
+function formatKeyCapReason(dynamicKeyCap) {
+  if (!dynamicKeyCap?.reasons?.length) return null;
+  return dynamicKeyCap.reasons.join(", ");
+}
+
 function normalizeActionKey(action, severity) {
   const text = String(action || "").toLowerCase();
   if (text.includes("keine intens") || text.includes("no intensity")) {
@@ -5836,7 +5855,8 @@ function buildComments(
         ? "Heute ist ein kontrollierter Schwellenreiz möglich, ohne zusätzlichen Ermüdungsaufbau."
         : "Heute bleiben wir beim geplanten Reiz und setzen keine zusätzliche Intensität.";
 
-  const readinessConf = readinessConfidence || computeReadinessConfidence({
+  const sleepMissing = recoverySignals?.sleepHours == null;
+  let readinessConf = readinessConfidence || computeReadinessConfidence({
     driftSignal,
     hrvDeltaPct,
     runLoad7,
@@ -5847,6 +5867,7 @@ function buildComments(
     hrv2dNegative: hrv2dConcern,
     trend,
   });
+  if (sleepMissing) readinessConf = downgradeConfidenceOneStep(readinessConf);
   const policyDecision = buildPolicyDecision({
     matchedPatterns: patternMatches,
     signalMap,
@@ -6050,7 +6071,7 @@ function buildComments(
   const driftText = displayDrift == null ? "n/a" : `${displayDrift.toFixed(1)}%`;
   const efText = displayEf == null ? "n/a" : displayEf.toFixed(2);
   const vdotText = displayVdot == null ? "n/a" : displayVdot.toFixed(1);
-  const gaDataNote = repDisplayDate ? ` (letzter GA-Lauf ${repDisplayDate})` : "";
+  const gaSourceDate = repRun?.date ?? repDisplayDate ?? null;
   const intervalToday = intervalContext?.today ?? null;
   const intervalPrev = intervalContext?.prev?.intervalMetrics ?? null;
   const intervalDriftText = intervalToday?.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a";
@@ -6086,9 +6107,9 @@ function buildComments(
         ].join(" | ")
       : "n/a (kein GA-Lauf für Vergleich)";
   const intervalKeyMetricsLine = intervalToday
-    ? `HF-Drift ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"} | HRR60 ${intervalHrr60Text}`
+    ? `HF-Drift (Intervalle) ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"} | HRR60 ${intervalHrr60Text}`
     : null;
-  const keyMetricsLine = intervalKeyMetricsLine || `HF-Drift ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
+  const keyMetricsLine = intervalKeyMetricsLine || `HF-Drift (Intervalle) ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
   const intervalContextParts = [];
   if (intervalHrr60Delta != null) {
     intervalContextParts.push(`Δ HRR60 ${fmtSigned1(intervalHrr60Delta)} bpm vs letzte`);
@@ -6102,6 +6123,11 @@ function buildComments(
   const intervalContextLine = intervalContextParts.length ? `Intervall-Kontext: ${intervalContextParts.join(" | ")}` : null;
   const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
+  const keyCount7 = keyCompliance?.actual7 ?? fatigue?.keyCount7 ?? intensityBudget?.keyAnyCount ?? null;
+  const keyCapValue = formatKeyCapValue(dynamicKeyCap, fatigue?.keyCap ?? null);
+  const keyCapReason = formatKeyCapReason(dynamicKeyCap);
+  const keyBudgetFull =
+    Number.isFinite(keyCount7) && Number.isFinite(keyCapValue) ? keyCount7 >= keyCapValue : false;
 
   const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
   if (runFloorGap) activeWarnings.push("Runfloor-Lücke");
@@ -6146,7 +6172,34 @@ function buildComments(
   weeklyReportLines.push(`- Nächster Lernfokus: ${learningNext}`);
   weeklyReportLines.push(`- Leitplanken: Runfloor ${runTarget > 0 ? runTarget : "n/a"} (7T Soll) | max ${KEY_HARD_MAX_PER_7D} Key/7T | ${STEADY_T_MAX_PER_7D} steady/7T.`);
 
+  const topTriggers = [];
+  if (runFloorGap) topTriggers.push("Runfloor-Gap");
+  if (keyBudgetFull || keyCompliance?.capExceeded) topTriggers.push("Key-Budget voll");
+  if (driftSignal === "orange" || driftSignal === "red") topTriggers.push("Drift erhöht");
+  if (recoverySignals?.sleepLow) topTriggers.push("Schlaf low");
+  if (fatigue?.override) topTriggers.push("Fatigue-Override");
+  if (subjectiveNegative) topTriggers.push("Gefühl schwer");
+  const topTriggerText = topTriggers.length ? topTriggers.slice(0, 2).join(" + ") : "keine dominanten Trigger";
+  const todayAllowed =
+    readinessAmpel === "🔴"
+      ? "nur EASY/REST"
+      : keyHardDecision?.allowed && readinessAmpel === "🟢"
+        ? "Key/Intervalle möglich"
+        : steadyDecision?.allowSteady
+          ? "GA + STEADY"
+          : "GA/STRIDES";
+  const nextKeyEarliest =
+    keyCompliance?.nextKeyEarliest ||
+    keySpacing?.nextAllowedIso ||
+    (keyCompliance?.capExceeded ? "nach Ablauf 7T-Fenster" : "heute");
+
   const lines = [];
+  lines.push("⚡ DAILY SUMMARY");
+  lines.push(`- Ampel & Trigger: ${readinessAmpel} ${topTriggerText}`);
+  lines.push(`- Heute erlaubt: ${todayAllowed}`);
+  lines.push(`- Nächster Key frühestens: ${nextKeyEarliest}`);
+  lines.push("");
+
   lines.push("🧭 DAILY REPORT – Entscheidungsebene");
   lines.push(`- Readiness-Ampel: ${readinessAmpel}`);
   lines.push(`- Aktive Warnsignale: ${activeWarnings.length ? activeWarnings.join(", ") : "keine"}`);
@@ -6168,9 +6221,10 @@ function buildComments(
   if (hadGA) {
     const driftContext = ga21Context ? `${driftText} (Ø21T ${ga21Context.driftAvg.toFixed(1)}%)` : driftText;
     const efContext = ga21Context ? `${efText} (Ø21T ${ga21Context.efAvg.toFixed(2)})` : efText;
-    lines.push(`- GA-Kontext: Drift ${driftContext} | EF ${efContext}${gaDataNote}`);
+    const gaContextNote = gaSourceDate ? ` (letzter GA-Lauf ${gaSourceDate})` : "";
+    lines.push(`- GA-Kontext: Drift ${driftContext} | EF ${efContext}${gaContextNote}`);
     if (gaDetailLine) {
-      lines.push(`- GA-Werte: ${gaDetailLine}${gaDataNote}`);
+      lines.push(`- GA-Werte: ${gaDetailLine}${gaContextNote}`);
     }
   }
   if (intervalContextLine) {
@@ -6191,10 +6245,15 @@ function buildComments(
   lines.push("🔎 BEGRÜNDUNG & ZAHLEN");
   lines.push(`- HRV Δ (vs 7T): ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"}${hrv2dConcern ? " (2T negativ)" : ""}`);
   lines.push(`- Schlaf: ${recoverySignals?.sleepHours != null ? `${recoverySignals.sleepHours.toFixed(1)}h` : "n/a"}${recoverySignals?.sleepLow ? " (unter Basis)" : ""}`);
-  lines.push(`- Drift (GA): ${driftText} | EF ${efText} | VDOT ${vdotText}${gaDataNote}`);
+  if (sleepMissing) {
+    lines.push("- Hinweis: Schlafdaten fehlen → Confidence -1 Stufe.");
+  }
+  lines.push(`- GA-Drift${gaSourceDate ? ` (letzter GA-Lauf ${gaSourceDate})` : ""}: ${driftText} | EF ${efText} | VDOT ${vdotText}`);
   lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
   lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
-  lines.push(`- Key 7T: ${fatigue?.keyCount7 ?? keyCompliance?.actual7 ?? "n/a"} / Cap ${dynamicKeyCap ?? fatigue?.keyCap ?? "n/a"} | Spacing ${keySpacing?.ok === false ? "zu eng" : "ok"}`);
+  lines.push(
+    `- Keys 7T: ${keyCount7 ?? "n/a"} / Cap ${keyCapValue ?? "n/a"}${keyCapReason ? ` (Regel: ${keyCapReason})` : ""} | Spacing ${keySpacing?.ok === false ? "zu eng" : "ok"}`
+  );
   if (lastRacePaceText) {
     const racePaceDate = lastKeyIntervalInsights?.date ? ` (${lastKeyIntervalInsights.date})` : "";
     lines.push(`- Racepace (letzte Intervalle${racePaceDate}): ${lastRacePaceText}`);
