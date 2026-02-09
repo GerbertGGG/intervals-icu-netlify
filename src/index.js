@@ -8781,7 +8781,299 @@ function computeIntervalMetricsFromStreams(streams, { intervalType, activity } =
     }),
     ...hrr60Summary,
     interval_type: intervalType ?? null,
+    racepace_assessment: computeRacePaceAssessmentFromStreams(streams, activity),
   };
+}
+
+function computeRacePaceAssessmentFromStreams(streams, activity) {
+  const time = streams?.time;
+  const speed = streams?.velocity_smooth;
+  const hr = streams?.heartrate;
+  if (!Array.isArray(time) || !Array.isArray(speed)) return null;
+
+  const racepaceSecPerKm = extractRacepaceSecPerKm(activity);
+  if (!Number.isFinite(racepaceSecPerKm) || racepaceSecPerKm <= 0) return null;
+
+  const n = Math.min(time.length, speed.length, Array.isArray(hr) ? hr.length : time.length);
+  if (n < 2) return null;
+
+  const timeSlice = time.slice(0, n);
+  const speedSlice = speed.slice(0, n);
+  const hrSlice = Array.isArray(hr) ? hr.slice(0, n) : null;
+
+  const paceTolerancePct = 2.5;
+  const paceLower = racepaceSecPerKm * (1 - paceTolerancePct / 100);
+  const paceUpper = racepaceSecPerKm * (1 + paceTolerancePct / 100);
+  const speedLower = paceUpper > 0 ? 1000 / paceUpper : null;
+  const speedUpper = paceLower > 0 ? 1000 / paceLower : null;
+  if (!Number.isFinite(speedLower) || !Number.isFinite(speedUpper)) return null;
+
+  const signal = new Array(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    const v = Number(speedSlice[i]);
+    if (!Number.isFinite(v)) continue;
+    signal[i] = v >= speedLower && v <= speedUpper;
+  }
+
+  const intervals = buildWorkIntervalsFromSignal(timeSlice, signal, { minIntervalSec: 60, maxGapSec: 6 });
+  if (!intervals.length) return null;
+
+  const timeAt = (i) => {
+    const t = Number(timeSlice[i]);
+    return Number.isFinite(t) ? t : i;
+  };
+
+  const reps = intervals.map((interval) => {
+    let speedSum = 0;
+    let speedCount = 0;
+    let hrSum = 0;
+    let hrCount = 0;
+    let hrMax = null;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const v = Number(speedSlice[i]);
+      if (Number.isFinite(v)) {
+        speedSum += v;
+        speedCount += 1;
+      }
+      if (hrSlice) {
+        const h = Number(hrSlice[i]);
+        if (Number.isFinite(h)) {
+          hrSum += h;
+          hrCount += 1;
+          if (hrMax == null || h > hrMax) hrMax = h;
+        }
+      }
+    }
+
+    const avgSpeed = speedCount ? speedSum / speedCount : null;
+    const paceSecPerKm = avgSpeed != null && avgSpeed > 0 ? 1000 / avgSpeed : null;
+    const avgHr = hrCount ? hrSum / hrCount : null;
+
+    return {
+      duration: interval.duration,
+      paceSecPerKm,
+      avgHr,
+      hrMax,
+      startTime: interval.startTime,
+      endTime: interval.endTime,
+    };
+  });
+
+  const durations = reps.map((r) => r.duration).filter((x) => Number.isFinite(x) && x > 0);
+  const medianDuration = durations.length ? median(durations) : null;
+  const sessionKind =
+    medianDuration == null
+      ? null
+      : medianDuration <= 150
+        ? "short"
+        : medianDuration <= 330
+          ? "vo2ish"
+          : medianDuration <= 750
+            ? "threshold"
+            : "steady";
+
+  const paceVals = reps.map((r) => r.paceSecPerKm).filter((x) => Number.isFinite(x) && x > 0);
+  const meanPace = paceVals.length ? avg(paceVals) : null;
+  const maxDevPct =
+    meanPace != null && paceVals.length
+      ? Math.max(...paceVals.map((p) => (Math.abs(p - meanPace) / meanPace) * 100))
+      : null;
+
+  let paceStabilityScore = 0.6;
+  const reasonFlags = [];
+  if (maxDevPct != null) {
+    if (maxDevPct <= 2.5) paceStabilityScore = 1.0;
+    else if (maxDevPct <= 4.0) paceStabilityScore = 0.6;
+    else paceStabilityScore = 0.2;
+    if (maxDevPct > 4.0) reasonFlags.push("PACE_VAR_HIGH");
+  }
+
+  const hrVals = reps.map((r) => r.avgHr).filter((x) => Number.isFinite(x) && x > 0);
+  let hrDriftScore = 0.6;
+  if (hrVals.length >= 3) {
+    const drift = hrVals[hrVals.length - 1] - hrVals[0];
+    if (drift <= 5) hrDriftScore = 1.0;
+    else if (drift <= 10) hrDriftScore = 0.6;
+    else hrDriftScore = 0.2;
+    if (drift > 10) reasonFlags.push("HR_DRIFT_HIGH");
+  } else {
+    reasonFlags.push("HR_INSUFFICIENT");
+  }
+
+  let recoveryScore = 0.6;
+  if (hrSlice) {
+    const drops = [];
+    for (let i = 0; i < intervals.length - 1; i++) {
+      const current = intervals[i];
+      const next = intervals[i + 1];
+      const rep = reps[i];
+      if (!rep || rep.hrMax == null) continue;
+      const pauseEnd = next.startTime;
+      let lastHr = null;
+      for (let j = current.endIdx; j < next.startIdx; j++) {
+        const t = timeAt(j);
+        if (t > pauseEnd) break;
+        if (pauseEnd - t <= 12) {
+          const h = Number(hrSlice[j]);
+          if (Number.isFinite(h)) lastHr = h;
+        }
+      }
+      if (lastHr == null) continue;
+      drops.push(rep.hrMax - lastHr);
+    }
+    if (drops.length) {
+      const dropMedian = median(drops);
+      if (dropMedian >= 25) recoveryScore = 1.0;
+      else if (dropMedian >= 15) recoveryScore = 0.6;
+      else recoveryScore = 0.2;
+      if (dropMedian < 15) reasonFlags.push("RECOVERY_POOR");
+    }
+  }
+
+  const tAtTarget = reps.reduce((sum, rep) => {
+    if (!Number.isFinite(rep.paceSecPerKm)) return sum;
+    const within = rep.paceSecPerKm >= paceLower && rep.paceSecPerKm <= paceUpper;
+    return within ? sum + (rep.duration ?? 0) : sum;
+  }, 0);
+
+  const timeScore = Math.min(1.0, tAtTarget / (12 * 60));
+
+  let score =
+    paceStabilityScore * 0.4 +
+    hrDriftScore * 0.35 +
+    recoveryScore * 0.15 +
+    timeScore * 0.1;
+
+  const tempC = getActivityTemperatureC(activity);
+  if (Number.isFinite(tempC) && tempC > 20) {
+    score -= 0.08;
+    reasonFlags.push("HEAT_PENALTY");
+  }
+  const elevGain = getActivityElevationGain(activity);
+  if (Number.isFinite(elevGain) && elevGain > 150) {
+    score -= 0.06;
+    reasonFlags.push("HILLS_PENALTY");
+  }
+
+  score = clamp(score, 0, 1);
+
+  const holdBase = sessionKind === "short" ? 2.0 : sessionKind === "vo2ish" ? 2.6 : sessionKind === "threshold" ? 3.2 : 3.6;
+  const holdFactor = 1.6 + (holdBase - 1.6) * score;
+  const tHold = tAtTarget * holdFactor;
+
+  const distanceKey = extractTargetDistanceKey(activity);
+  const distanceBounds = getRaceDistanceBounds(distanceKey);
+  const lowerBound = distanceBounds?.min ?? null;
+  const realistic = lowerBound != null ? tHold >= lowerBound * 0.85 : null;
+  if (realistic === false) reasonFlags.push("DISTANCE_MISMATCH");
+
+  let deltaSecPerKm = 0;
+  if (realistic === false && lowerBound != null) {
+    const gap = Math.max(0, lowerBound - tHold);
+    const basePenalty = getRacePacePenaltyPer5Min(distanceKey);
+    if (basePenalty != null) {
+      deltaSecPerKm = (gap / (5 * 60)) * basePenalty;
+      deltaSecPerKm *= 1.0 + (0.6 - score);
+      deltaSecPerKm = clamp(deltaSecPerKm, 2, 25);
+      if (deltaSecPerKm >= 10) reasonFlags.push("PACE_TOO_FAST");
+    }
+  }
+
+  if (realistic === true && score > 0.85 && lowerBound != null && tHold > lowerBound * 1.05) {
+    deltaSecPerKm = -1 * clamp((score - 0.85) * 20, 1, 6);
+    reasonFlags.push("YOU_CAN_PUSH");
+  }
+
+  const suggestedRacePace = racepaceSecPerKm + deltaSecPerKm;
+
+  let confidence = Math.round(score * 100);
+  if (hrVals.length < 3) confidence = Math.round(confidence * 0.9);
+  if (!hrSlice || recoveryScore === 0.6) confidence = Math.round(confidence * 0.95);
+  confidence = clamp(confidence, 0, 100);
+
+  return {
+    realistic,
+    score,
+    confidence,
+    delta_s_per_km: deltaSecPerKm,
+    suggestedRacePace,
+    tAtTarget,
+    tHold,
+    sessionKind,
+    reasonFlags,
+  };
+}
+
+function getActivityTemperatureC(activity) {
+  const candidates = [activity?.average_temp, activity?.temperature, activity?.temp_c, activity?.temp];
+  for (const value of candidates) {
+    const v = Number(value);
+    if (Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function getActivityElevationGain(activity) {
+  const candidates = [
+    activity?.total_elevation_gain,
+    activity?.elevation_gain,
+    activity?.elevationGain,
+    activity?.elevation,
+  ];
+  for (const value of candidates) {
+    const v = Number(value);
+    if (Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
+function extractTargetDistanceKey(activity) {
+  const candidates = [
+    activity?.targetDistance,
+    activity?.raceDistance,
+    activity?.eventDistance,
+    activity?.distance_km,
+    activity?.distanceKm,
+    activity?.distanceMeters,
+    activity?.distance_metres,
+    activity?.distance,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) {
+      const norm = normalizeEventDistanceKey(value.trim());
+      if (norm) return norm;
+    }
+    const num = Number(value);
+    if (Number.isFinite(num)) {
+      if (num > 1000) {
+        const km = num / 1000;
+        const key = normalizeEventDistanceKey(`${km.toFixed(1)}k`);
+        if (key) return key;
+      } else if (num >= 1) {
+        const key = normalizeEventDistanceKey(`${num}k`);
+        if (key) return key;
+      }
+    }
+  }
+  return null;
+}
+
+function getRaceDistanceBounds(distanceKey) {
+  const key = String(distanceKey || "").toLowerCase();
+  if (key === "5k") return { min: 16 * 60, max: 35 * 60 };
+  if (key === "10k") return { min: 33 * 60, max: 65 * 60 };
+  if (key === "hm" || key === "half" || key === "half_marathon") return { min: 70 * 60, max: 140 * 60 };
+  if (key === "m" || key === "marathon") return { min: 150 * 60, max: 300 * 60 };
+  return null;
+}
+
+function getRacePacePenaltyPer5Min(distanceKey) {
+  const key = String(distanceKey || "").toLowerCase();
+  if (key === "5k") return 6;
+  if (key === "10k") return 8;
+  if (key === "hm" || key === "half" || key === "half_marathon") return 10;
+  if (key === "m" || key === "marathon") return 12;
+  return null;
 }
 
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
