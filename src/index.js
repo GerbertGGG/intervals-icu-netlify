@@ -3857,6 +3857,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         const weeklySections = commentBundle.weeklyReportSections ?? null;
         if (detectiveSections?.title) sections.push(detectiveSections.title);
         if (weeklySections?.blockStatus?.length) sections.push(...weeklySections.blockStatus);
+        if (weeklySections?.racePrediction?.length) sections.push(...weeklySections.racePrediction);
         if (weeklySections?.weeklyVerdict?.length) sections.push(...weeklySections.weeklyVerdict);
         if (detectiveSections?.loadBasis?.length) sections.push(...detectiveSections.loadBasis);
         if (weeklySections?.learnings?.length) sections.push(...weeklySections.learnings);
