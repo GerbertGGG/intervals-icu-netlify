@@ -5,7 +5,7 @@
 // INTERVALS_API_KEY
 //
 // Wellness custom fields (create these in Intervals):
-// VDOT, Drift, Motor, EF, Block
+// VDOT, Drift, Motor, EF, Block, BlockEffective
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
@@ -214,6 +214,15 @@ const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
 const LAST_ACTIVITY_SYNC_KEY = "scheduled:last-activity-iso";
+const REENTRY_STATE_KEY = "blockEffective:reentryState";
+const REENTRY_DAYS_DEFAULT = 7; // env: REENTRY_DAYS
+const OVERRIDE_CATEGORIES = ["INJURED", "SICK", "HOLIDAY"];
+const OVERRIDE_PRIORITY = { INJURED: 3, SICK: 2, HOLIDAY: 1 };
+const OVERRIDE_TO_BLOCK = {
+  INJURED: "HOLD_INJURY",
+  SICK: "HOLD_ILLNESS",
+  HOLIDAY: "HOLD_LIFE",
+};
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
@@ -278,6 +287,12 @@ function toLocalYMD(d) {
   const m = String(x.getMonth() + 1).padStart(2, "0");
   const day = String(x.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function getReentryDays(env) {
+  const raw = Number(env?.REENTRY_DAYS);
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  return REENTRY_DAYS_DEFAULT;
 }
 
 // Fatigue override thresholds (tune later)
@@ -458,6 +473,7 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
+const FIELD_BLOCK_EFFECTIVE = "BlockEffective";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -2122,6 +2138,11 @@ function daysBetween(dateAISO, dateBISO) {
   if (!a || !b) return NaN;
   return (b.getTime() - a.getTime()) / 86400000;
 }
+function addDaysIso(dayIso, deltaDays) {
+  const base = parseISODateSafe(dayIso);
+  if (!base || !Number.isFinite(deltaDays)) return null;
+  return isoDate(new Date(base.getTime() + deltaDays * 86400000));
+}
 function clampStartDate(startISO, todayISO, maxAgeDays = 180) {
   const start = parseISODateSafe(startISO);
   const today = parseISODateSafe(todayISO);
@@ -2168,6 +2189,125 @@ async function readKvJson(env, key) {
 async function writeKvJson(env, key, value) {
   if (!hasKv(env)) return;
   await env.KV.put(key, JSON.stringify(value));
+}
+
+async function readReentryState(env) {
+  const state = await readKvJson(env, REENTRY_STATE_KEY);
+  if (!state || typeof state !== "object") return null;
+  return {
+    lastOverrideDay: isIsoDate(state.lastOverrideDay) ? state.lastOverrideDay : null,
+    lastOverrideCategory: state.lastOverrideCategory || null,
+    reentryStartDay: isIsoDate(state.reentryStartDay) ? state.reentryStartDay : null,
+    reentryEndDay: isIsoDate(state.reentryEndDay) ? state.reentryEndDay : null,
+    reentryDays: Number.isFinite(state.reentryDays) ? state.reentryDays : null,
+  };
+}
+
+async function writeReentryState(env, state) {
+  if (!state) return;
+  await writeKvJson(env, REENTRY_STATE_KEY, state);
+}
+
+function coversDay(event, dayIso) {
+  const start = event?.start_date_local || event?.start_date || null;
+  const end = event?.end_date_local || event?.end_date || null;
+  if (!start || !end) return false;
+  const dayStart = `${dayIso}T00:00:00`;
+  return start <= dayStart && dayStart < end;
+}
+
+function getOverrideWindowInfo(event, dayIso) {
+  const startLocal = event?.start_date_local || event?.start_date || null;
+  const endLocal = event?.end_date_local || event?.end_date || null;
+  const startDate = startLocal ? String(startLocal).slice(0, 10) : null;
+  const endDate = endLocal ? String(endLocal).slice(0, 10) : null;
+  if (!isIsoDate(startDate) || !isIsoDate(endDate)) return { dayIndex: null, totalDays: null };
+  const totalDays = daysBetween(startDate, endDate);
+  const dayIndex = daysBetween(startDate, dayIso) + 1;
+  if (!Number.isFinite(totalDays) || totalDays <= 0) return { dayIndex: null, totalDays: null };
+  if (!Number.isFinite(dayIndex) || dayIndex <= 0) return { dayIndex: null, totalDays };
+  return { dayIndex, totalDays };
+}
+
+function pickOverrideEvent(events, dayIso) {
+  if (!Array.isArray(events) || !isIsoDate(dayIso)) return null;
+  const candidates = events.filter((event) => {
+    const category = String(event?.category || "").toUpperCase();
+    return OVERRIDE_CATEGORIES.includes(category) && coversDay(event, dayIso);
+  });
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const ca = String(a?.category || "").toUpperCase();
+    const cb = String(b?.category || "").toUpperCase();
+    return (OVERRIDE_PRIORITY[cb] || 0) - (OVERRIDE_PRIORITY[ca] || 0);
+  });
+  const event = candidates[0];
+  const category = String(event?.category || "").toUpperCase();
+  const blockEffective = OVERRIDE_TO_BLOCK[category] || null;
+  const { dayIndex, totalDays } = getOverrideWindowInfo(event, dayIso);
+  return {
+    category,
+    blockEffective,
+    event,
+    dayIndex,
+    totalDays,
+  };
+}
+
+function computeBlockEffectiveForDay({ dayIso, planBlock, overrideInfo, reentryState, reentryDays }) {
+  const nextState = {
+    lastOverrideDay: reentryState?.lastOverrideDay ?? null,
+    lastOverrideCategory: reentryState?.lastOverrideCategory ?? null,
+    reentryStartDay: reentryState?.reentryStartDay ?? null,
+    reentryEndDay: reentryState?.reentryEndDay ?? null,
+    reentryDays: reentryDays,
+  };
+
+  if (overrideInfo?.blockEffective) {
+    nextState.lastOverrideDay = dayIso;
+    nextState.lastOverrideCategory = overrideInfo.category;
+    nextState.reentryStartDay = null;
+    nextState.reentryEndDay = null;
+    return {
+      blockEffective: overrideInfo.blockEffective,
+      overrideInfo,
+      reentryInfo: null,
+      nextState,
+    };
+  }
+
+  if (!nextState.reentryStartDay && nextState.lastOverrideDay && daysBetween(nextState.lastOverrideDay, dayIso) >= 1) {
+    const reentryStartDay = addDaysIso(nextState.lastOverrideDay, 1);
+    const reentryEndDay = addDaysIso(reentryStartDay, (reentryDays || REENTRY_DAYS_DEFAULT) - 1);
+    nextState.reentryStartDay = reentryStartDay;
+    nextState.reentryEndDay = reentryEndDay;
+    nextState.reentryDays = reentryDays;
+  }
+
+  const reentryActive =
+    nextState.reentryStartDay &&
+    nextState.reentryEndDay &&
+    dayIso >= nextState.reentryStartDay &&
+    dayIso <= nextState.reentryEndDay;
+  if (reentryActive) {
+    const dayIndex = daysBetween(nextState.reentryStartDay, dayIso) + 1;
+    const totalDays = nextState.reentryDays || null;
+    return {
+      blockEffective: "REENTRY",
+      overrideInfo: null,
+      reentryInfo: { dayIndex, totalDays },
+      nextState,
+    };
+  }
+
+  nextState.reentryStartDay = null;
+  nextState.reentryEndDay = null;
+  return {
+    blockEffective: planBlock,
+    overrideInfo: null,
+    reentryInfo: null,
+    nextState,
+  };
 }
 
 async function appendLearningEvent(env, event) {
@@ -2781,6 +2921,28 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const daysList = listIsoDaysInclusive(oldest, newest);
   let previousBlockState = null;
   const learningEvents = await loadLearningEvents(env, newest, LEARNING_LOOKBACK_DAYS);
+  const reentryDays = getReentryDays(env);
+  let reentryState = (await readReentryState(env)) || {
+    lastOverrideDay: null,
+    lastOverrideCategory: null,
+    reentryStartDay: null,
+    reentryEndDay: null,
+    reentryDays,
+  };
+  let overrideEvents = [];
+  try {
+    const overrideOldest = addDaysIso(oldest, -30) || oldest;
+    const overrideNewest = addDaysIso(newest, 1) || newest;
+    overrideEvents = await fetchOverrideEvents(env, overrideOldest, overrideNewest);
+  } catch (e) {
+    overrideEvents = [];
+    if (debug) {
+      ctx.debugOut = ctx.debugOut || {};
+      addDebug(ctx.debugOut, "override-events", null, "warn:fetch_failed", {
+        message: String(e?.message ?? e),
+      });
+    }
+  }
 
   for (const day of daysList) {
     // NEW: mode + policy for this day (based on next event)
@@ -3146,6 +3308,19 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     historyMetrics.keyCompliance = keyCompliance;
 
     patch[FIELD_BLOCK] = blockState.block;
+    const overrideInfo = pickOverrideEvent(overrideEvents, day);
+    const blockEffectiveResult = computeBlockEffectiveForDay({
+      dayIso: day,
+      planBlock: blockState.block,
+      overrideInfo,
+      reentryState,
+      reentryDays,
+    });
+    patch[FIELD_BLOCK_EFFECTIVE] = blockEffectiveResult.blockEffective;
+    reentryState = blockEffectiveResult.nextState;
+    if (write) {
+      await writeReentryState(env, reentryState);
+    }
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
@@ -3407,6 +3582,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       robustness,
       modeInfo,
       blockState,
+      blockEffective: blockEffectiveResult.blockEffective,
+      overrideInfo: blockEffectiveResult.overrideInfo,
+      reentryInfo: blockEffectiveResult.reentryInfo,
       keyRules,
       keyCompliance,
       dynamicKeyCap,
@@ -5796,6 +5974,9 @@ function buildComments(
     robustness,
     modeInfo,
     blockState,
+    blockEffective,
+    overrideInfo,
+    reentryInfo,
     keyRules,
     keyCompliance,
     dynamicKeyCap,
@@ -5839,6 +6020,8 @@ function buildComments(
   const eventDistanceRaw = blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent);
   const eventDistance = formatEventDistance(eventDistanceRaw);
   const daysToEvent = eventDate ? daysBetween(isoDate(new Date()), eventDate) : null;
+  const blockPlanLabel = blockState?.block ?? "n/a";
+  const effectiveBlockLabel = blockEffective || blockPlanLabel;
 
   const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
   const displayDrift = Number.isFinite(repDisplayRun?.drift) ? repDisplayRun.drift : null;
@@ -6358,6 +6541,20 @@ function buildComments(
     (keyCompliance?.capExceeded ? "nach Ablauf 7T-Fenster" : "heute");
 
   const lines = [];
+  lines.push(`🧱 Block (Plan): ${blockPlanLabel}`);
+  if (overrideInfo?.blockEffective) {
+    const tagText =
+      Number.isFinite(overrideInfo?.dayIndex) && Number.isFinite(overrideInfo?.totalDays)
+        ? ` (Tag ${overrideInfo.dayIndex}/${overrideInfo.totalDays})`
+        : "";
+    lines.push(`⏸ Override: ${overrideInfo.category}${tagText} → ${overrideInfo.blockEffective}`);
+  }
+  if (reentryInfo?.dayIndex) {
+    const totalText = Number.isFinite(reentryInfo?.totalDays) ? reentryInfo.totalDays : "n/a";
+    lines.push(`↩️ ReEntry: Tag ${reentryInfo.dayIndex}/${totalText} → REENTRY`);
+  }
+  lines.push(`→ Effektiv: ${effectiveBlockLabel}`);
+  lines.push("");
   lines.push("⚡ DAILY SUMMARY");
   lines.push(`- Ampel & Trigger: ${readinessAmpel} ${topTriggerText}`);
   lines.push(`- Heute erlaubt: ${todayAllowed}`);
@@ -8613,6 +8810,15 @@ async function fetchIntervalsEvents(env, oldest, newest) {
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
   const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function fetchOverrideEvents(env, oldest, newest) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const categories = OVERRIDE_CATEGORIES.join(",");
+  const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}&category=${categories}`;
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
+  if (!r.ok) throw new Error(`override events ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
