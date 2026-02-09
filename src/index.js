@@ -6200,6 +6200,12 @@ function buildComments(
     lines.push(`- Racepace (letzte Intervalle${racePaceDate}): ${lastRacePaceText}`);
   }
 
+  if (hadKey) {
+    lines.push("");
+    lines.push("❤️ HRR60 READINESS");
+    hrr60Readiness.report.forEach((line) => lines.push(line));
+  }
+
   if (aerobicContextAvailable) {
     lines.push("");
     lines.push("🫁 AEROBER KONTEXT");
