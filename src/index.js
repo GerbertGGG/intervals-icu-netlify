@@ -6781,11 +6781,18 @@ function buildComments(
         ? "1× Key (Schwelle/VO2) sauber, sonst easy."
         : "Struktur halten: 1× Key sauber, Longrun locker.";
 
+  const racePredictionLine = buildRacePredictionLine({
+    event: modeInfo?.nextEvent ?? null,
+    eventDistanceRaw,
+    lastKeyIntervalInsights,
+  });
+
   const weeklyReport = buildMondayReportLines({
     blockLabel,
     blockGoalShort,
     priorityLine,
     eventCountdownLine,
+    racePredictionLine,
     weeklyFazit,
     weeklyWhy,
     blockFitNotes,
@@ -7601,6 +7608,7 @@ function buildMondayReportLines({
   blockGoalShort,
   priorityLine,
   eventCountdownLine,
+  racePredictionLine,
   weeklyFazit,
   weeklyWhy,
   blockFitNotes,
@@ -7633,6 +7641,8 @@ function buildMondayReportLines({
     `→ ${blockFitDetail}`,
   ];
 
+  const racePrediction = ["🏁 RACE PREDICTION", racePredictionLine || "Event n/a: Prognose n/a"];
+
   const weeklyVerdict = ["📊 WOCHENURTEIL (Trainer)", weeklyFazit, weeklyWhy];
 
   const learnings = [
@@ -7657,8 +7667,20 @@ function buildMondayReportLines({
 
   const risk = ["⚠️ RISIKO-BLICK (2–3 Wochen)", ...riskNotes.slice(0, 2).map((item) => `• ${item}`)];
 
-  const sections = { blockStatus, weeklyVerdict, learnings, decision, risk };
-  const lines = [...blockStatus, "", ...weeklyVerdict, "", ...learnings, "", ...decision, "", ...risk];
+  const sections = { blockStatus, racePrediction, weeklyVerdict, learnings, decision, risk };
+  const lines = [
+    ...blockStatus,
+    "",
+    ...racePrediction,
+    "",
+    ...weeklyVerdict,
+    "",
+    ...learnings,
+    "",
+    ...decision,
+    "",
+    ...risk,
+  ];
 
   return { sections, lines };
 }
@@ -7669,6 +7691,7 @@ function buildMondayReportPreview() {
     blockGoalShort: "Basis stärken und eine Key-Qualität pro Woche sauber setzen",
     priorityLine: "Qualität > Umfang | Frequenz halten",
     eventCountdownLine: "Zeit bis Event: 5 Wochen",
+    racePredictionLine: "10 km · City Run: Prognose 45:30 | Ø 4:33/km | Confidence 72% | Quelle: Racepace",
     weeklyFazit: "🟠 Auf Kurs – Basis lückenhaft.",
     weeklyWhy: "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.",
     blockFitNotes: [
@@ -8198,6 +8221,102 @@ function parseTimeToSeconds(raw) {
   const numeric = Number(s.replace(",", "."));
   if (!Number.isFinite(numeric) || numeric <= 0) return null;
   return numeric >= 300 ? numeric : numeric * 60;
+}
+
+function getDistanceKmFromKey(distanceKey) {
+  const key = String(distanceKey || "").toLowerCase();
+  if (key === "5k") return 5;
+  if (key === "10k") return 10;
+  if (key === "hm" || key === "half" || key === "half_marathon") return 21.0975;
+  if (key === "m" || key === "marathon") return 42.195;
+  return null;
+}
+
+function extractPredictionSecondsFromEvent(event) {
+  if (!event) return null;
+  const rawCandidates = [
+    event?.prediction,
+    event?.race_prediction,
+    event?.racePrediction,
+    event?.predicted_time,
+    event?.predictedTime,
+    event?.prediction_time,
+    event?.predictionTime,
+    event?.predicted,
+    event?.predictedTimeSec,
+    event?.predicted_time_sec,
+    event?.prediction_time_sec,
+  ];
+  const objectCandidates = [event?.race, event?.prediction, event?.race_prediction, event?.racePrediction].filter(
+    (val) => val && typeof val === "object"
+  );
+
+  for (const obj of objectCandidates) {
+    rawCandidates.push(
+      obj?.prediction,
+      obj?.predicted,
+      obj?.predicted_time,
+      obj?.predictedTime,
+      obj?.prediction_time,
+      obj?.predictionTime,
+      obj?.predicted_time_sec,
+      obj?.predictedTimeSec,
+      obj?.prediction_time_sec,
+      obj?.time,
+      obj?.time_sec,
+      obj?.timeSec,
+      obj?.duration,
+      obj?.seconds
+    );
+  }
+
+  for (const candidate of rawCandidates) {
+    const sec = parseTimeToSeconds(candidate);
+    if (sec != null) return sec;
+  }
+  return null;
+}
+
+function buildRacePredictionLine({ event, eventDistanceRaw, lastKeyIntervalInsights }) {
+  const eventLabel = eventDistanceRaw ? formatEventDistance(eventDistanceRaw) : null;
+  const eventName = event?.name ? String(event.name) : null;
+  const eventDescriptor = [eventLabel, eventName].filter(Boolean).join(" · ");
+  const eventText = eventDescriptor || "Event n/a";
+  const distanceKey = normalizeEventDistanceKey(eventDistanceRaw);
+  const distanceKm = getDistanceKmFromKey(distanceKey);
+  const predictionFromEventSec = extractPredictionSecondsFromEvent(event);
+  const assessment = lastKeyIntervalInsights?.intervalMetrics?.racepace_assessment;
+  const intervalPaceSec = lastKeyIntervalInsights?.intervalMetrics?.interval_pace_sec_per_km;
+
+  let predictionSec = predictionFromEventSec;
+  let paceSec = null;
+  let confidence = null;
+  let source = null;
+
+  if (predictionSec != null) {
+    source = "Event";
+    if (distanceKm) paceSec = predictionSec / distanceKm;
+  } else if (assessment?.suggestedRacePace && distanceKm) {
+    paceSec = assessment.suggestedRacePace;
+    predictionSec = paceSec * distanceKm;
+    confidence = assessment.confidence;
+    source = "Racepace";
+  } else if (lastKeyIntervalInsights?.keyType === "racepace" && intervalPaceSec && distanceKm) {
+    paceSec = intervalPaceSec;
+    predictionSec = paceSec * distanceKm;
+    source = "Racepace (letzter Key)";
+  }
+
+  const parts = [];
+  parts.push(`Prognose ${predictionSec != null ? formatTimeSeconds(predictionSec) : "n/a"}`);
+  if (paceSec != null) {
+    const paceText = formatPaceSeconds(paceSec);
+    if (paceText) parts.push(`Ø ${paceText}`);
+  }
+  if (Number.isFinite(confidence)) parts.push(`Confidence ${Math.round(confidence)}%`);
+  if (source) parts.push(`Quelle: ${source}`);
+
+  return `${eventText}: ${parts.join(" | ")}`;
 }
 
 function formatPaceDeltaSeconds(deltaSec) {
