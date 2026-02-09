@@ -8352,11 +8352,8 @@ function pickIntervalIntensity(streams) {
 }
 
 function hasIntervalKeyTag(activity) {
-  const tags = activity?.tags || [];
-  return tags.some((t) => {
-    const s = String(t || "").toLowerCase().trim();
-    return s === "key:vo2" || s === "key:racepace" || s === "key:interval";
-  });
+  const tags = normalizeTags(activity?.tags);
+  return tags.some((t) => t === "key:vo2" || t === "key:racepace" || t === "key:interval");
 }
 
 function extractRacepaceSecPerKm(activity) {
@@ -9354,7 +9351,9 @@ function isAerobic(a) {
 }
 
 function normalizeTags(tags) {
-  return (tags || []).map((t) => String(t || "").toLowerCase().trim()).filter(Boolean);
+  return (tags || [])
+    .map((t) => String(t || "").toLowerCase().trim().replace(/^#+/, ""))
+    .filter(Boolean);
 }
 
 function isStrength(a) {
@@ -9434,14 +9433,14 @@ function isBike(a) {
   );
 }
 function hasKeyTag(a) {
-  return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
+  const tags = normalizeTags(a?.tags);
+  return tags.some((t) => t.startsWith("key:"));
 }
 
 function getKeyType(a) {
   // key:schwelle, key:vo2, key:tempo, ...
-  const tags = a?.tags || [];
-  for (const t of tags) {
-    const s = String(t || "").toLowerCase().trim();
+  const tags = normalizeTags(a?.tags);
+  for (const s of tags) {
     if (s.startsWith("key:")) return s.slice(4).trim() || "key";
   }
   return "key";
