@@ -8147,38 +8147,56 @@ function isStrength(a) {
 }
 async function buildWatchfacePayload(env, endIso) {
   const end = parseISODateSafe(endIso) ? endIso : isoDate(new Date());
-  const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 6 * 86400000));
+  const start7Iso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 6 * 86400000));
+  const start21Iso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 20 * 86400000));
+  const deloadFactor = 0.6;
 
-  // Fetch activities only for these 7 days (klein halten)
-  const acts = await fetchIntervalsActivities(env, startIso, end);
+  // Fetch activities only for these 21 days (klein halten)
+  const acts = await fetchIntervalsActivities(env, start21Iso, end);
 
-  const days = listIsoDaysInclusive(startIso, end); // genau 7
+  const days = listIsoDaysInclusive(start7Iso, end); // genau 7
+  const days21 = listIsoDaysInclusive(start21Iso, end); // genau 21
   const runLoadByDay = {};
+  const runLoadByDay21 = {};
   const strengthMinByDay = {};
 
-  for (const d of days) { runLoadByDay[d] = 0; strengthMinByDay[d] = 0; }
+  for (const d of days) {
+    runLoadByDay[d] = 0;
+    strengthMinByDay[d] = 0;
+  }
+  for (const d of days21) {
+    runLoadByDay21[d] = 0;
+  }
 
   for (const a of acts) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || !(d in runLoadByDay)) continue;
+    if (!d) continue;
 
-    if (isRun(a)) {
-      runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
-      continue;
+    if (d in runLoadByDay21 && isRun(a)) {
+      runLoadByDay21[d] += Number(extractLoad(a)) || 0;
     }
+    if (d in runLoadByDay) {
+      if (isRun(a)) {
+        runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
+        continue;
+      }
 
-    if (isStrength(a)) {
-      const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
-      strengthMinByDay[d] += sec / 60;
-      continue;
+      if (isStrength(a)) {
+        const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+        strengthMinByDay[d] += sec / 60;
+        continue;
+      }
     }
   }
 
   const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
-
   const runSum7 = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
+
+  const runSum21 = days21.reduce((sum, d) => sum + (runLoadByDay21[d] || 0), 0);
+  const runDeloadGoal = Math.round((runSum21 / 3) * deloadFactor);
+  const runDeloadDelta = Math.round(runSum7 - runDeloadGoal);
 
   return {
     ok: true,
@@ -8187,6 +8205,9 @@ async function buildWatchfacePayload(env, endIso) {
     runLoad,
     runSum7,
     runGoal: 150,
+    runSum21: Math.round(runSum21),
+    runDeloadGoal,
+    runDeloadDelta,
     strengthMin,
     strengthSum7,
     strengthGoal: 60,
