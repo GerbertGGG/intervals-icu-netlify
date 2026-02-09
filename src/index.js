@@ -8288,28 +8288,42 @@ function buildRacePredictionLine({ event, eventDistanceRaw, lastKeyIntervalInsig
   const predictionFromEventSec = extractPredictionSecondsFromEvent(event);
   const assessment = lastKeyIntervalInsights?.intervalMetrics?.racepace_assessment;
   const intervalPaceSec = lastKeyIntervalInsights?.intervalMetrics?.interval_pace_sec_per_km;
+  const hasEventPrediction = predictionFromEventSec != null;
+  const hasAssessment = assessment?.suggestedRacePace && distanceKm;
+  const hasRacepaceKey = lastKeyIntervalInsights?.keyType === "racepace" && intervalPaceSec && distanceKm;
 
   let predictionSec = predictionFromEventSec;
   let paceSec = null;
   let confidence = null;
   let source = null;
 
-  if (predictionSec != null) {
+  if (hasEventPrediction) {
     source = "Event";
     if (distanceKm) paceSec = predictionSec / distanceKm;
-  } else if (assessment?.suggestedRacePace && distanceKm) {
+  } else if (hasAssessment) {
     paceSec = assessment.suggestedRacePace;
     predictionSec = paceSec * distanceKm;
     confidence = assessment.confidence;
     source = "Racepace";
-  } else if (lastKeyIntervalInsights?.keyType === "racepace" && intervalPaceSec && distanceKm) {
+  } else if (hasRacepaceKey) {
     paceSec = intervalPaceSec;
     predictionSec = paceSec * distanceKm;
     source = "Racepace (letzter Key)";
   }
 
   const parts = [];
-  parts.push(`Prognose ${predictionSec != null ? formatTimeSeconds(predictionSec) : "n/a"}`);
+  const predictionText = predictionSec != null ? formatTimeSeconds(predictionSec) : "n/a";
+  parts.push(`Prognose ${predictionText}`);
+  if (predictionSec == null) {
+    const reasonParts = [];
+    if (!event) reasonParts.push("kein Event");
+    else if (!distanceKm) reasonParts.push("Event-Distanz fehlt");
+    if (!hasEventPrediction) reasonParts.push("keine Event-Prognose");
+    if (!hasAssessment && !hasRacepaceKey) {
+      reasonParts.push("kein Racepace-Key mit Pace-Daten");
+    }
+    if (reasonParts.length) parts.push(`Grund: ${reasonParts.join(" & ")}`);
+  }
   if (paceSec != null) {
     const paceText = formatPaceSeconds(paceSec);
     if (paceText) parts.push(`Ø ${paceText}`);
