@@ -1105,6 +1105,9 @@ async function computeLoads7d(ctx, dayIso) {
   let bikeTotal7 = 0;
   let runMinutes7 = 0;
   let bikeMinutes7 = 0;
+  let runCount7 = 0;
+  let gaRuns7 = 0;
+  let longRuns7 = 0;
 
   let aerobicRun7 = 0;
   let aerobicBike7 = 0;
@@ -1127,8 +1130,11 @@ async function computeLoads7d(ctx, dayIso) {
     const bike = isBike(a);
 
     if (run) {
+      runCount7 += 1;
       runMinutes7 += minutes;
       runTotal7 += totalLoad;
+      if (!hasKeyTag(a) && seconds >= GA_MIN_SECONDS) gaRuns7 += 1;
+      if (seconds >= LONGRUN_MIN_SECONDS) longRuns7 += 1;
     }
     if (bike) {
       bikeMinutes7 += minutes;
@@ -1169,6 +1175,9 @@ async function computeLoads7d(ctx, dayIso) {
     bikeTotal7,
     runMinutes7,
     bikeMinutes7,
+    runCount7,
+    gaRuns7,
+    longRuns7,
     aerobicRun7,
     aerobicBike7,
     aerobicEq7,
@@ -6231,35 +6240,101 @@ function buildComments(
   const needsKey = keyCompliance?.freqOk === false || keyCompliance?.preferredMissing;
   const needsLongRun = (longRunSummary?.minutes ?? 0) < 60;
 
-  const learningArmLabel = STRATEGY_LABELS[learningNarrativeState?.recommendedArm] || "Neutral";
-  const learningContext = learningNarrativeState?.contextSummary || "aktueller Kontext";
-  const learningConfidence = formatPct(learningNarrativeState?.confidenceRec);
-  const learningSamples = Number.isFinite(learningEvidence?.effectiveSamples)
-    ? `${learningEvidence.effectiveSamples.toFixed(1)} eff. Beobachtungen`
-    : "Evidenz n/a";
-  const learningFocus = confirmedRules.length ? confirmedRules.slice(0, 2).join(" | ") : "Stabilisieren & beobachten.";
-  const learningNext = proposedRules.length ? proposedRules.slice(0, 2).join(" | ") : "Aktuell keine neue Hypothese.";
-  const learningBrake =
-    warningCount > 0 || recoverySignals?.painInjury || runFloorGap
-      ? [loadReasonText, runFloorGap ? `Runfloor ${runLoad7}/${runTarget}` : null]
-        .filter(Boolean)
-        .join(" | ")
-      : "Keine klaren Bremser aktuell.";
-  const trendLine =
-    aerobicContextAvailable
-      ? `VDOT ${formatSignedPct(trend?.dv)} | Drift ${formatSignedPct(trend?.dd)} | EF ${formatSignedPct(trend?.efDeltaPct)}`
-      : "Trend n/a (zu wenig GA-Daten)";
+  const runsLast7 = Number.isFinite(loads7?.runCount7) ? loads7.runCount7 : null;
+  const gaRuns7 = Number.isFinite(loads7?.gaRuns7) ? loads7.gaRuns7 : null;
+  const longRuns7 = Number.isFinite(loads7?.longRuns7) ? loads7.longRuns7 : null;
+  const monotonyText = isFiniteNumber(fatigue?.monotony) ? fatigue.monotony.toFixed(2) : "n/a";
+  const strainText = isFiniteNumber(fatigue?.strain) ? Math.round(fatigue.strain).toFixed(0) : "n/a";
+  const blockGoalShort = blockGoal.replace(/,?\s*keine Eskalation\.?/i, "").replace(/\.$/, "");
+  const blockLabel = (blockState?.block ?? blockStatus ?? "n/a").toUpperCase();
+  const priorityParts = ["Qualität > Umfang", freqSignal === "red" ? "Frequenz drosseln" : "Frequenz halten"];
+  const priorityLine = priorityParts.join(" | ");
+  const keyTypeSummary = (() => {
+    const counts = fatigue?.keyTypeCounts7d;
+    if (!counts || !Object.keys(counts).length) return null;
+    const labelMap = {
+      schwelle: "Schwelle",
+      vo2_touch: "VO2",
+      racepace: "Racepace",
+      steady: "Steady",
+      strides: "Strides",
+    };
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([key]) => labelMap[key] || key)
+      .join("/");
+  })();
+  const keySummaryLine =
+    keyCount7 == null
+      ? "Key: n/a"
+      : `Key: ${keyCount7}${keyCount7 > 0 && keyTypeSummary ? ` (${keyTypeSummary})` : ""}`;
+  const weeklyStatusLine =
+    needsLongRun || runFloorGap
+      ? "🟠 Auf Kurs – Basis lückenhaft."
+      : warningCount > 0
+        ? "🟠 Auf Kurs – Signale angespannt."
+        : "🟢 Stabil – Struktur trägt.";
+  const weeklyCoachLine = needsLongRun
+    ? "Die Reize passen zum Block, aber ohne Longrun riskierst du, dass die Qualität nicht trägt."
+    : runFloorGap
+      ? "Die Reize passen zum Block, aber die Runfloor-Lücke bremst die Basis."
+      : warningCount > 0
+        ? "Die Reize passen, aber achte auf saubere Erholung und Easy-Pace."
+        : "Reize passen zum Block, Struktur wirkt stabil.";
+  const keyPlanLine = keyCount7 > 0 && keyCompliance?.capExceeded !== true ? "✔ Key richtig gesetzt" : "❌ Key fehlt";
+  const runFloorLine =
+    runTarget > 0
+      ? `${runFloorGap ? "⚠" : "✔"} Runfloor ${runLoad7} / ${runTarget}`
+      : "⚠ Runfloor n/a";
+  const longRunLine = needsLongRun ? "❌ Longrun fehlt → strukturelles Defizit" : "✔ Longrun gesetzt";
+  const learningHelps = [];
+  if (freqSignal !== "red") learningHelps.push("Häufiger & kürzer hält dich stabil");
+  if (keySpacing?.ok) learningHelps.push("Easy-Tage nach Key wirken");
+  if (!learningHelps.length) learningHelps.push("Struktur wirkt stabil, weiter beobachten");
+  const learningBrakes = [];
+  if (needsLongRun) learningBrakes.push("Fehlende Longruns");
+  if (driftSignal !== "green" && driftSignal !== "unknown") learningBrakes.push("Easy-Tempo oft zu hoch → Drift steigt");
+  if (runFloorGap) learningBrakes.push("Runfloor-Lücke bremst Basis");
+  if (!learningBrakes.length) learningBrakes.push("Keine klaren Bremser aktuell");
+  const weeklyGoal = needsLongRun
+    ? "→ 1× Longrun 60–75′ locker"
+    : needsKey
+      ? "→ 1× Key (Schwelle/VO2) sauber setzen"
+      : "→ Struktur halten, Longrun & Easy-Tage sauber";
 
   const weeklyReportLines = [];
-  weeklyReportLines.push("🧠 MONTAGS-REPORT – Learnings");
-  weeklyReportLines.push(`- Kontext: Block ${blockStatus} | Ziel: ${blockGoal}`);
-  weeklyReportLines.push(`- Was tut dir gut: ${learningArmLabel} (${learningContext}).`);
-  weeklyReportLines.push(`- Evidenz: ${learningSamples} | Confidence ${learningConfidence}.`);
-  weeklyReportLines.push(`- Was dich bremst: ${learningBrake}`);
-  weeklyReportLines.push(`- Historischer Trend (28d): ${trendLine}`);
-  weeklyReportLines.push(`- Bestätigt: ${learningFocus}`);
-  weeklyReportLines.push(`- Nächster Lernfokus: ${learningNext}`);
-  weeklyReportLines.push(`- Leitplanken: Runfloor ${runTarget > 0 ? runTarget : "n/a"} (7T Soll) | max ${KEY_HARD_MAX_PER_7D} Key/7T | ${STEADY_T_MAX_PER_7D} steady/7T.`);
+  weeklyReportLines.push("🧭 MONTAGS-REPORT");
+  weeklyReportLines.push("");
+  weeklyReportLines.push("🏗️ BLOCK-STATUS");
+  weeklyReportLines.push(`Block: ${blockLabel}`);
+  weeklyReportLines.push(`Ziel: ${blockGoalShort}`);
+  weeklyReportLines.push(`Priorität: ${priorityLine}`);
+  weeklyReportLines.push("");
+  weeklyReportLines.push("🧠 WOCHENFAZIT (Trainer)");
+  weeklyReportLines.push(weeklyStatusLine);
+  weeklyReportLines.push(weeklyCoachLine);
+  weeklyReportLines.push("");
+  weeklyReportLines.push("📊 RÜCKBLICK LETZTE WOCHE");
+  weeklyReportLines.push(`Läufe: ${runsLast7 ?? "n/a"} | Run-Load: ${runLoad7}`);
+  weeklyReportLines.push(keySummaryLine);
+  weeklyReportLines.push(`GA ≥30′: ${gaRuns7 ?? "n/a"} | Longrun: ${longRuns7 && longRuns7 > 0 ? longRuns7 : "❌"}`);
+  weeklyReportLines.push(`Monotony: ${monotonyText} | Strain: ${strainText}`);
+  weeklyReportLines.push("");
+  weeklyReportLines.push("🧭 EINORDNUNG ZUM PLAN");
+  weeklyReportLines.push(keyPlanLine);
+  weeklyReportLines.push(runFloorLine);
+  weeklyReportLines.push(longRunLine);
+  weeklyReportLines.push("");
+  weeklyReportLines.push("🧠 LEARNINGS");
+  weeklyReportLines.push("Was funktioniert:");
+  learningHelps.forEach((item) => weeklyReportLines.push(`• ${item}`));
+  weeklyReportLines.push("");
+  weeklyReportLines.push("Was bremsen:");
+  learningBrakes.forEach((item) => weeklyReportLines.push(`• ${item}`));
+  weeklyReportLines.push("");
+  weeklyReportLines.push("🎯 WOCHENZIEL");
+  weeklyReportLines.push(weeklyGoal);
+  weeklyReportLines.push(`Leitplanken: max. ${KEY_HARD_MAX_PER_7D} Key | Runfloor ≥${runTarget > 0 ? runTarget : "n/a"}`);
 
   const topTriggers = [];
   if (runFloorGap) topTriggers.push("Runfloor-Gap");
