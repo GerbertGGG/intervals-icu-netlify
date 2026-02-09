@@ -6918,9 +6918,10 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
 
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const end = new Date(mondayIso + "T00:00:00Z");
+  const newest = new Date(end.getTime() - 86400000);
   const start = new Date(end.getTime() - windowDays * 86400000);
 
-  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(newest));
   const runs = acts
     .filter((a) => isRun(a))
     .map((a) => ({
@@ -7102,8 +7103,9 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
 
 async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays) {
   const end = new Date(endDayIso + "T00:00:00Z");
+  const newest = new Date(end.getTime() - 86400000);
   const start = new Date(end.getTime() - windowDays * 86400000);
-  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(newest));
 
   let droppedNegCount = 0;
   let cvTooHighCount = 0;
