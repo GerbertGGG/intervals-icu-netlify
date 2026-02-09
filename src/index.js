@@ -1438,6 +1438,39 @@ function getEventDistanceFromEvent(event) {
   return normalizeEventDistance(`${name} ${type}`);
 }
 
+function extractTargetTimeFromEvent(event) {
+  if (!event) return null;
+  const candidates = [
+    event?.target_time,
+    event?.targetTime,
+    event?.goal_time,
+    event?.goalTime,
+    event?.time_target,
+    event?.details?.target_time,
+    event?.details?.targetTime,
+    event?.details?.goal_time,
+    event?.details?.goalTime,
+    event?.race?.target_time,
+    event?.race?.goal_time,
+    event?.race?.targetTime,
+    event?.race?.goalTime,
+  ];
+  for (const value of candidates) {
+    const parsed = parseTimeToSeconds(value);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function getEventDistanceKm(distanceKey) {
+  if (!distanceKey) return null;
+  if (distanceKey === "5k") return 5;
+  if (distanceKey === "10k") return 10;
+  if (distanceKey === "hm") return 21.0975;
+  if (distanceKey === "m") return 42.195;
+  return null;
+}
+
 
 
 
@@ -7545,6 +7578,308 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
   return { runTarget, loadTarget, exampleWeek };
 }
 
+function computeIntervalAverages({ speed, hr, startIdx, endIdx }) {
+  let speedSum = 0;
+  let speedCount = 0;
+  let hrSum = 0;
+  let hrCount = 0;
+  for (let i = startIdx; i <= endIdx; i++) {
+    const v = Number(speed?.[i]);
+    if (Number.isFinite(v) && v > 0) {
+      speedSum += v;
+      speedCount += 1;
+    }
+    const h = Number(hr?.[i]);
+    if (Number.isFinite(h) && h > 0) {
+      hrSum += h;
+      hrCount += 1;
+    }
+  }
+  const avgSpeed = speedCount ? speedSum / speedCount : null;
+  const avgHr = hrCount ? hrSum / hrCount : null;
+  return { avgSpeed, avgHr, hrCount };
+}
+
+function buildRacepaceSignal({ time, speed, targetPaceSecPerKm, tolerancePct }) {
+  const n = Math.min(time.length, speed.length);
+  const signal = new Array(n).fill(false);
+  for (let i = 0; i < n; i++) {
+    const v = Number(speed[i]);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    const pace = 1000 / v;
+    const pct = Math.abs(pace - targetPaceSecPerKm) / targetPaceSecPerKm;
+    if (pct <= tolerancePct) signal[i] = true;
+  }
+  return signal;
+}
+
+function computeRaceQualityFactor(intervals, { subjectiveNegative = false } = {}) {
+  if (!intervals?.length) return { qf: 1, quality: "niedrig" };
+  let qf = 1;
+  const paceVals = intervals.map((i) => i.paceSecPerKm).filter((v) => Number.isFinite(v));
+  const hrVals = intervals.map((i) => i.avgHr).filter((v) => Number.isFinite(v));
+  const paceStable =
+    paceVals.length >= 2 ? (Math.max(...paceVals) - Math.min(...paceVals)) / Math.min(...paceVals) <= 0.01 : false;
+  const lastNotSlower = paceVals.length >= 2 ? paceVals.at(-1) <= paceVals[0] : false;
+  const hrDelta = hrVals.length >= 2 ? hrVals.at(-1) - hrVals[0] : null;
+  const hrStable = hrDelta != null ? hrDelta <= 1 : false;
+  const hrDriftStrong = hrDelta != null ? hrDelta >= 5 : false;
+
+  if (paceStable && hrStable && lastNotSlower) qf += 0.02;
+
+  const paceDropTail =
+    paceVals.length >= 3
+      ? avg(paceVals.slice(-2)) > avg(paceVals.slice(0, 2)) * 1.02
+      : paceVals.length >= 2
+        ? paceVals.at(-1) > paceVals.at(-2) * 1.02
+        : false;
+
+  if (hrDriftStrong) qf -= 0.02;
+  if (paceDropTail) qf -= 0.02;
+  if (subjectiveNegative) qf -= 0.02;
+
+  qf = Math.max(0.9, Math.min(1.05, qf));
+  const quality = qf >= 1.01 ? "hoch" : qf >= 0.97 ? "mittel" : "niedrig";
+  return { qf, quality };
+}
+
+async function gatherRacepaceIntervals(env, mondayIso, targetPaceSecPerKm) {
+  const end = new Date(mondayIso + "T00:00:00Z");
+  const newest = new Date(end.getTime() - 86400000);
+  const start = new Date(end.getTime() - 21 * 86400000);
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(newest));
+
+  const allIntervals = [];
+  const activitySummaries = [];
+
+  for (const activity of acts) {
+    if (!isRun(activity)) continue;
+    const date = String(activity.start_date_local || activity.start_date || "").slice(0, 10);
+    if (!date) continue;
+
+    let streams = null;
+    try {
+      streams = await fetchIntervalsStreams(env, activity.id, ["time", "velocity_smooth", "heartrate"]);
+    } catch {
+      continue;
+    }
+    const time = streams?.time;
+    const speed = streams?.velocity_smooth;
+    const hr = streams?.heartrate;
+    if (!Array.isArray(time) || !Array.isArray(speed) || !Array.isArray(hr)) continue;
+
+    const validHrCount = hr.filter((x) => Number.isFinite(x) && x > 0).length;
+    if (!hr.length || validHrCount / hr.length < 0.9) continue;
+
+    const signal = buildRacepaceSignal({
+      time,
+      speed,
+      targetPaceSecPerKm,
+      tolerancePct: 0.03,
+    });
+    const intervals = buildWorkIntervalsFromSignal(time, signal, {
+      minIntervalSec: 90,
+      maxGapSec: 5,
+    });
+    if (!intervals.length) continue;
+
+    const intervalStats = intervals.map((interval) => {
+      const { avgSpeed, avgHr } = computeIntervalAverages({
+        speed,
+        hr,
+        startIdx: interval.startIdx,
+        endIdx: interval.endIdx,
+      });
+      const paceSecPerKm = avgSpeed ? 1000 / avgSpeed : null;
+      return {
+        ...interval,
+        avgSpeed,
+        paceSecPerKm,
+        avgHr,
+      };
+    });
+
+    const filteredIntervals = intervalStats.filter((interval, idx) => {
+      const next = intervalStats[idx + 1];
+      if (!next) return true;
+      const rest = Math.max(0, next.startTime - interval.endTime);
+      return rest <= interval.duration;
+    });
+    if (!filteredIntervals.length) continue;
+
+    if (filteredIntervals.length >= 3) {
+      const durations = filteredIntervals.map((i) => i.duration);
+      const minDur = Math.min(...durations);
+      const maxDur = Math.max(...durations);
+      if (minDur > 0 && maxDur / minDur > 1.25) continue;
+    }
+
+    if (filteredIntervals.length >= 2) {
+      const firstPace = filteredIntervals[0].paceSecPerKm;
+      const lastPace = filteredIntervals.at(-1).paceSecPerKm;
+      if (Number.isFinite(firstPace) && Number.isFinite(lastPace) && lastPace > firstPace * 1.04) {
+        continue;
+      }
+    }
+
+    const activityName = activity?.workout?.name || activity?.name || "n/a";
+    const activityIntervals = filteredIntervals.map((interval) => ({
+      date,
+      activityId: activity.id,
+      activityName,
+      duration: interval.duration,
+      paceSecPerKm: interval.paceSecPerKm,
+      avgHr: interval.avgHr,
+    }));
+    const totalDuration = activityIntervals.reduce((sum, i) => sum + i.duration, 0);
+    activitySummaries.push({
+      activityId: activity.id,
+      date,
+      activityName,
+      totalDuration,
+      intervals: activityIntervals,
+    });
+    allIntervals.push(...activityIntervals);
+  }
+
+  return { allIntervals, activitySummaries };
+}
+
+async function computeRacePredictionReport(env, mondayIso) {
+  const ctx = { wellnessCache: new Map(), blockStateCache: new Map() };
+  const blockState = await getPersistedBlockState(ctx, env, mondayIso);
+  const blockLabel = blockState?.block ?? "n/a";
+  const modeInfo = await determineMode(env, mondayIso, false);
+  const event = modeInfo?.nextEvent ?? null;
+  const eventDistanceRaw = blockState?.eventDistance || getEventDistanceFromEvent(event);
+  const eventDistanceLabel = formatEventDistance(eventDistanceRaw);
+  const eventDate = event ? String(event.start_date_local || event.start_date || "").slice(0, 10) : null;
+  const targetTimeSec = extractTargetTimeFromEvent(event);
+  const targetTimeText = targetTimeSec ? formatTimeSeconds(targetTimeSec) : "n/a";
+
+  const distanceKm = getEventDistanceKm(eventDistanceRaw);
+  if (!distanceKm || !targetTimeSec) {
+    return {
+      lines: [
+        "🎯 RACE-PREDICTION",
+        "- Modell: Interval-based (Racepace)",
+        "- Beste Einheit: n/a",
+        "- Effektive RP-Zeit (14T): n/a",
+        "- Qualität: niedrig (QF 1.00)",
+        `- Prognose ${eventDistanceLabel}: Datenbasis unzureichend`,
+        `- Ziel: ${targetTimeText} → aktuell nicht abgesichert`,
+        "- Trend: → (n/a/Woche)",
+        "",
+        "Trainer-Fazit (1 Satz):",
+        "- Datenbasis reicht aktuell nicht; es fehlen valide Event-Daten oder Zielzeit.",
+      ],
+      summary: { racePredictionMidSec: null },
+    };
+  }
+
+  const targetPaceSecPerKm = targetTimeSec / distanceKm;
+  const { allIntervals, activitySummaries } = await gatherRacepaceIntervals(env, mondayIso, targetPaceSecPerKm);
+
+  const end = new Date(mondayIso + "T00:00:00Z");
+  const start14 = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const effectiveSec = allIntervals
+    .filter((interval) => interval.date >= start14)
+    .reduce((sum, interval) => sum + interval.duration, 0);
+  const effectiveMinutes = effectiveSec / 60;
+
+  const bestActivity =
+    activitySummaries
+      .slice()
+      .sort((a, b) => (b.totalDuration !== a.totalDuration ? b.totalDuration - a.totalDuration : b.intervals.length - a.intervals.length))[0] ||
+    null;
+
+  const bestIntervals = bestActivity?.intervals ?? [];
+  const subjectiveSignals = await computeRecoverySignals(ctx, env, mondayIso);
+  const subjectiveNegative = subjectiveSignals?.subjectiveNegative ?? false;
+  const { qf, quality } = computeRaceQualityFactor(bestIntervals, { subjectiveNegative });
+
+  let predictedMidSec = null;
+  let predictedMinSec = null;
+  let predictedMaxSec = null;
+  if (effectiveMinutes >= 8) {
+    predictedMidSec = targetTimeSec * (1 / qf);
+    predictedMinSec = predictedMidSec * (1 - 0.015);
+    predictedMaxSec = predictedMidSec * (1 + 0.015);
+  }
+
+  const history = await loadDetectiveHistory(env, mondayIso);
+  const prevPredMid = history?.[0]?.racePredictionMidSec ?? null;
+  let trendArrow = "→";
+  let trendDeltaText = "n/a";
+  if (predictedMidSec != null && prevPredMid != null) {
+    const delta = predictedMidSec - prevPredMid;
+    trendDeltaText = `${Math.round(delta)}`;
+    if (Math.abs(delta) <= 5) trendArrow = "→";
+    else if (delta < 0) trendArrow = "↑";
+    else trendArrow = "↓";
+  }
+
+  const targetAssessment = (() => {
+    if (predictedMidSec == null) return "aktuell nicht abgesichert";
+    if (targetTimeSec >= predictedMinSec && targetTimeSec <= predictedMaxSec) return "realistisch";
+    if (targetTimeSec < predictedMinSec) {
+      return predictedMinSec - targetTimeSec <= predictedMinSec * 0.015 ? "ambitioniert" : "aktuell nicht abgesichert";
+    }
+    return "realistisch";
+  })();
+
+  const bestDurationSec = bestIntervals.length ? Math.round(avg(bestIntervals.map((i) => i.duration))) : null;
+  const bestDurationText = bestDurationSec ? `${Math.round(bestDurationSec / 60)}′` : "n/a";
+  const bestUnitText =
+    bestActivity && bestIntervals.length
+      ? `${bestActivity.activityName} (${bestIntervals.length}×${bestDurationText})`
+      : "n/a";
+
+  const indicative = blockLabel !== "RACE";
+  const effectiveText = Number.isFinite(effectiveMinutes) ? `${effectiveMinutes.toFixed(1)} min` : "n/a";
+  const qfText = qf.toFixed(2);
+  const predictionText =
+    predictedMidSec == null
+      ? "Datenbasis unzureichend"
+      : `${formatTimeSeconds(predictedMinSec)} – ${formatTimeSeconds(predictedMaxSec)}`;
+
+  const trainerFazit = (() => {
+    if (predictedMidSec == null) {
+      return "Aktuell reicht die Datenbasis nicht; es fehlen ≥8 min saubere Racepace-Intervalle in 14 Tagen.";
+    }
+    if (targetAssessment === "realistisch") {
+      return "Aktuell reicht es; halte Racepace-Umfang und Stabilität, ohne die Erholung zu kompromittieren.";
+    }
+    if (targetAssessment === "ambitioniert") {
+      return "Aktuell reicht es noch nicht; es fehlt etwas Racepace-Umfang oder Stabilität.";
+    }
+    return "Aktuell reicht es nicht; es fehlen klare Racepace-Intervalle und Stabilität.";
+  })();
+
+  const lines = [];
+  lines.push("🎯 RACE-PREDICTION");
+  lines.push(`- Modell: Interval-based (Racepace${indicative ? ", indikativ" : ""})`);
+  lines.push(`- Beste Einheit: ${bestUnitText}`);
+  lines.push(`- Effektive RP-Zeit (14T): ${effectiveText}`);
+  lines.push(`- Qualität: ${quality} (QF ${qfText})`);
+  lines.push(`- Prognose ${eventDistanceLabel}: ${predictionText}`);
+  lines.push(`- Ziel: ${targetTimeText} → ${targetAssessment}`);
+  lines.push(`- Trend: ${trendArrow} (${trendDeltaText}/Woche)`);
+  lines.push("");
+  lines.push("Trainer-Fazit (1 Satz):");
+  lines.push(`- ${trainerFazit}`);
+
+  return {
+    lines,
+    summary: {
+      racePredictionMidSec: predictedMidSec,
+      racePredictionEventDate: eventDate,
+      racePredictionEventDistance: eventDistanceRaw,
+      racePredictionTargetSec: targetTimeSec,
+    },
+  };
+}
+
 function buildMondayReportLines({
   blockLabel,
   blockGoalShort,
@@ -7841,6 +8176,12 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   );
   lines.push(`• 📅 Beispiel: ${miniPlan.exampleWeek.join(" · ")}`);
 
+  const racePrediction = await computeRacePredictionReport(env, mondayIso);
+  if (racePrediction?.lines?.length) {
+    lines.push("");
+    lines.push(...racePrediction.lines);
+  }
+
   const summary = {
     week: mondayIso,
     windowDays,
@@ -7856,6 +8197,10 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     efMed: comp.efMed ?? null,
     driftMed: comp.driftMed ?? null,
     compN: comp.n ?? 0,
+    racePredictionMidSec: racePrediction?.summary?.racePredictionMidSec ?? null,
+    racePredictionEventDate: racePrediction?.summary?.racePredictionEventDate ?? null,
+    racePredictionEventDistance: racePrediction?.summary?.racePredictionEventDistance ?? null,
+    racePredictionTargetSec: racePrediction?.summary?.racePredictionTargetSec ?? null,
   };
 
   // ok criteria: enough runs OR strong structural issue
@@ -8164,6 +8509,43 @@ function formatPaceSeconds(secPerKm) {
   const minutes = Math.floor(totalSec / 60);
   const seconds = totalSec % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
+}
+
+function formatTimeSeconds(totalSec) {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) return null;
+  const rounded = Math.round(totalSec);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const seconds = rounded % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function parseTimeToSeconds(raw) {
+  if (raw == null) return null;
+  if (Number.isFinite(raw)) {
+    if (raw <= 0) return null;
+    return raw >= 300 ? raw : raw * 60;
+  }
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (s.includes(":")) {
+    const parts = s.split(":").map((p) => Number(p));
+    if (parts.some((p) => !Number.isFinite(p))) return null;
+    if (parts.length === 3) {
+      const [h, m, sec] = parts;
+      return h * 3600 + m * 60 + sec;
+    }
+    if (parts.length === 2) {
+      const [m, sec] = parts;
+      return m * 60 + sec;
+    }
+  }
+  const numeric = Number(s.replace(",", "."));
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric >= 300 ? numeric : numeric * 60;
 }
 
 function formatPaceDeltaSeconds(deltaSec) {
