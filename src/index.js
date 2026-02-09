@@ -6604,8 +6604,7 @@ function buildComments(
     intervalContextParts.push(`Ausschluss: ${intervalExcludedSummary}`);
   }
   const intervalContextLine = intervalContextParts.length ? `Intervall-Kontext: ${intervalContextParts.join(" | ")}` : null;
-  const motorText = motor?.value != null ? `${motor.value.toFixed(1)}` : "n/a (kein Wert heute)";
-  const motorCoach = buildMotorCoachingComment(motor);
+  const motorWeekly = buildMotorWeeklyExplanation(motor);
   const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
   const keyCount7 = keyCompliance?.actual7 ?? fatigue?.keyCount7 ?? intensityBudget?.keyAnyCount ?? null;
   const keyCapValue = formatKeyCapValue(dynamicKeyCap, fatigue?.keyCap ?? null);
@@ -6778,6 +6777,9 @@ function buildComments(
     eventCountdownLine,
     weeklyFazit,
     weeklyWhy,
+    motorLine: motorWeekly.motorLine,
+    motorCoach: motorWeekly.coach,
+    motorExplanation: motorWeekly.explanation,
     runsLast7,
     runLoad7,
     runMinutes7,
@@ -6912,7 +6914,6 @@ function buildComments(
     lines.push("- Hinweis: Schlafdaten fehlen → Confidence -1 Stufe.");
   }
   lines.push(`- GA-Drift${gaSourceDate ? ` (letzter GA-Lauf ${gaSourceDate})` : ""}: ${driftText} | EF ${efText} | VDOT ${vdotText}`);
-  lines.push(`- Motor-Index: ${motorText} – ${motorCoach}`);
   lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
   lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
   lines.push(
@@ -7007,6 +7008,14 @@ function buildMotorCoachingComment(motor) {
   if (value >= 55) return `stabil – Kontinuität sichern, keine Eskalation nötig.${trendNote}`;
   if (value >= 40) return `fragil – Basis stabilisieren, Reize klein halten.${trendNote}`;
   return `schwach – Fokus auf ruhige GA-Kontinuität und Erholung.${trendNote}`;
+}
+
+function buildMotorWeeklyExplanation(motor) {
+  const motorLine = motor?.text || "🏎️ Motor-Index: n/a (keine vergleichbaren GA-Läufe im Fenster)";
+  const coach = buildMotorCoachingComment(motor);
+  const explanation =
+    "Erklärung: Trend-Score aus vergleichbaren GA-Läufen; EF-Median 28T vs 28T davor und Drift-Median 14T vs 14T davor. Einzelwerte können gegen den Trend laufen.";
+  return { motorLine, coach, explanation };
 }
 
 function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
@@ -7901,6 +7910,9 @@ function buildMondayReportLines({
   eventCountdownLine,
   weeklyFazit,
   weeklyWhy,
+  motorLine,
+  motorCoach,
+  motorExplanation,
   runsLast7,
   runLoad7,
   runMinutes7,
@@ -7937,6 +7949,11 @@ function buildMondayReportLines({
   lines.push("🧠 WOCHENFAZIT (Trainer)");
   lines.push(weeklyFazit);
   lines.push(weeklyWhy);
+  lines.push("");
+  lines.push("🏎️ MOTOR-INDEX (Wochenkontext)");
+  lines.push(`- ${motorLine}`);
+  lines.push(`- Einordnung: ${motorCoach}`);
+  lines.push(`- ${motorExplanation}`);
   lines.push("");
   lines.push("📊 RÜCKBLICK LETZTE WOCHE (Fakten, kompakt)");
   if (runsLast7 != null && Number.isFinite(runLoad7)) {
@@ -7991,6 +8008,10 @@ function buildMondayReportPreview() {
     eventCountdownLine: "Zeit bis Event: 5 Wochen",
     weeklyFazit: "🟠 Auf Kurs – Basis lückenhaft.",
     weeklyWhy: "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.",
+    motorLine: "🏎️ Motor-Index: 47/100 (fragil) ↓ | EF Δ -1.2% (28d) | Drift Δ +0.8%-Pkt (14d)",
+    motorCoach: "fragil – Basis stabilisieren, Reize klein halten. Trend zeigt nach unten.",
+    motorExplanation:
+      "Erklärung: Trend-Score aus vergleichbaren GA-Läufen; EF-Median 28T vs 28T davor und Drift-Median 14T vs 14T davor. Einzelwerte können gegen den Trend laufen.",
     runsLast7: 3,
     runLoad7: 165,
     runMinutes7: 142,
