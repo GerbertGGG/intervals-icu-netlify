@@ -3856,16 +3856,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         const detectiveSections = detectiveNote?.sections ?? null;
         const weeklySections = commentBundle.weeklyReportSections ?? null;
         if (detectiveSections?.title) sections.push(detectiveSections.title);
-        if (weeklySections?.blockStatus?.length) sections.push("", ...weeklySections.blockStatus);
-        if (weeklySections?.weeklyVerdict?.length) sections.push("", ...weeklySections.weeklyVerdict);
-        if (detectiveSections?.loadBasis?.length) sections.push("", ...detectiveSections.loadBasis);
-        if (detectiveSections?.racePrediction?.length) sections.push("", ...detectiveSections.racePrediction);
-        if (weeklySections?.learnings?.length) sections.push("", ...weeklySections.learnings);
-        if (weeklySections?.decision?.length) sections.push("", ...weeklySections.decision);
-        if (weeklySections?.risk?.length) sections.push("", ...weeklySections.risk);
-        detectiveNoteText = sections.join("\n");
+        if (weeklySections?.blockStatus?.length) sections.push(...weeklySections.blockStatus);
+        if (weeklySections?.weeklyVerdict?.length) sections.push(...weeklySections.weeklyVerdict);
+        if (detectiveSections?.loadBasis?.length) sections.push(...detectiveSections.loadBasis);
+        if (detectiveSections?.racePrediction?.length) sections.push(...detectiveSections.racePrediction);
+        if (weeklySections?.learnings?.length) sections.push(...weeklySections.learnings);
+        if (weeklySections?.decision?.length) sections.push(...weeklySections.decision);
+        if (weeklySections?.risk?.length) sections.push(...weeklySections.risk);
+        detectiveNoteText = sections.filter(Boolean).join("\n\n");
         if (!detectiveNoteText && commentBundle.weeklyReportLines?.length) {
-          detectiveNoteText = commentBundle.weeklyReportLines.join("\n");
+          detectiveNoteText = commentBundle.weeklyReportLines.filter(Boolean).join("\n\n");
         }
         if (!detectiveNoteText) detectiveNoteText = detectiveNote?.text ?? "";
         if (write) {
@@ -7994,7 +7994,7 @@ function buildMondayReportPreview() {
     runTargetFallback: "150–210",
   });
 
-  return report.lines.join("\n");
+  return report.lines.filter(Boolean).join("\n\n");
 }
 
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
@@ -8168,7 +8168,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   // ok criteria: enough runs OR strong structural issue
   const ok = totalRuns >= DETECTIVE_MIN_RUNS || longRuns.length === 0 || weeklyLoad < 120;
 
-  return { ok, text: lines.join("\n"), summary, sections };
+  return { ok, text: lines.filter(Boolean).join("\n\n"), summary, sections };
 }
 
 async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays) {
