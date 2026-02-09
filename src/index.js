@@ -880,6 +880,10 @@ const RUN_FLOOR_FLOOR_STEP = {
   BUILD: 10,
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
+const RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT = 5;
+const RUN_FLOOR_POST_ILLNESS_DRIFT_WORSEN_PCT = 1.5;
+const RUN_FLOOR_POST_ILLNESS_MOTOR_LOW = 45;
+const RUN_FLOOR_INJURY_PAUSE_DAYS = 14;
 
 function mapBlockToPhase(block) {
   if (block === "BASE") return "BASE";
@@ -952,6 +956,113 @@ function applyDeloadRules(currentTargets) {
     effectiveFloorTarget: floorTarget * factor,
     deloadTargetLow: floorTarget * RUN_FLOOR_DELOAD_RANGE.min,
     deloadTargetHigh: floorTarget * RUN_FLOOR_DELOAD_RANGE.max,
+  };
+}
+
+function evaluatePostIllnessPerformance({ motor, trend }) {
+  const motorValueLow = Number.isFinite(motor?.value) && motor.value <= RUN_FLOOR_POST_ILLNESS_MOTOR_LOW;
+  const motorEfDrop = Number.isFinite(motor?.dv) && motor.dv <= -RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT;
+  const trendEfDrop = Number.isFinite(trend?.dv) && trend.dv <= -RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT;
+  const trendDriftWorse =
+    Number.isFinite(trend?.dd) && trend.dd >= RUN_FLOOR_POST_ILLNESS_DRIFT_WORSEN_PCT;
+  const motorDriftWorse =
+    Number.isFinite(motor?.dd) && motor.dd >= RUN_FLOOR_POST_ILLNESS_DRIFT_WORSEN_PCT;
+
+  const reasons = [];
+  if (motorValueLow) reasons.push("Motor-Index deutlich schlechter");
+  if (motorEfDrop || trendEfDrop) {
+    reasons.push(`GA-Leistung ≥${RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT}% schlechter`);
+  }
+  if (trendDriftWorse || motorDriftWorse) reasons.push("Drift klar schlechter");
+
+  return {
+    shouldDown: reasons.length > 0,
+    reasons,
+  };
+}
+
+function computeRunfloorMode({
+  dayIso,
+  blockEffective,
+  overrideInfo,
+  reentryState,
+  runfloorAdjustedInBlock,
+  motor,
+  trend,
+}) {
+  const isBaseBuildRace = ["BASE", "BUILD", "RACE"].includes(blockEffective);
+  const lastOverrideCategory = reentryState?.lastOverrideCategory ?? null;
+  const reentryEndDay = isIsoDate(reentryState?.reentryEndDay) ? reentryState.reentryEndDay : null;
+  const reentryCheckDay = reentryEndDay ? addDaysIso(reentryEndDay, 1) : null;
+
+  const hold = (dailyText, reason) => ({
+    mode: "HOLD",
+    adjustmentPct: 0,
+    applyAdjustment: false,
+    dailyText: dailyText || null,
+    reason: reason || null,
+  });
+
+  if (!isBaseBuildRace) {
+    if (blockEffective === "HOLD_LIFE") {
+      return hold("Runfloor: HOLD (Urlaub)", "Life override: fehlender Reiz ≠ verlorene Anpassung.");
+    }
+    if (blockEffective === "HOLD_ILLNESS") {
+      return hold("Runfloor: HOLD (Krankheit – Bewertung nach ReEntry)", "Illness: Bewertung nach ReEntry.");
+    }
+    if (blockEffective === "HOLD_INJURY") {
+      const pauseDays = Number.isFinite(overrideInfo?.dayIndex) ? overrideInfo.dayIndex : null;
+      if (pauseDays != null && pauseDays >= RUN_FLOOR_INJURY_PAUSE_DAYS && !runfloorAdjustedInBlock) {
+        // Injury ≥14 Tage: struktureller Ausfall → -10 % Runfloor.
+        return {
+          mode: "DOWN_10",
+          adjustmentPct: 0.1,
+          applyAdjustment: true,
+          dailyText: "Runfloor: −10 % (längere Verletzungspause)",
+          reason: `Injury pause ≥${RUN_FLOOR_INJURY_PAUSE_DAYS} Tage → -10%.`,
+        };
+      }
+      const note = pauseDays != null ? `Verletzung – Tag ${pauseDays}` : "Verletzung";
+      return hold(`Runfloor: HOLD (${note})`, "Injury override: Runfloor bleibt stabil.");
+    }
+    if (blockEffective === "REENTRY") {
+      const detail =
+        lastOverrideCategory === "SICK"
+          ? "Krankheit – Bewertung nach ReEntry"
+          : lastOverrideCategory === "INJURED"
+            ? "Verletzung"
+            : lastOverrideCategory === "HOLIDAY"
+              ? "Urlaub"
+              : "ReEntry";
+      return hold(`Runfloor: HOLD (${detail})`, "ReEntry: keine Progression.");
+    }
+    return hold(null, "BlockEffective != BASE/BUILD/RACE → HOLD.");
+  }
+
+  if (lastOverrideCategory === "SICK" && reentryCheckDay && dayIso === reentryCheckDay) {
+    if (runfloorAdjustedInBlock) {
+      return hold("Runfloor: HOLD (bereits gesenkt im Block)", "Kein doppeltes Senken im Block.");
+    }
+    const evaluation = evaluatePostIllnessPerformance({ motor, trend });
+    if (evaluation.shouldDown) {
+      // Nach Krankheit nur bei objektivem Leistungsabfall → -5 % Runfloor.
+      return {
+        mode: "DOWN_5",
+        adjustmentPct: 0.05,
+        applyAdjustment: true,
+        dailyText: "Runfloor: −5 % (Leistungsabfall nach Krankheit)",
+        reason: `Post-Illness-Evaluation: ${evaluation.reasons.join(" | ")}`,
+      };
+    }
+    return hold("Runfloor: HOLD (Krankheit – Bewertung nach ReEntry)", "Post-Illness: keine klare Verschlechterung.");
+  }
+
+  return {
+    mode: null,
+    adjustmentPct: 0,
+    applyAdjustment: false,
+    dailyText: null,
+    reason: null,
   };
 }
 
@@ -1987,6 +2098,9 @@ function buildBlockStateLine(state) {
     eventDate: state.eventDate,
     eventDistance: state.eventDistance,
     floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
+    runfloorAdjustedInBlock: state.runfloorAdjustedInBlock ?? false,
+    runfloorAdjustmentMode: state.runfloorAdjustmentMode ?? null,
+    runfloorAdjustmentDate: isIsoDate(state.runfloorAdjustmentDate) ? state.runfloorAdjustmentDate : null,
     deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
@@ -2012,6 +2126,9 @@ function parseBlockStateFromComment(comment) {
       eventDate: parsed.eventDate ?? null,
       eventDistance: parsed.eventDistance ?? null,
       floorTarget: Number.isFinite(parsed.floorTarget) ? parsed.floorTarget : null,
+      runfloorAdjustedInBlock: parsed.runfloorAdjustedInBlock ?? false,
+      runfloorAdjustmentMode: parsed.runfloorAdjustmentMode ?? null,
+      runfloorAdjustmentDate: isIsoDate(parsed.runfloorAdjustmentDate) ? parsed.runfloorAdjustmentDate : null,
       loadDays: Number.isFinite(parsed.loadDays) ? parsed.loadDays : 0,
       deloadStartDate: isIsoDate(parsed.deloadStartDate) ? parsed.deloadStartDate : null,
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
@@ -3231,18 +3348,49 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
 
+    const overrideInfo = pickOverrideEvent(overrideEvents, day);
+    const blockEffectiveResult = computeBlockEffectiveForDay({
+      dayIso: day,
+      planBlock: blockState.block,
+      overrideInfo,
+      reentryState,
+      reentryDays,
+    });
+    patch[FIELD_BLOCK_EFFECTIVE] = blockEffectiveResult.blockEffective;
+
+    const isNewBlock = blockState.startDate && blockState.startDate !== previousBlockState?.startDate;
+    const runfloorAdjustedInBlock = isNewBlock
+      ? false
+      : previousBlockState?.runfloorAdjustedInBlock ?? false;
+    const runfloorModeInfo = computeRunfloorMode({
+      dayIso: day,
+      blockEffective: blockEffectiveResult.blockEffective,
+      overrideInfo: blockEffectiveResult.overrideInfo,
+      reentryState,
+      runfloorAdjustedInBlock,
+      motor,
+      trend,
+    });
+
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
     const dailyRunLoads = buildRunDailyLoads(ctx, day, RUN_FLOOR_DELOAD_WINDOW_DAYS);
+    const runfloorAdjustedTarget = runfloorModeInfo.applyAdjustment
+      ? Math.max(1, Math.round(baseRunFloorTarget * (1 - runfloorModeInfo.adjustmentPct)))
+      : baseRunFloorTarget;
+    const didAdjustRunfloor = runfloorModeInfo.applyAdjustment && runfloorAdjustedTarget !== baseRunFloorTarget;
     const runFloorState = evaluateRunFloorState({
       todayISO: day,
-      floorTarget: baseRunFloorTarget,
+      floorTarget: runfloorAdjustedTarget,
       phase,
       eventInDays,
       eventDateISO: eventDate || null,
       previousState: previousBlockState,
       dailyRunLoads,
     });
+    runFloorState.runfloorMode = runfloorModeInfo.mode;
+    runFloorState.runfloorModeText = runfloorModeInfo.dailyText;
+    runFloorState.runfloorModeReason = runfloorModeInfo.reason;
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
       policy = {
@@ -3308,19 +3456,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     historyMetrics.keyCompliance = keyCompliance;
 
     patch[FIELD_BLOCK] = blockState.block;
-    const overrideInfo = pickOverrideEvent(overrideEvents, day);
-    const blockEffectiveResult = computeBlockEffectiveForDay({
-      dayIso: day,
-      planBlock: blockState.block,
-      overrideInfo,
-      reentryState,
-      reentryDays,
-    });
-    patch[FIELD_BLOCK_EFFECTIVE] = blockEffectiveResult.blockEffective;
     reentryState = blockEffectiveResult.nextState;
     if (write) {
       await writeReentryState(env, reentryState);
     }
+    blockState.runfloorAdjustedInBlock = runfloorAdjustedInBlock || didAdjustRunfloor;
+    blockState.runfloorAdjustmentMode = didAdjustRunfloor
+      ? runfloorModeInfo.mode
+      : previousBlockState?.runfloorAdjustmentMode ?? null;
+    blockState.runfloorAdjustmentDate = didAdjustRunfloor
+      ? day
+      : previousBlockState?.runfloorAdjustmentDate ?? null;
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
@@ -3328,6 +3474,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDate,
       eventDistance,
       floorTarget: blockState.floorTarget,
+      runfloorAdjustedInBlock: blockState.runfloorAdjustedInBlock,
+      runfloorAdjustmentMode: blockState.runfloorAdjustmentMode,
+      runfloorAdjustmentDate: blockState.runfloorAdjustmentDate,
       deloadStartDate: blockState.deloadStartDate,
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
@@ -3353,6 +3502,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       lastEventDate: runFloorState.lastEventDate,
       daysSinceEvent: runFloorState.daysSinceEvent,
       reasons: runFloorState.reasons,
+      runfloorMode: runFloorState.runfloorMode,
+      runfloorModeText: runFloorState.runfloorModeText,
+      runfloorModeReason: runFloorState.runfloorModeReason,
     });
 
     const maintenance14d = computeMaintenance14d(ctx, day);
@@ -3377,11 +3529,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
             ? "orange"
             : "green";
     const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-  const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
-  const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
-  const freqCount14 = maintenance14d?.runCount14 ?? null;
-  const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
-  const warningSignals = [
+    const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+    const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+    const freqCount14 = maintenance14d?.runCount14 ?? null;
+    const freqSignal =
+      freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
+    const warningSignals = [
       driftSignalForLearning === "orange" || driftSignalForLearning === "red",
       hrv1dConcern,
       freqSignal === "orange" || freqSignal === "red",
@@ -6599,6 +6752,9 @@ function buildComments(
     lines.push(`- Runfloor-Status: ${runLoad7} / Soll ${runTarget}${runFloorGap ? " (Lücke)" : ""}`);
   } else {
     lines.push("- Runfloor-Status: n/a");
+  }
+  if (runFloorState?.runfloorModeText) {
+    lines.push(`- ${runFloorState.runfloorModeText}`);
   }
   lines.push(
     `- Deload-Status (21T): ${deloadSum21 ?? "n/a"} / Ziel ${deloadTargetSum}${
