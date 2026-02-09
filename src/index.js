@@ -8198,6 +8198,7 @@ async function buildWatchfacePayload(env, endIso) {
 
 
 function isRun(a) {
+  if (isStrength(a)) return false;
   const t = String(a?.type ?? "").toLowerCase();
   return t === "run" || t === "running" || t.includes("run") || t.includes("laufen");
 }
