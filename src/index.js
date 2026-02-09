@@ -3806,6 +3806,51 @@ function extractSleepHoursFromWellness(wellness) {
   return null;
 }
 
+function extractSleepQualityFromWellness(wellness) {
+  if (!wellness) return null;
+  const candidates = [
+    wellness.sleepQuality,
+    wellness.sleep_quality,
+    wellness.sleep_quality_score,
+  ];
+  for (const value of candidates) {
+    const num = parseWellnessNumber(value);
+    if (!Number.isFinite(num)) continue;
+    if (num >= 1 && num <= 4) return Math.round(num);
+  }
+  return null;
+}
+
+function extractSleepScoreFromWellness(wellness) {
+  if (!wellness) return null;
+  const candidates = [
+    wellness.sleepScore,
+    wellness.sleep_score,
+  ];
+  for (const value of candidates) {
+    const num = parseWellnessNumber(value);
+    if (!Number.isFinite(num)) continue;
+    if (num >= 0 && num <= 100) return Math.round(num);
+  }
+  return null;
+}
+
+function deriveSleepQualityLabel({ sleepQuality, sleepScore } = {}) {
+  if (sleepQuality != null) {
+    if (sleepQuality === 1) return "super";
+    if (sleepQuality === 2) return "gut";
+    if (sleepQuality === 3) return "ok";
+    if (sleepQuality === 4) return "schlecht";
+  }
+  if (sleepScore != null) {
+    if (sleepScore >= 85) return "super";
+    if (sleepScore >= 70) return "gut";
+    if (sleepScore >= 55) return "ok";
+    return "schlecht";
+  }
+  return null;
+}
+
 function extractHrvFromWellness(wellness) {
   if (!wellness) return null;
   const candidates = [
@@ -3863,14 +3908,33 @@ function averageSubjectiveShare(shares) {
 function buildRecoverySignalLines(recoverySignals) {
   if (!recoverySignals) return [];
   const lines = [];
-  const { sleepHours, sleepBaseline, sleepDeltaPct, hrv, hrvBaseline, hrvDeltaPct, sleepLow, hrvLow } = recoverySignals;
+  const {
+    sleepHours,
+    sleepBaseline,
+    sleepDeltaPct,
+    sleepQuality,
+    sleepScore,
+    sleepQualityLabel,
+    hrv,
+    hrvBaseline,
+    hrvDeltaPct,
+    sleepLow,
+    hrvLow,
+  } = recoverySignals;
   const hasSleep = sleepHours != null;
   const hasHrv = hrv != null;
-  if (!hasSleep && !hasHrv) return [];
+  const hasSleepQuality = sleepQuality != null || sleepScore != null;
+  if (!hasSleep && !hasHrv && !hasSleepQuality) return [];
   const parts = [];
   if (hasSleep) {
     const sleepDeltaText = sleepBaseline != null ? ` (${sleepDeltaPct > 0 ? "+" : ""}${sleepDeltaPct.toFixed(0)}% vs 7T)` : "";
     parts.push(`Schlaf ${sleepHours.toFixed(1)}h${sleepDeltaText}`);
+  }
+  if (hasSleepQuality) {
+    const qualityLabel = sleepQualityLabel ? sleepQualityLabel : "unbekannt";
+    const scoreText = sleepScore != null ? ` (Score ${sleepScore})` : "";
+    const qualityText = sleepQuality != null ? `Qualität ${qualityLabel}${scoreText}` : `Schlafscore ${qualityLabel}${scoreText}`;
+    parts.push(qualityText);
   }
   if (hasHrv) {
     const hrvDeltaText = hrvBaseline != null ? ` (${hrvDeltaPct > 0 ? "+" : ""}${hrvDeltaPct.toFixed(0)}% vs 7T)` : "";
@@ -3909,6 +3973,8 @@ function buildSubjectiveAverageLine(recoverySignals, label = "4T") {
 async function computeRecoverySignals(ctx, env, dayIso) {
   const today = await fetchWellnessDay(ctx, env, dayIso);
   const sleepToday = extractSleepHoursFromWellness(today);
+  const sleepQuality = extractSleepQualityFromWellness(today);
+  const sleepScore = extractSleepScoreFromWellness(today);
   const hrvToday = extractHrvFromWellness(today);
 
   const priorDays = [];
@@ -3946,7 +4012,16 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     if (motivationNeg != null) motivationEntries.push(motivationNeg);
   }
 
-  if (sleepToday == null && hrvToday == null && !legsEntries.length && !moodEntries.length && !painEntries.length && !motivationEntries.length) {
+  if (
+    sleepToday == null &&
+    sleepQuality == null &&
+    sleepScore == null &&
+    hrvToday == null &&
+    !legsEntries.length &&
+    !moodEntries.length &&
+    !painEntries.length &&
+    !motivationEntries.length
+  ) {
     return null;
   }
 
@@ -3958,7 +4033,11 @@ async function computeRecoverySignals(ctx, env, dayIso) {
   const yday = await fetchWellnessDay(ctx, env, ydayIso);
   const ydayHrv = extractHrvFromWellness(yday);
   const ydayHrvDeltaPct = hrvBaseline && ydayHrv ? ((ydayHrv - hrvBaseline) / hrvBaseline) * 100 : null;
-  const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
+  const sleepQualityLabel = deriveSleepQualityLabel({ sleepQuality, sleepScore });
+  const sleepLowByHours = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
+  const sleepLowByQuality = sleepQuality != null && sleepQuality >= 4;
+  const sleepLowByScore = sleepScore != null && sleepScore < 55;
+  const sleepLow = sleepLowByHours || sleepLowByQuality || sleepLowByScore;
   const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
   const legsNegative = subjectiveRollingFlag(legsEntries);
   const moodNegative = subjectiveRollingFlag(moodEntries);
@@ -3977,6 +4056,9 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     sleepHours: sleepToday,
     sleepBaseline,
     sleepDeltaPct,
+    sleepQuality,
+    sleepScore,
+    sleepQualityLabel,
     hrv: hrvToday,
     hrvBaseline,
     hrvDeltaPct,
@@ -5859,7 +5941,10 @@ function buildComments(
         ? "Heute ist ein kontrollierter Schwellenreiz möglich, ohne zusätzlichen Ermüdungsaufbau."
         : "Heute bleiben wir beim geplanten Reiz und setzen keine zusätzliche Intensität.";
 
-  const sleepMissing = recoverySignals?.sleepHours == null;
+  const sleepMissing =
+    recoverySignals?.sleepHours == null &&
+    recoverySignals?.sleepQuality == null &&
+    recoverySignals?.sleepScore == null;
   let readinessConf = readinessConfidence || computeReadinessConfidence({
     driftSignal,
     hrvDeltaPct,
@@ -6253,7 +6338,15 @@ function buildComments(
   lines.push("");
   lines.push("🔎 BEGRÜNDUNG & ZAHLEN");
   lines.push(`- HRV Δ (vs 7T): ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"}${hrv2dConcern ? " (2T negativ)" : ""}`);
-  lines.push(`- Schlaf: ${recoverySignals?.sleepHours != null ? `${recoverySignals.sleepHours.toFixed(1)}h` : "n/a"}${recoverySignals?.sleepLow ? " (unter Basis)" : ""}`);
+  const sleepQualityLabel = recoverySignals?.sleepQualityLabel;
+  const sleepScoreText = recoverySignals?.sleepScore != null ? `Score ${recoverySignals.sleepScore}` : null;
+  const sleepQualityText =
+    recoverySignals?.sleepQuality != null || recoverySignals?.sleepScore != null
+      ? `${sleepQualityLabel || "unbekannt"}${sleepScoreText ? ` (${sleepScoreText})` : ""}`
+      : null;
+  const sleepHoursText = recoverySignals?.sleepHours != null ? `${recoverySignals.sleepHours.toFixed(1)}h` : null;
+  const sleepParts = [sleepHoursText, sleepQualityText].filter(Boolean);
+  lines.push(`- Schlaf: ${sleepParts.length ? sleepParts.join(" | ") : "n/a"}${recoverySignals?.sleepLow ? " (unter Basis)" : ""}`);
   if (sleepMissing) {
     lines.push("- Hinweis: Schlafdaten fehlen → Confidence -1 Stufe.");
   }
