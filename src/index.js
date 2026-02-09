@@ -5775,6 +5775,10 @@ function buildComments(
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runBaseTarget = Math.round(runFloorState?.floorTarget ?? 0);
   const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+  const deloadSum21 = Number.isFinite(runFloorState?.sum21) ? Math.round(runFloorState.sum21) : null;
+  const deloadTargetSum = RUN_FLOOR_DELOAD_SUM21_MIN;
+  const deloadDelta = deloadSum21 != null ? deloadSum21 - deloadTargetSum : null;
+  const deloadActiveDays = Number.isFinite(runFloorState?.activeDays21) ? runFloorState.activeDays21 : null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
   const floorModeText =
     overlayMode === "DELOAD"
@@ -6239,6 +6243,11 @@ function buildComments(
   } else {
     lines.push("- Runfloor-Status: n/a");
   }
+  lines.push(
+    `- Deload-Status (21T): ${deloadSum21 ?? "n/a"} / Ziel ${deloadTargetSum}${
+      deloadDelta != null ? ` (Δ ${deloadDelta >= 0 ? "+" : ""}${Math.round(deloadDelta)})` : ""
+    }${deloadActiveDays != null ? ` | aktive Tage ${deloadActiveDays}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN}` : ""}`
+  );
   lines.push(`- Konsequenz: ${loadConsequence}`);
 
   lines.push("");
@@ -8147,56 +8156,38 @@ function isStrength(a) {
 }
 async function buildWatchfacePayload(env, endIso) {
   const end = parseISODateSafe(endIso) ? endIso : isoDate(new Date());
-  const start7Iso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 6 * 86400000));
-  const start21Iso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 20 * 86400000));
-  const deloadFactor = 0.6;
+  const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 6 * 86400000));
 
-  // Fetch activities only for these 21 days (klein halten)
-  const acts = await fetchIntervalsActivities(env, start21Iso, end);
+  // Fetch activities only for these 7 days (klein halten)
+  const acts = await fetchIntervalsActivities(env, startIso, end);
 
-  const days = listIsoDaysInclusive(start7Iso, end); // genau 7
-  const days21 = listIsoDaysInclusive(start21Iso, end); // genau 21
+  const days = listIsoDaysInclusive(startIso, end); // genau 7
   const runLoadByDay = {};
-  const runLoadByDay21 = {};
   const strengthMinByDay = {};
 
-  for (const d of days) {
-    runLoadByDay[d] = 0;
-    strengthMinByDay[d] = 0;
-  }
-  for (const d of days21) {
-    runLoadByDay21[d] = 0;
-  }
+  for (const d of days) { runLoadByDay[d] = 0; strengthMinByDay[d] = 0; }
 
   for (const a of acts) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d) continue;
+    if (!d || !(d in runLoadByDay)) continue;
 
-    if (d in runLoadByDay21 && isRun(a)) {
-      runLoadByDay21[d] += Number(extractLoad(a)) || 0;
+    if (isRun(a)) {
+      runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
+      continue;
     }
-    if (d in runLoadByDay) {
-      if (isRun(a)) {
-        runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
-        continue;
-      }
 
-      if (isStrength(a)) {
-        const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
-        strengthMinByDay[d] += sec / 60;
-        continue;
-      }
+    if (isStrength(a)) {
+      const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+      strengthMinByDay[d] += sec / 60;
+      continue;
     }
   }
 
   const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
+
   const runSum7 = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
-
-  const runSum21 = days21.reduce((sum, d) => sum + (runLoadByDay21[d] || 0), 0);
-  const runDeloadGoal = Math.round((runSum21 / 3) * deloadFactor);
-  const runDeloadDelta = Math.round(runSum7 - runDeloadGoal);
 
   return {
     ok: true,
@@ -8205,9 +8196,6 @@ async function buildWatchfacePayload(env, endIso) {
     runLoad,
     runSum7,
     runGoal: 150,
-    runSum21: Math.round(runSum21),
-    runDeloadGoal,
-    runDeloadDelta,
     strengthMin,
     strengthSum7,
     strengthGoal: 60,
