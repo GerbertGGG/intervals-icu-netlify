@@ -7494,9 +7494,7 @@ function buildWhySummary(insights) {
 
 function applyDetectiveWhy(rep, insights) {
   if (!insights) return rep;
-  const lines = rep.text.split("\n");
-  appendWhySection(lines, insights);
-  return { ...rep, text: lines.join("\n"), insights };
+  return { ...rep, insights };
 }
 
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
