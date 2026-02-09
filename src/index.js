@@ -5928,7 +5928,8 @@ function buildComments(
   lines.push("");
   lines.push("🧭 TAGESSTATUS");
   lines.push(`- Heute: ${todayStatusLine}`);
-  lines.push(`- Kontext: ${nextEventLine}`);
+  const trainerLine = "Trainer: Qualität vor Umfang.";
+  lines.push(`- Kontext: ${nextEventLine} | ${trainerLine}`);
   if (hadKey && !hadGA) {
     lines.push(`- Key-Metriken: ${keyMetricsLine}`);
   } else {
