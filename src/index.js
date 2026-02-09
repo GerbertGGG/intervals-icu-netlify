@@ -6802,6 +6802,21 @@ function buildComments(
     if (trend?.confidence) lines.push(`- Confidence-Level: ${trend.confidence}`);
   }
 
+  if (motor?.text) {
+    let motorCoachLine = "Motor n/a: mehr vergleichbare GA-Läufe sammeln und Konstanz herstellen.";
+    if (motor?.ok && Number.isFinite(motor?.value)) {
+      if (motor.value >= 70) motorCoachLine = "Motor stark: GA-Form baut auf, Kurs halten und sauber dosieren.";
+      else if (motor.value >= 55) motorCoachLine = "Motor stabil: Basis trägt, kleine Fortschritte sind drin.";
+      else if (motor.value >= 40) motorCoachLine = "Motor fragil: Kontinuität vor Intensität, erst stabilisieren.";
+      else motorCoachLine = "Motor schwach: erst 2–4 Wochen ruhige GA-Kontinuität, dann neu bewerten.";
+    }
+    lines.push("");
+    lines.push("🏎️ MOTOR");
+    lines.push(`- ${motor.text}`);
+    lines.push("- Einordnung: Trend-Score (0–100) aus vergleichbaren GA-Läufen, EF (28d) stärker gewichtet als Drift (14d).");
+    lines.push(`- Coach: ${motorCoachLine}`);
+  }
+
   lines.push("");
   const dailySuggestion =
     todayAction === "kein Lauf"
