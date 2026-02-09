@@ -6744,6 +6744,19 @@ function buildComments(
   if (!keyDoseMet) blockFitNotes.push("⚠ Key-Dosis nicht sauber gesetzt – Qualität/Erholung ausbalancieren.");
   if (warningCount > 0 || subjectiveNegative) blockFitNotes.push("⚠ Erholungssignale beachten, Reize dosieren.");
   if (blockFitNotes.length < 2) blockFitNotes.push("✔ Keine strukturellen Konflikte zum Block erkennbar.");
+  const blockFitLabel = weeklyAmpel;
+  const blockFitSummary = !longRunMet
+    ? "Basis limitiert die Blockwirkung"
+    : runFloorGap
+      ? "Runfloor bremst die Blockwirkung"
+      : !keyDoseMet
+        ? "Qualität dosieren, Block stabil halten"
+        : "Blockziel aktuell sauber bedient";
+  const basisSummaryLine = !longRunMet
+    ? "Longrun fehlt – Verteilung wacklig."
+    : runFloorGap
+      ? "Runfloor unter Soll – Basis wacklig."
+      : "Struktur stabil – Verteilung passt.";
   const confidenceEvidence = Number.isFinite(trend?.recentCount)
     ? trend.recentCount
     : Number.isFinite(ga21Context?.count)
@@ -6775,6 +6788,8 @@ function buildComments(
     blockLabel,
     blockGoalShort,
     priorityLine,
+    blockFitLabel,
+    blockFitSummary,
     eventCountdownLine,
     weeklyFazit,
     weeklyWhy,
@@ -6784,15 +6799,7 @@ function buildComments(
     keySummaryLine: keyCount7 != null ? keySummaryLine : null,
     gaRuns7,
     longRuns7,
-    monotony,
-    strain,
-    monotonyText,
-    strainText,
     gaComparableLine,
-    planSoll,
-    planIst,
-    planRating,
-    blockFitNotes,
     learningHelps,
     learningBrakes,
     confidenceEvidence,
@@ -6803,6 +6810,8 @@ function buildComments(
     keyMax,
     runTarget,
     runTargetFallback: miniPlan.loadTarget,
+    runLoadTargetText: miniPlan.loadTarget,
+    basisSummaryLine,
   });
 
   const topTriggers = [];
@@ -7777,15 +7786,11 @@ async function computeRacePredictionReport(env, mondayIso) {
       lines: [
         "🎯 RACE-PREDICTION",
         "- Modell: Interval-based (Racepace)",
-        "- Beste Einheit: n/a",
-        "- Effektive RP-Zeit (14T): n/a",
-        "- Qualität: niedrig (QF 1.00)",
-        `- Prognose ${eventDistanceLabel}: Datenbasis unzureichend`,
-        `- Ziel: ${targetTimeText} → aktuell nicht abgesichert`,
-        "- Trend: → (n/a/Woche)",
-        "",
-        "Trainer-Fazit (1 Satz):",
-        "- Datenbasis reicht aktuell nicht; es fehlen valide Event-Daten oder Zielzeit.",
+        "- Valide RP-Einheiten (14T): keine",
+        "- Effektive RP-Zeit: n/a",
+        `- Prognose ${eventDistanceLabel}: nicht belastbar`,
+        "- Status: Zielzeit aktuell nicht abgesichert",
+        "- Trainer-Hinweis: Es fehlen valide Event-Daten oder eine Zielzeit.",
       ],
       summary: { racePredictionMidSec: null },
     };
@@ -7821,18 +7826,6 @@ async function computeRacePredictionReport(env, mondayIso) {
     predictedMaxSec = predictedMidSec * (1 + 0.015);
   }
 
-  const history = await loadDetectiveHistory(env, mondayIso);
-  const prevPredMid = history?.[0]?.racePredictionMidSec ?? null;
-  let trendArrow = "→";
-  let trendDeltaText = "n/a";
-  if (predictedMidSec != null && prevPredMid != null) {
-    const delta = predictedMidSec - prevPredMid;
-    trendDeltaText = `${Math.round(delta)}`;
-    if (Math.abs(delta) <= 5) trendArrow = "→";
-    else if (delta < 0) trendArrow = "↑";
-    else trendArrow = "↓";
-  }
-
   const targetAssessment = (() => {
     if (predictedMidSec == null) return "aktuell nicht abgesichert";
     if (targetTimeSec >= predictedMinSec && targetTimeSec <= predictedMaxSec) return "realistisch";
@@ -7842,46 +7835,35 @@ async function computeRacePredictionReport(env, mondayIso) {
     return "realistisch";
   })();
 
-  const bestDurationSec = bestIntervals.length ? Math.round(avg(bestIntervals.map((i) => i.duration))) : null;
-  const bestDurationText = bestDurationSec ? `${Math.round(bestDurationSec / 60)}′` : "n/a";
-  const bestUnitText =
-    bestActivity && bestIntervals.length
-      ? `${bestActivity.activityName} (${bestIntervals.length}×${bestDurationText})`
-      : "n/a";
-
   const indicative = blockLabel !== "RACE";
   const effectiveText = Number.isFinite(effectiveMinutes) ? `${effectiveMinutes.toFixed(1)} min` : "n/a";
-  const qfText = qf.toFixed(2);
   const predictionText =
     predictedMidSec == null
-      ? "Datenbasis unzureichend"
+      ? "nicht belastbar"
       : `${formatTimeSeconds(predictedMinSec)} – ${formatTimeSeconds(predictedMaxSec)}`;
+  const targetStatus = predictedMidSec == null ? "Zielzeit aktuell nicht abgesichert" : `Zielzeit ${targetAssessment}`;
 
   const trainerFazit = (() => {
     if (predictedMidSec == null) {
-      return "Aktuell reicht die Datenbasis nicht; es fehlen ≥8 min saubere Racepace-Intervalle in 14 Tagen.";
+      return "Ohne ≥8 min saubere Racepace-Intervalle keine seriöse Prognose.";
     }
     if (targetAssessment === "realistisch") {
-      return "Aktuell reicht es; halte Racepace-Umfang und Stabilität, ohne die Erholung zu kompromittieren.";
+      return "Halte Racepace-Umfang und Stabilität, ohne die Erholung zu kompromittieren.";
     }
     if (targetAssessment === "ambitioniert") {
-      return "Aktuell reicht es noch nicht; es fehlt etwas Racepace-Umfang oder Stabilität.";
+      return "Es fehlt etwas Racepace-Umfang oder Stabilität.";
     }
-    return "Aktuell reicht es nicht; es fehlen klare Racepace-Intervalle und Stabilität.";
+    return "Es fehlen klare Racepace-Intervalle und Stabilität.";
   })();
 
   const lines = [];
   lines.push("🎯 RACE-PREDICTION");
   lines.push(`- Modell: Interval-based (Racepace${indicative ? ", indikativ" : ""})`);
-  lines.push(`- Beste Einheit: ${bestUnitText}`);
-  lines.push(`- Effektive RP-Zeit (14T): ${effectiveText}`);
-  lines.push(`- Qualität: ${quality} (QF ${qfText})`);
+  lines.push(`- Valide RP-Einheiten (14T): ${activitySummaries.length || "keine"}`);
+  lines.push(`- Effektive RP-Zeit: ${effectiveText}`);
   lines.push(`- Prognose ${eventDistanceLabel}: ${predictionText}`);
-  lines.push(`- Ziel: ${targetTimeText} → ${targetAssessment}`);
-  lines.push(`- Trend: ${trendArrow} (${trendDeltaText}/Woche)`);
-  lines.push("");
-  lines.push("Trainer-Fazit (1 Satz):");
-  lines.push(`- ${trainerFazit}`);
+  lines.push(`- Status: ${targetStatus}`);
+  lines.push(`- Trainer-Hinweis: ${trainerFazit}`);
 
   return {
     lines,
@@ -7898,6 +7880,8 @@ function buildMondayReportLines({
   blockLabel,
   blockGoalShort,
   priorityLine,
+  blockFitLabel,
+  blockFitSummary,
   eventCountdownLine,
   weeklyFazit,
   weeklyWhy,
@@ -7907,15 +7891,7 @@ function buildMondayReportLines({
   keySummaryLine,
   gaRuns7,
   longRuns7,
-  monotony,
-  strain,
-  monotonyText,
-  strainText,
   gaComparableLine,
-  planSoll,
-  planIst,
-  planRating,
-  blockFitNotes,
   learningHelps,
   learningBrakes,
   confidenceEvidence,
@@ -7926,60 +7902,57 @@ function buildMondayReportLines({
   keyMax,
   runTarget,
   runTargetFallback,
+  runLoadTargetText,
+  basisSummaryLine,
 }) {
   const lines = [];
   lines.push("🏗️ BLOCK-STATUS");
   lines.push(`Block: ${blockLabel}`);
-  lines.push(`Ziel des Blocks: ${blockGoalShort}`);
-  lines.push(`Priorität jetzt: ${priorityLine}`);
+  lines.push(`Ziel: ${blockGoalShort}`);
+  lines.push(`Priorität: ${priorityLine}`);
   if (eventCountdownLine) lines.push(eventCountdownLine);
+  if (blockFitLabel) {
+    const fitNote = blockFitSummary ? ` → ${blockFitSummary}` : "";
+    lines.push(`Block-Fit: ${blockFitLabel}${fitNote}`);
+  }
   lines.push("");
-  lines.push("🧠 WOCHENFAZIT (Trainer)");
+  lines.push("📊 WOCHENURTEIL (Trainer)");
   lines.push(weeklyFazit);
   lines.push(weeklyWhy);
   lines.push("");
-  lines.push("📊 RÜCKBLICK LETZTE WOCHE (Fakten, kompakt)");
+  lines.push("📈 BELASTUNG & BASIS (kompakt)");
   if (runsLast7 != null && Number.isFinite(runLoad7)) {
-    lines.push(`• Läufe: ${runsLast7} | Run-Load: ${runLoad7} | Minuten: ${runMinutes7 ?? 0}`);
+    const loadTargetNote = runLoadTargetText ? ` (Soll ${runLoadTargetText})` : "";
+    lines.push(`• Läufe: ${runsLast7}`);
+    lines.push(`• Run-Load: ${runLoad7}${loadTargetNote}`);
+    if (runMinutes7 != null) {
+      lines.push(`• Minuten: ${runMinutes7}`);
+    }
   }
   if (keySummaryLine) lines.push(`• ${keySummaryLine}`);
   if (gaRuns7 != null || longRuns7 != null) {
-    lines.push(`• GA ≥30′: ${gaRuns7 ?? 0} | Longrun ≥60′: ${longRuns7 ?? 0}`);
-  }
-  if (isFiniteNumber(monotony) || isFiniteNumber(strain)) {
-    lines.push(`• Monotony: ${monotonyText} | Strain: ${strainText}`);
+    lines.push(`• Longrun ≥60′: ${longRuns7 ?? 0}×`);
   }
   if (gaComparableLine) lines.push(`• ${gaComparableLine}`);
+  if (basisSummaryLine) lines.push(`Kernaussage: ${basisSummaryLine}`);
   lines.push("");
-  lines.push("📐 PLANABWEICHUNG (Soll vs Ist)");
-  lines.push(planSoll);
-  lines.push(planIst);
-  lines.push(planRating);
-  lines.push("");
-  lines.push("🧭 EINORDNUNG ZUM BLOCK");
-  blockFitNotes.slice(0, 4).forEach((item) => lines.push(`• ${item}`));
-  lines.push("");
-  lines.push("🧠 LEARNINGS");
-  lines.push("A) Was funktioniert bei dir");
+  lines.push("🧠 LEARNINGS (nur das Relevante)");
+  lines.push("Was funktioniert");
   learningHelps.slice(0, 4).forEach((item) => lines.push(`• ${item}`));
-  lines.push("B) Was dich bremst");
+  lines.push("Was dich bremst");
   learningBrakes.slice(0, 3).forEach((item) => lines.push(`• ${item}`));
-  lines.push("C) “Confidence”");
-  lines.push(`Evidenz: ${confidenceEvidence} Beobachtungen | Confidence: ${confidencePct}%`);
+  lines.push(`Confidence: ${confidencePct}% (${confidenceEvidence} Beobachtungen)`);
   lines.push("");
-  lines.push("🎙️ TRAINER-ENTSCHEIDUNG");
-  lines.push(trainerDecision);
-  lines.push("");
-  lines.push("⚠️ RISIKO-BLICK (2–3 Wochen)");
-  riskNotes.slice(0, 2).forEach((item) => lines.push(`• ${item}`));
-  lines.push("");
-  lines.push("🎯 WOCHENZIEL (1 Fokus)");
-  lines.push(weeklyFocusGoal);
+  lines.push("🎯 ENTSCHEIDUNG & WOCHENZIEL");
+  lines.push(`Entscheidung: ${trainerDecision}`);
+  lines.push(`Wochenfokus (1 Punkt): ${weeklyFocusGoal}`);
   lines.push("Leitplanken:");
   lines.push(`• max ${keyMax} Key/7T`);
   lines.push(`• Runfloor ≥${runTarget > 0 ? runTarget : runTargetFallback}`);
-  lines.push(`• 1× Longrun ≥60′ locker`);
   lines.push(`• Easy = Drift unter Warnschwelle`);
+  lines.push("");
+  lines.push("⚠️ RISIKO-BLICK (2–3 Wochen)");
+  riskNotes.slice(0, 2).forEach((item) => lines.push(`• ${item}`));
   return lines;
 }
 
@@ -7988,6 +7961,8 @@ function buildMondayReportPreview() {
     blockLabel: "BUILD",
     blockGoalShort: "Basis stärken und eine Key-Qualität pro Woche sauber setzen",
     priorityLine: "Qualität > Umfang | Frequenz halten",
+    blockFitLabel: "🟠",
+    blockFitSummary: "Qualität vorhanden, Basis limitiert die Blockwirkung",
     eventCountdownLine: "Zeit bis Event: 5 Wochen",
     weeklyFazit: "🟠 Auf Kurs – Basis lückenhaft.",
     weeklyWhy: "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.",
@@ -7997,24 +7972,12 @@ function buildMondayReportPreview() {
     keySummaryLine: "Key: 1 (Schwelle)",
     gaRuns7: 2,
     longRuns7: 0,
-    monotony: 1.42,
-    strain: 530,
-    monotonyText: "1.42",
-    strainText: "530",
     gaComparableLine: "Messbasis GA comparable: n=4 | EF(med)=1.17890 | Drift(med)=4.2%",
-    planSoll: "Soll: 3–4 Läufe | Run-Load 150–210 | 1× Longrun ≥60′ | max 1 Key",
-    planIst: "Ist: 3 Läufe | Run-Load 165 | Longrun 0× | Key 1×",
-    planRating: "Bewertung: 2/4 Kernziele erreicht → kritisch: Longrun zuerst stabilisieren, keine Eskalation.",
-    blockFitNotes: [
-      "⚠ Longrun fehlt – Basis trägt die Blockziele noch nicht.",
-      "⚠ Runfloor wacklig – Blockwirkung wird ausgebremst.",
-      "✔ Blockpriorität getroffen, Reize passen zur Phase.",
-    ],
     learningHelps: ["Easy-Tage nach Key wirken", "Häufiger & kürzer hält dich stabil"],
     learningBrakes: ["Fehlende Longruns", "Runfloor-Lücke bremst Basis"],
     confidenceEvidence: 5,
     confidencePct: 60,
-    trainerDecision: "Diese Woche keine Eskalation – Longrun zuerst setzen, dann Qualität aufbauen.",
+    trainerDecision: "Keine Eskalation. Basis zuerst schließen.",
     riskNotes: [
       "Wenn Longrun fehlt → Ausdauerbasis stagniert, Blockwirkung bleibt flach.",
       "Wenn Runfloor niedrig bleibt → Belastbarkeit sinkt, Qualität wird brüchig.",
@@ -8023,6 +7986,8 @@ function buildMondayReportPreview() {
     keyMax: 1,
     runTarget: 160,
     runTargetFallback: "150–210",
+    runLoadTargetText: "150–210",
+    basisSummaryLine: "Umfang nicht kritisch – Verteilung wacklig.",
   });
 
   return lines.join("\n");
@@ -8162,39 +8127,137 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const lines = [];
   lines.push(title);
   lines.push("");
-  lines.push("🏗️ Struktur:");
-  lines.push(`• 🏃 Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`• ⏱️ Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
-  lines.push(`• 🧱 Longruns: ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche) | 🎯 Key: ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`• 🌿 GA (≥30′, nicht key): ${gaRuns.length} | ⚡ Kurz (<30′): ${shortRuns.length}`);
-  lines.push(`• 🧭 ${keyTypeLine}`);
-  lines.push("");
-  lines.push("📈 Belastung:");
-  lines.push(`• 📊 Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
-  lines.push("");
-
-  lines.push("🔍 Highlights:");
-  if (!findings.length) lines.push("• ✅ Keine klaren strukturellen Probleme.");
-  else for (const f of findings.slice(0, 4)) lines.push(`• 🧩 ${f}`);
-
-  lines.push("");
-  lines.push("✅ Nächste Schritte:");
-  if (!actions.length) lines.push("• 📌 Struktur halten, Bench/GA comparable sammeln.");
-  else for (const a of uniq(actions).slice(0, 4)) lines.push(`• 🛠️ ${a}`);
-
+  const ctx = { wellnessCache: new Map(), blockStateCache: new Map() };
+  const blockState = await getPersistedBlockState(ctx, env, mondayIso);
+  const modeInfo = await determineMode(env, mondayIso, false);
+  const event = modeInfo?.nextEvent ?? null;
+  const eventDate = event ? String(event.start_date_local || event.start_date || "").slice(0, 10) : null;
+  const daysToEvent =
+    eventDate && mondayIso
+      ? Math.max(0, Math.round((new Date(eventDate).getTime() - new Date(mondayIso + "T00:00:00Z").getTime()) / 86400000))
+      : null;
+  const eventCountdownLine =
+    Number.isFinite(daysToEvent) && daysToEvent >= 0
+      ? `Zeit bis Event: ${daysToEvent >= 14 ? `${Math.round(daysToEvent / 7)} Wochen` : `${daysToEvent} Tage`}`
+      : null;
+  const blockLabel = (blockState?.block ?? "n/a").toUpperCase();
+  const blockGoalMap = {
+    BASE: "Basis stabilisieren, Umfang verträglich halten",
+    BUILD: "Qualität aufbauen, Basis stabil halten",
+    RACE: "Form zuspitzen, Frische schützen",
+    RESET: "Reset & Systeme beruhigen",
+  };
+  const blockGoalShort = blockGoalMap[blockLabel] || "n/a";
+  const priorityLine = "Qualität > Umfang | Frequenz halten";
   const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek });
+  const blockFitLabel = totalRuns === 0 ? "🔴" : longRuns.length === 0 || weeklyLoad < 120 ? "🟠" : "🟢";
+  const blockFitSummary =
+    totalRuns === 0
+      ? "Keine belastbaren Basisdaten"
+      : longRuns.length === 0
+        ? "Basis limitiert die Blockwirkung"
+        : weeklyLoad < 120
+          ? "Runfloor limitiert die Blockwirkung"
+          : "Blockziel aktuell sauber bedient";
+  const weeklyFazit =
+    totalRuns === 0
+      ? "🔴 Instabil – keine Basis."
+      : longRuns.length === 0 || weeklyLoad < 120
+        ? "🟠 Auf Kurs – aber lückenhafte Basis."
+        : "🟢 Stabil – Struktur trägt.";
+  const weeklyWhy =
+    totalRuns === 0
+      ? "Warum: Keine Läufe im Fenster; Urteil nicht belastbar."
+      : longRuns.length === 0
+        ? "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung."
+        : weeklyLoad < 120
+          ? "Warum: Runfloor unter Soll; aerobe Tragfähigkeit wacklig."
+          : "Warum: Kernziele erfüllt; Block greift sauber.";
+  const basisSummaryLine =
+    longRuns.length === 0
+      ? "Umfang nicht kritisch – Verteilung wacklig."
+      : weeklyLoad < 120
+        ? "Runfloor unter Soll – Basis wacklig."
+        : "Struktur stabil – Verteilung passt.";
+  const driftText = comp.driftMed != null ? `${comp.driftMed.toFixed(1)} %` : "n/a";
+  const learningHelps = [];
+  if (runsPerWeek >= 2) learningHelps.push("Häufige, kürzere Läufe stabilisieren dich");
+  if (keyRuns.length > 0 && gaRuns.length > 0) learningHelps.push("Easy-Tage nach Keys wirken regenerativ");
+  if (!learningHelps.length) learningHelps.push("Struktur wirkt stabil, weiter beobachten");
+  const learningBrakes = [];
+  if (longRuns.length === 0) learningBrakes.push("Fehlender Longrun");
+  if (weeklyLoad < 120) learningBrakes.push("Runfloor-Lücke → Basis trägt Qualität nicht sauber");
+  const shortShare = totalRuns ? (shortRuns.length / totalRuns) * 100 : 0;
+  if (shortRuns.length >= 3 && shortShare >= 45) learningBrakes.push("Viele Kurzläufe limitieren Basis");
+  if (!learningBrakes.length) learningBrakes.push("Keine klaren Bremser aktuell");
+  const confidenceEvidence = comp.n ?? 0;
+  const confidencePct = confidenceEvidence >= 6 ? 70 : confidenceEvidence >= 4 ? 60 : confidenceEvidence >= 2 ? 50 : 40;
+  const trainerDecision =
+    longRuns.length === 0
+      ? "Keine Eskalation. Basis zuerst schließen."
+      : weeklyLoad < 120
+        ? "Frequenz/Basis stabilisieren, keine Eskalation."
+        : keyRuns.length === 0
+          ? "1 Key sauber setzen, sonst easy."
+          : "Plan halten, Progression nur minimal.";
+  const weeklyFocusGoal =
+    longRuns.length === 0
+      ? "1× Longrun 60–75′ locker"
+      : weeklyLoad < 120
+        ? `Runfloor stabilisieren: ${miniPlan.runTarget} Läufe`
+        : keyRuns.length === 0
+          ? "1× Key sauber setzen (Schwelle/VO2)"
+          : "Struktur halten: 1× Key + Longrun locker";
+  const riskNotes = [];
+  if (longRuns.length === 0) riskNotes.push("Kein Longrun → Basis stagniert, Race-Block bleibt flach.");
+  if (weeklyLoad < 120) riskNotes.push("Niedriger Runfloor → Belastbarkeit sinkt, Qualität wird brüchig.");
+  if (!riskNotes.length) riskNotes.push("Struktur stabil – Risiko aktuell begrenzt.");
+
+  lines.push("🏗️ BLOCK-STATUS");
+  lines.push(`Block: ${blockLabel}`);
+  lines.push(`Ziel: ${blockGoalShort}`);
+  lines.push(`Priorität: ${priorityLine}`);
+  if (eventCountdownLine) lines.push(eventCountdownLine);
+  lines.push(`Block-Fit: ${blockFitLabel} → ${blockFitSummary}`);
   lines.push("");
-  lines.push("🗓️ Mini-Plan nächste Woche:");
-  lines.push(
-    `• 🎯 Ziele: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
-  );
-  lines.push(`• 📅 Beispiel: ${miniPlan.exampleWeek.join(" · ")}`);
+  lines.push("📊 WOCHENURTEIL (Trainer)");
+  lines.push(weeklyFazit);
+  lines.push(weeklyWhy);
+  lines.push("");
+  lines.push("📈 BELASTUNG & BASIS (kompakt)");
+  lines.push(`Läufe: ${totalRuns}`);
+  lines.push(`Run-Load: ${Math.round(weeklyLoad)} (Soll ${miniPlan.loadTarget})`);
+  lines.push(`Key: ${keyRuns.length}×`);
+  lines.push(`Longrun ≥60′: ${longRuns.length}×`);
+  lines.push(`GA-Messbasis (vergleichbar): n=${comp.n ?? 0}`);
+  lines.push(`Drift (med): ${driftText}`);
+  lines.push(`Kernaussage: ${basisSummaryLine}`);
+  lines.push("");
 
   const racePrediction = await computeRacePredictionReport(env, mondayIso);
   if (racePrediction?.lines?.length) {
     lines.push("");
     lines.push(...racePrediction.lines);
   }
+
+  lines.push("");
+  lines.push("🧠 LEARNINGS (nur das Relevante)");
+  lines.push("Was funktioniert");
+  learningHelps.slice(0, 3).forEach((item) => lines.push(`• ${item}`));
+  lines.push("Was dich bremst");
+  learningBrakes.slice(0, 3).forEach((item) => lines.push(`• ${item}`));
+  lines.push(`Confidence: ${confidencePct}% (${confidenceEvidence} Beobachtungen)`);
+  lines.push("");
+  lines.push("🎯 ENTSCHEIDUNG & WOCHENZIEL");
+  lines.push(`Entscheidung: ${trainerDecision}`);
+  lines.push(`Wochenfokus (1 Punkt): ${weeklyFocusGoal}`);
+  lines.push("Leitplanken");
+  lines.push("max. 1 Key / 7 Tage");
+  lines.push(`Runfloor ≥${miniPlan.loadTarget}`);
+  lines.push("Easy-Läufe: Drift unter Warnschwelle");
+  lines.push("");
+  lines.push("⚠️ RISIKO-BLICK (2–3 Wochen)");
+  riskNotes.slice(0, 2).forEach((item) => lines.push(`• ${item}`));
 
   const summary = {
     week: mondayIso,
