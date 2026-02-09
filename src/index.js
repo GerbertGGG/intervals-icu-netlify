@@ -6595,8 +6595,10 @@ function buildComments(
   const runsLast7 = Number.isFinite(loads7?.runCount7) ? loads7.runCount7 : null;
   const gaRuns7 = Number.isFinite(loads7?.gaRuns7) ? loads7.gaRuns7 : null;
   const longRuns7 = Number.isFinite(loads7?.longRuns7) ? loads7.longRuns7 : null;
-  const monotonyText = isFiniteNumber(fatigue?.monotony) ? fatigue.monotony.toFixed(2) : "n/a";
-  const strainText = isFiniteNumber(fatigue?.strain) ? Math.round(fatigue.strain).toFixed(0) : "n/a";
+  const monotony = isFiniteNumber(fatigue?.monotony) ? fatigue.monotony : null;
+  const strain = isFiniteNumber(fatigue?.strain) ? fatigue.strain : null;
+  const monotonyText = monotony != null ? monotony.toFixed(2) : "n/a";
+  const strainText = strain != null ? Math.round(strain).toFixed(0) : "n/a";
   const blockGoalShort = blockGoal.replace(/,?\s*keine Eskalation\.?/i, "").replace(/\.$/, "");
   const blockLabel = (blockState?.block ?? blockStatus ?? "n/a").toUpperCase();
   const priorityParts = ["Qualität > Umfang", freqSignal === "red" ? "Frequenz drosseln" : "Frequenz halten"];
