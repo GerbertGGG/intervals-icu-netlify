@@ -8910,9 +8910,7 @@ function computeRacePaceAssessmentFromStreams(streams, activity) {
   const speed = streams?.velocity_smooth;
   const hr = streams?.heartrate;
   if (!Array.isArray(time) || !Array.isArray(speed)) return null;
-
-  const racepaceSecPerKm = extractRacepaceSecPerKm(activity);
-  if (!Number.isFinite(racepaceSecPerKm) || racepaceSecPerKm <= 0) return null;
+  const tagPresent = hasIntervalKeyTag(activity);
 
   const n = Math.min(time.length, speed.length, Array.isArray(hr) ? hr.length : time.length);
   if (n < 2) return null;
@@ -8920,6 +8918,18 @@ function computeRacePaceAssessmentFromStreams(streams, activity) {
   const timeSlice = time.slice(0, n);
   const speedSlice = speed.slice(0, n);
   const hrSlice = Array.isArray(hr) ? hr.slice(0, n) : null;
+
+  let racepaceSecPerKm = extractRacepaceSecPerKm(activity);
+  if (!Number.isFinite(racepaceSecPerKm) || racepaceSecPerKm <= 0) {
+    if (tagPresent) {
+      const speedVals = speedSlice.filter((x) => Number.isFinite(x));
+      const fallbackSpeed = quantile(speedVals, HRR60_INTERVAL_CONFIG.tagSpeedQuantile);
+      if (Number.isFinite(fallbackSpeed) && fallbackSpeed > 0) {
+        racepaceSecPerKm = 1000 / fallbackSpeed;
+      }
+    }
+  }
+  if (!Number.isFinite(racepaceSecPerKm) || racepaceSecPerKm <= 0) return null;
 
   const paceTolerancePct = 2.5;
   const paceLower = racepaceSecPerKm * (1 - paceTolerancePct / 100);
