@@ -3727,6 +3727,20 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       }
     }
 
+    let gaComparableStats = null;
+    try {
+      const samples = await gatherGASamples(ctx, day, MOTOR_WINDOW_DAYS, { comparable: true, needCv: true });
+      if (samples?.length) {
+        gaComparableStats = {
+          n: samples.length,
+          efMed: median(samples.map((x) => x.ef)),
+          driftMed: median(samples.map((x) => x.drift)),
+        };
+      }
+    } catch {
+      gaComparableStats = null;
+    }
+
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
     const commentBundle = buildComments({
       perRunInfo,
@@ -3773,6 +3787,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       lastKeyIntervalInsights,
       intervalContext,
       existingRecommendationLines,
+      gaComparableStats,
     }, { debug });
 
     const dailyReportText = commentBundle.dailyReportText;
@@ -6159,6 +6174,7 @@ function buildComments(
     ga21Context,
     intervalContext,
     existingRecommendationLines,
+    gaComparableStats,
   },
   { debug = false } = {}
 ) {
@@ -6604,25 +6620,52 @@ function buildComments(
     keyCount7 == null
       ? "Key: n/a"
       : `Key: ${keyCount7}${keyCount7 > 0 && keyTypeSummary ? ` (${keyTypeSummary})` : ""}`;
-  const weeklyStatusLine =
-    needsLongRun || runFloorGap
-      ? "🟠 Auf Kurs – Basis lückenhaft."
-      : warningCount > 0
-        ? "🟠 Auf Kurs – Signale angespannt."
-        : "🟢 Stabil – Struktur trägt.";
-  const weeklyCoachLine = needsLongRun
-    ? "Die Reize passen zum Block, aber ohne Longrun riskierst du, dass die Qualität nicht trägt."
-    : runFloorGap
-      ? "Die Reize passen zum Block, aber die Runfloor-Lücke bremst die Basis."
-      : warningCount > 0
-        ? "Die Reize passen, aber achte auf saubere Erholung und Easy-Pace."
-        : "Reize passen zum Block, Struktur wirkt stabil.";
-  const keyPlanLine = keyCount7 > 0 && keyCompliance?.capExceeded !== true ? "✔ Key richtig gesetzt" : "❌ Key fehlt";
-  const runFloorLine =
-    runTarget > 0
-      ? `${runFloorGap ? "⚠" : "✔"} Runfloor ${runLoad7} / ${runTarget}`
-      : "⚠ Runfloor n/a";
-  const longRunLine = needsLongRun ? "❌ Longrun fehlt → strukturelles Defizit" : "✔ Longrun gesetzt";
+  const runMinutes7 = Number.isFinite(loads7?.runMinutes7) ? Math.round(loads7.runMinutes7) : null;
+  const miniPlan = buildMiniPlanTargets({
+    runsPerWeek: Number.isFinite(runsLast7) ? runsLast7 : 0,
+    weeklyLoad: runLoad7,
+    keyPerWeek: Number.isFinite(keyCount7) ? keyCount7 : 0,
+  });
+  const keyMax = Number.isFinite(keyCapValue) ? keyCapValue : KEY_HARD_MAX_PER_7D;
+  const parseTargetRange = (text) => {
+    const nums = String(text || "").match(/\d+/g)?.map((n) => Number(n)) ?? [];
+    if (!nums.length) return { min: null, max: null };
+    return { min: nums[0], max: nums[nums.length - 1] };
+  };
+  const runTargetRange = parseTargetRange(miniPlan.runTarget);
+  const longRunMet = (longRuns7 ?? 0) >= 1;
+  const runFloorMet = runTarget > 0 ? runLoad7 >= runTarget : false;
+  const keyDoseNeeded = keyCompliance?.freqOk === false || keyCompliance?.preferredMissing;
+  const keyDoseMet =
+    keyCompliance?.capExceeded === true
+      ? false
+      : keyDoseNeeded
+        ? (keyCount7 ?? 0) >= 1 && (keyCount7 ?? 0) <= keyMax
+        : (keyCount7 ?? 0) <= keyMax;
+  const frequencyMet = runTargetRange.min != null ? (runsLast7 ?? 0) >= runTargetRange.min : false;
+  const coreGoals = [longRunMet, runFloorMet, keyDoseMet, frequencyMet];
+  const coreGoalsMet = coreGoals.filter(Boolean).length;
+  const coreGoalsTotal = coreGoals.length;
+  const planDeviationCritical = !longRunMet || (runTarget > 0 && runFloorGap);
+  const weeklyAmpel =
+    coreGoalsMet <= 1 || (warningCount >= 2 && subjectiveNegative) || fatigue?.override
+      ? "🔴"
+      : coreGoalsMet >= 3 && !planDeviationCritical
+        ? "🟢"
+        : "🟠";
+  const weeklyFazit =
+    weeklyAmpel === "🟢"
+      ? "🟢 Stabil – Struktur trägt."
+      : weeklyAmpel === "🔴"
+        ? "🔴 Instabil – Struktur bricht."
+        : "🟠 Auf Kurs – Basis lückenhaft.";
+  const weeklyWhy = (() => {
+    if (!longRunMet) return "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.";
+    if (runFloorGap) return "Warum: Runfloor unter Soll; Basiswoche nicht stabil genug für Progression.";
+    if (!keyDoseMet) return "Warum: Key-Dosis passt nicht zur Woche; Qualität/Regeneration aus dem Gleichgewicht.";
+    if (!frequencyMet) return "Warum: Frequenz unter Soll; Kontinuität fehlt für stabile Basis.";
+    return "Warum: Kernziele erfüllt; Blockpriorität wird aktuell sauber bedient.";
+  })();
   const learningHelps = [];
   if (freqSignal !== "red") learningHelps.push("Häufiger & kürzer hält dich stabil");
   if (keySpacing?.ok) learningHelps.push("Easy-Tage nach Key wirken");
@@ -6632,45 +6675,99 @@ function buildComments(
   if (driftSignal !== "green" && driftSignal !== "unknown") learningBrakes.push("Easy-Tempo oft zu hoch → Drift steigt");
   if (runFloorGap) learningBrakes.push("Runfloor-Lücke bremst Basis");
   if (!learningBrakes.length) learningBrakes.push("Keine klaren Bremser aktuell");
-  const weeklyGoal = needsLongRun
-    ? "→ 1× Longrun 60–75′ locker"
-    : needsKey
-      ? "→ 1× Key (Schwelle/VO2) sauber setzen"
-      : "→ Struktur halten, Longrun & Easy-Tage sauber";
+  const gaComparableLine =
+    gaComparableStats?.n > 0 && gaComparableStats.efMed != null && gaComparableStats.driftMed != null
+      ? `Messbasis GA comparable: n=${gaComparableStats.n} | EF(med)=${gaComparableStats.efMed.toFixed(
+          5
+        )} | Drift(med)=${gaComparableStats.driftMed.toFixed(1)}%`
+      : null;
+  const eventCountdownLine =
+    Number.isFinite(daysToEvent) && daysToEvent >= 0
+      ? `Zeit bis Event: ${
+          daysToEvent >= 14 ? `${Math.round(daysToEvent / 7)} Wochen` : `${daysToEvent} Tage`
+        }`
+      : null;
+  const planSoll = `Soll: ${miniPlan.runTarget} Läufe | Run-Load ${miniPlan.loadTarget} | 1× Longrun ≥60′ | max ${keyMax} Key`;
+  const planIst = `Ist: ${runsLast7 ?? 0} Läufe | Run-Load ${runLoad7} | Longrun ${longRuns7 ?? 0}× | Key ${
+    keyCount7 ?? 0
+  }×`;
+  const planConsequence = (() => {
+    if (!longRunMet) return "Longrun zuerst stabilisieren, keine Eskalation.";
+    if (runFloorGap) return "Frequenz/GA stabilisieren, erst dann Progression.";
+    if (!keyDoseMet) return "Key-Dosis glätten, Qualität gezielt setzen.";
+    if (!frequencyMet) return "Frequenz erhöhen, Woche wieder tragfähig machen.";
+    return "Plan halten, minimal progressieren.";
+  })();
+  const planRating = `Bewertung: ${coreGoalsMet}/${coreGoalsTotal} Kernziele erreicht → ${
+    planDeviationCritical ? `kritisch: ${planConsequence}` : planConsequence
+  }`;
+  const blockFitNotes = [];
+  if (weeklyAmpel === "🟢") blockFitNotes.push("✔ Blockpriorität getroffen, Reize passen zur Phase.");
+  if (!longRunMet) blockFitNotes.push("⚠ Longrun fehlt – Basis trägt die Blockziele noch nicht.");
+  if (runFloorGap) blockFitNotes.push("⚠ Runfloor wacklig – Blockwirkung wird ausgebremst.");
+  if (!keyDoseMet) blockFitNotes.push("⚠ Key-Dosis nicht sauber gesetzt – Qualität/Erholung ausbalancieren.");
+  if (warningCount > 0 || subjectiveNegative) blockFitNotes.push("⚠ Erholungssignale beachten, Reize dosieren.");
+  if (blockFitNotes.length < 2) blockFitNotes.push("✔ Keine strukturellen Konflikte zum Block erkennbar.");
+  const confidenceEvidence = Number.isFinite(trend?.recentCount)
+    ? trend.recentCount
+    : Number.isFinite(ga21Context?.count)
+      ? ga21Context.count
+      : 0;
+  const confidencePct =
+    trend?.confidence === "hoch" ? 80 : trend?.confidence === "mittel" ? 60 : trend?.confidence === "niedrig" ? 40 : 40;
+  const trainerDecision = (() => {
+    if (!longRunMet) return "Diese Woche keine Eskalation – Longrun zuerst setzen, dann Qualität aufbauen.";
+    if (runFloorGap) return "Frequenz/GA stabilisieren; Qualität nur, wenn die Basis steht.";
+    if (!keyDoseMet) return "Plan halten, 1 Key sauber, restliche Läufe bewusst easy.";
+    return "Plan halten, 1 Key sauber, Progression nur minimal.";
+  })();
+  const riskNotes = [];
+  if (!longRunMet) riskNotes.push("Wenn Longrun fehlt → Ausdauerbasis stagniert, Blockwirkung bleibt flach.");
+  if (runFloorGap) riskNotes.push("Wenn Runfloor niedrig bleibt → Belastbarkeit sinkt, Qualität wird brüchig.");
+  if (driftSignal === "orange" || driftSignal === "red")
+    riskNotes.push("Wenn Easy-Drift hoch bleibt → Ermüdung kumuliert, Fortschritt verzögert sich.");
+  if (!riskNotes.length) riskNotes.push("Wenn Struktur wackelt → Blockziel verzögert sich leicht.");
+  const weeklyFocusGoal = !longRunMet
+    ? "1× Longrun 60–75′ locker."
+    : runFloorGap
+      ? `Runfloor stabilisieren: ${miniPlan.runTarget} Läufe locker.`
+      : !keyDoseMet
+        ? "1× Key (Schwelle/VO2) sauber, sonst easy."
+        : "Struktur halten: 1× Key sauber, Longrun locker.";
 
-  const weeklyReportLines = [];
-  weeklyReportLines.push("🧭 MONTAGS-REPORT");
-  weeklyReportLines.push("");
-  weeklyReportLines.push("🏗️ BLOCK-STATUS");
-  weeklyReportLines.push(`Block: ${blockLabel}`);
-  weeklyReportLines.push(`Ziel: ${blockGoalShort}`);
-  weeklyReportLines.push(`Priorität: ${priorityLine}`);
-  weeklyReportLines.push("");
-  weeklyReportLines.push("🧠 WOCHENFAZIT (Trainer)");
-  weeklyReportLines.push(weeklyStatusLine);
-  weeklyReportLines.push(weeklyCoachLine);
-  weeklyReportLines.push("");
-  weeklyReportLines.push("📊 RÜCKBLICK LETZTE WOCHE");
-  weeklyReportLines.push(`Läufe: ${runsLast7 ?? "n/a"} | Run-Load: ${runLoad7}`);
-  weeklyReportLines.push(keySummaryLine);
-  weeklyReportLines.push(`GA ≥30′: ${gaRuns7 ?? "n/a"} | Longrun: ${longRuns7 && longRuns7 > 0 ? longRuns7 : "❌"}`);
-  weeklyReportLines.push(`Monotony: ${monotonyText} | Strain: ${strainText}`);
-  weeklyReportLines.push("");
-  weeklyReportLines.push("🧭 EINORDNUNG ZUM PLAN");
-  weeklyReportLines.push(keyPlanLine);
-  weeklyReportLines.push(runFloorLine);
-  weeklyReportLines.push(longRunLine);
-  weeklyReportLines.push("");
-  weeklyReportLines.push("🧠 LEARNINGS");
-  weeklyReportLines.push("Was funktioniert:");
-  learningHelps.forEach((item) => weeklyReportLines.push(`• ${item}`));
-  weeklyReportLines.push("");
-  weeklyReportLines.push("Was bremsen:");
-  learningBrakes.forEach((item) => weeklyReportLines.push(`• ${item}`));
-  weeklyReportLines.push("");
-  weeklyReportLines.push("🎯 WOCHENZIEL");
-  weeklyReportLines.push(weeklyGoal);
-  weeklyReportLines.push(`Leitplanken: max. ${KEY_HARD_MAX_PER_7D} Key | Runfloor ≥${runTarget > 0 ? runTarget : "n/a"}`);
+  const weeklyReportLines = buildMondayReportLines({
+    blockLabel,
+    blockGoalShort,
+    priorityLine,
+    eventCountdownLine,
+    weeklyFazit,
+    weeklyWhy,
+    runsLast7,
+    runLoad7,
+    runMinutes7,
+    keySummaryLine: keyCount7 != null ? keySummaryLine : null,
+    gaRuns7,
+    longRuns7,
+    monotony,
+    strain,
+    monotonyText,
+    strainText,
+    gaComparableLine,
+    planSoll,
+    planIst,
+    planRating,
+    blockFitNotes,
+    learningHelps,
+    learningBrakes,
+    confidenceEvidence,
+    confidencePct,
+    trainerDecision,
+    riskNotes,
+    weeklyFocusGoal,
+    keyMax,
+    runTarget,
+    runTargetFallback: miniPlan.loadTarget,
+  });
 
   const topTriggers = [];
   if (runFloorGap) topTriggers.push("Runfloor-Gap");
@@ -7444,6 +7541,140 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
       : ["Mi 30–35′ easy", "Fr 40–50′ GA", "So 60–75′ longrun"];
 
   return { runTarget, loadTarget, exampleWeek };
+}
+
+function buildMondayReportLines({
+  blockLabel,
+  blockGoalShort,
+  priorityLine,
+  eventCountdownLine,
+  weeklyFazit,
+  weeklyWhy,
+  runsLast7,
+  runLoad7,
+  runMinutes7,
+  keySummaryLine,
+  gaRuns7,
+  longRuns7,
+  monotony,
+  strain,
+  monotonyText,
+  strainText,
+  gaComparableLine,
+  planSoll,
+  planIst,
+  planRating,
+  blockFitNotes,
+  learningHelps,
+  learningBrakes,
+  confidenceEvidence,
+  confidencePct,
+  trainerDecision,
+  riskNotes,
+  weeklyFocusGoal,
+  keyMax,
+  runTarget,
+  runTargetFallback,
+}) {
+  const lines = [];
+  lines.push("🏗️ BLOCK-STATUS");
+  lines.push(`Block: ${blockLabel}`);
+  lines.push(`Ziel des Blocks: ${blockGoalShort}`);
+  lines.push(`Priorität jetzt: ${priorityLine}`);
+  if (eventCountdownLine) lines.push(eventCountdownLine);
+  lines.push("");
+  lines.push("🧠 WOCHENFAZIT (Trainer)");
+  lines.push(weeklyFazit);
+  lines.push(weeklyWhy);
+  lines.push("");
+  lines.push("📊 RÜCKBLICK LETZTE WOCHE (Fakten, kompakt)");
+  if (runsLast7 != null && Number.isFinite(runLoad7)) {
+    lines.push(`• Läufe: ${runsLast7} | Run-Load: ${runLoad7} | Minuten: ${runMinutes7 ?? 0}`);
+  }
+  if (keySummaryLine) lines.push(`• ${keySummaryLine}`);
+  if (gaRuns7 != null || longRuns7 != null) {
+    lines.push(`• GA ≥30′: ${gaRuns7 ?? 0} | Longrun ≥60′: ${longRuns7 ?? 0}`);
+  }
+  if (isFiniteNumber(monotony) || isFiniteNumber(strain)) {
+    lines.push(`• Monotony: ${monotonyText} | Strain: ${strainText}`);
+  }
+  if (gaComparableLine) lines.push(`• ${gaComparableLine}`);
+  lines.push("");
+  lines.push("📐 PLANABWEICHUNG (Soll vs Ist)");
+  lines.push(planSoll);
+  lines.push(planIst);
+  lines.push(planRating);
+  lines.push("");
+  lines.push("🧭 EINORDNUNG ZUM BLOCK");
+  blockFitNotes.slice(0, 4).forEach((item) => lines.push(`• ${item}`));
+  lines.push("");
+  lines.push("🧠 LEARNINGS");
+  lines.push("A) Was funktioniert bei dir");
+  learningHelps.slice(0, 4).forEach((item) => lines.push(`• ${item}`));
+  lines.push("B) Was dich bremst");
+  learningBrakes.slice(0, 3).forEach((item) => lines.push(`• ${item}`));
+  lines.push("C) “Confidence”");
+  lines.push(`Evidenz: ${confidenceEvidence} Beobachtungen | Confidence: ${confidencePct}%`);
+  lines.push("");
+  lines.push("🎙️ TRAINER-ENTSCHEIDUNG");
+  lines.push(trainerDecision);
+  lines.push("");
+  lines.push("⚠️ RISIKO-BLICK (2–3 Wochen)");
+  riskNotes.slice(0, 2).forEach((item) => lines.push(`• ${item}`));
+  lines.push("");
+  lines.push("🎯 WOCHENZIEL (1 Fokus)");
+  lines.push(weeklyFocusGoal);
+  lines.push("Leitplanken:");
+  lines.push(`• max ${keyMax} Key/7T`);
+  lines.push(`• Runfloor ≥${runTarget > 0 ? runTarget : runTargetFallback}`);
+  lines.push(`• 1× Longrun ≥60′ locker`);
+  lines.push(`• Easy = Drift unter Warnschwelle`);
+  return lines;
+}
+
+function buildMondayReportPreview() {
+  const lines = buildMondayReportLines({
+    blockLabel: "BUILD",
+    blockGoalShort: "Basis stärken und eine Key-Qualität pro Woche sauber setzen",
+    priorityLine: "Qualität > Umfang | Frequenz halten",
+    eventCountdownLine: "Zeit bis Event: 5 Wochen",
+    weeklyFazit: "🟠 Auf Kurs – Basis lückenhaft.",
+    weeklyWhy: "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.",
+    runsLast7: 3,
+    runLoad7: 165,
+    runMinutes7: 142,
+    keySummaryLine: "Key: 1 (Schwelle)",
+    gaRuns7: 2,
+    longRuns7: 0,
+    monotony: 1.42,
+    strain: 530,
+    monotonyText: "1.42",
+    strainText: "530",
+    gaComparableLine: "Messbasis GA comparable: n=4 | EF(med)=1.17890 | Drift(med)=4.2%",
+    planSoll: "Soll: 3–4 Läufe | Run-Load 150–210 | 1× Longrun ≥60′ | max 1 Key",
+    planIst: "Ist: 3 Läufe | Run-Load 165 | Longrun 0× | Key 1×",
+    planRating: "Bewertung: 2/4 Kernziele erreicht → kritisch: Longrun zuerst stabilisieren, keine Eskalation.",
+    blockFitNotes: [
+      "⚠ Longrun fehlt – Basis trägt die Blockziele noch nicht.",
+      "⚠ Runfloor wacklig – Blockwirkung wird ausgebremst.",
+      "✔ Blockpriorität getroffen, Reize passen zur Phase.",
+    ],
+    learningHelps: ["Easy-Tage nach Key wirken", "Häufiger & kürzer hält dich stabil"],
+    learningBrakes: ["Fehlende Longruns", "Runfloor-Lücke bremst Basis"],
+    confidenceEvidence: 5,
+    confidencePct: 60,
+    trainerDecision: "Diese Woche keine Eskalation – Longrun zuerst setzen, dann Qualität aufbauen.",
+    riskNotes: [
+      "Wenn Longrun fehlt → Ausdauerbasis stagniert, Blockwirkung bleibt flach.",
+      "Wenn Runfloor niedrig bleibt → Belastbarkeit sinkt, Qualität wird brüchig.",
+    ],
+    weeklyFocusGoal: "1× Longrun 60–75′ locker.",
+    keyMax: 1,
+    runTarget: 160,
+    runTargetFallback: "150–210",
+  });
+
+  return lines.join("\n");
 }
 
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
@@ -9061,4 +9292,4 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   return races;
 }
 
-export { computeIntervalMetricsFromStreams };
+export { computeIntervalMetricsFromStreams, buildMondayReportPreview };
