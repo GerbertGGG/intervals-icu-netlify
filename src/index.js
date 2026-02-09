@@ -2012,6 +2012,26 @@ async function fetchWellnessDay(ctx, env, dayIso) {
   return p;
 }
 
+async function fetchDailyReportNote(env, dayIso) {
+  const externalId = `daily-report-${dayIso}`;
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = (events || []).find((e) => String(e?.external_id || "") === externalId);
+  return existing?.description ?? null;
+}
+
+function extractRecommendationLines(noteText) {
+  if (!noteText) return null;
+  const lines = String(noteText).split("\n");
+  const startIndex = lines.findIndex((line) => line.trim() === "🎯 HEUTIGE EMPFEHLUNG");
+  if (startIndex === -1) return null;
+  const section = lines.slice(startIndex, startIndex + 4);
+  if (section.length < 4) return null;
+  if (!section[1]?.trim().startsWith("- Empfehlung:")) return null;
+  if (!section[2]?.trim().startsWith("- Begründung:")) return null;
+  if (!section[3]?.trim().startsWith("- Konkret:")) return null;
+  return section;
+}
+
 async function getPersistedBlockState(ctx, env, dayIso) {
   if (ctx.blockStateCache.has(dayIso)) return ctx.blockStateCache.get(dayIso);
   const wellness = await fetchWellnessDay(ctx, env, dayIso);
@@ -3167,11 +3187,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
             ? "orange"
             : "green";
     const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-    const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
-    const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
-    const freqCount14 = maintenance14d?.runCount14 ?? null;
-    const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
-    const warningSignals = [
+  const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+  const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
+  const freqCount14 = maintenance14d?.runCount14 ?? null;
+  const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
+  const warningSignals = [
       driftSignalForLearning === "orange" || driftSignalForLearning === "red",
       hrv1dConcern,
       freqSignal === "orange" || freqSignal === "red",
@@ -3348,6 +3368,22 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     };
     learningEvents.push(learningEvent);
 
+    let existingRecommendationLines = null;
+    if (write && perRunInfo.length > 0) {
+      try {
+        const existingNoteText = await fetchDailyReportNote(env, day);
+        existingRecommendationLines = extractRecommendationLines(existingNoteText);
+      } catch (e) {
+        existingRecommendationLines = null;
+        if (debug) {
+          addDebug(ctx.debugOut, day, null, "warn:daily_report_note_fetch_failed", {
+            message: String(e?.message ?? e),
+            stack: String(e?.stack ?? ""),
+          });
+        }
+      }
+    }
+
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
     const commentBundle = buildComments({
       perRunInfo,
@@ -3390,6 +3426,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       lastKeyInfo,
       lastKeyIntervalInsights,
       intervalContext,
+      existingRecommendationLines,
     }, { debug });
 
     const dailyReportText = commentBundle.dailyReportText;
@@ -5505,6 +5542,7 @@ function buildComments(
     lastKeyIntervalInsights,
     ga21Context,
     intervalContext,
+    existingRecommendationLines,
   },
   { debug = false } = {}
 ) {
@@ -5762,6 +5800,14 @@ function buildComments(
             ? "Qualitätsreiz passt heute in den Block und die Leitplanken."
         : "Heute zählt entspanntes Durchbewegen ohne Risiko.";
 
+  const recommendationLines = existingRecommendationLines?.length
+    ? existingRecommendationLines
+    : [
+        "🎯 HEUTIGE EMPFEHLUNG",
+        `- Empfehlung: ${todayAction}`,
+        `- Begründung: ${todayWhy}`,
+      ];
+
   const decisionKeyType =
     intensitySelection?.keyType ??
     (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE
@@ -5980,9 +6026,6 @@ function buildComments(
   }
 
   lines.push("");
-  lines.push("🎯 HEUTIGE EMPFEHLUNG");
-  lines.push(`- Empfehlung: ${todayAction}`);
-  lines.push(`- Begründung: ${todayWhy}`);
   const dailySuggestion =
     todayAction === "kein Lauf"
       ? "Ruhe oder 20–40′ Spaziergang/Mobility, jederzeit abbrechbar."
@@ -5996,7 +6039,10 @@ function buildComments(
                 adjustmentNotes: workoutAdjustmentNotes,
               }) || "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
         : "35–55′ locker (GA1), jederzeit abbrechbar.";
-  lines.push(`- Konkret: ${dailySuggestion}`);
+  if (!existingRecommendationLines?.length) {
+    recommendationLines.push(`- Konkret: ${dailySuggestion}`);
+  }
+  lines.push(...recommendationLines);
 
   return {
     dailyReportText: lines.join("\n"),
