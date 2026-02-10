@@ -2508,36 +2508,43 @@ function buildComments(
   const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
   const eventDateText = eventDate ? eventDate : "n/a";
   const confidence = trend?.confidence ?? "niedrig";
+  const bullet = (text) => `- ${text}`;
+  const subBullet = (text) => `  - ${text}`;
 
   const lines = [];
   lines.push("ℹ️ Tagesstatus");
-  lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}`);
-  lines.push(`Mode: ${policy?.label ?? "OPEN"} | Event: ${eventDateText} (${eventDistance})`);
+  lines.push(bullet(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}`));
+  lines.push(bullet(`Mode: ${policy?.label ?? "OPEN"}`));
+  lines.push(bullet(`Event: ${eventDateText} (${eventDistance})`));
+
   lines.push("");
   lines.push(`🟠 Aerober Status (Confidence: ${confidence})`);
-  lines.push(buildAerobicTrendLine(trend));
-  lines.push(`→ letzter vergleichbarer GA-Lauf: ${trend?.lastComparableDate ?? "n/a"}`);
+  lines.push(bullet(buildAerobicTrendLine(trend)));
+  lines.push(bullet(`Letzter vergleichbarer GA-Lauf: ${trend?.lastComparableDate ?? "n/a"}`));
   if (trend?.recentCount != null && trend?.prevCount != null) {
     const windowText =
       trend?.prevStart && trend?.recentStart && trend?.windowEnd
         ? `${trend.prevStart}–${trend.recentStart}–${trend.windowEnd}`
         : "n/a";
-    lines.push(`Messbasis: ${trend.recentCount}/${trend.prevCount} GA | Fenster: ${windowText}`);
+    lines.push(bullet(`Messbasis: ${trend.recentCount}/${trend.prevCount} GA`));
+    lines.push(bullet(`Fenster: ${windowText}`));
   }
+
   lines.push("");
   lines.push("🧱 Robustheit");
   if (robustness) {
     const strengthMinutes7d = robustness.strengthMinutes7d ?? 0;
     lines.push(
-      `Krafttraining: ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T)${robustness.strengthOk ? "" : " ⚠️"}`
+      bullet(`Krafttraining: ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T)${robustness.strengthOk ? "" : " ⚠️"}`)
     );
     lines.push(
-      `➡️ ${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 60 min Kraft/Stabi."}`
+      bullet(`${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 60 min Kraft/Stabi."}`)
     );
   } else {
-    lines.push("Krafttraining: n/a");
-    lines.push("➡️ Robustheit nicht verfügbar.");
+    lines.push(bullet("Krafttraining: n/a"));
+    lines.push(bullet("Robustheit nicht verfügbar."));
   }
+
   lines.push("");
   lines.push("📉 Belastung & Progression");
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
@@ -2563,40 +2570,41 @@ function buildComments(
         )}`
       : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
+  lines.push(bullet(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`));
+  lines.push(subBullet(`Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`));
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
-    lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
-    lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
-    lines.push(`• 7T RunFloor-Äquivalent: Ist ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
+    lines.push(
+      subBullet(`7T RunFloor-Äquivalent: Ist ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`)
+    );
   } else {
-    lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
-    lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
-    lines.push(`• 7T Run-Floor: Ist ${runLoad7} / Soll ${runTargetText}`);
+    lines.push(subBullet(`7T Run-Floor: Ist ${runLoad7} / Soll ${runTargetText}`));
   }
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
-  lines.push(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`);
-  lines.push(`• Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
-  lines.push("Progression (Deload bei 21T Summe + aktive Tage):");
+  lines.push(bullet(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`));
+  lines.push(subBullet(`Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`));
+  lines.push(bullet("Progression (Deload bei 21T Summe + aktive Tage):"));
   if (runFloorState?.deloadActive) {
     const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
-    lines.push(`• Deload läuft${endText} (Ziel: ${deloadTargetRange} Run-Load/Woche).`);
+    lines.push(subBullet(`Deload läuft${endText} (Ziel: ${deloadTargetRange} Run-Load/Woche).`));
   } else if (deloadReady) {
     lines.push(
-      `• 21T Summe ${sum21} ≥ ${RUN_FLOOR_DELOAD_SUM21_MIN} & aktive Tage ${activeDays21} ≥ ${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} → Deload (Ziel: ${deloadTargetRange} Run-Load/Woche).`
+      subBullet(`21T Summe ${sum21} ≥ ${RUN_FLOOR_DELOAD_SUM21_MIN} & aktive Tage ${activeDays21} ≥ ${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} → Deload (Ziel: ${deloadTargetRange} Run-Load/Woche).`)
     );
   } else {
     const stabilityText = runFloorState?.stabilityOK ? "Stabilität ok" : "Stabilität wackelig";
     lines.push(
-      `• 21T Summe ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN}, aktive Tage ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} – ${stabilityText}.`
+      subBullet(`21T Summe ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN}, aktive Tage ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} – ${stabilityText}.`)
     );
   }
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
-  lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
+  lines.push(bullet(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`));
   const deloadExplanation = buildDeloadExplanation(runFloorState);
-  if (deloadExplanation) lines.push(`Deload-Hinweis: ${deloadExplanation}`);
+  if (deloadExplanation) lines.push(subBullet(`Deload-Hinweis: ${deloadExplanation}`));
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
-  if (transitionLine) lines.push(transitionLine);
+  if (transitionLine) lines.push(subBullet(transitionLine));
+
   lines.push("");
   lines.push("🎯 Key-Check");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
@@ -2609,24 +2617,27 @@ function buildComments(
   const keyTypes = keyCompliance?.actualTypes?.length
     ? keyCompliance.actualTypes.map(formatKeyType).join("/")
     : "n/a";
-  lines.push(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`);
+  lines.push(bullet(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`));
   const keyRuleLine = buildKeyRuleLine({
     keyRules,
     block: blockState?.block,
     eventDistance,
   });
-  if (keyRuleLine) lines.push(keyRuleLine);
+  if (keyRuleLine) lines.push(bullet(keyRuleLine));
   lines.push(
-    `➡️ ${buildKeyConsequence({
-      keyCompliance,
-      keySpacing,
-      keyCap,
-    })}`
+    bullet(
+      buildKeyConsequence({
+        keyCompliance,
+        keySpacing,
+        keyCap,
+      })
+    )
   );
   if (benchReports?.length) {
     lines.push("");
-    lines.push(...benchReports);
+    lines.push(...benchReports.map((line) => bullet(line)));
   }
+
   lines.push("");
   lines.push("✅ Bottom Line");
   const next = buildNextRunRecommendation({
@@ -2654,7 +2665,7 @@ function buildComments(
     todayText,
     nextText: `Nächster Lauf: ${next}`,
   });
-  lines.push(`Coach: ${coachLine}`);
+  lines.push(bullet(`Coach: ${coachLine}`));
   return lines.join("\n");
 }
 
