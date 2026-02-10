@@ -4113,7 +4113,7 @@ const DISTANCE_RACE_PROGRESSION_HINTS = {
 
 const TRAINING_LIBRARY = BLOCK_DESCRIPTION_LIBRARY;
 const COACH_PLANNER_CONFIG = {
-  minKeySpacingHours: 72,
+  minKeySpacingHours: 48,
   progressionMinPct: 0.05,
   progressionMaxPct: 0.1,
   deloadReductionRange: { min: 0.2, max: 0.3 },
@@ -4452,31 +4452,26 @@ function pickWeeklyKeyWorkout(context = {}) {
   const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
   const keyRules = context.keyRules || getKeyRules(phase, distance, weeksToEvent);
   const keyCount7 = Number.isFinite(context.keyCount7) ? context.keyCount7 : Number.isFinite(context.keyStats7?.count) ? context.keyStats7.count : 0;
-  const runfloorBlocked = !!(context.runfloorGap || context.runfloorAmpelActive);
   const spacingBlocked = context.spacingBlocked === true;
-  const baseQuotaAllows = phase !== "BASE" || shouldSelectBaseKeyByQuota(keyRules?.expectedKeysPerWeek, context.dayIso);
-  const allowedKeyTypes = new Set(keyRules?.allowedKeyTypes || []);
-  const bannedKeyTypes = new Set(keyRules?.bannedKeyTypes || []);
-  const maxKeysPerWeek = Number.isFinite(keyRules?.maxKeysPerWeek) ? keyRules.maxKeysPerWeek : 0;
+  const maxKeysPerWeek = KEY_HARD_MAX_PER_7D;
   const rationale = [];
 
-  if (!maxKeysPerWeek || keyCount7 >= maxKeysPerWeek || runfloorBlocked || spacingBlocked || !baseQuotaAllows) {
-    rationale.push("Gate aktiv: kein Key diese Woche (Budget/Spacing/Runfloor/BASE-Quote).");
+  if (!maxKeysPerWeek || keyCount7 >= maxKeysPerWeek || spacingBlocked) {
+    rationale.push("Gate aktiv: kein Key diese Woche (nur Budget/Spacing).");
     return { workout: null, rationale, ladderStep: null, taperApplied: false, scalingLevel: deriveWeeklyScalingLevel(context), preview: null };
   }
 
   const libraryPhase = parseTrainingLibraryWeek(distance, phase);
   const fallbackPhase = parseTrainingLibraryWeek(distance, normalizeBlockKey(context.nextSuggestedBlock || phase));
   const libraryCandidates = [...libraryPhase, ...fallbackPhase]
-    .filter((w) => w.isKey)
-    .filter((w) => allowedKeyTypes.has(w.typeKey) && !bannedKeyTypes.has(w.typeKey));
+    .filter((w) => w.isKey);
 
   if (!libraryCandidates.length) {
     rationale.push("Keine regelkonforme Key-Session in TRAINING_LIBRARY gefunden.");
     return { workout: null, rationale, ladderStep: null, taperApplied: false, scalingLevel: deriveWeeklyScalingLevel(context), preview: null };
   }
 
-  const preferred = (keyRules?.preferredKeyTypes || []).find((type) => allowedKeyTypes.has(type) && !bannedKeyTypes.has(type));
+  const preferred = (keyRules?.preferredKeyTypes || []).find((type) => libraryCandidates.some((candidate) => candidate.typeKey === type));
   const chosenType = preferred || libraryCandidates[0].typeKey;
   const template = libraryCandidates.find((w) => w.typeKey === chosenType) || libraryCandidates[0];
   const ladder = KEY_WORKOUT_LADDERS?.[distance]?.[chosenType] || [];
@@ -4528,7 +4523,7 @@ function pickWeeklyKeyWorkout(context = {}) {
     : null;
 
   rationale.push(`Template aus TRAINING_LIBRARY: ${template.name}.`);
-  rationale.push(`Regelkonform: erlaubt ${formatKeyTypeList(keyRules?.allowedKeyTypes || [])}, tabu ${formatKeyTypeList(keyRules?.bannedKeyTypes || [])}.`);
+  rationale.push("Regelkonform: Key nur über 7T-Budget und 48h-Spacing begrenzt.");
   rationale.push(`Deterministisch via Historie (${typeHistory.length} passende Keys) und Ladder.`);
   if (scalingLevel <= -1) rationale.push("Belastungsflags aktiv: Downshift angewendet.");
 
@@ -4556,13 +4551,11 @@ function selectWeeklyPlan(context = {}) {
   const runfloorAmpel = String(context.runfloorAmpel || context.runfloorTrafficLight || "").toUpperCase();
   const runfloorBlocked = !!(context.runfloorGap || context.runfloorAmpelActive || runfloorAmpel === "RED" || runfloorAmpel === "YELLOW");
   const downgradeFlag = !!(context.negativeSignals || []).length || !!context.driftWarning;
-  const baseQuotaAllows = phase !== "BASE" || shouldSelectBaseKeyByQuota(keyRules.expectedKeysPerWeek, context.dayIso);
 
   const filtered = candidates.filter((w) => {
     if (!w.isKey) return true;
-    if (runfloorBlocked || spacingBlocked || !baseQuotaAllows) return false;
-    if ((keyRules?.bannedKeyTypes || []).includes(w.typeKey)) return false;
-    return (keyRules?.allowedKeyTypes || []).includes(w.typeKey);
+    if (spacingBlocked) return false;
+    return true;
   });
 
   const scored = filtered.map((workout) => ({ ...scoreWorkoutCandidate(workout, { ...context, phase }, keyRules), workout }))
@@ -4650,8 +4643,8 @@ function selectWeeklyPlan(context = {}) {
   }
 
   const rationale = [
-    runfloorBlocked ? "Runfloor-Gap/Ampel aktiv: strukturierter Key gesperrt, Ersatz nur GA1 (+Strides wenn erlaubt)." : "Runfloor erlaubt Key-Struktur.",
-    baseQuotaAllows ? "BASE-Quote deterministic erfüllt (kein Random)." : "BASE-Quote lässt diese Woche keinen Key zu.",
+    runfloorBlocked ? "Runfloor-Gap/Ampel aktiv, Key bleibt dennoch möglich (nur Budget/Spacing regeln)." : "Runfloor ohne Blockwirkung auf Key.",
+    "BASE-Quote deaktiviert: Key-Freigabe nur über Budget/Spacing.",
     spacingBlocked ? `Key-Abstand < ${minSpacingHours}h, daher kein zusätzlicher Key.` : "Key-Abstand regelkonform.",
     `Top-Score: ${selectedKey?.score ?? 0}/100 nach RuleFit/Specificity/Progression/Fatigue/Variety.`,
   ].slice(0, 4);
@@ -5870,36 +5863,16 @@ function computeBuildSteadyDecision({
 }
 
 function computeKeyHardDecision({
-  guardrailHardActive,
-  guardrailMediumActive,
-  hrv2dNegative,
-  loadState,
   keySpacingOk,
-  keyCompliance,
   intensityBudget,
 }) {
-  if (guardrailHardActive || hrv2dNegative) {
-    return { allowed: false, reason: "Harter Guardrail aktiv." };
-  }
-  if (guardrailMediumActive) {
-    return { allowed: false, reason: "Soft Guardrail aktiv – Key-Hard heute gesperrt." };
-  }
-  if (loadState === "overreached") {
-    return { allowed: false, reason: "Belastungsstatus: overreached." };
-  }
   if (keySpacingOk === false) {
     return { allowed: false, reason: "Key-Abstand <48h." };
-  }
-  if (keyCompliance?.capExceeded) {
-    return { allowed: false, reason: "Key-Cap diese Woche erreicht." };
-  }
-  if (intensityBudget?.steadyCount > 0) {
-    return { allowed: false, reason: "STEADY_T in den letzten 7 Tagen." };
   }
   if (intensityBudget?.keyHardCount >= KEY_HARD_MAX_PER_7D) {
     return { allowed: false, reason: `KEY_HARD-Limit (${KEY_HARD_MAX_PER_7D}/7T) erreicht.` };
   }
-  return { allowed: true, reason: "Key-Hard möglich (Budget frei)." };
+  return { allowed: true, reason: "Key-Hard erlaubt (nur 7T-Budget + 48h-Spacing)." };
 }
 
 function mapKeyTypeToIntensityClass(keyType) {
@@ -5936,7 +5909,6 @@ function selectIntensityRecommendation({
   runFloorGap,
 }) {
   const guardrailSeverity = guardrailState?.guardrailSeverity ?? "none";
-  const hardGuardrail = guardrailSeverity === "hard";
   const spacingOk = keySpacing?.ok !== false;
   const keyBudgetAvailable =
     (intensityBudget?.keyHardCount ?? 0) < KEY_HARD_MAX_PER_7D && !keyCompliance?.capExceeded;
@@ -5946,7 +5918,7 @@ function selectIntensityRecommendation({
     keyBudgetAvailable,
     spacingOk,
   });
-  const keyEligible = guardrailSeverity !== "hard" && spacingOk && keyBudgetAvailable;
+  const keyEligible = spacingOk && keyBudgetAvailable;
   const allowedKeyTypes = keyCompliance?.allowedKeyTypes ?? keyRules?.allowedKeyTypes ?? [];
   const preferredKeyTypes = keyRules?.preferredKeyTypes ?? [];
   const bannedKeyTypes = keyCompliance?.bannedKeyTypes ?? keyRules?.bannedKeyTypes ?? [];
@@ -5956,23 +5928,13 @@ function selectIntensityRecommendation({
 
   const isTypeAllowed = (type) =>
     allowedKeyTypes.includes(type) && !bannedKeyTypes.includes(type) && !disallowedKeyTypes.includes(type);
-  const softDowngradeBlock = guardrailSeverity === "soft" ? new Set(["vo2_touch"]) : new Set();
-  const filterForGuardrails = (types) => types.filter((type) => isTypeAllowed(type) && !softDowngradeBlock.has(type));
+  const filterForGuardrails = (types) => types.filter((type) => isTypeAllowed(type));
 
   const availablePreferred = filterForGuardrails(preferredKeyTypes);
   const availableAllowed = filterForGuardrails(allowedKeyTypes);
 
   const block = blockState?.block || "BASE";
   const preferRaceKey = block === "RACE" && weeksToEvent != null && weeksToEvent <= 6;
-
-  if (hardGuardrail) {
-    return {
-      intensityClass: INTENSITY_RECOMMENDATION_CLASS.EASY_BASE,
-      reasonId: "POSITIVE_SELECT_EASY_BASE",
-      reasonText: "Positive Auswahl: EASY_BASE (Hard-Guardrail aktiv).",
-      floorGapPolicy,
-    };
-  }
 
   if (bannedLast && keyEligible) {
     const altKey = availablePreferred[0] ?? availableAllowed[0] ?? null;
@@ -6725,7 +6687,7 @@ function buildDailyTrainingSuggestionLines({
   }
 
   const canPush = readinessAmpel === "🟢";
-  const allowKeyHard = canPush && keyHardDecision?.allowed;
+  const allowKeyHard = keyHardDecision?.allowed;
   const allowSteady = canPush && steadyDecision?.allowSteady;
   const intervalSuggestion = allowKeyHard
     ? intervalTemplate
