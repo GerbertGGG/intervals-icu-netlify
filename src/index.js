@@ -6787,10 +6787,15 @@ function buildComments(
   if (fatigue?.override) topTriggers.push("Fatigue-Override");
   if (subjectiveNegative) topTriggers.push("Gefühl schwer");
   const topTriggerText = topTriggers.length ? topTriggers.slice(0, 2).join(" + ") : "keine dominanten Trigger";
+  const keyStimulusRecommended =
+    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
+    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH;
   const todayAllowed =
     readinessAmpel === "🔴"
       ? "nur EASY/REST"
-      : keyHardDecision?.allowed && readinessAmpel === "🟢"
+      : keyStimulusRecommended
+        ? "GA/STRIDES/RP"
+        : keyHardDecision?.allowed && readinessAmpel === "🟢"
         ? "Key/Intervalle möglich"
         : steadyDecision?.allowSteady
           ? "GA + STEADY"
