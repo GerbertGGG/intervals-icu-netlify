@@ -2237,8 +2237,8 @@ async function computeMaintenance14d(ctx, dayIso) {
       }
     }
 
-    // Daily comment ALWAYS (includes min stimulus ALWAYS)
-    patch.comments = buildComments({
+    // Daily report text (used for calendar NOTE instead of wellness comments)
+    const dailyReportText = buildComments({
       perRunInfo,
       trend,
       motor,
@@ -2265,11 +2265,19 @@ async function computeMaintenance14d(ctx, dayIso) {
       weeksToEvent,
     }, { debug });
 
+    // Explicitly clear wellness comments; report is written only as NOTE.
+    patch.comments = "";
+
 
 
 
 
     patches[day] = patch;
+
+    // Daily NOTE (calendar): stores the daily report text in blue
+    if (write) {
+      await upsertDailyReportNote(env, day, dailyReportText || "");
+    }
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
     if (isMondayIso(day)) {
@@ -3409,6 +3417,37 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
     name,
     description,
     color: "orange",
+    external_id,
+  });
+}
+
+// Create/update a blue NOTE event for the daily wellness report
+async function upsertDailyReportNote(env, dayIso, noteText) {
+  const external_id = `daily-report-${dayIso}`;
+  const name = "Daily-Report";
+  const description = noteText;
+
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
+
+  if (existing?.id) {
+    await updateIntervalsEvent(env, existing.id, {
+      category: "NOTE",
+      start_date_local: `${dayIso}T00:00:00`,
+      name,
+      description,
+      color: "blue",
+      external_id,
+    });
+    return;
+  }
+
+  await createIntervalsEvent(env, {
+    category: "NOTE",
+    start_date_local: `${dayIso}T00:00:00`,
+    name,
+    description,
+    color: "blue",
     external_id,
   });
 }
