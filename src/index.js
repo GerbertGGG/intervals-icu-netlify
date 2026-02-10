@@ -4021,9 +4021,9 @@ const PHASE_DISTANCE_RULES = {
       keyRules: {
         expectedKeysPerWeek: 0.25,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["strides"],
+        allowedKeyTypes: ["strides", "vo2_touch"],
         preferredKeyTypes: ["strides"],
-        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
+        bannedKeyTypes: ["schwelle", "racepace", "steady"],
       },
     },
     BUILD: {
@@ -5888,77 +5888,80 @@ function formatSteadyDecisionStatus(steadyDecision, { includeReason = false, inc
 const INTERVAL_TEMPLATE_LIBRARY = {
   "5k": {
     BASE: [
-      "GA5-1: 45–60′ GA locker",
-      "STR5-1: 6–8×20″ Steigerungen, volle Erholung",
-      "ST5-1: 3×6′ @ Schwelle-, 2′ locker",
-      "GA5-2: 40′ locker + Lauf-ABC",
+      "GA5-1: 45–75′ GA1 locker",
+      "STR5-1: 6–8×15–20″ Strides (volle Erholung)",
+      "VO2T5-1: 8×20″/40″ (limitiert)",
+      "HILL5-1: 6–8×8–10″ Hügel kurz",
     ],
     BUILD: [
-      "VO25-1: 6×2′ @ 3–5-km-Pace, 2′ Trab",
-      "VO25-2: 5×3′ @ 5-km-Pace, 2–3′ Trab",
-      "ST5-2: 2×10′ @ Schwelle, 3′ Trab",
-      "STR5-2: 8×100 m flott, locker zurück",
+      "ST5-1: 4×6′ @ Schwelle",
+      "ST5-2: 5×5′ @ Schwelle",
+      "VO25-1: 6×600 m @ VO₂max",
+      "VO25-2: 5×1000 m @ VO₂max",
+      "HRT5-1: 10×400 m Tempohärte",
     ],
     RACE: [
-      "RP5-1: 6×2′ @ 5-km-Pace, 2′ Trab",
-      "RP5-2: 3×5′ @ 5-km-Pace",
-      "SHARP5-1: 4×200 m @ schneller als RP, voll erholt",
+      "RP5-1: 6×400 m @ 5-km-Pace",
+      "RP5-2: 3×1 km @ 5-km-Pace",
+      "SHARP5-1: 8×200 m flott",
     ],
-    RESET: ["GA5-1: 45–60′ GA locker", "STR5-1: 6–8×20″ Steigerungen, volle Erholung"],
+    RESET: ["GA5-1: 45–60′ GA locker", "STR5-1: 6×20″ Steigerungen"],
   },
   "10k": {
     BASE: [
-      "GA10-1: 60–75′ locker",
-      "ST10-1: 3×8′ @ Schwelle-, 2′ Trab",
-      "ST10-2: 20′ @ gleichmäßig zügig",
-      "STR10-1: 6×20″ Steigerungen",
+      "GA10-1: 60–75′ GA1 locker",
+      "STR10-1: 6×20″ Strides",
+      "VO2T10-1: 6×20″ VO₂-Impulse (selten)",
+      "HILL10-1: 60′ locker wellig",
     ],
     BUILD: [
-      "ST10-3: 4×10′ @ Schwelle, 2′ Trab",
-      "RP10-1: 5×3′ @ 10-km-Pace, 2′ Trab",
-      "RP10-2: 3×6′ @ 10-km-Pace",
-      "VO210-1: 6×2′ @ 5-km-Pace",
+      "ST10-1: 4×8′ @ Schwelle",
+      "ST10-2: 3×10′ @ Schwelle",
+      "I10-1: 5×1000 m @ 10-km-Pace",
+      "I10-2: 4×2000 m @ 10-km-Pace",
+      "TL10-1: 30–40′ Tempodauerlauf",
     ],
-    RACE: ["RP10-3: 2×10′ @ 10-km-Pace", "RP10-4: 3×3 km @ 10-km-Pace", "SHARP10-1: 4×200 m flott"],
+    RACE: ["RP10-1: 3×2 km @ 10-km-Pace", "RP10-2: 2×3 km @ 10-km-Pace", "CTRL10-1: 5×1 km kontrolliert"],
     RESET: ["GA10-1: 60–75′ locker", "STR10-1: 6×20″ Steigerungen"],
   },
   hm: {
     BASE: [
-      "GAHM-1: 75–90′ locker",
-      "LLHM-1: 100–120′ locker",
-      "STHM-1: 3×12′ @ Schwelle-, 3′ Trab",
-      "GAHM-2: 60′ locker + STR",
+      "GAHM-1: 60–90′ GA1 locker",
+      "LLHM-1: 100–130′ locker",
+      "STRHM-1: 4–6×20″ Strides (optional)",
+      "VO2THM-1: 4–6×15″ VO₂-Impulse (sehr selten)",
     ],
     BUILD: [
-      "RPHM-1: 3×15′ @ HM-Pace, 3′ Trab",
-      "RPHM-2: 2×25′ @ HM-Pace",
-      "STHM-2: 30–40′ @ Schwelle-",
-      "LLHM-2: 120′ mit 20–30′ @ HM-Pace am Ende",
+      "STHM-1: 3×12′ @ Schwelle",
+      "STHM-2: 2×20′ @ Schwelle",
+      "RPHM-1: 3×3 km @ HM-Pace",
+      "RPHM-2: 2×5 km @ HM-Pace",
+      "TDLHM-1: 40–60′ Tempodauerlauf",
     ],
     RACE: [
-      "RPHM-3: 2×20′ @ HM-Pace",
-      "RPHM-4: 12–14 km @ HM-Pace",
-      "SHARPHM-1: 3×1000 m @ 10-km-Pace",
+      "RPHM-1: 2×5 km @ HM-Pace",
+      "RPHM-2: 3×3 km @ HM-Pace",
+      "RHYHM-1: 10 km @ HM-Rhythmus",
     ],
-    RESET: ["GAHM-1: 75–90′ locker", "GAHM-2: 60′ locker + STR"],
+    RESET: ["GAHM-1: 75–90′ locker", "STRHM-1: 4×20″ Strides"],
   },
   m: {
     BASE: [
-      "GAM-1: 80–100′ locker",
-      "LLM-1: 140–180′ locker",
-      "STM-1: 3×15′ @ Schwelle-, 3′ Trab",
-      "STRM-1: 6×20″ Steigerungen",
+      "GAM-1: 75–90′ GA1 locker",
+      "LLM-1: 120–150′ locker",
+      "STRM-1: 4×15″ Strides (selten)",
+      "HILLM-1: 60′ locker, technisch wellig",
     ],
     BUILD: [
-      "MPM-1: 3×8 km @ Marathonpace",
-      "MPM-2: 16–24 km @ Marathonpace gesamt",
-      "STM-2: 40′ @ Schwelle-",
-      "LLM-2: 28–32 km mit 10–16 km @ MP",
+      "MPM-1: 3×5 km @ Marathonpace",
+      "MPM-2: 2×8 km @ Marathonpace",
+      "STM-1: 3×10′ Schwelle moderat",
+      "LLM-2: 28 km mit 3×5 km @ M",
     ],
     RACE: [
-      "MPM-3: 12–16 km @ Marathonpace",
-      "MPM-4: 2×6 km @ Marathonpace",
-      "SHARPM-1: 6×100 m Steigerungen",
+      "MPM-1: 2×6–8 km @ Marathonpace",
+      "MPM-2: 12–16 km @ M (10–14T vor Wettkampf)",
+      "ACTM-1: 3×1′ flott (Aktivierung)",
     ],
     RESET: ["GAM-1: 80–100′ locker", "STRM-1: 6×20″ Steigerungen"],
   },
@@ -5966,7 +5969,6 @@ const INTERVAL_TEMPLATE_LIBRARY = {
     BASE: [
       "GA: 45–60′ locker",
       "STR: 6×20″ Steigerungen",
-      "ST: 3×8′ @ Schwelle-, 2′ Trab",
     ],
     BUILD: [
       "RP: 5×3′ @ Racepace, 2′ Trab",
@@ -6027,7 +6029,7 @@ function buildDailyTrainingSuggestionLines({
   if (todayAction === "kein Lauf") {
     todaySuggestion = "Ruhetag oder 20–40′ Spaziergang/Mobility.";
   } else if (todayAction === "locker mit kontrolliertem Reiz") {
-    todaySuggestion = "45–60′ locker + 2–3×8–10′ steady (Schwelle-), 2–3′ traben.";
+    todaySuggestion = "45–60′ GA1 locker + 4–6×20″ Strides (optional), jederzeit abbrechbar.";
   }
 
   const canPush = readinessAmpel === "🟢";
@@ -6035,9 +6037,7 @@ function buildDailyTrainingSuggestionLines({
   const allowSteady = canPush && steadyDecision?.allowSteady;
   const intervalSuggestion = allowKeyHard
     ? intervalTemplate
-    : allowSteady && allowedTypes.has("steady")
-      ? "2–3×10′ steady (Schwelle-), 2–3′ traben"
-      : allowedTypes.has("strides")
+    : allowedTypes.has("strides")
         ? "Neuromuskulär: 4–8×15–20″ Strides, dazwischen volle Erholung."
         : "Heute keine Intervalle (locker/Regeneration).";
 
@@ -6046,7 +6046,7 @@ function buildDailyTrainingSuggestionLines({
     `- Heute: ${todaySuggestion}`,
     `- Intervalle (wenn Key erlaubt): ${intervalSuggestion}`,
     `- Longrun (wenn dran): ${longrunTarget} locker`,
-    "- Legende: GA1 = locker aerob, Strides = kurze Steigerungen mit voller Erholung, steady/Schwelle- = kontrolliert zügig unter LT.",
+    "- Legende: GA1 = locker aerob, Strides = kurze Steigerungen mit voller Erholung.",
   ];
 }
 
@@ -6984,7 +6984,7 @@ function buildComments(
     todayAction === "kein Lauf"
       ? "Ruhe oder 20–40′ Spaziergang/Mobility, jederzeit abbrechbar."
       : todayAction === "locker mit kontrolliertem Reiz"
-        ? "45–60′ locker + 2–3×8–10′ steady (Schwelle-), jederzeit abbrechbar."
+        ? "45–60′ GA1 locker + optionale Strides (4–6×20″), jederzeit abbrechbar."
         : todayAction === "locker + Steigerungen"
           ? "35–55′ locker (GA1) + 4–6 kurze Steigerungen, jederzeit abbrechbar."
           : todayAction === "locker + Key-Reiz"
