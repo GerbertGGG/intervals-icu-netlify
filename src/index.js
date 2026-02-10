@@ -951,6 +951,89 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
   return "steady";
 }
 
+const PHASE_MAX_MINUTES = {
+  BASE: {
+    "5k": { ga: 75, longrun: 100, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 75, longrun: 110, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, longrun: 130, vo2_touch: 2, strides: 2 },
+    m: { ga: 90, longrun: 150, strides: 1 },
+  },
+  BUILD: {
+    "5k": { schwelle: 30, vo2_touch: 15, racepace: 10, longrun: 90 },
+    "10k": { schwelle: 30, vo2_touch: 32, racepace: 40, longrun: 120 },
+    hm: { schwelle: 40, racepace: 40, longrun: 150 },
+    m: { schwelle: 30, racepace: 60, longrun: 180 },
+  },
+  RACE: {
+    "5k": { racepace: 15, vo2_touch: 4, ga: 45 },
+    "10k": { racepace: 24, schwelle: 20, ga: 50 },
+    hm: { racepace: 40, schwelle: 36, ga: 60 },
+    m: { racepace: 60, ga: 45, longrun: 90 },
+  },
+};
+
+function resolvePrimaryKeyType(keyRules, block) {
+  const preferred = keyRules?.preferredKeyTypes?.find((k) => k !== "steady");
+  if (preferred) return preferred;
+  if (block === "BASE") return "ga";
+  if (block === "RACE") return "racepace";
+  return "steady";
+}
+
+function computeProgressionTarget(context = {}, keyRules = {}) {
+  const block = context.block || "BASE";
+  const dist = context.eventDistance || "10k";
+  const phaseConfig = PHASE_MAX_MINUTES?.[block]?.[dist] || null;
+  const primaryType = resolvePrimaryKeyType(keyRules, block);
+  const maxMinutes = phaseConfig?.[primaryType] ?? null;
+  if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) {
+    return {
+      available: false,
+      primaryType,
+      targetMinutes: null,
+      maxMinutes: null,
+      microcycleWeek: null,
+      note: "Für diese Distanz/Phase fehlt noch eine Progressionsvorlage.",
+    };
+  }
+
+  const timeInBlockDays = Number(context.timeInBlockDays ?? 0);
+  const weekInBlock = Math.max(1, Math.floor(Math.max(0, timeInBlockDays) / 7) + 1);
+  const microcycleWeek = ((weekInBlock - 1) % 4) + 1;
+
+  let factor = 1;
+  if (block === "BASE") {
+    const ramp = [0.75, 0.85, 0.95, 1.0];
+    factor = ramp[Math.min(microcycleWeek, ramp.length) - 1] ?? 1.0;
+  } else if (block === "BUILD") {
+    const ramp = [0.8, 0.9, 1.0, 0.65];
+    factor = ramp[microcycleWeek - 1] ?? 1.0;
+  } else if (block === "RACE") {
+    const weeksToEvent = Number(context.weeksToEvent);
+    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) factor = 0.6;
+    else if (Number.isFinite(weeksToEvent) && weeksToEvent <= 3) factor = 0.75;
+    else factor = 0.9;
+  }
+
+  return {
+    available: true,
+    primaryType,
+    maxMinutes,
+    targetMinutes: Math.max(1, Math.round(maxMinutes * factor)),
+    microcycleWeek,
+    note:
+      block === "BUILD" && microcycleWeek === 4
+        ? "Deload-Woche: Umfang runter, Intensität stabil halten."
+        : "Progression über Zeit/Umfang – Pace nicht parallel anheben.",
+  };
+}
+
+function buildProgressionSuggestion(progression) {
+  if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
+  const keyType = formatKeyType(progression.primaryType);
+  return `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
+}
+
 function getKeyRules(block, eventDistance, weeksToEvent) {
   const dist = eventDistance || "10k";
   if (block === "RESET") {
@@ -1132,6 +1215,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
+  const progression = computeProgressionTarget(context, keyRules);
 
   if (capExceeded) {
     suggestion = "Kein weiterer Key diese Woche.";
@@ -1153,6 +1237,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand).`;
   }
 
+  const progressionHint = buildProgressionSuggestion(progression);
+  if (suggestion) suggestion = `${suggestion} ${progressionHint}`;
+
   const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
 
   return {
@@ -1172,6 +1259,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     disallowedHits,
     status,
     suggestion,
+    progression,
     basedOn: "7T",
     capExceeded,
     keySpacingOk,
@@ -2064,6 +2152,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
       block: baseBlock,
       eventDistance,
+      timeInBlockDays: previousBlockState?.timeInBlockDays ?? 0,
+      weeksToEvent,
     });
 
     const baseRunFloorTarget =
@@ -2170,6 +2260,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDistance,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
+      timeInBlockDays: blockState.timeInBlockDays,
+      weeksToEvent: blockState.weeksToEvent,
     });
 
     patch[FIELD_BLOCK] = blockState.block;
@@ -2180,6 +2272,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDate,
       eventDistance,
       floorTarget: blockState.floorTarget,
+      timeInBlockDays: blockState.timeInBlockDays,
       deloadStartDate: blockState.deloadStartDate,
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
