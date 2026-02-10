@@ -972,6 +972,40 @@ const PHASE_MAX_MINUTES = {
   },
 };
 
+const PROGRESSION_DEFAULT_BLOCK_DAYS = {
+  BASE: 56,
+  BUILD: 35,
+  RACE: 21,
+  RESET: 10,
+};
+const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
+const RACEPACE_BUDGET_DAYS = 5;
+
+function estimateLikelyBlockDays(context = {}) {
+  const block = context.block || "BASE";
+  const limits = BLOCK_CONFIG?.durations?.[block] || null;
+  const fallback = PROGRESSION_DEFAULT_BLOCK_DAYS[block] || 28;
+
+  let likelyDays = fallback;
+  if (limits?.minDays && limits?.maxDays) {
+    likelyDays = Math.round((Number(limits.minDays) + Number(limits.maxDays)) / 2);
+  }
+
+  const weeksToEvent = Number(context.weeksToEvent);
+  if (Number.isFinite(weeksToEvent) && weeksToEvent > 0) {
+    const eventDays = Math.round(weeksToEvent * 7);
+    if (block === "RACE") {
+      likelyDays = Math.min(likelyDays, eventDays);
+    } else if (block === "BUILD") {
+      likelyDays = Math.min(likelyDays, Math.max(14, eventDays - 14));
+    }
+  }
+
+  const minDays = Number(limits?.minDays) || 7;
+  const maxDays = Number(limits?.maxDays) || 84;
+  return clampInt(String(likelyDays), minDays, maxDays);
+}
+
 function resolvePrimaryKeyType(keyRules, block) {
   const preferred = keyRules?.preferredKeyTypes?.find((k) => k !== "steady");
   if (preferred) return preferred;
@@ -997,32 +1031,55 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
     };
   }
 
-  const timeInBlockDays = Number(context.timeInBlockDays ?? 0);
-  const weekInBlock = Math.max(1, Math.floor(Math.max(0, timeInBlockDays) / 7) + 1);
-  const microcycleWeek = ((weekInBlock - 1) % 4) + 1;
+  const timeInBlockDays = Math.max(0, Number(context.timeInBlockDays ?? 0));
+  const weekInBlock = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
+  const microcycleWeek = ((weekInBlock - 1) % PROGRESSION_DELOAD_EVERY_WEEKS) + 1;
+  const likelyBlockDays = estimateLikelyBlockDays(context);
+  const likelyWeeks = Math.max(1, Math.round(likelyBlockDays / 7));
 
-  let factor = 1;
+  const blockHasDeload = block === "BASE" || block === "BUILD";
+  const expectedDeloadWeeks = blockHasDeload ? Math.floor(likelyWeeks / PROGRESSION_DELOAD_EVERY_WEEKS) : 0;
+  const elapsedWeeks = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
+  const elapsedDeloadWeeks = blockHasDeload
+    ? Math.floor((elapsedWeeks - 1) / PROGRESSION_DELOAD_EVERY_WEEKS)
+    : 0;
+  const effectiveWeeksTotal = Math.max(1, likelyWeeks - expectedDeloadWeeks);
+  const effectiveWeekNow = Math.max(1, elapsedWeeks - elapsedDeloadWeeks);
+
+  let factor = clamp(Math.round((effectiveWeekNow / effectiveWeeksTotal) * 100) / 100, 0.6, 1.0);
   if (block === "BASE") {
-    const ramp = [0.75, 0.85, 0.95, 1.0];
-    factor = ramp[Math.min(microcycleWeek, ramp.length) - 1] ?? 1.0;
+    factor = Math.max(0.7, factor);
   } else if (block === "BUILD") {
-    const ramp = [0.8, 0.9, 1.0, 0.65];
-    factor = ramp[microcycleWeek - 1] ?? 1.0;
+    factor = Math.max(0.75, factor);
   } else if (block === "RACE") {
     const weeksToEvent = Number(context.weeksToEvent);
     if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) factor = 0.6;
     else if (Number.isFinite(weeksToEvent) && weeksToEvent <= 3) factor = 0.75;
-    else factor = 0.9;
+    else factor = Math.max(0.85, factor);
   }
+
+  const isDeloadWeek = blockHasDeload && microcycleWeek === PROGRESSION_DELOAD_EVERY_WEEKS;
+  if (isDeloadWeek) {
+    factor = Math.min(factor, 0.65);
+  }
+
+  const targetMinutes = Math.max(1, Math.round(maxMinutes * factor));
+  const budgetDays = primaryType === "racepace" ? RACEPACE_BUDGET_DAYS : 7;
+  const budgetMinutes = Math.max(1, Math.round((targetMinutes * budgetDays) / 7));
 
   return {
     available: true,
     primaryType,
     maxMinutes,
-    targetMinutes: Math.max(1, Math.round(maxMinutes * factor)),
+    targetMinutes,
+    budgetDays,
+    budgetMinutes,
     microcycleWeek,
+    likelyBlockDays,
+    expectedDeloadWeeks,
+    isDeloadWeek,
     note:
-      block === "BUILD" && microcycleWeek === 4
+      isDeloadWeek
         ? "Deload-Woche: Umfang runter, Intensität stabil halten."
         : "Progression über Zeit/Umfang – Pace nicht parallel anheben.",
   };
@@ -1031,7 +1088,11 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
   const keyType = formatKeyType(progression.primaryType);
-  return `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
+  const budgetText =
+    progression?.budgetDays === RACEPACE_BUDGET_DAYS
+      ? ` RP-${RACEPACE_BUDGET_DAYS}T-Budget ~${progression.budgetMinutes}′.`
+      : "";
+  return `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′).${budgetText} ${progression.note}`;
 }
 
 function getKeyRules(block, eventDistance, weeksToEvent) {
