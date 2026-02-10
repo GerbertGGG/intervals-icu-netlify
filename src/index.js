@@ -4062,7 +4062,111 @@ const PHASE_DISTANCE_RULES = {
   },
 };
 
-function buildBlockDescriptionLines({ block, eventDistance }) {
+const DISTANCE_RACE_PROGRESSION_HINTS = {
+  "5k": {
+    specific: "6×400 m / 3×1 km @ 5-km-Pace",
+    sharp: "8×200 m flott",
+    raceWeek: "2 kurze Aktivierungen (z. B. 6×200 m + 4×200 m)"
+  },
+  "10k": {
+    specific: "3×2 km / 2×3 km @ 10-km-Pace",
+    sharp: "5×1 km kontrolliert",
+    raceWeek: "1× 3×1 km + kurze Strides"
+  },
+  hm: {
+    specific: "2×5 km / 3×3 km @ HM-Pace",
+    sharp: "8–10 km HM-Rhythmus locker-kontrolliert",
+    raceWeek: "1× 3×2 km HM-Pace + kurze Strides"
+  },
+  m: {
+    specific: "2×6–8 km @ MP (geteilt)",
+    sharp: "12–16 km progressiv bis MP",
+    raceWeek: "1× 6–8 km @ MP + 4–6 Strides"
+  },
+};
+
+function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry }) {
+  if (!blockEntry || !Array.isArray(blockEntry.week) || !blockEntry.week.length) return null;
+  if (!Number.isFinite(daysToEvent) || daysToEvent < 0) return null;
+
+  const weekLabel = (startDay) => {
+    const endDay = Math.max(0, startDay - 6);
+    if (startDay <= 0) return "Rennwoche";
+    if (startDay < 7) return `Woche -1 (${startDay}–${endDay}T)`;
+    return `Woche -${Math.ceil((startDay + 1) / 7)} (${startDay}–${endDay}T)`;
+  };
+
+  const keyA = blockEntry.week[0] || blockEntry.content?.[0] || "Key A";
+  const keyB = blockEntry.week[2] || blockEntry.content?.[1] || "Key B";
+  const easy = blockEntry.week[1] || blockEntry.content?.find((x) => String(x).toLowerCase().includes("ga")) || "GA1 locker";
+  const sharpen = blockEntry.week[3] || blockEntry.content?.[2] || "kurzer Schärfereiz";
+
+  const lines = [];
+
+  if (block === "BASE") {
+    if (daysToEvent > 56) {
+      lines.push(`- ${weekLabel(daysToEvent)}: Basis stabilisieren (${easy}), optional ${sharpen}.`);
+      lines.push(`- ${weekLabel(daysToEvent - 7)}: leicht progressieren (Zeit/Umfang +5–10%), Qualität gleich halten.`);
+      lines.push(`- ${weekLabel(daysToEvent - 14)}: Entlastungswoche (Umfang -10 bis -20%), Frequenz halten.`);
+      lines.push(`- ${weekLabel(daysToEvent - 21)}: zurück in normalen Base-Rhythmus und auf BUILD vorbereiten.`);
+    } else {
+      lines.push(`- ${weekLabel(daysToEvent)}: letzte Base-Woche mit Fokus auf Robustheit (${easy}).`);
+      lines.push(`- ${weekLabel(daysToEvent - 7)}: Übergang zu BUILD: 1 spezifischer Reiz (${keyA}) + sauber easy dazwischen.`);
+      lines.push(`- ${weekLabel(daysToEvent - 14)}: Volumen stabil, Intensität nur dosiert.`);
+    }
+    return lines;
+  }
+
+  if (block === "BUILD") {
+    if (daysToEvent > 28) {
+      lines.push(`- ${weekLabel(daysToEvent)}: 1 Haupt-Key (${keyA}) + 1 unterstützender Reiz (${keyB}).`);
+      lines.push(`- ${weekLabel(daysToEvent - 7)}: Progression klein halten (+1 Wiederholung ODER +5–10% Dauer).`);
+      lines.push(`- ${weekLabel(daysToEvent - 14)}: Konsolidieren: gleiche Qualität, besser kontrolliert.`);
+      lines.push(`- ${weekLabel(daysToEvent - 21)}: Entlasten (-10 bis -20%), dann nächste BUILD-Stufe.`);
+    } else {
+      lines.push(`- ${weekLabel(daysToEvent)}: BUILD spitz setzen mit ${keyA}, restliche Läufe bewusst easy.`);
+      lines.push(`- ${weekLabel(daysToEvent - 7)}: Vor-RACE-Übergang: ${keyB} kürzer, dafür sauberer.`);
+      lines.push(`- ${weekLabel(daysToEvent - 14)}: keine neue Härte, nur Qualität absichern.`);
+    }
+    return lines;
+  }
+
+  if (block === "RACE") {
+    const raceHints = DISTANCE_RACE_PROGRESSION_HINTS[eventDistance] || {};
+    const specificMain = raceHints.specific || keyA;
+    const sharpMain = raceHints.sharp || keyB;
+    const raceWeekMain = raceHints.raceWeek || sharpen;
+
+    if (daysToEvent >= 21) {
+      lines.push(`- ${weekLabel(daysToEvent)}: 1× spezifisch (${specificMain}), 1× Kontrolle/Schärfe (${sharpMain}), Rest locker.`);
+      lines.push(`- ${weekLabel(daysToEvent - 7)}: Umfang leicht senken (~10%), Intensität halten, volle Erholung zwischen Reizen.`);
+      lines.push(`- ${weekLabel(daysToEvent - 14)}: Umfang weiter reduzieren (-15 bis -25%), nur kurze Aktivierungen (${raceWeekMain}).`);
+      lines.push(`- ${weekLabel(daysToEvent - 21)}: Rennwoche: Frische priorisieren, keine neue Härte, Rennen.`);
+      return lines;
+    }
+
+    if (daysToEvent >= 14) {
+      lines.push(`- ${weekLabel(daysToEvent)}: normal-spezifisch (${specificMain}) + kurzer Schärfereiz (${sharpMain}).`);
+      lines.push(`- ${weekLabel(daysToEvent - 7)}: Vorwoche: Umfang -15 bis -25%, nur race-spezifische Akzente.`);
+      lines.push(`- ${weekLabel(daysToEvent - 14)}: Rennwoche: ${raceWeekMain}, sonst easy.`);
+      return lines;
+    }
+
+    if (daysToEvent >= 7) {
+      lines.push(`- ${weekLabel(daysToEvent)}: letzte volle Woche: ${specificMain} kürzer, ${sharpMain} kontrolliert, Volumen reduziert.`);
+      lines.push(`- Rennwoche: nur erhalten, nicht verbessern: ${raceWeekMain}, viel Easy, frische Beine am Start.`);
+      return lines;
+    }
+
+    lines.push("- Rennwoche: Progression stoppen, Frische maximieren.");
+    lines.push(`- Vorschlag: ${easy}, ${raceWeekMain}, 1–2 Ruhetage, Rennen.`);
+    return lines;
+  }
+
+  return null;
+}
+
+function buildBlockDescriptionLines({ block, eventDistance, daysToEvent = null }) {
   if (!block || !eventDistance) return null;
   if (!["BASE", "BUILD", "RACE"].includes(block)) return null;
   const libraryEntry = BLOCK_DESCRIPTION_LIBRARY[eventDistance];
@@ -4084,6 +4188,13 @@ function buildBlockDescriptionLines({ block, eventDistance }) {
     lines.push("");
     lines.push("Beispielwoche:");
     blockEntry.week.forEach((item) => lines.push(`- ${item}`));
+  }
+
+  const progressionLines = buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry });
+  if (progressionLines?.length) {
+    lines.push("");
+    lines.push("Progression bis Rennen:");
+    progressionLines.forEach((item) => lines.push(item));
   }
 
   const phaseRules = PHASE_DISTANCE_RULES?.[eventDistance]?.[block];
@@ -6463,6 +6574,7 @@ function buildComments(
   const blockDescriptionLines = buildBlockDescriptionLines({
     block: blockState?.block,
     eventDistance: eventDistanceRaw,
+    daysToEvent,
   });
 
   const readinessReasons = [];
