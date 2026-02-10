@@ -1404,6 +1404,29 @@ function computeLongRunSummary7d(ctx, dayIso) {
   };
 }
 
+function computeLongrunTargetMinutes(ctx, dayIso) {
+  if (!ctx?.activitiesAll?.length) return 60;
+  const longRuns = ctx.activitiesAll
+    .filter((a) => {
+      if (!isRun(a)) return false;
+      const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+      if (!d || (dayIso && d >= dayIso)) return false;
+      const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+      return seconds >= LONGRUN_MIN_SECONDS;
+    })
+    .map((a) => ({
+      date: String(a.start_date_local || a.start_date || "").slice(0, 10),
+      seconds: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!longRuns.length) return 60;
+  const recent = longRuns.slice(0, 2);
+  const avgMinutes = avg(recent.map((x) => x.seconds / 60));
+  if (!Number.isFinite(avgMinutes)) return 60;
+  return Math.max(60, Math.round((avgMinutes * 1.05) / 5) * 5);
+}
+
 // ================= BLOCK / KEY LOGIC (NEW) =================
 function normalizeEventDistance(value) {
   const s = String(value || "").toLowerCase().trim();
@@ -3172,6 +3195,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
+    const longrunMinutesTarget = computeLongrunTargetMinutes(ctx, day);
     let recoverySignals = null;
     try {
       recoverySignals = await computeRecoverySignals(ctx, env, day);
@@ -3656,6 +3680,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       aerobicFloorActive,
       fatigue,
       longRunSummary,
+      longrunMinutesTarget,
       recoverySignals,
       weeksToEvent,
       maintenance14d,
@@ -4085,7 +4110,7 @@ const DISTANCE_RACE_PROGRESSION_HINTS = {
   },
 };
 
-function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry }) {
+function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry, longrunMinutesTarget = null }) {
   if (!blockEntry || !Array.isArray(blockEntry.week) || !blockEntry.week.length) return null;
   if (!Number.isFinite(daysToEvent) || daysToEvent < 0) return null;
 
@@ -4138,7 +4163,8 @@ function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEn
     const raceWeekMain = raceHints.raceWeek || sharpen;
 
     if (daysToEvent >= 21) {
-      lines.push(`- ${weekLabel(daysToEvent)}: 1× spezifisch (${specificMain}), 1× Kontrolle/Schärfe (${sharpMain}), Rest locker.`);
+      const longrunLine = Number.isFinite(longrunMinutesTarget) ? ` Longrun ${longrunMinutesTarget} Minuten.` : "";
+      lines.push(`- ${weekLabel(daysToEvent)}: 1× spezifisch (${specificMain}) oder 1× Kontrolle/Schärfe (${sharpMain}), Rest locker.${longrunLine}`);
       return lines;
     }
 
@@ -4159,7 +4185,7 @@ function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEn
   return null;
 }
 
-function buildBlockDescriptionLines({ block, eventDistance, daysToEvent = null }) {
+function buildBlockDescriptionLines({ block, eventDistance, daysToEvent = null, longrunMinutesTarget = null }) {
   if (!block || !eventDistance) return null;
   if (!["BASE", "BUILD", "RACE"].includes(block)) return null;
   const libraryEntry = BLOCK_DESCRIPTION_LIBRARY[eventDistance];
@@ -4172,18 +4198,20 @@ function buildBlockDescriptionLines({ block, eventDistance, daysToEvent = null }
   if (blockEntry.principle) lines.push(`Leitprinzip: ${blockEntry.principle}`);
   lines.push("Ziel:");
   blockEntry.goal.forEach((item) => lines.push(`- ${item}`));
-  if (blockEntry.content?.length) {
+  const showDetailSections = block !== "RACE";
+
+  if (showDetailSections && blockEntry.content?.length) {
     lines.push("");
     lines.push("Inhalt:");
     blockEntry.content.forEach((item) => lines.push(`- ${item}`));
   }
-  if (blockEntry.week?.length) {
+  if (showDetailSections && blockEntry.week?.length) {
     lines.push("");
     lines.push("Beispielwoche:");
     blockEntry.week.forEach((item) => lines.push(`- ${item}`));
   }
 
-  const progressionLines = buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry });
+  const progressionLines = buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry, longrunMinutesTarget });
   if (progressionLines?.length) {
     lines.push("");
     lines.push("Progression bis Rennen:");
@@ -6340,6 +6368,7 @@ function buildComments(
     runFloorState,
     fatigue,
     longRunSummary,
+    longrunMinutesTarget,
     recoverySignals,
     weeksToEvent,
     maintenance14d,
@@ -6568,6 +6597,7 @@ function buildComments(
     block: blockState?.block,
     eventDistance: eventDistanceRaw,
     daysToEvent,
+    longrunMinutesTarget,
   });
 
   const readinessReasons = [];
