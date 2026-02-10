@@ -4110,6 +4110,307 @@ const DISTANCE_RACE_PROGRESSION_HINTS = {
   },
 };
 
+const TRAINING_LIBRARY = BLOCK_DESCRIPTION_LIBRARY;
+const COACH_PLANNER_CONFIG = {
+  minKeySpacingHours: 72,
+  progressionMinPct: 0.05,
+  progressionMaxPct: 0.1,
+  deloadReductionRange: { min: 0.2, max: 0.3 },
+  taperReductionRange: {
+    days14to7: { min: 0.2, max: 0.3 },
+    raceWeek: { min: 0.4, max: 0.6 },
+  },
+};
+
+function getIsoWeekInfo(dayIso) {
+  if (!isIsoDate(dayIso)) return { year: null, week: null, key: "n/a" };
+  const date = new Date(`${dayIso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return { year: date.getUTCFullYear(), week, key: `${date.getUTCFullYear()}-W${week}` };
+}
+
+function parseMinuteRangeToken(raw) {
+  const text = String(raw || "");
+  const range = text.match(/(\d+)\s*[–-]\s*(\d+)\s*[′']/u);
+  if (range) {
+    const min = Number(range[1]);
+    const max = Number(range[2]);
+    return Number.isFinite(min) && Number.isFinite(max) ? Math.round((min + max) / 2) : null;
+  }
+  const single = text.match(/(\d+)\s*[′']/u);
+  if (single) {
+    const value = Number(single[1]);
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+}
+
+function parseDistanceKmToken(raw) {
+  const text = String(raw || "").toLowerCase();
+  const km = text.match(/(\d+(?:[.,]\d+)?)\s*km\b/u);
+  if (!km) return null;
+  const value = Number(km[1].replace(",", "."));
+  return Number.isFinite(value) ? value : null;
+}
+
+function inferWorkoutTypeKey(raw) {
+  const text = String(raw || "").toLowerCase();
+  if (!text) return "easy";
+  if (text.includes("wettkampf") || text.includes("rhythmus") || text.includes("@ hm") || text.includes("@ m") || text.includes("race") || text.includes("pace")) return "racepace";
+  if (text.includes("schwelle") || text.includes("tempo")) return "schwelle";
+  if (text.includes("vo2") || text.includes("vo₂") || text.includes("flott")) return "vo2_touch";
+  if (text.includes("strides") || text.includes("steiger")) return "strides";
+  if (text.includes("hügel") || text.includes("hill")) return "hill";
+  if (text.includes("kraft") || text.includes("stabi")) return "strength";
+  if (text.includes("lang") || text.includes("ll")) return "longrun";
+  return "easy";
+}
+
+function parseLibraryWorkoutEntry(raw, { distance, phase, idx } = {}) {
+  const name = String(raw || "").trim();
+  const text = name.toLowerCase();
+  const repsMatch = name.match(/(\d+)\s*×\s*(\d+(?:[.,]\d+)?)\s*(km|m|[′'])?/u);
+  const repTimeOnlyMatch = name.match(/(\d+)\s*×\s*(\d+(?:[.,]\d+)?)\s*[′']/u);
+  const repDistanceOnlyMatch = name.match(/(\d+)\s*×\s*(\d+(?:[.,]\d+)?)\s*(km|m)\b/u);
+  const restMatch = name.match(/(\d+(?:[.,]\d+)?)\s*(?:′|min|s|sek)\s*(?:trab|pause|erholung)/iu);
+  const durationMin = parseMinuteRangeToken(name);
+  const distanceKm = parseDistanceKmToken(name);
+
+  const reps = repsMatch ? Number(repsMatch[1]) : null;
+  let repDistance = null;
+  let repTime = null;
+  if (repDistanceOnlyMatch) {
+    const value = Number(repDistanceOnlyMatch[2].replace(",", "."));
+    repDistance = repDistanceOnlyMatch[3] === "m" ? value / 1000 : value;
+  }
+  if (repTimeOnlyMatch) {
+    repTime = Number(repTimeOnlyMatch[2].replace(",", "."));
+  }
+  const typeKey = inferWorkoutTypeKey(name);
+  const looksEasy = typeKey === "easy" || typeKey === "longrun";
+  const isKey = !looksEasy && !text.includes("optional") && !text.includes("selten");
+  const tags = [];
+  if (typeKey === "longrun" || text.includes("langer lauf")) tags.push("longrun");
+  if (text.includes("optional")) tags.push("optional");
+  if (text.includes("selten")) tags.push("rare");
+  if (typeKey === "strides" || typeKey === "hill" || typeKey === "strength") tags.push("addon");
+
+  return {
+    id: `${distance || "default"}_${phase || "BASE"}_${idx + 1}`,
+    name,
+    typeKey,
+    isKey,
+    durationMin,
+    distanceKm,
+    reps,
+    repDistance,
+    repTime,
+    rest: restMatch ? restMatch[0] : null,
+    intensityHint: typeKey,
+    tags,
+    source: "library",
+    rationale: [`Aus TRAINING_LIBRARY ${distance || "default"}/${phase || "BASE"} geparsed.`],
+  };
+}
+
+function parseTrainingLibraryWeek(distance, phase) {
+  const entry = TRAINING_LIBRARY?.[distance]?.blocks?.[phase];
+  const week = Array.isArray(entry?.week) ? entry.week : [];
+  return week.map((item, idx) => parseLibraryWorkoutEntry(item, { distance, phase, idx }));
+}
+
+function shouldSelectBaseKeyByQuota(expectedKeysPerWeek, dayIso) {
+  if (!Number.isFinite(expectedKeysPerWeek) || expectedKeysPerWeek <= 0) return false;
+  if (expectedKeysPerWeek >= 1) return true;
+  const interval = Math.max(1, Math.round(1 / expectedKeysPerWeek));
+  const isoWeek = getIsoWeekInfo(dayIso).week;
+  if (!Number.isFinite(isoWeek)) return false;
+  return isoWeek % interval === 0;
+}
+
+function findLatestSimilarWorkout(history = [], typeKey) {
+  const typed = history.filter((item) => item?.typeKey === typeKey && Number.isFinite(item?.workload));
+  return typed.length ? typed[typed.length - 1] : null;
+}
+
+function deriveTouchWorkout(workout, reason) {
+  if (!workout) return null;
+  const derived = { ...workout, source: "derived", rationale: [...(workout.rationale || [])] };
+  if (Number.isFinite(derived.reps) && derived.reps > 2) {
+    derived.reps = Math.max(2, Math.round(derived.reps * 0.7));
+  } else if (Number.isFinite(derived.repTime) && derived.repTime > 2) {
+    derived.repTime = round(derived.repTime * 0.8, 1);
+  } else if (Number.isFinite(derived.durationMin) && derived.durationMin > 20) {
+    derived.durationMin = Math.max(20, Math.round(derived.durationMin * 0.75));
+  }
+  derived.name = `${workout.name} (touch)`;
+  derived.rationale.push(reason);
+  return derived;
+}
+
+function applySingleDimensionProgression(workout, context = {}) {
+  if (!workout?.isKey) return { workout, progressed: false };
+  const fatigue = !!(context.deloadActive || context.runfloorGap || context.fatigueFlag);
+  if (fatigue) return { workout, progressed: false };
+  const historyRef = findLatestSimilarWorkout(context.history || [], workout.typeKey);
+  if (!historyRef) return { workout, progressed: false };
+  const pct = COACH_PLANNER_CONFIG.progressionMinPct;
+  const progressed = { ...workout, rationale: [...(workout.rationale || [])] };
+  if (Number.isFinite(progressed.reps) && progressed.reps >= 3) {
+    progressed.reps = Math.round(progressed.reps * (1 + pct));
+    progressed.rationale.push("Progression: nur Reps +5%.");
+    return { workout: progressed, progressed: true, dimension: "reps" };
+  }
+  if (Number.isFinite(progressed.repTime) && progressed.repTime >= 2) {
+    progressed.repTime = round(progressed.repTime * (1 + pct), 1);
+    progressed.rationale.push("Progression: nur Rep-Time +5%.");
+    return { workout: progressed, progressed: true, dimension: "repTime" };
+  }
+  if (Number.isFinite(progressed.repDistance) && progressed.repDistance > 0.2) {
+    progressed.repDistance = round(progressed.repDistance * (1 + pct), 2);
+    progressed.rationale.push("Progression: nur Rep-Distanz +5%.");
+    return { workout: progressed, progressed: true, dimension: "repDistance" };
+  }
+  return { workout, progressed: false };
+}
+
+function scoreWorkoutCandidate(candidate, context, keyRules) {
+  const hardDisallowed = keyRules?.bannedKeyTypes?.includes(candidate.typeKey) ||
+    (candidate.isKey && !(keyRules?.allowedKeyTypes || []).includes(candidate.typeKey));
+  if (hardDisallowed) return { score: 0, parts: { ruleFit: 0, specificity: 0, progression: 0, fatigueRisk: 0, variety: 0 } };
+  const ruleFit = 35;
+  const specificity = context.phase === "RACE" && candidate.typeKey === "racepace" ? 25 : context.phase === "BUILD" ? 18 : 10;
+  const progression = candidate.isKey ? 20 : 10;
+  const fatigueRisk = context.runfloorGap || context.fatigueFlag ? 5 : 15;
+  const varietyPenalty = (context.lastKeyTypes || []).includes(candidate.typeKey) ? 2 : 5;
+  const score = Math.max(0, Math.min(100, ruleFit + specificity + progression + fatigueRisk + varietyPenalty));
+  return { score, parts: { ruleFit, specificity, progression, fatigueRisk, variety: varietyPenalty } };
+}
+
+function selectWeeklyPlan(context = {}) {
+  const distance = context.distance || "10k";
+  const phase = normalizeBlockKey(context.phase);
+  const keyRules = getKeyRules(phase, distance, Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null);
+  const candidates = parseTrainingLibraryWeek(distance, phase);
+  const daysToRace = Number.isFinite(context.daysToRace) ? context.daysToRace : null;
+  const minSpacingHours = Number.isFinite(context.minKeySpacingHours) ? context.minKeySpacingHours : COACH_PLANNER_CONFIG.minKeySpacingHours;
+  const spacingHours = context.lastKeyDate && isIsoDate(context.lastKeyDate) && isIsoDate(context.dayIso)
+    ? diffDays(context.lastKeyDate, context.dayIso) * 24
+    : null;
+  const spacingBlocked = Number.isFinite(spacingHours) && spacingHours < minSpacingHours;
+  const runfloorAmpel = String(context.runfloorAmpel || context.runfloorTrafficLight || "").toUpperCase();
+  const runfloorBlocked = !!(context.runfloorGap || context.runfloorAmpelActive || runfloorAmpel === "RED" || runfloorAmpel === "YELLOW");
+  const downgradeFlag = !!(context.negativeSignals || []).length || !!context.driftWarning;
+  const baseQuotaAllows = phase !== "BASE" || shouldSelectBaseKeyByQuota(keyRules.expectedKeysPerWeek, context.dayIso);
+
+  const filtered = candidates.filter((w) => {
+    if (!w.isKey) return true;
+    if (runfloorBlocked || spacingBlocked || !baseQuotaAllows) return false;
+    if ((keyRules?.bannedKeyTypes || []).includes(w.typeKey)) return false;
+    return (keyRules?.allowedKeyTypes || []).includes(w.typeKey);
+  });
+
+  const scored = filtered.map((workout) => ({ ...scoreWorkoutCandidate(workout, { ...context, phase }, keyRules), workout }))
+    .sort((a, b) => b.score - a.score || a.workout.id.localeCompare(b.workout.id));
+
+  const selectedKey = scored.find((item) => item.workout.isKey) || null;
+  const selected = [];
+  let taperApplied = false;
+  let deloadApplied = false;
+
+  const easyRuns = filtered.filter((w) => !w.isKey && !w.tags.includes("addon") && !w.tags.includes("longrun"));
+  const fallbackEasy = easyRuns.find((w) => {
+    const lower = String(w.name || "").toLowerCase();
+    return lower.includes("ga1") || lower.includes("locker");
+  }) || easyRuns[0] || {
+    id: `${distance}_${phase}_GA1_FALLBACK`,
+    name: "45′ GA1 locker",
+    typeKey: "easy",
+    isKey: false,
+    durationMin: 45,
+    intensityHint: "easy",
+    tags: ["fallback"],
+    source: "derived",
+    rationale: ["Konservativer Fallback wegen fehlender Library-Einträge."],
+  };
+  selected.push(fallbackEasy);
+
+  if (!runfloorBlocked && selectedKey && keyRules.maxKeysPerWeek > 0) {
+    let keyWorkout = selectedKey.workout;
+    const progressionWindowOpen = Number.isFinite(daysToRace) ? daysToRace > 21 : true;
+    if (progressionWindowOpen) {
+      keyWorkout = applySingleDimensionProgression(keyWorkout, context).workout;
+    }
+    if (context.deloadActive) {
+      keyWorkout = deriveTouchWorkout(keyWorkout, "Deload aktiv: Key als touch abgeleitet.");
+      deloadApplied = true;
+    } else if (downgradeFlag) {
+      keyWorkout = deriveTouchWorkout(keyWorkout, "Fatigue/Drift Warnung: Key downgraded auf touch.");
+    }
+    selected.push(keyWorkout);
+  }
+
+  const longrun = filtered.find((w) => w.tags.includes("longrun") || w.name.toLowerCase().includes("langer lauf"));
+  if (longrun) {
+    let adjustedLongrun = { ...longrun };
+    if (context.deloadActive && Number.isFinite(adjustedLongrun.durationMin)) {
+      adjustedLongrun.durationMin = Math.round(adjustedLongrun.durationMin * (1 - COACH_PLANNER_CONFIG.deloadReductionRange.min));
+      adjustedLongrun.source = "derived";
+      adjustedLongrun.rationale = [...(adjustedLongrun.rationale || []), "Deload: Longrun reduziert (-20%)."];
+      deloadApplied = true;
+    }
+    selected.push(adjustedLongrun);
+  }
+
+  if (runfloorBlocked) {
+    const stridesAllowed = (keyRules?.allowedKeyTypes || []).includes("strides") && !(keyRules?.bannedKeyTypes || []).includes("strides");
+    const libraryAddon = filtered.find((w) => w.typeKey === "strides" && w.tags.includes("addon"));
+    if (stridesAllowed && libraryAddon) {
+      selected.push({ ...libraryAddon, isKey: false, rationale: [...(libraryAddon.rationale || []), "Runfloor-Gate: nur Easy + Strides Add-on."] });
+    }
+  } else {
+    const addons = filtered.filter((w) => w.tags.includes("addon") && !w.isKey).slice(0, 1);
+    selected.push(...addons);
+  }
+
+  if (Number.isFinite(daysToRace)) {
+    if (daysToRace <= 7) {
+      taperApplied = true;
+      for (let i = 0; i < selected.length; i++) {
+        if (selected[i].isKey) selected[i] = deriveTouchWorkout(selected[i], "Raceweek: Aktivierung statt voller Key.");
+        if (Number.isFinite(selected[i].durationMin)) selected[i].durationMin = Math.round(selected[i].durationMin * 0.5);
+      }
+    } else if (daysToRace <= 14) {
+      taperApplied = true;
+      for (let i = 0; i < selected.length; i++) {
+        if (selected[i].isKey) selected[i] = deriveTouchWorkout(selected[i], "Taper 14-7T: Key verkürzt.");
+        if (Number.isFinite(selected[i].durationMin)) selected[i].durationMin = Math.round(selected[i].durationMin * 0.75);
+      }
+    }
+  }
+
+  const rationale = [
+    runfloorBlocked ? "Runfloor-Gap/Ampel aktiv: strukturierter Key gesperrt, Ersatz nur GA1 (+Strides wenn erlaubt)." : "Runfloor erlaubt Key-Struktur.",
+    baseQuotaAllows ? "BASE-Quote deterministic erfüllt (kein Random)." : "BASE-Quote lässt diese Woche keinen Key zu.",
+    spacingBlocked ? `Key-Abstand < ${minSpacingHours}h, daher kein zusätzlicher Key.` : "Key-Abstand regelkonform.",
+    `Top-Score: ${selectedKey?.score ?? 0}/100 nach RuleFit/Specificity/Progression/Fatigue/Variety.`,
+  ].slice(0, 4);
+
+  return {
+    distance,
+    phase,
+    dayIso: context.dayIso || null,
+    taperApplied,
+    deloadApplied,
+    runfloorBlocked,
+    selected,
+    candidateScores: scored.map((item) => ({ id: item.workout.id, name: item.workout.name, typeKey: item.workout.typeKey, isKey: item.workout.isKey, score: item.score, parts: item.parts })),
+    rationale,
+  };
+}
+
 function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry, longrunMinutesTarget = null }) {
   if (!blockEntry || !Array.isArray(blockEntry.week) || !blockEntry.week.length) return null;
   if (!Number.isFinite(daysToEvent) || daysToEvent < 0) return null;
@@ -9793,4 +10094,4 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   return races;
 }
 
-export { computeIntervalMetricsFromStreams, buildMondayReportPreview };
+export { computeIntervalMetricsFromStreams, buildMondayReportPreview, selectWeeklyPlan, parseLibraryWorkoutEntry, shouldSelectBaseKeyByQuota };
