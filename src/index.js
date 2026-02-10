@@ -7535,7 +7535,7 @@ function buildComments(
     guardrailHardActive: guardrailState?.hardActive,
     intensitySelection,
     decisionKeyType,
-    runfloorGap,
+    runfloorGap: runFloorGap,
     driftWarning: driftSignal === "orange" || driftSignal === "red",
     workoutDebug,
     negativeSignals: readinessReasons,
