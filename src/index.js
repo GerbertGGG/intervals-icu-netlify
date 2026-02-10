@@ -3656,6 +3656,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
     const commentBundle = buildComments({
+      day,
       perRunInfo,
       trend,
       motor,
@@ -6907,6 +6908,7 @@ function buildHrr60ReadinessOutput({
 // ================= COMMENT =================
 function buildComments(
   {
+    day,
     perRunInfo,
     latestGaSample,
     trend,
