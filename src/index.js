@@ -1622,8 +1622,6 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand).`;
   }
 
-  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
-
   return {
     expected,
     maxKeys,
@@ -1639,7 +1637,6 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     preferredHits,
     actualTypes: uniqueTypes,
     disallowedHits,
-    status,
     suggestion,
     basedOn: "7T",
     capExceeded,
