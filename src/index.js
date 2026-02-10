@@ -1019,8 +1019,8 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
   const dist = context.eventDistance || "10k";
   const phaseConfig = PHASE_MAX_MINUTES?.[block]?.[dist] || null;
   const primaryType = resolvePrimaryKeyType(keyRules, block);
-  const maxMinutes = phaseConfig?.[primaryType] ?? null;
-  if (!Number.isFinite(maxMinutes) || maxMinutes <= 0) {
+  const rawMaxMinutes = phaseConfig?.[primaryType] ?? null;
+  if (!Number.isFinite(rawMaxMinutes) || rawMaxMinutes <= 0) {
     return {
       available: false,
       primaryType,
@@ -1045,6 +1045,8 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
     : 0;
   const effectiveWeeksTotal = Math.max(1, likelyWeeks - expectedDeloadWeeks);
   const effectiveWeekNow = Math.max(1, elapsedWeeks - elapsedDeloadWeeks);
+  const budgetDays = primaryType === "racepace" ? RACEPACE_BUDGET_DAYS : 7;
+  const maxMinutes = Math.max(1, Math.round((rawMaxMinutes * budgetDays) / 7));
 
   let factor = clamp(Math.round((effectiveWeekNow / effectiveWeeksTotal) * 100) / 100, 0.6, 1.0);
   if (block === "BASE") {
@@ -1064,16 +1066,12 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
   }
 
   const targetMinutes = Math.max(1, Math.round(maxMinutes * factor));
-  const budgetDays = primaryType === "racepace" ? RACEPACE_BUDGET_DAYS : 7;
-  const budgetMinutes = Math.max(1, Math.round((targetMinutes * budgetDays) / 7));
 
   return {
     available: true,
     primaryType,
     maxMinutes,
     targetMinutes,
-    budgetDays,
-    budgetMinutes,
     microcycleWeek,
     likelyBlockDays,
     expectedDeloadWeeks,
@@ -1088,11 +1086,7 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
   const keyType = formatKeyType(progression.primaryType);
-  const budgetText =
-    progression?.budgetDays === RACEPACE_BUDGET_DAYS
-      ? ` RP-${RACEPACE_BUDGET_DAYS}T-Budget ~${progression.budgetMinutes}′.`
-      : "";
-  return `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′).${budgetText} ${progression.note}`;
+  return `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
 }
 
 function getKeyRules(block, eventDistance, weeksToEvent) {
