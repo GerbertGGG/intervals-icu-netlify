@@ -5,7 +5,7 @@
 // INTERVALS_API_KEY
 //
 // Wellness custom fields (create these in Intervals):
-// VDOT, Drift, Motor, EF, Block, BlockEffective
+// VDOT, Drift, Motor, EF, Block
 //
 // URL:
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
@@ -143,37 +143,9 @@ export default {
     // This keeps cost low and still ensures minimum-stimulus comment exists.
     const today = isoDate(new Date());
     const yday = isoDate(new Date(Date.now() - 86400000));
-    const cron = String(event?.cron || "");
-    const isMorningRun = cron === "0 6 * * *";
-    const isEveningWatcher = !isMorningRun;
-    let latestActivityIso = null;
-
-    try {
-      latestActivityIso = await fetchLatestActivityIso(env, yday, today);
-    } catch (e) {
-      console.error("scheduled latest activity fetch failed", e);
-    }
-
-    if (isEveningWatcher) {
-      if (!latestActivityIso) {
-        console.log("scheduled evening sync skipped: no recent activity");
-        return;
-      }
-
-      const lastSeen = await readKvJson(env, LAST_ACTIVITY_SYNC_KEY);
-      if (lastSeen && new Date(latestActivityIso) <= new Date(lastSeen)) {
-        console.log("scheduled evening sync skipped: no new activity");
-        return;
-      }
-    }
 
     ctx.waitUntil(
-      (async () => {
-        await syncRange(env, yday, today, true, false, 600);
-        if (latestActivityIso) {
-          await writeKvJson(env, LAST_ACTIVITY_SYNC_KEY, latestActivityIso);
-        }
-      })().catch((e) => {
+      syncRange(env, yday, today, true, false, 600).catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
@@ -184,68 +156,14 @@ export default {
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
 const STRENGTH_MIN_7D = 60;
-const DRIFT_WARN_PCT = 6; // Adjust steady_t drift warning threshold here
-const DRIFT_CRITICAL_PCT = 8; // Adjust critical drift threshold here
-const DRIFT_STEADY_T_MAX_PCT = 6.5; // Adjust expected steady_t drift ceiling here
-const DRIFT_TREND_WORSENING_PCT = 1.0; // Δ drift (recent-prev) that triggers delay
-const STEADY_T_MAX_PER_7D = 1;
-const KEY_HARD_MAX_PER_7D = 2;
-const STEADY_T_DELAY_DAYS_RANGE = { min: 5, max: 7 };
-const DECISION_CONF_MIN = 40; // NEW: STEADY_T decision confidence threshold
-const STEADY_T_QUALITY_MIN_MINUTES = 20;
-const STEADY_T_QUALITY_MAX_MINUTES = 30;
-const STEADY_T_BUDGET_MODE = "exclusive"; // NEW: replacement vs exclusive budget mode
-const STEADY_T_BUDGET_KEY_TYPE = "keyHard";
-const STEADY_T_TAGS = new Set(["steady_t", "steady-t", "steady:t", "steady t"]);
-const INTENSITY_CLASS = {
-  EASY: "EASY",
-  STEADY_T: "STEADY_T",
-  KEY_HARD: "KEY_HARD",
-};
-const INTENSITY_RECOMMENDATION_CLASS = {
-  EASY_BASE: "EASY_BASE",
-  STEADY: "STEADY",
-  STRIDES: "STRIDES",
-  RACEPACE: "RACEPACE",
-  VO2_TOUCH: "VO2_TOUCH",
-};
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
-const LAST_ACTIVITY_SYNC_KEY = "scheduled:last-activity-iso";
-const REENTRY_STATE_KEY = "blockEffective:reentryState";
-const REENTRY_DAYS_DEFAULT = 7; // env: REENTRY_DAYS
-const OVERRIDE_CATEGORIES = ["INJURED", "SICK", "HOLIDAY"];
-const OVERRIDE_PRIORITY = { INJURED: 3, SICK: 2, HOLIDAY: 1 };
-const OVERRIDE_TO_BLOCK = {
-  INJURED: "HOLD_INJURY",
-  SICK: "HOLD_ILLNESS",
-  HOLIDAY: "HOLD_LIFE",
-};
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
 // ================= BLOCK CONFIG (NEW) =================
-const HRR60_INTERVAL_CONFIG = {
-  minIntervalSec: 90,
-  detectionMinIntervalSec: 10,
-  detectedMinIntervalSec: 75,
-  maxGapSec: 5,
-  mergeGapSec: 12,
-  minValidHrWindowSec: 75,
-  maxHrDropoutSec: 5,
-  hrZoneZ4Ratio: 0.88,
-  hrZoneZ4Quantile: 0.85,
-  racepaceToleranceSecPerKm: 10,
-  racepaceSpeedQuantile: 0.85,
-  vo2PowerQuantile: 0.9,
-  tagSpeedQuantile: 0.7,
-  tagPowerQuantile: 0.8,
-  hrr60ExactToleranceSec: 3,
-  hrr60FallbackWindowSec: { start: 45, end: 75 },
-};
-
 const BLOCK_CONFIG = {
   durations: {
     BASE: { minDays: 28, maxDays: 84 },
@@ -289,19 +207,11 @@ function toLocalYMD(d) {
   return `${y}-${m}-${day}`;
 }
 
-function getReentryDays(env) {
-  const raw = Number(env?.REENTRY_DAYS);
-  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
-  return REENTRY_DAYS_DEFAULT;
-}
-
 // Fatigue override thresholds (tune later)
-const RAMP_HARD_PCT = 0.5;         // NEW: guardrail severity (hard)
-const RAMP_SOFT_PCT = 0.3;         // NEW: guardrail severity (soft)
+const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
-const ACWR_HARD = 1.6;             // NEW: guardrail severity (hard)
-const ACWR_SOFT = 1.3;             // NEW: guardrail severity (soft)
+const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
 const ACWR_LOW_LIMIT = 0.8;        // underload threshold
 
 
@@ -309,78 +219,6 @@ const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
 const MOTOR_STALE_DAYS = 5;
 const MIN_STIMULUS_7D_RUN_LOAD = 150;
-const HRV_NEGATIVE_THRESHOLD_PCT = -5;
-const PERSONAL_OVERLOAD_PATTERNS = [
-  {
-    id: "PAT_001",
-    signals: ["drift_high", "hrv_down", "key_felt_hard"],
-    window_days: 7,
-    match_rule: { required: 2, out_of: 3 },
-    severity: "high",
-    action: "keine Intensität für 5-7 Tage",
-  },
-  {
-    id: "PAT_002",
-    signals: ["hrv_2d_negative", "sleep_low", "fatigue_override"],
-    window_days: 3,
-    match_rule: { required: 2, out_of: 3 },
-    severity: "high",
-    action: "nur easy, Volumen reduzieren (24-48h)",
-  },
-  {
-    id: "PAT_003",
-    signals: ["frequency_high", "runfloor_gap", "drift_high"],
-    window_days: 14,
-    match_rule: { required: 2, out_of: 3 },
-    severity: "medium",
-    action: "Dichte runter, keine Zusatzreize",
-  },
-];
-
-const POLICY_REGISTRY = {
-  PAT_PAT_001__NO_INTENSITY_7D: {
-    short: "Keine Intensität für 5–7 Tage",
-    why: "Kombination aus Drift/HRV/Key-Signal deutet auf Überlastungsrisiko hin.",
-    effect: "Intensität pausieren, Fokus auf Erholung.",
-    severity: "high",
-    tags: ["guardrail"],
-  },
-  PAT_PAT_002__EASY_ONLY_TODAY: {
-    short: "Nur easy (24–48h)",
-    why: "Akute Stressmarker sind erhöht.",
-    effect: "Nur lockere Einheiten in den nächsten 24–48h.",
-    severity: "high",
-    tags: ["guardrail"],
-  },
-  PAT_PAT_002__REDUCE_VOL_15: {
-    short: "Volumen reduzieren (10–15%)",
-    why: "Akute Belastungssignale sprechen für eine Volumenreduktion.",
-    effect: "Gesamtvolumen für 24–48h um ~10–15% senken.",
-    severity: "medium",
-    tags: ["load"],
-  },
-  PAT_PAT_003__ACTION_GENERIC_MEDIUM: {
-    short: "Belastungsdichte reduzieren",
-    why: "Häufung von Warnsignalen bei hohem Dichteprofil.",
-    effect: "Zusatzreize vermeiden, Dichte runterfahren.",
-    severity: "medium",
-    tags: ["guardrail"],
-  },
-  SIG__hrv_2d_negative__HIGH: {
-    short: "HRV 2 Tage negativ",
-    why: "HRV ist über 2 Tage deutlich gesunken.",
-    effect: "Belastung temporär reduzieren.",
-    severity: "high",
-    tags: ["signal"],
-  },
-  SIG__fatigue_override__MEDIUM: {
-    short: "Fatigue-Schwelle überschritten",
-    why: "Kumulierte Last überschreitet deine Schwelle.",
-    effect: "Zusatzreize vermeiden.",
-    severity: "medium",
-    tags: ["signal"],
-  },
-};
 
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
@@ -388,41 +226,6 @@ const TREND_MIN_N = 3;
 const MOTOR_WINDOW_DAYS = 28;
 const MOTOR_NEED_N_PER_HALF = 2;
 const MOTOR_DRIFT_WINDOW_DAYS = 14;
-const LEARNING_LOOKBACK_DAYS = 120;
-const LEARNING_DECAY_DAYS = 45;
-const LEARNING_GOOD_OUTCOME_THRESHOLD = 2;
-const LEARNING_MIN_NEFF = 3;
-const LEARNING_CONFIDENCE_K = 6;
-const LEARNING_MIN_CONF = 0.4;
-const LEARNING_UTILITY_EPS = 0.05;
-const LEARNING_UTILITY_LAMBDA = 1.5;
-const LEARNING_MIN_ARM_NEFF = 0.5;
-const LEARNING_TEXT_MIN_ARM_NEFF = 3.0;
-const LEARNING_TEXT_MIN_COMPARE_NEFF = 3.0;
-const LEARNING_TEXT_MIN_COMPARE_ARMS = 2;
-const LEARNING_TEXT_MIN_CONF_FOR_STRONG = 0.6;
-const LEARNING_TEXT_UTILITY_EPS = 0.05;
-const LEARNING_SAFE_FALLBACK_ARMS = ["HOLD_ABSORB", "FREQ_UP", "NEUTRAL"];
-const LEARNING_EXPLORE_UNTRIED = false;
-const LEARNING_GLOBAL_CONTEXT_KEY = "ALL";
-
-const STRATEGY_ARMS = [
-  "FREQ_UP",
-  "INTENSITY_SHIFT",
-  "VOLUME_ADJUST",
-  "HOLD_ABSORB",
-  "PROTECT_DELOAD",
-  "NEUTRAL",
-];
-
-const STRATEGY_LABELS = {
-  FREQ_UP: "Häufiger, kürzer, locker",
-  INTENSITY_SHIFT: "Qualitätsreiz statt mehr Umfang",
-  VOLUME_ADJUST: "Umfang gezielt anpassen",
-  HOLD_ABSORB: "Stabilisieren & absorbieren",
-  PROTECT_DELOAD: "Schützen & deloaden",
-  NEUTRAL: "Neutral (keine klare Strategie)",
-};
 
 const HFMAX = 173;
 // ================= MODE / EVENTS (NEW) =================
@@ -473,7 +276,6 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
-const FIELD_BLOCK_EFFECTIVE = "BlockEffective";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -554,7 +356,7 @@ function inferSportFromEvent(ev) {
 }
 
 async function computeKeyCount7d(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -568,22 +370,6 @@ async function computeKeyCount7d(ctx, dayIso) {
   return keyCount7;
 }
 
-async function computeKeyTypeCounts7d(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
-  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  const keyTypes = [];
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!hasKeyTag(a)) continue;
-    const keyType = getKeyType(a);
-    if (keyType) keyTypes.push(keyType);
-  }
-  return countBy(keyTypes);
-}
-
 function bucketAllLoadsByDay(acts) {
   const m = {};
   for (const a of acts) {
@@ -595,7 +381,7 @@ function bucketAllLoadsByDay(acts) {
 }
 
 async function computeFatigue7d(ctx, dayIso, options = {}) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
 
   const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
@@ -643,60 +429,23 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const acwr = chronicWeekly > 0 ? last7 / chronicWeekly : null;
 
   const keyCount7 = await computeKeyCount7d(ctx, dayIso);
-  const keyTypeCounts7d = await computeKeyTypeCounts7d(ctx, dayIso);
   const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : MAX_KEYS_7D;
 
   const reasons = [];
-  const guardrailReasons = [];
-  let guardrailSeverity = "none";
-  let fatigueSeverity = "low";
-  const severityRank = { none: 0, soft: 1, hard: 2 };
-  const upgradeSeverity = (next) => {
-    if (severityRank[next] > severityRank[guardrailSeverity]) guardrailSeverity = next;
-    if (next === "hard") fatigueSeverity = "high";
-    else if (next === "soft" && fatigueSeverity === "low") fatigueSeverity = "medium";
-  };
-  const guardrailReasonText = (id, value) => `${id}:${value}`;
-
-  if (keyCount7 > keyCap) {
-    reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
-    upgradeSeverity("soft");
-  }
-  if (rampPct > RAMP_SOFT_PCT) {
-    const isHard = rampPct >= RAMP_HARD_PCT;
-    reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
-    guardrailReasons.push(guardrailReasonText("ramp_pct", rampPct.toFixed(2)));
-    upgradeSeverity(isHard ? "hard" : "soft"); // NEW: guardrail severity
-  }
-  if (acwr != null && acwr > ACWR_SOFT) {
-    const isHard = acwr >= ACWR_HARD;
-    reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${isHard ? ACWR_HARD : ACWR_SOFT})`);
-    guardrailReasons.push(guardrailReasonText("acwr", acwr.toFixed(2)));
-    upgradeSeverity(isHard ? "hard" : "soft"); // NEW: guardrail severity
-  }
-  if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0) {
+  if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
+  if (rampPct > RAMP_PCT_7D_LIMIT) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+  if (acwr != null && acwr > ACWR_HIGH_LIMIT) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${ACWR_HIGH_LIMIT})`);
+  if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0)
     reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${ACWR_LOW_LIMIT})`);
-    upgradeSeverity("soft");
-  }
-  if (monotony > MONOTONY_7D_LIMIT) {
-    reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
-    upgradeSeverity("soft");
-  }
-  if (strain > STRAIN_7D_LIMIT) {
-    reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
-    upgradeSeverity("soft");
-  }
+  if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
+  if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
 
   const override = reasons.length > 0;
 
   return {
     override,
     reasons,
-    guardrailSeverity,
-    guardrailReasons,
-    severity: fatigueSeverity,
     keyCount7,
-    keyTypeCounts7d,
     keyCap,
     keyCapExceeded: keyCount7 > keyCap,
     rampPct,
@@ -710,7 +459,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 }
 
 function computeRobustness(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
   const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
@@ -741,7 +490,7 @@ function computeRobustness(ctx, dayIso) {
 }
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
   const keyDates = [];
@@ -775,89 +524,6 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   };
 }
 
-function keyTypeToFamily(keyType) {
-  if (keyType === "racepace") return "racepace";
-  if (keyType === "vo2_touch") return "vo2_touch";
-  if (keyType === "strides") return "strides";
-  if (keyType === "steady") return "steady";
-  return null;
-}
-
-function computeLastKeyInfo(ctx, dayIso, windowDays = 14) {
-  const end = getHistoryWindowEnd(dayIso);
-  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const keyHistory = [];
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!hasKeyTag(a)) continue;
-    const rawType = getKeyType(a);
-    const keyType = normalizeKeyType(rawType, {
-      activity: a,
-      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
-    });
-    const family = keyTypeToFamily(keyType);
-    keyHistory.push({ date: d, keyType, family });
-  }
-
-  keyHistory.sort((a, b) => a.date.localeCompare(b.date));
-  const lastEntry = keyHistory.length ? keyHistory[keyHistory.length - 1] : null;
-  return {
-    windowDays,
-    keyHistory,
-    lastKeyIso: lastEntry?.date ?? null,
-    lastKeyType: lastEntry?.keyType ?? null,
-    lastKeyFamily: lastEntry?.family ?? null,
-  };
-}
-
-async function computeLastKeyIntervalInsights(ctx, dayIso, windowDays = 21) {
-  const end = getHistoryWindowEnd(dayIso);
-  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const keyHistory = [];
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!hasKeyTag(a)) continue;
-    const rawType = getKeyType(a);
-    const keyType = normalizeKeyType(rawType, {
-      activity: a,
-      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
-    });
-    keyHistory.push({ date: d, keyType, activity: a });
-  }
-
-  if (!keyHistory.length) return null;
-  keyHistory.sort((a, b) => a.date.localeCompare(b.date));
-
-  const racepaceCandidates = keyHistory.filter((entry) => entry.keyType === "racepace");
-  const lastEntry = racepaceCandidates.length ? racepaceCandidates[racepaceCandidates.length - 1] : keyHistory[keyHistory.length - 1];
-  if (!lastEntry?.activity) return null;
-
-  try {
-    const streams = await getStreams(ctx, lastEntry.activity.id, STREAM_TYPES_INTERVAL);
-    const intervalMetrics = computeIntervalMetricsFromStreams(streams, {
-      intervalType: getIntervalTypeFromActivity(lastEntry.activity),
-      activity: lastEntry.activity,
-    });
-    if (!intervalMetrics) return null;
-    const paceText = formatPaceSeconds(intervalMetrics.interval_pace_sec_per_km);
-    return {
-      activityId: lastEntry.activity.id,
-      date: lastEntry.date,
-      keyType: lastEntry.keyType,
-      intervalMetrics,
-      paceText,
-    };
-  } catch {
-    return null;
-  }
-}
-
 const RUN_FLOOR_DELOAD_SUM21_MIN = 450;
 const RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN = 14;
 const RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS = 14;
@@ -880,10 +546,6 @@ const RUN_FLOOR_FLOOR_STEP = {
   BUILD: 10,
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
-const RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT = 5;
-const RUN_FLOOR_POST_ILLNESS_DRIFT_WORSEN_PCT = 1.5;
-const RUN_FLOOR_POST_ILLNESS_MOTOR_LOW = 45;
-const RUN_FLOOR_INJURY_PAUSE_DAYS = 14;
 
 function mapBlockToPhase(block) {
   if (block === "BASE") return "BASE";
@@ -959,115 +621,8 @@ function applyDeloadRules(currentTargets) {
   };
 }
 
-function evaluatePostIllnessPerformance({ motor, trend }) {
-  const motorValueLow = Number.isFinite(motor?.value) && motor.value <= RUN_FLOOR_POST_ILLNESS_MOTOR_LOW;
-  const motorEfDrop = Number.isFinite(motor?.dv) && motor.dv <= -RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT;
-  const trendEfDrop = Number.isFinite(trend?.dv) && trend.dv <= -RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT;
-  const trendDriftWorse =
-    Number.isFinite(trend?.dd) && trend.dd >= RUN_FLOOR_POST_ILLNESS_DRIFT_WORSEN_PCT;
-  const motorDriftWorse =
-    Number.isFinite(motor?.dd) && motor.dd >= RUN_FLOOR_POST_ILLNESS_DRIFT_WORSEN_PCT;
-
-  const reasons = [];
-  if (motorValueLow) reasons.push("Motor-Index deutlich schlechter");
-  if (motorEfDrop || trendEfDrop) {
-    reasons.push(`GA-Leistung ≥${RUN_FLOOR_POST_ILLNESS_EF_DROP_PCT}% schlechter`);
-  }
-  if (trendDriftWorse || motorDriftWorse) reasons.push("Drift klar schlechter");
-
-  return {
-    shouldDown: reasons.length > 0,
-    reasons,
-  };
-}
-
-function computeRunfloorMode({
-  dayIso,
-  blockEffective,
-  overrideInfo,
-  reentryState,
-  runfloorAdjustedInBlock,
-  motor,
-  trend,
-}) {
-  const isBaseBuildRace = ["BASE", "BUILD", "RACE"].includes(blockEffective);
-  const lastOverrideCategory = reentryState?.lastOverrideCategory ?? null;
-  const reentryEndDay = isIsoDate(reentryState?.reentryEndDay) ? reentryState.reentryEndDay : null;
-  const reentryCheckDay = reentryEndDay ? addDaysIso(reentryEndDay, 1) : null;
-
-  const hold = (dailyText, reason) => ({
-    mode: "HOLD",
-    adjustmentPct: 0,
-    applyAdjustment: false,
-    dailyText: dailyText || null,
-    reason: reason || null,
-  });
-
-  if (!isBaseBuildRace) {
-    if (blockEffective === "HOLD_LIFE") {
-      return hold("Runfloor: HOLD (Urlaub)", "Life override: fehlender Reiz ≠ verlorene Anpassung.");
-    }
-    if (blockEffective === "HOLD_ILLNESS") {
-      return hold("Runfloor: HOLD (Krankheit – Bewertung nach ReEntry)", "Illness: Bewertung nach ReEntry.");
-    }
-    if (blockEffective === "HOLD_INJURY") {
-      const pauseDays = Number.isFinite(overrideInfo?.dayIndex) ? overrideInfo.dayIndex : null;
-      if (pauseDays != null && pauseDays >= RUN_FLOOR_INJURY_PAUSE_DAYS && !runfloorAdjustedInBlock) {
-        // Injury ≥14 Tage: struktureller Ausfall → -10 % Runfloor.
-        return {
-          mode: "DOWN_10",
-          adjustmentPct: 0.1,
-          applyAdjustment: true,
-          dailyText: "Runfloor: −10 % (längere Verletzungspause)",
-          reason: `Injury pause ≥${RUN_FLOOR_INJURY_PAUSE_DAYS} Tage → -10%.`,
-        };
-      }
-      const note = pauseDays != null ? `Verletzung – Tag ${pauseDays}` : "Verletzung";
-      return hold(`Runfloor: HOLD (${note})`, "Injury override: Runfloor bleibt stabil.");
-    }
-    if (blockEffective === "REENTRY") {
-      const detail =
-        lastOverrideCategory === "SICK"
-          ? "Krankheit – Bewertung nach ReEntry"
-          : lastOverrideCategory === "INJURED"
-            ? "Verletzung"
-            : lastOverrideCategory === "HOLIDAY"
-              ? "Urlaub"
-              : "ReEntry";
-      return hold(`Runfloor: HOLD (${detail})`, "ReEntry: keine Progression.");
-    }
-    return hold(null, "BlockEffective != BASE/BUILD/RACE → HOLD.");
-  }
-
-  if (lastOverrideCategory === "SICK" && reentryCheckDay && dayIso === reentryCheckDay) {
-    if (runfloorAdjustedInBlock) {
-      return hold("Runfloor: HOLD (bereits gesenkt im Block)", "Kein doppeltes Senken im Block.");
-    }
-    const evaluation = evaluatePostIllnessPerformance({ motor, trend });
-    if (evaluation.shouldDown) {
-      // Nach Krankheit nur bei objektivem Leistungsabfall → -5 % Runfloor.
-      return {
-        mode: "DOWN_5",
-        adjustmentPct: 0.05,
-        applyAdjustment: true,
-        dailyText: "Runfloor: −5 % (Leistungsabfall nach Krankheit)",
-        reason: `Post-Illness-Evaluation: ${evaluation.reasons.join(" | ")}`,
-      };
-    }
-    return hold("Runfloor: HOLD (Krankheit – Bewertung nach ReEntry)", "Post-Illness: keine klare Verschlechterung.");
-  }
-
-  return {
-    mode: null,
-    adjustmentPct: 0,
-    applyAdjustment: false,
-    dailyText: null,
-    reason: null,
-  };
-}
-
 function buildRunDailyLoads(ctx, todayISO, windowDays) {
-  const end = getHistoryWindowEnd(todayISO);
+  const end = new Date(todayISO + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - (windowDays - 1) * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1079,7 +634,7 @@ function buildRunDailyLoads(ctx, todayISO, windowDays) {
     dailyLoads[d] = (dailyLoads[d] || 0) + extractLoad(a);
   }
 
-  const days = listIsoDaysInclusive(startIso, isoDate(end));
+  const days = listIsoDaysInclusive(startIso, todayISO);
   return days.map((d) => Number(dailyLoads[d]) || 0);
 }
 
@@ -1224,7 +779,7 @@ function evaluateRunFloorState({
 
 // ================= LOAD SUPPORT =================
 async function computeLoads7d(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1232,9 +787,6 @@ async function computeLoads7d(ctx, dayIso) {
   let bikeTotal7 = 0;
   let runMinutes7 = 0;
   let bikeMinutes7 = 0;
-  let runCount7 = 0;
-  let gaRuns7 = 0;
-  let longRuns7 = 0;
 
   let aerobicRun7 = 0;
   let aerobicBike7 = 0;
@@ -1257,11 +809,8 @@ async function computeLoads7d(ctx, dayIso) {
     const bike = isBike(a);
 
     if (run) {
-      runCount7 += 1;
       runMinutes7 += minutes;
       runTotal7 += totalLoad;
-      if (!hasKeyTag(a) && seconds >= GA_MIN_SECONDS) gaRuns7 += 1;
-      if (seconds >= LONGRUN_MIN_SECONDS) longRuns7 += 1;
     }
     if (bike) {
       bikeMinutes7 += minutes;
@@ -1302,9 +851,6 @@ async function computeLoads7d(ctx, dayIso) {
     bikeTotal7,
     runMinutes7,
     bikeMinutes7,
-    runCount7,
-    gaRuns7,
-    longRuns7,
     aerobicRun7,
     aerobicBike7,
     aerobicEq7,
@@ -1319,56 +865,8 @@ async function computeLoads7d(ctx, dayIso) {
   };
 }
 
-function computeIntensityBudget(ctx, dayIso, windowDays = 7) {
-  const end = getHistoryWindowEnd(dayIso);
-  const startIso = isoDate(new Date(end.getTime() - (windowDays - 1) * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  let steadyCount = 0;
-  let keyAnyCount = 0;
-  let keyHardCount = 0;
-  let lastSteadyIso = null;
-  let lastKeyAnyIso = null;
-  let lastKeyHardIso = null;
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!isRun(a)) continue;
-
-    const intensityClass = getIntensityClassForActivity(a);
-    if (intensityClass === INTENSITY_CLASS.KEY_HARD) {
-      keyAnyCount += 1;
-      if (!lastKeyAnyIso || d > lastKeyAnyIso) lastKeyAnyIso = d;
-      if (isKeyHardActivity(a)) {
-        keyHardCount += 1;
-        if (!lastKeyHardIso || d > lastKeyHardIso) lastKeyHardIso = d;
-      }
-    } else if (intensityClass === INTENSITY_CLASS.STEADY_T) {
-      steadyCount += 1;
-      if (!lastSteadyIso || d > lastSteadyIso) lastSteadyIso = d;
-    }
-  }
-
-  return {
-    windowDays,
-    startIso,
-    endIso,
-    steadyCount,
-    keyAnyCount,
-    keyHardCount,
-    lastSteadyIso,
-    lastKeyAnyIso,
-    lastKeyHardIso,
-    limits: {
-      steadyMax: STEADY_T_MAX_PER_7D,
-      keyHardMax: KEY_HARD_MAX_PER_7D,
-    },
-  };
-}
-
 function computeLongRunSummary7d(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1402,29 +900,6 @@ function computeLongRunSummary7d(ctx, dayIso) {
     isKey: longest.isKey,
     intensity: longest.intensity,
   };
-}
-
-function computeLongrunTargetMinutes(ctx, dayIso) {
-  if (!ctx?.activitiesAll?.length) return 60;
-  const longRuns = ctx.activitiesAll
-    .filter((a) => {
-      if (!isRun(a)) return false;
-      const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-      if (!d || (dayIso && d >= dayIso)) return false;
-      const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-      return seconds >= LONGRUN_MIN_SECONDS;
-    })
-    .map((a) => ({
-      date: String(a.start_date_local || a.start_date || "").slice(0, 10),
-      seconds: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
-    }))
-    .sort((a, b) => b.date.localeCompare(a.date));
-
-  if (!longRuns.length) return 60;
-  const recent = longRuns.slice(0, 2);
-  const avgMinutes = avg(recent.map((x) => x.seconds / 60));
-  if (!Number.isFinite(avgMinutes)) return 60;
-  return Math.max(60, Math.round((avgMinutes * 1.05) / 5) * 5);
 }
 
 // ================= BLOCK / KEY LOGIC (NEW) =================
@@ -1461,39 +936,6 @@ function getEventDistanceFromEvent(event) {
   return normalizeEventDistance(`${name} ${type}`);
 }
 
-function extractTargetTimeFromEvent(event) {
-  if (!event) return null;
-  const candidates = [
-    event?.target_time,
-    event?.targetTime,
-    event?.goal_time,
-    event?.goalTime,
-    event?.time_target,
-    event?.details?.target_time,
-    event?.details?.targetTime,
-    event?.details?.goal_time,
-    event?.details?.goalTime,
-    event?.race?.target_time,
-    event?.race?.goal_time,
-    event?.race?.targetTime,
-    event?.race?.goalTime,
-  ];
-  for (const value of candidates) {
-    const parsed = parseTimeToSeconds(value);
-    if (parsed) return parsed;
-  }
-  return null;
-}
-
-function getEventDistanceKm(distanceKey) {
-  if (!distanceKey) return null;
-  if (distanceKey === "5k") return 5;
-  if (distanceKey === "10k") return 10;
-  if (distanceKey === "hm") return 21.0975;
-  if (distanceKey === "m") return 42.195;
-  return null;
-}
-
 
 
 
@@ -1515,26 +957,131 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     return {
       expectedKeysPerWeek: 0,
       maxKeysPerWeek: 0,
-      allowedKeyTypes: ["strides"],
-      preferredKeyTypes: ["strides"],
-      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
+      allowedKeyTypes: ["steady", "strides"],
+      preferredKeyTypes: ["steady"],
+      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
     };
   }
 
-  const fromMatrix = PHASE_DISTANCE_RULES?.[dist]?.[block]?.keyRules;
-  if (fromMatrix) return fromMatrix;
+  if (block === "BASE") {
+    if (dist === "5k" || dist === "10k") {
+      return {
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
+        preferredKeyTypes: ["vo2_touch"],
+        bannedKeyTypes: ["schwelle", "racepace"],
+      };
+    }
+    if (dist === "m" || dist === "hm") {
+      return {
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["steady", "strides"],
+        preferredKeyTypes: ["steady"],
+        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
+      };
+    }
+    return {
+      expectedKeysPerWeek: 0.5,
+      maxKeysPerWeek: 1,
+      allowedKeyTypes: ["steady", "strides"],
+      preferredKeyTypes: ["steady"],
+      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
+    };
+  }
+
+  if (block === "BUILD") {
+    if (dist === "5k") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["vo2_touch", "schwelle"],
+        bannedKeyTypes: ["racepace"],
+      };
+    }
+    if (dist === "10k") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["schwelle", "vo2_touch"],
+        bannedKeyTypes: ["racepace"],
+      };
+    }
+    if (dist === "hm") {
+      const allowRacePace = weeksToEvent != null && weeksToEvent <= 8;
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
+        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
+        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
+      };
+    }
+    if (dist === "m") {
+      const allowRacePace = weeksToEvent != null && weeksToEvent <= 10;
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
+        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
+        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
+      };
+    }
+  }
+
+  if (block === "RACE") {
+    if (dist === "5k") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle"],
+      };
+    }
+    if (dist === "10k") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "schwelle", "strides", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["vo2_touch"],
+      };
+    }
+    if (dist === "hm") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "schwelle", "steady"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: ["vo2_touch", "strides"],
+      };
+    }
+    if (dist === "m") {
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "schwelle", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["vo2_touch", "strides"],
+      };
+    }
+  }
 
   return {
     expectedKeysPerWeek: 0.5,
     maxKeysPerWeek: 1,
-    allowedKeyTypes: ["strides"],
-    preferredKeyTypes: ["strides"],
-    bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
+    allowedKeyTypes: ["steady", "strides"],
+    preferredKeyTypes: ["steady"],
+    bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
   };
 }
 
 function collectKeyStats(ctx, dayIso, windowDays) {
-  const end = getHistoryWindowEnd(dayIso);
+  const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
@@ -1558,23 +1105,7 @@ function collectKeyStats(ctx, dayIso, windowDays) {
   return { count, types, list };
 }
 
-// FIX: key policy source-of-truth
-function normalizeKeyPolicy(keyRules, source = "blockState.keyRules") {
-  const allowedKeyTypes = Array.from(new Set(keyRules?.allowedKeyTypes || []));
-  const preferredKeyTypes = Array.from(new Set(keyRules?.preferredKeyTypes || []));
-  const bannedKeyTypes = Array.from(new Set(keyRules?.bannedKeyTypes || []))
-    .filter((t) => !allowedKeyTypes.includes(t));
-  return {
-    source,
-    allowedKeyTypes,
-    preferredKeyTypes,
-    bannedKeyTypes,
-  };
-}
-
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
-  const policySource = context.keyPolicySource || "blockState.keyRules";
-  const keyPolicy = normalizeKeyPolicy(keyRules, policySource);
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
   const actual7 = keyStats7.count;
@@ -1588,17 +1119,17 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typesForOutput = actualTypes7.length ? actualTypes7 : actualTypes14;
   const uniqueTypes = [...new Set(typesForOutput)];
   const uniqueTypes7 = [...new Set(actualTypes7)];
-  const bannedHits = uniqueTypes7.filter((t) => keyPolicy.bannedKeyTypes.includes(t));
-  const allowedHits = uniqueTypes7.filter((t) => keyPolicy.allowedKeyTypes.includes(t));
-  const preferredHits = uniqueTypes7.filter((t) => keyPolicy.preferredKeyTypes.includes(t));
-  const disallowedHits = uniqueTypes7.filter((t) => !keyPolicy.allowedKeyTypes.includes(t));
+  const bannedHits = uniqueTypes7.filter((t) => keyRules.bannedKeyTypes.includes(t));
+  const allowedHits = uniqueTypes7.filter((t) => keyRules.allowedKeyTypes.includes(t));
+  const preferredHits = uniqueTypes7.filter((t) => keyRules.preferredKeyTypes.includes(t));
+  const disallowedHits = uniqueTypes7.filter((t) => !keyRules.allowedKeyTypes.includes(t));
 
   const freqOk = actual7 >= expected;
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
-  const preferredMissing = keyPolicy.preferredKeyTypes.length > 0 && preferredHits.length === 0;
+  const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
   let suggestion = "";
-  const preferred = keyPolicy.preferredKeyTypes[0] || keyPolicy.allowedKeyTypes[0] || "steady";
+  const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
 
@@ -1622,6 +1153,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand).`;
   }
 
+  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
+
   return {
     expected,
     maxKeys,
@@ -1637,15 +1170,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     preferredHits,
     actualTypes: uniqueTypes,
     disallowedHits,
+    status,
     suggestion,
     basedOn: "7T",
     capExceeded,
     keySpacingOk,
     nextKeyEarliest,
-    keyPolicySource: keyPolicy.source,
-    allowedKeyTypes: keyPolicy.allowedKeyTypes,
-    bannedKeyTypes: keyPolicy.bannedKeyTypes,
-    computedDisallowed: disallowedHits,
   };
 }
 
@@ -1869,7 +1399,7 @@ function determineBlockState({
   const aerobicReady = historyMetrics?.aerobicOk && historyMetrics?.aerobicOkPrev;
   const driftReady =
     historyMetrics?.hrDriftDelta == null || historyMetrics.hrDriftDelta <= BLOCK_CONFIG.thresholds.hrDriftMax;
-  const fatigueOk = historyMetrics?.fatigue?.severity !== "high";
+  const fatigueOk = !historyMetrics?.fatigue?.override;
 
   let readinessScore = 40;
   if (runFloorReady) readinessScore += 20;
@@ -2046,9 +1576,6 @@ function buildBlockStateLine(state) {
     eventDate: state.eventDate,
     eventDistance: state.eventDistance,
     floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
-    runfloorAdjustedInBlock: state.runfloorAdjustedInBlock ?? false,
-    runfloorAdjustmentMode: state.runfloorAdjustmentMode ?? null,
-    runfloorAdjustmentDate: isIsoDate(state.runfloorAdjustmentDate) ? state.runfloorAdjustmentDate : null,
     deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
@@ -2074,9 +1601,6 @@ function parseBlockStateFromComment(comment) {
       eventDate: parsed.eventDate ?? null,
       eventDistance: parsed.eventDistance ?? null,
       floorTarget: Number.isFinite(parsed.floorTarget) ? parsed.floorTarget : null,
-      runfloorAdjustedInBlock: parsed.runfloorAdjustedInBlock ?? false,
-      runfloorAdjustmentMode: parsed.runfloorAdjustmentMode ?? null,
-      runfloorAdjustmentDate: isIsoDate(parsed.runfloorAdjustmentDate) ? parsed.runfloorAdjustmentDate : null,
       loadDays: Number.isFinite(parsed.loadDays) ? parsed.loadDays : 0,
       deloadStartDate: isIsoDate(parsed.deloadStartDate) ? parsed.deloadStartDate : null,
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
@@ -2102,26 +1626,6 @@ async function fetchWellnessDay(ctx, env, dayIso) {
   return p;
 }
 
-async function fetchDailyReportNote(env, dayIso) {
-  const externalId = `daily-report-${dayIso}`;
-  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
-  const existing = (events || []).find((e) => String(e?.external_id || "") === externalId);
-  return existing?.description ?? null;
-}
-
-function extractRecommendationLines(noteText) {
-  if (!noteText) return null;
-  const lines = String(noteText).split("\n");
-  const startIndex = lines.findIndex((line) => line.trim() === "🎯 HEUTIGE EMPFEHLUNG");
-  if (startIndex === -1) return null;
-  const section = lines.slice(startIndex, startIndex + 4);
-  if (section.length < 4) return null;
-  if (!section[1]?.trim().startsWith("- Empfehlung:")) return null;
-  if (!section[2]?.trim().startsWith("- Begründung:")) return null;
-  if (!section[3]?.trim().startsWith("- Konkret:")) return null;
-  return section;
-}
-
 async function getPersistedBlockState(ctx, env, dayIso) {
   if (ctx.blockStateCache.has(dayIso)) return ctx.blockStateCache.get(dayIso);
   const wellness = await fetchWellnessDay(ctx, env, dayIso);
@@ -2137,12 +1641,6 @@ function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, histo
   debugOut.__blocks[day] = {
     blockState,
     keyRules,
-    keyPolicy: {
-      keyPolicySource: keyCompliance?.keyPolicySource ?? "blockState.keyRules",
-      allowedKeyTypes: keyCompliance?.allowedKeyTypes ?? keyRules?.allowedKeyTypes ?? [],
-      bannedKeyTypes: keyCompliance?.bannedKeyTypes ?? keyRules?.bannedKeyTypes ?? [],
-      computedDisallowed: keyCompliance?.computedDisallowed ?? [],
-    },
     keyCompliance,
     historyMetrics,
   };
@@ -2154,30 +1652,9 @@ function addRunFloorDebug(debugOut, day, payload) {
   debugOut.__runFloor[day] = payload;
 }
 
-function addDecisionDebug(debugOut, day, payload) {
-  if (!debugOut) return;
-  debugOut.__decision ??= {};
-  debugOut.__decision[day] = payload;
-}
-
-function addHrr60Debug(debugOut, day, payload) {
-  if (!debugOut || !payload) return;
-  debugOut.__hrr60 ??= {};
-  debugOut.__hrr60[day] = payload;
-}
-
-function addWorkoutDebug(debugOut, day, payload) {
-  if (!debugOut) return;
-  debugOut.__workout ??= {};
-  debugOut.__workout[day] = payload;
-}
-
 
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
-}
-function getHistoryWindowEnd(dayIso) {
-  return new Date(dayIso + "T00:00:00Z");
 }
 function parseISODateSafe(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
@@ -2202,11 +1679,6 @@ function daysBetween(dateAISO, dateBISO) {
   const b = parseISODateSafe(dateBISO);
   if (!a || !b) return NaN;
   return (b.getTime() - a.getTime()) / 86400000;
-}
-function addDaysIso(dayIso, deltaDays) {
-  const base = parseISODateSafe(dayIso);
-  if (!base || !Number.isFinite(deltaDays)) return null;
-  return isoDate(new Date(base.getTime() + deltaDays * 86400000));
 }
 function clampStartDate(startISO, todayISO, maxAgeDays = 180) {
   const start = parseISODateSafe(startISO);
@@ -2254,609 +1726,6 @@ async function readKvJson(env, key) {
 async function writeKvJson(env, key, value) {
   if (!hasKv(env)) return;
   await env.KV.put(key, JSON.stringify(value));
-}
-
-async function readReentryState(env) {
-  const state = await readKvJson(env, REENTRY_STATE_KEY);
-  if (!state || typeof state !== "object") return null;
-  return {
-    lastOverrideDay: isIsoDate(state.lastOverrideDay) ? state.lastOverrideDay : null,
-    lastOverrideCategory: state.lastOverrideCategory || null,
-    reentryStartDay: isIsoDate(state.reentryStartDay) ? state.reentryStartDay : null,
-    reentryEndDay: isIsoDate(state.reentryEndDay) ? state.reentryEndDay : null,
-    reentryDays: Number.isFinite(state.reentryDays) ? state.reentryDays : null,
-  };
-}
-
-async function writeReentryState(env, state) {
-  if (!state) return;
-  await writeKvJson(env, REENTRY_STATE_KEY, state);
-}
-
-function coversDay(event, dayIso) {
-  const start = event?.start_date_local || event?.start_date || null;
-  const end = event?.end_date_local || event?.end_date || null;
-  if (!start || !end) return false;
-  const dayStart = `${dayIso}T00:00:00`;
-  return start <= dayStart && dayStart < end;
-}
-
-function getOverrideWindowInfo(event, dayIso) {
-  const startLocal = event?.start_date_local || event?.start_date || null;
-  const endLocal = event?.end_date_local || event?.end_date || null;
-  const startDate = startLocal ? String(startLocal).slice(0, 10) : null;
-  const endDate = endLocal ? String(endLocal).slice(0, 10) : null;
-  if (!isIsoDate(startDate) || !isIsoDate(endDate)) return { dayIndex: null, totalDays: null };
-  const totalDays = daysBetween(startDate, endDate);
-  const dayIndex = daysBetween(startDate, dayIso) + 1;
-  if (!Number.isFinite(totalDays) || totalDays <= 0) return { dayIndex: null, totalDays: null };
-  if (!Number.isFinite(dayIndex) || dayIndex <= 0) return { dayIndex: null, totalDays };
-  return { dayIndex, totalDays };
-}
-
-function pickOverrideEvent(events, dayIso) {
-  if (!Array.isArray(events) || !isIsoDate(dayIso)) return null;
-  const candidates = events.filter((event) => {
-    const category = String(event?.category || "").toUpperCase();
-    return OVERRIDE_CATEGORIES.includes(category) && coversDay(event, dayIso);
-  });
-  if (!candidates.length) return null;
-  candidates.sort((a, b) => {
-    const ca = String(a?.category || "").toUpperCase();
-    const cb = String(b?.category || "").toUpperCase();
-    return (OVERRIDE_PRIORITY[cb] || 0) - (OVERRIDE_PRIORITY[ca] || 0);
-  });
-  const event = candidates[0];
-  const category = String(event?.category || "").toUpperCase();
-  const blockEffective = OVERRIDE_TO_BLOCK[category] || null;
-  const { dayIndex, totalDays } = getOverrideWindowInfo(event, dayIso);
-  return {
-    category,
-    blockEffective,
-    event,
-    dayIndex,
-    totalDays,
-  };
-}
-
-function computeBlockEffectiveForDay({ dayIso, planBlock, overrideInfo, reentryState, reentryDays }) {
-  const nextState = {
-    lastOverrideDay: reentryState?.lastOverrideDay ?? null,
-    lastOverrideCategory: reentryState?.lastOverrideCategory ?? null,
-    reentryStartDay: reentryState?.reentryStartDay ?? null,
-    reentryEndDay: reentryState?.reentryEndDay ?? null,
-    reentryDays: reentryDays,
-  };
-
-  if (overrideInfo?.blockEffective) {
-    nextState.lastOverrideDay = dayIso;
-    nextState.lastOverrideCategory = overrideInfo.category;
-    nextState.reentryStartDay = null;
-    nextState.reentryEndDay = null;
-    return {
-      blockEffective: overrideInfo.blockEffective,
-      overrideInfo,
-      reentryInfo: null,
-      nextState,
-    };
-  }
-
-  if (!nextState.reentryStartDay && nextState.lastOverrideDay && daysBetween(nextState.lastOverrideDay, dayIso) >= 1) {
-    const reentryStartDay = addDaysIso(nextState.lastOverrideDay, 1);
-    const reentryEndDay = addDaysIso(reentryStartDay, (reentryDays || REENTRY_DAYS_DEFAULT) - 1);
-    nextState.reentryStartDay = reentryStartDay;
-    nextState.reentryEndDay = reentryEndDay;
-    nextState.reentryDays = reentryDays;
-  }
-
-  const reentryActive =
-    nextState.reentryStartDay &&
-    nextState.reentryEndDay &&
-    dayIso >= nextState.reentryStartDay &&
-    dayIso <= nextState.reentryEndDay;
-  if (reentryActive) {
-    const dayIndex = daysBetween(nextState.reentryStartDay, dayIso) + 1;
-    const totalDays = nextState.reentryDays || null;
-    return {
-      blockEffective: "REENTRY",
-      overrideInfo: null,
-      reentryInfo: { dayIndex, totalDays },
-      nextState,
-    };
-  }
-
-  nextState.reentryStartDay = null;
-  nextState.reentryEndDay = null;
-  return {
-    blockEffective: planBlock,
-    overrideInfo: null,
-    reentryInfo: null,
-    nextState,
-  };
-}
-
-async function appendLearningEvent(env, event) {
-  if (!hasKv(env)) return;
-  if (!event || !isIsoDate(event.day)) return;
-  const key = `learning:event:${event.day}`;
-  await writeKvJson(env, key, {
-    schema: 2,
-    ...event,
-  });
-}
-
-// NEW: STEADY_T learning exposure/outcome tracking
-async function registerStrategyExposure(env, strategy, day) {
-  if (!hasKv(env)) return;
-  if (!strategy || !isIsoDate(day)) return;
-  const key = `learning:exposure:${strategy}:${day}`;
-  await writeKvJson(env, key, {
-    schema: 1,
-    strategy,
-    day,
-    type: "exposure",
-  });
-}
-
-async function registerStrategyOutcome(env, strategy, day, payload = {}) {
-  if (!hasKv(env)) return;
-  if (!strategy || !isIsoDate(day)) return;
-  const key = `learning:outcome:${strategy}:${day}`;
-  await writeKvJson(env, key, {
-    schema: 1,
-    strategy,
-    day,
-    type: "outcome",
-    ...payload,
-  });
-}
-
-async function loadLearningEvents(env, endDay, lookbackDays = LEARNING_LOOKBACK_DAYS) {
-  if (!hasKv(env) || !isIsoDate(endDay) || !Number.isFinite(lookbackDays) || lookbackDays <= 0) return [];
-  const end = parseISODateSafe(endDay);
-  if (!end) return [];
-  const out = [];
-  for (let i = 0; i <= lookbackDays; i++) {
-    const day = isoDate(new Date(end.getTime() - i * 86400000));
-    const item = await readKvJson(env, `learning:event:${day}`);
-    if (item && isIsoDate(item.day)) out.push(item);
-  }
-  return out.sort((a, b) => String(a.day).localeCompare(String(b.day)));
-}
-
-function decayWeight(dayIso, endDayIso, decayDays = LEARNING_DECAY_DAYS) {
-  const d = daysBetween(dayIso, endDayIso);
-  if (!Number.isFinite(d) || d < 0) return 0;
-  const tau = Number.isFinite(decayDays) && decayDays > 0 ? decayDays : LEARNING_DECAY_DAYS;
-  return Math.exp(-d / tau);
-}
-
-function betaPosteriorMean(alpha, beta) {
-  const a = Number(alpha) || 0;
-  const b = Number(beta) || 0;
-  const denom = a + b;
-  if (denom <= 0) return 0.5;
-  return a / denom;
-}
-
-function formatContextSummary(contextKey) {
-  if (!contextKey || contextKey === "LEGACY") return "Legacy-Kontext";
-  if (contextKey === LEARNING_GLOBAL_CONTEXT_KEY) return "globaler Kontext";
-  const parts = String(contextKey).split("|");
-  return parts.slice(0, 3).map((part) => {
-    const [key, value] = part.split("=");
-    if (!value) return part;
-    if (key === "RFgap") return `RunFloorGap ${value === "T" ? "ja" : "nein"}`;
-    if (key === "stress") return `Stress ${value}`;
-    if (key === "hrv") return `HRV ${value}`;
-    if (key === "drift") return `Drift ${value}`;
-    if (key === "sleep") return `Schlaf ${value}`;
-    if (key === "mono") return `Monotony ${value}`;
-    return `${key} ${value}`;
-  }).join(", ");
-}
-
-function normalizeOutcomeClass(outcomeClass, outcomeScore, outcomeGood) {
-  if (outcomeClass === "GOOD" || outcomeClass === "NEUTRAL" || outcomeClass === "BAD") return outcomeClass;
-  if (typeof outcomeGood === "boolean") return outcomeGood ? "GOOD" : "BAD";
-  if (Number.isFinite(outcomeScore)) {
-    if (outcomeScore >= 2) return "GOOD";
-    if (outcomeScore === 1) return "NEUTRAL";
-    return "BAD";
-  }
-  return "NEUTRAL";
-}
-
-function normalizeStrategyArm(strategyArm, decisionArm) {
-  if (STRATEGY_ARMS.includes(strategyArm)) return strategyArm;
-  if (decisionArm === "frequency") return "FREQ_UP";
-  if (decisionArm === "intensity") return "INTENSITY_SHIFT";
-  if (decisionArm === "neutral") return "NEUTRAL";
-  return "NEUTRAL";
-}
-
-function computeLearningUtility(goodPosterior, badPosterior) {
-  const pGood = Number.isFinite(goodPosterior) ? goodPosterior : 0.5;
-  const pBad = Number.isFinite(badPosterior) ? badPosterior : 0.5;
-  return pGood - LEARNING_UTILITY_LAMBDA * pBad;
-}
-
-function computeLearningStats(events, endDayIso) {
-  const valid = Array.isArray(events) ? events.filter((e) => e && isIsoDate(e.day)) : [];
-  const withWeights = valid.map((e) => ({
-    ...e,
-    w: decayWeight(e.day, endDayIso, LEARNING_DECAY_DAYS),
-  })).filter((e) => e.w > 0);
-
-  const byArm = {};
-  for (const arm of STRATEGY_ARMS) {
-    byArm[arm] = withWeights.filter((e) => normalizeStrategyArm(e.strategyArm, e.decisionArm) === arm);
-  }
-
-  const armStats = {};
-  for (const arm of STRATEGY_ARMS) {
-    const sample = byArm[arm];
-    let goodSuccess = 0;
-    let goodFail = 0;
-    let badSuccess = 0;
-    let badFail = 0;
-    let nEff = 0;
-    for (const item of sample) {
-      const outcome = normalizeOutcomeClass(item.outcomeClass, item.outcomeScore, item.outcomeGood);
-      const w = item.w || 0;
-      nEff += w;
-      if (outcome === "GOOD") {
-        goodSuccess += w;
-        badFail += w;
-      } else if (outcome === "NEUTRAL") {
-        goodFail += w;
-        badFail += w;
-      } else {
-        goodFail += w;
-        badSuccess += w;
-      }
-    }
-
-    const goodPosterior = betaPosteriorMean(1 + goodSuccess, 1 + goodFail);
-    const badPosterior = betaPosteriorMean(1 + badSuccess, 1 + badFail);
-    const utilityMean = computeLearningUtility(goodPosterior, badPosterior);
-    const confidenceArm = clamp(nEff / (nEff + LEARNING_CONFIDENCE_K), 0, 1);
-
-    armStats[arm] = {
-      nEff,
-      goodPosterior,
-      badPosterior,
-      utilityMean,
-      confidenceArm,
-    };
-  }
-
-  const totalEff = sum(Object.values(armStats).map((x) => x.nEff || 0));
-  const contextConfidence = clamp(totalEff / (totalEff + LEARNING_CONFIDENCE_K), 0, 1);
-  const armsWithData = STRATEGY_ARMS.filter((arm) => (armStats[arm]?.nEff || 0) >= LEARNING_MIN_ARM_NEFF);
-  const rankingPool = armsWithData.length > 0 ? armsWithData : LEARNING_SAFE_FALLBACK_ARMS.slice();
-  const sortedByUtility = rankingPool.slice().sort((a, b) => armStats[b].utilityMean - armStats[a].utilityMean);
-  const bestArm = sortedByUtility[0] || "NEUTRAL";
-  const secondArm = sortedByUtility[1] || bestArm;
-  const utilityDiff = Math.abs(armStats[bestArm].utilityMean - armStats[secondArm].utilityMean);
-  const nArmsWithData = armsWithData.length;
-  const explorationNeed = contextConfidence < LEARNING_MIN_CONF
-    || nArmsWithData < 2
-    || utilityDiff < LEARNING_UTILITY_EPS;
-
-  return {
-    totalEff,
-    contextConfidence,
-    armStats,
-    rankingPool,
-    armsWithData,
-    nArmsWithData,
-    bestArm,
-    secondArm,
-    utilityDiff,
-    explorationNeed,
-  };
-}
-
-function chooseLearningRecommendation(stats, contextKey, contextSummary) {
-  const explorationNeed = stats.explorationNeed ?? true;
-  const recommended = stats.bestArm || "NEUTRAL";
-  const nEffTotal = stats.totalEff ?? 0;
-  const nEffArm = stats.armStats?.[recommended]?.nEff ?? 0;
-  const confidenceContext = stats.contextConfidence ?? 0;
-  const confidenceArm = stats.armStats?.[recommended]?.confidenceArm ?? 0;
-  const isGlobal = contextKey === LEARNING_GLOBAL_CONTEXT_KEY;
-  const exploreUntried = LEARNING_EXPLORE_UNTRIED;
-  const secondArm = stats.secondArm || recommended;
-  const utilityDiff = stats.utilityDiff ?? null;
-  let recommendationMode = explorationNeed ? "CONSERVATIVE" : "EXPLOIT";
-  let chosenArm = recommended;
-  let chosenEff = nEffArm;
-  let chosenConfidence = confidenceArm;
-
-  if (explorationNeed && exploreUntried) {
-    const untried = stats.rankingPool?.filter((arm) => (stats.armStats?.[arm]?.nEff || 0) <= 0) || [];
-    const safeUntried = untried.filter((arm) => LEARNING_SAFE_FALLBACK_ARMS.includes(arm));
-    const exploreArm = safeUntried[0];
-    if (exploreArm) {
-      chosenArm = exploreArm;
-      chosenEff = stats.armStats?.[exploreArm]?.nEff ?? 0;
-      chosenConfidence = stats.armStats?.[exploreArm]?.confidenceArm ?? 0;
-      recommendationMode = "EXPLORATION";
-    }
-  }
-
-  return {
-    strategyArm: chosenArm,
-    confidenceContext,
-    confidenceArm: chosenConfidence,
-    explorationNeed,
-    recommendationMode,
-    exploreUntried,
-    nEffTotal,
-    nEffArm: chosenEff,
-    secondArm,
-    utilityDiff,
-    contextKey,
-    contextSummary,
-    globalFallback: isGlobal,
-  };
-}
-
-function zScoreForConfidence(level) {
-  if (level >= 0.99) return 2.576;
-  if (level >= 0.95) return 1.96;
-  if (level >= 0.90) return 1.645;
-  return 1.96;
-}
-
-function wilsonInterval(success, total, confidence = 0.95) {
-  const n = Number(total) || 0;
-  const k = Number(success) || 0;
-  if (n <= 0) return { low: 0, high: 1 };
-  const z = zScoreForConfidence(confidence);
-  const phat = k / n;
-  const denom = 1 + (z * z) / n;
-  const centre = phat + (z * z) / (2 * n);
-  const margin = z * Math.sqrt((phat * (1 - phat) + (z * z) / (4 * n)) / n);
-  return {
-    low: Math.max(0, (centre - margin) / denom),
-    high: Math.min(1, (centre + margin) / denom),
-  };
-}
-
-function weightedAverage(values, weights) {
-  if (!Array.isArray(values) || !Array.isArray(weights) || values.length !== weights.length) return null;
-  let num = 0;
-  let den = 0;
-  for (let i = 0; i < values.length; i++) {
-    const v = Number(values[i]);
-    const w = Number(weights[i]);
-    if (!Number.isFinite(v) || !Number.isFinite(w) || w <= 0) continue;
-    num += v * w;
-    den += w;
-  }
-  return den > 0 ? num / den : null;
-}
-
-function computeLearningEvidence(events, endDayIso, contextKey) {
-  const valid = Array.isArray(events) ? events.filter((e) => e && isIsoDate(e.day)) : [];
-  const redFlagCount = valid.filter((e) => e.learningEligible === false).length;
-  const eligible = valid.filter((e) => e.learningEligible !== false);
-  const contextEvents = eligible.filter((e) => (e.contextKey || "LEGACY") === contextKey);
-  const stats = computeLearningStats(contextEvents, endDayIso);
-  const useGlobal = stats.totalEff < LEARNING_MIN_NEFF && contextKey !== LEARNING_GLOBAL_CONTEXT_KEY;
-  const fallbackEvents = useGlobal ? eligible : contextEvents;
-  const fallbackStats = useGlobal ? computeLearningStats(fallbackEvents, endDayIso) : stats;
-  const finalContextKey = useGlobal ? LEARNING_GLOBAL_CONTEXT_KEY : contextKey;
-  const contextSummary = formatContextSummary(finalContextKey);
-  const recommendation = chooseLearningRecommendation(fallbackStats, finalContextKey, contextSummary);
-
-  return {
-    lookbackDays: LEARNING_LOOKBACK_DAYS,
-    decayDays: LEARNING_DECAY_DAYS,
-    sampleCount: eligible.length,
-    effectiveSamples: fallbackStats.totalEff,
-    contextKey: finalContextKey,
-    contextSummary,
-    globalFallback: useGlobal,
-    redFlagCount,
-    arms: fallbackStats.armStats,
-    recommendation,
-  };
-}
-
-function buildLearningNarrativeState(evidence) {
-  const recommendation = evidence?.recommendation;
-  const nEffRec = Number.isFinite(recommendation?.nEffArm) ? recommendation.nEffArm : 0;
-  const nEffTotal = Number.isFinite(recommendation?.nEffTotal) ? recommendation.nEffTotal : 0;
-  const confidenceRec = Number.isFinite(recommendation?.confidenceArm) ? recommendation.confidenceArm : 0;
-  const confidenceContext = Number.isFinite(recommendation?.confidenceContext) ? recommendation.confidenceContext : 0;
-  const baseExplorationNeed = recommendation?.explorationNeed ?? true;
-  const isGlobalFallback = recommendation?.globalFallback ?? false;
-  const recommendedArm = recommendation?.strategyArm || "NEUTRAL";
-  const contextSummary = recommendation?.contextSummary || evidence?.contextSummary || "aktueller Kontext";
-  const contextKey = recommendation?.contextKey || evidence?.contextKey || "LEGACY";
-  const arms = evidence?.arms || {};
-  const nEffByArm = {};
-  for (const arm of STRATEGY_ARMS) {
-    nEffByArm[arm] = Number.isFinite(arms[arm]?.nEff) ? arms[arm].nEff : 0;
-  }
-  const rankedArms = STRATEGY_ARMS
-    .filter((arm) => nEffByArm[arm] >= LEARNING_TEXT_MIN_ARM_NEFF)
-    .slice()
-    .sort((a, b) => (arms[b]?.utilityMean ?? -Infinity) - (arms[a]?.utilityMean ?? -Infinity));
-  const secondArm = rankedArms.find((arm) => arm !== recommendedArm) || recommendedArm;
-  const nEffSecond = Number.isFinite(nEffByArm[secondArm]) ? nEffByArm[secondArm] : 0;
-  const nArmsWithData = rankedArms.length;
-
-  const explorationNeed = baseExplorationNeed && (nEffRec < LEARNING_TEXT_MIN_ARM_NEFF || confidenceRec < 0.4);
-
-  return {
-    contextKey,
-    contextSummary,
-    isGlobalFallback,
-    recommendedArm,
-    secondArm,
-    nEffTotal,
-    nEffByArm,
-    nArmsWithData,
-    nEffRec,
-    nEffSecond,
-    confidenceRec,
-    confidenceContext,
-    explorationNeed,
-  };
-}
-
-function learningEvidenceLabel(isGlobal) {
-  return isGlobal ? "Evidenz (global)" : "Evidenz (Kontext)";
-}
-
-function formatLearningEvidenceLines(evidence, narrativeState) {
-  const arms = evidence?.arms || {};
-  const armLines = STRATEGY_ARMS.map((arm) => {
-    const label = STRATEGY_LABELS[arm] || arm;
-    const nEff = Number.isFinite(arms[arm]?.nEff) ? arms[arm].nEff : 0;
-    return `- ${label}: ${formatNeff(nEff)} Beobachtungen`;
-  });
-
-  const confArmPct = formatPct(narrativeState.confidenceRec);
-  const confContextPct = formatPct(narrativeState.confidenceContext);
-  const confidenceLine = `- Evidence-Confidence: Kontext ${confContextPct} | Arm ${confArmPct}`;
-
-  return [learningEvidenceLabel(narrativeState.isGlobalFallback), ...armLines, confidenceLine];
-}
-
-function formatPct(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "0%";
-  return `${Math.round(n * 100)}%`;
-}
-
-function formatNeff(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return "0.0";
-  return n.toFixed(1);
-}
-
-function sanitizeLearningText(text) {
-  let out = String(text || "");
-  out = out.replace(/NaN|undefined|null/g, "");
-  out = out.replace(/[ \t]{2,}/g, " ");
-  out = out.replace(/\s+\n/g, "\n").replace(/\n\s+/g, "\n");
-  out = out.replace(/\s+([.,;:])/g, "$1");
-  const suffix = "(basierend auf globalen Daten)";
-  const firstIndex = out.indexOf(suffix);
-  if (firstIndex >= 0) {
-    out = out.slice(0, firstIndex + suffix.length) + out.slice(firstIndex + suffix.length).replaceAll(suffix, "");
-  }
-  return out.trim();
-}
-
-function getClaimsLevel(state) {
-  if (state.explorationNeed || state.nEffRec < LEARNING_TEXT_MIN_ARM_NEFF || state.confidenceRec < 0.4) return 0;
-  const hasCompareArms = state.nArmsWithData >= LEARNING_TEXT_MIN_COMPARE_ARMS
-    && state.nEffRec >= LEARNING_TEXT_MIN_COMPARE_NEFF
-    && state.nEffSecond >= LEARNING_TEXT_MIN_COMPARE_NEFF;
-  if (!hasCompareArms) return 1;
-  const level = state.confidenceContext >= LEARNING_TEXT_MIN_CONF_FOR_STRONG ? 3 : 2;
-  return state.recommendedArm === "NEUTRAL" ? Math.min(level, 1) : level;
-}
-
-function applyTextGate(text, state) {
-  const claimsLevel = getClaimsLevel(state);
-  const isNeutral = state.recommendedArm === "NEUTRAL";
-  const blocklist = [
-    "robuster als",
-    "besser als",
-    "als Intensität",
-    "als die Alternativen",
-    "reagierst robuster",
-    "robuster reagierst",
-  ];
-  const neutralBlocklist = ["robust", "bewährt", "stabiler"];
-  let out = String(text || "");
-
-  if (claimsLevel <= 1) {
-    const hasBlocked = blocklist.some((phrase) => out.toLowerCase().includes(phrase));
-    if (hasBlocked) {
-      if (state.policyReason === "RUN_FLOOR_GAP_HIGH_STRESS") {
-        out =
-          "Wir entscheiden uns heute für Häufigkeit statt Tempo, weil dein Runload unter dem Ziel liegt und der Gesamtstress erhöht ist – so schließen wir die Lücke kontrolliert, ohne zusätzliche Intensität zu erzwingen.";
-      } else {
-        out =
-          "Wir priorisieren heute Häufigkeit und Kontrolle, weil das in dieser Situation die sicherste und plan-stabile Option ist.";
-      }
-    }
-  }
-
-  if (claimsLevel <= 1) {
-    for (const phrase of blocklist) {
-      const rx = new RegExp(phrase, "gi");
-      out = out.replace(rx, "");
-    }
-  }
-
-  if (isNeutral) {
-    for (const phrase of neutralBlocklist) {
-      const rx = new RegExp(phrase, "gi");
-      out = out.replace(rx, "");
-    }
-  }
-
-  return sanitizeLearningText(out);
-}
-
-function getLearningText(state) {
-  const armLabel = STRATEGY_LABELS[state.recommendedArm] || state.recommendedArm || "keine Anpassung";
-  const secondArmLabel = STRATEGY_LABELS[state.secondArm] || state.secondArm || "Alternative";
-  const contextText = state.contextSummary || "aktueller Kontext";
-  const suffix = state.isGlobalFallback || state.contextKey === LEARNING_GLOBAL_CONTEXT_KEY
-    ? " (basierend auf globalen Daten)"
-    : "";
-  const isNeutral = state.recommendedArm === "NEUTRAL";
-  let level = getClaimsLevel(state);
-  if (isNeutral) level = Math.min(level, 1);
-  let text = "";
-
-  if (isNeutral) {
-    text = `Learning heute:\nWir halten die Strategie im (${contextText}) konservativ.\nEs gibt heute keinen klaren Grund umzusteuern, daher stabilisieren wir und beobachten weiter.`;
-  } else if (level === 0) {
-    text = `Learning heute:\nWir haben im (${contextText}) noch zu wenig Vergleich, um sicher umzuschalten.\nWir bleiben vorerst bei ${armLabel} und sammeln weitere Beobachtungen.`;
-  } else if (level === 1) {
-    text = `Learning heute:\n${armLabel} wirkt im (${contextText}) bislang stabil.\nFür einen fairen Vergleich fehlen noch Tests der Alternativen.`;
-  } else if (level === 2) {
-    text = `Learning heute:\nIm (${contextText}) spricht aktuell mehr für ${armLabel} als für ${secondArmLabel}.\nDer Vergleich ist noch vorläufig, deshalb bleiben wir vorsichtig.`;
-  } else {
-    text = `Learning heute:\nIm (${contextText}) war ${armLabel} robuster als ${secondArmLabel}.\nDas ist unser Grund, die Empfehlung beizubehalten.`;
-  }
-
-  return applyTextGate(`${text}${suffix}`, state);
-}
-
-function buildLearningNarrative(payload) {
-  const normalized = payload?.evidence ? payload : { evidence: payload };
-  const { evidence, confirmedRules = [], proposedRules = [] } = normalized || {};
-  const narrativeState = buildLearningNarrativeState(evidence);
-  const confirmedText = confirmedRules.length ? confirmedRules.slice(0, 2).join(" | ") : "Noch keine bestätigte Regel.";
-  const proposedText = proposedRules.length ? proposedRules.slice(0, 2).join(" | ") : "Aktuell keine neue Hypothese.";
-  const evidenceLines = formatLearningEvidenceLines(evidence, narrativeState);
-  const learningToday = getLearningText(narrativeState);
-
-  return [
-    "1) 🧭 Ich-Regeln (Confirmed)",
-    confirmedText,
-    "",
-    "2) 🔬 Beobachtung / Test (Proposed)",
-    proposedText,
-    "",
-    "3) 📊 Evidenz (deskriptiv)",
-    ...evidenceLines,
-    "",
-    "4) 🧠 Learning heute (menschlich & ehrlich)",
-    learningToday,
-  ].join("\n");
 }
 
 function authHeader(env) {
@@ -2985,29 +1854,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   let daysWritten = 0;
   const daysList = listIsoDaysInclusive(oldest, newest);
   let previousBlockState = null;
-  const learningEvents = await loadLearningEvents(env, newest, LEARNING_LOOKBACK_DAYS);
-  const reentryDays = getReentryDays(env);
-  let reentryState = (await readReentryState(env)) || {
-    lastOverrideDay: null,
-    lastOverrideCategory: null,
-    reentryStartDay: null,
-    reentryEndDay: null,
-    reentryDays,
-  };
-  let overrideEvents = [];
-  try {
-    const overrideOldest = addDaysIso(oldest, -30) || oldest;
-    const overrideNewest = addDaysIso(newest, 1) || newest;
-    overrideEvents = await fetchOverrideEvents(env, overrideOldest, overrideNewest);
-  } catch (e) {
-    overrideEvents = [];
-    if (debug) {
-      ctx.debugOut = ctx.debugOut || {};
-      addDebug(ctx.debugOut, "override-events", null, "warn:fetch_failed", {
-        message: String(e?.message ?? e),
-      });
-    }
-  }
 
   for (const day of daysList) {
     // NEW: mode + policy for this day (based on next event)
@@ -3068,9 +1914,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     // Process runs (collect detailed info, but write VDOT/Drift from a single representative GA run)
     for (const a of runs) {
-      // NEW: STEADY_T intensity model
-      const intensityProfile = classifyIntensity(a);
-      const isKey = intensityProfile.isKey;
+      const isKey = hasKeyTag(a);
       const ga = isGA(a);
 
       const ef = extractEF(a);
@@ -3118,23 +1962,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_INTERVAL);
           intervalMetrics = computeIntervalMetricsFromStreams(streams, {
             intervalType: getIntervalTypeFromActivity(a),
-            activity: a,
           });
         } catch {
           intervalMetrics = null;
         }
       }
 
-      const intensityClass = intensityProfile.intensityClass;
       perRunInfo.push({
         activityId: a.id,
         type: a.type,
         tags: a.tags ?? [],
         ga,
         isKey,
-        intensityClass,
-        // NEW: STEADY_T excluded from diagnostic trends
-        excludeFromTrends: !shouldIncludeInTrends(intensityClass),
         keyType,
         ef,
         drift,
@@ -3150,13 +1989,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         addDebug(ctx.debugOut, day, a, "ok", {
           ga,
           isKey,
-          intensityClass,
           ef,
           drift,
           drift_raw,
           drift_source,
           load,
-          intervalMetrics,
         });
       }
     }
@@ -3176,12 +2013,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     } catch (e) {
       trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
     }
-    let latestGaSample = null;
-    try {
-      latestGaSample = await getLatestGaSample(ctx, day, TREND_WINDOW_DAYS * 2);
-    } catch {
-      latestGaSample = null;
-    }
 
     // NEW: loads + min stimulus depends on mode
     let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
@@ -3192,7 +2023,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
-    const longrunMinutesTarget = computeLongrunTargetMinutes(ctx, day);
     let recoverySignals = null;
     try {
       recoverySignals = await computeRecoverySignals(ctx, env, day);
@@ -3236,25 +2066,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const keySpacing = computeKeySpacing(ctx, day);
-    const lastKeyInfo = computeLastKeyInfo(ctx, day, 14);
-    let lastKeyIntervalInsights = null;
-    try {
-      lastKeyIntervalInsights = await computeLastKeyIntervalInsights(ctx, day, 21);
-    } catch {
-      lastKeyIntervalInsights = null;
-    }
-    let ga21Context = null;
-    try {
-      ga21Context = await computeGa21DayContext(ctx, day);
-    } catch {
-      ga21Context = null;
-    }
-    let intervalContext = null;
-    try {
-      intervalContext = await computeIntervalContext(ctx, day, perRunInfo);
-    } catch {
-      intervalContext = null;
-    }
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
@@ -3262,7 +2073,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
       block: baseBlock,
       eventDistance,
-      keyPolicySource: "baseBlock.keyRules",
     });
 
     const baseRunFloorTarget =
@@ -3297,49 +2107,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
 
-    const overrideInfo = pickOverrideEvent(overrideEvents, day);
-    const blockEffectiveResult = computeBlockEffectiveForDay({
-      dayIso: day,
-      planBlock: blockState.block,
-      overrideInfo,
-      reentryState,
-      reentryDays,
-    });
-    patch[FIELD_BLOCK_EFFECTIVE] = blockEffectiveResult.blockEffective;
-
-    const isNewBlock = blockState.startDate && blockState.startDate !== previousBlockState?.startDate;
-    const runfloorAdjustedInBlock = isNewBlock
-      ? false
-      : previousBlockState?.runfloorAdjustedInBlock ?? false;
-    const runfloorModeInfo = computeRunfloorMode({
-      dayIso: day,
-      blockEffective: blockEffectiveResult.blockEffective,
-      overrideInfo: blockEffectiveResult.overrideInfo,
-      reentryState,
-      runfloorAdjustedInBlock,
-      motor,
-      trend,
-    });
-
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
     const dailyRunLoads = buildRunDailyLoads(ctx, day, RUN_FLOOR_DELOAD_WINDOW_DAYS);
-    const runfloorAdjustedTarget = runfloorModeInfo.applyAdjustment
-      ? Math.max(1, Math.round(baseRunFloorTarget * (1 - runfloorModeInfo.adjustmentPct)))
-      : baseRunFloorTarget;
-    const didAdjustRunfloor = runfloorModeInfo.applyAdjustment && runfloorAdjustedTarget !== baseRunFloorTarget;
     const runFloorState = evaluateRunFloorState({
       todayISO: day,
-      floorTarget: runfloorAdjustedTarget,
+      floorTarget: baseRunFloorTarget,
       phase,
       eventInDays,
       eventDateISO: eventDate || null,
       previousState: previousBlockState,
       dailyRunLoads,
     });
-    runFloorState.runfloorMode = runfloorModeInfo.mode;
-    runFloorState.runfloorModeText = runfloorModeInfo.dailyText;
-    runFloorState.runfloorModeReason = runfloorModeInfo.reason;
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
       policy = {
@@ -3356,12 +2135,35 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const dynamicKeyCap = {
       maxKeys7d: MAX_KEYS_7D,
-      reasons: ["Statischer Key-Cap"],
+      reasons: [],
     };
+
+    if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
+      dynamicKeyCap.maxKeys7d = 0;
+      dynamicKeyCap.reasons.push("Recover-Overlay aktiv");
+    } else if (runFloorState.overlayMode === "TAPER") {
+      dynamicKeyCap.maxKeys7d = 0;
+      dynamicKeyCap.reasons.push("Taper aktiv");
+    } else if (runFloorState.overlayMode === "DELOAD") {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Deload aktiv");
+    } else if (fatigueBase?.override) {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Fatigue/Overload");
+    } else if (robustness && !robustness.strengthOk) {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Robustheit fehlt");
+    } else if ((motor?.value ?? 0) >= 70) {
+      dynamicKeyCap.maxKeys7d = 2;
+      dynamicKeyCap.reasons.push("Motor stark");
+    } else {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Motor <70");
+    }
 
     let fatigue = fatigueBase;
     try {
-      fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: MAX_KEYS_7D });
+      fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: dynamicKeyCap.maxKeys7d });
     } catch {
       fatigue = fatigueBase;
     }
@@ -3370,29 +2172,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
     const keyRules = {
       ...keyRulesBase,
-      maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, MAX_KEYS_7D),
+      maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
       block: blockState.block,
       eventDistance,
-      maxKeys7d: MAX_KEYS_7D,
+      maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
-      keyPolicySource: "blockState.keyRules",
     });
-    historyMetrics.keyCompliance = keyCompliance;
 
     patch[FIELD_BLOCK] = blockState.block;
-    reentryState = blockEffectiveResult.nextState;
-    if (write) {
-      await writeReentryState(env, reentryState);
-    }
-    blockState.runfloorAdjustedInBlock = runfloorAdjustedInBlock || didAdjustRunfloor;
-    blockState.runfloorAdjustmentMode = didAdjustRunfloor
-      ? runfloorModeInfo.mode
-      : previousBlockState?.runfloorAdjustmentMode ?? null;
-    blockState.runfloorAdjustmentDate = didAdjustRunfloor
-      ? day
-      : previousBlockState?.runfloorAdjustmentDate ?? null;
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
@@ -3400,9 +2189,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDate,
       eventDistance,
       floorTarget: blockState.floorTarget,
-      runfloorAdjustedInBlock: blockState.runfloorAdjustedInBlock,
-      runfloorAdjustmentMode: blockState.runfloorAdjustmentMode,
-      runfloorAdjustmentDate: blockState.runfloorAdjustmentDate,
       deloadStartDate: blockState.deloadStartDate,
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
@@ -3428,241 +2214,47 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       lastEventDate: runFloorState.lastEventDate,
       daysSinceEvent: runFloorState.daysSinceEvent,
       reasons: runFloorState.reasons,
-      runfloorMode: runFloorState.runfloorMode,
-      runfloorModeText: runFloorState.runfloorModeText,
-      runfloorModeReason: runFloorState.runfloorModeReason,
     });
 
-    const maintenance14d = computeMaintenance14d(ctx, day);
-    const pastLearningEvents = learningEvents.filter((e) => String(e.day) < day);
-    const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
-    const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
-    const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
-    const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
-    const subjectiveAvgNegative = recoverySignals?.subjectiveAvgNegative ?? null;
-    const subjectiveNegative = recoverySignals?.subjectiveNegative ?? false;
-    const hrv1dConcern = hrv1dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
-    const hrv2dConcern = hrv2dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
+async function computeMaintenance14d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const endIso = dayIso;
 
-    const repGARun = pickRepresentativeGARun(perRunInfo);
-    const repDrift = Number.isFinite(repGARun?.drift) ? repGARun.drift : null;
-    const driftSignalForLearning =
-      repDrift == null
-        ? "unknown"
-        : repDrift >= DRIFT_CRITICAL_PCT
-          ? "red"
-          : repDrift >= DRIFT_WARN_PCT
-            ? "orange"
-            : "green";
-    const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-    const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
-    const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
-    const freqCount14 = maintenance14d?.runCount14 ?? null;
-    const freqSignal =
-      freqCount14 == null ? "unknown" : freqCount14 > 12 ? "red" : (freqCount14 < 7 || freqCount14 > 11 ? "orange" : "green");
-    const warningSignals = [
-      driftSignalForLearning === "orange" || driftSignalForLearning === "red",
-      hrv1dConcern,
-      freqSignal === "orange" || freqSignal === "red",
-      !!recoverySignals?.sleepLow,
-      !!fatigue?.override,
-      subjectiveNegative,
-    ];
-    const warningCount = warningSignals.filter(Boolean).length;
-    const hasHardRedFlag = hrv2dConcern || (warningCount >= 2 && subjectiveNegative) || !!recoverySignals?.painInjury;
-    const intensityBudget = computeIntensityBudget(ctx, day, 7);
-    const driftRecentMedian = Number.isFinite(trend?.driftRecentMed) ? trend.driftRecentMed : null;
-    const driftTrendWorsening = Number.isFinite(trend?.dd) ? trend.dd > DRIFT_TREND_WORSENING_PCT : false;
-    const motorTrendDownStrong = Number.isFinite(motor?.dv) ? motor.dv < -1.5 : false;
-    const fatigueHigh = fatigue?.severity === "high" || !!fatigue?.override;
-    const loadState = fatigueHigh ? "overreached" : "ok";
-    const guardrailState = buildGuardrailState({
-      hasHardRedFlag,
-      hrv2dNegative: hrv2dConcern,
-      warningCount,
-      loadState,
-      painInjury: !!recoverySignals?.painInjury,
-      keySpacingOk: keySpacing?.ok,
-      fatigueGuardrailSeverity: fatigue?.guardrailSeverity ?? "none",
-      fatigueGuardrailReasons: fatigue?.guardrailReasons ?? [],
-    });
-    const hrvNegativeDays = hrvDeltaPct == null ? null : hrv2dConcern ? 2 : hrv1dConcern ? 1 : 0;
-    const hadKey = perRunInfo.some((x) => !!x.isKey);
-    const decisionConfidence = computeReadinessConfidence({
-      driftSignal: driftSignalForLearning,
-      hrvDeltaPct,
-      runLoad7,
-      fatigueOverride: !!fatigue?.override,
-      hadKey,
-      counterIndicator: !hadKey && driftSignalForLearning === "green",
-      hrv1dNegative: hrv1dConcern,
-      hrv2dNegative: hrv2dConcern,
-      trend,
-    });
-    const steadyDecision = computeBuildSteadyDecision({
-      phase: blockState.block,
-      guardrailHardActive: guardrailState.hardActive,
-      guardrailSoftActive: guardrailState.mediumActive,
-      hrvNegativeDays,
-      hrv2dNegative: hrv2dConcern,
-      driftRecentMedian,
-      driftTrendWorsening,
-      loadState,
-      fatigueHigh,
-      motorTrendDownStrong,
-      intensityBudget,
-      decisionConfidenceScore: decisionConfidence.score,
-    });
-    const keyHardDecision = computeKeyHardDecision({
-      guardrailHardActive: guardrailState.hardActive,
-      guardrailMediumActive: guardrailState.mediumActive,
-      hrv2dNegative: hrv2dConcern,
-      loadState,
-      keySpacingOk: keySpacing?.ok,
-      keyCompliance,
-      intensityBudget,
-    });
-    const overruledSignals = [];
-    if (steadyDecision?.delaySteady && steadyDecision?.allowConditionsMet) {
-      overruledSignals.push("BUILD_STEADY_ALLOWED");
-    }
-    if (guardrailState.hardActive) overruledSignals.push("HARD_GUARDRAIL");
-    const intensitySelection = selectIntensityRecommendation({
-      blockState,
-      weeksToEvent,
-      guardrailState,
-      keyRules,
-      keyCompliance,
-      intensityBudget,
-      keySpacing,
-      steadyDecision,
-      runFloorGap,
-    });
-    const intensityClassActual = deriveDailyIntensityClass(perRunInfo);
-    const intensityClassToday = intensityClassActual ?? intensitySelection?.intensityClass ?? null;
-    const excludeFromTrends = {
-      motorTrend: intensityClassActual === INTENSITY_CLASS.STEADY_T,
-      vdotTrend: intensityClassActual === INTENSITY_CLASS.STEADY_T,
-      efDriftTrend: intensityClassActual === INTENSITY_CLASS.STEADY_T,
-    };
-    const decisionTrace = buildDecisionTrace({
-      steadyDecision,
-      guardrailState,
-      overruledSignals,
-      intensityClassToday,
-      intensityBudget,
-      excludeFromTrends,
-      intensitySelection,
-    });
-    addDecisionDebug(ctx.debugOut, day, buildIntensityDebugPayload({
-      intensityClassToday,
-      intensityBudget,
-      steadyDecision,
-      keyHardDecision,
-      decisionTrace,
-      guardrailState,
-      excludeFromTrends,
-      intensitySelection,
-    }));
-    const lifeStress = deriveStressBucket({ fatigueOverride: !!fatigue?.override, warningCount });
-    const hrvState = deriveHrvBucket(hrvDeltaPct);
-    const driftState = deriveDriftBucket(driftSignalForLearning);
-    const highMonotony = deriveMonotonyBucket(fatigue?.monotony) === "HIGH";
-    const freqNotRed = freqSignal !== "red";
-    const strategyDecision = deriveStrategyArm({
-      runFloorGap,
-      lifeStress,
-      hrvState,
-      driftState,
-      hadKey,
-      freqNotRed,
-      highMonotony,
-      fatigueHigh: !!fatigue?.override,
-      hasHardRedFlag,
-    });
-    const outcomeScore = computeLearningOutcomeScore({
-      driftSignal: driftSignalForLearning,
-      hrv1dNegative,
-      hrv2dNegative,
-      fatigueOverride: !!fatigue?.override,
-      warningCount,
-    });
-    const outcomeClass =
-      outcomeScore >= 2 ? "GOOD" : outcomeScore === 1 ? "NEUTRAL" : "BAD";
-    const contextKey = deriveContextKey({
-      runFloorGap,
-      fatigueOverride: !!fatigue?.override,
-      warningCount,
-      hrvDeltaPct,
-      driftSignal: driftSignalForLearning,
-      recoverySignals,
-      monotony: fatigue?.monotony,
-    });
-    const learningEvidence = computeLearningEvidence(pastLearningEvents, day, contextKey);
-    const learningNarrativeState = buildLearningNarrativeState(learningEvidence);
-    const learningEvent = {
-      day,
-      decisionArm: strategyDecision.strategyArm === "FREQ_UP" ? "frequency" : strategyDecision.strategyArm === "INTENSITY_SHIFT" ? "intensity" : "neutral",
-      strategyArm: strategyDecision.strategyArm,
-      policyReason: strategyDecision.policyReason,
-      contextKey,
-      runFloorGap,
-      outcomeScore,
-      outcomeGood: outcomeScore >= LEARNING_GOOD_OUTCOME_THRESHOLD,
-      outcomeClass,
-      learningEligible: strategyDecision.learningEligible,
-      warningCount,
-      signalsSnapshot: {
-        runFloorGap,
-        lifeStress,
-        hrvState,
-        driftState,
-        sleepState: deriveSleepBucket(recoverySignals),
-        monotonyState: deriveMonotonyBucket(fatigue?.monotony),
-        freqSignal,
-        warningCount,
-        hasHardRedFlag,
-      },
-      outcomeVector: {
-        hrvDeltaBucket: hrvState,
-        driftDeltaBucket: driftState,
-        fatigueBucket: fatigue?.override ? "HIGH" : "OK",
-        adherenceBucket: freqSignal === "red" ? "LOW" : freqSignal === "orange" ? "MED" : "OK",
-      },
-      context: {
-        hadKey,
-        hadGA: perRunInfo.some((x) => !!x.ga && !x.isKey),
-        fatigueOverride: !!fatigue?.override,
-      },
-    };
-    learningEvents.push(learningEvent);
+  let runCount14 = 0;
+  let bikeCount14 = 0;
 
-    let gaComparableStats = null;
-    try {
-      const samples = await gatherGASamples(ctx, day, MOTOR_WINDOW_DAYS, { comparable: true, needCv: true });
-      if (samples?.length) {
-        gaComparableStats = {
-          n: samples.length,
-          efMed: median(samples.map((x) => x.ef)),
-          driftMed: median(samples.map((x) => x.drift)),
-        };
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (isRun(a)) runCount14++;
+    else if (isBike(a)) bikeCount14++;
+  }
+  return { runCount14, bikeCount14 };
+}
+
+    // Bench reports only on bench days
+    const benchReports = [];
+    for (const a of runs) {
+      const benchName = getBenchTag(a);
+      if (!benchName) continue;
+      try {
+        const rep = await computeBenchReport(env, a, benchName, ctx.warmupSkipSec);
+        if (rep) benchReports.push(rep);
+      } catch (e) {
+        benchReports.push(`🧪 bench:${benchName}\nFehler: ${String(e?.message ?? e)}`);
       }
-    } catch {
-      gaComparableStats = null;
     }
 
     // Daily report text ALWAYS (includes min stimulus ALWAYS)
-    const commentBundle = buildComments({
-      day,
+    const dailyReportText = buildComments({
       perRunInfo,
       trend,
       motor,
+      benchReports,
       robustness,
       modeInfo,
       blockState,
-      blockEffective: blockEffectiveResult.blockEffective,
-      overrideInfo: blockEffectiveResult.overrideInfo,
-      reentryInfo: blockEffectiveResult.reentryInfo,
       keyRules,
       keyCompliance,
       dynamicKeyCap,
@@ -3678,49 +2270,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       aerobicFloorActive,
       fatigue,
       longRunSummary,
-      longrunMinutesTarget,
       recoverySignals,
+      bikeSubFactor,
       weeksToEvent,
-      maintenance14d,
-      learningEvidence,
-      learningNarrativeState,
-      strategyDecision,
-      intensityBudget,
-      steadyDecision,
-      keyHardDecision,
-      decisionTrace,
-      guardrailState,
-      intensityClassToday,
-      intensitySelection,
-      readinessConfidence: decisionConfidence,
-      latestGaSample,
-      ga21Context,
-      lastKeyInfo,
-      lastKeyIntervalInsights,
-      intervalContext,
-      gaComparableStats,
     }, { debug });
 
-    const dailyReportText = commentBundle.dailyReportText;
+    // Do not write into wellness comment field anymore.
+    patch.comments = "";
+
+
+
+
 
     patches[day] = patch;
 
-    if (debug && commentBundle.workoutDebug) {
-      addWorkoutDebug(ctx.debugOut, day, commentBundle.workoutDebug);
-    }
-    if (debug && commentBundle.hrr60Readiness) {
-      addHrr60Debug(ctx.debugOut, day, commentBundle.hrr60Readiness);
-    }
-
     if (write) {
-      // NEW: STEADY_T learning exposure/outcome (no circular "0 observations")
-      if (steadyDecision?.allowSteady) {
-        await registerStrategyExposure(env, "STEADY_T", day);
-      }
-      if (intensityClassToday === INTENSITY_CLASS.STEADY_T) {
-        await registerStrategyOutcome(env, "STEADY_T", day, { performed: true });
-      }
-      await appendLearningEvent(env, learningEvent);
       await upsertDailyReportNote(env, day, dailyReportText);
     }
     if (debug) notesPreview[`${day}:daily`] = dailyReportText;
@@ -3730,21 +2294,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       let detectiveNoteText = null;
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
-        const sections = [];
-        const detectiveSections = detectiveNote?.sections ?? null;
-        const weeklySections = commentBundle.weeklyReportSections ?? null;
-        if (detectiveSections?.title) sections.push(detectiveSections.title);
-        if (weeklySections?.blockStatus?.length) sections.push(...weeklySections.blockStatus);
-        if (weeklySections?.weeklyVerdict?.length) sections.push(...weeklySections.weeklyVerdict);
-        if (detectiveSections?.loadBasis?.length) sections.push(...detectiveSections.loadBasis);
-        if (weeklySections?.learnings?.length) sections.push(...weeklySections.learnings);
-        if (weeklySections?.decision?.length) sections.push(...weeklySections.decision);
-        if (weeklySections?.risk?.length) sections.push(...weeklySections.risk);
-        detectiveNoteText = sections.filter(Boolean).join("\n\n");
-        if (!detectiveNoteText && commentBundle.weeklyReportLines?.length) {
-          detectiveNoteText = commentBundle.weeklyReportLines.filter(Boolean).join("\n\n");
-        }
-        if (!detectiveNoteText) detectiveNoteText = detectiveNote?.text ?? "";
+        detectiveNoteText = detectiveNote?.text ?? "";
         if (write) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
         }
@@ -3827,17 +2377,6 @@ function pickRepresentativeGARun(perRunInfo) {
   return ga[0] || null;
 }
 
-function pickRepresentativeIntervalRun(perRunInfo) {
-  return perRunInfo.find((x) => x.isKey && x.intervalMetrics) || null;
-}
-
-async function getLatestGaSample(ctx, endIso, windowDays) {
-  const samples = await gatherGASamples(ctx, endIso, windowDays, { comparable: false });
-  if (!samples.length) return null;
-  const latest = samples.slice().sort((a, b) => a.date.localeCompare(b.date)).at(-1);
-  return latest || null;
-}
-
 function formatEventDistance(dist) {
   if (!dist) return "n/a";
   if (dist === "5k") return "5 km";
@@ -3845,950 +2384,6 @@ function formatEventDistance(dist) {
   if (dist === "hm") return "HM";
   if (dist === "m") return "Marathon";
   return String(dist);
-}
-
-const BLOCK_DESCRIPTION_LIBRARY = {
-  "5k": {
-    distanceLabel: "5 KM",
-    blocks: {
-      BASE: {
-        title: "BASE – 5 KM",
-        principle: "Belastbar werden, nicht müde.",
-        goal: ["Aerobe Basis", "Robustheit", "Keine Ermüdung anhäufen"],
-        content: ["GA1 45′/60′/75′", "Langer Lauf 75–100′ locker", "Strides 6–8×15–20″", "VO2-Impulse nur limitiert: 8×20″/40″", "Hügel kurz: 6–8×8–10″", "Kraft/Stabi 2×/Woche"],
-        week: ["60′ GA1 locker", "6×20″ Strides (volle Erholung)", "45′ locker + Lauf-ABC", "8×20″/40″ VO2-Impuls (optional)", "80–90′ langer Lauf locker"],
-      },
-      BUILD: {
-        title: "BUILD – 5 KM",
-        principle: "Spezifisch, aber kontrolliert.",
-        goal: ["Schwelle + VO2 entwickeln", "Tempohärte formen"],
-        content: ["Schwelle kurz: 4×6′ / 5×5′", "VO2max: 6×600 m / 5×1000 m", "Tempohärte: 10×400 m", "Langer Lauf ~90′ locker", "Ergänzend: Strides + Kraft"],
-        week: ["4×6′ @ Schwelle", "45′ locker", "6×600 m @ 3–5-km-Pace", "10×400 m kontrolliert flott", "90′ locker"],
-      },
-      RACE: {
-        title: "RACE – 5 KM",
-        principle: "Frische schlägt Fitness.",
-        goal: ["Frische gewinnen", "Racepace automatisieren", "nichts Neues"],
-        content: ["Racepace: 6×400 m / 3×1 km", "Schärfe: 8×200 m flott", "GA1: 30–45′", "Strides: 6×20″"],
-        week: ["6×400 m @ 5-km-Pace", "35′ GA1 locker", "8×200 m flott (voll erholt)", "30′ locker + 6×20″", "Wettkampf"],
-      },
-    },
-  },
-  "10k": {
-    distanceLabel: "10 KM",
-    blocks: {
-      BASE: {
-        title: "BASE – 10 KM",
-        principle: "Belastbar werden, nicht müde.",
-        goal: ["Aerobe Kapazität", "Umfangstoleranz", "saubere Basis"],
-        content: ["GA1 60′/75′", "Langer Lauf 90–110′", "Strides 6×20″", "VO2 nur selten: 6×20″", "Hügel locker/wellig", "Kraft/Stabi regelmäßig"],
-        week: ["60′ GA1 locker", "6×20″ Strides", "50′ locker wellig", "6×20″ VO2-Impulse (selten)", "95–105′ langer Lauf"],
-      },
-      BUILD: {
-        title: "BUILD – 10 KM",
-        principle: "Spezifisch, aber kontrolliert.",
-        goal: ["Schwelle anheben", "10-km-Tempo stabilisieren"],
-        content: ["Schwelle: 4×8′ / 3×10′", "Intervalle: 5×1000 m / 4×2000 m", "Tempodauerlauf: 30–40′", "Langer Lauf: 100–120′"],
-        week: ["4×8′ @ Schwelle", "45′ locker", "5×1000 m @ 10-km-Pace", "35′ Tempodauerlauf", "105′ locker"],
-      },
-      RACE: {
-        title: "RACE – 10 KM",
-        principle: "Frische schlägt Fitness.",
-        goal: ["Frische + Tempogefühl"],
-        content: ["Racepace: 3×2 km / 2×3 km", "Kontrolle: 5×1 km", "GA1: 40–50′", "Strides regelmäßig"],
-        week: ["3×2 km @ 10-km-Pace", "45′ locker", "5×1 km kontrolliert", "35′ locker + Strides", "Wettkampf"],
-      },
-    },
-  },
-  hm: {
-    distanceLabel: "HALBMARATHON",
-    blocks: {
-      BASE: {
-        title: "BASE – HM",
-        principle: "Belastbar werden, nicht müde.",
-        goal: ["Große aerobe Basis", "Belastungsverträglichkeit", "lange ruhige Qualität"],
-        content: ["GA1 60′/75′/90′", "Langer Lauf 100–130′ (Kern)", "Strides optional 4–6×20″", "VO2 sehr selten 4–6×15″", "Hügel locker", "Kraft/Stabi als Schwerpunkt"],
-        week: ["75′ GA1 locker", "60′ locker wellig", "4–6×20″ Strides optional", "105–125′ langer Lauf locker", "Kraft/Stabi"],
-      },
-      BUILD: {
-        title: "BUILD – HM",
-        principle: "Spezifisch, aber kontrolliert.",
-        goal: ["HM-Pace ökonomisch halten", "lange Schwelle stabilisieren"],
-        content: ["Lange Schwelle: 3×12′ / 2×20′", "HM-Pace: 3×3 km / 2×5 km", "Tempodauerlauf: 40–60′", "Langer Lauf: 120–150′", "Ergänzend: kurze Strides"],
-        week: ["3×12′ @ Schwelle", "50′ locker", "3×3 km @ HM-Pace", "45′ Tempodauerlauf", "130′ locker"],
-      },
-      RACE: {
-        title: "RACE – HM",
-        principle: "Frische schlägt Fitness.",
-        goal: ["Ermüdung raus", "Pace sichern"],
-        content: ["HM-Pace: 2×5 km / 3×3 km", "Rhythmuslauf: 10 km @ HM", "GA1: 40–60′", "Strides leicht"],
-        week: ["2×5 km @ HM-Pace", "50′ locker", "10 km @ HM-Rhythmus", "40′ locker + Strides", "Wettkampf"],
-      },
-    },
-  },
-  m: {
-    distanceLabel: "MARATHON",
-    blocks: {
-      BASE: {
-        title: "BASE – MARATHON",
-        principle: "Belastbar werden, nicht müde.",
-        goal: ["Aerobe Tiefe", "Robustheit", "Umfangsverträglichkeit"],
-        content: ["GA1 75′/90′", "Langer Lauf 120–150′ (Schlüssel)", "Strides selten 4×15″", "Hügel locker/technisch", "Kraft/Stabi sehr wichtig"],
-        week: ["90′ GA1 locker", "60′ locker technisch-wellig", "4×15″ Strides (selten)", "130–145′ langer Lauf", "Kraft/Stabi"],
-      },
-      BUILD: {
-        title: "BUILD – MARATHON",
-        principle: "Spezifisch, aber kontrolliert.",
-        goal: ["Marathonpace stabilisieren", "Ermüdungsresistenz"],
-        content: ["Marathonpace: 3×5 km / 2×8 km", "Schwelle moderat: 3×10′", "Strukturierter Longrun: 28 km mit 3×5 km @ M", "Langer Lauf: 150–180′", "Ergänzend: Kraft + Ökonomie"],
-        week: ["3×5 km @ Marathonpace", "60′ locker", "3×10′ @ Schwelle", "28 km mit 3×5 km @ M", "Kraft/Ökonomie"],
-      },
-      RACE: {
-        title: "RACE – MARATHON",
-        principle: "Frische schlägt Fitness.",
-        goal: ["Frische & Fokus", "Pace automatisieren"],
-        content: ["Marathonpace: 2×6–8 km", "Letzter langer Lauf: 12–16 km @ M (10–14T vorher)", "GA1 kurz & locker", "Aktivierung: 3×1′ flott"],
-        week: ["2×6 km @ Marathonpace", "45′ GA1 locker", "3×1′ flott", "30′ locker", "Wettkampf"],
-      },
-    },
-  },
-};
-
-const PHASE_DISTANCE_RULES = {
-  "5k": {
-    BASE: {
-      allowed: ["GA1 locker", "Langer Lauf", "Strides", "Hügel kurz", "Kraft/Stabi"],
-      limited: ["VO₂-Impulse"],
-      forbidden: ["Schwelle", "Intervalle lang"],
-      keyRules: {
-        expectedKeysPerWeek: 0.5,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["strides", "vo2_touch"],
-        preferredKeyTypes: ["strides"],
-        bannedKeyTypes: ["schwelle", "racepace", "steady"],
-      },
-    },
-    BUILD: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "vo2_touch"],
-        preferredKeyTypes: ["vo2_touch", "schwelle"],
-        bannedKeyTypes: ["racepace", "steady", "strides"],
-      },
-    },
-    RACE: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "vo2_touch"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
-        bannedKeyTypes: ["schwelle", "steady", "strides"],
-      },
-    },
-  },
-  "10k": {
-    BASE: {
-      allowed: ["GA1 locker", "Langer Lauf", "Strides", "Hügel locker", "Kraft/Stabi"],
-      limited: ["VO₂-Impulse"],
-      forbidden: ["Tempoläufe", "Intervalle"],
-      keyRules: {
-        expectedKeysPerWeek: 0.5,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["strides", "vo2_touch"],
-        preferredKeyTypes: ["strides"],
-        bannedKeyTypes: ["schwelle", "racepace", "steady"],
-      },
-    },
-    BUILD: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "vo2_touch"],
-        preferredKeyTypes: ["schwelle", "vo2_touch"],
-        bannedKeyTypes: ["racepace", "steady", "strides"],
-      },
-    },
-    RACE: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "vo2_touch"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
-        bannedKeyTypes: ["schwelle", "steady", "strides"],
-      },
-    },
-  },
-  hm: {
-    BASE: {
-      allowed: ["GA1 locker", "Langer Lauf", "Hügel locker", "Kraft/Stabi"],
-      limited: ["Strides", "VO₂-Impulse"],
-      forbidden: ["Schwelle", "Racepace"],
-      keyRules: {
-        expectedKeysPerWeek: 0.25,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["strides", "vo2_touch"],
-        preferredKeyTypes: ["strides"],
-        bannedKeyTypes: ["schwelle", "racepace", "steady"],
-      },
-    },
-    BUILD: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "racepace"],
-        preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["vo2_touch", "steady", "strides"],
-      },
-    },
-    RACE: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["schwelle", "vo2_touch", "steady", "strides"],
-      },
-    },
-  },
-  m: {
-    BASE: {
-      allowed: ["GA1 locker", "Langer Lauf", "Hügel locker", "Kraft/Stabi"],
-      limited: ["Strides"],
-      forbidden: ["VO₂-Impulse", "Tempoläufe", "Marathonpace"],
-      keyRules: {
-        expectedKeysPerWeek: 0.25,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["strides"],
-        preferredKeyTypes: ["strides"],
-        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
-      },
-    },
-    BUILD: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "schwelle"],
-        preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["vo2_touch", "steady", "strides"],
-      },
-    },
-    RACE: {
-      keyRules: {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["schwelle", "vo2_touch", "steady", "strides"],
-      },
-    },
-  },
-};
-
-const DISTANCE_RACE_PROGRESSION_HINTS = {
-  "5k": {
-    specific: "6×400 m / 3×1 km @ 5-km-Pace",
-    sharp: "8×200 m flott",
-    raceWeek: "2 kurze Aktivierungen (z. B. 6×200 m + 4×200 m)"
-  },
-  "10k": {
-    specific: "3×2 km / 2×3 km @ 10-km-Pace",
-    sharp: "5×1 km kontrolliert",
-    raceWeek: "1× 3×1 km + kurze Strides"
-  },
-  hm: {
-    specific: "2×5 km / 3×3 km @ HM-Pace",
-    sharp: "8–10 km HM-Rhythmus locker-kontrolliert",
-    raceWeek: "1× 3×2 km HM-Pace + kurze Strides"
-  },
-  m: {
-    specific: "2×6–8 km @ MP (geteilt)",
-    sharp: "12–16 km progressiv bis MP",
-    raceWeek: "1× 6–8 km @ MP + 4–6 Strides"
-  },
-};
-
-const TRAINING_LIBRARY = BLOCK_DESCRIPTION_LIBRARY;
-const COACH_PLANNER_CONFIG = {
-  minKeySpacingHours: 48,
-  progressionMinPct: 0.05,
-  progressionMaxPct: 0.1,
-  deloadReductionRange: { min: 0.2, max: 0.3 },
-  taperReductionRange: {
-    days14to7: { min: 0.2, max: 0.3 },
-    raceWeek: { min: 0.4, max: 0.6 },
-  },
-};
-
-const KEY_WORKOUT_LADDERS = {
-  "5k": {
-    racepace: [
-      { repDistance: 0.4, reps: 5 },
-      { repDistance: 0.4, reps: 6 },
-      { repDistance: 0.6, reps: 5 },
-      { repDistance: 0.8, reps: 4 },
-      { repDistance: 1.0, reps: 3 },
-    ],
-  },
-  "10k": {
-    racepace: [
-      { repDistance: 1.0, reps: 4 },
-      { repDistance: 2.0, reps: 3 },
-      { repDistance: 3.0, reps: 2 },
-    ],
-  },
-  hm: {
-    racepace: [
-      { repDistance: 3.0, reps: 3 },
-      { repDistance: 5.0, reps: 2 },
-    ],
-  },
-  m: {
-    racepace: [
-      { repDistance: 6.0, reps: 2 },
-      { repDistance: 8.0, reps: 2 },
-      { repDistance: 12.0, reps: 1, distanceKm: 12 },
-      { repDistance: 16.0, reps: 1, distanceKm: 16 },
-    ],
-  },
-};
-
-function getIsoWeekInfo(dayIso) {
-  if (!isIsoDate(dayIso)) return { year: null, week: null, key: "n/a" };
-  const date = new Date(`${dayIso}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
-  return { year: date.getUTCFullYear(), week, key: `${date.getUTCFullYear()}-W${week}` };
-}
-
-function parseMinuteRangeToken(raw) {
-  const text = String(raw || "");
-  const range = text.match(/(\d+)\s*[–-]\s*(\d+)\s*[′']/u);
-  if (range) {
-    const min = Number(range[1]);
-    const max = Number(range[2]);
-    return Number.isFinite(min) && Number.isFinite(max) ? Math.round((min + max) / 2) : null;
-  }
-  const single = text.match(/(\d+)\s*[′']/u);
-  if (single) {
-    const value = Number(single[1]);
-    return Number.isFinite(value) ? value : null;
-  }
-  return null;
-}
-
-function parseDistanceKmToken(raw) {
-  const text = String(raw || "").toLowerCase();
-  const km = text.match(/(\d+(?:[.,]\d+)?)\s*km\b/u);
-  if (!km) return null;
-  const value = Number(km[1].replace(",", "."));
-  return Number.isFinite(value) ? value : null;
-}
-
-function inferWorkoutTypeKey(raw) {
-  const text = String(raw || "").toLowerCase();
-  if (!text) return "easy";
-  if (text.includes("wettkampf") || text.includes("rhythmus") || text.includes("@ hm") || text.includes("@ m") || text.includes("race") || text.includes("pace")) return "racepace";
-  if (text.includes("schwelle") || text.includes("tempo")) return "schwelle";
-  if (text.includes("vo2") || text.includes("vo₂") || text.includes("flott")) return "vo2_touch";
-  if (text.includes("strides") || text.includes("steiger")) return "strides";
-  if (text.includes("hügel") || text.includes("hill")) return "hill";
-  if (text.includes("kraft") || text.includes("stabi")) return "strength";
-  if (text.includes("lang") || text.includes("ll")) return "longrun";
-  return "easy";
-}
-
-function parseLibraryWorkoutEntry(raw, { distance, phase, idx } = {}) {
-  const name = String(raw || "").trim();
-  const text = name.toLowerCase();
-  const repsMatch = name.match(/(\d+)\s*×\s*(\d+(?:[.,]\d+)?)\s*(km|m|[′'])?/u);
-  const repTimeOnlyMatch = name.match(/(\d+)\s*×\s*(\d+(?:[.,]\d+)?)\s*[′']/u);
-  const repDistanceOnlyMatch = name.match(/(\d+)\s*×\s*(\d+(?:[.,]\d+)?)\s*(km|m)\b/u);
-  const restMatch = name.match(/(\d+(?:[.,]\d+)?)\s*(?:′|min|s|sek)\s*(?:trab|pause|erholung)/iu);
-  const durationMin = parseMinuteRangeToken(name);
-  const distanceKm = parseDistanceKmToken(name);
-
-  const reps = repsMatch ? Number(repsMatch[1]) : null;
-  let repDistance = null;
-  let repTime = null;
-  if (repDistanceOnlyMatch) {
-    const value = Number(repDistanceOnlyMatch[2].replace(",", "."));
-    repDistance = repDistanceOnlyMatch[3] === "m" ? value / 1000 : value;
-  }
-  if (repTimeOnlyMatch) {
-    repTime = Number(repTimeOnlyMatch[2].replace(",", "."));
-  }
-  const typeKey = inferWorkoutTypeKey(name);
-  const looksEasy = typeKey === "easy" || typeKey === "longrun";
-  const isKey = !looksEasy && !text.includes("optional") && !text.includes("selten");
-  const tags = [];
-  if (typeKey === "longrun" || text.includes("langer lauf")) tags.push("longrun");
-  if (text.includes("optional")) tags.push("optional");
-  if (text.includes("selten")) tags.push("rare");
-  if (typeKey === "strides" || typeKey === "hill" || typeKey === "strength") tags.push("addon");
-
-  return {
-    id: `${distance || "default"}_${phase || "BASE"}_${idx + 1}`,
-    name,
-    typeKey,
-    isKey,
-    durationMin,
-    distanceKm,
-    reps,
-    repDistance,
-    repTime,
-    rest: restMatch ? restMatch[0] : null,
-    intensityHint: typeKey,
-    tags,
-    source: "library",
-    rationale: [`Aus TRAINING_LIBRARY ${distance || "default"}/${phase || "BASE"} geparsed.`],
-  };
-}
-
-function parseTrainingLibraryWeek(distance, phase) {
-  const entry = TRAINING_LIBRARY?.[distance]?.blocks?.[phase];
-  const week = Array.isArray(entry?.week) ? entry.week : [];
-  return week.map((item, idx) => parseLibraryWorkoutEntry(item, { distance, phase, idx }));
-}
-
-function shouldSelectBaseKeyByQuota(expectedKeysPerWeek, dayIso) {
-  if (!Number.isFinite(expectedKeysPerWeek) || expectedKeysPerWeek <= 0) return false;
-  if (expectedKeysPerWeek >= 1) return true;
-  const interval = Math.max(1, Math.round(1 / expectedKeysPerWeek));
-  const isoWeek = getIsoWeekInfo(dayIso).week;
-  if (!Number.isFinite(isoWeek)) return false;
-  return isoWeek % interval === 0;
-}
-
-function findLatestSimilarWorkout(history = [], typeKey) {
-  const typed = history.filter((item) => item?.typeKey === typeKey && Number.isFinite(item?.workload));
-  return typed.length ? typed[typed.length - 1] : null;
-}
-
-function deriveTouchWorkout(workout, reason) {
-  if (!workout) return null;
-  const derived = { ...workout, source: "derived", rationale: [...(workout.rationale || [])] };
-  if (Number.isFinite(derived.reps) && derived.reps > 2) {
-    derived.reps = Math.max(2, Math.round(derived.reps * 0.7));
-  } else if (Number.isFinite(derived.repTime) && derived.repTime > 2) {
-    derived.repTime = round(derived.repTime * 0.8, 1);
-  } else if (Number.isFinite(derived.durationMin) && derived.durationMin > 20) {
-    derived.durationMin = Math.max(20, Math.round(derived.durationMin * 0.75));
-  }
-  derived.name = `${workout.name} (touch)`;
-  derived.rationale.push(reason);
-  return derived;
-}
-
-function applySingleDimensionProgression(workout, context = {}) {
-  if (!workout?.isKey) return { workout, progressed: false };
-  const fatigue = !!(context.deloadActive || context.runfloorGap || context.fatigueFlag);
-  if (fatigue) return { workout, progressed: false };
-  const historyRef = findLatestSimilarWorkout(context.history || [], workout.typeKey);
-  if (!historyRef) return { workout, progressed: false };
-  const pct = COACH_PLANNER_CONFIG.progressionMinPct;
-  const progressed = { ...workout, rationale: [...(workout.rationale || [])] };
-  if (Number.isFinite(progressed.reps) && progressed.reps >= 3) {
-    progressed.reps = Math.round(progressed.reps * (1 + pct));
-    progressed.rationale.push("Progression: nur Reps +5%.");
-    return { workout: progressed, progressed: true, dimension: "reps" };
-  }
-  if (Number.isFinite(progressed.repTime) && progressed.repTime >= 2) {
-    progressed.repTime = round(progressed.repTime * (1 + pct), 1);
-    progressed.rationale.push("Progression: nur Rep-Time +5%.");
-    return { workout: progressed, progressed: true, dimension: "repTime" };
-  }
-  if (Number.isFinite(progressed.repDistance) && progressed.repDistance > 0.2) {
-    progressed.repDistance = round(progressed.repDistance * (1 + pct), 2);
-    progressed.rationale.push("Progression: nur Rep-Distanz +5%.");
-    return { workout: progressed, progressed: true, dimension: "repDistance" };
-  }
-  return { workout, progressed: false };
-}
-
-function scoreWorkoutCandidate(candidate, context, keyRules) {
-  const hardDisallowed = keyRules?.bannedKeyTypes?.includes(candidate.typeKey) ||
-    (candidate.isKey && !(keyRules?.allowedKeyTypes || []).includes(candidate.typeKey));
-  if (hardDisallowed) return { score: 0, parts: { ruleFit: 0, specificity: 0, progression: 0, fatigueRisk: 0, variety: 0 } };
-  const ruleFit = 35;
-  const specificity = context.phase === "RACE" && candidate.typeKey === "racepace" ? 25 : context.phase === "BUILD" ? 18 : 10;
-  const progression = candidate.isKey ? 20 : 10;
-  const fatigueRisk = context.runfloorGap || context.fatigueFlag ? 5 : 15;
-  const varietyPenalty = (context.lastKeyTypes || []).includes(candidate.typeKey) ? 2 : 5;
-  const score = Math.max(0, Math.min(100, ruleFit + specificity + progression + fatigueRisk + varietyPenalty));
-  return { score, parts: { ruleFit, specificity, progression, fatigueRisk, variety: varietyPenalty } };
-}
-
-function deriveWeeklyScalingLevel(context = {}) {
-  let scalingLevel = context.readinessTier === "GOOD" ? 1 : context.readinessTier === "LOW" ? -1 : 0;
-  if (context.runfloorGap && scalingLevel > 0) scalingLevel = 0;
-  if (Number.isFinite(context.hrvDeltaPct) && context.hrvDeltaPct <= -12 && scalingLevel > -1) scalingLevel = -1;
-  if ((context.driftWarning || context.driftCapActive) && scalingLevel > -1) scalingLevel = -1;
-  if ((context.negativeSignals || []).length && scalingLevel > -1) scalingLevel = -1;
-  return scalingLevel;
-}
-
-function formatKeyWorkoutDisplay(workout) {
-  if (!workout) return "kein Key";
-  if (Number.isFinite(workout.reps) && Number.isFinite(workout.repDistance)) {
-    const meters = Math.round(workout.repDistance * 1000);
-    return `${workout.reps}×${meters >= 1000 ? `${(meters / 1000).toFixed(meters % 1000 === 0 ? 0 : 1)} km` : `${meters} m`} (${formatKeyType(workout.typeKey)})`;
-  }
-  if (Number.isFinite(workout.distanceKm)) return `${workout.distanceKm} km ${formatKeyType(workout.typeKey)}`;
-  return workout.name || "Key-Workout";
-}
-
-function getTemplateById(templateId, keyType = "racepace") {
-  if (!templateId) return null;
-  const family = keyType === "vo2_touch" ? "vo2_touch" : "racepace";
-  const templates = WORKOUT_TEMPLATE_LIBRARY?.[family] || [];
-  return templates.find((item) => item?.id === templateId) || null;
-}
-
-function formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, templateLabel }) {
-  const repText = Number.isFinite(reps) ? `${Math.max(1, Math.round(reps))}×` : "";
-  const distText = Number.isFinite(repDistance) && repDistance > 0
-    ? `${Math.round(repDistance * 1000)} m`
-    : keyType === "racepace"
-      ? "Racepace-Intervalle"
-      : "Intervalle";
-  const recoveryText = Number.isFinite(recSec) ? `, P ${formatIntervalSeconds(Math.max(30, Math.round(recSec)))}` : "";
-  const header = templateId || "KEY";
-  if (repText) return `${header}: ${repText}${distText} @ ${formatKeyType(keyType)}${recoveryText}`;
-  if (templateLabel) return `${header}: ${templateLabel}${recoveryText}`;
-  return `${header}: ${distText}${recoveryText}`;
-}
-
-function getWeeklyKeySuggestion(context = {}, debug = {}) {
-  const requestedKeyType = context.decisionKeyType || context.intensitySelection?.keyType || "racepace";
-  const allowedKeyTypes = new Set(context.keyRules?.allowedKeyTypes || []);
-  const keyPolicyAllowsRequestedType = !allowedKeyTypes.size || allowedKeyTypes.has(requestedKeyType);
-  const keyType = keyPolicyAllowsRequestedType
-    ? requestedKeyType
-    : (context.keyRules?.preferredKeyTypes || []).find((type) => allowedKeyTypes.has(type)) ||
-      Array.from(allowedKeyTypes)[0] ||
-      requestedKeyType;
-  const spacingEligible = context.keySpacing?.ok !== false;
-  const cadenceEligible = context.keyHardDecision?.allowed !== false;
-  const keyEligible = spacingEligible && cadenceEligible;
-  const workoutDebug = context.workoutDebug || debug.__workout || null;
-  const hasWorkoutTemplate = !!workoutDebug?.chosenTemplateId;
-
-  const rationale = [];
-  if (!keyEligible) {
-    if (!cadenceEligible) rationale.push("Kein Key: 7T-Key-Budget erreicht (>=2 in 7 Tagen).");
-    if (context.keySpacing?.ok === false) rationale.push(`Key-Abstand noch aktiv bis ${context.keySpacing?.nextAllowedIso || "n/a"}.`);
-    return {
-      keyLabel: "kein Key (Cadence-Regel nicht erfüllt)",
-      keyType,
-      templateId: null,
-      reps: null,
-      recSec: null,
-      rationale,
-      progressionStep: null,
-      taperApplied: null,
-      scalingLevel: deriveWeeklyScalingLevel(context),
-    };
-  }
-
-  const distance = context.distance || "10k";
-  const ladder = KEY_WORKOUT_LADDERS?.[distance]?.[keyType] || [];
-  const weekIndex = Number.isFinite(context.weekIndex) ? context.weekIndex : 0;
-  const previousStep = Number.isFinite(context.previousStep) ? context.previousStep : Math.max(0, weekIndex - 1);
-  const scalingLevel = Number.isFinite(workoutDebug?.scalingLevel) ? workoutDebug.scalingLevel : deriveWeeklyScalingLevel(context);
-  const daysToRace = Number.isFinite(context.daysToRace) ? context.daysToRace : null;
-
-  let progressionStep = ladder.length ? Math.min(previousStep + 1, ladder.length - 1) : 0;
-  let taperApplied = "none";
-  if (Number.isFinite(daysToRace) && daysToRace <= 21) {
-    progressionStep = Math.min(previousStep, ladder.length ? ladder.length - 1 : 0);
-    taperApplied = "freeze";
-  }
-  if (Number.isFinite(daysToRace) && daysToRace <= 14 && daysToRace > 7) {
-    progressionStep = Math.max(0, progressionStep - 1);
-    taperApplied = "reduce_14_7";
-  }
-  if (Number.isFinite(daysToRace) && daysToRace <= 7) {
-    progressionStep = 0;
-    taperApplied = "raceWeekActivation";
-  }
-  if (scalingLevel <= -1) progressionStep = Math.max(0, progressionStep);
-
-  const templateFromLadder = ladder[progressionStep] || {};
-  const template = getTemplateById(workoutDebug?.chosenTemplateId, keyType);
-  let reps = Number.isFinite(workoutDebug?.adjustedReps) ? workoutDebug.adjustedReps : null;
-  if (!Number.isFinite(reps) && Number.isFinite(templateFromLadder?.reps)) reps = templateFromLadder.reps;
-  if (!Number.isFinite(reps) && Number.isFinite(template?.baseReps)) reps = template.baseReps;
-  let recSec = Number.isFinite(workoutDebug?.adjustedRecSec) ? workoutDebug.adjustedRecSec : null;
-  if (!Number.isFinite(recSec) && Number.isFinite(template?.baseRecSec)) recSec = template.baseRecSec;
-
-  const repDistance = Number.isFinite(templateFromLadder?.repDistance) ? templateFromLadder.repDistance : null;
-  const templateId = hasWorkoutTemplate ? workoutDebug?.chosenTemplateId : null;
-  const keyLabel = formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, templateLabel: template?.label });
-
-  rationale.push(
-    keyPolicyAllowsRequestedType
-      ? `Key-Typ: ${formatKeyType(keyType)} (Decision + Policy ok).`
-      : `Key-Typ skaliert: ${formatKeyType(requestedKeyType)} → ${formatKeyType(keyType)} (Policy-konform).`
-  );
-  if (scalingLevel <= -1) rationale.push("Runfloor/Drift aktiv: Key bleibt, aber Downshift via scalingLevel.");
-  rationale.push(`Progression-Step: ${progressionStep + 1}${ladder.length ? `/${ladder.length}` : ""}.`);
-  if (taperApplied !== "none") rationale.push(`Taper angewendet: ${taperApplied}.`);
-
-  return {
-    keyLabel,
-    keyType,
-    templateId,
-    reps,
-    recSec,
-    rationale: rationale.slice(0, 4),
-    progressionStep,
-    taperApplied,
-    scalingLevel,
-  };
-}
-
-function pickWeeklyKeyWorkout(context = {}) {
-  const distance = context.distance || "10k";
-  const phase = normalizeBlockKey(context.phase || context.blockEffective || context.nextSuggestedBlock || "BASE");
-  const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
-  const keyRules = context.keyRules || getKeyRules(phase, distance, weeksToEvent);
-  const keyCount7 = Number.isFinite(context.keyCount7) ? context.keyCount7 : Number.isFinite(context.keyStats7?.count) ? context.keyStats7.count : 0;
-  const spacingBlocked = context.spacingBlocked === true;
-  const maxKeysPerWeek = KEY_HARD_MAX_PER_7D;
-  const rationale = [];
-
-  if (!maxKeysPerWeek || keyCount7 >= maxKeysPerWeek || spacingBlocked) {
-    rationale.push("Gate aktiv: kein Key diese Woche (nur Budget/Spacing).");
-    return { workout: null, rationale, ladderStep: null, taperApplied: false, scalingLevel: deriveWeeklyScalingLevel(context), preview: null };
-  }
-
-  const libraryPhase = parseTrainingLibraryWeek(distance, phase);
-  const fallbackPhase = parseTrainingLibraryWeek(distance, normalizeBlockKey(context.nextSuggestedBlock || phase));
-  const libraryCandidates = [...libraryPhase, ...fallbackPhase]
-    .filter((w) => w.isKey);
-
-  if (!libraryCandidates.length) {
-    rationale.push("Keine regelkonforme Key-Session in TRAINING_LIBRARY gefunden.");
-    return { workout: null, rationale, ladderStep: null, taperApplied: false, scalingLevel: deriveWeeklyScalingLevel(context), preview: null };
-  }
-
-  const preferred = (keyRules?.preferredKeyTypes || []).find((type) => libraryCandidates.some((candidate) => candidate.typeKey === type));
-  const chosenType = preferred || libraryCandidates[0].typeKey;
-  const template = libraryCandidates.find((w) => w.typeKey === chosenType) || libraryCandidates[0];
-  const ladder = KEY_WORKOUT_LADDERS?.[distance]?.[chosenType] || [];
-  const typeHistory = (context.lastKeyInfo?.keyHistory || []).filter((entry) => entry?.keyType === chosenType);
-  const historyStep = Math.max(0, typeHistory.length - 1);
-  const ladderStep = ladder.length ? Math.min(historyStep, ladder.length - 1) : null;
-  let workout = { ...template, rationale: [...(template.rationale || [])], isKey: true };
-
-  if (ladderStep != null) {
-    const step = ladder[ladderStep];
-    if (Number.isFinite(step.repDistance)) workout.repDistance = step.repDistance;
-    if (Number.isFinite(step.reps)) workout.reps = step.reps;
-    if (Number.isFinite(step.distanceKm)) workout.distanceKm = step.distanceKm;
-    workout.rationale.push(`Ladder-Schritt ${ladderStep + 1}/${ladder.length} für ${distance}/${chosenType}.`);
-  } else {
-    workout.rationale.push("Konservativer Start aus Library mangels Ladder-Historie.");
-  }
-
-  const daysToRace = Number.isFinite(context.daysToRace) ? context.daysToRace : null;
-  const fatigueFlag = !!((context.negativeSignals || []).length || context.driftWarning || context.runfloorGap);
-  const scalingLevel = deriveWeeklyScalingLevel(context);
-  const taperApplied = { zone: null };
-  if (Number.isFinite(daysToRace) && daysToRace <= 21) {
-    taperApplied.zone = "maintain";
-    workout.rationale.push("Taper <=21T: keine Progression, nur erhalten.");
-  }
-  if (Number.isFinite(daysToRace) && daysToRace <= 14 && daysToRace > 7) {
-    taperApplied.zone = "14-7";
-    if (Number.isFinite(workout.reps)) workout.reps = Math.max(2, Math.round(workout.reps * 0.75));
-    if (Number.isFinite(workout.durationMin)) workout.durationMin = Math.max(15, Math.round(workout.durationMin * 0.75));
-    workout = deriveTouchWorkout(workout, "Taper 14..7T: Umfang -25%.");
-  } else if (Number.isFinite(daysToRace) && daysToRace <= 7) {
-    taperApplied.zone = "raceWeek";
-    if (Number.isFinite(workout.reps)) workout.reps = Math.max(2, Math.round(workout.reps * 0.6));
-    if (Number.isFinite(workout.durationMin)) workout.durationMin = Math.max(10, Math.round(workout.durationMin * 0.5));
-    workout = deriveTouchWorkout(workout, "Raceweek: kurze Aktivierung laut Race-Week-Hint.");
-  } else if (!fatigueFlag && ladderStep != null && ladderStep < ladder.length - 1) {
-    workout.rationale.push("Progression folgt Ladder deterministisch (nur eine Variable je Woche). ");
-  }
-
-  if (scalingLevel <= -1) {
-    if (Number.isFinite(workout.reps)) workout.reps = Math.max(2, Math.round(workout.reps * 0.9));
-    else if (Number.isFinite(workout.durationMin)) workout.durationMin = Math.max(12, Math.round(workout.durationMin * 0.9));
-    workout.rationale.push("Downshift: negative Signale → scalingLevel -1, Umfang reduziert.");
-  }
-
-  const nextStep = ladderStep != null && ladderStep + 1 < ladder.length && !(Number.isFinite(daysToRace) && daysToRace <= 21)
-    ? { ...workout, repDistance: ladder[ladderStep + 1].repDistance ?? workout.repDistance, reps: ladder[ladderStep + 1].reps ?? workout.reps }
-    : null;
-
-  rationale.push(`Template aus TRAINING_LIBRARY: ${template.name}.`);
-  rationale.push("Regelkonform: Key nur über 7T-Budget und 48h-Spacing begrenzt.");
-  rationale.push(`Deterministisch via Historie (${typeHistory.length} passende Keys) und Ladder.`);
-  if (scalingLevel <= -1) rationale.push("Belastungsflags aktiv: Downshift angewendet.");
-
-  return {
-    workout,
-    rationale: rationale.slice(0, 4),
-    ladderStep,
-    taperApplied: taperApplied.zone,
-    scalingLevel,
-    preview: nextStep ? formatKeyWorkoutDisplay(nextStep) : null,
-  };
-}
-
-function selectWeeklyPlan(context = {}) {
-  const distance = context.distance || "10k";
-  const phase = normalizeBlockKey(context.phase);
-  const keyRules = getKeyRules(phase, distance, Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null);
-  const candidates = parseTrainingLibraryWeek(distance, phase);
-  const daysToRace = Number.isFinite(context.daysToRace) ? context.daysToRace : null;
-  const minSpacingHours = Number.isFinite(context.minKeySpacingHours) ? context.minKeySpacingHours : COACH_PLANNER_CONFIG.minKeySpacingHours;
-  const spacingHours = context.lastKeyDate && isIsoDate(context.lastKeyDate) && isIsoDate(context.dayIso)
-    ? diffDays(context.lastKeyDate, context.dayIso) * 24
-    : null;
-  const spacingBlocked = Number.isFinite(spacingHours) && spacingHours < minSpacingHours;
-  const runfloorAmpel = String(context.runfloorAmpel || context.runfloorTrafficLight || "").toUpperCase();
-  const runfloorBlocked = !!(context.runfloorGap || context.runfloorAmpelActive || runfloorAmpel === "RED" || runfloorAmpel === "YELLOW");
-  const downgradeFlag = !!(context.negativeSignals || []).length || !!context.driftWarning;
-
-  const filtered = candidates.filter((w) => {
-    if (!w.isKey) return true;
-    if (spacingBlocked) return false;
-    return true;
-  });
-
-  const scored = filtered.map((workout) => ({ ...scoreWorkoutCandidate(workout, { ...context, phase }, keyRules), workout }))
-    .sort((a, b) => b.score - a.score || a.workout.id.localeCompare(b.workout.id));
-
-  const selectedKey = scored.find((item) => item.workout.isKey) || null;
-  const selected = [];
-  let taperApplied = false;
-  let deloadApplied = false;
-
-  const easyRuns = filtered.filter((w) => !w.isKey && !w.tags.includes("addon") && !w.tags.includes("longrun"));
-  const fallbackEasy = easyRuns.find((w) => {
-    const lower = String(w.name || "").toLowerCase();
-    return lower.includes("ga1") || lower.includes("locker");
-  }) || easyRuns[0] || {
-    id: `${distance}_${phase}_GA1_FALLBACK`,
-    name: "45′ GA1 locker",
-    typeKey: "easy",
-    isKey: false,
-    durationMin: 45,
-    intensityHint: "easy",
-    tags: ["fallback"],
-    source: "derived",
-    rationale: ["Konservativer Fallback wegen fehlender Library-Einträge."],
-  };
-  selected.push(fallbackEasy);
-
-  const weeklyKey = pickWeeklyKeyWorkout({
-    ...context,
-    distance,
-    phase,
-    keyRules,
-    runfloorGap: runfloorBlocked,
-    spacingBlocked,
-  });
-
-  if (weeklyKey.workout) {
-    let keyWorkout = weeklyKey.workout;
-    if (context.deloadActive) {
-      keyWorkout = deriveTouchWorkout(keyWorkout, "Deload aktiv: Key als touch abgeleitet.");
-      deloadApplied = true;
-    } else if (downgradeFlag && !String(keyWorkout.name || "").includes("touch")) {
-      keyWorkout = deriveTouchWorkout(keyWorkout, "Fatigue/Drift Warnung: Key downgraded auf touch.");
-    }
-    selected.push(keyWorkout);
-  }
-
-  const longrun = filtered.find((w) => w.tags.includes("longrun") || w.name.toLowerCase().includes("langer lauf"));
-  if (longrun) {
-    let adjustedLongrun = { ...longrun };
-    if (context.deloadActive && Number.isFinite(adjustedLongrun.durationMin)) {
-      adjustedLongrun.durationMin = Math.round(adjustedLongrun.durationMin * (1 - COACH_PLANNER_CONFIG.deloadReductionRange.min));
-      adjustedLongrun.source = "derived";
-      adjustedLongrun.rationale = [...(adjustedLongrun.rationale || []), "Deload: Longrun reduziert (-20%)."];
-      deloadApplied = true;
-    }
-    selected.push(adjustedLongrun);
-  }
-
-  if (runfloorBlocked) {
-    const stridesAllowed = (keyRules?.allowedKeyTypes || []).includes("strides") && !(keyRules?.bannedKeyTypes || []).includes("strides");
-    const libraryAddon = filtered.find((w) => w.typeKey === "strides" && w.tags.includes("addon"));
-    if (stridesAllowed && libraryAddon) {
-      selected.push({ ...libraryAddon, isKey: false, rationale: [...(libraryAddon.rationale || []), "Runfloor-Gate: nur Easy + Strides Add-on."] });
-    }
-  } else {
-    const addons = filtered.filter((w) => w.tags.includes("addon") && !w.isKey).slice(0, 1);
-    selected.push(...addons);
-  }
-
-  if (Number.isFinite(daysToRace)) {
-    if (daysToRace <= 7) {
-      taperApplied = true;
-      for (let i = 0; i < selected.length; i++) {
-        if (selected[i].isKey) selected[i] = deriveTouchWorkout(selected[i], "Raceweek: Aktivierung statt voller Key.");
-        if (Number.isFinite(selected[i].durationMin)) selected[i].durationMin = Math.round(selected[i].durationMin * 0.5);
-      }
-    } else if (daysToRace <= 14) {
-      taperApplied = true;
-      for (let i = 0; i < selected.length; i++) {
-        if (selected[i].isKey) selected[i] = deriveTouchWorkout(selected[i], "Taper 14-7T: Key verkürzt.");
-        if (Number.isFinite(selected[i].durationMin)) selected[i].durationMin = Math.round(selected[i].durationMin * 0.75);
-      }
-    }
-  }
-
-  const rationale = [
-    runfloorBlocked ? "Runfloor-Gap/Ampel aktiv, Key bleibt dennoch möglich (nur Budget/Spacing regeln)." : "Runfloor ohne Blockwirkung auf Key.",
-    "BASE-Quote deaktiviert: Key-Freigabe nur über Budget/Spacing.",
-    spacingBlocked ? `Key-Abstand < ${minSpacingHours}h, daher kein zusätzlicher Key.` : "Key-Abstand regelkonform.",
-    `Top-Score: ${selectedKey?.score ?? 0}/100 nach RuleFit/Specificity/Progression/Fatigue/Variety.`,
-  ].slice(0, 4);
-
-  return {
-    distance,
-    phase,
-    dayIso: context.dayIso || null,
-    taperApplied,
-    deloadApplied,
-    runfloorBlocked,
-    selected,
-    candidateScores: scored.map((item) => ({ id: item.workout.id, name: item.workout.name, typeKey: item.workout.typeKey, isKey: item.workout.isKey, score: item.score, parts: item.parts })),
-    rationale,
-    weeklyKey,
-  };
-}
-
-function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry, longrunMinutesTarget = null }) {
-  if (!blockEntry || !Array.isArray(blockEntry.week) || !blockEntry.week.length) return null;
-  if (!Number.isFinite(daysToEvent) || daysToEvent < 0) return null;
-
-  const weekLabel = (startDay) => {
-    const endDay = Math.max(0, startDay - 6);
-    if (startDay <= 0) return "Rennwoche";
-    if (startDay < 7) return `Woche -1 (${startDay}–${endDay}T)`;
-    return `Woche -${Math.ceil((startDay + 1) / 7)} (${startDay}–${endDay}T)`;
-  };
-
-  const keyA = blockEntry.week[0] || blockEntry.content?.[0] || "Key A";
-  const keyB = blockEntry.week[2] || blockEntry.content?.[1] || "Key B";
-  const easy = blockEntry.week[1] || blockEntry.content?.find((x) => String(x).toLowerCase().includes("ga")) || "GA1 locker";
-  const sharpen = blockEntry.week[3] || blockEntry.content?.[2] || "kurzer Schärfereiz";
-
-  const lines = [];
-
-  if (block === "BASE") {
-    if (daysToEvent > 56) {
-      lines.push(`- ${weekLabel(daysToEvent)}: Basis stabilisieren (${easy}), optional ${sharpen}.`);
-      lines.push(`- ${weekLabel(daysToEvent - 7)}: leicht progressieren (Zeit/Umfang +5–10%), Qualität gleich halten.`);
-      lines.push(`- ${weekLabel(daysToEvent - 14)}: Entlastungswoche (Umfang -10 bis -20%), Frequenz halten.`);
-      lines.push(`- ${weekLabel(daysToEvent - 21)}: zurück in normalen Base-Rhythmus und auf BUILD vorbereiten.`);
-    } else {
-      lines.push(`- ${weekLabel(daysToEvent)}: letzte Base-Woche mit Fokus auf Robustheit (${easy}).`);
-      lines.push(`- ${weekLabel(daysToEvent - 7)}: Übergang zu BUILD: 1 spezifischer Reiz (${keyA}) + sauber easy dazwischen.`);
-      lines.push(`- ${weekLabel(daysToEvent - 14)}: Volumen stabil, Intensität nur dosiert.`);
-    }
-    return lines;
-  }
-
-  if (block === "BUILD") {
-    if (daysToEvent > 28) {
-      lines.push(`- ${weekLabel(daysToEvent)}: 1 Haupt-Key (${keyA}) + 1 unterstützender Reiz (${keyB}).`);
-      lines.push(`- ${weekLabel(daysToEvent - 7)}: Progression klein halten (+1 Wiederholung ODER +5–10% Dauer).`);
-      lines.push(`- ${weekLabel(daysToEvent - 14)}: Konsolidieren: gleiche Qualität, besser kontrolliert.`);
-      lines.push(`- ${weekLabel(daysToEvent - 21)}: Entlasten (-10 bis -20%), dann nächste BUILD-Stufe.`);
-    } else {
-      lines.push(`- ${weekLabel(daysToEvent)}: BUILD spitz setzen mit ${keyA}, restliche Läufe bewusst easy.`);
-      lines.push(`- ${weekLabel(daysToEvent - 7)}: Vor-RACE-Übergang: ${keyB} kürzer, dafür sauberer.`);
-      lines.push(`- ${weekLabel(daysToEvent - 14)}: keine neue Härte, nur Qualität absichern.`);
-    }
-    return lines;
-  }
-
-  if (block === "RACE") {
-    const raceHints = DISTANCE_RACE_PROGRESSION_HINTS[eventDistance] || {};
-    const specificMain = raceHints.specific || keyA;
-    const sharpMain = raceHints.sharp || keyB;
-    const raceWeekMain = raceHints.raceWeek || sharpen;
-
-    if (daysToEvent >= 21) {
-      const longrunLine = Number.isFinite(longrunMinutesTarget) ? ` Longrun ${longrunMinutesTarget} Minuten.` : "";
-      lines.push(`- ${weekLabel(daysToEvent)}: 1× spezifisch (${specificMain}) oder 1× Kontrolle/Schärfe (${sharpMain}), Rest locker.${longrunLine}`);
-      return lines;
-    }
-
-    if (daysToEvent >= 14) {
-      lines.push(`- ${weekLabel(daysToEvent)}: normal-spezifisch (${specificMain}) + kurzer Schärfereiz (${sharpMain}).`);
-      return lines;
-    }
-
-    if (daysToEvent >= 7) {
-      lines.push(`- ${weekLabel(daysToEvent)}: letzte volle Woche: ${specificMain} kürzer, ${sharpMain} kontrolliert, Volumen reduziert.`);
-      return lines;
-    }
-
-    lines.push(`- Rennwoche: Progression stoppen, Frische maximieren (${raceWeekMain}, viel easy, 1–2 Ruhetage).`);
-    return lines;
-  }
-
-  return null;
-}
-
-function buildBlockDescriptionLines({ block, eventDistance, daysToEvent = null, longrunMinutesTarget = null }) {
-  if (!block || !eventDistance) return null;
-  if (!["BASE", "BUILD", "RACE"].includes(block)) return null;
-  const libraryEntry = BLOCK_DESCRIPTION_LIBRARY[eventDistance];
-  if (!libraryEntry) return null;
-  const blockEntry = libraryEntry.blocks?.[block];
-  if (!blockEntry) return null;
-
-  const lines = [];
-  lines.push(blockEntry.title);
-  if (blockEntry.principle) lines.push(`Leitprinzip: ${blockEntry.principle}`);
-  lines.push("Ziel:");
-  blockEntry.goal.forEach((item) => lines.push(`- ${item}`));
-  const showDetailSections = block !== "RACE";
-
-  if (showDetailSections && blockEntry.content?.length) {
-    lines.push("");
-    lines.push("Inhalt:");
-    blockEntry.content.forEach((item) => lines.push(`- ${item}`));
-  }
-  if (showDetailSections && blockEntry.week?.length) {
-    lines.push("");
-    lines.push("Beispielwoche:");
-    blockEntry.week.forEach((item) => lines.push(`- ${item}`));
-  }
-
-  const progressionLines = buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEntry, longrunMinutesTarget });
-  if (progressionLines?.length) {
-    lines.push("");
-    lines.push("Progression bis Rennen:");
-    progressionLines.forEach((item) => lines.push(item));
-  }
-
-  const phaseRules = PHASE_DISTANCE_RULES?.[eventDistance]?.[block];
-  if (phaseRules) {
-    lines.push("");
-    lines.push("Regel-Kompass:");
-    if (phaseRules.allowed?.length) {
-      lines.push(`- ✅ Erlaubt: ${phaseRules.allowed.join(", ")}`);
-    }
-    if (phaseRules.limited?.length) {
-      lines.push(`- ⚠️ Limitiert: ${phaseRules.limited.join(", ")}`);
-    }
-    if (phaseRules.forbidden?.length) {
-      lines.push(`- ❌ Nicht vorgesehen: ${phaseRules.forbidden.join(", ")}`);
-    }
-  }
-  return lines;
 }
 
 function formatKeyType(type) {
@@ -4830,64 +2425,6 @@ function buildAerobicTrendLine(trend) {
   return `GA-Form stabil/gemischt (VDOT ${vdotArrow} ${dvText}, HR-Drift ${driftArrow} ${ddText})`;
 }
 
-function formatSignedPct(value) {
-  if (!Number.isFinite(value)) return "n/a";
-  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
-}
-
-function buildAerobicStatusLines(trend) {
-  const efTrend = Number.isFinite(trend?.efDeltaPct) ? trend.efDeltaPct : Number.isFinite(trend?.dv) ? trend.dv : null;
-  const vdotTrend = efTrend;
-  const confidence = trend?.confidence ?? null;
-  const confidenceText = confidence ? ` (Confidence ${confidence})` : "";
-  return [
-    "🫁 Aerober Status (personalisiert)",
-    `• EF-Trend (28d vs 28d): ${formatSignedPct(efTrend)}${confidenceText}.`,
-    `• VDOT-Trend (28d vs 28d): ${formatSignedPct(vdotTrend)}.`,
-  ];
-}
-
-function parseWellnessNumber(value) {
-  if (value == null) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const normalized = trimmed.replace(",", ".");
-    const num = Number(normalized);
-    return Number.isFinite(num) ? num : null;
-  }
-  return null;
-}
-
-function parseSleepHours(value) {
-  if (value == null) return null;
-  if (typeof value === "string") {
-    const trimmed = value.trim().toLowerCase();
-    if (!trimmed) return null;
-    const timeMatch = trimmed.match(/^(\d+)\s*[:h]\s*(\d{1,2})$/);
-    if (timeMatch) {
-      const hours = Number(timeMatch[1]);
-      const minutes = Number(timeMatch[2]);
-      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
-        return hours + minutes / 60;
-      }
-    }
-    const hourMinuteMatch = trimmed.match(/(\d+)\s*h(?:\s*(\d{1,2}))?/);
-    if (hourMinuteMatch) {
-      const hours = Number(hourMinuteMatch[1]);
-      const minutes = hourMinuteMatch[2] ? Number(hourMinuteMatch[2]) : 0;
-      if (Number.isFinite(hours) && Number.isFinite(minutes)) {
-        return hours + minutes / 60;
-      }
-    }
-  }
-  const num = parseWellnessNumber(value);
-  if (num == null || num <= 0) return null;
-  if (num > 24) return round(num / 60, 2);
-  return num;
-}
-
 function extractSleepHoursFromWellness(wellness) {
   if (!wellness) return null;
   const candidates = [
@@ -4896,58 +2433,12 @@ function extractSleepHoursFromWellness(wellness) {
     wellness.sleep_duration,
     wellness.sleep_time,
     wellness.sleep_hr,
-    wellness.sleep_min,
-    wellness.sleep_minutes,
-    wellness.sleep_mins,
   ];
   for (const value of candidates) {
-    const parsed = parseSleepHours(value);
-    if (parsed != null) return parsed;
-  }
-  return null;
-}
-
-function extractSleepQualityFromWellness(wellness) {
-  if (!wellness) return null;
-  const candidates = [
-    wellness.sleepQuality,
-    wellness.sleep_quality,
-    wellness.sleep_quality_score,
-  ];
-  for (const value of candidates) {
-    const num = parseWellnessNumber(value);
-    if (!Number.isFinite(num)) continue;
-    if (num >= 1 && num <= 4) return Math.round(num);
-  }
-  return null;
-}
-
-function extractSleepScoreFromWellness(wellness) {
-  if (!wellness) return null;
-  const candidates = [
-    wellness.sleepScore,
-    wellness.sleep_score,
-  ];
-  for (const value of candidates) {
-    const num = parseWellnessNumber(value);
-    if (!Number.isFinite(num)) continue;
-    if (num >= 0 && num <= 100) return Math.round(num);
-  }
-  return null;
-}
-
-function deriveSleepQualityLabel({ sleepQuality, sleepScore } = {}) {
-  if (sleepQuality != null) {
-    if (sleepQuality === 1) return "super";
-    if (sleepQuality === 2) return "gut";
-    if (sleepQuality === 3) return "ok";
-    if (sleepQuality === 4) return "schlecht";
-  }
-  if (sleepScore != null) {
-    if (sleepScore >= 85) return "super";
-    if (sleepScore >= 70) return "gut";
-    if (sleepScore >= 55) return "ok";
-    return "schlecht";
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) continue;
+    if (num > 24) return round(num / 60, 2);
+    return num;
   }
   return null;
 }
@@ -4960,82 +2451,24 @@ function extractHrvFromWellness(wellness) {
     wellness.hrv_sdnn,
   ];
   for (const value of candidates) {
-    const num = parseWellnessNumber(value);
-    if (num == null || num <= 0) continue;
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) continue;
     return num;
   }
   return null;
 }
 
-function extractSubjectiveTag(wellness, keys) {
-  if (!wellness || !Array.isArray(keys)) return null;
-  for (const key of keys) {
-    const raw = wellness?.[key];
-    if (raw == null) continue;
-    const value = String(raw).trim().toLowerCase();
-    if (!value) continue;
-    return value;
-  }
-  return null;
-}
-
-function subjectiveTagIsNegative(tag, type) {
-  if (!tag) return null;
-  if (type === "pain") return !/none|no|0|false|ok/.test(tag);
-  if (type === "legs") return /heavy|schwer|dead|tired|müde|low/.test(tag);
-  if (type === "mood") return /low|down|bad|schlecht|negativ/.test(tag);
-  if (type === "motivation") return /low|down|bad|schlecht|negativ|unmotiv/.test(tag);
-  return null;
-}
-
-function subjectiveRollingFlag(entries, minShare = 0.5) {
-  if (!entries.length) return null;
-  const negatives = entries.filter(Boolean).length;
-  return negatives / entries.length >= minShare;
-}
-
-function subjectiveShare(entries) {
-  if (!entries.length) return null;
-  const negatives = entries.filter(Boolean).length;
-  return negatives / entries.length;
-}
-
-function averageSubjectiveShare(shares) {
-  const usable = shares.filter((share) => typeof share === "number");
-  if (!usable.length) return null;
-  return avg(usable);
-}
-
 function buildRecoverySignalLines(recoverySignals) {
   if (!recoverySignals) return [];
   const lines = [];
-  const {
-    sleepHours,
-    sleepBaseline,
-    sleepDeltaPct,
-    sleepQuality,
-    sleepScore,
-    sleepQualityLabel,
-    hrv,
-    hrvBaseline,
-    hrvDeltaPct,
-    sleepLow,
-    hrvLow,
-  } = recoverySignals;
+  const { sleepHours, sleepBaseline, sleepDeltaPct, hrv, hrvBaseline, hrvDeltaPct, sleepLow, hrvLow } = recoverySignals;
   const hasSleep = sleepHours != null;
   const hasHrv = hrv != null;
-  const hasSleepQuality = sleepQuality != null || sleepScore != null;
-  if (!hasSleep && !hasHrv && !hasSleepQuality) return [];
+  if (!hasSleep && !hasHrv) return [];
   const parts = [];
   if (hasSleep) {
     const sleepDeltaText = sleepBaseline != null ? ` (${sleepDeltaPct > 0 ? "+" : ""}${sleepDeltaPct.toFixed(0)}% vs 7T)` : "";
     parts.push(`Schlaf ${sleepHours.toFixed(1)}h${sleepDeltaText}`);
-  }
-  if (hasSleepQuality) {
-    const qualityLabel = sleepQualityLabel ? sleepQualityLabel : "unbekannt";
-    const scoreText = sleepScore != null ? ` (Score ${sleepScore})` : "";
-    const qualityText = sleepQuality != null ? `Qualität ${qualityLabel}${scoreText}` : `Schlafscore ${qualityLabel}${scoreText}`;
-    parts.push(qualityText);
   }
   if (hasHrv) {
     const hrvDeltaText = hrvBaseline != null ? ` (${hrvDeltaPct > 0 ? "+" : ""}${hrvDeltaPct.toFixed(0)}% vs 7T)` : "";
@@ -5051,44 +2484,19 @@ function buildRecoverySignalLines(recoverySignals) {
   return lines;
 }
 
-function buildSubjectiveAverageLine(recoverySignals, label = "4T") {
-  if (!recoverySignals?.subjectiveShares) return null;
-  const formatShare = (share) => (typeof share === "number" ? `${Math.round(share * 100)}%` : null);
-  const parts = [];
-  const { pain, legs, mood, motivation } = recoverySignals.subjectiveShares;
-  const shareValues = [pain, legs, mood, motivation].filter((share) => typeof share === "number");
-  const painText = formatShare(pain);
-  if (painText) parts.push(`Schmerz ${painText}`);
-  const legsText = formatShare(legs);
-  if (legsText) parts.push(`Ermüdung ${legsText}`);
-  const moodText = formatShare(mood);
-  if (moodText) parts.push(`Stimmung ${moodText}`);
-  const motivationText = formatShare(motivation);
-  if (motivationText) parts.push(`Motivation ${motivationText}`);
-  if (!parts.length) return null;
-  const hasZero = shareValues.some((share) => share === 0);
-  const zeroHint = hasZero ? " (0% = keine negativen Einträge im Zeitraum)" : "";
-  return `Subjektiv Ø ${label} negativ: ${parts.join(" | ")}.${zeroHint}`;
-}
-
 async function computeRecoverySignals(ctx, env, dayIso) {
   const today = await fetchWellnessDay(ctx, env, dayIso);
   const sleepToday = extractSleepHoursFromWellness(today);
-  const sleepQuality = extractSleepQualityFromWellness(today);
-  const sleepScore = extractSleepScoreFromWellness(today);
   const hrvToday = extractHrvFromWellness(today);
-
+  if (sleepToday == null && hrvToday == null) {
+    return null;
+  }
   const priorDays = [];
   for (let i = 1; i <= 7; i += 1) {
     priorDays.push(isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000)));
   }
-  const subjectiveWindow = [dayIso, ...priorDays.slice(0, 3)];
   const sleepVals = [];
   const hrvVals = [];
-  const legsEntries = [];
-  const moodEntries = [];
-  const painEntries = [];
-  const motivationEntries = [];
   for (const iso of priorDays) {
     const wellness = await fetchWellnessDay(ctx, env, iso);
     const sleep = extractSleepHoursFromWellness(wellness);
@@ -5096,106 +2504,22 @@ async function computeRecoverySignals(ctx, env, dayIso) {
     if (sleep != null) sleepVals.push(sleep);
     if (hrv != null) hrvVals.push(hrv);
   }
-  for (const iso of subjectiveWindow) {
-    const wellness = iso === dayIso ? today : await fetchWellnessDay(ctx, env, iso);
-    if (!wellness) continue;
-    const legsTag = extractSubjectiveTag(wellness, ["legs", "legs_feel", "leg_feel", "muscle_feel", "fatigue_feel"]);
-    const moodTag = extractSubjectiveTag(wellness, ["mood", "mood_state", "readiness_mood"]);
-    const painTag = extractSubjectiveTag(wellness, ["pain", "injury", "injury_flag", "pain_flag"]);
-    const motivationTag = extractSubjectiveTag(wellness, ["motivation", "motivation_level", "motivation_state", "motivation_score"]);
-    const legsNeg = subjectiveTagIsNegative(legsTag, "legs");
-    const moodNeg = subjectiveTagIsNegative(moodTag, "mood");
-    const painNeg = subjectiveTagIsNegative(painTag, "pain");
-    const motivationNeg = subjectiveTagIsNegative(motivationTag, "motivation");
-    if (legsNeg != null) legsEntries.push(legsNeg);
-    if (moodNeg != null) moodEntries.push(moodNeg);
-    if (painNeg != null) painEntries.push(painNeg);
-    if (motivationNeg != null) motivationEntries.push(motivationNeg);
-  }
-
-  if (
-    sleepToday == null &&
-    sleepQuality == null &&
-    sleepScore == null &&
-    hrvToday == null &&
-    !legsEntries.length &&
-    !moodEntries.length &&
-    !painEntries.length &&
-    !motivationEntries.length
-  ) {
-    return null;
-  }
-
   const sleepBaseline = sleepVals.length ? avg(sleepVals) : null;
   const hrvBaseline = hrvVals.length ? avg(hrvVals) : null;
   const sleepDeltaPct = sleepBaseline ? ((sleepToday - sleepBaseline) / sleepBaseline) * 100 : 0;
   const hrvDeltaPct = hrvBaseline ? ((hrvToday - hrvBaseline) / hrvBaseline) * 100 : 0;
-  const ydayIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - 86400000));
-  const yday = await fetchWellnessDay(ctx, env, ydayIso);
-  const ydayHrv = extractHrvFromWellness(yday);
-  const ydayHrvDeltaPct = hrvBaseline && ydayHrv ? ((ydayHrv - hrvBaseline) / hrvBaseline) * 100 : null;
-  const sleepQualityLabel = deriveSleepQualityLabel({ sleepQuality, sleepScore });
-  const sleepLowByHours = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
-  const sleepLowByQuality = sleepQuality != null && sleepQuality >= 4;
-  const sleepLowByScore = sleepScore != null && sleepScore < 55;
-  const sleepLow = sleepLowByHours || sleepLowByQuality || sleepLowByScore;
+  const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
   const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
-  const legsNegative = subjectiveRollingFlag(legsEntries);
-  const moodNegative = subjectiveRollingFlag(moodEntries);
-  const painInjury = painEntries.length ? painEntries.some(Boolean) : null;
-  const motivationNegative = subjectiveRollingFlag(motivationEntries);
-  const legsShare = subjectiveShare(legsEntries);
-  const moodShare = subjectiveShare(moodEntries);
-  const painShare = subjectiveShare(painEntries);
-  const motivationShare = subjectiveShare(motivationEntries);
-  const subjectiveAvgNegative = averageSubjectiveShare([legsShare, moodShare, painShare, motivationShare]);
-  const subjectiveNegative =
-    subjectiveAvgNegative != null
-      ? subjectiveAvgNegative >= 0.5
-      : !!legsNegative || !!moodNegative || !!motivationNegative || !!painInjury;
   return {
     sleepHours: sleepToday,
     sleepBaseline,
     sleepDeltaPct,
-    sleepQuality,
-    sleepScore,
-    sleepQualityLabel,
     hrv: hrvToday,
     hrvBaseline,
     hrvDeltaPct,
-    ydayHrvDeltaPct,
     sleepLow,
     hrvLow,
-    legsNegative,
-    moodNegative,
-    painInjury,
-    motivationNegative,
-    subjectiveAvgNegative,
-    subjectiveNegative,
-    subjectiveShares: {
-      legs: legsShare,
-      mood: moodShare,
-      pain: painShare,
-      motivation: motivationShare,
-    },
   };
-}
-
-function computeMaintenance14d(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
-  const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  let runCount14 = 0;
-  let bikeCount14 = 0;
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (isRun(a)) runCount14++;
-    else if (isBike(a)) bikeCount14++;
-  }
-  return { runCount14, bikeCount14 };
 }
 
 function buildNextRunRecommendation({
@@ -5363,1527 +2687,16 @@ function buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunS
   return lines;
 }
 
-function confidenceBucket(score) {
-  if (score >= 70) return "high";
-  if (score >= 40) return "medium";
-  return "low";
-}
-
-function computeSectionConfidence({ hasDrift, hasHrv, hasLoad, consistent, subjectiveAligned, contradictions, hasHistory }) {
-  let score = 0;
-  if (hasDrift) score += 15;
-  if (hasHrv) score += 15;
-  if (hasLoad) score += 10;
-  if (consistent) score += 20;
-  if (subjectiveAligned) score += 10;
-  if (!contradictions) score += 10;
-  if (hasHistory) score += 10;
-  return { score, bucket: confidenceBucket(score) };
-}
-
-// NEW: STEADY_T confidence helper (shared by decision + comment)
-function computeReadinessConfidence({
-  driftSignal,
-  hrvDeltaPct,
-  runLoad7,
-  fatigueOverride,
-  hadKey,
-  counterIndicator,
-  hrv1dNegative,
-  hrv2dNegative,
-  trend,
-}) {
-  return computeSectionConfidence({
-    hasDrift: driftSignal != null && driftSignal !== "unknown",
-    hasHrv: hrvDeltaPct != null,
-    hasLoad: Number.isFinite(runLoad7),
-    consistent: !(driftSignal === "green" && (hrv1dNegative || !!fatigueOverride)),
-    subjectiveAligned: hadKey || !counterIndicator,
-    contradictions: driftSignal === "green" && hrv2dNegative,
-    hasHistory: Number.isFinite(trend?.recentN) || Number.isFinite(trend?.prevN),
-  });
-}
-
-function downgradeConfidenceOneStep(confidence) {
-  if (!confidence) return confidence;
-  const currentBucket = confidence.bucket || confidenceBucket(confidence.score ?? 0);
-  if (currentBucket === "low") return { ...confidence, bucket: "low", score: Math.min(confidence.score ?? 0, 39) };
-  if (currentBucket === "medium") return { ...confidence, bucket: "low", score: Math.min(confidence.score ?? 0, 39) };
-  return { ...confidence, bucket: "medium", score: Math.min(confidence.score ?? 0, 69) };
-}
-
-function formatKeyCapValue(dynamicKeyCap, fallbackCap) {
-  if (Number.isFinite(dynamicKeyCap?.maxKeys7d)) return dynamicKeyCap.maxKeys7d;
-  if (Number.isFinite(fallbackCap)) return fallbackCap;
-  return null;
-}
-
-function formatKeyCapReason(dynamicKeyCap) {
-  if (!dynamicKeyCap?.reasons?.length) return null;
-  return dynamicKeyCap.reasons.join(", ");
-}
-
-function normalizeActionKey(action, severity) {
-  const text = String(action || "").toLowerCase();
-  if (text.includes("keine intens") || text.includes("no intensity")) {
-    if (text.includes("5-7") || text.includes("5–7") || text.includes("7")) return "NO_INTENSITY_7D";
-    return "NO_INTENSITY";
-  }
-  if (text.includes("nur easy") || text.includes("easy only") || text.includes("easy")) {
-    return "EASY_ONLY_TODAY";
-  }
-  if (text.includes("volumen reduzieren") || text.includes("reduce volume")) {
-    return "REDUCE_VOL_15";
-  }
-  if (text.includes("dichte runter") || text.includes("keine zusatzreize")) {
-    return `ACTION_GENERIC_${String(severity || "medium").toUpperCase()}`;
-  }
-  return `ACTION_GENERIC_${String(severity || "medium").toUpperCase()}`;
-}
-
-function extractActionKeys(action, severity) {
-  if (Array.isArray(action)) {
-    return action.map((a) => normalizeActionKey(a, severity));
-  }
-  const text = String(action || "").toLowerCase();
-  const keys = new Set();
-  if (text.includes("keine intens") || text.includes("no intensity")) keys.add(normalizeActionKey("no intensity", severity));
-  if (text.includes("nur easy") || text.includes("easy only") || text.includes("easy")) keys.add("EASY_ONLY_TODAY");
-  if (text.includes("volumen reduzieren") || text.includes("reduce volume")) keys.add("REDUCE_VOL_15");
-  if (!keys.size) keys.add(normalizeActionKey(action, severity));
-  return Array.from(keys);
-}
-
-function matchOverloadPatterns(signalMap) {
-  const matches = [];
-  for (const pattern of PERSONAL_OVERLOAD_PATTERNS) {
-    const outOf = pattern?.match_rule?.out_of || pattern?.signals?.length || 0;
-    const required = pattern?.match_rule?.required || outOf;
-    const hitSignals = (pattern.signals || []).filter((s) => !!signalMap[s]);
-    if (hitSignals.length >= required && outOf > 0) {
-      matches.push({
-        id: pattern.id,
-        severity: pattern.severity,
-        action: pattern.action,
-        hitSignals,
-      });
-    }
-  }
-  return matches;
-}
-
-function patternToPolicies(matchedPatterns) {
-  const policies = [];
-  for (const pattern of matchedPatterns) {
-    const actionKeys = extractActionKeys(pattern.action, pattern.severity);
-    actionKeys.forEach((actionKey, idx) => {
-      const id = `PAT_${pattern.id}__${actionKey}`;
-      policies.push({
-        id,
-        severity: pattern.severity,
-        primary: idx === 0,
-        guardrail: actionKey.includes("NO_INTENSITY"),
-        actionKey,
-      });
-    });
-  }
-  return policies;
-}
-
-function signalToPolicies(signalMap) {
-  const candidates = [];
-  if (signalMap?.hrv_2d_negative) {
-    candidates.push({ id: "SIG__hrv_2d_negative__HIGH", severity: "high", guardrail: true });
-  }
-  if (signalMap?.fatigue_override) {
-    candidates.push({ id: "SIG__fatigue_override__MEDIUM", severity: "medium", guardrail: false });
-  }
-  return candidates;
-}
-
-function mergeAndRankPolicies(policies) {
-  const severityRank = { high: 3, medium: 2, low: 1 };
-  const dedup = new Map();
-  for (const p of policies) {
-    const existing = dedup.get(p.id);
-    if (!existing || severityRank[p.severity] > severityRank[existing.severity]) {
-      dedup.set(p.id, p);
-    }
-  }
-  return Array.from(dedup.values())
-    .sort((a, b) => {
-      if (severityRank[b.severity] !== severityRank[a.severity]) {
-        return severityRank[b.severity] - severityRank[a.severity];
-      }
-      if (b.guardrail !== a.guardrail) return b.guardrail ? 1 : -1;
-      return a.id.localeCompare(b.id);
-    })
-    .map((p) => p.id);
-}
-
-function buildPolicyDecision({ matchedPatterns, signalMap, confidenceScore }) {
-  const patternPolicies = patternToPolicies(matchedPatterns);
-  const signalPolicies = patternPolicies.length ? [] : signalToPolicies(signalMap);
-  const rankedIds = mergeAndRankPolicies([...patternPolicies, ...signalPolicies]);
-  if (!rankedIds.length) return null;
-
-  const primaryId = rankedIds[0];
-  const primary = POLICY_REGISTRY[primaryId];
-  const confidence = confidenceScore ?? 0;
-  const bucket = confidenceBucket(confidence);
-  const primaryPattern = matchedPatterns.find((p) => primaryId.startsWith(`PAT_${p.id}__`));
-  const intensityLock = Boolean(primaryPattern?.severity === "high" && String(primaryPattern?.action || "").toLowerCase().includes("keine intens"));
-  const reasonSuffix =
-    confidence < 40
-      ? "Wenn die Signale zutreffen, ist dies eine vorsichtige Empfehlung."
-      : "Zusatzsignal: mindestens ein Warnsignal im Kontext aktiv.";
-
-  return {
-    title: primary?.short || primaryId,
-    reason: `${primary?.why || "Signalbasierte Entscheidung."} ${reasonSuffix}`,
-    effect: primary?.effect || "Belastung anpassen.",
-    confidence: { score: confidence, bucket },
-    intensity_lock: intensityLock,
-    policies_applied: rankedIds,
-    decision_trace: { primaryId, matchedPatterns: matchedPatterns.length },
-  };
-}
-
-function deterministicRoll(seed) {
-  const text = String(seed ?? "seed");
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return ((hash >>> 0) % 10000) / 10000;
-}
-
-function deriveStressBucket({ fatigueOverride, warningCount }) {
-  if (fatigueOverride || warningCount >= 3) return "HIGH";
-  if (warningCount >= 1) return "MED";
-  return "LOW";
-}
-
-function deriveHrvBucket(hrvDeltaPct) {
-  if (!Number.isFinite(hrvDeltaPct)) return "UNK";
-  if (hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT) return "LOW";
-  if (hrvDeltaPct >= 5) return "HIGH";
-  return "NORMAL";
-}
-
-function deriveDriftBucket(driftSignal) {
-  if (!driftSignal || driftSignal === "unknown") return "UNK";
-  if (driftSignal === "red") return "BAD";
-  if (driftSignal === "orange") return "WARN";
-  return "OK";
-}
-
-function deriveSleepBucket(recoverySignals) {
-  if (!recoverySignals) return "UNK";
-  if (recoverySignals.sleepLow) return "LOW";
-  if (Number.isFinite(recoverySignals.sleepDeltaPct)) {
-    if (recoverySignals.sleepDeltaPct >= 10) return "HIGH";
-    if (recoverySignals.sleepDeltaPct <= -10) return "LOW";
-  }
-  return "OK";
-}
-
-function deriveMonotonyBucket(monotony) {
-  if (!Number.isFinite(monotony)) return "UNK";
-  return monotony > MONOTONY_7D_LIMIT ? "HIGH" : "LOW";
-}
-
-function deriveContextKey({
-  runFloorGap,
-  fatigueOverride,
-  warningCount,
-  hrvDeltaPct,
-  driftSignal,
-  recoverySignals,
-  monotony,
-}) {
-  const lifeStress = deriveStressBucket({ fatigueOverride, warningCount });
-  const hrvState = deriveHrvBucket(hrvDeltaPct);
-  const driftState = deriveDriftBucket(driftSignal);
-  const sleepState = deriveSleepBucket(recoverySignals);
-  const monotonyState = deriveMonotonyBucket(monotony);
-  return `RFgap=${runFloorGap ? "T" : "F"}|stress=${lifeStress}|hrv=${hrvState}|drift=${driftState}|sleep=${sleepState}|mono=${monotonyState}`;
-}
-
-function deriveStrategyArm({
-  runFloorGap,
-  lifeStress,
-  hrvState,
-  driftState,
-  hadKey,
-  freqNotRed,
-  highMonotony,
-  fatigueHigh,
-  hasHardRedFlag,
-}) {
-  if (hasHardRedFlag) {
-    return {
-      strategyArm: "NEUTRAL",
-      policyReason: "RED_FLAG",
-      learningEligible: false,
-    };
-  }
-
-  if (runFloorGap && (lifeStress === "MED" || lifeStress === "HIGH")) {
-    return {
-      strategyArm: "FREQ_UP",
-      policyReason: "RUN_FLOOR_GAP_HIGH_STRESS",
-      learningEligible: true,
-    };
-  }
-
-  if (runFloorGap && lifeStress === "LOW") {
-    return {
-      strategyArm: "VOLUME_ADJUST",
-      policyReason: "RUN_FLOOR_GAP_LOW_STRESS",
-      learningEligible: true,
-    };
-  }
-
-  if (hadKey && freqNotRed) {
-    return {
-      strategyArm: "INTENSITY_SHIFT",
-      policyReason: "QUALITY_OK",
-      learningEligible: true,
-    };
-  }
-
-  if (highMonotony || driftState === "BAD") {
-    return {
-      strategyArm: fatigueHigh ? "PROTECT_DELOAD" : "HOLD_ABSORB",
-      policyReason: fatigueHigh ? "HIGH_MONOTONY_FATIGUE" : "HIGH_MONOTONY_OR_DRIFT",
-      learningEligible: true,
-    };
-  }
-
-  if (fatigueHigh || (hrvState === "LOW" && lifeStress === "HIGH")) {
-    return {
-      strategyArm: "PROTECT_DELOAD",
-      policyReason: "HIGH_STRESS",
-      learningEligible: true,
-    };
-  }
-
-  return {
-    strategyArm: "HOLD_ABSORB",
-    policyReason: "DEFAULT_HOLD",
-    learningEligible: true,
-  };
-}
-
-function computeLearningOutcomeScore({ driftSignal, hrv1dNegative, hrv2dNegative, fatigueOverride, warningCount }) {
-  let score = 0;
-  if (driftSignal === "green") score += 2;
-  else if (driftSignal === "orange") score += 0;
-  else if (driftSignal === "red") score -= 2;
-
-  if (!hrv1dNegative) score += 1;
-  if (!hrv2dNegative) score += 1;
-  if (!fatigueOverride) score += 1;
-
-  if (warningCount >= 3) score -= 2;
-  else if (warningCount === 2) score -= 1;
-
-  return score;
-}
-
-// NEW: STEADY_T guardrail state (split KEY_HARD vs STEADY_T)
-function buildGuardrailState({
-  hasHardRedFlag,
-  hrv2dNegative,
-  warningCount,
-  loadState,
-  painInjury,
-  keySpacingOk,
-  fatigueGuardrailSeverity,
-  fatigueGuardrailReasons,
-}) {
-  const hardReasons = [];
-  const softReasons = [];
-  const guardrailReasons = [];
-  if (painInjury) hardReasons.push("pain_injury");
-  if (hrv2dNegative) hardReasons.push("hrv_2d_negative");
-  if (loadState === "overreached") hardReasons.push("overreached");
-  if (hasHardRedFlag && !hrv2dNegative) hardReasons.push("hard_red_flag");
-  if (fatigueGuardrailSeverity === "hard") hardReasons.push("fatigue_hard");
-  if (fatigueGuardrailSeverity === "soft") softReasons.push("fatigue_soft");
-  if (warningCount >= 2) softReasons.push("cumulative_warnings");
-
-  if (Array.isArray(fatigueGuardrailReasons)) {
-    guardrailReasons.push(...fatigueGuardrailReasons);
-  }
-  if (hrv2dNegative) guardrailReasons.push("hrv_2d_negative");
-  if (painInjury) guardrailReasons.push("pain_injury");
-  if (warningCount >= 2) guardrailReasons.push(`warning_count:${warningCount}`);
-
-  const guardrailSeverity = hardReasons.length > 0 ? "hard" : softReasons.length > 0 ? "soft" : "none"; // NEW: guardrail severity
-  const hardActive = guardrailSeverity === "hard";
-  const mediumActive = guardrailSeverity === "soft";
-
-  const blocksKeyHard = new Set();
-  const blocksSteady = new Set();
-
-  if (hardActive) {
-    blocksKeyHard.add("HARD_GUARDRAIL");
-    blocksSteady.add("HARD_GUARDRAIL");
-  } else if (mediumActive) {
-    blocksKeyHard.add("SOFT_GUARDRAIL");
-  }
-  if (hrv2dNegative) blocksKeyHard.add("HRV_2D_NEGATIVE");
-  if (warningCount >= 2) blocksKeyHard.add("CUMULATIVE_WARNINGS");
-  if (keySpacingOk === false) blocksKeyHard.add("KEY_SPACING");
-
-  return {
-    guardrailSeverity,
-    hardActive,
-    mediumActive,
-    hardReasons,
-    softReasons,
-    guardrailReasons,
-    blocks: {
-      keyHard: Array.from(blocksKeyHard),
-      steady: Array.from(blocksSteady),
-    },
-  };
-}
-
-function computeBuildSteadyDecision({
-  phase,
-  guardrailHardActive,
-  guardrailSoftActive,
-  hrvNegativeDays,
-  hrv2dNegative,
-  driftRecentMedian,
-  driftTrendWorsening,
-  loadState,
-  fatigueHigh,
-  motorTrendDownStrong,
-  intensityBudget,
-  decisionConfidenceScore,
-}) {
-  const driftOk = Number.isFinite(driftRecentMedian) ? driftRecentMedian <= DRIFT_WARN_PCT : false;
-  const hrvOk = Number.isFinite(hrvNegativeDays) ? hrvNegativeDays <= 1 : false;
-  const loadOk = loadState !== "overreached";
-  const steadyBudgetOk = intensityBudget.steadyCount < STEADY_T_MAX_PER_7D;
-  const keyBudgetCount =
-    STEADY_T_BUDGET_KEY_TYPE === "keyAny" ? intensityBudget.keyAnyCount ?? 0 : intensityBudget.keyHardCount ?? 0;
-  const keyConflict = keyBudgetCount >= KEY_HARD_MAX_PER_7D;
-  const budgetMode = STEADY_T_BUDGET_MODE;
-  const budgetOk = steadyBudgetOk && (budgetMode === "exclusive" ? !keyConflict : true);
-  const replacementEligible = budgetMode === "replacement" && keyConflict && !guardrailHardActive && !fatigueHigh;
-
-  const delaySignals = {
-    drift_trend_worsening: !!driftTrendWorsening,
-    hrv_negative_2days: !!hrv2dNegative,
-    motor_trend_down_strong: !!motorTrendDownStrong,
-  };
-  const delayActive = Object.values(delaySignals).some(Boolean);
-
-  const confidenceOk = Number.isFinite(decisionConfidenceScore) ? decisionConfidenceScore >= DECISION_CONF_MIN : false; // NEW: STEADY_T confidence gate
-  const replacementOk = budgetMode !== "replacement" || !keyConflict || replacementEligible;
-  const allowConditionsMet = !guardrailHardActive && loadOk && budgetOk && driftOk && hrvOk && replacementOk;
-  const eligibility = {
-    guardrailHardActive,
-    guardrailSoftActive,
-    loadOk,
-    budgetOk,
-    driftOk,
-    hrvOk,
-    steadyBudgetOk,
-    keyConflict,
-    confidenceOk,
-    budgetModeExclusive: budgetMode === "exclusive",
-    budgetModeReplacement: budgetMode === "replacement",
-    replacementEligible,
-    fatigueHigh: !!fatigueHigh,
-  };
-
-  let status = "blocked";
-  let reasonId = "UNKNOWN";
-  let reasonText = "Steady-T heute nicht freigegeben.";
-
-  if (guardrailHardActive) {
-    reasonId = "HARD_GUARDRAIL";
-    reasonText = hrv2dNegative
-      ? "Harter Guardrail aktiv (HRV 2 Tage negativ)."
-      : "Harter Guardrail aktiv.";
-  } else if (!loadOk) {
-    reasonId = "FATIGUE_HIGH";
-    reasonText = "Belastungsstatus: overreached.";
-  } else if (!budgetOk) {
-    if (!steadyBudgetOk) {
-      reasonId = "BUDGET_STEADY_MAX";
-      reasonText = `STEADY_T-Limit (${STEADY_T_MAX_PER_7D}/7T) erreicht.`;
-    } else {
-      reasonId = "BUDGET_KEY_PRESENT";
-      const lastKeyIso =
-        STEADY_T_BUDGET_KEY_TYPE === "keyAny" ? intensityBudget.lastKeyAnyIso : intensityBudget.lastKeyHardIso;
-      reasonText = `Wochen-Budget erreicht (Key in letzten 7T am ${lastKeyIso || "n/a"}).`;
-    }
-  } else if (delayActive) {
-    status = "delayed";
-    reasonId = "BUILD_STEADY_DELAY";
-    reasonText = "Build aktiv, aber System absorbiert noch – Schwellenreiz wird verschoben, nicht gestrichen.";
-  } else if (!hrvOk) {
-    reasonId = "HRV_2D_NEG";
-    reasonText = "HRV an 2 Tagen negativ.";
-  } else if (!driftOk) {
-    reasonId = "DRIFT_TOO_HIGH";
-    reasonText = `Drift-Median > ${DRIFT_WARN_PCT}%.`;
-  } else {
-    status = "allowed";
-    reasonId = "BUILD_STEADY_ALLOWED";
-    reasonText = guardrailSoftActive
-      ? "Soft Guardrail aktiv: kontrollierter Schwellenreiz erlaubt (Signal setzen, kein Ermüdungsaufbau)."
-      : "Kontrollierter Schwellenreiz erlaubt (Signal setzen, kein Ermüdungsaufbau).";
-    if (replacementEligible) {
-      reasonText = `${reasonText} Key diese Woche erledigt → nur wenn du statt eines weiteren Keys einen kontrollierten Steady-Block willst.`;
-    }
-  }
-
-  const delayReasons = Object.entries(delaySignals)
-    .filter(([, active]) => active)
-    .map(([key]) => key);
-
-  return {
-    status,
-    allowSteady: status === "allowed",
-    delaySteady: status === "delayed",
-    reasonId,
-    reasonText,
-    delayRange: STEADY_T_DELAY_DAYS_RANGE,
-    delayReasons,
-    allowConditionsMet,
-    confidenceOk,
-    eligibility,
-  };
-}
-
-function computeKeyHardDecision({
-  keySpacingOk,
-  intensityBudget,
-}) {
-  if (keySpacingOk === false) {
-    return { allowed: false, reason: "Key-Abstand <48h." };
-  }
-  if (intensityBudget?.keyHardCount >= KEY_HARD_MAX_PER_7D) {
-    return { allowed: false, reason: `KEY_HARD-Limit (${KEY_HARD_MAX_PER_7D}/7T) erreicht.` };
-  }
-  return { allowed: true, reason: "Key-Hard erlaubt (nur 7T-Budget + 48h-Spacing)." };
-}
-
-function mapKeyTypeToIntensityClass(keyType) {
-  if (keyType === "racepace") return INTENSITY_RECOMMENDATION_CLASS.RACEPACE;
-  if (keyType === "vo2_touch") return INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH;
-  if (keyType === "strides") return INTENSITY_RECOMMENDATION_CLASS.STRIDES;
-  return INTENSITY_RECOMMENDATION_CLASS.STEADY;
-}
-
-function computeFloorGapPolicy({ runFloorGap, guardrailSeverity, keyBudgetAvailable, spacingOk }) {
-  const blockVolumeEscalationDueToFloorGap = !!runFloorGap;
-  const allowIntensityDespiteFloorGap = runFloorGap
-    ? guardrailSeverity !== "hard" && keyBudgetAvailable && spacingOk
-    : true;
-  return {
-    blockVolumeEscalationDueToFloorGap,
-    allowIntensityDespiteFloorGap,
-    reasonId: runFloorGap ? "FLOOR_GAP_BLOCKS_VOLUME_ONLY" : null,
-    reasonText: runFloorGap
-      ? "Runfloor-Lücke: Volumen nicht erhöhen, Intensität möglich wenn Guardrails/Budget ok."
-      : null,
-  };
-}
-
-function selectIntensityRecommendation({
-  blockState,
-  weeksToEvent,
-  guardrailState,
-  keyRules,
-  keyCompliance,
-  intensityBudget,
-  keySpacing,
-  steadyDecision,
-  runFloorGap,
-}) {
-  const guardrailSeverity = guardrailState?.guardrailSeverity ?? "none";
-  const spacingOk = keySpacing?.ok !== false;
-  const keyBudgetAvailable =
-    (intensityBudget?.keyHardCount ?? 0) < KEY_HARD_MAX_PER_7D && !keyCompliance?.capExceeded;
-  const floorGapPolicy = computeFloorGapPolicy({
-    runFloorGap,
-    guardrailSeverity,
-    keyBudgetAvailable,
-    spacingOk,
-  });
-  const keyEligible = spacingOk && keyBudgetAvailable;
-  const allowedKeyTypes = keyCompliance?.allowedKeyTypes ?? keyRules?.allowedKeyTypes ?? [];
-  const preferredKeyTypes = keyRules?.preferredKeyTypes ?? [];
-  const bannedKeyTypes = keyCompliance?.bannedKeyTypes ?? keyRules?.bannedKeyTypes ?? [];
-  const disallowedKeyTypes = keyCompliance?.computedDisallowed ?? [];
-  const bannedHits = keyCompliance?.bannedHits ?? [];
-  const bannedLast = bannedHits.length ? bannedHits[0] : null;
-
-  const isTypeAllowed = (type) =>
-    allowedKeyTypes.includes(type) && !bannedKeyTypes.includes(type) && !disallowedKeyTypes.includes(type);
-  const filterForGuardrails = (types) => types.filter((type) => isTypeAllowed(type));
-
-  const availablePreferred = filterForGuardrails(preferredKeyTypes);
-  const availableAllowed = filterForGuardrails(allowedKeyTypes);
-
-  const block = blockState?.block || "BASE";
-  const preferRaceKey = block === "RACE" && weeksToEvent != null && weeksToEvent <= 6;
-
-  if (bannedLast && keyEligible) {
-    const altKey = availablePreferred[0] ?? availableAllowed[0] ?? null;
-    if (altKey) {
-      return {
-        intensityClass: mapKeyTypeToIntensityClass(altKey),
-        keyType: altKey,
-        reasonId: `POSITIVE_SELECT_${mapKeyTypeToIntensityClass(altKey)}`,
-        reasonText: `Alternative statt verbotener Key-Typ: ${altKey} (statt ${bannedLast}).`,
-        floorGapPolicy,
-      };
-    }
-  }
-
-  if (block === "RACE" && keyEligible) {
-    const chosenKey = availablePreferred[0] ?? availableAllowed[0] ?? null;
-    if (chosenKey) {
-      return {
-        intensityClass: mapKeyTypeToIntensityClass(chosenKey),
-        keyType: chosenKey,
-        reasonId: preferRaceKey ? "RACE_PREF_KEY_CHOSEN" : `POSITIVE_SELECT_${mapKeyTypeToIntensityClass(chosenKey)}`,
-        reasonText: preferRaceKey
-          ? `RACE-Block: bevorzuge ${chosenKey} (wettkampfnah).`
-          : `Positive Auswahl: ${mapKeyTypeToIntensityClass(chosenKey)} (Guardrails ok, Budget ok, Spacing ok).`,
-        floorGapPolicy,
-      };
-    }
-  }
-
-  if (steadyDecision?.allowSteady && steadyDecision?.eligibility?.steadyBudgetOk) {
-    return {
-      intensityClass: INTENSITY_RECOMMENDATION_CLASS.STEADY,
-      reasonId: "POSITIVE_SELECT_STEADY",
-      reasonText: "Positive Auswahl: STEADY (Guardrails ok, Budget ok, Spacing ok).",
-      floorGapPolicy,
-    };
-  }
-
-  if (spacingOk && availableAllowed.includes("strides")) {
-    return {
-      intensityClass: INTENSITY_RECOMMENDATION_CLASS.STRIDES,
-      reasonId: "POSITIVE_SELECT_STRIDES",
-      reasonText: "Positive Auswahl: STRIDES (Guardrails ok, Budget ok, Spacing ok).",
-      floorGapPolicy,
-    };
-  }
-
-  return {
-    intensityClass: INTENSITY_RECOMMENDATION_CLASS.EASY_BASE,
-    reasonId: "POSITIVE_SELECT_EASY_BASE",
-    reasonText: "Positive Auswahl: EASY_BASE (Guardrails ok, Budget ok, Spacing ok).",
-    floorGapPolicy,
-  };
-}
-
-function buildDecisionTrace({
-  steadyDecision,
-  guardrailState,
-  overruledSignals,
-  intensityClassToday,
-  intensityBudget,
-  excludeFromTrends,
-  intensitySelection,
-}) {
-  // NEW: STEADY_T decision trace payload
-  const guardrailApplied = { blocks: [], allows: [] };
-  if (guardrailState) {
-    const keyBlocked = guardrailState.blocks?.keyHard?.length > 0;
-    const steadyBlocked = guardrailState.blocks?.steady?.length > 0;
-    if (keyBlocked) guardrailApplied.blocks.push("KEY_HARD");
-    else guardrailApplied.allows.push("KEY_HARD");
-    if (steadyBlocked) guardrailApplied.blocks.push("STEADY_T");
-    else guardrailApplied.allows.push("STEADY_T");
-    guardrailApplied.guardrailSeverity = guardrailState.guardrailSeverity || "none";
-    guardrailApplied.severity = guardrailApplied.guardrailSeverity;
-    guardrailApplied.guardrailReasons = guardrailState.guardrailReasons || [];
-    guardrailApplied.steadyEligibility = steadyDecision?.eligibility || null;
-  }
-  if (!guardrailApplied.guardrailSeverity) guardrailApplied.guardrailSeverity = "none";
-  if (!guardrailApplied.severity) guardrailApplied.severity = guardrailApplied.guardrailSeverity;
-  if (!guardrailApplied.guardrailReasons) guardrailApplied.guardrailReasons = [];
-  if (!("steadyEligibility" in guardrailApplied)) guardrailApplied.steadyEligibility = steadyDecision?.eligibility || null;
-
-  const excluded = Object.entries(excludeFromTrends || {})
-    .filter(([, value]) => value)
-    .map(([key]) => key);
-
-  return {
-    highest_priority_trigger: steadyDecision?.reasonId ?? null,
-    guardrail_applied: guardrailApplied,
-    intensity_class_today: intensityClassToday ?? null,
-    intensity_budget: intensityBudget ?? null,
-    intensity_recommendation: intensitySelection ?? null,
-    delayed: {
-      steady: !!steadyDecision?.delaySteady,
-      days: steadyDecision?.delaySteady ? steadyDecision?.delayRange?.max ?? null : null,
-    },
-    excluded_from_trends: excluded,
-    overruled_signals: overruledSignals ?? [],
-  };
-}
-
-function buildIntensityDebugPayload({
-  intensityClassToday,
-  intensityBudget,
-  steadyDecision,
-  keyHardDecision,
-  decisionTrace,
-  guardrailState,
-  excludeFromTrends,
-  intensitySelection,
-}) {
-  return {
-    intensity_class: intensityClassToday,
-    intensity_budget: intensityBudget,
-    steady_decision: steadyDecision,
-    steadyEligibility: steadyDecision?.eligibility ?? null,
-    key_hard_decision: keyHardDecision,
-    intensity_selection: intensitySelection ?? null,
-    decision_trace: decisionTrace,
-    computedGuardrail: guardrailState
-      ? { severity: guardrailState.guardrailSeverity, reasons: guardrailState.guardrailReasons }
-      : null,
-    exclude_from: excludeFromTrends,
-  };
-}
-
-// ================= WORKOUT BUILDER (Key-Reiz Konkret) =================
-
-function normalizeConfidenceLevel(confidenceLevel) {
-  const text = String(confidenceLevel || "").toLowerCase();
-  if (text === "hoch" || text === "high") return "high";
-  if (text === "mittel" || text === "medium") return "medium";
-  if (text === "niedrig" || text === "low") return "low";
-  return "unknown";
-}
-
-function toMinutes(seconds) {
-  return seconds / 60;
-}
-
-function formatIntervalSeconds(seconds) {
-  if (seconds % 60 === 0) return `${seconds / 60}′`;
-  return `${seconds}s`;
-}
-
-function formatMinuteBlock(minutes) {
-  return `${Math.round(minutes)}′`;
-}
-
-function applyIntervalInsightsToWorkoutPlan(plan, intervalInsights) {
-  if (!plan || !intervalInsights) return { plan, adjustmentNotes: [] };
-  const metrics = intervalInsights.intervalMetrics;
-  if (!metrics) return { plan, adjustmentNotes: [] };
-  if (plan.keyType === "strides") return { plan, adjustmentNotes: [] };
-
-  let adjusted = { ...plan };
-  const adjustmentNotes = [];
-  let recBonus = 0;
-
-  if (metrics.drift_flag === "too_hard" || metrics.drift_flag === "overreaching") {
-    if (adjusted.reps > 4) {
-      adjusted.reps -= 1;
-      adjustmentNotes.push("1 Wdh weniger (HF-Drift hoch)");
-    } else {
-      recBonus += 30;
-      adjustmentNotes.push("Pausen +30s (HF-Drift hoch)");
-    }
-  }
-
-  if (recBonus > 0) {
-    adjusted.recSec = Math.min(adjusted.recSec + recBonus, 240);
-  }
-
-  if (adjustmentNotes.length) {
-    adjusted.intensityMinutes = toMinutes(adjusted.reps * adjusted.workSec);
-    adjusted.totalMinutes = computeTotalMinutes({
-      warmupMin: adjusted.warmupMin,
-      cooldownMin: adjusted.cooldownMin,
-      reps: adjusted.reps,
-      workSec: adjusted.workSec,
-      recSec: adjusted.recSec,
-    });
-  }
-
-  return { plan: adjusted, adjustmentNotes };
-}
-
-function computeReadinessTier({ readinessAmpel, readinessScore, fatigueSeverity, guardrailSeverity }) {
-  if (guardrailSeverity === "hard" || readinessAmpel === "🔴") return "BAD";
-  if (fatigueSeverity === "high" || (readinessAmpel === "🟠" && readinessScore < 55)) return "LOW";
-  if (readinessAmpel === "🟢" || readinessScore >= 70) return "GOOD";
-  if (readinessAmpel === "🟠" && readinessScore >= 55 && readinessScore <= 69) return "OK";
-  return "OK";
-}
-
-function computeWorkoutProgressIndex({
-  family,
-  lastKeyInfo,
-  readinessTier,
-  guardrailSeverity,
-  runFloorGap,
-  hrvDeltaPct,
-  driftCapActive,
-}) {
-  const familyHistory = (lastKeyInfo?.keyHistory || []).filter((entry) => entry.family === family);
-  let index = familyHistory.length >= 3 ? 2 : familyHistory.length >= 2 ? 1 : 0;
-  if (lastKeyInfo?.lastKeyFamily === family && readinessTier !== "LOW" && guardrailSeverity !== "hard" && !runFloorGap) {
-    index += 1;
-  }
-  if (readinessTier === "LOW" || (hrvDeltaPct != null && hrvDeltaPct <= -12) || driftCapActive) {
-    index -= 1;
-  }
-  return clamp(index, -1, 2);
-}
-
-function selectTemplateForFamily(family, progressIndex, lastWorkoutSignature) {
-  const templates = WORKOUT_TEMPLATE_LIBRARY[family] || [];
-  if (!templates.length) return null;
-  const index = Math.min(Math.max(progressIndex, 0), templates.length - 1);
-  let template = templates[index];
-  if (lastWorkoutSignature && template?.id && lastWorkoutSignature === template.id && templates.length > 1) {
-    template = templates[(index + 1) % templates.length];
-  }
-  return template;
-}
-
-function pickWarmupCooldown(template, { runFloorGap, scalingLevel }) {
-  const [wuMin, wuMax] = template.warmupRangeMin;
-  const [cdMin, cdMax] = template.cooldownRangeMin;
-  if (runFloorGap || scalingLevel < 0) {
-    return { warmupMin: wuMin, cooldownMin: cdMin };
-  }
-  const warmupMin = Math.round((wuMin + wuMax) / 2);
-  const cooldownMin = Math.round((cdMin + cdMax) / 2);
-  return { warmupMin, cooldownMin };
-}
-
-function computeIntensityCaps(keyType, scalingLevel) {
-  if (scalingLevel >= 2) return 22;
-  if (keyType === "vo2_touch") return 14;
-  if (keyType === "racepace") return 18;
-  return 18;
-}
-
-function applyScalingToTemplate({
-  template,
-  scalingLevel,
-  keyType,
-  weeksToEvent,
-  readinessTier,
-  runFloorGap,
-}) {
-  const baseReps = template.baseReps;
-  const baseWorkSec = template.baseWorkSec;
-  const baseRecSec = template.baseRecSec;
-
-  let reps = baseReps;
-  let workSec = baseWorkSec;
-  let recSec = baseRecSec;
-
-  if (scalingLevel === -2) {
-    reps = Math.max(4, Math.round(baseReps * 0.6));
-  } else if (scalingLevel === -1) {
-    reps = Math.max(5, Math.round(baseReps * 0.8));
-  } else if (scalingLevel >= 1) {
-    const intensityCap = computeIntensityCaps(keyType, scalingLevel);
-    const baseIntensityMin = toMinutes(baseReps * baseWorkSec);
-    const canAddRep = toMinutes((baseReps + 1) * baseWorkSec) <= intensityCap;
-    const canAddTwoRep = toMinutes((baseReps + 2) * baseWorkSec) <= intensityCap;
-    const canAddWork = toMinutes(baseReps * (baseWorkSec + 30)) <= intensityCap;
-
-    if (scalingLevel === 2 && weeksToEvent != null && weeksToEvent > 4 && readinessTier === "GOOD" && !runFloorGap) {
-      if (canAddTwoRep) reps = baseReps + 2;
-      else if (canAddRep) reps = baseReps + 1;
-      else if (canAddWork) workSec = baseWorkSec + 30;
-    } else if (scalingLevel >= 1) {
-      if (canAddRep) reps = baseReps + 1;
-      else if (canAddWork) workSec = baseWorkSec + 30;
-    }
-    if (baseIntensityMin > intensityCap) {
-      reps = baseReps;
-      workSec = baseWorkSec;
-    }
-  }
-
-  const intensityMinutes = toMinutes(reps * workSec);
-
-  return {
-    reps,
-    workSec,
-    recSec,
-    intensityMinutes,
-  };
-}
-
-function computeTotalMinutes({ warmupMin, cooldownMin, reps, workSec, recSec }) {
-  return warmupMin + cooldownMin + toMinutes(reps * (workSec + recSec));
-}
-
-function buildWorkoutPlan({
-  decisionKeyType,
-  weeksToEvent,
-  readinessAmpel,
-  readinessScore,
-  guardrailSeverity,
-  hrvDeltaPct,
-  driftPct,
-  confidenceLevel,
-  fatigueSeverity,
-  keyBudget,
-  runFloorGap,
-  lastKeyInfo,
-  lastWorkoutSignature,
-}) {
-  const reasonIds = [];
-  const guardrailBlock = guardrailSeverity === "hard";
-  if (guardrailBlock || readinessAmpel === "🔴") {
-    return { plan: null, reasonIds };
-  }
-
-  const readinessTier = computeReadinessTier({
-    readinessAmpel,
-    readinessScore,
-    fatigueSeverity,
-    guardrailSeverity,
-  });
-
-  if (readinessTier === "BAD") {
-    return { plan: null, reasonIds };
-  }
-
-  const spacingOk = keyBudget?.spacingOk !== false;
-  const keyBudgetAvailable =
-    (keyBudget?.keyHardCount7 ?? 0) < (keyBudget?.keyHardMax ?? KEY_HARD_MAX_PER_7D) && !keyBudget?.capExceeded;
-  if (!spacingOk || !keyBudgetAvailable) {
-    return { plan: null, reasonIds };
-  }
-
-  let keyType = decisionKeyType;
-  if (keyType === "vo2_touch" && guardrailSeverity === "soft") {
-    keyType = "racepace";
-    reasonIds.push("SOFT_GUARDRAIL_SWITCH_VO2_TO_RP");
-  }
-
-  const driftCapActive = driftPct != null && driftPct >= 5.5 && normalizeConfidenceLevel(confidenceLevel) !== "high";
-  let scalingLevel = readinessTier === "GOOD" ? 1 : readinessTier === "LOW" ? -1 : 0;
-
-  if (runFloorGap && scalingLevel > 0) {
-    scalingLevel = 0;
-    reasonIds.push("FLOOR_GAP_CAPS_PROGRESSION");
-  }
-  if (hrvDeltaPct != null && hrvDeltaPct <= -12 && scalingLevel > -1) {
-    scalingLevel = -1;
-    reasonIds.push("HRV_CAPS_WORKOUT");
-  }
-  if (driftCapActive && scalingLevel > -1) {
-    scalingLevel = -1;
-    reasonIds.push("DRIFT_CAPS_WORKOUT");
-  }
-
-  if (scalingLevel <= -2 && keyType === "vo2_touch") {
-    keyType = "racepace";
-  }
-
-  const family = keyType === "vo2_touch" ? "vo2_touch" : "racepace";
-  const progressIndex = computeWorkoutProgressIndex({
-    family,
-    lastKeyInfo,
-    readinessTier,
-    guardrailSeverity,
-    runFloorGap,
-    hrvDeltaPct,
-    driftCapActive,
-  });
-  const template = selectTemplateForFamily(family, progressIndex, lastWorkoutSignature);
-  if (!template) {
-    return { plan: null, reasonIds: ["FALLBACK_STRIDES_NO_KEY_SLOT"] };
-  }
-
-  const { warmupMin, cooldownMin } = pickWarmupCooldown(template, { runFloorGap, scalingLevel });
-  let scaled = applyScalingToTemplate({
-    template,
-    scalingLevel,
-    keyType,
-    weeksToEvent,
-    readinessTier,
-    runFloorGap,
-  });
-
-  if (scalingLevel === -2 && scaled.intensityMinutes < 6) {
-    const strides = WORKOUT_TEMPLATE_LIBRARY.strides;
-    scaled = applyScalingToTemplate({
-      template: strides,
-      scalingLevel: 0,
-      keyType: "strides",
-      weeksToEvent,
-      readinessTier,
-      runFloorGap,
-    });
-    const warmupCooldown = pickWarmupCooldown(strides, { runFloorGap, scalingLevel: 0 });
-    const totalMinutes = computeTotalMinutes({
-      warmupMin: warmupCooldown.warmupMin,
-      cooldownMin: warmupCooldown.cooldownMin,
-      reps: scaled.reps,
-      workSec: scaled.workSec,
-      recSec: scaled.recSec,
-    });
-    return {
-      plan: {
-        templateId: strides.id,
-        keyType: "strides",
-        family: "strides",
-        reps: scaled.reps,
-        workSec: scaled.workSec,
-        recSec: scaled.recSec,
-        warmupMin: warmupCooldown.warmupMin,
-        cooldownMin: warmupCooldown.cooldownMin,
-        intensityMinutes: scaled.intensityMinutes,
-        totalMinutes,
-        scalingLevel: 0,
-      },
-      reasonIds: ["FALLBACK_STRIDES_NO_KEY_SLOT"],
-    };
-  }
-
-  let totalMinutes = computeTotalMinutes({
-    warmupMin,
-    cooldownMin,
-    reps: scaled.reps,
-    workSec: scaled.workSec,
-    recSec: scaled.recSec,
-  });
-
-  if (runFloorGap && totalMinutes > 55) {
-    let reps = scaled.reps;
-    const minReps = Math.max(4, Math.min(reps, template.baseReps));
-    while (reps > minReps) {
-      reps -= 1;
-      totalMinutes = computeTotalMinutes({
-        warmupMin,
-        cooldownMin,
-        reps,
-        workSec: scaled.workSec,
-        recSec: scaled.recSec,
-      });
-      if (totalMinutes <= 55) break;
-    }
-    scaled.reps = reps;
-    totalMinutes = computeTotalMinutes({
-      warmupMin,
-      cooldownMin,
-      reps: scaled.reps,
-      workSec: scaled.workSec,
-      recSec: scaled.recSec,
-    });
-  }
-
-  reasonIds.push(`WORKOUT_TEMPLATE_CHOSEN_${template.id}`);
-  reasonIds.push(`WORKOUT_SCALED_${scalingLevel}`);
-
-  return {
-    plan: {
-      templateId: template.id,
-      keyType,
-      family,
-      reps: scaled.reps,
-      workSec: scaled.workSec,
-      recSec: scaled.recSec,
-      warmupMin,
-      cooldownMin,
-      intensityMinutes: scaled.intensityMinutes,
-      totalMinutes,
-      scalingLevel,
-    },
-    reasonIds,
-  };
-}
-
-function formatWorkoutKonkret(plan, { paceText = null, adjustmentNotes = [] } = {}) {
-  if (!plan) return null;
-  const warmup = `${formatMinuteBlock(plan.warmupMin)} EL`;
-  const cooldown = `${formatMinuteBlock(plan.cooldownMin)} AL`;
-  if (plan.keyType === "strides") {
-    const work = formatIntervalSeconds(plan.workSec);
-    const rec = formatIntervalSeconds(plan.recSec);
-    return `${warmup}, ${plan.reps}×${work} zügig/locker (${rec} trab), ${cooldown}.`;
-  }
-  const work = formatIntervalSeconds(plan.workSec);
-  const rec = formatIntervalSeconds(plan.recSec);
-  const paceSuffix = plan.keyType === "racepace" && paceText ? ` Zielpace ca. ${paceText}.` : "";
-  const adjustmentSuffix = adjustmentNotes.length ? ` Anpassung: ${adjustmentNotes.join(" | ")}.` : "";
-  return `${warmup}, ${plan.reps}×${work} @ ${plan.keyType} (${rec} trab), ${cooldown}.${paceSuffix}${adjustmentSuffix}`;
-}
-
-function applyConfidenceTone(sentence, bucket) {
-  if (!sentence) return sentence;
-  if (bucket === "low") return `Beobachtung (Test): ${sentence}`;
-  if (bucket === "medium") return `Beobachtung: ${sentence}`;
-  return sentence;
-}
-
-function normalizeReasonText(reasonText) {
-  if (!reasonText) return "";
-  return String(reasonText).replace(/\.*\s*$/, "");
-}
-
-// FIX: single source of truth for build status text
-function formatSteadyDecisionStatus(steadyDecision, { includeReason = false, includeDelayRange = false } = {}) {
-  if (!steadyDecision) return "✖ STEADY_T gesperrt";
-  const baseReason = normalizeReasonText(steadyDecision.reasonText);
-  const reasonSuffix = includeReason && baseReason ? `: ${baseReason}` : "";
-  const delayRange =
-    includeDelayRange && steadyDecision.delayRange
-      ? ` (${steadyDecision.delayRange.min}–${steadyDecision.delayRange.max}T)`
-      : "";
-  if (steadyDecision.status === "allowed") return `✔ STEADY_T erlaubt${reasonSuffix}`;
-  if (steadyDecision.status === "delayed") return `⏳ STEADY_T verschoben${delayRange}${reasonSuffix}`;
-  return `✖ STEADY_T gesperrt${reasonSuffix}`;
-}
-
-const INTERVAL_TEMPLATE_LIBRARY = {
-  "5k": {
-    BASE: [
-      "GA5-1: 45–75′ GA1 locker",
-      "STR5-1: 6–8×15–20″ Strides (volle Erholung)",
-      "VO2T5-1: 8×20″/40″ (limitiert)",
-      "HILL5-1: 6–8×8–10″ Hügel kurz",
-    ],
-    BUILD: [
-      "ST5-1: 4×6′ @ Schwelle",
-      "ST5-2: 5×5′ @ Schwelle",
-      "VO25-1: 6×600 m @ VO₂max",
-      "VO25-2: 5×1000 m @ VO₂max",
-      "HRT5-1: 10×400 m Tempohärte",
-    ],
-    RACE: [
-      "RP5-1: 6×400 m @ 5-km-Pace",
-      "RP5-2: 3×1 km @ 5-km-Pace",
-      "SHARP5-1: 8×200 m flott",
-    ],
-    RESET: ["GA5-1: 45–60′ GA locker", "STR5-1: 6×20″ Steigerungen"],
-  },
-  "10k": {
-    BASE: [
-      "GA10-1: 60–75′ GA1 locker",
-      "STR10-1: 6×20″ Strides",
-      "VO2T10-1: 6×20″ VO₂-Impulse (selten)",
-      "HILL10-1: 60′ locker wellig",
-    ],
-    BUILD: [
-      "ST10-1: 4×8′ @ Schwelle",
-      "ST10-2: 3×10′ @ Schwelle",
-      "I10-1: 5×1000 m @ 10-km-Pace",
-      "I10-2: 4×2000 m @ 10-km-Pace",
-      "TL10-1: 30–40′ Tempodauerlauf",
-    ],
-    RACE: ["RP10-1: 3×2 km @ 10-km-Pace", "RP10-2: 2×3 km @ 10-km-Pace", "CTRL10-1: 5×1 km kontrolliert"],
-    RESET: ["GA10-1: 60–75′ locker", "STR10-1: 6×20″ Steigerungen"],
-  },
-  hm: {
-    BASE: [
-      "GAHM-1: 60–90′ GA1 locker",
-      "LLHM-1: 100–130′ locker",
-      "STRHM-1: 4–6×20″ Strides (optional)",
-      "VO2THM-1: 4–6×15″ VO₂-Impulse (sehr selten)",
-    ],
-    BUILD: [
-      "STHM-1: 3×12′ @ Schwelle",
-      "STHM-2: 2×20′ @ Schwelle",
-      "RPHM-1: 3×3 km @ HM-Pace",
-      "RPHM-2: 2×5 km @ HM-Pace",
-      "TDLHM-1: 40–60′ Tempodauerlauf",
-    ],
-    RACE: [
-      "RPHM-1: 2×5 km @ HM-Pace",
-      "RPHM-2: 3×3 km @ HM-Pace",
-      "RHYHM-1: 10 km @ HM-Rhythmus",
-    ],
-    RESET: ["GAHM-1: 75–90′ locker", "STRHM-1: 4×20″ Strides"],
-  },
-  m: {
-    BASE: [
-      "GAM-1: 75–90′ GA1 locker",
-      "LLM-1: 120–150′ locker",
-      "STRM-1: 4×15″ Strides (selten)",
-      "HILLM-1: 60′ locker, technisch wellig",
-    ],
-    BUILD: [
-      "MPM-1: 3×5 km @ Marathonpace",
-      "MPM-2: 2×8 km @ Marathonpace",
-      "STM-1: 3×10′ Schwelle moderat",
-      "LLM-2: 28 km mit 3×5 km @ M",
-    ],
-    RACE: [
-      "MPM-1: 2×6–8 km @ Marathonpace",
-      "MPM-2: 12–16 km @ M (10–14T vor Wettkampf)",
-      "ACTM-1: 3×1′ flott (Aktivierung)",
-    ],
-    RESET: ["GAM-1: 80–100′ locker", "STRM-1: 6×20″ Steigerungen"],
-  },
-  default: {
-    BASE: [
-      "GA: 45–60′ locker",
-      "STR: 6×20″ Steigerungen",
-    ],
-    BUILD: [
-      "RP: 5×3′ @ Racepace, 2′ Trab",
-      "ST: 3×10′ @ Schwelle, 2′ Trab",
-      "VO2: 6×2′ zügig, 2′ Trab",
-    ],
-    RACE: ["RP: 3×6′ @ Racepace", "SHARP: 4×200 m flott"],
-    RESET: ["GA: 45–60′ locker", "STR: 6×20″ Steigerungen"],
-  },
-};
-
-function parseStructuredWorkoutTemplate(rawTemplate, { id, family, baseRecSec }) {
-  const text = String(rawTemplate || "");
-  const repsMatch = text.match(/(\d+)\s*×/u);
-  const reps = Number.parseInt(repsMatch?.[1] || "", 10);
-  if (!Number.isFinite(reps) || reps <= 0) return null;
-
-  const minutesMatch = text.match(/×\s*(\d+)\s*′/u);
-  const secondsMatch = text.match(/×\s*(\d+)\s*["″]|×\s*(\d+)\s*s\b/u);
-
-  let workSec = null;
-  if (minutesMatch) {
-    workSec = Number.parseInt(minutesMatch[1], 10) * 60;
-  } else if (secondsMatch) {
-    workSec = Number.parseInt(secondsMatch[1] || secondsMatch[2], 10);
-  }
-  if (!Number.isFinite(workSec) || workSec <= 0) return null;
-
-  return {
-    id,
-    family,
-    label: text,
-    baseReps: reps,
-    baseWorkSec: workSec,
-    baseRecSec,
-    warmupRangeMin: [10, 15],
-    cooldownRangeMin: [8, 12],
-  };
-}
-
-function buildWorkoutTemplateLibraryFromIntervalLibrary() {
-  const racepaceTemplates = [];
-  const vo2Templates = [];
-
-  const candidateLibrary = INTERVAL_TEMPLATE_LIBRARY?.default || {};
-  const raceSources = [...(candidateLibrary.BUILD || []), ...(candidateLibrary.RACE || [])].filter((item) =>
-    String(item || "").toUpperCase().includes("RP:"),
-  );
-  const vo2Sources = (candidateLibrary.BUILD || []).filter((item) => String(item || "").toUpperCase().includes("VO2:"));
-  const stridesSource = (candidateLibrary.BASE || []).find((item) => String(item || "").toUpperCase().includes("STR:"));
-
-  raceSources.forEach((source, idx) => {
-    const parsed = parseStructuredWorkoutTemplate(source, {
-      id: `RP${idx + 1}`,
-      family: "racepace",
-      baseRecSec: 120,
-    });
-    if (parsed) racepaceTemplates.push(parsed);
-  });
-
-  vo2Sources.forEach((source, idx) => {
-    const parsed = parseStructuredWorkoutTemplate(source, {
-      id: `VO2_${idx + 1}`,
-      family: "vo2_touch",
-      baseRecSec: 120,
-    });
-    if (parsed) vo2Templates.push(parsed);
-  });
-
-  const stridesTemplate =
-    parseStructuredWorkoutTemplate(stridesSource, {
-      id: "STRIDES",
-      family: "strides",
-      baseRecSec: 75,
-    }) || {
-      id: "STRIDES",
-      family: "strides",
-      label: "6×20″ Strides",
-      baseReps: 6,
-      baseWorkSec: 20,
-      baseRecSec: 75,
-      warmupRangeMin: [10, 15],
-      cooldownRangeMin: [8, 12],
-    };
-
-  return {
-    racepace: racepaceTemplates,
-    vo2_touch: vo2Templates,
-    strides: stridesTemplate,
-  };
-}
-
-const WORKOUT_TEMPLATE_LIBRARY = buildWorkoutTemplateLibraryFromIntervalLibrary();
-
-const LONGRUN_TARGET_LIBRARY = {
-  "5k": { BASE: "60–75′", BUILD: "65–80′", RACE: "50–60′", RESET: "60–70′" },
-  "10k": { BASE: "70–85′", BUILD: "75–90′", RACE: "60–75′", RESET: "70–80′" },
-  hm: { BASE: "90–110′", BUILD: "95–120′", RACE: "75–95′", RESET: "85–100′" },
-  m: { BASE: "120–150′", BUILD: "140–180′", RACE: "90–120′", RESET: "110–140′" },
-  default: { BASE: "70–90′", BUILD: "75–95′", RACE: "60–75′", RESET: "70–85′" },
-};
-
-function normalizeEventDistanceKey(distance) {
-  const raw = String(distance || "").toLowerCase();
-  if (!raw) return "default";
-  if (raw.includes("5k")) return "5k";
-  if (raw.includes("10k")) return "10k";
-  if (raw.includes("hm") || raw.includes("halb")) return "hm";
-  if (raw.includes("marathon") || raw === "m") return "m";
-  return "default";
-}
-
-function normalizeBlockKey(block) {
-  const key = String(block || "").toUpperCase();
-  if (key === "BASE" || key === "BUILD" || key === "RACE" || key === "RESET") return key;
-  return "BASE";
-}
-
-function getTemplateByBlock(library, distanceKey, blockKey) {
-  const selection = (library[distanceKey] || library.default || {})[blockKey] || library.default?.BASE || "";
-  if (Array.isArray(selection)) return selection.join(" | ");
-  return selection;
-}
-
-function buildDailyTrainingSuggestionLines({
-  todayAction,
-  readinessAmpel,
-  steadyDecision,
-  keyHardDecision,
-  blockState,
-  eventDistanceRaw,
-  keyRules,
-}) {
-  const blockKey = normalizeBlockKey(blockState?.block);
-  const distanceKey = normalizeEventDistanceKey(eventDistanceRaw);
-  const intervalTemplate = getTemplateByBlock(INTERVAL_TEMPLATE_LIBRARY, distanceKey, blockKey);
-  const longrunTarget = getTemplateByBlock(LONGRUN_TARGET_LIBRARY, distanceKey, blockKey);
-  const allowedTypes = new Set(keyRules?.allowedKeyTypes || []);
-
-  let todaySuggestion = "35–55′ locker (GA1) + 4–6 lockere Steigerungen optional.";
-  if (todayAction === "kein Lauf") {
-    todaySuggestion = "Ruhetag oder 20–40′ Spaziergang/Mobility.";
-  } else if (todayAction === "locker mit kontrolliertem Reiz") {
-    todaySuggestion = "45–60′ GA1 locker + 4–6×20″ Strides (optional), jederzeit abbrechbar.";
-  }
-
-  const canPush = readinessAmpel === "🟢";
-  const allowKeyHard = keyHardDecision?.allowed;
-  const allowSteady = canPush && steadyDecision?.allowSteady;
-  const intervalSuggestion = allowKeyHard
-    ? intervalTemplate
-    : allowedTypes.has("strides")
-        ? "Neuromuskulär: 4–8×15–20″ Strides, dazwischen volle Erholung."
-        : "Heute keine Intervalle (locker/Regeneration).";
-
-  return [
-    "🎯 TRAININGSVORSCHLAG",
-    `- Heute: ${todaySuggestion}`,
-    `- Intervalle (wenn Key erlaubt): ${intervalSuggestion}`,
-    `- Longrun (wenn dran): ${longrunTarget} locker`,
-    "- Legende: GA1 = locker aerob, Strides = kurze Steigerungen mit voller Erholung.",
-  ];
-}
-
-function buildHrr60ReadinessOutput({
-  intervalMetrics,
-  prevIntervalMetrics,
-  isKeySession,
-  hrv2dNegative,
-  rampPct,
-  acwr,
-  intensityBudget,
-}) {
-  if (!intervalMetrics || !isKeySession) {
-    return {
-      machine: {
-        hrr60: {
-          status: "n/a",
-          badge: "⚪",
-          value: "n/a",
-          zone: "n/a",
-          trend: "n/a",
-          confidence: "low",
-          ruleHits: ["not_key_or_missing"],
-          coachOneLiner: "HRR60 n/a – nur bei Key-Einheiten.",
-          action: "n/a.",
-        },
-      },
-      human: "HRR60 ⚪ n/a (Trend n/a) | Confidence: low | Action: n/a.",
-      report: ["- HRR60 n/a (nur bei Key-Einheiten)."],
-    };
-  }
-
-  const value = Number.isFinite(intervalMetrics?.HRR60_median) ? intervalMetrics.HRR60_median : null;
-  const count = Number.isFinite(intervalMetrics?.HRR60_count) ? intervalMetrics.HRR60_count : 0;
-  const min = Number.isFinite(intervalMetrics?.HRR60_min) ? intervalMetrics.HRR60_min : null;
-  const max = Number.isFinite(intervalMetrics?.HRR60_max) ? intervalMetrics.HRR60_max : null;
-  const prevValue = Number.isFinite(prevIntervalMetrics?.HRR60_median) ? prevIntervalMetrics.HRR60_median : null;
-  const trendDelta = value != null && prevValue != null ? value - prevValue : null;
-  const hasEnough = count >= 2;
-  const ruleHits = [];
-
-  const contextActive =
-    !!hrv2dNegative ||
-    (Number.isFinite(rampPct) && rampPct > 0.5) ||
-    (Number.isFinite(acwr) && acwr > 1.2);
-  if (hrv2dNegative) ruleHits.push("context:hrv_2d_negative");
-  if (Number.isFinite(rampPct) && rampPct > 0.5) ruleHits.push("context:ramp_gt_50pct");
-  if (Number.isFinite(acwr) && acwr > 1.2) ruleHits.push("context:acwr_gt_1_2");
-
-  let zone = "n/a";
-  let badge = "⚪";
-  let status = "n/a";
-
-  if (value != null && hasEnough) {
-    if (value <= 5) {
-      zone = "Extreme Red";
-      badge = "🟥";
-      status = "extreme_red";
-      ruleHits.push("zone:extreme_red");
-    } else if (value < 10) {
-      zone = "Red";
-      badge = "🔴";
-      status = "red";
-      ruleHits.push("zone:red");
-    } else if (value < 20) {
-      zone = "Caution";
-      badge = "🟠";
-      status = "caution";
-      ruleHits.push("zone:caution");
-    } else {
-      zone = "Good";
-      badge = "🟢";
-      status = "ok";
-      ruleHits.push("zone:good");
-    }
-  } else if (value != null && !hasEnough) {
-    ruleHits.push("count_lt_2");
-  }
-
-  if (contextActive && (status === "red" || status === "extreme_red")) {
-    status = "block";
-    ruleHits.push("context:escalated");
-  }
-
-  let confidenceIndex = 0;
-  if (value != null && hasEnough) {
-    confidenceIndex = count >= 4 ? 2 : 1;
-    if (min != null && max != null) {
-      const spread = max - min;
-      if (Number.isFinite(spread) && spread >= 12) {
-        confidenceIndex = Math.max(confidenceIndex - 1, 0);
-        ruleHits.push("stability:wide_range");
-      }
-      if (Number.isFinite(spread) && spread >= 18) {
-        confidenceIndex = 0;
-        ruleHits.push("stability:very_wide_range");
-      }
-    }
-  }
-  const confidence = confidenceIndex === 2 ? "high" : confidenceIndex === 1 ? "medium" : "low";
-
-  const budgetOk =
-    intensityBudget?.limits?.keyHardMax != null && intensityBudget?.keyHardCount != null
-      ? intensityBudget.keyHardCount < intensityBudget.limits.keyHardMax
-      : null;
-
-  let coachOneLiner = "HRR60 n/a – kein verlässliches Signal.";
-  let action = "n/a.";
-
-  if (value != null && !hasEnough) {
-    coachOneLiner = "HRR60 unsicher – zu wenig Intervalle.";
-    action = "Kein harter Entscheid nur aus HRR60; andere Signale nutzen.";
-  } else if (value != null) {
-    if (status === "block") {
-      coachOneLiner = "Erholung deutlich limitiert, Kontext verschärft.";
-      action = "Keine Intensität für 48–72h, nur EASY/REST.";
-    } else if (status === "extreme_red" || status === "red") {
-      coachOneLiner = "Erholung klar limitiert.";
-      action = "Heute nur easy, keine harte Intensität (24–48h).";
-    } else if (status === "caution") {
-      coachOneLiner = "Erholung verhalten – Vorsicht.";
-      action = contextActive
-        ? "Intensität verschieben, heute easy/locker."
-        : "Intensität nur wenn Budget ok; nur „touch“, kein „hard“.";
-    } else if (status === "ok") {
-      coachOneLiner = "Erholung gut – aber kein Freifahrtschein.";
-      action =
-        budgetOk === false
-          ? "Budget/Leitplanken begrenzen Intensität heute."
-          : "Intensität ok, wenn Budget/Guardrails ok.";
-    }
-  }
-
-  const valueText = value != null ? `${Math.round(value)}` : "n/a";
-  const trendText =
-    trendDelta == null
-      ? "Trend n/a"
-      : `${trendDelta > 0 ? "↑" : trendDelta < 0 ? "↓" : "→"} ${trendDelta > 0 ? "+" : ""}${Math.round(trendDelta)} vs last`;
-
-  const humanLine = `HRR60 ${badge} ${valueText} bpm (${trendText}) | Confidence: ${confidence} | Action: ${action}`;
-
-  const reportLines = [
-    `- HRR60 ${badge} ${valueText} bpm (${trendText}).`,
-    `- Confidence: ${confidence}${!hasEnough ? " (zu wenig Intervalle)" : ""}.`,
-    `- Konsequenz: ${action}`,
-  ];
-
-  return {
-    machine: {
-      hrr60: {
-        status,
-        badge,
-        value: value != null ? Math.round(value) : "n/a",
-        zone,
-        trend: trendDelta != null ? Math.round(trendDelta) : "n/a",
-        confidence,
-        ruleHits,
-        coachOneLiner,
-        action,
-      },
-    },
-    human: humanLine,
-    report: reportLines,
-  };
-}
-
 // ================= COMMENT =================
 function buildComments(
   {
-    day,
     perRunInfo,
-    latestGaSample,
     trend,
     motor,
+    benchReports,
     robustness,
     modeInfo,
     blockState,
-    blockEffective,
-    overrideInfo,
-    reentryInfo,
     keyRules,
     keyCompliance,
     dynamicKeyCap,
@@ -6892,781 +2705,178 @@ function buildComments(
     loads7,
     runEquivalent7,
     runFloorState,
+    specificOk,
+    specificValue,
+    aerobicOk,
+    aerobicFloor,
+    aerobicFloorActive,
     fatigue,
     longRunSummary,
-    longrunMinutesTarget,
     recoverySignals,
+    bikeSubFactor,
     weeksToEvent,
-    maintenance14d,
-    learningEvidence,
-    learningNarrativeState,
-    strategyDecision,
-    intensityBudget,
-    steadyDecision,
-    keyHardDecision,
-    decisionTrace,
-    guardrailState,
-    intensityClassToday,
-    intensitySelection,
-    readinessConfidence,
-    lastKeyInfo,
-    lastKeyIntervalInsights,
-    ga21Context,
-    intervalContext,
-    gaComparableStats,
   },
   { debug = false } = {}
 ) {
   const hadKey = perRunInfo.some((x) => x.isKey);
   const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
   const hadAnyRun = perRunInfo.length > 0;
+  const hasSpecific = (policy?.specificThreshold ?? 0) > 0;
+  const intensitySignal = loads7?.intensitySignal ?? "none";
   const totalMinutesToday = Math.round(sum(perRunInfo.map((x) => x.moving_time || 0)) / 60);
-  const repRun = pickRepresentativeGARun(perRunInfo);
-  const repDisplayRun = repRun ?? latestGaSample;
-  const repDisplayDate = repRun ? null : latestGaSample?.date ?? null;
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
-  const eventDistanceRaw = blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent);
-  const eventDistance = formatEventDistance(eventDistanceRaw);
-  const daysToEvent = eventDate ? daysBetween(isoDate(new Date()), eventDate) : null;
-  const blockPlanLabel = blockState?.block ?? "n/a";
-  const effectiveBlockLabel = blockEffective || blockPlanLabel;
-
-  const drift = Number.isFinite(repRun?.drift) ? repRun.drift : null;
-  const displayDrift = Number.isFinite(repDisplayRun?.drift) ? repDisplayRun.drift : null;
-  const displayEf = Number.isFinite(repDisplayRun?.ef) ? repDisplayRun.ef : null;
-  const repEf = Number.isFinite(repRun?.ef) ? repRun.ef : null;
-  const repVdot = repEf != null ? vdotLikeFromEf(repEf) : null;
-  const displayVdot = displayEf != null ? vdotLikeFromEf(displayEf) : null;
-  const personalDriftWarn = DRIFT_WARN_PCT;
-  const personalDriftCritical = DRIFT_CRITICAL_PCT;
-  const driftSignal = drift == null ? "unknown" : drift >= personalDriftCritical ? "red" : drift >= personalDriftWarn ? "orange" : "green";
-
-  const hrvDeltaPct = Number.isFinite(recoverySignals?.hrvDeltaPct) ? recoverySignals.hrvDeltaPct : null;
-  const ydayHrvDeltaPct = Number.isFinite(recoverySignals?.ydayHrvDeltaPct) ? recoverySignals.ydayHrvDeltaPct : null;
-  const hrv1dNegative = hrvDeltaPct != null && hrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
-  const hrv2dNegative = hrv1dNegative && ydayHrvDeltaPct != null && ydayHrvDeltaPct <= HRV_NEGATIVE_THRESHOLD_PCT;
-  const counterIndicator = !hadKey && driftSignal === "green";
-
-  const freqCount14 = maintenance14d?.runCount14 ?? null;
-  const sweetspotLow = 7;
-  const sweetspotHigh = 11;
-  const upperLimit = 12;
-  const freqSignal = freqCount14 == null ? "unknown" : freqCount14 > upperLimit ? "red" : (freqCount14 < sweetspotLow || freqCount14 > sweetspotHigh ? "orange" : "green");
-
-  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-  const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
-  const runBaseTarget = Math.round(runFloorState?.floorTarget ?? 0);
-  const runFloorGap = runTarget > 0 && runLoad7 < runTarget;
-  const deloadSum21 = Number.isFinite(runFloorState?.sum21) ? Math.round(runFloorState.sum21) : null;
-  const deloadTargetSum = RUN_FLOOR_DELOAD_SUM21_MIN;
-  const deloadDelta = deloadSum21 != null ? deloadSum21 - deloadTargetSum : null;
-  const deloadActiveDays = Number.isFinite(runFloorState?.activeDays21) ? runFloorState.activeDays21 : null;
-  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
-  const floorModeText =
-    overlayMode === "DELOAD"
-      ? "Deload aktiv (Soll fällt automatisch)"
-      : overlayMode === "TAPER"
-        ? "Taper aktiv (Soll reduziert)"
-        : overlayMode === "RECOVER_OVERLAY"
-          ? "Recovery-Overlay (Soll abgesenkt)"
-          : "Build-Modus (Soll kann stufenweise steigen)";
-
-  const subjectiveAvgNegative = recoverySignals?.subjectiveAvgNegative ?? null;
-  const subjectiveNegative = recoverySignals?.subjectiveNegative ?? false;
-  const hrv1dConcern = hrv1dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
-  const hrv2dConcern = hrv2dNegative && (subjectiveAvgNegative == null || subjectiveAvgNegative >= 0.5);
-  const hrr60Readiness = buildHrr60ReadinessOutput({
-    intervalMetrics: intervalContext?.today ?? null,
-    prevIntervalMetrics: intervalContext?.prev?.intervalMetrics ?? null,
-    isKeySession: hadKey,
-    hrv2dNegative: hrv2dConcern,
-    rampPct: fatigue?.rampPct ?? null,
-    acwr: fatigue?.acwr ?? null,
-    intensityBudget,
-  });
-
-  const signalMap = {
-    drift_high: driftSignal !== "green" && driftSignal !== "unknown",
-    hrv_down: hrv1dConcern,
-    hrv_2d_negative: hrv2dConcern,
-    key_felt_hard: hadKey && driftSignal !== "green",
-    sleep_low: !!recoverySignals?.sleepLow,
-    fatigue_override: !!fatigue?.override,
-    frequency_high: freqSignal === "red",
-    runfloor_gap: runFloorGap,
-  };
-  const patternMatches = matchOverloadPatterns(signalMap);
-  const highPattern = patternMatches.find((p) => p.severity === "high");
-
-  const warningSignals = [
-    driftSignal === "orange" || driftSignal === "red",
-    hrv1dConcern,
-    !!recoverySignals?.sleepLow,
-    !!fatigue?.override,
-    subjectiveNegative,
-  ];
-  const warningCount = warningSignals.filter(Boolean).length;
-  const warningSignalStates = [
-    { label: 'Drift-Trend auffällig (🟠/🔴)', active: driftSignal === "orange" || driftSignal === "red" },
-    { label: 'HRV 1T negativ', active: hrv1dConcern },
-    { label: recoverySignals?.sleepLow ? 'Schlaf/Erholung suboptimal' : 'Schlaf/Erholung im Zielbereich', active: !!recoverySignals?.sleepLow },
-    { label: fatigue?.override ? 'Belastung strukturell erhöht' : 'Belastung strukturell im Rahmen', active: !!fatigue?.override },
-  ];
-
-  const hardRedFlags = {
-    hrv2dNegative: hrv2dConcern && !counterIndicator,
-    confirmedOverloadHigh: !!highPattern,
-    multiWarningPlusSubjectiveNegative: warningCount >= 2 && subjectiveNegative,
-    painInjury: !!recoverySignals?.painInjury,
-  };
-  const hasHardRedFlag = Object.values(hardRedFlags).some(Boolean);
-
-  const softRedFlags = {
-    frequencyBelowSweetspot: freqCount14 != null && freqCount14 < sweetspotLow,
-    driftNearWarn: drift != null && drift >= personalDriftWarn - 1 && drift < personalDriftCritical,
-    // Runfloor-Gap bleibt Warnsignal, soll aber Intervalle nicht mehr direkt sperren.
-    runFloorBelowTarget: false,
-    sleepStressSuboptimal: !!recoverySignals?.sleepLow || hrv1dConcern,
-    isolatedWarningSignal: warningCount === 1,
-  };
-  const hasSoftRedFlag = Object.values(softRedFlags).some(Boolean);
-
-  let readinessAmpel = "🟢";
-  if (hasHardRedFlag) readinessAmpel = "🔴";
-  else if (hasSoftRedFlag) readinessAmpel = "🟠";
-
-  const readinessDecision =
-    readinessAmpel === "🔴"
-      ? "Heute keine Intensität – Fokus auf Erholung."
-      : steadyDecision?.allowSteady
-        ? "Heute ist ein kontrollierter Schwellenreiz möglich, ohne zusätzlichen Ermüdungsaufbau."
-        : "Heute bleiben wir beim geplanten Reiz und setzen keine zusätzliche Intensität.";
-
-  const sleepMissing =
-    recoverySignals?.sleepHours == null &&
-    recoverySignals?.sleepQuality == null &&
-    recoverySignals?.sleepScore == null;
-  let readinessConf = readinessConfidence || computeReadinessConfidence({
-    driftSignal,
-    hrvDeltaPct,
-    runLoad7,
-    fatigueOverride: !!fatigue?.override,
-    hadKey,
-    counterIndicator,
-    hrv1dNegative: hrv1dConcern,
-    hrv2dNegative: hrv2dConcern,
-    trend,
-  });
-  if (sleepMissing) readinessConf = downgradeConfidenceOneStep(readinessConf);
-  const policyDecision = buildPolicyDecision({
-    matchedPatterns: patternMatches,
-    signalMap,
-    confidenceScore: readinessConf.score,
-  });
-  const aerobicConf = computeSectionConfidence({
-    hasDrift: drift != null,
-    hasHrv: hrvDeltaPct != null,
-    hasLoad: true,
-    consistent: driftSignal !== "unknown",
-    subjectiveAligned: true,
-    contradictions: false,
-    hasHistory: Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd),
-  });
-  const loadConf = computeSectionConfidence({
-    hasDrift: drift != null,
-    hasHrv: hrvDeltaPct != null,
-    hasLoad: true,
-    consistent: freqSignal !== "unknown",
-    subjectiveAligned: true,
-    contradictions: false,
-    hasHistory: true,
-  });
-
-  const confirmedRules = [];
-  if (keySpacing && keySpacing.ok) confirmedRules.push("Nach Key immer 24-48h easy");
-  if (freqSignal !== "red") confirmedRules.push("Frequenz halten, Intensität dosieren");
-
-  const proposedRules = [];
-  if (hrv1dConcern) proposedRules.push(`Wenn HRV <= ${HRV_NEGATIVE_THRESHOLD_PCT}% vs 7T an 2 Tagen, dann Intensität stoppen (Test über nächste 4 Wochen).`);
-  if (driftSignal !== "green") proposedRules.push("Wenn Easy-Drift > Warnschwelle, dann Pace senken oder Lauf kürzen (3 Beobachtungen sammeln).");
-  const keyTypeCounts7d = fatigue?.keyTypeCounts7d ? Object.keys(fatigue.keyTypeCounts7d).length : 0;
-  if (keyTypeCounts7d > 1) {
-    proposedRules.push("Pro Woche nur 1 Schwerpunkt: nur einen Key-Typ setzen, alles andere unterstützt.");
-  }
-  if (Number.isFinite(fatigue?.rampPct) && fatigue.rampPct > 0.1 && (intensityBudget?.keyHardCount ?? 0) > 0) {
-    proposedRules.push("Nur eine Variable steigern: wenn Umfang steigt, Intensität stabil halten.");
-  }
-
-  const baseBlockLabel = blockState?.block === "BASE" ? "Base" : blockState?.block === "RACE" ? "Race" : blockState?.block === "RESET" ? "Reset" : "Build";
-  const blockStatus =
-    overlayMode === "DELOAD" ? "Deload" : overlayMode === "RECOVER_OVERLAY" || overlayMode === "TAPER" ? "Stabilisieren/Absorb" : baseBlockLabel;
-  const blockGoal =
-    blockStatus === "Deload"
-      ? "Erholung priorisieren und Systeme beruhigen."
-      : blockStatus === "Stabilisieren/Absorb"
-        ? "Belastung aufnehmen und den Körper ruhig festigen."
-        : blockStatus === "Base"
-          ? "Fundament stabilisieren und Belastung ruhig aufbauen."
-          : blockStatus === "Race"
-            ? "Form zuspitzen, Frische schützen, keine Eskalation."
-            : blockStatus === "Reset"
-              ? "Reset und Systeme beruhigen, bevor neu aufgebaut wird."
-              : "Kapazität behutsam ausbauen, ohne unnötigen Druck.";
-  const blockRisk =
-    hasHardRedFlag || recoverySignals?.painInjury
-      ? "Zu viel Druck trotz Warnzeichen."
-      : warningCount > 0
-        ? "Zu viel Tempo statt sauberer Erholung."
-        : "Zu viel Ehrgeiz ohne saubere Basis.";
-
-  const blockDescriptionLines = buildBlockDescriptionLines({
-    block: blockState?.block,
-    eventDistance: eventDistanceRaw,
-    daysToEvent,
-    longrunMinutesTarget,
-  });
-
-  const readinessReasons = [];
-  if (hrv2dConcern) readinessReasons.push("HRV 2T unter 7T-Niveau");
-  else if (hrv1dConcern) readinessReasons.push("HRV 1T unter 7T-Niveau");
-  if (driftSignal === "orange" || driftSignal === "red") readinessReasons.push("Drift erhöht");
-  if (recoverySignals?.sleepLow) readinessReasons.push("Schlaf/Erholung angespannt");
-  if (fatigue?.override) readinessReasons.push("Belastung strukturell erhöht");
-  if (runFloorGap) readinessReasons.push("Runfloor-Lücke");
-  if (recoverySignals?.painInjury) readinessReasons.push("Schmerz/Verletzung");
-  if (subjectiveNegative) readinessReasons.push("subjektiv schwer");
-
-  const readinessReason =
-    readinessAmpel === "🔴"
-      ? readinessReasons.length
-        ? `Heute entlasten: ${readinessReasons.join(", ")}.`
-        : "Heute entlasten, um Sicherheit zu halten."
-      : readinessAmpel === "🟠"
-        ? readinessReasons.length
-          ? `Heute vorsichtig: ${readinessReasons.join(", ")}. 🟠 = mindestens ein weiches Warnsignal (z.B. Runfloor-Lücke).`
-          : "Einige Signale sind angespannt, heute vorsichtig. 🟠 = mindestens ein weiches Warnsignal."
-        : "Keine klaren Warnsignale, stabil für ruhige Belastung.";
-
-  let fatigueSignalLine = null;
-  if (recoverySignals?.painInjury) fatigueSignalLine = "Schmerz";
-  else if (driftSignal === "red" || driftSignal === "orange") fatigueSignalLine = "Drift";
-  else if (subjectiveNegative) fatigueSignalLine = "Gefühl";
-
-  const loadLevel = hasHardRedFlag || recoverySignals?.painInjury || freqSignal === "red" || fatigue?.override ? "hoch" : warningCount > 0 ? "moderat" : "niedrig";
-  const loadReasons = [];
-  if (hasHardRedFlag) loadReasons.push("kritische Warnsignale");
-  if (recoverySignals?.painInjury) loadReasons.push("Schmerz/Verletzung");
-  if (freqSignal === "red") loadReasons.push("Frequenz > Obergrenze");
-  if (fatigue?.override) loadReasons.push("Fatigue-Override");
-  if (driftSignal === "orange" || driftSignal === "red") loadReasons.push("Drift erhöht");
-  if (hrv2dConcern) loadReasons.push("HRV 2T niedrig");
-  if (runFloorGap) loadReasons.push("Runfloor-Lücke");
-  const loadReasonText = loadReasons.length ? loadReasons.join(", ") : "keine zusätzlichen Warnsignale";
-  const loadConsequence =
-    loadLevel === "hoch"
-      ? "Heute nicht kompensieren, Erholung hat Priorität."
-      : loadLevel === "moderat"
-        ? "Heute ruhig bleiben und nichts erzwingen."
-        : "Heute stabil bleiben und nicht eskalieren.";
-
-  let todayAction = "locker + abbrechbar";
-  if (recoverySignals?.painInjury || readinessAmpel === "🔴") {
-    todayAction = "kein Lauf";
-  } else if (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.STEADY) {
-    todayAction = "locker mit kontrolliertem Reiz";
-  } else if (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.STRIDES) {
-    todayAction = "locker + Steigerungen";
-  } else if (
-    keyHardDecision?.allowed &&
-    (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
-      intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH)
-  ) {
-    todayAction = "locker + Key-Reiz";
-  }
-
-  const decisionKeyType =
-    intensitySelection?.keyType ??
-    (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE
-      ? "racepace"
-      : intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH
-        ? "vo2_touch"
-        : null);
-  const guardrailSeverity = guardrailState?.guardrailSeverity ?? "none";
-  let workoutPlan = null;
-  let workoutDebug = null;
-  let workoutAdjustmentNotes = [];
-  let workoutDisplayPlan = null;
-  const lastRacePaceText = lastKeyIntervalInsights?.keyType === "racepace" ? lastKeyIntervalInsights?.paceText : null;
-  if (todayAction === "locker + Key-Reiz" && decisionKeyType) {
-    const planResult = buildWorkoutPlan({
-      decisionKeyType,
-      weeksToEvent,
-      readinessAmpel,
-      readinessScore: readinessConf?.score ?? 0,
-      guardrailSeverity,
-      hrvDeltaPct,
-      driftPct: displayDrift,
-      confidenceLevel: trend?.confidence ?? null,
-      fatigueSeverity: fatigue?.severity ?? "low",
-      keyBudget: {
-        keyHardMax: KEY_HARD_MAX_PER_7D,
-        keyHardCount7: intensityBudget?.keyHardCount ?? 0,
-        spacingOk: keySpacing?.ok !== false,
-        nextKeyEarliest: keySpacing?.nextAllowedIso ?? null,
-        capExceeded: keyCompliance?.capExceeded ?? false,
-      },
-      runFloorGap,
-      lastKeyInfo,
-      lastWorkoutSignature: null,
-    });
-    workoutPlan = planResult.plan;
-    const adjusted = applyIntervalInsightsToWorkoutPlan(workoutPlan, lastKeyIntervalInsights);
-    workoutDisplayPlan = adjusted.plan;
-    workoutAdjustmentNotes = adjusted.adjustmentNotes;
-    workoutDebug = workoutPlan
-      ? {
-        chosenTemplateId: workoutPlan.templateId,
-        scalingLevel: workoutPlan.scalingLevel,
-        computedTotalMinutes: workoutPlan.totalMinutes,
-        intensityMinutes: workoutPlan.intensityMinutes,
-        reasonIds: planResult.reasonIds,
-        adjustmentNotes: workoutAdjustmentNotes,
-        adjustedRecSec: workoutDisplayPlan?.recSec ?? null,
-        adjustedReps: workoutDisplayPlan?.reps ?? null,
-      }
-      : { chosenTemplateId: null, scalingLevel: null, computedTotalMinutes: null, intensityMinutes: null, reasonIds: planResult.reasonIds };
-  }
-
-  const todayStatusLine = buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday });
-  const modeLabel = modeInfo?.mode === "EVENT" ? "Event" : "Open";
-  const nextEventLine = eventDate
-    ? `${eventDistance || "Event"} am ${eventDate}${daysToEvent != null ? ` (in ${daysToEvent}T)` : ""}`
-    : "kein Event geplant";
-  const driftText = displayDrift == null ? "n/a" : `${displayDrift.toFixed(1)}%`;
-  const efText = displayEf == null ? "n/a" : displayEf.toFixed(2);
-  const vdotText = displayVdot == null ? "n/a" : displayVdot.toFixed(1);
-  const gaSourceDate = repRun?.date ?? repDisplayDate ?? null;
-  const intervalToday = intervalContext?.today ?? null;
-  const intervalPrev = intervalContext?.prev?.intervalMetrics ?? null;
-  const intervalDriftText = intervalToday?.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a";
-  const intervalDriftDelta =
-    intervalToday?.HR_Drift_bpm != null && intervalPrev?.HR_Drift_bpm != null
-      ? intervalToday.HR_Drift_bpm - intervalPrev.HR_Drift_bpm
-      : null;
-  const intervalHrr60Count = intervalToday?.HRR60_count ?? 0;
-  const intervalDetectedCount = intervalToday?.intervals_detected_count;
-  const intervalEligibleCount = intervalToday?.intervals_eligible_count ?? intervalHrr60Count;
-  const intervalExcludedSummary = intervalToday?.excluded_summary_text ?? null;
-  const intervalHrr60Text = (() => {
-    if (intervalToday?.HRR60_median == null) return "n/a";
-    const countText =
-      Number.isFinite(intervalDetectedCount) &&
-      intervalDetectedCount > 0 &&
-      Number.isFinite(intervalEligibleCount) &&
-      intervalEligibleCount !== intervalDetectedCount
-        ? `${intervalEligibleCount}/${intervalDetectedCount} Intervalle`
-        : `${intervalEligibleCount} Intervalle`;
-    const summaryText = intervalExcludedSummary ? `; ${intervalExcludedSummary}` : "";
-    return `${intervalToday.HRR60_median.toFixed(0)} bpm (${countText}${summaryText})`;
-  })();
-  const intervalHrr60Delta =
-    intervalToday?.HRR60_median != null && intervalPrev?.HRR60_median != null
-      ? intervalToday.HRR60_median - intervalPrev.HRR60_median
-      : null;
-  const gaDetailLine =
-    repDisplayRun || repRun
-      ? [
-          `Drift ${displayDrift != null ? `${displayDrift.toFixed(1)}%` : "n/a"}`,
-          `EF ${displayEf != null ? displayEf.toFixed(2) : "n/a"}`,
-        ].join(" | ")
-      : "n/a (kein GA-Lauf für Vergleich)";
-  const intervalKeyMetricsLine = intervalToday
-    ? `HF-Drift (Intervalle) ${intervalToday.HR_Drift_bpm != null ? `${fmtSigned1(intervalToday.HR_Drift_bpm)} bpm` : "n/a"} | HRR60 ${intervalHrr60Text}`
-    : null;
-  const keyMetricsLine = intervalKeyMetricsLine || `HF-Drift (Intervalle) ${intervalDriftText} | HRR60 ${intervalHrr60Text}`;
-  const intervalContextParts = [];
-  if (intervalHrr60Delta != null) {
-    intervalContextParts.push(`Δ HRR60 ${fmtSigned1(intervalHrr60Delta)} bpm vs letzte`);
-  }
-  if (intervalDriftDelta != null) {
-    intervalContextParts.push(`Δ HF-Drift ${fmtSigned1(intervalDriftDelta)} bpm vs letzte`);
-  }
-  if (intervalExcludedSummary && intervalToday?.HRR60_median == null) {
-    intervalContextParts.push(`Ausschluss: ${intervalExcludedSummary}`);
-  }
-  const intervalContextLine = intervalContextParts.length ? `Intervall-Kontext: ${intervalContextParts.join(" | ")}` : null;
-  const motorWeekly = buildMotorWeeklyExplanation(motor);
-  const runEvaluationText = buildRunEvaluationText({ hadAnyRun, repRun, trend });
-  const keyCount7 = keyCompliance?.actual7 ?? fatigue?.keyCount7 ?? intensityBudget?.keyAnyCount ?? null;
-  const keyCapValue = formatKeyCapValue(dynamicKeyCap, fatigue?.keyCap ?? null);
-  const keyCapReason = formatKeyCapReason(dynamicKeyCap);
-  const keyBudgetFull =
-    Number.isFinite(keyCount7) && Number.isFinite(keyCapValue) ? keyCount7 >= keyCapValue : false;
-
-  const activeWarnings = warningSignalStates.filter((s) => s.active).map((s) => s.label);
-  if (runFloorGap) activeWarnings.push("Runfloor-Lücke");
-  if (recoverySignals?.painInjury) activeWarnings.push("Schmerz/Verletzung");
-
-  const subjectiveAvgLine = buildSubjectiveAverageLine(recoverySignals);
-  const subjectiveLine = subjectiveAvgLine ? subjectiveAvgLine : "Subjektiv: n/a.";
-
-  const aerobicContextAvailable =
-    Number.isFinite(trend?.efDeltaPct) || Number.isFinite(trend?.dv) || Number.isFinite(trend?.dd);
-
-  const needsKey = keyCompliance?.freqOk === false || keyCompliance?.preferredMissing;
-  const needsLongRun = (longRunSummary?.minutes ?? 0) < 60;
-
-  const runsLast7 = Number.isFinite(loads7?.runCount7) ? loads7.runCount7 : null;
-  const gaRuns7 = Number.isFinite(loads7?.gaRuns7) ? loads7.gaRuns7 : null;
-  const longRuns7 = Number.isFinite(loads7?.longRuns7) ? loads7.longRuns7 : null;
-  const monotony = isFiniteNumber(fatigue?.monotony) ? fatigue.monotony : null;
-  const strain = isFiniteNumber(fatigue?.strain) ? fatigue.strain : null;
-  const monotonyText = monotony != null ? monotony.toFixed(2) : "n/a";
-  const strainText = strain != null ? Math.round(strain).toFixed(0) : "n/a";
-  const blockGoalShort = blockGoal.replace(/,?\s*keine Eskalation\.?/i, "").replace(/\.$/, "");
-  const blockLabel = (blockState?.block ?? blockStatus ?? "n/a").toUpperCase();
-  const priorityParts = ["Qualität > Umfang", freqSignal === "red" ? "Frequenz drosseln" : "Frequenz halten"];
-  const priorityLine = priorityParts.join(" | ");
-  const keyTypeSummary = (() => {
-    const counts = fatigue?.keyTypeCounts7d;
-    if (!counts || !Object.keys(counts).length) return null;
-    const labelMap = {
-      schwelle: "Schwelle",
-      vo2_touch: "VO2",
-      racepace: "Racepace",
-      steady: "Steady",
-      strides: "Strides",
-    };
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([key]) => labelMap[key] || key)
-      .join("/");
-  })();
-  const keySummaryLine =
-    keyCount7 == null
-      ? "Key: n/a"
-      : `Key: ${keyCount7}${keyCount7 > 0 && keyTypeSummary ? ` (${keyTypeSummary})` : ""}`;
-  const runMinutes7 = Number.isFinite(loads7?.runMinutes7) ? Math.round(loads7.runMinutes7) : null;
-  const miniPlan = buildMiniPlanTargets({
-    runsPerWeek: Number.isFinite(runsLast7) ? runsLast7 : 0,
-    weeklyLoad: runLoad7,
-    keyPerWeek: Number.isFinite(keyCount7) ? keyCount7 : 0,
-  });
-  const keyMax = Number.isFinite(keyCapValue) ? keyCapValue : KEY_HARD_MAX_PER_7D;
-  const parseTargetRange = (text) => {
-    const nums = String(text || "").match(/\d+/g)?.map((n) => Number(n)) ?? [];
-    if (!nums.length) return { min: null, max: null };
-    return { min: nums[0], max: nums[nums.length - 1] };
-  };
-  const runTargetRange = parseTargetRange(miniPlan.runTarget);
-  const longRunMet = (longRuns7 ?? 0) >= 1;
-  const runFloorMet = runTarget > 0 ? runLoad7 >= runTarget : false;
-  const keyDoseNeeded = keyCompliance?.freqOk === false || keyCompliance?.preferredMissing;
-  const keyDoseMet =
-    keyCompliance?.capExceeded === true
-      ? false
-      : keyDoseNeeded
-        ? (keyCount7 ?? 0) >= 1 && (keyCount7 ?? 0) <= keyMax
-        : (keyCount7 ?? 0) <= keyMax;
-  const frequencyMet = runTargetRange.min != null ? (runsLast7 ?? 0) >= runTargetRange.min : false;
-  const coreGoals = [longRunMet, runFloorMet, keyDoseMet, frequencyMet];
-  const coreGoalsMet = coreGoals.filter(Boolean).length;
-  const coreGoalsTotal = coreGoals.length;
-  const planDeviationCritical = !longRunMet || (runTarget > 0 && runFloorGap);
-  const weeklyAmpel =
-    coreGoalsMet <= 1 || (warningCount >= 2 && subjectiveNegative) || fatigue?.override
-      ? "🔴"
-      : coreGoalsMet >= 3 && !planDeviationCritical
-        ? "🟢"
-        : "🟠";
-  const weeklyFazit =
-    weeklyAmpel === "🟢"
-      ? "🟢 Stabil – Struktur trägt."
-      : weeklyAmpel === "🔴"
-        ? "🔴 Instabil – Struktur bricht."
-        : "🟠 Auf Kurs – Basis lückenhaft.";
-  const weeklyWhy = (() => {
-    if (!longRunMet) return "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.";
-    if (runFloorGap) return "Warum: Runfloor unter Soll; Basiswoche nicht stabil genug für Progression.";
-    if (!keyDoseMet) return "Warum: Key-Dosis passt nicht zur Woche; Qualität/Regeneration aus dem Gleichgewicht.";
-    if (!frequencyMet) return "Warum: Frequenz unter Soll; Kontinuität fehlt für stabile Basis.";
-    return "Warum: Kernziele erfüllt; Blockpriorität wird aktuell sauber bedient.";
-  })();
-  const learningHelps = [];
-  if (freqSignal !== "red") learningHelps.push("Häufiger & kürzer hält dich stabil");
-  if (keySpacing?.ok) learningHelps.push("Easy-Tage nach Key wirken");
-  if (!learningHelps.length) learningHelps.push("Struktur wirkt stabil, weiter beobachten");
-  const learningBrakes = [];
-  if (needsLongRun) learningBrakes.push("Fehlende Longruns");
-  if (driftSignal !== "green" && driftSignal !== "unknown") learningBrakes.push("Easy-Tempo oft zu hoch → Drift steigt");
-  if (runFloorGap) learningBrakes.push("Runfloor-Lücke bremst Basis");
-  if (!learningBrakes.length) learningBrakes.push("Keine klaren Bremser aktuell");
-  const gaComparableLine =
-    gaComparableStats?.n > 0 && gaComparableStats.efMed != null && gaComparableStats.driftMed != null
-      ? `Messbasis GA comparable: n=${gaComparableStats.n} | EF(med)=${gaComparableStats.efMed.toFixed(
-          5
-        )} | Drift(med)=${gaComparableStats.driftMed.toFixed(1)}%`
-      : null;
-  const eventCountdownLine =
-    Number.isFinite(daysToEvent) && daysToEvent >= 0
-      ? `Zeit bis Event: ${
-          daysToEvent >= 14 ? `${Math.round(daysToEvent / 7)} Wochen` : `${daysToEvent} Tage`
-        }`
-      : null;
-  const planSoll = `Soll: ${miniPlan.runTarget} Läufe | Run-Load ${miniPlan.loadTarget} | 1× Longrun ≥60′ | max ${keyMax} Key`;
-  const planIst = `Ist: ${runsLast7 ?? 0} Läufe | Run-Load ${runLoad7} | Longrun ${longRuns7 ?? 0}× | Key ${
-    keyCount7 ?? 0
-  }×`;
-  const planConsequence = (() => {
-    if (!longRunMet) return "Longrun zuerst stabilisieren, keine Eskalation.";
-    if (runFloorGap) return "Frequenz/GA stabilisieren, erst dann Progression.";
-    if (!keyDoseMet) return "Key-Dosis glätten, Qualität gezielt setzen.";
-    if (!frequencyMet) return "Frequenz erhöhen, Woche wieder tragfähig machen.";
-    return "Plan halten, minimal progressieren.";
-  })();
-  const planRating = `Bewertung: ${coreGoalsMet}/${coreGoalsTotal} Kernziele erreicht → ${
-    planDeviationCritical ? `kritisch: ${planConsequence}` : planConsequence
-  }`;
-  const blockFitNotes = [];
-  if (weeklyAmpel === "🟢") blockFitNotes.push("✔ Blockpriorität getroffen, Reize passen zur Phase.");
-  if (!longRunMet) blockFitNotes.push("⚠ Longrun fehlt – Basis trägt die Blockziele noch nicht.");
-  if (runFloorGap) blockFitNotes.push("⚠ Runfloor wacklig – Blockwirkung wird ausgebremst.");
-  if (!keyDoseMet) blockFitNotes.push("⚠ Key-Dosis nicht sauber gesetzt – Qualität/Erholung ausbalancieren.");
-  if (warningCount > 0 || subjectiveNegative) blockFitNotes.push("⚠ Erholungssignale beachten, Reize dosieren.");
-  if (blockFitNotes.length < 2) blockFitNotes.push("✔ Keine strukturellen Konflikte zum Block erkennbar.");
-  const confidenceEvidence = Number.isFinite(trend?.recentCount)
-    ? trend.recentCount
-    : Number.isFinite(ga21Context?.count)
-      ? ga21Context.count
-      : 0;
-  const confidencePct =
-    trend?.confidence === "hoch" ? 80 : trend?.confidence === "mittel" ? 60 : trend?.confidence === "niedrig" ? 40 : 40;
-  const trainerDecision = (() => {
-    if (!longRunMet) return "Diese Woche keine Eskalation – Longrun zuerst setzen, dann Qualität aufbauen.";
-    if (runFloorGap) return "Frequenz/GA stabilisieren; Qualität nur, wenn die Basis steht.";
-    if (!keyDoseMet) return "Plan halten, 1 Key sauber, restliche Läufe bewusst easy.";
-    return "Plan halten, 1 Key sauber, Progression nur minimal.";
-  })();
-  const riskNotes = [];
-  if (!longRunMet) riskNotes.push("Wenn Longrun fehlt → Ausdauerbasis stagniert, Blockwirkung bleibt flach.");
-  if (runFloorGap) riskNotes.push("Wenn Runfloor niedrig bleibt → Belastbarkeit sinkt, Qualität wird brüchig.");
-  if (driftSignal === "orange" || driftSignal === "red")
-    riskNotes.push("Wenn Easy-Drift hoch bleibt → Ermüdung kumuliert, Fortschritt verzögert sich.");
-  if (!riskNotes.length) riskNotes.push("Wenn Struktur wackelt → Blockziel verzögert sich leicht.");
-  const weeklyFocusGoal = !longRunMet
-    ? "1× Longrun 60–75′ locker."
-    : runFloorGap
-      ? `Runfloor stabilisieren: ${miniPlan.runTarget} Läufe locker.`
-      : !keyDoseMet
-        ? "1× Key (Schwelle/VO2) sauber, sonst easy."
-        : "Struktur halten: 1× Key sauber, Longrun locker.";
-
-  const topTriggers = [];
-  if (runFloorGap) topTriggers.push("Runfloor-Gap");
-  if (keyBudgetFull || keyCompliance?.capExceeded) topTriggers.push("Key-Budget voll");
-  if (driftSignal === "orange" || driftSignal === "red") topTriggers.push("Drift erhöht");
-  if (recoverySignals?.sleepLow) topTriggers.push("Schlaf low");
-  if (fatigue?.override) topTriggers.push("Fatigue-Override");
-  if (subjectiveNegative) topTriggers.push("Gefühl schwer");
-  const topTriggerText = topTriggers.length ? topTriggers.slice(0, 2).join(" + ") : "keine dominanten Trigger";
-  const keySlotOpen = keyHardDecision?.allowed && !keyCompliance?.capExceeded && keySpacing?.ok !== false;
-  const keyStimulusRecommended =
-    keySlotOpen &&
-    (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
-      intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH);
-  const todayAllowed =
-    readinessAmpel === "🔴"
-      ? "nur EASY/REST"
-      : keyStimulusRecommended
-        ? "GA/STRIDES/RP"
-        : keyHardDecision?.allowed && readinessAmpel === "🟢"
-        ? "Key/Intervalle möglich"
-        : steadyDecision?.allowSteady
-          ? "GA + STEADY"
-          : "GA/STRIDES";
-  const nextKeyEarliest =
-    keyCompliance?.nextKeyEarliest ||
-    keySpacing?.nextAllowedIso ||
-    (keyCompliance?.capExceeded ? "nach Ablauf 7T-Fenster" : "heute");
-  const weeklyKeyPlan = getWeeklyKeySuggestion({
-    distance: eventDistanceRaw,
-    phase: blockEffective || blockState?.block,
-    weeksToEvent,
-    daysToRace: daysToEvent,
-    dayIso: day,
-    keyRules,
-    keySpacing,
-    keyHardDecision,
-    guardrailHardActive: guardrailState?.hardActive,
-    intensitySelection,
-    decisionKeyType,
-    runfloorGap: runFloorGap,
-    driftWarning: driftSignal === "orange" || driftSignal === "red",
-    workoutDebug,
-    negativeSignals: readinessReasons,
-    hrvDeltaPct,
-    readinessTier: readinessAmpel === "🟢" ? "GOOD" : readinessAmpel === "🔴" ? "LOW" : "MED",
-  });
-  const mondayBlockCompassLines = [];
-  if (blockDescriptionLines?.length) {
-    mondayBlockCompassLines.push(...blockDescriptionLines);
-    mondayBlockCompassLines.push(`Key diese Woche: ${weeklyKeyPlan?.keyLabel || "kein Key (Hard-Block aktiv)"}`);
-    (weeklyKeyPlan?.rationale || []).slice(0, 4).forEach((item) => mondayBlockCompassLines.push(`- ${item}`));
-  }
-
-  const weeklyReport = buildMondayReportLines({
-    blockLabel,
-    blockGoalShort,
-    priorityLine,
-    eventCountdownLine,
-    weeklyFazit,
-    weeklyWhy,
-    blockFitNotes,
-    learningHelps,
-    learningBrakes,
-    confidenceEvidence,
-    confidencePct,
-    trainerDecision,
-    riskNotes,
-    weeklyFocusGoal,
-    keyMax,
-    runTarget,
-    runTargetFallback: miniPlan.loadTarget,
-    blockCompassLines: mondayBlockCompassLines,
-  });
-
-  const dailyTrainingSuggestionLines = buildDailyTrainingSuggestionLines({
-    todayAction,
-    readinessAmpel,
-    steadyDecision,
-    keyHardDecision,
-    blockState,
-    eventDistanceRaw,
-    keyRules,
-  });
-  const dailyTodaySuggestion = dailyTrainingSuggestionLines?.find((line) => line.startsWith("- Heute:"));
+  const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
+  const eventDateText = eventDate ? eventDate : "n/a";
+  const weeksOut = Number.isFinite(modeInfo?.weeksToEvent) ? modeInfo.weeksToEvent : null;
+  const confidence = trend?.confidence ?? "niedrig";
+  const dv = Number.isFinite(trend?.dv) ? trend.dv : null;
+  const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
 
   const lines = [];
-  lines.push(`🧱 Block (Plan): ${blockPlanLabel}`);
-  if (overrideInfo?.blockEffective) {
-    const tagText =
-      Number.isFinite(overrideInfo?.dayIndex) && Number.isFinite(overrideInfo?.totalDays)
-        ? ` (Tag ${overrideInfo.dayIndex}/${overrideInfo.totalDays})`
-        : "";
-    lines.push(`⏸ Override: ${overrideInfo.category}${tagText} → ${overrideInfo.blockEffective}`);
-  }
-  if (reentryInfo?.dayIndex) {
-    const totalText = Number.isFinite(reentryInfo?.totalDays) ? reentryInfo.totalDays : "n/a";
-    lines.push(`↩️ ReEntry: Tag ${reentryInfo.dayIndex}/${totalText} → REENTRY`);
-  }
-  lines.push(`→ Effektiv: ${effectiveBlockLabel}`);
+  lines.push("1) 🧭 Tagesstatus");
+  lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
+  lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
+  lines.push(`Makrozyklus: ${blockState?.activeBlock || "BASE"} | ${formatWeeksOut(weeksOut)} Wochen out.`);
+  lines.push(inferWeekIntent({ blockState, runFloorState, eventDistance }));
+  lines.push(inferNotImportantNow({ blockState, weeksToEvent: weeksOut }));
   lines.push("");
-  lines.push("⚡ DAILY SUMMARY");
-  lines.push(`- Ampel & Trigger: ${readinessAmpel} ${topTriggerText}`);
-  lines.push(`- Heute erlaubt: ${todayAllowed}`);
-  if (dailyTodaySuggestion) {
-    lines.push(`- Vorschlag heute: ${dailyTodaySuggestion.replace(/^- Heute:\s*/u, "")}`);
-  }
-  lines.push(`- Nächster Key frühestens: ${nextKeyEarliest}`);
-  lines.push("");
-
-  lines.push("🧭 DAILY REPORT – Entscheidungsebene");
-  lines.push(`- Readiness-Ampel: ${readinessAmpel}`);
-  lines.push(`- Aktive Warnsignale: ${activeWarnings.length ? activeWarnings.join(", ") : "keine"}`);
-  lines.push(`- ${subjectiveLine}`);
-
-  lines.push("");
-  lines.push("🧭 TAGESSTATUS");
-  lines.push(`- Heute: ${todayStatusLine}`);
-  const trainerLine = "Trainer: Qualität vor Umfang.";
-  lines.push(`- Kontext: ${nextEventLine} | ${trainerLine}`);
-  if (hadKey && !hadGA) {
-    lines.push(`- Key-Metriken: ${keyMetricsLine}`);
+  lines.push("2) 🫁 Aerober Status");
+  if (dv == null || dd == null) {
+    lines.push(`Diagnose: keine belastbare GA-Tendenz (Confidence ${confidence}).`);
   } else {
-    lines.push(`- Laufbewertung: ${runEvaluationText}`);
-    if (intervalKeyMetricsLine) {
-      lines.push(`- Key-Metriken: ${intervalKeyMetricsLine}`);
+    const vdotText = `${dv > 0 ? "+" : ""}${dv.toFixed(1)}%`;
+    const driftText = `${dd > 0 ? "+" : ""}${dd.toFixed(1)}%-Pkt`;
+    if (dv <= -1.5 && dd >= 1) {
+      lines.push(`Diagnose: aerober Status rückläufig (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
+    } else if (dv >= 1.5 && dd <= 0) {
+      lines.push(`Diagnose: aerober Status verbessert (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
+    } else {
+      lines.push(`Diagnose: aerober Status gemischt/stabil (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
     }
   }
-  if (hadGA) {
-    const driftContext = ga21Context ? `${driftText} (Ø21T ${ga21Context.driftAvg.toFixed(1)}%)` : driftText;
-    const efContext = ga21Context ? `${efText} (Ø21T ${ga21Context.efAvg.toFixed(2)})` : efText;
-    const gaContextNote = gaSourceDate ? ` (letzter GA-Lauf ${gaSourceDate})` : "";
-    lines.push(`- GA-Kontext: Drift ${driftContext} | EF ${efContext}${gaContextNote}`);
-    if (gaDetailLine) {
-      lines.push(`- GA-Werte: ${gaDetailLine}${gaContextNote}`);
+  const recoveryLines = buildRecoverySignalLines(recoverySignals);
+  if (recoveryLines.length) {
+    lines.push(...recoveryLines);
+  }
+  const driftTodayLines = buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary });
+  if (driftTodayLines.length) {
+    lines.push(...driftTodayLines);
+  }
+  const repRun = pickRepresentativeGARun(perRunInfo);
+  if (repRun) {
+    const subjectiveLoad = Number.isFinite(repRun.drift) && repRun.drift > 6
+      ? "wirkte schwerer als geplant"
+      : "wirkte voraussichtlich kontrolliert";
+    lines.push(`Subjektiv (Proxy): Einheit ${subjectiveLoad}; bitte RPE + Beinstatus kurz notieren.`);
+    if (Number.isFinite(repRun.speed_cv)) {
+      const economyLabel = repRun.speed_cv <= 0.1 ? "technisch sauber" : "ökonomisch unruhig";
+      lines.push(`Technik/Ökonomie: Pace-CV ${(repRun.speed_cv * 100).toFixed(1)}% (${economyLabel}) – lieber kurz & sauber statt lang und schlurfend.`);
     }
-  }
-  if (intervalContextLine) {
-    lines.push(`- ${intervalContextLine}`);
-  }
-
-  lines.push("");
-  lines.push("📈 BELASTUNG & KONSEQUENZ");
-  lines.push(`- Heutige Belastung: ${loadLevel}`);
-  if (runTarget > 0) {
-    lines.push(`- Runfloor-Status: ${runLoad7} / Soll ${runTarget}${runFloorGap ? " (Lücke)" : ""}`);
   } else {
-    lines.push("- Runfloor-Status: n/a");
+    lines.push("Subjektiv: Kein GA-Check heute – optional RPE, Beinstatus und mentale Frische im Kommentar erfassen.");
   }
-  if (runFloorState?.runfloorModeText) {
-    lines.push(`- ${runFloorState.runfloorModeText}`);
+  const aerobicRules = [];
+  if (dd != null && dd > 0.5) {
+    aerobicRules.push("Regel: Easy-Tempo runter oder Lauf um 10–15′ kürzen (nächste 3–5 Tage).");
+  } else {
+    aerobicRules.push("Regel: Easy-Tempo halten, kein Tempo-Drift provozieren (nächste 3–5 Tage).");
   }
-  lines.push(
-    `- Deload-Status (21T): ${deloadSum21 ?? "n/a"} / Ziel ${deloadTargetSum}${
-      deloadDelta != null ? ` (Δ ${deloadDelta >= 0 ? "+" : ""}${Math.round(deloadDelta)})` : ""
-    }${deloadActiveDays != null ? ` | aktive Tage ${deloadActiveDays}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN}` : ""}`
-  );
-  lines.push(`- Konsequenz: ${loadConsequence}`);
-
+  const avg7Raw = Number(runFloorState?.avg7 ?? 0);
+  const avg21Raw = Number(runFloorState?.avg21 ?? 0);
+  const avg7 = Math.round(avg7Raw);
+  const avg21 = Math.round(avg21Raw);
+  const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
+  const activeDays21 = Number(runFloorState?.activeDays21 ?? 0);
+  const activeGoalDays = RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN;
+  const steadyAllowed = runFloorState?.stabilityOK && avg7Raw >= floorDaily && activeDays21 >= activeGoalDays;
+  aerobicRules.push(steadyAllowed ? "Regel: max. 1× steady kurz (20–25′) nur wenn frisch." : "Regel: kein steady push in den nächsten 3–5 Tagen.");
+  aerobicRules.push("Regel: Strides optional nach easy, nur wenn frisch.");
+  lines.push(...aerobicRules.slice(0, 2));
   lines.push("");
-  lines.push("🔎 BEGRÜNDUNG & ZAHLEN");
-  lines.push(`- HRV Δ (vs 7T): ${hrvDeltaPct != null ? formatSignedPct(hrvDeltaPct) : "n/a"}${hrv2dConcern ? " (2T negativ)" : ""}`);
-  const sleepQualityLabel = recoverySignals?.sleepQualityLabel;
-  const sleepScoreText = recoverySignals?.sleepScore != null ? `Score ${recoverySignals.sleepScore}` : null;
-  const sleepQualityText =
-    recoverySignals?.sleepQuality != null || recoverySignals?.sleepScore != null
-      ? `${sleepQualityLabel || "unbekannt"}${sleepScoreText ? ` (${sleepScoreText})` : ""}`
-      : null;
-  const sleepHoursText = recoverySignals?.sleepHours != null ? `${recoverySignals.sleepHours.toFixed(1)}h` : null;
-  const sleepParts = [sleepHoursText, sleepQualityText].filter(Boolean);
-  lines.push(`- Schlaf: ${sleepParts.length ? sleepParts.join(" | ") : "n/a"}${recoverySignals?.sleepLow ? " (unter Basis)" : ""}`);
-  if (sleepMissing) {
-    lines.push("- Hinweis: Schlafdaten fehlen → Confidence -1 Stufe.");
+  lines.push("3) 💪 Robustheit");
+  if (robustness) {
+    const strengthMinutes7d = Math.round(robustness.strengthMinutes7d ?? 0);
+    const robustnessLabel = robustness.strengthOk ? "im Aufbau, aber stabil" : "im Aufbau, aber wackelig";
+    lines.push(`Diagnose: Kraft/Stabi ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T) – ${robustnessLabel}.`);
+  } else {
+    lines.push("Diagnose: Kraft/Stabi nicht verfügbar.");
   }
-  lines.push(`- GA-Drift${gaSourceDate ? ` (letzter GA-Lauf ${gaSourceDate})` : ""}: ${driftText} | EF ${efText} | VDOT ${vdotText}`);
-  lines.push(`- Load 7T: ${runLoad7} (vorher 7T: ${fatigue?.prev7Load != null ? Math.round(fatigue.prev7Load) : "n/a"})`);
-  lines.push(`- Ramp/ACWR: ${fatigue?.rampPct != null ? formatSignedPct(fatigue.rampPct * 100) : "n/a"} | ${fatigue?.acwr != null ? fatigue.acwr.toFixed(2) : "n/a"}`);
-  lines.push(
-    `- Keys 7T: ${keyCount7 ?? "n/a"} / Cap ${keyCapValue ?? "n/a"}${keyCapReason ? ` (Regel: ${keyCapReason})` : ""} | Spacing ${keySpacing?.ok === false ? "zu eng" : "ok"}`
-  );
-  if (lastRacePaceText) {
-    const racePaceDate = lastKeyIntervalInsights?.date ? ` (${lastKeyIntervalInsights.date})` : "";
-    lines.push(`- Racepace (letzte Intervalle${racePaceDate}): ${lastRacePaceText}`);
-  }
-
-  if (hadKey) {
-    lines.push("");
-    lines.push("❤️ HRR60 READINESS");
-    hrr60Readiness.report.forEach((line) => lines.push(line));
-  }
-
-  if (aerobicContextAvailable) {
-    lines.push("");
-    lines.push("🫁 AEROBER KONTEXT");
-    lines.push(`- GA-Form: ${buildAerobicTrendLine(trend)}`);
-    if (trend?.confidence) lines.push(`- Confidence-Level: ${trend.confidence}`);
-  }
-
   lines.push("");
-  return {
-    dailyReportText: lines.join("\n"),
-    weeklyReportLines: weeklyReport.lines,
-    weeklyReportSections: weeklyReport.sections,
-    wellnessComment: null,
-    workoutDebug,
-    hrr60Readiness,
-  };
+  lines.push("4) 📈 Belastung & Key-Check");
+  lines.push("Belastung:");
+  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
+  const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
+  const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
+  const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
+  const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
+  const runFloorWeekly = Math.round(runFloorState?.floorTarget ?? 0);
+  const runFloorWeeklyText = runFloorWeekly > 0 ? runFloorWeekly : "n/a";
+  const sum21Raw = Number(runFloorState?.sum21 ?? 0);
+  const sum21 = Math.round(sum21Raw);
+  const deloadReady = shouldTriggerDeload(sum21Raw, activeDays21, runFloorState?.deloadActive);
+  const deloadTargetRange =
+    runFloorWeekly > 0
+      ? `${Math.round(runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.min)}–${Math.round(
+          runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.max
+        )}`
+      : "n/a";
+  const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
+  if (bikeSubFactor > 0) {
+    const pct = Math.round(bikeSubFactor * 100);
+    lines.push(`- RunFloor: 7T RunFloor-Äquivalent ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%).`);
+  } else {
+    lines.push(`- RunFloor: 7T Run-Floor ${runLoad7} / Soll ${runTargetText}.`);
+  }
+  const causeLine =
+    activeDays21 < activeGoalDays
+      ? `Ursache: zu wenige aktive Tage (${activeDays21}/${activeGoalDays}) → Häufigkeit fehlt.`
+      : `Ursache: Laufdauer/Load pro Tag zu niedrig (aktive Tage ${activeDays21}/${activeGoalDays} ok).`;
+  lines.push(`- ${causeLine}`);
+  if (activeDays21 < activeGoalDays) {
+    lines.push("- To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
+  } else {
+    lines.push("- To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
+  }
+  lines.push("- Reaktionsregel: Wenn Drift bei Easy erneut >6% ist → Lauf kürzen/abbrechen und Folgetag max. 30′ locker.");
+  lines.push("- Reaktionsregel: Wenn HRV/Schlaf klar unter 7T liegt → nur easy + Technik, kein steady.");
+  const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
+  if (eventDistance === "5 km" && longRunMinutes > 0) {
+    lines.push(`- Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
+  }
+  if (runFloorState?.deloadActive) {
+    lines.push(`- Hinweis: Deload aktiv (Ziel ${deloadTargetRange} Run-Load/Woche).`);
+  } else if (deloadReady) {
+    lines.push(
+      `- Hinweis: Deload bereit (21T Summe ${sum21} & aktive Tage ${activeDays21}) → Ziel ${deloadTargetRange} Run-Load/Woche.`
+    );
+  }
+  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
+  if (transitionLine) lines.push(`- ${transitionLine}`);
+  lines.push("Key-Check:");
+  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
+  const actualKeys = keyCompliance?.actual7 ?? 0;
+  const keyTypes = keyCompliance?.actualTypes?.length
+    ? keyCompliance.actualTypes.map(formatKeyType).join("/")
+    : "n/a";
+  lines.push(`- Key diese Woche: ${actualKeys}/${keyCap} (${keyTypes}).`);
+  lines.push(`- Key-Regel: ${buildKeyConsequence({ keyCompliance, keySpacing, keyCap })}`);
+  lines.push("");
+  lines.push("5) ✅ Fazit");
+  const bottomLineTodos = [];
+  bottomLineTodos.push(activeDays21 < activeGoalDays ? "2× easy 35–45′ zusätzlich für Häufigkeit." : "1–2 Läufe um 10–15′ verlängern (easy).");
+  if (robustness?.strengthOk) {
+    bottomLineTodos.push("Kraft/Stabi 2×20–30′ halten.");
+  } else {
+    bottomLineTodos.push("Noch fehlende Kraft/Stabi-Minuten diese Woche schließen.");
+  }
+  bottomLineTodos.push("Steady nur wenn frisch; nach Key 24–48h nur locker.");
+  lines.push(...bottomLineTodos.slice(0, 3).map((item) => `- ${item}`));
+  const statusLabel = runFloorState?.stabilityOK ? "stabil" : "wackelig";
+  const frequencyLabel = activeDays21 >= activeGoalDays ? "ok" : "zu niedrig";
+  lines.push(`- Fokus: Häufigkeit ${frequencyLabel}, Stabilität ${statusLabel}.`);
+  lines.push("- Priorität: Häufigkeit → Volumen → Spezifität.");
+  lines.push("- Leitlinie der Woche: Nicht fitter werden erzwingen – Belastbarkeit schaffen, damit Tempo später tragfähig ist.");
+  return lines.join("\n");
 }
 
 function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
@@ -7678,67 +2888,12 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   return `Lauf: ${minutesText}Lauf`;
 }
 
-function buildRunEvaluationText({ hadAnyRun, repRun, trend }) {
-  if (!hadAnyRun) return "kein Lauf";
-  if (!repRun) return "n/a (kein GA-Lauf für Vergleich)";
-  const efAvg = trend?.efRecentAvg;
-  const driftAvg = trend?.driftRecentMed;
-  const efDelta = pct(repRun.ef, efAvg);
-  const driftDelta = repRun.drift != null && driftAvg != null ? repRun.drift - driftAvg : null;
-  const parts = [];
-  if (efDelta != null) parts.push(`EF ${fmtSigned1(efDelta)}% vs Ø 28d`);
-  if (driftDelta != null) parts.push(`Drift ${fmtSigned1(driftDelta)}%-Pkt vs Ø 28d`);
-  if (!parts.length) return "n/a (zu wenig Vergleichsdaten)";
-  let verdict = "gemischt";
-  if (efDelta != null && driftDelta != null) {
-    if (efDelta >= 1 && driftDelta <= -0.5) verdict = "besser";
-    else if (efDelta <= -1 && driftDelta >= 0.5) verdict = "schwächer";
-  } else if (efDelta != null) {
-    if (efDelta >= 1) verdict = "besser";
-    else if (efDelta <= -1) verdict = "schwächer";
-  }
-  return `${verdict} (${parts.join(" | ")})`;
-}
-
-function buildMotorCoachingComment(motor) {
-  if (!Number.isFinite(motor?.value)) {
-    return "kein belastbarer Wert – erst mehr vergleichbare GA-Läufe sammeln.";
-  }
-  const value = motor.value;
-  const trendDown = Number.isFinite(motor?.dv) && motor.dv <= -1.5;
-  const driftWorse = Number.isFinite(motor?.dd) && motor.dd >= 1;
-  const trendNote = trendDown || driftWorse ? " Trend zeigt nach unten." : "";
-  if (value >= 70) return `stark – Qualität halten, Progression dosiert möglich.${trendNote}`;
-  if (value >= 55) return `stabil – Kontinuität sichern, keine Eskalation nötig.${trendNote}`;
-  if (value >= 40) return `fragil – Basis stabilisieren, Reize klein halten.${trendNote}`;
-  return `schwach – Fokus auf ruhige GA-Kontinuität und Erholung.${trendNote}`;
-}
-
-function buildMotorWeeklyExplanation(motor) {
-  const motorLine = motor?.text || "🏎️ Motor-Index: n/a (keine vergleichbaren GA-Läufe im Fenster)";
-  const coach = buildMotorCoachingComment(motor);
-  const explanation =
-    "Erklärung: Trend-Score aus vergleichbaren GA-Läufen; EF-Median 28T vs 28T davor und Drift-Median 14T vs 14T davor. Einzelwerte können gegen den Trend laufen.";
-  return { motorLine, coach, explanation };
-}
-
 function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   if (!hadAnyRun) return "Ruhetag (kein Lauf)";
   if (hadKey && hadGA) return "GA + Key (gemischt)";
   if (hadKey) return "Key (intensiv)";
   if (hadGA) return totalMinutesToday > 0 ? `Easy/GA ${totalMinutesToday}′` : "Easy/GA";
   return totalMinutesToday > 0 ? `Lauf ${totalMinutesToday}′` : "Lauf";
-}
-
-function deriveDailyIntensityClass(perRunInfo) {
-  if (!perRunInfo?.length) return null;
-  if (perRunInfo.some((run) => run.intensityClass === INTENSITY_CLASS.KEY_HARD)) {
-    return INTENSITY_CLASS.KEY_HARD;
-  }
-  if (perRunInfo.some((run) => run.intensityClass === INTENSITY_CLASS.STEADY_T)) {
-    return INTENSITY_CLASS.STEADY_T;
-  }
-  return INTENSITY_CLASS.EASY;
 }
 
 function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
@@ -7805,10 +2960,6 @@ async function computeAerobicTrend(ctx, dayIso) {
       prevStart,
       windowEnd: endIso,
       lastComparableDate,
-      efRecentAvg: null,
-      efPrevAvg: null,
-      driftRecentMed: null,
-      driftPrevMed: null,
       text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – zu wenig GA-Daten (recent=${recent.length}, prev=${prev.length})`,
     };
   }
@@ -7832,8 +2983,7 @@ async function computeAerobicTrend(ctx, dayIso) {
     };
   }
 
-  const efDeltaPct = ((ef1 - ef0) / ef0) * 100;
-  const dv = efDeltaPct;
+  const dv = ((ef1 - ef0) / ef0) * 100;
   const dd = d1 - d0;
 
   let emoji = "🟡";
@@ -7849,13 +2999,8 @@ async function computeAerobicTrend(ctx, dayIso) {
   const confidence = trendConfidence(recent.length, prev.length);
   return {
     ok: true,
-    efDeltaPct,
     dv,
     dd,
-    efRecentAvg: ef1,
-    efPrevAvg: ef0,
-    driftRecentMed: d1,
-    driftPrevMed: d0,
     confidence,
     recentCount: recent.length,
     prevCount: prev.length,
@@ -7869,24 +3014,6 @@ async function computeAerobicTrend(ctx, dayIso) {
         1
       )}%-Pkt\n` +
       `Confidence: ${confidence} (recent=${recent.length}, prev=${prev.length})`,
-  };
-}
-
-async function computeGa21DayContext(ctx, dayIso) {
-  const end = getHistoryWindowEnd(dayIso);
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const samples = await gatherGASamples(ctx, endIso, 21, { comparable: false });
-  if (!samples.length) return null;
-
-  const efAvg = avg(samples.map((x) => x.ef));
-  const driftAvg = avg(samples.map((x) => x.drift));
-  if (efAvg == null || driftAvg == null) return null;
-
-  return {
-    count: samples.length,
-    efAvg,
-    driftAvg,
-    vdotAvg: vdotLikeFromEf(efAvg),
   };
 }
 
@@ -7982,8 +3109,6 @@ async function computeMotorIndex(ctx, dayIso) {
   return {
     ok: true,
     value: val,
-    dv,
-    dd,
     text: `🏎️ Motor-Index: ${val.toFixed(0)}/100 (${label}) ${arrow} | EF Δ ${dv.toFixed(1)}% (28d)${extra}`,
   };
 }
@@ -8043,62 +3168,6 @@ async function gatherGASamples(ctx, endIso, windowDays, opts) {
 
   ctx.gaSampleCache.set(key, p);
   return p;
-}
-
-async function computePreviousKeyIntervalInsights(ctx, dayIso, windowDays, excludeActivityIds) {
-  const end = getHistoryWindowEnd(dayIso);
-  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const keyHistory = [];
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (d >= dayIso) continue;
-    if (!hasKeyTag(a)) continue;
-    if (excludeActivityIds?.has?.(a.id)) continue;
-    const rawType = getKeyType(a);
-    const keyType = normalizeKeyType(rawType, {
-      activity: a,
-      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
-    });
-    keyHistory.push({ date: d, keyType, activity: a });
-  }
-
-  if (!keyHistory.length) return null;
-  keyHistory.sort((a, b) => a.date.localeCompare(b.date));
-  const lastEntry = keyHistory[keyHistory.length - 1];
-  if (!lastEntry?.activity) return null;
-
-  try {
-    const streams = await getStreams(ctx, lastEntry.activity.id, STREAM_TYPES_INTERVAL);
-    const intervalMetrics = computeIntervalMetricsFromStreams(streams, {
-      intervalType: getIntervalTypeFromActivity(lastEntry.activity),
-      activity: lastEntry.activity,
-    });
-    if (!intervalMetrics) return null;
-    return {
-      activityId: lastEntry.activity.id,
-      date: lastEntry.date,
-      keyType: lastEntry.keyType,
-      intervalMetrics,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function computeIntervalContext(ctx, dayIso, perRunInfo) {
-  const todayRun = pickRepresentativeIntervalRun(perRunInfo);
-  if (!todayRun?.intervalMetrics) return null;
-
-  const excludeIds = new Set([todayRun.activityId]);
-  const prev = await computePreviousKeyIntervalInsights(ctx, dayIso, 21, excludeIds);
-  return {
-    today: todayRun.intervalMetrics,
-    todayKeyType: todayRun.keyType,
-    prev,
-  };
 }
 // ================= MONDAY DETECTIVE NOTE (TRAININGSLEHRE V2) =================
 async function persistDetectiveSummary(env, mondayIso, summary) {
@@ -8256,7 +3325,9 @@ function buildWhySummary(insights) {
 
 function applyDetectiveWhy(rep, insights) {
   if (!insights) return rep;
-  return { ...rep, insights };
+  const lines = rep.text.split("\n");
+  appendWhySection(lines, insights);
+  return { ...rep, text: lines.join("\n"), insights };
 }
 
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
@@ -8305,124 +3376,11 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
   return { runTarget, loadTarget, exampleWeek };
 }
 
-function buildMondayReportLines({
-  blockLabel,
-  blockGoalShort,
-  priorityLine,
-  eventCountdownLine,
-  weeklyFazit,
-  weeklyWhy,
-  blockFitNotes,
-  learningHelps,
-  learningBrakes,
-  confidenceEvidence,
-  confidencePct,
-  trainerDecision,
-  riskNotes,
-  weeklyFocusGoal,
-  keyMax,
-  runTarget,
-  runTargetFallback,
-  blockCompassLines,
-}) {
-  const blockFitEmoji = String(weeklyFazit || "")
-    .trim()
-    .split(/\s+/)[0];
-  const blockFitDetail = blockFitNotes?.length
-    ? blockFitNotes[0].replace(/^[⚠✔]+\s*/u, "")
-    : "n/a";
-  const runTargetText = runTarget > 0 ? runTarget : runTargetFallback;
-
-  const blockStatus = [
-    "🏗️ BLOCK-STATUS",
-    `Block: ${blockLabel}`,
-    `Ziel: ${blockGoalShort}`,
-    `Priorität: ${priorityLine}`,
-    ...(eventCountdownLine ? [eventCountdownLine] : []),
-    `Block-Fit: ${blockFitEmoji || "n/a"}`,
-    `→ ${blockFitDetail}`,
-  ];
-
-  const weeklyVerdict = ["📊 WOCHENURTEIL (Trainer)", weeklyFazit, weeklyWhy];
-
-  const blockCompass = blockCompassLines?.length ? ["🧱 BLOCK-KOMPASS", ...blockCompassLines] : [];
-
-  const learnings = [
-    "🧠 LEARNINGS (nur das Relevante)",
-    "Was funktioniert",
-    ...learningHelps.slice(0, 3).map((item) => `• ${item}`),
-    "Was dich bremst",
-    ...learningBrakes.slice(0, 3).map((item) => `• ${item}`),
-    `Confidence: ${confidencePct}% (${confidenceEvidence} Beobachtungen)`,
-  ];
-
-  const decision = [
-    "🎯 ENTSCHEIDUNG & WOCHENZIEL",
-    `Entscheidung: ${trainerDecision}`,
-    "Wochenfokus (1 Punkt):",
-    `👉 ${weeklyFocusGoal}`,
-    "Leitplanken",
-    `• max ${keyMax} Key/7T`,
-    `• Runfloor ≥${runTargetText}`,
-    "• Easy-Läufe: Drift unter Warnschwelle",
-  ];
-
-  const risk = ["⚠️ RISIKO-BLICK (2–3 Wochen)", ...riskNotes.slice(0, 2).map((item) => `• ${item}`)];
-
-  const sections = { blockStatus, blockCompass, weeklyVerdict, learnings, decision, risk };
-  const lines = [
-    ...blockStatus,
-    ...(blockCompass.length ? ["", ...blockCompass] : []),
-    "",
-    ...weeklyVerdict,
-    "",
-    ...learnings,
-    "",
-    ...decision,
-    "",
-    ...risk,
-  ];
-
-  return { sections, lines };
-}
-
-function buildMondayReportPreview() {
-  const report = buildMondayReportLines({
-    blockLabel: "BUILD",
-    blockGoalShort: "Basis stärken und eine Key-Qualität pro Woche sauber setzen",
-    priorityLine: "Qualität > Umfang | Frequenz halten",
-    eventCountdownLine: "Zeit bis Event: 5 Wochen",
-    weeklyFazit: "🟠 Auf Kurs – Basis lückenhaft.",
-    weeklyWhy: "Warum: Longrun fehlt; Basis wirkt fragil und bremst die Blockwirkung.",
-    blockFitNotes: [
-      "⚠ Longrun fehlt – Basis trägt die Blockziele noch nicht.",
-      "⚠ Runfloor wacklig – Blockwirkung wird ausgebremst.",
-      "✔ Blockpriorität getroffen, Reize passen zur Phase.",
-    ],
-    learningHelps: ["Easy-Tage nach Key wirken", "Häufiger & kürzer hält dich stabil"],
-    learningBrakes: ["Fehlende Longruns", "Runfloor-Lücke bremst Basis"],
-    confidenceEvidence: 5,
-    confidencePct: 60,
-    trainerDecision: "Diese Woche keine Eskalation – Longrun zuerst setzen, dann Qualität aufbauen.",
-    riskNotes: [
-      "Wenn Longrun fehlt → Ausdauerbasis stagniert, Blockwirkung bleibt flach.",
-      "Wenn Runfloor niedrig bleibt → Belastbarkeit sinkt, Qualität wird brüchig.",
-    ],
-    weeklyFocusGoal: "1× Longrun 60–75′ locker.",
-    keyMax: 1,
-    runTarget: 160,
-    runTargetFallback: "150–210",
-  });
-
-  return report.lines.filter(Boolean).join("\n\n");
-}
-
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const end = new Date(mondayIso + "T00:00:00Z");
-  const newest = new Date(end.getTime() - 86400000);
   const start = new Date(end.getTime() - windowDays * 86400000);
 
-  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(newest));
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
   const runs = acts
     .filter((a) => isRun(a))
     .map((a) => ({
@@ -8538,28 +3496,46 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     actions.push("Für Diagnose: 1×/Woche steady GA 45–60min (oder bench:GA45) auf möglichst ähnlicher Strecke.");
   }
 
+  // Key type distribution (if tagged)
+  const keyTypeCounts = countBy(keyRuns.map((x) => x.keyType).filter(Boolean));
+  const keyTypeLine = Object.keys(keyTypeCounts).length
+    ? `Key-Typen: ${Object.entries(keyTypeCounts)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ")}`
+    : "Key-Typen: n/a (keine key:<type> Untertags genutzt)";
+
   // Compose note
   const title = `🕵️‍♂️ Montags-Report (${windowDays}T)`;
-  const loadSummary = (() => {
-    if (totalRuns === 0) return "Kernaussage: keine belastbare Basis.";
-    if (longRuns.length === 0) return "Kernaussage: Umfang nicht kritisch – Verteilung schon.";
-    if (weeklyLoad < 120) return "Kernaussage: Run-Load niedrig – Basis wacklig.";
-    if (keyRuns.length === 0) return "Kernaussage: Qualität fehlt – Basis zwar da, aber ohne Reiz.";
-    return "Kernaussage: Struktur ok, Basis tragfähig.";
-  })();
-  const loadBasis = [
-    "📈 BELASTUNG & BASIS (kompakt)",
-    `Läufe: ${totalRuns}`,
-    `Run-Load Ø/Woche: ${Math.round(weeklyLoad)}`,
-    `Key: ${keyRuns.length}×`,
-    `Longrun ≥60′: ${longRuns.length}×${longRuns.length === 0 ? " ⚠" : ""}`,
-    `GA-Messbasis (vergleichbar): n=${comp.n ?? 0}`,
-    `Drift (med): ${comp.driftMed != null ? `${comp.driftMed.toFixed(1)} %` : "n/a"}`,
-    loadSummary,
-  ];
+  const lines = [];
+  lines.push(title);
+  lines.push("");
+  lines.push("🏗️ Struktur:");
+  lines.push(`• 🏃 Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`• ⏱️ Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
+  lines.push(`• 🧱 Longruns: ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche) | 🎯 Key: ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`• 🌿 GA (≥30′, nicht key): ${gaRuns.length} | ⚡ Kurz (<30′): ${shortRuns.length}`);
+  lines.push(`• 🧭 ${keyTypeLine}`);
+  lines.push("");
+  lines.push("📈 Belastung:");
+  lines.push(`• 📊 Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
+  lines.push("");
 
-  const lines = [title, "", ...loadBasis];
-  const sections = { title, loadBasis };
+  lines.push("🔍 Highlights:");
+  if (!findings.length) lines.push("• ✅ Keine klaren strukturellen Probleme.");
+  else for (const f of findings.slice(0, 4)) lines.push(`• 🧩 ${f}`);
+
+  lines.push("");
+  lines.push("✅ Nächste Schritte:");
+  if (!actions.length) lines.push("• 📌 Struktur halten, Bench/GA comparable sammeln.");
+  else for (const a of uniq(actions).slice(0, 4)) lines.push(`• 🛠️ ${a}`);
+
+  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek });
+  lines.push("");
+  lines.push("🗓️ Mini-Plan nächste Woche:");
+  lines.push(
+    `• 🎯 Ziele: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
+  );
+  lines.push(`• 📅 Beispiel: ${miniPlan.exampleWeek.join(" · ")}`);
 
   const summary = {
     week: mondayIso,
@@ -8581,14 +3557,13 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   // ok criteria: enough runs OR strong structural issue
   const ok = totalRuns >= DETECTIVE_MIN_RUNS || longRuns.length === 0 || weeklyLoad < 120;
 
-  return { ok, text: lines.filter(Boolean).join("\n\n"), summary, sections };
+  return { ok, text: lines.join("\n"), summary };
 }
 
 async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays) {
   const end = new Date(endDayIso + "T00:00:00Z");
-  const newest = new Date(end.getTime() - 86400000);
   const start = new Date(end.getTime() - windowDays * 86400000);
-  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(newest));
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
 
   let droppedNegCount = 0;
   let cvTooHighCount = 0;
@@ -8763,10 +3738,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       lines.push(`HF-Drift (Intervall): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
     }
     if (intervalMetrics?.HRR60_median != null) {
-      const hrr60Count = intervalMetrics.HRR60_count ?? 0;
-      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (${hrr60Count} Intervalle)`);
-    } else if (intervalMetrics) {
-      lines.push("Erholung: HRR60 n/a (keine geeigneten Intervalle)");
+      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
     }
     if (!intervalMetrics?.HR_Drift_bpm && isKey) {
       if (same.length && last?.avgSpeed != null) {
@@ -8826,7 +3798,6 @@ async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
 
   return computeIntervalMetricsFromStreams(streams, {
     intervalType: getIntervalTypeFromActivity(a),
-    activity: a,
   });
 }
 
@@ -8878,72 +3849,6 @@ function fmtDistanceKm(distanceMeters) {
   return `${distanceMeters.toFixed(0)} m`;
 }
 
-function formatPaceSeconds(secPerKm) {
-  if (!Number.isFinite(secPerKm) || secPerKm <= 0) return null;
-  const totalSec = Math.round(secPerKm);
-  const minutes = Math.floor(totalSec / 60);
-  const seconds = totalSec % 60;
-  return `${minutes}:${String(seconds).padStart(2, "0")}/km`;
-}
-
-function formatTimeSeconds(totalSec) {
-  if (!Number.isFinite(totalSec) || totalSec <= 0) return null;
-  const rounded = Math.round(totalSec);
-  const hours = Math.floor(rounded / 3600);
-  const minutes = Math.floor((rounded % 3600) / 60);
-  const seconds = rounded % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function parseTimeToSeconds(raw) {
-  if (raw == null) return null;
-  if (Number.isFinite(raw)) {
-    if (raw <= 0) return null;
-    return raw >= 300 ? raw : raw * 60;
-  }
-  const s = String(raw).trim();
-  if (!s) return null;
-  if (s.includes(":")) {
-    const parts = s.split(":").map((p) => Number(p));
-    if (parts.some((p) => !Number.isFinite(p))) return null;
-    if (parts.length === 3) {
-      const [h, m, sec] = parts;
-      return h * 3600 + m * 60 + sec;
-    }
-    if (parts.length === 2) {
-      const [m, sec] = parts;
-      return m * 60 + sec;
-    }
-  }
-  const numeric = Number(s.replace(",", "."));
-  if (!Number.isFinite(numeric) || numeric <= 0) return null;
-  return numeric >= 300 ? numeric : numeric * 60;
-}
-
-function getDistanceKmFromKey(distanceKey) {
-  const key = String(distanceKey || "").toLowerCase();
-  if (key === "5k") return 5;
-  if (key === "10k") return 10;
-  if (key === "hm" || key === "half" || key === "half_marathon") return 21.0975;
-  if (key === "m" || key === "marathon") return 42.195;
-  return null;
-}
-
-function formatPaceDeltaSeconds(deltaSec) {
-  if (!Number.isFinite(deltaSec)) return null;
-  const rounded = Math.round(deltaSec);
-  const sign = rounded > 0 ? "+" : "";
-  return `${sign}${rounded}s/km`;
-}
-
-function formatPaceFromSpeed(speedMps) {
-  if (!Number.isFinite(speedMps) || speedMps <= 0) return null;
-  return formatPaceSeconds(1000 / speedMps);
-}
-
 // ================= STREAMS METRICS =================
 function quantile(arr, q) {
   const v = arr.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
@@ -8960,27 +3865,6 @@ function pickIntervalIntensity(streams) {
   const speed = streams?.velocity_smooth;
   if (Array.isArray(watts) && watts.some((x) => Number.isFinite(x))) return { data: watts, kind: "watts" };
   if (Array.isArray(speed) && speed.some((x) => Number.isFinite(x))) return { data: speed, kind: "speed" };
-  return null;
-}
-
-function hasIntervalKeyTag(activity) {
-  const tags = normalizeTags(activity?.tags);
-  return tags.some((t) => t === "key:vo2" || t === "key:racepace" || t === "key:interval");
-}
-
-function extractRacepaceSecPerKm(activity) {
-  const candidates = [
-    activity?.racepace_sec_per_km,
-    activity?.race_pace_sec_per_km,
-    activity?.racepaceSecPerKm,
-    activity?.racePaceSecPerKm,
-    activity?.race_pace,
-    activity?.racepace,
-  ];
-  for (const value of candidates) {
-    const v = Number(value);
-    if (Number.isFinite(v) && v > 0) return v;
-  }
   return null;
 }
 
@@ -9035,86 +3919,6 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   return intervals;
 }
 
-function buildWorkIntervalsFromSignal(time, signal, { minIntervalSec = 60, maxGapSec = 5 } = {}) {
-  const n = Math.min(time.length, signal.length);
-  if (n < 2) return [];
-
-  const intervals = [];
-  let startIdx = null;
-  let lastAboveIdx = null;
-  let gapStart = null;
-
-  const timeAt = (i) => {
-    const t = Number(time[i]);
-    return Number.isFinite(t) ? t : i;
-  };
-
-  for (let i = 0; i < n; i++) {
-    const isWork = !!signal[i];
-    if (isWork) {
-      if (startIdx == null) startIdx = i;
-      lastAboveIdx = i;
-      gapStart = null;
-      continue;
-    }
-
-    if (startIdx != null) {
-      if (gapStart == null) gapStart = timeAt(i);
-      if (timeAt(i) - gapStart > maxGapSec) {
-        const startTime = timeAt(startIdx);
-        const endTime = timeAt(lastAboveIdx);
-        const duration = endTime - startTime;
-        if (duration >= minIntervalSec) {
-          intervals.push({ startIdx, endIdx: lastAboveIdx, startTime, endTime, duration });
-        }
-        startIdx = null;
-        lastAboveIdx = null;
-        gapStart = null;
-      }
-    }
-  }
-
-  if (startIdx != null && lastAboveIdx != null) {
-    const startTime = timeAt(startIdx);
-    const endTime = timeAt(lastAboveIdx);
-    const duration = endTime - startTime;
-    if (duration >= minIntervalSec) {
-      intervals.push({ startIdx, endIdx: lastAboveIdx, startTime, endTime, duration });
-    }
-  }
-
-  return intervals;
-}
-
-function mergeWorkIntervals(intervals, { mergeGapSec = 12, detectedMinIntervalSec = 75 } = {}) {
-  if (!Array.isArray(intervals) || intervals.length < 2) return intervals ?? [];
-  const merged = [];
-  let current = { ...intervals[0] };
-
-  for (let i = 1; i < intervals.length; i++) {
-    const next = intervals[i];
-    const gapSec = next.startTime - current.endTime;
-    if (gapSec <= mergeGapSec) {
-      const combinedDuration = next.endTime - current.startTime;
-      if (combinedDuration >= detectedMinIntervalSec) {
-        current = {
-          startIdx: current.startIdx,
-          endIdx: next.endIdx,
-          startTime: current.startTime,
-          endTime: next.endTime,
-          duration: combinedDuration,
-        };
-        continue;
-      }
-    }
-    merged.push(current);
-    current = { ...next };
-  }
-
-  merged.push(current);
-  return merged;
-}
-
 function classifyIntervalDrift(intervalType, driftBpm) {
   if (!Number.isFinite(driftBpm)) return null;
   if (intervalType === "threshold") {
@@ -9137,682 +3941,115 @@ function formatDriftFlag(flag) {
   return flag;
 }
 
-function deriveSpeedThreshold(speed, config, activity, tagPresent) {
-  if (!Array.isArray(speed)) return null;
-  const speedVals = speed.filter((x) => Number.isFinite(x));
-  if (!speedVals.length) return null;
-  const racepaceSecPerKm = extractRacepaceSecPerKm(activity);
-  if (Number.isFinite(racepaceSecPerKm)) {
-    const thresholdSec = racepaceSecPerKm + config.racepaceToleranceSecPerKm;
-    return thresholdSec > 0 ? 1000 / thresholdSec : null;
-  }
-  const fallback = quantile(speedVals, tagPresent ? config.tagSpeedQuantile : config.racepaceSpeedQuantile);
-  return Number.isFinite(fallback) ? fallback : null;
-}
-
-function derivePowerThreshold(watts, config, tagPresent) {
-  if (!Array.isArray(watts)) return null;
-  const vals = watts.filter((x) => Number.isFinite(x));
-  if (!vals.length) return null;
-  const threshold = quantile(vals, tagPresent ? config.tagPowerQuantile : config.vo2PowerQuantile);
-  return Number.isFinite(threshold) ? threshold : null;
-}
-
-function deriveHrThreshold(hr, config) {
-  if (!Array.isArray(hr)) return null;
-  const vals = hr.filter((x) => Number.isFinite(x) && x > 0);
-  if (!vals.length) return null;
-  const maxHr = Math.max(...vals);
-  const ratioThreshold = Number.isFinite(maxHr) ? maxHr * config.hrZoneZ4Ratio : null;
-  if (Number.isFinite(ratioThreshold)) return ratioThreshold;
-  const fallback = quantile(vals, config.hrZoneZ4Quantile);
-  return Number.isFinite(fallback) ? fallback : null;
-}
-
-function buildHrr60IntervalsFromStreams({ time, speed, watts, hr, activity, config }) {
-  const tagPresent = hasIntervalKeyTag(activity);
-  const speedThreshold = deriveSpeedThreshold(speed, config, activity, tagPresent);
-  const powerThreshold = derivePowerThreshold(watts, config, tagPresent);
-  const hrThreshold = deriveHrThreshold(hr, config);
-
-  const n = Math.min(time.length, hr.length, speed?.length ?? time.length, watts?.length ?? time.length);
-  if (n < 2) return { intervals: [], hrThreshold };
-
-  if (!Number.isFinite(speedThreshold) && !Number.isFinite(powerThreshold) && !Number.isFinite(hrThreshold)) {
-    return { intervals: [], hrThreshold };
-  }
-
-  const signal = new Array(n).fill(false);
-  const hasSpeedThreshold = Number.isFinite(speedThreshold);
-  const hasPowerThreshold = Number.isFinite(powerThreshold);
-  const useHrSignal = !hasSpeedThreshold && !hasPowerThreshold;
-  for (let i = 0; i < n; i++) {
-    const vSpeed = Number(speed?.[i]);
-    const vWatts = Number(watts?.[i]);
-    const vHr = Number(hr[i]);
-    const speedOk = hasSpeedThreshold && Number.isFinite(vSpeed) && vSpeed >= speedThreshold;
-    const powerOk = hasPowerThreshold && Number.isFinite(vWatts) && vWatts >= powerThreshold;
-    const hrOk = Number.isFinite(hrThreshold) && Number.isFinite(vHr) && vHr >= hrThreshold;
-    signal[i] = speedOk || powerOk || (useHrSignal && hrOk);
-  }
-
-  const intervals = buildWorkIntervalsFromSignal(time, signal, {
-    minIntervalSec: config.detectionMinIntervalSec,
-    maxGapSec: config.maxGapSec,
-  });
-
-  return { intervals, hrThreshold };
-}
-
-function computeHrr60Summary({ intervals, hr, time, hrThreshold, config }) {
-  const excludedReasonsCount = {
-    insufficient_recovery_data: 0,
-    hr_dropout: 0,
-    too_short: 0,
-    no_hr_peak: 0,
-  };
-  const mergedIntervals = mergeWorkIntervals(intervals, config);
-  const detectedIntervals = mergedIntervals.filter(
-    (interval) => interval.duration >= config.detectedMinIntervalSec,
-  );
-  const intervalsDetectedCount = detectedIntervals.length;
-
-  const buildExcludedSummaryText = (reasons) => {
-    const labels = {
-      insufficient_recovery_data: "zu wenig Recovery-Daten",
-      hr_dropout: "HR-Dropout",
-      too_short: "Belastung zu kurz",
-      no_hr_peak: "kein HF-Peak",
-    };
-    const entries = Object.entries(reasons)
-      .filter(([, count]) => count > 0)
-      .sort((a, b) => b[1] - a[1]);
-    if (!entries.length) return null;
-    const parts = [];
-    for (const [key, count] of entries) {
-      const label = labels[key];
-      if (!label) continue;
-      const part = `${count}× ${label}`;
-      const nextText = parts.length ? `${parts.join(", ")}, ${part}` : part;
-      if (nextText.length > 40) break;
-      parts.push(part);
-      if (parts.length >= 2) break;
-    }
-    return parts.length ? parts.join(", ") : null;
-  };
-
-  if (!detectedIntervals.length) {
-    return {
-      HRR60_median: null,
-      HRR60_count: 0,
-      HRR60_min: null,
-      HRR60_max: null,
-      HR_peak_median: null,
-      HR_60s_median: null,
-      HRR60_values: [],
-      intervals_detected_count: 0,
-      intervals_eligible_count: 0,
-      excluded_reasons_count: excludedReasonsCount,
-      excluded_summary_text: null,
-    };
-  }
-
-  const n = Math.min(hr.length, time.length);
-  const timeAt = (i) => {
-    const t = Number(time[i]);
-    return Number.isFinite(t) ? t : i;
-  };
-
-  const hrr60Drops = [];
-  const peaks = [];
-  const hr60s = [];
-
-  for (const interval of detectedIntervals) {
-    if (interval.duration < config.minIntervalSec) {
-      excludedReasonsCount.too_short += 1;
-      continue;
-    }
-
-    let peak = -Infinity;
-    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-      const h = Number(hr[i]);
-      if (!Number.isFinite(h) || h <= 0) continue;
-      if (h > peak) peak = h;
-    }
-    if (!Number.isFinite(peak)) {
-      excludedReasonsCount.no_hr_peak += 1;
-      continue;
-    }
-    if (Number.isFinite(hrThreshold) && peak < hrThreshold) {
-      excludedReasonsCount.no_hr_peak += 1;
-      continue;
-    }
-
-    const windowEnd = interval.endTime + config.minValidHrWindowSec;
-    let firstValidTime = null;
-    let lastValidTime = null;
-    let dropoutTooLong = false;
-
-    for (let i = interval.endIdx; i < n; i++) {
-      const t = timeAt(i);
-      if (t < interval.endTime) continue;
-      if (t > windowEnd) break;
-      const h = Number(hr[i]);
-      if (!Number.isFinite(h) || h <= 0) continue;
-      if (firstValidTime == null) {
-        if (t - interval.endTime > config.maxHrDropoutSec) dropoutTooLong = true;
-        firstValidTime = t;
-        lastValidTime = t;
-      } else {
-        if (t - lastValidTime > config.maxHrDropoutSec) dropoutTooLong = true;
-        lastValidTime = t;
-      }
-    }
-
-    if (dropoutTooLong || firstValidTime == null || lastValidTime == null) {
-      excludedReasonsCount.hr_dropout += 1;
-      continue;
-    }
-    if (lastValidTime - interval.endTime < config.minValidHrWindowSec) {
-      excludedReasonsCount.insufficient_recovery_data += 1;
-      continue;
-    }
-
-    const target = interval.endTime + 60;
-    let hr60 = null;
-    let bestDelta = Infinity;
-    const tol = config.hrr60ExactToleranceSec;
-    for (let i = interval.endIdx; i < n; i++) {
-      const t = timeAt(i);
-      if (t < target - tol) continue;
-      if (t > target + tol) break;
-      const h = Number(hr[i]);
-      if (!Number.isFinite(h) || h <= 0) continue;
-      const delta = Math.abs(t - target);
-      if (delta < bestDelta) {
-        bestDelta = delta;
-        hr60 = h;
-      }
-    }
-
-    if (!Number.isFinite(hr60)) {
-      const start = interval.endTime + config.hrr60FallbackWindowSec.start;
-      const end = interval.endTime + config.hrr60FallbackWindowSec.end;
-      let minHr = null;
-      for (let i = interval.endIdx; i < n; i++) {
-        const t = timeAt(i);
-        if (t < start) continue;
-        if (t > end) break;
-        const h = Number(hr[i]);
-        if (!Number.isFinite(h) || h <= 0) continue;
-        if (minHr == null || h < minHr) minHr = h;
-      }
-      hr60 = minHr;
-    }
-
-    if (!Number.isFinite(hr60)) {
-      excludedReasonsCount.insufficient_recovery_data += 1;
-      continue;
-    }
-
-    hrr60Drops.push(peak - hr60);
-    peaks.push(peak);
-    hr60s.push(hr60);
-  }
-
-  const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
-  const hrPeakMedian = median(peaks.filter((x) => Number.isFinite(x)));
-  const hr60Median = median(hr60s.filter((x) => Number.isFinite(x)));
-
-  return {
-    HRR60_median: Number.isFinite(hrr60Median) ? hrr60Median : null,
-    HRR60_count: hrr60Drops.length,
-    HRR60_min: hrr60Drops.length ? Math.min(...hrr60Drops) : null,
-    HRR60_max: hrr60Drops.length ? Math.max(...hrr60Drops) : null,
-    HR_peak_median: Number.isFinite(hrPeakMedian) ? hrPeakMedian : null,
-    HR_60s_median: Number.isFinite(hr60Median) ? hr60Median : null,
-    HRR60_values: hrr60Drops,
-    intervals_detected_count: intervalsDetectedCount,
-    intervals_eligible_count: hrr60Drops.length,
-    excluded_reasons_count: excludedReasonsCount,
-    excluded_summary_text: buildExcludedSummaryText(excludedReasonsCount),
-  };
-}
-
-function computeIntervalMetricsFromStreams(streams, { intervalType, activity } = {}) {
+function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
   const hr = streams?.heartrate;
   const time = streams?.time;
   if (!Array.isArray(hr) || !Array.isArray(time)) return null;
 
   const intensityInfo = pickIntervalIntensity(streams);
-  const speed = streams?.velocity_smooth;
-  const watts = streams?.watts;
+  if (!intensityInfo) return null;
 
-  const n = Math.min(hr.length, time.length, speed?.length ?? time.length, watts?.length ?? time.length);
+  const n = Math.min(hr.length, time.length, intensityInfo.data.length);
   if (n < 2) return null;
 
   const timeSlice = time.slice(0, n);
+  const intensity = intensityInfo.data.slice(0, n);
   const hrSlice = hr.slice(0, n);
-  const speedSlice = Array.isArray(speed) ? speed.slice(0, n) : null;
-  const wattsSlice = Array.isArray(watts) ? watts.slice(0, n) : null;
 
-  const hrr60Intervals = buildHrr60IntervalsFromStreams({
-    time: timeSlice,
-    speed: speedSlice,
-    watts: wattsSlice,
-    hr: hrSlice,
-    activity,
-    config: HRR60_INTERVAL_CONFIG,
-  });
-  const hrr60Summary = computeHrr60Summary({
-    intervals: hrr60Intervals.intervals,
-    hr: hrSlice,
-    time: timeSlice,
-    hrThreshold: hrr60Intervals.hrThreshold,
-    config: HRR60_INTERVAL_CONFIG,
-  });
+  const intensityVals = intensity.filter((x) => Number.isFinite(x));
+  const threshold = quantile(intensityVals, 0.75);
+  if (!Number.isFinite(threshold)) return null;
 
-  let driftMetrics = null;
-  if (intensityInfo) {
-    const intensity = intensityInfo.data.slice(0, n);
-    const intensityVals = intensity.filter((x) => Number.isFinite(x));
-    const threshold = quantile(intensityVals, 0.75);
-    if (Number.isFinite(threshold)) {
-      const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
-      if (intervals.length >= 2) {
-        const durations = intervals.map((i) => i.duration);
-        const minDur = Math.min(...durations);
-        const maxDur = Math.max(...durations);
-        if (minDur > 0 && maxDur / minDur <= 1.1) {
-          const intensityMeans = intervals.map((interval) => {
-            let sum = 0;
-            let count = 0;
-            for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-              const v = Number(intensity[i]);
-              if (Number.isFinite(v)) {
-                sum += v;
-                count++;
-              }
-            }
-            return count ? sum / count : null;
-          });
+  const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
+  if (intervals.length < 2) return null;
 
-          const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
-          if (validIntensity.length === intervals.length) {
-            const minIntensity = Math.min(...validIntensity);
-            const maxIntensity = Math.max(...validIntensity);
-            if (minIntensity > 0 && maxIntensity / minIntensity <= 1.1) {
-              const avgIntensity = avg(validIntensity);
-              const intervalAvgSpeedMps =
-                intensityInfo.kind === "speed" && Number.isFinite(avgIntensity) ? avgIntensity : null;
-              const intervalPaceSecPerKm =
-                intervalAvgSpeedMps != null && intervalAvgSpeedMps > 0 ? 1000 / intervalAvgSpeedMps : null;
+  const durations = intervals.map((i) => i.duration);
+  const minDur = Math.min(...durations);
+  const maxDur = Math.max(...durations);
+  if (minDur <= 0 || maxDur / minDur > 1.1) return null;
 
-              const timeAt = (i) => {
-                const t = Number(timeSlice[i]);
-                return Number.isFinite(t) ? t : i;
-              };
-
-              const intervalHr = intervals.map((interval) => {
-                const startTime = interval.startTime;
-                const endTime = interval.endTime;
-                const duration = interval.duration;
-                const lateStart = startTime + duration * 0.6;
-
-                let lateSum = 0;
-                let lateCount = 0;
-                for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-                  const t = timeAt(i);
-                  const h = Number(hrSlice[i]);
-                  if (!Number.isFinite(h)) continue;
-                  if (t >= lateStart && t <= endTime) {
-                    lateSum += h;
-                    lateCount++;
-                  }
-                }
-                const lateAvg = lateCount ? lateSum / lateCount : null;
-
-                return {
-                  lateAvg,
-                };
-              });
-
-              const first = intervalHr[0]?.lateAvg;
-              const last = intervalHr[intervalHr.length - 1]?.lateAvg;
-              if (Number.isFinite(first) && Number.isFinite(last) && first > 0) {
-                const hrDriftBpm = last - first;
-                const hrDriftPct = ((last - first) / first) * 100;
-                driftMetrics = {
-                  HR_Drift_bpm: hrDriftBpm,
-                  HR_Drift_pct: hrDriftPct,
-                  drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
-                  interval_avg_speed_mps: intervalAvgSpeedMps,
-                  interval_pace_sec_per_km: intervalPaceSecPerKm,
-                };
-              }
-            }
-          }
-        }
+  const intensityMeans = intervals.map((interval) => {
+    let sum = 0;
+    let count = 0;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const v = Number(intensity[i]);
+      if (Number.isFinite(v)) {
+        sum += v;
+        count++;
       }
     }
-  }
+    return count ? sum / count : null;
+  });
 
-  const hasIntervals = hrr60Intervals.intervals.length > 0;
-  if (!driftMetrics && !hasIntervals) return null;
-
-  return {
-    ...(driftMetrics || {
-      HR_Drift_bpm: null,
-      HR_Drift_pct: null,
-      drift_flag: null,
-      interval_avg_speed_mps: null,
-      interval_pace_sec_per_km: null,
-    }),
-    ...hrr60Summary,
-    interval_type: intervalType ?? null,
-    racepace_assessment: computeRacePaceAssessmentFromStreams(streams, activity),
-  };
-}
-
-function computeRacePaceAssessmentFromStreams(streams, activity) {
-  const time = streams?.time;
-  const speed = streams?.velocity_smooth;
-  const hr = streams?.heartrate;
-  if (!Array.isArray(time) || !Array.isArray(speed)) return null;
-  const tagPresent = hasIntervalKeyTag(activity);
-
-  const n = Math.min(time.length, speed.length, Array.isArray(hr) ? hr.length : time.length);
-  if (n < 2) return null;
-
-  const timeSlice = time.slice(0, n);
-  const speedSlice = speed.slice(0, n);
-  const hrSlice = Array.isArray(hr) ? hr.slice(0, n) : null;
-
-  let racepaceSecPerKm = extractRacepaceSecPerKm(activity);
-  if (!Number.isFinite(racepaceSecPerKm) || racepaceSecPerKm <= 0) {
-    if (tagPresent) {
-      const speedVals = speedSlice.filter((x) => Number.isFinite(x));
-      const fallbackSpeed = quantile(speedVals, HRR60_INTERVAL_CONFIG.tagSpeedQuantile);
-      if (Number.isFinite(fallbackSpeed) && fallbackSpeed > 0) {
-        racepaceSecPerKm = 1000 / fallbackSpeed;
-      }
-    }
-  }
-  if (!Number.isFinite(racepaceSecPerKm) || racepaceSecPerKm <= 0) return null;
-
-  const paceTolerancePct = 2.5;
-  const paceLower = racepaceSecPerKm * (1 - paceTolerancePct / 100);
-  const paceUpper = racepaceSecPerKm * (1 + paceTolerancePct / 100);
-  const speedLower = paceUpper > 0 ? 1000 / paceUpper : null;
-  const speedUpper = paceLower > 0 ? 1000 / paceLower : null;
-  if (!Number.isFinite(speedLower) || !Number.isFinite(speedUpper)) return null;
-
-  const signal = new Array(n).fill(false);
-  for (let i = 0; i < n; i++) {
-    const v = Number(speedSlice[i]);
-    if (!Number.isFinite(v)) continue;
-    signal[i] = v >= speedLower && v <= speedUpper;
-  }
-
-  const intervals = buildWorkIntervalsFromSignal(timeSlice, signal, { minIntervalSec: 60, maxGapSec: 6 });
-  if (!intervals.length) return null;
+  const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
+  if (validIntensity.length !== intervals.length) return null;
+  const minIntensity = Math.min(...validIntensity);
+  const maxIntensity = Math.max(...validIntensity);
+  if (minIntensity <= 0 || maxIntensity / minIntensity > 1.1) return null;
 
   const timeAt = (i) => {
     const t = Number(timeSlice[i]);
     return Number.isFinite(t) ? t : i;
   };
 
-  const reps = intervals.map((interval) => {
-    let speedSum = 0;
-    let speedCount = 0;
-    let hrSum = 0;
-    let hrCount = 0;
-    let hrMax = null;
+  const intervalHr = intervals.map((interval) => {
+    const startTime = interval.startTime;
+    const endTime = interval.endTime;
+    const duration = interval.duration;
+    const lateStart = startTime + duration * 0.6;
+
+    let lateSum = 0;
+    let lateCount = 0;
+    let peak = -Infinity;
     for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-      const v = Number(speedSlice[i]);
-      if (Number.isFinite(v)) {
-        speedSum += v;
-        speedCount += 1;
+      const t = timeAt(i);
+      const h = Number(hrSlice[i]);
+      if (!Number.isFinite(h)) continue;
+      if (h > peak) peak = h;
+      if (t >= lateStart && t <= endTime) {
+        lateSum += h;
+        lateCount++;
       }
-      if (hrSlice) {
+    }
+    const lateAvg = lateCount ? lateSum / lateCount : null;
+
+    const target = endTime + 60;
+    let hr60 = null;
+    for (let i = interval.endIdx; i < n; i++) {
+      const t = timeAt(i);
+      if (t >= target) {
         const h = Number(hrSlice[i]);
-        if (Number.isFinite(h)) {
-          hrSum += h;
-          hrCount += 1;
-          if (hrMax == null || h > hrMax) hrMax = h;
-        }
+        if (Number.isFinite(h)) hr60 = h;
+        break;
       }
     }
 
-    const avgSpeed = speedCount ? speedSum / speedCount : null;
-    const paceSecPerKm = avgSpeed != null && avgSpeed > 0 ? 1000 / avgSpeed : null;
-    const avgHr = hrCount ? hrSum / hrCount : null;
-
     return {
-      duration: interval.duration,
-      paceSecPerKm,
-      avgHr,
-      hrMax,
-      startTime: interval.startTime,
-      endTime: interval.endTime,
+      lateAvg,
+      peak: Number.isFinite(peak) ? peak : null,
+      hr60,
     };
   });
 
-  const durations = reps.map((r) => r.duration).filter((x) => Number.isFinite(x) && x > 0);
-  const medianDuration = durations.length ? median(durations) : null;
-  const sessionKind =
-    medianDuration == null
-      ? null
-      : medianDuration <= 150
-        ? "short"
-        : medianDuration <= 330
-          ? "vo2ish"
-          : medianDuration <= 750
-            ? "threshold"
-            : "steady";
+  const first = intervalHr[0]?.lateAvg;
+  const last = intervalHr[intervalHr.length - 1]?.lateAvg;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
 
-  const paceVals = reps.map((r) => r.paceSecPerKm).filter((x) => Number.isFinite(x) && x > 0);
-  const meanPace = paceVals.length ? avg(paceVals) : null;
-  const maxDevPct =
-    meanPace != null && paceVals.length
-      ? Math.max(...paceVals.map((p) => (Math.abs(p - meanPace) / meanPace) * 100))
-      : null;
+  const hrDriftBpm = last - first;
+  const hrDriftPct = ((last - first) / first) * 100;
 
-  let paceStabilityScore = 0.6;
-  const reasonFlags = [];
-  if (maxDevPct != null) {
-    if (maxDevPct <= 2.5) paceStabilityScore = 1.0;
-    else if (maxDevPct <= 4.0) paceStabilityScore = 0.6;
-    else paceStabilityScore = 0.2;
-    if (maxDevPct > 4.0) reasonFlags.push("PACE_VAR_HIGH");
-  }
-
-  const hrVals = reps.map((r) => r.avgHr).filter((x) => Number.isFinite(x) && x > 0);
-  let hrDriftScore = 0.6;
-  if (hrVals.length >= 3) {
-    const drift = hrVals[hrVals.length - 1] - hrVals[0];
-    if (drift <= 5) hrDriftScore = 1.0;
-    else if (drift <= 10) hrDriftScore = 0.6;
-    else hrDriftScore = 0.2;
-    if (drift > 10) reasonFlags.push("HR_DRIFT_HIGH");
-  } else {
-    reasonFlags.push("HR_INSUFFICIENT");
-  }
-
-  let recoveryScore = 0.6;
-  if (hrSlice) {
-    const drops = [];
-    for (let i = 0; i < intervals.length - 1; i++) {
-      const current = intervals[i];
-      const next = intervals[i + 1];
-      const rep = reps[i];
-      if (!rep || rep.hrMax == null) continue;
-      const pauseEnd = next.startTime;
-      let lastHr = null;
-      for (let j = current.endIdx; j < next.startIdx; j++) {
-        const t = timeAt(j);
-        if (t > pauseEnd) break;
-        if (pauseEnd - t <= 12) {
-          const h = Number(hrSlice[j]);
-          if (Number.isFinite(h)) lastHr = h;
-        }
-      }
-      if (lastHr == null) continue;
-      drops.push(rep.hrMax - lastHr);
-    }
-    if (drops.length) {
-      const dropMedian = median(drops);
-      if (dropMedian >= 25) recoveryScore = 1.0;
-      else if (dropMedian >= 15) recoveryScore = 0.6;
-      else recoveryScore = 0.2;
-      if (dropMedian < 15) reasonFlags.push("RECOVERY_POOR");
-    }
-  }
-
-  const tAtTarget = reps.reduce((sum, rep) => {
-    if (!Number.isFinite(rep.paceSecPerKm)) return sum;
-    const within = rep.paceSecPerKm >= paceLower && rep.paceSecPerKm <= paceUpper;
-    return within ? sum + (rep.duration ?? 0) : sum;
-  }, 0);
-
-  const timeScore = Math.min(1.0, tAtTarget / (12 * 60));
-
-  let score =
-    paceStabilityScore * 0.4 +
-    hrDriftScore * 0.35 +
-    recoveryScore * 0.15 +
-    timeScore * 0.1;
-
-  const tempC = getActivityTemperatureC(activity);
-  if (Number.isFinite(tempC) && tempC > 20) {
-    score -= 0.08;
-    reasonFlags.push("HEAT_PENALTY");
-  }
-  const elevGain = getActivityElevationGain(activity);
-  if (Number.isFinite(elevGain) && elevGain > 150) {
-    score -= 0.06;
-    reasonFlags.push("HILLS_PENALTY");
-  }
-
-  score = clamp(score, 0, 1);
-
-  const holdBase = sessionKind === "short" ? 2.0 : sessionKind === "vo2ish" ? 2.6 : sessionKind === "threshold" ? 3.2 : 3.6;
-  const holdFactor = 1.6 + (holdBase - 1.6) * score;
-  const tHold = tAtTarget * holdFactor;
-
-  const distanceKey = extractTargetDistanceKey(activity);
-  const distanceBounds = getRaceDistanceBounds(distanceKey);
-  const lowerBound = distanceBounds?.min ?? null;
-  const realistic = lowerBound != null ? tHold >= lowerBound * 0.85 : null;
-  if (realistic === false) reasonFlags.push("DISTANCE_MISMATCH");
-
-  let deltaSecPerKm = 0;
-  if (realistic === false && lowerBound != null) {
-    const gap = Math.max(0, lowerBound - tHold);
-    const basePenalty = getRacePacePenaltyPer5Min(distanceKey);
-    if (basePenalty != null) {
-      deltaSecPerKm = (gap / (5 * 60)) * basePenalty;
-      deltaSecPerKm *= 1.0 + (0.6 - score);
-      deltaSecPerKm = clamp(deltaSecPerKm, 2, 25);
-      if (deltaSecPerKm >= 10) reasonFlags.push("PACE_TOO_FAST");
-    }
-  }
-
-  if (realistic === true && score > 0.85 && lowerBound != null && tHold > lowerBound * 1.05) {
-    deltaSecPerKm = -1 * clamp((score - 0.85) * 20, 1, 6);
-    reasonFlags.push("YOU_CAN_PUSH");
-  }
-
-  const suggestedRacePace = racepaceSecPerKm + deltaSecPerKm;
-
-  let confidence = Math.round(score * 100);
-  if (hrVals.length < 3) confidence = Math.round(confidence * 0.9);
-  if (!hrSlice || recoveryScore === 0.6) confidence = Math.round(confidence * 0.95);
-  confidence = clamp(confidence, 0, 100);
+  const hrr60Drops = intervalHr
+    .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
+    .filter((x) => Number.isFinite(x));
+  const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
 
   return {
-    realistic,
-    score,
-    confidence,
-    delta_s_per_km: deltaSecPerKm,
-    suggestedRacePace,
-    tAtTarget,
-    tHold,
-    sessionKind,
-    reasonFlags,
+    HR_Drift_bpm: hrDriftBpm,
+    HR_Drift_pct: hrDriftPct,
+    HRR60_median: hrr60Median,
+    drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
+    interval_type: intervalType ?? null,
   };
-}
-
-function getActivityTemperatureC(activity) {
-  const candidates = [activity?.average_temp, activity?.temperature, activity?.temp_c, activity?.temp];
-  for (const value of candidates) {
-    const v = Number(value);
-    if (Number.isFinite(v)) return v;
-  }
-  return null;
-}
-
-function getActivityElevationGain(activity) {
-  const candidates = [
-    activity?.total_elevation_gain,
-    activity?.elevation_gain,
-    activity?.elevationGain,
-    activity?.elevation,
-  ];
-  for (const value of candidates) {
-    const v = Number(value);
-    if (Number.isFinite(v)) return v;
-  }
-  return null;
-}
-
-function extractTargetDistanceKey(activity) {
-  const candidates = [
-    activity?.targetDistance,
-    activity?.raceDistance,
-    activity?.eventDistance,
-    activity?.distance_km,
-    activity?.distanceKm,
-    activity?.distanceMeters,
-    activity?.distance_metres,
-    activity?.distance,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) {
-      const norm = normalizeEventDistanceKey(value.trim());
-      if (norm) return norm;
-    }
-    const num = Number(value);
-    if (Number.isFinite(num)) {
-      if (num > 1000) {
-        const km = num / 1000;
-        const key = normalizeEventDistanceKey(`${km.toFixed(1)}k`);
-        if (key) return key;
-      } else if (num >= 1) {
-        const key = normalizeEventDistanceKey(`${num}k`);
-        if (key) return key;
-      }
-    }
-  }
-  return null;
-}
-
-function getRaceDistanceBounds(distanceKey) {
-  const key = String(distanceKey || "").toLowerCase();
-  if (key === "5k") return { min: 16 * 60, max: 35 * 60 };
-  if (key === "10k") return { min: 33 * 60, max: 65 * 60 };
-  if (key === "hm" || key === "half" || key === "half_marathon") return { min: 70 * 60, max: 140 * 60 };
-  if (key === "m" || key === "marathon") return { min: 150 * 60, max: 300 * 60 };
-  return null;
-}
-
-function getRacePacePenaltyPer5Min(distanceKey) {
-  const key = String(distanceKey || "").toLowerCase();
-  if (key === "5k") return 6;
-  if (key === "10k") return 8;
-  if (key === "hm" || key === "half" || key === "half_marathon") return 10;
-  if (key === "m" || key === "marathon") return 12;
-  return null;
 }
 
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
@@ -9906,29 +4143,6 @@ function extractLoad(a) {
 }
 
 // ================= CLASSIFICATION =================
-// NEW: STEADY_T intensity classifier + trend filter
-function classifyIntensity(a) {
-  const intensityClass = hasKeyTag(a)
-    ? INTENSITY_CLASS.KEY_HARD
-    : hasSteadyTTag(a)
-      ? INTENSITY_CLASS.STEADY_T
-      : INTENSITY_CLASS.EASY;
-  return {
-    intensityClass,
-    isKey: intensityClass === INTENSITY_CLASS.KEY_HARD,
-    isSteadyT: intensityClass === INTENSITY_CLASS.STEADY_T,
-    isEasy: intensityClass === INTENSITY_CLASS.EASY,
-  };
-}
-
-function shouldIncludeInTrends(intensityClass) {
-  return intensityClass === INTENSITY_CLASS.EASY;
-}
-
-function isDiagnosticRun(a) {
-  return shouldIncludeInTrends(classifyIntensity(a).intensityClass);
-}
-
 function isIntensity(a) {
   // MVP: key:* bedeutet intensiv
   return hasKeyTag(a);
@@ -9940,32 +4154,15 @@ function isIntensityByHr(a) {
   return hr >= HFMAX * INTENSITY_HR_PCT;
 }
 
-function hasSteadyTTag(a) {
-  const tags = normalizeTags(a?.tags);
-  return tags.some((t) => STEADY_T_TAGS.has(t));
-}
-
-function getIntensityClassForActivity(a) {
-  // NEW: STEADY_T classifier pipeline
-  return classifyIntensity(a).intensityClass;
-}
-
-function isSteadyTActivity(a) {
-  return getIntensityClassForActivity(a) === INTENSITY_CLASS.STEADY_T;
-}
-
 function isAerobic(a) {
   // MVP: nicht key und ausreichend lang
-  // NEW: STEADY_T excluded from diagnostic/aerobic buckets
-  if (!isDiagnosticRun(a)) return false;
+  if (hasKeyTag(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_MIN_SECONDS;
 }
 
 function normalizeTags(tags) {
-  return (tags || [])
-    .map((t) => String(t || "").toLowerCase().trim().replace(/^#+/, ""))
-    .filter(Boolean);
+  return (tags || []).map((t) => String(t || "").toLowerCase().trim()).filter(Boolean);
 }
 
 function isStrength(a) {
@@ -10028,7 +4225,6 @@ async function buildWatchfacePayload(env, endIso) {
 
 
 function isRun(a) {
-  if (isStrength(a)) return false;
   const t = String(a?.type ?? "").toLowerCase();
   return t === "run" || t === "running" || t.includes("run") || t.includes("laufen");
 }
@@ -10045,34 +4241,17 @@ function isBike(a) {
   );
 }
 function hasKeyTag(a) {
-  const tags = normalizeTags(a?.tags);
-  return tags.some((t) => t.startsWith("key:"));
+  return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
 }
 
 function getKeyType(a) {
   // key:schwelle, key:vo2, key:tempo, ...
-  const tags = normalizeTags(a?.tags);
-  for (const s of tags) {
+  const tags = a?.tags || [];
+  for (const t of tags) {
+    const s = String(t || "").toLowerCase().trim();
     if (s.startsWith("key:")) return s.slice(4).trim() || "key";
   }
   return "key";
-}
-
-function isKeyHardType(keyType) {
-  const s = String(keyType || "").toLowerCase();
-  if (!s) return false;
-  if (s.includes("vo2") || s.includes("v02")) return true;
-  if (s.includes("racepace") || s.includes("race pace") || s.includes("race")) return true;
-  if (s.includes("anaerob") || s.includes("anaerobic")) return true;
-  if (s.includes("allout") || s.includes("max")) return true;
-  if (s.includes("schwelle") && (s.includes("hart") || s.includes("hard"))) return true;
-  if (s.includes("threshold") && s.includes("hard")) return true;
-  return false;
-}
-
-function isKeyHardActivity(a) {
-  if (!hasKeyTag(a)) return false;
-  return isKeyHardType(getKeyType(a));
 }
 
 function getIntervalTypeFromActivity(a) {
@@ -10085,15 +4264,13 @@ function getIntervalTypeFromActivity(a) {
 }
 
 function isGA(a) {
-  // NEW: STEADY_T excluded from GA trend windows
-  if (!isDiagnosticRun(a)) return false;
+  if (hasKeyTag(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_MIN_SECONDS;
 }
 
 function isGAComparable(a) {
-  // NEW: STEADY_T excluded from GA comparable windows
-  if (!isDiagnosticRun(a)) return false;
+  if (hasKeyTag(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_COMPARABLE_MIN_SECONDS;
 }
@@ -10199,23 +4376,6 @@ async function fetchIntervalsActivities(env, oldest, newest) {
   return r.json();
 }
 
-async function fetchLatestActivityIso(env, oldest, newest) {
-  const activities = await fetchIntervalsActivities(env, oldest, newest);
-  if (!Array.isArray(activities) || activities.length === 0) return null;
-
-  let latestIso = null;
-  for (const activity of activities) {
-    const raw = activity?.start_date_local || activity?.start_date;
-    if (!raw) continue;
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) continue;
-    const iso = parsed.toISOString();
-    if (!latestIso || parsed > new Date(latestIso)) latestIso = iso;
-  }
-
-  return latestIso;
-}
-
 async function fetchIntervalsStreams(env, activityId, types) {
   const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
   const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
@@ -10266,15 +4426,6 @@ async function fetchIntervalsEvents(env, oldest, newest) {
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
   const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
-  return r.json();
-}
-
-async function fetchOverrideEvents(env, oldest, newest) {
-  const athleteId = mustEnv(env, "ATHLETE_ID");
-  const categories = OVERRIDE_CATEGORIES.join(",");
-  const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}&category=${categories}`;
-  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
-  if (!r.ok) throw new Error(`override events ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
@@ -10360,5 +4511,3 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
 
   return races;
 }
-
-export { buildMondayReportPreview };

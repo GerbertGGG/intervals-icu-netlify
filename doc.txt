@@ -179,47 +179,27 @@ Ermüdung vs. Form – so deutet es ein Coach
 
 7) WELLNESS-KOMMENTAR: AUFBAU
 -----------------------------
-Jeder Tag bekommt einen Kommentar mit mehreren Blöcken. Der Aufbau ist bewusst
-transparent gehalten, damit Entscheidungen nachvollziehbar bleiben:
+Jeder Tag bekommt einen Kommentar mit folgenden Blöcken:
 
-1) 🧭 DAILY REPORT – Entscheidungsebene
-- Readiness-Ampel (grün/gelb/rot)
-- Aktive Warnsignale (z.B. Runfloor-Lücke, Schmerz/Verletzung)
-- Subjektiver Status (wenn vorhanden)
+1) Tages-Status
+- Heute: Kein Lauf / Grundlage (GA) / Schlüsseltraining (Key) / Gemischt (GA+Key)
 
-2) 🧭 TAGESSTATUS
-- Heute: Kein Lauf / GA / Key / Gemischt
-- Kontext (nächster Event + Leitprinzip „Qualität vor Umfang“)
-- Laufbewertung: EF/Drift vs Ø 28 Tage (wenn GA vorhanden)
-- Key-Metriken (HF-Drift + HRR60) bei Key/Intervallen
-
-3) 📈 BELASTUNG & KONSEQUENZ
-- Heutige Belastung (Load-Level)
-- Runfloor-Status (7-Tage Run-Load vs Soll, inkl. Lücke)
-- Konsequenz (z.B. „volumen senken“, „Locker bleiben“, „Key ok“)
-
-4) 🔎 BEGRÜNDUNG & ZAHLEN
-- HRV-Delta vs 7 Tage + Schlafsignal (falls vorhanden)
-- Drift/EF/VDOT-Werte des Tages
-- 7-Tage Load, Ramp/ACWR, Key-Spacing
-- Racepace-Referenz (wenn letzte Intervalle vorhanden)
-
-5) 🫁 AEROBER KONTEXT (nur GA)
-- Trend aus EF-/Drift-Vergleich (28 Tage recent vs prev)
+2) Aerober Kontext (nur GA)
+- Trend aus EF- und Drift-Vergleich (28 Tage recent vs prev)
 - Ampel:
   - 🟢 Aerober Fortschritt: EF rauf UND Drift nicht schlechter (dd <= 0)
   - 🔴 Warnsignal: EF runter UND Drift schlechter (dv < -1.5 und dd > 1)
   - 🟡 sonst stabil/gemischt
 
-6) ✅ EMPFEHLUNG (Konkret)
-- Alltags-Vorschlag (Ruhe, locker, Steady, Steigerungen)
-- Bei Key-Tagen: konkrete Einheit aus dem Workout-Builder (Warmup/Intervalle/Cooldown),
-  inkl. optionaler Anpassung (z.B. Wiederholungen/Erholung) basierend auf
-  den letzten Intervall-Metriken.
+3) Motor-Index
+- siehe Kapitel 6.5
 
-Hinweise:
-- Bench-Reports (bench:<name>) werden weiterhin als Zusatzblock integriert.
-- Der Mindest-Laufreiz (7-Tage Run-Load) bleibt immer enthalten.
+4) Bench Reports (optional)
+- wenn bench:<name> Tag vorhanden ist
+
+5) Mindest-Laufreiz (immer)
+- 7-Tage Summe Run-Load (aus icu_training_load oder hr_load)
+- Ziel: MIN_STIMULUS_7D_RUN_LOAD (Default 150)
 
 8) BENCH REPORTS (bench:<name>)
 -------------------------------
@@ -260,11 +240,9 @@ Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
 9.3 Inhalte der Note
 Die Note enthält:
 - Struktur: Runs/Woche, Minuten, Load, Longruns, Keys, GA/Kurz
-- Key-Typen-Verteilung (falls key:<type> genutzt wird)
 - Belastungsbild: Monotony und Strain (einfaches Modell)
-- Highlights (Findings) und Nächste Schritte (Actions)
+- Fundstücke (Findings) und Nächste Schritte (Actions)
 - optional: GA comparable Messbasis (EF/Drift Median + Qualitäts-Hinweise)
-- Mini-Plan für die nächste Woche (Ziele + Beispielwoche)
 
 Adaptive Fenster:
 - versucht Fenster nacheinander: 14, 28, 42, 56, 84 Tage
@@ -362,99 +340,3 @@ Monotony  = mean(load)/sd(load) über Tageslasten
 Strain    = monotony * sum(load)
 
 ENDE
-
-15) ANHANG – Decision-Engine Feinschliff (MVP V1)
--------------------------------------------------
-Die folgenden Regeln konkretisieren die tägliche Coaching-Engine und machen
-Entscheidungen robuster gegen Tagesrauschen.
-
-15.1 HRV-Negativ-Definition (praxisnah)
----------------------------------------
-HRV gilt als negativ, wenn:
-- hrv_change_vs_7d_pct <= -5%
-- an mindestens 2 aufeinanderfolgenden Tagen
-- und kein klarer Gegenindikator vorliegt
-  (z. B. subjektiv "fresh" und Drift stabil).
-
-Klassifikation:
-- 1 Tag negativ -> 🟠 Warnsignal
-- 2 Tage negativ -> 🔴 Recovery-kritisch (Guardrail greift)
-
-Optional (wenn RMSSD-Rohwert vorhanden):
-- ODER RMSSD < persönlicher 20%-Perzentilwert im 8-Wochen-Fenster.
-
-15.2 Pattern-Matching mit n-of-m
---------------------------------
-"Alle Signale" ist zu streng und "ein Signal reicht" zu weich.
-Deshalb wird Pattern-Matching als n-of-m formuliert.
-
-Beispiel:
-{
-  "id": "PAT_001",
-  "signals": ["drift_high", "hrv_down", "key_felt_hard"],
-  "window_days": 7,
-  "match_rule": { "required": 2, "out_of": 3 },
-  "severity": "high",
-  "action": "no intensity 5-7 days"
-}
-
-Pattern match:
-- mindestens "required" Signale erfüllt
-- innerhalb von "window_days"
-
-Ampel-Ableitung:
-- severity high -> 🔴
-- severity medium -> 🟠
-- severity low -> Hinweis ohne harten Guardrail
-
-15.3 Confidence-Score (0-100, transparent)
--------------------------------------------
-ConfidenceScore = Completeness (0-40) + Consistency (0-40) + History (0-20)
-
-Teil-Scores:
-- Completeness:
-  - Drift vorhanden: +15
-  - HRV vorhanden: +15
-  - Frequency/Load vorhanden: +10
-- Consistency:
-  - Signale zeigen gleiche Richtung: +20
-  - Subjektiv passt dazu: +10
-  - Keine harten Widersprüche: +10
-- History:
-  - AthleteProfile vorhanden: +10
-  - Regel/Pattern mit >=3 Vorkommen: +10
-
-Buckets:
-- >=70  -> Confidence high
-- 40-69 -> Confidence medium
-- <40   -> Confidence low
-
-Textregel:
-- low: konservativ steuern und als Test formulieren (keine harten Aussagen)
-- medium: Empfehlung + If-Then
-- high: klare Coaching-Entscheidung
-
-15.4 Debug-Light für Transparenz (optional)
--------------------------------------------
-Intern kann die Engine eine DecisionTrace führen:
-{
-  "highest_priority_trigger": "PAT_001",
-  "overruled_signals": ["drift_ok"],
-  "guardrail_applied": {
-    "guardrailSeverity": "soft",
-    "blocks": ["KEY_HARD"],
-    "allows": ["STEADY_T"],
-    "guardrailReasons": ["ramp_pct:0.34"],
-    "steadyEligibility": {
-      "inBuild": true,
-      "loadOk": true,
-      "budgetOk": true,
-      "driftOk": true,
-      "hrvOk": true
-    }
-  }
-}
-
-Extern reicht ein Satz zur Konfliktauflösung:
-"Obwohl der Drift heute ok ist, pausieren wir Intensität wegen kumuliertem
-HRV- und Key-Stress."
