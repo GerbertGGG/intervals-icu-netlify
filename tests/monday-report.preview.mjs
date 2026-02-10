@@ -4,8 +4,8 @@ import { buildMondayReportPreview } from "../src/index.js";
 const output = buildMondayReportPreview();
 
 assert.ok(output.includes("🏗️ BLOCK-STATUS"));
-assert.ok(output.includes("🧠 WOCHENFAZIT (Trainer)"));
-assert.ok(output.includes("📐 PLANABWEICHUNG (Soll vs Ist)"));
-assert.ok(output.includes("🎯 WOCHENZIEL (1 Fokus)"));
+assert.ok(output.includes("📊 WOCHENURTEIL (Trainer)"));
+assert.ok(output.includes("🧠 LEARNINGS (nur das Relevante)"));
+assert.ok(output.includes("🎯 ENTSCHEIDUNG & WOCHENZIEL"));
 
 console.log("--- Montags-Report Preview ---\n" + output);
