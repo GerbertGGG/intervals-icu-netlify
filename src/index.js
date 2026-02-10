@@ -1492,124 +1492,21 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     return {
       expectedKeysPerWeek: 0,
       maxKeysPerWeek: 0,
-      allowedKeyTypes: ["steady", "strides"],
-      preferredKeyTypes: ["steady"],
-      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
+      allowedKeyTypes: ["strides"],
+      preferredKeyTypes: ["strides"],
+      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
     };
   }
 
-  if (block === "BASE") {
-    if (dist === "5k" || dist === "10k") {
-      return {
-        expectedKeysPerWeek: 0.5,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
-        preferredKeyTypes: ["steady", "strides"],
-        bannedKeyTypes: ["schwelle", "racepace"],
-      };
-    }
-    if (dist === "m" || dist === "hm") {
-      return {
-        expectedKeysPerWeek: 0.5,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["steady", "strides"],
-        preferredKeyTypes: ["steady"],
-        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
-      };
-    }
-    return {
-      expectedKeysPerWeek: 0.5,
-      maxKeysPerWeek: 1,
-      allowedKeyTypes: ["steady", "strides"],
-      preferredKeyTypes: ["steady"],
-      bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
-    };
-  }
-
-  if (block === "BUILD") {
-    if (dist === "5k") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["vo2_touch", "schwelle"],
-        bannedKeyTypes: ["racepace"],
-      };
-    }
-    if (dist === "10k") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["schwelle", "vo2_touch"],
-        bannedKeyTypes: ["racepace"],
-      };
-    }
-    if (dist === "hm") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "racepace", "steady", "strides"],
-        preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["vo2_touch"],
-      };
-    }
-    if (dist === "m") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["schwelle", "racepace", "steady"],
-        preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["vo2_touch", "strides"],
-      };
-    }
-  }
-
-  if (block === "RACE") {
-    if (dist === "5k") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
-        bannedKeyTypes: ["schwelle"],
-      };
-    }
-    if (dist === "10k") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
-        bannedKeyTypes: ["schwelle"],
-      };
-    }
-    if (dist === "hm") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "steady"],
-        bannedKeyTypes: ["schwelle"],
-      };
-    }
-    if (dist === "m") {
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "steady", "strides"],
-        preferredKeyTypes: ["racepace", "steady"],
-        bannedKeyTypes: ["schwelle", "vo2_touch"],
-      };
-    }
-  }
+  const fromMatrix = PHASE_DISTANCE_RULES?.[dist]?.[block]?.keyRules;
+  if (fromMatrix) return fromMatrix;
 
   return {
     expectedKeysPerWeek: 0.5,
     maxKeysPerWeek: 1,
-    allowedKeyTypes: ["steady", "strides"],
-    preferredKeyTypes: ["steady"],
-    bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
+    allowedKeyTypes: ["strides"],
+    preferredKeyTypes: ["strides"],
+    bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
   };
 }
 
@@ -4051,6 +3948,137 @@ const BLOCK_DESCRIPTION_LIBRARY = {
   },
 };
 
+const PHASE_DISTANCE_RULES = {
+  "5k": {
+    BASE: {
+      allowed: ["GA1 locker", "Langer Lauf", "Strides", "Hügel kurz", "Kraft/Stabi"],
+      limited: ["VO₂-Impulse"],
+      forbidden: ["Schwelle", "Intervalle lang"],
+      keyRules: {
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["strides", "vo2_touch"],
+        preferredKeyTypes: ["strides"],
+        bannedKeyTypes: ["schwelle", "racepace", "steady"],
+      },
+    },
+    BUILD: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "vo2_touch"],
+        preferredKeyTypes: ["vo2_touch", "schwelle"],
+        bannedKeyTypes: ["racepace", "steady", "strides"],
+      },
+    },
+    RACE: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "vo2_touch"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle", "steady", "strides"],
+      },
+    },
+  },
+  "10k": {
+    BASE: {
+      allowed: ["GA1 locker", "Langer Lauf", "Strides", "Hügel locker", "Kraft/Stabi"],
+      limited: ["VO₂-Impulse"],
+      forbidden: ["Tempoläufe", "Intervalle"],
+      keyRules: {
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["strides", "vo2_touch"],
+        preferredKeyTypes: ["strides"],
+        bannedKeyTypes: ["schwelle", "racepace", "steady"],
+      },
+    },
+    BUILD: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "vo2_touch"],
+        preferredKeyTypes: ["schwelle", "vo2_touch"],
+        bannedKeyTypes: ["racepace", "steady", "strides"],
+      },
+    },
+    RACE: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "vo2_touch"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle", "steady", "strides"],
+      },
+    },
+  },
+  hm: {
+    BASE: {
+      allowed: ["GA1 locker", "Langer Lauf", "Hügel locker", "Kraft/Stabi"],
+      limited: ["Strides", "VO₂-Impulse"],
+      forbidden: ["Schwelle", "Racepace"],
+      keyRules: {
+        expectedKeysPerWeek: 0.25,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["strides"],
+        preferredKeyTypes: ["strides"],
+        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
+      },
+    },
+    BUILD: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "racepace"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: ["vo2_touch", "steady", "strides"],
+      },
+    },
+    RACE: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["schwelle", "vo2_touch", "steady", "strides"],
+      },
+    },
+  },
+  m: {
+    BASE: {
+      allowed: ["GA1 locker", "Langer Lauf", "Hügel locker", "Kraft/Stabi"],
+      limited: ["Strides"],
+      forbidden: ["VO₂-Impulse", "Tempoläufe", "Marathonpace"],
+      keyRules: {
+        expectedKeysPerWeek: 0.25,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["strides"],
+        preferredKeyTypes: ["strides"],
+        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch", "steady"],
+      },
+    },
+    BUILD: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "schwelle"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: ["vo2_touch", "steady", "strides"],
+      },
+    },
+    RACE: {
+      keyRules: {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["schwelle", "vo2_touch", "steady", "strides"],
+      },
+    },
+  },
+};
+
 function buildBlockDescriptionLines({ block, eventDistance }) {
   if (!block || !eventDistance) return null;
   if (!["BASE", "BUILD", "RACE"].includes(block)) return null;
@@ -4073,6 +4101,21 @@ function buildBlockDescriptionLines({ block, eventDistance }) {
     lines.push("");
     lines.push("Beispielwoche:");
     blockEntry.week.forEach((item) => lines.push(`- ${item}`));
+  }
+
+  const phaseRules = PHASE_DISTANCE_RULES?.[eventDistance]?.[block];
+  if (phaseRules) {
+    lines.push("");
+    lines.push("Regel-Kompass:");
+    if (phaseRules.allowed?.length) {
+      lines.push(`- ✅ Erlaubt: ${phaseRules.allowed.join(", ")}`);
+    }
+    if (phaseRules.limited?.length) {
+      lines.push(`- ⚠️ Limitiert: ${phaseRules.limited.join(", ")}`);
+    }
+    if (phaseRules.forbidden?.length) {
+      lines.push(`- ❌ Nicht vorgesehen: ${phaseRules.forbidden.join(", ")}`);
+    }
   }
   return lines;
 }
@@ -6836,6 +6879,11 @@ function buildComments(
     lines.push(`↩️ ReEntry: Tag ${reentryInfo.dayIndex}/${totalText} → REENTRY`);
   }
   lines.push(`→ Effektiv: ${effectiveBlockLabel}`);
+  if (blockDescriptionLines?.length) {
+    lines.push("");
+    lines.push("🧱 BLOCK-KOMPASS");
+    blockDescriptionLines.forEach((line) => lines.push(line));
+  }
   lines.push("");
   lines.push("⚡ DAILY SUMMARY");
   lines.push(`- Ampel & Trigger: ${readinessAmpel} ${topTriggerText}`);
