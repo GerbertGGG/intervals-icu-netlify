@@ -4,10 +4,10 @@ USER-DOKUMENTATION – Cloudflare Worker „Intervals Daily Sync“
 1) ZWECK & ÜBERBLICK
 -------------------
 Dieser Worker synchronisiert Daten aus Intervals.icu (Aktivitäten + Streams) in die
-Wellness-Tage und ergänzt tägliche Kalender-Notizen („Daily-Report“) sowie montags eine zusätzliche Kalender-Notiz („Montags-Report“).
+Wellness-Tage (Felder) und schreibt den Tages-Report als tägliche Kalender-Notiz („Daily-Report“) sowie montags eine zusätzliche Kalender-Notiz („Montags-Report“).
 
 Pro Tag (im gewählten Zeitraum):
-- schreibt IMMER einen Wellness-Kommentar (auch wenn kein Lauf stattfindet)
+- schreibt KEINEN Wellness-Kommentar; der Tages-Text steht stattdessen in der Daily-Report NOTE
 - berechnet (wenn möglich) GA-Kennzahlen:
   - VDOT (VDOT-like aus Efficiency-Factor)
   - Drift (HF-Drift aus Streams, optional mit Warmup-Skip)
@@ -44,7 +44,7 @@ Diese Felder werden in Wellness-Tagen gesetzt.
 ------------------------------
 4.1 Wellness pro Tag
 Für jeden Tag im Range wird mindestens geschrieben:
-- comments (Wellness-Kommentar)
+- comments (wird leer gesetzt; Report steht in Daily-Report NOTE)
 
 Optional, wenn ein GA-Lauf vorhanden und geeignet:
 - VDOT (aus EF)
@@ -144,12 +144,12 @@ Stale-Logik:
 - Wenn der letzte comparable GA-Lauf älter als MOTOR_STALE_DAYS (Default 5) ist:
   => Motor = n/a
 
-Motor-Text im Kommentar z.B.:
+Motor-Text im Daily-Report-Text z.B.:
 - "🏎️ Motor-Index: 68/100 (stabil) ↑ | EF Δ +1.2% (28d) | Drift Δ -0.7%-Pkt (14d)"
 
-7) WELLNESS-KOMMENTAR: AUFBAU
+7) DAILY-REPORT TEXT: AUFBAU
 -----------------------------
-Jeder Tag bekommt einen Kommentar mit folgenden Blöcken:
+Jeder Tag bekommt einen Daily-Report-Text mit folgenden Blöcken:
 
 1) Tages-Status
 - Heute: Kein Lauf / Grundlage (GA) / Schlüsseltraining (Key) / Gemischt (GA+Key)
@@ -183,7 +183,7 @@ Beispiele:
 - bench:schwelle-30
 
 8.2 Was passiert an Bench-Tagen?
-Der Worker erzeugt im Kommentar einen Report:
+Der Worker erzeugt im Daily-Report-Text einen Report:
 - Vergleich zu letztem Lauf mit gleichem bench:<name>
 - Metriken:
   - EF: prozentual vs letztes
@@ -206,7 +206,7 @@ Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
 - external_id: daily-report-YYYY-MM-DD
 - start_date_local: YYYY-MM-DDT00:00:00
 - color: blue
-- description: entspricht dem Wellness-Kommentar des Tages
+- description: enthält den Tages-Report-Text (statt Wellness-Kommentar)
 
 10) MONTAGS-DETEKTIV (KALENDER NOTE)
 ----------------------------------

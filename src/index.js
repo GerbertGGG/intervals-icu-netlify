@@ -2237,8 +2237,8 @@ async function computeMaintenance14d(ctx, dayIso) {
       }
     }
 
-    // Daily comment ALWAYS (includes min stimulus ALWAYS)
-    patch.comments = buildComments({
+    // Daily report text (used for calendar NOTE instead of wellness comments)
+    const dailyReportText = buildComments({
       perRunInfo,
       trend,
       motor,
@@ -2265,15 +2265,18 @@ async function computeMaintenance14d(ctx, dayIso) {
       weeksToEvent,
     }, { debug });
 
+    // Explicitly clear wellness comments; report is written only as NOTE.
+    patch.comments = "";
+
 
 
 
 
     patches[day] = patch;
 
-    // Daily NOTE (calendar): mirrors the wellness comment in blue
+    // Daily NOTE (calendar): stores the daily report text in blue
     if (write) {
-      await upsertDailyReportNote(env, day, patch.comments || "");
+      await upsertDailyReportNote(env, day, dailyReportText || "");
     }
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
