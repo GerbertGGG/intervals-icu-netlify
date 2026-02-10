@@ -4364,22 +4364,26 @@ function formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, 
 }
 
 function getWeeklyKeySuggestion(context = {}, debug = {}) {
-  const keyType = context.decisionKeyType || context.intensitySelection?.keyType || "racepace";
+  const requestedKeyType = context.decisionKeyType || context.intensitySelection?.keyType || "racepace";
   const allowedKeyTypes = new Set(context.keyRules?.allowedKeyTypes || []);
-  const keyPolicyAllows = !allowedKeyTypes.size || allowedKeyTypes.has(keyType);
-  const hardAllowed = context.keyHardDecision?.allowed !== false;
-  const hardBlocked = !hardAllowed || context.keySpacing?.ok === false || context.guardrailHardActive;
+  const keyPolicyAllowsRequestedType = !allowedKeyTypes.size || allowedKeyTypes.has(requestedKeyType);
+  const keyType = keyPolicyAllowsRequestedType
+    ? requestedKeyType
+    : (context.keyRules?.preferredKeyTypes || []).find((type) => allowedKeyTypes.has(type)) ||
+      Array.from(allowedKeyTypes)[0] ||
+      requestedKeyType;
+  const spacingEligible = context.keySpacing?.ok !== false;
+  const cadenceEligible = context.keyHardDecision?.allowed !== false;
+  const keyEligible = spacingEligible && cadenceEligible;
   const workoutDebug = context.workoutDebug || debug.__workout || null;
   const hasWorkoutTemplate = !!workoutDebug?.chosenTemplateId;
-  const keyPresent = hasWorkoutTemplate && hardAllowed && keyPolicyAllows;
 
   const rationale = [];
-  if (hardBlocked) {
-    if (!hardAllowed) rationale.push("Hard-Block aktiv: key_hard_decision.allowed=false.");
+  if (!keyEligible) {
+    if (!cadenceEligible) rationale.push("Kein Key: 7T-Key-Budget erreicht (>=2 in 7 Tagen).");
     if (context.keySpacing?.ok === false) rationale.push(`Key-Abstand noch aktiv bis ${context.keySpacing?.nextAllowedIso || "n/a"}.`);
-    if (context.guardrailHardActive) rationale.push("Guardrail-Hard aktiv.");
     return {
-      keyLabel: "kein Key (Hard-Block aktiv)",
+      keyLabel: "kein Key (Cadence-Regel nicht erfüllt)",
       keyType,
       templateId: null,
       reps: null,
@@ -4423,12 +4427,14 @@ function getWeeklyKeySuggestion(context = {}, debug = {}) {
   if (!Number.isFinite(recSec) && Number.isFinite(template?.baseRecSec)) recSec = template.baseRecSec;
 
   const repDistance = Number.isFinite(templateFromLadder?.repDistance) ? templateFromLadder.repDistance : null;
-  const templateId = keyPresent ? workoutDebug?.chosenTemplateId : workoutDebug?.chosenTemplateId || null;
-  const keyLabel = keyPresent
-    ? formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, templateLabel: template?.label })
-    : "kein Key (Policy blockiert)";
+  const templateId = hasWorkoutTemplate ? workoutDebug?.chosenTemplateId : null;
+  const keyLabel = formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, templateLabel: template?.label });
 
-  rationale.push(`Key-Typ: ${formatKeyType(keyType)} (Decision + Policy ${keyPolicyAllows ? "ok" : "nicht erlaubt"}).`);
+  rationale.push(
+    keyPolicyAllowsRequestedType
+      ? `Key-Typ: ${formatKeyType(keyType)} (Decision + Policy ok).`
+      : `Key-Typ skaliert: ${formatKeyType(requestedKeyType)} → ${formatKeyType(keyType)} (Policy-konform).`
+  );
   if (scalingLevel <= -1) rationale.push("Runfloor/Drift aktiv: Key bleibt, aber Downshift via scalingLevel.");
   rationale.push(`Progression-Step: ${progressionStep + 1}${ladder.length ? `/${ladder.length}` : ""}.`);
   if (taperApplied !== "none") rationale.push(`Taper angewendet: ${taperApplied}.`);
