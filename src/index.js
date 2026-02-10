@@ -5426,72 +5426,6 @@ function buildIntensityDebugPayload({
 }
 
 // ================= WORKOUT BUILDER (Key-Reiz Konkret) =================
-const WORKOUT_TEMPLATE_LIBRARY = {
-  racepace: [
-    {
-      id: "RP1",
-      family: "racepace",
-      label: "6×2′ @ racepace",
-      baseReps: 6,
-      baseWorkSec: 120,
-      baseRecSec: 120,
-      warmupRangeMin: [10, 15],
-      cooldownRangeMin: [8, 12],
-    },
-    {
-      id: "RP2",
-      family: "racepace",
-      label: "5×3′ @ racepace",
-      baseReps: 5,
-      baseWorkSec: 180,
-      baseRecSec: 120,
-      warmupRangeMin: [10, 15],
-      cooldownRangeMin: [8, 12],
-    },
-    {
-      id: "RP3",
-      family: "racepace",
-      label: "3×5′ @ racepace",
-      baseReps: 3,
-      baseWorkSec: 300,
-      baseRecSec: 180,
-      warmupRangeMin: [10, 15],
-      cooldownRangeMin: [8, 12],
-    },
-  ],
-  vo2_touch: [
-    {
-      id: "VO2_1",
-      family: "vo2_touch",
-      label: "10×1′ @ vo2_touch",
-      baseReps: 10,
-      baseWorkSec: 60,
-      baseRecSec: 60,
-      warmupRangeMin: [10, 15],
-      cooldownRangeMin: [8, 12],
-    },
-    {
-      id: "VO2_2",
-      family: "vo2_touch",
-      label: "8×90s @ vo2_touch",
-      baseReps: 8,
-      baseWorkSec: 90,
-      baseRecSec: 90,
-      warmupRangeMin: [10, 15],
-      cooldownRangeMin: [8, 12],
-    },
-  ],
-  strides: {
-    id: "STRIDES",
-    family: "strides",
-    label: "8×20s fast/relaxed",
-    baseReps: 8,
-    baseWorkSec: 20,
-    baseRecSec: 75,
-    warmupRangeMin: [10, 15],
-    cooldownRangeMin: [8, 12],
-  },
-};
 
 function normalizeConfidenceLevel(confidenceLevel) {
   const text = String(confidenceLevel || "").toLowerCase();
@@ -5979,6 +5913,89 @@ const INTERVAL_TEMPLATE_LIBRARY = {
     RESET: ["GA: 45–60′ locker", "STR: 6×20″ Steigerungen"],
   },
 };
+
+function parseStructuredWorkoutTemplate(rawTemplate, { id, family, baseRecSec }) {
+  const text = String(rawTemplate || "");
+  const repsMatch = text.match(/(\d+)\s*×/u);
+  const reps = Number.parseInt(repsMatch?.[1] || "", 10);
+  if (!Number.isFinite(reps) || reps <= 0) return null;
+
+  const minutesMatch = text.match(/×\s*(\d+)\s*′/u);
+  const secondsMatch = text.match(/×\s*(\d+)\s*["″]|×\s*(\d+)\s*s\b/u);
+
+  let workSec = null;
+  if (minutesMatch) {
+    workSec = Number.parseInt(minutesMatch[1], 10) * 60;
+  } else if (secondsMatch) {
+    workSec = Number.parseInt(secondsMatch[1] || secondsMatch[2], 10);
+  }
+  if (!Number.isFinite(workSec) || workSec <= 0) return null;
+
+  return {
+    id,
+    family,
+    label: text,
+    baseReps: reps,
+    baseWorkSec: workSec,
+    baseRecSec,
+    warmupRangeMin: [10, 15],
+    cooldownRangeMin: [8, 12],
+  };
+}
+
+function buildWorkoutTemplateLibraryFromIntervalLibrary() {
+  const racepaceTemplates = [];
+  const vo2Templates = [];
+
+  const candidateLibrary = INTERVAL_TEMPLATE_LIBRARY?.default || {};
+  const raceSources = [...(candidateLibrary.BUILD || []), ...(candidateLibrary.RACE || [])].filter((item) =>
+    String(item || "").toUpperCase().includes("RP:"),
+  );
+  const vo2Sources = (candidateLibrary.BUILD || []).filter((item) => String(item || "").toUpperCase().includes("VO2:"));
+  const stridesSource = (candidateLibrary.BASE || []).find((item) => String(item || "").toUpperCase().includes("STR:"));
+
+  raceSources.forEach((source, idx) => {
+    const parsed = parseStructuredWorkoutTemplate(source, {
+      id: `RP${idx + 1}`,
+      family: "racepace",
+      baseRecSec: 120,
+    });
+    if (parsed) racepaceTemplates.push(parsed);
+  });
+
+  vo2Sources.forEach((source, idx) => {
+    const parsed = parseStructuredWorkoutTemplate(source, {
+      id: `VO2_${idx + 1}`,
+      family: "vo2_touch",
+      baseRecSec: 120,
+    });
+    if (parsed) vo2Templates.push(parsed);
+  });
+
+  const stridesTemplate =
+    parseStructuredWorkoutTemplate(stridesSource, {
+      id: "STRIDES",
+      family: "strides",
+      baseRecSec: 75,
+    }) || {
+      id: "STRIDES",
+      family: "strides",
+      label: "6×20″ Strides",
+      baseReps: 6,
+      baseWorkSec: 20,
+      baseRecSec: 75,
+      warmupRangeMin: [10, 15],
+      cooldownRangeMin: [8, 12],
+    };
+
+  return {
+    racepace: racepaceTemplates,
+    vo2_touch: vo2Templates,
+    strides: stridesTemplate,
+  };
+}
+
+const WORKOUT_TEMPLATE_LIBRARY = buildWorkoutTemplateLibraryFromIntervalLibrary();
 
 const LONGRUN_TARGET_LIBRARY = {
   "5k": { BASE: "60–75′", BUILD: "65–80′", RACE: "50–60′", RESET: "60–70′" },
