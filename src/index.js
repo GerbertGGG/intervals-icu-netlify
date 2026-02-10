@@ -1504,7 +1504,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
         expectedKeysPerWeek: 0.5,
         maxKeysPerWeek: 1,
         allowedKeyTypes: ["steady", "strides", "vo2_touch"],
-        preferredKeyTypes: ["vo2_touch"],
+        preferredKeyTypes: ["steady", "strides"],
         bannedKeyTypes: ["schwelle", "racepace"],
       };
     }
@@ -1546,23 +1546,21 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       };
     }
     if (dist === "hm") {
-      const allowRacePace = weeksToEvent != null && weeksToEvent <= 8;
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
-        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
-        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: ["schwelle", "racepace", "steady", "strides"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: ["vo2_touch"],
       };
     }
     if (dist === "m") {
-      const allowRacePace = weeksToEvent != null && weeksToEvent <= 10;
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
-        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
-        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: ["schwelle", "racepace", "steady"],
+        preferredKeyTypes: ["racepace", "schwelle"],
+        bannedKeyTypes: ["vo2_touch", "strides"],
       };
     }
   }
@@ -1590,8 +1588,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
+        allowedKeyTypes: ["racepace", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "steady"],
         bannedKeyTypes: ["schwelle"],
       };
     }
@@ -1599,9 +1597,9 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 1,
-        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
-        bannedKeyTypes: ["schwelle"],
+        allowedKeyTypes: ["racepace", "steady", "strides"],
+        preferredKeyTypes: ["racepace", "steady"],
+        bannedKeyTypes: ["schwelle", "vo2_touch"],
       };
     }
   }
@@ -3952,21 +3950,24 @@ const BLOCK_DESCRIPTION_LIBRARY = {
     blocks: {
       BASE: {
         title: "BASE – 5 KM",
-        goal: ["Aerobe Basis", "Laufökonomie & Grundtempo", "Technik, Kraft, Sehnenrobustheit"],
-        content: ["GA1/GA2-Läufe", "Kurze Steigerungen", "Lockeres Tempogefühl (keine harte Schwelle)"],
-        week: ["40–50 min locker", "6×20 s Steigerungen (voll erholt)", "45 min locker", "Krafttraining (Beine/Core)", "60 min locker"],
+        principle: "Belastbar werden, nicht müde.",
+        goal: ["Aerobe Basis", "Robustheit", "Keine Ermüdung anhäufen"],
+        content: ["GA1 45′/60′/75′", "Langer Lauf 75–100′ locker", "Strides 6–8×15–20″", "VO2-Impulse nur limitiert: 8×20″/40″", "Hügel kurz: 6–8×8–10″", "Kraft/Stabi 2×/Woche"],
+        week: ["60′ GA1 locker", "6×20″ Strides (volle Erholung)", "45′ locker + Lauf-ABC", "8×20″/40″ VO2-Impuls (optional)", "80–90′ langer Lauf locker"],
       },
       BUILD: {
         title: "BUILD – 5 KM",
-        goal: ["VO2max & Tempohärte", "Schnelligkeitsausdauer", "Nähe zur Wettkampfpace"],
-        content: ["Intervalle leicht schneller als 5-km-Pace", "Kurze Schwellenblöcke", "Intensität > Umfang"],
-        week: ["6×800 m @ 5-km-Pace (2–3 min Pause)", "40 min locker", "10×200 m schnell, locker traben", "50 min locker"],
+        principle: "Spezifisch, aber kontrolliert.",
+        goal: ["Schwelle + VO2 entwickeln", "Tempohärte formen"],
+        content: ["Schwelle kurz: 4×6′ / 5×5′", "VO2max: 6×600 m / 5×1000 m", "Tempohärte: 10×400 m", "Langer Lauf ~90′ locker", "Ergänzend: Strides + Kraft"],
+        week: ["4×6′ @ Schwelle", "45′ locker", "6×600 m @ 3–5-km-Pace", "10×400 m kontrolliert flott", "90′ locker"],
       },
       RACE: {
         title: "RACE – 5 KM",
-        goal: ["Ermüdung abbauen", "Nervensystem scharf", "Pace-Gefühl konservieren"],
-        content: ["Volumen ↓", "Intensität bleibt kurz erhalten"],
-        week: ["3×1000 m @ 5-km-Pace", "30 min locker", "4×200 m flott", "Wettkampf"],
+        principle: "Frische schlägt Fitness.",
+        goal: ["Frische gewinnen", "Racepace automatisieren", "nichts Neues"],
+        content: ["Racepace: 6×400 m / 3×1 km", "Schärfe: 8×200 m flott", "GA1: 30–45′", "Strides: 6×20″"],
+        week: ["6×400 m @ 5-km-Pace", "35′ GA1 locker", "8×200 m flott (voll erholt)", "30′ locker + 6×20″", "Wettkampf"],
       },
     },
   },
@@ -3975,21 +3976,24 @@ const BLOCK_DESCRIPTION_LIBRARY = {
     blocks: {
       BASE: {
         title: "BASE – 10 KM",
-        goal: ["Aerobe Kapazität", "Schwellenbasis", "Effizienz im mittleren Tempo"],
-        content: ["GA1 + GA2", "Lange Läufe moderat", "Leichte Tempodauerläufe"],
-        week: ["60 min locker", "3×10 min @ zügig (unter Schwelle)", "45 min locker", "75 min locker"],
+        principle: "Belastbar werden, nicht müde.",
+        goal: ["Aerobe Kapazität", "Umfangstoleranz", "saubere Basis"],
+        content: ["GA1 60′/75′", "Langer Lauf 90–110′", "Strides 6×20″", "VO2 nur selten: 6×20″", "Hügel locker/wellig", "Kraft/Stabi regelmäßig"],
+        week: ["60′ GA1 locker", "6×20″ Strides", "50′ locker wellig", "6×20″ VO2-Impulse (selten)", "95–105′ langer Lauf"],
       },
       BUILD: {
         title: "BUILD – 10 KM",
-        goal: ["Schwelle anheben", "Tempo über längere Dauer halten"],
-        content: ["Längere Intervalle", "Schwellenläufe nahe Wettkampfpace"],
-        week: ["5×1200 m @ 10-km-Pace", "40 min locker", "25 min @ knapp unter Schwelle", "70 min locker"],
+        principle: "Spezifisch, aber kontrolliert.",
+        goal: ["Schwelle anheben", "10-km-Tempo stabilisieren"],
+        content: ["Schwelle: 4×8′ / 3×10′", "Intervalle: 5×1000 m / 4×2000 m", "Tempodauerlauf: 30–40′", "Langer Lauf: 100–120′"],
+        week: ["4×8′ @ Schwelle", "45′ locker", "5×1000 m @ 10-km-Pace", "35′ Tempodauerlauf", "105′ locker"],
       },
       RACE: {
         title: "RACE – 10 KM",
+        principle: "Frische schlägt Fitness.",
         goal: ["Frische + Tempogefühl"],
-        content: [],
-        week: ["2×3000 m @ 10-km-Pace", "30 min locker", "4×200 m", "Wettkampf"],
+        content: ["Racepace: 3×2 km / 2×3 km", "Kontrolle: 5×1 km", "GA1: 40–50′", "Strides regelmäßig"],
+        week: ["3×2 km @ 10-km-Pace", "45′ locker", "5×1 km kontrolliert", "35′ locker + Strides", "Wettkampf"],
       },
     },
   },
@@ -3998,21 +4002,24 @@ const BLOCK_DESCRIPTION_LIBRARY = {
     blocks: {
       BASE: {
         title: "BASE – HM",
-        goal: ["Große aerobe Basis", "Fettstoffwechsel", "Belastungsverträglichkeit"],
-        content: ["Viel GA1", "Langer Lauf", "Kurze Schwellenimpulse"],
-        week: ["70 min locker", "4×12 min @ Schwelle locker", "50 min locker", "90–110 min locker"],
+        principle: "Belastbar werden, nicht müde.",
+        goal: ["Große aerobe Basis", "Belastungsverträglichkeit", "lange ruhige Qualität"],
+        content: ["GA1 60′/75′/90′", "Langer Lauf 100–130′ (Kern)", "Strides optional 4–6×20″", "VO2 sehr selten 4–6×15″", "Hügel locker", "Kraft/Stabi als Schwerpunkt"],
+        week: ["75′ GA1 locker", "60′ locker wellig", "4–6×20″ Strides optional", "105–125′ langer Lauf locker", "Kraft/Stabi"],
       },
       BUILD: {
         title: "BUILD – HM",
-        goal: ["HM-Pace ökonomisch halten", "Schwelle stabilisieren"],
-        content: ["Längere Tempoblöcke", "Pace-nahe Dauerläufe"],
-        week: ["3×5 km @ HM-Pace", "50 min locker", "40 min @ Schwelle-", "100 min locker"],
+        principle: "Spezifisch, aber kontrolliert.",
+        goal: ["HM-Pace ökonomisch halten", "lange Schwelle stabilisieren"],
+        content: ["Lange Schwelle: 3×12′ / 2×20′", "HM-Pace: 3×3 km / 2×5 km", "Tempodauerlauf: 40–60′", "Langer Lauf: 120–150′", "Ergänzend: kurze Strides"],
+        week: ["3×12′ @ Schwelle", "50′ locker", "3×3 km @ HM-Pace", "45′ Tempodauerlauf", "130′ locker"],
       },
       RACE: {
         title: "RACE – HM",
+        principle: "Frische schlägt Fitness.",
         goal: ["Ermüdung raus", "Pace sichern"],
-        content: [],
-        week: ["2×6 km @ HM-Pace", "40 min locker", "3×1000 m flott", "Wettkampf"],
+        content: ["HM-Pace: 2×5 km / 3×3 km", "Rhythmuslauf: 10 km @ HM", "GA1: 40–60′", "Strides leicht"],
+        week: ["2×5 km @ HM-Pace", "50′ locker", "10 km @ HM-Rhythmus", "40′ locker + Strides", "Wettkampf"],
       },
     },
   },
@@ -4021,21 +4028,24 @@ const BLOCK_DESCRIPTION_LIBRARY = {
     blocks: {
       BASE: {
         title: "BASE – MARATHON",
-        goal: ["Aerobe Tiefe", "Muskuloskelettale Robustheit", "Umfangsverträglichkeit"],
-        content: ["Viel GA1", "Lange Läufe", "Technik & Kraft"],
-        week: ["80 min locker", "60 min locker + Steigerungen", "100 min locker", "150–180 min locker"],
+        principle: "Belastbar werden, nicht müde.",
+        goal: ["Aerobe Tiefe", "Robustheit", "Umfangsverträglichkeit"],
+        content: ["GA1 75′/90′", "Langer Lauf 120–150′ (Schlüssel)", "Strides selten 4×15″", "Hügel locker/technisch", "Kraft/Stabi sehr wichtig"],
+        week: ["90′ GA1 locker", "60′ locker technisch-wellig", "4×15″ Strides (selten)", "130–145′ langer Lauf", "Kraft/Stabi"],
       },
       BUILD: {
         title: "BUILD – MARATHON",
+        principle: "Spezifisch, aber kontrolliert.",
         goal: ["Marathonpace stabilisieren", "Ermüdungsresistenz"],
-        content: ["Lange Läufe mit MP-Anteilen", "Schwelle moderat"],
-        week: ["2×10 km @ Marathonpace", "60 min locker", "30 min @ Schwelle-", "28–32 km langer Lauf mit MP-Ende"],
+        content: ["Marathonpace: 3×5 km / 2×8 km", "Schwelle moderat: 3×10′", "Strukturierter Longrun: 28 km mit 3×5 km @ M", "Langer Lauf: 150–180′", "Ergänzend: Kraft + Ökonomie"],
+        week: ["3×5 km @ Marathonpace", "60′ locker", "3×10′ @ Schwelle", "28 km mit 3×5 km @ M", "Kraft/Ökonomie"],
       },
       RACE: {
         title: "RACE – MARATHON",
-        goal: ["Glykogenspeicher füllen", "Frische & Fokus"],
-        content: [],
-        week: ["12 km @ Marathonpace", "45 min locker", "6×100 m Steigerungen", "Wettkampf"],
+        principle: "Frische schlägt Fitness.",
+        goal: ["Frische & Fokus", "Pace automatisieren"],
+        content: ["Marathonpace: 2×6–8 km", "Letzter langer Lauf: 12–16 km @ M (10–14T vorher)", "GA1 kurz & locker", "Aktivierung: 3×1′ flott"],
+        week: ["2×6 km @ Marathonpace", "45′ GA1 locker", "3×1′ flott", "30′ locker", "Wettkampf"],
       },
     },
   },
@@ -4051,6 +4061,7 @@ function buildBlockDescriptionLines({ block, eventDistance }) {
 
   const lines = [];
   lines.push(blockEntry.title);
+  if (blockEntry.principle) lines.push(`Leitprinzip: ${blockEntry.principle}`);
   lines.push("Ziel:");
   blockEntry.goal.forEach((item) => lines.push(`- ${item}`));
   if (blockEntry.content?.length) {
@@ -5961,11 +5972,13 @@ function buildDailyTrainingSuggestionLines({
   keyHardDecision,
   blockState,
   eventDistanceRaw,
+  keyRules,
 }) {
   const blockKey = normalizeBlockKey(blockState?.block);
   const distanceKey = normalizeEventDistanceKey(eventDistanceRaw);
   const intervalTemplate = getTemplateByBlock(INTERVAL_TEMPLATE_LIBRARY, distanceKey, blockKey);
   const longrunTarget = getTemplateByBlock(LONGRUN_TARGET_LIBRARY, distanceKey, blockKey);
+  const allowedTypes = new Set(keyRules?.allowedKeyTypes || []);
 
   let todaySuggestion = "35–55′ locker (GA1) + 4–6 lockere Steigerungen optional.";
   if (todayAction === "kein Lauf") {
@@ -5974,19 +5987,23 @@ function buildDailyTrainingSuggestionLines({
     todaySuggestion = "45–60′ locker + 2–3×8–10′ steady (Schwelle-), 2–3′ traben.";
   }
 
-  const allowKeyHard = keyHardDecision?.allowed && readinessAmpel === "🟢";
-  const allowSteady = steadyDecision?.allowSteady && readinessAmpel === "🟢";
+  const canPush = readinessAmpel === "🟢";
+  const allowKeyHard = canPush && keyHardDecision?.allowed;
+  const allowSteady = canPush && steadyDecision?.allowSteady;
   const intervalSuggestion = allowKeyHard
     ? intervalTemplate
-    : allowSteady
+    : allowSteady && allowedTypes.has("steady")
       ? "2–3×10′ steady (Schwelle-), 2–3′ traben"
-      : "Heute keine Intervalle (locker/Regeneration).";
+      : allowedTypes.has("strides")
+        ? "Neuromuskulär: 4–8×15–20″ Strides, dazwischen volle Erholung."
+        : "Heute keine Intervalle (locker/Regeneration).";
 
   return [
     "🎯 TRAININGSVORSCHLAG",
     `- Heute: ${todaySuggestion}`,
     `- Intervalle (wenn Key erlaubt): ${intervalSuggestion}`,
     `- Longrun (wenn dran): ${longrunTarget} locker`,
+    "- Legende: GA1 = locker aerob, Strides = kurze Steigerungen mit voller Erholung, steady/Schwelle- = kontrolliert zügig unter LT.",
   ];
 }
 
