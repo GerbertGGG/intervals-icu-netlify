@@ -2663,16 +2663,7 @@ function buildComments(
         )}`
       : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
-  lines.push(bullet(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`));
-  lines.push(subBullet(`Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`));
-  if (bikeSubFactor > 0) {
-    const pct = Math.round(bikeSubFactor * 100);
-    lines.push(
-      subBullet(`7T RunFloor-Äquivalent: Ist ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`)
-    );
-  } else {
-    lines.push(subBullet(`7T Run-Floor: Ist ${runLoad7} / Soll ${runTargetText}`));
-  }
+  lines.push(bullet(`RunFloor: ${runLoad7}/${runTargetText} (7-Tage)`));
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
   lines.push(bullet(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`));
