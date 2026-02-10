@@ -189,7 +189,7 @@ const DRIFT_CRITICAL_PCT = 8; // Adjust critical drift threshold here
 const DRIFT_STEADY_T_MAX_PCT = 6.5; // Adjust expected steady_t drift ceiling here
 const DRIFT_TREND_WORSENING_PCT = 1.0; // Δ drift (recent-prev) that triggers delay
 const STEADY_T_MAX_PER_7D = 1;
-const KEY_HARD_MAX_PER_7D = 1;
+const KEY_HARD_MAX_PER_7D = 2;
 const STEADY_T_DELAY_DAYS_RANGE = { min: 5, max: 7 };
 const DECISION_CONF_MIN = 40; // NEW: STEADY_T decision confidence threshold
 const STEADY_T_QUALITY_MIN_MINUTES = 20;
@@ -6329,7 +6329,8 @@ function buildComments(
   const softRedFlags = {
     frequencyBelowSweetspot: freqCount14 != null && freqCount14 < sweetspotLow,
     driftNearWarn: drift != null && drift >= personalDriftWarn - 1 && drift < personalDriftCritical,
-    runFloorBelowTarget: runFloorGap,
+    // Runfloor-Gap bleibt Warnsignal, soll aber Intervalle nicht mehr direkt sperren.
+    runFloorBelowTarget: false,
     sleepStressSuboptimal: !!recoverySignals?.sleepLow || hrv1dConcern,
     isolatedWarningSignal: warningCount === 1,
   };
