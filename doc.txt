@@ -4,7 +4,7 @@ USER-DOKUMENTATION – Cloudflare Worker „Intervals Daily Sync“
 1) ZWECK & ÜBERBLICK
 -------------------
 Dieser Worker synchronisiert Daten aus Intervals.icu (Aktivitäten + Streams) in die
-Wellness-Tage und ergänzt montags eine Kalender-Notiz („Montags-Report“).
+Wellness-Tage und ergänzt tägliche Kalender-Notizen („Daily-Report“) sowie montags eine zusätzliche Kalender-Notiz („Montags-Report“).
 
 Pro Tag (im gewählten Zeitraum):
 - schreibt IMMER einen Wellness-Kommentar (auch wenn kein Lauf stattfindet)
@@ -13,7 +13,8 @@ Pro Tag (im gewählten Zeitraum):
   - Drift (HF-Drift aus Streams, optional mit Warmup-Skip)
 - berechnet einen Motor-Index (0..100) als Trend-Indikator aus „vergleichbaren“ GA-Läufen
 - zeigt IMMER einen Mindest-Laufreiz-Block (7-Tage Run-Load)
-- erstellt montags eine Montags-Report NOTE (Kalender-Event, Kategorie NOTE)
+- erstellt täglich eine Daily-Report NOTE (Kalender-Event, Kategorie NOTE, blau)
+- erstellt montags eine Montags-Report NOTE (Kalender-Event, Kategorie NOTE, orange)
 - erstellt an Bench-Tagen kurze Bench-Reports über Tags „bench:<name>“
 
 2) VORAUSSETZUNGEN
@@ -192,12 +193,27 @@ Zusätzliche Metriken bei nicht-GA Bench (z.B. VO2/Schwelle/Interval):
 - HRR60: Herzfrequenzabfall 60 Sekunden nach Peak
 - VO2-Zeit: Zeit >= 90% HFmax (HFMAX ist fest im Code: 173)
 
-9) MONTAGS-DETEKTIV (KALENDER NOTE)
-----------------------------------
+
+9) DAILY-REPORT (KALENDER NOTE)
+--------------------------------
 9.1 Wann?
-- Jeden Montag (Monday-Erkennung über UTC)
+- Täglich pro verarbeitetem Tag
 
 9.2 Was wird geschrieben?
+Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
+- category: NOTE
+- name: Daily-Report
+- external_id: daily-report-YYYY-MM-DD
+- start_date_local: YYYY-MM-DDT00:00:00
+- color: blue
+- description: entspricht dem Wellness-Kommentar des Tages
+
+10) MONTAGS-DETEKTIV (KALENDER NOTE)
+----------------------------------
+10.1 Wann?
+- Jeden Montag (Monday-Erkennung über UTC)
+
+10.2 Was wird geschrieben?
 Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
 - category: NOTE
 - name: Montags-Report
@@ -206,7 +222,7 @@ Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
 - color: orange
 - description: Diagnose-Text (mehrzeilig)
 
-9.3 Inhalte der Note
+10.3 Inhalte der Note
 Die Note enthält:
 - Struktur: Runs/Woche, Minuten, Load, Longruns, Keys, GA/Kurz
 - Belastungsbild: Monotony und Strain (einfaches Modell)
@@ -217,20 +233,20 @@ Adaptive Fenster:
 - versucht Fenster nacheinander: 14, 28, 42, 56, 84 Tage
 - nimmt das erste Fenster, das als „ok“ gilt
 
-10) API / NUTZUNG
+11) API / NUTZUNG
 -----------------
-10.1 Health Check
+11.1 Health Check
 GET /
 Antwort: "ok"
 
-10.2 Watchface Endpoint
+11.2 Watchface Endpoint
 GET /watchface
 Antwort: JSON (CORS-freundlich, kein Cache).
 
 Optional:
 - date=YYYY-MM-DD (sonst „heute“)
 
-10.3 Sync Endpoint
+11.3 Sync Endpoint
 GET /sync
 
 Parameter:
@@ -263,7 +279,7 @@ Beispiele:
 - /sync?days=7&write=false&debug=true
 - /sync?from=2026-01-01&to=2026-01-14&write=true&warmup_skip=900
 
-11) SCHEDULED TRIGGER
+12) SCHEDULED TRIGGER
 ---------------------
 Der Worker hat scheduled():
 - läuft täglich
@@ -273,7 +289,7 @@ Der Worker hat scheduled():
 
 Ziel: Jeden Tag mindestens Kommentar + Mindest-Laufreiz-Block.
 
-12) TYPISCHE WORKFLOWS
+13) TYPISCHE WORKFLOWS
 ----------------------
 A) Erstes Setup testen (ohne Schreiben)
 1) /sync?days=7&write=false&debug=true
@@ -291,13 +307,13 @@ C) Drift-Probleme debuggen
   - drift_raw
   - drift_source (z.B. streams_negative_dropped)
 
-13) GRENZEN & HINWEISE
+14) GRENZEN & HINWEISE
 ----------------------
 - Negative Drift wird verworfen (Drift < 0 => null).
 - Bei mehreren GA-Läufen am Tag können VDOT/Drift überschrieben werden.
 - Monday-Erkennung basiert auf UTC.
 
-14) GLOSSAR
+15) GLOSSAR
 -----------
 GA        = Grundlagenlauf (locker, >=30min, nicht key)
 Key       = intensiver Lauf (Tag key:*)

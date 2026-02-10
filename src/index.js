@@ -2271,6 +2271,11 @@ async function computeMaintenance14d(ctx, dayIso) {
 
     patches[day] = patch;
 
+    // Daily NOTE (calendar): mirrors the wellness comment in blue
+    if (write) {
+      await upsertDailyReportNote(env, day, patch.comments || "");
+    }
+
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
     if (isMondayIso(day)) {
       let detectiveNoteText = null;
@@ -3409,6 +3414,37 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
     name,
     description,
     color: "orange",
+    external_id,
+  });
+}
+
+// Create/update a blue NOTE event for the daily wellness report
+async function upsertDailyReportNote(env, dayIso, noteText) {
+  const external_id = `daily-report-${dayIso}`;
+  const name = "Daily-Report";
+  const description = noteText;
+
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
+
+  if (existing?.id) {
+    await updateIntervalsEvent(env, existing.id, {
+      category: "NOTE",
+      start_date_local: `${dayIso}T00:00:00`,
+      name,
+      description,
+      color: "blue",
+      external_id,
+    });
+    return;
+  }
+
+  await createIntervalsEvent(env, {
+    category: "NOTE",
+    start_date_local: `${dayIso}T00:00:00`,
+    name,
+    description,
+    color: "blue",
     external_id,
   });
 }
