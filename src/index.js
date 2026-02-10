@@ -1924,7 +1924,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       let drift = null;
       let drift_raw = null;
       let drift_source = "none";
-      let speed_cv = null;
       let intervalMetrics = null;
 
       if (ga && !isKey) {
@@ -1933,7 +1932,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
           const ds = computeDriftAndStabilityFromStreams(streams, ctx.warmupSkipSec);
           drift_raw = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
-          speed_cv = Number.isFinite(ds?.speed_cv) ? ds.speed_cv : null;
 
           drift = drift_raw;
 
@@ -1979,7 +1977,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
         drift,
         drift_raw,
         drift_source,
-        speed_cv,
         load,
         intervalMetrics,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
@@ -2023,12 +2020,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
-    let recoverySignals = null;
-    try {
-      recoverySignals = await computeRecoverySignals(ctx, env, day);
-    } catch {
-      recoverySignals = null;
-    }
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
@@ -2246,8 +2237,8 @@ async function computeMaintenance14d(ctx, dayIso) {
       }
     }
 
-    // Daily report text ALWAYS (includes min stimulus ALWAYS)
-    const dailyReportText = buildComments({
+    // Daily comment ALWAYS (includes min stimulus ALWAYS)
+    patch.comments = buildComments({
       perRunInfo,
       trend,
       motor,
@@ -2270,24 +2261,15 @@ async function computeMaintenance14d(ctx, dayIso) {
       aerobicFloorActive,
       fatigue,
       longRunSummary,
-      recoverySignals,
       bikeSubFactor,
       weeksToEvent,
     }, { debug });
-
-    // Do not write into wellness comment field anymore.
-    patch.comments = "";
 
 
 
 
 
     patches[day] = patch;
-
-    if (write) {
-      await upsertDailyReportNote(env, day, dailyReportText);
-    }
-    if (debug) notesPreview[`${day}:daily`] = dailyReportText;
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
     if (isMondayIso(day)) {
@@ -2326,37 +2308,6 @@ async function computeMaintenance14d(ctx, dayIso) {
     patches: debug ? patches : undefined,
     debug: debug ? ctx.debugOut : undefined,
   };
-}
-
-// Create/update a NOTE event for the daily report
-async function upsertDailyReportNote(env, dayIso, noteText) {
-  const external_id = `daily-report-${dayIso}`;
-  const name = "Daily-Report";
-  const description = noteText;
-
-  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
-  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
-
-  if (existing?.id) {
-    await updateIntervalsEvent(env, existing.id, {
-      category: "NOTE",
-      start_date_local: `${dayIso}T00:00:00`,
-      name,
-      description,
-      color: "blue",
-      external_id,
-    });
-    return;
-  }
-
-  await createIntervalsEvent(env, {
-    category: "NOTE",
-    start_date_local: `${dayIso}T00:00:00`,
-    name,
-    description,
-    color: "blue",
-    external_id,
-  });
 }
 
 // Representative GA run: prefer non-key GA; fallback to key GA for EF/VDOT.
@@ -2423,103 +2374,6 @@ function buildAerobicTrendLine(trend) {
   if (dv <= -1.5 && dd >= 1) return `GA-Form rückläufig (VDOT ↓ ${dvText}, HR-Drift ↑ ${ddText})`;
   if (dv >= 1.5 && dd <= 0) return `GA-Form verbessert (VDOT ↑ ${dvText}, HR-Drift ↓ ${ddText})`;
   return `GA-Form stabil/gemischt (VDOT ${vdotArrow} ${dvText}, HR-Drift ${driftArrow} ${ddText})`;
-}
-
-function extractSleepHoursFromWellness(wellness) {
-  if (!wellness) return null;
-  const candidates = [
-    wellness.sleep,
-    wellness.sleep_hours,
-    wellness.sleep_duration,
-    wellness.sleep_time,
-    wellness.sleep_hr,
-  ];
-  for (const value of candidates) {
-    const num = Number(value);
-    if (!Number.isFinite(num) || num <= 0) continue;
-    if (num > 24) return round(num / 60, 2);
-    return num;
-  }
-  return null;
-}
-
-function extractHrvFromWellness(wellness) {
-  if (!wellness) return null;
-  const candidates = [
-    wellness.hrv,
-    wellness.hrv_rmssd,
-    wellness.hrv_sdnn,
-  ];
-  for (const value of candidates) {
-    const num = Number(value);
-    if (!Number.isFinite(num) || num <= 0) continue;
-    return num;
-  }
-  return null;
-}
-
-function buildRecoverySignalLines(recoverySignals) {
-  if (!recoverySignals) return [];
-  const lines = [];
-  const { sleepHours, sleepBaseline, sleepDeltaPct, hrv, hrvBaseline, hrvDeltaPct, sleepLow, hrvLow } = recoverySignals;
-  const hasSleep = sleepHours != null;
-  const hasHrv = hrv != null;
-  if (!hasSleep && !hasHrv) return [];
-  const parts = [];
-  if (hasSleep) {
-    const sleepDeltaText = sleepBaseline != null ? ` (${sleepDeltaPct > 0 ? "+" : ""}${sleepDeltaPct.toFixed(0)}% vs 7T)` : "";
-    parts.push(`Schlaf ${sleepHours.toFixed(1)}h${sleepDeltaText}`);
-  }
-  if (hasHrv) {
-    const hrvDeltaText = hrvBaseline != null ? ` (${hrvDeltaPct > 0 ? "+" : ""}${hrvDeltaPct.toFixed(0)}% vs 7T)` : "";
-    parts.push(`HRV ${Math.round(hrv)}${hrvDeltaText}`);
-  }
-  lines.push(`Recovery-Check: ${parts.join(" | ")}.`);
-  if (sleepLow || hrvLow) {
-    const issues = [];
-    if (sleepLow) issues.push("Schlaf");
-    if (hrvLow) issues.push("HRV");
-    lines.push(`Hinweis: ${issues.join(" & ")} niedriger als üblich → Ermüdung wahrscheinlicher.`);
-  }
-  return lines;
-}
-
-async function computeRecoverySignals(ctx, env, dayIso) {
-  const today = await fetchWellnessDay(ctx, env, dayIso);
-  const sleepToday = extractSleepHoursFromWellness(today);
-  const hrvToday = extractHrvFromWellness(today);
-  if (sleepToday == null && hrvToday == null) {
-    return null;
-  }
-  const priorDays = [];
-  for (let i = 1; i <= 7; i += 1) {
-    priorDays.push(isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000)));
-  }
-  const sleepVals = [];
-  const hrvVals = [];
-  for (const iso of priorDays) {
-    const wellness = await fetchWellnessDay(ctx, env, iso);
-    const sleep = extractSleepHoursFromWellness(wellness);
-    const hrv = extractHrvFromWellness(wellness);
-    if (sleep != null) sleepVals.push(sleep);
-    if (hrv != null) hrvVals.push(hrv);
-  }
-  const sleepBaseline = sleepVals.length ? avg(sleepVals) : null;
-  const hrvBaseline = hrvVals.length ? avg(hrvVals) : null;
-  const sleepDeltaPct = sleepBaseline ? ((sleepToday - sleepBaseline) / sleepBaseline) * 100 : 0;
-  const hrvDeltaPct = hrvBaseline ? ((hrvToday - hrvBaseline) / hrvBaseline) * 100 : 0;
-  const sleepLow = sleepBaseline != null && sleepToday < sleepBaseline * 0.9;
-  const hrvLow = hrvBaseline != null && hrvToday < hrvBaseline * 0.9;
-  return {
-    sleepHours: sleepToday,
-    sleepBaseline,
-    sleepDeltaPct,
-    hrv: hrvToday,
-    hrvBaseline,
-    hrvDeltaPct,
-    sleepLow,
-    hrvLow,
-  };
 }
 
 function buildNextRunRecommendation({
@@ -2606,87 +2460,6 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
   return `Übergang aktiv: Rad zählt ${pct}% zum RunFloor (aktuell ${weeksText} bis Event, 0% ab ≤${TRANSITION_BIKE_EQ.endWeeks} Wochen).`;
 }
 
-function formatWeeksOut(weeksToEvent) {
-  if (!Number.isFinite(weeksToEvent)) return "n/a";
-  return `${Math.max(0, Math.round(weeksToEvent))}`;
-}
-
-function inferWeekIntent({ blockState, runFloorState, eventDistance }) {
-  const phase = blockState?.activeBlock || "BASE";
-  const stabilityOK = !!runFloorState?.stabilityOK;
-  if (phase === "RACE") return `Primäres Ziel dieser Woche: Spezifität schärfen + Frische schützen (${eventDistance || "Event"}-Fokus).`;
-  if (phase === "BUILD") return "Primäres Ziel dieser Woche: aerobe Stabilisierung + Frequenzaufbau mit kontrollierter Spezifität.";
-  if (phase === "RESET") return "Primäres Ziel dieser Woche: Erholung sichern + technische Sauberkeit wiederherstellen.";
-  return stabilityOK
-    ? "Primäres Ziel dieser Woche: Belastbarkeit stabil halten und den aeroben Unterbau festigen."
-    : "Primäres Ziel dieser Woche: aerobe Stabilisierung + Frequenzaufbau (nicht über Tempo erzwingen).";
-}
-
-function inferNotImportantNow({ blockState, weeksToEvent }) {
-  const phase = blockState?.activeBlock || "BASE";
-  if (phase === "BASE" || phase === "RESET") return "Aktuell NICHT wichtig: harte Pace-Ziele oder zusätzliche VO2-Spitzen.";
-  if (phase === "BUILD" && Number.isFinite(weeksToEvent) && weeksToEvent > 4) {
-    return "Aktuell NICHT wichtig: Race-Pace ausreizen – zuerst Tragfähigkeit aufbauen.";
-  }
-  return "Aktuell NICHT wichtig: unnötiger Zusatzreiz außerhalb des Wochenziels.";
-}
-
-function classifyGaDriftPct(driftPct) {
-  if (!Number.isFinite(driftPct) || driftPct < 0) return null;
-  if (driftPct <= 3) {
-    return {
-      zone: "🟢",
-      label: "sehr gut",
-      summary: "saubere aerobe Basis",
-      action: "Perfekter GA-Lauf.",
-    };
-  }
-  if (driftPct <= 5) {
-    return {
-      zone: "🟡",
-      label: "ok / Grenzbereich",
-      summary: "aerob solide, aber nur begrenzt steigerbar",
-      action: "Noch akzeptabel – ggf. Dauer oder Tempo leicht anpassen.",
-    };
-  }
-  if (driftPct <= 8) {
-    return {
-      zone: "🟠",
-      label: "Warnsignal",
-      summary: "über aktueller aerober Kapazität",
-      action: "Kein klassischer GA-Lauf mehr – eher Tempo senken oder kürzen.",
-    };
-  }
-  return {
-    zone: "🔴",
-    label: "klar anaerob geprägt",
-    summary: "deutliche Entkopplung",
-    action: "Für GA-Ziel zu hoch, Erholungskosten steigen.",
-  };
-}
-
-function buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary }) {
-  const rep = pickRepresentativeGARun(perRunInfo);
-  if (!rep || !Number.isFinite(rep.drift) || rep.drift < 0) return [];
-  const drift = rep.drift;
-  const bucket = classifyGaDriftPct(drift);
-  if (!bucket) return [];
-  const lines = [];
-  lines.push(`Drift heute: ${bucket.zone} ${drift.toFixed(1)}% (${bucket.label}) – ${bucket.summary}.`);
-  const context = [];
-  if (recoverySignals?.hrvLow) context.push("HRV niedriger als 7T");
-  if (recoverySignals?.sleepLow) context.push("Schlaf niedriger als 7T");
-  if ((longRunSummary?.minutes ?? 0) >= 75) context.push("längerer Lauf");
-  if (context.length) {
-    lines.push(`Kontext: erhöhte Drift kann auch durch ${context.join(" / ")} erklärt sein (nicht automatisch "schlechte Form").`);
-  }
-  if (drift > 7) {
-    lines.push("Coach-Logik: Drift >7% signalisiert limitierte aerobe Effizienz – metabolische Kosten steigen schneller als der Nutzen.");
-  }
-  lines.push(`Einordnung: ${bucket.action}`);
-  return lines;
-}
-
 // ================= COMMENT =================
 function buildComments(
   {
@@ -2712,7 +2485,6 @@ function buildComments(
     aerobicFloorActive,
     fatigue,
     longRunSummary,
-    recoverySignals,
     bikeSubFactor,
     weeksToEvent,
   },
@@ -2727,83 +2499,39 @@ function buildComments(
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
   const eventDateText = eventDate ? eventDate : "n/a";
-  const weeksOut = Number.isFinite(modeInfo?.weeksToEvent) ? modeInfo.weeksToEvent : null;
   const confidence = trend?.confidence ?? "niedrig";
-  const dv = Number.isFinite(trend?.dv) ? trend.dv : null;
-  const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
 
   const lines = [];
-  lines.push("1) 🧭 Tagesstatus");
-  lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}.`);
-  lines.push(`Mode/Event: ${policy?.label ?? "OPEN"} | ${eventDateText} | ${eventDistance}`);
-  lines.push(`Makrozyklus: ${blockState?.activeBlock || "BASE"} | ${formatWeeksOut(weeksOut)} Wochen out.`);
-  lines.push(inferWeekIntent({ blockState, runFloorState, eventDistance }));
-  lines.push(inferNotImportantNow({ blockState, weeksToEvent: weeksOut }));
+  lines.push("ℹ️ Tagesstatus");
+  lines.push(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}`);
+  lines.push(`Mode: ${policy?.label ?? "OPEN"} | Event: ${eventDateText} (${eventDistance})`);
   lines.push("");
-  lines.push("2) 🫁 Aerober Status");
-  if (dv == null || dd == null) {
-    lines.push(`Diagnose: keine belastbare GA-Tendenz (Confidence ${confidence}).`);
-  } else {
-    const vdotText = `${dv > 0 ? "+" : ""}${dv.toFixed(1)}%`;
-    const driftText = `${dd > 0 ? "+" : ""}${dd.toFixed(1)}%-Pkt`;
-    if (dv <= -1.5 && dd >= 1) {
-      lines.push(`Diagnose: aerober Status rückläufig (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
-    } else if (dv >= 1.5 && dd <= 0) {
-      lines.push(`Diagnose: aerober Status verbessert (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
-    } else {
-      lines.push(`Diagnose: aerober Status gemischt/stabil (VDOT ${vdotText}, HR-Drift ${driftText}, Confidence ${confidence}).`);
-    }
+  lines.push(`🟠 Aerober Status (Confidence: ${confidence})`);
+  lines.push(buildAerobicTrendLine(trend));
+  lines.push(`→ letzter vergleichbarer GA-Lauf: ${trend?.lastComparableDate ?? "n/a"}`);
+  if (trend?.recentCount != null && trend?.prevCount != null) {
+    const windowText =
+      trend?.prevStart && trend?.recentStart && trend?.windowEnd
+        ? `${trend.prevStart}–${trend.recentStart}–${trend.windowEnd}`
+        : "n/a";
+    lines.push(`Messbasis: ${trend.recentCount}/${trend.prevCount} GA | Fenster: ${windowText}`);
   }
-  const recoveryLines = buildRecoverySignalLines(recoverySignals);
-  if (recoveryLines.length) {
-    lines.push(...recoveryLines);
-  }
-  const driftTodayLines = buildGaDriftInterpretationLines({ perRunInfo, recoverySignals, longRunSummary });
-  if (driftTodayLines.length) {
-    lines.push(...driftTodayLines);
-  }
-  const repRun = pickRepresentativeGARun(perRunInfo);
-  if (repRun) {
-    const subjectiveLoad = Number.isFinite(repRun.drift) && repRun.drift > 6
-      ? "wirkte schwerer als geplant"
-      : "wirkte voraussichtlich kontrolliert";
-    lines.push(`Subjektiv (Proxy): Einheit ${subjectiveLoad}; bitte RPE + Beinstatus kurz notieren.`);
-    if (Number.isFinite(repRun.speed_cv)) {
-      const economyLabel = repRun.speed_cv <= 0.1 ? "technisch sauber" : "ökonomisch unruhig";
-      lines.push(`Technik/Ökonomie: Pace-CV ${(repRun.speed_cv * 100).toFixed(1)}% (${economyLabel}) – lieber kurz & sauber statt lang und schlurfend.`);
-    }
-  } else {
-    lines.push("Subjektiv: Kein GA-Check heute – optional RPE, Beinstatus und mentale Frische im Kommentar erfassen.");
-  }
-  const aerobicRules = [];
-  if (dd != null && dd > 0.5) {
-    aerobicRules.push("Regel: Easy-Tempo runter oder Lauf um 10–15′ kürzen (nächste 3–5 Tage).");
-  } else {
-    aerobicRules.push("Regel: Easy-Tempo halten, kein Tempo-Drift provozieren (nächste 3–5 Tage).");
-  }
-  const avg7Raw = Number(runFloorState?.avg7 ?? 0);
-  const avg21Raw = Number(runFloorState?.avg21 ?? 0);
-  const avg7 = Math.round(avg7Raw);
-  const avg21 = Math.round(avg21Raw);
-  const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
-  const activeDays21 = Number(runFloorState?.activeDays21 ?? 0);
-  const activeGoalDays = RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN;
-  const steadyAllowed = runFloorState?.stabilityOK && avg7Raw >= floorDaily && activeDays21 >= activeGoalDays;
-  aerobicRules.push(steadyAllowed ? "Regel: max. 1× steady kurz (20–25′) nur wenn frisch." : "Regel: kein steady push in den nächsten 3–5 Tagen.");
-  aerobicRules.push("Regel: Strides optional nach easy, nur wenn frisch.");
-  lines.push(...aerobicRules.slice(0, 2));
   lines.push("");
-  lines.push("3) 💪 Robustheit");
+  lines.push("🧱 Robustheit");
   if (robustness) {
-    const strengthMinutes7d = Math.round(robustness.strengthMinutes7d ?? 0);
-    const robustnessLabel = robustness.strengthOk ? "im Aufbau, aber stabil" : "im Aufbau, aber wackelig";
-    lines.push(`Diagnose: Kraft/Stabi ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T) – ${robustnessLabel}.`);
+    const strengthMinutes7d = robustness.strengthMinutes7d ?? 0;
+    lines.push(
+      `Krafttraining: ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T)${robustness.strengthOk ? "" : " ⚠️"}`
+    );
+    lines.push(
+      `➡️ ${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 60 min Kraft/Stabi."}`
+    );
   } else {
-    lines.push("Diagnose: Kraft/Stabi nicht verfügbar.");
+    lines.push("Krafttraining: n/a");
+    lines.push("➡️ Robustheit nicht verfügbar.");
   }
   lines.push("");
-  lines.push("4) 📈 Belastung & Key-Check");
-  lines.push("Belastung:");
+  lines.push("📉 Belastung & Progression");
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
   const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
@@ -2811,8 +2539,14 @@ function buildComments(
   const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
   const runFloorWeekly = Math.round(runFloorState?.floorTarget ?? 0);
   const runFloorWeeklyText = runFloorWeekly > 0 ? runFloorWeekly : "n/a";
+  const avg21Raw = Number(runFloorState?.avg21 ?? 0);
+  const avg7Raw = Number(runFloorState?.avg7 ?? 0);
+  const avg21 = Math.round(avg21Raw);
+  const avg7 = Math.round(avg7Raw);
   const sum21Raw = Number(runFloorState?.sum21 ?? 0);
   const sum21 = Math.round(sum21Raw);
+  const activeDays21 = Number(runFloorState?.activeDays21 ?? 0);
+  const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
   const deloadReady = shouldTriggerDeload(sum21Raw, activeDays21, runFloorState?.deloadActive);
   const deloadTargetRange =
     runFloorWeekly > 0
@@ -2823,59 +2557,96 @@ function buildComments(
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
   if (bikeSubFactor > 0) {
     const pct = Math.round(bikeSubFactor * 100);
-    lines.push(`- RunFloor: 7T RunFloor-Äquivalent ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%).`);
+    lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
+    lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
+    lines.push(`• 7T RunFloor-Äquivalent: Ist ${runEq7} / Soll ${runTargetText} (Run ${runLoad7} + Rad ${bikeLoad7} × ${pct}%)`);
   } else {
-    lines.push(`- RunFloor: 7T Run-Floor ${runLoad7} / Soll ${runTargetText}.`);
+    lines.push(`RunFloor: Ziel ${runFloorWeeklyText}/Woche (Soll ${floorDaily}/Tag)`);
+    lines.push(`• Ist: 7T Ø ${avg7}/Tag, 21T Ø ${avg21}/Tag`);
+    lines.push(`• 7T Run-Floor: Ist ${runLoad7} / Soll ${runTargetText}`);
   }
-  const causeLine =
-    activeDays21 < activeGoalDays
-      ? `Ursache: zu wenige aktive Tage (${activeDays21}/${activeGoalDays}) → Häufigkeit fehlt.`
-      : `Ursache: Laufdauer/Load pro Tag zu niedrig (aktive Tage ${activeDays21}/${activeGoalDays} ok).`;
-  lines.push(`- ${causeLine}`);
-  if (activeDays21 < activeGoalDays) {
-    lines.push("- To-do: +2 easy Läufe 35–45′ in den nächsten 7 Tagen.");
-  } else {
-    lines.push("- To-do: 1–2 Läufe um 10–15′ verlängern (easy).");
-  }
-  lines.push("- Reaktionsregel: Wenn Drift bei Easy erneut >6% ist → Lauf kürzen/abbrechen und Folgetag max. 30′ locker.");
-  lines.push("- Reaktionsregel: Wenn HRV/Schlaf klar unter 7T liegt → nur easy + Technik, kein steady.");
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
-  if (eventDistance === "5 km" && longRunMinutes > 0) {
-    lines.push(`- Longrun: ${longRunMinutes}′ als Basis/Robustheit – immer easy.`);
-  }
+  const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
+  lines.push(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`);
+  lines.push(`• Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`);
+  lines.push("Progression (Deload bei 21T Summe + aktive Tage):");
   if (runFloorState?.deloadActive) {
-    lines.push(`- Hinweis: Deload aktiv (Ziel ${deloadTargetRange} Run-Load/Woche).`);
+    const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
+    lines.push(`• Deload läuft${endText} (Ziel: ${deloadTargetRange} Run-Load/Woche).`);
   } else if (deloadReady) {
     lines.push(
-      `- Hinweis: Deload bereit (21T Summe ${sum21} & aktive Tage ${activeDays21}) → Ziel ${deloadTargetRange} Run-Load/Woche.`
+      `• 21T Summe ${sum21} ≥ ${RUN_FLOOR_DELOAD_SUM21_MIN} & aktive Tage ${activeDays21} ≥ ${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} → Deload (Ziel: ${deloadTargetRange} Run-Load/Woche).`
+    );
+  } else {
+    const stabilityText = runFloorState?.stabilityOK ? "Stabilität ok" : "Stabilität wackelig";
+    lines.push(
+      `• 21T Summe ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN}, aktive Tage ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} – ${stabilityText}.`
     );
   }
+  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
+  lines.push(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`);
+  const deloadExplanation = buildDeloadExplanation(runFloorState);
+  if (deloadExplanation) lines.push(`Deload-Hinweis: ${deloadExplanation}`);
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
-  if (transitionLine) lines.push(`- ${transitionLine}`);
-  lines.push("Key-Check:");
+  if (transitionLine) lines.push(transitionLine);
+  lines.push("");
+  lines.push("🎯 Key-Check");
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
   const actualKeys = keyCompliance?.actual7 ?? 0;
+  const keyStatusIcon = keyCompliance?.capExceeded
+    ? "⚠️"
+    : keyCompliance?.status === "ok"
+      ? "✅"
+      : "⚠️";
   const keyTypes = keyCompliance?.actualTypes?.length
     ? keyCompliance.actualTypes.map(formatKeyType).join("/")
     : "n/a";
-  lines.push(`- Key diese Woche: ${actualKeys}/${keyCap} (${keyTypes}).`);
-  lines.push(`- Key-Regel: ${buildKeyConsequence({ keyCompliance, keySpacing, keyCap })}`);
-  lines.push("");
-  lines.push("5) ✅ Fazit");
-  const bottomLineTodos = [];
-  bottomLineTodos.push(activeDays21 < activeGoalDays ? "2× easy 35–45′ zusätzlich für Häufigkeit." : "1–2 Läufe um 10–15′ verlängern (easy).");
-  if (robustness?.strengthOk) {
-    bottomLineTodos.push("Kraft/Stabi 2×20–30′ halten.");
-  } else {
-    bottomLineTodos.push("Noch fehlende Kraft/Stabi-Minuten diese Woche schließen.");
+  lines.push(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`);
+  const keyRuleLine = buildKeyRuleLine({
+    keyRules,
+    block: blockState?.block,
+    eventDistance,
+  });
+  if (keyRuleLine) lines.push(keyRuleLine);
+  lines.push(
+    `➡️ ${buildKeyConsequence({
+      keyCompliance,
+      keySpacing,
+      keyCap,
+    })}`
+  );
+  if (benchReports?.length) {
+    lines.push("");
+    lines.push(...benchReports);
   }
-  bottomLineTodos.push("Steady nur wenn frisch; nach Key 24–48h nur locker.");
-  lines.push(...bottomLineTodos.slice(0, 3).map((item) => `- ${item}`));
-  const statusLabel = runFloorState?.stabilityOK ? "stabil" : "wackelig";
-  const frequencyLabel = activeDays21 >= activeGoalDays ? "ok" : "zu niedrig";
-  lines.push(`- Fokus: Häufigkeit ${frequencyLabel}, Stabilität ${statusLabel}.`);
-  lines.push("- Priorität: Häufigkeit → Volumen → Spezifität.");
-  lines.push("- Leitlinie der Woche: Nicht fitter werden erzwingen – Belastbarkeit schaffen, damit Tempo später tragfähig ist.");
+  lines.push("");
+  lines.push("✅ Bottom Line");
+  const next = buildNextRunRecommendation({
+    runFloorState,
+    policy,
+    specificOk,
+    hasSpecific,
+    aerobicOk,
+    intensitySignal,
+    keyCapExceeded: keyCompliance?.capExceeded ?? false,
+    keySpacingOk: keyCompliance?.keySpacingOk ?? true,
+  });
+  const todayText = buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday });
+  const coachLine = buildBottomLineCoachMessage({
+    hadAnyRun,
+    hadGA,
+    runFloorState,
+    hasSpecific,
+    specificOk,
+    policy,
+    intensitySignal,
+    aerobicOk,
+    keyCapExceeded: keyCompliance?.capExceeded ?? false,
+    keySpacingOk: keyCompliance?.keySpacingOk ?? true,
+    todayText,
+    nextText: `Nächster Lauf: ${next}`,
+  });
+  lines.push(`Coach: ${coachLine}`);
   return lines.join("\n");
 }
 
@@ -2886,14 +2657,6 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
   if (hadGA && !hadKey) return `Lauf: ${minutesText}locker`;
   if (hadKey && hadGA) return `Lauf: ${minutesText}GA + Key`;
   return `Lauf: ${minutesText}Lauf`;
-}
-
-function buildTodayClassification({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
-  if (!hadAnyRun) return "Ruhetag (kein Lauf)";
-  if (hadKey && hadGA) return "GA + Key (gemischt)";
-  if (hadKey) return "Key (intensiv)";
-  if (hadGA) return totalMinutesToday > 0 ? `Easy/GA ${totalMinutesToday}′` : "Easy/GA";
-  return totalMinutesToday > 0 ? `Lauf ${totalMinutesToday}′` : "Lauf";
 }
 
 function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
@@ -3509,33 +3272,36 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const lines = [];
   lines.push(title);
   lines.push("");
-  lines.push("🏗️ Struktur:");
-  lines.push(`• 🏃 Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`• ⏱️ Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
-  lines.push(`• 🧱 Longruns: ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche) | 🎯 Key: ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`• 🌿 GA (≥30′, nicht key): ${gaRuns.length} | ⚡ Kurz (<30′): ${shortRuns.length}`);
-  lines.push(`• 🧭 ${keyTypeLine}`);
+  lines.push("Struktur (Trainingslehre):");
+  lines.push(`- Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`- Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
+  lines.push(`- Longruns (≥60min): ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`- Key (key:*): ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
+  lines.push(`- GA (≥30min, nicht key): ${gaRuns.length}`);
+  lines.push(`- Kurz (<30min): ${shortRuns.length}`);
+  lines.push(`- ${keyTypeLine}`);
   lines.push("");
-  lines.push("📈 Belastung:");
-  lines.push(`• 📊 Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
+  lines.push("Belastungsbild:");
+  lines.push(`- Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
+  lines.push(`- Basis: tägliche Run-Loads inkl. 0-Tage (Fenster: ${windowDays} Tage, nur Run).`);
   lines.push("");
 
-  lines.push("🔍 Highlights:");
-  if (!findings.length) lines.push("• ✅ Keine klaren strukturellen Probleme.");
-  else for (const f of findings.slice(0, 4)) lines.push(`• 🧩 ${f}`);
+  lines.push("Fundstücke:");
+  if (!findings.length) lines.push("- Keine klaren strukturellen Probleme gefunden.");
+  else for (const f of findings.slice(0, 8)) lines.push(`- ${f}`);
 
   lines.push("");
-  lines.push("✅ Nächste Schritte:");
-  if (!actions.length) lines.push("• 📌 Struktur halten, Bench/GA comparable sammeln.");
-  else for (const a of uniq(actions).slice(0, 4)) lines.push(`• 🛠️ ${a}`);
+  lines.push("Nächste Schritte:");
+  if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
+  else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
 
   const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek });
   lines.push("");
-  lines.push("🗓️ Mini-Plan nächste Woche:");
+  lines.push("Konkrete nächste Woche (Mini-Plan):");
   lines.push(
-    `• 🎯 Ziele: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
+    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
   );
-  lines.push(`• 📅 Beispiel: ${miniPlan.exampleWeek.join(" · ")}`);
+  lines.push(`- Beispielwoche: ${miniPlan.exampleWeek.join(" · ")}`);
 
   const summary = {
     week: mondayIso,
