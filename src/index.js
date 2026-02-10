@@ -3616,22 +3616,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     };
     learningEvents.push(learningEvent);
 
-    let existingRecommendationLines = null;
-    if (write && perRunInfo.length > 0) {
-      try {
-        const existingNoteText = await fetchDailyReportNote(env, day);
-        existingRecommendationLines = extractRecommendationLines(existingNoteText);
-      } catch (e) {
-        existingRecommendationLines = null;
-        if (debug) {
-          addDebug(ctx.debugOut, day, null, "warn:daily_report_note_fetch_failed", {
-            message: String(e?.message ?? e),
-            stack: String(e?.stack ?? ""),
-          });
-        }
-      }
-    }
-
     let gaComparableStats = null;
     try {
       const samples = await gatherGASamples(ctx, day, MOTOR_WINDOW_DAYS, { comparable: true, needCv: true });
@@ -3691,7 +3675,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       lastKeyInfo,
       lastKeyIntervalInsights,
       intervalContext,
-      existingRecommendationLines,
       gaComparableStats,
     }, { debug });
 
@@ -6271,7 +6254,6 @@ function buildComments(
     lastKeyIntervalInsights,
     ga21Context,
     intervalContext,
-    existingRecommendationLines,
     gaComparableStats,
   },
   { debug = false } = {}
@@ -6539,25 +6521,6 @@ function buildComments(
   ) {
     todayAction = "locker + Key-Reiz";
   }
-
-  const todayWhy =
-    todayAction === "kein Lauf"
-      ? "Dein Körper braucht heute Ruhe, Sicherheit geht vor."
-      : todayAction === "locker mit kontrolliertem Reiz"
-        ? "Du wirkst stabil genug für einen kleinen Reiz ohne Druck."
-        : todayAction === "locker + Steigerungen"
-          ? "Kurzer neuromuskulärer Reiz hält die Spannung ohne hohe Belastung."
-          : todayAction === "locker + Key-Reiz"
-            ? "Qualitätsreiz passt heute in den Block und die Leitplanken."
-        : "Heute zählt entspanntes Durchbewegen ohne Risiko.";
-
-  const recommendationLines = existingRecommendationLines?.length
-    ? existingRecommendationLines
-    : [
-        "🎯 HEUTIGE EMPFEHLUNG",
-        `- Empfehlung: ${todayAction}`,
-        `- Begründung: ${todayWhy}`,
-      ];
 
   const decisionKeyType =
     intensitySelection?.keyType ??
@@ -6997,24 +6960,6 @@ function buildComments(
   }
 
   lines.push("");
-  const dailySuggestion =
-    todayAction === "kein Lauf"
-      ? "Ruhe oder 20–40′ Spaziergang/Mobility, jederzeit abbrechbar."
-      : todayAction === "locker mit kontrolliertem Reiz"
-        ? "45–60′ GA1 locker + optionale Strides (4–6×20″), jederzeit abbrechbar."
-        : todayAction === "locker + Steigerungen"
-          ? "35–55′ locker (GA1) + 4–6 kurze Steigerungen, jederzeit abbrechbar."
-          : todayAction === "locker + Key-Reiz"
-            ? formatWorkoutKonkret(workoutDisplayPlan ?? workoutPlan, {
-                paceText: lastRacePaceText,
-                adjustmentNotes: workoutAdjustmentNotes,
-              }) || "10–15′ Einlaufen, Hauptteil racepace/vo2_touch nach Vorgabe, 10′ Auslaufen."
-        : "35–55′ locker (GA1), jederzeit abbrechbar.";
-  if (!existingRecommendationLines?.length) {
-    recommendationLines.push(`- Konkret: ${dailySuggestion}`);
-  }
-  lines.push(...recommendationLines);
-
   return {
     dailyReportText: lines.join("\n"),
     weeklyReportLines: weeklyReport.lines,
