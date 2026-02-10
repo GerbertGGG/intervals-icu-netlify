@@ -4139,27 +4139,20 @@ function buildBlockProgressionLines({ block, eventDistance, daysToEvent, blockEn
 
     if (daysToEvent >= 21) {
       lines.push(`- ${weekLabel(daysToEvent)}: 1× spezifisch (${specificMain}), 1× Kontrolle/Schärfe (${sharpMain}), Rest locker.`);
-      lines.push(`- ${weekLabel(daysToEvent - 7)}: Umfang leicht senken (~10%), Intensität halten, volle Erholung zwischen Reizen.`);
-      lines.push(`- ${weekLabel(daysToEvent - 14)}: Umfang weiter reduzieren (-15 bis -25%), nur kurze Aktivierungen (${raceWeekMain}).`);
-      lines.push(`- ${weekLabel(daysToEvent - 21)}: Rennwoche: Frische priorisieren, keine neue Härte, Rennen.`);
       return lines;
     }
 
     if (daysToEvent >= 14) {
       lines.push(`- ${weekLabel(daysToEvent)}: normal-spezifisch (${specificMain}) + kurzer Schärfereiz (${sharpMain}).`);
-      lines.push(`- ${weekLabel(daysToEvent - 7)}: Vorwoche: Umfang -15 bis -25%, nur race-spezifische Akzente.`);
-      lines.push(`- ${weekLabel(daysToEvent - 14)}: Rennwoche: ${raceWeekMain}, sonst easy.`);
       return lines;
     }
 
     if (daysToEvent >= 7) {
       lines.push(`- ${weekLabel(daysToEvent)}: letzte volle Woche: ${specificMain} kürzer, ${sharpMain} kontrolliert, Volumen reduziert.`);
-      lines.push(`- Rennwoche: nur erhalten, nicht verbessern: ${raceWeekMain}, viel Easy, frische Beine am Start.`);
       return lines;
     }
 
-    lines.push("- Rennwoche: Progression stoppen, Frische maximieren.");
-    lines.push(`- Vorschlag: ${easy}, ${raceWeekMain}, 1–2 Ruhetage, Rennen.`);
+    lines.push(`- Rennwoche: Progression stoppen, Frische maximieren (${raceWeekMain}, viel easy, 1–2 Ruhetage).`);
     return lines;
   }
 
