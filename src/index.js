@@ -2726,6 +2726,9 @@ function buildComments(
       })
     )
   );
+  if (keyCompliance?.suggestion) {
+    lines.push(bullet(`Trainingsempfehlung: ${keyCompliance.suggestion}`));
+  }
   if (benchReports?.length) {
     lines.push("");
     lines.push(...benchReports.map((line) => bullet(line)));
