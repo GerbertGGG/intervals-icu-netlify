@@ -4341,6 +4341,110 @@ function formatKeyWorkoutDisplay(workout) {
   return workout.name || "Key-Workout";
 }
 
+function getTemplateById(templateId, keyType = "racepace") {
+  if (!templateId) return null;
+  const family = keyType === "vo2_touch" ? "vo2_touch" : "racepace";
+  const templates = WORKOUT_TEMPLATE_LIBRARY?.[family] || [];
+  return templates.find((item) => item?.id === templateId) || null;
+}
+
+function formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, templateLabel }) {
+  const repText = Number.isFinite(reps) ? `${Math.max(1, Math.round(reps))}×` : "";
+  const distText = Number.isFinite(repDistance) && repDistance > 0
+    ? `${Math.round(repDistance * 1000)} m`
+    : keyType === "racepace"
+      ? "Racepace-Intervalle"
+      : "Intervalle";
+  const recoveryText = Number.isFinite(recSec) ? `, P ${formatIntervalSeconds(Math.max(30, Math.round(recSec)))}` : "";
+  const header = templateId || "KEY";
+  if (repText) return `${header}: ${repText}${distText} @ ${formatKeyType(keyType)}${recoveryText}`;
+  if (templateLabel) return `${header}: ${templateLabel}${recoveryText}`;
+  return `${header}: ${distText}${recoveryText}`;
+}
+
+function getWeeklyKeySuggestion(context = {}, debug = {}) {
+  const keyType = context.decisionKeyType || context.intensitySelection?.keyType || "racepace";
+  const allowedKeyTypes = new Set(context.keyRules?.allowedKeyTypes || []);
+  const keyPolicyAllows = !allowedKeyTypes.size || allowedKeyTypes.has(keyType);
+  const hardAllowed = context.keyHardDecision?.allowed !== false;
+  const hardBlocked = !hardAllowed || context.keySpacing?.ok === false || context.guardrailHardActive;
+  const workoutDebug = context.workoutDebug || debug.__workout || null;
+  const hasWorkoutTemplate = !!workoutDebug?.chosenTemplateId;
+  const keyPresent = hasWorkoutTemplate && hardAllowed && keyPolicyAllows;
+
+  const rationale = [];
+  if (hardBlocked) {
+    if (!hardAllowed) rationale.push("Hard-Block aktiv: key_hard_decision.allowed=false.");
+    if (context.keySpacing?.ok === false) rationale.push(`Key-Abstand noch aktiv bis ${context.keySpacing?.nextAllowedIso || "n/a"}.`);
+    if (context.guardrailHardActive) rationale.push("Guardrail-Hard aktiv.");
+    return {
+      keyLabel: "kein Key (Hard-Block aktiv)",
+      keyType,
+      templateId: null,
+      reps: null,
+      recSec: null,
+      rationale,
+      progressionStep: null,
+      taperApplied: null,
+      scalingLevel: deriveWeeklyScalingLevel(context),
+    };
+  }
+
+  const distance = context.distance || "10k";
+  const ladder = KEY_WORKOUT_LADDERS?.[distance]?.[keyType] || [];
+  const weekIndex = Number.isFinite(context.weekIndex) ? context.weekIndex : 0;
+  const previousStep = Number.isFinite(context.previousStep) ? context.previousStep : Math.max(0, weekIndex - 1);
+  const scalingLevel = Number.isFinite(workoutDebug?.scalingLevel) ? workoutDebug.scalingLevel : deriveWeeklyScalingLevel(context);
+  const daysToRace = Number.isFinite(context.daysToRace) ? context.daysToRace : null;
+
+  let progressionStep = ladder.length ? Math.min(previousStep + 1, ladder.length - 1) : 0;
+  let taperApplied = "none";
+  if (Number.isFinite(daysToRace) && daysToRace <= 21) {
+    progressionStep = Math.min(previousStep, ladder.length ? ladder.length - 1 : 0);
+    taperApplied = "freeze";
+  }
+  if (Number.isFinite(daysToRace) && daysToRace <= 14 && daysToRace > 7) {
+    progressionStep = Math.max(0, progressionStep - 1);
+    taperApplied = "reduce_14_7";
+  }
+  if (Number.isFinite(daysToRace) && daysToRace <= 7) {
+    progressionStep = 0;
+    taperApplied = "raceWeekActivation";
+  }
+  if (scalingLevel <= -1) progressionStep = Math.max(0, progressionStep);
+
+  const templateFromLadder = ladder[progressionStep] || {};
+  const template = getTemplateById(workoutDebug?.chosenTemplateId, keyType);
+  let reps = Number.isFinite(workoutDebug?.adjustedReps) ? workoutDebug.adjustedReps : null;
+  if (!Number.isFinite(reps) && Number.isFinite(templateFromLadder?.reps)) reps = templateFromLadder.reps;
+  if (!Number.isFinite(reps) && Number.isFinite(template?.baseReps)) reps = template.baseReps;
+  let recSec = Number.isFinite(workoutDebug?.adjustedRecSec) ? workoutDebug.adjustedRecSec : null;
+  if (!Number.isFinite(recSec) && Number.isFinite(template?.baseRecSec)) recSec = template.baseRecSec;
+
+  const repDistance = Number.isFinite(templateFromLadder?.repDistance) ? templateFromLadder.repDistance : null;
+  const templateId = keyPresent ? workoutDebug?.chosenTemplateId : workoutDebug?.chosenTemplateId || null;
+  const keyLabel = keyPresent
+    ? formatWeeklyKeyLabel({ templateId, keyType, reps, recSec, repDistance, templateLabel: template?.label })
+    : "kein Key (Policy blockiert)";
+
+  rationale.push(`Key-Typ: ${formatKeyType(keyType)} (Decision + Policy ${keyPolicyAllows ? "ok" : "nicht erlaubt"}).`);
+  if (scalingLevel <= -1) rationale.push("Runfloor/Drift aktiv: Key bleibt, aber Downshift via scalingLevel.");
+  rationale.push(`Progression-Step: ${progressionStep + 1}${ladder.length ? `/${ladder.length}` : ""}.`);
+  if (taperApplied !== "none") rationale.push(`Taper angewendet: ${taperApplied}.`);
+
+  return {
+    keyLabel,
+    keyType,
+    templateId,
+    reps,
+    recSec,
+    rationale: rationale.slice(0, 4),
+    progressionStep,
+    taperApplied,
+    scalingLevel,
+  };
+}
+
 function pickWeeklyKeyWorkout(context = {}) {
   const distance = context.distance || "10k";
   const phase = normalizeBlockKey(context.phase || context.blockEffective || context.nextSuggestedBlock || "BASE");
@@ -7434,22 +7538,22 @@ function buildComments(
     keyCompliance?.nextKeyEarliest ||
     keySpacing?.nextAllowedIso ||
     (keyCompliance?.capExceeded ? "nach Ablauf 7T-Fenster" : "heute");
-  const weeklyKeyPlan = pickWeeklyKeyWorkout({
+  const weeklyKeyPlan = getWeeklyKeySuggestion({
     distance: eventDistanceRaw,
     phase: blockEffective || blockState?.block,
-    nextSuggestedBlock: blockState?.nextSuggestedBlock,
     weeksToEvent,
     daysToRace: daysToEvent,
-    dayIso: isoDate(new Date()),
+    dayIso: day,
     keyRules,
-    keyCount7,
-    keyStats7: { count: keyCount7 },
-    runfloorGap: runFloorGap,
-    runfloorAmpelActive: runFloorGap,
-    spacingBlocked: keySpacing?.ok === false,
-    lastKeyInfo,
-    negativeSignals: readinessReasons,
+    keySpacing,
+    keyHardDecision,
+    guardrailHardActive: guardrailState?.hardActive,
+    intensitySelection,
+    decisionKeyType,
+    runfloorGap,
     driftWarning: driftSignal === "orange" || driftSignal === "red",
+    workoutDebug,
+    negativeSignals: readinessReasons,
     hrvDeltaPct,
     readinessTier: readinessAmpel === "🟢" ? "GOOD" : readinessAmpel === "🔴" ? "LOW" : "MED",
   });
@@ -7472,11 +7576,8 @@ function buildComments(
     lines.push("");
     lines.push("🧱 BLOCK-KOMPASS");
     blockDescriptionLines.forEach((line) => lines.push(line));
-    lines.push(`Key diese Woche: ${weeklyKeyPlan?.workout ? formatKeyWorkoutDisplay(weeklyKeyPlan.workout) : "kein Key (Gate aktiv)"}`);
+    lines.push(`Key diese Woche: ${weeklyKeyPlan?.keyLabel || "kein Key (Hard-Block aktiv)"}`);
     (weeklyKeyPlan?.rationale || []).slice(0, 4).forEach((item) => lines.push(`- ${item}`));
-    if (weeklyKeyPlan?.preview) {
-      lines.push(`Nächste Woche voraussichtlich: ${weeklyKeyPlan.preview}`);
-    }
   }
   lines.push("");
   lines.push("⚡ DAILY SUMMARY");
@@ -10272,4 +10373,4 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   return races;
 }
 
-export { computeIntervalMetricsFromStreams, buildMondayReportPreview, selectWeeklyPlan, pickWeeklyKeyWorkout, parseLibraryWorkoutEntry, shouldSelectBaseKeyByQuota };
+export { computeIntervalMetricsFromStreams, buildMondayReportPreview, selectWeeklyPlan, pickWeeklyKeyWorkout, getWeeklyKeySuggestion, parseLibraryWorkoutEntry, shouldSelectBaseKeyByQuota };
