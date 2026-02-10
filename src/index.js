@@ -3440,35 +3440,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const dynamicKeyCap = {
       maxKeys7d: MAX_KEYS_7D,
-      reasons: [],
+      reasons: ["Statischer Key-Cap"],
     };
-
-    if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push("Recover-Overlay aktiv");
-    } else if (runFloorState.overlayMode === "TAPER") {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push("Taper aktiv");
-    } else if (runFloorState.overlayMode === "DELOAD") {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Deload aktiv");
-    } else if (fatigueBase?.override) {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Fatigue/Overload");
-    } else if (robustness && !robustness.strengthOk) {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Robustheit fehlt");
-    } else if ((motor?.value ?? 0) >= 70) {
-      dynamicKeyCap.maxKeys7d = 2;
-      dynamicKeyCap.reasons.push("Motor stark");
-    } else {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Motor <70");
-    }
 
     let fatigue = fatigueBase;
     try {
-      fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: dynamicKeyCap.maxKeys7d });
+      fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: MAX_KEYS_7D });
     } catch {
       fatigue = fatigueBase;
     }
@@ -3477,12 +3454,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
     const keyRules = {
       ...keyRulesBase,
-      maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
+      maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, MAX_KEYS_7D),
     };
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
       block: blockState.block,
       eventDistance,
-      maxKeys7d: dynamicKeyCap.maxKeys7d,
+      maxKeys7d: MAX_KEYS_7D,
       keySpacing,
       keyPolicySource: "blockState.keyRules",
     });
