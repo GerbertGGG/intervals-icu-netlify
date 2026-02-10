@@ -7210,8 +7210,9 @@ function buildComments(
   } else if (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.STRIDES) {
     todayAction = "locker + Steigerungen";
   } else if (
-    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
-    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH
+    keyHardDecision?.allowed &&
+    (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
+      intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH)
   ) {
     todayAction = "locker + Key-Reiz";
   }
@@ -7493,26 +7494,6 @@ function buildComments(
         ? "1× Key (Schwelle/VO2) sauber, sonst easy."
         : "Struktur halten: 1× Key sauber, Longrun locker.";
 
-  const weeklyReport = buildMondayReportLines({
-    blockLabel,
-    blockGoalShort,
-    priorityLine,
-    eventCountdownLine,
-    weeklyFazit,
-    weeklyWhy,
-    blockFitNotes,
-    learningHelps,
-    learningBrakes,
-    confidenceEvidence,
-    confidencePct,
-    trainerDecision,
-    riskNotes,
-    weeklyFocusGoal,
-    keyMax,
-    runTarget,
-    runTargetFallback: miniPlan.loadTarget,
-  });
-
   const topTriggers = [];
   if (runFloorGap) topTriggers.push("Runfloor-Gap");
   if (keyBudgetFull || keyCompliance?.capExceeded) topTriggers.push("Key-Budget voll");
@@ -7521,9 +7502,11 @@ function buildComments(
   if (fatigue?.override) topTriggers.push("Fatigue-Override");
   if (subjectiveNegative) topTriggers.push("Gefühl schwer");
   const topTriggerText = topTriggers.length ? topTriggers.slice(0, 2).join(" + ") : "keine dominanten Trigger";
+  const keySlotOpen = keyHardDecision?.allowed && !keyCompliance?.capExceeded && keySpacing?.ok !== false;
   const keyStimulusRecommended =
-    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
-    intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH;
+    keySlotOpen &&
+    (intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.RACEPACE ||
+      intensitySelection?.intensityClass === INTENSITY_RECOMMENDATION_CLASS.VO2_TOUCH);
   const todayAllowed =
     readinessAmpel === "🔴"
       ? "nur EASY/REST"
@@ -7557,6 +7540,44 @@ function buildComments(
     hrvDeltaPct,
     readinessTier: readinessAmpel === "🟢" ? "GOOD" : readinessAmpel === "🔴" ? "LOW" : "MED",
   });
+  const mondayBlockCompassLines = [];
+  if (blockDescriptionLines?.length) {
+    mondayBlockCompassLines.push(...blockDescriptionLines);
+    mondayBlockCompassLines.push(`Key diese Woche: ${weeklyKeyPlan?.keyLabel || "kein Key (Hard-Block aktiv)"}`);
+    (weeklyKeyPlan?.rationale || []).slice(0, 4).forEach((item) => mondayBlockCompassLines.push(`- ${item}`));
+  }
+
+  const weeklyReport = buildMondayReportLines({
+    blockLabel,
+    blockGoalShort,
+    priorityLine,
+    eventCountdownLine,
+    weeklyFazit,
+    weeklyWhy,
+    blockFitNotes,
+    learningHelps,
+    learningBrakes,
+    confidenceEvidence,
+    confidencePct,
+    trainerDecision,
+    riskNotes,
+    weeklyFocusGoal,
+    keyMax,
+    runTarget,
+    runTargetFallback: miniPlan.loadTarget,
+    blockCompassLines: mondayBlockCompassLines,
+  });
+
+  const dailyTrainingSuggestionLines = buildDailyTrainingSuggestionLines({
+    todayAction,
+    readinessAmpel,
+    steadyDecision,
+    keyHardDecision,
+    blockState,
+    eventDistanceRaw,
+    keyRules,
+  });
+  const dailyTodaySuggestion = dailyTrainingSuggestionLines?.find((line) => line.startsWith("- Heute:"));
 
   const lines = [];
   lines.push(`🧱 Block (Plan): ${blockPlanLabel}`);
@@ -7572,17 +7593,13 @@ function buildComments(
     lines.push(`↩️ ReEntry: Tag ${reentryInfo.dayIndex}/${totalText} → REENTRY`);
   }
   lines.push(`→ Effektiv: ${effectiveBlockLabel}`);
-  if (blockDescriptionLines?.length) {
-    lines.push("");
-    lines.push("🧱 BLOCK-KOMPASS");
-    blockDescriptionLines.forEach((line) => lines.push(line));
-    lines.push(`Key diese Woche: ${weeklyKeyPlan?.keyLabel || "kein Key (Hard-Block aktiv)"}`);
-    (weeklyKeyPlan?.rationale || []).slice(0, 4).forEach((item) => lines.push(`- ${item}`));
-  }
   lines.push("");
   lines.push("⚡ DAILY SUMMARY");
   lines.push(`- Ampel & Trigger: ${readinessAmpel} ${topTriggerText}`);
   lines.push(`- Heute erlaubt: ${todayAllowed}`);
+  if (dailyTodaySuggestion) {
+    lines.push(`- Vorschlag heute: ${dailyTodaySuggestion.replace(/^- Heute:\s*/u, "")}`);
+  }
   lines.push(`- Nächster Key frühestens: ${nextKeyEarliest}`);
   lines.push("");
 
@@ -8339,6 +8356,7 @@ function buildMondayReportLines({
   keyMax,
   runTarget,
   runTargetFallback,
+  blockCompassLines,
 }) {
   const blockFitEmoji = String(weeklyFazit || "")
     .trim()
@@ -8359,6 +8377,8 @@ function buildMondayReportLines({
   ];
 
   const weeklyVerdict = ["📊 WOCHENURTEIL (Trainer)", weeklyFazit, weeklyWhy];
+
+  const blockCompass = blockCompassLines?.length ? ["🧱 BLOCK-KOMPASS", ...blockCompassLines] : [];
 
   const learnings = [
     "🧠 LEARNINGS (nur das Relevante)",
@@ -8382,9 +8402,10 @@ function buildMondayReportLines({
 
   const risk = ["⚠️ RISIKO-BLICK (2–3 Wochen)", ...riskNotes.slice(0, 2).map((item) => `• ${item}`)];
 
-  const sections = { blockStatus, weeklyVerdict, learnings, decision, risk };
+  const sections = { blockStatus, blockCompass, weeklyVerdict, learnings, decision, risk };
   const lines = [
     ...blockStatus,
+    ...(blockCompass.length ? ["", ...blockCompass] : []),
     "",
     ...weeklyVerdict,
     "",
