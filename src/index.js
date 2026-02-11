@@ -3036,14 +3036,29 @@ function buildComments(
   lines.push("");
   lines.push("✅ HEUTE-ENTSCHEIDUNG");
   lines.push("");
-  lines.push(`Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`);
-
-  lines.push(`${ampel} Fokus: ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`);
-  lines.push(`• Key: ${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`);
-  lines.push(`• RunFloor: ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : "–"}${Math.abs(runFloorGap)})`);
-  lines.push(`• 21T: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} | ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`);
-  lines.push(`• Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
-  lines.push(`• Next: ${nextRunText}`);
+  lines.push("Modus:");
+  lines.push(`${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`);
+  lines.push("");
+  lines.push("Fokus:");
+  lines.push(`${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`);
+  lines.push("");
+  lines.push("Key:");
+  lines.push(`${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`);
+  lines.push("");
+  lines.push("RunFloor:");
+  lines.push(`${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : "–"}${Math.abs(runFloorGap)})`);
+  lines.push("");
+  lines.push("21T Last:");
+  lines.push(`${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`);
+  lines.push("");
+  lines.push("21T Aktive Tage:");
+  lines.push(`${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`);
+  lines.push("");
+  lines.push("Longrun:");
+  lines.push(`${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
+  lines.push("");
+  lines.push("Next:");
+  lines.push(`${nextRunText}`);
 
   lines.push("");
   lines.push("⸻");
