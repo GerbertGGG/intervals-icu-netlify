@@ -2660,40 +2660,6 @@ function buildComments(
   const subBullet = (text) => `  - ${text}`;
 
   const lines = [];
-  lines.push("ℹ️ Tagesstatus");
-  lines.push(bullet(`Heute: ${buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday })}`));
-  lines.push(bullet(`Mode: ${policy?.label ?? "OPEN"}`));
-  lines.push(bullet(`Event: ${eventDateText} (${eventDistance})`));
-
-  lines.push("");
-  lines.push(`🟠 Aerober Status (Confidence: ${confidence})`);
-  lines.push(bullet(buildAerobicTrendLine(trend)));
-  lines.push(bullet(`Letzter vergleichbarer GA-Lauf: ${trend?.lastComparableDate ?? "n/a"}`));
-  if (trend?.recentCount != null && trend?.prevCount != null) {
-    const windowText =
-      trend?.prevStart && trend?.recentStart && trend?.windowEnd
-        ? `${trend.prevStart}–${trend.recentStart}–${trend.windowEnd}`
-        : "n/a";
-    lines.push(bullet(`Messbasis: ${trend.recentCount}/${trend.prevCount} GA`));
-    lines.push(bullet(`Fenster: ${windowText}`));
-  }
-
-  lines.push("");
-  lines.push("🧱 Robustheit");
-  if (robustness) {
-    const strengthMinutes7d = robustness.strengthMinutes7d ?? 0;
-    lines.push(
-      bullet(`Krafttraining: ${strengthMinutes7d}/${STRENGTH_MIN_7D} min (7T)${robustness.strengthOk ? "" : " ⚠️"}`)
-    );
-    lines.push(
-      bullet(`${robustness.strengthOk ? "Robustheit ok – Kraft halten." : "Diese Woche 60 min Kraft/Stabi."}`)
-    );
-  } else {
-    lines.push(bullet("Krafttraining: n/a"));
-    lines.push(bullet("Robustheit nicht verfügbar."));
-  }
-
-  lines.push("");
   lines.push("📉 Belastung & Progression");
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
@@ -2718,6 +2684,7 @@ function buildComments(
         )}`
       : "n/a";
   const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
+  const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
   lines.push(bullet(`RunFloor: ${runLoad7}/${runTargetText} (7-Tage)`));
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
@@ -2779,13 +2746,6 @@ function buildComments(
   lines.push(bullet(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`));
   lines.push(subBullet(`Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`));
 
-  if (benchReports?.length) {
-    lines.push("");
-    lines.push(...benchReports.map((line) => bullet(line)));
-  }
-
-  lines.push("");
-  lines.push("✅ Bottom Line");
   const next = buildNextRunRecommendation({
     runFloorState,
     policy,
@@ -2811,7 +2771,53 @@ function buildComments(
     todayText,
     nextText: `Nächster Lauf: ${next}`,
   });
-  lines.push(bullet(`Coach: ${coachLine}`));
+
+  const modeLine =
+    runFloorState?.overlayMode === "DELOAD"
+      ? "Deload (nur locker/GA)"
+      : runFloorState?.overlayMode === "TAPER"
+        ? "Taper/Frische"
+        : runFloorState?.overlayMode === "RECOVER_OVERLAY"
+          ? "Recovery"
+          : keyCompliance?.capExceeded || (keyCompliance?.actual7 ?? 0) >= keyCap
+            ? "Easy only (kein weiterer Key)"
+            : "Key möglich (Regeln beachten)";
+
+  lines.push("");
+  lines.push("✅ HEUTE-ENTSCHEIDUNG");
+  lines.push(`Modus: ${modeLine}`);
+  lines.push("");
+  lines.push("1) Key-Budget (7T)");
+  lines.push(`${actualKeys}/${keyCap} ${keyStatusIcon} → ${actualKeys >= keyCap ? "Rest locker/GA" : "Key optional"}`);
+  lines.push("");
+  lines.push("2) RunFloor (7T)");
+  lines.push(`${runLoad7}/${runTargetText} → Gap: ${runFloorGap >= 0 ? "+" : ""}${runFloorGap} (Volumen priorisieren)`);
+  lines.push("");
+  lines.push("3) Progression / Deload-Check (21T)");
+  lines.push(`${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN} & ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} aktive Tage → ${deloadReady ? "Deload fällig" : "noch kein Deload"}${runFloorState?.stabilityOK ? "" : ", Stabilität wackelig"}`);
+  lines.push("");
+  lines.push("4) Longrun-Anker");
+  lines.push(`${longRunMinutes}′ → Ziel ${longRunTarget}′ (nächster Longrun: +5–10′)`);
+  lines.push("");
+  lines.push(`➡️ Nächster Lauf (konkret): ${next}`);
+  lines.push("");
+
+  const focusEmoji = runFloorGap < 0 ? "🟠" : "🟢";
+  const focusText = runFloorGap < 0 ? "Volumen (RunFloor-Gap)" : "Stabil halten";
+  lines.push(`${focusEmoji} Fokus: ${focusText}`);
+  lines.push(`Key: ${actualKeys}/${keyCap} ${keyStatusIcon} → ${actualKeys >= keyCap ? "kein Key mehr" : "Key möglich"}`);
+  lines.push(`RunFloor: ${runLoad7}/${runTargetText} (${runFloorGap >= 0 ? "+" : ""}${runFloorGap})`);
+  lines.push(`21T: ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN} | ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN}${runFloorState?.stabilityOK ? "" : " (Stabilität wackelig)"}`);
+  lines.push(`Longrun: ${longRunMinutes}′ → ${longRunTarget}′`);
+  lines.push(`Next: ${next}`);
+
+  if (debug) {
+    lines.push("");
+    lines.push(`Debug: ${coachLine}`);
+    lines.push(`Debug: Trend-Confidence ${confidence}, Event ${eventDateText} (${eventDistance})`);
+    if (benchReports?.length) lines.push(...benchReports.map((line) => `Debug: ${line}`));
+  }
+
   return lines.join("\n");
 }
 
