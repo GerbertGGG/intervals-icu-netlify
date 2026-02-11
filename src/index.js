@@ -172,6 +172,53 @@ const DETECTIVE_HISTORY_LIMIT = 12;
 // REMOVE or stop using this for Aerobic:
 // const BIKE_EQ_FACTOR = 0.65;
 
+/*
+ * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
+ *
+ * Zielbild:
+ * - Tagesempfehlungen folgen BASE -> BUILD -> RACE -> RESET.
+ * - Progression erfolgt primär über Zeit/Umfang, nicht über Pace-Erhöhung.
+ * - Eventnähe, Lastsignale und Robustheit steuern progressiv vs. deloaded vs. konservativ.
+ *
+ * Aktueller Stand im Code:
+ * 1) determineBlockState(...)
+ *    - berücksichtigt Event-Datum/Distanz, Last, Fatigue (Ramp/Monotony/Strain/ACWR),
+ *      Key-Compliance inkl. Spacing und Robustheit (Kraft/Stabi-Minuten).
+ *
+ * 2) Moduslogik (EVENT/OPEN)
+ *    - EVENT:RUN, EVENT:BIKE oder OPEN bestimmen Floors/Policies als Basis der Tagesbewertung.
+ *
+ * 3) computeRunFloorState(...)
+ *    - operative Overlays: NORMAL, DELOAD, TAPER, RECOVER_OVERLAY.
+ *    - beeinflusst Floor-Ziele, Key-Caps und Tagesempfehlung.
+ *
+ * 4) getKeyRules(...)
+ *    - regelt erlaubte/bevorzugte Key-Typen, erwartete/maximale Keys/Woche und Verbote je Phase,
+ *      differenziert nach Distanz (5k/10k/hm/m) und Block.
+ *
+ * 5) Progressions-Engine
+ *    - PHASE_MAX_MINUTES + computeProgressionTarget(...) + PROGRESSION_DELOAD_EVERY_WEEKS
+ *      + RACEPACE_BUDGET_DAYS.
+ *    - Ausgabe im Daily-Report: Key-Format, Wochenziel, Block-Maximum, Coaching-Notiz.
+ *
+ * 6) Coach-Hinweise
+ *    - buildKeySuggestion(...) + buildProgressionSuggestion(...)
+ *      liefern den nächsten Reiz und den Belastungs-/Sicherheitskontext.
+ *
+ * Leitplanken:
+ * - Fatigue/Overload begrenzen Intensitätsfreigaben (dynamischer Key-Cap).
+ * - Taper/Recover begrenzen oder deaktivieren Key-Einheiten.
+ * - Deload-Wochen kappen den Progressionsumfang.
+ * - Distanz- und phasenspezifische Reiztypen werden bevorzugt.
+ *
+ * Offene Weiterentwicklungen:
+ * - PHASE_MAX_MINUTES in konfigurierbare Quelle (KV/JSON) auslagern.
+ * - Reiztyp -> Workout-Template-Mapping (z.B. 3x10, 5x3, 2x20).
+ * - Athlete-Level als Multiplikator.
+ * - Bike-Progressionslogik vertiefen.
+ * - Block-State-Persistenz transparenter dokumentieren.
+ */
+
 // ================= BLOCK CONFIG (NEW) =================
 const BLOCK_CONFIG = {
   durations: {
