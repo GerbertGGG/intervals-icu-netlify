@@ -156,6 +156,15 @@ export default {
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
 const STRENGTH_MIN_7D = 60;
+const EASY_SHARE_THRESHOLDS = {
+  BASE: 0.9,
+  BUILD: 0.85,
+  RACE: 0.85,
+  RESET: 0.9,
+};
+const EASY_SHARE_PRIMARY_LOOKBACK_DAYS = 14;
+const EASY_SHARE_FALLBACK_LOOKBACK_DAYS = 7;
+const EASY_SHARE_MIN_TOTAL_MIN_14D = 90;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -972,6 +981,50 @@ const PHASE_MAX_MINUTES = {
   },
 };
 
+const PROGRESSION_TEMPLATES = {
+  BUILD: {
+    "10k": {
+      schwelle: [
+        { reps: 4, work_min: 6 },
+        { reps: 3, work_min: 8 },
+        { reps: 3, work_min: 10 },
+        { reps: 2, work_min: 8, deload_step: true },
+      ],
+    },
+    hm: {
+      schwelle: [
+        { reps: 3, work_min: 10 },
+        { reps: 3, work_min: 12 },
+        { reps: 2, work_min: 15 },
+        { reps: 2, work_min: 10, deload_step: true },
+      ],
+      racepace: [
+        { reps: 4, work_min: 6 },
+        { reps: 3, work_min: 8 },
+        { reps: 3, work_min: 10 },
+        { reps: 2, work_min: 8, deload_step: true },
+      ],
+    },
+    m: {
+      racepace: [
+        { reps: 3, work_min: 12 },
+        { reps: 2, work_min: 18 },
+        { reps: 2, work_min: 22 },
+        { reps: 2, work_min: 12, deload_step: true },
+      ],
+    },
+  },
+  RACE: {
+    "10k": {
+      racepace: [
+        { reps: 3, work_min: 6 },
+        { reps: 4, work_min: 5 },
+        { reps: 3, work_min: 4, deload_step: true },
+      ],
+    },
+  },
+};
+
 const PROGRESSION_DEFAULT_BLOCK_DAYS = {
   BASE: 56,
   BUILD: 35,
@@ -1066,16 +1119,19 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
   }
 
   const targetMinutes = Math.max(1, Math.round(maxMinutes * factor));
+  const templateText = getProgressionTemplate(block, dist, primaryType, weekInBlock, isDeloadWeek);
 
   return {
     available: true,
     primaryType,
+    weekInBlock,
     maxMinutes,
     targetMinutes,
     microcycleWeek,
     likelyBlockDays,
     expectedDeloadWeeks,
     isDeloadWeek,
+    templateText,
     note:
       isDeloadWeek
         ? "Deload-Woche: Umfang runter, Intensität stabil halten."
@@ -1083,10 +1139,76 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
   };
 }
 
+function computeEasyShare(ctx, dayIso, lookbackDays) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let easyMin = 0;
+  let totalMin = 0;
+  for (const a of ctx.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso || !isRun(a)) continue;
+    const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
+    if (!(min > 0)) continue;
+    totalMin += min;
+    if (!hasKeyTag(a)) easyMin += min;
+  }
+
+  const easyShare = totalMin > 0 ? easyMin / totalMin : null;
+  return { easyShare, easyMin: Math.round(easyMin), totalMin: Math.round(totalMin) };
+}
+
+function computeEasyShareGate(ctx, dayIso, block) {
+  const threshold = EASY_SHARE_THRESHOLDS[block] ?? EASY_SHARE_THRESHOLDS.BASE;
+  const metrics14 = computeEasyShare(ctx, dayIso, EASY_SHARE_PRIMARY_LOOKBACK_DAYS);
+  const useFallback = metrics14.totalMin < EASY_SHARE_MIN_TOTAL_MIN_14D;
+  const metrics = useFallback
+    ? computeEasyShare(ctx, dayIso, EASY_SHARE_FALLBACK_LOOKBACK_DAYS)
+    : metrics14;
+
+  const hasData = (metrics?.totalMin ?? 0) > 0;
+  const easyShare = metrics?.easyShare;
+  const ok = !hasData || (Number.isFinite(easyShare) && easyShare >= threshold);
+  return {
+    ok,
+    threshold,
+    lookbackDays: useFallback ? EASY_SHARE_FALLBACK_LOOKBACK_DAYS : EASY_SHARE_PRIMARY_LOOKBACK_DAYS,
+    easyShare,
+    easyMin: metrics?.easyMin ?? 0,
+    totalMin: metrics?.totalMin ?? 0,
+    hasData,
+  };
+}
+
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
   const keyType = formatKeyType(progression.primaryType);
-  return `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
+  let text = `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
+  if (progression?.templateText) text += ` ${progression.templateText}`;
+  return text;
+}
+
+function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDeload) {
+  const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
+  if (!Array.isArray(steps) || !steps.length) return null;
+
+  const formatted = steps.map((step, idx) => {
+    const totalWork = Number.isFinite(step.total_work_min)
+      ? step.total_work_min
+      : (Number(step.reps) || 0) * (Number(step.work_min) || 0);
+    const main = `${step.reps}×${step.work_min}`;
+    const rest = Number.isFinite(step.rest_min) ? ` (${step.rest_min}′ Trabpause)` : "";
+    const deload = step.deload_step ? " Deload" : "";
+    const total = totalWork > 0 ? ` ≈${Math.round(totalWork)}′` : "";
+    return `W${idx + 1}${deload} ${main}${rest}${total}`;
+  });
+
+  const cycleLength = steps.length;
+  const weekIndex = Math.max(1, Number(weekIndexInBlock) || 1);
+  const currentStep = ((weekIndex - 1) % cycleLength) + 1;
+  const deloadHint = isDeload ? ` Aktuelle Woche: Deload (W${currentStep}).` : ` Aktuelle Woche: W${currentStep}.`;
+  return `${formatKeyType(keyType)} (${distance}) Progression: ${formatted.join(", ")}.${deloadHint}`;
 }
 
 function getKeyRules(block, eventDistance, weeksToEvent) {
@@ -1250,7 +1372,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
   const maxKeysCap = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : maxKeys;
-  const capExceeded = actual7 > maxKeysCap;
+  const capExceeded = actual7 >= maxKeysCap;
 
   const actualTypes7 = keyStats7.list || [];
   const actualTypes14 = keyStats14.list || [];
@@ -1266,36 +1388,49 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  let suggestion = "";
   const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
   const progression = computeProgressionTarget(context, keyRules);
 
+  const dayIso = context.dayIso || null;
+  const lastKeyIso = context.keySpacing?.lastKeyIso ?? null;
+  const lastKeyGapDays =
+    dayIso && lastKeyIso && isIsoDate(dayIso) && isIsoDate(lastKeyIso) ? diffDays(lastKeyIso, dayIso) : null;
+  const keySpacingNowOk = !Number.isFinite(lastKeyGapDays) || lastKeyGapDays >= 2;
+  const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
+
+  const easyShareGate = context.easyShareGate || null;
+  const easyShareBlocked = easyShareGate?.ok === false;
+
+  let suggestion = "";
+  let keyAllowedNow = false;
+
   if (capExceeded) {
-    suggestion = "Kein weiterer Key diese Woche.";
+    suggestion = "Key-Budget erschöpft (2 Keys/7 Tage) – restliche Einheiten locker/GA.";
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
-  } else if (!freqOk) {
+  } else if (!keySpacingNowOk && nextKeyEarliest) {
+    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand). Bis dahin locker/GA.`;
+  } else if (easyShareBlocked) {
+    const pct = Math.round((easyShareGate.easyShare ?? 0) * 100);
+    suggestion = `Intensity-Guardrail: zu wenig locker in den letzten ${easyShareGate.lookbackDays} Tagen (${pct}%). Erst 2–3 lockere Tage.`;
+  } else if (actual7 === 1 && typeOk) {
+    suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
+    keyAllowedNow = true;
+  } else if (!freqOk || preferredMissing) {
     suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
-  } else if (actual7 >= 1 && typeOk) {
-    suggestion = "Key diese Woche erledigt ✅ – restliche Einheiten locker/GA.";
-  } else if (preferredMissing) {
-    suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
+    keyAllowedNow = true;
   } else {
     suggestion = "Kein Key geplant – locker/GA.";
   }
 
-  const keySpacingOk = context.keySpacing?.ok ?? true;
-  const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
-  if (!capExceeded && !keySpacingOk && nextKeyEarliest) {
-    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand).`;
+  if (suggestion && keyAllowedNow) {
+    const progressionHint = buildProgressionSuggestion(progression);
+    if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
   }
 
-  const progressionHint = buildProgressionSuggestion(progression);
-  if (suggestion) suggestion = `${suggestion} ${progressionHint}`;
-
-  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
+  const status = capExceeded || easyShareBlocked ? "red" : freqOk && typeOk ? "ok" : "warn";
 
   return {
     expected,
@@ -1317,10 +1452,14 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     progression,
     basedOn: "7T",
     capExceeded,
-    keySpacingOk,
+    keySpacingOk: keySpacingNowOk,
     nextKeyEarliest,
+    lastKeyGapDays,
+    easyShareGate,
+    keyAllowedNow,
   };
 }
+
 
 function getNextBlock(block, wave, weeksToEvent) {
   if (block === "BASE") return "BUILD";
@@ -2310,11 +2449,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       ...keyRulesBase,
       maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
+    const easyShareGate = computeEasyShareGate(ctx, day, blockState.block);
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
+      dayIso: day,
       block: blockState.block,
       eventDistance,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
+      easyShareGate,
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
     });
@@ -2398,6 +2540,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       keyCompliance,
       dynamicKeyCap,
       keySpacing,
+      todayIso: day,
       policy,
       loads7,
       runEquivalent7,
@@ -2630,6 +2773,7 @@ function buildComments(
     keyCompliance,
     dynamicKeyCap,
     keySpacing,
+    todayIso,
     policy,
     loads7,
     runEquivalent7,
@@ -2722,6 +2866,12 @@ function buildComments(
     ? keyCompliance.actualTypes.map(formatKeyType).join("/")
     : "n/a";
   lines.push(bullet(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`));
+  const nextAllowedText = formatNextAllowed(todayIso, keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null);
+  const easyShareGate = keyCompliance?.easyShareGate;
+  const easyShareText = easyShareGate?.hasData
+    ? `${Math.round((easyShareGate.easyShare ?? 0) * 100)}% (≥${Math.round((easyShareGate.threshold ?? 0) * 100)}%, ${easyShareGate.lookbackDays}T)`
+    : `n/a (≥${Math.round((easyShareGate?.threshold ?? 0) * 100)}%)`;
+  lines.push(bullet(`Guardrails: keys_last_7d=${actualKeys}, nextAllowed=${nextAllowedText}, EasyShare=${easyShareText}`));
   const keyRuleLine = buildKeyRuleLine({
     keyRules,
     block: blockState?.block,
@@ -2788,7 +2938,7 @@ function buildComments(
   lines.push(`Modus: ${modeLine}`);
   lines.push("");
   lines.push("1) Key-Budget (7T)");
-  lines.push(`${actualKeys}/${keyCap} ${keyStatusIcon} → ${actualKeys >= keyCap ? "Rest locker/GA" : "Key optional"}`);
+  lines.push(`${actualKeys}/${keyCap} ${keyStatusIcon} → ${keyCompliance?.keyAllowedNow ? "2. Key optional" : actualKeys >= keyCap ? "Rest locker/GA" : "Key optional"}`);
   lines.push("");
   lines.push("2) RunFloor (7T)");
   lines.push(`${runLoad7}/${runTargetText} → Gap: ${runFloorGap >= 0 ? "+" : ""}${runFloorGap} (Volumen priorisieren)`);
@@ -2841,9 +2991,21 @@ function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMi
   return "Rest (kein Lauf)";
 }
 
+
+function formatNextAllowed(dayIso, nextAllowedIso) {
+  if (!nextAllowedIso) return "n/a";
+  if (!dayIso || !isIsoDate(dayIso) || !isIsoDate(nextAllowedIso)) return nextAllowedIso;
+  const delta = diffDays(dayIso, nextAllowedIso);
+  if (delta <= 0) return `${nextAllowedIso} (ab heute)`;
+  if (delta === 1) return `${nextAllowedIso} (in 1 Tag)`;
+  return `${nextAllowedIso} (in ${delta} Tagen)`;
+}
+
 function buildKeyConsequence({ keyCompliance, keySpacing, keyCap }) {
-  if (keyCompliance?.capExceeded) return "Weitere Einheiten nur locker/GA.";
-  if (keySpacing?.ok === false) return "Weitere Einheiten nur locker/GA (Key-Abstand <48h).";
+  if (keyCompliance?.capExceeded) return "Key-Budget erschöpft – restliche Einheiten locker/GA.";
+  if (keyCompliance?.easyShareGate?.ok === false) return "Intensity-Guardrail aktiv – erst 2–3 lockere Tage.";
+  if (keyCompliance?.keySpacingOk === false || keySpacing?.ok === false) return "Weitere Einheiten nur locker/GA (Key-Abstand <48h).";
+  if ((keyCompliance?.actual7 ?? 0) === 1 && keyCompliance?.keyAllowedNow) return "2. Key optional möglich, wenn du dich frisch fühlst.";
   if ((keyCompliance?.actual7 ?? 0) < keyCap) return "1 Key noch möglich.";
   return "Weitere Einheiten nur locker/GA.";
 }
