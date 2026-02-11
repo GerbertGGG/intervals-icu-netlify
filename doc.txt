@@ -3,325 +3,214 @@ USER-DOKUMENTATION – Cloudflare Worker „Intervals Daily Sync“
 
 1) ZWECK & ÜBERBLICK
 -------------------
-Dieser Worker synchronisiert Daten aus Intervals.icu (Aktivitäten + Streams) in die
-Wellness-Tage (Felder) und schreibt den Tages-Report als tägliche Kalender-Notiz („Daily-Report“) sowie montags eine zusätzliche Kalender-Notiz („Montags-Report“).
+Dieser Worker synchronisiert Intervals.icu-Daten (Aktivitäten + Streams) in Wellness-Felder,
+erzeugt tägliche und montägliche NOTE-Events und liefert ein kompaktes Watchface-JSON.
 
-Pro Tag (im gewählten Zeitraum):
-- schreibt KEINEN Wellness-Kommentar; der Tages-Text steht stattdessen in der Daily-Report NOTE
-- berechnet (wenn möglich) GA-Kennzahlen:
-  - VDOT (VDOT-like aus Efficiency-Factor)
-  - Drift (HF-Drift aus Streams, optional mit Warmup-Skip)
-- berechnet einen Motor-Index (0..100) als Trend-Indikator aus „vergleichbaren“ GA-Läufen
-- zeigt IMMER einen Mindest-Laufreiz-Block (7-Tage Run-Load)
-- erstellt täglich eine Daily-Report NOTE (Kalender-Event, Kategorie NOTE, blau)
-- erstellt montags eine Montags-Report NOTE (Kalender-Event, Kategorie NOTE, orange)
-- erstellt an Bench-Tagen kurze Bench-Reports über Tags „bench:<name>“
+Hauptfunktionen:
+- `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
+- `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
+- `scheduled()`: triggert automatischen Sync für gestern + heute (mit `write=true`)
+
+Pro verarbeitetem Tag:
+- Wellness-Kommentar wird geleert (`comments = ""`)
+- numerische Felder werden gesetzt, wenn Daten vorhanden sind:
+  - `VDOT`, `EF`, `Drift`, `Motor`, `Block`
+- tägliches NOTE-Event `Daily-Report` wird geschrieben/aktualisiert
+- montags zusätzlich `Montags-Report` (Detective-Note)
 
 2) VORAUSSETZUNGEN
 ------------------
 Plattform:
-- Cloudflare Worker (Modul-Worker: export default { fetch, scheduled })
+- Cloudflare Worker (Module Worker, `export default { fetch, scheduled }`)
 
-Required Secret / Environment:
-- INTERVALS_API_KEY
+Environment / Secrets:
+- `INTERVALS_API_KEY` (Secret)
+- `ATHLETE_ID` (required env var)
+- `KV` (KV Namespace Binding für Detective-Historie)
 
-Auth-Mechanik:
-- Authorization Header: "Basic " + base64("API_KEY:<INTERVALS_API_KEY>")
+Auth:
+- Authorization Header: `Basic ` + base64(`API_KEY:<INTERVALS_API_KEY>`)
 
 3) INTERVALS.ICU SETUP
 ----------------------
 3.1 Wellness Custom Numeric Fields
-In Intervals.icu musst du diese numeric custom fields anlegen (Codes exakt so):
-- VDOT
-- Drift
-- Motor
-- EF
-- Block
+In Intervals.icu müssen diese Codes als Numeric Fields existieren:
+- `VDOT`
+- `Drift`
+- `Motor`
+- `EF`
+- `Block`
 
-Diese Felder werden in Wellness-Tagen gesetzt.
+4) ENDPOINTS
+------------
+4.1 Health
+- `GET /`
+- Antwort: `ok`
 
-4) WAS GENAU WIRD GESCHRIEBEN?
-------------------------------
-4.1 Wellness pro Tag
-Für jeden Tag im Range wird mindestens geschrieben:
-- comments (wird leer gesetzt; Report steht in Daily-Report NOTE)
+4.2 Watchface
+- `GET /watchface`
+- optional: `?date=YYYY-MM-DD`
+- Antwort: JSON mit 7-Tage-Zeitraum inkl.:
+  - `days[]`
+  - `runLoad[]`, `runSum7`, `runGoal` (aktuell 150)
+  - `strengthMin[]`, `strengthSum7`, `strengthGoal` (aktuell 60)
+  - `updatedAt`
+- Header:
+  - `cache-control: no-store`
+  - `access-control-allow-origin: *`
+- `OPTIONS /watchface` liefert CORS-Preflight (`204`)
 
-Optional, wenn ein GA-Lauf vorhanden und geeignet:
-- VDOT (aus EF)
-- EF (Efficiency Factor)
-- Drift (HR-Drift % aus Streams)
+4.3 Sync
+- `GET /sync`
 
-Optional, wenn berechenbar:
-- Motor (0..100)
-- Block (aktuelle Block-Phase, z.B. BASE/BUILD/RACE/RESET)
+Range-Parameter:
+- `date=YYYY-MM-DD` (einzelner Tag)
+- `from=YYYY-MM-DD&to=YYYY-MM-DD` (expliziter Bereich)
+- sonst `days=14` (Default, clamp 1..31)
 
-Technik:
-- Der Worker nutzt PUT /wellness/<YYYY-MM-DD> und schreibt das Patch-Objekt.
+Weitere Parameter:
+- `write=true|false`
+  - `true`: schreibt Wellness + NOTE-Events
+  - `false`: nur Berechnung/Preview
+- `debug=true|false`
+  - `true`: synchron, liefert umfangreiches JSON (`patches`, `debug`, `notesPreview`)
+  - `false`: asynchron via `waitUntil`, Response sofort
+- `warmup_skip=600` (Sekunden, clamp 0..1800)
 
-5) KLASSIFIKATION: GA vs KEY vs BENCH
--------------------------------------
-5.1 Lauf-Erkennung
-Eine Aktivität zählt als Lauf, wenn type ungefähr „run“ ist:
-- "run", "running", enthält "run" oder enthält "laufen"
-
-5.2 Key-Einheit
-Ein Lauf ist Key, wenn es einen Tag gibt:
-- key:<irgendwas>
-
-Beispiele:
-- key:vo2
-- key:schwelle
-- key:tempo
-
-Key-Läufe werden NICHT für GA-Kennzahlen (VDOT/Drift/Motor) genutzt.
-
-5.3 GA (Grundlage)
-GA wenn:
-- kein key:*
-- Dauer (moving_time oder elapsed_time) >= 30 Minuten
-
-5.4 GA Comparable (für Motor & Diagnose)
-Comparable GA wenn:
-- kein key:*
-- Dauer >= 35 Minuten
-- Pace stabil genug (CV-Limit, siehe unten)
-
-6) KENNZAHLEN IM DETAIL
------------------------
-6.1 Efficiency Factor (EF)
-Aus Aktivitäts-Summary:
-- EF = average_speed / average_heartrate
-
-Wenn average_speed oder average_heartrate fehlen/0 sind => EF = null.
-
-6.2 VDOT-like
-Für GA (nicht Key) wird gesetzt:
-- VDOT = EF * 1200
-Hinweis: „VDOT-like“ ist ein skaliertes EF-Signal, kein offizieller VDOT.
-
-6.3 HR-Drift (aus Streams)
-Nur für GA (nicht Key), aus Streams:
-- time
-- velocity_smooth
-- heartrate
-
-Berechnung:
-- Warmup wird standardmäßig übersprungen (warmup_skip, Default 600 Sekunden)
-- Danach werden nur Punkte genutzt, die:
-  - HR >= 40
-  - speed >= MIN_RUN_SPEED (Default 1.8 m/s)
-- Verbleibende Punkte werden halbiert:
-  - hr1 = mean(erste Hälfte)
-  - hr2 = mean(zweite Hälfte)
-- Drift in %:
-  - hr_drift_pct = ((hr2 - hr1) / hr1) * 100
-
-Negative Drift:
-- Wenn Drift < 0 => wird verworfen (null) und nicht geschrieben.
-
-6.4 Pace-Stabilität (CV)
-Aus den verwendeten Speed-Punkten:
-- speed_cv = std(speed) / mean(speed)
-
-Für „GA comparable“ gilt:
-- speed_cv <= GA_SPEED_CV_MAX (Default 0.10)
-
-6.5 Motor-Index (0..100)
-Der Motor-Index ist ein Trend-Score aus vergleichbaren GA-Läufen.
-
-Fenster:
-- nutzt bis zu 56 Tage (2 x 28)
-- recent vs prev basiert auf 28 Tagen
-- Drift-Trend nutzt 14 Tage (recent14 vs prev14)
-
-Vereinfacht:
-- dv = % Änderung EF-Median (recent vs prev), positiv ist gut
-- dd = Änderung Drift-Median (recent14 vs prev14), negativ ist gut
-- Score startet bei 50, wird gemappt und auf 0..100 geklemmt:
-  - EF wirkt stärker als Drift
-
-Stale-Logik:
-- Wenn der letzte comparable GA-Lauf älter als MOTOR_STALE_DAYS (Default 5) ist:
-  => Motor = n/a
-
-Motor-Text im Daily-Report-Text z.B.:
-- "🏎️ Motor-Index: 68/100 (stabil) ↑ | EF Δ +1.2% (28d) | Drift Δ -0.7%-Pkt (14d)"
-
-7) DAILY-REPORT TEXT: AUFBAU
------------------------------
-Jeder Tag bekommt einen Daily-Report-Text mit folgenden Blöcken:
-
-1) Tages-Status
-- Heute: Kein Lauf / Grundlage (GA) / Schlüsseltraining (Key) / Gemischt (GA+Key)
-
-2) Aerober Kontext (nur GA)
-- Trend aus EF- und Drift-Vergleich (28 Tage recent vs prev)
-- Ampel:
-  - 🟢 Aerober Fortschritt: EF rauf UND Drift nicht schlechter (dd <= 0)
-  - 🔴 Warnsignal: EF runter UND Drift schlechter (dv < -1.5 und dd > 1)
-  - 🟡 sonst stabil/gemischt
-
-3) Motor-Index
-- siehe Kapitel 6.5
-
-4) Bench Reports (optional)
-- wenn bench:<name> Tag vorhanden ist
-
-5) Mindest-Laufreiz (immer)
-- 7-Tage Summe Run-Load (aus icu_training_load oder hr_load)
-- Ziel: MIN_STIMULUS_7D_RUN_LOAD (Default 150)
-
-8) BENCH REPORTS (bench:<name>)
--------------------------------
-8.1 Bench-Tag setzen
-Setze am Lauf einen Tag:
-- bench:<name>
+Validierung:
+- Datumsformat muss `YYYY-MM-DD` sein
+- `to >= from`
+- max Range = 31 Tage
 
 Beispiele:
-- bench:GA45
-- bench:vo2-5x3
-- bench:schwelle-30
+- `/sync?date=2026-01-20&write=true&debug=true`
+- `/sync?days=7&write=false&debug=true`
+- `/sync?from=2026-01-01&to=2026-01-14&write=true&warmup_skip=900`
 
-8.2 Was passiert an Bench-Tagen?
-Der Worker erzeugt im Daily-Report-Text einen Report:
-- Vergleich zu letztem Lauf mit gleichem bench:<name>
-- Metriken:
-  - EF: prozentual vs letztes
-  - Drift: Delta %-Punkte vs letztes
+5) SCHEDULED TRIGGER
+--------------------
+`scheduled()` verarbeitet:
+- `oldest = gestern`
+- `newest = heute`
+- intern mit `write=true`, `debug=false`, `warmup_skip=600`
 
-Zusätzliche Metriken bei nicht-GA Bench (z.B. VO2/Schwelle/Interval):
-- HRR60: Herzfrequenzabfall 60 Sekunden nach Peak
-- VO2-Zeit: Zeit >= 90% HFmax (HFMAX ist fest im Code: 173)
+Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei Läufe pro Tag).
 
+6) KLASSIFIKATIONEN
+-------------------
+6.1 Sportarten
+- Run: `type` enthält run/running/laufen
+- Bike: `type` enthält ride/bike/cycling/rad/velo
+- Strength: type- oder tag-basierte Erkennung (`strength`, `kraft`, `gym`, `core`, ...)
 
-9) DAILY-REPORT (KALENDER NOTE)
+6.2 Key-Training
+- Aktivität ist Key, wenn mindestens ein Tag mit Präfix `key:` existiert
+- Beispiel: `key:vo2`, `key:schwelle`, `key:tempo`
+
+6.3 GA / comparable GA
+- GA: nicht Key und Dauer >= 30 min
+- comparable GA: nicht Key und Dauer >= 35 min (+ Stabilitäts-/Qualitätskriterien)
+
+7) KENNZAHLEN
+-------------
+7.1 EF (Efficiency Factor)
+- `EF = average_speed / average_heartrate`
+- fehlt eine Basisgröße -> `null`
+
+7.2 VDOT-like
+- `VDOT = EF * 1200`
+- skaliertes Signal (kein offizieller VDOT)
+
+7.3 Drift
+Aus Streams (`time`, `velocity_smooth`, `heartrate`):
+- Warmup-Skip standardmäßig 600s
+- Filter: `HR >= 40`, `speed >= 1.8 m/s`
+- Drift `% = ((hr2 - hr1) / hr1) * 100`
+- Negative Drift wird verworfen (`null`)
+
+7.4 Motor-Index
+- Trendscore 0..100 auf Basis vergleichbarer GA-Läufe
+- kombiniert EF- und Drift-Entwicklung (verschiedene Fenster)
+- Stale-Logik: bei fehlender aktueller Messbasis wird Motor als nicht belastbar markiert
+
+8) MODE / POLICY (EVENT vs OPEN)
+---------------------------------
+Der Worker ermittelt aus kommenden Events einen Modus:
+- `EVENT:RUN` (run-spezifischer Floor)
+- `EVENT:BIKE` (bike-spezifischer Floor)
+- `OPEN` (kein harter spezifischer Floor)
+
+Zusätzlich aktiv:
+- Aerobic-Floor-Logik
+- Overlays wie `NORMAL`, `DELOAD`, `TAPER`, `RECOVER_OVERLAY`
+- dynamische Key-Caps (z. B. strenger bei Taper/Fatigue)
+
+9) BLOCK-STEUERUNG & PROGRESSION
 --------------------------------
-9.1 Wann?
-- Täglich pro verarbeitetem Tag
+Block-Feld (`Block`) nutzt Zustände wie:
+- `BASE`, `BUILD`, `RACE`, `RESET`
 
-9.2 Was wird geschrieben?
-Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
-- category: NOTE
-- name: Daily-Report
-- external_id: daily-report-YYYY-MM-DD
-- start_date_local: YYYY-MM-DDT00:00:00
-- color: blue
-- description: enthält den Tages-Report-Text (statt Wellness-Kommentar)
+Steuerung berücksichtigt u. a.:
+- Event-Nähe (`weeksToEvent`)
+- Lauf-/Bike-Load und Floors
+- Fatigue-Signale (Ramp, Monotony, Strain, ACWR)
+- Robustheit (Kraft/Stabi-Minuten)
+- Key-Compliance + Key-Spacing
 
-10) MONTAGS-DETEKTIV (KALENDER NOTE)
-----------------------------------
-10.1 Wann?
-- Jeden Montag (Monday-Erkennung über UTC)
+Im Daily-Report erscheinen daraus abgeleitete Empfehlungen inkl.
+- nächster Key-Reiz
+- Progressionshinweis (Wochenziel in Minuten)
 
-10.2 Was wird geschrieben?
-Es wird ein Kalender-Event (Intervals Events API) erstellt/aktualisiert:
-- category: NOTE
-- name: Montags-Report
-- external_id: detektiv-YYYY-MM-DD
-- start_date_local: YYYY-MM-DDT00:00:00
-- color: orange
-- description: Diagnose-Text (mehrzeilig)
-
-10.3 Inhalte der Note
-Die Note enthält:
-- Struktur: Runs/Woche, Minuten, Load, Longruns, Keys, GA/Kurz
-- Belastungsbild: Monotony und Strain (einfaches Modell)
-- Fundstücke (Findings) und Nächste Schritte (Actions)
-- optional: GA comparable Messbasis (EF/Drift Median + Qualitäts-Hinweise)
-
-Adaptive Fenster:
-- versucht Fenster nacheinander: 14, 28, 42, 56, 84 Tage
-- nimmt das erste Fenster, das als „ok“ gilt
-
-11) API / NUTZUNG
------------------
-11.1 Health Check
-GET /
-Antwort: "ok"
-
-11.2 Watchface Endpoint
-GET /watchface
-Antwort: JSON (CORS-freundlich, kein Cache).
-
-Optional:
-- date=YYYY-MM-DD (sonst „heute“)
-
-11.3 Sync Endpoint
-GET /sync
-
-Parameter:
-
-A) Range-Optionen
-1) Einzelner Tag:
-- date=YYYY-MM-DD
-
-2) Explizit:
-- from=YYYY-MM-DD&to=YYYY-MM-DD
-
-3) Relativ (Default):
-- days=14 (Clamp 1..31)
-Wenn weder date noch from/to: newest=today, oldest=today-days.
-
-B) Write / Debug
-- write=true|false
-  - true  => schreibt nach Intervals
-  - false => nur rechnen (Achtung: im Nicht-Debug Modus wird trotzdem async gestartet)
-
-- debug=true|false
-  - true  => führt synchron aus und gibt umfangreiche JSON-Ausgabe zurück (inkl. patches)
-  - false => startet asynchron (waitUntil) und antwortet sofort
-
-C) Warmup Skip
-- warmup_skip=600 (Sekunden; Default 600; 0..1800)
-
-Beispiele:
-- /sync?date=2026-01-20&write=true&debug=true
-- /sync?days=7&write=false&debug=true
-- /sync?from=2026-01-01&to=2026-01-14&write=true&warmup_skip=900
-
-12) SCHEDULED TRIGGER
+10) DAILY-REPORT NOTE
 ---------------------
-Der Worker hat scheduled():
-- läuft täglich
-- syncRange über gestern + heute
-- write=true
-- warmup_skip=600
+Tägliches Event:
+- `category: NOTE`
+- `name: Daily-Report`
+- `external_id: daily-report-YYYY-MM-DD`
+- `start_date_local: YYYY-MM-DDT00:00:00`
+- `color: blue`
+- `description`: kompletter Tagesreport
 
-Ziel: Jeden Tag mindestens Kommentar + Mindest-Laufreiz-Block.
+11) MONTAGS-REPORT NOTE
+-----------------------
+Montags-Event:
+- `category: NOTE`
+- `name: Montags-Report`
+- `external_id: detektiv-YYYY-MM-DD`
+- `start_date_local: YYYY-MM-DDT00:00:00`
+- `color: orange`
+- `description`: Diagnose, Findings, Actions, Lastbild
 
-13) TYPISCHE WORKFLOWS
-----------------------
-A) Erstes Setup testen (ohne Schreiben)
-1) /sync?days=7&write=false&debug=true
-2) Prüfe JSON:
-   - patches pro Tag
-   - debug-Einträge: streams_failed, insufficient, negative_dropped, etc.
+Fensterauswahl adaptiv über mehrere Kandidaten (14..84 Tage),
+zusätzlich Persistenz einer kompakten Summary in KV.
 
-B) Schreiben aktivieren
-- /sync?days=7&write=true&debug=true (einmalig kontrolliert)
-- dann scheduled laufen lassen
+12) SCHREIBLOGIK / DEBUG
+------------------------
+- `write=false` schreibt nichts nach Intervals (nur Berechnung)
+- `write=true` schreibt Wellness + NOTE-Events
+- `debug=true` liefert:
+  - `patches` je Tag
+  - `debug` inkl. Aktivitätsklassifikation / Metrikhinweisen
+  - `notesPreview` (Montags-Note Text)
 
-C) Drift-Probleme debuggen
-- debug=true nutzen
-- debug[day][..] enthält:
-  - drift_raw
-  - drift_source (z.B. streams_negative_dropped)
+13) WICHTIGE GRENZEN / HINWEISE
+-------------------------------
+- max Sync-Range: 31 Tage
+- negative Drift wird nicht persistiert
+- Representative-GA-Auswahl verhindert zufälliges Überschreiben numerischer Felder
+- Monday-Check basiert auf ISO-Taglogik im Worker
+- fehlende Streams/inkonsistente Aktivitäten werden im Debug sichtbar, aber nicht als Hard-Fail erzwungen
 
-14) GRENZEN & HINWEISE
-----------------------
-- Negative Drift wird verworfen (Drift < 0 => null).
-- Bei mehreren GA-Läufen am Tag können VDOT/Drift überschrieben werden.
-- Monday-Erkennung basiert auf UTC.
-
-15) GLOSSAR
+14) GLOSSAR
 -----------
-GA        = Grundlagenlauf (locker, >=30min, nicht key)
-Key       = intensiver Lauf (Tag key:*)
-EF        = Efficiency Factor = speed / HR
-VDOT-like = EF skaliert (EF*1200)
-Drift     = relative Änderung HR zwischen erster und zweiter Hälfte
-Motor     = Trend-Score 0..100 aus EF- und Drift-Trends
-Monotony  = mean(load)/sd(load) über Tageslasten
-Strain    = monotony * sum(load)
+GA        = Grundlagenlauf (locker, nicht key, >=30 min)
+Key       = intensive Einheit (Tag `key:*`)
+EF        = Efficiency Factor (`speed / HR`)
+VDOT-like = skaliertes EF-Signal (`EF*1200`)
+Drift     = HR-Veränderung zwischen erster und zweiter Hälfte
+Motor     = Trendscore aus EF/Drift-Entwicklung
+Monotony  = mean(load) / std(load) über Tageslasten
+Strain    = monotony * weekly load
+ACWR      = acute/chronic workload ratio
 
 ENDE
