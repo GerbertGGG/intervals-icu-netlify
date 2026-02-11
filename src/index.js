@@ -2805,185 +2805,138 @@ function buildComments(
   },
   { debug = false } = {}
 ) {
-  const hadKey = perRunInfo.some((x) => x.isKey);
-  const hadGA = perRunInfo.some((x) => x.ga && !x.isKey);
-  const hadAnyRun = perRunInfo.length > 0;
-  const hasSpecific = (policy?.specificThreshold ?? 0) > 0;
-  const intensitySignal = loads7?.intensitySignal ?? "none";
-  const totalMinutesToday = Math.round(sum(perRunInfo.map((x) => x.moving_time || 0)) / 60);
-  const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
-  const eventDistance = formatEventDistance(blockState?.eventDistance || getEventDistanceFromEvent(modeInfo?.nextEvent));
-  const eventDateText = eventDate ? eventDate : "n/a";
-  const confidence = trend?.confidence ?? "niedrig";
-  const bullet = (text) => `- ${text}`;
-  const subBullet = (text) => `  - ${text}`;
-
   const lines = [];
-  lines.push("📉 Belastung & Progression");
-  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
-  const bikeLoad7 = Math.round(loads7?.bikeTotal7 ?? 0);
-  const runEq7 = Math.round(Number.isFinite(runEquivalent7) ? runEquivalent7 : runLoad7);
-  const runTarget = runFloorState?.effectiveFloorTarget ?? 0;
-  const runTargetText = runTarget > 0 ? Math.round(runTarget) : "n/a";
-  const runFloorWeekly = Math.round(runFloorState?.floorTarget ?? 0);
-  const runFloorWeeklyText = runFloorWeekly > 0 ? runFloorWeekly : "n/a";
-  const avg21Raw = Number(runFloorState?.avg21 ?? 0);
-  const avg7Raw = Number(runFloorState?.avg7 ?? 0);
-  const avg21 = Math.round(avg21Raw);
-  const avg7 = Math.round(avg7Raw);
-  const sum21Raw = Number(runFloorState?.sum21 ?? 0);
-  const sum21 = Math.round(sum21Raw);
-  const activeDays21 = Number(runFloorState?.activeDays21 ?? 0);
-  const floorDaily = Math.round(runFloorState?.floorDaily ?? 0);
-  const deloadReady = shouldTriggerDeload(sum21Raw, activeDays21, runFloorState?.deloadActive);
-  const deloadTargetRange =
-    runFloorWeekly > 0
-      ? `${Math.round(runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.min)}–${Math.round(
-          runFloorWeekly * RUN_FLOOR_DELOAD_RANGE.max
-        )}`
-      : "n/a";
-  const longRunTarget = Math.round(LONGRUN_MIN_SECONDS / 60);
-  const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
-  lines.push(bullet(`RunFloor: ${runLoad7}/${runTargetText} (7-Tage)`));
-  const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
-  const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
-  lines.push(bullet("Progression (Deload bei 21T Summe + aktive Tage):"));
-  if (runFloorState?.deloadActive) {
-    const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
-    lines.push(subBullet(`Deload läuft${endText} (Ziel: ${deloadTargetRange} Run-Load/Woche).`));
-  } else if (deloadReady) {
-    lines.push(
-      subBullet(`21T Summe ${sum21} ≥ ${RUN_FLOOR_DELOAD_SUM21_MIN} & aktive Tage ${activeDays21} ≥ ${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} → Deload (Ziel: ${deloadTargetRange} Run-Load/Woche).`)
-    );
-  } else {
-    const stabilityText = runFloorState?.stabilityOK ? "Stabilität ok" : "Stabilität wackelig";
-    lines.push(
-      subBullet(`21T Summe ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN}, aktive Tage ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} – ${stabilityText}.`)
-    );
-  }
-  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
-  lines.push(bullet(`Status: ${overlayMode === "NORMAL" ? "im Plan" : overlayMode}`));
-  const deloadExplanation = buildDeloadExplanation(runFloorState);
-  if (deloadExplanation) lines.push(subBullet(`Deload-Hinweis: ${deloadExplanation}`));
-  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
-  if (transitionLine) lines.push(subBullet(transitionLine));
+  const bullet = (text) => `- ${text}`;
 
-  lines.push("");
-  lines.push("🎯 Key-Check");
-  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? 0;
+  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? MAX_KEYS_7D;
   const actualKeys = keyCompliance?.actual7 ?? 0;
-  const keyStatusIcon = keyCompliance?.capExceeded
-    ? "⚠️"
-    : keyCompliance?.status === "ok"
-      ? "✅"
-      : "⚠️";
-  const keyTypes = keyCompliance?.actualTypes?.length
-    ? keyCompliance.actualTypes.map(formatKeyType).join("/")
-    : "n/a";
-  lines.push(bullet(`Key diese Woche: ${actualKeys}/${keyCap} ${keyStatusIcon} (${keyTypes})`));
-  const nextAllowedText = formatNextAllowed(todayIso, keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null);
+  const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
+  const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+  const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
   const easyShareGate = keyCompliance?.easyShareGate;
-  const easyShareText = easyShareGate?.hasData
-    ? `${Math.round((easyShareGate.easyShare ?? 0) * 100)}% (≥${Math.round((easyShareGate.threshold ?? 0) * 100)}%, ${easyShareGate.lookbackDays}T)`
-    : `n/a (≥${Math.round((easyShareGate?.threshold ?? 0) * 100)}%)`;
-  lines.push(bullet(`Guardrails: keys_last_7d=${actualKeys}, nextAllowed=${nextAllowedText}, EasyShare=${easyShareText}`));
-  const keyRuleLine = buildKeyRuleLine({
-    keyRules,
-    block: blockState?.block,
-    eventDistance,
-  });
-  if (keyRuleLine) lines.push(bullet(keyRuleLine));
+  const easySharePct = easyShareGate?.hasData ? Math.round((easyShareGate.easyShare ?? 0) * 100) : null;
+  const easyShareThresholdPct = Math.round((easyShareGate?.threshold ?? EASY_SHARE_THRESHOLDS?.[blockState?.block] ?? 0) * 100);
+  const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
+  const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
+  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
 
-  lines.push("");
-  lines.push("📝 Empfehlungen");
-  lines.push(
-    bullet(
-      buildKeyConsequence({
-        keyCompliance,
-        keySpacing,
-        keyCap,
-      })
-    )
-  );
-  if (keyCompliance?.suggestion) {
-    lines.push(bullet(`Trainingsempfehlung: ${keyCompliance.suggestion}`));
+  const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
+  const daysToEvent = eventDate && todayIso ? diffDays(todayIso, eventDate) : null;
+
+  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
+  const budgetBlocked = keyCompliance?.capExceeded || actualKeys >= keyCap;
+  const spacingBlocked = !spacingOk;
+  const easyShareBlocked = easyShareGate?.hasData && easyShareGate?.ok === false;
+  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
+  const runFloorBlocked = runTarget > 0 && runFloorGap < 0;
+
+  let mainBlockReason = null;
+  if (keyBlocked) {
+    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys}/${keyCap}`;
+    else if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
+    else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyShareThresholdPct}%`;
+    else if (deloadBlocked) mainBlockReason = `Overlay ${overlayMode}`;
+    else if (runFloorBlocked) mainBlockReason = `RunFloor-Gap ${runFloorGap}`;
   }
-  lines.push(bullet(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`));
-  lines.push(subBullet(`Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`));
 
-  const next = buildNextRunRecommendation({
-    runFloorState,
-    policy,
-    specificOk,
-    hasSpecific,
-    aerobicOk,
-    intensitySignal,
-    keyCapExceeded: keyCompliance?.capExceeded ?? false,
-    keySpacingOk: keyCompliance?.keySpacingOk ?? true,
-  });
-  const todayText = buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday });
-  const coachLine = buildBottomLineCoachMessage({
-    hadAnyRun,
-    hadGA,
-    runFloorState,
-    hasSpecific,
-    specificOk,
-    policy,
-    intensitySignal,
-    aerobicOk,
-    keyCapExceeded: keyCompliance?.capExceeded ?? false,
-    keySpacingOk: keyCompliance?.keySpacingOk ?? true,
-    todayText,
-    nextText: `Nächster Lauf: ${next}`,
-  });
-
-  const modeLine =
-    runFloorState?.overlayMode === "DELOAD"
-      ? "Deload (nur locker/GA)"
-      : runFloorState?.overlayMode === "TAPER"
-        ? "Taper/Frische"
-        : runFloorState?.overlayMode === "RECOVER_OVERLAY"
+  const modeLabel =
+    overlayMode === "DELOAD"
+      ? "Deload"
+      : overlayMode === "TAPER"
+        ? "Taper"
+        : overlayMode === "RECOVER_OVERLAY"
           ? "Recovery"
-          : keyCompliance?.capExceeded || (keyCompliance?.actual7 ?? 0) >= keyCap
-            ? "Easy only (kein weiterer Key)"
-            : "Key möglich (Regeln beachten)";
+          : keyBlocked
+            ? "Easy only"
+            : "Key möglich";
+  const ampel = keyBlocked ? "🟠" : "🟢";
+  const keyStatus = keyBlocked && mainBlockReason ? `Key blockiert (${mainBlockReason})` : keyBlocked ? "Key blockiert" : "Key frei";
 
-  lines.push("");
-  lines.push("✅ HEUTE-ENTSCHEIDUNG");
-  lines.push(`Modus: ${modeLine}`);
-  lines.push("");
-  lines.push("1) Key-Budget (7T)");
-  lines.push(`${actualKeys}/${keyCap} ${keyStatusIcon} → ${keyCompliance?.keyAllowedNow ? "2. Key optional" : actualKeys >= keyCap ? "Rest locker/GA" : "Key optional"}`);
-  lines.push("");
-  lines.push("2) RunFloor (7T)");
-  lines.push(`${runLoad7}/${runTargetText} → Gap: ${runFloorGap >= 0 ? "+" : ""}${runFloorGap} (Volumen priorisieren)`);
-  lines.push("");
-  lines.push("3) Progression / Deload-Check (21T)");
-  lines.push(`${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN} & ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN} aktive Tage → ${deloadReady ? "Deload fällig" : "noch kein Deload"}${runFloorState?.stabilityOK ? "" : ", Stabilität wackelig"}`);
-  lines.push("");
-  lines.push("4) Longrun-Anker");
-  lines.push(`${longRunMinutes}′ → Ziel ${longRunTarget}′ (nächster Longrun: +5–10′)`);
-  lines.push("");
-  lines.push(`➡️ Nächster Lauf (konkret): ${next}`);
+  lines.push(`Status: ${ampel} • ${modeLabel} • ${keyStatus} • Budget ${actualKeys}/${keyCap} • RunFloor-Gap ${runFloorGap >= 0 ? "+" : ""}${runFloorGap}`);
   lines.push("");
 
-  const focusEmoji = runFloorGap < 0 ? "🟠" : "🟢";
-  const focusText = runFloorGap < 0 ? "Volumen (RunFloor-Gap)" : "Stabil halten";
-  lines.push(`${focusEmoji} Fokus: ${focusText}`);
-  lines.push(`Key: ${actualKeys}/${keyCap} ${keyStatusIcon} → ${actualKeys >= keyCap ? "kein Key mehr" : "Key möglich"}`);
-  lines.push(`RunFloor: ${runLoad7}/${runTargetText} (${runFloorGap >= 0 ? "+" : ""}${runFloorGap})`);
-  lines.push(`21T: ${sum21}/${RUN_FLOOR_DELOAD_SUM21_MIN} | ${activeDays21}/${RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN}${runFloorState?.stabilityOK ? "" : " (Stabilität wackelig)"}`);
-  lines.push(`Longrun: ${longRunMinutes}′ → ${longRunTarget}′`);
-  lines.push(`Next: ${next}`);
+  lines.push("Belastung & Kontext");
+  lines.push(bullet(`Block: ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? ` • ${daysToEvent} Tage bis Event` : " • Event: n/a"}`));
+  lines.push(bullet(`RunFloor (7T): ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (Gap ${runFloorGap >= 0 ? "+" : ""}${runFloorGap}) • EasyShare (14T): ${easySharePct != null ? easySharePct + "%" : "n/a"}`));
+  lines.push(bullet(`21T: ${runFloorState?.deloadActive ? "Deload aktiv" : "Progression"} (Summe ${Math.round(runFloorState?.sum21 ?? 0)}, aktive Tage ${Math.round(runFloorState?.activeDays21 ?? 0)})`));
+  lines.push("");
+
+  lines.push("Key-Check");
+  lines.push(bullet(`Budget: ${actualKeys}/${keyCap}`));
+  lines.push(bullet(`Spacing: ${spacingOk ? "ok" : `nicht ok bis ${nextAllowed || "n/a"}`}`));
+  const easyText = `${easySharePct != null ? easySharePct + "%" : "n/a"} (Schwelle ${easyShareThresholdPct}%)`;
+  lines.push(bullet(`EasyShare: ${easyText}${keyBlocked && mainBlockReason ? ` • Hauptgrund: ${mainBlockReason}` : ""}`));
+  lines.push("");
+
+  lines.push("Heutiger Lauf – Bewertung");
+  if (!perRunInfo?.length) {
+    lines.push("Heute kein Lauf.");
+  } else {
+    const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
+    const intervalToday = perRunInfo.find((x) => x.isKey && x.intervalMetrics);
+
+    if (gaToday) {
+      const drift = gaToday.drift;
+      const driftText = drift == null ? "n/a" : `${drift.toFixed(1)}%`;
+      const driftEval =
+        drift == null
+          ? "keine belastbare Einordnung"
+          : drift <= 5
+            ? "innerhalb der 5%-Leitplanke, aerobe Stabilität gegeben"
+            : "über 5%: mögliche Ermüdung, zu hohe Pace oder Umweltfaktoren";
+      const efTrend = trend?.dv;
+      const efText = Number.isFinite(efTrend)
+        ? `${efTrend >= 0 ? "+" : ""}${efTrend.toFixed(1)}% vs Referenz ähnlicher GA-Läufe`
+        : "n/a (zu wenig vergleichbare Läufe)";
+      const vdotText = Number.isFinite(efTrend)
+        ? `${efTrend >= 0 ? "+" : ""}${efTrend.toFixed(1)}% Trend`
+        : "n/a";
+
+      lines.push(bullet(`Drift: ${driftText} → ${driftEval}.`));
+      lines.push(bullet(`EF: ${efText} (nur als Trendsignal, keine absolute Bewertung).`));
+      lines.push(bullet(`VDOT: ${vdotText} (nur im Trend und nur bei vergleichbarer Intensität interpretieren).`));
+      lines.push("Einordnung: Aerobe Stabilität und Ermüdung nur im Verlauf bewerten, nicht aus einem Einzelwert.");
+    } else if (intervalToday) {
+      const m = intervalToday.intervalMetrics;
+      const hrr = m?.HRR60_median;
+      let hrrEval = "n/a";
+      if (Number.isFinite(hrr)) {
+        if (hrr >= 25) hrrEval = "gute akute Erholung (Heuristik)";
+        else if (hrr >= 15) hrrEval = "normaler Bereich (Heuristik)";
+        else hrrEval = "mögliche kumulative Ermüdung (Heuristik)";
+      }
+      const efSeries = Number.isFinite(m?.HR_Drift_pct)
+        ? `${m.HR_Drift_pct >= 0 ? "+" : ""}${m.HR_Drift_pct.toFixed(1)}% HR-Drift über die Intervalle`
+        : "n/a";
+      const paceConsistency = m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a";
+
+      lines.push(bullet(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`));
+      lines.push(bullet(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`));
+      lines.push(bullet(`Pace-Konsistenz: ${paceConsistency}.`));
+      lines.push("Einordnung: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
+    } else {
+      lines.push("Heute Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
+    }
+  }
+  lines.push("");
+
+  lines.push("Empfehlung");
+  if (keyBlocked) {
+    lines.push("Kein Key heute: zuerst Verteilung und Frische stabilisieren.");
+    lines.push("Nächster Lauf: 40–55′ GA1 locker, ohne zusätzliche Intensität.");
+  } else {
+    lines.push("Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
+    lines.push("Nächster Lauf: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
+  }
 
   if (debug) {
     lines.push("");
-    lines.push(`Debug: ${coachLine}`);
-    lines.push(`Debug: Trend-Confidence ${confidence}, Event ${eventDateText} (${eventDistance})`);
+    lines.push(`Debug: overlay=${overlayMode}, specificOk=${specificOk}, aerobicOk=${aerobicOk}, motor=${motor?.value ?? "n/a"}`);
     if (benchReports?.length) lines.push(...benchReports.map((line) => `Debug: ${line}`));
   }
 
-  return lines.join("\n");
+  return lines.join("
+");
 }
 
 function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
