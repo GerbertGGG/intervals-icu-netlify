@@ -2851,24 +2851,43 @@ function buildComments(
             : "Key möglich";
   const ampel = keyBlocked ? "🟠" : "🟢";
   const keyStatus = keyBlocked && mainBlockReason ? `Key blockiert (${mainBlockReason})` : keyBlocked ? "Key blockiert" : "Key frei";
+  const progressionStatus = runFloorState?.deloadActive ? "Deload aktiv" : "im Plan";
+  const keyRuleLine = buildKeyRuleLine({
+    keyRules,
+    block: blockState?.block,
+    eventDistance: formatEventDistance(modeInfo?.nextEvent?.distance_type),
+  });
+  const nextRunText = buildNextRunRecommendation({
+    runFloorState,
+    policy,
+    specificOk,
+    hasSpecific: Number.isFinite(specificValue),
+    aerobicOk,
+    intensitySignal: fatigue?.intensitySignal,
+    keyCapExceeded: budgetBlocked,
+    keySpacingOk: spacingOk,
+  });
 
   lines.push(`Status: ${ampel} • ${modeLabel} • ${keyStatus} • Budget ${actualKeys}/${keyCap} • RunFloor-Gap ${runFloorGap >= 0 ? "+" : ""}${runFloorGap}`);
   lines.push("");
 
-  lines.push("Belastung & Kontext");
-  lines.push(bullet(`Block: ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? ` • ${daysToEvent} Tage bis Event` : " • Event: n/a"}`));
-  lines.push(bullet(`RunFloor (7T): ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (Gap ${runFloorGap >= 0 ? "+" : ""}${runFloorGap}) • EasyShare (14T): ${easySharePct != null ? easySharePct + "%" : "n/a"}`));
-  lines.push(bullet(`21T: ${runFloorState?.deloadActive ? "Deload aktiv" : "Progression"} (Summe ${Math.round(runFloorState?.sum21 ?? 0)}, aktive Tage ${Math.round(runFloorState?.activeDays21 ?? 0)})`));
+  lines.push("📉 Belastung & Progression");
+  lines.push("");
+  lines.push(`RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (7-Tage)`);
+  lines.push("Progression (Deload bei 21T Summe + aktive Tage):");
+  lines.push(`21T Summe ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}, aktive Tage ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} – Stabilität ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}.`);
+  lines.push(`Status: ${progressionStatus}`);
   lines.push("");
 
-  lines.push("Key-Check");
-  lines.push(bullet(`Budget: ${actualKeys}/${keyCap}`));
-  lines.push(bullet(`Spacing: ${spacingOk ? "ok" : `nicht ok bis ${nextAllowed || "n/a"}`}`));
-  const easyText = `${easySharePct != null ? easySharePct + "%" : "n/a"} (Schwelle ${easyShareThresholdPct}%)`;
-  lines.push(bullet(`EasyShare: ${easyText}${keyBlocked && mainBlockReason ? ` • Hauptgrund: ${mainBlockReason}` : ""}`));
+  lines.push("🎯 Key-Check");
+  lines.push("");
+  lines.push(`Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} (${modeLabel === "Easy only" ? "GA" : "offen"})`);
+  lines.push(`Guardrails: keys_last_7d=${actualKeys}, nextAllowed=${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""}, EasyShare=${easySharePct != null ? easySharePct + "%" : "n/a"} (≥${easyShareThresholdPct}%, 14T)`);
+  if (keyRuleLine) lines.push(`${keyRuleLine}`);
   lines.push("");
 
   lines.push("Heutiger Lauf – Bewertung");
+  lines.push("");
   if (!perRunInfo?.length) {
     lines.push("Heute kein Lauf.");
   } else {
@@ -2920,18 +2939,46 @@ function buildComments(
   }
   lines.push("");
 
-  lines.push("Empfehlung");
+  lines.push("📝 Empfehlungen");
+  lines.push("");
   if (keyBlocked) {
-    lines.push("Kein Key heute: zuerst Verteilung und Frische stabilisieren.");
-    lines.push("Nächster Lauf: 40–55′ GA1 locker, ohne zusätzliche Intensität.");
+    lines.push(`Key-Budget erschöpft – restliche Einheiten locker/GA.`);
+    lines.push(`Trainingsempfehlung: ${keyStatus} – restliche Einheiten locker/GA.`);
   } else {
     lines.push("Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
-    lines.push("Nächster Lauf: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
+    lines.push("Trainingsempfehlung: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
   }
+  lines.push(`Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel: ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
+  lines.push(`Qualität: ${keyBlocked ? "locker/GA" : "Key möglich"} (${todayIso || "n/a"})`);
+  lines.push(`✅ HEUTE-ENTSCHEIDUNG Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`);
+  lines.push("");
+  lines.push(`1) Key-Budget (7T) ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} → ${keyBlocked ? "Rest locker/GA" : "Key möglich"}`);
+  lines.push(`2) RunFloor (7T) ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} → Gap: ${runFloorGap >= 0 ? "+" : ""}${runFloorGap} (${runFloorGap < 0 ? "Volumen priorisieren" : "stabil"})`);
+  lines.push(`3) Progression / Deload-Check (21T) ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} & ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} aktive Tage → ${runFloorState?.deloadActive ? "Deload" : "noch kein Deload, Stabilität wackelig"}`);
+  lines.push(`4) Longrun-Anker ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
+  lines.push("");
+  lines.push(`➡️ Nächster Lauf (konkret): ${nextRunText}`);
+  lines.push("");
+  lines.push(`${ampel} Fokus: ${runFloorGap < 0 ? "Volumen (RunFloor-Gap)" : "Stabilität"} Key: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} • RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : ""}${runFloorGap}) • 21T: ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} | ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} • Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′ • Next: ${nextRunText}`);
 
   if (debug) {
     lines.push("");
     lines.push(`Debug: overlay=${overlayMode}, specificOk=${specificOk}, aerobicOk=${aerobicOk}, motor=${motor?.value ?? "n/a"}`);
+    lines.push(`Debug: ${buildBottomLineCoachMessage({
+      hadAnyRun: !!perRunInfo?.length,
+      hadGA: !!perRunInfo?.find((x) => x.ga),
+      runFloorState,
+      hasSpecific: Number.isFinite(specificValue),
+      specificOk,
+      policy,
+      intensitySignal: fatigue?.intensitySignal,
+      aerobicOk,
+      keyCapExceeded: budgetBlocked,
+      keySpacingOk: spacingOk,
+      todayText: `Block ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? `, ${daysToEvent} Tage bis Event` : ""}`,
+      nextText: nextRunText,
+    })}`);
+    lines.push(`Debug: Trend-Confidence ${robustness?.classification?.label || "n/a"}, Event ${eventDate || "n/a"} (${formatEventDistance(modeInfo?.nextEvent?.distance_type)})`);
     if (benchReports?.length) lines.push(...benchReports.map((line) => `Debug: ${line}`));
   }
 
