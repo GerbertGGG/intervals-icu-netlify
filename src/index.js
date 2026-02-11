@@ -2935,8 +2935,7 @@ function buildComments(
     if (benchReports?.length) lines.push(...benchReports.map((line) => `Debug: ${line}`));
   }
 
-  return lines.join("
-");
+  return lines.join("\n");
 }
 
 function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
