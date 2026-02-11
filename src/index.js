@@ -2854,6 +2854,11 @@ function buildComments(
 ) {
   const lines = [];
   const bullet = (text) => `- ${text}`;
+  const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
+  const formatSignedPct1 = (value) =>
+    Number.isFinite(value)
+      ? `${value >= 0 ? "+" : ""}${value.toFixed(1).replace('.', ',')} %`
+      : "n/a";
 
   const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? MAX_KEYS_7D;
   const actualKeys = keyCompliance?.actual7 ?? 0;
@@ -2924,25 +2929,33 @@ function buildComments(
 
     if (gaToday) {
       const drift = gaToday.drift;
-      const driftText = drift == null ? "n/a" : `${drift.toFixed(1)}%`;
+      const driftText = formatPct1(drift);
       const driftEval =
         drift == null
-          ? "keine belastbare Einordnung"
+          ? "keine belastbare Einordnung."
           : drift <= 5
-            ? "innerhalb der 5%-Leitplanke, aerobe Stabilität gegeben"
-            : "über 5%: mögliche Ermüdung, zu hohe Pace oder Umweltfaktoren";
+            ? "innerhalb der 5 %-Leitplanke."
+            : "über der 5 %-Leitplanke. Mögliche Ermüdung, zu hohe Pace oder Umweltfaktoren.";
       const efTrend = trend?.dv;
       const efText = Number.isFinite(efTrend)
-        ? `${efTrend >= 0 ? "+" : ""}${efTrend.toFixed(1)}% vs Referenz ähnlicher GA-Läufe`
-        : "n/a (zu wenig vergleichbare Läufe)";
+        ? `${formatSignedPct1(efTrend)} vs. Referenz ähnlicher GA-Läufe.`
+        : "n/a (zu wenig vergleichbare Läufe).";
       const vdotText = Number.isFinite(efTrend)
-        ? `${efTrend >= 0 ? "+" : ""}${efTrend.toFixed(1)}% Trend`
-        : "n/a";
+        ? `${formatSignedPct1(efTrend)} Trend.`
+        : "n/a.";
 
-      lines.push(bullet(`Drift: ${driftText} → ${driftEval}.`));
-      lines.push(bullet(`EF: ${efText} (nur als Trendsignal, keine absolute Bewertung).`));
-      lines.push(bullet(`VDOT: ${vdotText} (nur im Trend und nur bei vergleichbarer Intensität interpretieren).`));
-      lines.push("Einordnung: Aerobe Stabilität und Ermüdung nur im Verlauf bewerten, nicht aus einem Einzelwert.");
+      lines.push(`Drift:`);
+      lines.push(`${driftText} → ${driftEval}`);
+      if (drift != null && drift <= 5) lines.push("✔ Aerobe Stabilität gegeben.");
+      lines.push("");
+      lines.push(`EF:`);
+      lines.push(`${efText}`);
+      lines.push("→ Nur als Trendsignal interpretieren, keine absolute Bewertung.");
+      lines.push("");
+      lines.push(`VDOT:`);
+      lines.push(`${vdotText}`);
+      lines.push("→ Nur bei vergleichbarer Intensität interpretieren.");
+      lines.push("→ Aerobe Stabilität und Ermüdung immer im Verlauf bewerten, nicht aus einem Einzelwert.");
     } else if (intervalToday) {
       const m = intervalToday.intervalMetrics;
       const hrr = m?.HRR60_median;
@@ -2966,38 +2979,79 @@ function buildComments(
     }
   }
   lines.push("");
+  lines.push("⸻");
+  lines.push("");
 
   lines.push("📉 Belastung & Progression");
-  lines.push(`RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (7-Tage)`);
-  lines.push(`Progression: ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} (21-Tage)`);
-  lines.push(`aktive Tage ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} – Stabilität ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}. Status: ${progressionStatus}`);
+  lines.push(`RunFloor (7 Tage):`);
+  lines.push(`${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"}`);
+  lines.push("");
+  lines.push(`21-Tage Progression:`);
+  lines.push(`${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`);
+  lines.push("");
+  lines.push(`Aktive Tage:`);
+  lines.push(`${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} → Stabilität ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`);
+  lines.push("");
+  lines.push("Status:");
+  lines.push(`${progressionStatus === "im Plan" ? "Im Plan." : progressionStatus}`);
+  lines.push("");
+  lines.push("⸻");
   lines.push("");
 
   lines.push("🎯 Key-Check");
   lines.push(`Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""}`);
-  lines.push(`nextAllowed=${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""},`);
-  lines.push(`EasyShare=${easySharePct != null ? easySharePct + "%" : "n/a"} (≥${easyShareThresholdPct}%, 14T)`);
+  lines.push("");
+  lines.push(`Next Allowed:`);
+  lines.push(`${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""}`);
+  lines.push("");
+  lines.push(`EasyShare (14 Tage):`);
+  lines.push(`${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`);
+  lines.push("");
+  lines.push(`Key-Regel (${blockState?.block ?? "n/a"}, ${formatEventDistance(modeInfo?.nextEvent?.distance_type) || "n/a"}):`);
   if (keyRuleLine) lines.push(`${keyRuleLine}`);
+  lines.push("");
+  lines.push("⸻");
   lines.push("");
 
   lines.push("📝 Empfehlungen");
   if (keyBlocked) {
-    lines.push(`Key-Budget erschöpft – restliche Einheiten locker/GA.`);
-    lines.push(`Trainingsempfehlung: ${keyStatus} – restliche Einheiten locker/GA.`);
+    lines.push(`Key-Budget erschöpft (${actualKeys}/${keyCap}).`);
+    lines.push(`→ Restliche Einheiten locker / GA.`);
+    lines.push("");
+    lines.push(`Trainingsempfehlung:`);
+    lines.push(`${keyStatus}`);
+    lines.push("→ Alle weiteren Einheiten locker / GA.");
   } else {
     lines.push("Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
     lines.push("Trainingsempfehlung: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
   }
-  lines.push(`Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel: ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
-  lines.push(`Qualität: ${keyBlocked ? "locker/GA" : "Key möglich"} (${todayIso || "n/a"})`);
-  lines.push(`✅ HEUTE-ENTSCHEIDUNG Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`);
+  lines.push("");
+  lines.push(`Longrun:`);
+  lines.push(`${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel erreicht (${Math.round(longRunSummary?.targetMin ?? 0) || 60}′)`);
+  lines.push("");
+  lines.push(`Qualität zuletzt:`);
+  lines.push(`${keyBlocked ? "locker / GA" : "Key möglich"} (${todayIso || "n/a"})`);
+  lines.push("");
+  lines.push("⸻");
+  lines.push("");
+  lines.push("✅ HEUTE-ENTSCHEIDUNG");
+  lines.push("");
+  lines.push(`Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`);
 
-  lines.push(`${ampel} Fokus: ${runFloorGap < 0 ? "Volumen (RunFloor-Gap)" : "Stabilität"} Key: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} • RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : ""}${runFloorGap}) • 21T: ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} | ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} • Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′ • Next: ${nextRunText}`);
+  lines.push(`${ampel} Fokus: ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`);
+  lines.push(`• Key: ${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`);
+  lines.push(`• RunFloor: ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : "–"}${Math.abs(runFloorGap)})`);
+  lines.push(`• 21T: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} | ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`);
+  lines.push(`• Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
+  lines.push(`• Next: ${nextRunText}`);
 
+  lines.push("");
+  lines.push("⸻");
   lines.push("");
   lines.push("✅ Bottom Line");
   lines.push("");
-  lines.push(`Coach: ${buildBottomLineCoachMessage({
+  lines.push("Coach-Urteil:");
+  lines.push(`${buildBottomLineCoachMessage({
     hadAnyRun: !!perRunInfo?.length,
     hadGA: !!perRunInfo?.find((x) => x.ga),
     runFloorState,
