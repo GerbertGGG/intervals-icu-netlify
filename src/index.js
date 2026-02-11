@@ -2709,7 +2709,7 @@ function buildNextRunRecommendation({
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
   } else if (hasSpecific && !specificOk) {
-    next = "35–50 min locker/GA (Volumenaufbau)";
+    next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
   }
@@ -2753,7 +2753,7 @@ function buildBottomLineCoachMessage({
     return `Gib dem Körper 48h zwischen Keys. Heute ruhig bleiben. ${nextText}.`;
   }
   if (hasSpecific && !specificOk) {
-    return `Volumen fehlt noch ein Stück. Fülle locker/GA auf. ${nextText}.`;
+    return `Volumen fehlt noch ein Stück. Fülle locker/steady auf. Nächster Lauf: ${nextText}.`;
   }
   if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     if (hadAnyRun && hadGA) {
@@ -2868,7 +2868,7 @@ function buildComments(
     keySpacingOk: spacingOk,
   });
 
-  lines.push("Heutiger Lauf – Bewertung");
+  lines.push("🏃 Heutiger Lauf – Bewertung");
   if (!perRunInfo?.length) {
     lines.push("Heute kein Lauf.");
   } else {
@@ -2947,26 +2947,23 @@ function buildComments(
 
   lines.push(`${ampel} Fokus: ${runFloorGap < 0 ? "Volumen (RunFloor-Gap)" : "Stabilität"} Key: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} • RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : ""}${runFloorGap}) • 21T: ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} | ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} • Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′ • Next: ${nextRunText}`);
 
-  if (debug) {
-    lines.push("");
-    lines.push(`Debug: overlay=${overlayMode}, specificOk=${specificOk}, aerobicOk=${aerobicOk}, motor=${motor?.value ?? "n/a"}`);
-    lines.push(`Debug: ${buildBottomLineCoachMessage({
-      hadAnyRun: !!perRunInfo?.length,
-      hadGA: !!perRunInfo?.find((x) => x.ga),
-      runFloorState,
-      hasSpecific: Number.isFinite(specificValue),
-      specificOk,
-      policy,
-      intensitySignal: fatigue?.intensitySignal,
-      aerobicOk,
-      keyCapExceeded: budgetBlocked,
-      keySpacingOk: spacingOk,
-      todayText: `Block ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? `, ${daysToEvent} Tage bis Event` : ""}`,
-      nextText: nextRunText,
-    })}`);
-    lines.push(`Debug: Trend-Confidence ${robustness?.classification?.label || "n/a"}, Event ${eventDate || "n/a"} (${formatEventDistance(modeInfo?.nextEvent?.distance_type)})`);
-    if (benchReports?.length) lines.push(...benchReports.map((line) => `Debug: ${line}`));
-  }
+  lines.push("");
+  lines.push("✅ Bottom Line");
+  lines.push("");
+  lines.push(`Coach: ${buildBottomLineCoachMessage({
+    hadAnyRun: !!perRunInfo?.length,
+    hadGA: !!perRunInfo?.find((x) => x.ga),
+    runFloorState,
+    hasSpecific: Number.isFinite(specificValue),
+    specificOk,
+    policy,
+    intensitySignal: fatigue?.intensitySignal,
+    aerobicOk,
+    keyCapExceeded: budgetBlocked,
+    keySpacingOk: spacingOk,
+    todayText: `Block ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? `, ${daysToEvent} Tage bis Event` : ""}`,
+    nextText: nextRunText,
+  })}`);
 
   return lines.join("\n");
 }
