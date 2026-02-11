@@ -2565,6 +2565,10 @@ async function computeMaintenance14d(ctx, dayIso) {
 
     patches[day] = patch;
 
+    if (debug) {
+      notesPreview[day] = dailyReportText || "";
+    }
+
     // Daily NOTE (calendar): stores the daily report text in blue
     if (write) {
       await upsertDailyReportNote(env, day, dailyReportText || "");
@@ -2585,7 +2589,18 @@ async function computeMaintenance14d(ctx, dayIso) {
       if (write) {
         await upsertMondayDetectiveNote(env, day, detectiveNoteText);
       }
-      if (debug) notesPreview[day] = detectiveNoteText;
+      if (debug) {
+        const detectiveBlock = String(detectiveNoteText || "").startsWith("🕵️‍♂️")
+          ? detectiveNoteText || ""
+          : ["🕵️‍♂️ Montags-Report", detectiveNoteText || ""].join("\n");
+        notesPreview[day] = [
+          notesPreview[day],
+          "",
+          detectiveBlock,
+        ]
+          .filter((line) => line != null)
+          .join("\n");
+      }
     }
 
     if (write) {
