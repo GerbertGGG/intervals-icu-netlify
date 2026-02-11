@@ -2868,26 +2868,7 @@ function buildComments(
     keySpacingOk: spacingOk,
   });
 
-  lines.push(`Status: ${ampel} • ${modeLabel} • ${keyStatus} • Budget ${actualKeys}/${keyCap} • RunFloor-Gap ${runFloorGap >= 0 ? "+" : ""}${runFloorGap}`);
-  lines.push("");
-
-  lines.push("📉 Belastung & Progression");
-  lines.push("");
-  lines.push(`RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (7-Tage)`);
-  lines.push("Progression (Deload bei 21T Summe + aktive Tage):");
-  lines.push(`21T Summe ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}, aktive Tage ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} – Stabilität ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}.`);
-  lines.push(`Status: ${progressionStatus}`);
-  lines.push("");
-
-  lines.push("🎯 Key-Check");
-  lines.push("");
-  lines.push(`Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} (${modeLabel === "Easy only" ? "GA" : "offen"})`);
-  lines.push(`Guardrails: keys_last_7d=${actualKeys}, nextAllowed=${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""}, EasyShare=${easySharePct != null ? easySharePct + "%" : "n/a"} (≥${easyShareThresholdPct}%, 14T)`);
-  if (keyRuleLine) lines.push(`${keyRuleLine}`);
-  lines.push("");
-
   lines.push("Heutiger Lauf – Bewertung");
-  lines.push("");
   if (!perRunInfo?.length) {
     lines.push("Heute kein Lauf.");
   } else {
@@ -2939,8 +2920,20 @@ function buildComments(
   }
   lines.push("");
 
-  lines.push("📝 Empfehlungen");
+  lines.push("📉 Belastung & Progression");
+  lines.push(`RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (7-Tage)`);
+  lines.push(`Progression: ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} (21-Tage)`);
+  lines.push(`aktive Tage ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} – Stabilität ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}. Status: ${progressionStatus}`);
   lines.push("");
+
+  lines.push("🎯 Key-Check");
+  lines.push(`Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""}`);
+  lines.push(`nextAllowed=${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""},`);
+  lines.push(`EasyShare=${easySharePct != null ? easySharePct + "%" : "n/a"} (≥${easyShareThresholdPct}%, 14T)`);
+  if (keyRuleLine) lines.push(`${keyRuleLine}`);
+  lines.push("");
+
+  lines.push("📝 Empfehlungen");
   if (keyBlocked) {
     lines.push(`Key-Budget erschöpft – restliche Einheiten locker/GA.`);
     lines.push(`Trainingsempfehlung: ${keyStatus} – restliche Einheiten locker/GA.`);
@@ -2951,14 +2944,7 @@ function buildComments(
   lines.push(`Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel: ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
   lines.push(`Qualität: ${keyBlocked ? "locker/GA" : "Key möglich"} (${todayIso || "n/a"})`);
   lines.push(`✅ HEUTE-ENTSCHEIDUNG Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`);
-  lines.push("");
-  lines.push(`1) Key-Budget (7T) ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} → ${keyBlocked ? "Rest locker/GA" : "Key möglich"}`);
-  lines.push(`2) RunFloor (7T) ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} → Gap: ${runFloorGap >= 0 ? "+" : ""}${runFloorGap} (${runFloorGap < 0 ? "Volumen priorisieren" : "stabil"})`);
-  lines.push(`3) Progression / Deload-Check (21T) ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} & ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} aktive Tage → ${runFloorState?.deloadActive ? "Deload" : "noch kein Deload, Stabilität wackelig"}`);
-  lines.push(`4) Longrun-Anker ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`);
-  lines.push("");
-  lines.push(`➡️ Nächster Lauf (konkret): ${nextRunText}`);
-  lines.push("");
+
   lines.push(`${ampel} Fokus: ${runFloorGap < 0 ? "Volumen (RunFloor-Gap)" : "Stabilität"} Key: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""} • RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : ""}${runFloorGap}) • 21T: ${Math.round(runFloorState?.sum21 ?? 0)}/${Math.round(runFloorState?.baseSum21Target ?? 0) || 450} | ${Math.round(runFloorState?.activeDays21 ?? 0)}/${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14} • Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′ • Next: ${nextRunText}`);
 
   if (debug) {
