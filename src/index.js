@@ -889,7 +889,7 @@ function computeLongRunSummary7d(ctx, dayIso) {
 
   if (!longest) return { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false };
   const minutes = Math.round(longest.seconds / 60);
-  let quality = "locker/steady";
+  let quality = "locker/GA";
   if (longest.isKey) quality = "Key/Intensität";
   else if (longest.intensity) quality = "mit Intensität";
   else if (!longest.ga) quality = "gemischt";
@@ -979,7 +979,7 @@ const PROGRESSION_DEFAULT_BLOCK_DAYS = {
   RESET: 10,
 };
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
-const RACEPACE_BUDGET_DAYS = 5;
+const RACEPACE_BUDGET_DAYS = 4;
 
 function estimateLikelyBlockDays(context = {}) {
   const block = context.block || "BASE";
@@ -1279,11 +1279,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   } else if (!freqOk) {
     suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
   } else if (actual7 >= 1 && typeOk) {
-    suggestion = "Key diese Woche erledigt ✅ – restliche Einheiten locker/steady.";
+    suggestion = "Key diese Woche erledigt ✅ – restliche Einheiten locker/GA.";
   } else if (preferredMissing) {
     suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
   } else {
-    suggestion = "Kein Key geplant – locker/steady.";
+    suggestion = "Kein Key geplant – locker/GA.";
   }
 
   const keySpacingOk = context.keySpacing?.ok ?? true;
@@ -2498,7 +2498,7 @@ function formatKeyType(type) {
   if (type === "racepace") return "Racepace";
   if (type === "vo2_touch") return "VO2";
   if (type === "strides") return "Strides";
-  if (type === "steady") return "steady";
+  if (type === "steady") return "GA";
   return type || "n/a";
 }
 
@@ -2542,7 +2542,7 @@ function buildNextRunRecommendation({
   keyCapExceeded,
   keySpacingOk,
 }) {
-  let next = "45–60 min locker/steady";
+  let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   if (overlay === "RECOVER_OVERLAY") {
     next = "25–40 min locker / Technik / frei";
@@ -2551,14 +2551,14 @@ function buildNextRunRecommendation({
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
   } else if (hasSpecific && !specificOk) {
-    next = "35–50 min locker/steady (Volumenaufbau)";
+    next = "35–50 min locker/GA (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
   }
   if (keyCapExceeded) {
-    next = "Kein weiterer Key diese Woche – locker/steady.";
+    next = "Kein weiterer Key diese Woche – locker/GA.";
   } else if (!keySpacingOk) {
-    next = "Nächster Key frühestens in 48h – bis dahin locker/steady.";
+    next = "Nächster Key frühestens in 48h – bis dahin locker/GA.";
   }
 
   return next;
@@ -2589,13 +2589,13 @@ function buildBottomLineCoachMessage({
     return `Deload aktiv: locker & Technik. ${todayText}. ${nextText}.`;
   }
   if (keyCapExceeded) {
-    return `Key ist für diese Woche abgehakt. Halte den Rest locker/steady. ${nextText}.`;
+    return `Key ist für diese Woche abgehakt. Halte den Rest locker/GA. ${nextText}.`;
   }
   if (!keySpacingOk) {
     return `Gib dem Körper 48h zwischen Keys. Heute ruhig bleiben. ${nextText}.`;
   }
   if (hasSpecific && !specificOk) {
-    return `Volumen fehlt noch ein Stück. Fülle locker/steady auf. ${nextText}.`;
+    return `Volumen fehlt noch ein Stück. Fülle locker/GA auf. ${nextText}.`;
   }
   if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     if (hadAnyRun && hadGA) {
@@ -2721,8 +2721,6 @@ function buildComments(
   lines.push(bullet(`RunFloor: ${runLoad7}/${runTargetText} (7-Tage)`));
   const longRunMinutes = Math.round(longRunSummary?.minutes ?? 0);
   const longRunDate = longRunSummary?.date ? ` (${longRunSummary.date})` : "";
-  lines.push(bullet(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`));
-  lines.push(subBullet(`Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`));
   lines.push(bullet("Progression (Deload bei 21T Summe + aktive Tage):"));
   if (runFloorState?.deloadActive) {
     const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
@@ -2763,6 +2761,9 @@ function buildComments(
     eventDistance,
   });
   if (keyRuleLine) lines.push(bullet(keyRuleLine));
+
+  lines.push("");
+  lines.push("📝 Empfehlungen");
   lines.push(
     bullet(
       buildKeyConsequence({
@@ -2775,6 +2776,9 @@ function buildComments(
   if (keyCompliance?.suggestion) {
     lines.push(bullet(`Trainingsempfehlung: ${keyCompliance.suggestion}`));
   }
+  lines.push(bullet(`Longrun: ${longRunMinutes}′ → Ziel: ${longRunTarget}′`));
+  lines.push(subBullet(`Qualität: ${longRunSummary?.quality ?? "n/a"}${longRunDate}`));
+
   if (benchReports?.length) {
     lines.push("");
     lines.push(...benchReports.map((line) => bullet(line)));
@@ -2832,10 +2836,10 @@ function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMi
 }
 
 function buildKeyConsequence({ keyCompliance, keySpacing, keyCap }) {
-  if (keyCompliance?.capExceeded) return "Weitere Einheiten nur locker/steady.";
-  if (keySpacing?.ok === false) return "Weitere Einheiten nur locker/steady (Key-Abstand <48h).";
+  if (keyCompliance?.capExceeded) return "Weitere Einheiten nur locker/GA.";
+  if (keySpacing?.ok === false) return "Weitere Einheiten nur locker/GA (Key-Abstand <48h).";
   if ((keyCompliance?.actual7 ?? 0) < keyCap) return "1 Key noch möglich.";
-  return "Weitere Einheiten nur locker/steady.";
+  return "Weitere Einheiten nur locker/GA.";
 }
 
 function buildDeloadExplanation(runFloorState) {
