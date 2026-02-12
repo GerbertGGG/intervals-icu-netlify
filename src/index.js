@@ -3075,6 +3075,9 @@ function buildComments(
   const longRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const longRunStepCapMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
+  const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
+    ? Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct))
+    : LONGRUN_PREPLAN.startMin;
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
@@ -3162,8 +3165,14 @@ function buildComments(
     recommendationMetrics.push("Status: Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
     recommendationMetrics.push("Trainingsempfehlung: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
   }
-  recommendationMetrics.push(`Longrun (14T): ${longRunDoneMin}′ vs. Ziel ${longRunTargetMin}′ (${longRunGapMin >= 0 ? "im Soll" : `${Math.abs(longRunGapMin)}′ fehlen`})`);
-  recommendationMetrics.push(`Longrun-Regel: max +${Math.round(LONGRUN_PREPLAN.maxStepPct * 100)}% je ${LONGRUN_PREPLAN.stepDays} Tage (nächster Step-Deckel ~${longRunStepCapMin}′).`);
+  const isFreePreplanBlock = Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS;
+  if (isFreePreplanBlock) {
+    recommendationMetrics.push(`Longrun (14T): ${longRunDoneMin}′ vs. Ziel ${longRunTargetMin}′ (${longRunGapMin >= 0 ? "im Soll" : `${Math.abs(longRunGapMin)}′ fehlen`})`);
+    recommendationMetrics.push(`Longrun-Regel: max +${Math.round(LONGRUN_PREPLAN.maxStepPct * 100)}% je ${LONGRUN_PREPLAN.stepDays} Tage (nächster Step-Deckel ~${longRunStepCapMin}′).`);
+  } else {
+    recommendationMetrics.push(`Longrun (Block): längster Longrun der letzten ${LONGRUN_PREPLAN.stepDays} Tage ${longRunDoneMin}′${longRun14d?.date ? ` (${longRun14d.date})` : ""}.`);
+    recommendationMetrics.push(`Longrun-Regel (Block): nächste Woche +${Math.round(LONGRUN_PREPLAN.maxStepPct * 100)}% → Ziel ~${blockLongRunNextWeekTargetMin}′.`);
+  }
   recommendationMetrics.push(`Qualität zuletzt: ${keyBlocked ? "locker / GA" : "Key möglich"} (${todayIso || "n/a"})`);
   addDecisionBlock("EMPFEHLUNGEN", recommendationMetrics);
 
