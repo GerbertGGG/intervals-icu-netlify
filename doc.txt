@@ -161,6 +161,14 @@ Im Daily-Report erscheinen daraus abgeleitete Empfehlungen inkl.
 - nächster Key-Reiz
 - Progressionshinweis (Wochenziel in Minuten)
 
+9.1 Verhalten zwischen zwei Wettkämpfen (Beispiel: Ende März + Anfang Oktober)
+-------------------------------------------------------------------------------
+- Nach **jedem** Wettkampf startet der Worker für 14 Tage einen offenen Modus (`OPEN:POST_EVENT`).
+- In diesen 2 Wochen gibt es keine spezifischen Floors/Vorgaben ("Training nach Lust und Laune").
+- Technisch wird dafür das kommende Event in dieser Phase bewusst nicht als aktives Ziel verwendet (`nextEvent = null`).
+- Nach Ablauf der 14 Tage schaltet der Worker wieder normal auf den nächsten zukünftigen Wettkampf (z. B. Oktober) und läuft dann regulär in Richtung `BASE/BUILD/RACE`.
+- Die bestehende Block-Logik (`RESET`/`BASE`) bleibt erhalten, greift aber erst wieder, wenn der offene 2‑Wochen-Block beendet ist.
+
 10) DAILY-REPORT NOTE
 ---------------------
 Tägliches Event:

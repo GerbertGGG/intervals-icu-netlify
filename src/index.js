@@ -286,6 +286,7 @@ const MOTOR_DRIFT_WINDOW_DAYS = 14;
 const HFMAX = 173;
 // ================= MODE / EVENTS (NEW) =================
 const EVENT_LOOKAHEAD_DAYS = 365; // how far we look for next event
+const POST_EVENT_OPEN_DAYS = 14;  // 2-week open block after each event
 
 // AerobicFloor = k * Intensity7  (Bike & Run zählen aerob gleichwertig)
 const AEROBIC_K_DEFAULT = 2.8;
@@ -4514,21 +4515,49 @@ async function determineMode(env, dayIso, debug = false) {
 
   // sort by start date (local)
   const normDay = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
-  const future = (races || [])
+  const sorted = (races || [])
     .map((e) => ({ e, day: normDay(e) }))
     .filter((x) => isIsoDate(x.day))
     .sort((a, b) => a.day.localeCompare(b.day));
 
-  const next = future.find((x) => x.day >= dayIso)?.e || null;
+  const next = sorted.find((x) => x.day >= dayIso) || null;
+  const lastPast = [...sorted].reverse().find((x) => x.day < dayIso) || null;
 
-  if (!next) return { mode: "OPEN", primary: "open", nextEvent: null, eventError: null };
+  if (lastPast) {
+    const daysSinceLastEvent = diffDays(lastPast.day, dayIso);
+    if (Number.isFinite(daysSinceLastEvent) && daysSinceLastEvent >= 0 && daysSinceLastEvent <= POST_EVENT_OPEN_DAYS) {
+      return {
+        mode: "OPEN",
+        primary: "open",
+        nextEvent: null,
+        eventError: null,
+        postEventOpenActive: true,
+        postEventOpenDaysLeft: POST_EVENT_OPEN_DAYS - daysSinceLastEvent,
+        lastEventDate: lastPast.day,
+      };
+    }
+  }
 
-  const primary = inferSportFromEvent(next);
-  if (primary === "bike") return { mode: "EVENT", primary: "bike", nextEvent: next, eventError: null };
+  if (!next?.e) {
+    return {
+      mode: "OPEN",
+      primary: "open",
+      nextEvent: null,
+      eventError: null,
+      postEventOpenActive: false,
+    };
+  }
+
+  const primary = inferSportFromEvent(next.e);
+  if (primary === "bike") {
+    return { mode: "EVENT", primary: "bike", nextEvent: next.e, eventError: null, postEventOpenActive: false };
+  }
   // Default RACE_A bei dir ist sehr wahrscheinlich Lauf – aber wir bleiben bei heuristics:
-  if (primary === "run" || primary === "unknown") return { mode: "EVENT", primary: "run", nextEvent: next, eventError: null };
+  if (primary === "run" || primary === "unknown") {
+    return { mode: "EVENT", primary: "run", nextEvent: next.e, eventError: null, postEventOpenActive: false };
+  }
 
-  return { mode: "OPEN", primary: "open", nextEvent: next, eventError: null };
+  return { mode: "OPEN", primary: "open", nextEvent: next.e, eventError: null, postEventOpenActive: false };
 }
 
 
@@ -4554,6 +4583,18 @@ function getModePolicy(modeInfo) {
       aerobicK: AEROBIC_K_DEFAULT,
       useAerobicFloor: true,
       recovery: false,
+    };
+  }
+
+  if (modeInfo?.postEventOpenActive) {
+    return {
+      label: "OPEN:POST_EVENT",
+      specificLabel: "Freier Block (2 Wochen nach Event)",
+      specificKind: "open",
+      specificThreshold: 0,
+      aerobicK: AEROBIC_K_DEFAULT,
+      useAerobicFloor: false,
+      recovery: true,
     };
   }
 
