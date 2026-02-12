@@ -2860,7 +2860,15 @@ function buildComments(
       ? `${value >= 0 ? "+" : ""}${value.toFixed(1).replace('.', ',')} %`
       : "n/a";
   const addDecisionBlock = (title, metrics = []) => {
-    lines.push(`✅ ${title}`);
+    const titleEmojis = {
+      "HEUTIGER LAUF": "🏃",
+      "BELASTUNG & PROGRESSION": "📈",
+      "KEY-CHECK": "🔑",
+      "EMPFEHLUNGEN": "🧭",
+      "HEUTE-ENTSCHEIDUNG": "🎯",
+      "BOTTOM LINE": "🧾",
+    };
+    lines.push(`${titleEmojis[title] || "✅"} ${title}`);
     lines.push("");
     for (const metric of metrics) {
       if (metric) lines.push(metric);
@@ -2993,12 +3001,14 @@ function buildComments(
     `Status: ${progressionStatus === "im Plan" ? "Im Plan." : progressionStatus}`,
   ]);
 
-  addDecisionBlock("KEY-CHECK", [
+  const keyCheckMetrics = [
     `Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""}`,
     `EasyShare (14 Tage): ${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`,
-    `Key-Regel (${blockState?.block ?? "n/a"}, ${formatEventDistance(modeInfo?.nextEvent?.distance_type) || "n/a"}): ${keyRuleLine || "n/a"}`,
-  ]);
+  ];
+  const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
+  if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
+  addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
   const recommendationMetrics = [];
   if (keyBlocked) {
@@ -3018,11 +3028,6 @@ function buildComments(
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
-    `RunFloor: ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"} (${runFloorGap >= 0 ? "+" : "–"}${Math.abs(runFloorGap)})`,
-    `21T Last: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
-    `21T Aktive Tage: ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
-    `Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → ${Math.round(longRunSummary?.targetMin ?? 0) || 60}′`,
-    `Next: ${nextRunText}`,
   ]);
 
   addDecisionBlock("BOTTOM LINE", [
