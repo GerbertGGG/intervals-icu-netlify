@@ -3163,7 +3163,7 @@ function buildComments(
     recommendationMetrics.push("Umsetzung: Alle weiteren Einheiten locker / GA.");
   } else {
     recommendationMetrics.push("Status: Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
-    recommendationMetrics.push("Trainingsempfehlung: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
+    recommendationMetrics.push(`Trainingsempfehlung: ${keyCompliance?.suggestion || "45–60′ GA1 locker; optional 4–6×20″ Strides."}`);
   }
   const isFreePreplanBlock = Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS;
   if (isFreePreplanBlock) {
