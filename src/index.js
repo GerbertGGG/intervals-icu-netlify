@@ -3127,6 +3127,34 @@ function buildNextRunRecommendation({
   return next;
 }
 
+function limitText(text, maxLen = 140) {
+  const clean = String(text || "").replace(/\s+/g, " ").trim();
+  if (clean.length <= maxLen) return clean;
+  return `${clean.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
+}
+
+function buildProgressionLine(progression) {
+  if (!progression?.available) return null;
+  const week = Number(progression?.weekInBlock);
+  const type = progression?.primaryType === "racepace" ? "RP" : formatKeyType(progression?.primaryType || "Key");
+  const target = progression?.primaryType === "racepace"
+    ? (Number.isFinite(Number(progression?.targetKm)) ? ` ${formatDecimalKm(Number(progression?.targetKm))} km` : "")
+    : (Number.isFinite(Number(progression?.targetMinutes)) ? ` ${Math.round(Number(progression?.targetMinutes))}′` : "");
+  const prefix = `Progression (${type}${target}):`;
+  const template = progression?.templateText ? ` ${progression.templateText}` : "";
+  const weekText = Number.isFinite(week) ? ` W${week}.` : "";
+  return limitText(`${prefix}${weekText}${template}`, 160);
+}
+
+function shortExplicitSession(explicitSession) {
+  if (!explicitSession) return null;
+  const cleaned = String(explicitSession)
+    .replace(/^.*?konkret:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return limitText(cleaned, 90);
+}
+
 function buildBottomLineCoachMessage({
   hadAnyRun,
   hadGA,
@@ -3384,28 +3412,21 @@ function buildComments(
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
   const recommendationMetrics = [];
+  const progressionLine = buildProgressionLine(keyCompliance?.progression);
+  const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
+  const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
+  recommendationMetrics.push(`RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} → ${runFloorGap < 0 ? "Volumen priorisieren" : "im Soll"}.`);
   if (keyBlocked) {
-    if (budgetBlocked) recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys7}/${keyCap7} in 7 Tagen).`);
-    else if (easyShareBlocked) recommendationMetrics.push(`Status: EasyShare unter Ziel (${easySharePct ?? "n/a"}% < ${easyShareThresholdPct}%).`);
-    else if (spacingBlocked) recommendationMetrics.push(`Status: Key-Abstand noch nicht erfüllt (nächster Key ab ${nextAllowed || "n/a"}).`);
-    else recommendationMetrics.push("Status: Key heute nicht freigegeben.");
-    recommendationMetrics.push("Konsequenz: Restliche Einheiten locker / GA.");
-    recommendationMetrics.push(`Trainingsempfehlung: ${keyStatus}`);
-    recommendationMetrics.push("Umsetzung: Alle weiteren Einheiten locker / GA.");
+    if (budgetBlocked) recommendationMetrics.push(`Key blockiert: Budget ${actualKeys7}/${keyCap7} (7T).`);
+    else if (easyShareBlocked) recommendationMetrics.push(`Key blockiert: EasyShare ${easySharePct ?? "n/a"}% (<${easyShareThresholdPct}%).`);
+    else if (spacingBlocked) recommendationMetrics.push(`Key blockiert: Abstand <48h (ab ${nextAllowed || "n/a"}).`);
+    else recommendationMetrics.push("Key blockiert: heute kein weiterer Reiz.");
   } else {
-    recommendationMetrics.push("Status: Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
-    recommendationMetrics.push(`Trainingsempfehlung: ${keyCompliance?.suggestion || "45–60′ GA1 locker; optional 4–6×20″ Strides."}`);
+    recommendationMetrics.push("Key möglich, wenn du dich frisch fühlst.");
+    if (easyShareBlocked) recommendationMetrics.push(`EasyShare ${easySharePct ?? "n/a"}% (<${easyShareThresholdPct}%) → konservativ bleiben.`);
   }
-  const isFreePreplanBlock = Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS;
-  if (isFreePreplanBlock) {
-    recommendationMetrics.push(`Longrun (14T): ${longRunDoneMin}′ vs. Ziel ${longRunTargetMin}′ (${longRunGapMin >= 0 ? "im Soll" : `${Math.abs(longRunGapMin)}′ fehlen`})`);
-    recommendationMetrics.push(`Longrun-Regel: max +${Math.round(LONGRUN_PREPLAN.maxStepPct * 100)}% je ${LONGRUN_PREPLAN.stepDays} Tage (nächster Step-Deckel ~${longRunStepCapMin}′).`);
-  } else {
-    recommendationMetrics.push(`Longrun (Block): längster Longrun der letzten ${LONGRUN_PREPLAN.stepDays} Tage ${longRunDoneMin}′${longRun14d?.date ? ` (${longRun14d.date})` : ""}.`);
-    recommendationMetrics.push(`Longrun-Regel (Block): nächste Woche +${Math.round(LONGRUN_PREPLAN.maxStepPct * 100)}% → Ziel ~${blockLongRunNextWeekTargetMin}′.`);
-  }
-  recommendationMetrics.push(`Qualität zuletzt: ${keyBlocked ? "locker / GA" : "Key möglich"} (${todayIso || "n/a"})`);
-  addDecisionBlock("EMPFEHLUNGEN", recommendationMetrics);
+  if (progressionLine) recommendationMetrics.push(progressionLine);
+  addDecisionBlock("EMPFEHLUNGEN", recommendationMetrics.slice(0, 3));
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
@@ -3416,22 +3437,13 @@ function buildComments(
       : `Planphase aktiv (<= ${PLAN_START_WEEKS} Wochen): Blocksteuerung BASE/BUILD/RACE`,
   ]);
 
-  addDecisionBlock("BOTTOM LINE", [
-    `Coach-Urteil: ${buildBottomLineCoachMessage({
-    hadAnyRun: !!perRunInfo?.length,
-    hadGA: !!perRunInfo?.find((x) => x.ga),
-    runFloorState,
-    hasSpecific: Number.isFinite(specificValue),
-    specificOk,
-    policy,
-    intensitySignal: fatigue?.intensitySignal,
-    aerobicOk,
-    keyCapExceeded: budgetBlocked,
-    keySpacingOk: spacingOk,
-    todayText: `Block ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? `, ${daysToEvent} Tage bis Event` : ""}`,
-    nextText: nextRunText,
-  })}`,
-  ]);
+  const bottomLine = [
+    limitText(`Heute: ${nextRunText.replace(/ Optional:.*$/i, "").trim()}.`, 140),
+  ];
+  if (keyAllowedNow && explicitSessionShort) {
+    bottomLine.push(limitText(`Key (wenn frisch): ${explicitSessionShort}`, 140));
+  }
+  addDecisionBlock("BOTTOM LINE", bottomLine.slice(0, 2));
 
   return lines.join("\n");
 }
