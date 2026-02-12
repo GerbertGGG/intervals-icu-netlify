@@ -1462,11 +1462,37 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   const entries = chosenType ? catalog[chosenType] : null;
   if (!Array.isArray(entries) || !entries.length) return null;
 
-  const progressionText = progression?.templateText ? ` ${progression.templateText}` : "";
+  const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.weekInBlock);
+  const sessionText = progressionStepSession || entries[0];
   const racepaceTarget = chosenType === "racepace"
     ? getRacepaceTargetText(distance)
     : "";
-  return `${formatKeyType(chosenType)} konkret: ${entries.join(" · ")}.${racepaceTarget}${progressionText}`;
+  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${racepaceTarget}`;
+}
+
+function getCurrentProgressionStepSession(block, distance, keyType, weekInBlock) {
+  const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
+  if (!Array.isArray(steps) || !steps.length) return null;
+
+  const cycleLength = steps.length;
+  const weekIndex = Math.max(1, Number(weekInBlock) || 1);
+  const currentStep = steps[((weekIndex - 1) % cycleLength)];
+  if (!currentStep) return null;
+
+  const reps = Number(currentStep.reps) || 0;
+  if (!reps) return null;
+
+  if (Number.isFinite(currentStep.work_km)) {
+    const workKm = formatDecimalKm(Number(currentStep.work_km));
+    const racepaceLabel = keyType === "racepace" ? ` @ ${distance.toUpperCase()}-RP` : "";
+    return `${reps}×${workKm} km${racepaceLabel}`;
+  }
+
+  if (Number.isFinite(currentStep.work_min)) {
+    return `${reps}×${Math.round(Number(currentStep.work_min))}′`;
+  }
+
+  return null;
 }
 
 function formatDecimalKm(km) {
