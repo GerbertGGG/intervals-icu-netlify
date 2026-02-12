@@ -632,6 +632,7 @@ const RUN_FLOOR_FLOOR_STEP = {
   BUILD: 10,
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
+const LIFE_EVENT_CATEGORY_PRIORITY = ["SICK", "INJURED", "HOLIDAY"];
 
 function mapBlockToPhase(block) {
   if (block === "BASE") return "BASE";
@@ -639,6 +640,71 @@ function mapBlockToPhase(block) {
   if (block === "RACE") return "PEAK";
   if (block === "RESET") return "RECOVER";
   return "BASE";
+}
+
+function normalizeEventCategory(category) {
+  return String(category ?? "").toUpperCase().trim();
+}
+
+function isLifeEventCategory(category) {
+  const cat = normalizeEventCategory(category);
+  return cat === "SICK" || cat === "INJURED" || cat === "HOLIDAY";
+}
+
+function isLifeEventActiveOnDay(event, dayIso) {
+  const startIso = String(event?.start_date_local || event?.start_date || "").slice(0, 10);
+  if (!isIsoDate(startIso) || !isIsoDate(dayIso)) return false;
+
+  const endIsoRaw = String(event?.end_date_local || event?.end_date || "").slice(0, 10);
+  if (!isIsoDate(endIsoRaw)) return dayIso === startIso;
+  return dayIso >= startIso && dayIso < endIsoRaw;
+}
+
+function getLifeEventEffect(activeLifeEvent) {
+  const category = normalizeEventCategory(activeLifeEvent?.category);
+
+  if (category === "SICK" || category === "INJURED") {
+    return {
+      active: true,
+      category,
+      runFloorFactor: 0,
+      allowKeys: false,
+      freezeProgression: true,
+      freezeFloorIncrease: true,
+      ignoreRunFloorGap: true,
+      overlayMode: "LIFE_EVENT_STOP",
+      reason: `${category}: kompletter Freeze`,
+      event: activeLifeEvent,
+    };
+  }
+
+  if (category === "HOLIDAY") {
+    return {
+      active: true,
+      category,
+      runFloorFactor: 0.6,
+      allowKeys: null,
+      freezeProgression: false,
+      freezeFloorIncrease: true,
+      ignoreRunFloorGap: true,
+      overlayMode: "LIFE_EVENT_HOLIDAY",
+      reason: "HOLIDAY: RunFloor reduziert + Floor-Erhöhung pausiert",
+      event: activeLifeEvent,
+    };
+  }
+
+  return {
+    active: false,
+    category: null,
+    runFloorFactor: 1,
+    allowKeys: null,
+    freezeProgression: false,
+    freezeFloorIncrease: false,
+    ignoreRunFloorGap: false,
+    overlayMode: null,
+    reason: null,
+    event: null,
+  };
 }
 
 function getTaperStartDays(eventDistance) {
@@ -751,6 +817,7 @@ function evaluateRunFloorState({
   eventDateISO,
   previousState,
   dailyRunLoads,
+  lifeEventEffect,
 }) {
   const reasons = [];
   const safeEventInDays = Number.isFinite(eventInDays) ? Math.round(eventInDays) : 9999;
@@ -805,7 +872,11 @@ function evaluateRunFloorState({
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
 
   let overlayMode = "NORMAL";
-  if (safeEventInDays >= 0 && safeEventInDays <= taperStartDays) {
+  const hasLifeEvent = lifeEventEffect?.active === true;
+  if (hasLifeEvent) {
+    overlayMode = lifeEventEffect.overlayMode || "LIFE_EVENT";
+    reasons.push(lifeEventEffect.reason || "LifeEvent aktiv");
+  } else if (safeEventInDays >= 0 && safeEventInDays <= taperStartDays) {
     overlayMode = "TAPER";
     reasons.push(`Taper aktiv (Event in ≤${taperStartDays} Tagen)`);
   } else if (daysSinceEvent != null && daysSinceEvent <= RUN_FLOOR_RECOVER_DAYS) {
@@ -825,7 +896,10 @@ function evaluateRunFloorState({
   }
 
   let effectiveFloorTarget = updatedFloorTarget;
-  if (overlayMode === "DELOAD") {
+  if (hasLifeEvent) {
+    const factor = Number.isFinite(lifeEventEffect?.runFloorFactor) ? lifeEventEffect.runFloorFactor : 1;
+    effectiveFloorTarget = updatedFloorTarget * factor;
+  } else if (overlayMode === "DELOAD") {
     effectiveFloorTarget = applyDeloadRules({ floorTarget: updatedFloorTarget, phase }).effectiveFloorTarget;
   } else if (overlayMode === "TAPER") {
     effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays, taperStartDays);
@@ -840,6 +914,7 @@ function evaluateRunFloorState({
     (phase === "BASE" || phase === "BUILD") &&
     overlayMode === "NORMAL" &&
     safeEventInDays > 28 &&
+    !lifeEventEffect?.freezeFloorIncrease &&
     deloadCompletedSinceIncrease
   ) {
     const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
@@ -868,7 +943,11 @@ function evaluateRunFloorState({
     loadGap,
     stabilityOK,
     decisionText:
-      overlayMode === "RECOVER_OVERLAY"
+      overlayMode === "LIFE_EVENT_STOP"
+        ? "LifeEvent: Stop"
+        : overlayMode === "LIFE_EVENT_HOLIDAY"
+          ? "LifeEvent: Holiday"
+          : overlayMode === "RECOVER_OVERLAY"
         ? "Recover"
         : overlayMode === "DELOAD"
           ? "Deload"
@@ -880,6 +959,17 @@ function evaluateRunFloorState({
     lastEventDate,
     daysSinceEvent,
     reasons,
+    lifeEvent: lifeEventEffect?.active
+      ? {
+          category: lifeEventEffect.category,
+          runFloorFactor: lifeEventEffect.runFloorFactor,
+          allowKeys: lifeEventEffect.allowKeys,
+          freezeProgression: lifeEventEffect.freezeProgression,
+          freezeFloorIncrease: lifeEventEffect.freezeFloorIncrease,
+          ignoreRunFloorGap: lifeEventEffect.ignoreRunFloorGap,
+          name: lifeEventEffect?.event?.name || null,
+        }
+      : null,
   };
 }
 
@@ -2536,7 +2626,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       modeInfo = await determineMode(env, day, ctx.debug);
       policy = getModePolicy(modeInfo);
     } catch (e) {
-      modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
+      modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
       policy = getModePolicy(modeInfo);
     }
     // NEW: fatigue / key-cap metrics (keine RECOVERY-Logik mehr)
@@ -2780,6 +2870,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
 
+    if (modeInfo?.lifeEventEffect?.active && previousBlockState?.block) {
+      blockState.block = previousBlockState.block;
+      blockState.wave = previousBlockState.wave || blockState.wave;
+      blockState.startDate = previousBlockState.startDate || blockState.startDate;
+      blockState.timeInBlockDays = previousBlockState.timeInBlockDays ?? blockState.timeInBlockDays;
+      blockState.reasons = [...(blockState.reasons || []), `LifeEvent ${modeInfo.lifeEventEffect.category}: Blockwechsel eingefroren`];
+    }
+
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
     const dailyRunLoads = buildRunDailyLoads(ctx, day, RUN_FLOOR_DELOAD_WINDOW_DAYS);
@@ -2792,6 +2890,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDateISO: eventDate || null,
       previousState: previousBlockState,
       dailyRunLoads,
+      lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
     });
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
@@ -2812,7 +2911,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       reasons: [],
     };
 
-    if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
+    if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
+      dynamicKeyCap.maxKeys7d = 0;
+      dynamicKeyCap.reasons.push(`LifeEvent ${modeInfo.lifeEventEffect.category}: Keys pausiert`);
+    } else if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
       dynamicKeyCap.maxKeys7d = 0;
       dynamicKeyCap.reasons.push("Recover-Overlay aktiv");
     } else if (runFloorState.overlayMode === "TAPER") {
@@ -2859,6 +2961,10 @@ if (robustness && !robustness.strengthOk) {
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
     });
+if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
+      keyCompliance.keyAllowedNow = false;
+      keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}: keine Keys (Freeze aktiv).`;
+    }
 historyMetrics.keyCompliance = keyCompliance;
     patch[FIELD_BLOCK] = blockState.block;
     previousBlockState = {
@@ -2894,6 +3000,7 @@ historyMetrics.keyCompliance = keyCompliance;
       lastEventDate: runFloorState.lastEventDate,
       daysSinceEvent: runFloorState.daysSinceEvent,
       reasons: runFloorState.reasons,
+      lifeEvent: runFloorState.lifeEvent,
     });
 
 async function computeMaintenance14d(ctx, dayIso) {
@@ -3104,7 +3211,11 @@ function buildNextRunRecommendation({
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
-  if (overlay === "RECOVER_OVERLAY") {
+  if (overlay === "LIFE_EVENT_STOP") {
+    next = "Pause / nur Regeneration (LifeEvent)";
+  } else if (overlay === "LIFE_EVENT_HOLIDAY") {
+    next = "20–45 min locker (Holiday-Modus)";
+  } else if (overlay === "RECOVER_OVERLAY") {
     next = "25–40 min locker / Technik / frei";
   } else if (overlay === "TAPER") {
     next = "20–35 min locker (Taper)";
@@ -3320,6 +3431,8 @@ function buildComments(
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
+  const lifeEvent = runFloorState?.lifeEvent || null;
+  const ignoreRunFloorGap = lifeEvent?.ignoreRunFloorGap === true;
   const easyShareGate = keyCompliance?.easyShareGate;
   const easySharePct = easyShareGate?.hasData ? Math.round((easyShareGate.easyShare ?? 0) * 100) : null;
   const easyShareThresholdPct = Math.round((easyShareGate?.threshold ?? EASY_SHARE_THRESHOLDS?.[blockState?.block] ?? 0) * 100);
@@ -3330,12 +3443,12 @@ function buildComments(
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const daysToEvent = eventDate && todayIso ? diffDays(todayIso, eventDate) : null;
 
-  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
+  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
   const budgetBlocked = keyCompliance?.capExceeded === true;
   const spacingBlocked = !spacingOk;
   const easyShareBlocked = easyShareGate?.hasData && easyShareGate?.ok === false;
-  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
-  const runFloorBlocked = runTarget > 0 && runFloorGap < 0;
+  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
+  const runFloorBlocked = !ignoreRunFloorGap && runTarget > 0 && runFloorGap < 0;
 
   let mainBlockReason = null;
   if (keyBlocked) {
@@ -3353,12 +3466,20 @@ function buildComments(
         ? "Taper"
         : overlayMode === "RECOVER_OVERLAY"
           ? "Recovery"
+          : overlayMode === "LIFE_EVENT_STOP"
+            ? "LifeEvent Freeze"
+            : overlayMode === "LIFE_EVENT_HOLIDAY"
+              ? "Holiday"
           : keyBlocked
             ? "Easy only"
             : "Key möglich";
   const ampel = keyBlocked ? "🟠" : "🟢";
   const keyStatus = keyBlocked && mainBlockReason ? `Key blockiert (${mainBlockReason})` : keyBlocked ? "Key blockiert" : "Key frei";
-  const progressionStatus = runFloorState?.deloadActive ? "Deload aktiv" : "im Plan";
+  const progressionStatus = lifeEvent?.freezeProgression
+    ? "LifeEvent-Freeze"
+    : runFloorState?.deloadActive
+      ? "Deload aktiv"
+      : "im Plan";
   const keyRuleLine = buildKeyRuleLine({
     keyRules,
     block: blockState?.block,
@@ -3481,7 +3602,7 @@ function buildComments(
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
-    `Fokus: ${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
+    `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
     Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS
       ? `Freie Vorphase (> ${PLAN_START_WEEKS} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent) * 100))}`
@@ -3505,6 +3626,8 @@ function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
 function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   if (overlay === "RECOVER_OVERLAY") return "Rest/Recovery";
+  if (overlay === "LIFE_EVENT_STOP") return "LifeEvent Freeze";
+  if (overlay === "LIFE_EVENT_HOLIDAY") return "Holiday-Modus";
   if (overlay === "TAPER") return "Taper/Frische";
   if (overlay === "DELOAD") return "Deload";
   if (hadKey) return "Training absolviert";
@@ -4966,7 +5089,19 @@ function addDebug(debugOut, day, a, status, computed) {
 
 async function determineMode(env, dayIso, debug = false) {
   const auth = authHeader(env);
-  const races = await fetchUpcomingRaces(env, auth, debug, 8000, dayIso);
+  const events = await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
+  const races = (events || []).filter((e) => normalizeEventCategory(e.category) === "RACE_A");
+
+  const activeLifeEvents = (events || []).filter(
+    (e) => isLifeEventCategory(e?.category) && isLifeEventActiveOnDay(e, dayIso)
+  );
+  activeLifeEvents.sort((a, b) => {
+    const pa = LIFE_EVENT_CATEGORY_PRIORITY.indexOf(normalizeEventCategory(a?.category));
+    const pb = LIFE_EVENT_CATEGORY_PRIORITY.indexOf(normalizeEventCategory(b?.category));
+    return (pa === -1 ? 999 : pa) - (pb === -1 ? 999 : pb);
+  });
+  const activeLifeEvent = activeLifeEvents[0] || null;
+  const lifeEventEffect = getLifeEventEffect(activeLifeEvent);
 
   // sort by start date (local)
   const normDay = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
@@ -4989,6 +5124,8 @@ async function determineMode(env, dayIso, debug = false) {
         postEventOpenActive: true,
         postEventOpenDaysLeft: POST_EVENT_OPEN_DAYS - daysSinceLastEvent,
         lastEventDate: lastPast.day,
+        activeLifeEvent,
+        lifeEventEffect,
       };
     }
   }
@@ -5000,19 +5137,45 @@ async function determineMode(env, dayIso, debug = false) {
       nextEvent: null,
       eventError: null,
       postEventOpenActive: false,
+      activeLifeEvent,
+      lifeEventEffect,
     };
   }
 
   const primary = inferSportFromEvent(next.e);
   if (primary === "bike") {
-    return { mode: "EVENT", primary: "bike", nextEvent: next.e, eventError: null, postEventOpenActive: false };
+    return {
+      mode: "EVENT",
+      primary: "bike",
+      nextEvent: next.e,
+      eventError: null,
+      postEventOpenActive: false,
+      activeLifeEvent,
+      lifeEventEffect,
+    };
   }
   // Default RACE_A bei dir ist sehr wahrscheinlich Lauf – aber wir bleiben bei heuristics:
   if (primary === "run" || primary === "unknown") {
-    return { mode: "EVENT", primary: "run", nextEvent: next.e, eventError: null, postEventOpenActive: false };
+    return {
+      mode: "EVENT",
+      primary: "run",
+      nextEvent: next.e,
+      eventError: null,
+      postEventOpenActive: false,
+      activeLifeEvent,
+      lifeEventEffect,
+    };
   }
 
-  return { mode: "OPEN", primary: "open", nextEvent: next.e, eventError: null, postEventOpenActive: false };
+  return {
+    mode: "OPEN",
+    primary: "open",
+    nextEvent: next.e,
+    eventError: null,
+    postEventOpenActive: false,
+    activeLifeEvent,
+    lifeEventEffect,
+  };
 }
 
 
@@ -5153,7 +5316,7 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
 }
 
 
-async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
+async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 
   const athleteId = mustEnv(env, "ATHLETE_ID");
 
@@ -5178,8 +5341,7 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   const payload = await res.json();
   const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
 
-  // IMPORTANT: sort + deterministic pick later
-  const races = events.filter((e) => String(e.category ?? "").toUpperCase() === "RACE_A");
+  const races = events.filter((e) => normalizeEventCategory(e.category) === "RACE_A");
 
   if (debug) {
   console.log(
@@ -5208,5 +5370,5 @@ async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
   );
 }
 
-  return races;
+  return events;
 }
