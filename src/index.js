@@ -1559,7 +1559,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand). Bis dahin locker/GA.`;
   } else if (easyShareBlocked) {
     const pct = Math.round((easyShareGate.easyShare ?? 0) * 100);
-    suggestion = `Intensity-Guardrail: zu wenig locker in den letzten ${easyShareGate.lookbackDays} Tagen (${pct}%). Erst 2–3 lockere Tage.`;
+    suggestion = `EasyShare unter Ziel (${pct}% in ${easyShareGate.lookbackDays} Tagen) – Key nur wenn du dich wirklich frisch fühlst, sonst 1–2 lockere Tage.`;
+    keyAllowedNow = true;
   } else if (actual7 === 1 && typeOk) {
     suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
     keyAllowedNow = true;
@@ -1575,7 +1576,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
   }
 
-  const status = capExceeded || easyShareBlocked ? "red" : freqOk && typeOk ? "ok" : "warn";
+  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
 
   return {
     expected,
@@ -3150,7 +3151,10 @@ function buildComments(
 
   const recommendationMetrics = [];
   if (keyBlocked) {
-    recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys7}/${keyCap7} in 7 Tagen).`);
+    if (budgetBlocked) recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys7}/${keyCap7} in 7 Tagen).`);
+    else if (easyShareBlocked) recommendationMetrics.push(`Status: EasyShare unter Ziel (${easySharePct ?? "n/a"}% < ${easyShareThresholdPct}%).`);
+    else if (spacingBlocked) recommendationMetrics.push(`Status: Key-Abstand noch nicht erfüllt (nächster Key ab ${nextAllowed || "n/a"}).`);
+    else recommendationMetrics.push("Status: Key heute nicht freigegeben.");
     recommendationMetrics.push("Konsequenz: Restliche Einheiten locker / GA.");
     recommendationMetrics.push(`Trainingsempfehlung: ${keyStatus}`);
     recommendationMetrics.push("Umsetzung: Alle weiteren Einheiten locker / GA.");
