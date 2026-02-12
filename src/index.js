@@ -2605,8 +2605,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       dynamicKeyCap.maxKeys7d = 2;
       dynamicKeyCap.reasons.push("Motor stark");
     } else {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Motor <70");
+      dynamicKeyCap.maxKeys7d = 2;
+      dynamicKeyCap.reasons.push("Standard-Cap 2 Keys/7 Tage");
     }
 
     let fatigue = fatigueBase;
