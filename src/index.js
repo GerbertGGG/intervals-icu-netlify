@@ -244,6 +244,46 @@ const BLOCK_CONFIG = {
   },
 };
 
+const BLOCK_LENGTHS_WEEKS_BY_DISTANCE = {
+  "5k": { base: 8, build: 6, race: 4, taper: 1 },
+  "10k": { base: 10, build: 6, race: 4, taper: 1 },
+  hm: { base: 12, build: 8, race: 6, taper: 2 },
+  m: { base: 16, build: 10, race: 6, taper: 2 },
+};
+
+function getBlockLengthsWeeks(eventDistance) {
+  const dist = normalizeEventDistance(eventDistance) || "10k";
+  return BLOCK_LENGTHS_WEEKS_BY_DISTANCE[dist] || BLOCK_LENGTHS_WEEKS_BY_DISTANCE["10k"];
+}
+
+function getPlanStartWeeks(eventDistance) {
+  const lengths = getBlockLengthsWeeks(eventDistance);
+  return (lengths.base || 0) + (lengths.build || 0) + (lengths.race || 0) + (lengths.taper || 0);
+}
+
+function getRaceStartWeeks(eventDistance) {
+  const lengths = getBlockLengthsWeeks(eventDistance);
+  return (lengths.race || 0) + (lengths.taper || 0);
+}
+
+function getForceRaceWeeks(eventDistance) {
+  const lengths = getBlockLengthsWeeks(eventDistance);
+  return lengths.taper || BLOCK_CONFIG.cutoffs.forceRaceWeeks;
+}
+
+function getBlockDurationForDistance(block, eventDistance) {
+  const lengths = getBlockLengthsWeeks(eventDistance);
+  const weekByBlock = {
+    BASE: lengths.base,
+    BUILD: lengths.build,
+    RACE: (lengths.race || 0) + (lengths.taper || 0),
+  };
+  const weeks = weekByBlock[block];
+  if (!Number.isFinite(weeks) || weeks <= 0) return BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
+  const days = Math.max(7, Math.round(weeks * 7));
+  return { minDays: days, maxDays: days };
+}
+
 
 
 
@@ -1118,6 +1158,7 @@ function computeLongRunSummary14d(ctx, dayIso) {
 
 function computeLongRunTargetMinutes(weeksToEvent, eventDistance) {
   const dist = normalizeEventDistance(eventDistance) || "10k";
+  const planStartWeeks = getPlanStartWeeks(dist);
   const target = LONGRUN_PREPLAN.targetMinByDistance?.[dist] ?? LONGRUN_PREPLAN.targetMinByDistance["10k"];
 
   if (!Number.isFinite(weeksToEvent)) {
@@ -1132,8 +1173,8 @@ function computeLongRunTargetMinutes(weeksToEvent, eventDistance) {
     };
   }
 
-  const clampedWeeks = clamp(weeksToEvent, PLAN_START_WEEKS, PREPLAN_WINDOW_WEEKS);
-  const span = PREPLAN_WINDOW_WEEKS - PLAN_START_WEEKS;
+  const clampedWeeks = clamp(weeksToEvent, planStartWeeks, PREPLAN_WINDOW_WEEKS);
+  const span = PREPLAN_WINDOW_WEEKS - planStartWeeks;
   const ratio = span > 0 ? (PREPLAN_WINDOW_WEEKS - clampedWeeks) / span : 1;
   const progressPct = clamp(ratio, 0, 1);
   const plannedMin = Math.round(LONGRUN_PREPLAN.startMin + (target - LONGRUN_PREPLAN.startMin) * progressPct);
@@ -1149,11 +1190,12 @@ function computeLongRunTargetMinutes(weeksToEvent, eventDistance) {
   };
 }
 
-function computeRunShareTarget(weeksToEvent) {
+function computeRunShareTarget(weeksToEvent, eventDistance) {
+  const planStartWeeks = getPlanStartWeeks(eventDistance);
   if (!Number.isFinite(weeksToEvent)) return PREPLAN_RUN_SHARE.min;
   if (weeksToEvent >= PREPLAN_WINDOW_WEEKS) return PREPLAN_RUN_SHARE.min;
-  if (weeksToEvent <= PLAN_START_WEEKS) return PREPLAN_RUN_SHARE.targetAtPlanStart;
-  const span = PREPLAN_WINDOW_WEEKS - PLAN_START_WEEKS;
+  if (weeksToEvent <= planStartWeeks) return PREPLAN_RUN_SHARE.targetAtPlanStart;
+  const span = PREPLAN_WINDOW_WEEKS - planStartWeeks;
   if (span <= 0) return PREPLAN_RUN_SHARE.targetAtPlanStart;
   const ratio = (PREPLAN_WINDOW_WEEKS - weeksToEvent) / span;
   const raw = PREPLAN_RUN_SHARE.min + ratio * (PREPLAN_RUN_SHARE.targetAtPlanStart - PREPLAN_RUN_SHARE.min);
@@ -1381,7 +1423,7 @@ const RACEPACE_BUDGET_DAYS = 4;
 
 function estimateLikelyBlockDays(context = {}) {
   const block = context.block || "BASE";
-  const limits = BLOCK_CONFIG?.durations?.[block] || null;
+  const limits = getBlockDurationForDistance(block, context.eventDistance);
   const fallback = PROGRESSION_DEFAULT_BLOCK_DAYS[block] || 28;
 
   let likelyDays = fallback;
@@ -1960,8 +2002,11 @@ function determineBlockState({
   previousState,
 }) {
   const reasons = [];
-  const eventDistanceNorm = eventDistance || "10k";
-  
+  const eventDistanceNorm = normalizeEventDistance(eventDistance) || "10k";
+  const planStartWeeks = getPlanStartWeeks(eventDistanceNorm);
+  const raceStartWeeks = getRaceStartWeeks(eventDistanceNorm);
+  const forceRaceWeeks = getForceRaceWeeks(eventDistanceNorm);
+
 
   const todayISO = today;
   const eventDateISO = eventDate || null;
@@ -2040,7 +2085,7 @@ function determineBlockState({
     };
   }
 
-  if (weeksToEvent <= BLOCK_CONFIG.cutoffs.forceRaceWeeks && weeksToEvent >= 0) {
+  if (weeksToEvent <= forceRaceWeeks && weeksToEvent >= 0) {
     return {
       block: "RACE",
       wave: weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0,
@@ -2102,8 +2147,8 @@ function determineBlockState({
     };
   }
 
-  if (weeksToEvent > PLAN_START_WEEKS) {
-    reasons.push(`Freie Vorphase aktiv (> ${PLAN_START_WEEKS} Wochen bis Event) → BASE`);
+  if (weeksToEvent > planStartWeeks) {
+    reasons.push(`Freie Vorphase aktiv (> ${planStartWeeks} Wochen bis Event) → BASE`);
     return {
       block: "BASE",
       wave: 0,
@@ -2131,7 +2176,7 @@ function determineBlockState({
     reasons.push("Event ≤8 Wochen → Wave 1 deaktiviert");
   }
 
-  let block = previousState?.block || (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
+  let block = previousState?.block || (weeksToEvent <= raceStartWeeks ? "BUILD" : "BASE");
 
   const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
   const runFloorIsLow =
@@ -2150,7 +2195,7 @@ function determineBlockState({
   if (!Number.isFinite(timeInBlockDays) || timeInBlockDays < 0) {
     timeInBlockDays = 0;
   }
-  const blockLimits = BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
+  const blockLimits = getBlockDurationForDistance(block, eventDistanceNorm);
   
 
   const runFloorReady =
@@ -2174,9 +2219,9 @@ function determineBlockState({
   let forcedSwitch = false;
   let nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent);
 
-  if (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks && weeksToEvent >= 0 && block !== "RACE") {
+  if (weeksToEvent <= raceStartWeeks && weeksToEvent >= 0 && block !== "RACE") {
     forcedSwitch = true;
-    reasons.push("Event ≤6 Wochen → sofort RACE (Taper-Puffer)");
+    reasons.push(`Event ≤${raceStartWeeks} Wochen → sofort RACE (Taper-Puffer)`);
     block = "RACE";
     startDate = todayISO;
     timeInBlockDays = 0;
@@ -2267,7 +2312,7 @@ function determineBlockState({
       historyMetrics?.motorDelta == null || Math.abs(historyMetrics.motorDelta) <= BLOCK_CONFIG.thresholds.plateauMotorDelta;
 
     const buildReady = keyCompliance?.freqOk && keyCompliance?.typeOk && (plateauEf || plateauMotor);
-    const eventForcesRace = weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks;
+    const eventForcesRace = weeksToEvent <= raceStartWeeks;
 
     if (wave === 1 && weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) {
       const keysOk = (historyMetrics?.keyStats14?.count ?? 0) >= 3;
@@ -2829,7 +2874,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
-      (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
+      (weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(eventDistance) ? "BUILD" : "BASE");
     const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
       block: baseBlock,
@@ -3361,10 +3406,10 @@ function buildBottomLineCoachMessage({
   return `Alles im grünen Bereich. ${todayText}. ${nextText}.`;
 }
 
-function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
+function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   if (!(bikeSubFactor > 0)) return null;
   const pct = Math.round(bikeSubFactor * 100);
-  const runSharePct = Math.round(computeRunShareTarget(weeksToEvent) * 100);
+  const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
   const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
@@ -3497,7 +3542,7 @@ function buildComments(
     keyAllowedNow: keyCompliance?.keyAllowedNow,
     keySuggestion: keyCompliance?.suggestion,
   });
-  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
+  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
@@ -3604,9 +3649,9 @@ function buildComments(
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS
-      ? `Freie Vorphase (> ${PLAN_START_WEEKS} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent) * 100))}`
-      : `Planphase aktiv (<= ${PLAN_START_WEEKS} Wochen): Blocksteuerung BASE/BUILD/RACE`,
+    Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
+      ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
+      : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
