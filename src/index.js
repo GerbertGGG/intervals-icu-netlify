@@ -1516,8 +1516,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const actual7 = keyStats7.count;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
-  const maxKeysCap14 = Number.isFinite(context.maxKeys14d) ? context.maxKeys14d : MAX_KEYS_14D;
-  const capExceeded = actual14 >= maxKeysCap14;
+  const maxKeysCap7 = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : MAX_KEYS_7D;
+  const capExceeded = actual7 >= maxKeysCap7;
 
   const actualTypes7 = keyStats7.list || [];
   const actualTypes14 = keyStats14.list || [];
@@ -1552,7 +1552,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   let keyAllowedNow = false;
 
   if (capExceeded) {
-    suggestion = "Key-Budget erschöpft (2 Keys/14 Tage) – restliche Einheiten locker/GA.";
+    suggestion = `Key-Budget erschöpft (${actual7}/${maxKeysCap7} in 7 Tagen) – restliche Einheiten locker/GA.`;
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
@@ -1580,7 +1580,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   return {
     expected,
     maxKeys,
-    maxKeysCap14,
+    maxKeysCap7,
     actual7,
     actual14,
     perWeek14,
@@ -3008,8 +3008,9 @@ function buildComments(
     lines.push("");
   };
 
-  const keyCap14 = keyCompliance?.maxKeysCap14 ?? MAX_KEYS_14D;
+  const keyCap7 = keyCompliance?.maxKeysCap7 ?? MAX_KEYS_7D;
   const actualKeys14 = keyCompliance?.actual14 ?? 0;
+  const actualKeys7 = keyCompliance?.actual7 ?? 0;
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
@@ -3032,7 +3033,7 @@ function buildComments(
 
   let mainBlockReason = null;
   if (keyBlocked) {
-    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys14}/${keyCap14} (14T)`;
+    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys7}/${keyCap7} (7T)`;
     else if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
     else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyShareThresholdPct}%`;
     else if (deloadBlocked) mainBlockReason = `Overlay ${overlayMode}`;
@@ -3140,7 +3141,7 @@ function buildComments(
   ]);
 
   const keyCheckMetrics = [
-    `Keys (14 Tage): ${actualKeys14}/${keyCap14}${budgetBlocked ? " ⚠️" : ""}`,
+    `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `EasyShare (14 Tage): ${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`,
   ];
@@ -3151,7 +3152,7 @@ function buildComments(
 
   const recommendationMetrics = [];
   if (keyBlocked) {
-    recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys14}/${keyCap14} in 14 Tagen).`);
+    recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys7}/${keyCap7} in 7 Tagen).`);
     recommendationMetrics.push("Konsequenz: Restliche Einheiten locker / GA.");
     recommendationMetrics.push(`Trainingsempfehlung: ${keyStatus}`);
     recommendationMetrics.push("Umsetzung: Alle weiteren Einheiten locker / GA.");
@@ -3167,7 +3168,7 @@ function buildComments(
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
-    `Key: ${actualKeys14} / ${keyCap14} (14T)${budgetBlocked ? " ⚠️" : ""}`,
+    `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
     Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS
       ? `Freie Vorphase (> ${PLAN_START_WEEKS} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent) * 100))}`
       : `Planphase aktiv (<= ${PLAN_START_WEEKS} Wochen): Blocksteuerung BASE/BUILD/RACE`,
