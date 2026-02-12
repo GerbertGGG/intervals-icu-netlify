@@ -294,11 +294,33 @@ const DELOAD_FACTOR = 0.65;
 const BLOCK_GROWTH = 1.10;
 const BLOCK_HIT_WEEKS = 3;
 const INTENSITY_HR_PCT = 0.85;
+const PLAN_START_WEEKS = 24;
+const PREPLAN_WINDOW_WEEKS = 48;
+
 const TRANSITION_BIKE_EQ = {
-  startWeeks: 24,
+  prePlanWeeks: PREPLAN_WINDOW_WEEKS,
+  startWeeks: PLAN_START_WEEKS,
   endWeeks: 12,
-  startFactor: 1.0,
+  prePlanFactor: 0.5,
+  startFactor: 0.2,
   endFactor: 0.0,
+};
+
+const PREPLAN_RUN_SHARE = {
+  min: 0.5,
+  targetAtPlanStart: 0.8,
+};
+
+const LONGRUN_PREPLAN = {
+  stepDays: 14,
+  maxStepPct: 0.05,
+  startMin: 45,
+  targetMinByDistance: {
+    "5k": 60,
+    "10k": 60,
+    hm: 90,
+    m: 120,
+  },
 };
 
 
@@ -623,10 +645,22 @@ function computeTaperFactor(eventInDays) {
 
 function computeBikeSubstitutionFactor(weeksToEvent) {
   if (!Number.isFinite(weeksToEvent)) return 0;
-  if (weeksToEvent >= TRANSITION_BIKE_EQ.startWeeks) return TRANSITION_BIKE_EQ.startFactor;
-  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return TRANSITION_BIKE_EQ.endFactor;
+
+  if (weeksToEvent >= TRANSITION_BIKE_EQ.prePlanWeeks) {
+    return clamp(TRANSITION_BIKE_EQ.prePlanFactor, 0, 1);
+  }
+
+  if (weeksToEvent > TRANSITION_BIKE_EQ.startWeeks) {
+    const span = TRANSITION_BIKE_EQ.prePlanWeeks - TRANSITION_BIKE_EQ.startWeeks;
+    if (span <= 0) return clamp(TRANSITION_BIKE_EQ.startFactor, 0, 1);
+    const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.startWeeks) / span;
+    const raw = TRANSITION_BIKE_EQ.startFactor + ratio * (TRANSITION_BIKE_EQ.prePlanFactor - TRANSITION_BIKE_EQ.startFactor);
+    return clamp(raw, 0, 1);
+  }
+
+  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
   const span = TRANSITION_BIKE_EQ.startWeeks - TRANSITION_BIKE_EQ.endWeeks;
-  if (span <= 0) return TRANSITION_BIKE_EQ.endFactor;
+  if (span <= 0) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
   const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.endWeeks) / span;
   const raw = TRANSITION_BIKE_EQ.endFactor + ratio * (TRANSITION_BIKE_EQ.startFactor - TRANSITION_BIKE_EQ.endFactor);
   return clamp(raw, 0, 1);
@@ -957,6 +991,68 @@ function computeLongRunSummary7d(ctx, dayIso) {
     isKey: longest.isKey,
     intensity: longest.intensity,
   };
+}
+
+function computeLongRunSummary14d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - (LONGRUN_PREPLAN.stepDays - 1) * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let longest = null;
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
+  }
+
+  if (!longest) return { minutes: 0, date: null };
+  return { minutes: Math.round(longest.seconds / 60), date: longest.date };
+}
+
+function computeLongRunTargetMinutes(weeksToEvent, eventDistance) {
+  const dist = normalizeEventDistance(eventDistance) || "10k";
+  const target = LONGRUN_PREPLAN.targetMinByDistance?.[dist] ?? LONGRUN_PREPLAN.targetMinByDistance["10k"];
+
+  if (!Number.isFinite(weeksToEvent)) {
+    return {
+      dist,
+      targetMin: target,
+      plannedMin: LONGRUN_PREPLAN.startMin,
+      progressPct: 0,
+      startMin: LONGRUN_PREPLAN.startMin,
+      maxStepPct: LONGRUN_PREPLAN.maxStepPct,
+      stepDays: LONGRUN_PREPLAN.stepDays,
+    };
+  }
+
+  const clampedWeeks = clamp(weeksToEvent, PLAN_START_WEEKS, PREPLAN_WINDOW_WEEKS);
+  const span = PREPLAN_WINDOW_WEEKS - PLAN_START_WEEKS;
+  const ratio = span > 0 ? (PREPLAN_WINDOW_WEEKS - clampedWeeks) / span : 1;
+  const progressPct = clamp(ratio, 0, 1);
+  const plannedMin = Math.round(LONGRUN_PREPLAN.startMin + (target - LONGRUN_PREPLAN.startMin) * progressPct);
+
+  return {
+    dist,
+    targetMin: target,
+    plannedMin: Math.max(LONGRUN_PREPLAN.startMin, Math.min(target, plannedMin)),
+    progressPct,
+    startMin: LONGRUN_PREPLAN.startMin,
+    maxStepPct: LONGRUN_PREPLAN.maxStepPct,
+    stepDays: LONGRUN_PREPLAN.stepDays,
+  };
+}
+
+function computeRunShareTarget(weeksToEvent) {
+  if (!Number.isFinite(weeksToEvent)) return PREPLAN_RUN_SHARE.min;
+  if (weeksToEvent >= PREPLAN_WINDOW_WEEKS) return PREPLAN_RUN_SHARE.min;
+  if (weeksToEvent <= PLAN_START_WEEKS) return PREPLAN_RUN_SHARE.targetAtPlanStart;
+  const span = PREPLAN_WINDOW_WEEKS - PLAN_START_WEEKS;
+  if (span <= 0) return PREPLAN_RUN_SHARE.targetAtPlanStart;
+  const ratio = (PREPLAN_WINDOW_WEEKS - weeksToEvent) / span;
+  const raw = PREPLAN_RUN_SHARE.min + ratio * (PREPLAN_RUN_SHARE.targetAtPlanStart - PREPLAN_RUN_SHARE.min);
+  return clamp(raw, PREPLAN_RUN_SHARE.min, PREPLAN_RUN_SHARE.targetAtPlanStart);
 }
 
 // ================= BLOCK / KEY LOGIC (NEW) =================
@@ -1691,6 +1787,28 @@ function determineBlockState({
     };
   }
 
+  if (weeksToEvent > PLAN_START_WEEKS) {
+    reasons.push(`Freie Vorphase aktiv (> ${PLAN_START_WEEKS} Wochen bis Event) → BASE`);
+    return {
+      block: "BASE",
+      wave: 0,
+      weeksToEvent,
+      weeksToEventRaw,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: todayISO,
+      startWasReset,
+      reasons,
+      readinessScore: 55,
+      forcedSwitch: false,
+      nextSuggestedBlock: "BASE",
+      timeInBlockDays: 0,
+      startDate: todayISO,
+      eventDistance: eventDistanceNorm,
+    };
+  }
+
   let wave = weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0;
   if (previousState?.wave === 2) wave = 2;
   if (weeksToEvent <= 8 && wave === 1) {
@@ -2346,7 +2464,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     try {
       loads7 = await computeLoads7d(ctx, day);
     } catch {}
-    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false };
+    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, plan: null };
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
@@ -2354,6 +2472,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
+    const longRun14d = computeLongRunSummary14d(ctx, day);
+    const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
+    longRunSummary = {
+      ...longRunSummary,
+      longRun14d,
+      plan: longRunPlan,
+    };
     const runEquivalent7 = (loads7.runTotal7 ?? 0) + (loads7.bikeTotal7 ?? 0) * bikeSubFactor;
 
     let specificValue = 0;
@@ -2602,6 +2727,7 @@ async function computeMaintenance14d(ctx, dayIso) {
       longRunSummary,
       bikeSubFactor,
       weeksToEvent,
+      eventDistance,
     }, { debug });
 
     // Explicitly clear wellness comments; report is written only as NOTE.
@@ -2818,8 +2944,10 @@ function buildBottomLineCoachMessage({
 function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
   if (!(bikeSubFactor > 0)) return null;
   const pct = Math.round(bikeSubFactor * 100);
+  const runSharePct = Math.round(computeRunShareTarget(weeksToEvent) * 100);
+  const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
-  return `Übergang aktiv: Rad zählt ${pct}% zum RunFloor (aktuell ${weeksText} bis Event, 0% ab ≤${TRANSITION_BIKE_EQ.endWeeks} Wochen).`;
+  return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
 // ================= COMMENT =================
@@ -2850,6 +2978,7 @@ function buildComments(
     longRunSummary,
     bikeSubFactor,
     weeksToEvent,
+    eventDistance,
   },
   { debug = false } = {}
 ) {
@@ -2937,6 +3066,14 @@ function buildComments(
     keyCapExceeded: budgetBlocked,
     keySpacingOk: spacingOk,
   });
+  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
+
+  const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
+  const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
+  const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
+  const longRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
+  const longRunGapMin = longRunDoneMin - longRunTargetMin;
+  const longRunStepCapMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
@@ -3008,6 +3145,7 @@ function buildComments(
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
+  if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
   const recommendationMetrics = [];
@@ -3020,7 +3158,8 @@ function buildComments(
     recommendationMetrics.push("Status: Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
     recommendationMetrics.push("Trainingsempfehlung: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
   }
-  recommendationMetrics.push(`Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel erreicht (${Math.round(longRunSummary?.targetMin ?? 0) || 60}′)`);
+  recommendationMetrics.push(`Longrun (14T): ${longRunDoneMin}′ vs. Ziel ${longRunTargetMin}′ (${longRunGapMin >= 0 ? "im Soll" : `${Math.abs(longRunGapMin)}′ fehlen`})`);
+  recommendationMetrics.push(`Longrun-Regel: max +${Math.round(LONGRUN_PREPLAN.maxStepPct * 100)}% je ${LONGRUN_PREPLAN.stepDays} Tage (nächster Step-Deckel ~${longRunStepCapMin}′).`);
   recommendationMetrics.push(`Qualität zuletzt: ${keyBlocked ? "locker / GA" : "Key möglich"} (${todayIso || "n/a"})`);
   addDecisionBlock("EMPFEHLUNGEN", recommendationMetrics);
 
@@ -3028,6 +3167,9 @@ function buildComments(
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
+    Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS
+      ? `Freie Vorphase (> ${PLAN_START_WEEKS} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent) * 100))}`
+      : `Planphase aktiv (<= ${PLAN_START_WEEKS} Wochen): Blocksteuerung BASE/BUILD/RACE`,
   ]);
 
   addDecisionBlock("BOTTOM LINE", [
