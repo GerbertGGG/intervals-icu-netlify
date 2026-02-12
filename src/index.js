@@ -3148,11 +3148,61 @@ function buildProgressionLine(progression) {
 
 function shortExplicitSession(explicitSession) {
   if (!explicitSession) return null;
-  const cleaned = String(explicitSession)
-    .replace(/^.*?konkret:\s*/i, "")
+  const firstSentence = String(explicitSession)
+    .split(".")[0]
+    .trim();
+  const cleaned = firstSentence
+    .replace(/^Racepace konkret:\s*/i, "")
     .replace(/\s+/g, " ")
     .trim();
   return limitText(cleaned, 90);
+}
+
+function capLines(lines, maxLines) {
+  return (lines || []).filter(Boolean).slice(0, maxLines);
+}
+
+function capText(s, maxChars) {
+  const x = String(s || "").trim();
+  if (x.length <= maxChars) return x;
+  return `${x.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
+function buildRecommendationsAndBottomLine(state) {
+  const rec = [];
+  const bottom = [];
+
+  const runFloorTarget = state?.runFloorTarget;
+  const runFloor7 = state?.runFloor7;
+  const explicitSessionShort = state?.explicitSessionShort;
+
+  bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
+  if (state?.keyAllowedNow && explicitSessionShort) {
+    bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
+  }
+
+  if (Number.isFinite(runFloor7) && Number.isFinite(runFloorTarget) && runFloor7 < runFloorTarget) {
+    rec.push(`RunFloor ${runFloor7}/${runFloorTarget} → Volumen priorisieren.`);
+  }
+  if (state?.easyShareGate?.ok === false) {
+    const es = Math.round((state.easyShareGate.easyShare || 0) * 100);
+    const th = Math.round((state.easyShareGate.threshold || 0) * 100);
+    rec.push(`EasyShare ${es}% (<${th}%) → Key nur wenn wirklich frisch.`);
+  }
+  if (state?.budgetBlocked) {
+    rec.push(`Key-Budget ${state.actualKeys7}/${state.keyCap7} (7T) erreicht → kein weiterer Key.`);
+  }
+  if (state?.spacingBlocked) {
+    rec.push(`Key-Abstand <48h${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
+  }
+  if (state?.overlayMode && state.overlayMode !== "NORMAL") {
+    rec.push(`Overlay: ${state.overlayMode} → konservativ bleiben.`);
+  }
+
+  return {
+    recommendations: capLines(rec, 3).map((x) => capText(x, 110)),
+    bottomLine: capLines(bottom, 2).map((x) => capText(x, 110)),
+  };
 }
 
 function buildBottomLineCoachMessage({
@@ -3411,22 +3461,23 @@ function buildComments(
   if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
-  const recommendationMetrics = [];
-  const progressionLine = buildProgressionLine(keyCompliance?.progression);
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
-  recommendationMetrics.push(`RunFloor: ${runLoad7}/${runTarget > 0 ? runTarget : "n/a"} → ${runFloorGap < 0 ? "Volumen priorisieren" : "im Soll"}.`);
-  if (keyBlocked) {
-    if (budgetBlocked) recommendationMetrics.push(`Key blockiert: Budget ${actualKeys7}/${keyCap7} (7T).`);
-    else if (easyShareBlocked) recommendationMetrics.push(`Key blockiert: EasyShare ${easySharePct ?? "n/a"}% (<${easyShareThresholdPct}%).`);
-    else if (spacingBlocked) recommendationMetrics.push(`Key blockiert: Abstand <48h (ab ${nextAllowed || "n/a"}).`);
-    else recommendationMetrics.push("Key blockiert: heute kein weiterer Reiz.");
-  } else {
-    recommendationMetrics.push("Key möglich, wenn du dich frisch fühlst.");
-    if (easyShareBlocked) recommendationMetrics.push(`EasyShare ${easySharePct ?? "n/a"}% (<${easyShareThresholdPct}%) → konservativ bleiben.`);
-  }
-  if (progressionLine) recommendationMetrics.push(progressionLine);
-  addDecisionBlock("EMPFEHLUNGEN", recommendationMetrics.slice(0, 3));
+  const decisionCompact = buildRecommendationsAndBottomLine({
+    runFloor7: runLoad7,
+    runFloorTarget: runTarget > 0 ? runTarget : null,
+    easyShareGate: keyCompliance?.easyShareGate,
+    budgetBlocked,
+    spacingBlocked,
+    nextAllowed,
+    overlayMode: runFloorState?.overlayMode,
+    keyAllowedNow,
+    explicitSessionShort,
+    todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
+    actualKeys7,
+    keyCap7,
+  });
+  addDecisionBlock("EMPFEHLUNGEN", decisionCompact.recommendations);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
@@ -3437,13 +3488,7 @@ function buildComments(
       : `Planphase aktiv (<= ${PLAN_START_WEEKS} Wochen): Blocksteuerung BASE/BUILD/RACE`,
   ]);
 
-  const bottomLine = [
-    limitText(`Heute: ${nextRunText.replace(/ Optional:.*$/i, "").trim()}.`, 140),
-  ];
-  if (keyAllowedNow && explicitSessionShort) {
-    bottomLine.push(limitText(`Key (wenn frisch): ${explicitSessionShort}`, 140));
-  }
-  addDecisionBlock("BOTTOM LINE", bottomLine.slice(0, 2));
+  addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
 
   return lines.join("\n");
 }
