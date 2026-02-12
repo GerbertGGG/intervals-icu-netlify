@@ -1322,9 +1322,31 @@ function resolvePrimaryKeyType(keyRules, block) {
   return "steady";
 }
 
-function computeProgressionTarget(context = {}, keyRules = {}) {
+function pickProgressionStep({ block, dist, keyType, weekInBlock, overlayMode, weeksToEvent }) {
+  const steps = PROGRESSION_TEMPLATES?.[block]?.[dist]?.[keyType];
+  if (!Array.isArray(steps) || !steps.length) return { step: null, stepIndex: null, steps: null };
+
+  const cycleLength = steps.length;
+  let idx = (Math.max(1, Number(weekInBlock) || 1) - 1) % cycleLength;
+
+  if (overlayMode === "DELOAD") {
+    const deloadIdx = steps.findIndex((s) => s?.deload_step);
+    idx = deloadIdx >= 0 ? deloadIdx : Math.max(0, idx - 1);
+  } else if (overlayMode === "RECOVER_OVERLAY") {
+    idx = 0;
+  } else if (overlayMode === "TAPER") {
+    const deloadIdx = steps.findIndex((s) => s?.deload_step);
+    idx = deloadIdx >= 0 ? deloadIdx : Math.max(0, idx - 1);
+    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) idx = 0;
+  }
+
+  return { step: steps[idx], stepIndex: idx, steps };
+}
+
+function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NORMAL") {
   const block = context.block || "BASE";
   const dist = context.eventDistance || "10k";
+  const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
   const phaseConfig = PHASE_MAX_MINUTES?.[block]?.[dist] || null;
   const primaryType = resolvePrimaryKeyType(keyRules, block);
   const rawMaxMinutes = phaseConfig?.[primaryType] ?? null;
@@ -1333,54 +1355,44 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
       available: false,
       primaryType,
       targetMinutes: null,
+      targetKm: null,
       maxMinutes: null,
-      microcycleWeek: null,
-      racepaceTargetKm: Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null,
-      racepaceTargetKmNow: null,
       note: "Für diese Distanz/Phase fehlt noch eine Progressionsvorlage.",
     };
   }
 
   const timeInBlockDays = Math.max(0, Number(context.timeInBlockDays ?? 0));
   const weekInBlock = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
-  const microcycleWeek = ((weekInBlock - 1) % PROGRESSION_DELOAD_EVERY_WEEKS) + 1;
-  const likelyBlockDays = estimateLikelyBlockDays(context);
-  const likelyWeeks = Math.max(1, Math.round(likelyBlockDays / 7));
-
-  const blockHasDeload = block === "BASE" || block === "BUILD";
-  const expectedDeloadWeeks = blockHasDeload ? Math.floor(likelyWeeks / PROGRESSION_DELOAD_EVERY_WEEKS) : 0;
-  const elapsedWeeks = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
-  const elapsedDeloadWeeks = blockHasDeload
-    ? Math.floor((elapsedWeeks - 1) / PROGRESSION_DELOAD_EVERY_WEEKS)
-    : 0;
-  const effectiveWeeksTotal = Math.max(1, likelyWeeks - expectedDeloadWeeks);
-  const effectiveWeekNow = Math.max(1, elapsedWeeks - elapsedDeloadWeeks);
   const budgetDays = primaryType === "racepace" ? RACEPACE_BUDGET_DAYS : 7;
   const maxMinutes = Math.max(1, Math.round((rawMaxMinutes * budgetDays) / 7));
+  const { step, stepIndex } = pickProgressionStep({
+    block,
+    dist,
+    keyType: primaryType,
+    weekInBlock,
+    overlayMode,
+    weeksToEvent,
+  });
 
-  let factor = clamp(Math.round((effectiveWeekNow / effectiveWeeksTotal) * 100) / 100, 0.6, 1.0);
-  if (block === "BASE") {
-    factor = Math.max(0.7, factor);
-  } else if (block === "BUILD") {
-    factor = Math.max(0.75, factor);
-  } else if (block === "RACE") {
-    const weeksToEvent = Number(context.weeksToEvent);
-    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) factor = 0.6;
-    else if (Number.isFinite(weeksToEvent) && weeksToEvent <= 3) factor = 0.75;
-    else factor = Math.max(0.85, factor);
+  let targetMinutes = null;
+  let targetKm = null;
+  if (primaryType === "racepace") {
+    if (step && Number.isFinite(step.work_km)) {
+      const reps = Number(step.reps) || 1;
+      targetKm = Math.max(0.5, reps * Number(step.work_km));
+    } else {
+      const goal = Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null;
+      targetKm = goal ? Math.max(0.5, Math.round(goal * 0.8 * 10) / 10) : null;
+    }
+  } else if (primaryType === "schwelle") {
+    if (step && Number.isFinite(step.work_min)) {
+      const reps = Number(step.reps) || 1;
+      targetMinutes = Math.max(1, reps * Number(step.work_min));
+    }
   }
 
-  const isDeloadWeek = blockHasDeload && microcycleWeek === PROGRESSION_DELOAD_EVERY_WEEKS;
-  if (isDeloadWeek) {
-    factor = Math.min(factor, 0.65);
-  }
-
-  const targetMinutes = Math.max(1, Math.round(maxMinutes * factor));
-  const racepaceTargetKm = Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null;
-  const racepaceTargetKmNow = Number.isFinite(racepaceTargetKm)
-    ? Math.max(0.5, Math.round(racepaceTargetKm * factor * 10) / 10)
-    : null;
-  const templateText = getProgressionTemplate(block, dist, primaryType, weekInBlock, isDeloadWeek);
+  if (targetMinutes != null) targetMinutes = Math.min(maxMinutes, Math.round(targetMinutes));
+  const templateText = getProgressionTemplate(block, dist, primaryType, weekInBlock, overlayMode === "DELOAD");
 
   return {
     available: true,
@@ -1388,17 +1400,15 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
     weekInBlock,
     maxMinutes,
     targetMinutes,
-    microcycleWeek,
-    likelyBlockDays,
-    expectedDeloadWeeks,
-    isDeloadWeek,
+    targetKm,
+    stepIndex,
     templateText,
-    racepaceTargetKm,
-    racepaceTargetKmNow,
     note:
-      isDeloadWeek
-        ? "Deload-Woche: Umfang runter, Intensität stabil halten."
-        : "Progression über Zeit/Umfang – Pace nicht parallel anheben.",
+      overlayMode === "DELOAD"
+        ? "Deload aktiv: Volumen runter, Intensität stabil."
+        : overlayMode === "TAPER"
+          ? "Taper aktiv: weniger Volumen, frisch bleiben."
+          : "Progression über Umfang, Pace nicht parallel anheben.",
   };
 }
 
@@ -1445,22 +1455,26 @@ function computeEasyShareGate(ctx, dayIso, block) {
 }
 
 function buildProgressionSuggestion(progression) {
-  if (progression?.primaryType === "racepace") {
-    const targetKm = Number(progression?.racepaceTargetKm);
-    const targetKmNow = Number(progression?.racepaceTargetKmNow);
-    if (Number.isFinite(targetKm) && targetKm > 0) {
-      const weekText = Number.isFinite(targetKmNow) && targetKmNow > 0
-        ? `Diese Woche ca. ${formatDecimalKm(targetKmNow)} km RP als Hauptblock. `
-        : "";
-      return `Racepace: ${weekText}Bis Blockende Richtung ${formatDecimalKm(targetKm)} km zusammenhängendes RP-Volumen steigern. ${progression?.note || "Progression über Zeit/Umfang – Pace nicht parallel anheben."}`;
-    }
-    return null;
-  }
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
+
+  if (progression?.primaryType === "racepace") {
+    const kmNow = Number(progression?.targetKm);
+    const note = progression?.note ? ` ${progression.note}` : "";
+    const text = Number.isFinite(kmNow)
+      ? `Diese Woche ca. ${formatDecimalKm(kmNow)} km RP als Hauptblock.`
+      : "";
+    return `Racepace: ${text}${note}${progression?.templateText ? ` ${progression.templateText}` : ""}`;
+  }
+
+  if (progression.primaryType === "schwelle") {
+    const minutes = Number(progression?.targetMinutes);
+    const note = progression?.note ? ` ${progression.note}` : "";
+    const text = Number.isFinite(minutes) ? `Diese Woche ~${Math.round(minutes)}′ Schwelle.` : "";
+    return `Schwelle: ${text}${note}${progression?.templateText ? ` ${progression.templateText}` : ""}`;
+  }
+
   const keyType = formatKeyType(progression.primaryType);
-  let text = `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
-  if (progression?.templateText) text += ` ${progression.templateText}`;
-  return text;
+  return `${keyType}: ${progression?.templateText || progression?.note || ""}`.trim();
 }
 
 function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null) {
@@ -1739,7 +1753,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
-  const progression = computeProgressionTarget(context, keyRules);
+  const progression = computeProgressionTarget(context, keyRules, context.overlayMode || "NORMAL");
 
   const dayIso = context.dayIso || null;
   const lastKeyIso = context.keySpacing?.lastKeyIso ?? null;
