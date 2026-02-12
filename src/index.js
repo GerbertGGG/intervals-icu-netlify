@@ -2999,11 +2999,9 @@ function buildComments(
       "BOTTOM LINE": "🧾",
     };
     lines.push(`${titleEmojis[title] || "✅"} ${title}`);
-    lines.push("");
     for (const metric of metrics) {
       if (metric) lines.push(metric);
     }
-    lines.push("");
     lines.push("⸻");
     lines.push("");
   };
