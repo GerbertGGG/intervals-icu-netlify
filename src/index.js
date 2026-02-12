@@ -611,7 +611,13 @@ const RUN_FLOOR_DELOAD_LOAD_GAP_PCT = 0.25;
 const RUN_FLOOR_DELOAD_LOAD_GAP_MAX = 3;
 const RUN_FLOOR_DELOAD_WINDOW_DAYS = 21;
 const RUN_FLOOR_DELOAD_DAYS = 7;
-const RUN_FLOOR_TAPER_START_DAYS = 14;
+const RUN_FLOOR_TAPER_START_DAYS_DEFAULT = 14;
+const RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE = {
+  "5k": 7,
+  "10k": 7,
+  hm: 14,
+  m: 14,
+};
 const RUN_FLOOR_TAPER_END_DAYS = 2;
 const RUN_FLOOR_RECOVER_DAYS = 9;
 const RUN_FLOOR_DELOAD_RANGE = { min: 0.6, max: 0.7 };
@@ -635,11 +641,17 @@ function mapBlockToPhase(block) {
   return "BASE";
 }
 
-function computeTaperFactor(eventInDays) {
+function getTaperStartDays(eventDistance) {
+  const dist = normalizeEventDistance(eventDistance);
+  return RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE[dist] ?? RUN_FLOOR_TAPER_START_DAYS_DEFAULT;
+}
+
+function computeTaperFactor(eventInDays, taperStartDays) {
   if (!Number.isFinite(eventInDays)) return 1;
   if (eventInDays <= RUN_FLOOR_TAPER_END_DAYS) return 0.6;
-  if (eventInDays >= RUN_FLOOR_TAPER_START_DAYS) return 0.9;
-  const span = RUN_FLOOR_TAPER_START_DAYS - RUN_FLOOR_TAPER_END_DAYS;
+  if (eventInDays >= taperStartDays) return 0.9;
+  const span = taperStartDays - RUN_FLOOR_TAPER_END_DAYS;
+  if (span <= 0) return 0.9;
   const ratio = (eventInDays - RUN_FLOOR_TAPER_END_DAYS) / span;
   return 0.6 + ratio * (0.9 - 0.6);
 }
@@ -735,12 +747,14 @@ function evaluateRunFloorState({
   floorTarget,
   phase,
   eventInDays,
+  eventDistance,
   eventDateISO,
   previousState,
   dailyRunLoads,
 }) {
   const reasons = [];
   const safeEventInDays = Number.isFinite(eventInDays) ? Math.round(eventInDays) : 9999;
+  const taperStartDays = getTaperStartDays(eventDistance);
   const prevFloorTarget = Number.isFinite(previousState?.floorTarget) ? previousState.floorTarget : null;
   const baseFloorTarget = Number.isFinite(floorTarget) ? floorTarget : prevFloorTarget ?? 0;
 
@@ -791,9 +805,9 @@ function evaluateRunFloorState({
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
 
   let overlayMode = "NORMAL";
-  if (safeEventInDays >= 0 && safeEventInDays <= RUN_FLOOR_TAPER_START_DAYS) {
+  if (safeEventInDays >= 0 && safeEventInDays <= taperStartDays) {
     overlayMode = "TAPER";
-    reasons.push("Taper aktiv (Event in ≤14 Tagen)");
+    reasons.push(`Taper aktiv (Event in ≤${taperStartDays} Tagen)`);
   } else if (daysSinceEvent != null && daysSinceEvent <= RUN_FLOOR_RECOVER_DAYS) {
     overlayMode = "RECOVER_OVERLAY";
     reasons.push("Recover-Overlay aktiv (Event gerade passiert)");
@@ -814,7 +828,7 @@ function evaluateRunFloorState({
   if (overlayMode === "DELOAD") {
     effectiveFloorTarget = applyDeloadRules({ floorTarget: updatedFloorTarget, phase }).effectiveFloorTarget;
   } else if (overlayMode === "TAPER") {
-    effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays);
+    effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays, taperStartDays);
   } else if (overlayMode === "RECOVER_OVERLAY") {
     effectiveFloorTarget = updatedFloorTarget * RUN_FLOOR_RECOVER_FACTOR;
   }
@@ -2760,6 +2774,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       floorTarget: baseRunFloorTarget,
       phase,
       eventInDays,
+      eventDistance,
       eventDateISO: eventDate || null,
       previousState: previousBlockState,
       dailyRunLoads,
