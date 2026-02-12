@@ -1176,6 +1176,74 @@ const PROGRESSION_DEFAULT_BLOCK_DAYS = {
   RACE: 21,
   RESET: 10,
 };
+
+const KEY_SESSION_RECOMMENDATIONS = {
+  BASE: {
+    "5k": {
+      ga: ["45–75′ GA1 locker", "langer Lauf 75–100′"],
+      strides: ["6–8×15–20″ Strides", "6–8×8–10″ kurze Hill-Sprints"],
+      vo2_touch: ["6–8×20″ VO₂-Impulse (optional)"]
+    },
+    "10k": {
+      ga: ["60–75′ GA1 locker", "langer Lauf 90–110′"],
+      strides: ["6×20″ Strides"],
+      vo2_touch: ["6×20″ VO₂-Impulse (selten)"]
+    },
+    hm: {
+      ga: ["60–90′ GA1 locker", "langer Lauf 100–130′"],
+      strides: ["4–6×20″ Strides"],
+      vo2_touch: ["4–6×15″ VO₂-Impulse (sehr selten)"]
+    },
+    m: {
+      ga: ["75–90′ GA1 locker", "langer Lauf 120–150′"],
+      strides: ["4×15″ Strides"]
+    }
+  },
+  BUILD: {
+    "5k": {
+      schwelle: ["3×10′ Schwelle"],
+      vo2_touch: ["5×3′ VO₂max"],
+      racepace: ["10×1′ Tempohärte"],
+      longrun: ["langer Lauf 90′"]
+    },
+    "10k": {
+      schwelle: ["3×10′ Schwelle", "4×8′ Intervalle"],
+      racepace: ["40′ Tempodauerlauf"],
+      longrun: ["langer Lauf 100–120′"]
+    },
+    hm: {
+      schwelle: ["2×20′ lange Schwelle"],
+      racepace: ["2×20′ HM-Pace", "60′ Tempodauerlauf"],
+      longrun: ["langer Lauf 120–150′"]
+    },
+    m: {
+      schwelle: ["3×10′ moderate Schwelle"],
+      racepace: ["2×25–30′ Marathonpace"],
+      longrun: ["150′ Struktur-Longrun mit 3×15′ @ M", "langer Lauf 150–180′"]
+    }
+  },
+  RACE: {
+    "5k": {
+      racepace: ["6×2′ oder 3×5′ Racepace"],
+      vo2_touch: ["8×30″ Schärfe"],
+      ga: ["30–45′ GA1 locker"]
+    },
+    "10k": {
+      racepace: ["3×8′ oder 2×12′ Racepace"],
+      schwelle: ["5×4′ Kontrolle"],
+      ga: ["40–50′ GA1 locker"]
+    },
+    hm: {
+      racepace: ["2×20′ oder 3×12′ HM-Pace", "40′ Rhythmus @ HM"],
+      ga: ["40–60′ GA1 locker"]
+    },
+    m: {
+      racepace: ["2×25–30′ Marathonpace"],
+      longrun: ["75–90′ letzter Longrun @ M (10–14 Tage vor Rennen)"],
+      ga: ["30–45′ GA1 locker"]
+    }
+  }
+};
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
 
@@ -1333,6 +1401,23 @@ function buildProgressionSuggestion(progression) {
   let text = `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
   if (progression?.templateText) text += ` ${progression.templateText}`;
   return text;
+}
+
+function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null) {
+  const block = context.block || "BASE";
+  const distance = context.eventDistance || "10k";
+  const preferredType = resolvePrimaryKeyType(keyRules, block);
+  const catalog = KEY_SESSION_RECOMMENDATIONS?.[block]?.[distance] || null;
+  if (!catalog) return null;
+
+  const preferredList = Array.isArray(catalog?.[preferredType]) ? catalog[preferredType] : null;
+  const fallbackType = Object.keys(catalog).find((type) => Array.isArray(catalog[type]) && catalog[type].length > 0) || null;
+  const chosenType = preferredList?.length ? preferredType : fallbackType;
+  const entries = chosenType ? catalog[chosenType] : null;
+  if (!Array.isArray(entries) || !entries.length) return null;
+
+  const progressionText = progression?.templateText ? ` ${progression.templateText}` : "";
+  return `${formatKeyType(chosenType)} konkret: ${entries.join(" · ")}.${progressionText}`;
 }
 
 function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDeload) {
@@ -1577,6 +1662,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
   }
 
+  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression);
+  if (explicitSession && keyAllowedNow) {
+    suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
+  }
+
   const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
 
   return {
@@ -1604,6 +1694,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     lastKeyGapDays,
     easyShareGate,
     keyAllowedNow,
+    explicitSession,
   };
 }
 
