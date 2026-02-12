@@ -2876,6 +2876,8 @@ function buildNextRunRecommendation({
   intensitySignal,
   keyCapExceeded,
   keySpacingOk,
+  keyAllowedNow,
+  keySuggestion,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
@@ -2894,6 +2896,9 @@ function buildNextRunRecommendation({
     next = "Kein weiterer Key diese Woche – locker/GA.";
   } else if (!keySpacingOk) {
     next = "Nächster Key frühestens in 48h – bis dahin locker/GA.";
+  } else if (keyAllowedNow) {
+    const optionalKeyHint = keySuggestion ? ` Optional: ${keySuggestion}` : " Optional: kurzer Key möglich, wenn du dich frisch fühlst.";
+    next = `${next}.${optionalKeyHint}`;
   }
 
   return next;
@@ -3067,6 +3072,8 @@ function buildComments(
     intensitySignal: fatigue?.intensitySignal,
     keyCapExceeded: budgetBlocked,
     keySpacingOk: spacingOk,
+    keyAllowedNow: keyCompliance?.keyAllowedNow,
+    keySuggestion: keyCompliance?.suggestion,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent });
 
