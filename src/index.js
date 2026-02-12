@@ -1126,6 +1126,13 @@ const PHASE_MAX_MINUTES = {
   },
 };
 
+const RACEPACE_DISTANCE_TARGET_KM = {
+  "5k": 3.0,
+  "10k": 6.0,
+  hm: 12.0,
+  m: 20.0,
+};
+
 const PROGRESSION_TEMPLATES = {
   BUILD: {
     "10k": {
@@ -1144,27 +1151,48 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_min: 10, deload_step: true },
       ],
       racepace: [
-        { reps: 4, work_min: 6 },
-        { reps: 3, work_min: 8 },
-        { reps: 3, work_min: 10 },
-        { reps: 2, work_min: 8, deload_step: true },
+        { reps: 3, work_km: 2.0 },
+        { reps: 2, work_km: 3.0 },
+        { reps: 2, work_km: 4.0 },
+        { reps: 2, work_km: 2.0, deload_step: true },
       ],
     },
     m: {
       racepace: [
-        { reps: 3, work_min: 12 },
-        { reps: 2, work_min: 18 },
-        { reps: 2, work_min: 22 },
-        { reps: 2, work_min: 12, deload_step: true },
+        { reps: 3, work_km: 4.0 },
+        { reps: 2, work_km: 6.0 },
+        { reps: 2, work_km: 8.0 },
+        { reps: 2, work_km: 4.0, deload_step: true },
       ],
     },
   },
   RACE: {
+    "5k": {
+      racepace: [
+        { reps: 3, work_km: 0.8 },
+        { reps: 3, work_km: 1.0 },
+        { reps: 2, work_km: 1.2, deload_step: true },
+      ],
+    },
     "10k": {
       racepace: [
-        { reps: 3, work_min: 6 },
-        { reps: 4, work_min: 5 },
-        { reps: 3, work_min: 4, deload_step: true },
+        { reps: 3, work_km: 1.5 },
+        { reps: 3, work_km: 2.0 },
+        { reps: 2, work_km: 2.0, deload_step: true },
+      ],
+    },
+    hm: {
+      racepace: [
+        { reps: 2, work_km: 4.0 },
+        { reps: 2, work_km: 5.0 },
+        { reps: 2, work_km: 3.0, deload_step: true },
+      ],
+    },
+    m: {
+      racepace: [
+        { reps: 2, work_km: 6.0 },
+        { reps: 2, work_km: 8.0 },
+        { reps: 2, work_km: 5.0, deload_step: true },
       ],
     },
   },
@@ -1203,42 +1231,42 @@ const KEY_SESSION_RECOMMENDATIONS = {
     "5k": {
       schwelle: ["3×10′ Schwelle"],
       vo2_touch: ["5×3′ VO₂max"],
-      racepace: ["10×1′ Tempohärte"],
+      racepace: ["6×400 m bis 4×800 m @ 5k-RP"],
       longrun: ["langer Lauf 90′"]
     },
     "10k": {
       schwelle: ["3×10′ Schwelle", "4×8′ Intervalle"],
-      racepace: ["40′ Tempodauerlauf"],
+      racepace: ["3×2 km @ 10k-RP"],
       longrun: ["langer Lauf 100–120′"]
     },
     hm: {
       schwelle: ["2×20′ lange Schwelle"],
-      racepace: ["2×20′ HM-Pace", "60′ Tempodauerlauf"],
+      racepace: ["3×3 km @ HM-RP", "2×4 km @ HM-RP"],
       longrun: ["langer Lauf 120–150′"]
     },
     m: {
       schwelle: ["3×10′ moderate Schwelle"],
-      racepace: ["2×25–30′ Marathonpace"],
+      racepace: ["3×4 km @ M-RP"],
       longrun: ["150′ Struktur-Longrun mit 3×15′ @ M", "langer Lauf 150–180′"]
     }
   },
   RACE: {
     "5k": {
-      racepace: ["6×2′ oder 3×5′ Racepace"],
+      racepace: ["3×1 km @ 5k-RP", "2×1,2 km @ 5k-RP"],
       vo2_touch: ["8×30″ Schärfe"],
       ga: ["30–45′ GA1 locker"]
     },
     "10k": {
-      racepace: ["3×8′ oder 2×12′ Racepace"],
+      racepace: ["3×2 km @ 10k-RP", "2×3 km @ 10k-RP"],
       schwelle: ["5×4′ Kontrolle"],
       ga: ["40–50′ GA1 locker"]
     },
     hm: {
-      racepace: ["2×20′ oder 3×12′ HM-Pace", "40′ Rhythmus @ HM"],
+      racepace: ["2×5 km @ HM-RP", "3×4 km @ HM-RP"],
       ga: ["40–60′ GA1 locker"]
     },
     m: {
-      racepace: ["2×25–30′ Marathonpace"],
+      racepace: ["2×8 km @ M-RP"],
       longrun: ["75–90′ letzter Longrun @ M (10–14 Tage vor Rennen)"],
       ga: ["30–45′ GA1 locker"]
     }
@@ -1293,6 +1321,8 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
       targetMinutes: null,
       maxMinutes: null,
       microcycleWeek: null,
+      racepaceTargetKm: Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null,
+      racepaceTargetKmNow: null,
       note: "Für diese Distanz/Phase fehlt noch eine Progressionsvorlage.",
     };
   }
@@ -1332,6 +1362,10 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
   }
 
   const targetMinutes = Math.max(1, Math.round(maxMinutes * factor));
+  const racepaceTargetKm = Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null;
+  const racepaceTargetKmNow = Number.isFinite(racepaceTargetKm)
+    ? Math.max(0.5, Math.round(racepaceTargetKm * factor * 10) / 10)
+    : null;
   const templateText = getProgressionTemplate(block, dist, primaryType, weekInBlock, isDeloadWeek);
 
   return {
@@ -1345,6 +1379,8 @@ function computeProgressionTarget(context = {}, keyRules = {}) {
     expectedDeloadWeeks,
     isDeloadWeek,
     templateText,
+    racepaceTargetKm,
+    racepaceTargetKmNow,
     note:
       isDeloadWeek
         ? "Deload-Woche: Umfang runter, Intensität stabil halten."
@@ -1395,7 +1431,17 @@ function computeEasyShareGate(ctx, dayIso, block) {
 }
 
 function buildProgressionSuggestion(progression) {
-  if (progression?.primaryType === "racepace") return null;
+  if (progression?.primaryType === "racepace") {
+    const targetKm = Number(progression?.racepaceTargetKm);
+    const targetKmNow = Number(progression?.racepaceTargetKmNow);
+    if (Number.isFinite(targetKm) && targetKm > 0) {
+      const weekText = Number.isFinite(targetKmNow) && targetKmNow > 0
+        ? `Diese Woche ca. ${formatDecimalKm(targetKmNow)} km RP als Hauptblock. `
+        : "";
+      return `Racepace: ${weekText}Bis Blockende Richtung ${formatDecimalKm(targetKm)} km zusammenhängendes RP-Volumen steigern. ${progression?.note || "Progression über Zeit/Umfang – Pace nicht parallel anheben."}`;
+    }
+    return null;
+  }
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
   const keyType = formatKeyType(progression.primaryType);
   let text = `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
@@ -1417,7 +1463,25 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   if (!Array.isArray(entries) || !entries.length) return null;
 
   const progressionText = progression?.templateText ? ` ${progression.templateText}` : "";
-  return `${formatKeyType(chosenType)} konkret: ${entries.join(" · ")}.${progressionText}`;
+  const racepaceTarget = chosenType === "racepace"
+    ? getRacepaceTargetText(distance)
+    : "";
+  return `${formatKeyType(chosenType)} konkret: ${entries.join(" · ")}.${racepaceTarget}${progressionText}`;
+}
+
+function formatDecimalKm(km) {
+  const value = Number(km);
+  if (!Number.isFinite(value)) return "0";
+  return value.toLocaleString("de-DE", {
+    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function getRacepaceTargetText(distance) {
+  const km = Number(RACEPACE_DISTANCE_TARGET_KM?.[distance]);
+  if (!Number.isFinite(km) || km <= 0) return "";
+  return ` RP-Ziel bis Blockende: ${formatDecimalKm(km)} km am Stück in RP-Qualität.`;
 }
 
 function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDeload) {
@@ -1425,10 +1489,23 @@ function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDe
   if (!Array.isArray(steps) || !steps.length) return null;
 
   const formatted = steps.map((step, idx) => {
+    const reps = Number(step.reps) || 0;
+    const hasKm = Number.isFinite(step.work_km);
+    if (hasKm) {
+      const workKm = Number(step.work_km);
+      const totalKm = Number.isFinite(step.total_work_km)
+        ? Number(step.total_work_km)
+        : reps * workKm;
+      const main = `${reps}×${formatDecimalKm(workKm)} km`;
+      const deload = step.deload_step ? " Deload" : "";
+      const total = totalKm > 0 ? ` ≈${formatDecimalKm(totalKm)} km` : "";
+      return `W${idx + 1}${deload} ${main}${total}`;
+    }
+
     const totalWork = Number.isFinite(step.total_work_min)
       ? step.total_work_min
-      : (Number(step.reps) || 0) * (Number(step.work_min) || 0);
-    const main = `${step.reps}×${step.work_min}`;
+      : reps * (Number(step.work_min) || 0);
+    const main = `${reps}×${step.work_min}`;
     const rest = Number.isFinite(step.rest_min) ? ` (${step.rest_min}′ Trabpause)` : "";
     const deload = step.deload_step ? " Deload" : "";
     const total = totalWork > 0 ? ` ≈${Math.round(totalWork)}′` : "";
