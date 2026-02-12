@@ -155,7 +155,7 @@ export default {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
-const MAX_KEYS_14D = 2;
+const MAX_KEYS_14D = 3;
 const STRENGTH_MIN_7D = 60;
 const EASY_SHARE_THRESHOLDS = {
   BASE: 0.9,
@@ -2599,9 +2599,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     } else if (fatigueBase?.override) {
       dynamicKeyCap.maxKeys7d = 1;
       dynamicKeyCap.reasons.push("Fatigue/Overload");
-    } else if (robustness && !robustness.strengthOk) {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Robustheit fehlt");
+   
     } else if ((motor?.value ?? 0) >= 70) {
       dynamicKeyCap.maxKeys7d = 2;
       dynamicKeyCap.reasons.push("Motor stark");
@@ -2609,7 +2607,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       dynamicKeyCap.maxKeys7d = 2;
       dynamicKeyCap.reasons.push("Standard-Cap 2 Keys/7 Tage");
     }
-
+if (robustness && !robustness.strengthOk) {
+      dynamicKeyCap.reasons.push("Robustheit fehlt (Hinweis)");
+    }
     let fatigue = fatigueBase;
     try {
       fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: dynamicKeyCap.maxKeys7d });
@@ -2634,7 +2634,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
     });
-
+historyMetrics.keyCompliance = keyCompliance;
     patch[FIELD_BLOCK] = blockState.block;
     previousBlockState = {
       block: blockState.block,
