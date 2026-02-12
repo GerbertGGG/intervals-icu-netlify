@@ -1327,6 +1327,7 @@ function computeEasyShareGate(ctx, dayIso, block) {
 }
 
 function buildProgressionSuggestion(progression) {
+  if (progression?.primaryType === "racepace") return null;
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
   const keyType = formatKeyType(progression.primaryType);
   let text = `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
