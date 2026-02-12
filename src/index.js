@@ -155,6 +155,7 @@ export default {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
+const MAX_KEYS_14D = 2;
 const STRENGTH_MIN_7D = 60;
 const EASY_SHARE_THRESHOLDS = {
   BASE: 0.9,
@@ -1515,8 +1516,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const actual7 = keyStats7.count;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
-  const maxKeysCap = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : maxKeys;
-  const capExceeded = actual7 >= maxKeysCap;
+  const maxKeysCap14 = Number.isFinite(context.maxKeys14d) ? context.maxKeys14d : MAX_KEYS_14D;
+  const capExceeded = actual14 >= maxKeysCap14;
 
   const actualTypes7 = keyStats7.list || [];
   const actualTypes14 = keyStats14.list || [];
@@ -1551,7 +1552,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   let keyAllowedNow = false;
 
   if (capExceeded) {
-    suggestion = "Key-Budget erschöpft (2 Keys/7 Tage) – restliche Einheiten locker/GA.";
+    suggestion = "Key-Budget erschöpft (2 Keys/14 Tage) – restliche Einheiten locker/GA.";
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
@@ -1579,7 +1580,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   return {
     expected,
     maxKeys,
-    maxKeysCap,
+    maxKeysCap14,
     actual7,
     actual14,
     perWeek14,
@@ -3007,8 +3008,8 @@ function buildComments(
     lines.push("");
   };
 
-  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? MAX_KEYS_7D;
-  const actualKeys = keyCompliance?.actual7 ?? 0;
+  const keyCap14 = keyCompliance?.maxKeysCap14 ?? MAX_KEYS_14D;
+  const actualKeys14 = keyCompliance?.actual14 ?? 0;
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
@@ -3023,7 +3024,7 @@ function buildComments(
   const daysToEvent = eventDate && todayIso ? diffDays(todayIso, eventDate) : null;
 
   const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
-  const budgetBlocked = keyCompliance?.capExceeded || actualKeys >= keyCap;
+  const budgetBlocked = keyCompliance?.capExceeded === true;
   const spacingBlocked = !spacingOk;
   const easyShareBlocked = easyShareGate?.hasData && easyShareGate?.ok === false;
   const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
@@ -3031,7 +3032,7 @@ function buildComments(
 
   let mainBlockReason = null;
   if (keyBlocked) {
-    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys}/${keyCap}`;
+    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys14}/${keyCap14} (14T)`;
     else if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
     else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyShareThresholdPct}%`;
     else if (deloadBlocked) mainBlockReason = `Overlay ${overlayMode}`;
@@ -3139,8 +3140,8 @@ function buildComments(
   ]);
 
   const keyCheckMetrics = [
-    `Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
-    `Next Allowed: ${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""}`,
+    `Keys (14 Tage): ${actualKeys14}/${keyCap14}${budgetBlocked ? " ⚠️" : ""}`,
+    `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `EasyShare (14 Tage): ${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`,
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
@@ -3150,7 +3151,7 @@ function buildComments(
 
   const recommendationMetrics = [];
   if (keyBlocked) {
-    recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys}/${keyCap}).`);
+    recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys14}/${keyCap14} in 14 Tagen).`);
     recommendationMetrics.push("Konsequenz: Restliche Einheiten locker / GA.");
     recommendationMetrics.push(`Trainingsempfehlung: ${keyStatus}`);
     recommendationMetrics.push("Umsetzung: Alle weiteren Einheiten locker / GA.");
@@ -3166,7 +3167,7 @@ function buildComments(
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
-    `Key: ${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
+    `Key: ${actualKeys14} / ${keyCap14} (14T)${budgetBlocked ? " ⚠️" : ""}`,
     Number.isFinite(weeksToEvent) && weeksToEvent > PLAN_START_WEEKS
       ? `Freie Vorphase (> ${PLAN_START_WEEKS} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent) * 100))}`
       : `Planphase aktiv (<= ${PLAN_START_WEEKS} Wochen): Blocksteuerung BASE/BUILD/RACE`,
