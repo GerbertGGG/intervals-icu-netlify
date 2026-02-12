@@ -3797,7 +3797,7 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
 async function upsertMondayDetectiveNote(env, dayIso, noteText) {
   const external_id = `detektiv-${dayIso}`;
   const name = "Montags-Report";
-  const description = noteText;
+  const description = toHardLineBreakText(noteText);
 
   // Find existing note by external_id on that day
   const events = await fetchIntervalsEvents(env, dayIso, dayIso);
@@ -3829,7 +3829,7 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
 async function upsertDailyReportNote(env, dayIso, noteText) {
   const external_id = `daily-report-${dayIso}`;
   const name = "Daily-Report";
-  const description = noteText;
+  const description = toHardLineBreakText(noteText);
 
   const events = await fetchIntervalsEvents(env, dayIso, dayIso);
   const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
@@ -3854,6 +3854,13 @@ async function upsertDailyReportNote(env, dayIso, noteText) {
     color: "blue",
     external_id,
   });
+}
+
+function toHardLineBreakText(text) {
+  const normalized = String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  return normalized.split("\n").join("<br />\n");
 }
 
 // ================= BENCH REPORTS =================
