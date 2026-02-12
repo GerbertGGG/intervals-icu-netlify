@@ -1372,7 +1372,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "5k" || dist === "10k") {
       return {
         expectedKeysPerWeek: 0.5,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["steady", "strides", "vo2_touch"],
         preferredKeyTypes: ["vo2_touch"],
         bannedKeyTypes: ["schwelle", "racepace"],
@@ -1381,7 +1381,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "m" || dist === "hm") {
       return {
         expectedKeysPerWeek: 0.5,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["steady", "strides"],
         preferredKeyTypes: ["steady"],
         bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
@@ -1389,7 +1389,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     }
     return {
       expectedKeysPerWeek: 0.5,
-      maxKeysPerWeek: 1,
+      maxKeysPerWeek: 2,
       allowedKeyTypes: ["steady", "strides"],
       preferredKeyTypes: ["steady"],
       bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
@@ -1400,7 +1400,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "5k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
         preferredKeyTypes: ["vo2_touch", "schwelle"],
         bannedKeyTypes: ["racepace"],
@@ -1409,7 +1409,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
         preferredKeyTypes: ["schwelle", "vo2_touch"],
         bannedKeyTypes: ["racepace"],
@@ -1419,7 +1419,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       const allowRacePace = weeksToEvent != null && weeksToEvent <= 8;
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
         preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
         bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
@@ -1429,7 +1429,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       const allowRacePace = weeksToEvent != null && weeksToEvent <= 10;
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
         preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
         bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
@@ -1441,7 +1441,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "5k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
         preferredKeyTypes: ["racepace", "vo2_touch"],
         bannedKeyTypes: ["schwelle"],
@@ -1450,7 +1450,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["racepace", "schwelle", "strides", "steady"],
         preferredKeyTypes: ["racepace"],
         bannedKeyTypes: ["vo2_touch"],
@@ -1459,7 +1459,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["racepace", "schwelle", "steady"],
         preferredKeyTypes: ["racepace", "schwelle"],
         bannedKeyTypes: ["vo2_touch", "strides"],
@@ -1468,7 +1468,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "m") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
         allowedKeyTypes: ["racepace", "schwelle", "steady"],
         preferredKeyTypes: ["racepace"],
         bannedKeyTypes: ["vo2_touch", "strides"],
@@ -1478,7 +1478,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
 
   return {
     expectedKeysPerWeek: 0.5,
-    maxKeysPerWeek: 1,
+    maxKeysPerWeek: 2,
     allowedKeyTypes: ["steady", "strides"],
     preferredKeyTypes: ["steady"],
     bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
