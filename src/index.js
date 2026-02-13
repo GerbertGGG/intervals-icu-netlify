@@ -1253,22 +1253,22 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
 
 const PHASE_MAX_MINUTES = {
   BASE: {
-    "5k": { ga: 75, longrun: 100, vo2_touch: 3, strides: 3 },
-    "10k": { ga: 75, longrun: 110, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, longrun: 130, vo2_touch: 2, strides: 2 },
-    m: { ga: 90, longrun: 150, strides: 1 },
+    "5k": { ga: 75, longrun: 105, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 80, longrun: 120, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, longrun: 150, vo2_touch: 2, strides: 2 },
+    m: { ga: 95, longrun: 180, strides: 1 },
   },
   BUILD: {
-    "5k": { schwelle: 30, vo2_touch: 15, racepace: 10, longrun: 90 },
-    "10k": { schwelle: 30, vo2_touch: 32, racepace: 40, longrun: 120 },
-    hm: { schwelle: 40, racepace: 40, longrun: 150 },
-    m: { schwelle: 30, racepace: 60, longrun: 180 },
+    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 100 },
+    "10k": { schwelle: 35, vo2_touch: 35, racepace: 45, longrun: 135 },
+    hm: { schwelle: 45, racepace: 50, longrun: 165 },
+    m: { schwelle: 35, racepace: 70, longrun: 195 },
   },
   RACE: {
-    "5k": { racepace: 15, vo2_touch: 4, ga: 45 },
-    "10k": { racepace: 24, schwelle: 20, ga: 50 },
-    hm: { racepace: 40, schwelle: 36, ga: 60 },
-    m: { racepace: 60, ga: 45, longrun: 90 },
+    "5k": { racepace: 18, vo2_touch: 5, ga: 50, longrun: 90 },
+    "10k": { racepace: 28, schwelle: 25, ga: 60, longrun: 110 },
+    hm: { racepace: 45, schwelle: 40, ga: 70, longrun: 135 },
+    m: { racepace: 75, ga: 55, longrun: 150 },
   },
 };
 
@@ -3555,9 +3555,13 @@ function buildComments(
   const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
   const longRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
-  const longRunStepCapMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
+  const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
+  const longRunStepCapRawMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
+  const longRunStepCapMin = phaseLongRunMaxMin > 0
+    ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
+    : longRunStepCapRawMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
-    ? Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct))
+    ? longRunStepCapMin
     : LONGRUN_PREPLAN.startMin;
 
   const runMetrics = [];
