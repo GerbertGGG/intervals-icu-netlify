@@ -245,10 +245,10 @@ const BLOCK_CONFIG = {
 };
 
 const BLOCK_LENGTHS_WEEKS_BY_DISTANCE = {
-  "5k": { base: 8, build: 6, race: 4, taper: 1 },
-  "10k": { base: 10, build: 6, race: 4, taper: 1 },
-  hm: { base: 12, build: 8, race: 6, taper: 2 },
-  m: { base: 16, build: 10, race: 6, taper: 2 },
+  "5k": { base: 10, build: 8, race: 6, taper: 1 },
+  "10k": { base: 10, build: 8, race: 6, taper: 1 },
+  hm: { base: 12, build: 8, race: 8, taper: 2 },
+  m: { base: 16, build: 10, race: 8, taper: 2 },
 };
 
 function getBlockLengthsWeeks(eventDistance) {
