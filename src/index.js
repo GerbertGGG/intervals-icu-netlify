@@ -723,12 +723,12 @@ function getLifeEventEffect(activeLifeEvent) {
       active: true,
       category,
       runFloorFactor: 0.6,
-      allowKeys: null,
-      freezeProgression: false,
+      allowKeys: false,
+      freezeProgression: true,
       freezeFloorIncrease: true,
       ignoreRunFloorGap: true,
       overlayMode: "LIFE_EVENT_HOLIDAY",
-      reason: "HOLIDAY: RunFloor reduziert + Floor-Erhöhung pausiert",
+      reason: "HOLIDAY: RunFloor reduziert + Keys/Progression pausiert",
       event: activeLifeEvent,
     };
   }
