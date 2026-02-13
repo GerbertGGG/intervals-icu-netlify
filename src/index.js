@@ -354,7 +354,7 @@ const PREPLAN_RUN_SHARE = {
 
 const LONGRUN_PREPLAN = {
   stepDays: 14,
-  maxStepPct: 0.05,
+  maxStepPct: 0.10,
   startMin: 45,
   targetMinByDistance: {
     "5k": 60,
