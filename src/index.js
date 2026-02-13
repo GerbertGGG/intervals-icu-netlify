@@ -3557,6 +3557,7 @@ function buildComments(
     if (gaToday) {
       const drift = gaToday.drift;
       const driftText = formatPct1(drift);
+      const driftTooHigh = Number.isFinite(drift) && drift > 5;
       const driftEval =
         drift == null
           ? "keine belastbare Einordnung."
@@ -3573,10 +3574,14 @@ function buildComments(
 
       runMetrics.push(`Drift: ${driftText} → ${driftEval}`);
       if (drift != null && drift <= 5) runMetrics.push("Stabilität: ✔ Aerobe Stabilität gegeben.");
-      runMetrics.push(`EF: ${efText}`);
-      runMetrics.push("EF-Hinweis: Nur als Trendsignal interpretieren, keine absolute Bewertung.");
-      runMetrics.push(`VDOT: ${vdotText}`);
-      runMetrics.push("VDOT-Hinweis: Nur bei vergleichbarer Intensität interpretieren.");
+      if (driftTooHigh) {
+        runMetrics.push("Bewertung: ausgesetzt (Drift > 5 %). EF/VDOT heute nicht bewerten.");
+      } else {
+        runMetrics.push(`EF: ${efText}`);
+        runMetrics.push("EF-Hinweis: Nur als Trendsignal interpretieren, keine absolute Bewertung.");
+        runMetrics.push(`VDOT: ${vdotText}`);
+        runMetrics.push("VDOT-Hinweis: Nur bei vergleichbarer Intensität interpretieren.");
+      }
       runMetrics.push("Gesamt-Hinweis: Stabilität und Ermüdung immer im Verlauf bewerten, nicht aus einem Einzelwert.");
     } else if (intervalToday) {
       const m = intervalToday.intervalMetrics;
