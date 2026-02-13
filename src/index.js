@@ -3324,6 +3324,11 @@ function buildRecommendationsAndBottomLine(state) {
   const runFloorTarget = state?.runFloorTarget;
   const runFloor7 = state?.runFloor7;
   const explicitSessionShort = state?.explicitSessionShort;
+  const longRunDoneMin = Number(state?.longRunDoneMin ?? 0);
+  const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
+  const longRunGapMin = Number(state?.longRunGapMin ?? 0);
+  const longRunStepCapMin = Number(state?.longRunStepCapMin ?? 0);
+  const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
 
   bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
   if (state?.keyAllowedNow && explicitSessionShort) {
@@ -3332,6 +3337,13 @@ function buildRecommendationsAndBottomLine(state) {
 
   if (Number.isFinite(runFloor7) && Number.isFinite(runFloorTarget) && runFloor7 < runFloorTarget) {
     rec.push(`RunFloor ${runFloor7}/${runFloorTarget} → Volumen priorisieren.`);
+  }
+  if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
+    if (longRunGapMin < 0) {
+      rec.push(`Longrun ${longRunDoneMin}′/${longRunTargetMin}′ → diese Woche locker auf ${longRunTargetMin}′ annähern.`);
+    } else if (longRunDoneMin > 0 && Number.isFinite(longRunStepCapMin) && Number.isFinite(blockLongRunNextWeekTargetMin)) {
+      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).`);
+    }
   }
   if (state?.easyShareGate?.ok === false) {
     const es = Math.round((state.easyShareGate.easyShare || 0) * 100);
@@ -3539,6 +3551,7 @@ function buildComments(
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
+  const longRun7d = longRunSummary || { minutes: 0, date: null, quality: "n/a" };
   const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
   const longRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
@@ -3608,6 +3621,8 @@ function buildComments(
   addDecisionBlock("HEUTIGER LAUF", runMetrics);
 
   addDecisionBlock("BELASTUNG & PROGRESSION", [
+    `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
+    `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
     `RunFloor (7 Tage): ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"}`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
@@ -3640,6 +3655,11 @@ function buildComments(
     todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
     actualKeys7,
     keyCap7,
+    longRunDoneMin,
+    longRunTargetMin,
+    longRunGapMin,
+    longRunStepCapMin,
+    blockLongRunNextWeekTargetMin,
   });
   addDecisionBlock("EMPFEHLUNGEN", decisionCompact.recommendations);
 
