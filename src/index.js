@@ -3553,13 +3553,18 @@ function buildComments(
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
   const longRun7d = longRunSummary || { minutes: 0, date: null, quality: "n/a" };
   const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
-  const longRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
-  const longRunGapMin = longRunDoneMin - longRunTargetMin;
+  const prePlanLongRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
   const longRunStepCapRawMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
   const longRunStepCapMin = phaseLongRunMaxMin > 0
     ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
     : longRunStepCapRawMin;
+  const planStartWeeks = getPlanStartWeeks(eventDistance);
+  const inPlanPhase = Number.isFinite(weeksToEvent) && weeksToEvent <= planStartWeeks;
+  const longRunTargetMin = inPlanPhase && phaseLongRunMaxMin > 0
+    ? Math.max(prePlanLongRunTargetMin, longRunStepCapMin || prePlanLongRunTargetMin)
+    : prePlanLongRunTargetMin;
+  const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunStepCapMin
     : LONGRUN_PREPLAN.startMin;
