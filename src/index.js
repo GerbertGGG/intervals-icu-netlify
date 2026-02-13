@@ -1355,69 +1355,62 @@ const KEY_SESSION_RECOMMENDATIONS = {
   BASE: {
     "5k": {
       ga: ["45–75′ GA1 locker", "langer Lauf 75–100′"],
-      strides: ["6–8×15–20″ Strides", "6–8×8–10″ kurze Hill-Sprints"],
-      vo2_touch: ["6–8×20″ VO₂-Impulse (optional)"]
+      vo2: ["8–10×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "10k": {
       ga: ["60–75′ GA1 locker", "langer Lauf 90–110′"],
-      strides: ["6×20″ Strides"],
-      vo2_touch: ["6×20″ VO₂-Impulse (selten)"]
+      vo2: ["6–8×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
-    hm: {
+    "hm": {
       ga: ["60–90′ GA1 locker", "langer Lauf 100–130′"],
-      strides: ["4–6×20″ Strides"],
-      vo2_touch: ["4–6×15″ VO₂-Impulse (sehr selten)"]
+      vo2: ["6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     },
-    m: {
+    "m": {
       ga: ["75–90′ GA1 locker", "langer Lauf 120–150′"],
-      strides: ["4×15″ Strides"]
+      vo2: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     }
   },
+
   BUILD: {
     "5k": {
-      schwelle: ["3×10′ Schwelle"],
-      vo2_touch: ["5×3′ VO₂max"],
-      racepace: ["6×400 m bis 4×800 m @ 5k-RP"],
+      vo2: ["5×3′ @ vVO₂max", "6×800 m @ 3–5k-Pace"],
       longrun: ["langer Lauf 90′"]
     },
     "10k": {
-      schwelle: ["3×10′ Schwelle", "4×8′ Intervalle"],
-      racepace: ["3×2 km @ 10k-RP"],
+      schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
       longrun: ["langer Lauf 100–120′"]
     },
-    hm: {
-      schwelle: ["2×20′ lange Schwelle"],
-      racepace: ["3×3 km @ HM-RP", "2×4 km @ HM-RP"],
+    "hm": {
+      schwelle: ["2×20′ @ Schwelle", "3×15′ @ Schwelle"],
       longrun: ["langer Lauf 120–150′"]
     },
-    m: {
-      schwelle: ["3×10′ moderate Schwelle"],
-      racepace: ["3×4 km @ M-RP"],
+    "m": {
+      racepace: ["3×5 km @ M-Pace", "14–18 km @ M im Longrun"],
       longrun: ["150′ Struktur-Longrun mit 3×15′ @ M", "langer Lauf 150–180′"]
     }
   },
+
   RACE: {
     "5k": {
-      racepace: ["3×1 km @ 5k-RP", "2×1,2 km @ 5k-RP"],
-      vo2_touch: ["8×30″ Schärfe"],
+      racepace: ["4–5×1000 m @ 5k-Pace", "8–10×400 m leicht schneller als 5k-Pace"],
       ga: ["30–45′ GA1 locker"]
     },
     "10k": {
-      racepace: ["3×2 km @ 10k-RP", "2×3 km @ 10k-RP"],
-      schwelle: ["5×4′ Kontrolle"],
+      racepace: ["3×2 km @ 10k-Pace", "2×3 km @ 10k-Pace"],
       ga: ["40–50′ GA1 locker"]
     },
-    hm: {
-      racepace: ["2×5 km @ HM-RP", "3×4 km @ HM-RP"],
+    "hm": {
+      racepace: ["2×4–5 km @ HM-Pace"],
       ga: ["40–60′ GA1 locker"]
     },
-    m: {
-      racepace: ["2×8 km @ M-RP"],
+    "m": {
+      racepace: ["2×6–8 km @ M-Pace (3 Wochen vor WK)"],
       longrun: ["75–90′ letzter Longrun @ M (10–14 Tage vor Rennen)"],
       ga: ["30–45′ GA1 locker"]
     }
   }
 };
+
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
 
