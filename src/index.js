@@ -2431,6 +2431,8 @@ function buildBlockStateLine(state) {
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
     lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
+    lastLifeEventCategory: state.lastLifeEventCategory || null,
+    lastLifeEventEndISO: isIsoDate(state.lastLifeEventEndISO) ? state.lastLifeEventEndISO : null,
   };
   return `BlockState: ${JSON.stringify(payload)}`;
 }
@@ -2458,6 +2460,8 @@ function parseBlockStateFromComment(comment) {
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
       lastFloorIncreaseDate: isIsoDate(parsed.lastFloorIncreaseDate) ? parsed.lastFloorIncreaseDate : null,
       lastEventDate: isIsoDate(parsed.lastEventDate) ? parsed.lastEventDate : null,
+      lastLifeEventCategory: parsed.lastLifeEventCategory ? normalizeEventCategory(parsed.lastLifeEventCategory) : "",
+      lastLifeEventEndISO: isIsoDate(parsed.lastLifeEventEndISO) ? parsed.lastLifeEventEndISO : null,
     };
   } catch {
     return null;
