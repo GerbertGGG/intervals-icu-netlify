@@ -52,7 +52,7 @@ In Intervals.icu müssen diese Codes als Numeric Fields existieren:
 - optional: `?date=YYYY-MM-DD`
 - Antwort: JSON mit 7-Tage-Zeitraum inkl.:
   - `days[]`
-  - `runLoad[]`, `runSum7`, `runGoal` (aktuell 150)
+  - `runLoad[]`, `runSum7`, `runGoal` (aus persistiertem RunFloor-Target, Fallback Event-Minimum)
   - `strengthMin[]`, `strengthSum7`, `strengthGoal` (aktuell 60)
   - `updatedAt`
 - Header:
