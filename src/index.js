@@ -5062,6 +5062,7 @@ async function buildWatchfacePayload(env, endIso) {
 
   const runSum7 = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
+  const runGoal = await resolveWatchfaceRunGoal(env, end);
 
   return {
     ok: true,
@@ -5069,12 +5070,30 @@ async function buildWatchfacePayload(env, endIso) {
     days,
     runLoad,
     runSum7,
-    runGoal: 150,
+    runGoal,
     strengthMin,
     strengthSum7,
     strengthGoal: 60,
     updatedAt: new Date().toISOString(),
   };
+}
+
+async function resolveWatchfaceRunGoal(env, dayIso) {
+  const ctx = {
+    wellnessCache: new Map(),
+    blockStateCache: new Map(),
+  };
+  const lookbackDays = 14;
+
+  for (let i = 0; i <= lookbackDays; i += 1) {
+    const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
+    const persisted = await getPersistedBlockState(ctx, env, probeDay);
+    if (Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0) {
+      return Math.round(persisted.floorTarget);
+    }
+  }
+
+  return MIN_STIMULUS_7D_RUN_EVENT;
 }
 
 
