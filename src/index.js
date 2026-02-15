@@ -5091,6 +5091,16 @@ async function resolveWatchfaceRunGoal(env, dayIso) {
 
   for (let i = 0; i <= lookbackDays; i += 1) {
     const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
+
+    // Prefer the goal that was already written into the Daily-Report NOTE
+    // so watchface consumes exactly the same output and does not re-derive it.
+    const events = await fetchIntervalsEvents(env, probeDay, probeDay);
+    const dailyReport = (events || []).find((e) => String(e?.external_id || "") === `daily-report-${probeDay}`);
+    const goalFromDailyReport = parseRunGoalFromDailyReportNote(dailyReport?.description);
+    if (Number.isFinite(goalFromDailyReport) && goalFromDailyReport > 0) {
+      return Math.round(goalFromDailyReport);
+    }
+
     const persisted = await getPersistedBlockState(ctx, env, probeDay);
     if (Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0) {
       return Math.round(persisted.effectiveFloorTarget);
@@ -5101,6 +5111,17 @@ async function resolveWatchfaceRunGoal(env, dayIso) {
   }
 
   return MIN_STIMULUS_7D_RUN_EVENT;
+}
+
+function parseRunGoalFromDailyReportNote(description) {
+  if (!description) return null;
+  const plain = String(description)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/&nbsp;/gi, " ");
+  const match = plain.match(/RunFloor\s*\(7\s*Tage\)\s*:\s*\d+\s*\/\s*(\d+)/i);
+  if (!match) return null;
+  const goal = Number(match[1]);
+  return Number.isFinite(goal) ? goal : null;
 }
 
 
