@@ -673,6 +673,7 @@ const RUN_FLOOR_FLOOR_STEP = {
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
 const LIFE_EVENT_CATEGORY_PRIORITY = ["SICK", "INJURED", "HOLIDAY"];
+const HOLIDAY_RAMP_DAYS = 3;
 
 function mapBlockToPhase(block) {
   if (block === "BASE") return "BASE";
@@ -745,6 +746,35 @@ function getLifeEventEffect(activeLifeEvent) {
     reason: null,
     event: null,
   };
+}
+
+function parseLifeEventBoundary(event, field) {
+  const value = String(event?.[field] || "").slice(0, 10);
+  return isIsoDate(value) ? value : null;
+}
+
+function computeHolidayRampFactor({ todayISO, lifeEventEffect, previousState }) {
+  const holidayFactor = Number.isFinite(lifeEventEffect?.runFloorFactor) ? lifeEventEffect.runFloorFactor : 0.6;
+  const transitionDays = Math.max(1, HOLIDAY_RAMP_DAYS);
+
+  if (lifeEventEffect?.active && lifeEventEffect?.category === "HOLIDAY") {
+    const startIso =
+      parseLifeEventBoundary(lifeEventEffect?.event, "start_date_local") ||
+      parseLifeEventBoundary(lifeEventEffect?.event, "start_date");
+    const daysSinceStart = startIso ? Math.max(0, daysBetween(startIso, todayISO)) : 0;
+    const progress = clamp((daysSinceStart + 1) / transitionDays, 0, 1);
+    return 1 - (1 - holidayFactor) * progress;
+  }
+
+  const prevCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
+  const lastHolidayEndISO = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
+  if (prevCategory !== "HOLIDAY" || !lastHolidayEndISO) return 1;
+
+  const daysSinceHolidayEnd = daysBetween(lastHolidayEndISO, todayISO);
+  if (!Number.isFinite(daysSinceHolidayEnd) || daysSinceHolidayEnd < 0 || daysSinceHolidayEnd >= transitionDays) return 1;
+
+  const progress = clamp(daysSinceHolidayEnd / transitionDays, 0, 1);
+  return holidayFactor + (1 - holidayFactor) * progress;
 }
 
 function getTaperStartDays(eventDistance) {
@@ -874,6 +904,8 @@ function evaluateRunFloorState({
     ? previousState.lastFloorIncreaseDate
     : null;
   let lastEventDate = isIsoDate(previousState?.lastEventDate) ? previousState.lastEventDate : null;
+  let lastLifeEventCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
+  let lastLifeEventEndISO = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
 
   if (eventDateISO && safeEventInDays <= 0) {
     lastEventDate = eventDateISO;
@@ -938,13 +970,28 @@ function evaluateRunFloorState({
   let effectiveFloorTarget = updatedFloorTarget;
   if (hasLifeEvent) {
     const factor = Number.isFinite(lifeEventEffect?.runFloorFactor) ? lifeEventEffect.runFloorFactor : 1;
-    effectiveFloorTarget = updatedFloorTarget * factor;
+    const holidayRampFactor = computeHolidayRampFactor({ todayISO, lifeEventEffect, previousState });
+    effectiveFloorTarget = updatedFloorTarget * (lifeEventEffect?.category === "HOLIDAY" ? holidayRampFactor : factor);
+    lastLifeEventCategory = normalizeEventCategory(lifeEventEffect?.category);
+    const endIso =
+      parseLifeEventBoundary(lifeEventEffect?.event, "end_date_local") ||
+      parseLifeEventBoundary(lifeEventEffect?.event, "end_date");
+    if (endIso) lastLifeEventEndISO = endIso;
   } else if (overlayMode === "DELOAD") {
     effectiveFloorTarget = applyDeloadRules({ floorTarget: updatedFloorTarget, phase }).effectiveFloorTarget;
   } else if (overlayMode === "TAPER") {
     effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays, taperStartDays);
   } else if (overlayMode === "RECOVER_OVERLAY") {
     effectiveFloorTarget = updatedFloorTarget * RUN_FLOOR_RECOVER_FACTOR;
+  } else {
+    const holidayRampFactor = computeHolidayRampFactor({ todayISO, lifeEventEffect, previousState });
+    if (holidayRampFactor < 1) {
+      effectiveFloorTarget = updatedFloorTarget * holidayRampFactor;
+      reasons.push("Post-Holiday Ramp aktiv");
+    } else {
+      lastLifeEventCategory = "";
+      lastLifeEventEndISO = null;
+    }
   }
 
   const deloadCompletedSinceIncrease =
@@ -997,6 +1044,8 @@ function evaluateRunFloorState({
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
+    lastLifeEventCategory,
+    lastLifeEventEndISO,
     daysSinceEvent,
     reasons,
     lifeEvent: lifeEventEffect?.active
@@ -3021,6 +3070,8 @@ historyMetrics.keyCompliance = keyCompliance;
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
       lastEventDate: blockState.lastEventDate,
+      lastLifeEventCategory: runFloorState.lastLifeEventCategory,
+      lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
     };
 
     addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
@@ -3040,6 +3091,8 @@ historyMetrics.keyCompliance = keyCompliance;
       lastDeloadCompletedISO: runFloorState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: runFloorState.lastFloorIncreaseDate,
       lastEventDate: runFloorState.lastEventDate,
+      lastLifeEventCategory: runFloorState.lastLifeEventCategory,
+      lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
       daysSinceEvent: runFloorState.daysSinceEvent,
       reasons: runFloorState.reasons,
       lifeEvent: runFloorState.lifeEvent,
