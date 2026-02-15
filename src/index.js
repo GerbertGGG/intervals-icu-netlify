@@ -2377,6 +2377,7 @@ function buildBlockStateLine(state) {
     eventDate: state.eventDate,
     eventDistance: state.eventDistance,
     floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
+    effectiveFloorTarget: Number.isFinite(state.effectiveFloorTarget) ? state.effectiveFloorTarget : null,
     deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
@@ -2402,6 +2403,7 @@ function parseBlockStateFromComment(comment) {
       eventDate: parsed.eventDate ?? null,
       eventDistance: parsed.eventDistance ?? null,
       floorTarget: Number.isFinite(parsed.floorTarget) ? parsed.floorTarget : null,
+      effectiveFloorTarget: Number.isFinite(parsed.effectiveFloorTarget) ? parsed.effectiveFloorTarget : null,
       loadDays: Number.isFinite(parsed.loadDays) ? parsed.loadDays : 0,
       deloadStartDate: isIsoDate(parsed.deloadStartDate) ? parsed.deloadStartDate : null,
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
@@ -2939,6 +2941,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     }
     specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
     blockState.floorTarget = runFloorState.floorTarget;
+    blockState.effectiveFloorTarget = runFloorState.effectiveFloorTarget;
     blockState.deloadStartDate = runFloorState.deloadStartDate;
     blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
@@ -3012,6 +3015,7 @@ historyMetrics.keyCompliance = keyCompliance;
       eventDate,
       eventDistance,
       floorTarget: blockState.floorTarget,
+      effectiveFloorTarget: blockState.effectiveFloorTarget,
       timeInBlockDays: blockState.timeInBlockDays,
       deloadStartDate: blockState.deloadStartDate,
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
@@ -5088,6 +5092,9 @@ async function resolveWatchfaceRunGoal(env, dayIso) {
   for (let i = 0; i <= lookbackDays; i += 1) {
     const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
     const persisted = await getPersistedBlockState(ctx, env, probeDay);
+    if (Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0) {
+      return Math.round(persisted.effectiveFloorTarget);
+    }
     if (Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0) {
       return Math.round(persisted.floorTarget);
     }
