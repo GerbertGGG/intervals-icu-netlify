@@ -748,6 +748,14 @@ function getLifeEventEffect(activeLifeEvent) {
   };
 }
 
+function getLifeEventCategoryLabel(category) {
+  const cat = normalizeEventCategory(category);
+  if (cat === "SICK") return "krank";
+  if (cat === "INJURED") return "verletzt";
+  if (cat === "HOLIDAY") return "Urlaub";
+  return cat || "unbekannt";
+}
+
 function parseLifeEventBoundary(event, field) {
   const value = String(event?.[field] || "").slice(0, 10);
   return isIsoDate(value) ? value : null;
@@ -4075,6 +4083,15 @@ function buildDetectiveWhyInsights(current, previous) {
   const context = [];
   const actions = [];
   const helped = [];
+  const lifeEventDaysCurrent = Number(current.lifeEventDays || 0);
+  const lifeEventDaysPrevious = Number(previous.lifeEventDays || 0);
+  const stopLifeEventDaysCurrent = Number(current.stopLifeEventDays || 0);
+
+  if (lifeEventDaysCurrent > 0) {
+    context.push(
+      `LifeEvent im aktuellen Fenster: ${lifeEventDaysCurrent} Tag(e) reduziert/pausiert (${stopLifeEventDaysCurrent} Tag(e) krank/verletzt).`
+    );
+  }
 
   const pct = (a, b) => (a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null);
 
@@ -4115,6 +4132,13 @@ function buildDetectiveWhyInsights(current, previous) {
     helped.push("Mehr Wochenreiz mit stabilen/mehr Longruns.");
   }
   if (loadPct != null && loadPct <= -10 && runFreqDelta != null && runFreqDelta <= -0.5) {
+    if (lifeEventDaysCurrent > 0 || lifeEventDaysPrevious > 0) {
+      const delta = lifeEventDaysCurrent - lifeEventDaysPrevious;
+      const deltaText = delta === 0 ? "gleich viel" : delta > 0 ? `+${delta}` : `${delta}`;
+      context.push(
+        `Reizverlust teilweise durch LifeEvent-Tage erklärbar (aktuell ${lifeEventDaysCurrent}, vorher ${lifeEventDaysPrevious}, Δ ${deltaText}).`
+      );
+    }
     regressions.push(`Reizverlust: Wochenload ${loadPct.toFixed(0)}% & Frequenz ↓ (${runFreqDelta.toFixed(1)}/Woche).`);
     actions.push("Frequenz & Wochenload wieder stabil erhöhen (zuerst kurz & locker).");
   }
@@ -4253,8 +4277,12 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const end = new Date(mondayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - windowDays * 86400000);
+  const startIso = isoDate(start);
+  const endIsoExclusive = isoDate(end);
+  const endIsoInclusive = isoDate(new Date(end.getTime() - 86400000));
 
-  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+  const acts = await fetchIntervalsActivities(env, startIso, endIsoExclusive);
+  const events = await fetchIntervalsEvents(env, startIso, endIsoInclusive).catch(() => []);
   const runs = acts
     .filter((a) => isRun(a))
     .map((a) => ({
@@ -4273,6 +4301,35 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
 
   const weeks = Math.max(1, windowDays / 7);
 
+  const lifeEvents = (events || []).filter((e) => isLifeEventCategory(e?.category));
+  const eventDaysWithinWindow = (event) => {
+    const eventStart = String(event?.start_date_local || event?.start_date || "").slice(0, 10);
+    if (!isIsoDate(eventStart)) return 0;
+    const eventEndRaw = String(event?.end_date_local || event?.end_date || "").slice(0, 10);
+    const eventEndExclusive = isIsoDate(eventEndRaw)
+      ? eventEndRaw
+      : isoDate(new Date(new Date(eventStart + "T00:00:00Z").getTime() + 86400000));
+    const overlapStart = eventStart > startIso ? eventStart : startIso;
+    const overlapEndExclusive = eventEndExclusive < endIsoExclusive ? eventEndExclusive : endIsoExclusive;
+    const days = daysBetween(overlapStart, overlapEndExclusive);
+    return Number.isFinite(days) ? Math.max(0, days) : 0;
+  };
+
+  const eventDays = lifeEvents.map((e) => ({
+    category: normalizeEventCategory(e?.category),
+    days: eventDaysWithinWindow(e),
+  }));
+  const lifeEventDays = sum(eventDays.map((x) => x.days));
+  const stopLifeEventDays = sum(eventDays.filter((x) => x.category === "SICK" || x.category === "INJURED").map((x) => x.days));
+  const holidayLifeEventDays = sum(eventDays.filter((x) => x.category === "HOLIDAY").map((x) => x.days));
+  const lifeEventSummary = eventDays
+    .filter((x) => x.days > 0)
+    .reduce((acc, x) => {
+      acc[x.category] = (acc[x.category] || 0) + x.days;
+      return acc;
+    }, {});
+  const hasLifeEvent = lifeEventDays > 0;
+
   // Distribution stats
   const totalRuns = runs.length;
   const totalMin = sum(runs.map((x) => x.moving_time)) / 60;
@@ -4289,9 +4346,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
 
   // Monotony/strain (simple) – include zero days for the full window
   const dailyLoads = bucketLoadsByDay(runs); // {day: loadSum} (runs only)
-  const startIso = isoDate(start);
-  const endIso = isoDate(new Date(end.getTime() - 86400000));
-  const daysAll = listIsoDaysInclusive(startIso, endIso);
+  const daysAll = listIsoDaysInclusive(startIso, endIsoInclusive);
   const loadArr = daysAll.map((d) => Number(dailyLoads[d]) || 0);
   const meanLoad = avg(loadArr) ?? 0;
   const sdLoad = std(loadArr) ?? 0;
@@ -4306,16 +4361,28 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const findings = [];
   const actions = [];
 
+  if (hasLifeEvent) {
+    const lifeEventLine = Object.entries(lifeEventSummary)
+      .map(([category, days]) => `${getLifeEventCategoryLabel(category)}=${days}d`)
+      .join(", ");
+    findings.push(`LifeEvent erkannt: ${lifeEventLine}. Bewertung von Reiz/Frequenz entsprechend relativieren.`);
+    if (stopLifeEventDays > 0) {
+      actions.push("Bei krank/verletzt: Fokus zuerst auf vollständige Regeneration, dann mit kurzen lockeren Läufen wieder einsteigen.");
+    } else if (holidayLifeEventDays > 0) {
+      actions.push("Nach Urlaub: Belastung 3–5 Tage progressiv hochfahren (nicht direkt volle Intensität).");
+    }
+  }
+
   // Absolute: too little training
   if (totalRuns === 0) {
     findings.push("Kein Lauf im Analysefenster → keine belastbare Diagnose möglich.");
     actions.push("Starte mit 2–3 lockeren Läufen/Woche (30–50min), bevor du harte Schlüsse ziehst.");
   } else {
     // Longrun
-    if (longRuns.length === 0) {
+    if (longRuns.length === 0 && !hasLifeEvent) {
       findings.push(`Zu wenig Longruns: 0× ≥60min in ${windowDays} Tagen.`);
       actions.push("1×/Woche Longrun ≥60–75min (locker) als Basisbaustein.");
-    } else if (longPerWeek < 0.8 && windowDays >= 14) {
+    } else if (longPerWeek < 0.8 && windowDays >= 14 && !hasLifeEvent) {
       findings.push(
         `Longrun-Frequenz niedrig: ${longRuns.length}× in ${windowDays} Tagen (~${longPerWeek.toFixed(1)}/Woche).`
       );
@@ -4323,10 +4390,10 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     }
 
     // Key
-    if (keyRuns.length === 0) {
+    if (keyRuns.length === 0 && !hasLifeEvent) {
       findings.push(`Zu wenig Qualität: 0× Key (key:*) in ${windowDays} Tagen.`);
       actions.push("Wenn Aufbau/Spezifisch: 1× Key/Woche (Schwelle ODER VO2) einbauen.");
-    } else if (keyPerWeek < 0.6 && windowDays >= 14) {
+    } else if (keyPerWeek < 0.6 && windowDays >= 14 && !hasLifeEvent) {
       findings.push(
         `Key-Frequenz niedrig: ${keyRuns.length}× in ${windowDays} Tagen (~${keyPerWeek.toFixed(1)}/Woche).`
       );
@@ -4334,7 +4401,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     }
 
     // Volume / frequency
-    if (runsPerWeek < 2.0 && windowDays >= 14) {
+    if (runsPerWeek < 2.0 && windowDays >= 14 && !hasLifeEvent) {
       findings.push(`Lauffrequenz niedrig: Ø ${runsPerWeek.toFixed(1)}/Woche.`);
       actions.push("Wenn möglich: erst Frequenz hoch (kurze easy Läufe), dann Intensität.");
     }
@@ -4352,8 +4419,12 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const weeklyLoad = totalLoad / weeks;
   if (windowDays >= 14) {
     if (weeklyLoad < 120) {
-      findings.push(`Wöchentlicher Laufreiz niedrig: ~${Math.round(weeklyLoad)}/Woche (Load).`);
-      actions.push("Motor-Aufbau braucht Kontinuität: 2–4 Wochen stabilen Reiz setzen, erst dann bewerten.");
+      if (hasLifeEvent) {
+        findings.push(`Wöchentlicher Laufreiz niedrig (~${Math.round(weeklyLoad)}/Woche), plausibel mit LifeEvent-Tagen im Fenster.`);
+      } else {
+        findings.push(`Wöchentlicher Laufreiz niedrig: ~${Math.round(weeklyLoad)}/Woche (Load).`);
+        actions.push("Motor-Aufbau braucht Kontinuität: 2–4 Wochen stabilen Reiz setzen, erst dann bewerten.");
+      }
     }
   }
 
@@ -4384,6 +4455,15 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   lines.push(title);
   lines.push("");
   lines.push("Struktur (Trainingslehre):");
+  if (hasLifeEvent) {
+    lines.push(
+      `- Verfügbarkeit: eingeschränkt (${Object.entries(lifeEventSummary)
+        .map(([category, days]) => `${getLifeEventCategoryLabel(category)} ${days}d`)
+        .join(" · ")})`
+    );
+  } else {
+    lines.push("- Verfügbarkeit: normal (kein Urlaub/krank/verletzt im Fenster)");
+  }
   lines.push(`- Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
   lines.push(`- Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
   lines.push(`- Longruns (≥60min): ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche)`);
@@ -4429,6 +4509,9 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     efMed: comp.efMed ?? null,
     driftMed: comp.driftMed ?? null,
     compN: comp.n ?? 0,
+    lifeEventDays,
+    stopLifeEventDays,
+    holidayLifeEventDays,
   };
 
   // ok criteria: enough runs OR strong structural issue
