@@ -156,7 +156,59 @@ export default {
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
 const MAX_KEYS_14D = 3;
-const STRENGTH_MIN_7D = 60;
+const KRAFT_MIN_RUNFLOOR = 30;
+const KRAFT_TARGET = 60;
+const KRAFT_MAX = 75;
+const STRENGTH_MIN_7D = KRAFT_TARGET;
+const STRENGTH_PHASE_PLANS = {
+  BASE: {
+    phase: "BASE",
+    focus: "Struktur & Stabilität",
+    objective: "Gewebe robust machen",
+    sessionsPerWeek: 2,
+    durationMin: [15, 20],
+    sessions: [
+      {
+        name: "Einheit A – Unterkörper stabil",
+        exercises: ["3×12 Split Squats", "3×12 Hip Thrust mit Band", "3×30s Plank", "2×12 Clamshell mit Band"],
+      },
+      {
+        name: "Einheit B – Balance & Core",
+        exercises: ["3×10 Single Leg RDL", "3×30s Seitstütz", "2×12 Monster Walk", "2×30s Stabikissen Einbeinstand"],
+      },
+    ],
+  },
+  BUILD: {
+    phase: "BUILD",
+    focus: "Kraft → Power",
+    objective: "Laufökonomie",
+    sessionsPerWeek: 2,
+    durationMin: [20, 25],
+    sessions: [
+      {
+        name: "Einheit A – Kraft + Explosiv",
+        exercises: ["3×8 Bulgarian Split Squat", "3×8 Hip Thrust einbeinig", "3×8 Jump Squats (kontrolliert)", "2×30s Plank"],
+      },
+      {
+        name: "Einheit B – Lauf-spezifisch",
+        exercises: ["3×8 Step-Ups explosiv", "3×8 Single Leg Deadlift", "3×20s Skippings auf Stelle", "2×30s Seitstütz"],
+      },
+    ],
+  },
+  RACE: {
+    phase: "RACE",
+    focus: "Erhalt",
+    objective: "Frische",
+    sessionsPerWeek: 2,
+    durationMin: [12, 15],
+    sessions: [
+      {
+        name: "Einheit – Erhalt",
+        exercises: ["2×8 Split Squats", "2×8 Hip Thrust", "2×20s Plank", "1×30s Stabikissen Einbein"],
+      },
+    ],
+  },
+};
 const EASY_SHARE_THRESHOLDS = {
   BASE: 0.9,
   BUILD: 0.85,
@@ -597,6 +649,7 @@ function computeRobustness(ctx, dayIso) {
     }
   }
 
+  const strengthPolicy = evaluateStrengthPolicy(strength7);
   const strengthOk = strength7 >= STRENGTH_MIN_7D;
   const reasons = [];
   if (!strengthOk) reasons.push("Kraft/Stabi fehlt");
@@ -605,8 +658,39 @@ function computeRobustness(ctx, dayIso) {
     strengthMinutes7d: Math.round(strength7),
     strengthMinutes14d: Math.round(strength14),
     strengthOk,
+    strengthPolicy,
     reasons,
   };
+}
+
+function computeStrengthScore(strengthMin7d) {
+  const mins = Number(strengthMin7d) || 0;
+  if (mins < 30) return 0;
+  if (mins < 45) return 1;
+  if (mins < 60) return 2;
+  return 3;
+}
+
+function evaluateStrengthPolicy(strengthMin7d) {
+  const mins = Math.round(Number(strengthMin7d) || 0);
+  const score = computeStrengthScore(mins);
+  const belowRunfloor = mins < KRAFT_MIN_RUNFLOOR;
+  const confidenceDelta = belowRunfloor ? -5 : mins >= KRAFT_TARGET ? 3 : 0;
+  return {
+    minRunfloor: KRAFT_MIN_RUNFLOOR,
+    target: KRAFT_TARGET,
+    max: KRAFT_MAX,
+    minutes7d: mins,
+    score,
+    confidenceDelta,
+    belowRunfloor,
+    keyCapOverride: belowRunfloor ? 0 : null,
+  };
+}
+
+function getStrengthPhasePlan(block) {
+  const phase = ["BASE", "BUILD", "RACE"].includes(block) ? block : "BASE";
+  return STRENGTH_PHASE_PLANS[phase] || STRENGTH_PHASE_PLANS.BASE;
 }
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
@@ -3028,8 +3112,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       dynamicKeyCap.maxKeys7d = 2;
       dynamicKeyCap.reasons.push("Standard-Cap 2 Keys/7 Tage");
     }
-if (robustness && !robustness.strengthOk) {
-      dynamicKeyCap.reasons.push("Robustheit fehlt (Hinweis)");
+    const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
+    if (strengthPolicy.belowRunfloor) {
+      dynamicKeyCap.maxKeys7d = 0;
+      dynamicKeyCap.reasons.push(`Kraft-Runfloor unterschritten (${strengthPolicy.minutes7d}/${strengthPolicy.minRunfloor} min)`);
+    } else if (robustness && !robustness.strengthOk) {
+      dynamicKeyCap.reasons.push("Kraft unter Zielbereich (Hinweis)");
     }
     let fatigue = fatigueBase;
     try {
@@ -3550,6 +3638,8 @@ function buildComments(
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
+  const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
+  const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const daysToEvent = eventDate && todayIso ? diffDays(todayIso, eventDate) : null;
@@ -3704,6 +3794,8 @@ function buildComments(
     `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `EasyShare (14 Tage): ${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`,
+    `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
+    `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
@@ -3731,12 +3823,19 @@ function buildComments(
     longRunStepCapMin,
     blockLongRunNextWeekTargetMin,
   });
-  addDecisionBlock("EMPFEHLUNGEN", decisionCompact.recommendations);
+  addDecisionBlock("EMPFEHLUNGEN", [
+    ...decisionCompact.recommendations,
+    `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
+    `Notfallmodus (15′): 2×12 Squats · 2×30s Plank · 2×12 Monster Walk.`,
+  ]);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
+    strengthPolicy.belowRunfloor
+      ? `Kraft-Regel aktiv: <${strengthPolicy.minRunfloor}′ ⇒ Key-Cap 0 & Confidence ${strengthPolicy.confidenceDelta}`
+      : `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus})`,
     Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
       ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
       : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
@@ -5124,6 +5223,9 @@ async function buildWatchfacePayload(env, endIso) {
   const runSum7 = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
   const runGoal = await resolveWatchfaceRunGoal(env, end);
+  const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
+  const persisted = await getPersistedBlockState({ wellnessCache: new Map(), blockStateCache: new Map() }, env, end);
+  const strengthPlan = getStrengthPhasePlan(persisted?.block || "BASE");
 
   return {
     ok: true,
@@ -5134,7 +5236,19 @@ async function buildWatchfacePayload(env, endIso) {
     runGoal,
     strengthMin,
     strengthSum7,
-    strengthGoal: 60,
+    strengthGoal: KRAFT_TARGET,
+    strengthMinRunfloor: KRAFT_MIN_RUNFLOOR,
+    strengthMax: KRAFT_MAX,
+    strengthScore: strengthPolicy.score,
+    strengthConfidenceDelta: strengthPolicy.confidenceDelta,
+    strengthKeyCap: strengthPolicy.keyCapOverride,
+    strengthPhase: strengthPlan.phase,
+    strengthFocus: strengthPlan.focus,
+    strengthObjective: strengthPlan.objective,
+    strengthDurationMin: strengthPlan.durationMin,
+    strengthSessionsPerWeek: strengthPlan.sessionsPerWeek,
+    strengthSessions: strengthPlan.sessions,
+    strengthEmergencyMode: ["2×12 Squats", "2×30s Plank", "2×12 Monster Walk"],
     updatedAt: new Date().toISOString(),
   };
 }
