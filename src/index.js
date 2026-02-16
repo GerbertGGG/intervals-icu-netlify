@@ -3849,6 +3849,14 @@ function buildComments(
       : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
   ]);
 
+  addDecisionBlock("KRAFTPLAN", [
+    `Phase: ${strengthPlan.phase} · Fokus: ${strengthPlan.focus}`,
+    `Ziel: ${strengthPlan.objective}`,
+    `Umfang: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`,
+    ...strengthPlan.sessions.map((session) => `${session.name}: ${session.exercises.join(" · ")}`),
+    `Notfallmodus: 2×12 Squats · 2×30s Plank · 2×12 Monster Walk`,
+  ]);
+
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
 
   return lines.join("\n");
@@ -5307,9 +5315,6 @@ async function buildWatchfacePayload(env, endIso) {
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
   const runGoal = await resolveWatchfaceRunGoal(env, end);
   const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
-  const persisted = await getPersistedBlockState({ wellnessCache: new Map(), blockStateCache: new Map() }, env, end);
-  const strengthPlan = getStrengthPhasePlan(persisted?.block || "BASE");
-
   return {
     ok: true,
     endIso: end,
@@ -5325,13 +5330,6 @@ async function buildWatchfacePayload(env, endIso) {
     strengthScore: strengthPolicy.score,
     strengthConfidenceDelta: strengthPolicy.confidenceDelta,
     strengthKeyCap: strengthPolicy.keyCapOverride,
-    strengthPhase: strengthPlan.phase,
-    strengthFocus: strengthPlan.focus,
-    strengthObjective: strengthPlan.objective,
-    strengthDurationMin: strengthPlan.durationMin,
-    strengthSessionsPerWeek: strengthPlan.sessionsPerWeek,
-    strengthSessions: strengthPlan.sessions,
-    strengthEmergencyMode: ["2×12 Squats", "2×30s Plank", "2×12 Monster Walk"],
     updatedAt: new Date().toISOString(),
   };
 }
