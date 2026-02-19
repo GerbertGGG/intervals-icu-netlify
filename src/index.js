@@ -3630,6 +3630,13 @@ function buildComments(
       const drift = gaToday.drift;
       const driftText = formatPct1(drift);
       const driftTooHigh = Number.isFinite(drift) && drift > 5;
+      const recentHolidayEnd = parseLifeEventBoundary(modeInfo?.recentHolidayEvent?.event, "end_date_local")
+        || parseLifeEventBoundary(modeInfo?.recentHolidayEvent?.event, "end_date")
+        || modeInfo?.recentHolidayEvent?.endIso
+        || null;
+      const daysSinceHoliday = recentHolidayEnd && isIsoDate(recentHolidayEnd)
+        ? diffDays(recentHolidayEnd, todayIso)
+        : null;
       const driftEval =
         drift == null
           ? "keine belastbare Einordnung."
@@ -3647,7 +3654,18 @@ function buildComments(
       runMetrics.push(`Drift: ${driftText} → ${driftEval}`);
       if (drift != null && drift <= 5) runMetrics.push("Stabilität: ✔ Aerobe Stabilität gegeben.");
       if (driftTooHigh) {
+        const likelyCauses = [];
+        if (overlayMode === "LIFE_EVENT_HOLIDAY" || (Number.isFinite(daysSinceHoliday) && daysSinceHoliday >= 0 && daysSinceHoliday <= 5)) {
+          likelyCauses.push("Rückkehr aus Urlaub / ungewohnter Rhythmus");
+        }
+        if (runFloorGap < 0 && !ignoreRunFloorGap) likelyCauses.push("niedrige Laufkontinuität in den letzten Tagen");
+        if (keyCompliance?.actual7 >= keyCap7) likelyCauses.push("hohe Intensitätsdichte (Keys am Limit)");
+
         runMetrics.push("Bewertung: ausgesetzt (Drift > 5 %). EF/VDOT heute nicht bewerten.");
+        if (likelyCauses.length) {
+          runMetrics.push(`Mögliche Hauptursache heute: ${likelyCauses[0]}.`);
+        }
+        runMetrics.push("Worker-Check: Für sichere Einordnung 2–3 vergleichbare GA-Läufe im Verlauf gegenprüfen.");
       } else {
         runMetrics.push(`EF: ${efText}`);
         runMetrics.push("EF-Hinweis: Nur als Trendsignal interpretieren, keine absolute Bewertung.");
