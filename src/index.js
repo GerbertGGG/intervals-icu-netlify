@@ -665,7 +665,21 @@ function evaluateStrengthPolicy(strengthMin7d) {
   const mins = Math.round(Number(strengthMin7d) || 0);
   const score = computeStrengthScore(mins);
   const belowRunfloor = mins < KRAFT_MIN_RUNFLOOR;
-  const confidenceDelta = belowRunfloor ? -5 : mins >= KRAFT_TARGET ? 3 : 0;
+  let confidenceDelta = 0;
+
+  if (belowRunfloor) {
+    const deficit = KRAFT_MIN_RUNFLOOR - mins;
+    const bucketSize = Math.max(1, KRAFT_MIN_RUNFLOOR / 5);
+    const penalty = Math.ceil(deficit / bucketSize);
+    confidenceDelta = -Math.min(5, Math.max(1, penalty));
+  } else if (mins >= KRAFT_TARGET) {
+    confidenceDelta = 5;
+  } else {
+    const span = Math.max(1, KRAFT_TARGET - KRAFT_MIN_RUNFLOOR);
+    const progress = Math.max(0, mins - KRAFT_MIN_RUNFLOOR);
+    confidenceDelta = Math.min(4, Math.floor((progress / span) * 5));
+  }
+
   return {
     minRunfloor: KRAFT_MIN_RUNFLOOR,
     target: KRAFT_TARGET,
