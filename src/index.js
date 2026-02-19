@@ -982,6 +982,7 @@ function evaluateRunFloorState({
   lifeEventEffect,
 }) {
   const reasons = [];
+  let syntheticLifeEvent = null;
   const safeEventInDays = Number.isFinite(eventInDays) ? Math.round(eventInDays) : 9999;
   const taperStartDays = getTaperStartDays(eventDistance);
   const prevFloorTarget = Number.isFinite(previousState?.floorTarget) ? previousState.floorTarget : null;
@@ -1080,6 +1081,15 @@ function evaluateRunFloorState({
     if (holidayRampFactor < 1) {
       effectiveFloorTarget = updatedFloorTarget * holidayRampFactor;
       reasons.push("Post-Holiday Ramp aktiv");
+      syntheticLifeEvent = {
+        category: "HOLIDAY",
+        runFloorFactor: holidayRampFactor,
+        allowKeys: null,
+        freezeProgression: false,
+        freezeFloorIncrease: false,
+        ignoreRunFloorGap: true,
+        name: "post_holiday_ramp",
+      };
     } else {
       lastLifeEventCategory = "";
       lastLifeEventEndISO = null;
@@ -1150,7 +1160,7 @@ function evaluateRunFloorState({
           ignoreRunFloorGap: lifeEventEffect.ignoreRunFloorGap,
           name: lifeEventEffect?.event?.name || null,
         }
-      : null,
+      : syntheticLifeEvent,
   };
 }
 
