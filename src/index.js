@@ -684,7 +684,7 @@ function evaluateStrengthPolicy(strengthMin7d) {
     score,
     confidenceDelta,
     belowRunfloor,
-    keyCapOverride: belowRunfloor ? 0 : null,
+    keyCapOverride: null,
   };
 }
 
@@ -3165,10 +3165,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       dynamicKeyCap.reasons.push("Standard-Cap 2 Keys/7 Tage");
     }
     const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
-    if (strengthPolicy.belowRunfloor) {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push(`Kraft-Runfloor unterschritten (${strengthPolicy.minutes7d}/${strengthPolicy.minRunfloor} min)`);
-    } else if (robustness && !robustness.strengthOk) {
+    if (robustness && !robustness.strengthOk) {
       dynamicKeyCap.reasons.push("Kraft unter Zielbereich (Hinweis)");
     }
     let fatigue = fatigueBase;
@@ -3871,6 +3868,7 @@ function buildComments(
     todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
     actualKeys7,
     keyCap7,
+    strengthPolicy,
     longRunDoneMin,
     longRunTargetMin,
     longRunGapMin,
@@ -3880,16 +3878,13 @@ function buildComments(
   addDecisionBlock("EMPFEHLUNGEN", [
     ...decisionCompact.recommendations,
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
-    `Notfallmodus (15′): 2×12 Squats · 2×30s Plank · 2×12 Monster Walk.`,
   ]);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    strengthPolicy.belowRunfloor
-      ? `Kraft-Regel aktiv: <${strengthPolicy.minRunfloor}′ ⇒ Key-Cap 0 & Confidence ${strengthPolicy.confidenceDelta}`
-      : `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus})`,
+    `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus}) | Score ${strengthPolicy.score}/3`,
     Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
       ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
       : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
