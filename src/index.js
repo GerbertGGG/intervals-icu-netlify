@@ -844,7 +844,7 @@ function parseLifeEventBoundary(event, field) {
   return isIsoDate(value) ? value : null;
 }
 
-function computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState }) {
+function computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState, recentHolidayEvent }) {
   const windowStartIso = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() - 6 * 86400000));
   const windowEndIso = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 86400000));
 
@@ -858,6 +858,13 @@ function computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState }
     holidayEndIso =
       parseLifeEventBoundary(lifeEventEffect?.event, "end_date_local") ||
       parseLifeEventBoundary(lifeEventEffect?.event, "end_date");
+  } else if (normalizeEventCategory(recentHolidayEvent?.category) === "HOLIDAY") {
+    holidayStartIso =
+      parseLifeEventBoundary(recentHolidayEvent, "start_date_local") ||
+      parseLifeEventBoundary(recentHolidayEvent, "start_date");
+    holidayEndIso =
+      parseLifeEventBoundary(recentHolidayEvent, "end_date_local") ||
+      parseLifeEventBoundary(recentHolidayEvent, "end_date");
   } else if (normalizeEventCategory(previousState?.lastLifeEventCategory) === "HOLIDAY") {
     holidayStartIso = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
     holidayEndIso = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
@@ -986,6 +993,7 @@ function evaluateRunFloorState({
   previousState,
   dailyRunLoads,
   lifeEventEffect,
+  recentHolidayEvent,
 }) {
   const reasons = [];
   let syntheticLifeEvent = null;
@@ -1070,7 +1078,12 @@ function evaluateRunFloorState({
   let effectiveFloorTarget = updatedFloorTarget;
   if (hasLifeEvent) {
     const factor = Number.isFinite(lifeEventEffect?.runFloorFactor) ? lifeEventEffect.runFloorFactor : 1;
-    const holidayRampFactor = computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState });
+    const holidayRampFactor = computeHolidayWindowFactor({
+      todayISO,
+      lifeEventEffect,
+      previousState,
+      recentHolidayEvent,
+    });
     effectiveFloorTarget = updatedFloorTarget * (lifeEventEffect?.category === "HOLIDAY" ? holidayRampFactor : factor);
     lastLifeEventCategory = normalizeEventCategory(lifeEventEffect?.category);
     const startIso =
@@ -1088,7 +1101,12 @@ function evaluateRunFloorState({
   } else if (overlayMode === "RECOVER_OVERLAY") {
     effectiveFloorTarget = updatedFloorTarget * RUN_FLOOR_RECOVER_FACTOR;
   } else {
-    const holidayRampFactor = computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState });
+    const holidayRampFactor = computeHolidayWindowFactor({
+      todayISO,
+      lifeEventEffect,
+      previousState,
+      recentHolidayEvent,
+    });
     if (holidayRampFactor < 1) {
       effectiveFloorTarget = updatedFloorTarget * holidayRampFactor;
       reasons.push("Post-Holiday Ramp aktiv");
@@ -3101,6 +3119,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       previousState: previousBlockState,
       dailyRunLoads,
       lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
+      recentHolidayEvent: modeInfo?.recentHolidayEvent || null,
     });
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
@@ -5489,6 +5508,7 @@ async function determineMode(env, dayIso, debug = false) {
   const auth = authHeader(env);
   const events = await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
   const races = (events || []).filter((e) => normalizeEventCategory(e.category) === "RACE_A");
+  const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
 
   const activeLifeEvents = (events || []).filter(
     (e) => isLifeEventCategory(e?.category) && isLifeEventActiveOnDay(e, dayIso)
@@ -5524,6 +5544,7 @@ async function determineMode(env, dayIso, debug = false) {
         lastEventDate: lastPast.day,
         activeLifeEvent,
         lifeEventEffect,
+        recentHolidayEvent,
       };
     }
   }
@@ -5537,6 +5558,7 @@ async function determineMode(env, dayIso, debug = false) {
       postEventOpenActive: false,
       activeLifeEvent,
       lifeEventEffect,
+      recentHolidayEvent,
     };
   }
 
@@ -5550,6 +5572,7 @@ async function determineMode(env, dayIso, debug = false) {
       postEventOpenActive: false,
       activeLifeEvent,
       lifeEventEffect,
+      recentHolidayEvent,
     };
   }
   // Default RACE_A bei dir ist sehr wahrscheinlich Lauf – aber wir bleiben bei heuristics:
@@ -5562,6 +5585,7 @@ async function determineMode(env, dayIso, debug = false) {
       postEventOpenActive: false,
       activeLifeEvent,
       lifeEventEffect,
+      recentHolidayEvent,
     };
   }
 
@@ -5573,7 +5597,42 @@ async function determineMode(env, dayIso, debug = false) {
     postEventOpenActive: false,
     activeLifeEvent,
     lifeEventEffect,
+    recentHolidayEvent,
   };
+}
+
+function findRecentHolidayEvent(events, dayIso) {
+  if (!Array.isArray(events) || !isIsoDate(dayIso)) return null;
+  const windowStartIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - 6 * 86400000));
+  const windowEndIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + 86400000));
+
+  const holidays = events
+    .filter((e) => normalizeEventCategory(e?.category) === "HOLIDAY")
+    .map((event) => {
+      const startIso =
+        parseLifeEventBoundary(event, "start_date_local") ||
+        parseLifeEventBoundary(event, "start_date");
+      if (!startIso) return null;
+
+      const endIso =
+        parseLifeEventBoundary(event, "end_date_local") ||
+        parseLifeEventBoundary(event, "end_date") ||
+        isoDate(new Date(new Date(startIso + "T00:00:00Z").getTime() + 86400000));
+
+      const overlapStart = startIso > windowStartIso ? startIso : windowStartIso;
+      const overlapEnd = endIso < windowEndIso ? endIso : windowEndIso;
+      const overlapDays = overlapEnd > overlapStart ? diffDays(overlapStart, overlapEnd) : 0;
+      if (overlapDays <= 0) return null;
+
+      return { event, endIso, startIso };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a.endIso === b.endIso) return b.startIso.localeCompare(a.startIso);
+      return b.endIso.localeCompare(a.endIso);
+    });
+
+  return holidays[0]?.event || null;
 }
 
 
