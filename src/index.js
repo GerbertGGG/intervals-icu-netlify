@@ -3648,6 +3648,20 @@ function buildComments(
       if (drift != null && drift <= 5) runMetrics.push("Stabilität: ✔ Aerobe Stabilität gegeben.");
       if (driftTooHigh) {
         runMetrics.push("Bewertung: Drift > 5 %. EF/VDOT weiter anzeigen, aber mit Vorsicht interpretieren.");
+        const likelyCauses = [];
+        const lifeEventCategory = normalizeEventCategory(lifeEvent?.category);
+        if (lifeEventCategory === "HOLIDAY") {
+          likelyCauses.push("Urlaubs-/Rückkehr-Effekt erkannt: 3–5 Tage progressive Belastungssteigerung einplanen.");
+        } else if (lifeEventCategory === "SICK" || lifeEventCategory === "INJURED") {
+          likelyCauses.push(`LifeEvent ${getLifeEventCategoryLabel(lifeEventCategory)} aktiv: erhöhte Drift kann regenerationsbedingt sein.`);
+        }
+        if (overlayMode === "RECOVER_OVERLAY") {
+          likelyCauses.push("Recover-Overlay aktiv: erhöhte Drift nach Event/Belastung ist aktuell plausibel.");
+        }
+        if (!likelyCauses.length) {
+          likelyCauses.push("Mögliche Treiber: zu hohe Pace, Hitze/Dehydrierung oder kumulative Ermüdung.");
+        }
+        runMetrics.push(`Ursachen-Check: ${likelyCauses.join(" ")}`);
       }
       runMetrics.push(`EF: ${efText}`);
       runMetrics.push("EF-Hinweis: Nur als Trendsignal interpretieren, keine absolute Bewertung.");
