@@ -2516,6 +2516,9 @@ function determineBlockState({
   }
 
   if (weeksToEvent <= 4 && weeksToEvent >= 0) {
+    const keepRaceStart = previousState?.block === "RACE";
+    const raceStartDate = keepRaceStart ? startDate : todayISO;
+    const raceTimeInBlockDays = keepRaceStart ? Math.max(0, daysBetween(raceStartDate, todayISO)) : 0;
     return {
       block: "RACE",
       wave: 0,
@@ -2524,19 +2527,22 @@ function determineBlockState({
       todayISO,
       eventDateISO,
       blockStartPersisted: persistedStart,
-      blockStartEffective: todayISO,
+      blockStartEffective: raceStartDate,
       startWasReset,
       reasons: [...reasons, "Event sehr nah (≤4 Wochen) → RACE"],
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockDays: 0,
-      startDate: todayISO,
+      timeInBlockDays: raceTimeInBlockDays,
+      startDate: raceStartDate,
       eventDistance: eventDistanceNorm,
     };
   }
 
   if (weeksToEvent <= forceRaceWeeks && weeksToEvent >= 0) {
+    const keepRaceStart = previousState?.block === "RACE";
+    const raceStartDate = keepRaceStart ? startDate : todayISO;
+    const raceTimeInBlockDays = keepRaceStart ? Math.max(0, daysBetween(raceStartDate, todayISO)) : 0;
     return {
       block: "RACE",
       wave: weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0,
@@ -2545,14 +2551,14 @@ function determineBlockState({
       todayISO,
       eventDateISO,
       blockStartPersisted: persistedStart,
-      blockStartEffective: todayISO,
+      blockStartEffective: raceStartDate,
       startWasReset,
       reasons: ["Event sehr nah → sofort RACE"],
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockDays: 0,
-      startDate: todayISO,
+      timeInBlockDays: raceTimeInBlockDays,
+      startDate: raceStartDate,
       eventDistance: eventDistanceNorm,
     };
   }
