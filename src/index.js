@@ -5704,18 +5704,51 @@ function isBike(a) {
     t.includes("velo")
   );
 }
+function normalizeKeyToken(raw) {
+  return String(raw || "").toLowerCase().trim().replace(/^#+/, "");
+}
+
+function extractKeyTypeFromText(a) {
+  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
+    .filter(Boolean)
+    .map((v) => String(v))
+    .join(" ");
+  if (!text) return null;
+  const match = text.match(/(?:^|\s)#key:([a-z0-9_:-]+)/i);
+  if (!match) return null;
+  const typed = normalizeKeyToken(match[1]);
+  return typed || null;
+}
+
 function hasKeyTag(a) {
-  return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
+  const tagHit = (a?.tags || []).some((t) => {
+    const s = normalizeKeyToken(t);
+    return s === "key" || s.startsWith("key:");
+  });
+  if (tagHit) return true;
+  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
+    .filter(Boolean)
+    .map((v) => String(v))
+    .join(" ");
+  return /(?:^|\s)#key(?::[a-z0-9_:-]+)?\b/i.test(text);
 }
 
 function getKeyType(a) {
   // key:schwelle, key:vo2, key:tempo, ...
   const tags = a?.tags || [];
   for (const t of tags) {
-    const s = String(t || "").toLowerCase().trim();
-    if (s.startsWith("key:")) return s.slice(4).trim() || "key";
+    const s = normalizeKeyToken(t);
+    if (s.startsWith("key:")) {
+      const typed = s.slice(4).trim();
+      if (typed && typed !== "key") return typed;
+      return "key";
+    }
+    if (s === "key") return "key";
   }
-  return "key";
+
+  const fromText = extractKeyTypeFromText(a);
+  if (fromText) return fromText;
+  return hasKeyTag(a) ? "key" : null;
 }
 
 function getIntervalTypeFromActivity(a) {
