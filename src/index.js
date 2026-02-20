@@ -2292,6 +2292,57 @@ function getLastKeyTypeBeforeDay(ctx, dayIso, windowDays = 21) {
   });
 }
 
+function computeRacepaceBlockProgress(ctx, context = {}) {
+  const block = context.block || "BASE";
+  const eventDistance = context.eventDistance || "10k";
+  const dayIso = context.dayIso;
+  const blockStartIso = context.blockStartIso;
+  if (!dayIso || !blockStartIso || !isIsoDate(dayIso) || !isIsoDate(blockStartIso)) return null;
+
+  const steps = PROGRESSION_TEMPLATES?.[block]?.[eventDistance]?.racepace;
+  if (!Array.isArray(steps) || !steps.length) return null;
+
+  const racepaceActs = [];
+  for (const a of ctx.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < blockStartIso || d > dayIso) continue;
+    if (!hasKeyTag(a)) continue;
+    const rawType = getKeyType(a);
+    const type = normalizeKeyType(rawType, {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    if (type === "racepace") racepaceActs.push(d);
+  }
+
+  racepaceActs.sort();
+  const cycleLength = steps.length;
+  let doneKm = 0;
+  for (let i = 0; i < racepaceActs.length; i++) {
+    const step = steps[i % cycleLength];
+    if (!step) continue;
+    const reps = Number(step.reps) || 0;
+    const workKm = Number.isFinite(step.total_work_km)
+      ? Number(step.total_work_km)
+      : reps * (Number(step.work_km) || 0);
+    if (Number.isFinite(workKm) && workKm > 0) doneKm += workKm;
+  }
+
+  const targetKm = Number(RACEPACE_DISTANCE_TARGET_KM?.[eventDistance]);
+  const doneRounded = Math.round(doneKm * 10) / 10;
+  const pct = Number.isFinite(targetKm) && targetKm > 0
+    ? Math.min(999, Math.round((doneRounded / targetKm) * 100))
+    : null;
+
+  return {
+    available: true,
+    sessionsDone: racepaceActs.length,
+    doneKm: doneRounded,
+    targetKm: Number.isFinite(targetKm) && targetKm > 0 ? targetKm : null,
+    pct,
+  };
+}
+
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
@@ -2319,6 +2370,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
   const progression = computeProgressionTarget(context, keyRules, context.overlayMode || "NORMAL");
+  const racepaceBlockProgress = computeRacepaceBlockProgress(context.ctx, {
+    block: context.block,
+    eventDistance: context.eventDistance,
+    dayIso: context.dayIso,
+    blockStartIso: context.blockStartIso,
+  });
 
   const dayIso = context.dayIso || null;
   const lastKeyIso = context.keySpacing?.lastKeyIso ?? null;
@@ -2410,6 +2467,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     intensityDistribution,
     keyAllowedNow,
     explicitSession,
+    racepaceBlockProgress,
   };
 }
 
@@ -3468,9 +3526,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     );
     keyRules.plannedPrimaryType = plannedPrimaryType;
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
+      ctx,
       dayIso: day,
       block: blockState.block,
       eventDistance,
+      blockStartIso: blockState.startDate || blockState.blockStartEffective || day,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
       overlayMode: runFloorState.overlayMode,
@@ -4088,10 +4148,14 @@ function buildComments(
     `Status: ${progressionStatus === "im Plan" ? "Im Plan." : progressionStatus}`,
   ]);
 
+  const racepaceBlockProgress = keyCompliance?.racepaceBlockProgress;
   const keyCheckMetrics = [
     `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `Intensität Block (${intensityLookbackDays}T): Easy ${easySharePct != null ? easySharePct + " %" : "n/a"} (≥${easyMinPct}%), Mid ${midSharePct != null ? midSharePct + " %" : "n/a"} (≤${midMaxPct || "n/a"}%), Hard ${hardSharePct != null ? hardSharePct + " %" : "n/a"} (≤${hardMaxPct}%)`,
+    racepaceBlockProgress?.available
+      ? `Racepace-Blockfortschritt: ${formatDecimalKm(racepaceBlockProgress.doneKm)} / ${racepaceBlockProgress.targetKm != null ? formatDecimalKm(racepaceBlockProgress.targetKm) : "n/a"} km (${racepaceBlockProgress.pct != null ? racepaceBlockProgress.pct + " %" : "n/a"}) · Sessions ${racepaceBlockProgress.sessionsDone}`
+      : null,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
     `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
   ];
