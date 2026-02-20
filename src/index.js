@@ -1463,19 +1463,19 @@ const PHASE_MAX_MINUTES = {
     "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
     "10k": { ga: 80, schwelle: 30, longrun: 120, vo2_touch: 2, strides: 2 },
     hm: { ga: 90, schwelle: 35, longrun: 150, vo2_touch: 2, strides: 2 },
-    m: { ga: 95, schwelle: 20, longrun: 180, strides: 1 },
+    m: { ga: 95, schwelle: 15, longrun: 180, strides: 1 },
   },
   BUILD: {
-    "5k": { schwelle: 35, vo2_touch: 18, racepace: 8, longrun: 100 },
-    "10k": { schwelle: 35, vo2_touch: 35, racepace: 25, longrun: 135 },
+    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 100 },
+    "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 135 },
     hm: { schwelle: 45, racepace: 40, longrun: 165 },
     m: { schwelle: 35, racepace: 70, longrun: 195 },
   },
   RACE: {
-    "5k": { racepace: 18, vo2_touch: 5, schwelle: 15, ga: 50, longrun: 90 },
+    "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 90 },
     "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 110 },
     hm: { racepace: 45, vo2_touch: 6, schwelle: 25, ga: 70, longrun: 135 },
-    m: { racepace: 75, schwelle: 20, ga: 55, longrun: 150 },
+    m: { racepace: 75, schwelle: 10, ga: 55, longrun: 150 },
   },
 };
 
@@ -1488,12 +1488,44 @@ const RACEPACE_DISTANCE_TARGET_KM = {
 
 const PROGRESSION_TEMPLATES = {
   BUILD: {
+    "5k": {
+      vo2_touch: [
+        { reps: 5, work_min: 3 },
+        { reps: 6, work_min: 3 },
+        { reps: 5, work_min: 4 },
+        { reps: 4, work_min: 3, deload_step: true },
+      ],
+      schwelle: [
+        { reps: 4, work_min: 6 },
+        { reps: 3, work_min: 8 },
+        { reps: 3, work_min: 10 },
+        { reps: 3, work_min: 6, deload_step: true },
+      ],
+      racepace: [
+        { reps: 5, work_km: 0.6 },
+        { reps: 4, work_km: 0.8 },
+        { reps: 4, work_km: 1.0 },
+        { reps: 6, work_km: 0.4, deload_step: true },
+      ],
+    },
     "10k": {
       schwelle: [
         { reps: 4, work_min: 6 },
         { reps: 3, work_min: 8 },
         { reps: 3, work_min: 10 },
         { reps: 2, work_min: 8, deload_step: true },
+      ],
+      vo2_touch: [
+        { reps: 6, work_min: 3 },
+        { reps: 5, work_min: 4 },
+        { reps: 4, work_min: 5 },
+        { reps: 5, work_min: 3, deload_step: true },
+      ],
+      racepace: [
+        { reps: 3, work_km: 1.5 },
+        { reps: 3, work_km: 2.0 },
+        { reps: 2, work_km: 3.0 },
+        { reps: 5, work_km: 1.0, deload_step: true },
       ],
     },
     hm: {
@@ -1533,12 +1565,22 @@ const PROGRESSION_TEMPLATES = {
         { reps: 3, work_km: 2.0 },
         { reps: 2, work_km: 2.0, deload_step: true },
       ],
+      schwelle: [
+        { reps: 2, work_min: 8 },
+        { reps: 2, work_min: 10 },
+        { reps: 2, work_min: 6, deload_step: true },
+      ],
     },
     hm: {
       racepace: [
         { reps: 2, work_km: 4.0 },
         { reps: 2, work_km: 5.0 },
         { reps: 2, work_km: 3.0, deload_step: true },
+      ],
+      schwelle: [
+        { reps: 2, work_min: 10 },
+        { reps: 2, work_min: 12 },
+        { reps: 2, work_min: 8, deload_step: true },
       ],
     },
     m: {
@@ -1557,39 +1599,42 @@ const KEY_SESSION_RECOMMENDATIONS = {
     "5k": {
       ga: ["45–75′ GA1 locker", "langer Lauf 75–100′"],
       schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
-      vo2: ["8–10×10″ Hill Sprints (volle 2–3′ Pause)"]
+      vo2_touch: ["8–10×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "10k": {
       ga: ["60–75′ GA1 locker", "langer Lauf 90–110′"],
       schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
-      vo2: ["6–8×10″ Hill Sprints (volle 2–3′ Pause)"]
+      vo2_touch: ["6–8×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "hm": {
       ga: ["60–90′ GA1 locker", "langer Lauf 100–130′"],
       schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
-      vo2: ["6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
+      vo2_touch: ["6×8–10″ Hill Sprints (volle 2–3′ Pause)"],
+      strides: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "m": {
       ga: ["75–90′ GA1 locker", "langer Lauf 120–150′"],
-      vo2: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
+      schwelle: ["2×8′ @ Schwelle (locker)", "20′ steady (kontrolliert)"],
+      strides: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     }
   },
 
   BUILD: {
     "5k": {
-      vo2: ["5×3′ @ vVO₂max", "6×800 m @ 3–5k-Pace"],
+      vo2_touch: ["5×3′ @ vVO₂max", "6×800 m @ 3–5k-Pace"],
       schwelle: ["4×6′ @ Schwelle", "3×8′ @ Schwelle"],
       racepace: ["4×1 km @ 5k-Pace (kontrolliert)", "6×600 m @ 5k-Pace"],
       longrun: ["langer Lauf 90′"]
     },
     "10k": {
       schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
-      vo2: ["5×1000 m @ 5–10k-Pace", "6×3′ @ vVO₂max"],
+      vo2_touch: ["5×1000 m @ 5–10k-Pace", "6×3′ @ vVO₂max"],
       racepace: ["3×2 km @ 10k-Pace (moderat)", "2×3 km @ 10k-Pace (kontrolliert)"],
       longrun: ["langer Lauf 100–120′"]
     },
     "hm": {
       schwelle: ["2×20′ @ Schwelle", "3×15′ @ Schwelle"],
+      racepace: ["3×3 km @ HM-Pace", "2×5 km @ HM-Pace (kontrolliert)"],
       longrun: ["langer Lauf 120–150′"]
     },
     "m": {
@@ -1601,17 +1646,18 @@ const KEY_SESSION_RECOMMENDATIONS = {
   RACE: {
     "5k": {
       racepace: ["4–5×1000 m @ 5k-Pace", "8–10×400 m leicht schneller als 5k-Pace"],
+      schwelle: ["2×6′ @ Schwelle (nur Erhalt, wenn Racepace nicht geht)"],
       ga: ["30–45′ GA1 locker"]
     },
     "10k": {
       racepace: ["3×2 km @ 10k-Pace", "2×3 km @ 10k-Pace"],
-      vo2: ["5×2′ @ VO2 (lange Pause)", "6×400 m @ 5k-Pace"],
+      vo2_touch: ["5×2′ @ VO2 (lange Pause)", "6×400 m @ 5k-Pace"],
       schwelle: ["2×8′ @ Schwelle (Erhalt)"],
       ga: ["40–50′ GA1 locker"]
     },
     "hm": {
       racepace: ["2×4–5 km @ HM-Pace"],
-      vo2: ["4×2′ @ VO2 (kurz, frisch)"],
+      vo2_touch: ["4×2′ @ VO2 (kurz, frisch)"],
       schwelle: ["2×10′ @ Schwelle (Erhalt)"],
       ga: ["40–60′ GA1 locker"]
     },
@@ -1686,9 +1732,16 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
     planned = keyRules?.preferredKeyTypes?.find((k) => k !== "steady") || "steady";
   }
 
+  if (block === "RACE" && dist === "5k") {
+    planned = "racepace";
+  }
+
   if (overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") {
     if (planned === "vo2_touch" || planned === "strides") {
       planned = block === "RACE" ? "racepace" : "schwelle";
+    }
+    if (block === "RACE" && dist === "5k") {
+      planned = "schwelle";
     }
   }
 
@@ -1703,6 +1756,10 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
     planned = block === "RACE" ? "racepace" : "schwelle";
   }
 
+  if (block === "RACE" && dist === "5k" && fatigueHigh) {
+    planned = "schwelle";
+  }
+
   if (planned === "racepace" && dist === "5k" && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
     planned = "schwelle";
   }
@@ -1713,6 +1770,11 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
 
   if (planned === "schwelle" && Number.isFinite(midShare) && Number.isFinite(midMax) && midShare > midMax) {
     planned = "steady";
+  }
+
+  if (block === "BASE" && (dist === "hm" || dist === "m") && planned === "strides") {
+    const stridesSeconds = Number(context?.stridesSeconds ?? context?.stridesDurationSec ?? context?.keyWorkSec ?? 0);
+    if (!Number.isFinite(stridesSeconds) || stridesSeconds > 60) planned = "schwelle";
   }
 
   const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
