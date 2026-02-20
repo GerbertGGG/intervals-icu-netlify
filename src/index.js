@@ -87,6 +87,12 @@ export default {
         url.searchParams.get("race_start_iso") ||
         "";
       const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
+      const blockStartParamRaw =
+        url.searchParams.get("block_start") ||
+        url.searchParams.get("block_start_override") ||
+        url.searchParams.get("block_start_iso") ||
+        "";
+      const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
       let oldest, newest;
       if (date) {
@@ -113,10 +119,16 @@ export default {
       if (raceStartParamRaw && !raceStartOverrideIso) {
         return json({ ok: false, error: "Invalid race_start format (YYYY-MM-DD)" }, 400);
       }
+      if (blockStartParamRaw && !blockStartOverrideIso) {
+        return json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400);
+      }
 
       if (debug) {
         try {
-          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, { raceStartOverrideIso });
+          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, {
+            raceStartOverrideIso,
+            blockStartOverrideIso,
+          });
           return json(result);
         } catch (e) {
           return json(
@@ -130,6 +142,7 @@ export default {
               write,
               warmupSkipSec,
               raceStartOverrideIso,
+              blockStartOverrideIso,
             },
             500
           );
@@ -138,12 +151,15 @@ export default {
 
       // async fire-and-forget (but don't swallow silently)
       ctx?.waitUntil?.(
-        syncRange(env, oldest, newest, write, false, warmupSkipSec, { raceStartOverrideIso }).catch((e) => {
+        syncRange(env, oldest, newest, write, false, warmupSkipSec, {
+          raceStartOverrideIso,
+          blockStartOverrideIso,
+        }).catch((e) => {
           console.error("syncRange failed", e);
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso });
     }
 
     return new Response("Not found", { status: 404 });
@@ -471,7 +487,6 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
-const FIELD_BLOCK_START = "BlockStart";
 const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
 // Streams/types we need often
@@ -2928,7 +2943,7 @@ function extractPersistedBlockStateFromWellness(wellness) {
   if (!wellness) return null;
   const blockRaw = wellness?.[FIELD_BLOCK] ?? wellness?.block ?? null;
   const block = String(blockRaw || "").trim().toUpperCase();
-  const startRaw = wellness?.[FIELD_BLOCK_START] ?? wellness?.blockStart ?? null;
+  const startRaw = wellness?.blockStart ?? null;
   const startDate = isIsoDate(startRaw) ? startRaw : null;
   if (!block || !startDate) return null;
   const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
@@ -3504,6 +3519,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         blockState.reasons = [...(blockState.reasons || []), `Manueller RACE-Start aktiv (${overrideStart})`];
       }
     }
+    if (runtimeOverrides?.blockStartOverrideIso) {
+      const overrideStart = clampStartDate(runtimeOverrides.blockStartOverrideIso, day, 3650);
+      if (overrideStart) {
+        blockState.startDate = overrideStart;
+        blockState.blockStartEffective = overrideStart;
+        blockState.timeInBlockDays = Math.max(0, daysBetween(overrideStart, day));
+        blockState.reasons = [...(blockState.reasons || []), `Manueller Block-Start aktiv (${overrideStart})`];
+      }
+    }
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
 
@@ -3633,8 +3657,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}: keine Keys (Freeze aktiv).`;
     }
 historyMetrics.keyCompliance = keyCompliance;
-    patch[FIELD_BLOCK] = blockState.block;
-    patch[FIELD_BLOCK_START] = blockState.startDate || day;
+    // No custom wellness fields for block state.
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
