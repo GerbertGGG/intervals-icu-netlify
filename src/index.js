@@ -376,6 +376,7 @@ function toLocalYMD(d) {
 }
 
 // Fatigue override thresholds (tune later)
+const ENABLE_FATIGUE_OVERRIDE = false;
 const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
@@ -623,11 +624,11 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
   if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
 
-  const override = reasons.length > 0;
+  const override = ENABLE_FATIGUE_OVERRIDE && reasons.length > 0;
 
   return {
     override,
-    reasons,
+    reasons: override ? reasons : [],
     keyCount7,
     keyCap,
     keyCapExceeded: keyCount7 > keyCap,
