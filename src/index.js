@@ -81,6 +81,12 @@ export default {
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
+      const raceStartParamRaw =
+        url.searchParams.get("race_start") ||
+        url.searchParams.get("race_start_override") ||
+        url.searchParams.get("race_start_iso") ||
+        "";
+      const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
 
       let oldest, newest;
       if (date) {
@@ -104,9 +110,13 @@ export default {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
 
+      if (raceStartParamRaw && !raceStartOverrideIso) {
+        return json({ ok: false, error: "Invalid race_start format (YYYY-MM-DD)" }, 400);
+      }
+
       if (debug) {
         try {
-          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec);
+          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, { raceStartOverrideIso });
           return json(result);
         } catch (e) {
           return json(
@@ -119,6 +129,7 @@ export default {
               newest,
               write,
               warmupSkipSec,
+              raceStartOverrideIso,
             },
             500
           );
@@ -127,12 +138,12 @@ export default {
 
       // async fire-and-forget (but don't swallow silently)
       ctx?.waitUntil?.(
-        syncRange(env, oldest, newest, write, false, warmupSkipSec).catch((e) => {
+        syncRange(env, oldest, newest, write, false, warmupSkipSec, { raceStartOverrideIso }).catch((e) => {
           console.error("syncRange failed", e);
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso });
     }
 
     return new Response("Not found", { status: 404 });
@@ -145,7 +156,7 @@ export default {
     const yday = isoDate(new Date(Date.now() - 86400000));
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600).catch((e) => {
+      syncRange(env, yday, today, true, false, 600, {}).catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
@@ -460,6 +471,8 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
+const FIELD_BLOCK_START = "BlockStart";
+const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -1451,12 +1464,23 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
   const s = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
   if (!s) return "steady";
 
-  const racepaceRegex = /\b(race|rp|5k pace|10k pace|hm pace|mp)\b/;
-  if (racepaceRegex.test(s) || s.includes("race pace") || s.includes("wettkampf")) return "racepace";
+  const racepaceRegex = /\b(race\s?pace|racepace|rp|wk\s?pace|5k\s?pace|10k\s?pace|hm\s?pace|mp)\b/;
+  if (racepaceRegex.test(s) || s.includes("wettkampf") || s.includes("wettkampftempo")) return "racepace";
   if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) return "schwelle";
   if (s.includes("vo2") || s.includes("v02")) return "vo2_touch";
   if (s.includes("strides") || s.includes("hill sprint")) return "strides";
   return "steady";
+}
+
+function hasRacepaceHint(a) {
+  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
+    .filter(Boolean)
+    .map((v) => String(v).toLowerCase())
+    .join(" ")
+    .replace(/[_-]+/g, " ");
+  if (!text) return false;
+  const racepaceRegex = /\b(race\s?pace|racepace|rp|wk\s?pace|5k\s?pace|10k\s?pace|hm\s?pace|mp)\b/;
+  return racepaceRegex.test(text) || text.includes("wettkampftempo") || text.includes("wettkampf");
 }
 
 const PHASE_MAX_MINUTES = {
@@ -2306,13 +2330,14 @@ function computeRacepaceBlockProgress(ctx, context = {}) {
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < blockStartIso || d > dayIso) continue;
-    if (!hasKeyTag(a)) continue;
-    const rawType = getKeyType(a);
+    const explicitKeyTag = hasKeyTag(a);
+    const rawType = explicitKeyTag ? getKeyType(a) : null;
     const type = normalizeKeyType(rawType, {
       activity: a,
       movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
     });
-    if (type === "racepace") racepaceActs.push(d);
+    const racepaceByHint = !explicitKeyTag && hasRacepaceHint(a);
+    if (type === "racepace" || racepaceByHint) racepaceActs.push(d);
   }
 
   racepaceActs.sort();
@@ -2891,6 +2916,51 @@ function determineBlockState({
   };
 }
 
+
+function parseManualRaceStartIso(value, todayIso) {
+  const raw = String(value || "").trim();
+  if (!raw || !isIsoDate(raw)) return null;
+  const clamped = clampStartDate(raw, todayIso, 3650);
+  return clamped || null;
+}
+
+function extractPersistedBlockStateFromWellness(wellness) {
+  if (!wellness) return null;
+  const blockRaw = wellness?.[FIELD_BLOCK] ?? wellness?.block ?? null;
+  const block = String(blockRaw || "").trim().toUpperCase();
+  const startRaw = wellness?.[FIELD_BLOCK_START] ?? wellness?.blockStart ?? null;
+  const startDate = isIsoDate(startRaw) ? startRaw : null;
+  if (!block || !startDate) return null;
+  const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
+  const wave = Number.isFinite(Number(waveRaw)) ? Number(waveRaw) : 0;
+  return {
+    block,
+    wave,
+    startDate,
+    eventDate: null,
+    eventDistance: null,
+    floorTarget: null,
+    effectiveFloorTarget: null,
+    loadDays: 0,
+    deloadStartDate: null,
+    lastDeloadCompletedISO: null,
+    lastFloorIncreaseDate: null,
+    lastEventDate: null,
+    lastLifeEventCategory: "",
+    lastLifeEventStartISO: null,
+    lastLifeEventEndISO: null,
+  };
+}
+
+function getManualRaceStartOverride(env, wellness, dayIso) {
+  const envValue = env?.RACE_START_OVERRIDE_ISO || env?.MANUAL_RACE_START_ISO || null;
+  const fromEnv = parseManualRaceStartIso(envValue, dayIso);
+  if (fromEnv) return fromEnv;
+  const fromWellness = parseManualRaceStartIso(wellness?.[FIELD_RACE_START_OVERRIDE], dayIso);
+  if (fromWellness) return fromWellness;
+  return null;
+}
+
 function parseBlockStateFromComment(comment) {
   if (!comment) return null;
   const line = String(comment)
@@ -2941,7 +3011,9 @@ async function getPersistedBlockState(ctx, env, dayIso) {
   if (ctx.blockStateCache.has(dayIso)) return ctx.blockStateCache.get(dayIso);
   const wellness = await fetchWellnessDay(ctx, env, dayIso);
   const comment = wellness?.comments || wellness?.comment || null;
-  const parsed = parseBlockStateFromComment(comment);
+  const parsedFromComment = parseBlockStateFromComment(comment);
+  const parsedFromFields = extractPersistedBlockStateFromWellness(wellness);
+  const parsed = parsedFromComment || parsedFromFields;
   ctx.blockStateCache.set(dayIso, parsed);
   return parsed;
 }
@@ -3111,7 +3183,7 @@ function bucketLoadsByDay(runs) {
 // ====== src/index.js (PART 2/4) ======
 
 // ================= MAIN =================
-async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
+async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
   const ctx = createCtx(env, warmupSkipSec, debug);
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
@@ -3213,6 +3285,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
     const runs = ctx.byDayRuns.get(day) ?? [];
     const patch = {};
     const perRunInfo = [];
+    const wellnessToday = await fetchWellnessDay(ctx, env, day);
+    const manualRaceStartIso = parseManualRaceStartIso(
+      runtimeOverrides?.raceStartOverrideIso,
+      day
+    ) || getManualRaceStartOverride(env, wellnessToday, day);
 
     // Motor Index (works even if no run today)
     let motor = null;
@@ -3417,6 +3494,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       historyMetrics,
       previousState: previousBlockState,
     });
+
+    if (manualRaceStartIso && blockState.block === "RACE") {
+      const overrideStart = clampStartDate(manualRaceStartIso, day, 3650);
+      if (overrideStart) {
+        blockState.startDate = overrideStart;
+        blockState.blockStartEffective = overrideStart;
+        blockState.timeInBlockDays = Math.max(0, daysBetween(overrideStart, day));
+        blockState.reasons = [...(blockState.reasons || []), `Manueller RACE-Start aktiv (${overrideStart})`];
+      }
+    }
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
 
@@ -3547,6 +3634,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     }
 historyMetrics.keyCompliance = keyCompliance;
     patch[FIELD_BLOCK] = blockState.block;
+    patch[FIELD_BLOCK_START] = blockState.startDate || day;
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
