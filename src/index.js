@@ -236,8 +236,6 @@ const INTENSITY_DISTRIBUTION_TARGET = {
   },
 };
 const INTENSITY_LOOKBACK_DAYS = 14;
-const INTENSITY_FALLBACK_LOOKBACK_DAYS = 7;
-const INTENSITY_MIN_TOTAL_MIN_14D = 90;
 const INTENSITY_CLEAR_OVERSHOOT = 0.01;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
@@ -1887,13 +1885,17 @@ function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventD
   };
 }
 
-function computeIntensityDistribution(ctx, dayIso, block, eventDistance) {
+function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null) {
   const targets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
-  const metrics14 = computeIntensityDistributionForWindow(ctx, dayIso, INTENSITY_LOOKBACK_DAYS, eventDistance);
-  const useFallback = metrics14.totalMinutes < INTENSITY_MIN_TOTAL_MIN_14D;
-  const metrics = useFallback
-    ? computeIntensityDistributionForWindow(ctx, dayIso, INTENSITY_FALLBACK_LOOKBACK_DAYS, eventDistance)
-    : metrics14;
+  let lookbackDays = INTENSITY_LOOKBACK_DAYS;
+  if (blockStartIso) {
+    const end = new Date(dayIso + "T00:00:00Z");
+    const start = new Date(blockStartIso + "T00:00:00Z");
+    const blockDays = Math.floor((end.getTime() - start.getTime()) / 86400000);
+    if (Number.isFinite(blockDays)) lookbackDays = Math.max(1, blockDays + 1);
+  }
+
+  const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance);
 
   const hasData = (metrics?.totalMinutes ?? 0) > 0;
   const easyShare = metrics?.easyShare;
@@ -1915,7 +1917,7 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance) {
 
   return {
     hasData,
-    lookbackDays: useFallback ? INTENSITY_FALLBACK_LOOKBACK_DAYS : INTENSITY_LOOKBACK_DAYS,
+    lookbackDays,
     targets,
     easyShare,
     midShare,
@@ -3374,7 +3376,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       ...keyRulesBase,
       maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
-    const intensityDistribution = computeIntensityDistribution(ctx, day, blockState.block, eventDistance);
+    const intensityDistribution = computeIntensityDistribution(
+      ctx,
+      day,
+      blockState.block,
+      eventDistance,
+      blockState.startDate || blockState.blockStartEffective || null
+    );
     const weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
     const plannedPrimaryType = decideKeyType1PerWeek(
       {
@@ -3834,6 +3842,7 @@ function buildComments(
   const easyMinPct = Math.round((intensityDistribution?.targets?.easyMin ?? 0) * 100);
   const midMaxPct = Math.round((intensityDistribution?.targets?.midMax ?? 0) * 100);
   const hardMaxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
+  const intensityLookbackDays = Math.max(1, Math.round(intensityDistribution?.lookbackDays ?? INTENSITY_LOOKBACK_DAYS));
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
@@ -4013,7 +4022,7 @@ function buildComments(
   const keyCheckMetrics = [
     `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
-    `Intensität 14T: Easy ${easySharePct != null ? easySharePct + " %" : "n/a"} (≥${easyMinPct}%), Mid ${midSharePct != null ? midSharePct + " %" : "n/a"} (≤${midMaxPct || "n/a"}%), Hard ${hardSharePct != null ? hardSharePct + " %" : "n/a"} (≤${hardMaxPct}%)`,
+    `Intensität Block (${intensityLookbackDays}T): Easy ${easySharePct != null ? easySharePct + " %" : "n/a"} (≥${easyMinPct}%), Mid ${midSharePct != null ? midSharePct + " %" : "n/a"} (≤${midMaxPct || "n/a"}%), Hard ${hardSharePct != null ? hardSharePct + " %" : "n/a"} (≤${hardMaxPct}%)`,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
     `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
   ];
