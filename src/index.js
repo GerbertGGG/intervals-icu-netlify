@@ -1627,8 +1627,107 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
+const KEY_PATTERN_1PERWEEK = {
+  BASE: {
+    "5k": ["schwelle", "schwelle", "vo2_touch"],
+    "10k": ["schwelle", "schwelle", "vo2_touch"],
+    hm: ["schwelle", "schwelle", "schwelle", "strides"],
+    m: ["schwelle", "schwelle", "schwelle", "strides"],
+  },
+  BUILD: {
+    "5k": ["vo2_touch", "schwelle"],
+    "10k": ["schwelle", "vo2_touch", "schwelle", "schwelle"],
+    hm: ["schwelle", "racepace", "schwelle", "racepace"],
+    m: ["racepace", "racepace", "racepace", "racepace"],
+  },
+  RACE: {
+    "5k": ["racepace", "racepace", "racepace"],
+    "10k": ["racepace", "racepace", "schwelle"],
+    hm: ["racepace", "racepace", "racepace", "schwelle"],
+    m: ["racepace", "racepace", "racepace", "racepace"],
+  },
+};
+
+function pickPatternBlock(context = {}) {
+  const block = context.block || "BASE";
+  const dist = normalizeEventDistance(context.eventDistance) || "10k";
+  const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
+  if (block === "BUILD" && dist === "5k" && weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(dist)) {
+    return "RACE";
+  }
+  return block;
+}
+
+function pickPatternKeyType(context = {}) {
+  const patternBlock = pickPatternBlock(context);
+  const dist = normalizeEventDistance(context.eventDistance) || "10k";
+  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist];
+  if (!Array.isArray(pattern) || !pattern.length) return null;
+  const weekInBlock = Math.max(1, Number(context.weekInBlock) || 1);
+  const idx = (weekInBlock - 1) % pattern.length;
+  return pattern[idx] || null;
+}
+
+function decideKeyType1PerWeek(context = {}, keyRules = {}) {
+  const block = context.block || "BASE";
+  const dist = normalizeEventDistance(context.eventDistance) || "10k";
+  const overlayMode = context.overlayMode || "NORMAL";
+  const lastKeyType = normalizeKeyType(context.lastKeyType || null);
+  const intensityDistribution = context.intensityDistribution || {};
+  const hardShare = Number(intensityDistribution?.hardShare);
+  const midShare = Number(intensityDistribution?.midShare);
+  const hardMax = Number(intensityDistribution?.targets?.hardMax);
+  const midMax = Number(intensityDistribution?.targets?.midMax);
+  const fatigueHigh = context?.fatigue?.override === true;
+
+  if (block === "RESET") return "steady";
+  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY") return "steady";
+
+  let planned = pickPatternKeyType({ ...context, block, eventDistance: dist });
+  if (!planned) {
+    planned = keyRules?.preferredKeyTypes?.find((k) => k !== "steady") || "steady";
+  }
+
+  if (overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") {
+    if (planned === "vo2_touch" || planned === "strides") {
+      planned = block === "RACE" ? "racepace" : "schwelle";
+    }
+  }
+
+  const patternBlock = pickPatternBlock({ ...context, block, eventDistance: dist });
+  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist] || [];
+  if (lastKeyType && planned === lastKeyType && pattern.length > 1) {
+    const alternatives = pattern.filter((type) => type !== planned);
+    if (alternatives.length) planned = alternatives[0];
+  }
+
+  if ((planned === "vo2_touch" || planned === "strides") && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
+    planned = block === "RACE" ? "racepace" : "schwelle";
+  }
+
+  if (planned === "racepace" && dist === "5k" && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
+    planned = "schwelle";
+  }
+
+  if ((planned === "vo2_touch" || planned === "strides" || (planned === "racepace" && dist === "5k")) && Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax) {
+    planned = "schwelle";
+  }
+
+  if (planned === "schwelle" && Number.isFinite(midShare) && Number.isFinite(midMax) && midShare > midMax) {
+    planned = "steady";
+  }
+
+  const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
+  if (allowed.length && !allowed.includes(planned)) {
+    const preferredAllowed = (keyRules?.preferredKeyTypes || []).find((k) => allowed.includes(k));
+    planned = preferredAllowed || allowed[0] || "steady";
+  }
+
+  return planned;
+}
 
 function resolvePrimaryKeyType(keyRules, block) {
+  if (keyRules?.plannedPrimaryType) return keyRules.plannedPrimaryType;
   const preferred = keyRules?.preferredKeyTypes?.find((k) => k !== "steady");
   if (preferred) return preferred;
   if (block === "BASE") return "ga";
@@ -2104,6 +2203,30 @@ function collectKeyStats(ctx, dayIso, windowDays) {
   return { count, types, list };
 }
 
+function getLastKeyTypeBeforeDay(ctx, dayIso, windowDays = 21) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let lastActivity = null;
+  let lastDate = "";
+  for (const a of ctx.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso || !hasKeyTag(a)) continue;
+    if (!lastActivity || d > lastDate) {
+      lastActivity = a;
+      lastDate = d;
+    }
+  }
+
+  if (!lastActivity) return null;
+  const rawType = getKeyType(lastActivity);
+  return normalizeKeyType(rawType, {
+    activity: lastActivity,
+    movingTime: Number(lastActivity?.moving_time ?? lastActivity?.elapsed_time ?? 0),
+  });
+}
+
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
@@ -2127,7 +2250,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const preferred = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
   const progression = computeProgressionTarget(context, keyRules, context.overlayMode || "NORMAL");
@@ -3122,6 +3245,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
 
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
+    const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
@@ -3132,6 +3256,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       eventDistance,
       timeInBlockDays: previousBlockState?.timeInBlockDays ?? 0,
       weeksToEvent,
+      lastKeyType,
     });
 
     const baseRunFloorTarget =
@@ -3250,15 +3375,34 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
     const intensityDistribution = computeIntensityDistribution(ctx, day, blockState.block, eventDistance);
+    const weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
+    const plannedPrimaryType = decideKeyType1PerWeek(
+      {
+        block: blockState.block,
+        eventDistance,
+        weeksToEvent: blockState.weeksToEvent,
+        overlayMode: runFloorState.overlayMode,
+        intensityDistribution,
+        fatigue,
+        weekInBlock,
+        lastKeyType,
+      },
+      keyRules
+    );
+    keyRules.plannedPrimaryType = plannedPrimaryType;
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
       dayIso: day,
       block: blockState.block,
       eventDistance,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
+      overlayMode: runFloorState.overlayMode,
       intensityDistribution,
+      fatigue,
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
+      weekInBlock,
+      lastKeyType,
     });
 if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
@@ -3469,6 +3613,23 @@ function buildKeyRuleLine({ keyRules, block, eventDistance }) {
   const preferred = formatKeyTypeList(keyRules.preferredKeyTypes);
   const banned = keyRules.bannedKeyTypes?.length ? formatKeyTypeList(keyRules.bannedKeyTypes) : null;
   return `Key-Regel (${blockLabel}, ${distLabel}): erlaubt ${allowed}, bevorzugt ${preferred}${banned ? `, tabu ${banned}` : ""}.`;
+}
+
+function buildKeyPatternDistributionLine({ block, eventDistance, plannedType, weeksToEvent }) {
+  const dist = normalizeEventDistance(eventDistance) || "10k";
+  const patternBlock = pickPatternBlock({ block, eventDistance: dist, weeksToEvent });
+  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist];
+  if (!Array.isArray(pattern) || !pattern.length) return null;
+
+  const counts = pattern.reduce((acc, type) => {
+    acc[type] = (acc[type] || 0) + 1;
+    return acc;
+  }, {});
+  const distribution = Object.entries(counts)
+    .map(([type, count]) => `${formatKeyType(type)} ${Math.round((count / pattern.length) * 100)}%`)
+    .join(" | ");
+  const plannedLabel = plannedType ? formatKeyType(plannedType) : "n/a";
+  return `Pattern 1 Key/Woche (${patternBlock}, ${formatEventDistance(dist)}): geplant ${plannedLabel}; Verteilung ${distribution}.`;
 }
 
 function buildNextRunRecommendation({
@@ -3726,6 +3887,12 @@ function buildComments(
     block: blockState?.block,
     eventDistance: formatEventDistance(modeInfo?.nextEvent?.distance_type),
   });
+  const keyPatternLine = buildKeyPatternDistributionLine({
+    block: blockState?.block,
+    eventDistance: modeInfo?.nextEvent?.distance_type,
+    plannedType: keyRules?.plannedPrimaryType,
+    weeksToEvent,
+  });
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
     policy,
@@ -3852,6 +4019,7 @@ function buildComments(
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
+  if (keyPatternLine && hasEventDistance) keyCheckMetrics.push(keyPatternLine);
   if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
