@@ -208,15 +208,37 @@ const STRENGTH_PHASE_PLANS = {
     ],
   },
 };
-const EASY_SHARE_THRESHOLDS = {
-  BASE: 0.9,
-  BUILD: 0.85,
-  RACE: 0.85,
-  RESET: 0.9,
+const INTENSITY_DISTRIBUTION_TARGET = {
+  BASE: {
+    easyMin: 0.75,
+    easyMax: 0.88,
+    midMin: 0.08,
+    midMax: 0.2,
+    hardMax: 0.08,
+  },
+  BUILD: {
+    easyMin: 0.65,
+    easyMax: 0.8,
+    midMin: 0.15,
+    midMax: 0.3,
+    hardMax: 0.12,
+  },
+  RACE: {
+    easyMin: 0.7,
+    easyMax: 0.85,
+    midMin: 0.1,
+    midMax: 0.2,
+    hardMax: 0.1,
+  },
+  RESET: {
+    easyMin: 0.9,
+    hardMax: 0.03,
+  },
 };
-const EASY_SHARE_PRIMARY_LOOKBACK_DAYS = 14;
-const EASY_SHARE_FALLBACK_LOOKBACK_DAYS = 7;
-const EASY_SHARE_MIN_TOTAL_MIN_14D = 90;
+const INTENSITY_LOOKBACK_DAYS = 14;
+const INTENSITY_FALLBACK_LOOKBACK_DAYS = 7;
+const INTENSITY_MIN_TOTAL_MIN_14D = 90;
+const INTENSITY_CLEAR_OVERSHOOT = 0.01;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -381,7 +403,8 @@ const POST_EVENT_OPEN_DAYS = 14;  // 2-week open block after each event
 
 // AerobicFloor = k * Intensity7  (Bike & Run zählen aerob gleichwertig)
 const AEROBIC_K_DEFAULT = 2.8;
-const INTENSITY_HR_PCT = 0.85;
+const THRESHOLD_HR_PCT = 0.88;
+const VO2_HR_PCT = 0.94;
 const PLAN_START_WEEKS = 24;
 const PREPLAN_WINDOW_WEEKS = 48;
 
@@ -1439,22 +1462,22 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
 
 const PHASE_MAX_MINUTES = {
   BASE: {
-    "5k": { ga: 75, longrun: 105, vo2_touch: 3, strides: 3 },
-    "10k": { ga: 80, longrun: 120, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, longrun: 150, vo2_touch: 2, strides: 2 },
-    m: { ga: 95, longrun: 180, strides: 1 },
+    "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 80, schwelle: 30, longrun: 120, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, schwelle: 35, longrun: 150, vo2_touch: 2, strides: 2 },
+    m: { ga: 95, schwelle: 20, longrun: 180, strides: 1 },
   },
   BUILD: {
-    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 100 },
-    "10k": { schwelle: 35, vo2_touch: 35, racepace: 45, longrun: 135 },
-    hm: { schwelle: 45, racepace: 50, longrun: 165 },
+    "5k": { schwelle: 35, vo2_touch: 18, racepace: 8, longrun: 100 },
+    "10k": { schwelle: 35, vo2_touch: 35, racepace: 25, longrun: 135 },
+    hm: { schwelle: 45, racepace: 40, longrun: 165 },
     m: { schwelle: 35, racepace: 70, longrun: 195 },
   },
   RACE: {
-    "5k": { racepace: 18, vo2_touch: 5, ga: 50, longrun: 90 },
-    "10k": { racepace: 28, schwelle: 25, ga: 60, longrun: 110 },
-    hm: { racepace: 45, schwelle: 40, ga: 70, longrun: 135 },
-    m: { racepace: 75, ga: 55, longrun: 150 },
+    "5k": { racepace: 18, vo2_touch: 5, schwelle: 15, ga: 50, longrun: 90 },
+    "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 110 },
+    hm: { racepace: 45, vo2_touch: 6, schwelle: 25, ga: 70, longrun: 135 },
+    m: { racepace: 75, schwelle: 20, ga: 55, longrun: 150 },
   },
 };
 
@@ -1535,14 +1558,17 @@ const KEY_SESSION_RECOMMENDATIONS = {
   BASE: {
     "5k": {
       ga: ["45–75′ GA1 locker", "langer Lauf 75–100′"],
+      schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
       vo2: ["8–10×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "10k": {
       ga: ["60–75′ GA1 locker", "langer Lauf 90–110′"],
+      schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
       vo2: ["6–8×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "hm": {
       ga: ["60–90′ GA1 locker", "langer Lauf 100–130′"],
+      schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
       vo2: ["6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "m": {
@@ -1554,10 +1580,14 @@ const KEY_SESSION_RECOMMENDATIONS = {
   BUILD: {
     "5k": {
       vo2: ["5×3′ @ vVO₂max", "6×800 m @ 3–5k-Pace"],
+      schwelle: ["4×6′ @ Schwelle", "3×8′ @ Schwelle"],
+      racepace: ["4×1 km @ 5k-Pace (kontrolliert)", "6×600 m @ 5k-Pace"],
       longrun: ["langer Lauf 90′"]
     },
     "10k": {
       schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
+      vo2: ["5×1000 m @ 5–10k-Pace", "6×3′ @ vVO₂max"],
+      racepace: ["3×2 km @ 10k-Pace (moderat)", "2×3 km @ 10k-Pace (kontrolliert)"],
       longrun: ["langer Lauf 100–120′"]
     },
     "hm": {
@@ -1577,10 +1607,14 @@ const KEY_SESSION_RECOMMENDATIONS = {
     },
     "10k": {
       racepace: ["3×2 km @ 10k-Pace", "2×3 km @ 10k-Pace"],
+      vo2: ["5×2′ @ VO2 (lange Pause)", "6×400 m @ 5k-Pace"],
+      schwelle: ["2×8′ @ Schwelle (Erhalt)"],
       ga: ["40–50′ GA1 locker"]
     },
     "hm": {
       racepace: ["2×4–5 km @ HM-Pace"],
+      vo2: ["4×2′ @ VO2 (kurz, frisch)"],
+      schwelle: ["2×10′ @ Schwelle (Erhalt)"],
       ga: ["40–60′ GA1 locker"]
     },
     "m": {
@@ -1692,45 +1726,108 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
   };
 }
 
-function computeEasyShare(ctx, dayIso, lookbackDays) {
+function mapKeyTypeToIntensity(type, eventDistance) {
+  const normalized = normalizeKeyType(type);
+  if (normalized === "ga" || normalized === "steady") return "easy";
+  if (normalized === "schwelle") return "mid";
+  if (normalized === "racepace") return eventDistance === "5k" ? "hard" : "mid";
+  if (normalized === "vo2_touch" || normalized === "strides") return "hard";
+  return "easy";
+}
+
+function classifyIntensityCategory(a, eventDistance) {
+  if (hasKeyTag(a)) {
+    return mapKeyTypeToIntensity(getKeyType(a), eventDistance);
+  }
+
+  const hr = Number(a?.average_heartrate);
+  if (Number.isFinite(hr) && hr > 0) {
+    if (hr >= HFMAX * VO2_HR_PCT) return "hard";
+    if (hr >= HFMAX * THRESHOLD_HR_PCT) return "mid";
+  }
+
+  return "easy";
+}
+
+function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
-  let easyMin = 0;
-  let totalMin = 0;
+  let easyMinutes = 0;
+  let midMinutes = 0;
+  let hardMinutes = 0;
+  let totalMinutes = 0;
+
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso || !isRun(a)) continue;
-    const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
-    if (!(min > 0)) continue;
-    totalMin += min;
-    if (!hasKeyTag(a)) easyMin += min;
+    const minutes = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
+    if (!(minutes > 0)) continue;
+
+    totalMinutes += minutes;
+    const category = classifyIntensityCategory(a, eventDistance);
+    if (category === "hard") hardMinutes += minutes;
+    else if (category === "mid") midMinutes += minutes;
+    else easyMinutes += minutes;
   }
 
-  const easyShare = totalMin > 0 ? easyMin / totalMin : null;
-  return { easyShare, easyMin: Math.round(easyMin), totalMin: Math.round(totalMin) };
+  const hasData = totalMinutes > 0;
+  const easyShare = hasData ? easyMinutes / totalMinutes : null;
+  const midShare = hasData ? midMinutes / totalMinutes : null;
+  const hardShare = hasData ? hardMinutes / totalMinutes : null;
+
+  return {
+    totalMinutes: Math.round(totalMinutes),
+    easyMinutes: Math.round(easyMinutes),
+    midMinutes: Math.round(midMinutes),
+    hardMinutes: Math.round(hardMinutes),
+    easyShare,
+    midShare,
+    hardShare,
+  };
 }
 
-function computeEasyShareGate(ctx, dayIso, block) {
-  const threshold = EASY_SHARE_THRESHOLDS[block] ?? EASY_SHARE_THRESHOLDS.BASE;
-  const metrics14 = computeEasyShare(ctx, dayIso, EASY_SHARE_PRIMARY_LOOKBACK_DAYS);
-  const useFallback = metrics14.totalMin < EASY_SHARE_MIN_TOTAL_MIN_14D;
+function computeIntensityDistribution(ctx, dayIso, block, eventDistance) {
+  const targets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
+  const metrics14 = computeIntensityDistributionForWindow(ctx, dayIso, INTENSITY_LOOKBACK_DAYS, eventDistance);
+  const useFallback = metrics14.totalMinutes < INTENSITY_MIN_TOTAL_MIN_14D;
   const metrics = useFallback
-    ? computeEasyShare(ctx, dayIso, EASY_SHARE_FALLBACK_LOOKBACK_DAYS)
+    ? computeIntensityDistributionForWindow(ctx, dayIso, INTENSITY_FALLBACK_LOOKBACK_DAYS, eventDistance)
     : metrics14;
 
-  const hasData = (metrics?.totalMin ?? 0) > 0;
+  const hasData = (metrics?.totalMinutes ?? 0) > 0;
   const easyShare = metrics?.easyShare;
-  const ok = !hasData || (Number.isFinite(easyShare) && easyShare >= threshold);
+  const midShare = metrics?.midShare;
+  const hardShare = metrics?.hardShare;
+
+  const hardOver =
+    hasData && Number.isFinite(hardShare) && Number.isFinite(targets?.hardMax)
+      ? hardShare > targets.hardMax + INTENSITY_CLEAR_OVERSHOOT
+      : false;
+  const midOver =
+    hasData && Number.isFinite(midShare) && Number.isFinite(targets?.midMax)
+      ? midShare > targets.midMax + INTENSITY_CLEAR_OVERSHOOT
+      : false;
+  const easyUnder =
+    hasData && Number.isFinite(easyShare) && Number.isFinite(targets?.easyMin)
+      ? easyShare < targets.easyMin
+      : false;
+
   return {
-    ok,
-    threshold,
-    lookbackDays: useFallback ? EASY_SHARE_FALLBACK_LOOKBACK_DAYS : EASY_SHARE_PRIMARY_LOOKBACK_DAYS,
-    easyShare,
-    easyMin: metrics?.easyMin ?? 0,
-    totalMin: metrics?.totalMin ?? 0,
     hasData,
+    lookbackDays: useFallback ? INTENSITY_FALLBACK_LOOKBACK_DAYS : INTENSITY_LOOKBACK_DAYS,
+    targets,
+    easyShare,
+    midShare,
+    hardShare,
+    easyMinutes: metrics?.easyMinutes ?? 0,
+    midMinutes: metrics?.midMinutes ?? 0,
+    hardMinutes: metrics?.hardMinutes ?? 0,
+    totalMinutes: metrics?.totalMinutes ?? 0,
+    hardOver,
+    midOver,
+    easyUnder,
   };
 }
 
@@ -1868,20 +1965,20 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   if (block === "BASE") {
     if (dist === "5k" || dist === "10k") {
       return {
-        expectedKeysPerWeek: 0.5,
+        expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
-        preferredKeyTypes: ["vo2_touch"],
-        bannedKeyTypes: ["schwelle", "racepace"],
+        allowedKeyTypes: ["steady", "schwelle", "strides", "vo2_touch"],
+        preferredKeyTypes: ["schwelle", "steady"],
+        bannedKeyTypes: ["racepace"],
       };
     }
     if (dist === "m" || dist === "hm") {
       return {
-        expectedKeysPerWeek: 0.5,
+        expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "strides"],
-        preferredKeyTypes: ["steady"],
-        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
+        allowedKeyTypes: ["steady", "schwelle", "strides"],
+        preferredKeyTypes: ["schwelle", "steady"],
+        bannedKeyTypes: ["racepace", "vo2_touch"],
       };
     }
     return {
@@ -1898,18 +1995,18 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["vo2_touch", "schwelle"],
-        bannedKeyTypes: ["racepace"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides", "steady"],
+        preferredKeyTypes: ["vo2_touch", "schwelle", "racepace"],
+        bannedKeyTypes: [],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["schwelle", "vo2_touch"],
-        bannedKeyTypes: ["racepace"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides", "steady"],
+        preferredKeyTypes: ["schwelle", "vo2_touch", "racepace"],
+        bannedKeyTypes: [],
       };
     }
     if (dist === "hm") {
@@ -1939,27 +2036,27 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "vo2_touch"],
-        bannedKeyTypes: ["schwelle"],
+        allowedKeyTypes: ["racepace", "vo2_touch", "schwelle", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch", "schwelle"],
+        bannedKeyTypes: [],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "strides", "steady"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["vo2_touch"],
+        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "schwelle", "vo2_touch"],
+        bannedKeyTypes: [],
       };
     }
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "steady"],
+        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch", "steady"],
         preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["vo2_touch", "strides"],
+        bannedKeyTypes: ["strides"],
       };
     }
     if (dist === "m") {
@@ -2042,8 +2139,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const keySpacingNowOk = !Number.isFinite(lastKeyGapDays) || lastKeyGapDays >= 2;
   const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
 
-  const easyShareGate = context.easyShareGate || null;
-  const easyShareBlocked = easyShareGate?.ok === false;
+  const intensityDistribution = context.intensityDistribution || null;
+  const hardShareBlocked = intensityDistribution?.hardOver === true;
+  const midShareBlocked = intensityDistribution?.midOver === true;
+  const easyShareBlocked = intensityDistribution?.easyUnder === true;
+  const preferredIntensity = mapKeyTypeToIntensity(preferred, context.eventDistance);
 
   let suggestion = "";
   let keyAllowedNow = false;
@@ -2054,10 +2154,26 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand). Bis dahin locker/GA.`;
-  } else if (easyShareBlocked) {
-    const pct = Math.round((easyShareGate.easyShare ?? 0) * 100);
-    suggestion = `EasyShare unter Ziel (${pct}% in ${easyShareGate.lookbackDays} Tagen) – Key nur wenn du dich wirklich frisch fühlst, sonst 1–2 lockere Tage.`;
+  } else if (hardShareBlocked && preferredIntensity === "hard") {
+    const hardPct = Math.round((intensityDistribution?.hardShare ?? 0) * 100);
+    const maxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
+    suggestion = `Hard-Anteil hoch (${hardPct}% > ${maxPct}%) – heute kein weiterer harter Key. Nur Mid/Easy.`;
     keyAllowedNow = true;
+  } else if (easyShareBlocked) {
+    const easyPct = Math.round((intensityDistribution?.easyShare ?? 0) * 100);
+    const minPct = Math.round((intensityDistribution?.targets?.easyMin ?? 0) * 100);
+    suggestion = `Easy-Anteil zu niedrig (${easyPct}% < ${minPct}%) – nächste Einheit zwingend locker.`;
+  } else if (midShareBlocked && preferred === "schwelle") {
+    const midPct = Math.round((intensityDistribution?.midShare ?? 0) * 100);
+    const maxPct = Math.round((intensityDistribution?.targets?.midMax ?? 0) * 100);
+    const hardShare = intensityDistribution?.hardShare ?? 0;
+    const hardMax = intensityDistribution?.targets?.hardMax ?? 0;
+    if (hardShare + INTENSITY_CLEAR_OVERSHOOT < hardMax && keyRules.allowedKeyTypes.includes("vo2_touch")) {
+      suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, VO2 kurz optional.`;
+      keyAllowedNow = true;
+    } else {
+      suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, besser locker.`;
+    }
   } else if (actual7 === 1 && typeOk) {
     suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
     keyAllowedNow = true;
@@ -2103,7 +2219,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keySpacingOk: keySpacingNowOk,
     nextKeyEarliest,
     lastKeyGapDays,
-    easyShareGate,
+    intensityDistribution,
     keyAllowedNow,
     explicitSession,
   };
@@ -3133,14 +3249,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
       ...keyRulesBase,
       maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
-    const easyShareGate = computeEasyShareGate(ctx, day, blockState.block);
+    const intensityDistribution = computeIntensityDistribution(ctx, day, blockState.block, eventDistance);
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
       dayIso: day,
       block: blockState.block,
       eventDistance,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
-      easyShareGate,
+      intensityDistribution,
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
     });
@@ -3452,10 +3568,15 @@ function buildRecommendationsAndBottomLine(state) {
       rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).`);
     }
   }
-  if (state?.easyShareGate?.ok === false) {
-    const es = Math.round((state.easyShareGate.easyShare || 0) * 100);
-    const th = Math.round((state.easyShareGate.threshold || 0) * 100);
-    rec.push(`EasyShare ${es}% (<${th}%) → Key nur wenn wirklich frisch.`);
+  if (state?.intensityDistribution?.easyUnder === true) {
+    const easyPct = Math.round((state.intensityDistribution.easyShare || 0) * 100);
+    const easyMinPct = Math.round((state.intensityDistribution?.targets?.easyMin || 0) * 100);
+    rec.push(`Easy-Anteil ${easyPct}% (<${easyMinPct}%) → nächste Einheit locker.`);
+  }
+  if (state?.intensityDistribution?.hardOver === true) {
+    const hardPct = Math.round((state.intensityDistribution.hardShare || 0) * 100);
+    const hardMaxPct = Math.round((state.intensityDistribution?.targets?.hardMax || 0) * 100);
+    rec.push(`Hard-Anteil ${hardPct}% (>${hardMaxPct}%) → kein weiterer harter Key.`);
   }
   if (state?.budgetBlocked) {
     rec.push(`Key-Budget ${state.actualKeys7}/${state.keyCap7} (7T) erreicht → kein weiterer Key.`);
@@ -3545,9 +3666,13 @@ function buildComments(
   const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
   const lifeEvent = runFloorState?.lifeEvent || null;
   const ignoreRunFloorGap = lifeEvent?.ignoreRunFloorGap === true;
-  const easyShareGate = keyCompliance?.easyShareGate;
-  const easySharePct = easyShareGate?.hasData ? Math.round((easyShareGate.easyShare ?? 0) * 100) : null;
-  const easyShareThresholdPct = Math.round((easyShareGate?.threshold ?? EASY_SHARE_THRESHOLDS?.[blockState?.block] ?? 0) * 100);
+  const intensityDistribution = keyCompliance?.intensityDistribution;
+  const easySharePct = intensityDistribution?.hasData ? Math.round((intensityDistribution.easyShare ?? 0) * 100) : null;
+  const midSharePct = intensityDistribution?.hasData ? Math.round((intensityDistribution.midShare ?? 0) * 100) : null;
+  const hardSharePct = intensityDistribution?.hasData ? Math.round((intensityDistribution.hardShare ?? 0) * 100) : null;
+  const easyMinPct = Math.round((intensityDistribution?.targets?.easyMin ?? 0) * 100);
+  const midMaxPct = Math.round((intensityDistribution?.targets?.midMax ?? 0) * 100);
+  const hardMaxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
@@ -3560,7 +3685,8 @@ function buildComments(
   const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
   const budgetBlocked = keyCompliance?.capExceeded === true;
   const spacingBlocked = !spacingOk;
-  const easyShareBlocked = easyShareGate?.hasData && easyShareGate?.ok === false;
+  const easyShareBlocked = intensityDistribution?.hasData && intensityDistribution?.easyUnder === true;
+  const hardShareBlocked = intensityDistribution?.hasData && intensityDistribution?.hardOver === true;
   const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
   const runFloorBlocked = !ignoreRunFloorGap && runTarget > 0 && runFloorGap < 0;
 
@@ -3568,7 +3694,8 @@ function buildComments(
   if (keyBlocked) {
     if (budgetBlocked) mainBlockReason = `Budget ${actualKeys7}/${keyCap7} (7T)`;
     else if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
-    else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyShareThresholdPct}%`;
+    else if (hardShareBlocked) mainBlockReason = `HardShare >${hardMaxPct}%`;
+    else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyMinPct}%`;
     else if (deloadBlocked) mainBlockReason = `Overlay ${overlayMode}`;
     else if (runFloorBlocked) mainBlockReason = `RunFloor-Gap ${runFloorGap}`;
   }
@@ -3719,7 +3846,7 @@ function buildComments(
   const keyCheckMetrics = [
     `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
-    `EasyShare (14 Tage): ${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`,
+    `Intensität 14T: Easy ${easySharePct != null ? easySharePct + " %" : "n/a"} (≥${easyMinPct}%), Mid ${midSharePct != null ? midSharePct + " %" : "n/a"} (≤${midMaxPct || "n/a"}%), Hard ${hardSharePct != null ? hardSharePct + " %" : "n/a"} (≤${hardMaxPct}%)`,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
     `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
   ];
@@ -3733,7 +3860,7 @@ function buildComments(
   const decisionCompact = buildRecommendationsAndBottomLine({
     runFloor7: runLoad7,
     runFloorTarget: runTarget > 0 ? runTarget : null,
-    easyShareGate: keyCompliance?.easyShareGate,
+    intensityDistribution: keyCompliance?.intensityDistribution,
     budgetBlocked,
     spacingBlocked,
     nextAllowed,
@@ -5130,7 +5257,7 @@ function isIntensity(a) {
 function isIntensityByHr(a) {
   const hr = Number(a?.average_heartrate);
   if (!Number.isFinite(hr) || hr <= 0) return false;
-  return hr >= HFMAX * INTENSITY_HR_PCT;
+  return hr >= HFMAX * THRESHOLD_HR_PCT;
 }
 
 function isAerobic(a) {
