@@ -173,7 +173,7 @@ export default {
     const runMetricsOnly = isEveningBerlinRun(event);
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600, { runMetricsOnly }).catch((e) => {
+      syncRange(env, yday, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true }).catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
@@ -3225,6 +3225,7 @@ function pickRunMetricsPatch(patch) {
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
   const ctx = createCtx(env, warmupSkipSec, debug);
   const runMetricsOnly = runtimeOverrides?.runMetricsOnly === true;
+  const runMetricsOnlyIfExisting = runtimeOverrides?.runMetricsOnlyIfExisting === true;
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
   // For this sync we only need enough to compute what we will write inside [oldest..newest].
@@ -3325,6 +3326,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const runs = ctx.byDayRuns.get(day) ?? [];
     const patch = {};
     const perRunInfo = [];
+    const existingDailyReportEvent =
+      write && runMetricsOnlyIfExisting ? await fetchDailyReportNoteEvent(env, day) : null;
+    const runSectionOnly = runMetricsOnly || Boolean(existingDailyReportEvent?.id);
     const wellnessToday = await fetchWellnessDay(ctx, env, day);
     const manualRaceStartIso = parseManualRaceStartIso(
       runtimeOverrides?.raceStartOverrideIso,
@@ -3769,7 +3773,7 @@ historyMetrics.keyCompliance = keyCompliance;
       eventDistance,
     }, { debug });
 
-    if (!runMetricsOnly) {
+    if (!runSectionOnly) {
       // Explicitly clear wellness comments; report is written only as NOTE.
       patch.comments = "";
     }
@@ -3781,12 +3785,14 @@ historyMetrics.keyCompliance = keyCompliance;
     }
 
     // Daily NOTE (calendar): stores the daily report text in blue
-    if (write && !runMetricsOnly) {
+    if (write && runSectionOnly && existingDailyReportEvent?.id) {
+      await upsertDailyReportTodayRunSection(env, day, dailyReportText || "", existingDailyReportEvent);
+    } else if (write && !runSectionOnly) {
       await upsertDailyReportNote(env, day, dailyReportText || "");
     }
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
-    if (!runMetricsOnly && isMondayIso(day)) {
+    if (!runSectionOnly && isMondayIso(day)) {
       let detectiveNoteText = null;
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
@@ -3814,7 +3820,7 @@ historyMetrics.keyCompliance = keyCompliance;
       }
     }
 
-    const patchToWrite = runMetricsOnly ? pickRunMetricsPatch(patch) : patch;
+    const patchToWrite = runSectionOnly ? pickRunMetricsPatch(patch) : patch;
 
     if (write) {
       await putWellnessDay(env, day, patchToWrite);
@@ -5209,6 +5215,76 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
     color: "orange",
     external_id,
   });
+}
+
+async function fetchDailyReportNoteEvent(env, dayIso) {
+  const external_id = `daily-report-${dayIso}`;
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  return (events || []).find((e) => String(e?.external_id || "") === external_id) || null;
+}
+
+function fromHardLineBreakText(text) {
+  return String(text ?? "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+}
+
+function splitDecisionBlocks(text) {
+  const normalized = fromHardLineBreakText(text).trim();
+  if (!normalized) return [];
+  return normalized.split(/\n⸻\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+}
+
+function getDecisionBlockTitle(block) {
+  const first = String(block || "").split("\n")[0] || "";
+  return first.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+}
+
+function composeDecisionBlocks(blocks) {
+  const clean = (blocks || []).map((b) => String(b || "").trim()).filter(Boolean);
+  if (!clean.length) return "";
+  return `${clean.join("\n⸻\n\n")}\n⸻\n\n`;
+}
+
+function mergeTodayRunSection(existingText, freshText) {
+  const title = "HEUTIGER LAUF";
+  const freshBlocks = splitDecisionBlocks(freshText);
+  const freshTodayBlock = freshBlocks.find((b) => getDecisionBlockTitle(b) === title);
+  if (!freshTodayBlock) return fromHardLineBreakText(existingText);
+
+  const existingBlocks = splitDecisionBlocks(existingText);
+  if (!existingBlocks.length) return composeDecisionBlocks([freshTodayBlock]);
+
+  let replaced = false;
+  const merged = existingBlocks.map((b) => {
+    if (getDecisionBlockTitle(b) === title) {
+      replaced = true;
+      return freshTodayBlock;
+    }
+    return b;
+  });
+  if (!replaced) merged.unshift(freshTodayBlock);
+  return composeDecisionBlocks(merged);
+}
+
+async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, existingEvent = null) {
+  const external_id = `daily-report-${dayIso}`;
+  const name = "Daily-Report";
+  const existing = existingEvent || await fetchDailyReportNoteEvent(env, dayIso);
+  if (!existing?.id) return false;
+
+  const merged = mergeTodayRunSection(existing?.description || "", freshNoteText || "");
+  await updateIntervalsEvent(env, existing.id, {
+    category: "NOTE",
+    start_date_local: `${dayIso}T00:00:00`,
+    name,
+    description: toHardLineBreakText(merged),
+    color: "blue",
+    external_id,
+  });
+  return true;
 }
 
 // Create/update a blue NOTE event for the daily wellness report
