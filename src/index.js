@@ -5196,6 +5196,8 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   const benchType = getBenchType(benchName);
   const isKey = hasKeyTag(activity);
+  const keyType = getKeyType(activity);
+  const isLongrunProgression = benchType === "GA" && String(keyType || "").toLowerCase().includes("prog");
   const end = new Date(dayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000);
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
@@ -5206,6 +5208,12 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   const today = await computeBenchMetrics(env, activity, warmupSkipSec, { allowDrift: !isKey });
   if (!today) return `🧪 bench:${benchName}\nHeute: n/a`;
+
+  let progressionMetrics = null;
+  if (isLongrunProgression) {
+    const streams = await fetchIntervalsStreams(env, activity.id, ["time", "velocity_smooth", "heartrate"]);
+    progressionMetrics = computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec);
+  }
 
   let intervalMetrics = null;
   if (benchType !== "GA" || isKey) {
@@ -5245,7 +5253,23 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lines.push("EF: n/a");
   }
 
-  if (benchType === "GA" && !isKey) {
+  if (isLongrunProgression) {
+    const steadyPct = Number.isFinite(progressionMetrics?.steadyEndPct) ? Math.round(progressionMetrics.steadyEndPct * 100) : 65;
+    if (progressionMetrics?.steadyDriftPct != null) {
+      lines.push(`Steady-Drift (0–${steadyPct}%): ${fmtSigned1(progressionMetrics.steadyDriftPct)}%`);
+    } else {
+      lines.push(`Steady-Drift (0–${steadyPct}%): n/a`);
+    }
+    if (progressionMetrics) {
+      lines.push(`Progression: Pace ${progressionMetrics.paceIncreased ? "↑" : "nicht klar steigend"}, HF ${progressionMetrics.hrProportional ? "proportional" : "überproportional"}`);
+      if (!progressionMetrics.noHrJump) {
+        lines.push("Warnung: HF-Sprung >5 bpm in ~150s erkannt.");
+      }
+      if (!progressionMetrics.below90PctHfmax) {
+        lines.push("Warnung: >90% HFmax im Progressions-Teil.");
+      }
+    }
+  } else if (benchType === "GA" && !isKey) {
     if (same.length && today.drift != null && last?.drift != null) {
       const dVsLast = today.drift - last.drift;
       lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
@@ -5279,7 +5303,22 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lastIntervalMetrics = await computeIntervalBenchMetrics(env, same[0], warmupSkipSec);
   }
 
-  if (same.length && intervalMetrics && lastIntervalMetrics) {
+  if (isLongrunProgression && progressionMetrics) {
+    const failReasons = [];
+    if (progressionMetrics.steadyDriftPct == null) {
+      failReasons.push("Steady-Drift n/a");
+    } else if (progressionMetrics.steadyDriftPct > 5) {
+      failReasons.push(`Steady-Drift ${progressionMetrics.steadyDriftPct.toFixed(1)}% > 5%`);
+    }
+    if (!progressionMetrics.paceIncreased) failReasons.push("Pace-Anstieg fehlt");
+    if (!progressionMetrics.hrProportional) failReasons.push("HF steigt überproportional");
+    if (!progressionMetrics.noHrJump) failReasons.push("HF-Sprung >5 bpm/150s");
+    if (!progressionMetrics.below90PctHfmax) failReasons.push(">90% HFmax erreicht");
+
+    verdict = failReasons.length
+      ? `Longrun-Progression teilweise verfehlt: ${failReasons.join(", ")}.`
+      : "Longrun-Progression erfüllt: Steady stabil, Progression kontrolliert.";
+  } else if (same.length && intervalMetrics && lastIntervalMetrics) {
     if (intervalMetrics.HRR60_median != null && lastIntervalMetrics.HRR60_median != null) {
       const hrr60Delta = intervalMetrics.HRR60_median - lastIntervalMetrics.HRR60_median;
       if (hrr60Delta >= 3) {
@@ -5313,6 +5352,116 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   lines.push(`Fazit: ${verdict}`);
   return lines.join("\n");
+}
+
+function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 600) {
+  if (!streams) return null;
+  const time = Array.isArray(streams.time) ? streams.time : null;
+  const speed = Array.isArray(streams.velocity_smooth) ? streams.velocity_smooth : null;
+  const hr = Array.isArray(streams.heartrate) ? streams.heartrate : null;
+  if (!time || !speed || !hr) return null;
+
+  const n = Math.min(time.length, speed.length, hr.length);
+  if (n < MIN_POINTS) return null;
+
+  const points = [];
+  for (let i = 0; i < n; i++) {
+    const t = Number(time[i]);
+    const v = Number(speed[i]);
+    const h = Number(hr[i]);
+    if (!Number.isFinite(t) || !Number.isFinite(v) || !Number.isFinite(h)) continue;
+    points.push({ t, v, h });
+  }
+  if (points.length < MIN_POINTS) return null;
+
+  const t0 = points[0].t;
+  for (const p of points) p.t -= t0;
+  const durationSec = points[points.length - 1].t;
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
+
+  const mean = (arr) => (arr.length ? arr.reduce((sum, x) => sum + x, 0) / arr.length : null);
+  const pick = (fromPct) => points.filter((p) => p.t >= durationSec * fromPct);
+
+  // Suche den plausibelsten Progressionsstart zwischen 70–95% (deckt auch sehr späte 95/5-Finishes ab).
+  let best = null;
+  for (let pct = 0.7; pct <= 0.95; pct += 0.05) {
+    const progCand = pick(pct);
+    if (progCand.length < Math.max(6, Math.floor(points.length * 0.05))) continue;
+    const preCand = points.filter((p) => p.t < durationSec * pct);
+    if (preCand.length < Math.max(6, Math.floor(points.length * 0.2))) continue;
+
+    const spPre = mean(preCand.map((p) => p.v));
+    const spProg = mean(progCand.map((p) => p.v));
+    if (!(spPre > 0 && spProg > 0)) continue;
+
+    const gainPct = ((spProg - spPre) / spPre) * 100;
+    if (!best || gainPct > best.gainPct) best = { pct, gainPct };
+  }
+
+  const progressionStartPct = best?.gainPct >= 1 ? best.pct : 0.8;
+  const steadyEndPct = Math.max(0.6, Math.min(0.7, progressionStartPct - 0.1));
+
+  const steadyEndSec = durationSec * steadyEndPct;
+  const progressionStartSec = durationSec * progressionStartPct;
+
+  const steadyPoints = points.filter((p) => p.t <= steadyEndSec);
+  const progressionPoints = points.filter((p) => p.t >= progressionStartSec);
+
+  const steadyDrift = computeDriftAndStabilityFromStreams(
+    {
+      time: steadyPoints.map((p) => p.t),
+      velocity_smooth: steadyPoints.map((p) => p.v),
+      heartrate: steadyPoints.map((p) => p.h),
+    },
+    Math.min(warmupSkipSec, Math.max(0, steadyEndSec * 0.4))
+  );
+  const steadyDriftPct = Number.isFinite(steadyDrift?.pa_hr_decouple_pct) ? steadyDrift.pa_hr_decouple_pct : null;
+
+  const pLen = progressionPoints.length;
+  const third = Math.max(1, Math.floor(pLen / 3));
+  const progStart = progressionPoints.slice(0, third);
+  const progEnd = progressionPoints.slice(Math.max(0, pLen - third));
+
+  const startSpeed = mean(progStart.map((p) => p.v));
+  const endSpeed = mean(progEnd.map((p) => p.v));
+  const startHr = mean(progStart.map((p) => p.h));
+  const endHr = mean(progEnd.map((p) => p.h));
+
+  const speedPct = startSpeed > 0 && endSpeed > 0 ? ((endSpeed - startSpeed) / startSpeed) * 100 : null;
+  const hrPct = startHr > 0 && endHr > 0 ? ((endHr - startHr) / startHr) * 100 : null;
+  const paceIncreased = Number.isFinite(speedPct) && speedPct >= 1;
+  const hrProportional = Number.isFinite(speedPct) && Number.isFinite(hrPct) && hrPct >= 0 && hrPct <= speedPct * 1.5 + 1;
+
+  let noHrJump = true;
+  if (pLen > 1) {
+    for (let i = 0; i < pLen; i++) {
+      const base = progressionPoints[i];
+      let j = i + 1;
+      while (j < pLen && progressionPoints[j].t - base.t < 150) j++;
+      if (j < pLen) {
+        const deltaHr = progressionPoints[j].h - base.h;
+        if (deltaHr > 5) {
+          noHrJump = false;
+          break;
+        }
+      }
+    }
+  }
+
+  const maxHrProg = progressionPoints.length ? Math.max(...progressionPoints.map((p) => p.h)) : null;
+  const below90PctHfmax = Number.isFinite(maxHrProg) ? maxHrProg <= HFMAX * 0.9 : true;
+
+  return {
+    steadyDriftPct,
+    paceIncreased,
+    hrProportional,
+    noHrJump,
+    below90PctHfmax,
+    speedPct,
+    hrPct,
+    steadyEndPct,
+    progressionStartPct,
+  };
 }
 
 async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
