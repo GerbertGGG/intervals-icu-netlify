@@ -215,24 +215,36 @@ const STRENGTH_PHASE_PLANS = {
       },
       {
         name: "Einheit B – Balance & Core",
-        exercises: ["3×10 Single Leg RDL", "3×30s Seitstütz", "2×12 Monster Walk", "2×30s Stabikissen Einbeinstand"],
+        exercises: [
+          "3×10 Single Leg RDL",
+          "3×30s Seitstütz",
+          "2×12 Monster Walk",
+          "2×30s Stabikissen Einbeinstand",
+          "2×8–10 Tibialis Raises (optional)",
+        ],
       },
     ],
   },
   BUILD: {
     phase: "BUILD",
-    focus: "Kraft → Power",
-    objective: "Laufökonomie",
+    focus: "Schwelle-Block kompatibel",
+    objective: "Kraft + Laufökonomie ohne Ermüdungs-Overkill",
     sessionsPerWeek: 2,
     durationMin: [20, 25],
     sessions: [
       {
-        name: "Einheit A – Kraft + Explosiv",
-        exercises: ["3×8 Bulgarian Split Squat", "3×8 Hip Thrust einbeinig", "3×8 Jump Squats (kontrolliert)", "2×30s Plank"],
+        name: "Einheit A – Kraft + 1× Plyo",
+        exercises: [
+          "3×8 Bulgarian Split Squat",
+          "3×8 Hip Thrust einbeinig",
+          "3×6 Jump Squats (kontrolliert, volle Pause)",
+          "2×30s Plank",
+          "2×30–45s Waden isometrisch (Soleus) pro Seite",
+        ],
       },
       {
-        name: "Einheit B – Lauf-spezifisch",
-        exercises: ["3×8 Step-Ups explosiv", "3×8 Single Leg Deadlift", "3×20s Skippings auf Stelle", "2×30s Seitstütz"],
+        name: "Einheit B – Kraft (ohne Plyo)",
+        exercises: ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "2×12 Monster Walk", "2×30s Seitstütz"],
       },
     ],
   },
@@ -240,37 +252,43 @@ const STRENGTH_PHASE_PLANS = {
     phase: "RACE",
     focus: "Erhalt",
     objective: "Frische",
-    sessionsPerWeek: 2,
+    sessionsPerWeek: 1,
     durationMin: [12, 15],
     sessions: [
       {
         name: "Einheit – Erhalt",
-        exercises: ["2×8 Split Squats", "2×8 Hip Thrust", "2×20s Plank", "1×30s Stabikissen Einbein"],
+        exercises: [
+          "2×8 Split Squats",
+          "2×8 Hip Thrust",
+          "2×20s Plank",
+          "1×30s Stabikissen Einbein",
+          "1×30–45s Waden isometrisch (Soleus) pro Seite",
+        ],
       },
     ],
   },
 };
 const INTENSITY_DISTRIBUTION_TARGET = {
   BASE: {
-    easyMin: 0.75,
-    easyMax: 0.88,
-    midMin: 0.08,
-    midMax: 0.2,
-    hardMax: 0.08,
+    easyMin: 0.78,
+    easyMax: 0.9,
+    midMin: 0.06,
+    midMax: 0.18,
+    hardMax: 0.06,
   },
   BUILD: {
-    easyMin: 0.65,
-    easyMax: 0.8,
-    midMin: 0.15,
-    midMax: 0.3,
-    hardMax: 0.12,
+    easyMin: 0.72,
+    easyMax: 0.86,
+    midMin: 0.1,
+    midMax: 0.24,
+    hardMax: 0.08,
   },
   RACE: {
-    easyMin: 0.7,
-    easyMax: 0.85,
+    easyMin: 0.72,
+    easyMax: 0.86,
     midMin: 0.1,
-    midMax: 0.2,
-    hardMax: 0.1,
+    midMax: 0.22,
+    hardMax: 0.08,
   },
   RESET: {
     easyMin: 0.9,
@@ -1517,19 +1535,19 @@ const PHASE_MAX_MINUTES = {
   BASE: {
     "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
     "10k": { ga: 80, schwelle: 30, longrun: 120, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, schwelle: 35, longrun: 150, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, schwelle: 20, longrun: 120, vo2_touch: 2, strides: 2 },
     m: { ga: 95, schwelle: 15, longrun: 180, strides: 1 },
   },
   BUILD: {
     "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 100 },
     "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 135 },
-    hm: { schwelle: 45, racepace: 40, longrun: 165 },
+    hm: { schwelle: 55, racepace: 25, longrun: 165 },
     m: { schwelle: 35, racepace: 70, longrun: 195 },
   },
   RACE: {
     "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 90 },
     "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 110 },
-    hm: { racepace: 45, vo2_touch: 6, schwelle: 25, ga: 70, longrun: 135 },
+    hm: { racepace: 50, vo2_touch: 4, schwelle: 20, ga: 70, longrun: 135 },
     m: { racepace: 75, schwelle: 10, ga: 55, longrun: 150 },
   },
 };
@@ -1590,6 +1608,12 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_min: 15 },
         { reps: 2, work_min: 10, deload_step: true },
       ],
+      vo2_touch: [
+        { reps: 10, work_sec: 20, rest_sec: 70 },
+        { reps: 12, work_sec: 20, rest_sec: 70 },
+        { reps: 10, work_sec: 30, rest_sec: 90 },
+        { reps: 8, work_sec: 20, rest_sec: 90, deload_step: true },
+      ],
       racepace: [
         { reps: 3, work_km: 2.0 },
         { reps: 2, work_km: 3.0 },
@@ -1631,6 +1655,10 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_km: 4.0 },
         { reps: 2, work_km: 5.0 },
         { reps: 2, work_km: 3.0, deload_step: true },
+      ],
+      vo2_touch: [
+        { reps: 8, work_sec: 20, rest_sec: 90 },
+        { reps: 6, work_sec: 20, rest_sec: 90, deload_step: true },
       ],
       schwelle: [
         { reps: 2, work_min: 10 },
@@ -1690,7 +1718,11 @@ const KEY_SESSION_RECOMMENDATIONS = {
     "hm": {
       schwelle: ["2×20′ @ Schwelle", "3×15′ @ Schwelle"],
       racepace: ["3×3 km @ HM-Pace", "2×5 km @ HM-Pace (kontrolliert)"],
-      longrun: ["langer Lauf 120–150′"]
+      longrun: [
+        "120–150′ locker",
+        "Longrun mit EB: 90′ locker + 20′ steady + 10′ bis HM-nah (nicht drüber)",
+        "Longrun strukturiert: 80′ locker + 2×(10′ HM-Pace / 5′ locker) + auslaufen",
+      ]
     },
     "m": {
       racepace: ["3×5 km @ M-Pace", "14–18 km @ M im Longrun"],
@@ -1714,7 +1746,11 @@ const KEY_SESSION_RECOMMENDATIONS = {
       racepace: ["2×4–5 km @ HM-Pace"],
       vo2_touch: ["4×2′ @ VO2 (kurz, frisch)"],
       schwelle: ["2×10′ @ Schwelle (Erhalt)"],
-      ga: ["40–60′ GA1 locker"]
+      ga: ["40–60′ GA1 locker"],
+      longrun: [
+        "100–120′ locker (Taper: 75–90′)",
+        "Ökonomie-Longrun: 70′ locker + 2×15′ @ HM-Pace (5′ locker) + auslaufen",
+      ],
     },
     "m": {
       racepace: ["2×6–8 km @ M-Pace (3 Wochen vor WK)"],
@@ -1726,23 +1762,30 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
+const LONGRUN_EB_POLICY = {
+  hm: {
+    BASE: { everyDays: 14, type: "eb_light" },
+    BUILD: { everyDays: 14, type: "eb_progressive" },
+    RACE: { everyDays: 21, type: "economy_blocks" },
+  },
+};
 const KEY_PATTERN_1PERWEEK = {
   BASE: {
     "5k": ["schwelle", "schwelle", "vo2_touch"],
     "10k": ["schwelle", "schwelle", "vo2_touch"],
-    hm: ["schwelle", "schwelle", "schwelle", "strides"],
+    hm: ["steady", "strides", "steady", "schwelle"],
     m: ["schwelle", "schwelle", "schwelle", "strides"],
   },
   BUILD: {
     "5k": ["vo2_touch", "schwelle"],
     "10k": ["schwelle", "vo2_touch", "schwelle", "schwelle"],
-    hm: ["schwelle", "racepace", "schwelle", "racepace"],
+    hm: ["schwelle", "schwelle", "schwelle", "vo2_touch"],
     m: ["racepace", "racepace", "racepace", "racepace"],
   },
   RACE: {
     "5k": ["racepace", "racepace", "racepace"],
     "10k": ["racepace", "racepace", "schwelle"],
-    hm: ["racepace", "racepace", "racepace", "schwelle"],
+    hm: ["racepace", "racepace", "schwelle", "racepace"],
     m: ["racepace", "racepace", "racepace", "racepace"],
   },
 };
@@ -1912,10 +1955,13 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
       const goal = Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null;
       targetKm = goal ? Math.max(0.5, Math.round(goal * 0.8 * 10) / 10) : null;
     }
-  } else if (primaryType === "schwelle") {
+  } else if (primaryType === "schwelle" || primaryType === "vo2_touch") {
     if (step && Number.isFinite(step.work_min)) {
       const reps = Number(step.reps) || 1;
       targetMinutes = Math.max(1, reps * Number(step.work_min));
+    } else if (step && Number.isFinite(step.work_sec)) {
+      const reps = Number(step.reps) || 1;
+      targetMinutes = Math.max(1, (reps * Number(step.work_sec)) / 60);
     }
   }
 
@@ -1942,10 +1988,10 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
 
 function mapKeyTypeToIntensity(type, eventDistance) {
   const normalized = normalizeKeyType(type);
-  if (normalized === "ga" || normalized === "steady") return "easy";
+  if (normalized === "ga" || normalized === "steady" || normalized === "strides") return "easy";
   if (normalized === "schwelle") return "mid";
   if (normalized === "racepace") return eventDistance === "5k" ? "hard" : "mid";
-  if (normalized === "vo2_touch" || normalized === "strides") return "hard";
+  if (normalized === "vo2_touch") return "hard";
   return "easy";
 }
 
@@ -2115,6 +2161,12 @@ function getCurrentProgressionStepSession(block, distance, keyType, weekInBlock)
     return `${reps}×${Math.round(Number(currentStep.work_min))}′`;
   }
 
+  if (Number.isFinite(currentStep.work_sec)) {
+    const workSec = Math.round(Number(currentStep.work_sec));
+    const restSec = Number.isFinite(currentStep.rest_sec) ? ` / ${Math.round(Number(currentStep.rest_sec))}″ easy` : "";
+    return `${reps}×${workSec}″${restSec}`;
+  }
+
   return null;
 }
 
@@ -2151,13 +2203,21 @@ function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDe
       return `W${idx + 1}${deload} ${main}${total}`;
     }
 
-    const totalWork = Number.isFinite(step.total_work_min)
-      ? step.total_work_min
-      : reps * (Number(step.work_min) || 0);
-    const main = `${reps}×${step.work_min}`;
-    const rest = Number.isFinite(step.rest_min) ? ` (${step.rest_min}′ Trabpause)` : "";
+    const totalWorkMin = Number.isFinite(step.work_sec)
+      ? (reps * Number(step.work_sec)) / 60
+      : Number.isFinite(step.total_work_min)
+        ? step.total_work_min
+        : reps * (Number(step.work_min) || 0);
+    const main = Number.isFinite(step.work_sec)
+      ? `${reps}×${Math.round(Number(step.work_sec))}″`
+      : `${reps}×${step.work_min}`;
+    const rest = Number.isFinite(step.rest_sec)
+      ? ` (${Math.round(Number(step.rest_sec))}″ easy)`
+      : Number.isFinite(step.rest_min)
+        ? ` (${step.rest_min}′ Trabpause)`
+        : "";
     const deload = step.deload_step ? " Deload" : "";
-    const total = totalWork > 0 ? ` ≈${Math.round(totalWork)}′` : "";
+    const total = totalWorkMin > 0 ? ` ≈${Math.round(totalWorkMin)}′` : "";
     return `W${idx + 1}${deload} ${main}${rest}${total}`;
   });
 
