@@ -5254,10 +5254,11 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   }
 
   if (isLongrunProgression) {
+    const steadyPct = Number.isFinite(progressionMetrics?.steadyEndPct) ? Math.round(progressionMetrics.steadyEndPct * 100) : 65;
     if (progressionMetrics?.steadyDriftPct != null) {
-      lines.push(`Steady-Drift (0–65%): ${fmtSigned1(progressionMetrics.steadyDriftPct)}%`);
+      lines.push(`Steady-Drift (0–${steadyPct}%): ${fmtSigned1(progressionMetrics.steadyDriftPct)}%`);
     } else {
-      lines.push("Steady-Drift (0–65%): n/a");
+      lines.push(`Steady-Drift (0–${steadyPct}%): n/a`);
     }
     if (progressionMetrics) {
       lines.push(`Progression: Pace ${progressionMetrics.paceIncreased ? "↑" : "nicht klar steigend"}, HF ${progressionMetrics.hrProportional ? "proportional" : "überproportional"}`);
@@ -5378,8 +5379,30 @@ function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 60
   const durationSec = points[points.length - 1].t;
   if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
 
-  const steadyEndSec = durationSec * 0.65;
-  const progressionStartSec = durationSec * 0.75;
+  const mean = (arr) => (arr.length ? arr.reduce((sum, x) => sum + x, 0) / arr.length : null);
+  const pick = (fromPct) => points.filter((p) => p.t >= durationSec * fromPct);
+
+  // Suche den plausibelsten Progressionsstart zwischen 70–85% (deckt 70/30 bis 80/20 gut ab).
+  let best = null;
+  for (let pct = 0.7; pct <= 0.85; pct += 0.05) {
+    const progCand = pick(pct);
+    if (progCand.length < Math.max(6, Math.floor(points.length * 0.1))) continue;
+    const preCand = points.filter((p) => p.t < durationSec * pct);
+    if (preCand.length < Math.max(6, Math.floor(points.length * 0.2))) continue;
+
+    const spPre = mean(preCand.map((p) => p.v));
+    const spProg = mean(progCand.map((p) => p.v));
+    if (!(spPre > 0 && spProg > 0)) continue;
+
+    const gainPct = ((spProg - spPre) / spPre) * 100;
+    if (!best || gainPct > best.gainPct) best = { pct, gainPct };
+  }
+
+  const progressionStartPct = best?.gainPct >= 1 ? best.pct : 0.8;
+  const steadyEndPct = Math.max(0.6, Math.min(0.7, progressionStartPct - 0.1));
+
+  const steadyEndSec = durationSec * steadyEndPct;
+  const progressionStartSec = durationSec * progressionStartPct;
 
   const steadyPoints = points.filter((p) => p.t <= steadyEndSec);
   const progressionPoints = points.filter((p) => p.t >= progressionStartSec);
@@ -5399,7 +5422,6 @@ function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 60
   const progStart = progressionPoints.slice(0, third);
   const progEnd = progressionPoints.slice(Math.max(0, pLen - third));
 
-  const mean = (arr) => (arr.length ? arr.reduce((sum, x) => sum + x, 0) / arr.length : null);
   const startSpeed = mean(progStart.map((p) => p.v));
   const endSpeed = mean(progEnd.map((p) => p.v));
   const startHr = mean(progStart.map((p) => p.h));
@@ -5437,6 +5459,8 @@ function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 60
     below90PctHfmax,
     speedPct,
     hrPct,
+    steadyEndPct,
+    progressionStartPct,
   };
 }
 
