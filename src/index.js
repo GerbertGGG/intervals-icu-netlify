@@ -5382,11 +5382,11 @@ function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 60
   const mean = (arr) => (arr.length ? arr.reduce((sum, x) => sum + x, 0) / arr.length : null);
   const pick = (fromPct) => points.filter((p) => p.t >= durationSec * fromPct);
 
-  // Suche den plausibelsten Progressionsstart zwischen 70–85% (deckt 70/30 bis 80/20 gut ab).
+  // Suche den plausibelsten Progressionsstart zwischen 70–95% (deckt auch sehr späte 95/5-Finishes ab).
   let best = null;
-  for (let pct = 0.7; pct <= 0.85; pct += 0.05) {
+  for (let pct = 0.7; pct <= 0.95; pct += 0.05) {
     const progCand = pick(pct);
-    if (progCand.length < Math.max(6, Math.floor(points.length * 0.1))) continue;
+    if (progCand.length < Math.max(6, Math.floor(points.length * 0.05))) continue;
     const preCand = points.filter((p) => p.t < durationSec * pct);
     if (preCand.length < Math.max(6, Math.floor(points.length * 0.2))) continue;
 
