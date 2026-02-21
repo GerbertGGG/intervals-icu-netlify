@@ -167,17 +167,32 @@ export default {
 
   async scheduled(event, env, ctx) {
     // Daily sync: only yesterday+today (and Monday detective if today is Monday).
-    // This keeps cost low and still ensures minimum-stimulus comment exists.
+    // 20:00 Berlin run updates only run metrics so planning/report state remains untouched.
     const today = isoDate(new Date());
     const yday = isoDate(new Date(Date.now() - 86400000));
+    const runMetricsOnly = isEveningBerlinRun(event);
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600, {}).catch((e) => {
+      syncRange(env, yday, today, true, false, 600, { runMetricsOnly }).catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
   },
 };
+
+
+function isEveningBerlinRun(event) {
+  const t = Number(event?.scheduledTime);
+  if (!Number.isFinite(t)) return false;
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: "Europe/Berlin",
+    }).format(new Date(t))
+  );
+  return Number.isFinite(hour) && hour >= 20;
+}
 
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
@@ -3197,9 +3212,19 @@ function bucketLoadsByDay(runs) {
 }
 // ====== src/index.js (PART 2/4) ======
 
+function pickRunMetricsPatch(patch) {
+  const next = {};
+  const runMetricFields = [FIELD_VDOT, FIELD_EF, FIELD_DRIFT, FIELD_MOTOR];
+  for (const key of runMetricFields) {
+    if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key];
+  }
+  return next;
+}
+
 // ================= MAIN =================
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
   const ctx = createCtx(env, warmupSkipSec, debug);
+  const runMetricsOnly = runtimeOverrides?.runMetricsOnly === true;
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
   // For this sync we only need enough to compute what we will write inside [oldest..newest].
@@ -3744,26 +3769,24 @@ historyMetrics.keyCompliance = keyCompliance;
       eventDistance,
     }, { debug });
 
-    // Explicitly clear wellness comments; report is written only as NOTE.
-    patch.comments = "";
+    if (!runMetricsOnly) {
+      // Explicitly clear wellness comments; report is written only as NOTE.
+      patch.comments = "";
+    }
 
 
-
-
-
-    patches[day] = patch;
 
     if (debug) {
       notesPreview[day] = dailyReportText || "";
     }
 
     // Daily NOTE (calendar): stores the daily report text in blue
-    if (write) {
+    if (write && !runMetricsOnly) {
       await upsertDailyReportNote(env, day, dailyReportText || "");
     }
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
-    if (isMondayIso(day)) {
+    if (!runMetricsOnly && isMondayIso(day)) {
       let detectiveNoteText = null;
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
@@ -3791,10 +3814,14 @@ historyMetrics.keyCompliance = keyCompliance;
       }
     }
 
+    const patchToWrite = runMetricsOnly ? pickRunMetricsPatch(patch) : patch;
+
     if (write) {
-      await putWellnessDay(env, day, patch);
+      await putWellnessDay(env, day, patchToWrite);
       daysWritten++;
     }
+
+    patches[day] = patchToWrite;
   }
 
   return {
