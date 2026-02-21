@@ -301,9 +301,6 @@ const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const DETECTIVE_HISTORY_LIMIT = 12;
-// REMOVE or stop using this for Aerobic:
-// const BIKE_EQ_FACTOR = 0.65;
-
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
  *
@@ -1762,13 +1759,6 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
-const LONGRUN_EB_POLICY = {
-  hm: {
-    BASE: { everyDays: 14, type: "eb_light" },
-    BUILD: { everyDays: 14, type: "eb_progressive" },
-    RACE: { everyDays: 21, type: "economy_blocks" },
-  },
-};
 const KEY_PATTERN_1PERWEEK = {
   BASE: {
     "5k": ["schwelle", "schwelle", "vo2_touch"],
@@ -4161,7 +4151,6 @@ function buildComments(
   };
 
   const keyCap7 = keyCompliance?.maxKeysCap7 ?? MAX_KEYS_7D;
-  const actualKeys14 = keyCompliance?.actual14 ?? 0;
   const actualKeys7 = keyCompliance?.actual7 ?? 0;
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
@@ -4183,7 +4172,6 @@ function buildComments(
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
-  const daysToEvent = eventDate && todayIso ? diffDays(todayIso, eventDate) : null;
 
   const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
   const budgetBlocked = keyCompliance?.capExceeded === true;
@@ -4218,7 +4206,6 @@ function buildComments(
             ? "Easy only"
             : "Key möglich";
   const ampel = keyBlocked ? "🟠" : "🟢";
-  const keyStatus = keyBlocked && mainBlockReason ? `Key blockiert (${mainBlockReason})` : keyBlocked ? "Key blockiert" : "Key frei";
   const progressionStatus = lifeEvent?.freezeProgression
     ? "LifeEvent-Freeze"
     : runFloorState?.deloadActive
