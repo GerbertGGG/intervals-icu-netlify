@@ -4753,13 +4753,63 @@ function applyDetectiveWhy(rep, insights) {
   return { ...rep, text: lines.join("\n"), insights };
 }
 
+function appendFourWeekProgressSection(rep, insights) {
+  if (!rep) return rep;
+  const lines = rep.text.split("\n");
+  lines.push("");
+  lines.push("4-Wochen-Fazit:");
+
+  if (!insights) {
+    lines.push("- Aktuell keine belastbare 4-Wochen-Aussage möglich (zu wenig Vergleichsdaten).");
+    return { ...rep, text: lines.join("\n"), fourWeekInsights: null };
+  }
+
+  const improved = insights.improvements.length > 0 && insights.regressions.length === 0;
+  const notImproved = insights.regressions.length > 0;
+  const verdict = improved
+    ? "Ja – du bist in den letzten 4 Wochen besser geworden."
+    : notImproved
+    ? "Nein – in den letzten 4 Wochen gab es keine klare Verbesserung."
+    : "Unklar – keine eindeutige Verbesserung oder Verschlechterung in den letzten 4 Wochen.";
+
+  lines.push(`- Fortschritt letzte 4 Wochen: ${verdict}`);
+
+  if (insights.regressions.length || insights.context.length) {
+    lines.push("- Wenn nicht besser: wahrscheinliche Gründe:");
+    for (const item of [...insights.regressions, ...insights.context].slice(0, 6)) lines.push(`  - ${item}`);
+  }
+
+  if (insights.actions.length) {
+    lines.push("- Fokus für die nächsten Wochen:");
+    for (const item of insights.actions.slice(0, 4)) lines.push(`  - ${item}`);
+  }
+
+  return { ...rep, text: lines.join("\n"), fourWeekInsights: insights };
+}
+
+async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
+  const current = await computeDetectiveNote(env, mondayIso, warmupSkipSec, 28);
+  const mondayDate = new Date(mondayIso + "T00:00:00Z");
+  const prevMondayIso = isoDate(new Date(mondayDate.getTime() - 28 * 86400000));
+  const previous = await computeDetectiveNote(env, prevMondayIso, warmupSkipSec, 28);
+
+  if (!current?.summary || !previous?.summary) return null;
+
+  return buildDetectiveWhyInsights(
+    { ...current.summary, week: "letzte 4 Wochen" },
+    { ...previous.summary, week: "vorherige 4 Wochen" }
+  );
+}
+
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   for (const w of DETECTIVE_WINDOWS) {
     const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w);
     if (rep.ok) {
       const history = await loadDetectiveHistory(env, mondayIso);
       const insights = buildDetectiveWhyInsights(rep.summary, history[0]);
-      return applyDetectiveWhy(rep, insights);
+      const withWhy = applyDetectiveWhy(rep, insights);
+      const fourWeekInsights = await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec);
+      return appendFourWeekProgressSection(withWhy, fourWeekInsights);
     }
   }
   // fallback: last attempt (most info)
@@ -4771,7 +4821,9 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   );
   const history = await loadDetectiveHistory(env, mondayIso);
   const insights = buildDetectiveWhyInsights(last.summary, history[0]);
-  return applyDetectiveWhy(last, insights);
+  const withWhy = applyDetectiveWhy(last, insights);
+  const fourWeekInsights = await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec);
+  return appendFourWeekProgressSection(withWhy, fourWeekInsights);
 }
 
 function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
