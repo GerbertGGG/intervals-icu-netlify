@@ -1715,9 +1715,9 @@ const PROGRESSION_TEMPLATES = {
   RACE: {
     "5k": {
       racepace: [
-        { reps: 3, work_km: 0.8 },
-        { reps: 3, work_km: 1.0 },
-        { reps: 2, work_km: 1.2, deload_step: true },
+        { reps: 4, work_km: 0.8 },
+        { reps: 4, work_km: 1.0 },
+        { reps: 3, work_km: 1.0, deload_step: true },
       ],
     },
     "10k": {
@@ -1814,7 +1814,7 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
   RACE: {
     "5k": {
-      racepace: ["4–5×1000 m @ 5k-Pace", "8–10×400 m leicht schneller als 5k-Pace"],
+      racepace: ["4–5×1000 m @ 5k-Pace", "10–12×400 m leicht schneller als 5k-Pace"],
       schwelle: ["2×6′ @ Schwelle (nur Erhalt, wenn Racepace nicht geht)"],
       ga: ["30–45′ GA1 locker"]
     },
@@ -2490,7 +2490,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   if (block === "RACE") {
     if (dist === "5k") {
       return {
-        expectedKeysPerWeek: 1,
+        expectedKeysPerWeek: 1.5,
         maxKeysPerWeek: 2,
         allowedKeyTypes: ["racepace", "vo2_touch", "schwelle", "strides", "steady"],
         preferredKeyTypes: ["racepace", "vo2_touch", "schwelle"],
