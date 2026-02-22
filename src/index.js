@@ -326,6 +326,7 @@ const INTENSITY_CLEAR_OVERSHOOT = 0.01;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
+const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const DETECTIVE_HISTORY_LIMIT = 12;
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
@@ -3126,9 +3127,50 @@ async function getPersistedBlockState(ctx, env, dayIso) {
   const comment = wellness?.comments || wellness?.comment || null;
   const parsedFromComment = parseBlockStateFromComment(comment);
   const parsedFromFields = extractPersistedBlockStateFromWellness(wellness);
-  const parsed = parsedFromComment || parsedFromFields;
+  const parsedFromKv = await readLatestBlockStateKv(env, dayIso);
+  const parsed = parsedFromComment || parsedFromFields || parsedFromKv;
   ctx.blockStateCache.set(dayIso, parsed);
   return parsed;
+}
+
+function getBlockStateKvKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${BLOCK_STATE_KV_PREFIX}${athleteId}`;
+}
+
+async function readLatestBlockStateKv(env, dayIso) {
+  const key = getBlockStateKvKey(env);
+  const raw = await readKvJson(env, key);
+  if (!raw || typeof raw !== "object") return null;
+  if (raw.day && isIsoDate(raw.day) && raw.day > dayIso) return null;
+  const state = raw.state;
+  if (!state || typeof state !== "object" || !state.block || !state.startDate) return null;
+  return {
+    block: state.block,
+    wave: Number.isFinite(Number(state.wave)) ? Number(state.wave) : 0,
+    startDate: isIsoDate(state.startDate) ? state.startDate : null,
+    eventDate: isIsoDate(state.eventDate) ? state.eventDate : null,
+    eventDistance: state.eventDistance ?? null,
+    floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
+    effectiveFloorTarget: Number.isFinite(state.effectiveFloorTarget) ? state.effectiveFloorTarget : null,
+    timeInBlockDays: Number.isFinite(state.timeInBlockDays) ? state.timeInBlockDays : 0,
+    deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
+    lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
+    lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
+    lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
+    lastLifeEventCategory: state.lastLifeEventCategory ? normalizeEventCategory(state.lastLifeEventCategory) : "",
+    lastLifeEventStartISO: isIsoDate(state.lastLifeEventStartISO) ? state.lastLifeEventStartISO : null,
+    lastLifeEventEndISO: isIsoDate(state.lastLifeEventEndISO) ? state.lastLifeEventEndISO : null,
+  };
+}
+
+async function writeLatestBlockStateKv(env, dayIso, state) {
+  if (!state?.block || !state?.startDate) return;
+  const key = getBlockStateKvKey(env);
+  await writeKvJson(env, key, {
+    day: dayIso,
+    state,
+  });
 }
 
 function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics) {
@@ -3788,6 +3830,10 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
       lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
     };
+
+    if (write && !runSectionOnly) {
+      await writeLatestBlockStateKv(env, day, previousBlockState);
+    }
 
     addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
     addRunFloorDebug(ctx.debugOut, day, {
