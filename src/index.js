@@ -270,31 +270,57 @@ const STRENGTH_PHASE_PLANS = {
 };
 const INTENSITY_DISTRIBUTION_TARGET = {
   BASE: {
-    easyMin: 0.78,
+    easyMin: 0.7,
     easyMax: 0.9,
-    midMin: 0.06,
-    midMax: 0.18,
-    hardMax: 0.06,
+    midMin: 0.05,
+    midMax: 0.15,
+    hardMax: 0.1,
+    byDistance: {
+      "5k": { easyMin: 0.7, easyMax: 0.75, midMin: 0.12, midMax: 0.15, hardMax: 0.1 },
+      "10k": { easyMin: 0.75, easyMax: 0.8, midMin: 0.1, midMax: 0.12, hardMax: 0.08 },
+      hm: { easyMin: 0.8, easyMax: 0.85, midMin: 0.08, midMax: 0.1, hardMax: 0.05 },
+      m: { easyMin: 0.85, easyMax: 0.9, midMin: 0.05, midMax: 0.08, hardMax: 0.03 },
+    },
   },
   BUILD: {
-    easyMin: 0.72,
-    easyMax: 0.86,
+    easyMin: 0.6,
+    easyMax: 0.75,
     midMin: 0.1,
-    midMax: 0.24,
-    hardMax: 0.08,
+    midMax: 0.3,
+    hardMax: 0.2,
+    byDistance: {
+      "5k": { easyMin: 0.6, easyMax: 0.65, midMin: 0.2, midMax: 0.25, hardMax: 0.18 },
+      "10k": { easyMin: 0.6, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.12 },
+      hm: { easyMin: 0.65, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.08 },
+      m: { easyMin: 0.65, easyMax: 0.75, midMin: 0.1, midMax: 0.15, hardMax: 0.2 },
+    },
   },
   RACE: {
-    easyMin: 0.72,
-    easyMax: 0.86,
-    midMin: 0.1,
-    midMax: 0.22,
-    hardMax: 0.08,
+    easyMin: 0.6,
+    easyMax: 0.75,
+    midMin: 0,
+    midMax: 0.2,
+    hardMax: 0.35,
+    byDistance: {
+      "5k": { easyMin: 0.65, easyMax: 0.75, midMin: 0, midMax: 0.05, hardMax: 0.35 },
+      "10k": { easyMin: 0.6, easyMax: 0.65, midMin: 0.15, midMax: 0.2, hardMax: 0.25 },
+      hm: { easyMin: 0.6, easyMax: 0.65, midMin: 0.15, midMax: 0.2, hardMax: 0.25 },
+      m: { easyMin: 0.65, easyMax: 0.75, midMin: 0.05, midMax: 0.1, hardMax: 0.3 },
+    },
   },
   RESET: {
     easyMin: 0.9,
     hardMax: 0.03,
   },
 };
+
+function getIntensityDistributionTargets(block, eventDistance) {
+  const blockTargets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
+  const dist = normalizeEventDistance(eventDistance);
+  const byDistance = blockTargets?.byDistance?.[dist];
+  return byDistance ? { ...blockTargets, ...byDistance } : blockTargets;
+}
+
 const INTENSITY_LOOKBACK_DAYS = 14;
 const INTENSITY_CLEAR_OVERSHOOT = 0.01;
 const BASE_URL = "https://intervals.icu/api/v1";
@@ -2039,7 +2065,7 @@ function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventD
 }
 
 function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null) {
-  const targets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
+  const targets = getIntensityDistributionTargets(block, eventDistance);
   let lookbackDays = INTENSITY_LOOKBACK_DAYS;
   if (blockStartIso) {
     const end = new Date(dayIso + "T00:00:00Z");
