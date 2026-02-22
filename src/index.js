@@ -1716,14 +1716,14 @@ const PROGRESSION_TEMPLATES = {
     "5k": {
       racepace: [
         { reps: 4, work_km: 0.8 },
-        { reps: 4, work_km: 1.0 },
-        { reps: 3, work_km: 1.0, deload_step: true },
+        { reps: 6, work_km: 1.0 },
+        { reps: 4, work_km: 1.5 },
       ],
     },
-    "10k": {
-      racepace: [
-        { reps: 3, work_km: 1.5 },
-        { reps: 3, work_km: 2.0 },
+        { reps: 4, work_km: 2.0 },
+        { reps: 3, work_km: 3.0 },
+        { reps: 5, work_km: 2.0 },
+        { reps: 4, work_km: 3.0 },
         { reps: 2, work_km: 2.0, deload_step: true },
       ],
       schwelle: [
@@ -1814,9 +1814,21 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
   RACE: {
     "5k": {
-      racepace: ["4–5×1000 m @ 5k-Pace", "10–12×400 m leicht schneller als 5k-Pace"],
-      schwelle: ["2×6′ @ Schwelle (nur Erhalt, wenn Racepace nicht geht)"],
-      ga: ["30–45′ GA1 locker"]
+      racepace: [
+        "6×1 km @ 10k-Pace",
+        "5×1200 m @ 10k-Pace (kontrolliert)",
+        "3×2 km @ 10k-Pace",
+      ],
+      racepace: [
+        "4×2 km @ HM-Pace",
+        "3×3 km @ HM-Pace",
+        "2×4–5 km @ HM-Pace",
+      ],
+      racepace: [
+        "5×2 km @ M-Pace",
+        "4×3 km @ M-Pace",
+        "2×6–8 km @ M-Pace (3 Wochen vor WK)",
+      ],
     },
     "10k": {
       racepace: ["3×2 km @ 10k-Pace", "2×3 km @ 10k-Pace"],
