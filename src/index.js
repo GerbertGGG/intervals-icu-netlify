@@ -1599,11 +1599,47 @@ const PHASE_MAX_MINUTES = {
 };
 
 const RACEPACE_DISTANCE_TARGET_KM = {
-  "5k": 3.0,
-  "10k": 6.0,
-  hm: 12.0,
-  m: 20.0,
+  "5k": {
+    min: 3.2,
+    peak: 4.0,
+    max: 4.5,
+  },
+  "10k": {
+    min: 6.0,
+    peak: 7.0,
+    max: 8.0,
+  },
+  hm: {
+    min: 12.0,
+    peak: 15.0,
+    max: 16.0,
+  },
+  m: {
+    min: 16.0,
+    peak: 22.0,
+    max: 26.0,
+  },
 };
+
+function getRacepaceDistanceTarget(distance) {
+  const configured = RACEPACE_DISTANCE_TARGET_KM?.[distance];
+  if (Number.isFinite(configured)) {
+    return {
+      min: Number(configured),
+      peak: Number(configured),
+      max: Number(configured),
+    };
+  }
+  if (!configured || typeof configured !== "object") return null;
+  const min = Number(configured.min);
+  const peak = Number(configured.peak);
+  const max = Number(configured.max);
+  return {
+    min: Number.isFinite(min) && min > 0 ? min : null,
+    peak: Number.isFinite(peak) && peak > 0 ? peak : null,
+    max: Number.isFinite(max) && max > 0 ? max : null,
+  };
+}
 
 const PROGRESSION_TEMPLATES = {
   BUILD: {
@@ -2080,7 +2116,7 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
       const reps = Number(step.reps) || 1;
       targetKm = Math.max(0.5, reps * Number(step.work_km));
     } else {
-      const goal = Number(RACEPACE_DISTANCE_TARGET_KM?.[dist]) || null;
+      const goal = getRacepaceDistanceTarget(dist)?.peak || null;
       targetKm = goal ? Math.max(0.5, Math.round(goal * 0.8 * 10) / 10) : null;
     }
   } else if (primaryType === "schwelle" || primaryType === "vo2_touch") {
@@ -2316,9 +2352,15 @@ function formatDecimalKm(km) {
 }
 
 function getRacepaceTargetText(distance) {
-  const km = Number(RACEPACE_DISTANCE_TARGET_KM?.[distance]);
-  if (!Number.isFinite(km) || km <= 0) return "";
-  return ` RP-Ziel bis Blockende: ${formatDecimalKm(km)} km am Stück in RP-Qualität.`;
+  const target = getRacepaceDistanceTarget(distance);
+  if (!target) return "";
+  const peak = Number(target.peak);
+  if (!Number.isFinite(peak) || peak <= 0) return "";
+  const minText = Number.isFinite(target.min) && target.min > 0 ? `${formatDecimalKm(target.min)}–` : "";
+  const maxText = Number.isFinite(target.max) && target.max > peak
+    ? ` (max ${formatDecimalKm(target.max)} km)`
+    : "";
+  return ` RP-Ziel bis Blockende: ${minText}${formatDecimalKm(peak)} km am Stück in RP-Qualität${maxText}.`;
 }
 
 function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDeload) {
@@ -2579,7 +2621,7 @@ function computeRacepaceBlockProgress(ctx, context = {}) {
     if (Number.isFinite(workKm) && workKm > 0) doneKm += workKm;
   }
 
-  const targetKm = Number(RACEPACE_DISTANCE_TARGET_KM?.[eventDistance]);
+  const targetKm = Number(getRacepaceDistanceTarget(eventDistance)?.peak);
   const doneRounded = Math.round(doneKm * 10) / 10;
   const pct = Number.isFinite(targetKm) && targetKm > 0
     ? Math.min(999, Math.round((doneRounded / targetKm) * 100))
