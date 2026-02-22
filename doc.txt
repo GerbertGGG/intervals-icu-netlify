@@ -79,8 +79,8 @@ Weitere Parameter:
 - `race_start=YYYY-MM-DD` (optional, manueller Startpunkt für RACE-Betrachtung)
 - `block_start=YYYY-MM-DD` (optional, manueller Block-Start für BASE/BUILD/RACE-Zeitrechnung)
   - Alias-Parameter werden ebenfalls akzeptiert:
-    - `race_start_override`, `race_start_iso`
-    - `block_start_override`, `block_start_iso`
+    - `race_start_override`, `race_start_iso`, `raceStart`, `racestart` (auch case-insensitive)
+    - `block_start_override`, `block_start_iso`, `blockStart`, `blockstart` (auch case-insensitive, z. B. `Blockstart`)
 
 Validierung:
 - Datumsformat muss `YYYY-MM-DD` sein
