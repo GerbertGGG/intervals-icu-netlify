@@ -2134,25 +2134,32 @@ function buildProgressionSuggestion(progression) {
   return `${keyType}: ${progression?.templateText || progression?.note || ""}`.trim();
 }
 
-function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null) {
+function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null) {
   const block = context.block || "BASE";
   const distance = context.eventDistance || "10k";
-  const preferredType = resolvePrimaryKeyType(keyRules, block);
+  const preferredType = normalizeKeyType(plannedKeyType) || resolvePrimaryKeyType(keyRules, block);
   const catalog = KEY_SESSION_RECOMMENDATIONS?.[block]?.[distance] || null;
   if (!catalog) return null;
 
-  const preferredList = Array.isArray(catalog?.[preferredType]) ? catalog[preferredType] : null;
+  const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
+  const preferredAllowed = !allowed.length || allowed.includes(preferredType);
+  const safePreferred = preferredAllowed
+    ? preferredType
+    : (keyRules?.preferredKeyTypes || []).find((type) => allowed.includes(type)) || allowed[0] || null;
+
+  const preferredList = safePreferred && Array.isArray(catalog?.[safePreferred]) ? catalog[safePreferred] : null;
   const fallbackType = Object.keys(catalog).find((type) => Array.isArray(catalog[type]) && catalog[type].length > 0) || null;
-  const chosenType = preferredList?.length ? preferredType : fallbackType;
+  const chosenType = preferredList?.length ? safePreferred : fallbackType;
   const entries = chosenType ? catalog[chosenType] : null;
   if (!Array.isArray(entries) || !entries.length) return null;
 
   const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.weekInBlock);
   const sessionText = progressionStepSession || entries[0];
+  const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
   const racepaceTarget = chosenType === "racepace"
     ? getRacepaceTargetText(distance)
     : "";
-  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${racepaceTarget}`;
+  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${progressionMissingNote}${racepaceTarget}`;
 }
 
 function getCurrentProgressionStepSession(block, distance, keyType, weekInBlock) {
@@ -2497,7 +2504,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  const preferred = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const plannedKeyType = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  keyRules.plannedPrimaryType = plannedKeyType;
+  const preferred = plannedKeyType;
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
   const progression = computeProgressionTarget(context, keyRules, context.overlayMode || "NORMAL");
@@ -2565,7 +2574,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
   }
 
-  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression);
+  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType);
   if (explicitSession && keyAllowedNow) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
