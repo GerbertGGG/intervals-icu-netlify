@@ -6491,12 +6491,30 @@ function normalizeStreams(raw) {
 async function putWellnessDay(env, day, patch) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
-  const r = await fetch(url, {
-    method: "PUT",
-    headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
+  let currentPatch = { ...patch };
+
+  while (true) {
+    const r = await fetch(url, {
+      method: "PUT",
+      headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
+      body: JSON.stringify(currentPatch),
+    });
+
+    if (r.ok) return;
+
+    const errorText = await r.text();
+    const unknownField = extractUnknownWellnessField(errorText);
+    if (r.status !== 422 || !unknownField || !(unknownField in currentPatch)) {
+      throw new Error(`wellness PUT ${day} ${r.status}: ${errorText}`);
+    }
+
+    delete currentPatch[unknownField];
+  }
+}
+
+function extractUnknownWellnessField(errorText) {
+  const m = String(errorText || "").match(/Unrecognized wellness field \[([^\]]+)\]/i);
+  return m?.[1] || null;
 }
 
 // Events (for NOTE)
