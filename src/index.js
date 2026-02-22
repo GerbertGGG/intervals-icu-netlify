@@ -1932,25 +1932,110 @@ function resolvePrimaryKeyType(keyRules, block) {
   return "steady";
 }
 
-function pickProgressionStep({ block, dist, keyType, weekInBlock, overlayMode, weeksToEvent }) {
+function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDistance } = {}) {
+  if (!isIsoDate(blockStartIso) || !isIsoDate(dayIso)) return 0;
+  const normalizedKeyType = normalizeKeyType(keyType);
+  if (!normalizedKeyType) return 0;
+
+  let count = 0;
+  for (const activity of ctx?.activitiesAll || []) {
+    const activityIso = String(activity.start_date_local || activity.start_date || "").slice(0, 10);
+    if (!activityIso || activityIso < blockStartIso || activityIso > dayIso) continue;
+
+    const explicitKeyTag = hasKeyTag(activity);
+    const rawType = explicitKeyTag ? getKeyType(activity) : null;
+    let normalizedType = normalizeKeyType(rawType, {
+      activity,
+      movingTime: Number(activity?.moving_time ?? activity?.elapsed_time ?? 0),
+      eventDistance,
+    });
+    if (!explicitKeyTag && normalizedKeyType === "racepace" && hasRacepaceHint(activity)) {
+      normalizedType = "racepace";
+    }
+
+    if (normalizedType === normalizedKeyType) count++;
+  }
+
+  return count;
+}
+
+function getVolumeFactorForOverlay(overlayMode, fatigue = null, weeksToEvent = null) {
+  if (overlayMode === "RECOVER_OVERLAY") return 0.55;
+  if (overlayMode === "DELOAD") return fatigue?.override ? 0.6 : 0.7;
+  if (overlayMode === "TAPER") {
+    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) return 0.5;
+    return 0.6;
+  }
+  if (overlayMode === "LIFE_EVENT_HOLIDAY") return 0.65;
+  if (overlayMode === "LIFE_EVENT_STOP") return 0.5;
+  return 1;
+}
+
+function roundStepValue(value, increment, min = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  const step = Number.isFinite(increment) && increment > 0 ? increment : 1;
+  const rounded = Math.round(numeric / step) * step;
+  return Math.max(min, Number(rounded.toFixed(3)));
+}
+
+function applyVolumeFactorToStep(step, factor = 1) {
+  if (!step || !Number.isFinite(factor) || factor >= 0.999) return step;
+  const scaled = { ...step };
+
+  if (Number.isFinite(step.work_km)) {
+    scaled.work_km = roundStepValue(Number(step.work_km) * factor, 0.1, 0.1);
+  }
+  if (Number.isFinite(step.total_work_km)) {
+    scaled.total_work_km = roundStepValue(Number(step.total_work_km) * factor, 0.1, 0.1);
+  }
+  if (Number.isFinite(step.work_min)) {
+    scaled.work_min = roundStepValue(Number(step.work_min) * factor, 1, 1);
+  }
+  if (Number.isFinite(step.total_work_min)) {
+    scaled.total_work_min = roundStepValue(Number(step.total_work_min) * factor, 1, 1);
+  }
+  if (Number.isFinite(step.work_sec)) {
+    scaled.work_sec = roundStepValue(Number(step.work_sec) * factor, 15, 15);
+  }
+
+  return scaled;
+}
+
+function pickProgressionStep({ block, dist, keyType, overlayMode, weeksToEvent, ctx, dayIso, blockStartIso, fatigue, lifeEventEffect }) {
   const steps = PROGRESSION_TEMPLATES?.[block]?.[dist]?.[keyType];
   if (!Array.isArray(steps) || !steps.length) return { step: null, stepIndex: null, steps: null };
 
-  const cycleLength = steps.length;
-  let idx = (Math.max(1, Number(weekInBlock) || 1) - 1) % cycleLength;
+  const sessionsDone = getSessionsDoneInBlock(ctx, {
+    blockStartIso,
+    dayIso,
+    keyType,
+    eventDistance: dist,
+  });
+  let idx = Math.min(Math.max(0, sessionsDone), steps.length - 1);
 
   if (overlayMode === "DELOAD") {
-    const deloadIdx = steps.findIndex((s) => s?.deload_step);
-    idx = deloadIdx >= 0 ? deloadIdx : Math.max(0, idx - 1);
+    idx = Math.max(0, idx - 1);
   } else if (overlayMode === "RECOVER_OVERLAY") {
     idx = 0;
   } else if (overlayMode === "TAPER") {
-    const deloadIdx = steps.findIndex((s) => s?.deload_step);
-    idx = deloadIdx >= 0 ? deloadIdx : Math.max(0, idx - 1);
+    idx = Math.max(0, idx - 1);
     if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) idx = 0;
   }
 
-  return { step: steps[idx], stepIndex: idx, steps };
+  if (lifeEventEffect?.freezeProgression) {
+    idx = Math.max(0, Math.min(idx, Math.max(0, sessionsDone - 1)));
+  }
+
+  if (lifeEventEffect?.name === "post_holiday_ramp") {
+    idx = Math.max(0, idx - 1);
+  }
+
+  const volumeFactor = getVolumeFactorForOverlay(overlayMode, fatigue, weeksToEvent);
+  const rawStep = steps[idx] || null;
+  const step = applyVolumeFactorToStep(rawStep, volumeFactor);
+
+  return { step, rawStep, stepIndex: idx, steps, sessionsDone, volumeFactor };
 }
 
 function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NORMAL") {
@@ -1975,13 +2060,17 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
   const weekInBlock = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
   const budgetDays = primaryType === "racepace" ? RACEPACE_BUDGET_DAYS : 7;
   const maxMinutes = Math.max(1, Math.round((rawMaxMinutes * budgetDays) / 7));
-  const { step, stepIndex } = pickProgressionStep({
+  const { step, stepIndex, sessionsDone, volumeFactor } = pickProgressionStep({
     block,
     dist,
     keyType: primaryType,
-    weekInBlock,
     overlayMode,
     weeksToEvent,
+    ctx: context.ctx,
+    dayIso: context.dayIso,
+    blockStartIso: context.blockStartIso,
+    fatigue: context.fatigue,
+    lifeEventEffect: context.lifeEvent,
   });
 
   let targetMinutes = null;
@@ -2015,6 +2104,8 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
     targetMinutes,
     targetKm,
     stepIndex,
+    sessionsDoneInBlock: sessionsDone,
+    volumeFactor,
     templateText,
     note:
       overlayMode === "DELOAD"
@@ -2176,7 +2267,7 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   const entries = chosenType ? catalog[chosenType] : null;
   if (!Array.isArray(entries) || !entries.length) return null;
 
-  const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.weekInBlock);
+  const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.stepIndex);
   const sessionText = progressionStepSession || entries[0];
   const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
   const racepaceTarget = chosenType === "racepace"
@@ -2185,13 +2276,12 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   return `${formatKeyType(chosenType)} konkret: ${sessionText}.${progressionMissingNote}${racepaceTarget}`;
 }
 
-function getCurrentProgressionStepSession(block, distance, keyType, weekInBlock) {
+function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
   const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
   if (!Array.isArray(steps) || !steps.length) return null;
 
-  const cycleLength = steps.length;
-  const weekIndex = Math.max(1, Number(weekInBlock) || 1);
-  const currentStep = steps[((weekIndex - 1) % cycleLength)];
+  const idx = Math.max(0, Math.min(steps.length - 1, Number(stepIndex) || 0));
+  const currentStep = steps[idx];
   if (!currentStep) return null;
 
   const reps = Number(currentStep.reps) || 0;
@@ -3826,6 +3916,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
       weekInBlock,
+      lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
     });
 if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
