@@ -76,6 +76,11 @@ Weitere Parameter:
   - `true`: synchron, liefert umfangreiches JSON (`patches`, `debug`, `notesPreview`)
   - `false`: asynchron via `waitUntil`, Response sofort
 - `warmup_skip=600` (Sekunden, clamp 0..1800)
+- `race_start=YYYY-MM-DD` (optional, manueller Startpunkt für RACE-Betrachtung)
+- `block_start=YYYY-MM-DD` (optional, manueller Block-Start für BASE/BUILD/RACE-Zeitrechnung)
+  - Alias-Parameter werden ebenfalls akzeptiert:
+    - `race_start_override`, `race_start_iso`
+    - `block_start_override`, `block_start_iso`
 
 Validierung:
 - Datumsformat muss `YYYY-MM-DD` sein
