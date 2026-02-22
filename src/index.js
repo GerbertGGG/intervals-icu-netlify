@@ -517,7 +517,6 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
-const FIELD_BLOCK_START = "blockStart";
 const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
 // Streams/types we need often
@@ -3009,15 +3008,13 @@ function extractPersistedBlockStateFromWellness(wellness) {
   if (!wellness) return null;
   const blockRaw = wellness?.[FIELD_BLOCK] ?? wellness?.block ?? null;
   const block = String(blockRaw || "").trim().toUpperCase();
-  const startRaw = wellness?.blockStart ?? null;
-  const startDate = isIsoDate(startRaw) ? startRaw : null;
-  if (!block || !startDate) return null;
+  if (!block) return null;
   const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
   const wave = Number.isFinite(Number(waveRaw)) ? Number(waveRaw) : 0;
   return {
     block,
     wave,
-    startDate,
+    startDate: null,
     eventDate: null,
     eventDistance: null,
     floorTarget: null,
@@ -3738,7 +3735,6 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     }
     historyMetrics.keyCompliance = keyCompliance;
     patch[FIELD_BLOCK] = blockState.block;
-    patch[FIELD_BLOCK_START] = blockState.startDate || day;
 
     previousBlockState = {
       block: blockState.block,
