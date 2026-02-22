@@ -517,6 +517,8 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
+const FIELD_BLOCK_WAVE = "BlockWave";
+const FIELD_BLOCK_START = "blockStart";
 const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
 // Streams/types we need often
@@ -3735,8 +3737,11 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       keyCompliance.keyAllowedNow = false;
       keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}: keine Keys (Freeze aktiv).`;
     }
-historyMetrics.keyCompliance = keyCompliance;
-    // No custom wellness fields for block state.
+    historyMetrics.keyCompliance = keyCompliance;
+    patch[FIELD_BLOCK] = blockState.block;
+    if (blockState.wave != null) patch[FIELD_BLOCK_WAVE] = Number(blockState.wave) || 0;
+    patch[FIELD_BLOCK_START] = blockState.startDate || day;
+
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
