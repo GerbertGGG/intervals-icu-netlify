@@ -81,17 +81,39 @@ export default {
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
-      const raceStartParamRaw =
-        url.searchParams.get("race_start") ||
-        url.searchParams.get("race_start_override") ||
-        url.searchParams.get("race_start_iso") ||
-        "";
+      const getSearchParamAny = (keys) => {
+        for (const k of keys) {
+          const direct = url.searchParams.get(k);
+          if (direct) return direct;
+        }
+        const lowerMap = new Map();
+        for (const [k, v] of url.searchParams.entries()) {
+          if (!v) continue;
+          const lower = String(k || "").toLowerCase();
+          if (!lowerMap.has(lower)) lowerMap.set(lower, v);
+        }
+        for (const k of keys) {
+          const v = lowerMap.get(String(k).toLowerCase());
+          if (v) return v;
+        }
+        return "";
+      };
+
+      const raceStartParamRaw = getSearchParamAny([
+        "race_start",
+        "race_start_override",
+        "race_start_iso",
+        "racestart",
+        "raceStart",
+      ]);
       const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-      const blockStartParamRaw =
-        url.searchParams.get("block_start") ||
-        url.searchParams.get("block_start_override") ||
-        url.searchParams.get("block_start_iso") ||
-        "";
+      const blockStartParamRaw = getSearchParamAny([
+        "block_start",
+        "block_start_override",
+        "block_start_iso",
+        "blockstart",
+        "blockStart",
+      ]);
       const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
       let oldest, newest;
