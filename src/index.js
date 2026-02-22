@@ -517,7 +517,6 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
-const FIELD_BLOCK_WAVE = "BlockWave";
 const FIELD_BLOCK_START = "blockStart";
 const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
@@ -3739,7 +3738,6 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     }
     historyMetrics.keyCompliance = keyCompliance;
     patch[FIELD_BLOCK] = blockState.block;
-    if (blockState.wave != null) patch[FIELD_BLOCK_WAVE] = Number(blockState.wave) || 0;
     patch[FIELD_BLOCK_START] = blockState.startDate || day;
 
     previousBlockState = {
