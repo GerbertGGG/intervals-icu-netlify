@@ -517,7 +517,7 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
-const FIELD_BLOCK_WAVE = "BlockWave";
+const FIELD_BLOCK_WAVE = "blockWave";
 const FIELD_BLOCK_START = "blockStart";
 const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
@@ -3013,7 +3013,7 @@ function extractPersistedBlockStateFromWellness(wellness) {
   const startRaw = wellness?.blockStart ?? null;
   const startDate = isIsoDate(startRaw) ? startRaw : null;
   if (!block || !startDate) return null;
-  const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
+  const waveRaw = wellness?.blockWave ?? wellness?.BlockWave ?? 0;
   const wave = Number.isFinite(Number(waveRaw)) ? Number(waveRaw) : 0;
   return {
     block,
