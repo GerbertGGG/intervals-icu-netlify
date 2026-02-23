@@ -4953,6 +4953,7 @@ function buildDetectiveWhyInsights(current, previous) {
   const pct = (a, b) => (a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null);
 
   const efPct = pct(current.efMed, previous.efMed);
+  const vdotPct = pct(current.vdotMed, previous.vdotMed);
   const driftDelta = current.driftMed != null && previous.driftMed != null ? current.driftMed - previous.driftMed : null;
 
   if (efPct != null && efPct >= 1 && driftDelta != null && driftDelta <= -1) {
@@ -4963,7 +4964,11 @@ function buildDetectiveWhyInsights(current, previous) {
     actions.push("Mehr ruhige GA-Läufe für Ökonomie & Stabilität (konstant, nicht hart).");
   } else {
     if (efPct != null && Math.abs(efPct) >= 1) {
-      (efPct > 0 ? improvements : regressions).push(`EF ${efPct > 0 ? "+" : ""}${efPct.toFixed(1)}% (Ökonomie).`);
+      const vdotSuffix =
+        vdotPct != null && Math.abs(vdotPct) >= 0.5 ? ` | VDOT ${vdotPct > 0 ? "+" : ""}${vdotPct.toFixed(1)}%` : "";
+      (efPct > 0 ? improvements : regressions).push(
+        `EF ${efPct > 0 ? "+" : ""}${efPct.toFixed(1)}% (Ökonomie)${vdotSuffix}.`
+      );
       if (efPct > 0) {
         helped.push("Bessere Laufökonomie (EF ↑) – das hat geholfen.");
       } else {
@@ -5129,6 +5134,10 @@ function buildFourWeekValuesLine(insights) {
     isFiniteNumber(c.efMed) && isFiniteNumber(p.efMed)
       ? `${c.efMed.toFixed(3)} vs ${p.efMed.toFixed(3)}`
       : "n/a";
+  const vdotText =
+    isFiniteNumber(c.vdotMed) && isFiniteNumber(p.vdotMed)
+      ? `${c.vdotMed.toFixed(1)} vs ${p.vdotMed.toFixed(1)}`
+      : "n/a";
   const driftText =
     isFiniteNumber(c.driftMed) && isFiniteNumber(p.driftMed)
       ? `${c.driftMed.toFixed(1)}%-Pkt vs ${p.driftMed.toFixed(1)}%-Pkt`
@@ -5142,7 +5151,7 @@ function buildFourWeekValuesLine(insights) {
       ? `${c.runsPerWeek.toFixed(1)} vs ${p.runsPerWeek.toFixed(1)}`
       : "n/a";
 
-  return `EF ${efText} | Drift ${driftText} | Load/Woche ${loadText} | Läufe/Woche ${runsText}`;
+  return `EF ${efText} | VDOT ${vdotText} | Drift ${driftText} | Load/Woche ${loadText} | Läufe/Woche ${runsText}`;
 }
 
 async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
@@ -5464,6 +5473,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     monotony,
     strain,
     efMed: comp.efMed ?? null,
+    vdotMed: comp.efMed != null ? vdotLikeFromEf(comp.efMed) : null,
     driftMed: comp.driftMed ?? null,
     compN: comp.n ?? 0,
     lifeEventDays,
