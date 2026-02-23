@@ -1801,7 +1801,11 @@ const KEY_SESSION_RECOMMENDATIONS = {
     },
     "hm": {
       schwelle: ["2×20′ @ Schwelle", "3×15′ @ Schwelle"],
-      racepace: ["3×3 km @ HM-Pace", "2×5 km @ HM-Pace (kontrolliert)"],
+      racepace: [
+        "Tempowechsel: 5×(3′ @ HM-Pace / 2′ locker)",
+        "Tempowechsel: 4×(5′ leicht über HM-Pace / 3′ locker)",
+        "Progressiver Tempowechsellauf 40–50′",
+      ],
       longrun: [
         "120–150′ locker",
         "Longrun mit EB: 90′ locker + 20′ steady + 10′ bis HM-nah (nicht drüber)",
@@ -1839,7 +1843,10 @@ const KEY_SESSION_RECOMMENDATIONS = {
       ga: ["40–50′ GA1 locker"]
     },
     "hm": {
-      racepace: ["2×4–5 km @ HM-Pace"],
+      racepace: [
+        "2×5 km @ HM-Pace",
+        "10–14 km progressiv bis HM-Pace (Rennsimulation)",
+      ],
       vo2_touch: ["4×2′ @ VO2 (kurz, frisch)"],
       schwelle: ["2×10′ @ Schwelle (Erhalt)"],
       ga: ["40–60′ GA1 locker"],
