@@ -3294,7 +3294,10 @@ async function getPersistedBlockState(ctx, env, dayIso) {
   const parsedFromComment = parseBlockStateFromComment(comment);
   const parsedFromFields = extractPersistedBlockStateFromWellness(wellness);
   const parsedFromKv = await readLatestBlockStateKv(env, dayIso);
-  const parsed = parsedFromComment || parsedFromFields || parsedFromKv;
+  // Prefer sources that include a persisted start date (comment/KV).
+  // Wellness custom fields currently only carry block/wave and would otherwise
+  // wipe the remembered block start on the next run.
+  const parsed = parsedFromComment || parsedFromKv || parsedFromFields;
   ctx.blockStateCache.set(dayIso, parsed);
   return parsed;
 }
