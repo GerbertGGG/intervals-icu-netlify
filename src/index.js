@@ -1720,6 +1720,8 @@ const PROGRESSION_TEMPLATES = {
         { reps: 4, work_km: 1.5 },
       ],
     },
+    "10k": {
+      racepace: [
         { reps: 4, work_km: 2.0 },
         { reps: 3, work_km: 3.0 },
         { reps: 5, work_km: 2.0 },
