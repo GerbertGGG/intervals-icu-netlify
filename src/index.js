@@ -5105,6 +5105,7 @@ function appendFourWeekProgressSection(rep, insights) {
     : "Unklar – keine eindeutige Verbesserung oder Verschlechterung in den letzten 4 Wochen.";
 
   lines.push(`- Fortschritt letzte 4 Wochen: ${verdict}`);
+  lines.push(`- Werte (letzte 4 Wochen vs vorherige 4 Wochen): ${buildFourWeekValuesLine(insights)}`);
 
   if (!improved && (insights.regressions.length || insights.context.length)) {
     lines.push("- Wenn nicht besser: wahrscheinliche Gründe:");
@@ -5119,6 +5120,31 @@ function appendFourWeekProgressSection(rep, insights) {
   return { ...rep, text: lines.join("\n"), fourWeekInsights: insights };
 }
 
+function buildFourWeekValuesLine(insights) {
+  const c = insights?.currentSummary;
+  const p = insights?.previousSummary;
+  if (!c || !p) return "noch keine Werte verfügbar.";
+
+  const efText =
+    isFiniteNumber(c.efMed) && isFiniteNumber(p.efMed)
+      ? `${c.efMed.toFixed(3)} vs ${p.efMed.toFixed(3)}`
+      : "n/a";
+  const driftText =
+    isFiniteNumber(c.driftMed) && isFiniteNumber(p.driftMed)
+      ? `${c.driftMed.toFixed(1)}%-Pkt vs ${p.driftMed.toFixed(1)}%-Pkt`
+      : "n/a";
+  const loadText =
+    isFiniteNumber(c.weeklyLoad) && isFiniteNumber(p.weeklyLoad)
+      ? `${Math.round(c.weeklyLoad)} vs ${Math.round(p.weeklyLoad)}`
+      : "n/a";
+  const runsText =
+    isFiniteNumber(c.runsPerWeek) && isFiniteNumber(p.runsPerWeek)
+      ? `${c.runsPerWeek.toFixed(1)} vs ${p.runsPerWeek.toFixed(1)}`
+      : "n/a";
+
+  return `EF ${efText} | Drift ${driftText} | Load/Woche ${loadText} | Läufe/Woche ${runsText}`;
+}
+
 async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
   const current = await computeDetectiveNote(env, mondayIso, warmupSkipSec, 28);
   const mondayDate = new Date(mondayIso + "T00:00:00Z");
@@ -5127,10 +5153,17 @@ async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
 
   if (!current?.summary || !previous?.summary) return null;
 
-  return buildDetectiveWhyInsights(
+  const baseInsights = buildDetectiveWhyInsights(
     { ...current.summary, week: "letzte 4 Wochen" },
     { ...previous.summary, week: "vorherige 4 Wochen" }
   );
+  if (!baseInsights) return null;
+
+  return {
+    ...baseInsights,
+    currentSummary: current.summary,
+    previousSummary: previous.summary,
+  };
 }
 
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
