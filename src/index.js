@@ -5106,7 +5106,7 @@ function appendFourWeekProgressSection(rep, insights) {
 
   lines.push(`- Fortschritt letzte 4 Wochen: ${verdict}`);
 
-  if (insights.regressions.length || insights.context.length) {
+  if (!improved && (insights.regressions.length || insights.context.length)) {
     lines.push("- Wenn nicht besser: wahrscheinliche Gründe:");
     for (const item of [...insights.regressions, ...insights.context].slice(0, 6)) lines.push(`  - ${item}`);
   }
