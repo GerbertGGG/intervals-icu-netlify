@@ -5101,18 +5101,20 @@ function appendFourWeekProgressSection(rep, insights) {
     return { ...rep, text: lines.join("\n"), fourWeekInsights: null };
   }
 
-  const improved = insights.improvements.length > 0 && insights.regressions.length === 0;
-  const notImproved = insights.regressions.length > 0;
-  const verdict = improved
-    ? "Ja – du bist in den letzten 4 Wochen besser geworden."
-    : notImproved
-    ? "Nein – in den letzten 4 Wochen gab es keine klare Verbesserung."
-    : "Unklar – keine eindeutige Verbesserung oder Verschlechterung in den letzten 4 Wochen.";
+  const verdict = buildFourWeekVerdict(insights);
 
   lines.push(`- Fortschritt letzte 4 Wochen: ${verdict}`);
   lines.push(`- Werte (letzte 4 Wochen vs vorherige 4 Wochen): ${buildFourWeekValuesLine(insights)}`);
+  if (isFiniteNumber(insights.progressScore)) {
+    lines.push(
+      `- Progress-Score (Output-basiert): ${insights.progressScore.toFixed(2)} → ${insights.progressCategory}`
+    );
+  }
+  if (isFiniteNumber(insights.fatigueAdjustedProgress)) {
+    lines.push(`- Fatigue-korrigiert (VDOT + Load-Effekt): ${fmtSigned1(insights.fatigueAdjustedProgress)}`);
+  }
 
-  if (!improved && (insights.regressions.length || insights.context.length)) {
+  if (insights.progressCategory !== "klarer Fortschritt" && (insights.regressions.length || insights.context.length)) {
     lines.push("- Wenn nicht besser: wahrscheinliche Gründe:");
     for (const item of [...insights.regressions, ...insights.context].slice(0, 6)) lines.push(`  - ${item}`);
   }
@@ -5123,6 +5125,17 @@ function appendFourWeekProgressSection(rep, insights) {
   }
 
   return { ...rep, text: lines.join("\n"), fourWeekInsights: insights };
+}
+
+function buildFourWeekVerdict(insights) {
+  const category = insights?.progressCategory || "stabil";
+  if (category === "klarer Fortschritt") {
+    return "Ja – messbarer Fortschritt in den letzten 4 Wochen (Output > Belastungsanstieg).";
+  }
+  if (category === "Rückgang / Fatigue") {
+    return "Nein – aktuell kein messbarer Leistungsgewinn; eher Ermüdung bzw. Rückgang sichtbar.";
+  }
+  return "Stabil – Leistungsniveau aktuell eher gehalten (Adaption läuft, Fortschritt noch nicht klar messbar).";
 }
 
 function buildFourWeekValuesLine(insights) {
@@ -5172,6 +5185,44 @@ async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
     ...baseInsights,
     currentSummary: current.summary,
     previousSummary: previous.summary,
+    ...buildFourWeekProgressMetrics(current.summary, previous.summary),
+  };
+}
+
+function buildFourWeekProgressMetrics(current, previous) {
+  const efDelta = isFiniteNumber(current?.efMed) && isFiniteNumber(previous?.efMed) ? current.efMed - previous.efMed : null;
+  const vdotDelta =
+    isFiniteNumber(current?.vdotMed) && isFiniteNumber(previous?.vdotMed) ? current.vdotMed - previous.vdotMed : null;
+  const driftDelta =
+    isFiniteNumber(current?.driftMed) && isFiniteNumber(previous?.driftMed) ? current.driftMed - previous.driftMed : null;
+  const loadDeltaPct =
+    isFiniteNumber(current?.weeklyLoad) && isFiniteNumber(previous?.weeklyLoad) && previous.weeklyLoad > 0
+      ? ((current.weeklyLoad - previous.weeklyLoad) / previous.weeklyLoad) * 100
+      : null;
+
+  const progressScore =
+    efDelta == null || vdotDelta == null || driftDelta == null
+      ? null
+      : efDelta * 1000 * 0.4 + vdotDelta * 0.3 - driftDelta * 1.5 * 0.3;
+  const fatigueAdjustedProgress =
+    vdotDelta == null
+      ? null
+      : vdotDelta + (isFiniteNumber(loadDeltaPct) ? loadDeltaPct * 0.1 : 0);
+
+  let progressCategory = "stabil";
+  if (progressScore != null) {
+    if (progressScore > 0.5) progressCategory = "klarer Fortschritt";
+    else if (progressScore < -0.3) progressCategory = "Rückgang / Fatigue";
+  }
+
+  return {
+    efDelta,
+    vdotDelta,
+    driftDelta,
+    loadDeltaPct,
+    progressScore,
+    fatigueAdjustedProgress,
+    progressCategory,
   };
 }
 
