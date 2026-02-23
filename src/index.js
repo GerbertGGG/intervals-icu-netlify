@@ -6710,17 +6710,74 @@ function getModePolicy(modeInfo) {
 
 
 // ================= INTERVALS API =================
+const INTERVALS_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(value) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
+  const retryAt = Date.parse(value);
+  if (Number.isFinite(retryAt)) {
+    const delta = retryAt - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return null;
+}
+
+async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
+  const label = meta.label || "intervals_api";
+  const maxRetries = Number.isFinite(meta.maxRetries) ? meta.maxRetries : 3;
+  const baseDelayMs = Number.isFinite(meta.baseDelayMs) ? meta.baseDelayMs : 500;
+
+  let attempt = 0;
+  while (true) {
+    let response;
+    try {
+      response = await fetch(url, options);
+    } catch (err) {
+      if (attempt >= maxRetries) throw err;
+      const delayMs = baseDelayMs * Math.pow(2, attempt);
+      console.warn(`${label} network error, retrying in ${delayMs}ms`, err);
+      attempt++;
+      await sleep(delayMs);
+      continue;
+    }
+
+    if (!INTERVALS_RETRYABLE_STATUS.has(response.status) || attempt >= maxRetries) {
+      return response;
+    }
+
+    const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+    const delayMs = Math.max(baseDelayMs * Math.pow(2, attempt), retryAfterMs ?? 0);
+    console.warn(`${label} ${response.status}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`);
+    attempt++;
+    await sleep(delayMs);
+  }
+}
+
 async function fetchIntervalsActivities(env, oldest, newest) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}`;
-  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
+  const r = await fetchIntervalsWithRetry(url, {
+    headers: { Authorization: authHeader(env) },
+  }, {
+    label: "activities",
+  });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
 async function fetchIntervalsStreams(env, activityId, types) {
   const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
-  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
+  const r = await fetchIntervalsWithRetry(url, {
+    headers: { Authorization: authHeader(env) },
+  }, {
+    label: `streams ${activityId}`,
+  });
   if (!r.ok) {
   const txt = await r.text().catch(() => "");
   throw new Error(`streams ${r.status}: ${txt.slice(0, 400)}`);
@@ -6753,10 +6810,12 @@ function normalizeStreams(raw) {
 async function putWellnessDay(env, day, patch) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
-  const r = await fetch(url, {
+  const r = await fetchIntervalsWithRetry(url, {
     method: "PUT",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(patch),
+  }, {
+    label: `wellness PUT ${day}`,
   });
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
@@ -6766,7 +6825,11 @@ async function fetchIntervalsEvents(env, oldest, newest) {
   // local dates (yyyy-MM-dd)
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
-  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
+  const r = await fetchIntervalsWithRetry(url, {
+    headers: { Authorization: authHeader(env) },
+  }, {
+    label: "events",
+  });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
   return r.json();
 }
@@ -6774,10 +6837,12 @@ async function fetchIntervalsEvents(env, oldest, newest) {
 async function createIntervalsEvent(env, eventObj) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events`;
-  const r = await fetch(url, {
+  const r = await fetchIntervalsWithRetry(url, {
     method: "POST",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(eventObj),
+  }, {
+    label: "events POST",
   });
   if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
   return r.json();
@@ -6786,10 +6851,12 @@ async function createIntervalsEvent(env, eventObj) {
 async function updateIntervalsEvent(env, eventId, eventObj) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events/${encodeURIComponent(String(eventId))}`;
-  const r = await fetch(url, {
+  const r = await fetchIntervalsWithRetry(url, {
     method: "PUT",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(eventObj),
+  }, {
+    label: `events PUT ${eventId}`,
   });
   if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
   return r.json();
@@ -6811,7 +6878,9 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   const newest = toLocalYMD(end);
 
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
-  const res = await fetch(url, { headers: { Authorization: auth } });
+  const res = await fetchIntervalsWithRetry(url, { headers: { Authorization: auth } }, {
+    label: "events preview",
+  });
 
   if (!res.ok) {
     if (debug) console.log("⚠️ Event-API fehlgeschlagen:", res.status, "url:", url);
