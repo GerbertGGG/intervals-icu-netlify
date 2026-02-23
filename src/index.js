@@ -5226,6 +5226,15 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     category: normalizeEventCategory(e?.category),
     days: eventDaysWithinWindow(e),
   }));
+  const activeLifeEventsAtWindowEnd = lifeEvents.filter((event) => isLifeEventActiveOnDay(event, endIsoInclusive));
+  const activeLifeEventSummary = activeLifeEventsAtWindowEnd
+    .map((e) => normalizeEventCategory(e?.category))
+    .filter(Boolean)
+    .reduce((acc, category) => {
+      acc[category] = (acc[category] || 0) + 1;
+      return acc;
+    }, {});
+  const hasActiveLifeEventAtWindowEnd = Object.keys(activeLifeEventSummary).length > 0;
   const lifeEventDays = sum(eventDays.map((x) => x.days));
   const stopLifeEventDays = sum(eventDays.filter((x) => x.category === "SICK" || x.category === "INJURED").map((x) => x.days));
   const holidayLifeEventDays = sum(eventDays.filter((x) => x.category === "HOLIDAY").map((x) => x.days));
@@ -5362,9 +5371,15 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   lines.push(title);
   lines.push("");
   lines.push("Struktur (Trainingslehre):");
-  if (hasLifeEvent) {
+  if (hasActiveLifeEventAtWindowEnd) {
     lines.push(
-      `- Verfügbarkeit: eingeschränkt (${Object.entries(lifeEventSummary)
+      `- Verfügbarkeit: eingeschränkt (aktives LifeEvent: ${Object.entries(activeLifeEventSummary)
+        .map(([category, count]) => `${getLifeEventCategoryLabel(category)}${count > 1 ? ` ×${count}` : ""}`)
+        .join(" · ")})`
+    );
+  } else if (hasLifeEvent) {
+    lines.push(
+      `- Verfügbarkeit: normal (aktuell kein LifeEvent; im Fenster: ${Object.entries(lifeEventSummary)
         .map(([category, days]) => `${getLifeEventCategoryLabel(category)} ${days}d`)
         .join(" · ")})`
     );
