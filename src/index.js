@@ -4347,6 +4347,16 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
+function buildWellnessRecommendation({ readinessAmpel, warningCount, hasHardRedFlag }) {
+  if (hasHardRedFlag || readinessAmpel === "🔴") {
+    return "Die Erholungsmarker sind deutlich angespannt und die Woche war fordernd.\n👉 Heute keine Intervalle – Fokus auf Ruhe und Regeneration.";
+  }
+  if (readinessAmpel === "🟠" || warningCount > 0) {
+    return "Die Erholungsmarker sind gemischt und die Woche wirkt spürbar belastet.\n👉 Heute nur sehr lockere Belastung, Intervalle besser verschieben.";
+  }
+  return "Die Erholungsmarker sind stabil und die Woche hat sich noch nicht übermäßig angespannt.\n👉 Heute sind kurze Intervalle möglich, aber streng kontrolliert.";
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -4650,6 +4660,15 @@ function buildComments(
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
+
+  const wellnessRecommendation = buildWellnessRecommendation({
+    readinessAmpel,
+    warningCount,
+    hasHardRedFlag,
+  });
+  lines.push("");
+  lines.push("💬 WELLNESS KOMMENTAR");
+  lines.push(wellnessRecommendation);
 
   return lines.join("\n");
 }
