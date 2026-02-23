@@ -4458,11 +4458,19 @@ function buildComments(
             ? "Easy only"
             : "Key möglich";
   const ampel = keyBlocked ? "🟠" : "🟢";
+  const missingKeyFrequency = keyCompliance?.freqOk === false;
+  const regressionSignal =
+    runFloorBlocked ||
+    missingKeyFrequency ||
+    keyCompliance?.status === "warn" ||
+    keyCompliance?.preferredMissing === true;
   const progressionStatus = lifeEvent?.freezeProgression
     ? "LifeEvent-Freeze"
     : runFloorState?.deloadActive
       ? "Deload aktiv"
-      : "im Plan";
+      : regressionSignal
+        ? "Nein – nicht im Plan (Reiz/Frequenz aktuell zu schwach)"
+        : "Ja – im Plan";
   const keyRuleLine = buildKeyRuleLine({
     keyRules,
     block: blockState?.block,
@@ -4588,7 +4596,7 @@ function buildComments(
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`,
-    `Status: ${progressionStatus === "im Plan" ? "Im Plan." : progressionStatus}`,
+    `Status: ${progressionStatus}.`,
   ]);
 
   const keyCheckMetrics = [
