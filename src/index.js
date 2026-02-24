@@ -4263,7 +4263,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     }
 
     // Daily report text (used for calendar NOTE instead of wellness comments)
-    const dailyReportText = buildComments({
+    const dailyReportTextRaw = buildComments({
       perRunInfo,
       trend,
       motor,
@@ -4291,6 +4291,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       weeksToEvent,
       eventDistance,
     }, { debug });
+    const dailyReportText = normalizeDailyReportText(day, dailyReportTextRaw);
 
     if (!runSectionOnly) {
       // Explicitly clear wellness comments; report is written only as NOTE.
@@ -5900,7 +5901,8 @@ async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, exis
   const existing = existingEvent || await fetchDailyReportNoteEvent(env, dayIso);
   if (!existing?.id) return false;
 
-  const merged = mergeTodayRunSection(existing?.description || "", freshNoteText || "");
+  const normalizedFreshText = normalizeDailyReportText(dayIso, freshNoteText || "");
+  const merged = mergeTodayRunSection(existing?.description || "", normalizedFreshText);
   await updateIntervalsEvent(env, existing.id, {
     category: "NOTE",
     start_date_local: `${dayIso}T00:00:00`,
@@ -5916,7 +5918,7 @@ async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, exis
 async function upsertDailyReportNote(env, dayIso, noteText) {
   const external_id = `daily-report-${dayIso}`;
   const name = "Daily-Report";
-  const description = toHardLineBreakText(noteText);
+  const description = toHardLineBreakText(normalizeDailyReportText(dayIso, noteText));
 
   const events = await fetchIntervalsEvents(env, dayIso, dayIso);
   const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
@@ -5948,6 +5950,21 @@ function toHardLineBreakText(text) {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
   return normalized.split("\n").join("<br />\n");
+}
+
+function normalizeDailyReportText(dayIso, text) {
+  const raw = String(text ?? "");
+  const trimmed = raw.trim();
+  if (!trimmed || !trimmed.startsWith("{") || !trimmed.includes('"notesPreview"')) return raw;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    const dayNote = parsed?.notesPreview?.[dayIso];
+    if (typeof dayNote === "string" && dayNote.trim()) return dayNote;
+  } catch (_) {
+    // keep original text when payload is not valid JSON
+  }
+  return raw;
 }
 
 // ================= BENCH REPORTS =================
