@@ -6721,7 +6721,22 @@ function isBike(a) {
   );
 }
 function normalizeKeyToken(raw) {
-  return String(raw || "").toLowerCase().trim().replace(/^#+/, "");
+  return String(raw || "")
+    .toLowerCase()
+    .trim()
+    .replace(/^#+\s*/, "")
+    .replace(/^key\s*:\s*/, "key:");
+}
+
+function extractTagCandidates(tag) {
+  if (tag == null) return [];
+  if (typeof tag === "string" || typeof tag === "number") return [String(tag)];
+  if (typeof tag === "object") {
+    return [tag.name, tag.tag, tag.value, tag.label, tag.key]
+      .filter((v) => v != null)
+      .map((v) => String(v));
+  }
+  return [String(tag)];
 }
 
 function extractKeyTypeFromText(a) {
@@ -6730,7 +6745,7 @@ function extractKeyTypeFromText(a) {
     .map((v) => String(v))
     .join(" ");
   if (!text) return null;
-  const match = text.match(/(?:^|\s)#key:([a-z0-9_:-]+)/i);
+  const match = text.match(/(?:^|\s)#\s*key\s*:\s*([a-z0-9_:-]+)/i);
   if (!match) return null;
   const typed = normalizeKeyToken(match[1]);
   return typed || null;
@@ -6738,28 +6753,34 @@ function extractKeyTypeFromText(a) {
 
 function hasKeyTag(a) {
   const tagHit = (a?.tags || []).some((t) => {
-    const s = normalizeKeyToken(t);
-    return s === "key" || s.startsWith("key:");
+    const candidates = extractTagCandidates(t);
+    return candidates.some((raw) => {
+      const s = normalizeKeyToken(raw);
+      return s === "key" || s.startsWith("key:");
+    });
   });
   if (tagHit) return true;
   const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
     .filter(Boolean)
     .map((v) => String(v))
     .join(" ");
-  return /(?:^|\s)#key(?::[a-z0-9_:-]+)?\b/i.test(text);
+  return /(?:^|\s)#\s*key(?:\s*:[a-z0-9_:-]+)?\b/i.test(text);
 }
 
 function getKeyType(a) {
   // key:schwelle, key:vo2, key:tempo, ...
   const tags = a?.tags || [];
   for (const t of tags) {
-    const s = normalizeKeyToken(t);
-    if (s.startsWith("key:")) {
-      const typed = s.slice(4).trim();
-      if (typed && typed !== "key") return typed;
-      return "key";
+    const candidates = extractTagCandidates(t);
+    for (const raw of candidates) {
+      const s = normalizeKeyToken(raw);
+      if (s.startsWith("key:")) {
+        const typed = s.slice(4).trim();
+        if (typed && typed !== "key") return typed;
+        return "key";
+      }
+      if (s === "key") return "key";
     }
-    if (s === "key") return "key";
   }
 
   const fromText = extractKeyTypeFromText(a);
@@ -6768,6 +6789,7 @@ function getKeyType(a) {
 }
 
 function getIntervalTypeFromActivity(a) {
+
   const keyType = getKeyType(a);
   if (!keyType) return null;
   const s = String(keyType).toLowerCase();
