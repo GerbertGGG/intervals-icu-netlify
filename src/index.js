@@ -1591,6 +1591,68 @@ function hasExplicitIntervalStructure(a) {
   return repeatDistance.test(text) || repeatTime.test(text);
 }
 
+function inferPaceConsistencyFromIcu(activity) {
+  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
+  if (!groups.length || !intervals.length) return null;
+
+  const repeated = groups
+    .filter((g) => Number(g?.count) >= 2)
+    .map((g) => {
+      const speed = Number(g?.average_speed);
+      if (!Number.isFinite(speed) || speed <= 0) return null;
+      const moving = Number(g?.moving_time);
+      if (!Number.isFinite(moving) || moving < 90 || moving > 480) return null;
+      return {
+        id: String(g?.id ?? ""),
+        speed,
+        count: Number(g?.count) || 0,
+        zone: Number(g?.zone),
+      };
+    })
+    .filter(Boolean);
+
+  if (!repeated.length) return null;
+
+  const prioritized = repeated
+    .filter((g) => Number.isFinite(g.zone) && g.zone >= 3)
+    .sort((a, b) => b.speed - a.speed);
+  const pool = prioritized.length ? prioritized : [...repeated].sort((a, b) => b.speed - a.speed);
+  const candidate = pool[0];
+  if (!candidate) return null;
+
+  const paces = intervals
+    .filter((x) => String(x?.group_id ?? "") === candidate.id)
+    .map((x) => {
+      const speed = Number(x?.average_speed);
+      return Number.isFinite(speed) && speed > 0 ? 1000 / speed : null;
+    })
+    .filter((x) => Number.isFinite(x));
+  if (paces.length < 2) return null;
+
+  const paceMean = avg(paces);
+  const paceStd = std(paces);
+  if (!Number.isFinite(paceMean) || paceMean <= 0 || !Number.isFinite(paceStd)) return null;
+  const paceCvPct = (paceStd / paceMean) * 100;
+
+  if (paceCvPct <= 3) {
+    return {
+      stable: true,
+      label: "stabil (Wiederholungen mit enger Pace-Streuung)",
+    };
+  }
+  if (paceCvPct <= 6) {
+    return {
+      stable: true,
+      label: "weitgehend konstant (leichte Streuung in den Wiederholungen)",
+    };
+  }
+  return {
+    stable: false,
+    label: "uneinheitlich (deutlich streuende Wiederholungs-Pace)",
+  };
+}
+
 const PHASE_MAX_MINUTES = {
   BASE: {
     "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
@@ -3670,6 +3732,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
       const intervalStructureHint = isKey ? hasExplicitIntervalStructure(a) : false;
+      const paceConsistencyHint = isKey ? inferPaceConsistencyFromIcu(a) : null;
 
       let drift = null;
       let drift_raw = null;
@@ -3730,6 +3793,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         load,
         intervalMetrics,
         intervalStructureHint,
+        paceConsistencyHint,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -4600,7 +4664,7 @@ function buildComments(
       const efSeries = Number.isFinite(m?.HR_Drift_pct)
         ? `${m.HR_Drift_pct >= 0 ? "+" : ""}${m.HR_Drift_pct.toFixed(1)}% HR-Drift über die Intervalle`
         : "n/a";
-      const paceConsistency = m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a";
+      const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
 
       runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
       runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
