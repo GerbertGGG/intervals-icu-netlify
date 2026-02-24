@@ -611,6 +611,7 @@ function createCtx(env, warmupSkipSec, debug) {
     // streams memo
     byDayBikes: new Map(), // NEW
     streamsCache: new Map(), // activityId -> Promise(streams)
+    activityDetailsCache: new Map(), // activityId -> Promise(activity details)
     // derived GA samples cache (for windows)
     gaSampleCache: new Map(), // key: `${endIso}|${windowDays}|${mode}` -> result
     wellnessCache: new Map(), // dayIso -> wellness payload
@@ -638,6 +639,15 @@ async function getStreams(ctx, activityId, types) {
   });
 
   ctx.streamsCache.set(key, p);
+  return p;
+}
+
+async function getActivityDetails(ctx, activityId) {
+  const key = String(activityId);
+  if (ctx.activityDetailsCache.has(key)) return ctx.activityDetailsCache.get(key);
+
+  const p = ctx.limit(async () => fetchIntervalsActivityDetails(ctx.env, activityId));
+  ctx.activityDetailsCache.set(key, p);
   return p;
 }
 
@@ -3787,11 +3797,23 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           intervalMetrics = null;
         }
 
-        if (Array.isArray(a?.icu_intervals) && a.icu_intervals.length) {
+        let icuIntervals = Array.isArray(a?.icu_intervals) ? a.icu_intervals : null;
+        if (!icuIntervals?.length) {
+          try {
+            const details = await getActivityDetails(ctx, a.id);
+            if (Array.isArray(details?.icu_intervals) && details.icu_intervals.length) {
+              icuIntervals = details.icu_intervals;
+            }
+          } catch {
+            // fallback: scoring remains optional
+          }
+        }
+
+        if (icuIntervals?.length) {
           try {
             const sessionScore = evaluateIntervalsSession(
               {
-                icu_intervals: a.icu_intervals,
+                icu_intervals: icuIntervals,
                 plannedIntent: mapKeyTypeToPlannedIntent(keyType),
               },
               DEFAULT_EVAL_CFG
@@ -7222,6 +7244,17 @@ async function fetchIntervalsActivities(env, oldest, newest) {
     label: "activities",
   });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+async function fetchIntervalsActivityDetails(env, activityId) {
+  const url = `${BASE_URL}/activity/${activityId}`;
+  const r = await fetchIntervalsWithRetry(url, {
+    headers: { Authorization: authHeader(env) },
+  }, {
+    label: `activity ${activityId}`,
+  });
+  if (!r.ok) throw new Error(`activity ${activityId} ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
