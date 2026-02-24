@@ -6216,7 +6216,9 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
   const durations = intervals.map((i) => i.duration);
   const minDur = Math.min(...durations);
   const maxDur = Math.max(...durations);
-  if (minDur <= 0 || maxDur / minDur > 1.1) return null;
+  // Outdoor repeats (e.g. 3×800 m) have more GPS/autopause noise than track-perfect intervals.
+  // Keep a quality gate, but allow moderate variance so valid sessions are not dropped too often.
+  if (minDur <= 0 || maxDur / minDur > 1.25) return null;
 
   const intensityMeans = intervals.map((interval) => {
     let sum = 0;
@@ -6235,7 +6237,7 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
   if (validIntensity.length !== intervals.length) return null;
   const minIntensity = Math.min(...validIntensity);
   const maxIntensity = Math.max(...validIntensity);
-  if (minIntensity <= 0 || maxIntensity / minIntensity > 1.1) return null;
+  if (minIntensity <= 0 || maxIntensity / minIntensity > 1.2) return null;
 
   const timeAt = (i) => {
     const t = Number(timeSlice[i]);
