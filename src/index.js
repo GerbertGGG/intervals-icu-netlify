@@ -6190,6 +6190,45 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   return intervals;
 }
 
+function keepConsistentIntervals(intervals, intensityMeans, { durationTolerance = 0.3, intensityTolerance = 0.2 } = {}) {
+  if (!Array.isArray(intervals) || !Array.isArray(intensityMeans) || intervals.length !== intensityMeans.length) {
+    return { intervals: [], intensityMeans: [] };
+  }
+  if (intervals.length < 3) return { intervals, intensityMeans };
+
+  const durations = intervals
+    .map((i) => Number(i?.duration))
+    .filter((x) => Number.isFinite(x) && x > 0);
+  const intensities = intensityMeans.filter((x) => Number.isFinite(x) && x > 0);
+  if (!durations.length || intensities.length !== intervals.length) {
+    return { intervals, intensityMeans };
+  }
+
+  const durationMed = median(durations);
+  const intensityMed = median(intensities);
+  if (!Number.isFinite(durationMed) || !Number.isFinite(intensityMed) || durationMed <= 0 || intensityMed <= 0) {
+    return { intervals, intensityMeans };
+  }
+
+  const filtered = intervals
+    .map((interval, idx) => ({ interval, intensity: intensityMeans[idx] }))
+    .filter(({ interval, intensity }) => {
+      const dur = Number(interval?.duration);
+      const int = Number(intensity);
+      if (!Number.isFinite(dur) || !Number.isFinite(int) || dur <= 0 || int <= 0) return false;
+      const durRatio = Math.abs(dur - durationMed) / durationMed;
+      const intRatio = Math.abs(int - intensityMed) / intensityMed;
+      return durRatio <= durationTolerance && intRatio <= intensityTolerance;
+    });
+
+  if (filtered.length < 2) return { intervals, intensityMeans };
+
+  return {
+    intervals: filtered.map((x) => x.interval),
+    intensityMeans: filtered.map((x) => x.intensity),
+  };
+}
+
 function classifyIntervalDrift(intervalType, driftBpm) {
   if (!Number.isFinite(driftBpm)) return null;
   if (intervalType === "threshold") {
@@ -6235,13 +6274,6 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
     const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
     if (intervals.length < 2) continue;
 
-    const durations = intervals.map((i) => i.duration);
-    const minDur = Math.min(...durations);
-    const maxDur = Math.max(...durations);
-    // Outdoor repeats (e.g. 3×800 m) have more GPS/autopause noise than track-perfect intervals.
-    // Keep a quality gate, but allow moderate variance so valid sessions are not dropped too often.
-    if (minDur <= 0 || maxDur / minDur > 1.25) continue;
-
     const intensityMeans = intervals.map((interval) => {
       let sum = 0;
       let count = 0;
@@ -6255,8 +6287,20 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
       return count ? sum / count : null;
     });
 
-    const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
-    if (validIntensity.length !== intervals.length) continue;
+    const kept = keepConsistentIntervals(intervals, intensityMeans);
+    const cleanIntervals = kept.intervals;
+    const cleanIntensityMeans = kept.intensityMeans;
+    if (cleanIntervals.length < 2) continue;
+
+    const durations = cleanIntervals.map((i) => i.duration);
+    const minDur = Math.min(...durations);
+    const maxDur = Math.max(...durations);
+    // Outdoor repeats (e.g. 3×800 m) have more GPS/autopause noise than track-perfect intervals.
+    // Keep a quality gate, but allow moderate variance so valid sessions are not dropped too often.
+    if (minDur <= 0 || maxDur / minDur > 1.25) continue;
+
+    const validIntensity = cleanIntensityMeans.filter((x) => Number.isFinite(x));
+    if (validIntensity.length !== cleanIntervals.length) continue;
     const minIntensity = Math.min(...validIntensity);
     const maxIntensity = Math.max(...validIntensity);
     if (minIntensity <= 0 || maxIntensity / minIntensity > 1.2) continue;
@@ -6266,7 +6310,7 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
       return Number.isFinite(t) ? t : i;
     };
 
-    const intervalHr = intervals.map((interval) => {
+    const intervalHr = cleanIntervals.map((interval) => {
       const startTime = interval.startTime;
       const endTime = interval.endTime;
       const duration = interval.duration;
