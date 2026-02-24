@@ -52,7 +52,7 @@ In Intervals.icu müssen diese Codes als Numeric Fields existieren:
 - optional: `?date=YYYY-MM-DD`
 - Antwort: JSON mit 7-Tage-Zeitraum inkl.:
   - `days[]`
-  - `runLoad[]`, `runSum7`, `runGoal` (primär aus Daily-Report-Note, Fallback persistiertes RunFloor-Target, dann Event-Minimum)
+  - `runLoad[]`, `runSum7`, `runGoal` (aktuell 150)
   - `strengthMin[]`, `strengthSum7`, `strengthGoal` (aktuell 60)
   - `updatedAt`
 - Header:
@@ -76,11 +76,6 @@ Weitere Parameter:
   - `true`: synchron, liefert umfangreiches JSON (`patches`, `debug`, `notesPreview`)
   - `false`: asynchron via `waitUntil`, Response sofort
 - `warmup_skip=600` (Sekunden, clamp 0..1800)
-- `race_start=YYYY-MM-DD` (optional, manueller Startpunkt für RACE-Betrachtung)
-- `block_start=YYYY-MM-DD` (optional, manueller Block-Start für BASE/BUILD/RACE-Zeitrechnung)
-  - Alias-Parameter werden ebenfalls akzeptiert:
-    - `race_start_override`, `race_start_iso`, `raceStart`, `racestart` (auch case-insensitive)
-    - `block_start_override`, `block_start_iso`, `blockStart`, `blockstart` (auch case-insensitive, z. B. `Blockstart`)
 
 Validierung:
 - Datumsformat muss `YYYY-MM-DD` sein
@@ -130,7 +125,7 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei 
 Aus Streams (`time`, `velocity_smooth`, `heartrate`):
 - Warmup-Skip standardmäßig 600s
 - Filter: `HR >= 40`, `speed >= 1.8 m/s`
-- Drift (Pa:HR-Decoupling) `% = ((EF1 - EF2) / EF1) * 100`, mit `EF = speed / HR`
+- Drift `% = ((hr2 - hr1) / hr1) * 100`
 - Negative Drift wird verworfen (`null`)
 
 7.4 Motor-Index
@@ -173,60 +168,6 @@ Im Daily-Report erscheinen daraus abgeleitete Empfehlungen inkl.
 - Technisch wird dafür das kommende Event in dieser Phase bewusst nicht als aktives Ziel verwendet (`nextEvent = null`).
 - Nach Ablauf der 14 Tage schaltet der Worker wieder normal auf den nächsten zukünftigen Wettkampf (z. B. Oktober) und läuft dann regulär in Richtung `BASE/BUILD/RACE`.
 - Die bestehende Block-Logik (`RESET`/`BASE`) bleibt erhalten, greift aber erst wieder, wenn der offene 2‑Wochen-Block beendet ist.
-
-9.2 Wenn der Wettkampf noch mehr als 24 Wochen entfernt ist
------------------------------------------------------------
-- Es gibt **keinen separaten Extra-Block** für `>24` Wochen Distanz zum Event.
-- Die Blocklogik startet in der Regel in `BASE` (bei sehr großer Distanz oft mit `wave=1`) und arbeitet dann klassisch über `BUILD`/`RESET` weiter.
-- Spezifisch für `>24` Wochen ist vor allem die Übergangsgewichtung von Bike zu Run:
-  - Bei `weeksToEvent >= 24` zählt Bike mit Faktor `1.0` in die Aerobic-/Floor-Logik.
-  - Zwischen 24 und 12 Wochen wird dieser Bike-Faktor linear reduziert.
-  - Ab `<=12` Wochen ist Bike-Substitution auf `0.0` und der Fokus liegt vollständig auf laufspezifischer Vorbereitung.
-- Praktisch bedeutet das: Frühe Phase = robuster Grundaufbau (`BASE`) mit hoher Bike-Anrechenbarkeit, später zunehmend laufspezifisch.
-
-9.3 Heißt das „zweimal BASE→BUILD→RACE“?
------------------------------------------
-- **Nicht exakt.** Wenn genug Zeit bis zum Event ist, nutzt das System typischerweise eine 2‑Wellen-Logik:
-  1. `BASE` (Wave 1) -> `BUILD` (Wave 1) -> `RESET`
-  2. danach `BASE` (Wave 2) -> `BUILD` (Wave 2) -> `RACE`
-- Der Zwischenblock `RESET` trennt die Wellen bewusst (Entlastung/Neuaufbau), daher ist es nicht einfach zweimal derselbe reine `BASE->BUILD->RACE`-Durchlauf.
-- Wenn die Event-Nähe es erzwingt (z. B. <=6 Wochen), wird direkt in `RACE` gewechselt und die zweite Welle kann verkürzt/übersprungen werden.
-
-9.4 Vorschlag (ohne Coding): freie Vorphase bis 24 Wochen + klarer Renn-Start
--------------------------------------------------------------------------
-Zielbild für die Planung:
-- Bis **>24 Wochen** vor Event: freierer Modus („Spaß haben, Form halten“), mit klaren Leitplanken.
-- Ab **24 Wochen** vor Event: Start des bekannten Systems `BASE -> BUILD -> RACE`.
-
-Regeltabelle (fachlich):
-1) Vorphase `weeksToEvent > 24`
-   - Modus: frei / unspezifisch (keine harte Race-Spezifik)
-   - Sportarten-Mix: **50% Laufen / 50% Rad** erlaubt
-   - Intensität: primär locker/steady, nur wenig scharfe Keys
-   - Mindest-Longrun über 14 Tage:
-     - 5k/10k: 45 min (Progression Richtung 60 min)
-     - HM: 45 min (Progression Richtung 90 min)
-     - Marathon: 45 min (Progression Richtung 120 min)
-
-2) Übergangsfenster (optional fein): `48 -> 24 Wochen`
-   - Run-Anteil progressiv steigern: **50% -> 80%**
-   - Bike-Anteil entsprechend senken: **50% -> 20%**
-   - Ziel: laufspezifischer werden, ohne abrupte Brüche.
-
-3) Ab Startfenster `weeksToEvent <= 24`
-   - Start des bekannten Systems: `BASE -> BUILD -> RACE`
-   - Block-/Wave-Mechanik bleibt erhalten (`RESET` als Entlastungs-/Umschaltblock, falls ausgelöst).
-
-4) Longrun-Zielkorridor bis zur 24-Wochen-Marke
-   - 5k/10k: auf **60 min** anheben
-   - HM: auf **90 min** anheben
-   - Marathon: auf **120 min** anheben
-   - Frequenz: mindestens **1 Lauf in 14 Tagen** im genannten Korridor.
-   - Progression: **leichte Steigerung**, pro 14-Tage-Schritt maximal **+5%** Longrun-Dauer (Deckel).
-   - Beispiel: 45 min -> 47 min -> 49 min -> 52 min ... bis zum distanzspezifischen Zielwert.
-
-Hinweis zur Umsetzung im bestehenden Design:
-- Die bestehende Bike->Run-Übergangslogik kann als technischer Hebel dienen, inhaltlich aber auf das neue Zielmodell ausgerichtet werden (Vorphase klarer „frei“, Start des Blocksystems fix bei 24 Wochen).
 
 10) DAILY-REPORT NOTE
 ---------------------

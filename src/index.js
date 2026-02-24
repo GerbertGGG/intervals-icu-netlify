@@ -1,5 +1,3 @@
-import { DEFAULT_EVAL_CFG, evaluateIntervalsSession } from "./interval-evaluation.js";
-
 // ====== src/index.js (PART 1/4) ======
 // Cloudflare Worker – Run only
 //
@@ -83,40 +81,6 @@ export default {
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
-      const getSearchParamAny = (keys) => {
-        for (const k of keys) {
-          const direct = url.searchParams.get(k);
-          if (direct) return direct;
-        }
-        const lowerMap = new Map();
-        for (const [k, v] of url.searchParams.entries()) {
-          if (!v) continue;
-          const lower = String(k || "").toLowerCase();
-          if (!lowerMap.has(lower)) lowerMap.set(lower, v);
-        }
-        for (const k of keys) {
-          const v = lowerMap.get(String(k).toLowerCase());
-          if (v) return v;
-        }
-        return "";
-      };
-
-      const raceStartParamRaw = getSearchParamAny([
-        "race_start",
-        "race_start_override",
-        "race_start_iso",
-        "racestart",
-        "raceStart",
-      ]);
-      const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-      const blockStartParamRaw = getSearchParamAny([
-        "block_start",
-        "block_start_override",
-        "block_start_iso",
-        "blockstart",
-        "blockStart",
-      ]);
-      const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
       let oldest, newest;
       if (date) {
@@ -140,19 +104,9 @@ export default {
         return json({ ok: false, error: "Max range is 31 days" }, 400);
       }
 
-      if (raceStartParamRaw && !raceStartOverrideIso) {
-        return json({ ok: false, error: "Invalid race_start format (YYYY-MM-DD)" }, 400);
-      }
-      if (blockStartParamRaw && !blockStartOverrideIso) {
-        return json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400);
-      }
-
       if (debug) {
         try {
-          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, {
-            raceStartOverrideIso,
-            blockStartOverrideIso,
-          });
+          const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec);
           return json(result);
         } catch (e) {
           return json(
@@ -165,8 +119,6 @@ export default {
               newest,
               write,
               warmupSkipSec,
-              raceStartOverrideIso,
-              blockStartOverrideIso,
             },
             500
           );
@@ -175,15 +127,12 @@ export default {
 
       // async fire-and-forget (but don't swallow silently)
       ctx?.waitUntil?.(
-        syncRange(env, oldest, newest, write, false, warmupSkipSec, {
-          raceStartOverrideIso,
-          blockStartOverrideIso,
-        }).catch((e) => {
+        syncRange(env, oldest, newest, write, false, warmupSkipSec).catch((e) => {
           console.error("syncRange failed", e);
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec });
     }
 
     return new Response("Not found", { status: 404 });
@@ -191,167 +140,38 @@ export default {
 
   async scheduled(event, env, ctx) {
     // Daily sync: only yesterday+today (and Monday detective if today is Monday).
-    // 20:00 Berlin run updates only run metrics so planning/report state remains untouched.
+    // This keeps cost low and still ensures minimum-stimulus comment exists.
     const today = isoDate(new Date());
     const yday = isoDate(new Date(Date.now() - 86400000));
-    const runMetricsOnly = isEveningBerlinRun(event);
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true }).catch((e) => {
+      syncRange(env, yday, today, true, false, 600).catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
   },
 };
 
-
-function isEveningBerlinRun(event) {
-  const t = Number(event?.scheduledTime);
-  if (!Number.isFinite(t)) return false;
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      hour12: false,
-      timeZone: "Europe/Berlin",
-    }).format(new Date(t))
-  );
-  return Number.isFinite(hour) && hour >= 20;
-}
-
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
-const KRAFT_MIN_RUNFLOOR = 30;
-const KRAFT_TARGET = 60;
-const KRAFT_MAX = 75;
-const STRENGTH_MIN_7D = KRAFT_TARGET;
-const STRENGTH_PHASE_PLANS = {
-  BASE: {
-    phase: "BASE",
-    focus: "Struktur & Stabilität",
-    objective: "Gewebe robust machen",
-    sessionsPerWeek: 2,
-    durationMin: [15, 20],
-    sessions: [
-      {
-        name: "Einheit A – Unterkörper stabil",
-        exercises: ["3×12 Split Squats", "3×12 Hip Thrust mit Band", "3×30s Plank", "2×12 Clamshell mit Band"],
-      },
-      {
-        name: "Einheit B – Balance & Core",
-        exercises: [
-          "3×10 Single Leg RDL",
-          "3×30s Seitstütz",
-          "2×12 Monster Walk",
-          "2×30s Stabikissen Einbeinstand",
-          "2×8–10 Tibialis Raises (optional)",
-        ],
-      },
-    ],
-  },
-  BUILD: {
-    phase: "BUILD",
-    focus: "Schwelle-Block kompatibel",
-    objective: "Kraft + Laufökonomie ohne Ermüdungs-Overkill",
-    sessionsPerWeek: 2,
-    durationMin: [20, 25],
-    sessions: [
-      {
-        name: "Einheit A – Kraft + 1× Plyo",
-        exercises: [
-          "3×8 Bulgarian Split Squat",
-          "3×8 Hip Thrust einbeinig",
-          "3×6 Jump Squats (kontrolliert, volle Pause)",
-          "2×30s Plank",
-          "2×30–45s Waden isometrisch (Soleus) pro Seite",
-        ],
-      },
-      {
-        name: "Einheit B – Kraft (ohne Plyo)",
-        exercises: ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "2×12 Monster Walk", "2×30s Seitstütz"],
-      },
-    ],
-  },
-  RACE: {
-    phase: "RACE",
-    focus: "Erhalt",
-    objective: "Frische",
-    sessionsPerWeek: 1,
-    durationMin: [12, 15],
-    sessions: [
-      {
-        name: "Einheit – Erhalt",
-        exercises: [
-          "2×8 Split Squats",
-          "2×8 Hip Thrust",
-          "2×20s Plank",
-          "1×30s Stabikissen Einbein",
-          "1×30–45s Waden isometrisch (Soleus) pro Seite",
-        ],
-      },
-    ],
-  },
+const STRENGTH_MIN_7D = 60;
+const EASY_SHARE_THRESHOLDS = {
+  BASE: 0.9,
+  BUILD: 0.85,
+  RACE: 0.85,
+  RESET: 0.9,
 };
-const INTENSITY_DISTRIBUTION_TARGET = {
-  BASE: {
-    easyMin: 0.7,
-    easyMax: 0.9,
-    midMin: 0.05,
-    midMax: 0.15,
-    hardMax: 0.1,
-    byDistance: {
-      "5k": { easyMin: 0.7, easyMax: 0.75, midMin: 0.12, midMax: 0.15, hardMax: 0.1 },
-      "10k": { easyMin: 0.75, easyMax: 0.8, midMin: 0.1, midMax: 0.12, hardMax: 0.08 },
-      hm: { easyMin: 0.8, easyMax: 0.85, midMin: 0.08, midMax: 0.1, hardMax: 0.05 },
-      m: { easyMin: 0.85, easyMax: 0.9, midMin: 0.05, midMax: 0.08, hardMax: 0.03 },
-    },
-  },
-  BUILD: {
-    easyMin: 0.6,
-    easyMax: 0.75,
-    midMin: 0.1,
-    midMax: 0.3,
-    hardMax: 0.2,
-    byDistance: {
-      "5k": { easyMin: 0.6, easyMax: 0.65, midMin: 0.2, midMax: 0.25, hardMax: 0.18 },
-      "10k": { easyMin: 0.6, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.12 },
-      hm: { easyMin: 0.65, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.08 },
-      m: { easyMin: 0.65, easyMax: 0.75, midMin: 0.1, midMax: 0.15, hardMax: 0.2 },
-    },
-  },
-  RACE: {
-    easyMin: 0.6,
-    easyMax: 0.75,
-    midMin: 0,
-    midMax: 0.2,
-    hardMax: 0.35,
-    byDistance: {
-      "5k": { easyMin: 0.65, easyMax: 0.75, midMin: 0, midMax: 0.05, hardMax: 0.35 },
-      "10k": { easyMin: 0.6, easyMax: 0.65, midMin: 0.15, midMax: 0.2, hardMax: 0.25 },
-      hm: { easyMin: 0.6, easyMax: 0.65, midMin: 0.15, midMax: 0.2, hardMax: 0.25 },
-      m: { easyMin: 0.65, easyMax: 0.75, midMin: 0.05, midMax: 0.1, hardMax: 0.3 },
-    },
-  },
-  RESET: {
-    easyMin: 0.9,
-    hardMax: 0.03,
-  },
-};
-
-function getIntensityDistributionTargets(block, eventDistance) {
-  const blockTargets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
-  const dist = normalizeEventDistance(eventDistance);
-  const byDistance = blockTargets?.byDistance?.[dist];
-  return byDistance ? { ...blockTargets, ...byDistance } : blockTargets;
-}
-
-const INTENSITY_LOOKBACK_DAYS = 14;
-const INTENSITY_CLEAR_OVERSHOOT = 0.01;
+const EASY_SHARE_PRIMARY_LOOKBACK_DAYS = 14;
+const EASY_SHARE_FALLBACK_LOOKBACK_DAYS = 7;
+const EASY_SHARE_MIN_TOTAL_MIN_14D = 90;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
-const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const DETECTIVE_HISTORY_LIMIT = 12;
+// REMOVE or stop using this for Aerobic:
+// const BIKE_EQ_FACTOR = 0.65;
+
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
  *
@@ -423,46 +243,6 @@ const BLOCK_CONFIG = {
   },
 };
 
-const BLOCK_LENGTHS_WEEKS_BY_DISTANCE = {
-  "5k": { base: 10, build: 8, race: 6, taper: 1 },
-  "10k": { base: 10, build: 8, race: 6, taper: 1 },
-  hm: { base: 12, build: 8, race: 8, taper: 2 },
-  m: { base: 16, build: 10, race: 8, taper: 2 },
-};
-
-function getBlockLengthsWeeks(eventDistance) {
-  const dist = normalizeEventDistance(eventDistance) || "10k";
-  return BLOCK_LENGTHS_WEEKS_BY_DISTANCE[dist] || BLOCK_LENGTHS_WEEKS_BY_DISTANCE["10k"];
-}
-
-function getPlanStartWeeks(eventDistance) {
-  const lengths = getBlockLengthsWeeks(eventDistance);
-  return (lengths.base || 0) + (lengths.build || 0) + (lengths.race || 0) + (lengths.taper || 0);
-}
-
-function getRaceStartWeeks(eventDistance) {
-  const lengths = getBlockLengthsWeeks(eventDistance);
-  return (lengths.race || 0) + (lengths.taper || 0);
-}
-
-function getForceRaceWeeks(eventDistance) {
-  const lengths = getBlockLengthsWeeks(eventDistance);
-  return lengths.taper || BLOCK_CONFIG.cutoffs.forceRaceWeeks;
-}
-
-function getBlockDurationForDistance(block, eventDistance) {
-  const lengths = getBlockLengthsWeeks(eventDistance);
-  const weekByBlock = {
-    BASE: lengths.base,
-    BUILD: lengths.build,
-    RACE: (lengths.race || 0) + (lengths.taper || 0),
-  };
-  const weeks = weekByBlock[block];
-  if (!Number.isFinite(weeks) || weeks <= 0) return BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
-  const days = Math.max(7, Math.round(weeks * 7));
-  return { minDays: days, maxDays: days };
-}
-
 
 
 
@@ -484,7 +264,6 @@ function toLocalYMD(d) {
 }
 
 // Fatigue override thresholds (tune later)
-const ENABLE_FATIGUE_OVERRIDE = false;
 const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
@@ -495,6 +274,7 @@ const ACWR_LOW_LIMIT = 0.8;        // underload threshold
 const GA_MIN_SECONDS = 30 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
 const MOTOR_STALE_DAYS = 5;
+const MIN_STIMULUS_7D_RUN_LOAD = 150;
 
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
@@ -510,50 +290,35 @@ const POST_EVENT_OPEN_DAYS = 14;  // 2-week open block after each event
 
 // AerobicFloor = k * Intensity7  (Bike & Run zählen aerob gleichwertig)
 const AEROBIC_K_DEFAULT = 2.8;
-const THRESHOLD_HR_PCT = 0.88;
-const VO2_HR_PCT = 0.94;
-const PLAN_START_WEEKS = 24;
-const PREPLAN_WINDOW_WEEKS = 48;
-
+const DELOAD_FACTOR = 0.65;
+const BLOCK_GROWTH = 1.10;
+const BLOCK_HIT_WEEKS = 3;
+const INTENSITY_HR_PCT = 0.85;
 const TRANSITION_BIKE_EQ = {
-  prePlanWeeks: PREPLAN_WINDOW_WEEKS,
-  startWeeks: PLAN_START_WEEKS,
+  startWeeks: 24,
   endWeeks: 12,
-  prePlanFactor: 0.5,
-  startFactor: 0.2,
+  startFactor: 1.0,
   endFactor: 0.0,
-};
-
-const PREPLAN_RUN_SHARE = {
-  min: 0.5,
-  targetAtPlanStart: 0.8,
-};
-
-const LONGRUN_PREPLAN = {
-  stepDays: 14,
-  maxStepPct: 0.10,
-  startMin: 45,
-  targetMinByDistance: {
-    "5k": 60,
-    "10k": 60,
-    hm: 90,
-    m: 120,
-  },
 };
 
 
 // Minimum stimulus thresholds per mode (tune later)
 const MIN_STIMULUS_7D_RUN_EVENT = 150;   // your current value (5k/run blocks)
 const MIN_STIMULUS_7D_BIKE_EVENT = 220;  // bike primary
+const MIN_STIMULUS_7D_AEROBIC_OPEN = 220;// open mode: run + bike*factor
 
 // Maintenance anchors (soft hints, not hard fails)
+const RUN_MAINTENANCE_14D_MIN = 1;
+const BIKE_MAINTENANCE_14D_MIN = 1;
 
 // Streams/types
+const STREAM_TYPES_BIKE = ["time", "heartrate", "watts"]; // watts optional
 
 // "Trainingslehre" detective
 const LONGRUN_MIN_SECONDS = 60 * 60; // >= 60 minutes
 const DETECTIVE_WINDOWS = [14, 28, 42, 56, 84];
 const DETECTIVE_MIN_RUNS = 3;
+const DETECTIVE_MIN_WEEKS = 2;
 
 const MIN_RUN_SPEED = 1.8;
 const MIN_POINTS = 300;
@@ -568,7 +333,6 @@ const FIELD_DRIFT = "Drift";
 const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
-const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -611,7 +375,6 @@ function createCtx(env, warmupSkipSec, debug) {
     // streams memo
     byDayBikes: new Map(), // NEW
     streamsCache: new Map(), // activityId -> Promise(streams)
-    activityDetailsCache: new Map(), // activityId -> Promise(activity details)
     // derived GA samples cache (for windows)
     gaSampleCache: new Map(), // key: `${endIso}|${windowDays}|${mode}` -> result
     wellnessCache: new Map(), // dayIso -> wellness payload
@@ -639,15 +402,6 @@ async function getStreams(ctx, activityId, types) {
   });
 
   ctx.streamsCache.set(key, p);
-  return p;
-}
-
-async function getActivityDetails(ctx, activityId) {
-  const key = String(activityId);
-  if (ctx.activityDetailsCache.has(key)) return ctx.activityDetailsCache.get(key);
-
-  const p = ctx.limit(async () => fetchIntervalsActivityDetails(ctx.env, activityId));
-  ctx.activityDetailsCache.set(key, p);
   return p;
 }
 
@@ -743,11 +497,11 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
   if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
 
-  const override = ENABLE_FATIGUE_OVERRIDE && reasons.length > 0;
+  const override = reasons.length > 0;
 
   return {
     override,
-    reasons: override ? reasons : [],
+    reasons,
     keyCount7,
     keyCap,
     keyCapExceeded: keyCount7 > keyCap,
@@ -780,7 +534,6 @@ function computeRobustness(ctx, dayIso) {
     }
   }
 
-  const strengthPolicy = evaluateStrengthPolicy(strength7);
   const strengthOk = strength7 >= STRENGTH_MIN_7D;
   const reasons = [];
   if (!strengthOk) reasons.push("Kraft/Stabi fehlt");
@@ -789,53 +542,8 @@ function computeRobustness(ctx, dayIso) {
     strengthMinutes7d: Math.round(strength7),
     strengthMinutes14d: Math.round(strength14),
     strengthOk,
-    strengthPolicy,
     reasons,
   };
-}
-
-function computeStrengthScore(strengthMin7d) {
-  const mins = Number(strengthMin7d) || 0;
-  if (mins < 30) return 0;
-  if (mins < 45) return 1;
-  if (mins < 60) return 2;
-  return 3;
-}
-
-function evaluateStrengthPolicy(strengthMin7d) {
-  const mins = Math.round(Number(strengthMin7d) || 0);
-  const score = computeStrengthScore(mins);
-  const belowRunfloor = mins < KRAFT_MIN_RUNFLOOR;
-  let confidenceDelta = 0;
-
-  if (belowRunfloor) {
-    const deficit = KRAFT_MIN_RUNFLOOR - mins;
-    const bucketSize = Math.max(1, KRAFT_MIN_RUNFLOOR / 5);
-    const penalty = Math.ceil(deficit / bucketSize);
-    confidenceDelta = -Math.min(5, Math.max(1, penalty));
-  } else if (mins >= KRAFT_TARGET) {
-    confidenceDelta = 5;
-  } else {
-    const span = Math.max(1, KRAFT_TARGET - KRAFT_MIN_RUNFLOOR);
-    const progress = Math.max(0, mins - KRAFT_MIN_RUNFLOOR);
-    confidenceDelta = Math.min(4, Math.floor((progress / span) * 5));
-  }
-
-  return {
-    minRunfloor: KRAFT_MIN_RUNFLOOR,
-    target: KRAFT_TARGET,
-    max: KRAFT_MAX,
-    minutes7d: mins,
-    score,
-    confidenceDelta,
-    belowRunfloor,
-    keyCapOverride: null,
-  };
-}
-
-function getStrengthPhasePlan(block) {
-  const phase = ["BASE", "BUILD", "RACE"].includes(block) ? block : "BASE";
-  return STRENGTH_PHASE_PLANS[phase] || STRENGTH_PHASE_PLANS.BASE;
 }
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
@@ -880,13 +588,7 @@ const RUN_FLOOR_DELOAD_LOAD_GAP_PCT = 0.25;
 const RUN_FLOOR_DELOAD_LOAD_GAP_MAX = 3;
 const RUN_FLOOR_DELOAD_WINDOW_DAYS = 21;
 const RUN_FLOOR_DELOAD_DAYS = 7;
-const RUN_FLOOR_TAPER_START_DAYS_DEFAULT = 14;
-const RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE = {
-  "5k": 7,
-  "10k": 7,
-  hm: 14,
-  m: 14,
-};
+const RUN_FLOOR_TAPER_START_DAYS = 14;
 const RUN_FLOOR_TAPER_END_DAYS = 2;
 const RUN_FLOOR_RECOVER_DAYS = 9;
 const RUN_FLOOR_DELOAD_RANGE = { min: 0.6, max: 0.7 };
@@ -901,7 +603,6 @@ const RUN_FLOOR_FLOOR_STEP = {
   BUILD: 10,
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
-const LIFE_EVENT_CATEGORY_PRIORITY = ["SICK", "INJURED", "HOLIDAY"];
 
 function mapBlockToPhase(block) {
   if (block === "BASE") return "BASE";
@@ -911,155 +612,21 @@ function mapBlockToPhase(block) {
   return "BASE";
 }
 
-function normalizeEventCategory(category) {
-  return String(category ?? "").toUpperCase().trim();
-}
-
-function isLifeEventCategory(category) {
-  const cat = normalizeEventCategory(category);
-  return cat === "SICK" || cat === "INJURED" || cat === "HOLIDAY";
-}
-
-function isLifeEventActiveOnDay(event, dayIso) {
-  const startIso = String(event?.start_date_local || event?.start_date || "").slice(0, 10);
-  if (!isIsoDate(startIso) || !isIsoDate(dayIso)) return false;
-
-  const endIsoRaw = String(event?.end_date_local || event?.end_date || "").slice(0, 10);
-  if (!isIsoDate(endIsoRaw)) return dayIso === startIso;
-  return dayIso >= startIso && dayIso < endIsoRaw;
-}
-
-function getLifeEventEffect(activeLifeEvent) {
-  const category = normalizeEventCategory(activeLifeEvent?.category);
-
-  if (category === "SICK" || category === "INJURED") {
-    return {
-      active: true,
-      category,
-      runFloorFactor: 0,
-      allowKeys: false,
-      freezeProgression: true,
-      freezeFloorIncrease: true,
-      ignoreRunFloorGap: true,
-      overlayMode: "LIFE_EVENT_STOP",
-      reason: `${category}: kompletter Freeze`,
-      event: activeLifeEvent,
-    };
-  }
-
-  if (category === "HOLIDAY") {
-    return {
-      active: true,
-      category,
-      runFloorFactor: 0.6,
-      allowKeys: false,
-      freezeProgression: true,
-      freezeFloorIncrease: true,
-      ignoreRunFloorGap: true,
-      overlayMode: "LIFE_EVENT_HOLIDAY",
-      reason: "HOLIDAY: RunFloor reduziert + Keys/Progression pausiert",
-      event: activeLifeEvent,
-    };
-  }
-
-  return {
-    active: false,
-    category: null,
-    runFloorFactor: 1,
-    allowKeys: null,
-    freezeProgression: false,
-    freezeFloorIncrease: false,
-    ignoreRunFloorGap: false,
-    overlayMode: null,
-    reason: null,
-    event: null,
-  };
-}
-
-function getLifeEventCategoryLabel(category) {
-  const cat = normalizeEventCategory(category);
-  if (cat === "SICK") return "krank";
-  if (cat === "INJURED") return "verletzt";
-  if (cat === "HOLIDAY") return "Urlaub";
-  return cat || "unbekannt";
-}
-
-function parseLifeEventBoundary(event, field) {
-  const value = String(event?.[field] || "").slice(0, 10);
-  return isIsoDate(value) ? value : null;
-}
-
-function computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState, recentHolidayEvent }) {
-  const windowStartIso = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() - 6 * 86400000));
-  const windowEndIso = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 86400000));
-
-  let holidayStartIso = null;
-  let holidayEndIso = null;
-
-  if (lifeEventEffect?.active && lifeEventEffect?.category === "HOLIDAY") {
-    holidayStartIso =
-      parseLifeEventBoundary(lifeEventEffect?.event, "start_date_local") ||
-      parseLifeEventBoundary(lifeEventEffect?.event, "start_date");
-    holidayEndIso =
-      parseLifeEventBoundary(lifeEventEffect?.event, "end_date_local") ||
-      parseLifeEventBoundary(lifeEventEffect?.event, "end_date");
-  } else if (normalizeEventCategory(recentHolidayEvent?.category) === "HOLIDAY") {
-    holidayStartIso =
-      parseLifeEventBoundary(recentHolidayEvent, "start_date_local") ||
-      parseLifeEventBoundary(recentHolidayEvent, "start_date");
-    holidayEndIso =
-      parseLifeEventBoundary(recentHolidayEvent, "end_date_local") ||
-      parseLifeEventBoundary(recentHolidayEvent, "end_date");
-  } else if (normalizeEventCategory(previousState?.lastLifeEventCategory) === "HOLIDAY") {
-    holidayStartIso = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
-    holidayEndIso = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
-  }
-
-  if (!holidayStartIso) return 1;
-  const normalizedHolidayEndIso = holidayEndIso || isoDate(new Date(new Date(holidayStartIso + "T00:00:00Z").getTime() + 86400000));
-
-  const overlapStart = holidayStartIso > windowStartIso ? holidayStartIso : windowStartIso;
-  const overlapEnd = normalizedHolidayEndIso < windowEndIso ? normalizedHolidayEndIso : windowEndIso;
-  const overlapDays = overlapEnd > overlapStart ? diffDays(overlapStart, overlapEnd) : 0;
-
-  const blockedDays = clampInt(String(overlapDays), 0, 7);
-  const trainableDays = 7 - blockedDays;
-  return clamp(trainableDays / 7, 0, 1);
-}
-
-function getTaperStartDays(eventDistance) {
-  const dist = normalizeEventDistance(eventDistance);
-  return RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE[dist] ?? RUN_FLOOR_TAPER_START_DAYS_DEFAULT;
-}
-
-function computeTaperFactor(eventInDays, taperStartDays) {
+function computeTaperFactor(eventInDays) {
   if (!Number.isFinite(eventInDays)) return 1;
   if (eventInDays <= RUN_FLOOR_TAPER_END_DAYS) return 0.6;
-  if (eventInDays >= taperStartDays) return 0.9;
-  const span = taperStartDays - RUN_FLOOR_TAPER_END_DAYS;
-  if (span <= 0) return 0.9;
+  if (eventInDays >= RUN_FLOOR_TAPER_START_DAYS) return 0.9;
+  const span = RUN_FLOOR_TAPER_START_DAYS - RUN_FLOOR_TAPER_END_DAYS;
   const ratio = (eventInDays - RUN_FLOOR_TAPER_END_DAYS) / span;
   return 0.6 + ratio * (0.9 - 0.6);
 }
 
 function computeBikeSubstitutionFactor(weeksToEvent) {
   if (!Number.isFinite(weeksToEvent)) return 0;
-
-  if (weeksToEvent >= TRANSITION_BIKE_EQ.prePlanWeeks) {
-    return clamp(TRANSITION_BIKE_EQ.prePlanFactor, 0, 1);
-  }
-
-  if (weeksToEvent > TRANSITION_BIKE_EQ.startWeeks) {
-    const span = TRANSITION_BIKE_EQ.prePlanWeeks - TRANSITION_BIKE_EQ.startWeeks;
-    if (span <= 0) return clamp(TRANSITION_BIKE_EQ.startFactor, 0, 1);
-    const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.startWeeks) / span;
-    const raw = TRANSITION_BIKE_EQ.startFactor + ratio * (TRANSITION_BIKE_EQ.prePlanFactor - TRANSITION_BIKE_EQ.startFactor);
-    return clamp(raw, 0, 1);
-  }
-
-  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
+  if (weeksToEvent >= TRANSITION_BIKE_EQ.startWeeks) return TRANSITION_BIKE_EQ.startFactor;
+  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return TRANSITION_BIKE_EQ.endFactor;
   const span = TRANSITION_BIKE_EQ.startWeeks - TRANSITION_BIKE_EQ.endWeeks;
-  if (span <= 0) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
+  if (span <= 0) return TRANSITION_BIKE_EQ.endFactor;
   const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.endWeeks) / span;
   const raw = TRANSITION_BIKE_EQ.endFactor + ratio * (TRANSITION_BIKE_EQ.startFactor - TRANSITION_BIKE_EQ.endFactor);
   return clamp(raw, 0, 1);
@@ -1133,17 +700,12 @@ function evaluateRunFloorState({
   floorTarget,
   phase,
   eventInDays,
-  eventDistance,
   eventDateISO,
   previousState,
   dailyRunLoads,
-  lifeEventEffect,
-  recentHolidayEvent,
 }) {
   const reasons = [];
-  let syntheticLifeEvent = null;
   const safeEventInDays = Number.isFinite(eventInDays) ? Math.round(eventInDays) : 9999;
-  const taperStartDays = getTaperStartDays(eventDistance);
   const prevFloorTarget = Number.isFinite(previousState?.floorTarget) ? previousState.floorTarget : null;
   const baseFloorTarget = Number.isFinite(floorTarget) ? floorTarget : prevFloorTarget ?? 0;
 
@@ -1156,9 +718,6 @@ function evaluateRunFloorState({
     ? previousState.lastFloorIncreaseDate
     : null;
   let lastEventDate = isIsoDate(previousState?.lastEventDate) ? previousState.lastEventDate : null;
-  let lastLifeEventCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
-  let lastLifeEventStartISO = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
-  let lastLifeEventEndISO = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
 
   if (eventDateISO && safeEventInDays <= 0) {
     lastEventDate = eventDateISO;
@@ -1197,13 +756,9 @@ function evaluateRunFloorState({
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
 
   let overlayMode = "NORMAL";
-  const hasLifeEvent = lifeEventEffect?.active === true;
-  if (hasLifeEvent) {
-    overlayMode = lifeEventEffect.overlayMode || "LIFE_EVENT";
-    reasons.push(lifeEventEffect.reason || "LifeEvent aktiv");
-  } else if (safeEventInDays >= 0 && safeEventInDays <= taperStartDays) {
+  if (safeEventInDays >= 0 && safeEventInDays <= RUN_FLOOR_TAPER_START_DAYS) {
     overlayMode = "TAPER";
-    reasons.push(`Taper aktiv (Event in ≤${taperStartDays} Tagen)`);
+    reasons.push("Taper aktiv (Event in ≤14 Tagen)");
   } else if (daysSinceEvent != null && daysSinceEvent <= RUN_FLOOR_RECOVER_DAYS) {
     overlayMode = "RECOVER_OVERLAY";
     reasons.push("Recover-Overlay aktiv (Event gerade passiert)");
@@ -1221,54 +776,12 @@ function evaluateRunFloorState({
   }
 
   let effectiveFloorTarget = updatedFloorTarget;
-  if (hasLifeEvent) {
-    const factor = Number.isFinite(lifeEventEffect?.runFloorFactor) ? lifeEventEffect.runFloorFactor : 1;
-    const holidayRampFactor = computeHolidayWindowFactor({
-      todayISO,
-      lifeEventEffect,
-      previousState,
-      recentHolidayEvent,
-    });
-    effectiveFloorTarget = updatedFloorTarget * (lifeEventEffect?.category === "HOLIDAY" ? holidayRampFactor : factor);
-    lastLifeEventCategory = normalizeEventCategory(lifeEventEffect?.category);
-    const startIso =
-      parseLifeEventBoundary(lifeEventEffect?.event, "start_date_local") ||
-      parseLifeEventBoundary(lifeEventEffect?.event, "start_date");
-    const endIso =
-      parseLifeEventBoundary(lifeEventEffect?.event, "end_date_local") ||
-      parseLifeEventBoundary(lifeEventEffect?.event, "end_date");
-    if (startIso) lastLifeEventStartISO = startIso;
-    if (endIso) lastLifeEventEndISO = endIso;
-  } else if (overlayMode === "DELOAD") {
+  if (overlayMode === "DELOAD") {
     effectiveFloorTarget = applyDeloadRules({ floorTarget: updatedFloorTarget, phase }).effectiveFloorTarget;
   } else if (overlayMode === "TAPER") {
-    effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays, taperStartDays);
+    effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays);
   } else if (overlayMode === "RECOVER_OVERLAY") {
     effectiveFloorTarget = updatedFloorTarget * RUN_FLOOR_RECOVER_FACTOR;
-  } else {
-    const holidayRampFactor = computeHolidayWindowFactor({
-      todayISO,
-      lifeEventEffect,
-      previousState,
-      recentHolidayEvent,
-    });
-    if (holidayRampFactor < 1) {
-      effectiveFloorTarget = updatedFloorTarget * holidayRampFactor;
-      reasons.push("Post-Holiday Ramp aktiv");
-      syntheticLifeEvent = {
-        category: "HOLIDAY",
-        runFloorFactor: holidayRampFactor,
-        allowKeys: null,
-        freezeProgression: false,
-        freezeFloorIncrease: false,
-        ignoreRunFloorGap: true,
-        name: "post_holiday_ramp",
-      };
-    } else {
-      lastLifeEventCategory = "";
-      lastLifeEventStartISO = null;
-      lastLifeEventEndISO = null;
-    }
   }
 
   const deloadCompletedSinceIncrease =
@@ -1278,7 +791,6 @@ function evaluateRunFloorState({
     (phase === "BASE" || phase === "BUILD") &&
     overlayMode === "NORMAL" &&
     safeEventInDays > 28 &&
-    !lifeEventEffect?.freezeFloorIncrease &&
     deloadCompletedSinceIncrease
   ) {
     const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
@@ -1307,11 +819,7 @@ function evaluateRunFloorState({
     loadGap,
     stabilityOK,
     decisionText:
-      overlayMode === "LIFE_EVENT_STOP"
-        ? "LifeEvent: Stop"
-        : overlayMode === "LIFE_EVENT_HOLIDAY"
-          ? "LifeEvent: Holiday"
-          : overlayMode === "RECOVER_OVERLAY"
+      overlayMode === "RECOVER_OVERLAY"
         ? "Recover"
         : overlayMode === "DELOAD"
           ? "Deload"
@@ -1321,22 +829,8 @@ function evaluateRunFloorState({
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
-    lastLifeEventCategory,
-    lastLifeEventStartISO,
-    lastLifeEventEndISO,
     daysSinceEvent,
     reasons,
-    lifeEvent: lifeEventEffect?.active
-      ? {
-          category: lifeEventEffect.category,
-          runFloorFactor: lifeEventEffect.runFloorFactor,
-          allowKeys: lifeEventEffect.allowKeys,
-          freezeProgression: lifeEventEffect.freezeProgression,
-          freezeFloorIncrease: lifeEventEffect.freezeFloorIncrease,
-          ignoreRunFloorGap: lifeEventEffect.ignoreRunFloorGap,
-          name: lifeEventEffect?.event?.name || null,
-        }
-      : syntheticLifeEvent,
   };
 }
 
@@ -1465,70 +959,6 @@ function computeLongRunSummary7d(ctx, dayIso) {
   };
 }
 
-function computeLongRunSummary14d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - (LONGRUN_PREPLAN.stepDays - 1) * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  let longest = null;
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (!isRun(a)) continue;
-    const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
-  }
-
-  if (!longest) return { minutes: 0, date: null };
-  return { minutes: Math.round(longest.seconds / 60), date: longest.date };
-}
-
-function computeLongRunTargetMinutes(weeksToEvent, eventDistance) {
-  const dist = normalizeEventDistance(eventDistance) || "10k";
-  const planStartWeeks = getPlanStartWeeks(dist);
-  const target = LONGRUN_PREPLAN.targetMinByDistance?.[dist] ?? LONGRUN_PREPLAN.targetMinByDistance["10k"];
-
-  if (!Number.isFinite(weeksToEvent)) {
-    return {
-      dist,
-      targetMin: target,
-      plannedMin: LONGRUN_PREPLAN.startMin,
-      progressPct: 0,
-      startMin: LONGRUN_PREPLAN.startMin,
-      maxStepPct: LONGRUN_PREPLAN.maxStepPct,
-      stepDays: LONGRUN_PREPLAN.stepDays,
-    };
-  }
-
-  const clampedWeeks = clamp(weeksToEvent, planStartWeeks, PREPLAN_WINDOW_WEEKS);
-  const span = PREPLAN_WINDOW_WEEKS - planStartWeeks;
-  const ratio = span > 0 ? (PREPLAN_WINDOW_WEEKS - clampedWeeks) / span : 1;
-  const progressPct = clamp(ratio, 0, 1);
-  const plannedMin = Math.round(LONGRUN_PREPLAN.startMin + (target - LONGRUN_PREPLAN.startMin) * progressPct);
-
-  return {
-    dist,
-    targetMin: target,
-    plannedMin: Math.max(LONGRUN_PREPLAN.startMin, Math.min(target, plannedMin)),
-    progressPct,
-    startMin: LONGRUN_PREPLAN.startMin,
-    maxStepPct: LONGRUN_PREPLAN.maxStepPct,
-    stepDays: LONGRUN_PREPLAN.stepDays,
-  };
-}
-
-function computeRunShareTarget(weeksToEvent, eventDistance) {
-  const planStartWeeks = getPlanStartWeeks(eventDistance);
-  if (!Number.isFinite(weeksToEvent)) return PREPLAN_RUN_SHARE.min;
-  if (weeksToEvent >= PREPLAN_WINDOW_WEEKS) return PREPLAN_RUN_SHARE.min;
-  if (weeksToEvent <= planStartWeeks) return PREPLAN_RUN_SHARE.targetAtPlanStart;
-  const span = PREPLAN_WINDOW_WEEKS - planStartWeeks;
-  if (span <= 0) return PREPLAN_RUN_SHARE.targetAtPlanStart;
-  const ratio = (PREPLAN_WINDOW_WEEKS - weeksToEvent) / span;
-  const raw = PREPLAN_RUN_SHARE.min + ratio * (PREPLAN_RUN_SHARE.targetAtPlanStart - PREPLAN_RUN_SHARE.min);
-  return clamp(raw, PREPLAN_RUN_SHARE.min, PREPLAN_RUN_SHARE.targetAtPlanStart);
-}
-
 // ================= BLOCK / KEY LOGIC (NEW) =================
 function normalizeEventDistance(value) {
   const s = String(value || "").toLowerCase().trim();
@@ -1570,255 +1000,43 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
   const s = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
   if (!s) return "steady";
 
-  const racepaceRegex = /\b(race\s?pace|racepace|rp|wk\s?pace|5k\s?pace|10k\s?pace|hm\s?pace|mp)\b/;
-  if (racepaceRegex.test(s) || s.includes("wettkampf") || s.includes("wettkampftempo")) return "racepace";
+  const racepaceRegex = /\b(race|rp|5k pace|10k pace|hm pace|mp)\b/;
+  if (racepaceRegex.test(s) || s.includes("race pace") || s.includes("wettkampf")) return "racepace";
   if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) return "schwelle";
   if (s.includes("vo2") || s.includes("v02")) return "vo2_touch";
   if (s.includes("strides") || s.includes("hill sprint")) return "strides";
   return "steady";
 }
 
-function hasRacepaceHint(a) {
-  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
-    .filter(Boolean)
-    .map((v) => String(v).toLowerCase())
-    .join(" ")
-    .replace(/[_-]+/g, " ");
-  if (!text) return false;
-  const racepaceRegex = /\b(race\s?pace|racepace|rp|wk\s?pace|5k\s?pace|10k\s?pace|hm\s?pace|mp)\b/;
-  return racepaceRegex.test(text) || text.includes("wettkampftempo") || text.includes("wettkampf");
-}
-
-function hasExplicitIntervalStructure(a) {
-  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
-    .filter(Boolean)
-    .map((v) => String(v).toLowerCase())
-    .join(" ")
-    .replace(/[_-]+/g, " ");
-  if (!text) return false;
-
-  // examples: 3x800m, 4×1 km, 5x3', 6×90s
-  const repeatDistance = /\b\d{1,2}\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:km|m)\b/i;
-  const repeatTime = /\b\d{1,2}\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:min|s|sec|"|''|′|″|')\b/i;
-  return repeatDistance.test(text) || repeatTime.test(text);
-}
-
-function parseIcuArrayCandidate(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("[")) return null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function pickFirstIcuArray(candidates) {
-  for (const item of candidates) {
-    const arr = parseIcuArrayCandidate(item);
-    if (arr?.length) return arr;
-  }
-  return [];
-}
-
-function getIcuIntervalsFromActivity(activity) {
-  const direct = pickFirstIcuArray([
-    activity?.icu_intervals,
-    activity?.icuIntervals,
-    activity?.intervals,
-    activity?.data?.icu_intervals,
-    activity?.data?.activity?.icu_intervals,
-    activity?.activity?.icu_intervals,
-  ]);
-  return direct.filter((seg) => seg && typeof seg === "object");
-}
-
-function getIcuGroupsFromActivity(activity) {
-  const groups = pickFirstIcuArray([
-    activity?.icu_groups,
-    activity?.data?.icu_groups,
-    activity?.data?.activity?.icu_groups,
-    activity?.activity?.icu_groups,
-  ]);
-  return groups.filter((seg) => seg && typeof seg === "object");
-}
-
-function inferPaceConsistencyFromIcu(activity) {
-  const intervals = getIcuIntervalsFromActivity(activity);
-  const groups = getIcuGroupsFromActivity(activity);
-  if (!groups.length || !intervals.length) return null;
-
-  const repeated = groups
-    .filter((g) => Number(g?.count) >= 2)
-    .map((g) => {
-      const speed = Number(g?.average_speed);
-      if (!Number.isFinite(speed) || speed <= 0) return null;
-      const moving = Number(g?.moving_time);
-      if (!Number.isFinite(moving) || moving < 90 || moving > 480) return null;
-      return {
-        id: String(g?.id ?? ""),
-        speed,
-        count: Number(g?.count) || 0,
-        zone: Number(g?.zone),
-      };
-    })
-    .filter(Boolean);
-
-  if (!repeated.length) return null;
-
-  const prioritized = repeated
-    .filter((g) => Number.isFinite(g.zone) && g.zone >= 3)
-    .sort((a, b) => b.speed - a.speed);
-  const pool = prioritized.length ? prioritized : [...repeated].sort((a, b) => b.speed - a.speed);
-  const candidate = pool[0];
-  if (!candidate) return null;
-
-  const paces = intervals
-    .filter((x) => String(x?.group_id ?? "") === candidate.id)
-    .map((x) => {
-      const speed = Number(x?.average_speed);
-      return Number.isFinite(speed) && speed > 0 ? 1000 / speed : null;
-    })
-    .filter((x) => Number.isFinite(x));
-  if (paces.length < 2) return null;
-
-  const paceMean = avg(paces);
-  const paceStd = std(paces);
-  if (!Number.isFinite(paceMean) || paceMean <= 0 || !Number.isFinite(paceStd)) return null;
-  const paceCvPct = (paceStd / paceMean) * 100;
-
-  if (paceCvPct <= 3) {
-    return {
-      stable: true,
-      label: "stabil (Wiederholungen mit enger Pace-Streuung)",
-    };
-  }
-  if (paceCvPct <= 6) {
-    return {
-      stable: true,
-      label: "weitgehend konstant (leichte Streuung in den Wiederholungen)",
-    };
-  }
-  return {
-    stable: false,
-    label: "uneinheitlich (deutlich streuende Wiederholungs-Pace)",
-  };
-}
-
-function mapKeyTypeToPlannedIntent(keyType) {
-  if (keyType === "racepace") return "racepace";
-  if (keyType === "schwelle") return "threshold";
-  if (keyType === "vo2_touch") return "vo2";
-  return "unknown";
-}
-
 const PHASE_MAX_MINUTES = {
   BASE: {
-    "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
-    "10k": { ga: 80, schwelle: 30, longrun: 120, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, schwelle: 20, longrun: 120, vo2_touch: 2, strides: 2 },
-    m: { ga: 95, schwelle: 15, longrun: 180, strides: 1 },
+    "5k": { ga: 75, longrun: 100, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 75, longrun: 110, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, longrun: 130, vo2_touch: 2, strides: 2 },
+    m: { ga: 90, longrun: 150, strides: 1 },
   },
   BUILD: {
-    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 100 },
-    "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 135 },
-    hm: { schwelle: 55, racepace: 25, longrun: 165 },
-    m: { schwelle: 35, racepace: 70, longrun: 195 },
+    "5k": { schwelle: 30, vo2_touch: 15, racepace: 10, longrun: 90 },
+    "10k": { schwelle: 30, vo2_touch: 32, racepace: 40, longrun: 120 },
+    hm: { schwelle: 40, racepace: 40, longrun: 150 },
+    m: { schwelle: 30, racepace: 60, longrun: 180 },
   },
   RACE: {
-    "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 90 },
-    "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 110 },
-    hm: { racepace: 50, vo2_touch: 4, schwelle: 20, ga: 70, longrun: 135 },
-    m: { racepace: 75, schwelle: 10, ga: 55, longrun: 150 },
+    "5k": { racepace: 15, vo2_touch: 4, ga: 45 },
+    "10k": { racepace: 24, schwelle: 20, ga: 50 },
+    hm: { racepace: 40, schwelle: 36, ga: 60 },
+    m: { racepace: 60, ga: 45, longrun: 90 },
   },
 };
-
-const RACEPACE_DISTANCE_TARGET_KM = {
-  "5k": {
-    min: 3.2,
-    peak: 4.0,
-    max: 4.5,
-  },
-  "10k": {
-    min: 6.0,
-    peak: 7.0,
-    max: 8.0,
-  },
-  hm: {
-    min: 12.0,
-    peak: 15.0,
-    max: 16.0,
-  },
-  m: {
-    min: 16.0,
-    peak: 22.0,
-    max: 26.0,
-  },
-};
-
-function getRacepaceDistanceTarget(distance) {
-  const configured = RACEPACE_DISTANCE_TARGET_KM?.[distance];
-  if (Number.isFinite(configured)) {
-    return {
-      min: Number(configured),
-      peak: Number(configured),
-      max: Number(configured),
-    };
-  }
-  if (!configured || typeof configured !== "object") return null;
-  const min = Number(configured.min);
-  const peak = Number(configured.peak);
-  const max = Number(configured.max);
-  return {
-    min: Number.isFinite(min) && min > 0 ? min : null,
-    peak: Number.isFinite(peak) && peak > 0 ? peak : null,
-    max: Number.isFinite(max) && max > 0 ? max : null,
-  };
-}
 
 const PROGRESSION_TEMPLATES = {
   BUILD: {
-    "5k": {
-      vo2_touch: [
-        { reps: 5, work_min: 3 },
-        { reps: 6, work_min: 3 },
-        { reps: 5, work_min: 4 },
-        { reps: 4, work_min: 3, deload_step: true },
-      ],
-      schwelle: [
-        { reps: 4, work_min: 6 },
-        { reps: 3, work_min: 8 },
-        { reps: 3, work_min: 10 },
-        { reps: 3, work_min: 6, deload_step: true },
-      ],
-      racepace: [
-        { reps: 5, work_km: 0.6 },
-        { reps: 4, work_km: 0.8 },
-        { reps: 4, work_km: 1.0 },
-        { reps: 6, work_km: 0.4, deload_step: true },
-      ],
-    },
     "10k": {
       schwelle: [
         { reps: 4, work_min: 6 },
         { reps: 3, work_min: 8 },
         { reps: 3, work_min: 10 },
         { reps: 2, work_min: 8, deload_step: true },
-      ],
-      vo2_touch: [
-        { reps: 6, work_min: 3 },
-        { reps: 5, work_min: 4 },
-        { reps: 4, work_min: 5 },
-        { reps: 5, work_min: 3, deload_step: true },
-      ],
-      racepace: [
-        { reps: 3, work_km: 1.5 },
-        { reps: 3, work_km: 2.0 },
-        { reps: 2, work_km: 3.0 },
-        { reps: 5, work_km: 1.0, deload_step: true },
       ],
     },
     hm: {
@@ -1828,298 +1046,68 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_min: 15 },
         { reps: 2, work_min: 10, deload_step: true },
       ],
-      vo2_touch: [
-        { reps: 10, work_sec: 20, rest_sec: 70 },
-        { reps: 12, work_sec: 20, rest_sec: 70 },
-        { reps: 10, work_sec: 30, rest_sec: 90 },
-        { reps: 8, work_sec: 20, rest_sec: 90, deload_step: true },
-      ],
       racepace: [
-        { reps: 3, work_km: 2.0 },
-        { reps: 2, work_km: 3.0 },
-        { reps: 2, work_km: 4.0 },
-        { reps: 2, work_km: 2.0, deload_step: true },
-      ],
-    },
-    m: {
-      racepace: [
-        { reps: 3, work_km: 4.0 },
-        { reps: 2, work_km: 6.0 },
-        { reps: 2, work_km: 8.0 },
-        { reps: 2, work_km: 4.0, deload_step: true },
-      ],
-    },
-  },
-  RACE: {
-    "5k": {
-      racepace: [
-        { reps: 4, work_km: 0.8 },
-        { reps: 6, work_km: 1.0 },
-        { reps: 4, work_km: 1.5 },
-      ],
-    },
-    "10k": {
-      racepace: [
-        { reps: 4, work_km: 2.0 },
-        { reps: 3, work_km: 3.0 },
-        { reps: 5, work_km: 2.0 },
-        { reps: 4, work_km: 3.0 },
-        { reps: 2, work_km: 2.0, deload_step: true },
-      ],
-      schwelle: [
-        { reps: 2, work_min: 8 },
-        { reps: 2, work_min: 10 },
-        { reps: 2, work_min: 6, deload_step: true },
-      ],
-    },
-    hm: {
-      racepace: [
-        { reps: 2, work_km: 4.0 },
-        { reps: 2, work_km: 5.0 },
-        { reps: 2, work_km: 3.0, deload_step: true },
-      ],
-      vo2_touch: [
-        { reps: 8, work_sec: 20, rest_sec: 90 },
-        { reps: 6, work_sec: 20, rest_sec: 90, deload_step: true },
-      ],
-      schwelle: [
-        { reps: 2, work_min: 10 },
-        { reps: 2, work_min: 12 },
+        { reps: 4, work_min: 6 },
+        { reps: 3, work_min: 8 },
+        { reps: 3, work_min: 10 },
         { reps: 2, work_min: 8, deload_step: true },
       ],
     },
     m: {
       racepace: [
-        { reps: 2, work_km: 6.0 },
-        { reps: 2, work_km: 8.0 },
-        { reps: 2, work_km: 5.0, deload_step: true },
+        { reps: 3, work_min: 12 },
+        { reps: 2, work_min: 18 },
+        { reps: 2, work_min: 22 },
+        { reps: 2, work_min: 12, deload_step: true },
       ],
     },
   },
-};
-
-
-const KEY_SESSION_RECOMMENDATIONS = {
-  BASE: {
-    "5k": {
-      ga: ["45–75′ GA1 locker", "langer Lauf 75–100′"],
-      schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
-      vo2_touch: ["8–10×10″ Hill Sprints (volle 2–3′ Pause)"]
-    },
-    "10k": {
-      ga: ["60–75′ GA1 locker", "langer Lauf 90–110′"],
-      schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
-      vo2_touch: ["6–8×10″ Hill Sprints (volle 2–3′ Pause)"]
-    },
-    "hm": {
-      ga: ["60–90′ GA1 locker", "langer Lauf 100–130′"],
-      schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
-      vo2_touch: ["6×8–10″ Hill Sprints (volle 2–3′ Pause)"],
-      strides: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
-    },
-    "m": {
-      ga: ["75–90′ GA1 locker", "langer Lauf 120–150′"],
-      schwelle: ["2×8′ @ Schwelle (locker)", "20′ steady (kontrolliert)"],
-      strides: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
-    }
-  },
-
-  BUILD: {
-    "5k": {
-      vo2_touch: ["5×3′ @ vVO₂max", "6×800 m @ 3–5k-Pace"],
-      schwelle: ["4×6′ @ Schwelle", "3×8′ @ Schwelle"],
-      racepace: ["4×1 km @ 5k-Pace (kontrolliert)", "6×600 m @ 5k-Pace"],
-      longrun: ["langer Lauf 90′"]
-    },
-    "10k": {
-      schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
-      vo2_touch: ["5×1000 m @ 5–10k-Pace", "6×3′ @ vVO₂max"],
-      racepace: ["3×2 km @ 10k-Pace (moderat)", "2×3 km @ 10k-Pace (kontrolliert)"],
-      longrun: ["langer Lauf 100–120′"]
-    },
-    "hm": {
-      schwelle: ["2×20′ @ Schwelle", "3×15′ @ Schwelle"],
-      racepace: [
-        "Tempowechsel: 5×(3′ @ HM-Pace / 2′ locker)",
-        "Tempowechsel: 4×(5′ leicht über HM-Pace / 3′ locker)",
-        "Progressiver Tempowechsellauf 40–50′",
-      ],
-      longrun: [
-        "120–150′ locker",
-        "Longrun mit EB: 90′ locker + 20′ steady + 10′ bis HM-nah (nicht drüber)",
-        "Longrun strukturiert: 80′ locker + 2×(10′ HM-Pace / 5′ locker) + auslaufen",
-      ]
-    },
-    "m": {
-      racepace: ["3×5 km @ M-Pace", "14–18 km @ M im Longrun"],
-      longrun: ["150′ Struktur-Longrun mit 3×15′ @ M", "langer Lauf 150–180′"]
-    }
-  },
-
   RACE: {
-    "5k": {
-      racepace: [
-        "6×1 km @ 10k-Pace",
-        "5×1200 m @ 10k-Pace (kontrolliert)",
-        "3×2 km @ 10k-Pace",
-      ],
-      racepace: [
-        "4×2 km @ HM-Pace",
-        "3×3 km @ HM-Pace",
-        "2×4–5 km @ HM-Pace",
-      ],
-      racepace: [
-        "5×2 km @ M-Pace",
-        "4×3 km @ M-Pace",
-        "2×6–8 km @ M-Pace (3 Wochen vor WK)",
-      ],
-    },
     "10k": {
-      racepace: ["3×2 km @ 10k-Pace", "2×3 km @ 10k-Pace"],
-      vo2_touch: ["5×2′ @ VO2 (lange Pause)", "6×400 m @ 5k-Pace"],
-      schwelle: ["2×8′ @ Schwelle (Erhalt)"],
-      ga: ["40–50′ GA1 locker"]
-    },
-    "hm": {
       racepace: [
-        "2×5 km @ HM-Pace",
-        "10–14 km progressiv bis HM-Pace (Rennsimulation)",
-      ],
-      vo2_touch: ["4×2′ @ VO2 (kurz, frisch)"],
-      schwelle: ["2×10′ @ Schwelle (Erhalt)"],
-      ga: ["40–60′ GA1 locker"],
-      longrun: [
-        "100–120′ locker (Taper: 75–90′)",
-        "Ökonomie-Longrun: 70′ locker + 2×15′ @ HM-Pace (5′ locker) + auslaufen",
+        { reps: 3, work_min: 6 },
+        { reps: 4, work_min: 5 },
+        { reps: 3, work_min: 4, deload_step: true },
       ],
     },
-    "m": {
-      racepace: ["2×6–8 km @ M-Pace (3 Wochen vor WK)"],
-      longrun: ["75–90′ letzter Longrun @ M (10–14 Tage vor Rennen)"],
-      ga: ["30–45′ GA1 locker"]
-    }
-  }
+  },
 };
 
+const PROGRESSION_DEFAULT_BLOCK_DAYS = {
+  BASE: 56,
+  BUILD: 35,
+  RACE: 21,
+  RESET: 10,
+};
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
-const KEY_PATTERN_1PERWEEK = {
-  BASE: {
-    "5k": ["schwelle", "schwelle", "vo2_touch"],
-    "10k": ["schwelle", "schwelle", "vo2_touch"],
-    hm: ["steady", "strides", "steady", "schwelle"],
-    m: ["schwelle", "schwelle", "schwelle", "strides"],
-  },
-  BUILD: {
-    "5k": ["vo2_touch", "schwelle"],
-    "10k": ["schwelle", "vo2_touch", "schwelle", "schwelle"],
-    hm: ["schwelle", "schwelle", "schwelle", "vo2_touch"],
-    m: ["racepace", "racepace", "racepace", "racepace"],
-  },
-  RACE: {
-    "5k": ["racepace", "racepace", "racepace"],
-    "10k": ["racepace", "racepace", "schwelle"],
-    hm: ["racepace", "racepace", "schwelle", "racepace"],
-    m: ["racepace", "racepace", "racepace", "racepace"],
-  },
-};
 
-function pickPatternBlock(context = {}) {
+function estimateLikelyBlockDays(context = {}) {
   const block = context.block || "BASE";
-  const dist = normalizeEventDistance(context.eventDistance) || "10k";
-  const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
-  if (block === "BUILD" && dist === "5k" && weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(dist)) {
-    return "RACE";
-  }
-  return block;
-}
+  const limits = BLOCK_CONFIG?.durations?.[block] || null;
+  const fallback = PROGRESSION_DEFAULT_BLOCK_DAYS[block] || 28;
 
-function pickPatternKeyType(context = {}) {
-  const patternBlock = pickPatternBlock(context);
-  const dist = normalizeEventDistance(context.eventDistance) || "10k";
-  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist];
-  if (!Array.isArray(pattern) || !pattern.length) return null;
-  const weekInBlock = Math.max(1, Number(context.weekInBlock) || 1);
-  const idx = (weekInBlock - 1) % pattern.length;
-  return pattern[idx] || null;
-}
-
-function decideKeyType1PerWeek(context = {}, keyRules = {}) {
-  const block = context.block || "BASE";
-  const dist = normalizeEventDistance(context.eventDistance) || "10k";
-  const overlayMode = context.overlayMode || "NORMAL";
-  const lastKeyType = normalizeKeyType(context.lastKeyType || null);
-  const intensityDistribution = context.intensityDistribution || {};
-  const hardShare = Number(intensityDistribution?.hardShare);
-  const midShare = Number(intensityDistribution?.midShare);
-  const hardMax = Number(intensityDistribution?.targets?.hardMax);
-  const midMax = Number(intensityDistribution?.targets?.midMax);
-  const fatigueHigh = context?.fatigue?.override === true;
-
-  if (block === "RESET") return "steady";
-  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY") return "steady";
-
-  let planned = pickPatternKeyType({ ...context, block, eventDistance: dist });
-  if (!planned) {
-    planned = keyRules?.preferredKeyTypes?.find((k) => k !== "steady") || "steady";
+  let likelyDays = fallback;
+  if (limits?.minDays && limits?.maxDays) {
+    likelyDays = Math.round((Number(limits.minDays) + Number(limits.maxDays)) / 2);
   }
 
-  if (block === "RACE" && dist === "5k") {
-    planned = "racepace";
-  }
-
-  if (overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") {
-    if (planned === "vo2_touch" || planned === "strides") {
-      planned = block === "RACE" ? "racepace" : "schwelle";
-    }
-    if (block === "RACE" && dist === "5k") {
-      planned = "schwelle";
+  const weeksToEvent = Number(context.weeksToEvent);
+  if (Number.isFinite(weeksToEvent) && weeksToEvent > 0) {
+    const eventDays = Math.round(weeksToEvent * 7);
+    if (block === "RACE") {
+      likelyDays = Math.min(likelyDays, eventDays);
+    } else if (block === "BUILD") {
+      likelyDays = Math.min(likelyDays, Math.max(14, eventDays - 14));
     }
   }
 
-  const patternBlock = pickPatternBlock({ ...context, block, eventDistance: dist });
-  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist] || [];
-  if (lastKeyType && planned === lastKeyType && pattern.length > 1) {
-    const alternatives = pattern.filter((type) => type !== planned);
-    if (alternatives.length) planned = alternatives[0];
-  }
-
-  if ((planned === "vo2_touch" || planned === "strides") && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
-    planned = block === "RACE" ? "racepace" : "schwelle";
-  }
-
-  if (block === "RACE" && dist === "5k" && fatigueHigh) {
-    planned = "schwelle";
-  }
-
-  if (planned === "racepace" && dist === "5k" && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
-    planned = "schwelle";
-  }
-
-  if ((planned === "vo2_touch" || planned === "strides" || (planned === "racepace" && dist === "5k")) && Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax) {
-    planned = "schwelle";
-  }
-
-  if (planned === "schwelle" && Number.isFinite(midShare) && Number.isFinite(midMax) && midShare > midMax) {
-    planned = "steady";
-  }
-
-  if (block === "BASE" && (dist === "hm" || dist === "m") && planned === "strides") {
-    const stridesSeconds = Number(context?.stridesSeconds ?? context?.stridesDurationSec ?? context?.keyWorkSec ?? 0);
-    if (!Number.isFinite(stridesSeconds) || stridesSeconds > 60) planned = "schwelle";
-  }
-
-  const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
-  if (allowed.length && !allowed.includes(planned)) {
-    const preferredAllowed = (keyRules?.preferredKeyTypes || []).find((k) => allowed.includes(k));
-    planned = preferredAllowed || allowed[0] || "steady";
-  }
-
-  return planned;
+  const minDays = Number(limits?.minDays) || 7;
+  const maxDays = Number(limits?.maxDays) || 84;
+  return clampInt(String(likelyDays), minDays, maxDays);
 }
 
 function resolvePrimaryKeyType(keyRules, block) {
-  if (keyRules?.plannedPrimaryType) return keyRules.plannedPrimaryType;
   const preferred = keyRules?.preferredKeyTypes?.find((k) => k !== "steady");
   if (preferred) return preferred;
   if (block === "BASE") return "ga";
@@ -2127,116 +1115,9 @@ function resolvePrimaryKeyType(keyRules, block) {
   return "steady";
 }
 
-function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDistance } = {}) {
-  if (!isIsoDate(blockStartIso) || !isIsoDate(dayIso)) return 0;
-  const normalizedKeyType = normalizeKeyType(keyType);
-  if (!normalizedKeyType) return 0;
-
-  let count = 0;
-  for (const activity of ctx?.activitiesAll || []) {
-    const activityIso = String(activity.start_date_local || activity.start_date || "").slice(0, 10);
-    if (!activityIso || activityIso < blockStartIso || activityIso > dayIso) continue;
-
-    const explicitKeyTag = hasKeyTag(activity);
-    const rawType = explicitKeyTag ? getKeyType(activity) : null;
-    let normalizedType = normalizeKeyType(rawType, {
-      activity,
-      movingTime: Number(activity?.moving_time ?? activity?.elapsed_time ?? 0),
-      eventDistance,
-    });
-    if (!explicitKeyTag && normalizedKeyType === "racepace" && hasRacepaceHint(activity)) {
-      normalizedType = "racepace";
-    }
-
-    if (normalizedType === normalizedKeyType) count++;
-  }
-
-  return count;
-}
-
-function getVolumeFactorForOverlay(overlayMode, fatigue = null, weeksToEvent = null) {
-  if (overlayMode === "RECOVER_OVERLAY") return 0.55;
-  if (overlayMode === "DELOAD") return fatigue?.override ? 0.6 : 0.7;
-  if (overlayMode === "TAPER") {
-    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) return 0.5;
-    return 0.6;
-  }
-  if (overlayMode === "LIFE_EVENT_HOLIDAY") return 0.65;
-  if (overlayMode === "LIFE_EVENT_STOP") return 0.5;
-  return 1;
-}
-
-function roundStepValue(value, increment, min = 0) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return value;
-  const step = Number.isFinite(increment) && increment > 0 ? increment : 1;
-  const rounded = Math.round(numeric / step) * step;
-  return Math.max(min, Number(rounded.toFixed(3)));
-}
-
-function applyVolumeFactorToStep(step, factor = 1) {
-  if (!step || !Number.isFinite(factor) || factor >= 0.999) return step;
-  const scaled = { ...step };
-
-  if (Number.isFinite(step.work_km)) {
-    scaled.work_km = roundStepValue(Number(step.work_km) * factor, 0.1, 0.1);
-  }
-  if (Number.isFinite(step.total_work_km)) {
-    scaled.total_work_km = roundStepValue(Number(step.total_work_km) * factor, 0.1, 0.1);
-  }
-  if (Number.isFinite(step.work_min)) {
-    scaled.work_min = roundStepValue(Number(step.work_min) * factor, 1, 1);
-  }
-  if (Number.isFinite(step.total_work_min)) {
-    scaled.total_work_min = roundStepValue(Number(step.total_work_min) * factor, 1, 1);
-  }
-  if (Number.isFinite(step.work_sec)) {
-    scaled.work_sec = roundStepValue(Number(step.work_sec) * factor, 15, 15);
-  }
-
-  return scaled;
-}
-
-function pickProgressionStep({ block, dist, keyType, overlayMode, weeksToEvent, ctx, dayIso, blockStartIso, fatigue, lifeEventEffect }) {
-  const steps = PROGRESSION_TEMPLATES?.[block]?.[dist]?.[keyType];
-  if (!Array.isArray(steps) || !steps.length) return { step: null, stepIndex: null, steps: null };
-
-  const sessionsDone = getSessionsDoneInBlock(ctx, {
-    blockStartIso,
-    dayIso,
-    keyType,
-    eventDistance: dist,
-  });
-  let idx = Math.min(Math.max(0, sessionsDone), steps.length - 1);
-
-  if (overlayMode === "DELOAD") {
-    idx = Math.max(0, idx - 1);
-  } else if (overlayMode === "RECOVER_OVERLAY") {
-    idx = 0;
-  } else if (overlayMode === "TAPER") {
-    idx = Math.max(0, idx - 1);
-    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) idx = 0;
-  }
-
-  if (lifeEventEffect?.freezeProgression) {
-    idx = Math.max(0, Math.min(idx, Math.max(0, sessionsDone - 1)));
-  }
-
-  if (lifeEventEffect?.name === "post_holiday_ramp") {
-    idx = Math.max(0, idx - 1);
-  }
-
-  const volumeFactor = getVolumeFactorForOverlay(overlayMode, fatigue, weeksToEvent);
-  const rawStep = steps[idx] || null;
-  const step = applyVolumeFactorToStep(rawStep, volumeFactor);
-
-  return { step, rawStep, stepIndex: idx, steps, sessionsDone, volumeFactor };
-}
-
-function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NORMAL") {
+function computeProgressionTarget(context = {}, keyRules = {}) {
   const block = context.block || "BASE";
   const dist = context.eventDistance || "10k";
-  const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
   const phaseConfig = PHASE_MAX_MINUTES?.[block]?.[dist] || null;
   const primaryType = resolvePrimaryKeyType(keyRules, block);
   const rawMaxMinutes = phaseConfig?.[primaryType] ?? null;
@@ -2245,51 +1126,48 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
       available: false,
       primaryType,
       targetMinutes: null,
-      targetKm: null,
       maxMinutes: null,
+      microcycleWeek: null,
       note: "Für diese Distanz/Phase fehlt noch eine Progressionsvorlage.",
     };
   }
 
   const timeInBlockDays = Math.max(0, Number(context.timeInBlockDays ?? 0));
   const weekInBlock = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
+  const microcycleWeek = ((weekInBlock - 1) % PROGRESSION_DELOAD_EVERY_WEEKS) + 1;
+  const likelyBlockDays = estimateLikelyBlockDays(context);
+  const likelyWeeks = Math.max(1, Math.round(likelyBlockDays / 7));
+
+  const blockHasDeload = block === "BASE" || block === "BUILD";
+  const expectedDeloadWeeks = blockHasDeload ? Math.floor(likelyWeeks / PROGRESSION_DELOAD_EVERY_WEEKS) : 0;
+  const elapsedWeeks = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
+  const elapsedDeloadWeeks = blockHasDeload
+    ? Math.floor((elapsedWeeks - 1) / PROGRESSION_DELOAD_EVERY_WEEKS)
+    : 0;
+  const effectiveWeeksTotal = Math.max(1, likelyWeeks - expectedDeloadWeeks);
+  const effectiveWeekNow = Math.max(1, elapsedWeeks - elapsedDeloadWeeks);
   const budgetDays = primaryType === "racepace" ? RACEPACE_BUDGET_DAYS : 7;
   const maxMinutes = Math.max(1, Math.round((rawMaxMinutes * budgetDays) / 7));
-  const { step, stepIndex, sessionsDone, volumeFactor } = pickProgressionStep({
-    block,
-    dist,
-    keyType: primaryType,
-    overlayMode,
-    weeksToEvent,
-    ctx: context.ctx,
-    dayIso: context.dayIso,
-    blockStartIso: context.blockStartIso,
-    fatigue: context.fatigue,
-    lifeEventEffect: context.lifeEvent,
-  });
 
-  let targetMinutes = null;
-  let targetKm = null;
-  if (primaryType === "racepace") {
-    if (step && Number.isFinite(step.work_km)) {
-      const reps = Number(step.reps) || 1;
-      targetKm = Math.max(0.5, reps * Number(step.work_km));
-    } else {
-      const goal = getRacepaceDistanceTarget(dist)?.peak || null;
-      targetKm = goal ? Math.max(0.5, Math.round(goal * 0.8 * 10) / 10) : null;
-    }
-  } else if (primaryType === "schwelle" || primaryType === "vo2_touch") {
-    if (step && Number.isFinite(step.work_min)) {
-      const reps = Number(step.reps) || 1;
-      targetMinutes = Math.max(1, reps * Number(step.work_min));
-    } else if (step && Number.isFinite(step.work_sec)) {
-      const reps = Number(step.reps) || 1;
-      targetMinutes = Math.max(1, (reps * Number(step.work_sec)) / 60);
-    }
+  let factor = clamp(Math.round((effectiveWeekNow / effectiveWeeksTotal) * 100) / 100, 0.6, 1.0);
+  if (block === "BASE") {
+    factor = Math.max(0.7, factor);
+  } else if (block === "BUILD") {
+    factor = Math.max(0.75, factor);
+  } else if (block === "RACE") {
+    const weeksToEvent = Number(context.weeksToEvent);
+    if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) factor = 0.6;
+    else if (Number.isFinite(weeksToEvent) && weeksToEvent <= 3) factor = 0.75;
+    else factor = Math.max(0.85, factor);
   }
 
-  if (targetMinutes != null) targetMinutes = Math.min(maxMinutes, Math.round(targetMinutes));
-  const templateText = getProgressionTemplate(block, dist, primaryType, weekInBlock, overlayMode === "DELOAD");
+  const isDeloadWeek = blockHasDeload && microcycleWeek === PROGRESSION_DELOAD_EVERY_WEEKS;
+  if (isDeloadWeek) {
+    factor = Math.min(factor, 0.65);
+  }
+
+  const targetMinutes = Math.max(1, Math.round(maxMinutes * factor));
+  const templateText = getProgressionTemplate(block, dist, primaryType, weekInBlock, isDeloadWeek);
 
   return {
     available: true,
@@ -2297,229 +1175,66 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
     weekInBlock,
     maxMinutes,
     targetMinutes,
-    targetKm,
-    stepIndex,
-    sessionsDoneInBlock: sessionsDone,
-    volumeFactor,
+    microcycleWeek,
+    likelyBlockDays,
+    expectedDeloadWeeks,
+    isDeloadWeek,
     templateText,
     note:
-      overlayMode === "DELOAD"
-        ? "Deload aktiv: Volumen runter, Intensität stabil."
-        : overlayMode === "TAPER"
-          ? "Taper aktiv: weniger Volumen, frisch bleiben."
-          : "Progression über Umfang, Pace nicht parallel anheben.",
+      isDeloadWeek
+        ? "Deload-Woche: Umfang runter, Intensität stabil halten."
+        : "Progression über Zeit/Umfang – Pace nicht parallel anheben.",
   };
 }
 
-function mapKeyTypeToIntensity(type, eventDistance) {
-  const normalized = normalizeKeyType(type);
-  if (normalized === "ga" || normalized === "steady" || normalized === "strides") return "easy";
-  if (normalized === "schwelle") return "mid";
-  if (normalized === "racepace") return eventDistance === "5k" ? "hard" : "mid";
-  if (normalized === "vo2_touch") return "hard";
-  return "easy";
-}
-
-function classifyIntensityCategory(a, eventDistance) {
-  if (hasKeyTag(a)) {
-    return mapKeyTypeToIntensity(getKeyType(a), eventDistance);
-  }
-
-  const hr = Number(a?.average_heartrate);
-  if (Number.isFinite(hr) && hr > 0) {
-    if (hr >= HFMAX * VO2_HR_PCT) return "hard";
-    if (hr >= HFMAX * THRESHOLD_HR_PCT) return "mid";
-  }
-
-  return "easy";
-}
-
-function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance) {
+function computeEasyShare(ctx, dayIso, lookbackDays) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
-  let easyMinutes = 0;
-  let midMinutes = 0;
-  let hardMinutes = 0;
-  let totalMinutes = 0;
-
+  let easyMin = 0;
+  let totalMin = 0;
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso || !isRun(a)) continue;
-    const minutes = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
-    if (!(minutes > 0)) continue;
-
-    totalMinutes += minutes;
-    const category = classifyIntensityCategory(a, eventDistance);
-    if (category === "hard") hardMinutes += minutes;
-    else if (category === "mid") midMinutes += minutes;
-    else easyMinutes += minutes;
+    const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
+    if (!(min > 0)) continue;
+    totalMin += min;
+    if (!hasKeyTag(a)) easyMin += min;
   }
 
-  const hasData = totalMinutes > 0;
-  const easyShare = hasData ? easyMinutes / totalMinutes : null;
-  const midShare = hasData ? midMinutes / totalMinutes : null;
-  const hardShare = hasData ? hardMinutes / totalMinutes : null;
-
-  return {
-    totalMinutes: Math.round(totalMinutes),
-    easyMinutes: Math.round(easyMinutes),
-    midMinutes: Math.round(midMinutes),
-    hardMinutes: Math.round(hardMinutes),
-    easyShare,
-    midShare,
-    hardShare,
-  };
+  const easyShare = totalMin > 0 ? easyMin / totalMin : null;
+  return { easyShare, easyMin: Math.round(easyMin), totalMin: Math.round(totalMin) };
 }
 
-function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null) {
-  const targets = getIntensityDistributionTargets(block, eventDistance);
-  let lookbackDays = INTENSITY_LOOKBACK_DAYS;
-  if (blockStartIso) {
-    const end = new Date(dayIso + "T00:00:00Z");
-    const start = new Date(blockStartIso + "T00:00:00Z");
-    const blockDays = Math.floor((end.getTime() - start.getTime()) / 86400000);
-    if (Number.isFinite(blockDays)) lookbackDays = Math.max(1, blockDays + 1);
-  }
+function computeEasyShareGate(ctx, dayIso, block) {
+  const threshold = EASY_SHARE_THRESHOLDS[block] ?? EASY_SHARE_THRESHOLDS.BASE;
+  const metrics14 = computeEasyShare(ctx, dayIso, EASY_SHARE_PRIMARY_LOOKBACK_DAYS);
+  const useFallback = metrics14.totalMin < EASY_SHARE_MIN_TOTAL_MIN_14D;
+  const metrics = useFallback
+    ? computeEasyShare(ctx, dayIso, EASY_SHARE_FALLBACK_LOOKBACK_DAYS)
+    : metrics14;
 
-  const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance);
-
-  const hasData = (metrics?.totalMinutes ?? 0) > 0;
+  const hasData = (metrics?.totalMin ?? 0) > 0;
   const easyShare = metrics?.easyShare;
-  const midShare = metrics?.midShare;
-  const hardShare = metrics?.hardShare;
-
-  const hardOver =
-    hasData && Number.isFinite(hardShare) && Number.isFinite(targets?.hardMax)
-      ? hardShare > targets.hardMax + INTENSITY_CLEAR_OVERSHOOT
-      : false;
-  const midOver =
-    hasData && Number.isFinite(midShare) && Number.isFinite(targets?.midMax)
-      ? midShare > targets.midMax + INTENSITY_CLEAR_OVERSHOOT
-      : false;
-  const easyUnder =
-    hasData && Number.isFinite(easyShare) && Number.isFinite(targets?.easyMin)
-      ? easyShare < targets.easyMin
-      : false;
-
+  const ok = !hasData || (Number.isFinite(easyShare) && easyShare >= threshold);
   return {
-    hasData,
-    lookbackDays,
-    targets,
+    ok,
+    threshold,
+    lookbackDays: useFallback ? EASY_SHARE_FALLBACK_LOOKBACK_DAYS : EASY_SHARE_PRIMARY_LOOKBACK_DAYS,
     easyShare,
-    midShare,
-    hardShare,
-    easyMinutes: metrics?.easyMinutes ?? 0,
-    midMinutes: metrics?.midMinutes ?? 0,
-    hardMinutes: metrics?.hardMinutes ?? 0,
-    totalMinutes: metrics?.totalMinutes ?? 0,
-    hardOver,
-    midOver,
-    easyUnder,
+    easyMin: metrics?.easyMin ?? 0,
+    totalMin: metrics?.totalMin ?? 0,
+    hasData,
   };
 }
 
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
-
-  if (progression?.primaryType === "racepace") {
-    const kmNow = Number(progression?.targetKm);
-    const note = progression?.note ? ` ${progression.note}` : "";
-    const text = Number.isFinite(kmNow)
-      ? `Diese Woche ca. ${formatDecimalKm(kmNow)} km RP als Hauptblock.`
-      : "";
-    return `Racepace: ${text}${note}${progression?.templateText ? ` ${progression.templateText}` : ""}`;
-  }
-
-  if (progression.primaryType === "schwelle") {
-    const minutes = Number(progression?.targetMinutes);
-    const note = progression?.note ? ` ${progression.note}` : "";
-    const text = Number.isFinite(minutes) ? `Diese Woche ~${Math.round(minutes)}′ Schwelle.` : "";
-    return `Schwelle: ${text}${note}${progression?.templateText ? ` ${progression.templateText}` : ""}`;
-  }
-
   const keyType = formatKeyType(progression.primaryType);
-  return `${keyType}: ${progression?.templateText || progression?.note || ""}`.trim();
-}
-
-function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null) {
-  const block = context.block || "BASE";
-  const distance = context.eventDistance || "10k";
-  const preferredType = normalizeKeyType(plannedKeyType) || resolvePrimaryKeyType(keyRules, block);
-  const catalog = KEY_SESSION_RECOMMENDATIONS?.[block]?.[distance] || null;
-  if (!catalog) return null;
-
-  const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
-  const preferredAllowed = !allowed.length || allowed.includes(preferredType);
-  const safePreferred = preferredAllowed
-    ? preferredType
-    : (keyRules?.preferredKeyTypes || []).find((type) => allowed.includes(type)) || allowed[0] || null;
-
-  const preferredList = safePreferred && Array.isArray(catalog?.[safePreferred]) ? catalog[safePreferred] : null;
-  const fallbackType = Object.keys(catalog).find((type) => Array.isArray(catalog[type]) && catalog[type].length > 0) || null;
-  const chosenType = preferredList?.length ? safePreferred : fallbackType;
-  const entries = chosenType ? catalog[chosenType] : null;
-  if (!Array.isArray(entries) || !entries.length) return null;
-
-  const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.stepIndex);
-  const sessionText = progressionStepSession || entries[0];
-  const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
-  const racepaceTarget = chosenType === "racepace"
-    ? getRacepaceTargetText(distance)
-    : "";
-  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${progressionMissingNote}${racepaceTarget}`;
-}
-
-function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
-  const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
-  if (!Array.isArray(steps) || !steps.length) return null;
-
-  const idx = Math.max(0, Math.min(steps.length - 1, Number(stepIndex) || 0));
-  const currentStep = steps[idx];
-  if (!currentStep) return null;
-
-  const reps = Number(currentStep.reps) || 0;
-  if (!reps) return null;
-
-  if (Number.isFinite(currentStep.work_km)) {
-    const workKm = formatDecimalKm(Number(currentStep.work_km));
-    const racepaceLabel = keyType === "racepace" ? ` @ ${distance.toUpperCase()}-RP` : "";
-    return `${reps}×${workKm} km${racepaceLabel}`;
-  }
-
-  if (Number.isFinite(currentStep.work_min)) {
-    return `${reps}×${Math.round(Number(currentStep.work_min))}′`;
-  }
-
-  if (Number.isFinite(currentStep.work_sec)) {
-    const workSec = Math.round(Number(currentStep.work_sec));
-    const restSec = Number.isFinite(currentStep.rest_sec) ? ` / ${Math.round(Number(currentStep.rest_sec))}″ easy` : "";
-    return `${reps}×${workSec}″${restSec}`;
-  }
-
-  return null;
-}
-
-function formatDecimalKm(km) {
-  const value = Number(km);
-  if (!Number.isFinite(value)) return "0";
-  return value.toLocaleString("de-DE", {
-    minimumFractionDigits: Number.isInteger(value) ? 0 : 1,
-    maximumFractionDigits: 1,
-  });
-}
-
-function getRacepaceTargetText(distance) {
-  const target = getRacepaceDistanceTarget(distance);
-  if (!target) return "";
-  const peak = Number(target.peak);
-  if (!Number.isFinite(peak) || peak <= 0) return "";
-  const minText = Number.isFinite(target.min) && target.min > 0 ? `${formatDecimalKm(target.min)}–` : "";
-  const maxText = Number.isFinite(target.max) && target.max > peak
-    ? ` (max ${formatDecimalKm(target.max)} km)`
-    : "";
-  return ` RP-Ziel bis Blockende: ${minText}${formatDecimalKm(peak)} km am Stück in RP-Qualität${maxText}.`;
+  let text = `${keyType}: diese Woche ~${progression.targetMinutes}′ (Block-Maximum ${progression.maxMinutes}′). ${progression.note}`;
+  if (progression?.templateText) text += ` ${progression.templateText}`;
+  return text;
 }
 
 function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDeload) {
@@ -2527,34 +1242,13 @@ function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDe
   if (!Array.isArray(steps) || !steps.length) return null;
 
   const formatted = steps.map((step, idx) => {
-    const reps = Number(step.reps) || 0;
-    const hasKm = Number.isFinite(step.work_km);
-    if (hasKm) {
-      const workKm = Number(step.work_km);
-      const totalKm = Number.isFinite(step.total_work_km)
-        ? Number(step.total_work_km)
-        : reps * workKm;
-      const main = `${reps}×${formatDecimalKm(workKm)} km`;
-      const deload = step.deload_step ? " Deload" : "";
-      const total = totalKm > 0 ? ` ≈${formatDecimalKm(totalKm)} km` : "";
-      return `W${idx + 1}${deload} ${main}${total}`;
-    }
-
-    const totalWorkMin = Number.isFinite(step.work_sec)
-      ? (reps * Number(step.work_sec)) / 60
-      : Number.isFinite(step.total_work_min)
-        ? step.total_work_min
-        : reps * (Number(step.work_min) || 0);
-    const main = Number.isFinite(step.work_sec)
-      ? `${reps}×${Math.round(Number(step.work_sec))}″`
-      : `${reps}×${step.work_min}`;
-    const rest = Number.isFinite(step.rest_sec)
-      ? ` (${Math.round(Number(step.rest_sec))}″ easy)`
-      : Number.isFinite(step.rest_min)
-        ? ` (${step.rest_min}′ Trabpause)`
-        : "";
+    const totalWork = Number.isFinite(step.total_work_min)
+      ? step.total_work_min
+      : (Number(step.reps) || 0) * (Number(step.work_min) || 0);
+    const main = `${step.reps}×${step.work_min}`;
+    const rest = Number.isFinite(step.rest_min) ? ` (${step.rest_min}′ Trabpause)` : "";
     const deload = step.deload_step ? " Deload" : "";
-    const total = totalWorkMin > 0 ? ` ≈${Math.round(totalWorkMin)}′` : "";
+    const total = totalWork > 0 ? ` ≈${Math.round(totalWork)}′` : "";
     return `W${idx + 1}${deload} ${main}${rest}${total}`;
   });
 
@@ -2580,25 +1274,25 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   if (block === "BASE") {
     if (dist === "5k" || dist === "10k") {
       return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "schwelle", "strides", "vo2_touch"],
-        preferredKeyTypes: ["schwelle", "steady"],
-        bannedKeyTypes: ["racepace"],
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
+        preferredKeyTypes: ["vo2_touch"],
+        bannedKeyTypes: ["schwelle", "racepace"],
       };
     }
     if (dist === "m" || dist === "hm") {
       return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "schwelle", "strides"],
-        preferredKeyTypes: ["schwelle", "steady"],
-        bannedKeyTypes: ["racepace", "vo2_touch"],
+        expectedKeysPerWeek: 0.5,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["steady", "strides"],
+        preferredKeyTypes: ["steady"],
+        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
       };
     }
     return {
       expectedKeysPerWeek: 0.5,
-      maxKeysPerWeek: 2,
+      maxKeysPerWeek: 1,
       allowedKeyTypes: ["steady", "strides"],
       preferredKeyTypes: ["steady"],
       bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
@@ -2609,26 +1303,26 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
     if (dist === "5k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides", "steady"],
-        preferredKeyTypes: ["vo2_touch", "schwelle", "racepace"],
-        bannedKeyTypes: [],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["vo2_touch", "schwelle"],
+        bannedKeyTypes: ["racepace"],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides", "steady"],
-        preferredKeyTypes: ["schwelle", "vo2_touch", "racepace"],
-        bannedKeyTypes: [],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["schwelle", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["schwelle", "vo2_touch"],
+        bannedKeyTypes: ["racepace"],
       };
     }
     if (dist === "hm") {
       const allowRacePace = weeksToEvent != null && weeksToEvent <= 8;
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
+        maxKeysPerWeek: 1,
         allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
         preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
         bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
@@ -2638,7 +1332,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       const allowRacePace = weeksToEvent != null && weeksToEvent <= 10;
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
+        maxKeysPerWeek: 1,
         allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
         preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
         bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
@@ -2649,35 +1343,35 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   if (block === "RACE") {
     if (dist === "5k") {
       return {
-        expectedKeysPerWeek: 1.5,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "vo2_touch", "schwelle", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "vo2_touch", "schwelle"],
-        bannedKeyTypes: [],
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "vo2_touch", "strides", "steady"],
+        preferredKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["schwelle"],
       };
     }
     if (dist === "10k") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch", "strides", "steady"],
-        preferredKeyTypes: ["racepace", "schwelle", "vo2_touch"],
-        bannedKeyTypes: [],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "schwelle", "strides", "steady"],
+        preferredKeyTypes: ["racepace"],
+        bannedKeyTypes: ["vo2_touch"],
       };
     }
     if (dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch", "steady"],
+        maxKeysPerWeek: 1,
+        allowedKeyTypes: ["racepace", "schwelle", "steady"],
         preferredKeyTypes: ["racepace", "schwelle"],
-        bannedKeyTypes: ["strides"],
+        bannedKeyTypes: ["vo2_touch", "strides"],
       };
     }
     if (dist === "m") {
       return {
         expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
+        maxKeysPerWeek: 1,
         allowedKeyTypes: ["racepace", "schwelle", "steady"],
         preferredKeyTypes: ["racepace"],
         bannedKeyTypes: ["vo2_touch", "strides"],
@@ -2687,7 +1381,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
 
   return {
     expectedKeysPerWeek: 0.5,
-    maxKeysPerWeek: 2,
+    maxKeysPerWeek: 1,
     allowedKeyTypes: ["steady", "strides"],
     preferredKeyTypes: ["steady"],
     bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
@@ -2719,90 +1413,14 @@ function collectKeyStats(ctx, dayIso, windowDays) {
   return { count, types, list };
 }
 
-function getLastKeyTypeBeforeDay(ctx, dayIso, windowDays = 21) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  let lastActivity = null;
-  let lastDate = "";
-  for (const a of ctx.activitiesAll || []) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso || !hasKeyTag(a)) continue;
-    if (!lastActivity || d > lastDate) {
-      lastActivity = a;
-      lastDate = d;
-    }
-  }
-
-  if (!lastActivity) return null;
-  const rawType = getKeyType(lastActivity);
-  return normalizeKeyType(rawType, {
-    activity: lastActivity,
-    movingTime: Number(lastActivity?.moving_time ?? lastActivity?.elapsed_time ?? 0),
-  });
-}
-
-function computeRacepaceBlockProgress(ctx, context = {}) {
-  const block = context.block || "BASE";
-  const eventDistance = context.eventDistance || "10k";
-  const dayIso = context.dayIso;
-  const blockStartIso = context.blockStartIso;
-  if (!dayIso || !blockStartIso || !isIsoDate(dayIso) || !isIsoDate(blockStartIso)) return null;
-
-  const steps = PROGRESSION_TEMPLATES?.[block]?.[eventDistance]?.racepace;
-  if (!Array.isArray(steps) || !steps.length) return null;
-
-  const racepaceActs = [];
-  for (const a of ctx.activitiesAll || []) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < blockStartIso || d > dayIso) continue;
-    const explicitKeyTag = hasKeyTag(a);
-    const rawType = explicitKeyTag ? getKeyType(a) : null;
-    const type = normalizeKeyType(rawType, {
-      activity: a,
-      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
-    });
-    const racepaceByHint = !explicitKeyTag && hasRacepaceHint(a);
-    if (type === "racepace" || racepaceByHint) racepaceActs.push(d);
-  }
-
-  racepaceActs.sort();
-  const cycleLength = steps.length;
-  let doneKm = 0;
-  for (let i = 0; i < racepaceActs.length; i++) {
-    const step = steps[i % cycleLength];
-    if (!step) continue;
-    const reps = Number(step.reps) || 0;
-    const workKm = Number.isFinite(step.total_work_km)
-      ? Number(step.total_work_km)
-      : reps * (Number(step.work_km) || 0);
-    if (Number.isFinite(workKm) && workKm > 0) doneKm += workKm;
-  }
-
-  const targetKm = Number(getRacepaceDistanceTarget(eventDistance)?.peak);
-  const doneRounded = Math.round(doneKm * 10) / 10;
-  const pct = Number.isFinite(targetKm) && targetKm > 0
-    ? Math.min(999, Math.round((doneRounded / targetKm) * 100))
-    : null;
-
-  return {
-    available: true,
-    sessionsDone: racepaceActs.length,
-    doneKm: doneRounded,
-    targetKm: Number.isFinite(targetKm) && targetKm > 0 ? targetKm : null,
-    pct,
-  };
-}
-
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
   const actual7 = keyStats7.count;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
-  const maxKeysCap7 = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : MAX_KEYS_7D;
-  const capExceeded = actual7 >= maxKeysCap7;
+  const maxKeysCap = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : maxKeys;
+  const capExceeded = actual7 >= maxKeysCap;
 
   const actualTypes7 = keyStats7.list || [];
   const actualTypes14 = keyStats14.list || [];
@@ -2818,18 +1436,10 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  const plannedKeyType = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
-  keyRules.plannedPrimaryType = plannedKeyType;
-  const preferred = plannedKeyType;
+  const preferred = keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
-  const progression = computeProgressionTarget(context, keyRules, context.overlayMode || "NORMAL");
-  const racepaceBlockProgress = computeRacepaceBlockProgress(context.ctx, {
-    block: context.block,
-    eventDistance: context.eventDistance,
-    dayIso: context.dayIso,
-    blockStartIso: context.blockStartIso,
-  });
+  const progression = computeProgressionTarget(context, keyRules);
 
   const dayIso = context.dayIso || null;
   const lastKeyIso = context.keySpacing?.lastKeyIso ?? null;
@@ -2838,41 +1448,21 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const keySpacingNowOk = !Number.isFinite(lastKeyGapDays) || lastKeyGapDays >= 2;
   const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
 
-  const intensityDistribution = context.intensityDistribution || null;
-  const hardShareBlocked = intensityDistribution?.hardOver === true;
-  const midShareBlocked = intensityDistribution?.midOver === true;
-  const easyShareBlocked = intensityDistribution?.easyUnder === true;
-  const preferredIntensity = mapKeyTypeToIntensity(preferred, context.eventDistance);
+  const easyShareGate = context.easyShareGate || null;
+  const easyShareBlocked = easyShareGate?.ok === false;
 
   let suggestion = "";
   let keyAllowedNow = false;
 
   if (capExceeded) {
-    suggestion = `Key-Budget erschöpft (${actual7}/${maxKeysCap7} in 7 Tagen) – restliche Einheiten locker/GA.`;
+    suggestion = "Key-Budget erschöpft (2 Keys/7 Tage) – restliche Einheiten locker/GA.";
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand). Bis dahin locker/GA.`;
-  } else if (hardShareBlocked && preferredIntensity === "hard") {
-    const hardPct = Math.round((intensityDistribution?.hardShare ?? 0) * 100);
-    const maxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
-    suggestion = `Hard-Anteil hoch (${hardPct}% > ${maxPct}%) – heute kein weiterer harter Key. Nur Mid/Easy.`;
-    keyAllowedNow = true;
   } else if (easyShareBlocked) {
-    const easyPct = Math.round((intensityDistribution?.easyShare ?? 0) * 100);
-    const minPct = Math.round((intensityDistribution?.targets?.easyMin ?? 0) * 100);
-    suggestion = `Easy-Anteil zu niedrig (${easyPct}% < ${minPct}%) – nächste Einheit zwingend locker.`;
-  } else if (midShareBlocked && preferred === "schwelle") {
-    const midPct = Math.round((intensityDistribution?.midShare ?? 0) * 100);
-    const maxPct = Math.round((intensityDistribution?.targets?.midMax ?? 0) * 100);
-    const hardShare = intensityDistribution?.hardShare ?? 0;
-    const hardMax = intensityDistribution?.targets?.hardMax ?? 0;
-    if (hardShare + INTENSITY_CLEAR_OVERSHOOT < hardMax && keyRules.allowedKeyTypes.includes("vo2_touch")) {
-      suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, VO2 kurz optional.`;
-      keyAllowedNow = true;
-    } else {
-      suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, besser locker.`;
-    }
+    const pct = Math.round((easyShareGate.easyShare ?? 0) * 100);
+    suggestion = `Intensity-Guardrail: zu wenig locker in den letzten ${easyShareGate.lookbackDays} Tagen (${pct}%). Erst 2–3 lockere Tage.`;
   } else if (actual7 === 1 && typeOk) {
     suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
     keyAllowedNow = true;
@@ -2888,17 +1478,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
   }
 
-  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType);
-  if (explicitSession && keyAllowedNow) {
-    suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
-  }
-
-  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
+  const status = capExceeded || easyShareBlocked ? "red" : freqOk && typeOk ? "ok" : "warn";
 
   return {
     expected,
     maxKeys,
-    maxKeysCap7,
+    maxKeysCap,
     actual7,
     actual14,
     perWeek14,
@@ -2918,10 +1503,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keySpacingOk: keySpacingNowOk,
     nextKeyEarliest,
     lastKeyGapDays,
-    intensityDistribution,
+    easyShareGate,
     keyAllowedNow,
-    explicitSession,
-    racepaceBlockProgress,
   };
 }
 
@@ -2966,11 +1549,8 @@ function determineBlockState({
   previousState,
 }) {
   const reasons = [];
-  const eventDistanceNorm = normalizeEventDistance(eventDistance) || "10k";
-  const planStartWeeks = getPlanStartWeeks(eventDistanceNorm);
-  const raceStartWeeks = getRaceStartWeeks(eventDistanceNorm);
-  const forceRaceWeeks = getForceRaceWeeks(eventDistanceNorm);
-
+  const eventDistanceNorm = eventDistance || "10k";
+  
 
   const todayISO = today;
   const eventDateISO = eventDate || null;
@@ -3029,9 +1609,6 @@ function determineBlockState({
   }
 
   if (weeksToEvent <= 4 && weeksToEvent >= 0) {
-    const keepRaceStart = previousState?.block === "RACE";
-    const raceStartDate = keepRaceStart ? startDate : todayISO;
-    const raceTimeInBlockDays = keepRaceStart ? Math.max(0, daysBetween(raceStartDate, todayISO)) : 0;
     return {
       block: "RACE",
       wave: 0,
@@ -3040,22 +1617,19 @@ function determineBlockState({
       todayISO,
       eventDateISO,
       blockStartPersisted: persistedStart,
-      blockStartEffective: raceStartDate,
+      blockStartEffective: todayISO,
       startWasReset,
       reasons: [...reasons, "Event sehr nah (≤4 Wochen) → RACE"],
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockDays: raceTimeInBlockDays,
-      startDate: raceStartDate,
+      timeInBlockDays: 0,
+      startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
   }
 
-  if (weeksToEvent <= forceRaceWeeks && weeksToEvent >= 0) {
-    const keepRaceStart = previousState?.block === "RACE";
-    const raceStartDate = keepRaceStart ? startDate : todayISO;
-    const raceTimeInBlockDays = keepRaceStart ? Math.max(0, daysBetween(raceStartDate, todayISO)) : 0;
+  if (weeksToEvent <= BLOCK_CONFIG.cutoffs.forceRaceWeeks && weeksToEvent >= 0) {
     return {
       block: "RACE",
       wave: weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0,
@@ -3064,14 +1638,14 @@ function determineBlockState({
       todayISO,
       eventDateISO,
       blockStartPersisted: persistedStart,
-      blockStartEffective: raceStartDate,
+      blockStartEffective: todayISO,
       startWasReset,
       reasons: ["Event sehr nah → sofort RACE"],
       readinessScore: 90,
       forcedSwitch: false,
       nextSuggestedBlock: "RESET",
-      timeInBlockDays: raceTimeInBlockDays,
-      startDate: raceStartDate,
+      timeInBlockDays: 0,
+      startDate: todayISO,
       eventDistance: eventDistanceNorm,
     };
   }
@@ -3117,28 +1691,6 @@ function determineBlockState({
     };
   }
 
-  if (weeksToEvent > planStartWeeks) {
-    reasons.push(`Freie Vorphase aktiv (> ${planStartWeeks} Wochen bis Event) → BASE`);
-    return {
-      block: "BASE",
-      wave: 0,
-      weeksToEvent,
-      weeksToEventRaw,
-      todayISO,
-      eventDateISO,
-      blockStartPersisted: persistedStart,
-      blockStartEffective: todayISO,
-      startWasReset,
-      reasons,
-      readinessScore: 55,
-      forcedSwitch: false,
-      nextSuggestedBlock: "BASE",
-      timeInBlockDays: 0,
-      startDate: todayISO,
-      eventDistance: eventDistanceNorm,
-    };
-  }
-
   let wave = weeksToEvent > BLOCK_CONFIG.cutoffs.wave1Weeks ? 1 : 0;
   if (previousState?.wave === 2) wave = 2;
   if (weeksToEvent <= 8 && wave === 1) {
@@ -3146,7 +1698,7 @@ function determineBlockState({
     reasons.push("Event ≤8 Wochen → Wave 1 deaktiviert");
   }
 
-  let block = previousState?.block || (weeksToEvent <= raceStartWeeks ? "BUILD" : "BASE");
+  let block = previousState?.block || (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
 
   const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
   const runFloorIsLow =
@@ -3165,7 +1717,7 @@ function determineBlockState({
   if (!Number.isFinite(timeInBlockDays) || timeInBlockDays < 0) {
     timeInBlockDays = 0;
   }
-  const blockLimits = getBlockDurationForDistance(block, eventDistanceNorm);
+  const blockLimits = BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
   
 
   const runFloorReady =
@@ -3189,9 +1741,9 @@ function determineBlockState({
   let forcedSwitch = false;
   let nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent);
 
-  if (weeksToEvent <= raceStartWeeks && weeksToEvent >= 0 && block !== "RACE") {
+  if (weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks && weeksToEvent >= 0 && block !== "RACE") {
     forcedSwitch = true;
-    reasons.push(`Event ≤${raceStartWeeks} Wochen → sofort RACE (Taper-Puffer)`);
+    reasons.push("Event ≤6 Wochen → sofort RACE (Taper-Puffer)");
     block = "RACE";
     startDate = todayISO;
     timeInBlockDays = 0;
@@ -3282,7 +1834,7 @@ function determineBlockState({
       historyMetrics?.motorDelta == null || Math.abs(historyMetrics.motorDelta) <= BLOCK_CONFIG.thresholds.plateauMotorDelta;
 
     const buildReady = keyCompliance?.freqOk && keyCompliance?.typeOk && (plateauEf || plateauMotor);
-    const eventForcesRace = weeksToEvent <= raceStartWeeks;
+    const eventForcesRace = weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks;
 
     if (wave === 1 && weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) {
       const keysOk = (historyMetrics?.keyStats14?.count ?? 0) >= 3;
@@ -3345,47 +1897,21 @@ function determineBlockState({
   };
 }
 
-
-function parseManualRaceStartIso(value, todayIso) {
-  const raw = String(value || "").trim();
-  if (!raw || !isIsoDate(raw)) return null;
-  const clamped = clampStartDate(raw, todayIso, 3650);
-  return clamped || null;
-}
-
-function extractPersistedBlockStateFromWellness(wellness) {
-  if (!wellness) return null;
-  const blockRaw = wellness?.[FIELD_BLOCK] ?? wellness?.block ?? null;
-  const block = String(blockRaw || "").trim().toUpperCase();
-  if (!block) return null;
-  const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
-  const wave = Number.isFinite(Number(waveRaw)) ? Number(waveRaw) : 0;
-  return {
-    block,
-    wave,
-    startDate: null,
-    eventDate: null,
-    eventDistance: null,
-    floorTarget: null,
-    effectiveFloorTarget: null,
-    loadDays: 0,
-    deloadStartDate: null,
-    lastDeloadCompletedISO: null,
-    lastFloorIncreaseDate: null,
-    lastEventDate: null,
-    lastLifeEventCategory: "",
-    lastLifeEventStartISO: null,
-    lastLifeEventEndISO: null,
+function buildBlockStateLine(state) {
+  if (!state) return "";
+  const payload = {
+    block: state.block,
+    wave: state.wave,
+    start: state.startDate,
+    eventDate: state.eventDate,
+    eventDistance: state.eventDistance,
+    floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
+    deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
+    lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
+    lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
+    lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
   };
-}
-
-function getManualRaceStartOverride(env, wellness, dayIso) {
-  const envValue = env?.RACE_START_OVERRIDE_ISO || env?.MANUAL_RACE_START_ISO || null;
-  const fromEnv = parseManualRaceStartIso(envValue, dayIso);
-  if (fromEnv) return fromEnv;
-  const fromWellness = parseManualRaceStartIso(wellness?.[FIELD_RACE_START_OVERRIDE], dayIso);
-  if (fromWellness) return fromWellness;
-  return null;
+  return `BlockState: ${JSON.stringify(payload)}`;
 }
 
 function parseBlockStateFromComment(comment) {
@@ -3405,15 +1931,11 @@ function parseBlockStateFromComment(comment) {
       eventDate: parsed.eventDate ?? null,
       eventDistance: parsed.eventDistance ?? null,
       floorTarget: Number.isFinite(parsed.floorTarget) ? parsed.floorTarget : null,
-      effectiveFloorTarget: Number.isFinite(parsed.effectiveFloorTarget) ? parsed.effectiveFloorTarget : null,
       loadDays: Number.isFinite(parsed.loadDays) ? parsed.loadDays : 0,
       deloadStartDate: isIsoDate(parsed.deloadStartDate) ? parsed.deloadStartDate : null,
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
       lastFloorIncreaseDate: isIsoDate(parsed.lastFloorIncreaseDate) ? parsed.lastFloorIncreaseDate : null,
       lastEventDate: isIsoDate(parsed.lastEventDate) ? parsed.lastEventDate : null,
-      lastLifeEventCategory: parsed.lastLifeEventCategory ? normalizeEventCategory(parsed.lastLifeEventCategory) : "",
-      lastLifeEventStartISO: isIsoDate(parsed.lastLifeEventStartISO) ? parsed.lastLifeEventStartISO : null,
-      lastLifeEventEndISO: isIsoDate(parsed.lastLifeEventEndISO) ? parsed.lastLifeEventEndISO : null,
     };
   } catch {
     return null;
@@ -3438,55 +1960,9 @@ async function getPersistedBlockState(ctx, env, dayIso) {
   if (ctx.blockStateCache.has(dayIso)) return ctx.blockStateCache.get(dayIso);
   const wellness = await fetchWellnessDay(ctx, env, dayIso);
   const comment = wellness?.comments || wellness?.comment || null;
-  const parsedFromComment = parseBlockStateFromComment(comment);
-  const parsedFromFields = extractPersistedBlockStateFromWellness(wellness);
-  const parsedFromKv = await readLatestBlockStateKv(env, dayIso);
-  // Prefer sources that include a persisted start date (comment/KV).
-  // Wellness custom fields currently only carry block/wave and would otherwise
-  // wipe the remembered block start on the next run.
-  const parsed = parsedFromComment || parsedFromKv || parsedFromFields;
+  const parsed = parseBlockStateFromComment(comment);
   ctx.blockStateCache.set(dayIso, parsed);
   return parsed;
-}
-
-function getBlockStateKvKey(env) {
-  const athleteId = mustEnv(env, "ATHLETE_ID");
-  return `${BLOCK_STATE_KV_PREFIX}${athleteId}`;
-}
-
-async function readLatestBlockStateKv(env, dayIso) {
-  const key = getBlockStateKvKey(env);
-  const raw = await readKvJson(env, key);
-  if (!raw || typeof raw !== "object") return null;
-  if (raw.day && isIsoDate(raw.day) && raw.day > dayIso) return null;
-  const state = raw.state;
-  if (!state || typeof state !== "object" || !state.block || !state.startDate) return null;
-  return {
-    block: state.block,
-    wave: Number.isFinite(Number(state.wave)) ? Number(state.wave) : 0,
-    startDate: isIsoDate(state.startDate) ? state.startDate : null,
-    eventDate: isIsoDate(state.eventDate) ? state.eventDate : null,
-    eventDistance: state.eventDistance ?? null,
-    floorTarget: Number.isFinite(state.floorTarget) ? state.floorTarget : null,
-    effectiveFloorTarget: Number.isFinite(state.effectiveFloorTarget) ? state.effectiveFloorTarget : null,
-    timeInBlockDays: Number.isFinite(state.timeInBlockDays) ? state.timeInBlockDays : 0,
-    deloadStartDate: isIsoDate(state.deloadStartDate) ? state.deloadStartDate : null,
-    lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
-    lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
-    lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
-    lastLifeEventCategory: state.lastLifeEventCategory ? normalizeEventCategory(state.lastLifeEventCategory) : "",
-    lastLifeEventStartISO: isIsoDate(state.lastLifeEventStartISO) ? state.lastLifeEventStartISO : null,
-    lastLifeEventEndISO: isIsoDate(state.lastLifeEventEndISO) ? state.lastLifeEventEndISO : null,
-  };
-}
-
-async function writeLatestBlockStateKv(env, dayIso, state) {
-  if (!state?.block || !state?.startDate) return;
-  const key = getBlockStateKvKey(env);
-  await writeKvJson(env, key, {
-    day: dayIso,
-    state,
-  });
 }
 
 function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics) {
@@ -3653,20 +2129,9 @@ function bucketLoadsByDay(runs) {
 }
 // ====== src/index.js (PART 2/4) ======
 
-function pickRunMetricsPatch(patch) {
-  const next = {};
-  const runMetricFields = [FIELD_VDOT, FIELD_EF, FIELD_DRIFT, FIELD_MOTOR];
-  for (const key of runMetricFields) {
-    if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key];
-  }
-  return next;
-}
-
 // ================= MAIN =================
-async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
+async function syncRange(env, oldest, newest, write, debug, warmupSkipSec) {
   const ctx = createCtx(env, warmupSkipSec, debug);
-  const runMetricsOnly = runtimeOverrides?.runMetricsOnly === true;
-  const runMetricsOnlyIfExisting = runtimeOverrides?.runMetricsOnlyIfExisting === true;
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
   // For this sync we only need enough to compute what we will write inside [oldest..newest].
@@ -3728,7 +2193,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       modeInfo = await determineMode(env, day, ctx.debug);
       policy = getModePolicy(modeInfo);
     } catch (e) {
-      modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
+      modeInfo = { mode: "OPEN", primary: "open", nextEvent: null };
       policy = getModePolicy(modeInfo);
     }
     // NEW: fatigue / key-cap metrics (keine RECOVERY-Logik mehr)
@@ -3767,14 +2232,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const runs = ctx.byDayRuns.get(day) ?? [];
     const patch = {};
     const perRunInfo = [];
-    const existingDailyReportEvent =
-      write && runMetricsOnlyIfExisting ? await fetchDailyReportNoteEvent(env, day) : null;
-    const runSectionOnly = runMetricsOnly || Boolean(existingDailyReportEvent?.id);
-    const wellnessToday = await fetchWellnessDay(ctx, env, day);
-    const manualRaceStartIso = parseManualRaceStartIso(
-      runtimeOverrides?.raceStartOverrideIso,
-      day
-    ) || getManualRaceStartOverride(env, wellnessToday, day);
 
     // Motor Index (works even if no run today)
     let motor = null;
@@ -3793,8 +2250,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
-      const intervalStructureHint = isKey ? hasExplicitIntervalStructure(a) : false;
-      const paceConsistencyHint = isKey ? inferPaceConsistencyFromIcu(a) : null;
 
       let drift = null;
       let drift_raw = null;
@@ -3839,39 +2294,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         } catch {
           intervalMetrics = null;
         }
-
-        let icuIntervals = getIcuIntervalsFromActivity(a);
-        if (!icuIntervals?.length) {
-          try {
-            const details = await getActivityDetails(ctx, a.id);
-            const detailedIntervals = getIcuIntervalsFromActivity(details);
-            if (detailedIntervals.length) {
-              icuIntervals = detailedIntervals;
-            }
-          } catch {
-            // fallback: scoring remains optional
-          }
-        }
-
-        if (icuIntervals?.length) {
-          try {
-            const sessionScore = evaluateIntervalsSession(
-              {
-                icu_intervals: icuIntervals,
-                plannedIntent: mapKeyTypeToPlannedIntent(keyType),
-              },
-              DEFAULT_EVAL_CFG
-            );
-            if (sessionScore?.repCount >= 2) {
-              intervalMetrics = {
-                ...(intervalMetrics || {}),
-                sessionScore,
-              };
-            }
-          } catch {
-            // optional scoring enrichment, ignore failures
-          }
-        }
       }
 
       perRunInfo.push({
@@ -3887,8 +2309,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         drift_source,
         load,
         intervalMetrics,
-        intervalStructureHint,
-        paceConsistencyHint,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -3926,7 +2346,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     try {
       loads7 = await computeLoads7d(ctx, day);
     } catch {}
-    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, plan: null };
+    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false };
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
@@ -3934,13 +2354,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
-    const longRun14d = computeLongRunSummary14d(ctx, day);
-    const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
-    longRunSummary = {
-      ...longRunSummary,
-      longRun14d,
-      plan: longRunPlan,
-    };
     const runEquivalent7 = (loads7.runTotal7 ?? 0) + (loads7.bikeTotal7 ?? 0) * bikeSubFactor;
 
     let specificValue = 0;
@@ -3973,18 +2386,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
-    const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
-      (weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(eventDistance) ? "BUILD" : "BASE");
+      (weeksToEvent != null && weeksToEvent <= BLOCK_CONFIG.cutoffs.raceStartWeeks ? "BUILD" : "BASE");
     const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
       block: baseBlock,
       eventDistance,
       timeInBlockDays: previousBlockState?.timeInBlockDays ?? 0,
       weeksToEvent,
-      lastKeyType,
     });
 
     const baseRunFloorTarget =
@@ -4016,35 +2427,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       historyMetrics,
       previousState: previousBlockState,
     });
-
-    if (manualRaceStartIso && blockState.block === "RACE") {
-      const overrideStart = clampStartDate(manualRaceStartIso, day, 3650);
-      if (overrideStart) {
-        blockState.startDate = overrideStart;
-        blockState.blockStartEffective = overrideStart;
-        blockState.timeInBlockDays = Math.max(0, daysBetween(overrideStart, day));
-        blockState.reasons = [...(blockState.reasons || []), `Manueller RACE-Start aktiv (${overrideStart})`];
-      }
-    }
-    if (runtimeOverrides?.blockStartOverrideIso) {
-      const overrideStart = clampStartDate(runtimeOverrides.blockStartOverrideIso, day, 3650);
-      if (overrideStart) {
-        blockState.startDate = overrideStart;
-        blockState.blockStartEffective = overrideStart;
-        blockState.timeInBlockDays = Math.max(0, daysBetween(overrideStart, day));
-        blockState.reasons = [...(blockState.reasons || []), `Manueller Block-Start aktiv (${overrideStart})`];
-      }
-    }
     blockState.eventDate = eventDate || null;
     blockState.eventDistance = eventDistance || blockState.eventDistance;
-
-    if (modeInfo?.lifeEventEffect?.active && previousBlockState?.block) {
-      blockState.block = previousBlockState.block;
-      blockState.wave = previousBlockState.wave || blockState.wave;
-      blockState.startDate = previousBlockState.startDate || blockState.startDate;
-      blockState.timeInBlockDays = previousBlockState.timeInBlockDays ?? blockState.timeInBlockDays;
-      blockState.reasons = [...(blockState.reasons || []), `LifeEvent ${modeInfo.lifeEventEffect.category}: Blockwechsel eingefroren`];
-    }
 
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
@@ -4054,12 +2438,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       floorTarget: baseRunFloorTarget,
       phase,
       eventInDays,
-      eventDistance,
       eventDateISO: eventDate || null,
       previousState: previousBlockState,
       dailyRunLoads,
-      lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
-      recentHolidayEvent: modeInfo?.recentHolidayEvent || null,
     });
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
@@ -4070,7 +2451,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
     blockState.floorTarget = runFloorState.floorTarget;
-    blockState.effectiveFloorTarget = runFloorState.effectiveFloorTarget;
     blockState.deloadStartDate = runFloorState.deloadStartDate;
     blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
@@ -4081,10 +2461,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       reasons: [],
     };
 
-    if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push(`LifeEvent ${modeInfo.lifeEventEffect.category}: Keys pausiert`);
-    } else if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
+    if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
       dynamicKeyCap.maxKeys7d = 0;
       dynamicKeyCap.reasons.push("Recover-Overlay aktiv");
     } else if (runFloorState.overlayMode === "TAPER") {
@@ -4096,18 +2473,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     } else if (fatigueBase?.override) {
       dynamicKeyCap.maxKeys7d = 1;
       dynamicKeyCap.reasons.push("Fatigue/Overload");
-   
+    } else if (robustness && !robustness.strengthOk) {
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Robustheit fehlt");
     } else if ((motor?.value ?? 0) >= 70) {
       dynamicKeyCap.maxKeys7d = 2;
       dynamicKeyCap.reasons.push("Motor stark");
     } else {
-      dynamicKeyCap.maxKeys7d = 2;
-      dynamicKeyCap.reasons.push("Standard-Cap 2 Keys/7 Tage");
+      dynamicKeyCap.maxKeys7d = 1;
+      dynamicKeyCap.reasons.push("Motor <70");
     }
-    const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
-    if (robustness && !robustness.strengthOk) {
-      dynamicKeyCap.reasons.push("Kraft unter Zielbereich (Hinweis)");
-    }
+
     let fatigue = fatigueBase;
     try {
       fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: dynamicKeyCap.maxKeys7d });
@@ -4121,52 +2497,19 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       ...keyRulesBase,
       maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
-    const intensityDistribution = computeIntensityDistribution(
-      ctx,
-      day,
-      blockState.block,
-      eventDistance,
-      blockState.startDate || blockState.blockStartEffective || null
-    );
-    const weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
-    const plannedPrimaryType = decideKeyType1PerWeek(
-      {
-        block: blockState.block,
-        eventDistance,
-        weeksToEvent: blockState.weeksToEvent,
-        overlayMode: runFloorState.overlayMode,
-        intensityDistribution,
-        fatigue,
-        weekInBlock,
-        lastKeyType,
-      },
-      keyRules
-    );
-    keyRules.plannedPrimaryType = plannedPrimaryType;
+    const easyShareGate = computeEasyShareGate(ctx, day, blockState.block);
     const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
-      ctx,
       dayIso: day,
       block: blockState.block,
       eventDistance,
-      blockStartIso: blockState.startDate || blockState.blockStartEffective || day,
       maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
-      overlayMode: runFloorState.overlayMode,
-      intensityDistribution,
-      fatigue,
+      easyShareGate,
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
-      weekInBlock,
-      lifeEvent: runFloorState.lifeEvent,
-      lastKeyType,
     });
-if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
-      keyCompliance.keyAllowedNow = false;
-      keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}: keine Keys (Freeze aktiv).`;
-    }
-    historyMetrics.keyCompliance = keyCompliance;
-    patch[FIELD_BLOCK] = blockState.block;
 
+    patch[FIELD_BLOCK] = blockState.block;
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
@@ -4174,20 +2517,12 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       eventDate,
       eventDistance,
       floorTarget: blockState.floorTarget,
-      effectiveFloorTarget: blockState.effectiveFloorTarget,
       timeInBlockDays: blockState.timeInBlockDays,
       deloadStartDate: blockState.deloadStartDate,
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
       lastEventDate: blockState.lastEventDate,
-      lastLifeEventCategory: runFloorState.lastLifeEventCategory,
-      lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
-      lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
     };
-
-    if (write && !runSectionOnly) {
-      await writeLatestBlockStateKv(env, day, previousBlockState);
-    }
 
     addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
     addRunFloorDebug(ctx.debugOut, day, {
@@ -4206,13 +2541,26 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       lastDeloadCompletedISO: runFloorState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: runFloorState.lastFloorIncreaseDate,
       lastEventDate: runFloorState.lastEventDate,
-      lastLifeEventCategory: runFloorState.lastLifeEventCategory,
-      lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
-      lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
       daysSinceEvent: runFloorState.daysSinceEvent,
       reasons: runFloorState.reasons,
-      lifeEvent: runFloorState.lifeEvent,
     });
+
+async function computeMaintenance14d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 14 * 86400000));
+  const endIso = dayIso;
+
+  let runCount14 = 0;
+  let bikeCount14 = 0;
+
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (isRun(a)) runCount14++;
+    else if (isBike(a)) bikeCount14++;
+  }
+  return { runCount14, bikeCount14 };
+}
 
     // Bench reports only on bench days
     const benchReports = [];
@@ -4254,29 +2602,28 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       longRunSummary,
       bikeSubFactor,
       weeksToEvent,
-      eventDistance,
     }, { debug });
 
-    if (!runSectionOnly) {
-      // Explicitly clear wellness comments; report is written only as NOTE.
-      patch.comments = "";
-    }
+    // Explicitly clear wellness comments; report is written only as NOTE.
+    patch.comments = "";
 
 
+
+
+
+    patches[day] = patch;
 
     if (debug) {
       notesPreview[day] = dailyReportText || "";
     }
 
     // Daily NOTE (calendar): stores the daily report text in blue
-    if (write && runSectionOnly && existingDailyReportEvent?.id) {
-      await upsertDailyReportTodayRunSection(env, day, dailyReportText || "", existingDailyReportEvent);
-    } else if (write && !runSectionOnly) {
+    if (write) {
       await upsertDailyReportNote(env, day, dailyReportText || "");
     }
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
-    if (!runSectionOnly && isMondayIso(day)) {
+    if (isMondayIso(day)) {
       let detectiveNoteText = null;
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
@@ -4304,14 +2651,10 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       }
     }
 
-    const patchToWrite = runSectionOnly ? pickRunMetricsPatch(patch) : patch;
-
     if (write) {
-      await putWellnessDay(env, day, patchToWrite);
+      await putWellnessDay(env, day, patch);
       daysWritten++;
     }
-
-    patches[day] = patchToWrite;
   }
 
   return {
@@ -4380,21 +2723,19 @@ function buildKeyRuleLine({ keyRules, block, eventDistance }) {
   return `Key-Regel (${blockLabel}, ${distLabel}): erlaubt ${allowed}, bevorzugt ${preferred}${banned ? `, tabu ${banned}` : ""}.`;
 }
 
-function buildKeyPatternDistributionLine({ block, eventDistance, plannedType, weeksToEvent }) {
-  const dist = normalizeEventDistance(eventDistance) || "10k";
-  const patternBlock = pickPatternBlock({ block, eventDistance: dist, weeksToEvent });
-  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist];
-  if (!Array.isArray(pattern) || !pattern.length) return null;
+function buildAerobicTrendLine(trend) {
+  const dv = Number.isFinite(trend?.dv) ? trend.dv : null;
+  const dd = Number.isFinite(trend?.dd) ? trend.dd : null;
+  if (dv == null || dd == null) return "GA-Form n/a";
 
-  const counts = pattern.reduce((acc, type) => {
-    acc[type] = (acc[type] || 0) + 1;
-    return acc;
-  }, {});
-  const distribution = Object.entries(counts)
-    .map(([type, count]) => `${formatKeyType(type)} ${Math.round((count / pattern.length) * 100)}%`)
-    .join(" | ");
-  const plannedLabel = plannedType ? formatKeyType(plannedType) : "n/a";
-  return `Pattern 1 Key/Woche (${patternBlock}, ${formatEventDistance(dist)}): geplant ${plannedLabel}; Verteilung ${distribution}.`;
+  const vdotArrow = dv > 0.5 ? "↑" : dv < -0.5 ? "↓" : "↔";
+  const driftArrow = dd > 0.5 ? "↑" : dd < -0.5 ? "↓" : "↔";
+  const dvText = `${dv > 0 ? "+" : ""}${dv.toFixed(1)}%`;
+  const ddText = `${dd > 0 ? "+" : ""}${dd.toFixed(1)}%`;
+
+  if (dv <= -1.5 && dd >= 1) return `GA-Form rückläufig (VDOT ↓ ${dvText}, HR-Drift ↑ ${ddText})`;
+  if (dv >= 1.5 && dd <= 0) return `GA-Form verbessert (VDOT ↑ ${dvText}, HR-Drift ↓ ${ddText})`;
+  return `GA-Form stabil/gemischt (VDOT ${vdotArrow} ${dvText}, HR-Drift ${driftArrow} ${ddText})`;
 }
 
 function buildNextRunRecommendation({
@@ -4406,16 +2747,10 @@ function buildNextRunRecommendation({
   intensitySignal,
   keyCapExceeded,
   keySpacingOk,
-  keyAllowedNow,
-  keySuggestion,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
-  if (overlay === "LIFE_EVENT_STOP") {
-    next = "Pause / nur Regeneration (LifeEvent)";
-  } else if (overlay === "LIFE_EVENT_HOLIDAY") {
-    next = "20–45 min locker (Holiday-Modus)";
-  } else if (overlay === "RECOVER_OVERLAY") {
+  if (overlay === "RECOVER_OVERLAY") {
     next = "25–40 min locker / Technik / frei";
   } else if (overlay === "TAPER") {
     next = "20–35 min locker (Taper)";
@@ -4430,110 +2765,61 @@ function buildNextRunRecommendation({
     next = "Kein weiterer Key diese Woche – locker/GA.";
   } else if (!keySpacingOk) {
     next = "Nächster Key frühestens in 48h – bis dahin locker/GA.";
-  } else if (keyAllowedNow) {
-    const optionalKeyHint = keySuggestion ? ` Optional: ${keySuggestion}` : " Optional: kurzer Key möglich, wenn du dich frisch fühlst.";
-    next = `${next}.${optionalKeyHint}`;
   }
 
   return next;
 }
 
-function limitText(text, maxLen = 140) {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
-  if (clean.length <= maxLen) return clean;
-  return `${clean.slice(0, Math.max(0, maxLen - 1)).trimEnd()}…`;
-}
-
-function shortExplicitSession(explicitSession) {
-  if (!explicitSession) return null;
-  const firstSentence = String(explicitSession)
-    .split(".")[0]
-    .trim();
-  const cleaned = firstSentence
-    .replace(/^Racepace konkret:\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return limitText(cleaned, 90);
-}
-
-function capLines(lines, maxLines) {
-  return (lines || []).filter(Boolean).slice(0, maxLines);
-}
-
-function capText(s, maxChars) {
-  const x = String(s || "").trim();
-  if (x.length <= maxChars) return x;
-  return `${x.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function buildRecommendationsAndBottomLine(state) {
-  const rec = [];
-  const bottom = [];
-
-  const runFloorTarget = state?.runFloorTarget;
-  const runFloor7 = state?.runFloor7;
-  const explicitSessionShort = state?.explicitSessionShort;
-  const longRunDoneMin = Number(state?.longRunDoneMin ?? 0);
-  const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
-  const longRunGapMin = Number(state?.longRunGapMin ?? 0);
-  const longRunStepCapMin = Number(state?.longRunStepCapMin ?? 0);
-  const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
-
-  bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
-  if (state?.keyAllowedNow && explicitSessionShort) {
-    bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
+function buildBottomLineCoachMessage({
+  hadAnyRun,
+  hadGA,
+  runFloorState,
+  hasSpecific,
+  specificOk,
+  policy,
+  intensitySignal,
+  aerobicOk,
+  keyCapExceeded,
+  keySpacingOk,
+  todayText,
+  nextText,
+}) {
+  const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  if (overlay === "RECOVER_OVERLAY") {
+    return `Heute ist Recovery angesagt. ${todayText}. Wenn du läufst: ${nextText}.`;
   }
-
-  if (Number.isFinite(runFloor7) && Number.isFinite(runFloorTarget) && runFloor7 < runFloorTarget) {
-    rec.push(`RunFloor ${runFloor7}/${runFloorTarget} → Volumen priorisieren.`);
+  if (overlay === "TAPER") {
+    return `Taper-Phase: Frische schützen. ${todayText}. ${nextText}.`;
   }
-  if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
-    if (longRunGapMin < 0) {
-      rec.push(`Longrun ${longRunDoneMin}′/${longRunTargetMin}′ → diese Woche locker auf ${longRunTargetMin}′ annähern.`);
-    } else if (longRunDoneMin > 0 && Number.isFinite(longRunStepCapMin) && Number.isFinite(blockLongRunNextWeekTargetMin)) {
-      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).`);
+  if (overlay === "DELOAD") {
+    return `Deload aktiv: locker & Technik. ${todayText}. ${nextText}.`;
+  }
+  if (keyCapExceeded) {
+    return `Key ist für diese Woche abgehakt. Halte den Rest locker/GA. ${nextText}.`;
+  }
+  if (!keySpacingOk) {
+    return `Gib dem Körper 48h zwischen Keys. Heute ruhig bleiben. ${nextText}.`;
+  }
+  if (hasSpecific && !specificOk) {
+    return `Volumen fehlt noch ein Stück. Fülle locker/steady auf. Nächster Lauf: ${nextText}.`;
+  }
+  if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
+    if (hadAnyRun && hadGA) {
+      return `GA heute erledigt (${todayText}). ${nextText}.`;
     }
+    if (hadAnyRun) {
+      return `Heute schon gelaufen (${todayText}) – Fokus GA & Intensität deckeln. ${nextText}.`;
+    }
+    return `GA ist heute der Fokus – Intensität deckeln. ${nextText}.`;
   }
-  if (state?.intensityDistribution?.easyUnder === true) {
-    const easyPct = Math.round((state.intensityDistribution.easyShare || 0) * 100);
-    const easyMinPct = Math.round((state.intensityDistribution?.targets?.easyMin || 0) * 100);
-    rec.push(`Easy-Anteil ${easyPct}% (<${easyMinPct}%) → nächste Einheit locker.`);
-  }
-  if (state?.intensityDistribution?.hardOver === true) {
-    const hardPct = Math.round((state.intensityDistribution.hardShare || 0) * 100);
-    const hardMaxPct = Math.round((state.intensityDistribution?.targets?.hardMax || 0) * 100);
-    rec.push(`Hard-Anteil ${hardPct}% (>${hardMaxPct}%) → kein weiterer harter Key.`);
-  }
-  if (state?.budgetBlocked) {
-    rec.push(`Key-Budget ${state.actualKeys7}/${state.keyCap7} (7T) erreicht → kein weiterer Key.`);
-  }
-  if (state?.spacingBlocked) {
-    rec.push(`Key-Abstand <48h${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
-  }
-  if (state?.overlayMode && state.overlayMode !== "NORMAL") {
-    rec.push(`Overlay: ${state.overlayMode} → konservativ bleiben.`);
-  }
-
-  return {
-    recommendations: capLines(rec, 3).map((x) => capText(x, 110)),
-    bottomLine: capLines(bottom, 2).map((x) => capText(x, 110)),
-  };
+  return `Alles im grünen Bereich. ${todayText}. ${nextText}.`;
 }
 
-function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
+function buildTransitionLine({ bikeSubFactor, weeksToEvent }) {
   if (!(bikeSubFactor > 0)) return null;
   const pct = Math.round(bikeSubFactor * 100);
-  const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
-  const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
-  return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
-}
-
-function buildDailyTargetMixLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
-  const pct = Math.max(0, Math.round((bikeSubFactor || 0) * 100));
-  const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
-  const bikeSharePct = Math.max(0, 100 - runSharePct);
-  return `Zielmix Lauf/Rad: ~${runSharePct}/${bikeSharePct} · Rad-Anrechnung auf RunFloor: ${pct}%`;
+  return `Übergang aktiv: Rad zählt ${pct}% zum RunFloor (aktuell ${weeksText} bis Event, 0% ab ≤${TRANSITION_BIKE_EQ.endWeeks} Wochen).`;
 }
 
 // ================= COMMENT =================
@@ -4564,7 +2850,6 @@ function buildComments(
     longRunSummary,
     bikeSubFactor,
     weeksToEvent,
-    eventDistance,
   },
   { debug = false } = {}
 ) {
@@ -4584,50 +2869,42 @@ function buildComments(
       "BOTTOM LINE": "🧾",
     };
     lines.push(`${titleEmojis[title] || "✅"} ${title}`);
+    lines.push("");
     for (const metric of metrics) {
       if (metric) lines.push(metric);
     }
+    lines.push("");
     lines.push("⸻");
     lines.push("");
   };
 
-  const keyCap7 = keyCompliance?.maxKeysCap7 ?? MAX_KEYS_7D;
-  const actualKeys7 = keyCompliance?.actual7 ?? 0;
+  const keyCap = dynamicKeyCap?.maxKeys7d ?? keyRules?.maxKeysPerWeek ?? MAX_KEYS_7D;
+  const actualKeys = keyCompliance?.actual7 ?? 0;
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
-  const lifeEvent = runFloorState?.lifeEvent || null;
-  const ignoreRunFloorGap = lifeEvent?.ignoreRunFloorGap === true;
-  const intensityDistribution = keyCompliance?.intensityDistribution;
-  const easySharePct = intensityDistribution?.hasData ? Math.round((intensityDistribution.easyShare ?? 0) * 100) : null;
-  const midSharePct = intensityDistribution?.hasData ? Math.round((intensityDistribution.midShare ?? 0) * 100) : null;
-  const hardSharePct = intensityDistribution?.hasData ? Math.round((intensityDistribution.hardShare ?? 0) * 100) : null;
-  const easyMinPct = Math.round((intensityDistribution?.targets?.easyMin ?? 0) * 100);
-  const midMaxPct = Math.round((intensityDistribution?.targets?.midMax ?? 0) * 100);
-  const hardMaxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
-  const intensityLookbackDays = Math.max(1, Math.round(intensityDistribution?.lookbackDays ?? INTENSITY_LOOKBACK_DAYS));
+  const easyShareGate = keyCompliance?.easyShareGate;
+  const easySharePct = easyShareGate?.hasData ? Math.round((easyShareGate.easyShare ?? 0) * 100) : null;
+  const easyShareThresholdPct = Math.round((easyShareGate?.threshold ?? EASY_SHARE_THRESHOLDS?.[blockState?.block] ?? 0) * 100);
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
-  const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
-  const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
+  const daysToEvent = eventDate && todayIso ? diffDays(todayIso, eventDate) : null;
 
-  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
-  const budgetBlocked = keyCompliance?.capExceeded === true;
+  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
+  const budgetBlocked = keyCompliance?.capExceeded || actualKeys >= keyCap;
   const spacingBlocked = !spacingOk;
-  const easyShareBlocked = intensityDistribution?.hasData && intensityDistribution?.easyUnder === true;
-  const hardShareBlocked = intensityDistribution?.hasData && intensityDistribution?.hardOver === true;
-  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
-  const runFloorBlocked = !ignoreRunFloorGap && runTarget > 0 && runFloorGap < 0;
+  const easyShareBlocked = easyShareGate?.hasData && easyShareGate?.ok === false;
+  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY";
+  const runFloorBlocked = runTarget > 0 && runFloorGap < 0;
 
   let mainBlockReason = null;
   if (keyBlocked) {
-    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys7}/${keyCap7} (7T)`;
+    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys}/${keyCap}`;
     else if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
-    else if (hardShareBlocked) mainBlockReason = `HardShare >${hardMaxPct}%`;
-    else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyMinPct}%`;
+    else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyShareThresholdPct}%`;
     else if (deloadBlocked) mainBlockReason = `Overlay ${overlayMode}`;
     else if (runFloorBlocked) mainBlockReason = `RunFloor-Gap ${runFloorGap}`;
   }
@@ -4639,37 +2916,16 @@ function buildComments(
         ? "Taper"
         : overlayMode === "RECOVER_OVERLAY"
           ? "Recovery"
-          : overlayMode === "LIFE_EVENT_STOP"
-            ? "LifeEvent Freeze"
-            : overlayMode === "LIFE_EVENT_HOLIDAY"
-              ? "Holiday"
           : keyBlocked
             ? "Easy only"
             : "Key möglich";
   const ampel = keyBlocked ? "🟠" : "🟢";
-  const missingKeyFrequency = keyCompliance?.freqOk === false;
-  const regressionSignal =
-    runFloorBlocked ||
-    missingKeyFrequency ||
-    keyCompliance?.status === "warn" ||
-    keyCompliance?.preferredMissing === true;
-  const progressionStatus = lifeEvent?.freezeProgression
-    ? "LifeEvent-Freeze"
-    : runFloorState?.deloadActive
-      ? "Deload aktiv"
-      : regressionSignal
-        ? "Nein – nicht im Plan (Reiz/Frequenz aktuell zu schwach)"
-        : "Ja – im Plan";
+  const keyStatus = keyBlocked && mainBlockReason ? `Key blockiert (${mainBlockReason})` : keyBlocked ? "Key blockiert" : "Key frei";
+  const progressionStatus = runFloorState?.deloadActive ? "Deload aktiv" : "im Plan";
   const keyRuleLine = buildKeyRuleLine({
     keyRules,
     block: blockState?.block,
     eventDistance: formatEventDistance(modeInfo?.nextEvent?.distance_type),
-  });
-  const keyPatternLine = buildKeyPatternDistributionLine({
-    block: blockState?.block,
-    eventDistance: modeInfo?.nextEvent?.distance_type,
-    plannedType: keyRules?.plannedPrimaryType,
-    weeksToEvent,
   });
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
@@ -4680,43 +2936,18 @@ function buildComments(
     intensitySignal: fatigue?.intensitySignal,
     keyCapExceeded: budgetBlocked,
     keySpacingOk: spacingOk,
-    keyAllowedNow: keyCompliance?.keyAllowedNow,
-    keySuggestion: keyCompliance?.suggestion,
   });
-  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
-  const dailyTargetMixLine = buildDailyTargetMixLine({ bikeSubFactor, weeksToEvent, eventDistance });
-
-  const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
-  const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
-  const longRun7d = longRunSummary || { minutes: 0, date: null, quality: "n/a" };
-  const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
-  const prePlanLongRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
-  const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
-  const longRunStepCapRawMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
-  const longRunStepCapMin = phaseLongRunMaxMin > 0
-    ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
-    : longRunStepCapRawMin;
-  const planStartWeeks = getPlanStartWeeks(eventDistance);
-  const inPlanPhase = Number.isFinite(weeksToEvent) && weeksToEvent <= planStartWeeks;
-  const longRunTargetMin = inPlanPhase && phaseLongRunMaxMin > 0
-    ? Math.max(prePlanLongRunTargetMin, longRunStepCapMin || prePlanLongRunTargetMin)
-    : prePlanLongRunTargetMin;
-  const longRunGapMin = longRunDoneMin - longRunTargetMin;
-  const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
-    ? longRunStepCapMin
-    : LONGRUN_PREPLAN.startMin;
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
     runMetrics.push("Status: Heute kein Lauf.");
   } else {
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
-    const intervalToday = perRunInfo.find((x) => x.isKey && (x.intervalMetrics || x.intervalStructureHint));
+    const intervalToday = perRunInfo.find((x) => x.isKey && x.intervalMetrics);
 
     if (gaToday) {
       const drift = gaToday.drift;
       const driftText = formatPct1(drift);
-      const driftTooHigh = Number.isFinite(drift) && drift > 5;
       const driftEval =
         drift == null
           ? "keine belastbare Einordnung."
@@ -4733,23 +2964,6 @@ function buildComments(
 
       runMetrics.push(`Drift: ${driftText} → ${driftEval}`);
       if (drift != null && drift <= 5) runMetrics.push("Stabilität: ✔ Aerobe Stabilität gegeben.");
-      if (driftTooHigh) {
-        runMetrics.push("Bewertung: Drift > 5 %. EF/VDOT weiter anzeigen, aber mit Vorsicht interpretieren.");
-        const likelyCauses = [];
-        const lifeEventCategory = normalizeEventCategory(lifeEvent?.category);
-        if (lifeEventCategory === "HOLIDAY") {
-          likelyCauses.push("Urlaubs-/Rückkehr-Effekt erkannt: 3–5 Tage progressive Belastungssteigerung einplanen.");
-        } else if (lifeEventCategory === "SICK" || lifeEventCategory === "INJURED") {
-          likelyCauses.push(`LifeEvent ${getLifeEventCategoryLabel(lifeEventCategory)} aktiv: erhöhte Drift kann regenerationsbedingt sein.`);
-        }
-        if (overlayMode === "RECOVER_OVERLAY") {
-          likelyCauses.push("Recover-Overlay aktiv: erhöhte Drift nach Event/Belastung ist aktuell plausibel.");
-        }
-        if (!likelyCauses.length) {
-          likelyCauses.push("Mögliche Treiber: zu hohe Pace, Hitze/Dehydrierung oder kumulative Ermüdung.");
-        }
-        runMetrics.push(`Ursachen-Check: ${likelyCauses.join(" ")}`);
-      }
       runMetrics.push(`EF: ${efText}`);
       runMetrics.push("EF-Hinweis: Nur als Trendsignal interpretieren, keine absolute Bewertung.");
       runMetrics.push(`VDOT: ${vdotText}`);
@@ -4767,58 +2981,11 @@ function buildComments(
       const efSeries = Number.isFinite(m?.HR_Drift_pct)
         ? `${m.HR_Drift_pct >= 0 ? "+" : ""}${m.HR_Drift_pct.toFixed(1)}% HR-Drift über die Intervalle`
         : "n/a";
-      const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
-      const sessionScore = m?.sessionScore || null;
+      const paceConsistency = m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a";
 
-      runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm (${hrrEval}).`);
-      runMetrics.push(`Serienbild: Drift ${efSeries}; Pace ${paceConsistency}.`);
-      if (sessionScore && Number.isFinite(sessionScore?.overall) && Number.isFinite(sessionScore?.repCount) && sessionScore.repCount >= 2) {
-        runMetrics.push(
-          `Intervall-Score (neu): ${Math.round(sessionScore.overall)}/100 (Execution ${Math.round(sessionScore.execution)}/100 · Dosis ${Math.round(sessionScore.dose)}/100 · Strain ${Math.round(sessionScore.strain)}/100).`
-        );
-      } else if (Number.isFinite(m?.iqi)) {
-        const c = m?.iqi_components || {};
-        const weights = c?.weights || {};
-        const fallbackComponents = [
-          ["Pace", c?.pace_consistency_score, weights?.pace_consistency],
-          ["Effizienz", c?.efficiency_drift_score, weights?.efficiency_drift],
-          ["Erholung", c?.recovery_score, weights?.recovery],
-          ["Mechanik", c?.mechanics_score, weights?.mechanics],
-        ].filter(([, score, weight]) => Number.isFinite(score) && Number.isFinite(weight));
-        const fallbackParts = fallbackComponents
-          .map(([label, score, weight]) => `${label} ${Math.round(score)} (${Math.round(weight * 100)}%)`)
-          .join(" · ");
-        const fallbackContrib = fallbackComponents
-          .map(([label, score, weight]) => `${label} +${Math.round(score * weight)} Punkte`)
-          .join(" · ");
-        const ignoredComponents = [
-          ["Pace", c?.pace_consistency_score, weights?.pace_consistency],
-          ["Effizienz", c?.efficiency_drift_score, weights?.efficiency_drift],
-          ["Erholung", c?.recovery_score, weights?.recovery],
-          ["Mechanik", c?.mechanics_score, weights?.mechanics],
-        ]
-          .filter(([, score, weight]) => !Number.isFinite(score) || !Number.isFinite(weight))
-          .map(([label]) => label)
-          .join(", ");
-        runMetrics.push(
-          `Intervall-Score: ${Math.round(m.iqi)}/100 (Fallback aus Stream-IQI${fallbackParts ? `; Treiber: ${fallbackParts}` : ""}).`
-        );
-        if (fallbackContrib) {
-          runMetrics.push(`Score-Aufschlüsselung (gewichtet): ${fallbackContrib}.`);
-        }
-        if (ignoredComponents) {
-          runMetrics.push(`Nicht berücksichtigt (fehlende Daten/Gewichtung): ${ignoredComponents}.`);
-        }
-        runMetrics.push("Plausibilitäts-Check: Die gewichteten Punkte sollten in Summe nahe am Intervall-Score liegen (Rundungsabweichungen möglich).");
-        const implication = m.iqi >= 80
-          ? "Ableitung: gute Qualität → Umfang normal fortführen."
-          : m.iqi >= 65
-            ? "Ableitung: solide Einheit → nächste Q-Einheit nur bei frischen Beinen."
-            : "Ableitung: Qualität limitiert → eher Umfang locker halten und Erholung priorisieren.";
-        runMetrics.push(implication);
-      } else {
-        runMetrics.push("Intervall-Score (neu): n/a (keine Intervall-Segmente in den geladenen Activity-Details gefunden).");
-      }
+      runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
+      runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
+      runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
       runMetrics.push("Hinweis: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
@@ -4827,78 +2994,82 @@ function buildComments(
   addDecisionBlock("HEUTIGER LAUF", runMetrics);
 
   addDecisionBlock("BELASTUNG & PROGRESSION", [
-    `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
-    `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
     `RunFloor (7 Tage): ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"}`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`,
-    `Status: ${progressionStatus}.`,
+    `Status: ${progressionStatus === "im Plan" ? "Im Plan." : progressionStatus}`,
   ]);
 
   const keyCheckMetrics = [
-    `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
-    `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
-    `Intensität Block (${intensityLookbackDays}T): Easy ${easySharePct != null ? easySharePct + " %" : "n/a"} (≥${easyMinPct}%), Mid ${midSharePct != null ? midSharePct + " %" : "n/a"} (≤${midMaxPct || "n/a"}%), Hard ${hardSharePct != null ? hardSharePct + " %" : "n/a"} (≤${hardMaxPct}%)`,
-    `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
-    `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
+    `Key diese Woche: ${actualKeys}/${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
+    `Next Allowed: ${nextAllowed || "n/a"}${spacingOk ? " (ab heute)" : ""}`,
+    `EasyShare (14 Tage): ${easySharePct != null ? easySharePct + " %" : "n/a"} (Ziel ≥ ${easyShareThresholdPct} %)`,
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
-  if (keyPatternLine && hasEventDistance) keyCheckMetrics.push(keyPatternLine);
-  if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
-  const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
-  const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
-  const decisionCompact = buildRecommendationsAndBottomLine({
-    runFloor7: runLoad7,
-    runFloorTarget: runTarget > 0 ? runTarget : null,
-    intensityDistribution: keyCompliance?.intensityDistribution,
-    budgetBlocked,
-    spacingBlocked,
-    nextAllowed,
-    overlayMode: runFloorState?.overlayMode,
-    keyAllowedNow,
-    explicitSessionShort,
-    todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
-    actualKeys7,
-    keyCap7,
-    strengthPolicy,
-    longRunDoneMin,
-    longRunTargetMin,
-    longRunGapMin,
-    longRunStepCapMin,
-    blockLongRunNextWeekTargetMin,
-  });
-  addDecisionBlock("EMPFEHLUNGEN", [
-    ...decisionCompact.recommendations,
-    `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
-  ]);
+  const recommendationMetrics = [];
+  if (keyBlocked) {
+    recommendationMetrics.push(`Status: Key-Budget erschöpft (${actualKeys}/${keyCap}).`);
+    recommendationMetrics.push("Konsequenz: Restliche Einheiten locker / GA.");
+    recommendationMetrics.push(`Trainingsempfehlung: ${keyStatus}`);
+    recommendationMetrics.push("Umsetzung: Alle weiteren Einheiten locker / GA.");
+  } else {
+    recommendationMetrics.push("Status: Key ist möglich, wenn das subjektive Belastungsgefühl unauffällig bleibt.");
+    recommendationMetrics.push("Trainingsempfehlung: 45–60′ GA1 locker; optional 4–6×20″ Strides.");
+  }
+  recommendationMetrics.push(`Longrun: ${Math.round(longRunSummary?.doneMin ?? 0) || 60}′ → Ziel erreicht (${Math.round(longRunSummary?.targetMin ?? 0) || 60}′)`);
+  recommendationMetrics.push(`Qualität zuletzt: ${keyBlocked ? "locker / GA" : "Key möglich"} (${todayIso || "n/a"})`);
+  addDecisionBlock("EMPFEHLUNGEN", recommendationMetrics);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
-    `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
-    `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    dailyTargetMixLine,
-    `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus}) | Score ${strengthPolicy.score}/3`,
-    Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
-      ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
-      : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
+    `Fokus: ${ampel} ${runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
+    `Key: ${actualKeys} / ${keyCap}${budgetBlocked ? " ⚠️" : ""}`,
   ]);
 
-  addDecisionBlock("KRAFTPLAN", [
-    `Phase: ${strengthPlan.phase} · Fokus: ${strengthPlan.focus}`,
-    `Ziel: ${strengthPlan.objective}`,
-    `Umfang: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`,
-    ...strengthPlan.sessions.map((session) => `${session.name}: ${session.exercises.join(" · ")}`),
-    `Notfallmodus: 2×12 Squats · 2×30s Plank · 2×12 Monster Walk`,
+  addDecisionBlock("BOTTOM LINE", [
+    `Coach-Urteil: ${buildBottomLineCoachMessage({
+    hadAnyRun: !!perRunInfo?.length,
+    hadGA: !!perRunInfo?.find((x) => x.ga),
+    runFloorState,
+    hasSpecific: Number.isFinite(specificValue),
+    specificOk,
+    policy,
+    intensitySignal: fatigue?.intensitySignal,
+    aerobicOk,
+    keyCapExceeded: budgetBlocked,
+    keySpacingOk: spacingOk,
+    todayText: `Block ${blockState?.block ?? "n/a"}${Number.isFinite(daysToEvent) ? `, ${daysToEvent} Tage bis Event` : ""}`,
+    nextText: nextRunText,
+  })}`,
   ]);
-
-  addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
 
   return lines.join("\n");
 }
+
+function buildTodayStatus({ hadAnyRun, hadKey, hadGA, totalMinutesToday }) {
+  if (!hadAnyRun) return "Kein Lauf";
+  const minutesText = totalMinutesToday > 0 ? `${totalMinutesToday}′ ` : "";
+  if (hadKey && !hadGA) return `Lauf: ${minutesText}Key`;
+  if (hadGA && !hadKey) return `Lauf: ${minutesText}locker`;
+  if (hadKey && hadGA) return `Lauf: ${minutesText}GA + Key`;
+  return `Lauf: ${minutesText}Lauf`;
+}
+
+function buildBottomLineToday({ hadAnyRun, hadKey, hadGA, runFloorState, totalMinutesToday }) {
+  const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  if (overlay === "RECOVER_OVERLAY") return "Rest/Recovery";
+  if (overlay === "TAPER") return "Taper/Frische";
+  if (overlay === "DELOAD") return "Deload";
+  if (hadKey) return "Training absolviert";
+  if (hadGA) return totalMinutesToday > 0 ? `GA ${totalMinutesToday}′` : "GA";
+  if (hadAnyRun) return totalMinutesToday > 0 ? `Lauf ${totalMinutesToday}′` : "Lauf";
+  return "Rest (kein Lauf)";
+}
+
 
 function formatNextAllowed(dayIso, nextAllowedIso) {
   if (!nextAllowedIso) return "n/a";
@@ -4907,6 +3078,25 @@ function formatNextAllowed(dayIso, nextAllowedIso) {
   if (delta <= 0) return `${nextAllowedIso} (ab heute)`;
   if (delta === 1) return `${nextAllowedIso} (in 1 Tag)`;
   return `${nextAllowedIso} (in ${delta} Tagen)`;
+}
+
+function buildKeyConsequence({ keyCompliance, keySpacing, keyCap }) {
+  if (keyCompliance?.capExceeded) return "Key-Budget erschöpft – restliche Einheiten locker/GA.";
+  if (keyCompliance?.easyShareGate?.ok === false) return "Intensity-Guardrail aktiv – erst 2–3 lockere Tage.";
+  if (keyCompliance?.keySpacingOk === false || keySpacing?.ok === false) return "Weitere Einheiten nur locker/GA (Key-Abstand <48h).";
+  if ((keyCompliance?.actual7 ?? 0) === 1 && keyCompliance?.keyAllowedNow) return "2. Key optional möglich, wenn du dich frisch fühlst.";
+  if ((keyCompliance?.actual7 ?? 0) < keyCap) return "1 Key noch möglich.";
+  return "Weitere Einheiten nur locker/GA.";
+}
+
+function buildDeloadExplanation(runFloorState) {
+  if (!runFloorState || runFloorState.overlayMode !== "DELOAD") return null;
+  const reason =
+    runFloorState.reasons?.find((r) => r.startsWith("Deload ausgelöst")) ||
+    runFloorState.reasons?.find((r) => r.startsWith("Deload läuft")) ||
+    "Deload aktiv";
+  const endText = runFloorState.deloadEndDate ? ` bis ${runFloorState.deloadEndDate}` : "";
+  return `${reason}${endText}`;
 }
 
 // ================= TREND (GA-only) =================
@@ -5186,20 +3376,10 @@ function buildDetectiveWhyInsights(current, previous) {
   const context = [];
   const actions = [];
   const helped = [];
-  const lifeEventDaysCurrent = Number(current.lifeEventDays || 0);
-  const lifeEventDaysPrevious = Number(previous.lifeEventDays || 0);
-  const stopLifeEventDaysCurrent = Number(current.stopLifeEventDays || 0);
-
-  if (lifeEventDaysCurrent > 0) {
-    context.push(
-      `LifeEvent im aktuellen Fenster: ${lifeEventDaysCurrent} Tag(e) reduziert/pausiert (${stopLifeEventDaysCurrent} Tag(e) krank/verletzt).`
-    );
-  }
 
   const pct = (a, b) => (a != null && b != null && b !== 0 ? ((a - b) / b) * 100 : null);
 
   const efPct = pct(current.efMed, previous.efMed);
-  const vdotPct = pct(current.vdotMed, previous.vdotMed);
   const driftDelta = current.driftMed != null && previous.driftMed != null ? current.driftMed - previous.driftMed : null;
 
   if (efPct != null && efPct >= 1 && driftDelta != null && driftDelta <= -1) {
@@ -5210,11 +3390,7 @@ function buildDetectiveWhyInsights(current, previous) {
     actions.push("Mehr ruhige GA-Läufe für Ökonomie & Stabilität (konstant, nicht hart).");
   } else {
     if (efPct != null && Math.abs(efPct) >= 1) {
-      const vdotSuffix =
-        vdotPct != null && Math.abs(vdotPct) >= 0.5 ? ` | VDOT ${vdotPct > 0 ? "+" : ""}${vdotPct.toFixed(1)}%` : "";
-      (efPct > 0 ? improvements : regressions).push(
-        `EF ${efPct > 0 ? "+" : ""}${efPct.toFixed(1)}% (Ökonomie)${vdotSuffix}.`
-      );
+      (efPct > 0 ? improvements : regressions).push(`EF ${efPct > 0 ? "+" : ""}${efPct.toFixed(1)}% (Ökonomie).`);
       if (efPct > 0) {
         helped.push("Bessere Laufökonomie (EF ↑) – das hat geholfen.");
       } else {
@@ -5240,13 +3416,6 @@ function buildDetectiveWhyInsights(current, previous) {
     helped.push("Mehr Wochenreiz mit stabilen/mehr Longruns.");
   }
   if (loadPct != null && loadPct <= -10 && runFreqDelta != null && runFreqDelta <= -0.5) {
-    if (lifeEventDaysCurrent > 0 || lifeEventDaysPrevious > 0) {
-      const delta = lifeEventDaysCurrent - lifeEventDaysPrevious;
-      const deltaText = delta === 0 ? "gleich viel" : delta > 0 ? `+${delta}` : `${delta}`;
-      context.push(
-        `Reizverlust teilweise durch LifeEvent-Tage erklärbar (aktuell ${lifeEventDaysCurrent}, vorher ${lifeEventDaysPrevious}, Δ ${deltaText}).`
-      );
-    }
     regressions.push(`Reizverlust: Wochenload ${loadPct.toFixed(0)}% & Frequenz ↓ (${runFreqDelta.toFixed(1)}/Woche).`);
     actions.push("Frequenz & Wochenload wieder stabil erhöhen (zuerst kurz & locker).");
   }
@@ -5336,151 +3505,13 @@ function applyDetectiveWhy(rep, insights) {
   return { ...rep, text: lines.join("\n"), insights };
 }
 
-function appendFourWeekProgressSection(rep, insights) {
-  if (!rep) return rep;
-  const lines = rep.text.split("\n");
-  lines.push("");
-  lines.push("4-Wochen-Fazit:");
-
-  if (!insights) {
-    lines.push("- Aktuell keine belastbare 4-Wochen-Aussage möglich (zu wenig Vergleichsdaten).");
-    return { ...rep, text: lines.join("\n"), fourWeekInsights: null };
-  }
-
-  const verdict = buildFourWeekVerdict(insights);
-
-  lines.push(`- Fortschritt letzte 4 Wochen: ${verdict}`);
-  lines.push(`- Werte (letzte 4 Wochen vs vorherige 4 Wochen): ${buildFourWeekValuesLine(insights)}`);
-  if (isFiniteNumber(insights.progressScore)) {
-    lines.push(
-      `- Progress-Score (Output-basiert): ${insights.progressScore.toFixed(2)} → ${insights.progressCategory}`
-    );
-  }
-  if (isFiniteNumber(insights.fatigueAdjustedProgress)) {
-    lines.push(`- Fatigue-korrigiert (VDOT + Load-Effekt): ${fmtSigned1(insights.fatigueAdjustedProgress)}`);
-  }
-
-  if (insights.progressCategory !== "klarer Fortschritt" && (insights.regressions.length || insights.context.length)) {
-    lines.push("- Wenn nicht besser: wahrscheinliche Gründe:");
-    for (const item of [...insights.regressions, ...insights.context].slice(0, 6)) lines.push(`  - ${item}`);
-  }
-
-  if (insights.actions.length) {
-    lines.push("- Fokus für die nächsten Wochen:");
-    for (const item of insights.actions.slice(0, 4)) lines.push(`  - ${item}`);
-  }
-
-  return { ...rep, text: lines.join("\n"), fourWeekInsights: insights };
-}
-
-function buildFourWeekVerdict(insights) {
-  const category = insights?.progressCategory || "stabil";
-  if (category === "klarer Fortschritt") {
-    return "Ja – messbarer Fortschritt in den letzten 4 Wochen (Output > Belastungsanstieg).";
-  }
-  if (category === "Rückgang / Fatigue") {
-    return "Nein – aktuell kein messbarer Leistungsgewinn; eher Ermüdung bzw. Rückgang sichtbar.";
-  }
-  return "Stabil – Leistungsniveau aktuell eher gehalten (Adaption läuft, Fortschritt noch nicht klar messbar).";
-}
-
-function buildFourWeekValuesLine(insights) {
-  const c = insights?.currentSummary;
-  const p = insights?.previousSummary;
-  if (!c || !p) return "noch keine Werte verfügbar.";
-
-  const efText =
-    isFiniteNumber(c.efMed) && isFiniteNumber(p.efMed)
-      ? `${c.efMed.toFixed(3)} vs ${p.efMed.toFixed(3)}`
-      : "n/a";
-  const vdotText =
-    isFiniteNumber(c.vdotMed) && isFiniteNumber(p.vdotMed)
-      ? `${c.vdotMed.toFixed(1)} vs ${p.vdotMed.toFixed(1)}`
-      : "n/a";
-  const driftText =
-    isFiniteNumber(c.driftMed) && isFiniteNumber(p.driftMed)
-      ? `${c.driftMed.toFixed(1)}%-Pkt vs ${p.driftMed.toFixed(1)}%-Pkt`
-      : "n/a";
-  const loadText =
-    isFiniteNumber(c.weeklyLoad) && isFiniteNumber(p.weeklyLoad)
-      ? `${Math.round(c.weeklyLoad)} vs ${Math.round(p.weeklyLoad)}`
-      : "n/a";
-  const runsText =
-    isFiniteNumber(c.runsPerWeek) && isFiniteNumber(p.runsPerWeek)
-      ? `${c.runsPerWeek.toFixed(1)} vs ${p.runsPerWeek.toFixed(1)}`
-      : "n/a";
-
-  return `EF ${efText} | VDOT ${vdotText} | Drift ${driftText} | Load/Woche ${loadText} | Läufe/Woche ${runsText}`;
-}
-
-async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
-  const current = await computeDetectiveNote(env, mondayIso, warmupSkipSec, 28);
-  const mondayDate = new Date(mondayIso + "T00:00:00Z");
-  const prevMondayIso = isoDate(new Date(mondayDate.getTime() - 28 * 86400000));
-  const previous = await computeDetectiveNote(env, prevMondayIso, warmupSkipSec, 28);
-
-  if (!current?.summary || !previous?.summary) return null;
-
-  const baseInsights = buildDetectiveWhyInsights(
-    { ...current.summary, week: "letzte 4 Wochen" },
-    { ...previous.summary, week: "vorherige 4 Wochen" }
-  );
-  if (!baseInsights) return null;
-
-  return {
-    ...baseInsights,
-    currentSummary: current.summary,
-    previousSummary: previous.summary,
-    ...buildFourWeekProgressMetrics(current.summary, previous.summary),
-  };
-}
-
-function buildFourWeekProgressMetrics(current, previous) {
-  const efDelta = isFiniteNumber(current?.efMed) && isFiniteNumber(previous?.efMed) ? current.efMed - previous.efMed : null;
-  const vdotDelta =
-    isFiniteNumber(current?.vdotMed) && isFiniteNumber(previous?.vdotMed) ? current.vdotMed - previous.vdotMed : null;
-  const driftDelta =
-    isFiniteNumber(current?.driftMed) && isFiniteNumber(previous?.driftMed) ? current.driftMed - previous.driftMed : null;
-  const loadDeltaPct =
-    isFiniteNumber(current?.weeklyLoad) && isFiniteNumber(previous?.weeklyLoad) && previous.weeklyLoad > 0
-      ? ((current.weeklyLoad - previous.weeklyLoad) / previous.weeklyLoad) * 100
-      : null;
-
-  const progressScore =
-    efDelta == null || vdotDelta == null || driftDelta == null
-      ? null
-      : efDelta * 1000 * 0.4 + vdotDelta * 0.3 - driftDelta * 1.5 * 0.3;
-  const fatigueAdjustedProgress =
-    vdotDelta == null
-      ? null
-      : vdotDelta + (isFiniteNumber(loadDeltaPct) ? loadDeltaPct * 0.1 : 0);
-
-  let progressCategory = "stabil";
-  if (progressScore != null) {
-    if (progressScore > 0.5) progressCategory = "klarer Fortschritt";
-    else if (progressScore < -0.3) progressCategory = "Rückgang / Fatigue";
-  }
-
-  return {
-    efDelta,
-    vdotDelta,
-    driftDelta,
-    loadDeltaPct,
-    progressScore,
-    fatigueAdjustedProgress,
-    progressCategory,
-  };
-}
-
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   for (const w of DETECTIVE_WINDOWS) {
     const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w);
     if (rep.ok) {
       const history = await loadDetectiveHistory(env, mondayIso);
       const insights = buildDetectiveWhyInsights(rep.summary, history[0]);
-      const withWhy = applyDetectiveWhy(rep, insights);
-      const fourWeekInsights = await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec);
-      return appendFourWeekProgressSection(withWhy, fourWeekInsights);
+      return applyDetectiveWhy(rep, insights);
     }
   }
   // fallback: last attempt (most info)
@@ -5492,9 +3523,7 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   );
   const history = await loadDetectiveHistory(env, mondayIso);
   const insights = buildDetectiveWhyInsights(last.summary, history[0]);
-  const withWhy = applyDetectiveWhy(last, insights);
-  const fourWeekInsights = await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec);
-  return appendFourWeekProgressSection(withWhy, fourWeekInsights);
+  return applyDetectiveWhy(last, insights);
 }
 
 function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
@@ -5525,12 +3554,8 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const end = new Date(mondayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - windowDays * 86400000);
-  const startIso = isoDate(start);
-  const endIsoExclusive = isoDate(end);
-  const endIsoInclusive = isoDate(new Date(end.getTime() - 86400000));
 
-  const acts = await fetchIntervalsActivities(env, startIso, endIsoExclusive);
-  const events = await fetchIntervalsEvents(env, startIso, endIsoInclusive).catch(() => []);
+  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
   const runs = acts
     .filter((a) => isRun(a))
     .map((a) => ({
@@ -5549,44 +3574,6 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
 
   const weeks = Math.max(1, windowDays / 7);
 
-  const lifeEvents = (events || []).filter((e) => isLifeEventCategory(e?.category));
-  const eventDaysWithinWindow = (event) => {
-    const eventStart = String(event?.start_date_local || event?.start_date || "").slice(0, 10);
-    if (!isIsoDate(eventStart)) return 0;
-    const eventEndRaw = String(event?.end_date_local || event?.end_date || "").slice(0, 10);
-    const eventEndExclusive = isIsoDate(eventEndRaw)
-      ? eventEndRaw
-      : isoDate(new Date(new Date(eventStart + "T00:00:00Z").getTime() + 86400000));
-    const overlapStart = eventStart > startIso ? eventStart : startIso;
-    const overlapEndExclusive = eventEndExclusive < endIsoExclusive ? eventEndExclusive : endIsoExclusive;
-    const days = daysBetween(overlapStart, overlapEndExclusive);
-    return Number.isFinite(days) ? Math.max(0, days) : 0;
-  };
-
-  const eventDays = lifeEvents.map((e) => ({
-    category: normalizeEventCategory(e?.category),
-    days: eventDaysWithinWindow(e),
-  }));
-  const activeLifeEventsAtWindowEnd = lifeEvents.filter((event) => isLifeEventActiveOnDay(event, endIsoInclusive));
-  const activeLifeEventSummary = activeLifeEventsAtWindowEnd
-    .map((e) => normalizeEventCategory(e?.category))
-    .filter(Boolean)
-    .reduce((acc, category) => {
-      acc[category] = (acc[category] || 0) + 1;
-      return acc;
-    }, {});
-  const hasActiveLifeEventAtWindowEnd = Object.keys(activeLifeEventSummary).length > 0;
-  const lifeEventDays = sum(eventDays.map((x) => x.days));
-  const stopLifeEventDays = sum(eventDays.filter((x) => x.category === "SICK" || x.category === "INJURED").map((x) => x.days));
-  const holidayLifeEventDays = sum(eventDays.filter((x) => x.category === "HOLIDAY").map((x) => x.days));
-  const lifeEventSummary = eventDays
-    .filter((x) => x.days > 0)
-    .reduce((acc, x) => {
-      acc[x.category] = (acc[x.category] || 0) + x.days;
-      return acc;
-    }, {});
-  const hasLifeEvent = lifeEventDays > 0;
-
   // Distribution stats
   const totalRuns = runs.length;
   const totalMin = sum(runs.map((x) => x.moving_time)) / 60;
@@ -5603,7 +3590,9 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
 
   // Monotony/strain (simple) – include zero days for the full window
   const dailyLoads = bucketLoadsByDay(runs); // {day: loadSum} (runs only)
-  const daysAll = listIsoDaysInclusive(startIso, endIsoInclusive);
+  const startIso = isoDate(start);
+  const endIso = isoDate(new Date(end.getTime() - 86400000));
+  const daysAll = listIsoDaysInclusive(startIso, endIso);
   const loadArr = daysAll.map((d) => Number(dailyLoads[d]) || 0);
   const meanLoad = avg(loadArr) ?? 0;
   const sdLoad = std(loadArr) ?? 0;
@@ -5618,28 +3607,16 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const findings = [];
   const actions = [];
 
-  if (hasLifeEvent) {
-    const lifeEventLine = Object.entries(lifeEventSummary)
-      .map(([category, days]) => `${getLifeEventCategoryLabel(category)}=${days}d`)
-      .join(", ");
-    findings.push(`LifeEvent erkannt: ${lifeEventLine}. Bewertung von Reiz/Frequenz entsprechend relativieren.`);
-    if (stopLifeEventDays > 0) {
-      actions.push("Bei krank/verletzt: Fokus zuerst auf vollständige Regeneration, dann mit kurzen lockeren Läufen wieder einsteigen.");
-    } else if (holidayLifeEventDays > 0) {
-      actions.push("Nach Urlaub: Belastung 3–5 Tage progressiv hochfahren (nicht direkt volle Intensität).");
-    }
-  }
-
   // Absolute: too little training
   if (totalRuns === 0) {
     findings.push("Kein Lauf im Analysefenster → keine belastbare Diagnose möglich.");
     actions.push("Starte mit 2–3 lockeren Läufen/Woche (30–50min), bevor du harte Schlüsse ziehst.");
   } else {
     // Longrun
-    if (longRuns.length === 0 && !hasLifeEvent) {
+    if (longRuns.length === 0) {
       findings.push(`Zu wenig Longruns: 0× ≥60min in ${windowDays} Tagen.`);
       actions.push("1×/Woche Longrun ≥60–75min (locker) als Basisbaustein.");
-    } else if (longPerWeek < 0.8 && windowDays >= 14 && !hasLifeEvent) {
+    } else if (longPerWeek < 0.8 && windowDays >= 14) {
       findings.push(
         `Longrun-Frequenz niedrig: ${longRuns.length}× in ${windowDays} Tagen (~${longPerWeek.toFixed(1)}/Woche).`
       );
@@ -5647,10 +3624,10 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     }
 
     // Key
-    if (keyRuns.length === 0 && !hasLifeEvent) {
+    if (keyRuns.length === 0) {
       findings.push(`Zu wenig Qualität: 0× Key (key:*) in ${windowDays} Tagen.`);
       actions.push("Wenn Aufbau/Spezifisch: 1× Key/Woche (Schwelle ODER VO2) einbauen.");
-    } else if (keyPerWeek < 0.6 && windowDays >= 14 && !hasLifeEvent) {
+    } else if (keyPerWeek < 0.6 && windowDays >= 14) {
       findings.push(
         `Key-Frequenz niedrig: ${keyRuns.length}× in ${windowDays} Tagen (~${keyPerWeek.toFixed(1)}/Woche).`
       );
@@ -5658,7 +3635,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     }
 
     // Volume / frequency
-    if (runsPerWeek < 2.0 && windowDays >= 14 && !hasLifeEvent) {
+    if (runsPerWeek < 2.0 && windowDays >= 14) {
       findings.push(`Lauffrequenz niedrig: Ø ${runsPerWeek.toFixed(1)}/Woche.`);
       actions.push("Wenn möglich: erst Frequenz hoch (kurze easy Läufe), dann Intensität.");
     }
@@ -5676,12 +3653,8 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   const weeklyLoad = totalLoad / weeks;
   if (windowDays >= 14) {
     if (weeklyLoad < 120) {
-      if (hasLifeEvent) {
-        findings.push(`Wöchentlicher Laufreiz niedrig (~${Math.round(weeklyLoad)}/Woche), plausibel mit LifeEvent-Tagen im Fenster.`);
-      } else {
-        findings.push(`Wöchentlicher Laufreiz niedrig: ~${Math.round(weeklyLoad)}/Woche (Load).`);
-        actions.push("Motor-Aufbau braucht Kontinuität: 2–4 Wochen stabilen Reiz setzen, erst dann bewerten.");
-      }
+      findings.push(`Wöchentlicher Laufreiz niedrig: ~${Math.round(weeklyLoad)}/Woche (Load).`);
+      actions.push("Motor-Aufbau braucht Kontinuität: 2–4 Wochen stabilen Reiz setzen, erst dann bewerten.");
     }
   }
 
@@ -5712,21 +3685,6 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   lines.push(title);
   lines.push("");
   lines.push("Struktur (Trainingslehre):");
-  if (hasActiveLifeEventAtWindowEnd) {
-    lines.push(
-      `- Verfügbarkeit: eingeschränkt (aktives LifeEvent: ${Object.entries(activeLifeEventSummary)
-        .map(([category, count]) => `${getLifeEventCategoryLabel(category)}${count > 1 ? ` ×${count}` : ""}`)
-        .join(" · ")})`
-    );
-  } else if (hasLifeEvent) {
-    lines.push(
-      `- Verfügbarkeit: normal (aktuell kein LifeEvent; im Fenster: ${Object.entries(lifeEventSummary)
-        .map(([category, days]) => `${getLifeEventCategoryLabel(category)} ${days}d`)
-        .join(" · ")})`
-    );
-  } else {
-    lines.push("- Verfügbarkeit: normal (kein Urlaub/krank/verletzt im Fenster)");
-  }
   lines.push(`- Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
   lines.push(`- Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
   lines.push(`- Longruns (≥60min): ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche)`);
@@ -5770,12 +3728,8 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     monotony,
     strain,
     efMed: comp.efMed ?? null,
-    vdotMed: comp.efMed != null ? vdotLikeFromEf(comp.efMed) : null,
     driftMed: comp.driftMed ?? null,
     compN: comp.n ?? 0,
-    lifeEventDays,
-    stopLifeEventDays,
-    holidayLifeEventDays,
   };
 
   // ok criteria: enough runs OR strong structural issue
@@ -5871,76 +3825,6 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
   });
 }
 
-async function fetchDailyReportNoteEvent(env, dayIso) {
-  const external_id = `daily-report-${dayIso}`;
-  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
-  return (events || []).find((e) => String(e?.external_id || "") === external_id) || null;
-}
-
-function fromHardLineBreakText(text) {
-  return String(text ?? "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n");
-}
-
-function splitDecisionBlocks(text) {
-  const normalized = fromHardLineBreakText(text).trim();
-  if (!normalized) return [];
-  return normalized.split(/\n⸻\n\s*\n/).map((b) => b.trim()).filter(Boolean);
-}
-
-function getDecisionBlockTitle(block) {
-  const first = String(block || "").split("\n")[0] || "";
-  return first.replace(/^[^\p{L}\p{N}]+/u, "").trim();
-}
-
-function composeDecisionBlocks(blocks) {
-  const clean = (blocks || []).map((b) => String(b || "").trim()).filter(Boolean);
-  if (!clean.length) return "";
-  return `${clean.join("\n⸻\n\n")}\n⸻\n\n`;
-}
-
-function mergeTodayRunSection(existingText, freshText) {
-  const title = "HEUTIGER LAUF";
-  const freshBlocks = splitDecisionBlocks(freshText);
-  const freshTodayBlock = freshBlocks.find((b) => getDecisionBlockTitle(b) === title);
-  if (!freshTodayBlock) return fromHardLineBreakText(existingText);
-
-  const existingBlocks = splitDecisionBlocks(existingText);
-  if (!existingBlocks.length) return composeDecisionBlocks([freshTodayBlock]);
-
-  let replaced = false;
-  const merged = existingBlocks.map((b) => {
-    if (getDecisionBlockTitle(b) === title) {
-      replaced = true;
-      return freshTodayBlock;
-    }
-    return b;
-  });
-  if (!replaced) merged.unshift(freshTodayBlock);
-  return composeDecisionBlocks(merged);
-}
-
-async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, existingEvent = null) {
-  const external_id = `daily-report-${dayIso}`;
-  const name = "Daily-Report";
-  const existing = existingEvent || await fetchDailyReportNoteEvent(env, dayIso);
-  if (!existing?.id) return false;
-
-  const merged = mergeTodayRunSection(existing?.description || "", freshNoteText || "");
-  await updateIntervalsEvent(env, existing.id, {
-    category: "NOTE",
-    start_date_local: `${dayIso}T00:00:00`,
-    name,
-    description: toHardLineBreakText(merged),
-    color: "blue",
-    external_id,
-  });
-  return true;
-}
-
 // Create/update a blue NOTE event for the daily wellness report
 async function upsertDailyReportNote(env, dayIso, noteText) {
   const external_id = `daily-report-${dayIso}`;
@@ -6005,8 +3889,6 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   const benchType = getBenchType(benchName);
   const isKey = hasKeyTag(activity);
-  const keyType = getKeyType(activity);
-  const isLongrunProgression = benchType === "GA" && String(keyType || "").toLowerCase().includes("prog");
   const end = new Date(dayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000);
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
@@ -6017,12 +3899,6 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   const today = await computeBenchMetrics(env, activity, warmupSkipSec, { allowDrift: !isKey });
   if (!today) return `🧪 bench:${benchName}\nHeute: n/a`;
-
-  let progressionMetrics = null;
-  if (isLongrunProgression) {
-    const streams = await fetchIntervalsStreams(env, activity.id, ["time", "velocity_smooth", "heartrate"]);
-    progressionMetrics = computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec);
-  }
 
   let intervalMetrics = null;
   if (benchType !== "GA" || isKey) {
@@ -6062,23 +3938,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lines.push("EF: n/a");
   }
 
-  if (isLongrunProgression) {
-    const steadyPct = Number.isFinite(progressionMetrics?.steadyEndPct) ? Math.round(progressionMetrics.steadyEndPct * 100) : 65;
-    if (progressionMetrics?.steadyDriftPct != null) {
-      lines.push(`Steady-Drift (0–${steadyPct}%): ${fmtSigned1(progressionMetrics.steadyDriftPct)}%`);
-    } else {
-      lines.push(`Steady-Drift (0–${steadyPct}%): n/a`);
-    }
-    if (progressionMetrics) {
-      lines.push(`Progression: Pace ${progressionMetrics.paceIncreased ? "↑" : "nicht klar steigend"}, HF ${progressionMetrics.hrProportional ? "proportional" : "überproportional"}`);
-      if (!progressionMetrics.noHrJump) {
-        lines.push("Warnung: HF-Sprung >5 bpm in ~150s erkannt.");
-      }
-      if (!progressionMetrics.below90PctHfmax) {
-        lines.push("Warnung: >90% HFmax im Progressions-Teil.");
-      }
-    }
-  } else if (benchType === "GA" && !isKey) {
+  if (benchType === "GA" && !isKey) {
     if (same.length && today.drift != null && last?.drift != null) {
       const dVsLast = today.drift - last.drift;
       lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
@@ -6086,40 +3946,15 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       lines.push(`Drift: ${fmtSigned1(today.drift)}%-Pkt`);
     }
   } else {
-    if (intervalMetrics?.iqi != null) {
-      const iqiLabel =
-        intervalMetrics.iqi >= 85 ? "sehr gut kontrolliert" : intervalMetrics.iqi >= 70 ? "gut kontrolliert" : intervalMetrics.iqi >= 55 ? "teils kontrolliert" : "instabil";
-      lines.push(`Intervall-Qualität (IQI): ${intervalMetrics.iqi}/100 (${iqiLabel})`);
-      const comp = intervalMetrics.iqi_components;
-      if (comp) {
-        const fmtComp = (label, score, weight) => {
-          if (!Number.isFinite(score)) return `${label} n/a (${Math.round(weight * 100)}%)`;
-          return `${label} ${Math.round(score)}/100 (${Math.round(weight * 100)}%)`;
-        };
-        const composition = [
-          fmtComp("Pace", comp.pace_consistency_score, comp?.weights?.pace_consistency ?? 0.4),
-          fmtComp("Effizienz", comp.efficiency_drift_score, comp?.weights?.efficiency_drift ?? 0.25),
-          fmtComp("Recovery", comp.recovery_score, comp?.weights?.recovery ?? 0.2),
-          fmtComp("Mechanik", comp.mechanics_score, comp?.weights?.mechanics ?? 0.15),
-        ];
-        lines.push(`IQI-Zusammensetzung: ${composition.join(" | ")}`);
-      }
-    }
-    if (intervalMetrics?.pace_cv != null) {
-      lines.push(`Pace-Konsistenz: CV ${(intervalMetrics.pace_cv * 100).toFixed(1)}%`);
-    }
-    if (intervalMetrics?.eff_drift_pct != null) {
-      lines.push(`Effizienz-Drift: ${fmtSigned1(intervalMetrics.eff_drift_pct)}%`);
-    }
     if (intervalMetrics?.HR_Drift_bpm != null) {
       const driftPct = intervalMetrics.HR_Drift_pct;
       const driftFlagLabel = formatDriftFlag(intervalMetrics.drift_flag);
       const driftFlag = driftFlagLabel ? ` (${driftFlagLabel})` : "";
       const driftPctText = Number.isFinite(driftPct) ? `, ${fmtSigned1(driftPct)}%` : "";
-      lines.push(`HF-Drift (Sekundärsignal): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
+      lines.push(`HF-Drift (Intervall): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
     }
     if (intervalMetrics?.HRR60_median != null) {
-      lines.push(`Erholung (sekundär): HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
+      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
     }
     if (!intervalMetrics?.HR_Drift_bpm && isKey) {
       if (same.length && last?.avgSpeed != null) {
@@ -6137,30 +3972,15 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     lastIntervalMetrics = await computeIntervalBenchMetrics(env, same[0], warmupSkipSec);
   }
 
-  if (isLongrunProgression && progressionMetrics) {
-    const failReasons = [];
-    if (progressionMetrics.steadyDriftPct == null) {
-      failReasons.push("Steady-Drift n/a");
-    } else if (progressionMetrics.steadyDriftPct > 5) {
-      failReasons.push(`Steady-Drift ${progressionMetrics.steadyDriftPct.toFixed(1)}% > 5%`);
-    }
-    if (!progressionMetrics.paceIncreased) failReasons.push("Pace-Anstieg fehlt");
-    if (!progressionMetrics.hrProportional) failReasons.push("HF steigt überproportional");
-    if (!progressionMetrics.noHrJump) failReasons.push("HF-Sprung >5 bpm/150s");
-    if (!progressionMetrics.below90PctHfmax) failReasons.push(">90% HFmax erreicht");
-
-    verdict = failReasons.length
-      ? `Longrun-Progression teilweise verfehlt: ${failReasons.join(", ")}.`
-      : "Longrun-Progression erfüllt: Steady stabil, Progression kontrolliert.";
-  } else if (same.length && intervalMetrics && lastIntervalMetrics) {
-    if (intervalMetrics.iqi != null && lastIntervalMetrics.iqi != null) {
-      const iqiDelta = intervalMetrics.iqi - lastIntervalMetrics.iqi;
-      if (iqiDelta >= 5) {
-        verdict = `Einheit besser kontrolliert – IQI ${fmtSigned1(iqiDelta)} Punkte vs letzte.`;
-      } else if (iqiDelta <= -5) {
-        verdict = `Einheit instabiler – IQI ${fmtSigned1(iqiDelta)} Punkte vs letzte.`;
+  if (same.length && intervalMetrics && lastIntervalMetrics) {
+    if (intervalMetrics.HRR60_median != null && lastIntervalMetrics.HRR60_median != null) {
+      const hrr60Delta = intervalMetrics.HRR60_median - lastIntervalMetrics.HRR60_median;
+      if (hrr60Delta >= 3) {
+        verdict = `Einheit besser – schnellere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+      } else if (hrr60Delta <= -3) {
+        verdict = `Einheit schlechter – langsamere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
       } else {
-        verdict = `Einheit ähnlich kontrolliert – IQI ${fmtSigned1(iqiDelta)} Punkte vs letzte.`;
+        verdict = `Einheit ähnlich – Erholung nahezu gleich (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
       }
     } else if (intervalMetrics.HR_Drift_bpm != null && lastIntervalMetrics.HR_Drift_bpm != null) {
       const driftDelta = intervalMetrics.HR_Drift_bpm - lastIntervalMetrics.HR_Drift_bpm;
@@ -6186,116 +4006,6 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   lines.push(`Fazit: ${verdict}`);
   return lines.join("\n");
-}
-
-function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 600) {
-  if (!streams) return null;
-  const time = Array.isArray(streams.time) ? streams.time : null;
-  const speed = Array.isArray(streams.velocity_smooth) ? streams.velocity_smooth : null;
-  const hr = Array.isArray(streams.heartrate) ? streams.heartrate : null;
-  if (!time || !speed || !hr) return null;
-
-  const n = Math.min(time.length, speed.length, hr.length);
-  if (n < MIN_POINTS) return null;
-
-  const points = [];
-  for (let i = 0; i < n; i++) {
-    const t = Number(time[i]);
-    const v = Number(speed[i]);
-    const h = Number(hr[i]);
-    if (!Number.isFinite(t) || !Number.isFinite(v) || !Number.isFinite(h)) continue;
-    points.push({ t, v, h });
-  }
-  if (points.length < MIN_POINTS) return null;
-
-  const t0 = points[0].t;
-  for (const p of points) p.t -= t0;
-  const durationSec = points[points.length - 1].t;
-  if (!Number.isFinite(durationSec) || durationSec <= 0) return null;
-
-  const mean = (arr) => (arr.length ? arr.reduce((sum, x) => sum + x, 0) / arr.length : null);
-  const pick = (fromPct) => points.filter((p) => p.t >= durationSec * fromPct);
-
-  // Suche den plausibelsten Progressionsstart zwischen 70–95% (deckt auch sehr späte 95/5-Finishes ab).
-  let best = null;
-  for (let pct = 0.7; pct <= 0.95; pct += 0.05) {
-    const progCand = pick(pct);
-    if (progCand.length < Math.max(6, Math.floor(points.length * 0.05))) continue;
-    const preCand = points.filter((p) => p.t < durationSec * pct);
-    if (preCand.length < Math.max(6, Math.floor(points.length * 0.2))) continue;
-
-    const spPre = mean(preCand.map((p) => p.v));
-    const spProg = mean(progCand.map((p) => p.v));
-    if (!(spPre > 0 && spProg > 0)) continue;
-
-    const gainPct = ((spProg - spPre) / spPre) * 100;
-    if (!best || gainPct > best.gainPct) best = { pct, gainPct };
-  }
-
-  const progressionStartPct = best?.gainPct >= 1 ? best.pct : 0.8;
-  const steadyEndPct = Math.max(0.6, Math.min(0.7, progressionStartPct - 0.1));
-
-  const steadyEndSec = durationSec * steadyEndPct;
-  const progressionStartSec = durationSec * progressionStartPct;
-
-  const steadyPoints = points.filter((p) => p.t <= steadyEndSec);
-  const progressionPoints = points.filter((p) => p.t >= progressionStartSec);
-
-  const steadyDrift = computeDriftAndStabilityFromStreams(
-    {
-      time: steadyPoints.map((p) => p.t),
-      velocity_smooth: steadyPoints.map((p) => p.v),
-      heartrate: steadyPoints.map((p) => p.h),
-    },
-    Math.min(warmupSkipSec, Math.max(0, steadyEndSec * 0.4))
-  );
-  const steadyDriftPct = Number.isFinite(steadyDrift?.pa_hr_decouple_pct) ? steadyDrift.pa_hr_decouple_pct : null;
-
-  const pLen = progressionPoints.length;
-  const third = Math.max(1, Math.floor(pLen / 3));
-  const progStart = progressionPoints.slice(0, third);
-  const progEnd = progressionPoints.slice(Math.max(0, pLen - third));
-
-  const startSpeed = mean(progStart.map((p) => p.v));
-  const endSpeed = mean(progEnd.map((p) => p.v));
-  const startHr = mean(progStart.map((p) => p.h));
-  const endHr = mean(progEnd.map((p) => p.h));
-
-  const speedPct = startSpeed > 0 && endSpeed > 0 ? ((endSpeed - startSpeed) / startSpeed) * 100 : null;
-  const hrPct = startHr > 0 && endHr > 0 ? ((endHr - startHr) / startHr) * 100 : null;
-  const paceIncreased = Number.isFinite(speedPct) && speedPct >= 1;
-  const hrProportional = Number.isFinite(speedPct) && Number.isFinite(hrPct) && hrPct >= 0 && hrPct <= speedPct * 1.5 + 1;
-
-  let noHrJump = true;
-  if (pLen > 1) {
-    for (let i = 0; i < pLen; i++) {
-      const base = progressionPoints[i];
-      let j = i + 1;
-      while (j < pLen && progressionPoints[j].t - base.t < 150) j++;
-      if (j < pLen) {
-        const deltaHr = progressionPoints[j].h - base.h;
-        if (deltaHr > 5) {
-          noHrJump = false;
-          break;
-        }
-      }
-    }
-  }
-
-  const maxHrProg = progressionPoints.length ? Math.max(...progressionPoints.map((p) => p.h)) : null;
-  const below90PctHfmax = Number.isFinite(maxHrProg) ? maxHrProg <= HFMAX * 0.9 : true;
-
-  return {
-    steadyDriftPct,
-    paceIncreased,
-    hrProportional,
-    noHrJump,
-    below90PctHfmax,
-    speedPct,
-    hrPct,
-    steadyEndPct,
-    progressionStartPct,
-  };
 }
 
 async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
@@ -6366,20 +4076,15 @@ function quantile(arr, q) {
   return v[base];
 }
 
-function pickIntervalIntensityCandidates(streams) {
-  const candidates = [];
+function pickIntervalIntensity(streams) {
   const watts = streams?.watts;
   const speed = streams?.velocity_smooth;
-  if (Array.isArray(watts) && watts.some((x) => Number.isFinite(x))) {
-    candidates.push({ data: watts, kind: "watts" });
-  }
-  if (Array.isArray(speed) && speed.some((x) => Number.isFinite(x))) {
-    candidates.push({ data: speed, kind: "speed" });
-  }
-  return candidates;
+  if (Array.isArray(watts) && watts.some((x) => Number.isFinite(x))) return { data: watts, kind: "watts" };
+  if (Array.isArray(speed) && speed.some((x) => Number.isFinite(x))) return { data: speed, kind: "speed" };
+  return null;
 }
 
-function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20, minResumeSec = 3 } = {}) {
+function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 5 } = {}) {
   const n = Math.min(time.length, intensity.length);
   if (n < 2) return [];
 
@@ -6387,7 +4092,6 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   let startIdx = null;
   let lastAboveIdx = null;
   let gapStart = null;
-  let aboveStart = null;
 
   const timeAt = (i) => {
     const t = Number(time[i]);
@@ -6396,39 +4100,16 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
 
   for (let i = 0; i < n; i++) {
     const v = Number(intensity[i]);
-    const t = timeAt(i);
-
     if (Number.isFinite(v) && v >= threshold) {
-      if (startIdx == null) {
-        startIdx = i;
-        lastAboveIdx = i;
-        gapStart = null;
-        aboveStart = null;
-        continue;
-      }
-
-      if (gapStart != null) {
-        // In recoveries, brief spikes can occur (sensor jitter / short moves).
-        // Only resume the same rep after a short sustained return above threshold.
-        if (aboveStart == null) aboveStart = t;
-        if (t - aboveStart >= minResumeSec) {
-          lastAboveIdx = i;
-          gapStart = null;
-          aboveStart = null;
-        }
-        continue;
-      }
-
+      if (startIdx == null) startIdx = i;
       lastAboveIdx = i;
+      gapStart = null;
       continue;
     }
 
-    aboveStart = null;
     if (startIdx != null) {
-      // Short dropouts (GPS/autopause/sensor gaps) are common outdoors;
-      // tolerate brief dips so one rep is not split into multiple pseudo-intervals.
-      if (gapStart == null) gapStart = t;
-      if (t - gapStart > maxGapSec) {
+      if (gapStart == null) gapStart = timeAt(i);
+      if (timeAt(i) - gapStart > maxGapSec) {
         const startTime = timeAt(startIdx);
         const endTime = timeAt(lastAboveIdx);
         const duration = endTime - startTime;
@@ -6454,45 +4135,6 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   return intervals;
 }
 
-function keepConsistentIntervals(intervals, intensityMeans, { durationTolerance = 0.3, intensityTolerance = 0.2 } = {}) {
-  if (!Array.isArray(intervals) || !Array.isArray(intensityMeans) || intervals.length !== intensityMeans.length) {
-    return { intervals: [], intensityMeans: [] };
-  }
-  if (intervals.length < 3) return { intervals, intensityMeans };
-
-  const durations = intervals
-    .map((i) => Number(i?.duration))
-    .filter((x) => Number.isFinite(x) && x > 0);
-  const intensities = intensityMeans.filter((x) => Number.isFinite(x) && x > 0);
-  if (!durations.length || intensities.length !== intervals.length) {
-    return { intervals, intensityMeans };
-  }
-
-  const durationMed = median(durations);
-  const intensityMed = median(intensities);
-  if (!Number.isFinite(durationMed) || !Number.isFinite(intensityMed) || durationMed <= 0 || intensityMed <= 0) {
-    return { intervals, intensityMeans };
-  }
-
-  const filtered = intervals
-    .map((interval, idx) => ({ interval, intensity: intensityMeans[idx] }))
-    .filter(({ interval, intensity }) => {
-      const dur = Number(interval?.duration);
-      const int = Number(intensity);
-      if (!Number.isFinite(dur) || !Number.isFinite(int) || dur <= 0 || int <= 0) return false;
-      const durRatio = Math.abs(dur - durationMed) / durationMed;
-      const intRatio = Math.abs(int - intensityMed) / intensityMed;
-      return durRatio <= durationTolerance && intRatio <= intensityTolerance;
-    });
-
-  if (filtered.length < 2) return { intervals, intensityMeans };
-
-  return {
-    intervals: filtered.map((x) => x.interval),
-    intensityMeans: filtered.map((x) => x.intensity),
-  };
-}
-
 function classifyIntervalDrift(intervalType, driftBpm) {
   if (!Number.isFinite(driftBpm)) return null;
   if (intervalType === "threshold") {
@@ -6515,252 +4157,115 @@ function formatDriftFlag(flag) {
   return flag;
 }
 
-function scoreFromThresholdsDesc(value, thresholds) {
-  if (!Number.isFinite(value)) return null;
-  for (const t of thresholds) {
-    if (value <= t.max) return t.score;
-  }
-  return thresholds[thresholds.length - 1]?.score ?? null;
-}
-
-function scoreFromThresholdsAsc(value, thresholds) {
-  if (!Number.isFinite(value)) return null;
-  for (const t of thresholds) {
-    if (value >= t.min) return t.score;
-  }
-  return thresholds[thresholds.length - 1]?.score ?? null;
-}
-
 function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
   const hr = streams?.heartrate;
   const time = streams?.time;
   if (!Array.isArray(hr) || !Array.isArray(time)) return null;
 
-  const candidates = pickIntervalIntensityCandidates(streams);
-  if (!candidates.length) return null;
+  const intensityInfo = pickIntervalIntensity(streams);
+  if (!intensityInfo) return null;
 
-  for (const intensityInfo of candidates) {
-    const n = Math.min(hr.length, time.length, intensityInfo.data.length);
-    if (n < 2) continue;
+  const n = Math.min(hr.length, time.length, intensityInfo.data.length);
+  if (n < 2) return null;
 
-    const timeSlice = time.slice(0, n);
-    const intensity = intensityInfo.data.slice(0, n);
-    const hrSlice = hr.slice(0, n);
+  const timeSlice = time.slice(0, n);
+  const intensity = intensityInfo.data.slice(0, n);
+  const hrSlice = hr.slice(0, n);
 
-    const intensityVals = intensity.filter((x) => Number.isFinite(x));
-    const threshold = quantile(intensityVals, 0.75);
-    if (!Number.isFinite(threshold)) continue;
+  const intensityVals = intensity.filter((x) => Number.isFinite(x));
+  const threshold = quantile(intensityVals, 0.75);
+  if (!Number.isFinite(threshold)) return null;
 
-    const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
-    if (intervals.length < 2) continue;
+  const intervals = buildWorkIntervals(timeSlice, intensity, { threshold });
+  if (intervals.length < 2) return null;
 
-    const intensityMeans = intervals.map((interval) => {
-      let sum = 0;
-      let count = 0;
-      for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-        const v = Number(intensity[i]);
-        if (Number.isFinite(v)) {
-          sum += v;
-          count++;
-        }
+  const durations = intervals.map((i) => i.duration);
+  const minDur = Math.min(...durations);
+  const maxDur = Math.max(...durations);
+  if (minDur <= 0 || maxDur / minDur > 1.1) return null;
+
+  const intensityMeans = intervals.map((interval) => {
+    let sum = 0;
+    let count = 0;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const v = Number(intensity[i]);
+      if (Number.isFinite(v)) {
+        sum += v;
+        count++;
       }
-      return count ? sum / count : null;
-    });
+    }
+    return count ? sum / count : null;
+  });
 
-    const kept = keepConsistentIntervals(intervals, intensityMeans);
-    const cleanIntervals = kept.intervals;
-    const cleanIntensityMeans = kept.intensityMeans;
-    if (cleanIntervals.length < 2) continue;
+  const validIntensity = intensityMeans.filter((x) => Number.isFinite(x));
+  if (validIntensity.length !== intervals.length) return null;
+  const minIntensity = Math.min(...validIntensity);
+  const maxIntensity = Math.max(...validIntensity);
+  if (minIntensity <= 0 || maxIntensity / minIntensity > 1.1) return null;
 
-    const durations = cleanIntervals.map((i) => i.duration);
-    const minDur = Math.min(...durations);
-    const maxDur = Math.max(...durations);
-    // Outdoor repeats (e.g. 3×800 m) have more GPS/autopause noise than track-perfect intervals.
-    // Keep a quality gate, but allow moderate variance so valid sessions are not dropped too often.
-    if (minDur <= 0 || maxDur / minDur > 1.4) continue;
+  const timeAt = (i) => {
+    const t = Number(timeSlice[i]);
+    return Number.isFinite(t) ? t : i;
+  };
 
-    const validIntensity = cleanIntensityMeans.filter((x) => Number.isFinite(x));
-    if (validIntensity.length !== cleanIntervals.length) continue;
-    const minIntensity = Math.min(...validIntensity);
-    const maxIntensity = Math.max(...validIntensity);
-    if (minIntensity <= 0 || maxIntensity / minIntensity > 1.3) continue;
+  const intervalHr = intervals.map((interval) => {
+    const startTime = interval.startTime;
+    const endTime = interval.endTime;
+    const duration = interval.duration;
+    const lateStart = startTime + duration * 0.6;
 
-    const timeAt = (i) => {
-      const t = Number(timeSlice[i]);
-      return Number.isFinite(t) ? t : i;
-    };
+    let lateSum = 0;
+    let lateCount = 0;
+    let peak = -Infinity;
+    for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+      const t = timeAt(i);
+      const h = Number(hrSlice[i]);
+      if (!Number.isFinite(h)) continue;
+      if (h > peak) peak = h;
+      if (t >= lateStart && t <= endTime) {
+        lateSum += h;
+        lateCount++;
+      }
+    }
+    const lateAvg = lateCount ? lateSum / lateCount : null;
 
-    const cadence = Array.isArray(streams?.cadence) ? streams.cadence.slice(0, n) : null;
-    const intervalHr = cleanIntervals.map((interval, intervalIdx) => {
-      const startTime = interval.startTime;
-      const endTime = interval.endTime;
-      const duration = interval.duration;
-      const lateStart = startTime + duration * 0.6;
-
-      let lateSum = 0;
-      let lateCount = 0;
-      let peak = -Infinity;
-      for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-        const t = timeAt(i);
+    const target = endTime + 60;
+    let hr60 = null;
+    for (let i = interval.endIdx; i < n; i++) {
+      const t = timeAt(i);
+      if (t >= target) {
         const h = Number(hrSlice[i]);
-        if (!Number.isFinite(h)) continue;
-        if (h > peak) peak = h;
-        if (t >= lateStart && t <= endTime) {
-          lateSum += h;
-          lateCount++;
-        }
+        if (Number.isFinite(h)) hr60 = h;
+        break;
       }
-      const lateAvg = lateCount ? lateSum / lateCount : null;
-
-      const target = endTime + 60;
-      let hr60 = null;
-      let recoveryEnd = null;
-      for (let i = interval.endIdx; i < n; i++) {
-        const t = timeAt(i);
-        if (!Number.isFinite(recoveryEnd) && i + 1 < cleanIntervals.length) {
-          const nextStart = cleanIntervals[intervalIdx + 1].startTime;
-          if (t >= nextStart - 5) {
-            const h = Number(hrSlice[i]);
-            if (Number.isFinite(h)) recoveryEnd = h;
-          }
-        }
-        if (t >= target) {
-          const h = Number(hrSlice[i]);
-          if (Number.isFinite(h)) hr60 = h;
-          break;
-        }
-      }
-
-      let cadAvg = null;
-      if (cadence) {
-        let cadSum = 0;
-        let cadCount = 0;
-        for (let i = interval.startIdx; i <= interval.endIdx; i++) {
-          const c = Number(cadence[i]);
-          if (Number.isFinite(c) && c > 0) {
-            cadSum += c;
-            cadCount += 1;
-          }
-        }
-        if (cadCount) cadAvg = cadSum / cadCount;
-      }
-
-      const intervalSpeed = Number(cleanIntensityMeans[intervalIdx]);
-      const strideProxy = Number.isFinite(intervalSpeed) && Number.isFinite(cadAvg) && cadAvg > 0 ? intervalSpeed / cadAvg : null;
-
-      return {
-        lateAvg,
-        peak: Number.isFinite(peak) ? peak : null,
-        hr60,
-        recoveryEnd,
-        speed: Number.isFinite(intervalSpeed) ? intervalSpeed : null,
-        eff: Number.isFinite(intervalSpeed) && Number.isFinite(lateAvg) && lateAvg > 0 ? intervalSpeed / lateAvg : null,
-        cadAvg,
-        strideProxy,
-      };
-    });
-
-    const first = intervalHr[0]?.lateAvg;
-    const last = intervalHr[intervalHr.length - 1]?.lateAvg;
-    if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) continue;
-
-    const hrDriftBpm = last - first;
-    const hrDriftPct = ((last - first) / first) * 100;
-
-    const hrr60Drops = intervalHr
-      .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
-      .filter((x) => Number.isFinite(x));
-    const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
-
-    const speeds = intervalHr.map((x) => x.speed).filter((x) => Number.isFinite(x) && x > 0);
-    const speedMean = avg(speeds);
-    const speedStd = std(speeds);
-    const paceCv = Number.isFinite(speedMean) && Number.isFinite(speedStd) && speedMean > 0 ? speedStd / speedMean : null;
-    const paceConsistencyScore = scoreFromThresholdsDesc(paceCv, [
-      { max: 0.01, score: 100 },
-      { max: 0.025, score: 85 },
-      { max: 0.04, score: 65 },
-      { max: 0.06, score: 40 },
-      { max: Infinity, score: 10 },
-    ]);
-
-    const firstEff = intervalHr[0]?.eff;
-    const lastEff = intervalHr[intervalHr.length - 1]?.eff;
-    const effDriftPct = Number.isFinite(firstEff) && Number.isFinite(lastEff) && firstEff > 0 ? ((firstEff - lastEff) / firstEff) * 100 : null;
-    const effDriftScore = paceCv != null && paceCv < 0.04
-      ? scoreFromThresholdsDesc(effDriftPct, [
-          { max: 2, score: 100 },
-          { max: 5, score: 80 },
-          { max: 8, score: 50 },
-          { max: 10, score: 25 },
-          { max: Infinity, score: 10 },
-        ])
-      : null;
-
-    const recoveryDropsRel = intervalHr
-      .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.recoveryEnd) && x.peak > 0 ? (x.peak - x.recoveryEnd) / x.peak : null))
-      .filter((x) => Number.isFinite(x));
-    const recoveryRelMedian = recoveryDropsRel.length ? median(recoveryDropsRel) : null;
-    const recoveryScore = scoreFromThresholdsAsc(recoveryRelMedian, [
-      { min: 0.25, score: 100 },
-      { min: 0.2, score: 85 },
-      { min: 0.15, score: 70 },
-      { min: 0.1, score: 50 },
-      { min: 0, score: 20 },
-    ]);
-
-    const cadenceVals = intervalHr.map((x) => x.cadAvg).filter((x) => Number.isFinite(x) && x > 0);
-    const strideVals = intervalHr.map((x) => x.strideProxy).filter((x) => Number.isFinite(x) && x > 0);
-    const cadenceCv = cadenceVals.length > 1 ? (std(cadenceVals) || 0) / avg(cadenceVals) : null;
-    const strideCv = strideVals.length > 1 ? (std(strideVals) || 0) / avg(strideVals) : null;
-    const mechanicsCv = [cadenceCv, strideCv].filter((x) => Number.isFinite(x));
-    const mechanicsScore = mechanicsCv.length
-      ? scoreFromThresholdsDesc(Math.max(...mechanicsCv), [
-          { max: 0.02, score: 100 },
-          { max: 0.04, score: 80 },
-          { max: 0.06, score: 55 },
-          { max: Infinity, score: 30 },
-        ])
-      : null;
-
-    const iqiWeighted = [
-      { value: paceConsistencyScore, weight: 0.4 },
-      { value: effDriftScore, weight: 0.25 },
-      { value: recoveryScore, weight: 0.2 },
-      { value: mechanicsScore, weight: 0.15 },
-    ].filter((x) => Number.isFinite(x.value));
-    const iqiWeightSum = iqiWeighted.reduce((acc, x) => acc + x.weight, 0);
-    const iqi = iqiWeightSum > 0 ? iqiWeighted.reduce((acc, x) => acc + x.value * x.weight, 0) / iqiWeightSum : null;
+    }
 
     return {
-      HR_Drift_bpm: hrDriftBpm,
-      HR_Drift_pct: hrDriftPct,
-      HRR60_median: hrr60Median,
-      pace_cv: paceCv,
-      eff_drift_pct: effDriftPct,
-      recovery_rel_median: recoveryRelMedian,
-      cadence_cv: cadenceCv,
-      stride_cv: strideCv,
-      iqi: Number.isFinite(iqi) ? Math.round(iqi) : null,
-      iqi_components: {
-        pace_consistency_score: paceConsistencyScore,
-        efficiency_drift_score: effDriftScore,
-        recovery_score: recoveryScore,
-        mechanics_score: mechanicsScore,
-        weights: {
-          pace_consistency: 0.4,
-          efficiency_drift: 0.25,
-          recovery: 0.2,
-          mechanics: 0.15,
-        },
-      },
-      drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
-      interval_type: intervalType ?? null,
-      intensity_source: intensityInfo.kind,
+      lateAvg,
+      peak: Number.isFinite(peak) ? peak : null,
+      hr60,
     };
-  }
+  });
 
-  return null;
+  const first = intervalHr[0]?.lateAvg;
+  const last = intervalHr[intervalHr.length - 1]?.lateAvg;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
+
+  const hrDriftBpm = last - first;
+  const hrDriftPct = ((last - first) / first) * 100;
+
+  const hrr60Drops = intervalHr
+    .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
+    .filter((x) => Number.isFinite(x));
+  const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
+
+  return {
+    HR_Drift_bpm: hrDriftBpm,
+    HR_Drift_pct: hrDriftPct,
+    HRR60_median: hrr60Median,
+    drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
+    interval_type: intervalType ?? null,
+  };
 }
 
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
@@ -6862,7 +4367,7 @@ function isIntensity(a) {
 function isIntensityByHr(a) {
   const hr = Number(a?.average_heartrate);
   if (!Number.isFinite(hr) || hr <= 0) return false;
-  return hr >= HFMAX * THRESHOLD_HR_PCT;
+  return hr >= HFMAX * INTENSITY_HR_PCT;
 }
 
 function isAerobic(a) {
@@ -6919,67 +4424,19 @@ async function buildWatchfacePayload(env, endIso) {
 
   const runSum7 = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
-  const runGoal = await resolveWatchfaceRunGoal(env, end);
-  const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
+
   return {
     ok: true,
     endIso: end,
     days,
     runLoad,
     runSum7,
-    runGoal,
+    runGoal: 150,
     strengthMin,
     strengthSum7,
-    strengthGoal: KRAFT_TARGET,
-    strengthMinRunfloor: KRAFT_MIN_RUNFLOOR,
-    strengthMax: KRAFT_MAX,
-    strengthScore: strengthPolicy.score,
-    strengthConfidenceDelta: strengthPolicy.confidenceDelta,
-    strengthKeyCap: strengthPolicy.keyCapOverride,
+    strengthGoal: 60,
     updatedAt: new Date().toISOString(),
   };
-}
-
-async function resolveWatchfaceRunGoal(env, dayIso) {
-  const ctx = {
-    wellnessCache: new Map(),
-    blockStateCache: new Map(),
-  };
-  const lookbackDays = 14;
-
-  for (let i = 0; i <= lookbackDays; i += 1) {
-    const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
-
-    // Prefer the goal that was already written into the Daily-Report NOTE
-    // so watchface consumes exactly the same output and does not re-derive it.
-    const events = await fetchIntervalsEvents(env, probeDay, probeDay);
-    const dailyReport = (events || []).find((e) => String(e?.external_id || "") === `daily-report-${probeDay}`);
-    const goalFromDailyReport = parseRunGoalFromDailyReportNote(dailyReport?.description);
-    if (Number.isFinite(goalFromDailyReport) && goalFromDailyReport > 0) {
-      return Math.round(goalFromDailyReport);
-    }
-
-    const persisted = await getPersistedBlockState(ctx, env, probeDay);
-    if (Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0) {
-      return Math.round(persisted.effectiveFloorTarget);
-    }
-    if (Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0) {
-      return Math.round(persisted.floorTarget);
-    }
-  }
-
-  return MIN_STIMULUS_7D_RUN_EVENT;
-}
-
-function parseRunGoalFromDailyReportNote(description) {
-  if (!description) return null;
-  const plain = String(description)
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/&nbsp;/gi, " ");
-  const match = plain.match(/RunFloor\s*\(7\s*Tage\)\s*:\s*\d+\s*\/\s*(\d+)/i);
-  if (!match) return null;
-  const goal = Number(match[1]);
-  return Number.isFinite(goal) ? goal : null;
 }
 
 
@@ -6999,51 +4456,18 @@ function isBike(a) {
     t.includes("velo")
   );
 }
-function normalizeKeyToken(raw) {
-  return String(raw || "").toLowerCase().trim().replace(/^#+/, "");
-}
-
-function extractKeyTypeFromText(a) {
-  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
-    .filter(Boolean)
-    .map((v) => String(v))
-    .join(" ");
-  if (!text) return null;
-  const match = text.match(/(?:^|\s)#key:([a-z0-9_:-]+)/i);
-  if (!match) return null;
-  const typed = normalizeKeyToken(match[1]);
-  return typed || null;
-}
-
 function hasKeyTag(a) {
-  const tagHit = (a?.tags || []).some((t) => {
-    const s = normalizeKeyToken(t);
-    return s === "key" || s.startsWith("key:");
-  });
-  if (tagHit) return true;
-  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
-    .filter(Boolean)
-    .map((v) => String(v))
-    .join(" ");
-  return /(?:^|\s)#key(?::[a-z0-9_:-]+)?\b/i.test(text);
+  return (a?.tags || []).some((t) => String(t).toLowerCase().startsWith("key:"));
 }
 
 function getKeyType(a) {
   // key:schwelle, key:vo2, key:tempo, ...
   const tags = a?.tags || [];
   for (const t of tags) {
-    const s = normalizeKeyToken(t);
-    if (s.startsWith("key:")) {
-      const typed = s.slice(4).trim();
-      if (typed && typed !== "key") return typed;
-      return "key";
-    }
-    if (s === "key") return "key";
+    const s = String(t || "").toLowerCase().trim();
+    if (s.startsWith("key:")) return s.slice(4).trim() || "key";
   }
-
-  const fromText = extractKeyTypeFromText(a);
-  if (fromText) return fromText;
-  return hasKeyTag(a) ? "key" : null;
+  return "key";
 }
 
 function getIntervalTypeFromActivity(a) {
@@ -7099,20 +4523,7 @@ function addDebug(debugOut, day, a, status, computed) {
 
 async function determineMode(env, dayIso, debug = false) {
   const auth = authHeader(env);
-  const events = await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
-  const races = (events || []).filter((e) => normalizeEventCategory(e.category) === "RACE_A");
-  const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
-
-  const activeLifeEvents = (events || []).filter(
-    (e) => isLifeEventCategory(e?.category) && isLifeEventActiveOnDay(e, dayIso)
-  );
-  activeLifeEvents.sort((a, b) => {
-    const pa = LIFE_EVENT_CATEGORY_PRIORITY.indexOf(normalizeEventCategory(a?.category));
-    const pb = LIFE_EVENT_CATEGORY_PRIORITY.indexOf(normalizeEventCategory(b?.category));
-    return (pa === -1 ? 999 : pa) - (pb === -1 ? 999 : pb);
-  });
-  const activeLifeEvent = activeLifeEvents[0] || null;
-  const lifeEventEffect = getLifeEventEffect(activeLifeEvent);
+  const races = await fetchUpcomingRaces(env, auth, debug, 8000, dayIso);
 
   // sort by start date (local)
   const normDay = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
@@ -7135,9 +4546,6 @@ async function determineMode(env, dayIso, debug = false) {
         postEventOpenActive: true,
         postEventOpenDaysLeft: POST_EVENT_OPEN_DAYS - daysSinceLastEvent,
         lastEventDate: lastPast.day,
-        activeLifeEvent,
-        lifeEventEffect,
-        recentHolidayEvent,
       };
     }
   }
@@ -7149,83 +4557,19 @@ async function determineMode(env, dayIso, debug = false) {
       nextEvent: null,
       eventError: null,
       postEventOpenActive: false,
-      activeLifeEvent,
-      lifeEventEffect,
-      recentHolidayEvent,
     };
   }
 
   const primary = inferSportFromEvent(next.e);
   if (primary === "bike") {
-    return {
-      mode: "EVENT",
-      primary: "bike",
-      nextEvent: next.e,
-      eventError: null,
-      postEventOpenActive: false,
-      activeLifeEvent,
-      lifeEventEffect,
-      recentHolidayEvent,
-    };
+    return { mode: "EVENT", primary: "bike", nextEvent: next.e, eventError: null, postEventOpenActive: false };
   }
   // Default RACE_A bei dir ist sehr wahrscheinlich Lauf – aber wir bleiben bei heuristics:
   if (primary === "run" || primary === "unknown") {
-    return {
-      mode: "EVENT",
-      primary: "run",
-      nextEvent: next.e,
-      eventError: null,
-      postEventOpenActive: false,
-      activeLifeEvent,
-      lifeEventEffect,
-      recentHolidayEvent,
-    };
+    return { mode: "EVENT", primary: "run", nextEvent: next.e, eventError: null, postEventOpenActive: false };
   }
 
-  return {
-    mode: "OPEN",
-    primary: "open",
-    nextEvent: next.e,
-    eventError: null,
-    postEventOpenActive: false,
-    activeLifeEvent,
-    lifeEventEffect,
-    recentHolidayEvent,
-  };
-}
-
-function findRecentHolidayEvent(events, dayIso) {
-  if (!Array.isArray(events) || !isIsoDate(dayIso)) return null;
-  const windowStartIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - 6 * 86400000));
-  const windowEndIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + 86400000));
-
-  const holidays = events
-    .filter((e) => normalizeEventCategory(e?.category) === "HOLIDAY")
-    .map((event) => {
-      const startIso =
-        parseLifeEventBoundary(event, "start_date_local") ||
-        parseLifeEventBoundary(event, "start_date");
-      if (!startIso) return null;
-
-      const endIso =
-        parseLifeEventBoundary(event, "end_date_local") ||
-        parseLifeEventBoundary(event, "end_date") ||
-        isoDate(new Date(new Date(startIso + "T00:00:00Z").getTime() + 86400000));
-
-      const overlapStart = startIso > windowStartIso ? startIso : windowStartIso;
-      const overlapEnd = endIso < windowEndIso ? endIso : windowEndIso;
-      const overlapDays = overlapEnd > overlapStart ? diffDays(overlapStart, overlapEnd) : 0;
-      if (overlapDays <= 0) return null;
-
-      return { event, endIso, startIso };
-    })
-    .filter(Boolean)
-    .sort((a, b) => {
-      if (a.endIso === b.endIso) return b.startIso.localeCompare(a.startIso);
-      return b.endIso.localeCompare(a.endIso);
-    });
-
-  return holidays[0]?.event || null;
+  return { mode: "OPEN", primary: "open", nextEvent: next.e, eventError: null, postEventOpenActive: false };
 }
 
 
@@ -7280,85 +4624,17 @@ function getModePolicy(modeInfo) {
 
 
 // ================= INTERVALS API =================
-const INTERVALS_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseRetryAfterMs(value) {
-  if (!value) return null;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
-  const retryAt = Date.parse(value);
-  if (Number.isFinite(retryAt)) {
-    const delta = retryAt - Date.now();
-    return delta > 0 ? delta : 0;
-  }
-  return null;
-}
-
-async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
-  const label = meta.label || "intervals_api";
-  const maxRetries = Number.isFinite(meta.maxRetries) ? meta.maxRetries : 3;
-  const baseDelayMs = Number.isFinite(meta.baseDelayMs) ? meta.baseDelayMs : 500;
-
-  let attempt = 0;
-  while (true) {
-    let response;
-    try {
-      response = await fetch(url, options);
-    } catch (err) {
-      if (attempt >= maxRetries) throw err;
-      const delayMs = baseDelayMs * Math.pow(2, attempt);
-      console.warn(`${label} network error, retrying in ${delayMs}ms`, err);
-      attempt++;
-      await sleep(delayMs);
-      continue;
-    }
-
-    if (!INTERVALS_RETRYABLE_STATUS.has(response.status) || attempt >= maxRetries) {
-      return response;
-    }
-
-    const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-    const delayMs = Math.max(baseDelayMs * Math.pow(2, attempt), retryAfterMs ?? 0);
-    console.warn(`${label} ${response.status}, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`);
-    attempt++;
-    await sleep(delayMs);
-  }
-}
-
 async function fetchIntervalsActivities(env, oldest, newest) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}`;
-  const r = await fetchIntervalsWithRetry(url, {
-    headers: { Authorization: authHeader(env) },
-  }, {
-    label: "activities",
-  });
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
-  return r.json();
-}
-
-async function fetchIntervalsActivityDetails(env, activityId) {
-  const url = `${BASE_URL}/activity/${activityId}`;
-  const r = await fetchIntervalsWithRetry(url, {
-    headers: { Authorization: authHeader(env) },
-  }, {
-    label: `activity ${activityId}`,
-  });
-  if (!r.ok) throw new Error(`activity ${activityId} ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
 async function fetchIntervalsStreams(env, activityId, types) {
   const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
-  const r = await fetchIntervalsWithRetry(url, {
-    headers: { Authorization: authHeader(env) },
-  }, {
-    label: `streams ${activityId}`,
-  });
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) {
   const txt = await r.text().catch(() => "");
   throw new Error(`streams ${r.status}: ${txt.slice(0, 400)}`);
@@ -7391,12 +4667,10 @@ function normalizeStreams(raw) {
 async function putWellnessDay(env, day, patch) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
-  const r = await fetchIntervalsWithRetry(url, {
+  const r = await fetch(url, {
     method: "PUT",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(patch),
-  }, {
-    label: `wellness PUT ${day}`,
   });
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
@@ -7406,11 +4680,7 @@ async function fetchIntervalsEvents(env, oldest, newest) {
   // local dates (yyyy-MM-dd)
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
-  const r = await fetchIntervalsWithRetry(url, {
-    headers: { Authorization: authHeader(env) },
-  }, {
-    label: "events",
-  });
+  const r = await fetch(url, { headers: { Authorization: authHeader(env) } });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
   return r.json();
 }
@@ -7418,12 +4688,10 @@ async function fetchIntervalsEvents(env, oldest, newest) {
 async function createIntervalsEvent(env, eventObj) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events`;
-  const r = await fetchIntervalsWithRetry(url, {
+  const r = await fetch(url, {
     method: "POST",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(eventObj),
-  }, {
-    label: "events POST",
   });
   if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
   return r.json();
@@ -7432,19 +4700,17 @@ async function createIntervalsEvent(env, eventObj) {
 async function updateIntervalsEvent(env, eventId, eventObj) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events/${encodeURIComponent(String(eventId))}`;
-  const r = await fetchIntervalsWithRetry(url, {
+  const r = await fetch(url, {
     method: "PUT",
     headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
     body: JSON.stringify(eventObj),
-  }, {
-    label: `events PUT ${eventId}`,
   });
   if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
   return r.json();
 }
 
 
-async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
+async function fetchUpcomingRaces(env, auth, debug, timeoutMs, dayIso) {
 
   const athleteId = mustEnv(env, "ATHLETE_ID");
 
@@ -7459,9 +4725,7 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   const newest = toLocalYMD(end);
 
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
-  const res = await fetchIntervalsWithRetry(url, { headers: { Authorization: auth } }, {
-    label: "events preview",
-  });
+  const res = await fetch(url, { headers: { Authorization: auth } });
 
   if (!res.ok) {
     if (debug) console.log("⚠️ Event-API fehlgeschlagen:", res.status, "url:", url);
@@ -7471,7 +4735,8 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   const payload = await res.json();
   const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
 
-  const races = events.filter((e) => normalizeEventCategory(e.category) === "RACE_A");
+  // IMPORTANT: sort + deterministic pick later
+  const races = events.filter((e) => String(e.category ?? "").toUpperCase() === "RACE_A");
 
   if (debug) {
   console.log(
@@ -7500,5 +4765,5 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   );
 }
 
-  return events;
+  return races;
 }

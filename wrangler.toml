@@ -2,9 +2,8 @@ name = "intervals-icu-netlify"
 main = "src/index.js"
 compatibility_date = "2025-11-11"
 
-# Zweimal täglich: morgens 06:00 UTC und abends 19:00 UTC
-# (Deutschland: i.d.R. 07:00/08:00 und 20:00/21:00 je nach Sommerzeit)
-triggers = { crons = ["0 19 * * *", "0 6 * * *"] }
+# Täglich um 03:17 UTC (entspricht i.d.R. 04:17/05:17 in Deutschland je nach Sommerzeit)
+triggers = { crons = ["0 20 * * *", "0 6 * * *"] }
 
 [[kv_namespaces]]
 binding = "KV"
