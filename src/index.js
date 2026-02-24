@@ -4529,6 +4529,13 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
+function buildDailyTargetMixLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
+  const pct = Math.max(0, Math.round((bikeSubFactor || 0) * 100));
+  const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
+  const bikeSharePct = Math.max(0, 100 - runSharePct);
+  return `Zielmix Lauf/Rad: ~${runSharePct}/${bikeSharePct} · Rad-Anrechnung auf RunFloor: ${pct}%`;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -4677,6 +4684,7 @@ function buildComments(
     keySuggestion: keyCompliance?.suggestion,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
+  const dailyTargetMixLine = buildDailyTargetMixLine({ bikeSubFactor, weeksToEvent, eventDistance });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
@@ -4835,6 +4843,7 @@ function buildComments(
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
+    dailyTargetMixLine,
     `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus}) | Score ${strengthPolicy.score}/3`,
     Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
       ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
