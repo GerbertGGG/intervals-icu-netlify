@@ -5935,15 +5935,40 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       lines.push(`Drift: ${fmtSigned1(today.drift)}%-Pkt`);
     }
   } else {
+    if (intervalMetrics?.iqi != null) {
+      const iqiLabel =
+        intervalMetrics.iqi >= 85 ? "sehr gut kontrolliert" : intervalMetrics.iqi >= 70 ? "gut kontrolliert" : intervalMetrics.iqi >= 55 ? "teils kontrolliert" : "instabil";
+      lines.push(`Intervall-Qualität (IQI): ${intervalMetrics.iqi}/100 (${iqiLabel})`);
+      const comp = intervalMetrics.iqi_components;
+      if (comp) {
+        const fmtComp = (label, score, weight) => {
+          if (!Number.isFinite(score)) return `${label} n/a (${Math.round(weight * 100)}%)`;
+          return `${label} ${Math.round(score)}/100 (${Math.round(weight * 100)}%)`;
+        };
+        const composition = [
+          fmtComp("Pace", comp.pace_consistency_score, comp?.weights?.pace_consistency ?? 0.4),
+          fmtComp("Effizienz", comp.efficiency_drift_score, comp?.weights?.efficiency_drift ?? 0.25),
+          fmtComp("Recovery", comp.recovery_score, comp?.weights?.recovery ?? 0.2),
+          fmtComp("Mechanik", comp.mechanics_score, comp?.weights?.mechanics ?? 0.15),
+        ];
+        lines.push(`IQI-Zusammensetzung: ${composition.join(" | ")}`);
+      }
+    }
+    if (intervalMetrics?.pace_cv != null) {
+      lines.push(`Pace-Konsistenz: CV ${(intervalMetrics.pace_cv * 100).toFixed(1)}%`);
+    }
+    if (intervalMetrics?.eff_drift_pct != null) {
+      lines.push(`Effizienz-Drift: ${fmtSigned1(intervalMetrics.eff_drift_pct)}%`);
+    }
     if (intervalMetrics?.HR_Drift_bpm != null) {
       const driftPct = intervalMetrics.HR_Drift_pct;
       const driftFlagLabel = formatDriftFlag(intervalMetrics.drift_flag);
       const driftFlag = driftFlagLabel ? ` (${driftFlagLabel})` : "";
       const driftPctText = Number.isFinite(driftPct) ? `, ${fmtSigned1(driftPct)}%` : "";
-      lines.push(`HF-Drift (Intervall): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
+      lines.push(`HF-Drift (Sekundärsignal): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
     }
     if (intervalMetrics?.HRR60_median != null) {
-      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
+      lines.push(`Erholung (sekundär): HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
     }
     if (!intervalMetrics?.HR_Drift_bpm && isKey) {
       if (same.length && last?.avgSpeed != null) {
@@ -5977,14 +6002,14 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       ? `Longrun-Progression teilweise verfehlt: ${failReasons.join(", ")}.`
       : "Longrun-Progression erfüllt: Steady stabil, Progression kontrolliert.";
   } else if (same.length && intervalMetrics && lastIntervalMetrics) {
-    if (intervalMetrics.HRR60_median != null && lastIntervalMetrics.HRR60_median != null) {
-      const hrr60Delta = intervalMetrics.HRR60_median - lastIntervalMetrics.HRR60_median;
-      if (hrr60Delta >= 3) {
-        verdict = `Einheit besser – schnellere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
-      } else if (hrr60Delta <= -3) {
-        verdict = `Einheit schlechter – langsamere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+    if (intervalMetrics.iqi != null && lastIntervalMetrics.iqi != null) {
+      const iqiDelta = intervalMetrics.iqi - lastIntervalMetrics.iqi;
+      if (iqiDelta >= 5) {
+        verdict = `Einheit besser kontrolliert – IQI ${fmtSigned1(iqiDelta)} Punkte vs letzte.`;
+      } else if (iqiDelta <= -5) {
+        verdict = `Einheit instabiler – IQI ${fmtSigned1(iqiDelta)} Punkte vs letzte.`;
       } else {
-        verdict = `Einheit ähnlich – Erholung nahezu gleich (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+        verdict = `Einheit ähnlich kontrolliert – IQI ${fmtSigned1(iqiDelta)} Punkte vs letzte.`;
       }
     } else if (intervalMetrics.HR_Drift_bpm != null && lastIntervalMetrics.HR_Drift_bpm != null) {
       const driftDelta = intervalMetrics.HR_Drift_bpm - lastIntervalMetrics.HR_Drift_bpm;
@@ -6339,6 +6364,22 @@ function formatDriftFlag(flag) {
   return flag;
 }
 
+function scoreFromThresholdsDesc(value, thresholds) {
+  if (!Number.isFinite(value)) return null;
+  for (const t of thresholds) {
+    if (value <= t.max) return t.score;
+  }
+  return thresholds[thresholds.length - 1]?.score ?? null;
+}
+
+function scoreFromThresholdsAsc(value, thresholds) {
+  if (!Number.isFinite(value)) return null;
+  for (const t of thresholds) {
+    if (value >= t.min) return t.score;
+  }
+  return thresholds[thresholds.length - 1]?.score ?? null;
+}
+
 function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
   const hr = streams?.heartrate;
   const time = streams?.time;
@@ -6398,7 +6439,8 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
       return Number.isFinite(t) ? t : i;
     };
 
-    const intervalHr = cleanIntervals.map((interval) => {
+    const cadence = Array.isArray(streams?.cadence) ? streams.cadence.slice(0, n) : null;
+    const intervalHr = cleanIntervals.map((interval, intervalIdx) => {
       const startTime = interval.startTime;
       const endTime = interval.endTime;
       const duration = interval.duration;
@@ -6421,8 +6463,16 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
 
       const target = endTime + 60;
       let hr60 = null;
+      let recoveryEnd = null;
       for (let i = interval.endIdx; i < n; i++) {
         const t = timeAt(i);
+        if (!Number.isFinite(recoveryEnd) && i + 1 < cleanIntervals.length) {
+          const nextStart = cleanIntervals[intervalIdx + 1].startTime;
+          if (t >= nextStart - 5) {
+            const h = Number(hrSlice[i]);
+            if (Number.isFinite(h)) recoveryEnd = h;
+          }
+        }
         if (t >= target) {
           const h = Number(hrSlice[i]);
           if (Number.isFinite(h)) hr60 = h;
@@ -6430,10 +6480,32 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
         }
       }
 
+      let cadAvg = null;
+      if (cadence) {
+        let cadSum = 0;
+        let cadCount = 0;
+        for (let i = interval.startIdx; i <= interval.endIdx; i++) {
+          const c = Number(cadence[i]);
+          if (Number.isFinite(c) && c > 0) {
+            cadSum += c;
+            cadCount += 1;
+          }
+        }
+        if (cadCount) cadAvg = cadSum / cadCount;
+      }
+
+      const intervalSpeed = Number(cleanIntensityMeans[intervalIdx]);
+      const strideProxy = Number.isFinite(intervalSpeed) && Number.isFinite(cadAvg) && cadAvg > 0 ? intervalSpeed / cadAvg : null;
+
       return {
         lateAvg,
         peak: Number.isFinite(peak) ? peak : null,
         hr60,
+        recoveryEnd,
+        speed: Number.isFinite(intervalSpeed) ? intervalSpeed : null,
+        eff: Number.isFinite(intervalSpeed) && Number.isFinite(lateAvg) && lateAvg > 0 ? intervalSpeed / lateAvg : null,
+        cadAvg,
+        strideProxy,
       };
     });
 
@@ -6449,10 +6521,88 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
       .filter((x) => Number.isFinite(x));
     const hrr60Median = hrr60Drops.length ? median(hrr60Drops) : null;
 
+    const speeds = intervalHr.map((x) => x.speed).filter((x) => Number.isFinite(x) && x > 0);
+    const speedMean = avg(speeds);
+    const speedStd = std(speeds);
+    const paceCv = Number.isFinite(speedMean) && Number.isFinite(speedStd) && speedMean > 0 ? speedStd / speedMean : null;
+    const paceConsistencyScore = scoreFromThresholdsDesc(paceCv, [
+      { max: 0.01, score: 100 },
+      { max: 0.025, score: 85 },
+      { max: 0.04, score: 65 },
+      { max: 0.06, score: 40 },
+      { max: Infinity, score: 10 },
+    ]);
+
+    const firstEff = intervalHr[0]?.eff;
+    const lastEff = intervalHr[intervalHr.length - 1]?.eff;
+    const effDriftPct = Number.isFinite(firstEff) && Number.isFinite(lastEff) && firstEff > 0 ? ((firstEff - lastEff) / firstEff) * 100 : null;
+    const effDriftScore = paceCv != null && paceCv < 0.04
+      ? scoreFromThresholdsDesc(effDriftPct, [
+          { max: 2, score: 100 },
+          { max: 5, score: 80 },
+          { max: 8, score: 50 },
+          { max: 10, score: 25 },
+          { max: Infinity, score: 10 },
+        ])
+      : null;
+
+    const recoveryDropsRel = intervalHr
+      .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.recoveryEnd) && x.peak > 0 ? (x.peak - x.recoveryEnd) / x.peak : null))
+      .filter((x) => Number.isFinite(x));
+    const recoveryRelMedian = recoveryDropsRel.length ? median(recoveryDropsRel) : null;
+    const recoveryScore = scoreFromThresholdsAsc(recoveryRelMedian, [
+      { min: 0.25, score: 100 },
+      { min: 0.2, score: 85 },
+      { min: 0.15, score: 70 },
+      { min: 0.1, score: 50 },
+      { min: 0, score: 20 },
+    ]);
+
+    const cadenceVals = intervalHr.map((x) => x.cadAvg).filter((x) => Number.isFinite(x) && x > 0);
+    const strideVals = intervalHr.map((x) => x.strideProxy).filter((x) => Number.isFinite(x) && x > 0);
+    const cadenceCv = cadenceVals.length > 1 ? (std(cadenceVals) || 0) / avg(cadenceVals) : null;
+    const strideCv = strideVals.length > 1 ? (std(strideVals) || 0) / avg(strideVals) : null;
+    const mechanicsCv = [cadenceCv, strideCv].filter((x) => Number.isFinite(x));
+    const mechanicsScore = mechanicsCv.length
+      ? scoreFromThresholdsDesc(Math.max(...mechanicsCv), [
+          { max: 0.02, score: 100 },
+          { max: 0.04, score: 80 },
+          { max: 0.06, score: 55 },
+          { max: Infinity, score: 30 },
+        ])
+      : null;
+
+    const iqiWeighted = [
+      { value: paceConsistencyScore, weight: 0.4 },
+      { value: effDriftScore, weight: 0.25 },
+      { value: recoveryScore, weight: 0.2 },
+      { value: mechanicsScore, weight: 0.15 },
+    ].filter((x) => Number.isFinite(x.value));
+    const iqiWeightSum = iqiWeighted.reduce((acc, x) => acc + x.weight, 0);
+    const iqi = iqiWeightSum > 0 ? iqiWeighted.reduce((acc, x) => acc + x.value * x.weight, 0) / iqiWeightSum : null;
+
     return {
       HR_Drift_bpm: hrDriftBpm,
       HR_Drift_pct: hrDriftPct,
       HRR60_median: hrr60Median,
+      pace_cv: paceCv,
+      eff_drift_pct: effDriftPct,
+      recovery_rel_median: recoveryRelMedian,
+      cadence_cv: cadenceCv,
+      stride_cv: strideCv,
+      iqi: Number.isFinite(iqi) ? Math.round(iqi) : null,
+      iqi_components: {
+        pace_consistency_score: paceConsistencyScore,
+        efficiency_drift_score: effDriftScore,
+        recovery_score: recoveryScore,
+        mechanics_score: mechanicsScore,
+        weights: {
+          pace_consistency: 0.4,
+          efficiency_drift: 0.25,
+          recovery: 0.2,
+          mechanics: 0.15,
+        },
+      },
       drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
       interval_type: intervalType ?? null,
       intensity_source: intensityInfo.kind,
