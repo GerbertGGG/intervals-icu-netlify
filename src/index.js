@@ -1603,8 +1603,20 @@ function hasExplicitIntervalStructure(a) {
   return repeatDistance.test(text) || repeatTime.test(text);
 }
 
+function getIcuIntervalsFromActivity(activity) {
+  const direct = [
+    activity?.icu_intervals,
+    activity?.icuIntervals,
+    activity?.intervals,
+    activity?.data?.icu_intervals,
+    activity?.activity?.icu_intervals,
+  ].find((x) => Array.isArray(x) && x.length);
+  if (!Array.isArray(direct)) return [];
+  return direct.filter((seg) => seg && typeof seg === "object");
+}
+
 function inferPaceConsistencyFromIcu(activity) {
-  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  const intervals = getIcuIntervalsFromActivity(activity);
   const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
   if (!groups.length || !intervals.length) return null;
 
@@ -3797,12 +3809,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           intervalMetrics = null;
         }
 
-        let icuIntervals = Array.isArray(a?.icu_intervals) ? a.icu_intervals : null;
+        let icuIntervals = getIcuIntervalsFromActivity(a);
         if (!icuIntervals?.length) {
           try {
             const details = await getActivityDetails(ctx, a.id);
-            if (Array.isArray(details?.icu_intervals) && details.icu_intervals.length) {
-              icuIntervals = details.icu_intervals;
+            const detailedIntervals = getIcuIntervalsFromActivity(details);
+            if (detailedIntervals.length) {
+              icuIntervals = detailedIntervals;
             }
           } catch {
             // fallback: scoring remains optional
@@ -3818,7 +3831,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
               },
               DEFAULT_EVAL_CFG
             );
-            if (sessionScore) {
+            if (sessionScore?.repCount >= 2) {
               intervalMetrics = {
                 ...(intervalMetrics || {}),
                 sessionScore,
@@ -4721,10 +4734,14 @@ function buildComments(
       runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
       runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
       runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
-      if (sessionScore && Number.isFinite(sessionScore?.overall)) {
+      if (sessionScore && Number.isFinite(sessionScore?.overall) && Number.isFinite(sessionScore?.repCount) && sessionScore.repCount >= 2) {
         runMetrics.push(
           `Intervall-Score (neu): ${Math.round(sessionScore.overall)}/100 (Execution ${Math.round(sessionScore.execution)}/100 · Dosis ${Math.round(sessionScore.dose)}/100 · Strain ${Math.round(sessionScore.strain)}/100).`
         );
+      } else if (Number.isFinite(m?.iqi)) {
+        runMetrics.push(`Intervall-Score (neu): ${Math.round(m.iqi)}/100 (Fallback aus Stream-IQI; keine auswertbaren icu_intervals-Reps gefunden).`);
+      } else {
+        runMetrics.push("Intervall-Score (neu): n/a (keine Intervall-Segmente in den geladenen Activity-Details gefunden).");
       }
       runMetrics.push("Hinweis: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
     } else {
