@@ -1591,6 +1591,26 @@ function hasExplicitIntervalStructure(a) {
   return repeatDistance.test(text) || repeatTime.test(text);
 }
 
+function hasIcuIntervalSignal(activity) {
+  const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
+  if (!groups.length) return false;
+
+  const repeatedHard = groups.some((g) => {
+    const count = Number(g?.count);
+    const moving = Number(g?.moving_time);
+    const zone = Number(g?.zone);
+    return Number.isFinite(count)
+      && count >= 2
+      && Number.isFinite(moving)
+      && moving >= 90
+      && moving <= 480
+      && Number.isFinite(zone)
+      && zone >= 3;
+  });
+
+  return repeatedHard;
+}
+
 function inferPaceConsistencyFromIcu(activity) {
   const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
   const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
@@ -3727,12 +3747,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     for (const a of runs) {
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
+      const intervalSignal = isKey || hasExplicitIntervalStructure(a) || hasIcuIntervalSignal(a);
 
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
-      const intervalStructureHint = isKey ? hasExplicitIntervalStructure(a) : false;
-      const paceConsistencyHint = isKey ? inferPaceConsistencyFromIcu(a) : null;
+      const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(a) : false;
+      const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(a) : null;
 
       let drift = null;
       let drift_raw = null;
@@ -3768,7 +3789,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         }
 
       }
-      if (isKey) {
+      if (intervalSignal) {
         try {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_INTERVAL);
           intervalMetrics = computeIntervalMetricsFromStreams(streams, {
@@ -3785,6 +3806,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         tags: a.tags ?? [],
         ga,
         isKey,
+        intervalSignal,
         keyType,
         ef,
         drift,
@@ -4608,7 +4630,7 @@ function buildComments(
     runMetrics.push("Status: Heute kein Lauf.");
   } else {
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
-    const intervalToday = perRunInfo.find((x) => x.isKey && (x.intervalMetrics || x.intervalStructureHint));
+    const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
 
     if (gaToday) {
       const drift = gaToday.drift;
