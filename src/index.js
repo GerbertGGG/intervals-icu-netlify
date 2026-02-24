@@ -6139,7 +6139,7 @@ function pickIntervalIntensityCandidates(streams) {
   return candidates;
 }
 
-function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20, maxLowGapSec = 8, lowIntensityFactor = 0.35 } = {}) {
+function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20, minResumeSec = 3 } = {}) {
   const n = Math.min(time.length, intensity.length);
   if (n < 2) return [];
 
@@ -6147,7 +6147,7 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   let startIdx = null;
   let lastAboveIdx = null;
   let gapStart = null;
-  let lowGapStart = null;
+  let aboveStart = null;
 
   const timeAt = (i) => {
     const t = Number(time[i]);
@@ -6156,30 +6156,39 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
 
   for (let i = 0; i < n; i++) {
     const v = Number(intensity[i]);
+    const t = timeAt(i);
+
     if (Number.isFinite(v) && v >= threshold) {
-      if (startIdx == null) startIdx = i;
+      if (startIdx == null) {
+        startIdx = i;
+        lastAboveIdx = i;
+        gapStart = null;
+        aboveStart = null;
+        continue;
+      }
+
+      if (gapStart != null) {
+        // In recoveries, brief spikes can occur (sensor jitter / short moves).
+        // Only resume the same rep after a short sustained return above threshold.
+        if (aboveStart == null) aboveStart = t;
+        if (t - aboveStart >= minResumeSec) {
+          lastAboveIdx = i;
+          gapStart = null;
+          aboveStart = null;
+        }
+        continue;
+      }
+
       lastAboveIdx = i;
-      gapStart = null;
-      lowGapStart = null;
       continue;
     }
 
+    aboveStart = null;
     if (startIdx != null) {
       // Short dropouts (GPS/autopause/sensor gaps) are common outdoors;
       // tolerate brief dips so one rep is not split into multiple pseudo-intervals.
-      if (gapStart == null) gapStart = timeAt(i);
-
-      // But treat clear pauses (e.g. stop to tie shoes) as interval breaks.
-      const lowIntensityThreshold = threshold * lowIntensityFactor;
-      if (Number.isFinite(v) && v <= lowIntensityThreshold) {
-        if (lowGapStart == null) lowGapStart = timeAt(i);
-      } else {
-        lowGapStart = null;
-      }
-
-      const totalGapExceeded = timeAt(i) - gapStart > maxGapSec;
-      const lowGapExceeded = lowGapStart != null && (timeAt(i) - lowGapStart > maxLowGapSec);
-      if (totalGapExceeded || lowGapExceeded) {
+      if (gapStart == null) gapStart = t;
+      if (t - gapStart > maxGapSec) {
         const startTime = timeAt(startIdx);
         const endTime = timeAt(lastAboveIdx);
         const duration = endTime - startTime;
@@ -6189,7 +6198,6 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
         startIdx = null;
         lastAboveIdx = null;
         gapStart = null;
-        lowGapStart = null;
       }
     }
   }
