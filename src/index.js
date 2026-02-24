@@ -1673,6 +1673,113 @@ function inferPaceConsistencyFromIcu(activity) {
   };
 }
 
+function parseTargetPaceSecPerKmFromActivity(activity) {
+  const text = [activity?.name, activity?.description, activity?.workout_name, activity?.workout_doc]
+    .filter(Boolean)
+    .map((v) => String(v))
+    .join(" ");
+  if (!text) return null;
+
+  const match = text.match(/(\d{1,2})\s*[:.,]\s*(\d{2})\s*(?:\/\s?km|\/km|min\/?km|pace|rp)/i);
+  if (!match) return null;
+  const min = Number(match[1]);
+  const sec = Number(match[2]);
+  if (!Number.isFinite(min) || !Number.isFinite(sec) || sec >= 60) return null;
+  return min * 60 + sec;
+}
+
+function summarizeIntervalSessionQuality(activity) {
+  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  if (!intervals.length) return null;
+
+  const reps = intervals
+    .filter((seg) => {
+      const type = String(seg?.type ?? "").toUpperCase();
+      const sec = Number(seg?.moving_time ?? seg?.elapsed_time);
+      const dist = Number(seg?.distance);
+      const speed = Number(seg?.average_speed);
+      if (type === "RECOVERY") return false;
+      if (type && !(type === "WORK" || type === "INTERVAL" || type === "ON")) return false;
+      return Number.isFinite(sec) && sec >= 90 && sec <= 480
+        && Number.isFinite(dist) && dist >= 300
+        && Number.isFinite(speed) && speed > 0;
+    })
+    .map((seg) => {
+      const speed = Number(seg.average_speed);
+      return {
+        distM: Number(seg.distance),
+        paceSecPerKm: 1000 / speed,
+      };
+    });
+
+  if (reps.length < 2) return null;
+
+  const recoveries = intervals
+    .filter((seg) => String(seg?.type ?? "").toUpperCase() === "RECOVERY")
+    .map((seg) => Number(seg?.average_speed))
+    .filter((x) => Number.isFinite(x) && x > 0);
+
+  const repPaces = reps.map((r) => r.paceSecPerKm);
+  const avgPace = avg(repPaces);
+  const paceStd = std(repPaces);
+  const cvPct = Number.isFinite(avgPace) && avgPace > 0 ? (paceStd / avgPace) * 100 : null;
+  const fadePct = (repPaces[repPaces.length - 1] - repPaces[0]) / repPaces[0];
+  const qualityKm = reps.reduce((sum, r) => sum + r.distM, 0) / 1000;
+
+  const targetPace = parseTargetPaceSecPerKmFromActivity(activity);
+  let targetHitPoints = 2;
+  if (Number.isFinite(targetPace) && Number.isFinite(avgPace) && targetPace > 0) {
+    const relErr = Math.abs(avgPace - targetPace) / targetPace;
+    if (relErr <= 0.02) targetHitPoints = 3;
+    else if (relErr <= 0.04) targetHitPoints = 2.5;
+    else if (relErr <= 0.06) targetHitPoints = 2;
+    else if (relErr <= 0.08) targetHitPoints = 1.5;
+    else targetHitPoints = 1;
+  }
+
+  let consistencyPoints = 1.5;
+  if (Number.isFinite(cvPct) && Number.isFinite(fadePct)) {
+    if (cvPct <= 3.5 && fadePct <= 0) consistencyPoints = 3;
+    else if (cvPct <= 5 && fadePct <= 0.02) consistencyPoints = 2.5;
+    else if (cvPct <= 7 && fadePct <= 0.04) consistencyPoints = 2;
+    else if (cvPct <= 9 && fadePct <= 0.06) consistencyPoints = 1.5;
+    else consistencyPoints = 1;
+  }
+
+  let specificityVolume = 0.4;
+  if (qualityKm >= 4) specificityVolume = 2;
+  else if (qualityKm >= 3) specificityVolume = 1.6;
+  else if (qualityKm >= 2.4) specificityVolume = 1.2;
+  else if (qualityKm >= 1.6) specificityVolume = 0.8;
+  const jogRecoveryShare = recoveries.length
+    ? recoveries.filter((v) => v >= 1.8).length / recoveries.length
+    : 0;
+  const specificityRecovery = recoveries.length ? (jogRecoveryShare >= 0.6 ? 1 : 0.4) : 0.5;
+  const specificityPoints = Math.min(3, specificityVolume + specificityRecovery);
+
+  const totalPoints = targetHitPoints + consistencyPoints + specificityPoints;
+  let verdict = "gute Einheit";
+  if (totalPoints >= 8.2) verdict = "sehr gute Einheit";
+  else if (totalPoints < 6) verdict = "solide Einheit";
+  const needsSpecificity = specificityPoints < 2;
+
+  const formatPace = (paceSec) => {
+    const min = Math.floor(paceSec / 60);
+    const sec = Math.round(paceSec - min * 60);
+    return `${min}:${String(sec).padStart(2, "0")}/km`;
+  };
+
+  return {
+    qualityKm,
+    specificityPoints,
+    lines: [
+      `RP getroffen: ${targetHitPoints >= 2.5 ? "ja" : "teilweise"}${Number.isFinite(avgPace) ? ` (Ø ${formatPace(avgPace)})` : ""}.`,
+      `Stabil: ${consistencyPoints >= 2.5 ? "ja" : "eingeschränkt"} (${Number.isFinite(fadePct) && fadePct <= 0 ? "kein Einbruch" : "leichter Pace-Abfall"}${reps[reps.length - 1]?.paceSecPerKm <= reps[0]?.paceSecPerKm ? "; letzter Rep nicht langsamer" : ""}).`,
+      `Session-Score: ${totalPoints.toFixed(1)}/9 → ${verdict}${needsSpecificity ? ", aber noch nicht spezifisch genug" : ""}. Nächster Hebel: ${qualityKm < 3 ? "mehr RP-Volumen" : "Pausen aktiver traben"}.`,
+    ],
+  };
+}
+
 const PHASE_MAX_MINUTES = {
   BASE: {
     "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
@@ -3802,6 +3909,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
       perRunInfo.push({
         activityId: a.id,
+        activity: a,
         type: a.type,
         tags: a.tags ?? [],
         ga,
@@ -4675,23 +4783,15 @@ function buildComments(
       runMetrics.push("VDOT-Hinweis: Nur bei vergleichbarer Intensität interpretieren.");
       runMetrics.push("Gesamt-Hinweis: Stabilität und Ermüdung immer im Verlauf bewerten, nicht aus einem Einzelwert.");
     } else if (intervalToday) {
-      const m = intervalToday.intervalMetrics;
-      const hrr = m?.HRR60_median;
-      let hrrEval = "n/a";
-      if (Number.isFinite(hrr)) {
-        if (hrr >= 25) hrrEval = "gute akute Erholung (Heuristik)";
-        else if (hrr >= 15) hrrEval = "normaler Bereich (Heuristik)";
-        else hrrEval = "mögliche kumulative Ermüdung (Heuristik)";
+      const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
+      if (sessionQuality?.lines?.length) {
+        runMetrics.push(...sessionQuality.lines);
+      } else {
+        const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
+        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt.`);
+        runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
+        runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
       }
-      const efSeries = Number.isFinite(m?.HR_Drift_pct)
-        ? `${m.HR_Drift_pct >= 0 ? "+" : ""}${m.HR_Drift_pct.toFixed(1)}% HR-Drift über die Intervalle`
-        : "n/a";
-      const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
-
-      runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
-      runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
-      runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
-      runMetrics.push("Hinweis: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
     }
