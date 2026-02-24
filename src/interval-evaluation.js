@@ -131,19 +131,38 @@ function extractQualifyingReps(icu_intervals, cfg) {
 
   for (let i = 0; i < icu_intervals.length; i += 1) {
     const seg = icu_intervals[i];
-    if (seg.moving_time < cfg.microSec) continue;
-    if (seg.type !== "WORK") continue;
-    if (!safeNum(seg.average_speed) || seg.average_speed <= 0) continue;
-    if (!safeNum(seg.distance) || seg.distance <= 0) continue;
-    if (seg.moving_time < cfg.repMinSec) continue;
-    if (seg.moving_time > cfg.repMaxSec) continue;
-    if (seg.average_speed < cfg.repMinSpeed) continue;
+    const segType = String(seg?.type ?? "").toUpperCase();
+    const movingSec = safeNum(seg?.moving_time)
+      ? seg.moving_time
+      : safeNum(seg?.elapsed_time)
+        ? seg.elapsed_time
+        : NaN;
+    const distance = safeNum(seg?.distance) ? seg.distance : NaN;
+    const speed = safeNum(seg?.average_speed) ? seg.average_speed : NaN;
+    const zone = safeNum(seg?.zone) ? seg.zone : null;
+    const intensity = safeNum(seg?.intensity) ? seg.intensity : null;
 
-    const speed = seg.average_speed;
+    if (!Number.isFinite(movingSec) || movingSec < cfg.microSec) continue;
+
+    if (segType) {
+      if (segType === "RECOVERY") continue;
+      const isKnownWorkType = segType === "WORK" || segType === "INTERVAL" || segType === "ON";
+      if (!isKnownWorkType) continue;
+    } else {
+      const probablyWork = (zone !== null && zone >= 3) || (intensity !== null && intensity >= 0.75);
+      if (!probablyWork) continue;
+    }
+
+    if (!Number.isFinite(speed) || speed <= 0) continue;
+    if (!Number.isFinite(distance) || distance <= 0) continue;
+    if (movingSec < cfg.repMinSec) continue;
+    if (movingSec > cfg.repMaxSec) continue;
+    if (speed < cfg.repMinSpeed) continue;
+
     reps.push({
       idx: i,
-      movingSec: seg.moving_time,
-      distM: seg.distance,
+      movingSec,
+      distM: distance,
       speed,
       gapSpeed: safeNum(seg.gap) ? seg.gap : undefined,
       paceSecPerKm: paceFromSpeed(speed),
@@ -438,7 +457,7 @@ function summarizeProgress(points, lookbackN = 4) {
 
 const DEFAULT_EVAL_CFG = {
   hfMax: 173,
-  repMinSec: 90,
+  repMinSec: 45,
   repMaxSec: 900,
   repMinSpeed: 2.8,
   microSec: 15,

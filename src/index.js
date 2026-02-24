@@ -1603,21 +1603,52 @@ function hasExplicitIntervalStructure(a) {
   return repeatDistance.test(text) || repeatTime.test(text);
 }
 
+function parseIcuArrayCandidate(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function pickFirstIcuArray(candidates) {
+  for (const item of candidates) {
+    const arr = parseIcuArrayCandidate(item);
+    if (arr?.length) return arr;
+  }
+  return [];
+}
+
 function getIcuIntervalsFromActivity(activity) {
-  const direct = [
+  const direct = pickFirstIcuArray([
     activity?.icu_intervals,
     activity?.icuIntervals,
     activity?.intervals,
     activity?.data?.icu_intervals,
+    activity?.data?.activity?.icu_intervals,
     activity?.activity?.icu_intervals,
-  ].find((x) => Array.isArray(x) && x.length);
-  if (!Array.isArray(direct)) return [];
+  ]);
   return direct.filter((seg) => seg && typeof seg === "object");
+}
+
+function getIcuGroupsFromActivity(activity) {
+  const groups = pickFirstIcuArray([
+    activity?.icu_groups,
+    activity?.data?.icu_groups,
+    activity?.data?.activity?.icu_groups,
+    activity?.activity?.icu_groups,
+  ]);
+  return groups.filter((seg) => seg && typeof seg === "object");
 }
 
 function inferPaceConsistencyFromIcu(activity) {
   const intervals = getIcuIntervalsFromActivity(activity);
-  const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
+  const groups = getIcuGroupsFromActivity(activity);
   if (!groups.length || !intervals.length) return null;
 
   const repeated = groups
