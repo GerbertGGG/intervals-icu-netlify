@@ -6139,7 +6139,7 @@ function pickIntervalIntensityCandidates(streams) {
   return candidates;
 }
 
-function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 5 } = {}) {
+function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20, minResumeSec = 3 } = {}) {
   const n = Math.min(time.length, intensity.length);
   if (n < 2) return [];
 
@@ -6147,6 +6147,7 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   let startIdx = null;
   let lastAboveIdx = null;
   let gapStart = null;
+  let aboveStart = null;
 
   const timeAt = (i) => {
     const t = Number(time[i]);
@@ -6155,16 +6156,39 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
 
   for (let i = 0; i < n; i++) {
     const v = Number(intensity[i]);
+    const t = timeAt(i);
+
     if (Number.isFinite(v) && v >= threshold) {
-      if (startIdx == null) startIdx = i;
+      if (startIdx == null) {
+        startIdx = i;
+        lastAboveIdx = i;
+        gapStart = null;
+        aboveStart = null;
+        continue;
+      }
+
+      if (gapStart != null) {
+        // In recoveries, brief spikes can occur (sensor jitter / short moves).
+        // Only resume the same rep after a short sustained return above threshold.
+        if (aboveStart == null) aboveStart = t;
+        if (t - aboveStart >= minResumeSec) {
+          lastAboveIdx = i;
+          gapStart = null;
+          aboveStart = null;
+        }
+        continue;
+      }
+
       lastAboveIdx = i;
-      gapStart = null;
       continue;
     }
 
+    aboveStart = null;
     if (startIdx != null) {
-      if (gapStart == null) gapStart = timeAt(i);
-      if (timeAt(i) - gapStart > maxGapSec) {
+      // Short dropouts (GPS/autopause/sensor gaps) are common outdoors;
+      // tolerate brief dips so one rep is not split into multiple pseudo-intervals.
+      if (gapStart == null) gapStart = t;
+      if (t - gapStart > maxGapSec) {
         const startTime = timeAt(startIdx);
         const endTime = timeAt(lastAboveIdx);
         const duration = endTime - startTime;
@@ -6297,13 +6321,13 @@ function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
     const maxDur = Math.max(...durations);
     // Outdoor repeats (e.g. 3×800 m) have more GPS/autopause noise than track-perfect intervals.
     // Keep a quality gate, but allow moderate variance so valid sessions are not dropped too often.
-    if (minDur <= 0 || maxDur / minDur > 1.25) continue;
+    if (minDur <= 0 || maxDur / minDur > 1.4) continue;
 
     const validIntensity = cleanIntensityMeans.filter((x) => Number.isFinite(x));
     if (validIntensity.length !== cleanIntervals.length) continue;
     const minIntensity = Math.min(...validIntensity);
     const maxIntensity = Math.max(...validIntensity);
-    if (minIntensity <= 0 || maxIntensity / minIntensity > 1.2) continue;
+    if (minIntensity <= 0 || maxIntensity / minIntensity > 1.3) continue;
 
     const timeAt = (i) => {
       const t = Number(timeSlice[i]);
