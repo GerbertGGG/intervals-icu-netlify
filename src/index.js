@@ -4779,18 +4779,37 @@ function buildComments(
       } else if (Number.isFinite(m?.iqi)) {
         const c = m?.iqi_components || {};
         const weights = c?.weights || {};
-        const fallbackParts = [
+        const fallbackComponents = [
+          ["Pace", c?.pace_consistency_score, weights?.pace_consistency],
+          ["Effizienz", c?.efficiency_drift_score, weights?.efficiency_drift],
+          ["Erholung", c?.recovery_score, weights?.recovery],
+          ["Mechanik", c?.mechanics_score, weights?.mechanics],
+        ].filter(([, score, weight]) => Number.isFinite(score) && Number.isFinite(weight));
+        const fallbackParts = fallbackComponents
+          .map(([label, score, weight]) => `${label} ${Math.round(score)} (${Math.round(weight * 100)}%)`)
+          .join(" · ");
+        const fallbackContrib = fallbackComponents
+          .map(([label, score, weight]) => `${label} +${Math.round(score * weight)} Punkte`)
+          .join(" · ");
+        const ignoredComponents = [
           ["Pace", c?.pace_consistency_score, weights?.pace_consistency],
           ["Effizienz", c?.efficiency_drift_score, weights?.efficiency_drift],
           ["Erholung", c?.recovery_score, weights?.recovery],
           ["Mechanik", c?.mechanics_score, weights?.mechanics],
         ]
-          .filter(([, score, weight]) => Number.isFinite(score) && Number.isFinite(weight))
-          .map(([label, score, weight]) => `${label} ${Math.round(score)} (${Math.round(weight * 100)}%)`)
-          .join(" · ");
+          .filter(([, score, weight]) => !Number.isFinite(score) || !Number.isFinite(weight))
+          .map(([label]) => label)
+          .join(", ");
         runMetrics.push(
           `Intervall-Score: ${Math.round(m.iqi)}/100 (Fallback aus Stream-IQI${fallbackParts ? `; Treiber: ${fallbackParts}` : ""}).`
         );
+        if (fallbackContrib) {
+          runMetrics.push(`Score-Aufschlüsselung (gewichtet): ${fallbackContrib}.`);
+        }
+        if (ignoredComponents) {
+          runMetrics.push(`Nicht berücksichtigt (fehlende Daten/Gewichtung): ${ignoredComponents}.`);
+        }
+        runMetrics.push("Plausibilitäts-Check: Die gewichteten Punkte sollten in Summe nahe am Intervall-Score liegen (Rundungsabweichungen möglich).");
         const implication = m.iqi >= 80
           ? "Ableitung: gute Qualität → Umfang normal fortführen."
           : m.iqi >= 65
