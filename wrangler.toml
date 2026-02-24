@@ -1,4 +1,4 @@
-name = "intervals-wellness-worker"
+name = "intervals-icu-netlify"
 main = "src/index.js"
 compatibility_date = "2025-11-11"
 
