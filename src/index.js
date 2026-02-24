@@ -1577,6 +1577,20 @@ function hasRacepaceHint(a) {
   return racepaceRegex.test(text) || text.includes("wettkampftempo") || text.includes("wettkampf");
 }
 
+function hasExplicitIntervalStructure(a) {
+  const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
+    .filter(Boolean)
+    .map((v) => String(v).toLowerCase())
+    .join(" ")
+    .replace(/[_-]+/g, " ");
+  if (!text) return false;
+
+  // examples: 3x800m, 4×1 km, 5x3', 6×90s
+  const repeatDistance = /\b\d{1,2}\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:km|m)\b/i;
+  const repeatTime = /\b\d{1,2}\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:min|s|sec|"|''|′|″|')\b/i;
+  return repeatDistance.test(text) || repeatTime.test(text);
+}
+
 const PHASE_MAX_MINUTES = {
   BASE: {
     "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
@@ -3655,6 +3669,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
+      const intervalStructureHint = isKey ? hasExplicitIntervalStructure(a) : false;
 
       let drift = null;
       let drift_raw = null;
@@ -3714,6 +3729,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         drift_source,
         load,
         intervalMetrics,
+        intervalStructureHint,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -4528,7 +4544,7 @@ function buildComments(
     runMetrics.push("Status: Heute kein Lauf.");
   } else {
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
-    const intervalToday = perRunInfo.find((x) => x.isKey && x.intervalMetrics);
+    const intervalToday = perRunInfo.find((x) => x.isKey && (x.intervalMetrics || x.intervalStructureHint));
 
     if (gaToday) {
       const drift = gaToday.drift;
