@@ -4770,15 +4770,33 @@ function buildComments(
       const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
       const sessionScore = m?.sessionScore || null;
 
-      runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
-      runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
-      runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
+      runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm (${hrrEval}).`);
+      runMetrics.push(`Serienbild: Drift ${efSeries}; Pace ${paceConsistency}.`);
       if (sessionScore && Number.isFinite(sessionScore?.overall) && Number.isFinite(sessionScore?.repCount) && sessionScore.repCount >= 2) {
         runMetrics.push(
           `Intervall-Score (neu): ${Math.round(sessionScore.overall)}/100 (Execution ${Math.round(sessionScore.execution)}/100 · Dosis ${Math.round(sessionScore.dose)}/100 · Strain ${Math.round(sessionScore.strain)}/100).`
         );
       } else if (Number.isFinite(m?.iqi)) {
-        runMetrics.push(`Intervall-Score (neu): ${Math.round(m.iqi)}/100 (Fallback aus Stream-IQI; keine auswertbaren icu_intervals-Reps gefunden).`);
+        const c = m?.iqi_components || {};
+        const weights = c?.weights || {};
+        const fallbackParts = [
+          ["Pace", c?.pace_consistency_score, weights?.pace_consistency],
+          ["Effizienz", c?.efficiency_drift_score, weights?.efficiency_drift],
+          ["Erholung", c?.recovery_score, weights?.recovery],
+          ["Mechanik", c?.mechanics_score, weights?.mechanics],
+        ]
+          .filter(([, score, weight]) => Number.isFinite(score) && Number.isFinite(weight))
+          .map(([label, score, weight]) => `${label} ${Math.round(score)} (${Math.round(weight * 100)}%)`)
+          .join(" · ");
+        runMetrics.push(
+          `Intervall-Score: ${Math.round(m.iqi)}/100 (Fallback aus Stream-IQI${fallbackParts ? `; Treiber: ${fallbackParts}` : ""}).`
+        );
+        const implication = m.iqi >= 80
+          ? "Ableitung: gute Qualität → Umfang normal fortführen."
+          : m.iqi >= 65
+            ? "Ableitung: solide Einheit → nächste Q-Einheit nur bei frischen Beinen."
+            : "Ableitung: Qualität limitiert → eher Umfang locker halten und Erholung priorisieren.";
+        runMetrics.push(implication);
       } else {
         runMetrics.push("Intervall-Score (neu): n/a (keine Intervall-Segmente in den geladenen Activity-Details gefunden).");
       }
