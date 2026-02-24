@@ -6139,7 +6139,7 @@ function pickIntervalIntensityCandidates(streams) {
   return candidates;
 }
 
-function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 5 } = {}) {
+function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20 } = {}) {
   const n = Math.min(time.length, intensity.length);
   if (n < 2) return [];
 
@@ -6163,6 +6163,8 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
     }
 
     if (startIdx != null) {
+      // Short dropouts (GPS/autopause/sensor gaps) are common outdoors;
+      // tolerate brief dips so one rep is not split into multiple pseudo-intervals.
       if (gapStart == null) gapStart = timeAt(i);
       if (timeAt(i) - gapStart > maxGapSec) {
         const startTime = timeAt(startIdx);
