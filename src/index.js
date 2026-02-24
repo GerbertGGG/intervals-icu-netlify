@@ -1592,6 +1592,16 @@ function hasExplicitIntervalStructure(a) {
 }
 
 function inferPaceConsistencyFromIcu(activity) {
+  const quantile = (values, q) => {
+    if (!Array.isArray(values) || !values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const pos = (sorted.length - 1) * q;
+    const base = Math.floor(pos);
+    const rest = pos - base;
+    if (sorted[base + 1] == null) return sorted[base];
+    return sorted[base] + (sorted[base + 1] - sorted[base]) * rest;
+  };
+
   const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
   const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
   if (!groups.length || !intervals.length) return null;
@@ -1623,6 +1633,10 @@ function inferPaceConsistencyFromIcu(activity) {
 
   const paces = intervals
     .filter((x) => String(x?.group_id ?? "") === candidate.id)
+    .filter((x) => {
+      const moving = Number(x?.moving_time);
+      return Number.isFinite(moving) && moving >= 15;
+    })
     .map((x) => {
       const speed = Number(x?.average_speed);
       return Number.isFinite(speed) && speed > 0 ? 1000 / speed : null;
@@ -1634,6 +1648,27 @@ function inferPaceConsistencyFromIcu(activity) {
   const paceStd = std(paces);
   if (!Number.isFinite(paceMean) || paceMean <= 0 || !Number.isFinite(paceStd)) return null;
   const paceCvPct = (paceStd / paceMean) * 100;
+
+  const p10 = quantile(paces, 0.1);
+  const p90 = quantile(paces, 0.9);
+  const paceMedian = quantile(paces, 0.5);
+  const spreadRatio =
+    Number.isFinite(p10) && Number.isFinite(p90) && Number.isFinite(paceMedian) && paceMedian > 0
+      ? (p90 - p10) / paceMedian
+      : null;
+
+  if (Number.isFinite(spreadRatio) && spreadRatio <= 0.06) {
+    return {
+      stable: true,
+      label: "stabil (Wiederholungen mit enger Pace-Streuung)",
+    };
+  }
+  if (Number.isFinite(spreadRatio) && spreadRatio <= 0.1) {
+    return {
+      stable: true,
+      label: "weitgehend konstant (leichte Streuung in den Wiederholungen)",
+    };
+  }
 
   if (paceCvPct <= 3) {
     return {
@@ -4667,7 +4702,7 @@ function buildComments(
       const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
 
       runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
-      runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
+      runMetrics.push(`EF/Serienverlauf: ${efSeries}.`);
       runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
       runMetrics.push("Hinweis: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
     } else {
