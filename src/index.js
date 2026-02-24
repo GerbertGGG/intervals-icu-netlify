@@ -1,3 +1,5 @@
+import { DEFAULT_EVAL_CFG, evaluateIntervalsSession } from "./interval-evaluation.js";
+
 // ====== src/index.js (PART 1/4) ======
 // Cloudflare Worker – Run only
 //
@@ -1651,6 +1653,13 @@ function inferPaceConsistencyFromIcu(activity) {
     stable: false,
     label: "uneinheitlich (deutlich streuende Wiederholungs-Pace)",
   };
+}
+
+function mapKeyTypeToPlannedIntent(keyType) {
+  if (keyType === "racepace") return "racepace";
+  if (keyType === "schwelle") return "threshold";
+  if (keyType === "vo2_touch") return "vo2";
+  return "unknown";
 }
 
 const PHASE_MAX_MINUTES = {
@@ -3777,6 +3786,26 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         } catch {
           intervalMetrics = null;
         }
+
+        if (Array.isArray(a?.icu_intervals) && a.icu_intervals.length) {
+          try {
+            const sessionScore = evaluateIntervalsSession(
+              {
+                icu_intervals: a.icu_intervals,
+                plannedIntent: mapKeyTypeToPlannedIntent(keyType),
+              },
+              DEFAULT_EVAL_CFG
+            );
+            if (sessionScore) {
+              intervalMetrics = {
+                ...(intervalMetrics || {}),
+                sessionScore,
+              };
+            }
+          } catch {
+            // optional scoring enrichment, ignore failures
+          }
+        }
       }
 
       perRunInfo.push({
@@ -4665,10 +4694,16 @@ function buildComments(
         ? `${m.HR_Drift_pct >= 0 ? "+" : ""}${m.HR_Drift_pct.toFixed(1)}% HR-Drift über die Intervalle`
         : "n/a";
       const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
+      const sessionScore = m?.sessionScore || null;
 
       runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
       runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
       runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
+      if (sessionScore && Number.isFinite(sessionScore?.overall)) {
+        runMetrics.push(
+          `Intervall-Score (neu): ${Math.round(sessionScore.overall)}/100 (Execution ${Math.round(sessionScore.execution)}/100 · Dosis ${Math.round(sessionScore.dose)}/100 · Strain ${Math.round(sessionScore.strain)}/100).`
+        );
+      }
       runMetrics.push("Hinweis: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
