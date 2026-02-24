@@ -6139,7 +6139,7 @@ function pickIntervalIntensityCandidates(streams) {
   return candidates;
 }
 
-function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20 } = {}) {
+function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, maxGapSec = 20, maxLowGapSec = 8, lowIntensityFactor = 0.35 } = {}) {
   const n = Math.min(time.length, intensity.length);
   if (n < 2) return [];
 
@@ -6147,6 +6147,7 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
   let startIdx = null;
   let lastAboveIdx = null;
   let gapStart = null;
+  let lowGapStart = null;
 
   const timeAt = (i) => {
     const t = Number(time[i]);
@@ -6159,6 +6160,7 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
       if (startIdx == null) startIdx = i;
       lastAboveIdx = i;
       gapStart = null;
+      lowGapStart = null;
       continue;
     }
 
@@ -6166,7 +6168,18 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
       // Short dropouts (GPS/autopause/sensor gaps) are common outdoors;
       // tolerate brief dips so one rep is not split into multiple pseudo-intervals.
       if (gapStart == null) gapStart = timeAt(i);
-      if (timeAt(i) - gapStart > maxGapSec) {
+
+      // But treat clear pauses (e.g. stop to tie shoes) as interval breaks.
+      const lowIntensityThreshold = threshold * lowIntensityFactor;
+      if (Number.isFinite(v) && v <= lowIntensityThreshold) {
+        if (lowGapStart == null) lowGapStart = timeAt(i);
+      } else {
+        lowGapStart = null;
+      }
+
+      const totalGapExceeded = timeAt(i) - gapStart > maxGapSec;
+      const lowGapExceeded = lowGapStart != null && (timeAt(i) - lowGapStart > maxLowGapSec);
+      if (totalGapExceeded || lowGapExceeded) {
         const startTime = timeAt(startIdx);
         const endTime = timeAt(lastAboveIdx);
         const duration = endTime - startTime;
@@ -6176,6 +6189,7 @@ function buildWorkIntervals(time, intensity, { threshold, minIntervalSec = 60, m
         startIdx = null;
         lastAboveIdx = null;
         gapStart = null;
+        lowGapStart = null;
       }
     }
   }
