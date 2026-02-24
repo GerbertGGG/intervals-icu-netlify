@@ -1,3 +1,5 @@
+import { DEFAULT_EVAL_CFG, evaluateIntervalsSession } from "./interval-evaluation.js";
+
 // ====== src/index.js (PART 1/4) ======
 // Cloudflare Worker – Run only
 //
@@ -1591,65 +1593,51 @@ function hasExplicitIntervalStructure(a) {
   return repeatDistance.test(text) || repeatTime.test(text);
 }
 
-function inferPaceConsistencyFromIcu(activity) {
+function mapKeyTypeToPlannedIntent(keyType) {
+  if (keyType === "racepace") return "racepace";
+  if (keyType === "schwelle") return "threshold";
+  if (keyType === "vo2_touch") return "vo2";
+  return "unknown";
+}
+
+function inferIntervalEvaluationFromIcu(activity, keyType, eventDistance) {
   const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
-  const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
-  if (!groups.length || !intervals.length) return null;
+  if (!intervals.length) return null;
 
-  const repeated = groups
-    .filter((g) => Number(g?.count) >= 2)
-    .map((g) => {
-      const speed = Number(g?.average_speed);
-      if (!Number.isFinite(speed) || speed <= 0) return null;
-      const moving = Number(g?.moving_time);
-      if (!Number.isFinite(moving) || moving < 90 || moving > 480) return null;
-      return {
-        id: String(g?.id ?? ""),
-        speed,
-        count: Number(g?.count) || 0,
-        zone: Number(g?.zone),
-      };
-    })
-    .filter(Boolean);
+  const plannedIntent = mapKeyTypeToPlannedIntent(keyType);
+  const racepaceTarget = keyType === "racepace" ? getRacepaceDistanceTarget(eventDistance) : null;
+  const targetKm = Number(racepaceTarget?.peak);
+  const doseTarget = Number.isFinite(targetKm) && targetKm > 0 ? { targetKm } : {};
 
-  if (!repeated.length) return null;
+  const scores = evaluateIntervalsSession(
+    {
+      icu_intervals: intervals,
+      plannedIntent,
+      doseTarget,
+    },
+    DEFAULT_EVAL_CFG
+  );
 
-  const prioritized = repeated
-    .filter((g) => Number.isFinite(g.zone) && g.zone >= 3)
-    .sort((a, b) => b.speed - a.speed);
-  const pool = prioritized.length ? prioritized : [...repeated].sort((a, b) => b.speed - a.speed);
-  const candidate = pool[0];
-  if (!candidate) return null;
+  if (!scores?.repCount) return null;
 
-  const paces = intervals
-    .filter((x) => String(x?.group_id ?? "") === candidate.id)
-    .map((x) => {
-      const speed = Number(x?.average_speed);
-      return Number.isFinite(speed) && speed > 0 ? 1000 / speed : null;
-    })
-    .filter((x) => Number.isFinite(x));
-  if (paces.length < 2) return null;
-
-  const paceMean = avg(paces);
-  const paceStd = std(paces);
-  if (!Number.isFinite(paceMean) || paceMean <= 0 || !Number.isFinite(paceStd)) return null;
-  const paceCvPct = (paceStd / paceMean) * 100;
-
-  if (paceCvPct <= 3) {
+  if (scores.execution >= 85) {
     return {
       stable: true,
       label: "stabil (Wiederholungen mit enger Pace-Streuung)",
+      scores,
     };
   }
-  if (paceCvPct <= 6) {
+  if (scores.execution >= 65) {
     return {
       stable: true,
       label: "weitgehend konstant (leichte Streuung in den Wiederholungen)",
+      scores,
     };
   }
   return {
     stable: false,
     label: "uneinheitlich (deutlich streuende Wiederholungs-Pace)",
+    scores,
   };
 }
 
@@ -3732,7 +3720,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
       const intervalStructureHint = isKey ? hasExplicitIntervalStructure(a) : false;
-      const paceConsistencyHint = isKey ? inferPaceConsistencyFromIcu(a) : null;
+      const intervalEval = isKey ? inferIntervalEvaluationFromIcu(a, keyType, eventDistance) : null;
 
       let drift = null;
       let drift_raw = null;
@@ -3793,7 +3781,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         load,
         intervalMetrics,
         intervalStructureHint,
-        paceConsistencyHint,
+        intervalEval,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -4664,11 +4652,25 @@ function buildComments(
       const efSeries = Number.isFinite(m?.HR_Drift_pct)
         ? `${m.HR_Drift_pct >= 0 ? "+" : ""}${m.HR_Drift_pct.toFixed(1)}% HR-Drift über die Intervalle`
         : "n/a";
-      const paceConsistency = intervalToday?.paceConsistencyHint?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
+      const paceConsistency = intervalToday?.intervalEval?.label || (m ? "weitgehend konstant (Serie als gleichförmig erkannt)" : "n/a");
+      const evalScores = intervalToday?.intervalEval?.scores;
 
       runMetrics.push(`HRR60: Ø ${Number.isFinite(hrr) ? hrr.toFixed(0) : "n/a"} bpm → ${hrrEval}.`);
       runMetrics.push(`EF/Serienverlauf: ${efSeries} (nur interpretierbar bei stabiler Pace).`);
       runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
+      if (evalScores) {
+        const paceCvText = Number.isFinite(evalScores.paceCv) ? `${(evalScores.paceCv * 100).toFixed(1)} %` : "n/a";
+        const fadeText = Number.isFinite(evalScores.fadePct) ? `${(evalScores.fadePct * 100).toFixed(1)} %` : "n/a";
+        runMetrics.push(
+          `Intervall-Score: Gesamt ${evalScores.overall}/100 | Execution ${evalScores.execution}/100 | Dose ${evalScores.dose}/100 | Strain ${evalScores.strain}/100 | Intent ${evalScores.intentMatch}/100.`
+        );
+        runMetrics.push(
+          `Rep-Details: ${evalScores.repCount} qualifizierte Reps, ${evalScores.qualityKm.toFixed(2)} km, ${evalScores.qualityMin.toFixed(1)} min, Pace-CV ${paceCvText}, Fade ${fadeText}.`
+        );
+        if (Array.isArray(evalScores.notes) && evalScores.notes.length) {
+          runMetrics.push(`Kommentar: ${evalScores.notes.join(" | ")}`);
+        }
+      }
       runMetrics.push("Hinweis: HRR60 ist protokollabhängig (Stop vs. aktiver Cooldown) und kein medizinisches Urteil.");
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
