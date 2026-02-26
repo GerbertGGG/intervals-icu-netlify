@@ -305,16 +305,16 @@ const INTENSITY_DISTRIBUTION_TARGET = {
     },
   },
   BUILD: {
-    easyMin: 0.6,
+    easyMin: 0.7,
     easyMax: 0.75,
     midMin: 0.1,
     midMax: 0.3,
     hardMax: 0.2,
     byDistance: {
-      "5k": { easyMin: 0.6, easyMax: 0.65, midMin: 0.2, midMax: 0.25, hardMax: 0.18 },
-      "10k": { easyMin: 0.6, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.12 },
-      hm: { easyMin: 0.65, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.08 },
-      m: { easyMin: 0.65, easyMax: 0.75, midMin: 0.1, midMax: 0.15, hardMax: 0.2 },
+      "5k": { easyMin: 0.7, easyMax: 0.75, midMin: 0.16, midMax: 0.24, hardMax: 0.14 },
+      "10k": { easyMin: 0.72, easyMax: 0.78, midMin: 0.17, midMax: 0.23, hardMax: 0.1 },
+      hm: { easyMin: 0.75, easyMax: 0.82, midMin: 0.14, midMax: 0.2, hardMax: 0.08 },
+      m: { easyMin: 0.78, easyMax: 0.85, midMin: 0.1, midMax: 0.16, hardMax: 0.06 },
     },
   },
   RACE: {
@@ -530,6 +530,7 @@ const PREPLAN_RUN_SHARE = {
 const LONGRUN_PREPLAN = {
   stepDays: 14,
   maxStepPct: 0.10,
+  spikeGuardLookbackDays: 30,
   startMin: 45,
   targetMinByDistance: {
     "5k": 60,
@@ -1450,6 +1451,29 @@ function computeLongRunSummary7d(ctx, dayIso) {
     quality,
     isKey: longest.isKey,
     intensity: longest.intensity,
+  };
+}
+
+function computeLongestRunSummaryWindow(ctx, dayIso, windowDays = LONGRUN_PREPLAN.spikeGuardLookbackDays) {
+  const safeWindowDays = Math.max(1, Number(windowDays) || LONGRUN_PREPLAN.spikeGuardLookbackDays || 30);
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - (safeWindowDays - 1) * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let longest = null;
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
+  }
+
+  if (!longest) return { minutes: 0, date: null, windowDays: safeWindowDays };
+  return {
+    minutes: Math.round(longest.seconds / 60),
+    date: longest.date,
+    windowDays: safeWindowDays,
   };
 }
 
@@ -3958,7 +3982,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     try {
       loads7 = await computeLoads7d(ctx, day);
     } catch {}
-    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, plan: null };
+    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, longestRun30d: { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays }, plan: null };
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
@@ -3967,10 +3991,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
     const longRun14d = computeLongRunSummary14d(ctx, day);
+    const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
     const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
     longRunSummary = {
       ...longRunSummary,
       longRun14d,
+      longestRun30d,
       plan: longRunPlan,
     };
     const runEquivalent7 = (loads7.runTotal7 ?? 0) + (loads7.bikeTotal7 ?? 0) * bikeSubFactor;
@@ -4510,6 +4536,8 @@ function buildRecommendationsAndBottomLine(state) {
   const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
   const longRunGapMin = Number(state?.longRunGapMin ?? 0);
   const longRunStepCapMin = Number(state?.longRunStepCapMin ?? 0);
+  const longRunSpikeCapMin = Number(state?.longRunSpikeCapMin ?? 0);
+  const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
 
   bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
@@ -4524,7 +4552,10 @@ function buildRecommendationsAndBottomLine(state) {
     if (longRunGapMin < 0) {
       rec.push(`Longrun ${longRunDoneMin}′/${longRunTargetMin}′ → diese Woche locker auf ${longRunTargetMin}′ annähern.`);
     } else if (longRunDoneMin > 0 && Number.isFinite(longRunStepCapMin) && Number.isFinite(blockLongRunNextWeekTargetMin)) {
-      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).`);
+      const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
+        ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
+        : "";
+      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).${spikeGuardNote}`);
     }
   }
   if (state?.intensityDistribution?.easyUnder === true) {
@@ -4712,23 +4743,29 @@ function buildComments(
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
+  const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
   const longRun7d = longRunSummary || { minutes: 0, date: null, quality: "n/a" };
   const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
+  const longestRun30dMin = Math.round(longRun30d?.minutes ?? 0);
   const prePlanLongRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
   const longRunStepCapRawMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
+  const longRunSpikeCapMin = longestRun30dMin > 0 ? Math.round(longestRun30dMin * (1 + LONGRUN_PREPLAN.maxStepPct)) : 0;
   const longRunStepCapMin = phaseLongRunMaxMin > 0
     ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
     : longRunStepCapRawMin;
+  const longRunSafetyCapMin = longRunSpikeCapMin > 0
+    ? Math.min(longRunStepCapMin, longRunSpikeCapMin)
+    : longRunStepCapMin;
   const planStartWeeks = getPlanStartWeeks(eventDistance);
   const inPlanPhase = Number.isFinite(weeksToEvent) && weeksToEvent <= planStartWeeks;
   const longRunTargetMin = inPlanPhase && phaseLongRunMaxMin > 0
-    ? Math.max(prePlanLongRunTargetMin, longRunStepCapMin || prePlanLongRunTargetMin)
+    ? Math.max(prePlanLongRunTargetMin, longRunSafetyCapMin || prePlanLongRunTargetMin)
     : prePlanLongRunTargetMin;
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
-    ? longRunStepCapMin
+    ? longRunSafetyCapMin
     : LONGRUN_PREPLAN.startMin;
 
   const runMetrics = [];
@@ -4838,7 +4875,9 @@ function buildComments(
     longRunDoneMin,
     longRunTargetMin,
     longRunGapMin,
-    longRunStepCapMin,
+    longRunStepCapMin: longRunSafetyCapMin,
+    longRunSpikeCapMin,
+    longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
   });
   addDecisionBlock("EMPFEHLUNGEN", [
