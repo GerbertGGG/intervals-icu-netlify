@@ -2506,6 +2506,62 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
   };
 }
 
+
+const THRESHOLD_FORMAT_TEMPLATES = {
+  intervals: {
+    "5k": ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "2×10′ @ Schwelle"],
+    "10k": ["3×8–10′ @ Schwelle", "4×6–8′ @ Schwelle", "2×15′ @ Schwelle"],
+    hm: ["3×10′ @ Schwelle", "2×15′ @ Schwelle", "4×8′ @ Schwelle"],
+    m: ["3×8′ @ Schwelle (kontrolliert)", "2×12′ @ Schwelle", "4×6′ @ Schwelle"],
+  },
+  continuous: {
+    "5k": ["20–25′ steady @ LT2-nah (kontrolliert)"],
+    "10k": ["20–25′ steady @ LT2-nah", "25′ progressiv bis LT2-nah"],
+    hm: ["25–35′ steady/progressiv", "2×15′ steady mit kurzer Pause"],
+    m: ["40–60′ steady (nicht all-out)", "30–40′ progressiv bis MP+/LT2-nah"],
+  },
+  maintenance: {
+    "5k": ["2×8′ @ Schwelle (Erhalt)"],
+    "10k": ["2×10′ @ Schwelle (Erhalt)", "3×6′ @ Schwelle (Erhalt)"],
+    hm: ["2×10′ @ Schwelle (Erhalt)"],
+    m: ["2×8–10′ @ Schwelle (Erhalt)"],
+  },
+};
+
+function chooseThresholdFormat(context = {}, keyRules = {}) {
+  const block = String(context?.block || "BASE").toUpperCase();
+  const distance = normalizeEventDistance(context?.eventDistance) || "10k";
+  const weeklyQualitySlots = clampInt(String(keyRules?.maxKeysPerWeek ?? keyRules?.expectedKeysPerWeek ?? 2), 1, 3);
+  const driftHigh = Number(context?.historyMetrics?.hrDriftDelta) > BLOCK_CONFIG.thresholds.hrDriftMax;
+  const rpeCreep = context?.intensityDistribution?.midOver === true;
+  const nextDayFatigueHigh = context?.fatigue?.override === true || context?.overlayMode === "DELOAD";
+
+  if (block === "BASE") {
+    return { format: "intervals", reason: "BASE: Schwelle minimal und kontrolliert dosieren." };
+  }
+
+  if (block === "BUILD" && (driftHigh || rpeCreep || nextDayFatigueHigh || weeklyQualitySlots <= 2)) {
+    return { format: "intervals", reason: "BUILD + Kontrollsignal: Intervalle vorziehen (geringere Drift/Cost)." };
+  }
+
+  if (block === "RACE" && (distance === "hm" || distance === "m")) {
+    return { format: "continuous", reason: "RACE HM/M: mehr Spezifität am Stück, Schwelle nur dosiert." };
+  }
+
+  if (block === "RACE" && (distance === "5k" || distance === "10k")) {
+    return { format: "maintenance", reason: "RACE 5k/10k: Schwelle nur kurz als Erhalt." };
+  }
+
+  return { format: "intervals", reason: "Standard: Schwellenintervalle für bessere Steuerbarkeit." };
+}
+
+function selectThresholdSessionTemplate(format, distance, fallback = null) {
+  const dist = normalizeEventDistance(distance) || "10k";
+  const candidates = THRESHOLD_FORMAT_TEMPLATES?.[format]?.[dist] || [];
+  if (fallback) return fallback;
+  return candidates[0] || null;
+}
+
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
 
@@ -2549,12 +2605,19 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   if (!Array.isArray(entries) || !entries.length) return null;
 
   const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.stepIndex);
-  const sessionText = progressionStepSession || entries[0];
+  let sessionText = progressionStepSession || entries[0];
+  let formatNote = "";
+  if (chosenType === "schwelle") {
+    const thresholdDecision = chooseThresholdFormat(context, keyRules);
+    const thresholdTemplate = selectThresholdSessionTemplate(thresholdDecision?.format, distance, progressionStepSession || null);
+    if (thresholdTemplate) sessionText = thresholdTemplate;
+    if (thresholdDecision?.reason) formatNote = ` Format-Entscheid: ${thresholdDecision.reason}`;
+  }
   const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
   const racepaceTarget = chosenType === "racepace"
     ? getRacepaceTargetText(distance)
     : "";
-  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${progressionMissingNote}${racepaceTarget}`;
+  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${formatNote}${progressionMissingNote}${racepaceTarget}`;
 }
 
 function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
@@ -4217,6 +4280,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weekInBlock,
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
+      historyMetrics,
     });
 if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
