@@ -2024,31 +2024,28 @@ const KEY_SESSION_RECOMMENDATIONS = {
   RACE: {
     "5k": {
       racepace: [
-        "6×1 km @ 10k-Pace",
-        "5×1200 m @ 10k-Pace (kontrolliert)",
-        "3×2 km @ 10k-Pace",
-      ],
-      racepace: [
-        "4×2 km @ HM-Pace",
-        "3×3 km @ HM-Pace",
-        "2×4–5 km @ HM-Pace",
-      ],
-      racepace: [
-        "5×2 km @ M-Pace",
-        "4×3 km @ M-Pace",
-        "2×6–8 km @ M-Pace (3 Wochen vor WK)",
+        "4×0,8 km @ 5k-RP",
+        "6×1,0 km @ 5k-RP",
+        "4×1,5 km @ 5k-RP",
       ],
     },
     "10k": {
-      racepace: ["3×2 km @ 10k-Pace", "2×3 km @ 10k-Pace"],
+      racepace: [
+        "4×2 km @ 10k-RP",
+        "3×3 km @ 10k-RP",
+        "5×2 km @ 10k-RP",
+        "4×3 km @ 10k-RP",
+        "2×2 km @ 10k-RP (Deload)",
+      ],
       vo2_touch: ["5×2′ @ VO2 (lange Pause)", "6×400 m @ 5k-Pace"],
       schwelle: ["2×8′ @ Schwelle (Erhalt)"],
       ga: ["40–50′ GA1 locker"]
     },
     "hm": {
       racepace: [
-        "2×5 km @ HM-Pace",
-        "10–14 km progressiv bis HM-Pace (Rennsimulation)",
+        "2×4 km @ HM-RP",
+        "2×5 km @ HM-RP",
+        "2×3 km @ HM-RP (Deload)",
       ],
       vo2_touch: ["4×2′ @ VO2 (kurz, frisch)"],
       schwelle: ["2×10′ @ Schwelle (Erhalt)"],
@@ -2059,7 +2056,7 @@ const KEY_SESSION_RECOMMENDATIONS = {
       ],
     },
     "m": {
-      racepace: ["2×6–8 km @ M-Pace (3 Wochen vor WK)"],
+      racepace: ["2×6 km @ M-RP", "2×8 km @ M-RP", "2×5 km @ M-RP (Deload)"],
       longrun: ["75–90′ letzter Longrun @ M (10–14 Tage vor Rennen)"],
       ga: ["30–45′ GA1 locker"]
     }
