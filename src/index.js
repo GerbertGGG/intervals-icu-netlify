@@ -1782,21 +1782,21 @@ function summarizeIntervalSessionQuality(activity) {
 
 const PHASE_MAX_MINUTES = {
   BASE: {
-    "5k": { ga: 75, schwelle: 25, longrun: 105, vo2_touch: 3, strides: 3 },
-    "10k": { ga: 80, schwelle: 30, longrun: 120, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, schwelle: 20, longrun: 120, vo2_touch: 2, strides: 2 },
-    m: { ga: 95, schwelle: 15, longrun: 180, strides: 1 },
+    "5k": { ga: 75, schwelle: 25, longrun: 85, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 80, schwelle: 30, longrun: 95, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, schwelle: 20, longrun: 110, vo2_touch: 2, strides: 2 },
+    m: { ga: 95, schwelle: 15, longrun: 165, strides: 1 },
   },
   BUILD: {
-    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 100 },
-    "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 135 },
-    hm: { schwelle: 55, racepace: 25, longrun: 165 },
-    m: { schwelle: 35, racepace: 70, longrun: 195 },
+    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 90 },
+    "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 105 },
+    hm: { schwelle: 55, racepace: 25, longrun: 130 },
+    m: { schwelle: 35, racepace: 70, longrun: 180 },
   },
   RACE: {
-    "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 90 },
-    "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 110 },
-    hm: { racepace: 50, vo2_touch: 4, schwelle: 20, ga: 70, longrun: 135 },
+    "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 75 },
+    "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 90 },
+    hm: { racepace: 50, vo2_touch: 4, schwelle: 20, ga: 70, longrun: 100 },
     m: { racepace: 75, schwelle: 10, ga: 55, longrun: 150 },
   },
 };
