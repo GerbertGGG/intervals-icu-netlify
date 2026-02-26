@@ -305,16 +305,16 @@ const INTENSITY_DISTRIBUTION_TARGET = {
     },
   },
   BUILD: {
-    easyMin: 0.6,
+    easyMin: 0.7,
     easyMax: 0.75,
     midMin: 0.1,
     midMax: 0.3,
     hardMax: 0.2,
     byDistance: {
-      "5k": { easyMin: 0.6, easyMax: 0.65, midMin: 0.2, midMax: 0.25, hardMax: 0.18 },
-      "10k": { easyMin: 0.6, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.12 },
-      hm: { easyMin: 0.65, easyMax: 0.7, midMin: 0.25, midMax: 0.3, hardMax: 0.08 },
-      m: { easyMin: 0.65, easyMax: 0.75, midMin: 0.1, midMax: 0.15, hardMax: 0.2 },
+      "5k": { easyMin: 0.7, easyMax: 0.75, midMin: 0.16, midMax: 0.24, hardMax: 0.14 },
+      "10k": { easyMin: 0.72, easyMax: 0.78, midMin: 0.17, midMax: 0.23, hardMax: 0.1 },
+      hm: { easyMin: 0.75, easyMax: 0.82, midMin: 0.14, midMax: 0.2, hardMax: 0.08 },
+      m: { easyMin: 0.78, easyMax: 0.85, midMin: 0.1, midMax: 0.16, hardMax: 0.06 },
     },
   },
   RACE: {
@@ -530,6 +530,7 @@ const PREPLAN_RUN_SHARE = {
 const LONGRUN_PREPLAN = {
   stepDays: 14,
   maxStepPct: 0.10,
+  spikeGuardLookbackDays: 30,
   startMin: 45,
   targetMinByDistance: {
     "5k": 60,
@@ -1450,6 +1451,29 @@ function computeLongRunSummary7d(ctx, dayIso) {
     quality,
     isKey: longest.isKey,
     intensity: longest.intensity,
+  };
+}
+
+function computeLongestRunSummaryWindow(ctx, dayIso, windowDays = LONGRUN_PREPLAN.spikeGuardLookbackDays) {
+  const safeWindowDays = Math.max(1, Number(windowDays) || LONGRUN_PREPLAN.spikeGuardLookbackDays || 30);
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - (safeWindowDays - 1) * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let longest = null;
+  for (const a of ctx.activitiesAll) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
+  }
+
+  if (!longest) return { minutes: 0, date: null, windowDays: safeWindowDays };
+  return {
+    minutes: Math.round(longest.seconds / 60),
+    date: longest.date,
+    windowDays: safeWindowDays,
   };
 }
 
@@ -2482,6 +2506,62 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
   };
 }
 
+
+const THRESHOLD_FORMAT_TEMPLATES = {
+  intervals: {
+    "5k": ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "2×10′ @ Schwelle"],
+    "10k": ["3×8–10′ @ Schwelle", "4×6–8′ @ Schwelle", "2×15′ @ Schwelle"],
+    hm: ["3×10′ @ Schwelle", "2×15′ @ Schwelle", "4×8′ @ Schwelle"],
+    m: ["3×8′ @ Schwelle (kontrolliert)", "2×12′ @ Schwelle", "4×6′ @ Schwelle"],
+  },
+  continuous: {
+    "5k": ["20–25′ steady @ LT2-nah (kontrolliert)"],
+    "10k": ["20–25′ steady @ LT2-nah", "25′ progressiv bis LT2-nah"],
+    hm: ["25–35′ steady/progressiv", "2×15′ steady mit kurzer Pause"],
+    m: ["40–60′ steady (nicht all-out)", "30–40′ progressiv bis MP+/LT2-nah"],
+  },
+  maintenance: {
+    "5k": ["2×8′ @ Schwelle (Erhalt)"],
+    "10k": ["2×10′ @ Schwelle (Erhalt)", "3×6′ @ Schwelle (Erhalt)"],
+    hm: ["2×10′ @ Schwelle (Erhalt)"],
+    m: ["2×8–10′ @ Schwelle (Erhalt)"],
+  },
+};
+
+function chooseThresholdFormat(context = {}, keyRules = {}) {
+  const block = String(context?.block || "BASE").toUpperCase();
+  const distance = normalizeEventDistance(context?.eventDistance) || "10k";
+  const weeklyQualitySlots = clampInt(String(keyRules?.maxKeysPerWeek ?? keyRules?.expectedKeysPerWeek ?? 2), 1, 3);
+  const driftHigh = Number(context?.historyMetrics?.hrDriftDelta) > BLOCK_CONFIG.thresholds.hrDriftMax;
+  const rpeCreep = context?.intensityDistribution?.midOver === true;
+  const nextDayFatigueHigh = context?.fatigue?.override === true || context?.overlayMode === "DELOAD";
+
+  if (block === "BASE") {
+    return { format: "intervals", reason: "BASE: Schwelle minimal und kontrolliert dosieren." };
+  }
+
+  if (block === "BUILD" && (driftHigh || rpeCreep || nextDayFatigueHigh || weeklyQualitySlots <= 2)) {
+    return { format: "intervals", reason: "BUILD + Kontrollsignal: Intervalle vorziehen (geringere Drift/Cost)." };
+  }
+
+  if (block === "RACE" && (distance === "hm" || distance === "m")) {
+    return { format: "continuous", reason: "RACE HM/M: mehr Spezifität am Stück, Schwelle nur dosiert." };
+  }
+
+  if (block === "RACE" && (distance === "5k" || distance === "10k")) {
+    return { format: "maintenance", reason: "RACE 5k/10k: Schwelle nur kurz als Erhalt." };
+  }
+
+  return { format: "intervals", reason: "Standard: Schwellenintervalle für bessere Steuerbarkeit." };
+}
+
+function selectThresholdSessionTemplate(format, distance, fallback = null) {
+  const dist = normalizeEventDistance(distance) || "10k";
+  const candidates = THRESHOLD_FORMAT_TEMPLATES?.[format]?.[dist] || [];
+  if (fallback) return fallback;
+  return candidates[0] || null;
+}
+
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
 
@@ -2525,12 +2605,19 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   if (!Array.isArray(entries) || !entries.length) return null;
 
   const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.stepIndex);
-  const sessionText = progressionStepSession || entries[0];
+  let sessionText = progressionStepSession || entries[0];
+  let formatNote = "";
+  if (chosenType === "schwelle") {
+    const thresholdDecision = chooseThresholdFormat(context, keyRules);
+    const thresholdTemplate = selectThresholdSessionTemplate(thresholdDecision?.format, distance, progressionStepSession || null);
+    if (thresholdTemplate) sessionText = thresholdTemplate;
+    if (thresholdDecision?.reason) formatNote = ` Format-Entscheid: ${thresholdDecision.reason}`;
+  }
   const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
   const racepaceTarget = chosenType === "racepace"
     ? getRacepaceTargetText(distance)
     : "";
-  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${progressionMissingNote}${racepaceTarget}`;
+  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${formatNote}${progressionMissingNote}${racepaceTarget}`;
 }
 
 function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
@@ -3958,7 +4045,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     try {
       loads7 = await computeLoads7d(ctx, day);
     } catch {}
-    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, plan: null };
+    let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, longestRun30d: { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays }, plan: null };
     try {
       longRunSummary = computeLongRunSummary7d(ctx, day);
     } catch {}
@@ -3967,10 +4054,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
     const longRun14d = computeLongRunSummary14d(ctx, day);
+    const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
     const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
     longRunSummary = {
       ...longRunSummary,
       longRun14d,
+      longestRun30d,
       plan: longRunPlan,
     };
     const runEquivalent7 = (loads7.runTotal7 ?? 0) + (loads7.bikeTotal7 ?? 0) * bikeSubFactor;
@@ -4191,6 +4280,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weekInBlock,
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
+      historyMetrics,
     });
 if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
@@ -4510,6 +4600,8 @@ function buildRecommendationsAndBottomLine(state) {
   const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
   const longRunGapMin = Number(state?.longRunGapMin ?? 0);
   const longRunStepCapMin = Number(state?.longRunStepCapMin ?? 0);
+  const longRunSpikeCapMin = Number(state?.longRunSpikeCapMin ?? 0);
+  const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
 
   bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
@@ -4524,7 +4616,10 @@ function buildRecommendationsAndBottomLine(state) {
     if (longRunGapMin < 0) {
       rec.push(`Longrun ${longRunDoneMin}′/${longRunTargetMin}′ → diese Woche locker auf ${longRunTargetMin}′ annähern.`);
     } else if (longRunDoneMin > 0 && Number.isFinite(longRunStepCapMin) && Number.isFinite(blockLongRunNextWeekTargetMin)) {
-      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).`);
+      const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
+        ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
+        : "";
+      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).${spikeGuardNote}`);
     }
   }
   if (state?.intensityDistribution?.easyUnder === true) {
@@ -4712,23 +4807,29 @@ function buildComments(
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
+  const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
   const longRun7d = longRunSummary || { minutes: 0, date: null, quality: "n/a" };
   const longRunDoneMin = Math.round(longRun14d?.minutes ?? 0);
+  const longestRun30dMin = Math.round(longRun30d?.minutes ?? 0);
   const prePlanLongRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
   const longRunStepCapRawMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
+  const longRunSpikeCapMin = longestRun30dMin > 0 ? Math.round(longestRun30dMin * (1 + LONGRUN_PREPLAN.maxStepPct)) : 0;
   const longRunStepCapMin = phaseLongRunMaxMin > 0
     ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
     : longRunStepCapRawMin;
+  const longRunSafetyCapMin = longRunSpikeCapMin > 0
+    ? Math.min(longRunStepCapMin, longRunSpikeCapMin)
+    : longRunStepCapMin;
   const planStartWeeks = getPlanStartWeeks(eventDistance);
   const inPlanPhase = Number.isFinite(weeksToEvent) && weeksToEvent <= planStartWeeks;
   const longRunTargetMin = inPlanPhase && phaseLongRunMaxMin > 0
-    ? Math.max(prePlanLongRunTargetMin, longRunStepCapMin || prePlanLongRunTargetMin)
+    ? Math.max(prePlanLongRunTargetMin, longRunSafetyCapMin || prePlanLongRunTargetMin)
     : prePlanLongRunTargetMin;
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
-    ? longRunStepCapMin
+    ? longRunSafetyCapMin
     : LONGRUN_PREPLAN.startMin;
 
   const runMetrics = [];
@@ -4838,7 +4939,9 @@ function buildComments(
     longRunDoneMin,
     longRunTargetMin,
     longRunGapMin,
-    longRunStepCapMin,
+    longRunStepCapMin: longRunSafetyCapMin,
+    longRunSpikeCapMin,
+    longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
   });
   addDecisionBlock("EMPFEHLUNGEN", [
