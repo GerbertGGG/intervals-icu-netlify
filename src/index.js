@@ -4962,7 +4962,6 @@ function buildComments(
   const keyCheckMetrics = [
     `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
-    `Intensität Block (${intensityLookbackDays}T): Easy ${easySharePct != null ? easySharePct + " %" : "n/a"} (≥${easyMinPct}%), Mid ${midSharePct != null ? midSharePct + " %" : "n/a"} (≤${midMaxPct || "n/a"}%), Hard ${hardSharePct != null ? hardSharePct + " %" : "n/a"} (≤${hardMaxPct}%)`,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
     `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
   ];
