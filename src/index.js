@@ -488,6 +488,7 @@ const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
 const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
 const ACWR_LOW_LIMIT = 0.8;        // underload threshold
+const RUN_DISTANCE_14D_LIMIT = 1.3; // +30% vs previous 14d
 
 
 const GA_MIN_SECONDS = 30 * 60;
@@ -686,16 +687,33 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   });
 
   const dailyLoads = bucketAllLoadsByDay(acts28); // day -> load
+  const dailyRunDistKm = {};
+  for (const a of acts28) {
+    if (!isRun(a)) continue;
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d) continue;
+    dailyRunDistKm[d] = (dailyRunDistKm[d] || 0) + extractRunDistanceKm(a);
+  }
   const days = Object.keys(dailyLoads).sort();
 
   // split prev7 and last7 deterministically
   let prev7 = 0;
   let last7 = 0;
+  let prev14RunDistKm = 0;
+  let last14RunDistKm = 0;
+  const start28To14Iso = isoDate(new Date(end.getTime() - 27 * 86400000));
 
   for (const d of days) {
     const v = Number(dailyLoads[d]) || 0;
     if (d >= start7Iso) last7 += v;
     else if (d >= start14Iso) prev7 += v;
+
+    const runDist = Number(dailyRunDistKm[d]) || 0;
+    if (d >= start14Iso) {
+      last14RunDistKm += runDist;
+    } else if (d >= start28To14Iso) {
+      prev14RunDistKm += runDist;
+    }
   }
 
   // monotony/strain for last7 only (need daily values in last7)
@@ -729,6 +747,12 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   if (acwr != null && acwr > ACWR_HIGH_LIMIT) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${ACWR_HIGH_LIMIT})`);
   if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0)
     reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${ACWR_LOW_LIMIT})`);
+  const runDist14dRatio = prev14RunDistKm > 0 ? last14RunDistKm / prev14RunDistKm : null;
+  if (runDist14dRatio != null && runDist14dRatio > RUN_DISTANCE_14D_LIMIT) {
+    reasons.push(
+      `Run-Distanz 14d: ${(runDist14dRatio * 100).toFixed(0)}% der Vorperiode (> ${(RUN_DISTANCE_14D_LIMIT * 100).toFixed(0)}%)`
+    );
+  }
   if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
   if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
 
@@ -744,10 +768,30 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     monotony,
     strain,
     acwr,
+    runDist14dRatio,
+    runDistLast14Km: last14RunDistKm,
+    runDistPrev14Km: prev14RunDistKm,
     chronicWeekly,
     last7Load: last7,
     prev7Load: prev7,
   };
+}
+
+function extractRunDistanceKm(activity) {
+  const candidates = [
+    activity?.distance,
+    activity?.distanceMeters,
+    activity?.distance_meters,
+    activity?.distance_metres,
+    activity?.details?.distance,
+    activity?.details?.distanceMeters,
+  ];
+  for (const raw of candidates) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    return n >= 1000 ? n / 1000 : n;
+  }
+  return 0;
 }
 
 function computeRobustness(ctx, dayIso) {
@@ -4905,8 +4949,10 @@ function buildComments(
 
   addDecisionBlock("BELASTUNG & PROGRESSION", [
     `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
+    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (heute vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
     `RunFloor (7 Tage): ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"}`,
+    `Run-Distanz 14T: ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"} km | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"} km | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`,
