@@ -3267,6 +3267,9 @@ function determineBlockState({
   }
 
   if (weeksToEvent > planStartWeeks) {
+    const stayedInFreeBase = previousState?.block === "BASE";
+    const freeBaseStart = stayedInFreeBase ? startDate : todayISO;
+    const freeBaseDays = stayedInFreeBase ? Math.max(0, daysBetween(freeBaseStart, todayISO)) : 0;
     reasons.push(`Freie Vorphase aktiv (> ${planStartWeeks} Wochen bis Event) → BASE`);
     return {
       block: "BASE",
@@ -3276,14 +3279,14 @@ function determineBlockState({
       todayISO,
       eventDateISO,
       blockStartPersisted: persistedStart,
-      blockStartEffective: todayISO,
+      blockStartEffective: freeBaseStart,
       startWasReset,
       reasons,
       readinessScore: 55,
       forcedSwitch: false,
       nextSuggestedBlock: "BASE",
-      timeInBlockDays: 0,
-      startDate: todayISO,
+      timeInBlockDays: freeBaseDays,
+      startDate: freeBaseStart,
       eventDistance: eventDistanceNorm,
     };
   }
