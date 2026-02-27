@@ -6002,7 +6002,7 @@ async function fetchDailyReportNoteEvent(env, dayIso) {
 
 function fromHardLineBreakText(text) {
   return String(text ?? "")
-    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<br\s*\/?>\s*\n?/gi, "\n")
     .replace(/&nbsp;/gi, " ")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
@@ -6962,9 +6962,7 @@ async function resolveWatchfaceRunGoal(env, dayIso) {
 
 function parseRunGoalFromDailyReportNote(description) {
   if (!description) return null;
-  const plain = String(description)
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/&nbsp;/gi, " ");
+  const plain = fromHardLineBreakText(description);
   const match = plain.match(/RunFloor\s*\(7\s*Tage\)\s*:\s*\d+\s*\/\s*(\d+)/i);
   if (!match) return null;
   const goal = Number(match[1]);
