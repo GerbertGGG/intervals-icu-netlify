@@ -228,6 +228,33 @@ Regeltabelle (fachlich):
 Hinweis zur Umsetzung im bestehenden Design:
 - Die bestehende Bike->Run-Übergangslogik kann als technischer Hebel dienen, inhaltlich aber auf das neue Zielmodell ausgerichtet werden (Vorphase klarer „frei“, Start des Blocksystems fix bei 24 Wochen).
 
+9.5 Evidenz zu Longrun-Dauer (Beginner-Profile)
+-----------------------------------------------
+Die folgende Tabelle übersetzt die Evidenz in praktische, zeitbasierte Longrun-Spannen.
+Anker mit klaren Schwellen kommen v. a. aus HM/Marathon; 5 km/10 km sind stärker review- und
+Durability-basiert.
+
+Distanz | Niveau | Base building (Dauer) | Race-specific Peak-Longrun (Dauer) | Taper-Longrun (Dauer) | Frequenz | Longrun-Anteil Wochenzeit | Intensität | Evidenz
+--- | --- | --- | --- | --- | --- | --- | --- | ---
+5 km | Beginner | 40–60 min | 55–80 min | 35–55 min | meist weekly; bei 2 Läufen/Woche oft alle 10–14 Tage | Annahme: 30–55% | überwiegend easy | niedrig (Extrapolation aus Track-Best-Practice-Reviews)
+10 km | Beginner | 50–70 min | 70–95 min | 40–65 min | weekly; bei geringer Robustheit 10–14-tägig | Annahme: 25–55% | easy | niedrig (wenige direkte Schwellen; mechanistische Hinweise ab ~60–90 min)
+Halbmarathon | Beginner | 60–90 min | 90–140 min (Zielanker bei Verträglichkeit: ~2:00 h) | 60–90 min | weekly; Peak ggf. biweekly | häufig hoch: 30–60% | easy; Endbeschleunigung sparsam | mittel (Kohorten + abgeleitete Zeitanker)
+Marathon | Beginner | 75–110 min | 150–180 min (oft zeitgedeckelt) | 75–105 min | sehr lange Peaks oft biweekly, sonst weekly medium-long | Annahme: 35–70% | easy | mittel (Kohorten-Schwellen; Zeitdeckel als Risikomanagement)
+
+Flow (vereinfacht):
+```mermaid
+flowchart TD
+  A[Startpunkt: sicherer Longrun<br/>= längster Lauf der letzten 30 Tage] --> B[Base building<br/>Ziel: Routine + Gewebe-/Sehnenadaptation<br/>Longrun: +10–20 min alle 1–2 Wochen]
+  B --> C[Race-specific<br/>Ziel: distanzspezifische Ermüdungsresistenz (Durability)<br/>Longrun: Peak-Zeitfenster erreichen]
+  C --> D[Taper<br/>Ziel: Ermüdung reduzieren, Intensität/Frequenz halten<br/>Longrun: typ. 40–60% kürzer als Peak]
+  D --> E[Raceday]
+
+  C --> C5[5 km: Peak ca. 55–80 min (Beginner)]
+  C --> C10[10 km: Peak ca. 70–95 min (Beginner)]
+  C --> CHM[HM: Peak ca. 90–140 min (Beginner)]
+  C --> CM[Marathon: Peak ca. 150–180 min (Beginner)]
+```
+
 10) DAILY-REPORT NOTE
 ---------------------
 Tägliches Event:

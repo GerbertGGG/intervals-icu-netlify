@@ -1806,22 +1806,25 @@ function summarizeIntervalSessionQuality(activity) {
 
 const PHASE_MAX_MINUTES = {
   BASE: {
-    "5k": { ga: 75, schwelle: 25, longrun: 85, vo2_touch: 3, strides: 3 },
-    "10k": { ga: 80, schwelle: 30, longrun: 95, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, schwelle: 20, longrun: 110, vo2_touch: 2, strides: 2 },
-    m: { ga: 95, schwelle: 15, longrun: 165, strides: 1 },
+    // Beginner-orientierte Obergrenzen für Base-Longruns
+    "5k": { ga: 75, schwelle: 25, longrun: 60, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 80, schwelle: 30, longrun: 70, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, schwelle: 20, longrun: 90, vo2_touch: 2, strides: 2 },
+    m: { ga: 95, schwelle: 15, longrun: 110, strides: 1 },
   },
   BUILD: {
-    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 90 },
-    "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 105 },
-    hm: { schwelle: 55, racepace: 25, longrun: 130 },
+    // Beginner-orientierte Peak-Longruns (race-specific)
+    "5k": { schwelle: 35, vo2_touch: 18, racepace: 12, longrun: 80 },
+    "10k": { schwelle: 35, vo2_touch: 28, racepace: 20, longrun: 95 },
+    hm: { schwelle: 55, racepace: 25, longrun: 140 },
     m: { schwelle: 35, racepace: 70, longrun: 180 },
   },
   RACE: {
-    "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 75 },
-    "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 90 },
-    hm: { racepace: 50, vo2_touch: 4, schwelle: 20, ga: 70, longrun: 100 },
-    m: { racepace: 75, schwelle: 10, ga: 55, longrun: 150 },
+    // Beginner-orientierte Taper-Longruns
+    "5k": { racepace: 18, vo2_touch: 5, schwelle: 6, ga: 50, longrun: 55 },
+    "10k": { racepace: 28, vo2_touch: 8, schwelle: 20, ga: 60, longrun: 65 },
+    hm: { racepace: 50, vo2_touch: 4, schwelle: 20, ga: 70, longrun: 90 },
+    m: { racepace: 75, schwelle: 10, ga: 55, longrun: 105 },
   },
 };
 
