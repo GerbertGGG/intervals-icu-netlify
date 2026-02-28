@@ -1990,7 +1990,7 @@ const PROGRESSION_TEMPLATES = {
     "5k": {
       racepace: [
         { reps: 4, work_km: 0.8 },
-        { reps: 6, work_km: 1.0 },
+        { reps: 4, work_km: 1.0 },
         { reps: 4, work_km: 1.5 },
       ],
     },
@@ -2096,7 +2096,7 @@ const KEY_SESSION_RECOMMENDATIONS = {
     "5k": {
       racepace: [
         "4×0,8 km @ 5k-RP",
-        "6×1,0 km @ 5k-RP",
+        "4×1,0 km @ 5k-RP",
         "4×1,5 km @ 5k-RP",
       ],
     },
