@@ -219,6 +219,7 @@ function isEveningBerlinRun(event) {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const MAX_KEYS_7D = 2;
+const KEY_MIN_GAP_DAYS_DEFAULT = 3;
 const KRAFT_MIN_RUNFLOOR = 30;
 const KRAFT_TARGET = 60;
 const KRAFT_MAX = 75;
@@ -340,7 +341,25 @@ function getIntensityDistributionTargets(block, eventDistance) {
   const blockTargets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
   const dist = normalizeEventDistance(eventDistance);
   const byDistance = blockTargets?.byDistance?.[dist];
-  return byDistance ? { ...blockTargets, ...byDistance } : blockTargets;
+  const merged = byDistance ? { ...blockTargets, ...byDistance } : blockTargets;
+  const easyMax = Number(merged?.easyMax);
+  const midMax = Number(merged?.midMax);
+  const hardMax = Number(merged?.hardMax);
+  const maxSum =
+    (Number.isFinite(easyMax) ? easyMax : 0) +
+    (Number.isFinite(midMax) ? midMax : 0) +
+    (Number.isFinite(hardMax) ? hardMax : 0);
+
+  if (maxSum > 1) {
+    const scale = 1 / maxSum;
+    return {
+      ...merged,
+      easyMax: Number.isFinite(easyMax) ? round(easyMax * scale, 3) : merged.easyMax,
+      midMax: Number.isFinite(midMax) ? round(midMax * scale, 3) : merged.midMax,
+      hardMax: Number.isFinite(hardMax) ? round(hardMax * scale, 3) : merged.hardMax,
+    };
+  }
+  return merged;
 }
 
 const INTENSITY_LOOKBACK_DAYS = 14;
@@ -482,13 +501,62 @@ function toLocalYMD(d) {
 }
 
 // Fatigue override thresholds (tune later)
-const ENABLE_FATIGUE_OVERRIDE = false;
+const ENABLE_FATIGUE_OVERRIDE_DEFAULT = true;
 const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
 const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
 const ACWR_LOW_LIMIT = 0.8;        // underload threshold
 const RUN_DISTANCE_14D_LIMIT = 1.3; // +30% vs previous 14d
+
+const RUNTIME_CONFIG_DEFAULTS = {
+  enableFatigueOverride: ENABLE_FATIGUE_OVERRIDE_DEFAULT,
+  maxKeys7d: MAX_KEYS_7D,
+  keyMinGapDays: KEY_MIN_GAP_DAYS_DEFAULT,
+  fatigueThresholds: {
+    rampPct: RAMP_PCT_7D_LIMIT,
+    monotony: MONOTONY_7D_LIMIT,
+    strain: STRAIN_7D_LIMIT,
+    acwrHigh: ACWR_HIGH_LIMIT,
+    acwrLow: ACWR_LOW_LIMIT,
+    runDistance14dLimit: RUN_DISTANCE_14D_LIMIT,
+  },
+};
+
+function parseBooleanEnv(value, fallback) {
+  if (typeof value === "boolean") return value;
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return fallback;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return fallback;
+}
+
+function parseNumberEnv(value, fallback, min = null, max = null) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  let next = n;
+  if (Number.isFinite(min)) next = Math.max(min, next);
+  if (Number.isFinite(max)) next = Math.min(max, next);
+  return next;
+}
+
+function loadRuntimeConfig(env) {
+  const defaults = RUNTIME_CONFIG_DEFAULTS;
+  return {
+    enableFatigueOverride: parseBooleanEnv(env?.ENABLE_FATIGUE_OVERRIDE, defaults.enableFatigueOverride),
+    maxKeys7d: parseNumberEnv(env?.MAX_KEYS_7D, defaults.maxKeys7d, 0, 3),
+    keyMinGapDays: parseNumberEnv(env?.KEY_MIN_GAP_DAYS, defaults.keyMinGapDays, 1, 7),
+    fatigueThresholds: {
+      rampPct: parseNumberEnv(env?.FATIGUE_RAMP_PCT_LIMIT, defaults.fatigueThresholds.rampPct, 0, 2),
+      monotony: parseNumberEnv(env?.FATIGUE_MONOTONY_LIMIT, defaults.fatigueThresholds.monotony, 0, 10),
+      strain: parseNumberEnv(env?.FATIGUE_STRAIN_LIMIT, defaults.fatigueThresholds.strain, 0, 100000),
+      acwrHigh: parseNumberEnv(env?.FATIGUE_ACWR_HIGH_LIMIT, defaults.fatigueThresholds.acwrHigh, 0, 10),
+      acwrLow: parseNumberEnv(env?.FATIGUE_ACWR_LOW_LIMIT, defaults.fatigueThresholds.acwrLow, 0, 10),
+      runDistance14dLimit: parseNumberEnv(env?.RUN_DISTANCE_14D_LIMIT, defaults.fatigueThresholds.runDistance14dLimit, 1, 5),
+    },
+  };
+}
 
 
 const GA_MIN_SECONDS = 30 * 60;
@@ -619,6 +687,7 @@ function createCtx(env, warmupSkipSec, debug) {
     limit: createLimiter(6),
     // debug accumulator
     debugOut: debug ? {} : null,
+    runtimeConfig: RUNTIME_CONFIG_DEFAULTS,
   };
 }
 
@@ -675,6 +744,8 @@ function bucketAllLoadsByDay(acts) {
 
 async function computeFatigue7d(ctx, dayIso, options = {}) {
   const end = new Date(dayIso + "T00:00:00Z");
+  const runtimeConfig = ctx?.runtimeConfig || RUNTIME_CONFIG_DEFAULTS;
+  const thresholds = runtimeConfig.fatigueThresholds || RUNTIME_CONFIG_DEFAULTS.fatigueThresholds;
 
   const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
   const start14Iso = isoDate(new Date(end.getTime() - 13 * 86400000));
@@ -739,24 +810,25 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const acwr = chronicWeekly > 0 ? last7 / chronicWeekly : null;
 
   const keyCount7 = await computeKeyCount7d(ctx, dayIso);
-  const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : MAX_KEYS_7D;
+  const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : runtimeConfig.maxKeys7d;
 
   const reasons = [];
   if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
-  if (rampPct > RAMP_PCT_7D_LIMIT) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
-  if (acwr != null && acwr > ACWR_HIGH_LIMIT) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${ACWR_HIGH_LIMIT})`);
-  if (acwr != null && acwr < ACWR_LOW_LIMIT && last7 > 0)
-    reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${ACWR_LOW_LIMIT})`);
+  if (rampPct > thresholds.rampPct) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+  if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${thresholds.acwrHigh})`);
+  if (acwr != null && acwr < thresholds.acwrLow && last7 > 0)
+    reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${thresholds.acwrLow})`);
   const runDist14dRatio = prev14RunDistKm > 0 ? last14RunDistKm / prev14RunDistKm : null;
-  if (runDist14dRatio != null && runDist14dRatio > RUN_DISTANCE_14D_LIMIT) {
+  if (runDist14dRatio != null && runDist14dRatio > thresholds.runDistance14dLimit) {
     reasons.push(
-      `Run-Distanz 14d: ${(runDist14dRatio * 100).toFixed(0)}% der Vorperiode (> ${(RUN_DISTANCE_14D_LIMIT * 100).toFixed(0)}%)`
+      `Run-Distanz 14d: ${(runDist14dRatio * 100).toFixed(0)}% der Vorperiode (> ${(thresholds.runDistance14dLimit * 100).toFixed(0)}%)`
     );
   }
-  if (monotony > MONOTONY_7D_LIMIT) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${MONOTONY_7D_LIMIT})`);
-  if (strain > STRAIN_7D_LIMIT) reasons.push(`Strain: ${strain.toFixed(0)} (> ${STRAIN_7D_LIMIT})`);
+  if (monotony > thresholds.monotony) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${thresholds.monotony})`);
+  if (strain > thresholds.strain) reasons.push(`Strain: ${strain.toFixed(0)} (> ${thresholds.strain})`);
 
-  const override = ENABLE_FATIGUE_OVERRIDE && reasons.length > 0;
+  const overrideEnabled = options.enableOverride ?? runtimeConfig.enableFatigueOverride;
+  const override = overrideEnabled && reasons.length > 0;
 
   return {
     override,
@@ -873,6 +945,7 @@ function getStrengthPhasePlan(block) {
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   const end = new Date(dayIso + "T00:00:00Z");
+  const minGapDays = clampInt(String(ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT), 1, 7);
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
   const keyDates = [];
@@ -888,7 +961,7 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   let violation = null;
   for (let i = 1; i < keyDates.length; i++) {
     const gap = diffDays(keyDates[i - 1], keyDates[i]);
-    if (gap < 2) {
+    if (gap < minGapDays) {
       ok = false;
       violation = { prev: keyDates[i - 1], next: keyDates[i], gapDays: gap };
       break;
@@ -896,13 +969,14 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   }
 
   const lastKeyIso = keyDates.length ? keyDates[keyDates.length - 1] : null;
-  const nextAllowedIso = lastKeyIso ? isoDate(new Date(new Date(lastKeyIso + "T00:00:00Z").getTime() + 2 * 86400000)) : null;
+  const nextAllowedIso = lastKeyIso ? isoDate(new Date(new Date(lastKeyIso + "T00:00:00Z").getTime() + minGapDays * 86400000)) : null;
 
   return {
     ok,
     violation,
     lastKeyIso,
     nextAllowedIso,
+    minGapDays,
   };
 }
 
@@ -2997,7 +3071,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const actual7 = keyStats7.count;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
-  const maxKeysCap7 = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : MAX_KEYS_7D;
+  const maxKeysCap7 = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : (context.ctx?.runtimeConfig?.maxKeys7d ?? MAX_KEYS_7D);
   const capExceeded = actual7 >= maxKeysCap7;
 
   const actualTypes7 = keyStats7.list || [];
@@ -3031,7 +3105,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const lastKeyIso = context.keySpacing?.lastKeyIso ?? null;
   const lastKeyGapDays =
     dayIso && lastKeyIso && isIsoDate(dayIso) && isIsoDate(lastKeyIso) ? diffDays(lastKeyIso, dayIso) : null;
-  const keySpacingNowOk = !Number.isFinite(lastKeyGapDays) || lastKeyGapDays >= 2;
+  const minGapDays = clampInt(String(context.keySpacing?.minGapDays ?? context.ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT), 1, 7);
+  const keySpacingNowOk = !Number.isFinite(lastKeyGapDays) || lastKeyGapDays >= minGapDays;
   const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
 
   const intensityDistribution = context.intensityDistribution || null;
@@ -3048,7 +3123,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
-    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥48h Abstand). Bis dahin locker/GA.`;
+    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapDays * 24}h Abstand). Bis dahin locker/GA.`;
   } else if (hardShareBlocked && preferredIntensity === "hard") {
     const hardPct = Math.round((intensityDistribution?.hardShare ?? 0) * 100);
     const maxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
@@ -3114,6 +3189,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keySpacingOk: keySpacingNowOk,
     nextKeyEarliest,
     lastKeyGapDays,
+    keyMinGapDays: minGapDays,
     intensityDistribution,
     keyAllowedNow,
     explicitSession,
@@ -3864,6 +3940,7 @@ function pickRunMetricsPatch(patch) {
 // ================= MAIN =================
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
   const ctx = createCtx(env, warmupSkipSec, debug);
+  ctx.runtimeConfig = loadRuntimeConfig(env);
   const runMetricsOnly = runtimeOverrides?.runMetricsOnly === true;
   const runMetricsOnlyIfExisting = runtimeOverrides?.runMetricsOnlyIfExisting === true;
 
@@ -4248,7 +4325,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastEventDate = runFloorState.lastEventDate;
 
     const dynamicKeyCap = {
-      maxKeys7d: MAX_KEYS_7D,
+      maxKeys7d: ctx.runtimeConfig.maxKeys7d,
       reasons: [],
     };
 
@@ -4581,6 +4658,7 @@ function buildNextRunRecommendation({
   keySpacingOk,
   keyAllowedNow,
   keySuggestion,
+  keyMinGapDays,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
@@ -4602,7 +4680,8 @@ function buildNextRunRecommendation({
   if (keyCapExceeded) {
     next = "Kein weiterer Key diese Woche – locker/GA.";
   } else if (!keySpacingOk) {
-    next = "Nächster Key frühestens in 48h – bis dahin locker/GA.";
+    const minGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
+    next = `Nächster Key frühestens in ${minGapHours}h – bis dahin locker/GA.`;
   } else if (keyAllowedNow) {
     const optionalKeyHint = keySuggestion ? ` Optional: ${keySuggestion}` : " Optional: kurzer Key möglich, wenn du dich frisch fühlst.";
     next = `${next}.${optionalKeyHint}`;
@@ -4686,7 +4765,8 @@ function buildRecommendationsAndBottomLine(state) {
     rec.push(`Key-Budget ${state.actualKeys7}/${state.keyCap7} (7T) erreicht → kein weiterer Key.`);
   }
   if (state?.spacingBlocked) {
-    rec.push(`Key-Abstand <48h${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
+    const minGapText = Number.isFinite(state?.keyMinGapDays) ? `${state.keyMinGapDays * 24}h` : `${KEY_MIN_GAP_DAYS_DEFAULT * 24}h`;
+    rec.push(`Key-Abstand <${minGapText}${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
   }
   if (state?.overlayMode && state.overlayMode !== "NORMAL") {
     rec.push(`Overlay: ${state.overlayMode} → konservativ bleiben.`);
@@ -4762,7 +4842,7 @@ function buildComments(
     lines.push("");
   };
 
-  const keyCap7 = keyCompliance?.maxKeysCap7 ?? MAX_KEYS_7D;
+  const keyCap7 = keyCompliance?.maxKeysCap7 ?? dynamicKeyCap?.maxKeys7d ?? MAX_KEYS_7D;
   const actualKeys7 = keyCompliance?.actual7 ?? 0;
   const runLoad7 = Math.round(loads7?.runTotal7 ?? 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
@@ -4853,6 +4933,7 @@ function buildComments(
     keySpacingOk: spacingOk,
     keyAllowedNow: keyCompliance?.keyAllowedNow,
     keySuggestion: keyCompliance?.suggestion,
+    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
 
@@ -4983,6 +5064,7 @@ function buildComments(
     budgetBlocked,
     spacingBlocked,
     nextAllowed,
+    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
     overlayMode: runFloorState?.overlayMode,
     keyAllowedNow,
     explicitSessionShort,
