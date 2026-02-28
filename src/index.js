@@ -675,6 +675,7 @@ function createCtx(env, warmupSkipSec, debug) {
     debug,
     // activity caches
     activitiesAll: [],
+    lifeEventsAll: [],
     byDayRuns: new Map(), // YYYY-MM-DD -> run activities
     // streams memo
     byDayBikes: new Map(), // NEW
@@ -715,6 +716,35 @@ function inferSportFromEvent(ev) {
   if (t.includes("run")) return "run";
   if (t.includes("ride") || t.includes("bike") || t.includes("cycling")) return "bike";
   return "unknown";
+}
+
+function countHolidayDaysInWindow(events, startIsoInclusive, endIsoExclusive) {
+  if (!Array.isArray(events) || !isIsoDate(startIsoInclusive) || !isIsoDate(endIsoExclusive) || endIsoExclusive <= startIsoInclusive) {
+    return 0;
+  }
+
+  const holidayDays = new Set();
+  for (const event of events) {
+    if (normalizeEventCategory(event?.category) !== "HOLIDAY") continue;
+
+    const eventStartIso = String(event?.start_date_local || event?.start_date || "").slice(0, 10);
+    if (!isIsoDate(eventStartIso)) continue;
+
+    const eventEndRaw = String(event?.end_date_local || event?.end_date || "").slice(0, 10);
+    const eventEndExclusive = isIsoDate(eventEndRaw)
+      ? eventEndRaw
+      : isoDate(new Date(new Date(eventStartIso + "T00:00:00Z").getTime() + 86400000));
+
+    const overlapStart = eventStartIso > startIsoInclusive ? eventStartIso : startIsoInclusive;
+    const overlapEnd = eventEndExclusive < endIsoExclusive ? eventEndExclusive : endIsoExclusive;
+    if (overlapEnd <= overlapStart) continue;
+
+    for (let d = overlapStart; d < overlapEnd; d = isoDate(new Date(new Date(d + "T00:00:00Z").getTime() + 86400000))) {
+      holidayDays.add(d);
+    }
+  }
+
+  return holidayDays.size;
 }
 
 async function computeKeyCount7d(ctx, dayIso) {
@@ -773,6 +803,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   let prev14RunDistKm = 0;
   let last14RunDistKm = 0;
   const start28To14Iso = isoDate(new Date(end.getTime() - 27 * 86400000));
+  const endIsoExclusive = isoDate(new Date(end.getTime() + 86400000));
 
   for (const d of days) {
     const v = Number(dailyLoads[d]) || 0;
@@ -818,10 +849,16 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${thresholds.acwrHigh})`);
   if (acwr != null && acwr < thresholds.acwrLow && last7 > 0)
     reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${thresholds.acwrLow})`);
-  const runDist14dRatio = prev14RunDistKm > 0 ? last14RunDistKm / prev14RunDistKm : null;
+  const last14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start14Iso, endIsoExclusive);
+  const prev14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start28To14Iso, start14Iso);
+  const last14TrainableDays = Math.max(0, 14 - last14HolidayDays);
+  const prev14TrainableDays = Math.max(0, 14 - prev14HolidayDays);
+  const last14RunDistAdjKm = last14TrainableDays > 0 ? (last14RunDistKm / last14TrainableDays) * 14 : null;
+  const prev14RunDistAdjKm = prev14TrainableDays > 0 ? (prev14RunDistKm / prev14TrainableDays) * 14 : null;
+  const runDist14dRatio = prev14RunDistAdjKm > 0 ? last14RunDistAdjKm / prev14RunDistAdjKm : null;
   if (runDist14dRatio != null && runDist14dRatio > thresholds.runDistance14dLimit) {
     reasons.push(
-      `Run-Distanz 14d: ${(runDist14dRatio * 100).toFixed(0)}% der Vorperiode (> ${(thresholds.runDistance14dLimit * 100).toFixed(0)}%)`
+      `Run-Distanz 14d (Urlaub bereinigt): ${(runDist14dRatio * 100).toFixed(0)}% der Vorperiode (> ${(thresholds.runDistance14dLimit * 100).toFixed(0)}%)`
     );
   }
   if (monotony > thresholds.monotony) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${thresholds.monotony})`);
@@ -843,6 +880,10 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     runDist14dRatio,
     runDistLast14Km: last14RunDistKm,
     runDistPrev14Km: prev14RunDistKm,
+    runDistLast14AdjKm: last14RunDistAdjKm,
+    runDistPrev14AdjKm: prev14RunDistAdjKm,
+    runDistLast14HolidayDays: last14HolidayDays,
+    runDistPrev14HolidayDays: prev14HolidayDays,
     chronicWeekly,
     last7Load: last7,
     prev7Load: prev7,
@@ -3959,6 +4000,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
   // 1) Fetch ALL activities once
   ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
+  ctx.lifeEventsAll = await fetchIntervalsEvents(env, globalOldest, globalNewest).catch(() => []);
 
   // 2) Build byDayRuns / byDayBikes for quick access
   let activitiesSeen = 0;
@@ -5036,7 +5078,7 @@ function buildComments(
     `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (heute vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
     `RunFloor (7 Tage): ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"}`,
-    `Run-Distanz 14T: ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"} km | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"} km | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
+    `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`,
