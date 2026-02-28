@@ -4874,9 +4874,12 @@ function buildComments(
     : longRunStepCapMin;
   const planStartWeeks = getPlanStartWeeks(eventDistance);
   const inPlanPhase = Number.isFinite(weeksToEvent) && weeksToEvent <= planStartWeeks;
-  const longRunTargetMin = inPlanPhase && phaseLongRunMaxMin > 0
-    ? Math.max(prePlanLongRunTargetMin, longRunSafetyCapMin || prePlanLongRunTargetMin)
+  const longRunTargetPhaseCapMin = inPlanPhase && phaseLongRunMaxMin > 0
+    ? Math.min(prePlanLongRunTargetMin, phaseLongRunMaxMin)
     : prePlanLongRunTargetMin;
+  const longRunTargetMin = longRunSafetyCapMin > 0
+    ? Math.min(longRunTargetPhaseCapMin, longRunSafetyCapMin)
+    : longRunTargetPhaseCapMin;
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunSafetyCapMin
