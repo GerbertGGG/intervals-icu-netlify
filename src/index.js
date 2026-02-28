@@ -4120,7 +4120,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       let drift_source = "none";
       let intervalMetrics = null;
 
-      if (ga && !isKey) {
+      const isTempoDauerlauf = isTempoDauerlaufKey(a);
+
+      if ((ga && !isKey) || isTempoDauerlauf) {
         drift_source = "streams";
         try {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
@@ -5013,6 +5015,7 @@ function buildComments(
     runMetrics.push("Status: Heute kein Lauf.");
   } else {
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
+    const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
 
     if (gaToday) {
@@ -5057,6 +5060,20 @@ function buildComments(
       runMetrics.push(`VDOT: ${vdotText}`);
       runMetrics.push("VDOT-Hinweis: Nur bei vergleichbarer Intensität interpretieren.");
       runMetrics.push("Gesamt-Hinweis: Stabilität und Ermüdung immer im Verlauf bewerten, nicht aus einem Einzelwert.");
+    } else if (tdlToday) {
+      const drift = tdlToday.drift;
+      const driftText = formatPct1(drift);
+      const driftEval =
+        drift == null
+          ? "keine belastbare Einordnung (zu wenig Daten/zu kurzer Abschnitt)."
+          : drift <= 5
+            ? "kontrolliert für TDL (≤ 5 %)."
+            : "erhöht für TDL (> 5 %): eher zu hart oder kumulierte Ermüdung.";
+      const paceConsistency = tdlToday?.paceConsistencyHint?.label || "n/a";
+
+      runMetrics.push(`TDL-Einschätzung: Drift ${driftText} → ${driftEval}`);
+      runMetrics.push(`TDL-Pace-Konsistenz: ${paceConsistency}.`);
+      runMetrics.push("TDL-Hinweis: Bewertung primär als durchgehender Lauf (Drift/Ökonomie), Intervallwerte nur ergänzend.");
     } else if (intervalToday) {
       const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
       if (sessionQuality?.lines?.length) {
@@ -6265,6 +6282,11 @@ function getBenchTag(a) {
   return null;
 }
 
+function isTempoDauerlaufKey(activity) {
+  const keyType = String(getKeyType(activity) || "").toLowerCase();
+  return keyType.includes("tdl") || keyType.includes("tempo");
+}
+
 async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   const dayIso = String(activity.start_date_local || activity.start_date || "").slice(0, 10);
   if (!dayIso) return null;
@@ -6273,6 +6295,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   const isKey = hasKeyTag(activity);
   const keyType = getKeyType(activity);
   const isLongrunProgression = benchType === "GA" && String(keyType || "").toLowerCase().includes("prog");
+  const isTempoDauerlauf = isTempoDauerlaufKey(activity);
   const end = new Date(dayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - BENCH_LOOKBACK_DAYS * 86400000);
   const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
@@ -6281,7 +6304,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
     .filter((a) => isRun(a) && getBenchTag(a) === benchName && a.id !== activity.id)
     .sort((a, b) => new Date(b.start_date_local || b.start_date) - new Date(a.start_date_local || a.start_date));
 
-  const today = await computeBenchMetrics(env, activity, warmupSkipSec, { allowDrift: !isKey });
+  const today = await computeBenchMetrics(env, activity, warmupSkipSec, { allowDrift: !isKey || isTempoDauerlauf });
   if (!today) return `🧪 bench:${benchName}\nHeute: n/a`;
 
   let progressionMetrics = null;
@@ -6310,7 +6333,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   if (contextParts.length) lines.push(`Kontext: ${contextParts.join(" | ")}`);
 
   const last = same.length
-    ? await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: benchType === "GA" && !isKey })
+    ? await computeBenchMetrics(env, same[0], warmupSkipSec, { allowDrift: (benchType === "GA" && !isKey) || isTempoDauerlauf })
     : null;
 
   if (!same.length) {
@@ -6344,7 +6367,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
         lines.push("Warnung: >90% HFmax im Progressions-Teil.");
       }
     }
-  } else if (benchType === "GA" && !isKey) {
+  } else if ((benchType === "GA" && !isKey) || isTempoDauerlauf) {
     if (same.length && today.drift != null && last?.drift != null) {
       const dVsLast = today.drift - last.drift;
       lines.push(`Drift: ${fmtSigned1(dVsLast)}%-Pkt vs letzte`);
@@ -6412,6 +6435,15 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       } else {
         verdict = `Einheit ähnlich – HF-Drift vergleichbar (${fmtSigned1(driftDelta)} bpm vs letzte).`;
       }
+    }
+  } else if (same.length && isTempoDauerlauf && today.drift != null && last?.drift != null) {
+    const driftDelta = today.drift - last.drift;
+    if (driftDelta >= 1.5) {
+      verdict = `TDL härter – Drift höher (${fmtSigned1(driftDelta)}%-Pkt vs letzte).`;
+    } else if (driftDelta <= -1.5) {
+      verdict = `TDL stabiler – Drift niedriger (${fmtSigned1(driftDelta)}%-Pkt vs letzte).`;
+    } else {
+      verdict = `TDL ähnlich – Drift vergleichbar (${fmtSigned1(driftDelta)}%-Pkt vs letzte).`;
     }
   }
 
@@ -7187,7 +7219,9 @@ function getIntervalTypeFromActivity(a) {
   if (!keyType) return null;
   const s = String(keyType).toLowerCase();
   if (s.includes("vo2") || s.includes("v02")) return "vo2";
-  if (s.includes("schwelle") || s.includes("threshold")) return "threshold";
+  if (s.includes("schwelle") || s.includes("threshold") || s.includes("tempo") || s.includes("tdl")) {
+    return "threshold";
+  }
   return null;
 }
 
