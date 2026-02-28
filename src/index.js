@@ -1990,7 +1990,7 @@ const PROGRESSION_TEMPLATES = {
     "5k": {
       racepace: [
         { reps: 4, work_km: 0.8 },
-        { reps: 6, work_km: 1.0 },
+        { reps: 4, work_km: 1.0 },
         { reps: 4, work_km: 1.5 },
       ],
     },
@@ -2096,7 +2096,7 @@ const KEY_SESSION_RECOMMENDATIONS = {
     "5k": {
       racepace: [
         "4×0,8 km @ 5k-RP",
-        "6×1,0 km @ 5k-RP",
+        "4×1,0 km @ 5k-RP",
         "4×1,5 km @ 5k-RP",
       ],
     },
@@ -4874,9 +4874,12 @@ function buildComments(
     : longRunStepCapMin;
   const planStartWeeks = getPlanStartWeeks(eventDistance);
   const inPlanPhase = Number.isFinite(weeksToEvent) && weeksToEvent <= planStartWeeks;
-  const longRunTargetMin = inPlanPhase && phaseLongRunMaxMin > 0
-    ? Math.max(prePlanLongRunTargetMin, longRunSafetyCapMin || prePlanLongRunTargetMin)
+  const longRunTargetPhaseCapMin = inPlanPhase && phaseLongRunMaxMin > 0
+    ? Math.min(prePlanLongRunTargetMin, phaseLongRunMaxMin)
     : prePlanLongRunTargetMin;
+  const longRunTargetMin = longRunSafetyCapMin > 0
+    ? Math.min(longRunTargetPhaseCapMin, longRunSafetyCapMin)
+    : longRunTargetPhaseCapMin;
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunSafetyCapMin
