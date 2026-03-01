@@ -5105,6 +5105,9 @@ function buildComments(
   const keyCheckMetrics = [
     `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
+    fatigue?.override
+      ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
+      : "Fatigue-Override: aus",
     `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
     `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
   ];
