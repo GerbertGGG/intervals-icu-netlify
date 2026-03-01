@@ -7108,9 +7108,11 @@ async function buildWatchfacePayload(env, endIso) {
   const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
-  const runSum7 = runLoad.reduce((a, b) => a + b, 0);
+  const runSum7Raw = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
-  const runGoal = await resolveWatchfaceRunGoal(env, end);
+  const runSnapshot = await resolveWatchfaceRunSnapshot(env, end);
+  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : runSum7Raw;
+  const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : MIN_STIMULUS_7D_RUN_EVENT;
   const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
   return {
     ok: true,
@@ -7131,7 +7133,7 @@ async function buildWatchfacePayload(env, endIso) {
   };
 }
 
-async function resolveWatchfaceRunGoal(env, dayIso) {
+async function resolveWatchfaceRunSnapshot(env, dayIso) {
   const ctx = {
     wellnessCache: new Map(),
     blockStateCache: new Map(),
@@ -7141,34 +7143,55 @@ async function resolveWatchfaceRunGoal(env, dayIso) {
   for (let i = 0; i <= lookbackDays; i += 1) {
     const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
 
-    // Prefer the goal that was already written into the Daily-Report NOTE
+    // Prefer values already written into the Daily-Report NOTE
     // so watchface consumes exactly the same output and does not re-derive it.
     const events = await fetchIntervalsEvents(env, probeDay, probeDay);
     const dailyReport = (events || []).find((e) => String(e?.external_id || "") === `daily-report-${probeDay}`);
-    const goalFromDailyReport = parseRunGoalFromDailyReportNote(dailyReport?.description);
-    if (Number.isFinite(goalFromDailyReport) && goalFromDailyReport > 0) {
-      return Math.round(goalFromDailyReport);
+    const fromDailyReport = parseRunSnapshotFromDailyReportNote(dailyReport?.description);
+    if (Number.isFinite(fromDailyReport?.runGoal) && fromDailyReport.runGoal > 0 && Number.isFinite(fromDailyReport?.runValue)) {
+      return {
+        runValue: Math.round(fromDailyReport.runValue),
+        runGoal: Math.round(fromDailyReport.runGoal),
+      };
     }
 
     const persisted = await getPersistedBlockState(ctx, env, probeDay);
-    if (Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0) {
-      return Math.round(persisted.effectiveFloorTarget);
-    }
-    if (Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0) {
-      return Math.round(persisted.floorTarget);
+    const persistedGoal =
+      Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0
+        ? persisted.effectiveFloorTarget
+        : Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0
+          ? persisted.floorTarget
+          : null;
+    if (Number.isFinite(persistedGoal)) {
+      return {
+        runValue: null,
+        runGoal: Math.round(persistedGoal),
+      };
     }
   }
 
-  return MIN_STIMULUS_7D_RUN_EVENT;
+  return {
+    runValue: null,
+    runGoal: MIN_STIMULUS_7D_RUN_EVENT,
+  };
+}
+
+function parseRunSnapshotFromDailyReportNote(description) {
+  if (!description) return null;
+  const plain = fromHardLineBreakText(description);
+  const match = plain.match(/RunFloor\s*\((?:7\s*Tage|10T\s*EWMA)\)\s*:\s*(\d+)\s*\/\s*(\d+)/i);
+  if (!match) return null;
+  const runValue = Number(match[1]);
+  const runGoal = Number(match[2]);
+  return {
+    runValue: Number.isFinite(runValue) ? runValue : null,
+    runGoal: Number.isFinite(runGoal) ? runGoal : null,
+  };
 }
 
 function parseRunGoalFromDailyReportNote(description) {
-  if (!description) return null;
-  const plain = fromHardLineBreakText(description);
-  const match = plain.match(/RunFloor\s*\((?:7\s*Tage|10T\s*EWMA)\)\s*:\s*\d+\s*\/\s*(\d+)/i);
-  if (!match) return null;
-  const goal = Number(match[1]);
-  return Number.isFinite(goal) ? goal : null;
+  const snapshot = parseRunSnapshotFromDailyReportNote(description);
+  return Number.isFinite(snapshot?.runGoal) ? snapshot.runGoal : null;
 }
 
 
