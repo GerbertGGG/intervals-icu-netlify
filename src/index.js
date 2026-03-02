@@ -611,7 +611,7 @@ const LONGRUN_PREPLAN = {
 
 
 // Minimum stimulus thresholds per mode (tune later)
-const MIN_STIMULUS_7D_RUN_EVENT = 130;
+const MIN_STIMULUS_7D_RUN_EVENT = 110;
 const MIN_STIMULUS_7D_BIKE_EVENT = 220;  // bike primary
 const RUN_FLOOR_EWMA_ALPHA = 0.82;
 const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 10;
