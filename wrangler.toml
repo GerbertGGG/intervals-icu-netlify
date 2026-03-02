@@ -2,9 +2,8 @@ name = "intervals-icu-netlify"
 main = "src/index.js"
 compatibility_date = "2025-11-11"
 
-# Zweimal täglich: morgens 06:00 UTC und abends 19:00 UTC
-# (Deutschland: i.d.R. 07:00/08:00 und 20:00/21:00 je nach Sommerzeit)
-triggers = { crons = ["0 19 * * *", "0 6 * * *"] }
+# Global alle 30 Minuten (UTC); Zeitfenster-Gating erfolgt im Worker auf Europe/Berlin.
+triggers = { crons = ["*/30 * * * *"] }
 
 [[kv_namespaces]]
 binding = "KV"
