@@ -7167,9 +7167,9 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
     blockStateCache: new Map(),
   };
   const lookbackDays = 14;
+  const lookbackStartIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - lookbackDays * 86400000));
 
-  // Use only the current Daily-Report value for the displayed RunFloor number,
-  // so the watchface never falls back to stale EWMA values from previous days.
+  // Prefer Daily-Report values so watchface and report stay in sync.
   const currentDayEvents = await fetchIntervalsEvents(env, dayIso, dayIso);
   const currentDailyReport = (currentDayEvents || []).find((e) => String(e?.external_id || "") === `daily-report-${dayIso}`);
   const currentSnapshot = parseRunSnapshotFromDailyReportNote(currentDailyReport?.description);
@@ -7177,6 +7177,23 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
     return {
       runValue: Math.round(currentSnapshot.runValue),
       runGoal: Math.round(currentSnapshot.runGoal),
+    };
+  }
+
+  const lookbackEvents = await fetchIntervalsEvents(env, lookbackStartIso, dayIso);
+  const latestDailyReportSnapshot = (lookbackEvents || [])
+    .filter((e) => String(e?.external_id || "").startsWith("daily-report-"))
+    .sort((a, b) => {
+      const aStart = Date.parse(String(a?.start_date || "")) || 0;
+      const bStart = Date.parse(String(b?.start_date || "")) || 0;
+      return bStart - aStart;
+    })
+    .map((e) => parseRunSnapshotFromDailyReportNote(e?.description))
+    .find((snapshot) => Number.isFinite(snapshot?.runGoal) && snapshot.runGoal > 0 && Number.isFinite(snapshot?.runValue));
+  if (latestDailyReportSnapshot) {
+    return {
+      runValue: Math.round(latestDailyReportSnapshot.runValue),
+      runGoal: Math.round(latestDailyReportSnapshot.runGoal),
     };
   }
 
