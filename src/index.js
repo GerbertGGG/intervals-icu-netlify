@@ -7165,65 +7165,83 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
   const ctx = {
     wellnessCache: new Map(),
     blockStateCache: new Map(),
+    activitiesAll: [],
   };
-  const lookbackDays = 14;
-  const lookbackStartIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - lookbackDays * 86400000));
+  const lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS;
+  const dayStart = new Date(dayIso + "T00:00:00Z");
+  const lookbackStartIso = isoDate(new Date(dayStart.getTime() - (lookbackDays - 1) * 86400000));
 
-  // Prefer Daily-Report values so watchface and report stay in sync.
-  const currentDayEvents = await fetchIntervalsEvents(env, dayIso, dayIso);
-  const currentDailyReport = (currentDayEvents || []).find((e) => String(e?.external_id || "") === `daily-report-${dayIso}`);
-  const currentSnapshot = parseRunSnapshotFromDailyReportNote(currentDailyReport?.description);
-  if (Number.isFinite(currentSnapshot?.runGoal) && currentSnapshot.runGoal > 0 && Number.isFinite(currentSnapshot?.runValue)) {
-    return {
-      runValue: Math.round(currentSnapshot.runValue),
-      runGoal: Math.round(currentSnapshot.runGoal),
-    };
+  // Use the same source variables as Daily-Report (EWMA + effectiveFloorTarget)
+  // instead of parsing rendered report text.
+  try {
+    ctx.activitiesAll = await fetchIntervalsActivities(env, lookbackStartIso, dayIso);
+  } catch {
+    ctx.activitiesAll = [];
   }
 
-  const lookbackEvents = await fetchIntervalsEvents(env, lookbackStartIso, dayIso);
-  const latestDailyReportSnapshot = (lookbackEvents || [])
-    .filter((e) => String(e?.external_id || "").startsWith("daily-report-"))
-    .sort((a, b) => {
-      const aStart = Date.parse(String(a?.start_date || "")) || 0;
-      const bStart = Date.parse(String(b?.start_date || "")) || 0;
-      return bStart - aStart;
-    })
-    .map((e) => parseRunSnapshotFromDailyReportNote(e?.description))
-    .find((snapshot) => Number.isFinite(snapshot?.runGoal) && snapshot.runGoal > 0 && Number.isFinite(snapshot?.runValue));
-  if (latestDailyReportSnapshot) {
-    return {
-      runValue: Math.round(latestDailyReportSnapshot.runValue),
-      runGoal: Math.round(latestDailyReportSnapshot.runGoal),
-    };
-  }
+  const persistedToday = await getPersistedBlockState(ctx, env, dayIso);
+  const eventDate = persistedToday?.eventDate || persistedToday?.lastEventDate || null;
+  const eventDistance = persistedToday?.eventDistance || null;
+  const runValueRaw = computeRunFloorEwma(ctx, dayIso, { eventDate, eventDistance, lookbackDays });
+  const runValue = Number.isFinite(runValueRaw) ? Math.round(runValueRaw) : null;
 
-  for (let i = 0; i <= lookbackDays; i += 1) {
-    const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
+  let runGoalRaw =
+    Number.isFinite(persistedToday?.effectiveFloorTarget) && persistedToday.effectiveFloorTarget > 0
+      ? persistedToday.effectiveFloorTarget
+      : Number.isFinite(persistedToday?.floorTarget) && persistedToday.floorTarget > 0
+        ? persistedToday.floorTarget
+        : null;
 
-    const persisted = await getPersistedBlockState(ctx, env, probeDay);
-    const persistedGoal =
-      Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0
-        ? persisted.effectiveFloorTarget
-        : Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0
-          ? persisted.floorTarget
-          : null;
-    if (Number.isFinite(persistedGoal)) {
-      return {
-        runValue: null,
-        runGoal: Math.round(persistedGoal),
-      };
+  if (!Number.isFinite(runGoalRaw) || runGoalRaw <= 0) {
+    for (let i = 1; i <= lookbackDays; i += 1) {
+      const probeDay = isoDate(new Date(dayStart.getTime() - i * 86400000));
+      const persisted = await getPersistedBlockState(ctx, env, probeDay);
+      const persistedGoal =
+        Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0
+          ? persisted.effectiveFloorTarget
+          : Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0
+            ? persisted.floorTarget
+            : null;
+      if (Number.isFinite(persistedGoal) && persistedGoal > 0) {
+        runGoalRaw = persistedGoal;
+        break;
+      }
     }
   }
 
   return {
-    runValue: null,
-    runGoal: MIN_STIMULUS_7D_RUN_EVENT,
+    runValue,
+    runGoal: Number.isFinite(runGoalRaw) && runGoalRaw > 0 ? Math.round(runGoalRaw) : MIN_STIMULUS_7D_RUN_EVENT,
   };
 }
 
 function parseRunSnapshotFromDailyReportNote(description) {
   if (!description) return null;
   const plain = fromHardLineBreakText(description);
+  const compact = plain.trim();
+
+  // Support payloads where Daily-Report content is persisted as JSON (escaped or plain)
+  // so watchface variables can stay identical to Daily-Report values.
+  if (compact.startsWith("{") && compact.endsWith("}")) {
+    try {
+      const parsedJson = JSON.parse(compact);
+      const runValueCandidate =
+        parsedJson?.runFloorNow ?? parsedJson?.runSum7 ?? parsedJson?.runValue ?? parsedJson?.runFloor;
+      const runGoalCandidate =
+        parsedJson?.runFloorGoal ?? parsedJson?.runGoal ?? parsedJson?.floorTarget ?? parsedJson?.runTarget;
+      const runValue = Number(runValueCandidate);
+      const runGoal = Number(runGoalCandidate);
+      if (Number.isFinite(runValue) && Number.isFinite(runGoal)) {
+        return {
+          runValue,
+          runGoal,
+        };
+      }
+    } catch (_) {
+      // Keep text-based parsing fallback below.
+    }
+  }
+
   const parseMatch = (match) => {
     if (!match) return null;
     const runValue = Number(String(match[1]).replace(",", "."));
