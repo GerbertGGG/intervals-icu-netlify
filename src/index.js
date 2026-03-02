@@ -1312,7 +1312,7 @@ function computeRunFloorEwma(
     const weeksInfo = eventDate ? computeWeeksToEvent(d, eventDate, eventDistance) : { weeksToEvent: null };
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksInfo?.weeksToEvent ?? null);
     const tss = loads.run + loads.bike * bikeSubFactor;
-    smooth = smooth == null ? tss : safeAlpha * tss + (1 - safeAlpha) * smooth;
+    smooth = smooth == null ? tss : tss + safeAlpha * smooth;
   }
 
   return Number.isFinite(smooth) ? smooth : 0;
