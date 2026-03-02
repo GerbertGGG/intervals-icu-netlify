@@ -4127,7 +4127,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const perRunInfo = [];
     const existingDailyReportEvent =
       write && runMetricsOnlyIfExisting ? await fetchDailyReportNoteEvent(env, day) : null;
-    const runSectionOnly = runMetricsOnly || Boolean(existingDailyReportEvent?.id);
+    const runSectionOnly =
+      runMetricsOnly && (!runMetricsOnlyIfExisting || Boolean(existingDailyReportEvent?.id));
     const wellnessToday = await fetchWellnessDay(ctx, env, day);
     const manualRaceStartIso = parseManualRaceStartIso(
       runtimeOverrides?.raceStartOverrideIso,
