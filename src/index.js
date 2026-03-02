@@ -7147,6 +7147,8 @@ async function buildWatchfacePayload(env, endIso) {
     days,
     runLoad,
     runLoadWindowDays: WATCHFACE_LOAD_WINDOW_DAYS,
+    runFloorNow: runSum7,
+    runFloorGoal: runGoal,
     runSum7,
     runGoal,
     strengthMin,
@@ -7207,10 +7209,10 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
 function parseRunSnapshotFromDailyReportNote(description) {
   if (!description) return null;
   const plain = fromHardLineBreakText(description);
-  const match = plain.match(/RunFloor\s*\(10T\s*EWMA\)\s*:\s*(\d+)\s*\/\s*(\d+)/i);
+  const match = plain.match(/RunFloor[^\n:]*:\s*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/i);
   if (!match) return null;
-  const runValue = Number(match[1]);
-  const runGoal = Number(match[2]);
+  const runValue = Number(String(match[1]).replace(",", "."));
+  const runGoal = Number(String(match[2]).replace(",", "."));
   return {
     runValue: Number.isFinite(runValue) ? runValue : null,
     runGoal: Number.isFinite(runGoal) ? runGoal : null,
