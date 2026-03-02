@@ -2027,10 +2027,10 @@ function summarizeIntervalSessionQuality(activity) {
 const PHASE_MAX_MINUTES = {
   BASE: {
     // Beginner-orientierte Obergrenzen für Base-Longruns
-    "5k": { ga: 75, schwelle: 25, longrun: 60, vo2_touch: 3, strides: 3 },
-    "10k": { ga: 80, schwelle: 30, longrun: 70, vo2_touch: 2, strides: 2 },
-    hm: { ga: 90, schwelle: 20, longrun: 90, vo2_touch: 2, strides: 2 },
-    m: { ga: 95, schwelle: 15, longrun: 110, strides: 1 },
+    "5k": { ga: 75, longrun: 60, vo2_touch: 3, strides: 3 },
+    "10k": { ga: 80, longrun: 70, vo2_touch: 2, strides: 2 },
+    hm: { ga: 90, longrun: 90, vo2_touch: 2, strides: 2 },
+    m: { ga: 95, longrun: 110, strides: 1 },
   },
   BUILD: {
     // Beginner-orientierte Peak-Longruns (race-specific)
@@ -2215,23 +2215,19 @@ const KEY_SESSION_RECOMMENDATIONS = {
   BASE: {
     "5k": {
       ga: ["45–75′ GA1 locker", "langer Lauf 75–100′"],
-      schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
       vo2_touch: ["8–10×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "10k": {
       ga: ["60–75′ GA1 locker", "langer Lauf 90–110′"],
-      schwelle: ["3×8′ @ Schwelle", "4×6′ @ Schwelle", "20′ steady"],
       vo2_touch: ["6–8×10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "hm": {
       ga: ["60–90′ GA1 locker", "langer Lauf 100–130′"],
-      schwelle: ["3×10′ @ Schwelle", "2×15′ @ Schwelle"],
       vo2_touch: ["6×8–10″ Hill Sprints (volle 2–3′ Pause)"],
       strides: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     },
     "m": {
       ga: ["75–90′ GA1 locker", "langer Lauf 120–150′"],
-      schwelle: ["2×8′ @ Schwelle (locker)", "20′ steady (kontrolliert)"],
       strides: ["4–6×8–10″ Hill Sprints (volle 2–3′ Pause)"]
     }
   },
@@ -2314,10 +2310,10 @@ const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
 const KEY_PATTERN_1PERWEEK = {
   BASE: {
-    "5k": ["schwelle", "schwelle", "vo2_touch"],
-    "10k": ["schwelle", "schwelle", "vo2_touch"],
-    hm: ["steady", "strides", "steady", "schwelle"],
-    m: ["schwelle", "schwelle", "schwelle", "strides"],
+    "5k": ["steady", "steady", "vo2_touch"],
+    "10k": ["steady", "steady", "vo2_touch"],
+    hm: ["steady", "strides", "steady", "strides"],
+    m: ["steady", "steady", "steady", "strides"],
   },
   BUILD: {
     "5k": ["vo2_touch", "schwelle"],
@@ -2379,7 +2375,7 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
 
   if (overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") {
     if (planned === "vo2_touch" || planned === "strides") {
-      planned = block === "RACE" ? "racepace" : "schwelle";
+      planned = block === "RACE" ? "racepace" : block === "BASE" ? "steady" : "schwelle";
     }
     if (block === "RACE" && dist === "5k") {
       planned = "schwelle";
@@ -2394,7 +2390,7 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   }
 
   if ((planned === "vo2_touch" || planned === "strides") && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
-    planned = block === "RACE" ? "racepace" : "schwelle";
+    planned = block === "RACE" ? "racepace" : block === "BASE" ? "steady" : "schwelle";
   }
 
   if (block === "RACE" && dist === "5k" && fatigueHigh) {
@@ -2415,7 +2411,7 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
 
   if (block === "BASE" && (dist === "hm" || dist === "m") && planned === "strides") {
     const stridesSeconds = Number(context?.stridesSeconds ?? context?.stridesDurationSec ?? context?.keyWorkSec ?? 0);
-    if (!Number.isFinite(stridesSeconds) || stridesSeconds > 60) planned = "schwelle";
+    if (!Number.isFinite(stridesSeconds) || stridesSeconds > 60) planned = "steady";
   }
 
   const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
@@ -2760,7 +2756,7 @@ function chooseThresholdFormat(context = {}, keyRules = {}) {
   const nextDayFatigueHigh = context?.fatigue?.override === true || context?.overlayMode === "DELOAD";
 
   if (block === "BASE") {
-    return { format: "intervals", reason: "BASE: Schwelle minimal und kontrolliert dosieren." };
+    return { format: "intervals", reason: "BASE: keine Schwelle einplanen, stattdessen locker/ökonomisch halten." };
   }
 
   if (block === "BUILD" && (driftHigh || rpeCreep || nextDayFatigueHigh || weeklyQualitySlots <= 2)) {
@@ -2954,18 +2950,18 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "schwelle", "strides", "vo2_touch"],
-        preferredKeyTypes: ["schwelle", "steady"],
-        bannedKeyTypes: ["racepace"],
+        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
+        preferredKeyTypes: ["steady", "vo2_touch"],
+        bannedKeyTypes: ["schwelle", "racepace"],
       };
     }
     if (dist === "m" || dist === "hm") {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "schwelle", "strides"],
-        preferredKeyTypes: ["schwelle", "steady"],
-        bannedKeyTypes: ["racepace", "vo2_touch"],
+        allowedKeyTypes: ["steady", "strides"],
+        preferredKeyTypes: ["steady", "strides"],
+        bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
       };
     }
     return {
