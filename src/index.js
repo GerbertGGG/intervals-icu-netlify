@@ -3508,8 +3508,9 @@ function determineBlockState({
   let block = previousState?.block || (weeksToEvent <= raceStartWeeks ? "BUILD" : "BASE");
 
   const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
-  const runFloorIsLow =
-    runFloorTarget > 0 && (historyMetrics?.runFloor7 ?? 0) < runFloorTarget * 0.5;
+  const runFloorNow = historyMetrics?.runFloorEwma10 ?? historyMetrics?.runFloor7 ?? 0;
+  const runFloorPrev = historyMetrics?.runFloorEwma10Prev ?? historyMetrics?.runFloorPrev7 ?? 0;
+  const runFloorIsLow = runFloorTarget > 0 && runFloorNow < runFloorTarget * 0.5;
   if (weeksToEvent <= 8 && block === "BASE") {
     if (runFloorIsLow) {
       reasons.push("BASE bleibt trotz Event-Nähe: RunFloor extrem niedrig");
@@ -3529,8 +3530,8 @@ function determineBlockState({
 
   const runFloorReady =
     runFloorTarget > 0
-      ? historyMetrics.runFloor7 >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct &&
-        historyMetrics.runFloorPrev7 >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct
+      ? runFloorNow >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct &&
+        runFloorPrev >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct
       : true;
 
   const aerobicReady = historyMetrics?.aerobicOk && historyMetrics?.aerobicOkPrev;
@@ -4329,8 +4330,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         : MIN_STIMULUS_7D_RUN_EVENT;
 
     const historyMetrics = {
-      runFloor7: runFloorEwma10 ?? 0,
-      runFloorPrev7: runFloorEwma10Prev ?? 0,
+      runFloorEwma10: runFloorEwma10 ?? 0,
+      runFloorEwma10Prev: runFloorEwma10Prev ?? 0,
       runFloorTarget: baseRunFloorTarget,
       aerobicOk,
       aerobicOkPrev,
@@ -4811,7 +4812,7 @@ function buildRecommendationsAndBottomLine(state) {
   const bottom = [];
 
   const runFloorTarget = state?.runFloorTarget;
-  const runFloor7 = state?.runFloor7;
+  const runFloorNow = state?.runFloorEwma10 ?? state?.runFloor7;
   const explicitSessionShort = state?.explicitSessionShort;
   const longRunDoneMin = Number(state?.longRunDoneMin ?? 0);
   const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
@@ -4826,8 +4827,8 @@ function buildRecommendationsAndBottomLine(state) {
     bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
   }
 
-  if (Number.isFinite(runFloor7) && Number.isFinite(runFloorTarget) && runFloor7 < runFloorTarget) {
-    rec.push(`RunFloor ${runFloor7}/${runFloorTarget} → Volumen priorisieren.`);
+  if (Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
+    rec.push(`RunFloor ${runFloorNow}/${runFloorTarget} → Volumen priorisieren.`);
   }
   if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
     if (longRunGapMin < 0) {
@@ -5164,7 +5165,7 @@ function buildComments(
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
   const decisionCompact = buildRecommendationsAndBottomLine({
-    runFloor7: runLoad7,
+    runFloorEwma10: runLoad7,
     runFloorTarget: runTarget > 0 ? runTarget : null,
     intensityDistribution: keyCompliance?.intensityDistribution,
     budgetBlocked,
