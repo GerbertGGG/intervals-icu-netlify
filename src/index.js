@@ -7224,13 +7224,28 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
 function parseRunSnapshotFromDailyReportNote(description) {
   if (!description) return null;
   const plain = fromHardLineBreakText(description);
-  const match = plain.match(/RunFloor[^\n:]*:\s*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/i);
-  if (!match) return null;
-  const runValue = Number(String(match[1]).replace(",", "."));
-  const runGoal = Number(String(match[2]).replace(",", "."));
+  const parseMatch = (match) => {
+    if (!match) return null;
+    const runValue = Number(String(match[1]).replace(",", "."));
+    const runGoal = Number(String(match[2]).replace(",", "."));
+    return {
+      runValue: Number.isFinite(runValue) ? runValue : null,
+      runGoal: Number.isFinite(runGoal) ? runGoal : null,
+    };
+  };
+
+  // Prefer the explicit EWMA snapshot line used in Daily-Report.
+  const ewmaMatch = plain.match(/RunFloor\s*\(\s*10T\s*EWMA\s*\)\s*:\s*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/i);
+  if (ewmaMatch) return parseMatch(ewmaMatch);
+
+  // Fallback: generic RunFloor lines (e.g. compact recommendation strings).
+  const genericMatches = [...plain.matchAll(/RunFloor[^\n:]*:\s*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/gi)];
+  const genericMatch = genericMatches.length ? genericMatches[genericMatches.length - 1] : null;
+  if (!genericMatch) return null;
+  const parsed = parseMatch(genericMatch);
   return {
-    runValue: Number.isFinite(runValue) ? runValue : null,
-    runGoal: Number.isFinite(runGoal) ? runGoal : null,
+    runValue: parsed?.runValue ?? null,
+    runGoal: parsed?.runGoal ?? null,
   };
 }
 
