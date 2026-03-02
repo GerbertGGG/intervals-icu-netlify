@@ -7141,20 +7141,20 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
   };
   const lookbackDays = 14;
 
+  // Use only the current Daily-Report value for the displayed RunFloor number,
+  // so the watchface never falls back to stale EWMA values from previous days.
+  const currentDayEvents = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const currentDailyReport = (currentDayEvents || []).find((e) => String(e?.external_id || "") === `daily-report-${dayIso}`);
+  const currentSnapshot = parseRunSnapshotFromDailyReportNote(currentDailyReport?.description);
+  if (Number.isFinite(currentSnapshot?.runGoal) && currentSnapshot.runGoal > 0 && Number.isFinite(currentSnapshot?.runValue)) {
+    return {
+      runValue: Math.round(currentSnapshot.runValue),
+      runGoal: Math.round(currentSnapshot.runGoal),
+    };
+  }
+
   for (let i = 0; i <= lookbackDays; i += 1) {
     const probeDay = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - i * 86400000));
-
-    // Prefer values already written into the Daily-Report NOTE
-    // so watchface consumes exactly the same output and does not re-derive it.
-    const events = await fetchIntervalsEvents(env, probeDay, probeDay);
-    const dailyReport = (events || []).find((e) => String(e?.external_id || "") === `daily-report-${probeDay}`);
-    const fromDailyReport = parseRunSnapshotFromDailyReportNote(dailyReport?.description);
-    if (Number.isFinite(fromDailyReport?.runGoal) && fromDailyReport.runGoal > 0 && Number.isFinite(fromDailyReport?.runValue)) {
-      return {
-        runValue: Math.round(fromDailyReport.runValue),
-        runGoal: Math.round(fromDailyReport.runGoal),
-      };
-    }
 
     const persisted = await getPersistedBlockState(ctx, env, probeDay);
     const persistedGoal =
@@ -7180,7 +7180,7 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
 function parseRunSnapshotFromDailyReportNote(description) {
   if (!description) return null;
   const plain = fromHardLineBreakText(description);
-  const match = plain.match(/RunFloor\s*\((?:7\s*Tage|10T\s*EWMA)\)\s*:\s*(\d+)\s*\/\s*(\d+)/i);
+  const match = plain.match(/RunFloor\s*\(10T\s*EWMA\)\s*:\s*(\d+)\s*\/\s*(\d+)/i);
   if (!match) return null;
   const runValue = Number(match[1]);
   const runGoal = Number(match[2]);
