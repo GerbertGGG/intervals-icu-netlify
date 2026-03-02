@@ -117,6 +117,11 @@ export default {
             raceStartOverrideIso,
             blockStartOverrideIso,
           });
+          if (write) {
+            await dailyModelJob(env, newest).catch((e) => {
+              console.error("dailyModelJob (/sync debug) failed", e);
+            });
+          }
           return json(result);
         } catch (e) {
           return json(
@@ -139,11 +144,14 @@ export default {
 
       // async fire-and-forget (but don't swallow silently)
       ctx?.waitUntil?.(
-        syncRange(env, oldest, newest, write, false, warmupSkipSec, {
-          raceStartOverrideIso,
-          blockStartOverrideIso,
-        }).catch((e) => {
-          console.error("syncRange failed", e);
+        (async () => {
+          await syncRange(env, oldest, newest, write, false, warmupSkipSec, {
+            raceStartOverrideIso,
+            blockStartOverrideIso,
+          });
+          if (write) await dailyModelJob(env, newest);
+        })().catch((e) => {
+          console.error("sync/model job failed", e);
         })
       );
 
@@ -161,8 +169,11 @@ export default {
     const runMetricsOnly = isEveningBerlinRun(event);
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true }).catch((e) => {
-        console.error("scheduled syncRange failed", e);
+      (async () => {
+        await syncRange(env, yday, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true });
+        await dailyModelJob(env, today);
+      })().catch((e) => {
+        console.error("scheduled sync/model job failed", e);
       })
     );
   },
@@ -4702,7 +4713,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       let detectiveNoteText = null;
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
-        detectiveNoteText = detectiveNote?.text ?? "";
+        const learnedCoaching = await buildMondayLearnedCoaching(env, day);
+        detectiveNoteText = appendMondayCoachingBlock(detectiveNote?.text ?? "", learnedCoaching);
         if (write) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
         }
@@ -7164,6 +7176,322 @@ function isStrength(a) {
   const strengthTags = new Set(["strength", "stabi", "kraft", "gym", "core", "mobility"]);
   return tags.some((t) => strengthTags.has(t));
 }
+
+const MODEL_BANDIT_KEY = "model:bandit:v1";
+const MODEL_POLICY_KEY = "model:policy:v1";
+const MODEL_WEEKS_INDEX_KEY = "model:weeks:index:v1";
+const MODEL_WEEK_PREFIX = "model:week:v1:";
+const MODEL_SCHEMA_VERSION = 1;
+const MODEL_ACTIONS = [
+  { id: "thr_3x10", label: "Schwelle: 3×10′", type: "threshold" },
+  { id: "thr_2x15", label: "Schwelle: 2×15′", type: "threshold" },
+  { id: "vo2_6x2", label: "VO2: 6×2′", type: "vo2" },
+  { id: "lr_plus10", label: "Longrun +10′", type: "longrun" },
+  { id: "lr_steady", label: "Longrun steady", type: "longrun" },
+  { id: "str_2x", label: "Kraft 2×/W", type: "strength" },
+  { id: "str_1x", label: "Kraft 1×/W", type: "strength" },
+];
+
+async function dailyModelJob(env, todayIso) {
+  if (!env?.KV) return { ok: false, skipped: "missing_kv" };
+  const today = isIsoDate(todayIso) ? todayIso : isoDate(new Date());
+
+  const weekStart = mondayOfIso(today);
+  const weekEnd = isoDate(new Date(new Date(weekStart + "T00:00:00Z").getTime() + 6 * 86400000));
+  const features = await buildWeekFeatures(env, weekStart, weekEnd);
+  const nowIso = new Date().toISOString();
+
+  const weekEntry = (await loadModelWeek(env, weekStart)) || {
+    weekStart,
+    weekEnd,
+    createdAt: nowIso,
+  };
+  weekEntry.weekEnd = weekEnd;
+  weekEntry.features = features;
+  weekEntry.featuresUpdatedAt = nowIso;
+
+  if (!weekEntry.actionId) {
+    const model = await loadBanditModel(env);
+    const pick = pickActionUCB(model);
+    weekEntry.actionId = pick.action.id;
+    weekEntry.action = pick.action;
+    weekEntry.decidedAt = nowIso;
+
+    await env.KV.put(
+      MODEL_POLICY_KEY,
+      JSON.stringify({
+        weekStart,
+        weekEnd,
+        action: pick.action,
+        totalN: pick.totalN,
+        score: round(pick.bestScore, 4),
+        reason: "UCB policy (explore/exploit) based on your history",
+        updatedAt: nowIso,
+      })
+    );
+  }
+
+  await saveModelWeek(env, weekStart, weekEntry);
+
+  const updatedRewards = await updateMaturedRewards(env, today);
+  return { ok: true, weekStart, weekEnd, updatedRewards };
+}
+
+async function buildMondayLearnedCoaching(env, mondayIso) {
+  if (!env?.KV) return "";
+
+  const weekStart = mondayOfIso(mondayIso);
+  const row = await loadModelWeek(env, weekStart);
+
+  const action = MODEL_ACTIONS.find((x) => x.id === String(row?.actionId || ""));
+  if (!action) return "🤖 Lern-Coach: Noch keine Empfehlung vorhanden (zu wenig Daten).";
+
+  const weeks = await loadAllModelWeeks(env);
+  let n = 0;
+  let rewardSum = 0;
+  for (const week of weeks) {
+    if (String(week?.actionId || "") !== action.id) continue;
+    const rewardVal = Number(week?.outcome?.reward_28d);
+    if (!Number.isFinite(rewardVal)) continue;
+    n += 1;
+    rewardSum += rewardVal;
+  }
+
+  const avgReward = n > 0 ? rewardSum / n : null;
+  const rewardTxt = Number.isFinite(Number(row?.outcome?.reward_28d))
+    ? ` | letzter 28d-Reward: ${round(Number(row.outcome.reward_28d), 2)}`
+    : " | letzter 28d-Reward: noch offen";
+
+  if (n > 0 && Number.isFinite(avgReward)) {
+    return `🤖 Lern-Coach: Empfehlung diese Woche → ${action.label}. Evidenz: Ø Reward ${round(avgReward, 2)} (n=${n})${rewardTxt}.`;
+  }
+  return `🤖 Lern-Coach: Empfehlung diese Woche → ${action.label}. Evidenz wird aufgebaut (n=0)${rewardTxt}.`;
+}
+
+function appendMondayCoachingBlock(baseText, coachingText) {
+  const base = String(baseText || "").trim();
+  const coaching = String(coachingText || "").trim();
+  if (!coaching) return base;
+  if (!base) return ["🕵️‍♂️ Montags-Report", coaching].join("\n\n");
+  return `${base}\n\n${coaching}`;
+}
+
+async function buildWeekFeatures(env, weekStart, weekEnd) {
+  const acts = await fetchIntervalsActivities(env, weekStart, weekEnd);
+  const runs = (acts || []).filter((a) => isRun(a));
+  const strength = (acts || []).filter((a) => isStrength(a));
+
+  const runLoadSum = runs.reduce((sum, a) => sum + (extractLoad(a) || 0), 0);
+  const longrunSeconds = runs.reduce((maxSec, a) => Math.max(maxSec, Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0), 0);
+
+  let thresholdCount = 0;
+  let vo2Count = 0;
+  for (const run of runs) {
+    if (!hasKeyTag(run)) continue;
+    const keyType = String(getIntervalTypeFromActivity(run) || getKeyType(run) || "").toLowerCase();
+    if (keyType.includes("vo2") || keyType.includes("v02")) vo2Count++;
+    else thresholdCount++;
+  }
+
+  const strengthMinutes = strength.reduce(
+    (sum, a) => sum + ((Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60),
+    0
+  );
+
+  const runSnapshot = await resolveWatchfaceRunSnapshot(env);
+  return {
+    runSum7: Number.isFinite(runSnapshot?.runValue) ? round(runSnapshot.runValue, 1) : 0,
+    runGoal: Number.isFinite(runSnapshot?.runGoal) ? round(runSnapshot.runGoal, 1) : 0,
+    runLoadWeek: round(runLoadSum, 1),
+    runCount: runs.length,
+    longrunMinutes: round(longrunSeconds / 60, 1),
+    qualityThresholdCount: thresholdCount,
+    qualityVo2Count: vo2Count,
+    strengthMinutes: round(strengthMinutes, 1),
+  };
+}
+
+async function updateMaturedRewards(env, todayIso) {
+  if (!env?.KV) return 0;
+  const maturityCutoffIso = isoDate(new Date(new Date(todayIso + "T00:00:00Z").getTime() - 28 * 86400000));
+  const rows = await loadAllModelWeeks(env);
+  let updated = 0;
+  let model = await loadBanditModel(env);
+
+  for (const row of rows) {
+    if (!row?.weekStart || !row?.weekEnd || !row?.actionId) continue;
+    if (row?.outcome?.reward_28d != null) continue;
+    if (row.weekEnd > maturityCutoffIso) continue;
+
+    const evalDay = isoDate(new Date(new Date(row.weekStart + "T00:00:00Z").getTime() + 34 * 86400000));
+    const rewardInfo = await computeRewardForDay(env, evalDay);
+    if (!rewardInfo.ok || rewardInfo.reward == null) continue;
+
+    row.outcome = {
+      reward_28d: rewardInfo.reward,
+      reward_json: rewardInfo,
+      computed_at: new Date().toISOString(),
+    };
+    await saveModelWeek(env, row.weekStart, row);
+
+    model = banditUpdate(model, row.actionId, rewardInfo.reward);
+    updated++;
+  }
+
+  if (updated > 0) await saveBanditModel(env, model);
+  return updated;
+}
+
+async function loadModelWeeksIndex(env) {
+  const raw = await env.KV.get(MODEL_WEEKS_INDEX_KEY, "text");
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => isIsoDate(String(x || "")));
+  } catch {
+    return [];
+  }
+}
+
+async function saveModelWeeksIndex(env, index) {
+  const unique = uniq((index || []).filter((x) => isIsoDate(String(x || ""))));
+  unique.sort();
+  await env.KV.put(MODEL_WEEKS_INDEX_KEY, JSON.stringify(unique));
+}
+
+async function loadModelWeek(env, weekStart) {
+  const raw = await env.KV.get(`${MODEL_WEEK_PREFIX}${weekStart}`, "text");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function saveModelWeek(env, weekStart, weekEntry) {
+  await env.KV.put(`${MODEL_WEEK_PREFIX}${weekStart}`, JSON.stringify(weekEntry));
+  const index = await loadModelWeeksIndex(env);
+  if (!index.includes(weekStart)) {
+    index.push(weekStart);
+    await saveModelWeeksIndex(env, index);
+  }
+}
+
+async function loadAllModelWeeks(env) {
+  const index = await loadModelWeeksIndex(env);
+  const rows = [];
+  for (const weekStart of index) {
+    const entry = await loadModelWeek(env, weekStart);
+    if (entry) rows.push(entry);
+  }
+  rows.sort((a, b) => String(a?.weekStart || "").localeCompare(String(b?.weekStart || "")));
+  return rows;
+}
+
+async function computeRewardForDay(env, dayIso) {
+  const ctx = createCtx(env, 600, false);
+  const lookbackDays = 2 * TREND_WINDOW_DAYS + 3;
+  const oldest = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - lookbackDays * 86400000));
+  ctx.activitiesAll = await fetchIntervalsActivities(env, oldest, dayIso);
+
+  for (const a of ctx.activitiesAll) {
+    const day = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!day) continue;
+    if (isRun(a)) {
+      if (!ctx.byDayRuns.has(day)) ctx.byDayRuns.set(day, []);
+      ctx.byDayRuns.get(day).push(a);
+    }
+  }
+
+  const trend = await computeAerobicTrend(ctx, dayIso);
+  const dv = Number(trend?.dv);
+  const dd = Number(trend?.dd);
+  if (!Number.isFinite(dv)) return { ok: false, dayIso, reason: "missing_dv" };
+
+  const driftPenalty = Number.isFinite(dd) ? 0.3 * Math.max(0, dd) : 0;
+  const rewardRaw = dv - driftPenalty;
+  const reward = Math.max(-5, Math.min(5, rewardRaw));
+  return {
+    ok: true,
+    dayIso,
+    dv: Number.isFinite(dv) ? round(dv, 3) : null,
+    dd: Number.isFinite(dd) ? round(dd, 3) : null,
+    rewardRaw: round(rewardRaw, 3),
+    reward: round(reward, 3),
+  };
+}
+
+async function loadBanditModel(env) {
+  const raw = await env.KV.get(MODEL_BANDIT_KEY, "text");
+  if (!raw) return { version: MODEL_SCHEMA_VERSION, actions: {} };
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      version: MODEL_SCHEMA_VERSION,
+      actions: parsed?.actions && typeof parsed.actions === "object" ? parsed.actions : {},
+    };
+  } catch {
+    return { version: MODEL_SCHEMA_VERSION, actions: {} };
+  }
+}
+
+async function saveBanditModel(env, model) {
+  await env.KV.put(
+    MODEL_BANDIT_KEY,
+    JSON.stringify({
+      version: MODEL_SCHEMA_VERSION,
+      actions: model?.actions || {},
+      updatedAt: new Date().toISOString(),
+    })
+  );
+}
+
+function ucbScore(mean, n, totalN) {
+  if (n === 0) return Number.POSITIVE_INFINITY;
+  return mean + Math.sqrt((2 * Math.log(Math.max(1, totalN))) / n);
+}
+
+function pickActionUCB(model) {
+  const actionStates = model?.actions || {};
+  const totalN = Object.values(actionStates).reduce((sum, a) => sum + (Number(a?.n) || 0), 0);
+  let best = MODEL_ACTIONS[0];
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const action of MODEL_ACTIONS) {
+    const st = actionStates[action.id] || { n: 0, mean: 0 };
+    const score = ucbScore(Number(st?.mean) || 0, Number(st?.n) || 0, totalN);
+    if (score > bestScore) {
+      bestScore = score;
+      best = action;
+    }
+  }
+
+  return { action: best, bestScore, totalN };
+}
+
+function banditUpdate(model, actionId, reward) {
+  model.actions ||= {};
+  const st = model.actions[actionId] || { n: 0, mean: 0 };
+  const n = Number(st?.n) || 0;
+  const mean = Number(st?.mean) || 0;
+  model.actions[actionId] = {
+    n: n + 1,
+    mean: mean + (reward - mean) / (n + 1),
+    lastReward: reward,
+    updatedAt: new Date().toISOString(),
+  };
+  return model;
+}
+
+function mondayOfIso(dayIso) {
+  const d = new Date(dayIso + "T00:00:00Z");
+  const weekday = d.getUTCDay();
+  const diffToMonday = (weekday + 6) % 7;
+  return isoDate(new Date(d.getTime() - diffToMonday * 86400000));
+}
+
 async function buildWatchfacePayload(env, endIso) {
   const end = parseISODateSafe(endIso) ? endIso : isoDate(new Date());
   const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - (WATCHFACE_LOAD_WINDOW_DAYS - 1) * 86400000));
