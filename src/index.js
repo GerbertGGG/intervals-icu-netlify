@@ -4290,10 +4290,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longestRun30d,
       plan: longRunPlan,
     };
+    const runFloorDebugFlag =
+      ctx?.env?.RUN_FLOOR_DEBUG_TRACE ??
+      (typeof globalThis !== "undefined" && globalThis?.process?.env
+        ? globalThis.process.env.RUN_FLOOR_DEBUG_TRACE
+        : "");
     const runFloorEwma10 = computeRunFloorEwma(ctx, day, {
       eventDate,
       eventDistance,
-      debugTrace: /^1|true|yes$/i.test(String(process.env.RUN_FLOOR_DEBUG_TRACE || "")),
+      debugTrace: /^1|true|yes$/i.test(String(runFloorDebugFlag || "")),
     });
 
     let specificValue = 0;
