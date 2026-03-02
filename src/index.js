@@ -3867,6 +3867,56 @@ async function writeLatestBlockStateKv(env, dayIso, state) {
   });
 }
 
+// ==========================
+// RunFloor Snapshot KV
+// ==========================
+function getRunSnapshotKvKey(env) {
+  return String(env?.RUN_SNAPSHOT_KV_KEY || "RUN_SNAPSHOT_LATEST");
+}
+
+async function writeLatestRunSnapshotKv(env, dayIso, snapshot) {
+  if (!snapshot) return;
+
+  const runValue = Number(snapshot.runValue);
+  const runGoal = Number(snapshot.runGoal);
+
+  if (!Number.isFinite(runValue) || !Number.isFinite(runGoal)) return;
+
+  const key = getRunSnapshotKvKey(env);
+
+  await writeKvJson(env, key, {
+    day: dayIso,
+    snapshot: {
+      runValue: Math.round(runValue),
+      runGoal: Math.round(runGoal),
+    },
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function readLatestRunSnapshotKv(env) {
+  const key = getRunSnapshotKvKey(env);
+
+  let data = null;
+  try {
+    data = await readKvJson(env, key);
+  } catch {
+    return null;
+  }
+
+  const runValue = Number(data?.snapshot?.runValue);
+  const runGoal = Number(data?.snapshot?.runGoal);
+
+  if (!Number.isFinite(runValue) || !Number.isFinite(runGoal)) return null;
+
+  return {
+    day: data?.day ?? null,
+    runValue,
+    runGoal,
+    updatedAt: data?.updatedAt ?? null,
+  };
+}
+
 function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics) {
   if (!debugOut) return;
   debugOut.__blocks ??= {};
@@ -4433,6 +4483,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       };
     }
     specificOk = policy.specificThreshold > 0 ? specificValue >= policy.specificThreshold : true;
+
+    const runSnapshot = {
+      runValue: runFloorEwma10,
+      runGoal: runFloorState?.effectiveFloorTarget ?? runFloorState?.floorTarget ?? null,
+    };
+
+    if (write && !runSectionOnly) {
+      await writeLatestRunSnapshotKv(env, day, runSnapshot);
+    }
+
     blockState.floorTarget = runFloorState.floorTarget;
     blockState.effectiveFloorTarget = runFloorState.effectiveFloorTarget;
     blockState.deloadStartDate = runFloorState.deloadStartDate;
@@ -7140,12 +7200,11 @@ async function buildWatchfacePayload(env, endIso) {
   const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
-  const runSumWindowRaw = runLoad.reduce((a, b) => a + b, 0);
   const strengthWindowDays = days.slice(-WATCHFACE_STRENGTH_WINDOW_DAYS);
   const strengthSum7 = strengthWindowDays.reduce((sum, day) => sum + (Math.round(strengthMinByDay[day] || 0)), 0);
-  const runSnapshot = await resolveWatchfaceRunSnapshot(env, end);
-  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : runSumWindowRaw;
-  const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : MIN_STIMULUS_7D_RUN_EVENT;
+  const runSnapshot = await resolveWatchfaceRunSnapshot(env);
+  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : 0;
+  const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : 0;
   const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
   return {
     ok: true,
@@ -7169,133 +7228,14 @@ async function buildWatchfacePayload(env, endIso) {
   };
 }
 
-async function resolveWatchfaceRunSnapshot(env, dayIso) {
-  const ctx = {
-    wellnessCache: new Map(),
-    blockStateCache: new Map(),
-    activitiesAll: [],
-  };
-  const lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS;
-  const dayStart = new Date(dayIso + "T00:00:00Z");
-  const lookbackStartIso = isoDate(new Date(dayStart.getTime() - (lookbackDays - 1) * 86400000));
+async function resolveWatchfaceRunSnapshot(env) {
+  const kv = await readLatestRunSnapshotKv(env);
 
-  // Use the same source variables as Daily-Report (EWMA + effectiveFloorTarget)
-  // instead of parsing rendered report text.
-  try {
-    ctx.activitiesAll = await fetchIntervalsActivities(env, lookbackStartIso, dayIso);
-  } catch {
-    ctx.activitiesAll = [];
+  if (kv?.runValue != null && kv?.runGoal != null) {
+    return { runValue: kv.runValue, runGoal: kv.runGoal };
   }
 
-  const persistedToday = await getPersistedBlockState(ctx, env, dayIso);
-  const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso).catch(() => null);
-  const dailyReportSnapshot = parseRunSnapshotFromDailyReportNote(dailyReportEvent?.description || "");
-  const eventDate = persistedToday?.eventDate || persistedToday?.lastEventDate || null;
-  const eventDistance = persistedToday?.eventDistance || null;
-  const runValueRaw = computeRunFloorEwma(ctx, dayIso, { eventDate, eventDistance, lookbackDays });
-  const runValue = Number.isFinite(dailyReportSnapshot?.runValue)
-    ? Math.round(dailyReportSnapshot.runValue)
-    : Number.isFinite(runValueRaw)
-      ? Math.round(runValueRaw)
-      : null;
-
-  let runGoalRaw =
-    Number.isFinite(dailyReportSnapshot?.runGoal) && dailyReportSnapshot.runGoal > 0
-      ? dailyReportSnapshot.runGoal
-      : Number.isFinite(persistedToday?.effectiveFloorTarget) && persistedToday.effectiveFloorTarget > 0
-      ? persistedToday.effectiveFloorTarget
-      : Number.isFinite(persistedToday?.floorTarget) && persistedToday.floorTarget > 0
-        ? persistedToday.floorTarget
-        : null;
-
-  if (!Number.isFinite(runGoalRaw) || runGoalRaw <= 0) {
-    for (let i = 1; i <= lookbackDays; i += 1) {
-      const probeDay = isoDate(new Date(dayStart.getTime() - i * 86400000));
-      const persisted = await getPersistedBlockState(ctx, env, probeDay);
-      const persistedGoal =
-        Number.isFinite(persisted?.effectiveFloorTarget) && persisted.effectiveFloorTarget > 0
-          ? persisted.effectiveFloorTarget
-          : Number.isFinite(persisted?.floorTarget) && persisted.floorTarget > 0
-            ? persisted.floorTarget
-            : null;
-      if (Number.isFinite(persistedGoal) && persistedGoal > 0) {
-        runGoalRaw = persistedGoal;
-        break;
-      }
-    }
-  }
-
-  return {
-    runValue,
-    runGoal: Number.isFinite(runGoalRaw) && runGoalRaw > 0 ? Math.round(runGoalRaw) : MIN_STIMULUS_7D_RUN_EVENT,
-  };
-}
-
-function parseRunSnapshotFromDailyReportNote(description) {
-  if (!description) return null;
-  const plain = fromHardLineBreakText(description);
-  const compact = plain.trim();
-
-  // Support payloads where Daily-Report content is persisted as JSON (escaped or plain)
-  // so watchface variables can stay identical to Daily-Report values.
-  if (compact.startsWith("{") && compact.endsWith("}")) {
-    try {
-      const parsedJson = JSON.parse(compact);
-      const runValueCandidate =
-        parsedJson?.nRunFloorNow ??
-        parsedJson?.nRunFloor ??
-        parsedJson?.runFloorNow ??
-        parsedJson?.runSum7 ??
-        parsedJson?.runValue ??
-        parsedJson?.runFloor;
-      const runGoalCandidate =
-        parsedJson?.nRunFloorGoal ??
-        parsedJson?.nRunGoal ??
-        parsedJson?.runFloorGoal ??
-        parsedJson?.runGoal ??
-        parsedJson?.floorTarget ??
-        parsedJson?.runTarget;
-      const runValue = Number(runValueCandidate);
-      const runGoal = Number(runGoalCandidate);
-      if (Number.isFinite(runValue) && Number.isFinite(runGoal)) {
-        return {
-          runValue,
-          runGoal,
-        };
-      }
-    } catch (_) {
-      // Keep text-based parsing fallback below.
-    }
-  }
-
-  const parseMatch = (match) => {
-    if (!match) return null;
-    const runValue = Number(String(match[1]).replace(",", "."));
-    const runGoal = Number(String(match[2]).replace(",", "."));
-    return {
-      runValue: Number.isFinite(runValue) ? runValue : null,
-      runGoal: Number.isFinite(runGoal) ? runGoal : null,
-    };
-  };
-
-  // Prefer the explicit EWMA snapshot line used in Daily-Report.
-  const ewmaMatch = plain.match(/n?RunFloor\s*\(\s*10T\s*EWMA\s*\)\s*:\s*[^\d\n]*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/i);
-  if (ewmaMatch) return parseMatch(ewmaMatch);
-
-  // Fallback: generic RunFloor lines (e.g. compact recommendation strings).
-  const genericMatches = [...plain.matchAll(/n?RunFloor[^\n:]*:\s*[^\d\n]*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/gi)];
-  const genericMatch = genericMatches.length ? genericMatches[genericMatches.length - 1] : null;
-  if (!genericMatch) return null;
-  const parsed = parseMatch(genericMatch);
-  return {
-    runValue: parsed?.runValue ?? null,
-    runGoal: parsed?.runGoal ?? null,
-  };
-}
-
-function parseRunGoalFromDailyReportNote(description) {
-  const snapshot = parseRunSnapshotFromDailyReportNote(description);
-  return Number.isFinite(snapshot?.runGoal) ? snapshot.runGoal : null;
+  return { runValue: 0, runGoal: 0 };
 }
 
 
