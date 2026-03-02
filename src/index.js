@@ -19,61 +19,45 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === "/") return new Response("ok");
-  if (url.pathname === "/watchface" || url.pathname === "/watchface/") {
-  // CORS preflight (sicher ist sicher)
-  if (req.method === "OPTIONS") {
-    return new Response("", {
-      status: 204,
-      headers: {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET, OPTIONS",
-        "access-control-allow-headers": "content-type",
-        "access-control-max-age": "86400",
-      },
-    });
-  }
-
-  // optional: ?date=YYYY-MM-DD zum Testen, sonst "heute"
-  const date = url.searchParams.get("date");
-  const endIso = (date && isIsoDate(date)) ? date : isoDate(new Date());
-
-  // Watchface should always reflect the latest data, so do not cache.
-
-  try {
-    const payload = await buildWatchfacePayload(env, endIso);
-
-    const cacheControl = "no-store";
-    const res = new Response(JSON.stringify(payload), {
-      headers: {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": cacheControl,
-        "access-control-allow-origin": "*",
-      },
-    });
-    return res;
-  } catch (e) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "watchface_failed",
-        message: String(e?.message ?? e),
-        endIso,
-      }),
-      {
-        status: 500,
-        headers: {
-          "content-type": "application/json; charset=utf-8",
-          "access-control-allow-origin": "*",
-        },
+    if (url.pathname === "/watchface" || url.pathname === "/watchface/") {
+      // CORS preflight (sicher ist sicher)
+      if (req.method === "OPTIONS") {
+        return new Response("", {
+          status: 204,
+          headers: WATCHFACE_PREFLIGHT_HEADERS,
+        });
       }
-    );
-  }
-}
+
+      // optional: ?date=YYYY-MM-DD zum Testen, sonst "heute"
+      const date = url.searchParams.get("date");
+      const endIso = date && isIsoDate(date) ? date : isoDate(new Date());
+
+      try {
+        const payload = await buildWatchfacePayload(env, endIso);
+
+        return new Response(JSON.stringify(payload), {
+          headers: WATCHFACE_JSON_HEADERS,
+        });
+      } catch (e) {
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error: "watchface_failed",
+            message: String(e?.message ?? e),
+            endIso,
+          }),
+          {
+            status: 500,
+            headers: WATCHFACE_ERROR_HEADERS,
+          }
+        );
+      }
+    }
 
 
     if (url.pathname === "/sync") {
-      const write = (url.searchParams.get("write") || "").toLowerCase() === "true";
-      const debug = (url.searchParams.get("debug") || "").toLowerCase() === "true";
+      const write = parseBooleanParam(url.searchParams, "write");
+      const debug = parseBooleanParam(url.searchParams, "debug");
 
       const date = url.searchParams.get("date");
       const from = url.searchParams.get("from");
@@ -81,25 +65,7 @@ export default {
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
-      const getSearchParamAny = (keys) => {
-        for (const k of keys) {
-          const direct = url.searchParams.get(k);
-          if (direct) return direct;
-        }
-        const lowerMap = new Map();
-        for (const [k, v] of url.searchParams.entries()) {
-          if (!v) continue;
-          const lower = String(k || "").toLowerCase();
-          if (!lowerMap.has(lower)) lowerMap.set(lower, v);
-        }
-        for (const k of keys) {
-          const v = lowerMap.get(String(k).toLowerCase());
-          if (v) return v;
-        }
-        return "";
-      };
-
-      const raceStartParamRaw = getSearchParamAny([
+      const raceStartParamRaw = getSearchParamAny(url.searchParams, [
         "race_start",
         "race_start_override",
         "race_start_iso",
@@ -107,7 +73,7 @@ export default {
         "raceStart",
       ]);
       const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-      const blockStartParamRaw = getSearchParamAny([
+      const blockStartParamRaw = getSearchParamAny(url.searchParams, [
         "block_start",
         "block_start_override",
         "block_start_iso",
@@ -201,6 +167,48 @@ export default {
     );
   },
 };
+
+const WATCHFACE_PREFLIGHT_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "content-type",
+  "access-control-max-age": "86400",
+};
+
+const WATCHFACE_JSON_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+  "access-control-allow-origin": "*",
+};
+
+const WATCHFACE_ERROR_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "access-control-allow-origin": "*",
+};
+
+function parseBooleanParam(searchParams, key) {
+  return (searchParams.get(key) || "").toLowerCase() === "true";
+}
+
+function getSearchParamAny(searchParams, keys) {
+  for (const key of keys) {
+    const direct = searchParams.get(key);
+    if (direct) return direct;
+  }
+
+  const lowerMap = new Map();
+  for (const [key, value] of searchParams.entries()) {
+    if (!value) continue;
+    const normalizedKey = String(key || "").toLowerCase();
+    if (!lowerMap.has(normalizedKey)) lowerMap.set(normalizedKey, value);
+  }
+
+  for (const key of keys) {
+    const value = lowerMap.get(String(key).toLowerCase());
+    if (value) return value;
+  }
+  return "";
+}
 
 
 function isEveningBerlinRun(event) {
