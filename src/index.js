@@ -5165,7 +5165,7 @@ function buildComments(
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
   const decisionCompact = buildRecommendationsAndBottomLine({
-    runFloorEwma10: runLoad7,
+    runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
     intensityDistribution: keyCompliance?.intensityDistribution,
     budgetBlocked,
