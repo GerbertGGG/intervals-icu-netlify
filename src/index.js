@@ -611,10 +611,9 @@ const LONGRUN_PREPLAN = {
 
 
 // Minimum stimulus thresholds per mode (tune later)
-const MIN_STIMULUS_7D_RUN_EVENT = 100;
+const MIN_STIMULUS_7D_RUN_EVENT = 135;
 const MIN_STIMULUS_7D_BIKE_EVENT = 200;  // bike primary
-const RUN_FLOOR_EWMA_ALPHA = 0.82;
-const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 10;
+const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 14;
 const WATCHFACE_LOAD_WINDOW_DAYS = 7;
 const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
 
@@ -1286,14 +1285,13 @@ function computeRunFloorEwma(
   {
     eventDate = null,
     eventDistance = null,
-    alpha = RUN_FLOOR_EWMA_ALPHA,
     lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS,
     debugTrace = false,
   } = {}
 ) {
-  const rawAlpha = Number.isFinite(alpha) ? alpha : RUN_FLOOR_EWMA_ALPHA;
-  const safeAlpha = Math.min(1, Math.max(0, rawAlpha));
   const safeLookbackDays = Math.max(10, Math.round(Number(lookbackDays) || RUN_FLOOR_EWMA_LOOKBACK_DAYS));
+  const alpha = 2 / (safeLookbackDays + 1);
+  const decay = 1 - alpha;
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - (safeLookbackDays - 1) * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
@@ -1320,12 +1318,12 @@ function computeRunFloorEwma(
     const weeksInfo = eventDate ? computeWeeksToEvent(d, eventDate, eventDistance) : { weeksToEvent: null };
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksInfo?.weeksToEvent ?? null);
     const tss = loads.run + loads.bike * bikeSubFactor;
-    smooth = smooth == null ? tss : tss + safeAlpha * smooth;
+    smooth = smooth == null ? tss : tss + decay * smooth;
     if (debugTrace) debugRows.push({ day: d, run: loads.run, bike: loads.bike, bikeSubFactor, tss, smooth });
   }
 
   if (debugTrace) {
-    console.log("RUNFLOOR_TRACE", { dayIso, startIso, endIso, safeAlpha, safeLookbackDays, rows: debugRows });
+    console.log("RUNFLOOR_TRACE", { dayIso, startIso, endIso, alpha, decay, safeLookbackDays, rows: debugRows });
   }
 
   return Number.isFinite(smooth) ? smooth : 0;
