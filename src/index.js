@@ -1283,7 +1283,13 @@ function buildRunDailyLoads(ctx, todayISO, windowDays) {
 function computeRunFloorEwma(
   ctx,
   dayIso,
-  { eventDate = null, eventDistance = null, alpha = RUN_FLOOR_EWMA_ALPHA, lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS } = {}
+  {
+    eventDate = null,
+    eventDistance = null,
+    alpha = RUN_FLOOR_EWMA_ALPHA,
+    lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS,
+    debugTrace = false,
+  } = {}
 ) {
   const rawAlpha = Number.isFinite(alpha) ? alpha : RUN_FLOOR_EWMA_ALPHA;
   const safeAlpha = Math.min(1, Math.max(0, rawAlpha));
@@ -1307,6 +1313,7 @@ function computeRunFloorEwma(
   }
 
   let smooth = null;
+  const debugRows = [];
   const days = listIsoDaysInclusive(startIso, dayIso);
   for (const d of days) {
     const loads = dailyLoads[d] || { run: 0, bike: 0 };
@@ -1314,6 +1321,11 @@ function computeRunFloorEwma(
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksInfo?.weeksToEvent ?? null);
     const tss = loads.run + loads.bike * bikeSubFactor;
     smooth = smooth == null ? tss : tss + safeAlpha * smooth;
+    if (debugTrace) debugRows.push({ day: d, run: loads.run, bike: loads.bike, bikeSubFactor, tss, smooth });
+  }
+
+  if (debugTrace) {
+    console.log("RUNFLOOR_TRACE", { dayIso, startIso, endIso, safeAlpha, safeLookbackDays, rows: debugRows });
   }
 
   return Number.isFinite(smooth) ? smooth : 0;
@@ -4278,7 +4290,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longestRun30d,
       plan: longRunPlan,
     };
-    const runFloorEwma10 = computeRunFloorEwma(ctx, day, { eventDate, eventDistance });
+    const runFloorEwma10 = computeRunFloorEwma(ctx, day, {
+      eventDate,
+      eventDistance,
+      debugTrace: /^1|true|yes$/i.test(String(process.env.RUN_FLOOR_DEBUG_TRACE || "")),
+    });
 
     let specificValue = 0;
     if (policy.specificKind === "run") specificValue = runFloorEwma10;
@@ -4933,9 +4949,9 @@ function buildComments(
 
   const keyCap7 = keyCompliance?.maxKeysCap7 ?? dynamicKeyCap?.maxKeys7d ?? MAX_KEYS_7D;
   const actualKeys7 = keyCompliance?.actual7 ?? 0;
-  const runLoad7 = Math.round(Number.isFinite(runFloorEwma10) ? runFloorEwma10 : 0);
+  const runFloorCurrent = Math.round(Number.isFinite(runFloorEwma10) ? runFloorEwma10 : 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
-  const runFloorGap = runTarget > 0 ? runLoad7 - runTarget : 0;
+  const runFloorGap = runTarget > 0 ? runFloorCurrent - runTarget : 0;
   const lifeEvent = runFloorState?.lifeEvent || null;
   const ignoreRunFloorGap = lifeEvent?.ignoreRunFloorGap === true;
   const intensityDistribution = keyCompliance?.intensityDistribution;
@@ -5139,7 +5155,7 @@ function buildComments(
     `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
     `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (heute vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
-    `RunFloor (10T EWMA): ${runLoad7} / ${runTarget > 0 ? runTarget : "n/a"}`,
+    `RunFloor (10T EWMA): ${runFloorCurrent} / ${runTarget > 0 ? runTarget : "n/a"}`,
     `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
