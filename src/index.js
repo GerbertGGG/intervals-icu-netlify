@@ -7242,9 +7242,19 @@ function parseRunSnapshotFromDailyReportNote(description) {
     try {
       const parsedJson = JSON.parse(compact);
       const runValueCandidate =
-        parsedJson?.runFloorNow ?? parsedJson?.runSum7 ?? parsedJson?.runValue ?? parsedJson?.runFloor;
+        parsedJson?.nRunFloorNow ??
+        parsedJson?.nRunFloor ??
+        parsedJson?.runFloorNow ??
+        parsedJson?.runSum7 ??
+        parsedJson?.runValue ??
+        parsedJson?.runFloor;
       const runGoalCandidate =
-        parsedJson?.runFloorGoal ?? parsedJson?.runGoal ?? parsedJson?.floorTarget ?? parsedJson?.runTarget;
+        parsedJson?.nRunFloorGoal ??
+        parsedJson?.nRunGoal ??
+        parsedJson?.runFloorGoal ??
+        parsedJson?.runGoal ??
+        parsedJson?.floorTarget ??
+        parsedJson?.runTarget;
       const runValue = Number(runValueCandidate);
       const runGoal = Number(runGoalCandidate);
       if (Number.isFinite(runValue) && Number.isFinite(runGoal)) {
@@ -7269,11 +7279,11 @@ function parseRunSnapshotFromDailyReportNote(description) {
   };
 
   // Prefer the explicit EWMA snapshot line used in Daily-Report.
-  const ewmaMatch = plain.match(/RunFloor\s*\(\s*10T\s*EWMA\s*\)\s*:\s*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/i);
+  const ewmaMatch = plain.match(/n?RunFloor\s*\(\s*10T\s*EWMA\s*\)\s*:\s*[^\d\n]*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/i);
   if (ewmaMatch) return parseMatch(ewmaMatch);
 
   // Fallback: generic RunFloor lines (e.g. compact recommendation strings).
-  const genericMatches = [...plain.matchAll(/RunFloor[^\n:]*:\s*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/gi)];
+  const genericMatches = [...plain.matchAll(/n?RunFloor[^\n:]*:\s*[^\d\n]*(\d+(?:[.,]\d+)?)\s*\/\s*(\d+(?:[.,]\d+)?)/gi)];
   const genericMatch = genericMatches.length ? genericMatches[genericMatches.length - 1] : null;
   if (!genericMatch) return null;
   const parsed = parseMatch(genericMatch);
