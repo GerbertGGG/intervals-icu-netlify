@@ -7188,13 +7188,21 @@ async function resolveWatchfaceRunSnapshot(env, dayIso) {
   }
 
   const persistedToday = await getPersistedBlockState(ctx, env, dayIso);
+  const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso).catch(() => null);
+  const dailyReportSnapshot = parseRunSnapshotFromDailyReportNote(dailyReportEvent?.description || "");
   const eventDate = persistedToday?.eventDate || persistedToday?.lastEventDate || null;
   const eventDistance = persistedToday?.eventDistance || null;
   const runValueRaw = computeRunFloorEwma(ctx, dayIso, { eventDate, eventDistance, lookbackDays });
-  const runValue = Number.isFinite(runValueRaw) ? Math.round(runValueRaw) : null;
+  const runValue = Number.isFinite(dailyReportSnapshot?.runValue)
+    ? Math.round(dailyReportSnapshot.runValue)
+    : Number.isFinite(runValueRaw)
+      ? Math.round(runValueRaw)
+      : null;
 
   let runGoalRaw =
-    Number.isFinite(persistedToday?.effectiveFloorTarget) && persistedToday.effectiveFloorTarget > 0
+    Number.isFinite(dailyReportSnapshot?.runGoal) && dailyReportSnapshot.runGoal > 0
+      ? dailyReportSnapshot.runGoal
+      : Number.isFinite(persistedToday?.effectiveFloorTarget) && persistedToday.effectiveFloorTarget > 0
       ? persistedToday.effectiveFloorTarget
       : Number.isFinite(persistedToday?.floorTarget) && persistedToday.floorTarget > 0
         ? persistedToday.floorTarget
