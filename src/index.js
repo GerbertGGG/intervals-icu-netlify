@@ -154,14 +154,31 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Daily sync: only yesterday+today (and Monday detective if today is Monday).
-    // 20:00 Berlin run updates only run metrics so planning/report state remains untouched.
-    const today = isoDate(new Date());
-    const yday = isoDate(new Date(Date.now() - 86400000));
-    const runMetricsOnly = isEveningBerlinRun(event);
+    const scheduledAt = Number.isFinite(Number(event?.scheduledTime))
+      ? new Date(Number(event.scheduledTime))
+      : new Date();
+    const berlin = getBerlinDateTimeParts(scheduledAt);
+
+    // Hard gate: no reads/writes outside of 08:00–22:59 Europe/Berlin.
+    if (!isBerlinComputeWindow(berlin.hour)) return;
 
     ctx.waitUntil(
-      syncRange(env, yday, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true }).catch((e) => {
+      (async () => {
+        const dayIso = berlin.dayIso;
+        const marker = await getTrainingMarkerForDay(env, dayIso);
+        const fpNow = computeTrainingFingerprint(marker);
+        const fpPrev = await readLastTrainingFingerprint(env);
+
+        if (fpNow === fpPrev) return;
+
+        await runFullSyncAndWrite(env, dayIso);
+        await writeLastTrainingFingerprint(env, {
+          day: dayIso,
+          marker,
+          fingerprint: fpNow,
+          updatedAt: new Date().toISOString(),
+        });
+      })().catch((e) => {
         console.error("scheduled syncRange failed", e);
       })
     );
@@ -210,18 +227,95 @@ function getSearchParamAny(searchParams, keys) {
   return "";
 }
 
+function getBerlinDateTimeParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
 
-function isEveningBerlinRun(event) {
-  const t = Number(event?.scheduledTime);
-  if (!Number.isFinite(t)) return false;
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      hour12: false,
-      timeZone: "Europe/Berlin",
-    }).format(new Date(t))
-  );
-  return Number.isFinite(hour) && hour >= 20;
+  const byType = Object.create(null);
+  for (const part of parts) {
+    if (part?.type) byType[part.type] = part.value;
+  }
+
+  return {
+    dayIso: `${byType.year}-${byType.month}-${byType.day}`,
+    hour: Number(byType.hour),
+  };
+}
+
+function isBerlinComputeWindow(hour) {
+  return Number.isFinite(hour) && hour >= 8 && hour <= 22;
+}
+
+function getDailyReportTrainingFingerprintKvKey(env) {
+  return String(env?.DAILYREPORT_LAST_TRAINING_FP_KV_KEY || "DAILYREPORT_LAST_TRAINING_FP");
+}
+
+async function readLastTrainingFingerprint(env) {
+  if (!hasKv(env)) return null;
+  const key = getDailyReportTrainingFingerprintKvKey(env);
+  const raw = await env.KV.get(key);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "string") return parsed;
+    if (parsed && typeof parsed === "object" && typeof parsed.fingerprint === "string") return parsed.fingerprint;
+  } catch {
+    // string value stored directly
+  }
+
+  return String(raw);
+}
+
+async function writeLastTrainingFingerprint(env, value) {
+  const key = getDailyReportTrainingFingerprintKvKey(env);
+  await writeKvJson(env, key, value);
+}
+
+async function getTrainingMarkerForDay(env, dayIso) {
+  const activities = await fetchIntervalsActivities(env, dayIso, dayIso);
+  const todays = (activities || []).filter((activity) => {
+    const activityDay = String(activity?.start_date_local || activity?.start_date || "").slice(0, 10);
+    return activityDay === dayIso;
+  });
+
+  const sorted = [...todays].sort((a, b) => {
+    const endA = Date.parse(String(a?.end_date_local || a?.end_date || a?.start_date_local || a?.start_date || "")) || 0;
+    const endB = Date.parse(String(b?.end_date_local || b?.end_date || b?.start_date_local || b?.start_date || "")) || 0;
+    return endB - endA;
+  });
+
+  const latest = sorted[0] || null;
+  return {
+    latestActivityId: latest?.id != null ? String(latest.id) : null,
+    latestWorkoutEndIso: latest ? String(latest?.end_date_local || latest?.end_date || latest?.start_date_local || latest?.start_date || "") : null,
+    workoutCountToday: todays.length,
+  };
+}
+
+function computeTrainingFingerprint(marker) {
+  if (!marker || typeof marker !== "object") return "end:|count:0";
+
+  if (marker.latestActivityId) {
+    return `id:${String(marker.latestActivityId)}`;
+  }
+
+  const latestWorkoutEndIso = marker.latestWorkoutEndIso ? String(marker.latestWorkoutEndIso) : "";
+  const workoutCountToday = Number.isFinite(Number(marker.workoutCountToday)) ? Number(marker.workoutCountToday) : 0;
+  return `end:${latestWorkoutEndIso}|count:${workoutCountToday}`;
+}
+
+async function runFullSyncAndWrite(env, dayIso) {
+  return syncRange(env, dayIso, dayIso, true, false, 600, {
+    runMetricsOnly: true,
+    runMetricsOnlyIfExisting: true,
+  });
 }
 
 // ================= CONFIG =================
@@ -4489,7 +4583,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       runGoal: runFloorState?.effectiveFloorTarget ?? runFloorState?.floorTarget ?? null,
     };
 
-    if (write && !runSectionOnly) {
+    if (write) {
       await writeLatestRunSnapshotKv(env, day, runSnapshot);
     }
 
