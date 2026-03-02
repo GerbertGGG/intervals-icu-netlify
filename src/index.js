@@ -616,6 +616,7 @@ const MIN_STIMULUS_7D_BIKE_EVENT = 220;  // bike primary
 const RUN_FLOOR_EWMA_ALPHA = 0.82;
 const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 10;
 const WATCHFACE_LOAD_WINDOW_DAYS = 10;
+const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
 
 // Maintenance anchors (soft hints, not hard fails)
 
@@ -7112,7 +7113,8 @@ async function buildWatchfacePayload(env, endIso) {
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
   const runSumWindowRaw = runLoad.reduce((a, b) => a + b, 0);
-  const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
+  const strengthWindowDays = days.slice(-WATCHFACE_STRENGTH_WINDOW_DAYS);
+  const strengthSum7 = strengthWindowDays.reduce((sum, day) => sum + (Math.round(strengthMinByDay[day] || 0)), 0);
   const runSnapshot = await resolveWatchfaceRunSnapshot(env, end);
   const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : runSumWindowRaw;
   const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : MIN_STIMULUS_7D_RUN_EVENT;
