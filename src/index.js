@@ -614,7 +614,8 @@ const LONGRUN_PREPLAN = {
 const MIN_STIMULUS_7D_RUN_EVENT = 130;
 const MIN_STIMULUS_7D_BIKE_EVENT = 220;  // bike primary
 const RUN_FLOOR_EWMA_ALPHA = 0.82;
-const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 60;
+const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 10;
+const WATCHFACE_LOAD_WINDOW_DAYS = 10;
 
 // Maintenance anchors (soft hints, not hard fails)
 
@@ -7079,12 +7080,12 @@ function isStrength(a) {
 }
 async function buildWatchfacePayload(env, endIso) {
   const end = parseISODateSafe(endIso) ? endIso : isoDate(new Date());
-  const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - 6 * 86400000));
+  const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - (WATCHFACE_LOAD_WINDOW_DAYS - 1) * 86400000));
 
-  // Fetch activities only for these 7 days (klein halten)
+  // Fetch activities only for this watchface window (klein halten)
   const acts = await fetchIntervalsActivities(env, startIso, end);
 
-  const days = listIsoDaysInclusive(startIso, end); // genau 7
+  const days = listIsoDaysInclusive(startIso, end); // genau WATCHFACE_LOAD_WINDOW_DAYS
   const runLoadByDay = {};
   const strengthMinByDay = {};
 
@@ -7109,10 +7110,10 @@ async function buildWatchfacePayload(env, endIso) {
   const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
-  const runSum7Raw = runLoad.reduce((a, b) => a + b, 0);
+  const runSumWindowRaw = runLoad.reduce((a, b) => a + b, 0);
   const strengthSum7 = strengthMin.reduce((a, b) => a + b, 0);
   const runSnapshot = await resolveWatchfaceRunSnapshot(env, end);
-  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : runSum7Raw;
+  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : runSumWindowRaw;
   const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : MIN_STIMULUS_7D_RUN_EVENT;
   const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
   return {
@@ -7120,6 +7121,7 @@ async function buildWatchfacePayload(env, endIso) {
     endIso: end,
     days,
     runLoad,
+    runLoadWindowDays: WATCHFACE_LOAD_WINDOW_DAYS,
     runSum7,
     runGoal,
     strengthMin,
