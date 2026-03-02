@@ -1284,7 +1284,8 @@ function computeRunFloorEwma(
   dayIso,
   { eventDate = null, eventDistance = null, alpha = RUN_FLOOR_EWMA_ALPHA, lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS } = {}
 ) {
-  const safeAlpha = Number.isFinite(alpha) ? alpha : RUN_FLOOR_EWMA_ALPHA;
+  const rawAlpha = Number.isFinite(alpha) ? alpha : RUN_FLOOR_EWMA_ALPHA;
+  const safeAlpha = Math.min(1, Math.max(0, rawAlpha));
   const safeLookbackDays = Math.max(10, Math.round(Number(lookbackDays) || RUN_FLOOR_EWMA_LOOKBACK_DAYS));
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - (safeLookbackDays - 1) * 86400000));
@@ -1311,7 +1312,7 @@ function computeRunFloorEwma(
     const weeksInfo = eventDate ? computeWeeksToEvent(d, eventDate, eventDistance) : { weeksToEvent: null };
     const bikeSubFactor = computeBikeSubstitutionFactor(weeksInfo?.weeksToEvent ?? null);
     const tss = loads.run + loads.bike * bikeSubFactor;
-    smooth = smooth == null ? tss : tss + safeAlpha * smooth;
+    smooth = smooth == null ? tss : safeAlpha * tss + (1 - safeAlpha) * smooth;
   }
 
   return Number.isFinite(smooth) ? smooth : 0;
