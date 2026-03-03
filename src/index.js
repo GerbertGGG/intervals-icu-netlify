@@ -541,6 +541,15 @@ const INTENSITY_CLEAR_OVERSHOOT = 0.01;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
+const WEEKDOC_KV_PREFIX = "u:";
+const WEEKDOC_INDEX_SUFFIX = ":idx:weeks";
+const WEEKDOC_KEY_PREFIX = ":week:";
+const WEEKDOC_INDEX_LIMIT = 20;
+const PATTERN_WINDOW_WEEKS = 8;
+const PATTERN_MIN_WEEKS = 4;
+const PATTERN_MIN_GROUP_N = 3;
+const PATTERN_MIN_CORR_N = 6;
+const PATTERN_MIN_CORR_ABS = 0.25;
 const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const DETECTIVE_HISTORY_LIMIT = 12;
 /*
@@ -4294,6 +4303,27 @@ function median(arr) {
   const m = Math.floor(v.length / 2);
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 }
+function pearsonCorrelation(pairs) {
+  const clean = (pairs || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (clean.length < 2) return null;
+  const xs = clean.map((p) => p[0]);
+  const ys = clean.map((p) => p[1]);
+  const mx = avg(xs);
+  const my = avg(ys);
+  if (!Number.isFinite(mx) || !Number.isFinite(my)) return null;
+  let num = 0;
+  let denX = 0;
+  let denY = 0;
+  for (let i = 0; i < clean.length; i++) {
+    const dx = xs[i] - mx;
+    const dy = ys[i] - my;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+  if (!(denX > 0) || !(denY > 0)) return null;
+  return num / Math.sqrt(denX * denY);
+}
 function sum(arr) {
   let s = 0;
   for (const x of arr) s += Number(x) || 0;
@@ -4328,6 +4358,16 @@ function countBy(arr) {
 function isMondayIso(dayIso) {
   const d = new Date(dayIso + "T00:00:00Z");
   return d.getUTCDay() === 1;
+}
+function getIsoWeekInfo(dayIso) {
+  const date = parseISODateSafe(dayIso);
+  if (!date) return null;
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const weekYear = d.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return { year: weekYear, week, weekId: `${weekYear}-${String(week).padStart(2, "0")}` };
 }
 function bucketLoadsByDay(runs) {
   const m = {};
@@ -4971,14 +5011,21 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
     if (!runSectionOnly && isMondayIso(day)) {
       let detectiveNoteText = null;
+      let patternAnalysis = null;
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
         detectiveNoteText = detectiveNote?.text ?? "";
         if (write) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
+          await upsertWeekDocAndIndex(env, day, ctx.warmupSkipSec, { activitiesAll: ctx.activitiesAll, eventDistance });
         }
+        const weekDocs = await loadWeekDocsForPattern(env);
+        patternAnalysis = buildPatternAnalysis(weekDocs);
+        const patternText = renderPatternAnalysisBlock(patternAnalysis);
+        if (patternText) detectiveNoteText = [detectiveNoteText, "", patternText].filter(Boolean).join("\n");
       } catch (e) {
-        detectiveNoteText = `🕵️‍♂️ Montags-Report\nFehler: ${String(e?.message ?? e)}`;
+        detectiveNoteText = `🕵️‍♂️ Montags-Report
+Fehler: ${String(e?.message ?? e)}`;
       }
       if (write) {
         await upsertMondayDetectiveNote(env, day, detectiveNoteText, lifeEventsByExternalId);
@@ -4994,6 +5041,10 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
         ]
           .filter((line) => line != null)
           .join("\n");
+        if (patternAnalysis) {
+          ctx.debugOut.__musterAnalyse ??= {};
+          ctx.debugOut.__musterAnalyse[day] = patternAnalysis;
+        }
       }
     }
 
@@ -5845,6 +5896,331 @@ async function loadDetectiveHistory(env, mondayIso) {
     if (s) summaries.push(s);
   }
   return summaries;
+}
+
+
+function buildWeekDocKey(uid, weekId) {
+  return `${WEEKDOC_KV_PREFIX}${uid}${WEEKDOC_KEY_PREFIX}${weekId}`;
+}
+
+function buildWeekIndexKey(uid) {
+  return `${WEEKDOC_KV_PREFIX}${uid}${WEEKDOC_INDEX_SUFFIX}`;
+}
+
+function hasAnyPatternOutputData(weekDoc) {
+  const output = weekDoc?.output || {};
+  return [output.vdot_delta, output.ef_delta_pct, output.drift_delta].some((v) => Number.isFinite(v));
+}
+
+function asMedianOutput(weeks, field) {
+  return median((weeks || []).map((w) => Number(w?.output?.[field])));
+}
+
+function asMedianInput(weeks, field) {
+  return median((weeks || []).map((w) => Number(w?.input?.[field])));
+}
+
+function patternConfidence(groupA, groupB, diffAbs, threshold) {
+  const nA = Number(groupA?.length || 0);
+  const nB = Number(groupB?.length || 0);
+  if (nA >= 4 && nB >= 4 && Number.isFinite(diffAbs) && diffAbs >= threshold) return "high";
+  if (nA >= 3 && nB >= 3) return "medium";
+  return "low";
+}
+
+async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}) {
+  if (!hasKv(env)) return null;
+
+  const uid = mustEnv(env, "ATHLETE_ID");
+  const weekEndDate = new Date(mondayIso + "T00:00:00Z");
+  const prevMondayDate = new Date(weekEndDate.getTime() - 7 * 86400000);
+  const startIso = isoDate(prevMondayDate);
+  const endExclusiveIso = mondayIso;
+  const weekInfo = getIsoWeekInfo(startIso);
+  if (!weekInfo?.weekId) return null;
+
+  const allActivities = Array.isArray(context?.activitiesAll)
+    ? context.activitiesAll
+    : await fetchIntervalsActivities(env, startIso, isoDate(new Date(weekEndDate.getTime() - 86400000)));
+
+  const runs = (allActivities || []).filter((a) => {
+    const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+    return d && d >= startIso && d < endExclusiveIso && isRun(a);
+  });
+
+  const keyRuns = runs.filter((a) => hasKeyTag(a));
+  const keyTypes = uniq(keyRuns.map((a) => normalizeKeyType(getKeyType(a) || "key")).filter(Boolean));
+
+  const minutesTotal = sum(runs.map((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60));
+  const loadTotal = sum(runs.map((a) => extractLoad(a)));
+  const longrunsCount = runs.filter((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) >= 60 * 60).length;
+
+  const eventDistance = normalizeEventDistance(context?.eventDistance) || "10k";
+  let easyMinutes = 0;
+  let midMinutes = 0;
+  let hardMinutes = 0;
+  for (const run of runs) {
+    const minutes = (Number(run?.moving_time ?? run?.elapsed_time ?? 0) || 0) / 60;
+    if (!(minutes > 0)) continue;
+    const cat = classifyIntensityCategory(run, eventDistance);
+    if (cat === "hard") hardMinutes += minutes;
+    else if (cat === "mid") midMinutes += minutes;
+    else easyMinutes += minutes;
+  }
+  const totalMinutes = easyMinutes + midMinutes + hardMinutes;
+
+  const comp = await gatherComparableGASamples(env, endExclusiveIso, warmupSkipSec, 7);
+
+  const weekDoc = {
+    weekId: weekInfo.weekId,
+    weekStart: startIso,
+    weekEndExclusive: endExclusiveIso,
+    input: {
+      load_total: round(loadTotal, 1),
+      runs: runs.length,
+      minutes_total: round(minutesTotal, 1),
+      keys_count: keyRuns.length,
+      key_types: keyTypes,
+      longruns_count: longrunsCount,
+      easy_share: totalMinutes > 0 ? round(easyMinutes / totalMinutes, 3) : null,
+      mid_share: totalMinutes > 0 ? round(midMinutes / totalMinutes, 3) : null,
+      hard_share: totalMinutes > 0 ? round(hardMinutes / totalMinutes, 3) : null,
+    },
+    output: {
+      vdot_level: comp?.efMed != null ? round(vdotLikeFromEf(comp.efMed), 1) : null,
+      vdot_delta: null,
+      ef_level: comp?.efMed != null ? round(comp.efMed, 5) : null,
+      ef_delta_pct: null,
+      drift_level: comp?.driftMed != null ? round(comp.driftMed, 2) : null,
+      drift_delta: null,
+    },
+    wellness: null,
+    quality: {
+      ga_comparable_n: Number(comp?.n || 0),
+      drift_has_data: Number.isFinite(comp?.driftMed),
+      ef_has_data: Number.isFinite(comp?.efMed),
+      vdot_has_data: Number.isFinite(comp?.efMed),
+    },
+  };
+
+  const indexKey = buildWeekIndexKey(uid);
+  const existingIdx = (await readKvJson(env, indexKey)) || [];
+  const cleanedIdx = existingIdx.filter((w) => typeof w === "string");
+  const prevWeekId = cleanedIdx.find((id) => id !== weekInfo.weekId) || null;
+  const prevWeekDoc = prevWeekId ? await readKvJson(env, buildWeekDocKey(uid, prevWeekId)) : null;
+
+  if (prevWeekDoc?.output) {
+    const prevOutput = prevWeekDoc.output;
+    if (Number.isFinite(weekDoc.output.vdot_level) && Number.isFinite(prevOutput.vdot_level) && prevOutput.vdot_level !== 0) {
+      weekDoc.output.vdot_delta = round(weekDoc.output.vdot_level - prevOutput.vdot_level, 2);
+    }
+    if (Number.isFinite(weekDoc.output.ef_level) && Number.isFinite(prevOutput.ef_level) && prevOutput.ef_level !== 0) {
+      weekDoc.output.ef_delta_pct = round(((weekDoc.output.ef_level - prevOutput.ef_level) / prevOutput.ef_level) * 100, 2);
+    }
+    if (Number.isFinite(weekDoc.output.drift_level) && Number.isFinite(prevOutput.drift_level)) {
+      weekDoc.output.drift_delta = round(weekDoc.output.drift_level - prevOutput.drift_level, 2);
+    }
+  }
+
+  const nextIndex = [weekInfo.weekId, ...cleanedIdx.filter((id) => id !== weekInfo.weekId)].slice(0, WEEKDOC_INDEX_LIMIT);
+  await writeKvJson(env, buildWeekDocKey(uid, weekInfo.weekId), weekDoc);
+  await writeKvJson(env, indexKey, nextIndex);
+  return weekDoc;
+}
+
+async function loadWeekDocsForPattern(env) {
+  if (!hasKv(env)) return [];
+  const uid = mustEnv(env, "ATHLETE_ID");
+  const idx = (await readKvJson(env, buildWeekIndexKey(uid))) || [];
+  const last8 = idx.filter((w) => typeof w === "string").slice(0, PATTERN_WINDOW_WEEKS);
+  const docs = [];
+  for (const weekId of last8) {
+    const doc = await readKvJson(env, buildWeekDocKey(uid, weekId));
+    if (doc) docs.push(doc);
+  }
+  return docs.filter((d) => hasAnyPatternOutputData(d));
+}
+
+function buildPatternFinding(title, evidence, action, confidence = "medium") {
+  return { title, evidence, action, confidence };
+}
+
+function buildPatternAnalysis(weeks) {
+  const usableWeeks = (weeks || []).filter((w) => hasAnyPatternOutputData(w));
+  const findings = [];
+  const correlationFindings = [];
+
+  if (usableWeeks.length < PATTERN_MIN_WEEKS) {
+    return {
+      header: "🧠 MUSTER-ANALYSE (8W)",
+      insufficientData: true,
+      findings: [buildPatternFinding("Zu wenig Daten", `Auswertbare Wochen: n=${usableWeeks.length} (mind. ${PATTERN_MIN_WEEKS} nötig).`, "Weiter WeekDocs sammeln und vergleichbare GA-Läufe priorisieren.", "medium")],
+      guidance: {
+        keysTarget: 1,
+        easyShareMin: 0.75,
+        loadChangePctCap: 0.1,
+        flags: ["insufficient_pattern_data"],
+        rationale: ["<4 Wochen mit Output-Daten im 8W-Fenster."],
+      },
+    };
+  }
+
+  const keysLow = usableWeeks.filter((w) => Number(w?.input?.keys_count) <= 1);
+  const keysHigh = usableWeeks.filter((w) => Number(w?.input?.keys_count) >= 2);
+  if (keysLow.length >= PATTERN_MIN_GROUP_N && keysHigh.length >= PATTERN_MIN_GROUP_N) {
+    const efLow = asMedianOutput(keysLow, "ef_delta_pct");
+    const efHigh = asMedianOutput(keysHigh, "ef_delta_pct");
+    const driftLow = asMedianOutput(keysLow, "drift_delta");
+    const driftHigh = asMedianOutput(keysHigh, "drift_delta");
+    const vdotLow = asMedianOutput(keysLow, "vdot_delta");
+    const vdotHigh = asMedianOutput(keysHigh, "vdot_delta");
+
+    if (Number.isFinite(efHigh) && Number.isFinite(efLow) && Number.isFinite(driftHigh) && Number.isFinite(driftLow) && efHigh > efLow && driftHigh > driftLow) {
+      findings.push(
+        buildPatternFinding(
+          "2 Keys/Woche: EF ↑, Drift ↑",
+          `0–1 Key (n=${keysLow.length}): EFΔ=${efLow.toFixed(1)}%, DriftΔ=${driftLow.toFixed(1)} | 2+ Keys (n=${keysHigh.length}): EFΔ=${efHigh.toFixed(1)}%, DriftΔ=${driftHigh.toFixed(1)}`,
+          "Nächste Woche: max 1 Key; 2. Reiz nur als strides/steady.",
+          patternConfidence(keysLow, keysHigh, Math.abs(driftHigh - driftLow), 0.8)
+        )
+      );
+    }
+
+    if (Number.isFinite(vdotHigh) && Number.isFinite(vdotLow) && Number.isFinite(driftHigh) && Number.isFinite(driftLow) && vdotHigh > vdotLow && driftHigh <= driftLow + 0.2) {
+      findings.push(
+        buildPatternFinding(
+          "2 Keys funktionieren bei stabiler Drift",
+          `0–1 Key (n=${keysLow.length}): VDOTΔ=${vdotLow.toFixed(1)}, DriftΔ=${driftLow.toFixed(1)} | 2+ Keys (n=${keysHigh.length}): VDOTΔ=${vdotHigh.toFixed(1)}, DriftΔ=${driftHigh.toFixed(1)}`,
+          "2. Key nur freigeben, wenn Drift in den letzten 2–3 Wochen stabil bleibt.",
+          patternConfidence(keysLow, keysHigh, Math.abs(vdotHigh - vdotLow), 1.0)
+        )
+      );
+    }
+  }
+
+  const easyHigh = usableWeeks.filter((w) => Number(w?.input?.easy_share) >= 0.8);
+  const easyLow = usableWeeks.filter((w) => Number(w?.input?.easy_share) < 0.8);
+  if (easyHigh.length >= PATTERN_MIN_GROUP_N && easyLow.length >= PATTERN_MIN_GROUP_N) {
+    const driftHigh = asMedianOutput(easyHigh, "drift_delta");
+    const driftLow = asMedianOutput(easyLow, "drift_delta");
+    if (Number.isFinite(driftHigh) && Number.isFinite(driftLow) && driftLow > driftHigh) {
+      findings.push(
+        buildPatternFinding(
+          "Easy ≥80% senkt Drift",
+          `Easy ≥80% (n=${easyHigh.length}): DriftΔ=${driftHigh.toFixed(1)} | Easy <80% (n=${easyLow.length}): DriftΔ=${driftLow.toFixed(1)}`,
+          "Nächste Woche Easy-Anteil auf mindestens 80% setzen.",
+          patternConfidence(easyHigh, easyLow, Math.abs(driftLow - driftHigh), 0.8)
+        )
+      );
+    }
+  }
+
+  const wellnessWeeks = usableWeeks.filter((w) => w?.wellness && Number.isFinite(w?.wellness?.sleep_avg));
+  if (wellnessWeeks.length >= 6) {
+    const wellGood = wellnessWeeks.filter((w) => Number(w.wellness.sleep_avg) >= 3.5 && Number(w.wellness.fatigue_avg) <= 3.2 && Number(w.wellness.pain_max) === 0);
+    const wellBad = wellnessWeeks.filter((w) => !wellGood.includes(w));
+    if (wellGood.length >= PATTERN_MIN_GROUP_N && wellBad.length >= PATTERN_MIN_GROUP_N) {
+      const goodDrift = asMedianOutput(wellGood, "drift_delta");
+      const badDrift = asMedianOutput(wellBad, "drift_delta");
+      const goodVdot = asMedianOutput(wellGood, "vdot_delta");
+      const badVdot = asMedianOutput(wellBad, "vdot_delta");
+      if ((Number.isFinite(goodDrift) && Number.isFinite(badDrift) && badDrift > goodDrift) || (Number.isFinite(goodVdot) && Number.isFinite(badVdot) && badVdot < goodVdot)) {
+        findings.push(
+          buildPatternFinding(
+            "Recovery gate: Qualität wirkt nur erholt",
+            `Wellness gut (n=${wellGood.length}): VDOTΔ=${Number.isFinite(goodVdot) ? goodVdot.toFixed(1) : "n/a"}, DriftΔ=${Number.isFinite(goodDrift) ? goodDrift.toFixed(1) : "n/a"} | schlecht (n=${wellBad.length}): VDOTΔ=${Number.isFinite(badVdot) ? badVdot.toFixed(1) : "n/a"}, DriftΔ=${Number.isFinite(badDrift) ? badDrift.toFixed(1) : "n/a"}`,
+            "Key-Qualität nur bei guter Recovery freigeben; sonst Umfang/Easy priorisieren.",
+            "medium"
+          )
+        );
+      }
+    }
+  }
+
+  const tradeoffWeeks = usableWeeks.filter((w) => Number(w?.output?.ef_delta_pct) > 2 && Number(w?.output?.drift_delta) > 0.8);
+  if (tradeoffWeeks.length >= Math.max(2, Math.round(usableWeeks.length * 0.35))) {
+    const hardShareTradeoff = asMedianInput(tradeoffWeeks, "hard_share");
+    const hardShareAll = asMedianInput(usableWeeks, "hard_share");
+    const keysTradeoff = median(tradeoffWeeks.map((w) => Number(w?.input?.keys_count)));
+    const keysAll = median(usableWeeks.map((w) => Number(w?.input?.keys_count)));
+    if ((Number.isFinite(hardShareTradeoff) && Number.isFinite(hardShareAll) && hardShareTradeoff > hardShareAll) || (Number.isFinite(keysTradeoff) && Number.isFinite(keysAll) && keysTradeoff > keysAll)) {
+      findings.push(
+        buildPatternFinding(
+          "Tradeoff: EF ↑ aber Drift ↑",
+          `Tradeoff-Wochen: ${tradeoffWeeks.length}/${usableWeeks.length} | hard_share med ${Number.isFinite(hardShareTradeoff) ? (hardShareTradeoff * 100).toFixed(0) + "%" : "n/a"} vs ${Number.isFinite(hardShareAll) ? (hardShareAll * 100).toFixed(0) + "%" : "n/a"} | keys med ${Number.isFinite(keysTradeoff) ? keysTradeoff.toFixed(1) : "n/a"} vs ${Number.isFinite(keysAll) ? keysAll.toFixed(1) : "n/a"}`,
+          "Intensität deckeln, bis Drift wieder stabilisiert ist (Easy hoch, Keys runter).",
+          "medium"
+        )
+      );
+    }
+  }
+
+  if (usableWeeks.length >= PATTERN_MIN_CORR_N) {
+    const corrDefs = [
+      { a: "easy_share", b: "drift_delta", label: "corr(EasyShare, DriftΔ)" },
+      { a: "keys_count", b: "drift_delta", label: "corr(Keys, DriftΔ)" },
+      { a: "keys_count", b: "ef_delta_pct", label: "corr(Keys, EFΔ%)" },
+      { a: "load_total", b: "vdot_delta", label: "corr(Load, VDOTΔ)" },
+    ];
+    for (const def of corrDefs) {
+      const r = pearsonCorrelation(usableWeeks.map((w) => [Number(w?.input?.[def.a]), Number(w?.output?.[def.b])]));
+      if (Number.isFinite(r) && Math.abs(r) >= PATTERN_MIN_CORR_ABS) {
+        correlationFindings.push(`${def.label} = ${r.toFixed(2)}`);
+      }
+    }
+    if (correlationFindings.length) {
+      findings.push(buildPatternFinding("Korrelationen (ergänzend)", correlationFindings.join(" | "), "Korrelationen nur als Hinweis, Gruppenfindings priorisieren.", "medium"));
+    }
+  }
+
+  const driftRecent3 = median(usableWeeks.slice(0, 3).map((w) => Number(w?.output?.drift_delta)));
+  const vdotRecent3 = median(usableWeeks.slice(0, 3).map((w) => Number(w?.output?.vdot_delta)));
+  const driftStable = Number.isFinite(driftRecent3) && driftRecent3 <= 0.5;
+
+  const guidance = {
+    keysTarget: driftStable && Number.isFinite(vdotRecent3) && vdotRecent3 > 0 ? 2 : 1,
+    easyShareMin: driftStable ? 0.75 : 0.8,
+    loadChangePctCap: 0.1,
+    flags: [],
+    rationale: [],
+  };
+
+  if (!driftStable) {
+    guidance.flags.push("drift_rising");
+    guidance.rationale.push("Drift-Median der letzten 3 Wochen > +0.5.");
+  }
+  if (Number.isFinite(vdotRecent3) && vdotRecent3 > 0 && driftStable) {
+    guidance.flags.push("vdot_positive_drift_stable");
+    guidance.rationale.push("VDOTΔ positiv bei stabiler Drift.");
+  }
+  if (tradeoffWeeks.length > 0) {
+    guidance.flags.push("intensity_tradeoff");
+    guidance.rationale.push("Mehrere Wochen mit EF↑ und Drift↑.");
+  }
+
+  for (const finding of findings.slice(0, 5)) {
+    guidance.rationale.push(finding.title);
+  }
+
+  return {
+    header: "🧠 MUSTER-ANALYSE (8W)",
+    insufficientData: false,
+    findings: findings.slice(0, 5),
+    guidance,
+  };
+}
+
+function renderPatternAnalysisBlock(analysis) {
+  if (!analysis) return "";
+  const lines = [analysis.header];
+  for (const finding of analysis.findings || []) {
+    lines.push(`- ${finding.title}`);
+    lines.push(`  Evidenz: ${finding.evidence}`);
+    lines.push(`  Handlung: ${finding.action}`);
+  }
+  lines.push("NextWeekGuidance:");
+  lines.push(JSON.stringify(analysis.guidance || {}, null, 2));
+  return lines.join("\n");
 }
 
 function buildDetectiveWhyInsights(current, previous) {
