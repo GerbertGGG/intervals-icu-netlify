@@ -2892,6 +2892,21 @@ function buildProgressionSuggestion(progression) {
   return `${keyType}: ${progression?.templateText || progression?.note || ""}`.trim();
 }
 
+function humanizeProgressionSessionText(keyType, progressionStepSession, fallbackRecommendation = "") {
+  if (!progressionStepSession) return fallbackRecommendation || null;
+
+  const recommendationHint = fallbackRecommendation ? ` Orientiert an: ${fallbackRecommendation}` : "";
+  const intro = keyType === "racepace"
+    ? "kontrolliert im Zieltempo"
+    : keyType === "schwelle"
+      ? "ruhig stabil an der Schwelle"
+      : keyType === "vo2_touch"
+        ? "sauber, mit voller Qualität"
+        : "kontrolliert";
+
+  return `${progressionStepSession} — ${intro}${recommendationHint}`.trim();
+}
+
 function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null) {
   const block = context.block || "BASE";
   const distance = context.eventDistance || "10k";
@@ -2912,12 +2927,18 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   if (!Array.isArray(entries) || !entries.length) return null;
 
   const progressionStepSession = getCurrentProgressionStepSession(block, distance, chosenType, progression?.stepIndex);
-  let sessionText = progressionStepSession || entries[0];
+  let sessionText = progressionStepSession
+    ? humanizeProgressionSessionText(chosenType, progressionStepSession, entries[0])
+    : entries[0];
   let formatNote = "";
   if (chosenType === "schwelle") {
     const thresholdDecision = chooseThresholdFormat(context, keyRules);
     const thresholdTemplate = selectThresholdSessionTemplate(thresholdDecision?.format, distance, progressionStepSession || null);
-    if (thresholdTemplate) sessionText = thresholdTemplate;
+    if (thresholdTemplate) {
+      sessionText = progressionStepSession
+        ? humanizeProgressionSessionText(chosenType, thresholdTemplate, entries[0])
+        : thresholdTemplate;
+    }
     if (thresholdDecision?.reason) formatNote = ` Format-Entscheid: ${thresholdDecision.reason}`;
   }
   const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
