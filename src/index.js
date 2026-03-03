@@ -2895,7 +2895,6 @@ function buildProgressionSuggestion(progression) {
 function humanizeProgressionSessionText(keyType, progressionStepSession, fallbackRecommendation = "") {
   if (!progressionStepSession) return fallbackRecommendation || null;
 
-  const recommendationHint = fallbackRecommendation ? ` Orientiert an: ${fallbackRecommendation}` : "";
   const intro = keyType === "racepace"
     ? "kontrolliert im Zieltempo"
     : keyType === "schwelle"
@@ -2904,7 +2903,7 @@ function humanizeProgressionSessionText(keyType, progressionStepSession, fallbac
         ? "sauber, mit voller Qualität"
         : "kontrolliert";
 
-  return `${progressionStepSession} — ${intro}${recommendationHint}`.trim();
+  return `${progressionStepSession} — ${intro}`.trim();
 }
 
 function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null) {
