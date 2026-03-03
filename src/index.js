@@ -4936,7 +4936,7 @@ function buildRecommendationsAndBottomLine(state) {
   }
 
   if (Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
-    rec.push(`RunFloor ${runFloorNow}/${runFloorTarget} → Volumen priorisieren.`);
+    rec.push(`RunFloor ${Math.round(runFloorNow)}/${Math.round(runFloorTarget)} → Volumen priorisieren.`);
   }
   if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
     if (longRunGapMin < 0) {
