@@ -95,6 +95,27 @@ Beispiele:
 - `/sync?days=7&write=false&debug=true`
 - `/sync?from=2026-01-01&to=2026-01-14&write=true&warmup_skip=900`
 
+4.4 Step-Sync (inkrementell, mit Merken des Fortschritts in KV)
+- `GET /sync-step`
+- Zweck: verarbeitet pro Aufruf **genau einen Tag** und merkt sich den nächsten Tag in KV.
+  So lassen sich große Bereiche robust in mehreren Calls abarbeiten (gegen 'Too many subrequests').
+- Voraussetzung: `KV` Binding muss vorhanden sein.
+
+Parameter:
+- `from=YYYY-MM-DD&to=YYYY-MM-DD` beim Start oder mit `reset=true`
+- `reset=true|false`
+  - `true`: setzt den gespeicherten Fortschritt neu auf `from`
+- `write=true|false`, `debug=true|false`, `warmup_skip=...`, `race_start=...`, `block_start=...` wie bei `/sync`
+
+Ablauf:
+1) Initialisieren: `/sync-step?from=2026-02-01&to=2026-03-02&write=true&reset=true`
+2) Dann wiederholt aufrufen (ohne `from/to`): `/sync-step?write=true`
+3) Response enthält `processedDay`, `next`, `done`
+
+Hinweis:
+- Sobald `done=true`, ist der Bereich vollständig verarbeitet.
+- Für einen neuen Bereich erneut mit `reset=true&from=...&to=...` starten.
+
 5) SCHEDULED TRIGGER
 --------------------
 `scheduled()` verarbeitet:

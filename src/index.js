@@ -164,6 +164,22 @@ export default {
       return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso });
     }
 
+    if (url.pathname === "/sync-step") {
+      try {
+        return await handleStepSync(req, env, ctx);
+      } catch (e) {
+        return json(
+          {
+            ok: false,
+            error: "Worker exception",
+            message: String(e?.message ?? e),
+            stack: String(e?.stack ?? ""),
+          },
+          500
+        );
+      }
+    }
+
     return new Response("Not found", { status: 404 });
   },
 
@@ -203,6 +219,8 @@ const WATCHFACE_ERROR_HEADERS = {
   "access-control-allow-origin": "*",
 };
 
+const STEP_SYNC_KV_PREFIX = "syncstep:state:";
+
 function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
 }
@@ -225,6 +243,150 @@ function getSearchParamAny(searchParams, keys) {
     if (value) return value;
   }
   return "";
+}
+
+function addDaysIso(dayIso, days) {
+  return isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + Number(days) * 86400000));
+}
+
+function makeStepSyncStateKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${STEP_SYNC_KV_PREFIX}${athleteId}`;
+}
+
+async function readStepSyncState(env) {
+  if (!hasKv(env)) return null;
+  return readKvJson(env, makeStepSyncStateKey(env));
+}
+
+async function writeStepSyncState(env, state) {
+  if (!hasKv(env)) return;
+  await writeKvJson(env, makeStepSyncStateKey(env), state);
+}
+
+function normalizeStepSyncState(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const from = isIsoDate(raw.from) ? raw.from : null;
+  const to = isIsoDate(raw.to) ? raw.to : null;
+  const next = isIsoDate(raw.next) ? raw.next : from;
+  if (!from || !to || !next) return null;
+  if (to < from) return null;
+  return {
+    from,
+    to,
+    next,
+    done: next > to,
+    updatedAt: raw.updatedAt || null,
+  };
+}
+
+async function handleStepSync(req, env, ctx) {
+  const url = new URL(req.url);
+  const write = parseBooleanParam(url.searchParams, "write");
+  const debug = parseBooleanParam(url.searchParams, "debug");
+  const reset = parseBooleanParam(url.searchParams, "reset");
+  const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
+
+  if (!hasKv(env)) {
+    return json({ ok: false, error: "KV binding required for /sync-step" }, 400);
+  }
+
+  const fromParam = url.searchParams.get("from");
+  const toParam = url.searchParams.get("to");
+  const raceStartParamRaw = getSearchParamAny(url.searchParams, [
+    "race_start",
+    "race_start_override",
+    "race_start_iso",
+    "racestart",
+    "raceStart",
+  ]);
+  const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
+  const blockStartParamRaw = getSearchParamAny(url.searchParams, [
+    "block_start",
+    "block_start_override",
+    "block_start_iso",
+    "blockstart",
+    "blockStart",
+  ]);
+  const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
+
+  if (raceStartParamRaw && !raceStartOverrideIso) {
+    return json({ ok: false, error: "Invalid race_start format (YYYY-MM-DD)" }, 400);
+  }
+  if (blockStartParamRaw && !blockStartOverrideIso) {
+    return json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400);
+  }
+
+  let state = normalizeStepSyncState(await readStepSyncState(env));
+
+  if (reset || !state) {
+    if (!isIsoDate(fromParam || "") || !isIsoDate(toParam || "")) {
+      return json({ ok: false, error: "Provide valid from/to (YYYY-MM-DD) when starting or resetting step sync" }, 400);
+    }
+    if (toParam < fromParam) {
+      return json({ ok: false, error: "`to` must be >= `from`" }, 400);
+    }
+    if (diffDays(fromParam, toParam) > 62) {
+      return json({ ok: false, error: "Max step-sync range is 62 days" }, 400);
+    }
+    state = {
+      from: fromParam,
+      to: toParam,
+      next: fromParam,
+      done: false,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeStepSyncState(env, state);
+  }
+
+  if (state.done || state.next > state.to) {
+    return json({
+      ok: true,
+      mode: "step-sync",
+      done: true,
+      from: state.from,
+      to: state.to,
+      next: null,
+      message: "Range already completed. Use reset=true with from/to to start a new range.",
+    });
+  }
+
+  const day = state.next;
+  const result = await syncRange(env, day, day, write, debug, warmupSkipSec, {
+    raceStartOverrideIso,
+    blockStartOverrideIso,
+  });
+
+  const next = addDaysIso(day, 1);
+  const done = next > state.to;
+  const nextState = {
+    ...state,
+    next,
+    done,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeStepSyncState(env, nextState);
+
+  if (done && write) {
+    ctx?.waitUntil?.(
+      dailyModelJob(env, state.to).catch((e) => {
+        console.error("dailyModelJob (/sync-step) failed", e);
+      })
+    );
+  }
+
+  return json({
+    ok: true,
+    mode: "step-sync",
+    processedDay: day,
+    done,
+    from: state.from,
+    to: state.to,
+    next: done ? null : next,
+    write,
+    warmupSkipSec,
+    ...(debug ? { result } : {}),
+  });
 }
 
 
