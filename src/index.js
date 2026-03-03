@@ -6268,12 +6268,15 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText, eventsByExternal
   const name = "Montags-Report";
   const description = toHardLineBreakText(noteText);
 
-  // Find existing note by external_id on that day
-  const dayEvents = eventsByExternalId?.has(external_id) ? null : await fetchIntervalsEvents(env, dayIso, dayIso);
-  const existing = eventsByExternalId?.get(external_id)
-    || (dayEvents || []).find((e) => String(e?.external_id || "") === external_id);
+  // If we already fetched events for the whole range, don't trigger per-day fetches again.
+  const hasPrefetchedEvents = eventsByExternalId instanceof Map;
+  const dayEvents = hasPrefetchedEvents ? null : await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = hasPrefetchedEvents
+    ? (eventsByExternalId.get(external_id) || null)
+    : (dayEvents || []).find((e) => String(e?.external_id || "") === external_id);
 
   if (existing?.id) {
+    if (String(existing?.description || "") === description) return;
     await updateIntervalsEvent(env, existing.id, {
       category: "NOTE",
       start_date_local: `${dayIso}T00:00:00`,
@@ -6285,7 +6288,7 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText, eventsByExternal
     return;
   }
 
-  await createIntervalsEvent(env, {
+  const created = await createIntervalsEvent(env, {
     category: "NOTE",
     start_date_local: `${dayIso}T00:00:00`,
     name,
@@ -6293,11 +6296,12 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText, eventsByExternal
     color: "orange",
     external_id,
   });
+  if (hasPrefetchedEvents && created?.id) eventsByExternalId.set(external_id, created);
 }
 
 async function fetchDailyReportNoteEvent(env, dayIso, eventsByExternalId = null) {
   const external_id = `daily-report-${dayIso}`;
-  if (eventsByExternalId?.has(external_id)) return eventsByExternalId.get(external_id) || null;
+  if (eventsByExternalId instanceof Map) return eventsByExternalId.get(external_id) || null;
   const events = await fetchIntervalsEvents(env, dayIso, dayIso);
   return (events || []).find((e) => String(e?.external_id || "") === external_id) || null;
 }
@@ -6356,6 +6360,8 @@ async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, exis
 
   const normalizedFreshText = normalizeDailyReportText(dayIso, freshNoteText || "");
   const merged = mergeTodayRunSection(existing?.description || "", normalizedFreshText);
+  const existingNormalized = fromHardLineBreakText(existing?.description || "").trim();
+  if (existingNormalized === String(merged || "").trim()) return true;
   await updateIntervalsEvent(env, existing.id, {
     category: "NOTE",
     start_date_local: `${dayIso}T00:00:00`,
@@ -6373,11 +6379,14 @@ async function upsertDailyReportNote(env, dayIso, noteText, eventsByExternalId =
   const name = "Daily-Report";
   const description = toHardLineBreakText(normalizeDailyReportText(dayIso, noteText));
 
-  const dayEvents = eventsByExternalId?.has(external_id) ? null : await fetchIntervalsEvents(env, dayIso, dayIso);
-  const existing = eventsByExternalId?.get(external_id)
-    || (dayEvents || []).find((e) => String(e?.external_id || "") === external_id);
+  const hasPrefetchedEvents = eventsByExternalId instanceof Map;
+  const dayEvents = hasPrefetchedEvents ? null : await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = hasPrefetchedEvents
+    ? (eventsByExternalId.get(external_id) || null)
+    : (dayEvents || []).find((e) => String(e?.external_id || "") === external_id);
 
   if (existing?.id) {
+    if (String(existing?.description || "") === description) return;
     await updateIntervalsEvent(env, existing.id, {
       category: "NOTE",
       start_date_local: `${dayIso}T00:00:00`,
@@ -6389,7 +6398,7 @@ async function upsertDailyReportNote(env, dayIso, noteText, eventsByExternalId =
     return;
   }
 
-  await createIntervalsEvent(env, {
+  const created = await createIntervalsEvent(env, {
     category: "NOTE",
     start_date_local: `${dayIso}T00:00:00`,
     name,
@@ -6397,6 +6406,7 @@ async function upsertDailyReportNote(env, dayIso, noteText, eventsByExternalId =
     color: "blue",
     external_id,
   });
+  if (hasPrefetchedEvents && created?.id) eventsByExternalId.set(external_id, created);
 }
 
 function toHardLineBreakText(text) {
