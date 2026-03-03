@@ -7,7 +7,6 @@ Dieser Worker synchronisiert Intervals.icu-Daten (Aktivitäten + Streams) in Wel
 erzeugt tägliche und montägliche NOTE-Events und liefert ein kompaktes Watchface-JSON.
 
 Hauptfunktionen:
-- tägliches Lernmodell (UCB-Bandit) speichert Wochen-Features/Aktionen/Outcomes in KV, lernt aus 28d-Reward und legt Empfehlung in KV ab
 - `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
 - `scheduled()`: triggert automatischen Sync für gestern + heute (mit `write=true`)
@@ -18,7 +17,6 @@ Pro verarbeitetem Tag:
   - `VDOT`, `EF`, `Drift`, `Motor`, `Block`
 - tägliches NOTE-Event `Daily-Report` wird geschrieben/aktualisiert
 - montags zusätzlich `Montags-Report` (Detective-Note)
-- im Montags-Report wird zusätzlich ein "🤖 Lern-Coach"-Kommentar aus dem Bandit-Modell ergänzt
 
 2) VORAUSSETZUNGEN
 ------------------
@@ -28,7 +26,7 @@ Plattform:
 Environment / Secrets:
 - `INTERVALS_API_KEY` (Secret)
 - `ATHLETE_ID` (required env var)
-- `KV` (KV Namespace Binding für Detective-Historie und Lernmodell)
+- `KV` (KV Namespace Binding für Detective-Historie und Step-Sync-Status)
 
 Auth:
 - Authorization Header: `Basic ` + base64(`API_KEY:<INTERVALS_API_KEY>`)
@@ -122,7 +120,6 @@ Hinweis:
 - `oldest = gestern`
 - `newest = heute`
 - intern mit `write=true`, `debug=false`, `warmup_skip=600`
-- danach wird `dailyModelJob` ausgeführt (Features upsert, Action wählen, reife Rewards lernen)
 
 Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei Läufe pro Tag).
 
