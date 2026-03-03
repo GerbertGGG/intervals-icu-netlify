@@ -4128,6 +4128,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
   ctx.lifeEventsAll = await fetchIntervalsEvents(env, globalOldest, globalNewest).catch(() => []);
   ctx.modeEventsAll = await fetchIntervalsEvents(env, modeOldest, modeNewest).catch(() => []);
+  const lifeEventsByExternalId = new Map(
+    (ctx.lifeEventsAll || [])
+      .filter((event) => event?.external_id)
+      .map((event) => [String(event.external_id), event])
+  );
 
   // 2) Build byDayRuns / byDayBikes for quick access
   let activitiesSeen = 0;
@@ -4213,7 +4218,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const patch = {};
     const perRunInfo = [];
     const existingDailyReportEvent =
-      write && runMetricsOnlyIfExisting ? await fetchDailyReportNoteEvent(env, day) : null;
+      write && runMetricsOnlyIfExisting ? await fetchDailyReportNoteEvent(env, day, lifeEventsByExternalId) : null;
     const runSectionOnly =
       runMetricsOnly && (!runMetricsOnlyIfExisting || Boolean(existingDailyReportEvent?.id));
     const wellnessToday = await fetchWellnessDay(ctx, env, day);
@@ -4713,7 +4718,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     if (write && runSectionOnly && existingDailyReportEvent?.id) {
       await upsertDailyReportTodayRunSection(env, day, dailyReportText || "", existingDailyReportEvent);
     } else if (write && !runSectionOnly) {
-      await upsertDailyReportNote(env, day, dailyReportText || "");
+      await upsertDailyReportNote(env, day, dailyReportText || "", lifeEventsByExternalId);
     }
 
     // Monday detective NOTE (calendar) – always on Mondays, even if no run
@@ -4730,7 +4735,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
         detectiveNoteText = `🕵️‍♂️ Montags-Report\nFehler: ${String(e?.message ?? e)}`;
       }
       if (write) {
-        await upsertMondayDetectiveNote(env, day, detectiveNoteText);
+        await upsertMondayDetectiveNote(env, day, detectiveNoteText, lifeEventsByExternalId);
       }
       if (debug) {
         const detectiveBlock = String(detectiveNoteText || "").startsWith("🕵️‍♂️")
@@ -6258,14 +6263,15 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
 }
 
 // Create/update a NOTE event for the Monday detective
-async function upsertMondayDetectiveNote(env, dayIso, noteText) {
+async function upsertMondayDetectiveNote(env, dayIso, noteText, eventsByExternalId = null) {
   const external_id = `detektiv-${dayIso}`;
   const name = "Montags-Report";
   const description = toHardLineBreakText(noteText);
 
   // Find existing note by external_id on that day
-  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
-  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
+  const dayEvents = eventsByExternalId?.has(external_id) ? null : await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = eventsByExternalId?.get(external_id)
+    || (dayEvents || []).find((e) => String(e?.external_id || "") === external_id);
 
   if (existing?.id) {
     await updateIntervalsEvent(env, existing.id, {
@@ -6289,8 +6295,9 @@ async function upsertMondayDetectiveNote(env, dayIso, noteText) {
   });
 }
 
-async function fetchDailyReportNoteEvent(env, dayIso) {
+async function fetchDailyReportNoteEvent(env, dayIso, eventsByExternalId = null) {
   const external_id = `daily-report-${dayIso}`;
+  if (eventsByExternalId?.has(external_id)) return eventsByExternalId.get(external_id) || null;
   const events = await fetchIntervalsEvents(env, dayIso, dayIso);
   return (events || []).find((e) => String(e?.external_id || "") === external_id) || null;
 }
@@ -6361,13 +6368,14 @@ async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, exis
 }
 
 // Create/update a blue NOTE event for the daily wellness report
-async function upsertDailyReportNote(env, dayIso, noteText) {
+async function upsertDailyReportNote(env, dayIso, noteText, eventsByExternalId = null) {
   const external_id = `daily-report-${dayIso}`;
   const name = "Daily-Report";
   const description = toHardLineBreakText(normalizeDailyReportText(dayIso, noteText));
 
-  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
-  const existing = (events || []).find((e) => String(e?.external_id || "") === external_id);
+  const dayEvents = eventsByExternalId?.has(external_id) ? null : await fetchIntervalsEvents(env, dayIso, dayIso);
+  const existing = eventsByExternalId?.get(external_id)
+    || (dayEvents || []).find((e) => String(e?.external_id || "") === external_id);
 
   if (existing?.id) {
     await updateIntervalsEvent(env, existing.id, {
