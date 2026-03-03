@@ -2115,25 +2115,42 @@ const PROGRESSION_TEMPLATES = {
         { reps: 6, work_min: 3 },
         { reps: 5, work_min: 4 },
         { reps: 4, work_min: 3, deload_step: true },
+        { reps: 6, work_min: 3 },
+        { reps: 5, work_min: 4 },
+        { reps: 5, work_min: 4 },
+        { reps: 4, work_min: 3, deload_step: true },
       ],
       schwelle: [
         { reps: 4, work_min: 6 },
         { reps: 3, work_min: 8 },
         { reps: 3, work_min: 10 },
         { reps: 3, work_min: 6, deload_step: true },
+        { reps: 3, work_min: 9 },
+        { reps: 2, work_min: 12 },
+        { reps: 3, work_min: 10 },
+        { reps: 2, work_min: 8, deload_step: true },
       ],
       racepace: [
         { reps: 5, work_km: 0.6 },
         { reps: 4, work_km: 0.8 },
         { reps: 4, work_km: 1.0 },
         { reps: 6, work_km: 0.4, deload_step: true },
+        { reps: 5, work_km: 0.8 },
+        { reps: 4, work_km: 1.0 },
+        { reps: 3, work_km: 1.2 },
+        { reps: 5, work_km: 0.6, deload_step: true },
       ],
     },
+
     "10k": {
       schwelle: [
         { reps: 4, work_min: 6 },
         { reps: 3, work_min: 8 },
         { reps: 3, work_min: 10 },
+        { reps: 2, work_min: 8, deload_step: true },
+        { reps: 3, work_min: 10 },
+        { reps: 2, work_min: 12 },
+        { reps: 2, work_min: 15 },
         { reps: 2, work_min: 8, deload_step: true },
       ],
       vo2_touch: [
@@ -2141,25 +2158,42 @@ const PROGRESSION_TEMPLATES = {
         { reps: 5, work_min: 4 },
         { reps: 4, work_min: 5 },
         { reps: 5, work_min: 3, deload_step: true },
+        { reps: 5, work_min: 4 },
+        { reps: 4, work_min: 5 },
+        { reps: 4, work_min: 6 },
+        { reps: 4, work_min: 3, deload_step: true },
       ],
       racepace: [
         { reps: 3, work_km: 1.5 },
         { reps: 3, work_km: 2.0 },
         { reps: 2, work_km: 3.0 },
         { reps: 5, work_km: 1.0, deload_step: true },
+        { reps: 3, work_km: 2.0 },
+        { reps: 2, work_km: 3.0 },
+        { reps: 2, work_km: 3.5 },
+        { reps: 4, work_km: 1.5, deload_step: true },
       ],
     },
+
     hm: {
       schwelle: [
         { reps: 3, work_min: 10 },
         { reps: 3, work_min: 12 },
         { reps: 2, work_min: 15 },
         { reps: 2, work_min: 10, deload_step: true },
+        { reps: 3, work_min: 12 },
+        { reps: 2, work_min: 16 },
+        { reps: 2, work_min: 20 },
+        { reps: 2, work_min: 12, deload_step: true },
       ],
       vo2_touch: [
         { reps: 10, work_sec: 20, rest_sec: 70 },
         { reps: 12, work_sec: 20, rest_sec: 70 },
         { reps: 10, work_sec: 30, rest_sec: 90 },
+        { reps: 8, work_sec: 20, rest_sec: 90, deload_step: true },
+        { reps: 10, work_sec: 30, rest_sec: 90 },
+        { reps: 8, work_sec: 40, rest_sec: 90 },
+        { reps: 6, work_sec: 40, rest_sec: 90 },
         { reps: 8, work_sec: 20, rest_sec: 90, deload_step: true },
       ],
       racepace: [
@@ -2167,31 +2201,50 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_km: 3.0 },
         { reps: 2, work_km: 4.0 },
         { reps: 2, work_km: 2.0, deload_step: true },
+        { reps: 2, work_km: 4.0 },
+        { reps: 2, work_km: 5.0 },
+        { reps: 3, work_km: 3.0 },
+        { reps: 2, work_km: 3.0, deload_step: true },
       ],
     },
+
     m: {
       racepace: [
         { reps: 3, work_km: 4.0 },
         { reps: 2, work_km: 6.0 },
         { reps: 2, work_km: 8.0 },
         { reps: 2, work_km: 4.0, deload_step: true },
+        { reps: 3, work_km: 5.0 },
+        { reps: 2, work_km: 9.0 },
+        { reps: 2, work_km: 10.0 },
+        { reps: 2, work_km: 6.0, deload_step: true },
+        { reps: 2, work_km: 8.0 },
+        { reps: 2, work_km: 6.0 },
       ],
     },
   },
+
   RACE: {
     "5k": {
       racepace: [
         { reps: 4, work_km: 0.8 },
         { reps: 4, work_km: 1.0 },
         { reps: 4, work_km: 1.5 },
+        { reps: 5, work_km: 1.0, deload_step: true },
+        { reps: 3, work_km: 1.2 },
+        { reps: 3, work_km: 1.6 },
+        { reps: 4, work_km: 0.8, deload_step: true },
       ],
     },
+
     "10k": {
       racepace: [
         { reps: 4, work_km: 2.0 },
         { reps: 3, work_km: 3.0 },
         { reps: 5, work_km: 2.0 },
         { reps: 4, work_km: 3.0 },
+        { reps: 2, work_km: 2.0, deload_step: true },
+        { reps: 3, work_km: 2.5 },
         { reps: 2, work_km: 2.0, deload_step: true },
       ],
       schwelle: [
@@ -2200,11 +2253,19 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_min: 6, deload_step: true },
       ],
     },
+
     hm: {
       racepace: [
         { reps: 2, work_km: 4.0 },
         { reps: 2, work_km: 5.0 },
-        { reps: 2, work_km: 3.0, deload_step: true },
+        { reps: 3, work_km: 3.0 },
+        { reps: 2, work_km: 6.0 },
+        { reps: 2, work_km: 4.0, deload_step: true },
+        { reps: 1, work_km: 7.0 },
+        { reps: 2, work_km: 4.5 },
+        { reps: 2, work_km: 5.0 },
+        { reps: 3, work_km: 3.0, deload_step: true },
+        { reps: 2, work_km: 4.0, deload_step: true },
       ],
       vo2_touch: [
         { reps: 8, work_sec: 20, rest_sec: 90 },
@@ -2216,10 +2277,18 @@ const PROGRESSION_TEMPLATES = {
         { reps: 2, work_min: 8, deload_step: true },
       ],
     },
+
     m: {
       racepace: [
         { reps: 2, work_km: 6.0 },
         { reps: 2, work_km: 8.0 },
+        { reps: 3, work_km: 5.0 },
+        { reps: 2, work_km: 10.0 },
+        { reps: 2, work_km: 6.0, deload_step: true },
+        { reps: 2, work_km: 9.0 },
+        { reps: 2, work_km: 10.0 },
+        { reps: 1, work_km: 12.0 },
+        { reps: 2, work_km: 6.0, deload_step: true },
         { reps: 2, work_km: 5.0, deload_step: true },
       ],
     },
