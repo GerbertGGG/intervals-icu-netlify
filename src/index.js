@@ -220,6 +220,7 @@ const WATCHFACE_ERROR_HEADERS = {
 };
 
 const STEP_SYNC_KV_PREFIX = "syncstep:state:";
+const STEP_SYNC_ADVANCE_DAYS = 7;
 
 function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
@@ -357,7 +358,7 @@ async function handleStepSync(req, env, ctx) {
     blockStartOverrideIso,
   });
 
-  const next = addDaysIso(day, 1);
+  const next = addDaysIso(day, STEP_SYNC_ADVANCE_DAYS);
   const done = next > state.to;
   const nextState = {
     ...state,
@@ -383,6 +384,7 @@ async function handleStepSync(req, env, ctx) {
     from: state.from,
     to: state.to,
     next: done ? null : next,
+    stepDays: STEP_SYNC_ADVANCE_DAYS,
     write,
     warmupSkipSec,
     ...(debug ? { result } : {}),

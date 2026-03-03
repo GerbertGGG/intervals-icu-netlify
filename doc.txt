@@ -97,7 +97,7 @@ Beispiele:
 
 4.4 Step-Sync (inkrementell, mit Merken des Fortschritts in KV)
 - `GET /sync-step`
-- Zweck: verarbeitet pro Aufruf **genau einen Tag** und merkt sich den nächsten Tag in KV.
+- Zweck: verarbeitet pro Aufruf **einen Tag** und springt anschließend standardmäßig um **7 Tage** weiter; der nächste Verarbeitungstag wird in KV gemerkt.
   So lassen sich große Bereiche robust in mehreren Calls abarbeiten (gegen 'Too many subrequests').
 - Voraussetzung: `KV` Binding muss vorhanden sein.
 
