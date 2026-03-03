@@ -7342,7 +7342,7 @@ async function buildWeekFeatures(env, weekStart, weekEnd) {
     0
   );
 
-  const runSnapshot = await resolveWatchfaceRunSnapshot(env);
+  const runSnapshot = await resolveWatchfaceRunSnapshot(env, end);
   return {
     runSum7: Number.isFinite(runSnapshot?.runValue) ? round(runSnapshot.runValue, 1) : 0,
     runGoal: Number.isFinite(runSnapshot?.runGoal) ? round(runSnapshot.runGoal, 1) : 0,
@@ -7596,14 +7596,32 @@ async function buildWatchfacePayload(env, endIso) {
   };
 }
 
-async function resolveWatchfaceRunSnapshot(env) {
+function parseRunSnapshotFromDailyReportText(rawText) {
+  const text = fromHardLineBreakText(rawText || "");
+  const match = text.match(/RunFloor\s*\(14T\s*EWMA\)\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*\/\s*([0-9]+(?:[.,][0-9]+)?)/i);
+  if (!match) return null;
+
+  const runValue = Number(String(match[1]).replace(",", "."));
+  const runGoal = Number(String(match[2]).replace(",", "."));
+  if (!Number.isFinite(runValue) || !Number.isFinite(runGoal)) return null;
+
+  return { runValue, runGoal, source: "daily_report" };
+}
+
+async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date())) {
+  const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso);
+  const parsedFromDailyReport = parseRunSnapshotFromDailyReportText(dailyReportEvent?.description || "");
+  if (parsedFromDailyReport?.runValue != null && parsedFromDailyReport?.runGoal != null) {
+    return parsedFromDailyReport;
+  }
+
   const kv = await readLatestRunSnapshotKv(env);
 
   if (kv?.runValue != null && kv?.runGoal != null) {
-    return { runValue: kv.runValue, runGoal: kv.runGoal };
+    return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
   }
 
-  return { runValue: 0, runGoal: 0 };
+  return { runValue: 0, runGoal: 0, source: "default" };
 }
 
 
