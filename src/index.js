@@ -4116,10 +4116,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
   const globalOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - neededLookbackDays * 86400000));
   const globalNewest = newest;
+  const modeOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - 21 * 86400000));
+  const modeNewest = isoDate(new Date(new Date(newest + "T00:00:00Z").getTime() + EVENT_LOOKAHEAD_DAYS * 86400000));
 
   // 1) Fetch ALL activities once
   ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
   ctx.lifeEventsAll = await fetchIntervalsEvents(env, globalOldest, globalNewest).catch(() => []);
+  ctx.modeEventsAll = await fetchIntervalsEvents(env, modeOldest, modeNewest).catch(() => []);
 
   // 2) Build byDayRuns / byDayBikes for quick access
   let activitiesSeen = 0;
@@ -4162,7 +4165,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     let modeInfo;
     let policy;
     try {
-      modeInfo = await determineMode(env, day, ctx.debug);
+      modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
       policy = getModePolicy(modeInfo);
     } catch (e) {
       modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
@@ -7719,9 +7722,11 @@ function addDebug(debugOut, day, a, status, computed) {
 }
 // ================= EVENTS -> MODE (NEW) =================
 
-async function determineMode(env, dayIso, debug = false) {
+async function determineMode(env, dayIso, debug = false, prefetchedEvents = null) {
   const auth = authHeader(env);
-  const events = await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
+  const events = Array.isArray(prefetchedEvents)
+    ? prefetchedEvents
+    : await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
   const races = (events || []).filter((e) => normalizeEventCategory(e.category) === "RACE_A");
   const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
 
