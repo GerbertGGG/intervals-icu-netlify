@@ -169,6 +169,32 @@ Im Daily-Report erscheinen daraus abgeleitete Empfehlungen inkl.
 - nächster Key-Reiz
 - Progressionshinweis (Wochenziel in Minuten)
 
+9.0a Templates vs. Recommendations (wie die Key-Vorschläge gebaut werden)
+-------------------------------------------------------------------------
+- `PROGRESSION_TEMPLATES` sind die **strukturierte Progressionslogik** pro Block (`BASE/BUILD/RACE`), Distanz (`5k/10k/hm/m`) und Key-Typ (`racepace/schwelle/vo2_touch`).
+  - Diese Steps liefern bei verfügbarer Progression die konkrete Einheit (z. B. `4×1,0 km` oder `3×10′`).
+  - Die Auswahl orientiert sich an bereits absolvierten Sessions im aktiven Block (`sessionsDone`) plus Overlay-Modus (`DELOAD/TAPER/RECOVER_OVERLAY`), der den Index reduzieren oder resetten kann.
+- `KEY_SESSION_RECOMMENDATIONS` ist der **Text-Katalog als Fallback und Ergänzung**.
+  - Der Code wählt zuerst den bevorzugten/erlaubten Key-Typ (`preferredType` aus Rules), sonst den ersten verfügbaren Typ im Katalog.
+  - Für den finalen Satz wird **zuerst versucht**, aus `PROGRESSION_TEMPLATES` die aktuelle Step-Session zu formatieren.
+  - Wenn kein Step auflösbar ist, wird ein Eintrag aus `KEY_SESSION_RECOMMENDATIONS` genutzt (`entries[0]`).
+  - Für `schwelle` kann zusätzlich ein Format-Umschalter greifen (z. B. andere Schwellen-Variante), inkl. Begründung im Text.
+- Ergebnis ist eine Zeile nach Muster:
+  - `<KeyType> konkret: <SessionText>. <optionale Hinweise>`
+  - Bei `racepace` ergänzt der Code zusätzlich ein RP-Ziel bis Blockende.
+
+9.0b Wie entstehen die Kommentare?
+---------------------------------
+- Der tägliche Kommentar wird in `buildComments()` als mehrteiliger Report zusammengesetzt.
+- Er besteht aus Blöcken mit Überschrift + Bullet-Zeilen (u. a. `HEUTIGER LAUF`, `BELASTUNG & PROGRESSION`, `KEY-CHECK`, `EMPFEHLUNGEN`, `HEUTE-ENTSCHEIDUNG`, `BOTTOM LINE`).
+- Die Kurz-„Empfehlungen“ stammen aus `buildRecommendationsAndBottomLine()` (max. 3 Rec-Zeilen + max. 2 Bottom-Line-Zeilen, jeweils gekürzt).
+- Wichtige Inputs für diese Blöcke sind:
+  - RunFloor/Longrun-Status,
+  - Intensitätsverteilung,
+  - Key-Budget/Spacing,
+  - Overlay-Modus,
+  - optional explizite Key-Session aus der Progression.
+
 9.1 Verhalten zwischen zwei Wettkämpfen (Beispiel: Ende März + Anfang Oktober)
 -------------------------------------------------------------------------------
 - Nach **jedem** Wettkampf startet der Worker für 14 Tage einen offenen Modus (`OPEN:POST_EVENT`).
