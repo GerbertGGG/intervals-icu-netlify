@@ -2448,7 +2448,7 @@ function resolvePrimaryKeyType(keyRules, block) {
   return "steady";
 }
 
-function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDistance } = {}) {
+function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDistance, explicitOnly = false } = {}) {
   if (!isIsoDate(blockStartIso) || !isIsoDate(dayIso)) return 0;
   const normalizedKeyType = normalizeKeyType(keyType);
   if (!normalizedKeyType) return 0;
@@ -2459,6 +2459,8 @@ function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDist
     if (!activityIso || activityIso < blockStartIso || activityIso > dayIso) continue;
 
     const explicitKeyTag = hasKeyTag(activity);
+    if (explicitOnly && !explicitKeyTag) continue;
+
     const rawType = explicitKeyTag ? getKeyType(activity) : null;
     let normalizedType = normalizeKeyType(rawType, {
       activity,
@@ -2527,6 +2529,7 @@ function pickProgressionStep({ block, dist, keyType, overlayMode, weeksToEvent, 
     dayIso,
     keyType,
     eventDistance: dist,
+    explicitOnly: true,
   });
   let idx = Math.min(Math.max(0, sessionsDone), steps.length - 1);
 
