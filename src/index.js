@@ -5281,6 +5281,13 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
+function buildBikeAllowanceLine({ bikeSubFactor }) {
+  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  const allowed = factor > 0;
+  const factorPct = Math.round(factor * 100);
+  return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
+}
+
 // ================= COMMENT =================
 function buildComments(
   {
@@ -5430,6 +5437,7 @@ function buildComments(
     keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
+  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
@@ -5564,6 +5572,7 @@ function buildComments(
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
   if (keyPatternLine && hasEventDistance) keyCheckMetrics.push(keyPatternLine);
+  if (bikeAllowanceLine) keyCheckMetrics.push(bikeAllowanceLine);
   if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
