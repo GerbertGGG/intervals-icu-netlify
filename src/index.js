@@ -914,17 +914,22 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 
 function extractRunDistanceKm(activity) {
   const candidates = [
-    activity?.distance,
-    activity?.distanceMeters,
-    activity?.distance_meters,
-    activity?.distance_metres,
-    activity?.details?.distance,
-    activity?.details?.distanceMeters,
+    { value: activity?.distanceMeters, unit: "m" },
+    { value: activity?.distance_meters, unit: "m" },
+    { value: activity?.distance_metres, unit: "m" },
+    { value: activity?.details?.distanceMeters, unit: "m" },
+    { value: activity?.details?.distance_meters, unit: "m" },
+    { value: activity?.details?.distance_metres, unit: "m" },
+    { value: activity?.distance, unit: "auto" },
+    { value: activity?.details?.distance, unit: "auto" },
   ];
-  for (const raw of candidates) {
-    const n = Number(raw);
+  for (const candidate of candidates) {
+    const n = Number(candidate?.value);
     if (!Number.isFinite(n) || n <= 0) continue;
-    return n >= 1000 ? n / 1000 : n;
+    if (candidate.unit === "m") return n / 1000;
+    // Ambiguous "distance" fields are usually meters for API payloads and km for some imports.
+    // Single-run values >60 are treated as meters to avoid inflating short runs (<1000m) by 1000x.
+    return n > 60 ? n / 1000 : n;
   }
   return 0;
 }
