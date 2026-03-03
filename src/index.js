@@ -7241,31 +7241,49 @@ async function buildMondayLearnedCoaching(env, mondayIso) {
   if (!env?.KV) return "";
 
   const weekStart = mondayOfIso(mondayIso);
-  const row = await loadModelWeek(env, weekStart);
-
-  const action = MODEL_ACTIONS.find((x) => x.id === String(row?.actionId || ""));
-  if (!action) return "🤖 Lern-Coach: Noch keine Empfehlung vorhanden (zu wenig Daten).";
-
   const weeks = await loadAllModelWeeks(env);
-  let n = 0;
-  let rewardSum = 0;
+  const typeStats = {
+    threshold: { label: "Schwelle", n: 0, rewardSum: 0 },
+    vo2: { label: "VO2", n: 0, rewardSum: 0 },
+    longrun: { label: "Longrun", n: 0, rewardSum: 0 },
+    strength: { label: "Kraft", n: 0, rewardSum: 0 },
+  };
+
   for (const week of weeks) {
-    if (String(week?.actionId || "") !== action.id) continue;
+    const action = MODEL_ACTIONS.find((x) => x.id === String(week?.actionId || ""));
+    if (!action?.type || !typeStats[action.type]) continue;
     const rewardVal = Number(week?.outcome?.reward_28d);
     if (!Number.isFinite(rewardVal)) continue;
-    n += 1;
-    rewardSum += rewardVal;
+
+    typeStats[action.type].n += 1;
+    typeStats[action.type].rewardSum += rewardVal;
   }
 
-  const avgReward = n > 0 ? rewardSum / n : null;
+  const evidence = Object.values(typeStats)
+    .filter((s) => s.n > 0)
+    .map((s) => ({
+      ...s,
+      avgReward: s.rewardSum / s.n,
+    }))
+    .sort((a, b) => b.avgReward - a.avgReward);
+
+  const row = await loadModelWeek(env, weekStart);
   const rewardTxt = Number.isFinite(Number(row?.outcome?.reward_28d))
-    ? ` | letzter 28d-Reward: ${round(Number(row.outcome.reward_28d), 2)}`
-    : " | letzter 28d-Reward: noch offen";
+    ? `Letzter 28d-Reward: ${round(Number(row.outcome.reward_28d), 2)}.`
+    : "Letzter 28d-Reward: noch offen.";
 
-  if (n > 0 && Number.isFinite(avgReward)) {
-    return `🤖 Lern-Coach: Empfehlung diese Woche → ${action.label}. Evidenz: Ø Reward ${round(avgReward, 2)} (n=${n})${rewardTxt}.`;
+  if (!evidence.length) {
+    return `🤖 Lern-Coach: Noch zu wenig Evidenz für belastbare Muster. ${rewardTxt}`;
   }
-  return `🤖 Lern-Coach: Empfehlung diese Woche → ${action.label}. Evidenz wird aufgebaut (n=0)${rewardTxt}.`;
+
+  const best = evidence[0];
+  const runnerUp = evidence[1] || null;
+  const spread = runnerUp ? best.avgReward - runnerUp.avgReward : null;
+  const spreadTxt = Number.isFinite(spread)
+    ? ` Abstand zu Platz 2: ${round(spread, 2)}.`
+    : "";
+
+  return `🤖 Lern-Coach: Tendenz aus deinen bisherigen Wochen: Bei ${best.label} war der Ø 28d-Reward am höchsten (${round(best.avgReward, 2)}, n=${best.n}). Das ist eine Beobachtung, keine konkrete Trainingsvorgabe.${spreadTxt} ${rewardTxt}`;
 }
 
 function appendMondayCoachingBlock(baseText, coachingText) {
