@@ -80,7 +80,7 @@ export default {
         "blockstart",
         "blockStart",
       ]);
-      const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
+      let blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
       let oldest, newest;
       if (date) {
@@ -109,6 +109,12 @@ export default {
       }
       if (blockStartParamRaw && !blockStartOverrideIso) {
         return json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400);
+      }
+
+      if (!write && debug && !blockStartOverrideIso) {
+        // Dry-run tests with explicit date/range should not silently inherit a persisted block start.
+        // This keeps /sync?date=...&debug=true&write=false predictable without requiring block_start.
+        blockStartOverrideIso = oldest;
       }
 
       if (debug) {
