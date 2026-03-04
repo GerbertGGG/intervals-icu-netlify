@@ -185,9 +185,9 @@ export default {
     }
 
     // Sync only when today's run set changed since the previous crawl.
-    // 20:00+ Berlin runs update only run metrics so planning/report state remains untouched.
+    // Scheduled updates touch only the "HEUTIGER LAUF" section so the rest of the 07:00 baseline report remains unchanged.
     const today = isoDate(new Date());
-    const runMetricsOnly = isEveningBerlinRun(event);
+    const runMetricsOnly = true;
 
     ctx.waitUntil(
       (async () => {

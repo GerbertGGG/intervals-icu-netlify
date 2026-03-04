@@ -9,7 +9,7 @@ erzeugt tägliche und montägliche NOTE-Events und liefert ein kompaktes Watchfa
 Hauptfunktionen:
 - `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
-- `scheduled()`: triggert alle 30 Minuten im Fenster 08:00–21:00 (Berlin), prüft nur den heutigen Tag und schreibt nur, wenn seit dem letzten Crawl ein neuer Lauf erkannt wurde
+- `scheduled()`: triggert alle 30 Minuten im Fenster 08:00–21:00 (Berlin), prüft nur den heutigen Tag und aktualisiert nur den NOTE-Abschnitt „HEUTIGER LAUF“ (Rest bleibt vom 07:00-Basislauf); geschrieben wird nur, wenn seit dem letzten Crawl eine Änderung in den heutigen Lauf-IDs erkannt wurde
 
 Pro verarbeitetem Tag:
 - Wellness-Kommentar wird geleert (`comments = ""`)
