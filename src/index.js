@@ -7964,8 +7964,12 @@ async function buildWatchfacePayload(env, endIso) {
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
   const strengthWindowDays = days.slice(-WATCHFACE_STRENGTH_WINDOW_DAYS);
+  const runWindowDays = days.slice(-WATCHFACE_RUN_WINDOW_DAYS);
+  const runSum7FromActivities = runWindowDays.reduce((sum, day) => sum + (Math.round(runLoadByDay[day] || 0)), 0);
   const strengthSum7 = strengthWindowDays.reduce((sum, day) => sum + (Math.round(strengthMinByDay[day] || 0)), 0);
-  const runSnapshot = await resolveWatchfaceRunSnapshot(env);
+  const runSnapshot = await resolveWatchfaceRunSnapshot(env, end, {
+    runValueFallback: runSum7FromActivities,
+  });
   const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : 0;
   const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : 0;
   const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
@@ -8003,10 +8007,13 @@ function parseRunSnapshotFromDailyReportText(rawText) {
   return { runValue, runGoal, source: "daily_report" };
 }
 
-async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date())) {
+async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date()), options = {}) {
+  const runValueFallback = Number(options?.runValueFallback);
   const kv = await readLatestRunSnapshotKv(env);
+  const kvRunGoal = Number(kv?.runGoal);
+  const fallbackRunGoal = Number.isFinite(kvRunGoal) ? kvRunGoal : 0;
 
-  if (kv?.runValue != null && kv?.runGoal != null) {
+  if (kv?.day === dayIso && kv?.runValue != null && kv?.runGoal != null) {
     return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
   }
 
@@ -8014,6 +8021,14 @@ async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date())) {
   const parsedFromDailyReport = parseRunSnapshotFromDailyReportText(dailyReportEvent?.description || "");
   if (parsedFromDailyReport?.runValue != null && parsedFromDailyReport?.runGoal != null) {
     return parsedFromDailyReport;
+  }
+
+  if (Number.isFinite(runValueFallback) && runValueFallback >= 0) {
+    return {
+      runValue: Math.round(runValueFallback),
+      runGoal: Math.round(fallbackRunGoal),
+      source: "computed_latest_activities",
+    };
   }
 
   return { runValue: 0, runGoal: 0, source: "default" };
