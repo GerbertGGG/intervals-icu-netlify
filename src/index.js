@@ -872,6 +872,7 @@ const MIN_STIMULUS_7D_BIKE_EVENT = 200;  // bike primary
 const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 14;
 const WATCHFACE_LOAD_WINDOW_DAYS = 7;
 const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
+const WATCHFACE_RUN_WINDOW_DAYS = WATCHFACE_LOAD_WINDOW_DAYS;
 
 // Maintenance anchors (soft hints, not hard fails)
 
