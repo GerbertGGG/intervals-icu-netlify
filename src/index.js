@@ -4499,6 +4499,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     if (!previousBlockState) {
       const prevDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 86400000));
       previousBlockState = await getPersistedBlockState(ctx, env, prevDay);
+      if (!previousBlockState) {
+        // Fallback for daily cron runs: if D-1 has no persisted block start,
+        // seed from the current day so we do not reset startDate accidentally.
+        previousBlockState = await getPersistedBlockState(ctx, env, day);
+      }
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
