@@ -178,15 +178,54 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Daily sync: only yesterday+today (and Monday detective if today is Monday).
-    // 20:00 Berlin run updates only run metrics so planning/report state remains untouched.
+    // Run every 30 minutes, but only process/write between 08:00 and 21:00 Berlin time.
+    // This avoids unnecessary requests overnight.
+    if (!isScheduledWindowBerlin(event)) {
+      return;
+    }
+
+    // Sync only when today's run set changed since the previous crawl.
+    // 20:00+ Berlin runs update only run metrics so planning/report state remains untouched.
     const today = isoDate(new Date());
-    const yday = isoDate(new Date(Date.now() - 86400000));
     const runMetricsOnly = isEveningBerlinRun(event);
 
     ctx.waitUntil(
       (async () => {
-        await syncRange(env, yday, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true });
+        const activities = await fetchIntervalsActivities(env, today, today);
+        const todaysRuns = Array.isArray(activities)
+          ? activities.filter((a) => {
+              const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+              return day === today && isRun(a);
+            })
+          : [];
+
+        if (!todaysRuns.length) {
+          await writeScheduledRunState(env, {
+            day: today,
+            runIdsSignature: "",
+            runCount: 0,
+            checkedAt: new Date().toISOString(),
+          });
+          return;
+        }
+
+        const currentSignature = buildRunIdsSignature(todaysRuns);
+        const previousState = await readScheduledRunState(env);
+        if (
+          previousState?.day === today
+          && String(previousState?.runIdsSignature || "") === currentSignature
+        ) {
+          return;
+        }
+
+        await syncRange(env, today, today, true, false, 600, { runMetricsOnly, runMetricsOnlyIfExisting: true });
+
+        await writeScheduledRunState(env, {
+          day: today,
+          runIdsSignature: currentSignature,
+          runCount: todaysRuns.length,
+          checkedAt: new Date().toISOString(),
+        });
       })().catch((e) => {
         console.error("scheduled sync/model job failed", e);
       })
@@ -213,6 +252,7 @@ const WATCHFACE_ERROR_HEADERS = {
 };
 
 const STEP_SYNC_KV_PREFIX = "syncstep:state:";
+const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
 
 function parseBooleanParam(searchParams, key) {
@@ -256,6 +296,29 @@ async function readStepSyncState(env) {
 async function writeStepSyncState(env, state) {
   if (!hasKv(env)) return;
   await writeKvJson(env, makeStepSyncStateKey(env), state);
+}
+
+function makeScheduledRunStateKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${SCHEDULED_RUN_STATE_KV_PREFIX}${athleteId}`;
+}
+
+async function readScheduledRunState(env) {
+  if (!hasKv(env)) return null;
+  return readKvJson(env, makeScheduledRunStateKey(env));
+}
+
+async function writeScheduledRunState(env, state) {
+  if (!hasKv(env)) return;
+  await writeKvJson(env, makeScheduledRunStateKey(env), state);
+}
+
+function buildRunIdsSignature(runs) {
+  const ids = (runs || [])
+    .map((a) => String(a?.id || "").trim())
+    .filter(Boolean)
+    .sort();
+  return ids.join(",");
 }
 
 function normalizeStepSyncState(raw) {
@@ -377,9 +440,9 @@ async function handleStepSync(req, env, ctx) {
 }
 
 
-function isEveningBerlinRun(event) {
+function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
-  if (!Number.isFinite(t)) return false;
+  if (!Number.isFinite(t)) return null;
   const hour = Number(
     new Intl.DateTimeFormat("en-GB", {
       hour: "2-digit",
@@ -387,6 +450,16 @@ function isEveningBerlinRun(event) {
       timeZone: "Europe/Berlin",
     }).format(new Date(t))
   );
+  return Number.isFinite(hour) ? hour : null;
+}
+
+function isScheduledWindowBerlin(event) {
+  const hour = getBerlinHourFromScheduledEvent(event);
+  return Number.isFinite(hour) && hour >= 8 && hour <= 21;
+}
+
+function isEveningBerlinRun(event) {
+  const hour = getBerlinHourFromScheduledEvent(event);
   return Number.isFinite(hour) && hour >= 20;
 }
 
