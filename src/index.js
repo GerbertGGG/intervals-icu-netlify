@@ -873,6 +873,7 @@ const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 14;
 const WATCHFACE_LOAD_WINDOW_DAYS = 7;
 const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
 const WATCHFACE_RUN_WINDOW_DAYS = WATCHFACE_LOAD_WINDOW_DAYS;
+const WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN = 180;
 
 // Maintenance anchors (soft hints, not hard fails)
 
@@ -8014,7 +8015,11 @@ async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date()), op
   const kvRunGoal = Number(kv?.runGoal);
   const fallbackRunGoal = Number.isFinite(kvRunGoal) ? kvRunGoal : 0;
 
-  if (kv?.day === dayIso && kv?.runValue != null && kv?.runGoal != null) {
+  const kvUpdatedAtMs = Date.parse(String(kv?.updatedAt || ""));
+  const kvAgeMin = Number.isFinite(kvUpdatedAtMs) ? (Date.now() - kvUpdatedAtMs) / 60000 : Infinity;
+  const kvFreshEnough = kvAgeMin <= WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN;
+
+  if (kv?.day === dayIso && kv?.runValue != null && kv?.runGoal != null && kvFreshEnough) {
     return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
   }
 
