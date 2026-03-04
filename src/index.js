@@ -5215,6 +5215,7 @@ function capText(s, maxChars) {
 function buildRecommendationsAndBottomLine(state) {
   const rec = [];
   const bottom = [];
+  const insight = [];
 
   const runFloorTarget = state?.runFloorTarget;
   const runFloorNow = state?.runFloorEwma10 ?? state?.runFloor7;
@@ -5226,6 +5227,7 @@ function buildRecommendationsAndBottomLine(state) {
   const longRunSpikeCapMin = Number(state?.longRunSpikeCapMin ?? 0);
   const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
+  const fatigue = state?.fatigue || null;
 
   bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
   if (state?.keyAllowedNow && explicitSessionShort) {
@@ -5233,7 +5235,8 @@ function buildRecommendationsAndBottomLine(state) {
   }
 
   if (Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
-    rec.push(`RunFloor ${Math.round(runFloorNow)}/${Math.round(runFloorTarget)} → Volumen priorisieren.`);
+    const runGap = Math.round(runFloorTarget - runFloorNow);
+    rec.push(`RunFloor ${Math.round(runFloorNow)}/${Math.round(runFloorTarget)} → Volumen priorisieren (Gap ${runGap}).`);
   }
   if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
     if (longRunGapMin < 0) {
@@ -5266,9 +5269,23 @@ function buildRecommendationsAndBottomLine(state) {
     rec.push(`Overlay: ${state.overlayMode} → konservativ bleiben.`);
   }
 
+  if (fatigue?.override && Array.isArray(fatigue?.reasons) && fatigue.reasons.length) {
+    insight.push(`Fatigue-Override aktiv: ${fatigue.reasons.slice(0, 2).join(" | ")}.`);
+  }
+  if (Number.isFinite(fatigue?.runDist14dRatio)) {
+    insight.push(`Belastungs-Ratio 14T: ${fatigue.runDist14dRatio.toFixed(2)} (Guard <= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)}).`);
+  }
+  if (Number.isFinite(fatigue?.acwr)) {
+    insight.push(`ACWR: ${fatigue.acwr.toFixed(2)} (${fatigue.acwr > 1.3 ? "erhöht" : "stabil"}).`);
+  }
+
+  if (insight.length) {
+    rec.push(...insight.map((line) => `Evidenz: ${line}`));
+  }
+
   return {
-    recommendations: capLines(rec, 3).map((x) => capText(x, 110)),
-    bottomLine: capLines(bottom, 2).map((x) => capText(x, 110)),
+    recommendations: capLines(rec, 6).map((x) => capText(x, 180)),
+    bottomLine: capLines(bottom, 3).map((x) => capText(x, 180)),
   };
 }
 
@@ -5600,6 +5617,7 @@ function buildComments(
     longRunSpikeCapMin,
     longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
+    fatigue,
   });
   addDecisionBlock("EMPFEHLUNGEN", [
     ...decisionCompact.recommendations,
