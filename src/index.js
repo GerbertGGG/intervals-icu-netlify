@@ -4874,7 +4874,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       runGoal: runFloorState?.effectiveFloorTarget ?? runFloorState?.floorTarget ?? null,
     };
 
-    if (write && !runSectionOnly) {
+    // Keep watchface run-floor snapshot in sync even for scheduled run-only updates.
+    if (write) {
       await writeLatestRunSnapshotKv(env, day, runSnapshot);
     }
 
