@@ -7794,6 +7794,98 @@ function reduceIntervalMetrics(perInterval) {
   };
 }
 
+function quantile(arr, q) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const vals = arr
+    .map((v) => Number(v))
+    .filter((v) => Number.isFinite(v))
+    .sort((a, b) => a - b);
+  if (!vals.length) return null;
+  const clampedQ = Math.min(1, Math.max(0, Number(q)));
+  const pos = (vals.length - 1) * clampedQ;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return vals[lo];
+  const w = pos - lo;
+  return vals[lo] * (1 - w) + vals[hi] * w;
+}
+
+function deriveIntervalsFromStreams(fullStreams, { minDurationSec = 120, maxIntervals = 50 } = {}) {
+  const time = Array.isArray(fullStreams?.time) ? fullStreams.time : null;
+  if (!time || time.length < 30) return [];
+
+  const key = Array.isArray(fullStreams?.watts)
+    ? 'watts'
+    : Array.isArray(fullStreams?.velocity_smooth)
+      ? 'velocity_smooth'
+      : null;
+  if (!key) return [];
+
+  const raw = fullStreams[key];
+  const n = Math.min(time.length, raw.length);
+  if (n < 30) return [];
+
+  const values = [];
+  for (let i = 0; i < n; i++) {
+    const v = Number(raw[i]);
+    if (Number.isFinite(v) && v > 0) values.push(v);
+  }
+  if (values.length < 30) return [];
+
+  const p50 = quantile(values, 0.5);
+  const p80 = quantile(values, 0.8);
+  if (!Number.isFinite(p50) || !Number.isFinite(p80) || p80 <= p50) return [];
+
+  const threshold = p50 + (p80 - p50) * 0.45;
+  const maxGapSec = 20;
+  const segments = [];
+
+  let active = null;
+  let gapStart = null;
+  for (let i = 0; i < n; i++) {
+    const t = Number(time[i]);
+    const v = Number(raw[i]);
+    if (!Number.isFinite(t)) continue;
+
+    const isOn = Number.isFinite(v) && v >= threshold;
+    if (isOn) {
+      if (!active) {
+        active = { start: t, end: t };
+      } else {
+        active.end = t;
+      }
+      gapStart = null;
+      continue;
+    }
+
+    if (!active) continue;
+    if (gapStart == null) gapStart = t;
+    if (t - gapStart > maxGapSec) {
+      if ((active.end - active.start) >= minDurationSec) {
+        segments.push({
+          start: active.start,
+          end: active.end,
+          type: 'ON',
+          name: 'Derived interval',
+        });
+      }
+      active = null;
+      gapStart = null;
+    }
+  }
+
+  if (active && (active.end - active.start) >= minDurationSec) {
+    segments.push({
+      start: active.start,
+      end: active.end,
+      type: 'ON',
+      name: 'Derived interval',
+    });
+  }
+
+  return segments.slice(0, maxIntervals);
+}
+
 async function computeIntervalMetricsStable(env, activity, options = {}) {
   const {
     minDurationSec = 120,
@@ -7806,13 +7898,12 @@ async function computeIntervalMetricsStable(env, activity, options = {}) {
   let intervals = extractIntervals(sourceActivity)
     .filter((itv) => (itv.end - itv.start) >= minDurationSec)
     .slice(0, maxIntervals);
+  let intervalSource = intervals.length ? 'icu_intervals' : null;
 
   intervals = intervals.filter((itv) => {
     const type = String(itv?.type ?? '').toUpperCase();
     return !type || type === 'WORK' || type === 'INTERVAL' || type === 'ON' || type === 'LAP';
   });
-
-  if (!intervals.length) return null;
 
   const available = new Set(Array.isArray(sourceActivity?.stream_types) ? sourceActivity.stream_types : []);
   const wanted = ['time', 'heartrate', 'watts', 'cadence', 'velocity_smooth', 'pace'];
@@ -7823,6 +7914,12 @@ async function computeIntervalMetricsStable(env, activity, options = {}) {
   const fullStreams = await fetchIntervalsStreams(env, activity.id, types);
   if (!Array.isArray(fullStreams?.time) || !Array.isArray(fullStreams?.heartrate)) return null;
 
+  if (!intervals.length) {
+    intervals = deriveIntervalsFromStreams(fullStreams, { minDurationSec, maxIntervals });
+    intervalSource = intervals.length ? 'streams_heuristic' : null;
+  }
+  if (!intervals.length) return null;
+
   const perInterval = intervals
     .map((itv) => computePerIntervalMetrics(fullStreams, itv, { dropPaused }))
     .filter(Boolean);
@@ -7831,6 +7928,7 @@ async function computeIntervalMetricsStable(env, activity, options = {}) {
   return {
     interval_count_input: intervals.length,
     interval_count_used: perInterval.length,
+    interval_source: intervalSource,
     summary: reduceIntervalMetrics(perInterval),
     perInterval,
   };
@@ -7850,7 +7948,7 @@ async function computeIntervalMetrics(env, activity, { intervalType } = {}) {
     HRR60_median: Number.isFinite(hrr60) ? hrr60 : null,
     drift_flag: classifyIntervalDrift(intervalType, drift),
     interval_type: intervalType ?? null,
-    intensity_source: 'intervals_stable',
+    intensity_source: stable.interval_source || 'intervals_stable',
     decoupling_pct_median: Number.isFinite(decoupling) ? decoupling : null,
   };
 }
