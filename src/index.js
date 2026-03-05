@@ -2101,9 +2101,21 @@ function hasExplicitIntervalStructure(a) {
   return repeatDistance.test(text) || repeatTime.test(text);
 }
 
+function getActivityIntervals(activity) {
+  if (Array.isArray(activity?.icu_intervals)) return activity.icu_intervals;
+  if (Array.isArray(activity?.intervals)) return activity.intervals;
+  return [];
+}
+
+function getActivityGroups(activity) {
+  if (Array.isArray(activity?.icu_groups)) return activity.icu_groups;
+  if (Array.isArray(activity?.groups)) return activity.groups;
+  return [];
+}
+
 function hasIcuIntervalSignal(activity) {
-  const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
-  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  const groups = getActivityGroups(activity);
+  const intervals = getActivityIntervals(activity);
 
   const repeatedHard = groups.some((g) => {
     const count = Number(g?.count);
@@ -2132,8 +2144,8 @@ function hasIcuIntervalSignal(activity) {
 }
 
 function inferPaceConsistencyFromIcu(activity) {
-  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
-  const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
+  const intervals = getActivityIntervals(activity);
+  const groups = getActivityGroups(activity);
   if (!groups.length || !intervals.length) return null;
 
   const repeated = groups
@@ -2209,7 +2221,7 @@ function parseTargetPaceSecPerKmFromActivity(activity) {
 }
 
 function summarizeIntervalSessionQuality(activity) {
-  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  const intervals = getActivityIntervals(activity);
   if (!intervals.length) return null;
 
   const reps = intervals
@@ -2300,9 +2312,14 @@ function summarizeIntervalSessionQuality(activity) {
   };
 }
 
-function getIntervalDataQualityReason(activity) {
-  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
-  if (!intervals.length) return "keine Intervall-Segmente erkannt";
+function getIntervalDataQualityReason(activity, intervalMetrics = null) {
+  const intervals = getActivityIntervals(activity);
+  if (!intervals.length) {
+    if (intervalMetrics?.intensity_source) {
+      return `keine Intervall-Segmente erkannt (Fallback via Streams/${intervalMetrics.intensity_source} möglich)`;
+    }
+    return "keine Intervall-Segmente erkannt";
+  }
 
   const validRepCount = intervals.filter((seg) => {
     const type = String(seg?.type ?? "").toUpperCase();
@@ -5620,9 +5637,30 @@ function buildComments(
       const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
       if (sessionQuality?.lines?.length) {
         runMetrics.push(...sessionQuality.lines);
+      } else if (intervalToday?.intervalMetrics) {
+        const driftBpm = Number(intervalToday.intervalMetrics.HR_Drift_bpm);
+        const driftLabel = Number.isFinite(driftBpm)
+          ? driftBpm <= 3
+            ? "stabil"
+            : driftBpm <= 7
+              ? "leicht ansteigend"
+              : "deutlich ansteigend"
+          : "n/a";
+        const hrr60 = Number(intervalToday.intervalMetrics.HRR60_median);
+        const hrrLabel = Number.isFinite(hrr60)
+          ? hrr60 >= 20
+            ? "gut"
+            : hrr60 >= 15
+              ? "ok"
+              : "ausbaufähig"
+          : "n/a";
+
+        runMetrics.push(`Intervall-Bewertung: via Stream-Analyse (Fallback), trotz Geh-/Stehpausen auswertbar.`);
+        runMetrics.push(`Intervall-Drift: ${Number.isFinite(driftBpm) ? `${fmtSigned1(driftBpm)} bpm` : "n/a"} (${driftLabel}).`);
+        runMetrics.push(`Erholung zwischen Reps (HRR60): ${Number.isFinite(hrr60) ? `${hrr60.toFixed(0)} bpm` : "n/a"} (${hrrLabel}).`);
       } else {
         const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
-        const qualityReason = getIntervalDataQualityReason(intervalToday.activity);
+        const qualityReason = getIntervalDataQualityReason(intervalToday.activity, intervalToday?.intervalMetrics);
         runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt${qualityReason ? ` (${qualityReason})` : ""}.`);
         runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
         runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
