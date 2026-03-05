@@ -4713,8 +4713,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
       if (intervalSignal) {
         try {
-          const streams = await getStreams(ctx, a.id, STREAM_TYPES_INTERVAL);
-          intervalMetrics = computeIntervalMetricsFromStreams(streams, {
+          intervalMetrics = await computeIntervalMetrics(env, a, {
             intervalType: getIntervalTypeFromActivity(a),
           });
         } catch {
@@ -7552,10 +7551,7 @@ function computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec = 60
 }
 
 async function computeIntervalBenchMetrics(env, a, warmupSkipSec) {
-  const streams = await fetchIntervalsStreams(env, a.id, STREAM_TYPES_INTERVAL);
-  if (!streams) return null;
-
-  return computeIntervalMetricsFromStreams(streams, {
+  return computeIntervalMetrics(env, a, {
     intervalType: getIntervalTypeFromActivity(a),
   });
 }
@@ -7766,6 +7762,134 @@ function formatDriftFlag(flag) {
   if (flag === "too_hard") return "zu hart";
   if (flag === "overreaching") return "Überreizung";
   return flag;
+}
+
+function lowerBound(arr, x) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function upperBound(arr, x) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function sliceStreamsByTime(streams, startTime, endTime) {
+  const time = streams?.time;
+  if (!Array.isArray(time) || time.length < 2) return null;
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return null;
+
+  const i0 = lowerBound(time, startTime);
+  const i1 = upperBound(time, endTime);
+  if (i1 - i0 < 2) return null;
+
+  const out = { time: time.slice(i0, i1) };
+  for (const [k, v] of Object.entries(streams)) {
+    if (k === "time") continue;
+    if (Array.isArray(v)) out[k] = v.slice(i0, i1);
+  }
+  return out;
+}
+
+function intervalWindow(interval) {
+  const startCandidates = [interval?.start, interval?.start_time, interval?.startTime, interval?.from];
+  const endCandidates = [interval?.end, interval?.end_time, interval?.endTime, interval?.to];
+  const start = startCandidates.map((v) => Number(v)).find((v) => Number.isFinite(v));
+  const end = endCandidates.map((v) => Number(v)).find((v) => Number.isFinite(v));
+  if (Number.isFinite(start) && Number.isFinite(end) && end > start) return { start, end };
+  return null;
+}
+
+function computeIntervalMetricsFromExplicitIntervals(intervals, streams, { intervalType } = {}) {
+  const hr = streams?.heartrate;
+  if (!Array.isArray(hr) || !Array.isArray(streams?.time)) return null;
+  if (!Array.isArray(intervals) || !intervals.length) return null;
+
+  const workWindows = intervals
+    .filter((seg) => {
+      const type = String(seg?.type ?? "").toUpperCase();
+      return !type || type === "WORK" || type === "INTERVAL" || type === "ON";
+    })
+    .map(intervalWindow)
+    .filter(Boolean);
+
+  if (workWindows.length < 2) return null;
+
+  const intervalHr = workWindows.map((window) => {
+    const slice = sliceStreamsByTime(streams, window.start, window.end);
+    if (!slice?.heartrate?.length || !slice?.time?.length) return null;
+
+    const lateStart = window.start + (window.end - window.start) * 0.6;
+    let lateSum = 0;
+    let lateCount = 0;
+    let peak = -Infinity;
+    for (let i = 0; i < slice.time.length; i++) {
+      const t = Number(slice.time[i]);
+      const h = Number(slice.heartrate[i]);
+      if (!Number.isFinite(t) || !Number.isFinite(h)) continue;
+      if (h > peak) peak = h;
+      if (t >= lateStart && t <= window.end) {
+        lateSum += h;
+        lateCount++;
+      }
+    }
+    const lateAvg = lateCount ? lateSum / lateCount : null;
+
+    const recoverySlice = sliceStreamsByTime(streams, window.end, window.end + 60);
+    const hr60 = Array.isArray(recoverySlice?.heartrate)
+      ? recoverySlice.heartrate.map((x) => Number(x)).find((x) => Number.isFinite(x))
+      : null;
+
+    return {
+      lateAvg,
+      peak: Number.isFinite(peak) ? peak : null,
+      hr60: Number.isFinite(hr60) ? hr60 : null,
+    };
+  }).filter(Boolean);
+
+  if (intervalHr.length < 2) return null;
+
+  const first = intervalHr[0]?.lateAvg;
+  const last = intervalHr[intervalHr.length - 1]?.lateAvg;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
+
+  const hrDriftBpm = last - first;
+  const hrDriftPct = ((last - first) / first) * 100;
+  const hrr60Drops = intervalHr
+    .map((x) => (Number.isFinite(x.peak) && Number.isFinite(x.hr60) ? x.peak - x.hr60 : null))
+    .filter((x) => Number.isFinite(x));
+
+  return {
+    HR_Drift_bpm: hrDriftBpm,
+    HR_Drift_pct: hrDriftPct,
+    HRR60_median: hrr60Drops.length ? median(hrr60Drops) : null,
+    drift_flag: classifyIntervalDrift(intervalType, hrDriftBpm),
+    interval_type: intervalType ?? null,
+    intensity_source: "intervals_explicit",
+  };
+}
+
+async function computeIntervalMetrics(env, activity, { intervalType } = {}) {
+  const fullActivity = await fetchActivityWithIntervals(env, activity.id).catch(() => null);
+  const intervals = getActivityIntervals(fullActivity ?? activity);
+  const streams = await fetchIntervalsStreams(env, activity.id, STREAM_TYPES_INTERVAL);
+  if (!streams) return null;
+
+  const explicitMetrics = computeIntervalMetricsFromExplicitIntervals(intervals, streams, { intervalType });
+  if (explicitMetrics) return explicitMetrics;
+  return computeIntervalMetricsFromStreams(streams, { intervalType });
 }
 
 function computeIntervalMetricsFromStreams(streams, { intervalType } = {}) {
@@ -8514,20 +8638,46 @@ async function fetchIntervalsActivities(env, oldest, newest) {
   return r.json();
 }
 
-async function fetchIntervalsStreams(env, activityId, types) {
-  const url = `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${encodeURIComponent(types.join(","))}`;
+async function fetchActivityWithIntervals(env, activityId) {
+  const url = `https://intervals.icu/api/v1/activity/${activityId}?intervals=true`;
   const r = await fetchIntervalsWithRetry(url, {
     headers: { Authorization: authHeader(env) },
   }, {
-    label: `streams ${activityId}`,
+    label: `activity ${activityId} intervals`,
   });
   if (!r.ok) {
-  const txt = await r.text().catch(() => "");
-  throw new Error(`streams ${r.status}: ${txt.slice(0, 400)}`);
+    const txt = await r.text().catch(() => "");
+    throw new Error(`activity intervals ${r.status}: ${txt.slice(0, 400)}`);
+  }
+  return r.json();
 }
 
-  const raw = await r.json();
-  return normalizeStreams(raw);
+async function fetchIntervalsStreams(env, activityId, types) {
+  const query = encodeURIComponent(types.join(","));
+  const endpoints = [
+    `https://intervals.icu/api/v1/activity/${activityId}/streams.json?types=${query}`,
+    `https://intervals.icu/api/v1/activity/${activityId}/streams?types=${query}`,
+  ];
+
+  let lastErr = null;
+  for (const url of endpoints) {
+    const r = await fetchIntervalsWithRetry(url, {
+      headers: { Authorization: authHeader(env) },
+    }, {
+      label: `streams ${activityId}`,
+    });
+    if (r.ok) {
+      const raw = await r.json();
+      return normalizeStreams(raw);
+    }
+
+    const txt = await r.text().catch(() => "");
+    lastErr = new Error(`streams ${r.status}: ${txt.slice(0, 400)}`);
+
+    if (r.status !== 404) break;
+  }
+
+  throw lastErr || new Error("streams request failed");
 }
 
 function normalizeStreams(raw) {
