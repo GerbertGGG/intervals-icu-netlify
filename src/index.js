@@ -178,7 +178,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Run every 30 minutes, but only process/write between 08:00 and 21:00 Berlin time.
+    // Run every 30 minutes, but only process/write between 07:00 and 21:00 Berlin time.
     // This avoids unnecessary requests overnight.
     if (!isScheduledWindowBerlin(event)) {
       return;
@@ -188,9 +188,22 @@ export default {
     // Scheduled updates touch only the "HEUTIGER LAUF" section so the rest of the 07:00 baseline report remains unchanged.
     const today = isoDate(new Date());
     const runMetricsOnly = true;
+    const berlinHour = getBerlinHourFromScheduledEvent(event);
+    const isSevenAmBaselineRun = berlinHour === 7;
 
     ctx.waitUntil(
       (async () => {
+        if (isSevenAmBaselineRun) {
+          await syncRange(env, today, today, true, false, 600);
+          await writeScheduledRunState(env, {
+            day: today,
+            runIdsSignature: "",
+            runCount: 0,
+            checkedAt: new Date().toISOString(),
+          });
+          return;
+        }
+
         const activities = await fetchIntervalsActivities(env, today, today);
         const todaysRuns = Array.isArray(activities)
           ? activities.filter((a) => {
@@ -455,7 +468,7 @@ function getBerlinHourFromScheduledEvent(event) {
 
 function isScheduledWindowBerlin(event) {
   const hour = getBerlinHourFromScheduledEvent(event);
-  return Number.isFinite(hour) && hour >= 8 && hour <= 21;
+  return Number.isFinite(hour) && hour >= 7 && hour <= 21;
 }
 
 function isEveningBerlinRun(event) {
