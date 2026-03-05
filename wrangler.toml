@@ -2,9 +2,9 @@ name = "intervals-icu-netlify"
 main = "src/index.js"
 compatibility_date = "2025-11-11"
 
-# Alle 30 Minuten (nur 06:00–20:59 UTC):
-# zusammen mit der Berlin-Zeit-Prüfung im Worker ergibt das effektiv 08:00–21:00 Berlin.
-triggers = { crons = ["*/30 6-20 * * *"] }
+# Alle 30 Minuten (05:00–20:59 UTC), damit 07:00 Berlin (Sommerzeit) sicher erfasst wird.
+# Das effektive Fenster bleibt durch die Berlin-Zeit-Prüfung im Worker auf 07:00–21:00 begrenzt.
+triggers = { crons = ["*/30 5-20 * * *"] }
 
 [[kv_namespaces]]
 binding = "KV"
