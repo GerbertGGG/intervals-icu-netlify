@@ -1108,8 +1108,9 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     const v = Number(dailyLoads[d]) || 0;
     if (d >= start28Iso) last28 += v;
   }
-  const chronicWeekly = last28 > 0 ? last28 / 4 : 0;
-  const acwr = chronicWeekly > 0 ? last7 / chronicWeekly : null;
+  const acuteLoad = last7 / 7;
+  const chronicLoad = last28 / 28;
+  const acwr = chronicLoad > 0 ? acuteLoad / chronicLoad : null;
 
   const keyCount7 = await computeKeyCount7d(ctx, dayIso);
   const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : runtimeConfig.maxKeys7d;
@@ -1153,7 +1154,9 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     runDistPrev14AdjKm: prev14RunDistAdjKm,
     runDistLast14HolidayDays: last14HolidayDays,
     runDistPrev14HolidayDays: prev14HolidayDays,
-    chronicWeekly,
+    chronicWeekly: chronicLoad * 7,
+    acuteLoad,
+    chronicLoad,
     last7Load: last7,
     prev7Load: prev7,
   };
