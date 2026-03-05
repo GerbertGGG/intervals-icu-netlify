@@ -2290,6 +2290,28 @@ function summarizeIntervalSessionQuality(activity) {
   };
 }
 
+function getIntervalDataQualityReason(activity) {
+  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  if (!intervals.length) return "keine Intervall-Segmente erkannt";
+
+  const validRepCount = intervals.filter((seg) => {
+    const type = String(seg?.type ?? "").toUpperCase();
+    const sec = Number(seg?.moving_time ?? seg?.elapsed_time);
+    const dist = Number(seg?.distance);
+    const speed = Number(seg?.average_speed);
+    if (type === "RECOVERY") return false;
+    if (type && !(type === "WORK" || type === "INTERVAL" || type === "ON")) return false;
+    return Number.isFinite(sec) && sec >= 90 && sec <= 480
+      && Number.isFinite(dist) && dist >= 300
+      && Number.isFinite(speed) && speed > 0;
+  }).length;
+
+  if (validRepCount < 2) {
+    return "zu wenige valide Wiederholungen (mind. 2 Reps à 90–480s / ≥300m)";
+  }
+  return null;
+}
+
 const PHASE_MAX_MINUTES = {
   BASE: {
     // Beginner-orientierte Obergrenzen für Base-Longruns
@@ -5647,7 +5669,8 @@ function buildComments(
         runMetrics.push(...sessionQuality.lines);
       } else {
         const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
-        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt.`);
+        const qualityReason = getIntervalDataQualityReason(intervalToday.activity);
+        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt${qualityReason ? ` (${qualityReason})` : ""}.`);
         runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
         runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
       }
@@ -5658,8 +5681,8 @@ function buildComments(
   addDecisionBlock("HEUTIGER LAUF", runMetrics);
 
   addDecisionBlock("BELASTUNG & PROGRESSION", [
-    `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
-    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (heute vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
+    `Longrun (14T): ${longRunDoneMin}′ → Ziel: ${longRunTargetMin}′`,
+    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((longRunDoneMin / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (14T vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
     `RunFloor (14T EWMA): ${runFloorCurrent} / ${runTarget > 0 ? runTarget : "n/a"}`,
     `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
