@@ -2103,7 +2103,7 @@ function hasExplicitIntervalStructure(a) {
 
 function hasIcuIntervalSignal(activity) {
   const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
-  if (!groups.length) return false;
+  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
 
   const repeatedHard = groups.some((g) => {
     const count = Number(g?.count);
@@ -2117,8 +2117,18 @@ function hasIcuIntervalSignal(activity) {
       && Number.isFinite(zone)
       && zone >= 3;
   });
+  if (repeatedHard) return true;
 
-  return repeatedHard;
+  // Fallback ohne Zonen: erkenne wiederholte Work-Intervalle auch bei Geh-/Stehpausen in Recovery.
+  const workReps = intervals.filter((seg) => {
+    const type = String(seg?.type ?? "").toUpperCase();
+    const sec = Number(seg?.moving_time ?? seg?.elapsed_time);
+    const dist = Number(seg?.distance);
+    if (type && !(type === "WORK" || type === "INTERVAL" || type === "ON")) return false;
+    return Number.isFinite(sec) && sec >= 90 && sec <= 480
+      && Number.isFinite(dist) && dist >= 300;
+  });
+  return workReps.length >= 2;
 }
 
 function inferPaceConsistencyFromIcu(activity) {
@@ -5603,11 +5613,35 @@ function buildComments(
   if (!perRunInfo?.length) {
     runMetrics.push("Status: Heute kein Lauf.");
   } else {
-    const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
-    const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
+    const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
+    const gaToday = perRunInfo.find((x) => x.ga && !x.isKey && !x.intervalSignal && !isTempoDauerlaufKey(x.activity));
+    if (intervalToday) {
+      const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
+      if (sessionQuality?.lines?.length) {
+        runMetrics.push(...sessionQuality.lines);
+      } else {
+        const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
+        const qualityReason = getIntervalDataQualityReason(intervalToday.activity);
+        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt${qualityReason ? ` (${qualityReason})` : ""}.`);
+        runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
+        runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
+      }
+    } else if (tdlToday) {
+      const drift = tdlToday.drift;
+      const driftText = formatPct1(drift);
+      const driftEval =
+        drift == null
+          ? "keine belastbare Einordnung (zu wenig Daten/zu kurzer Abschnitt)."
+          : drift <= 5
+            ? "kontrolliert für TDL (≤ 5 %)."
+            : "erhöht für TDL (> 5 %): eher zu hart oder kumulierte Ermüdung.";
+      const paceConsistency = tdlToday?.paceConsistencyHint?.label || "n/a";
 
-    if (gaToday) {
+      runMetrics.push(`TDL-Einschätzung: Drift ${driftText} → ${driftEval}`);
+      runMetrics.push(`TDL-Pace-Konsistenz: ${paceConsistency}.`);
+      runMetrics.push("TDL-Hinweis: Bewertung primär als durchgehender Lauf (Drift/Ökonomie), Intervallwerte nur ergänzend.");
+    } else if (gaToday) {
       const drift = gaToday.drift;
       const driftText = formatPct1(drift);
       const driftTooHigh = Number.isFinite(drift) && drift > 5;
@@ -5649,31 +5683,6 @@ function buildComments(
       runMetrics.push(`VDOT: ${vdotText}`);
       runMetrics.push("VDOT-Hinweis: Nur bei vergleichbarer Intensität interpretieren.");
       runMetrics.push("Gesamt-Hinweis: Stabilität und Ermüdung immer im Verlauf bewerten, nicht aus einem Einzelwert.");
-    } else if (tdlToday) {
-      const drift = tdlToday.drift;
-      const driftText = formatPct1(drift);
-      const driftEval =
-        drift == null
-          ? "keine belastbare Einordnung (zu wenig Daten/zu kurzer Abschnitt)."
-          : drift <= 5
-            ? "kontrolliert für TDL (≤ 5 %)."
-            : "erhöht für TDL (> 5 %): eher zu hart oder kumulierte Ermüdung.";
-      const paceConsistency = tdlToday?.paceConsistencyHint?.label || "n/a";
-
-      runMetrics.push(`TDL-Einschätzung: Drift ${driftText} → ${driftEval}`);
-      runMetrics.push(`TDL-Pace-Konsistenz: ${paceConsistency}.`);
-      runMetrics.push("TDL-Hinweis: Bewertung primär als durchgehender Lauf (Drift/Ökonomie), Intervallwerte nur ergänzend.");
-    } else if (intervalToday) {
-      const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
-      if (sessionQuality?.lines?.length) {
-        runMetrics.push(...sessionQuality.lines);
-      } else {
-        const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
-        const qualityReason = getIntervalDataQualityReason(intervalToday.activity);
-        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt${qualityReason ? ` (${qualityReason})` : ""}.`);
-        runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
-        runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
-      }
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
     }
