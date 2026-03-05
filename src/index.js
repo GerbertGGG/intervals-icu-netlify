@@ -2103,7 +2103,7 @@ function hasExplicitIntervalStructure(a) {
 
 function hasIcuIntervalSignal(activity) {
   const groups = Array.isArray(activity?.icu_groups) ? activity.icu_groups : [];
-  if (!groups.length) return false;
+  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
 
   const repeatedHard = groups.some((g) => {
     const count = Number(g?.count);
@@ -2117,8 +2117,18 @@ function hasIcuIntervalSignal(activity) {
       && Number.isFinite(zone)
       && zone >= 3;
   });
+  if (repeatedHard) return true;
 
-  return repeatedHard;
+  // Fallback ohne Zonen: erkenne wiederholte Work-Intervalle auch bei Geh-/Stehpausen in Recovery.
+  const workReps = intervals.filter((seg) => {
+    const type = String(seg?.type ?? "").toUpperCase();
+    const sec = Number(seg?.moving_time ?? seg?.elapsed_time);
+    const dist = Number(seg?.distance);
+    if (type && !(type === "WORK" || type === "INTERVAL" || type === "ON")) return false;
+    return Number.isFinite(sec) && sec >= 90 && sec <= 480
+      && Number.isFinite(dist) && dist >= 300;
+  });
+  return workReps.length >= 2;
 }
 
 function inferPaceConsistencyFromIcu(activity) {
@@ -2288,6 +2298,28 @@ function summarizeIntervalSessionQuality(activity) {
       `Session-Score: ${totalPoints.toFixed(1)}/9 → ${verdict}${needsSpecificity ? ", aber noch nicht spezifisch genug" : ""}. Nächster Hebel: ${qualityKm < 3 ? "mehr RP-Volumen" : "Pausen aktiver traben"}.`,
     ],
   };
+}
+
+function getIntervalDataQualityReason(activity) {
+  const intervals = Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : [];
+  if (!intervals.length) return "keine Intervall-Segmente erkannt";
+
+  const validRepCount = intervals.filter((seg) => {
+    const type = String(seg?.type ?? "").toUpperCase();
+    const sec = Number(seg?.moving_time ?? seg?.elapsed_time);
+    const dist = Number(seg?.distance);
+    const speed = Number(seg?.average_speed);
+    if (type === "RECOVERY") return false;
+    if (type && !(type === "WORK" || type === "INTERVAL" || type === "ON")) return false;
+    return Number.isFinite(sec) && sec >= 90 && sec <= 480
+      && Number.isFinite(dist) && dist >= 300
+      && Number.isFinite(speed) && speed > 0;
+  }).length;
+
+  if (validRepCount < 2) {
+    return "zu wenige valide Wiederholungen (mind. 2 Reps à 90–480s / ≥300m)";
+  }
+  return null;
 }
 
 const PHASE_MAX_MINUTES = {
@@ -5581,11 +5613,35 @@ function buildComments(
   if (!perRunInfo?.length) {
     runMetrics.push("Status: Heute kein Lauf.");
   } else {
-    const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
-    const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
+    const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
+    const gaToday = perRunInfo.find((x) => x.ga && !x.isKey && !x.intervalSignal && !isTempoDauerlaufKey(x.activity));
+    if (intervalToday) {
+      const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
+      if (sessionQuality?.lines?.length) {
+        runMetrics.push(...sessionQuality.lines);
+      } else {
+        const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
+        const qualityReason = getIntervalDataQualityReason(intervalToday.activity);
+        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt${qualityReason ? ` (${qualityReason})` : ""}.`);
+        runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
+        runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
+      }
+    } else if (tdlToday) {
+      const drift = tdlToday.drift;
+      const driftText = formatPct1(drift);
+      const driftEval =
+        drift == null
+          ? "keine belastbare Einordnung (zu wenig Daten/zu kurzer Abschnitt)."
+          : drift <= 5
+            ? "kontrolliert für TDL (≤ 5 %)."
+            : "erhöht für TDL (> 5 %): eher zu hart oder kumulierte Ermüdung.";
+      const paceConsistency = tdlToday?.paceConsistencyHint?.label || "n/a";
 
-    if (gaToday) {
+      runMetrics.push(`TDL-Einschätzung: Drift ${driftText} → ${driftEval}`);
+      runMetrics.push(`TDL-Pace-Konsistenz: ${paceConsistency}.`);
+      runMetrics.push("TDL-Hinweis: Bewertung primär als durchgehender Lauf (Drift/Ökonomie), Intervallwerte nur ergänzend.");
+    } else if (gaToday) {
       const drift = gaToday.drift;
       const driftText = formatPct1(drift);
       const driftTooHigh = Number.isFinite(drift) && drift > 5;
@@ -5627,30 +5683,6 @@ function buildComments(
       runMetrics.push(`VDOT: ${vdotText}`);
       runMetrics.push("VDOT-Hinweis: Nur bei vergleichbarer Intensität interpretieren.");
       runMetrics.push("Gesamt-Hinweis: Stabilität und Ermüdung immer im Verlauf bewerten, nicht aus einem Einzelwert.");
-    } else if (tdlToday) {
-      const drift = tdlToday.drift;
-      const driftText = formatPct1(drift);
-      const driftEval =
-        drift == null
-          ? "keine belastbare Einordnung (zu wenig Daten/zu kurzer Abschnitt)."
-          : drift <= 5
-            ? "kontrolliert für TDL (≤ 5 %)."
-            : "erhöht für TDL (> 5 %): eher zu hart oder kumulierte Ermüdung.";
-      const paceConsistency = tdlToday?.paceConsistencyHint?.label || "n/a";
-
-      runMetrics.push(`TDL-Einschätzung: Drift ${driftText} → ${driftEval}`);
-      runMetrics.push(`TDL-Pace-Konsistenz: ${paceConsistency}.`);
-      runMetrics.push("TDL-Hinweis: Bewertung primär als durchgehender Lauf (Drift/Ökonomie), Intervallwerte nur ergänzend.");
-    } else if (intervalToday) {
-      const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
-      if (sessionQuality?.lines?.length) {
-        runMetrics.push(...sessionQuality.lines);
-      } else {
-        const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
-        runMetrics.push(`Intervall-Bewertung: Datenqualität begrenzt.`);
-        runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
-        runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
-      }
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
     }
@@ -5658,8 +5690,8 @@ function buildComments(
   addDecisionBlock("HEUTIGER LAUF", runMetrics);
 
   addDecisionBlock("BELASTUNG & PROGRESSION", [
-    `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
-    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (heute vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
+    `Longrun (14T): ${longRunDoneMin}′ → Ziel: ${longRunTargetMin}′`,
+    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((longRunDoneMin / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (14T vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
     `RunFloor (14T EWMA): ${runFloorCurrent} / ${runTarget > 0 ? runTarget : "n/a"}`,
     `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
