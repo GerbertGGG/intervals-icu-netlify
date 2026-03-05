@@ -762,7 +762,6 @@ const RAMP_PCT_7D_LIMIT = 0.25;    // +25% vs previous 7d
 const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
 const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
-const ACWR_LOW_LIMIT = 0.8;        // underload threshold
 const RUN_DISTANCE_14D_LIMIT = 1.3; // +30% vs previous 14d
 
 const RUNTIME_CONFIG_DEFAULTS = {
@@ -774,7 +773,6 @@ const RUNTIME_CONFIG_DEFAULTS = {
     monotony: MONOTONY_7D_LIMIT,
     strain: STRAIN_7D_LIMIT,
     acwrHigh: ACWR_HIGH_LIMIT,
-    acwrLow: ACWR_LOW_LIMIT,
     runDistance14dLimit: RUN_DISTANCE_14D_LIMIT,
   },
 };
@@ -808,7 +806,6 @@ function loadRuntimeConfig(env) {
       monotony: parseNumberEnv(env?.FATIGUE_MONOTONY_LIMIT, defaults.fatigueThresholds.monotony, 0, 10),
       strain: parseNumberEnv(env?.FATIGUE_STRAIN_LIMIT, defaults.fatigueThresholds.strain, 0, 100000),
       acwrHigh: parseNumberEnv(env?.FATIGUE_ACWR_HIGH_LIMIT, defaults.fatigueThresholds.acwrHigh, 0, 10),
-      acwrLow: parseNumberEnv(env?.FATIGUE_ACWR_LOW_LIMIT, defaults.fatigueThresholds.acwrLow, 0, 10),
       runDistance14dLimit: parseNumberEnv(env?.RUN_DISTANCE_14D_LIMIT, defaults.fatigueThresholds.runDistance14dLimit, 1, 5),
     },
   };
@@ -1108,8 +1105,6 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
   if (rampPct > thresholds.rampPct) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
   if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${thresholds.acwrHigh})`);
-  if (acwr != null && acwr < thresholds.acwrLow && last7 > 0)
-    reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${thresholds.acwrLow})`);
   const last14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start14Iso, endIsoExclusive);
   const prev14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start28To14Iso, start14Iso);
   const last14TrainableDays = Math.max(0, 14 - last14HolidayDays);
