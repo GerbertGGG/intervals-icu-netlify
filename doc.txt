@@ -138,6 +138,26 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei 
 - GA: nicht Key und Dauer >= 30 min
 - comparable GA: nicht Key und Dauer >= 35 min (+ Stabilitäts-/Qualitätskriterien)
 
+6.4 Debug-Checkliste „Warum kein GA-/Intervallsignal?“
+- Der Status `Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.` erscheint,
+  wenn heute zwar ein Lauf vorhanden ist, aber keiner dieser Pfade greift:
+  1) Intervall erkannt + auswertbar,
+  2) TDL-Key erkannt,
+  3) GA erkannt (nicht Key, >= 30 min, ohne Intervallsignal).
+- Prüfschritte pro Lauf:
+  - Key-Tag prüfen (`#key`, `key:*` in Tags/Text). Jeder Key schließt GA aus.
+  - Dauer prüfen (`moving_time`/`elapsed_time` >= 1800s).
+  - Intervallsignal prüfen:
+    - Struktur im Text (`3x800`, `4×1 km`, `5x3'` etc.) oder
+    - ICU-Gruppen/Intervalle mit mind. 2 Work-Reps (90–480s, >=300m).
+  - Datenqualität für Intervallauswertung:
+    - mind. 2 valide Reps,
+    - Reps nicht als reine Recovery klassifiziert,
+    - gültige Dauer/Distanz/Speed vorhanden.
+  - Falls Intervallsignal vorhanden, aber Qualität zu schwach:
+    - Meldung „Datenqualität begrenzt“ ist erwartbar,
+    - nächster Hebel: Workouttext mit Zielpace + konsistente Rep-Struktur.
+
 7) KENNZAHLEN
 -------------
 7.1 EF (Efficiency Factor)
