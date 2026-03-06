@@ -991,7 +991,14 @@ async function getActivityWithIntervals(ctx, activity) {
 
   const key = String(activity.id);
   if (!ctx.activityDetailsCache.has(key)) {
-    const req = ctx.limit(async () => fetchActivityWithIntervals(ctx.env, key).catch(() => null));
+    const req = ctx.limit(async () => {
+      const fromIntervalsEndpoint = await fetchActivityIntervals(ctx.env, key).catch(() => null);
+      const intervalPayload = normalizeIntervalsPayload(fromIntervalsEndpoint);
+      if (extractIntervals(intervalPayload).length > 0) {
+        return intervalPayload;
+      }
+      return fetchActivityWithIntervals(ctx.env, key).catch(() => null);
+    });
     ctx.activityDetailsCache.set(key, req);
   }
 
@@ -7918,8 +7925,8 @@ function deriveIntervalsFromStreams(fullStreams, { minDurationSec = 120, maxInte
   const p80 = quantile(values, 0.8);
   if (!Number.isFinite(p50) || !Number.isFinite(p80) || p80 <= p50) return [];
 
-  const threshold = p50 + (p80 - p50) * 0.45;
-  const maxGapSec = 20;
+  const threshold = p50 + (p80 - p50) * 0.35;
+  const maxGapSec = 35;
   const segments = [];
 
   let active = null;
@@ -7970,22 +7977,17 @@ function deriveIntervalsFromStreams(fullStreams, { minDurationSec = 120, maxInte
 
 async function computeIntervalMetricsStable(env, activity, options = {}) {
   const {
-    minDurationSec = 120,
+    minDurationSec = 60,
     maxIntervals = 50,
     dropPaused = true,
   } = options;
 
-  const fullActivity = await fetchActivityWithIntervals(env, activity.id).catch(() => null);
-  const sourceActivity = fullActivity ?? activity;
-  let intervals = extractIntervals(sourceActivity)
-    .filter((itv) => (itv.end - itv.start) >= minDurationSec)
-    .slice(0, maxIntervals);
-  let intervalSource = intervals.length ? 'icu_intervals' : null;
+  const best = await fetchBestIntervals(env, activity, { minDurationSec, maxIntervals });
+  const sourceActivity = best.sourceActivity ?? activity;
+  let intervals = best.intervals;
+  let intervalSource = best.source;
 
-  intervals = intervals.filter((itv) => {
-    const type = String(itv?.type ?? '').toUpperCase();
-    return !type || type === 'WORK' || type === 'INTERVAL' || type === 'ON' || type === 'LAP';
-  });
+  intervals = intervals.filter((itv) => isLikelyWorkInterval(itv));
 
   const available = new Set(Array.isArray(sourceActivity?.stream_types) ? sourceActivity.stream_types : []);
   const wanted = ['time', 'heartrate', 'watts', 'cadence', 'velocity_smooth', 'pace'];
@@ -8014,6 +8016,69 @@ async function computeIntervalMetricsStable(env, activity, options = {}) {
     summary: reduceIntervalMetrics(perInterval),
     perInterval,
   };
+}
+
+function isLikelyWorkInterval(interval) {
+  const type = String(interval?.type ?? '').toUpperCase();
+  if (!type) return true;
+  return !(/REST|RECOV|OFF|COOLDOWN|WARMUP|WARM-UP|EASY/.test(type));
+}
+
+function normalizeIntervalsPayload(payload) {
+  if (Array.isArray(payload)) return { intervals: payload };
+  if (payload && typeof payload === 'object') return payload;
+  return {};
+}
+
+async function fetchBestIntervals(env, activity, options = {}) {
+  const {
+    minDurationSec = 60,
+    maxIntervals = 50,
+  } = options;
+
+  const base = activity && typeof activity === 'object' ? activity : { id: activity };
+  const activityId = base?.id;
+  if (!activityId) {
+    return { intervals: [], source: null, sourceActivity: base };
+  }
+
+  try {
+    const dto = await fetchActivityIntervals(env, activityId);
+    const payload = normalizeIntervalsPayload(dto);
+    const intervals = extractIntervals(payload)
+      .filter((itv) => (itv.end - itv.start) >= minDurationSec)
+      .slice(0, maxIntervals);
+    if (intervals.length) {
+      return {
+        intervals,
+        source: 'intervals_endpoint',
+        sourceActivity: { ...base, ...payload },
+      };
+    }
+  } catch (_) {
+    // fall through to activity details
+  }
+
+  try {
+    const detailed = await fetchActivityWithIntervals(env, activityId);
+    const intervals = extractIntervals(detailed)
+      .filter((itv) => (itv.end - itv.start) >= minDurationSec)
+      .slice(0, maxIntervals);
+    if (intervals.length) {
+      return {
+        intervals,
+        source: 'activity_with_intervals',
+        sourceActivity: { ...base, ...detailed },
+      };
+    }
+    return {
+      intervals: [],
+      source: null,
+      sourceActivity: { ...base, ...detailed },
+    };
+  } catch (_) {
+    return { intervals: [], source: null, sourceActivity: base };
+  }
 }
 
 async function computeIntervalMetrics(env, activity, { intervalType } = {}) {
@@ -8668,6 +8733,20 @@ async function fetchActivityWithIntervals(env, activityId) {
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
     throw new Error(`activity intervals ${r.status}: ${txt.slice(0, 400)}`);
+  }
+  return r.json();
+}
+
+async function fetchActivityIntervals(env, activityId) {
+  const url = `https://intervals.icu/api/v1/activity/${activityId}/intervals`;
+  const r = await fetchIntervalsWithRetry(url, {
+    headers: { Authorization: authHeader(env) },
+  }, {
+    label: `activity ${activityId} dedicated intervals`,
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(`activity dedicated intervals ${r.status}: ${txt.slice(0, 400)}`);
   }
   return r.json();
 }
