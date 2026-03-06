@@ -5625,8 +5625,15 @@ function buildComments(
     : runFloorState?.deloadActive
       ? "Deload aktiv"
       : regressionSignal
-        ? "Nein – nicht im Plan (Reiz/Frequenz aktuell zu schwach)"
+        ? "Teilweise im Plan – Basis ist da, jetzt Reiz/Frequenz stabilisieren"
         : "Ja – im Plan";
+  const progressionExplanation = lifeEvent?.freezeProgression
+    ? "LifeEvent erkannt: Progression ist bewusst pausiert und wird nach dem Event wieder aufgebaut"
+    : runFloorState?.deloadActive
+      ? "Deload ist aktiv: Die reduzierte Belastung dient der Erholung und verbessert den nächsten Aufbaublock"
+      : regressionSignal
+        ? "Erklärung: Aktuell fehlen noch konstante Key-Reize bzw. regelmäßige Frequenz – mit 1 Key/Woche + lockeren Läufen wird der Trend schnell wieder positiv"
+        : "Erklärung: Reiz, Frequenz und Belastungsrahmen passen aktuell gut zusammen";
   const keyRuleLine = buildKeyRuleLine({
     keyRules,
     block: blockState?.block,
@@ -5792,8 +5799,8 @@ function buildComments(
     `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
-    `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`,
-    `Status: ${progressionStatus}.`,
+    `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "im Aufbau"} (${runFloorState?.deloadActive ? "Erholung priorisieren" : "Kontinuität aufbauen"})`,
+    `Status: ${progressionStatus}. ${progressionExplanation}.`,
   ]);
 
   const keyCheckMetrics = [
