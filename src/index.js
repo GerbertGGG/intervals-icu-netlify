@@ -951,6 +951,7 @@ function createCtx(env, warmupSkipSec, debug) {
     // streams memo
     byDayBikes: new Map(), // NEW
     streamsCache: new Map(), // activityId -> Promise(streams)
+    activityDetailsCache: new Map(), // activityId -> Promise(activity with intervals)
     // derived GA samples cache (for windows)
     gaSampleCache: new Map(), // key: `${endIso}|${windowDays}|${mode}` -> result
     wellnessCache: new Map(), // dayIso -> wellness payload
@@ -980,6 +981,39 @@ async function getStreams(ctx, activityId, types) {
 
   ctx.streamsCache.set(key, p);
   return p;
+}
+
+async function getActivityWithIntervals(ctx, activity) {
+  if (!activity?.id) return activity;
+
+  const hasIntervals = getActivityIntervals(activity).length > 0 || getActivityGroups(activity).length > 0;
+  if (hasIntervals) return activity;
+
+  const key = String(activity.id);
+  if (!ctx.activityDetailsCache.has(key)) {
+    const req = ctx.limit(async () => fetchActivityWithIntervals(ctx.env, key).catch(() => null));
+    ctx.activityDetailsCache.set(key, req);
+  }
+
+  const detailed = await ctx.activityDetailsCache.get(key);
+  if (!detailed || typeof detailed !== 'object') return activity;
+
+  return {
+    ...activity,
+    ...detailed,
+    icu_intervals: Array.isArray(detailed?.icu_intervals)
+      ? detailed.icu_intervals
+      : (Array.isArray(activity?.icu_intervals) ? activity.icu_intervals : []),
+    intervals: Array.isArray(detailed?.intervals)
+      ? detailed.intervals
+      : (Array.isArray(activity?.intervals) ? activity.intervals : []),
+    icu_groups: Array.isArray(detailed?.icu_groups)
+      ? detailed.icu_groups
+      : (Array.isArray(activity?.icu_groups) ? activity.icu_groups : []),
+    groups: Array.isArray(detailed?.groups)
+      ? detailed.groups
+      : (Array.isArray(activity?.groups) ? activity.groups : []),
+  };
 }
 
 function inferSportFromEvent(ev) {
@@ -4665,15 +4699,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     // Process runs (collect detailed info, but write VDOT/Drift from a single representative GA run)
     for (const a of runs) {
+      const activityWithIntervals = await getActivityWithIntervals(ctx, a);
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
-      const intervalSignal = isKey || hasExplicitIntervalStructure(a) || hasIcuIntervalSignal(a);
+      const intervalSignal = isKey
+        || hasExplicitIntervalStructure(activityWithIntervals)
+        || hasIcuIntervalSignal(activityWithIntervals);
 
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
-      const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(a) : false;
-      const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(a) : null;
+      const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(activityWithIntervals) : false;
+      const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(activityWithIntervals) : null;
 
       let drift = null;
       let drift_raw = null;
@@ -4713,8 +4750,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
       if (intervalSignal) {
         try {
-          intervalMetrics = await computeIntervalMetrics(env, a, {
-            intervalType: getIntervalTypeFromActivity(a),
+          intervalMetrics = await computeIntervalMetrics(env, activityWithIntervals, {
+            intervalType: getIntervalTypeFromActivity(activityWithIntervals),
           });
         } catch {
           intervalMetrics = null;
@@ -4723,7 +4760,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
       perRunInfo.push({
         activityId: a.id,
-        activity: a,
+        activity: activityWithIntervals,
         type: a.type,
         tags: a.tags ?? [],
         ga,
@@ -7615,9 +7652,41 @@ function pickNumber(...vals) {
 
 function extractIntervals(activity) {
   const out = [];
-  const pushInterval = (itv, fallbackType = null) => {
-    const start = pickNumber(itv?.start, itv?.start_sec, itv?.startTime, itv?.start_time, itv?.from);
-    const end = pickNumber(itv?.end, itv?.end_sec, itv?.endTime, itv?.end_time, itv?.to);
+  const resolveIntervalBounds = (itv, cursorSec = null) => {
+    let start = pickNumber(
+      itv?.start,
+      itv?.start_sec,
+      itv?.startTime,
+      itv?.start_time,
+      itv?.from,
+      itv?.offset,
+      itv?.offset_sec
+    );
+    let end = pickNumber(itv?.end, itv?.end_sec, itv?.endTime, itv?.end_time, itv?.to);
+    const duration = pickNumber(
+      itv?.moving_time,
+      itv?.elapsed_time,
+      itv?.duration,
+      itv?.duration_sec,
+      itv?.time
+    );
+
+    if (!Number.isFinite(end) && Number.isFinite(start) && Number.isFinite(duration) && duration > 0) {
+      end = start + duration;
+    }
+    if (!Number.isFinite(start) && Number.isFinite(end) && Number.isFinite(duration) && duration > 0) {
+      start = end - duration;
+    }
+    if (!Number.isFinite(start) && !Number.isFinite(end) && Number.isFinite(cursorSec) && Number.isFinite(duration) && duration > 0) {
+      start = cursorSec;
+      end = cursorSec + duration;
+    }
+
+    return { start, end };
+  };
+
+  const pushInterval = (itv, fallbackType = null, cursorSec = null) => {
+    const { start, end } = resolveIntervalBounds(itv, cursorSec);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
     out.push({
       start,
@@ -7625,18 +7694,31 @@ function extractIntervals(activity) {
       name: itv?.name ?? itv?.label ?? itv?.lap_name ?? null,
       type: itv?.type ?? itv?.kind ?? fallbackType,
     });
+    return { start, end };
   };
 
   if (Array.isArray(activity?.intervals)) {
-    activity.intervals.forEach((itv) => pushInterval(itv));
+    let cursor = 0;
+    activity.intervals.forEach((itv) => {
+      const inserted = pushInterval(itv, null, cursor);
+      if (inserted) cursor = inserted.end;
+    });
     if (out.length) return out;
   }
   if (Array.isArray(activity?.icu_intervals)) {
-    activity.icu_intervals.forEach((itv) => pushInterval(itv));
+    let cursor = 0;
+    activity.icu_intervals.forEach((itv) => {
+      const inserted = pushInterval(itv, null, cursor);
+      if (inserted) cursor = inserted.end;
+    });
     if (out.length) return out;
   }
   if (Array.isArray(activity?.laps)) {
-    activity.laps.forEach((lap) => pushInterval(lap, 'lap'));
+    let cursor = 0;
+    activity.laps.forEach((lap) => {
+      const inserted = pushInterval(lap, 'lap', cursor);
+      if (inserted) cursor = inserted.end;
+    });
     if (out.length) return out;
   }
 
