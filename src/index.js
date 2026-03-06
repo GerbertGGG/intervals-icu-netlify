@@ -825,7 +825,7 @@ function loadRuntimeConfig(env) {
 }
 
 
-const GA_MIN_SECONDS = 30 * 60;
+const GA_MIN_SECONDS = 25 * 60;
 const GA_COMPARABLE_MIN_SECONDS = 35 * 60;
 const MOTOR_STALE_DAYS = 5;
 

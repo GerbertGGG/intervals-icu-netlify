@@ -135,7 +135,7 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei 
 - Beispiel: `key:vo2`, `key:schwelle`, `key:tempo`
 
 6.3 GA / comparable GA
-- GA: nicht Key und Dauer >= 30 min
+- GA: nicht Key und Dauer >= 25 min
 - comparable GA: nicht Key und Dauer >= 35 min (+ Stabilitäts-/Qualitätskriterien)
 
 6.4 Debug-Checkliste „Warum kein GA-/Intervallsignal?“
@@ -143,7 +143,7 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei 
   wenn heute zwar ein Lauf vorhanden ist, aber keiner dieser Pfade greift:
   1) Intervall erkannt + auswertbar,
   2) TDL-Key erkannt,
-  3) GA erkannt (nicht Key, >= 30 min, ohne Intervallsignal).
+  3) GA erkannt (nicht Key, >= 25 min, ohne Intervallsignal).
 - Prüfschritte pro Lauf:
   - Key-Tag prüfen (`#key`, `key:*` in Tags/Text). Jeder Key schließt GA aus.
   - Dauer prüfen (`moving_time`/`elapsed_time` >= 1800s).
