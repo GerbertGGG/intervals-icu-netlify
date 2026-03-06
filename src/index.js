@@ -2300,14 +2300,26 @@ function summarizeIntervalSessionQuality(activity) {
   const qualityKm = reps.reduce((sum, r) => sum + r.distM, 0) / 1000;
 
   const targetPace = parseTargetPaceSecPerKmFromActivity(activity);
+  const hasTargetPace = Number.isFinite(targetPace) && targetPace > 0;
+  const repMedianPace = median(repPaces);
   let targetHitPoints = 2;
-  if (Number.isFinite(targetPace) && Number.isFinite(avgPace) && targetPace > 0) {
-    const relErr = Math.abs(avgPace - targetPace) / targetPace;
-    if (relErr <= 0.02) targetHitPoints = 3;
-    else if (relErr <= 0.04) targetHitPoints = 2.5;
-    else if (relErr <= 0.06) targetHitPoints = 2;
-    else if (relErr <= 0.08) targetHitPoints = 1.5;
-    else targetHitPoints = 1;
+  let targetHitRepShare = null;
+  let targetHitRepCount = null;
+  if (hasTargetPace) {
+    const relErrors = repPaces
+      .map((pace) => (Number.isFinite(pace) && targetPace > 0 ? Math.abs(pace - targetPace) / targetPace : null))
+      .filter((x) => Number.isFinite(x));
+    const hitCorridor = 0.04;
+    targetHitRepCount = relErrors.filter((err) => err <= hitCorridor).length;
+    targetHitRepShare = relErrors.length ? targetHitRepCount / relErrors.length : null;
+
+    if (Number.isFinite(targetHitRepShare)) {
+      if (targetHitRepShare >= 0.85) targetHitPoints = 3;
+      else if (targetHitRepShare >= 0.65) targetHitPoints = 2.5;
+      else if (targetHitRepShare >= 0.45) targetHitPoints = 2;
+      else if (targetHitRepShare >= 0.25) targetHitPoints = 1.5;
+      else targetHitPoints = 1;
+    }
   }
 
   let consistencyPoints = 1.5;
@@ -2346,7 +2358,9 @@ function summarizeIntervalSessionQuality(activity) {
     qualityKm,
     specificityPoints,
     lines: [
-      `RP getroffen: ${targetHitPoints >= 2.5 ? "ja" : "teilweise"}${Number.isFinite(avgPace) ? ` (Ø ${formatPace(avgPace)})` : ""}.`,
+      hasTargetPace
+        ? `RP getroffen: ${targetHitPoints >= 2.5 ? "ja" : "teilweise"}${Number.isFinite(targetHitRepCount) ? ` (${targetHitRepCount}/${reps.length} Reps im Zielkorridor ±4%)` : ""}${Number.isFinite(repMedianPace) ? `; Rep-Median ${formatPace(repMedianPace)}` : ""}.`
+        : `RP-Check: offen (keine RP/Zielpace hinterlegt${Number.isFinite(repMedianPace) ? `; Rep-Median ${formatPace(repMedianPace)} nur als Kontext` : ""}).`,
       `Stabil: ${consistencyPoints >= 2.5 ? "ja" : "eingeschränkt"} (${Number.isFinite(fadePct) && fadePct <= 0 ? "kein Einbruch" : "leichter Pace-Abfall"}${reps[reps.length - 1]?.paceSecPerKm <= reps[0]?.paceSecPerKm ? "; letzter Rep nicht langsamer" : ""}).`,
       `Session-Score: ${totalPoints.toFixed(1)}/9 → ${verdict}${needsSpecificity ? ", aber noch nicht spezifisch genug" : ""}. Nächster Hebel: ${qualityKm < 3 ? "mehr RP-Volumen" : "Pausen aktiver traben"}.`,
     ],
