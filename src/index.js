@@ -8326,18 +8326,20 @@ async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date()), op
   const kvRunGoal = Number(kv?.runGoal);
   const fallbackRunGoal = Number.isFinite(kvRunGoal) ? kvRunGoal : 0;
 
+  // Prefer the persisted Daily-Report values whenever available.
+  // This keeps watchface + Daily-Report consistent even if KV is briefly stale.
+  const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso);
+  const parsedFromDailyReport = parseRunSnapshotFromDailyReportText(dailyReportEvent?.description || "");
+  if (parsedFromDailyReport?.runValue != null && parsedFromDailyReport?.runGoal != null) {
+    return parsedFromDailyReport;
+  }
+
   const kvUpdatedAtMs = Date.parse(String(kv?.updatedAt || ""));
   const kvAgeMin = Number.isFinite(kvUpdatedAtMs) ? (Date.now() - kvUpdatedAtMs) / 60000 : Infinity;
   const kvFreshEnough = kvAgeMin <= WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN;
 
   if (kv?.day === dayIso && kv?.runValue != null && kv?.runGoal != null && kvFreshEnough) {
     return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
-  }
-
-  const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso);
-  const parsedFromDailyReport = parseRunSnapshotFromDailyReportText(dailyReportEvent?.description || "");
-  if (parsedFromDailyReport?.runValue != null && parsedFromDailyReport?.runGoal != null) {
-    return parsedFromDailyReport;
   }
 
   if (Number.isFinite(runValueFallback) && runValueFallback >= 0) {
