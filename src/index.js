@@ -30,7 +30,7 @@ export default {
 
       // optional: ?date=YYYY-MM-DD zum Testen, sonst "heute"
       const date = url.searchParams.get("date");
-      const endIso = date && isIsoDate(date) ? date : isoDate(new Date());
+      const endIso = date && isIsoDate(date) ? date : isoDateBerlin(new Date());
 
       try {
         const payload = await buildWatchfacePayload(env, endIso);
@@ -4395,6 +4395,15 @@ function addRunFloorDebug(debugOut, day, payload) {
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
+function isoDateBerlin(d = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return formatter.format(d);
+}
 function parseISODateSafe(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
   const [y, m, d] = String(iso).split("-").map((v) => Number(v));
@@ -8244,7 +8253,7 @@ function isStrength(a) {
 }
 
 async function buildWatchfacePayload(env, endIso) {
-  const end = parseISODateSafe(endIso) ? endIso : isoDate(new Date());
+  const end = parseISODateSafe(endIso) ? endIso : isoDateBerlin(new Date());
   const startIso = isoDate(new Date(new Date(end + "T00:00:00Z").getTime() - (WATCHFACE_LOAD_WINDOW_DAYS - 1) * 86400000));
 
   // Fetch activities only for this watchface window (klein halten)
@@ -8303,39 +8312,10 @@ async function buildWatchfacePayload(env, endIso) {
   };
 }
 
-function parseRunSnapshotFromDailyReportText(rawText) {
-  const text = fromHardLineBreakText(rawText || "");
-  const match = text.match(/RunFloor\s*\(14T\s*EWMA\)\s*:\s*([0-9]+(?:[.,][0-9]+)?)(?:\s*\/\s*([0-9]+(?:[.,][0-9]+)?|n\/a))?/i);
-  if (!match) return null;
-
-  const runValue = Number(String(match[1]).replace(",", "."));
-  const runGoalRaw = String(match[2] || "").trim();
-  const runGoal = /^n\/a$/i.test(runGoalRaw)
-    ? null
-    : Number(runGoalRaw.replace(",", "."));
-  if (!Number.isFinite(runValue)) return null;
-
-  return { runValue, runGoal, source: "daily_report" };
-}
-
-async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date())) {
+async function resolveWatchfaceRunSnapshot(env, dayIso = isoDateBerlin(new Date())) {
   const kv = await readLatestRunSnapshotKv(env);
   const kvRunGoal = Number(kv?.runGoal);
   const fallbackRunGoal = Number.isFinite(kvRunGoal) ? kvRunGoal : 0;
-
-  // Prefer the persisted Daily-Report values whenever available.
-  // This keeps watchface + Daily-Report consistent even if KV is briefly stale.
-  const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso);
-  const parsedFromDailyReport = parseRunSnapshotFromDailyReportText(dailyReportEvent?.description || "");
-  if (parsedFromDailyReport?.runValue != null) {
-    return {
-      runValue: parsedFromDailyReport.runValue,
-      runGoal: Number.isFinite(parsedFromDailyReport?.runGoal)
-        ? parsedFromDailyReport.runGoal
-        : Math.round(fallbackRunGoal),
-      source: "daily_report",
-    };
-  }
 
   const kvUpdatedAtMs = Date.parse(String(kv?.updatedAt || ""));
   const kvAgeMin = Number.isFinite(kvUpdatedAtMs) ? (Date.now() - kvUpdatedAtMs) / 60000 : Infinity;
