@@ -882,7 +882,6 @@ const MIN_STIMULUS_7D_BIKE_EVENT = 200;  // bike primary
 const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 14;
 const WATCHFACE_LOAD_WINDOW_DAYS = 7;
 const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
-const WATCHFACE_RUN_WINDOW_DAYS = WATCHFACE_LOAD_WINDOW_DAYS;
 const WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN = 180;
 
 // Maintenance anchors (soft hints, not hard fails)
@@ -8277,13 +8276,9 @@ async function buildWatchfacePayload(env, endIso) {
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
   const strengthWindowDays = days.slice(-WATCHFACE_STRENGTH_WINDOW_DAYS);
-  const runWindowDays = days.slice(-WATCHFACE_RUN_WINDOW_DAYS);
-  const runSum7FromActivities = runWindowDays.reduce((sum, day) => sum + (Math.round(runLoadByDay[day] || 0)), 0);
   const strengthSum7 = strengthWindowDays.reduce((sum, day) => sum + (Math.round(strengthMinByDay[day] || 0)), 0);
-  const runSnapshot = await resolveWatchfaceRunSnapshot(env, end, {
-    runValueFallback: runSum7FromActivities,
-  });
-  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : 0;
+  const runSnapshot = await resolveWatchfaceRunSnapshot(env, end);
+  const runSum7 = Number.isFinite(runSnapshot?.runValue) ? Math.round(runSnapshot.runValue) : null;
   const runGoal = Number.isFinite(runSnapshot?.runGoal) ? Math.round(runSnapshot.runGoal) : 0;
   const strengthPolicy = evaluateStrengthPolicy(strengthSum7);
   return {
@@ -8310,18 +8305,20 @@ async function buildWatchfacePayload(env, endIso) {
 
 function parseRunSnapshotFromDailyReportText(rawText) {
   const text = fromHardLineBreakText(rawText || "");
-  const match = text.match(/RunFloor\s*\(14T\s*EWMA\)\s*:\s*([0-9]+(?:[.,][0-9]+)?)\s*\/\s*([0-9]+(?:[.,][0-9]+)?)/i);
+  const match = text.match(/RunFloor\s*\(14T\s*EWMA\)\s*:\s*([0-9]+(?:[.,][0-9]+)?)(?:\s*\/\s*([0-9]+(?:[.,][0-9]+)?|n\/a))?/i);
   if (!match) return null;
 
   const runValue = Number(String(match[1]).replace(",", "."));
-  const runGoal = Number(String(match[2]).replace(",", "."));
-  if (!Number.isFinite(runValue) || !Number.isFinite(runGoal)) return null;
+  const runGoalRaw = String(match[2] || "").trim();
+  const runGoal = /^n\/a$/i.test(runGoalRaw)
+    ? null
+    : Number(runGoalRaw.replace(",", "."));
+  if (!Number.isFinite(runValue)) return null;
 
   return { runValue, runGoal, source: "daily_report" };
 }
 
-async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date()), options = {}) {
-  const runValueFallback = Number(options?.runValueFallback);
+async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date())) {
   const kv = await readLatestRunSnapshotKv(env);
   const kvRunGoal = Number(kv?.runGoal);
   const fallbackRunGoal = Number.isFinite(kvRunGoal) ? kvRunGoal : 0;
@@ -8330,8 +8327,14 @@ async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date()), op
   // This keeps watchface + Daily-Report consistent even if KV is briefly stale.
   const dailyReportEvent = await fetchDailyReportNoteEvent(env, dayIso);
   const parsedFromDailyReport = parseRunSnapshotFromDailyReportText(dailyReportEvent?.description || "");
-  if (parsedFromDailyReport?.runValue != null && parsedFromDailyReport?.runGoal != null) {
-    return parsedFromDailyReport;
+  if (parsedFromDailyReport?.runValue != null) {
+    return {
+      runValue: parsedFromDailyReport.runValue,
+      runGoal: Number.isFinite(parsedFromDailyReport?.runGoal)
+        ? parsedFromDailyReport.runGoal
+        : Math.round(fallbackRunGoal),
+      source: "daily_report",
+    };
   }
 
   const kvUpdatedAtMs = Date.parse(String(kv?.updatedAt || ""));
@@ -8342,15 +8345,7 @@ async function resolveWatchfaceRunSnapshot(env, dayIso = isoDate(new Date()), op
     return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
   }
 
-  if (Number.isFinite(runValueFallback) && runValueFallback >= 0) {
-    return {
-      runValue: Math.round(runValueFallback),
-      runGoal: Math.round(fallbackRunGoal),
-      source: "computed_latest_activities",
-    };
-  }
-
-  return { runValue: 0, runGoal: 0, source: "default" };
+  return { runValue: null, runGoal: Math.round(fallbackRunGoal), source: "unavailable" };
 }
 
 
