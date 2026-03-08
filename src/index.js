@@ -5796,6 +5796,13 @@ function buildComments(
     } else {
       runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
     }
+
+    const runFloorDeltaLabel = runTarget > 0
+      ? `${runFloorGap >= 0 ? "+" : ""}${runFloorGap}`
+      : "n/a";
+    runMetrics.push(
+      `RunFloor (neu): ${runFloorCurrent}${runTarget > 0 ? ` / ${runTarget}` : ""} (Δ ${runFloorDeltaLabel})`
+    );
   }
   addDecisionBlock("HEUTIGER LAUF", runMetrics);
 
