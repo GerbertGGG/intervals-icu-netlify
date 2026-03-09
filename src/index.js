@@ -6487,8 +6487,44 @@ function renderPatternAnalysisBlock(analysis) {
     lines.push(`  Handlung: ${finding.action}`);
   }
   lines.push("NextWeekGuidance:");
-  lines.push(JSON.stringify(analysis.guidance || {}, null, 2));
+  lines.push(...renderNextWeekGuidance(analysis.guidance || {}));
   return lines.join("\n");
+}
+
+function renderNextWeekGuidance(guidance) {
+  const lines = [];
+  const keysTarget = Number(guidance?.keysTarget);
+  const easyShareMin = Number(guidance?.easyShareMin);
+  const loadChangePctCap = Number(guidance?.loadChangePctCap);
+  const flags = Array.isArray(guidance?.flags) ? guidance.flags.filter(Boolean) : [];
+  const rationale = Array.isArray(guidance?.rationale) ? guidance.rationale.filter(Boolean) : [];
+
+  if (Number.isFinite(keysTarget)) {
+    lines.push(`- Key-Einheiten Ziel: ${keysTarget} pro Woche`);
+  }
+  if (Number.isFinite(easyShareMin)) {
+    lines.push(`- Easy-Anteil Minimum: ${(easyShareMin * 100).toFixed(0)}%`);
+  }
+  if (Number.isFinite(loadChangePctCap)) {
+    lines.push(`- Wochenlast-Änderung max.: ±${(loadChangePctCap * 100).toFixed(0)}%`);
+  }
+
+  if (flags.length) {
+    lines.push(`- Hinweise: ${flags.join(", ")}`);
+  }
+
+  if (rationale.length) {
+    lines.push("- Begründung:");
+    for (const reason of rationale) {
+      lines.push(`  • ${reason}`);
+    }
+  }
+
+  if (!lines.length) {
+    return ["- Keine Guidance verfügbar."];
+  }
+
+  return lines;
 }
 
 function buildDetectiveWhyInsights(current, previous) {
