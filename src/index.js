@@ -875,6 +875,40 @@ const LONGRUN_PREPLAN = {
   },
 };
 
+const DISTANCE_REQUIREMENTS = {
+  "5k": {
+    weights: { base: 0.25, specificity: 0.30, longrun: 0.10, robustness: 0.20, execution: 0.15 },
+    longrunTargetMin: 60,
+    keyFocus: ["vo2", "racepace", "threshold"],
+    intensityProfile: "5k",
+  },
+  "10k": {
+    weights: { base: 0.25, specificity: 0.28, longrun: 0.15, robustness: 0.18, execution: 0.14 },
+    longrunTargetMin: 75,
+    keyFocus: ["threshold", "vo2", "racepace"],
+    intensityProfile: "10k",
+  },
+  hm: {
+    weights: { base: 0.28, specificity: 0.25, longrun: 0.22, robustness: 0.15, execution: 0.10 },
+    longrunTargetMin: 90,
+    keyFocus: ["threshold", "hm_specific_longrun", "racepace"],
+    intensityProfile: "hm",
+  },
+  m: {
+    weights: { base: 0.30, specificity: 0.20, longrun: 0.28, robustness: 0.17, execution: 0.05 },
+    longrunTargetMin: 120,
+    keyFocus: ["marathonpace", "longrun", "threshold"],
+    intensityProfile: "m",
+  },
+};
+
+const DISTANCE_INTENSITY_TARGETS = {
+  "5k": { easyMin: 0.70, hardMax: 0.18 },
+  "10k": { easyMin: 0.72, hardMax: 0.16 },
+  hm: { easyMin: 0.75, hardMax: 0.14 },
+  m: { easyMin: 0.78, hardMax: 0.12 },
+};
+
 
 // Minimum stimulus thresholds per mode (tune later)
 const MIN_STIMULUS_7D_RUN_EVENT = 135;
@@ -5264,7 +5298,41 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       keyCompliance.keyAllowedNow = false;
       keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}: keine Keys (Freeze aktiv).`;
     }
+
+    const executionScore = computeExecutionQualityScore({
+      keyCompliance,
+      trend,
+      longRunSummary,
+      fatigue,
+    });
+    const weeklySnapshot = buildWeeklySnapshot(ctx, day, {
+      eventDistance,
+      block: blockState.block,
+      runFloor: runFloorEwma10,
+      runLoad7: loads7.runTotal7,
+      intensityDistribution,
+      keyStats7,
+      longRunSummary,
+      longrunSpecificity,
+      robustness,
+      fatigue,
+      keyCompliance,
+      trend,
+      executionScore,
+    });
+    const longrunFrequency21d = computeLongrunFrequency21d(ctx, day);
+    const longrunSpikeIndex = computeLongrunSpikeIndex(longRunSummary);
+    const distanceDiagnostics = computeDistanceDiagnostics(weeklySnapshot, {
+      runFloorTarget: runFloorState.effectiveFloorTarget,
+      keyCompliance,
+      fatigue,
+      longrunFrequency21d,
+      longrunSpikeIndex,
+    });
+    const gapRecommendations = buildGapRecommendations(distanceDiagnostics);
+
     historyMetrics.keyCompliance = keyCompliance;
+    historyMetrics.distanceDiagnostics = distanceDiagnostics;
     patch[FIELD_BLOCK] = blockState.block;
 
     previousBlockState = {
@@ -5354,6 +5422,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       aerobicFloorActive,
       fatigue,
       longRunSummary,
+      distanceDiagnostics,
+      gapRecommendations,
       bikeSubFactor,
       weeksToEvent,
       eventDistance,
@@ -5484,6 +5554,186 @@ function formatKeyTypeList(types = []) {
   return types.map(formatKeyType).join("/");
 }
 
+function normalizeDiagnosticKeyType(type) {
+  const t = String(type || "").trim().toLowerCase();
+  if (!t) return "other";
+  if (t === "schwelle" || t === "threshold") return "threshold";
+  if (t === "vo2_touch" || t === "vo2") return "vo2";
+  if (t === "racepace") return "racepace";
+  if (t === "longrun") return "longrun";
+  return t;
+}
+
+function buildWeeklySnapshot(ctx, dayIso, context = {}) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const start7Iso = isoDate(new Date(end.getTime() - 6 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const runs7 = (ctx?.activitiesAll || []).filter((a) => {
+    if (!isRun(a)) return false;
+    const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+    return d && d >= start7Iso && d < endIso;
+  });
+
+  const keyTypes = uniq((context?.keyStats7?.list || []).map(normalizeDiagnosticKeyType).filter(Boolean));
+  const longrunSpecificity = context?.longrunSpecificity || null;
+  const qualityBudgetUsed = Number(longrunSpecificity?.qualityBudgetUsed ?? 0);
+
+  return {
+    eventDistance: normalizeEventDistance(context?.eventDistance) || "10k",
+    block: context?.block || "BASE",
+    runFloor: Number(context?.runFloor ?? 0),
+    runLoad7: Number(context?.runLoad7 ?? 0),
+    runsCount: runs7.length,
+    easyShare: Number(context?.intensityDistribution?.easyShare ?? 0),
+    midShare: Number(context?.intensityDistribution?.midShare ?? 0),
+    hardShare: Number(context?.intensityDistribution?.hardShare ?? 0),
+    keyCount: Number(context?.keyStats7?.count ?? 0),
+    keyTypes,
+    longrunMin: Number(context?.longRunSummary?.minutes ?? 0),
+    longrunSpecificMin: Number.isFinite(qualityBudgetUsed) ? qualityBudgetUsed : 0,
+    strengthMin: Number(context?.robustness?.strengthMinutes7d ?? 0),
+    fatigueOverride: context?.fatigue?.override === true,
+    keySpacingOk: context?.keyCompliance?.keySpacingOk !== false,
+    efTrend: Number(context?.trend?.dv ?? 0),
+    driftTrend: Number(context?.trend?.dd ?? 0),
+    executionScore: Number(context?.executionScore ?? 0),
+  };
+}
+
+function scoreByTargetRatio(value, target, lowerCap = 0, upperCap = 1.2) {
+  if (!(target > 0)) return 50;
+  const ratio = clamp((Number(value) || 0) / target, lowerCap, upperCap);
+  return clamp(Math.round((ratio / upperCap) * 100), 0, 100);
+}
+
+function computeExecutionQualityScore({ keyCompliance, trend, longRunSummary, fatigue }) {
+  let score = 72;
+  if (keyCompliance?.freqOk === false) score -= 14;
+  if (keyCompliance?.typeOk === false) score -= 14;
+  if (keyCompliance?.preferredMissing === true) score -= 8;
+  if (keyCompliance?.keySpacingOk === false) score -= 8;
+  if (fatigue?.override === true) score -= 10;
+  if (Number.isFinite(trend?.dd) && trend.dd > 1.5) score -= 8;
+  if (Number.isFinite(trend?.dv) && trend.dv < 0) score -= 6;
+  if (longRunSummary?.quality === "weak") score -= 8;
+  const racepaceProgress = Number(keyCompliance?.racepaceBlockProgress?.pct ?? null);
+  if (Number.isFinite(racepaceProgress) && racepaceProgress >= 90) score += 6;
+  return clamp(Math.round(score), 0, 100);
+}
+
+function computeDistanceDiagnostics(snapshot, context = {}) {
+  const dist = normalizeEventDistance(snapshot?.eventDistance) || "10k";
+  const req = DISTANCE_REQUIREMENTS[dist] || DISTANCE_REQUIREMENTS["10k"];
+  const intensityTargets = DISTANCE_INTENSITY_TARGETS[req.intensityProfile] || DISTANCE_INTENSITY_TARGETS["10k"];
+
+  const floorTarget = Number(context?.runFloorTarget ?? 0);
+  const baseRunFloor = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget) : 55;
+  const runsTarget = dist === "5k" ? 3 : dist === "10k" ? 3 : 4;
+  const runsScore = clamp(Math.round((snapshot.runsCount / runsTarget) * 100), 0, 100);
+  const easyScore = clamp(Math.round((snapshot.easyShare / Math.max(0.01, intensityTargets.easyMin)) * 100), 0, 100);
+  const efScore = clamp(Math.round(55 + (snapshot.efTrend || 0) * 8), 0, 100);
+  const driftScore = clamp(Math.round(70 - Math.max(0, snapshot.driftTrend || 0) * 12), 0, 100);
+  const base = clamp(Math.round(baseRunFloor * 0.35 + runsScore * 0.2 + easyScore * 0.2 + efScore * 0.15 + driftScore * 0.1), 0, 100);
+
+  const focus = (req.keyFocus || []).map(normalizeDiagnosticKeyType);
+  const keyTypes = (snapshot.keyTypes || []).map(normalizeDiagnosticKeyType);
+  const focusHits = focus.filter((type) => keyTypes.includes(type)).length;
+  const focusCoverage = focus.length ? focusHits / focus.length : 0;
+  const intensityPenalty = Math.max(0, (snapshot.hardShare || 0) - intensityTargets.hardMax);
+  let specificity = clamp(Math.round(40 + focusCoverage * 45 - intensityPenalty * 200), 0, 100);
+  if (context?.keyCompliance?.preferredMissing) specificity = clamp(specificity - 10, 0, 100);
+  if (snapshot.block === "BASE") specificity = Math.min(100, specificity + 5);
+
+  const longrunTarget = Math.max(Number(req.longrunTargetMin || 0), Number(LONGRUN_PREPLAN.targetMinByDistance?.[dist] || 0));
+  const longrunVolumeScore = scoreByTargetRatio(snapshot.longrunMin, longrunTarget);
+  const longRunFreq = Number(context?.longrunFrequency21d ?? 0);
+  const longrunFreqScore = clamp(Math.round((longRunFreq / 2) * 100), 0, 100);
+  const spikeIndex = Number(context?.longrunSpikeIndex ?? 1);
+  const spikePenalty = spikeIndex > 1.15 ? Math.round((spikeIndex - 1.15) * 120) : 0;
+  const specificLongrunScore = clamp(Math.round((snapshot.longrunSpecificMin / Math.max(1, longrunTarget * 0.2)) * 100), 0, 100);
+  const longrun = clamp(Math.round(longrunVolumeScore * 0.5 + longrunFreqScore * 0.2 + specificLongrunScore * 0.2 - spikePenalty * 0.1), 0, 100);
+
+  const strengthScore = clamp(Math.round((snapshot.strengthMin / 45) * 100), 0, 100);
+  const monotony = Number(context?.fatigue?.monotony ?? 0);
+  const strain = Number(context?.fatigue?.strain ?? 0);
+  const acwr = Number(context?.fatigue?.acwr ?? 0);
+  let robustness = clamp(Math.round(65 + strengthScore * 0.25), 0, 100);
+  if (snapshot.fatigueOverride) robustness -= 20;
+  if (!snapshot.keySpacingOk) robustness -= 10;
+  if (monotony > 2.1) robustness -= 10;
+  if (strain > 1200) robustness -= 10;
+  if (acwr > 1.3) robustness -= 10;
+  robustness = clamp(robustness, 0, 100);
+
+  const execution = clamp(Math.round(snapshot.executionScore || 0), 0, 100);
+  const readinessRaw =
+    base * req.weights.base +
+    specificity * req.weights.specificity +
+    longrun * req.weights.longrun +
+    robustness * req.weights.robustness +
+    execution * req.weights.execution;
+  const readiness = clamp(Math.round(readinessRaw), 0, 100);
+
+  const entries = [
+    ["base", base],
+    ["specificity", specificity],
+    ["longrun", longrun],
+    ["robustness", robustness],
+    ["execution", execution],
+  ].sort((a, b) => a[1] - b[1]);
+
+  const primaryGap = entries[0]?.[0] || "base";
+  const secondaryGap = entries[1]?.[0] || "specificity";
+  const strengths = entries.slice(-2).reverse().map(([name]) => name);
+
+  return {
+    readiness,
+    scores: { base, specificity, longrun, robustness, execution },
+    primaryGap,
+    secondaryGap,
+    strengths,
+    snapshot,
+  };
+}
+
+function buildGapRecommendations(diagnostics) {
+  const primary = diagnostics?.primaryGap;
+  const secondary = diagnostics?.secondaryGap;
+  const map = {
+    longrun: ["Longrun häufiger einplanen", "Longrun schrittweise verlängern", "distanzspezifische Segmente im Longrun einbauen"],
+    specificity: ["mehr distanzspezifische Key-Reize setzen", "bevorzugte Reize priorisieren", "Intensitätsverteilung am Zielprofil ausrichten"],
+    base: ["mehr easy Minuten sammeln", "Lauffrequenz pro Woche erhöhen", "RunFloor stabil über mehrere Wochen halten"],
+    robustness: ["Krafttraining auf 2x/Woche stabilisieren", "Load-Anstieg konservativer gestalten", "Key-Abstände strikt einhalten"],
+    execution: ["Key-Sessions sauber zu Ende laufen", "Pace-Stabilität priorisieren", "Qualität vor zusätzlichem Volumen"],
+  };
+  return {
+    primaryFocus: map[primary] || [],
+    secondaryFocus: map[secondary] || [],
+  };
+}
+
+function computeLongrunFrequency21d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 20 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  let count = 0;
+  for (const a of ctx?.activitiesAll || []) {
+    if (!isRun(a)) continue;
+    const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
+    if (min >= 60) count += 1;
+  }
+  return count;
+}
+
+function computeLongrunSpikeIndex(longRunSummary) {
+  const current = Number(longRunSummary?.minutes ?? 0);
+  const recentPeak = Number(longRunSummary?.longestRun30d?.minutes ?? 0);
+  if (!(current > 0) || !(recentPeak > 0)) return 1;
+  return current / recentPeak;
+}
+
 function buildKeyRuleLine({ keyRules, block, eventDistance }) {
   if (!keyRules) return null;
   const blockLabel = block || "n/a";
@@ -5598,6 +5848,8 @@ function buildRecommendationsAndBottomLine(state) {
   const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
   const fatigue = state?.fatigue || null;
+  const distanceDiagnostics = state?.distanceDiagnostics || null;
+  const gapRecommendations = state?.gapRecommendations || null;
 
   bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
   if (state?.keyAllowedNow && explicitSessionShort) {
@@ -5653,6 +5905,13 @@ function buildRecommendationsAndBottomLine(state) {
     rec.push(...insight.map((line) => `Evidenz: ${line}`));
   }
 
+  if (distanceDiagnostics) {
+    rec.unshift(`Readiness ${distanceDiagnostics.readiness}/100 · Gap: ${distanceDiagnostics.primaryGap}${distanceDiagnostics.secondaryGap ? ` → ${distanceDiagnostics.secondaryGap}` : ""}.`);
+    for (const line of (gapRecommendations?.primaryFocus || []).slice(0, 2)) {
+      rec.push(`Diagnose-Fokus: ${line}.`);
+    }
+  }
+
   return {
     recommendations: capLines(rec, 6).map((x) => capText(x, 180)),
     bottomLine: capLines(bottom, 3).map((x) => capText(x, 180)),
@@ -5701,6 +5960,8 @@ function buildComments(
     aerobicFloorActive,
     fatigue,
     longRunSummary,
+    distanceDiagnostics,
+    gapRecommendations,
     bikeSubFactor,
     weeksToEvent,
     eventDistance,
@@ -5718,6 +5979,7 @@ function buildComments(
       "HEUTIGER LAUF": "🏃",
       "BELASTUNG & PROGRESSION": "📈",
       "KEY-CHECK": "🔑",
+      "DIAGNOSE": "🧠",
       "EMPFEHLUNGEN": "🧭",
       "HEUTE-ENTSCHEIDUNG": "🎯",
       "BOTTOM LINE": "🧾",
@@ -6004,6 +6266,17 @@ function buildComments(
   if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
 
+  if (distanceDiagnostics) {
+    const diagScores = distanceDiagnostics.scores || {};
+    addDecisionBlock("DIAGNOSE", [
+      `Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`,
+      `Scores → Base ${diagScores.base ?? "n/a"} | Specificity ${diagScores.specificity ?? "n/a"} | Longrun ${diagScores.longrun ?? "n/a"} | Robustness ${diagScores.robustness ?? "n/a"} | Execution ${diagScores.execution ?? "n/a"}`,
+      `Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`,
+      `Strengths: ${(distanceDiagnostics.strengths || []).join(", ") || "n/a"}`,
+      ...(gapRecommendations?.primaryFocus || []).slice(0, 2).map((x) => `Coach: ${x}`),
+    ]);
+  }
+
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
   const decisionCompact = buildRecommendationsAndBottomLine({
@@ -6029,6 +6302,8 @@ function buildComments(
     longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
     fatigue,
+    distanceDiagnostics,
+    gapRecommendations,
   });
   addDecisionBlock("EMPFEHLUNGEN", [
     ...decisionCompact.recommendations,
