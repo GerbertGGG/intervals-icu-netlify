@@ -1419,6 +1419,15 @@ function normalizeEventCategory(category) {
   return String(category ?? "").toUpperCase().trim();
 }
 
+function isARaceCategory(category) {
+  const cat = normalizeEventCategory(category);
+  if (!cat) return false;
+
+  // Intervals kann je nach Quelle unterschiedliche Schreibweisen liefern.
+  // Wir berücksichtigen bewusst NUR A-Rennen.
+  return cat === "RACE_A" || cat === "A_RACE" || cat === "A-RACE" || cat === "RACE A";
+}
+
 function isLifeEventCategory(category) {
   const cat = normalizeEventCategory(category);
   return cat === "SICK" || cat === "INJURED" || cat === "HOLIDAY";
@@ -8962,7 +8971,7 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
   const events = Array.isArray(prefetchedEvents)
     ? prefetchedEvents
     : await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
-  const races = (events || []).filter((e) => normalizeEventCategory(e.category) === "RACE_A");
+  const races = (events || []).filter((e) => isARaceCategory(e?.category));
   const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
 
   const activeLifeEvents = (events || []).filter(
@@ -9370,7 +9379,7 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   const payload = await res.json();
   const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
 
-  const races = events.filter((e) => normalizeEventCategory(e.category) === "RACE_A");
+  const races = events.filter((e) => isARaceCategory(e?.category));
 
   if (debug) {
   console.log(
