@@ -5892,6 +5892,7 @@ function formatNextAllowed(dayIso, nextAllowedIso) {
   if (!nextAllowedIso) return "n/a";
   if (!dayIso || !isIsoDate(dayIso) || !isIsoDate(nextAllowedIso)) return nextAllowedIso;
   const delta = diffDays(dayIso, nextAllowedIso);
+  if (delta === 0) return `${nextAllowedIso} (ab heute, sofern Key-Budget frei)`;
   if (delta <= 0) return `${nextAllowedIso} (ab heute)`;
   if (delta === 1) return `${nextAllowedIso} (in 1 Tag)`;
   return `${nextAllowedIso} (in ${delta} Tagen)`;
