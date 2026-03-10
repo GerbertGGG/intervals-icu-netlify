@@ -6644,7 +6644,7 @@ function buildComments(
     `Specificity · ${keyCompliance?.coverageSummary || "n/a"} | Hard ${Math.round((intensityDistribution?.hardShare || 0) * 100)}% | Block ${blockState?.block || "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
     `Longrun · 14T ${longRunDoneMin}′ | Diagnose-Ziel ${prePlanLongRunTargetMin}′ | Progressionsschritt ${longRunSafetyCapMin}′ | Blockziel ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
     `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
-    `Execution · Key-Frequenz ${actualKeys7Raw}/${keyGoal} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
+    `Execution · Key-Frequenz ${actualKeys7Raw}/${keyCap7} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
     "",
   ];
   const loadSignalsLines = [
@@ -8949,6 +8949,26 @@ async function fetchBestIntervals(env, activity, options = {}) {
   } catch (_) {
     return { intervals: [], source: null, sourceActivity: base };
   }
+}
+
+
+function classifyIntervalDrift(intervalType, driftBpm) {
+  if (!Number.isFinite(driftBpm)) return null;
+  const type = String(intervalType || "").toUpperCase();
+  const hardType = /VO2|REP|INTERVAL|HILL|ANAEROB/.test(type);
+  const thresholdTooHard = hardType ? 8 : 7;
+  const thresholdOverreaching = hardType ? 11 : 9;
+  if (driftBpm >= thresholdOverreaching) return "overreaching";
+  if (driftBpm >= thresholdTooHard) return "too_hard";
+  return "ok";
+}
+
+function formatDriftFlag(flag) {
+  if (!flag) return null;
+  if (flag === "ok") return "im Rahmen";
+  if (flag === "too_hard") return "zu hart";
+  if (flag === "overreaching") return "Overreaching";
+  return flag;
 }
 
 async function computeIntervalMetrics(env, activity, { intervalType } = {}) {
