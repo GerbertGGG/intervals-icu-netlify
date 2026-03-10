@@ -5246,8 +5246,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       dynamicKeyCap.maxKeys7d = 1;
       dynamicKeyCap.reasons.push("Deload aktiv");
     } else if (fatigueBase?.override) {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Fatigue/Overload");
+      dynamicKeyCap.maxKeys7d = 2;
+      dynamicKeyCap.reasons.push("Fatigue/Overload (Cap bleibt 2, nur konservative Empfehlung)");
    
     } else if ((motor?.value ?? 0) >= 70) {
       dynamicKeyCap.maxKeys7d = 2;
@@ -6602,9 +6602,11 @@ function buildComments(
     return lines.join("\n");
   }
 
+  const keyStatusLine = keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.";
+  const keyStatusAlreadyInToday = /kein weiterer key diese woche/i.test(todayDecision);
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
     `Heute: ${todayDecision}.`,
-    keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.",
+    keyStatusAlreadyInToday ? null : keyStatusLine,
     `Fokus: ${focusLabel}.`,
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
