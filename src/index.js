@@ -6515,15 +6515,18 @@ function buildComments(
   if (distanceDiagnostics) {
     const diagDetails = [];
     diagDetails.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
+    diagDetails.push("");
     diagDetails.push("Stärken:");
     for (const strength of (distanceDiagnostics?.strengths || []).slice(0, 2)) {
       diagDetails.push(`• ${strength}`);
     }
+    diagDetails.push("");
     diagDetails.push("Limitierend:");
     diagDetails.push(`• ${distanceDiagnostics.primaryGap}`);
     if (distanceDiagnostics.secondaryGap) diagDetails.push(`• ${distanceDiagnostics.secondaryGap}`);
 
     const weights = distanceDiagnostics?.weights || {};
+    diagDetails.push("");
     diagDetails.push("READINESS BREAKDOWN:");
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const score = Number(distanceDiagnostics?.scores?.[name] ?? 0);
@@ -6535,18 +6538,20 @@ function buildComments(
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const component = distanceDiagnostics?.components?.[name];
       if (!component) continue;
+      diagDetails.push("");
       diagDetails.push(`${name.toUpperCase()}: ${component.score} (Confidence: ${component?.confidence?.label || "n/a"} · ${component?.confidence?.value ?? "n/a"}/100)`);
       for (const input of (component.inputs || []).slice(0, 4)) {
-        diagDetails.push(`Input: ${input}`);
+        diagDetails.push(`  Input: ${input}`);
       }
       for (const rule of (component.factorsDown || []).slice(0, 2)) {
-        diagDetails.push(`Score-Down: ${rule}`);
+        diagDetails.push(`  Score-Down: ${rule}`);
       }
       for (const rule of (component.factorsUp || []).slice(0, 1)) {
-        diagDetails.push(`Score-Up: ${rule}`);
+        diagDetails.push(`  Score-Up: ${rule}`);
       }
-      diagDetails.push(`Interpretation: ${component.interpretation}`);
+      diagDetails.push(`  Interpretation: ${component.interpretation}`);
     }
+    diagDetails.push("");
     diagDetails.push(`Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`);
     addDecisionBlock("DIAGNOSE ERKLÄRT", diagDetails);
   }
