@@ -8363,8 +8363,9 @@ async function resolveWatchfaceRunSnapshot(env, dayIso = isoDateBerlin(new Date(
   const kvUpdatedAtMs = Date.parse(String(kv?.updatedAt || ""));
   const kvAgeMin = Number.isFinite(kvUpdatedAtMs) ? (Date.now() - kvUpdatedAtMs) / 60000 : Infinity;
   const kvFreshEnough = kvAgeMin <= WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN;
+  const kvDayComparable = isIsoDate(kv?.day) ? kv.day <= dayIso : true;
 
-  if (kv?.runValue != null && kv?.runGoal != null && kvFreshEnough) {
+  if (kv?.runValue != null && kv?.runGoal != null && kvFreshEnough && kvDayComparable) {
     return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
   }
 
