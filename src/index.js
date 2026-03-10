@@ -6201,6 +6201,10 @@ function buildComments(
   const longrunSpecificity = keyCompliance?.longrunSpecificity || null;
   const runFloorCurrent = Math.round(Number.isFinite(runFloorEwma10) ? runFloorEwma10 : 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+  const runCount7 = Number.isFinite(distanceDiagnostics?.snapshot?.runsCount)
+    ? Math.round(distanceDiagnostics.snapshot.runsCount)
+    : 0;
+  const runGoal = eventDistance === "5k" || eventDistance === "10k" ? 3 : 4;
   const runFloorGap = runTarget > 0 ? runFloorCurrent - runTarget : 0;
   const lifeEvent = runFloorState?.lifeEvent || null;
   const ignoreRunFloorGap = lifeEvent?.ignoreRunFloorGap === true;
@@ -6640,7 +6644,7 @@ function buildComments(
     `Specificity · ${keyCompliance?.coverageSummary || "n/a"} | Hard ${Math.round((intensityDistribution?.hardShare || 0) * 100)}% | Block ${blockState?.block || "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
     `Longrun · 14T ${longRunDoneMin}′ | Diagnose-Ziel ${prePlanLongRunTargetMin}′ | Progressionsschritt ${longRunSafetyCapMin}′ | Blockziel ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
     `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
-    `Execution · Key-Frequenz ${keyStats7.count}/${keyGoal} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
+    `Execution · Key-Frequenz ${actualKeys7Raw}/${keyGoal} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
     "",
   ];
   const loadSignalsLines = [
