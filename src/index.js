@@ -5703,35 +5703,81 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     return 92;
   };
 
+  const collectKeyStats = (windowDays = 28) => {
+    const safeDays = Math.max(14, Number(windowDays) || 28);
+    const startIso = isoDate(new Date(end.getTime() - (safeDays - 1) * 86400000));
+    const endIso = isoDate(new Date(end.getTime() + 86400000));
+    const keyTypesWindow = [];
+
+    for (const a of context?.activitiesAll || []) {
+      if (!isRun(a) || !hasKeyTag(a)) continue;
+      const d = parseDay(a);
+      if (!d || d < startIso || d >= endIso) continue;
+      keyTypesWindow.push(normalizeDiagnosticKeyType(getKeyType(a)));
+    }
+
+    return {
+      count: keyTypesWindow.length,
+      types: uniq(keyTypesWindow.filter(Boolean)),
+    };
+  };
+
+  const computeIntensityBalanceScore = (easyShare, hardShare) => {
+    const easy = Number(easyShare || 0);
+    const hard = Number(hardShare || 0);
+    const easyPenalty = Math.max(0, intensityTargets.easyMin - easy) * 110;
+    const hardPenalty = Math.max(0, hard - intensityTargets.hardMax) * 90;
+    const corridorBonus = easy >= intensityTargets.easyMin && hard <= intensityTargets.hardMax ? 8 : 0;
+    return clamp(Math.round(70 - easyPenalty - hardPenalty + corridorBonus), 0, 100);
+  };
+
   const floorTarget = Number(context?.runFloorTarget ?? 0);
   const stats28 = collectRunStats(28);
   const stats42 = collectRunStats(42);
+  const keyStats14 = collectKeyStats(14);
+  const keyStats28 = collectKeyStats(28);
+  const keyStats42 = collectKeyStats(42);
   const runsTarget = dist === "5k" ? 3 : dist === "10k" ? 3 : 4;
 
-  const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget) : 58;
-  const consistencyScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget - 0.5)) * 100), 0, 100);
-  const freqScore = clamp(Math.round((stats28.runsPerWeek / runsTarget) * 100), 0, 100);
-  const easyVolumeTarget = Math.max(90, runsTarget * 35);
-  const easyVolumeScore = clamp(Math.round((stats28.easyMinutes / easyVolumeTarget) * 100), 0, 100);
-  const easyShareScore = clamp(Math.round((snapshot.easyShare / Math.max(0.01, intensityTargets.easyMin)) * 100), 0, 100);
-  const base = clamp(
+  const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget, 0, 1.1) : 58;
+  const consistencyScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget)) * 100), 0, 100);
+  const freqScore = clamp(Math.round((stats42.runsPerWeek / runsTarget) * 100), 0, 100);
+  const easyVolumeTarget = Math.max(90, runsTarget * 40);
+  const easyVolumeScore = clamp(Math.round((stats42.easyMinutes / easyVolumeTarget) * 100), 0, 100);
+  const easyShareScore = clamp(Math.round((stats28.easyMinutes / Math.max(1, stats28.runMinutes)) * 100), 0, 100);
+  const intensityBalanceScore = computeIntensityBalanceScore(snapshot.easyShare, snapshot.hardShare);
+  let base = clamp(
     Math.round(
-      runFloorScore * 0.28 +
+      runFloorScore * 0.30 +
       consistencyScore * 0.24 +
       freqScore * 0.20 +
       easyVolumeScore * 0.16 +
-      easyShareScore * 0.12
+      easyShareScore * 0.08 +
+      intensityBalanceScore * 0.02
     ),
     0,
     100
   );
+  const easyShareDeficit = Math.max(0, intensityTargets.easyMin - (snapshot.easyShare || 0));
+  if (easyShareDeficit > 0.06) base = clamp(base - Math.round(easyShareDeficit * 120), 0, 100);
+  if (stats42.runDaysPerWeek < runsTarget - 0.1) base = Math.min(base, 89);
+  const baseEliteUnlocked =
+    stats42.runDaysPerWeek >= runsTarget + 0.4 &&
+    (snapshot.easyShare || 0) >= intensityTargets.easyMin - 0.02 &&
+    consistencyScore >= 88 &&
+    runFloorScore >= 88;
+  if (!baseEliteUnlocked) base = Math.min(base, 92);
 
   const focus = (req.keyFocus || []).map(normalizeDiagnosticKeyType);
-  const keyTypes = (snapshot.keyTypes || []).map(normalizeDiagnosticKeyType);
-  const matchedFocusTypes = focus.filter((type) => keyTypes.includes(type));
+  const keyTypes = keyStats28.types.length ? keyStats28.types : (snapshot.keyTypes || []).map(normalizeDiagnosticKeyType);
+  const keyTypes42 = keyStats42.types.length ? keyStats42.types : keyTypes;
+  const matchedFocusTypes = focus.filter((type) => keyTypes42.includes(type));
+  const matchedRecentFocusTypes = focus.filter((type) => keyTypes.includes(type));
   const focusHits = matchedFocusTypes.length;
   const focusCoverage = focus.length ? focusHits / focus.length : 0;
-  const intensityPenalty = Math.max(0, (snapshot.hardShare || 0) - intensityTargets.hardMax);
+  const recentFocusCoverage = focus.length ? matchedRecentFocusTypes.length / focus.length : 0;
+  const keyDensity28 = clamp(keyStats28.count / Math.max(1, 4), 0, 1);
+  const keyDensity42 = clamp(keyStats42.count / Math.max(1, 6), 0, 1);
   const weeksToEvent = Number(context?.weeksToEvent);
   const raceProximity = Number.isFinite(weeksToEvent)
     ? clamp((16 - clamp(weeksToEvent, 0, 16)) / 16, 0, 1)
@@ -5747,8 +5793,20 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
       : snapshot.block === "BUILD"
         ? clamp(0.55 + focusCoverage * 0.45, 0, 1)
         : clamp(0.45 + focusCoverage * 0.55, 0, 1);
-  let specificity = clamp(Math.round(45 + (focusCoverage * 35 + blockFit * 20) * specificityInfluence - intensityPenalty * 120), 0, 100);
+  let specificity = clamp(
+    Math.round(
+      30 +
+      focusCoverage * 30 +
+      recentFocusCoverage * 20 +
+      keyDensity28 * 12 +
+      keyDensity42 * 8 +
+      blockFit * 12 * specificityInfluence
+    ),
+    0,
+    100
+  );
   if (context?.keyCompliance?.preferredMissing) specificity = clamp(specificity - 8, 0, 100);
+  if (keyStats14.count === 0 && keyStats28.count > 0) specificity = clamp(specificity - 4, 0, 100);
 
   const longrunTarget = Math.max(Number(req.longrunTargetMin || 0), Number(LONGRUN_PREPLAN.targetMinByDistance?.[dist] || 0));
   const progressionLongrunTarget = Number(context?.longRunSummary?.plan?.targetMin ?? 0);
@@ -5775,15 +5833,19 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const monotony = Number(context?.fatigue?.monotony ?? 0);
   const strain = Number(context?.fatigue?.strain ?? 0);
   const acwr = Number(context?.fatigue?.acwr ?? 0);
-  const continuityScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget - 0.25)) * 100), 0, 100);
-  const runDayScore = clamp(Math.round((stats28.runDaysPerWeek / runsTarget) * 100), 0, 100);
+  const continuityScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget)) * 100), 0, 100);
+  const runDayScore = clamp(Math.round((stats28.runDaysPerWeek / Math.max(1, runsTarget)) * 100), 0, 100);
+  const spacingScore = snapshot.keySpacingOk ? 88 : 38;
   let fatiguePenalty = 0;
   if (snapshot.fatigueOverride) fatiguePenalty += 14;
   if (monotony > 2.1) fatiguePenalty += 8;
   if (strain > 1200) fatiguePenalty += 8;
   if (acwr > 1.3) fatiguePenalty += 8;
-  if (!snapshot.keySpacingOk) fatiguePenalty += 6;
-  let robustness = clamp(Math.round(continuityScore * 0.34 + runDayScore * 0.20 + strengthScore * 0.26 + (100 - fatiguePenalty) * 0.20), 0, 100);
+  if (!snapshot.keySpacingOk) fatiguePenalty += 12;
+  let robustness = clamp(Math.round(continuityScore * 0.32 + runDayScore * 0.18 + strengthScore * 0.28 + spacingScore * 0.12 + (100 - fatiguePenalty) * 0.10), 0, 100);
+  if (snapshot.strengthMin <= 15 && !snapshot.keySpacingOk) robustness = Math.min(robustness, 62);
+  else if (snapshot.strengthMin <= 15) robustness = Math.min(robustness, 68);
+  else if (!snapshot.keySpacingOk) robustness = Math.min(robustness, 74);
 
   const executionProcess = clamp(Math.round(snapshot.executionScore || 0), 0, 100);
   const chaosPenalty = snapshot.keySpacingOk ? 0 : 14;
