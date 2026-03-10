@@ -5335,6 +5335,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       runFloorTarget: runFloorState.effectiveFloorTarget,
       keyCompliance,
       fatigue,
+      longRunSummary,
+      strengthPolicy: robustness?.strengthPolicy,
       longrunFrequency21d,
       longrunSpikeIndex,
     });
@@ -5646,7 +5648,8 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
 
   const focus = (req.keyFocus || []).map(normalizeDiagnosticKeyType);
   const keyTypes = (snapshot.keyTypes || []).map(normalizeDiagnosticKeyType);
-  const focusHits = focus.filter((type) => keyTypes.includes(type)).length;
+  const matchedFocusTypes = focus.filter((type) => keyTypes.includes(type));
+  const focusHits = matchedFocusTypes.length;
   const focusCoverage = focus.length ? focusHits / focus.length : 0;
   const intensityPenalty = Math.max(0, (snapshot.hardShare || 0) - intensityTargets.hardMax);
   let specificity = clamp(Math.round(40 + focusCoverage * 45 - intensityPenalty * 200), 0, 100);
@@ -5654,6 +5657,8 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   if (snapshot.block === "BASE") specificity = Math.min(100, specificity + 5);
 
   const longrunTarget = Math.max(Number(req.longrunTargetMin || 0), Number(LONGRUN_PREPLAN.targetMinByDistance?.[dist] || 0));
+  const progressionLongrunTarget = Number(context?.longRunSummary?.plan?.targetMin ?? 0);
+  const longrunInput14d = Number(context?.longRunSummary?.longRun14d?.minutes ?? 0);
   const longrunVolumeScore = scoreByTargetRatio(snapshot.longrunMin, longrunTarget);
   const longRunFreq = Number(context?.longrunFrequency21d ?? 0);
   const longrunFreqScore = clamp(Math.round((longRunFreq / 2) * 100), 0, 100);
@@ -5663,6 +5668,8 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const longrun = clamp(Math.round(longrunVolumeScore * 0.5 + longrunFreqScore * 0.2 + specificLongrunScore * 0.2 - spikePenalty * 0.1), 0, 100);
 
   const strengthScore = clamp(Math.round((snapshot.strengthMin / 45) * 100), 0, 100);
+  const strengthTargetCoachMin = Number(context?.strengthPolicy?.target ?? 60);
+  const strengthScoreAnchorMin = 45;
   const monotony = Number(context?.fatigue?.monotony ?? 0);
   const strain = Number(context?.fatigue?.strain ?? 0);
   const acwr = Number(context?.fatigue?.acwr ?? 0);
@@ -5763,7 +5770,8 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         label: toConfidenceLabel(specificityConfidenceRaw),
       },
       inputs: [
-        `Key-Fokus-Treffer: ${focusHits}/${focus.length || 0}`,
+        `Abgedeckte ${dist.toUpperCase()}-Keytypen: ${focusHits}/${focus.length || 0}`,
+        `Getroffen: ${(matchedFocusTypes.join(", ") || "keiner")}`,
         `Key-Typen: ${(snapshot.keyTypes || []).join(", ") || "n/a"}`,
         `Hard-Anteil: ${Math.round((snapshot.hardShare || 0) * 100)}% (Max ${Math.round(intensityTargets.hardMax * 100)}%)`,
         `Preferred-Key fehlt: ${context?.keyCompliance?.preferredMissing ? "ja" : "nein"}`,
@@ -5787,7 +5795,9 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
       },
       inputs: [
         `Longrun-Min (7T max): ${Math.round(snapshot.longrunMin)}/${Math.round(longrunTarget)}′`,
-        `Longrun-Max 14T: ${Math.round(Number(context?.longRunSummary?.longRun14d?.minutes ?? 0))}′`,
+        `Längster Lauf 14T: ${Math.round(longrunInput14d)}′`,
+        `Diagnose-Ziel (Distanzprofil): ${Math.round(longrunTarget)}′`,
+        `Aktueller Progressionsschritt: ${Math.round(progressionLongrunTarget || longrunTarget)}′`,
         `Longrun-Frequenz 21T: ${longRunFreq}/2`,
         `Spezifischer Anteil: ${Math.round(snapshot.longrunSpecificMin)}′`,
         `Spike-Index: ${Number(spikeIndex || 0).toFixed(2)} (Guard >1.15)`,
@@ -5810,17 +5820,19 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         label: toConfidenceLabel(robustnessConfidenceRaw),
       },
       inputs: [
-        `Kraft 7T: ${Math.round(snapshot.strengthMin)}′/45′`,
+        `Kraft 7T: ${Math.round(snapshot.strengthMin)}′`,
+        `Coach-Ziel: ${Math.round(strengthTargetCoachMin)}′`,
+        `Score-Anker: ${strengthScoreAnchorMin}′`,
         `Fatigue-Override: ${snapshot.fatigueOverride ? "aktiv" : "aus"}`,
         `Key-Spacing ok: ${snapshot.keySpacingOk ? "ja" : "nein"}`,
         `Monotony/Strain/ACWR: ${Number(monotony || 0).toFixed(2)} / ${Math.round(strain || 0)} / ${Number(acwr || 0).toFixed(2)}`,
       ],
       factorsUp: [
-        snapshot.strengthMin >= 45 ? "Kraftziel erfüllt" : null,
+        snapshot.strengthMin >= strengthScoreAnchorMin ? "Kraftziel erfüllt" : null,
         !snapshot.fatigueOverride ? "Keine Fatigue-Sperre" : null,
       ].filter(Boolean),
       factorsDown: [
-        snapshot.strengthMin < 45 ? "Kraft unter Ziel" : null,
+        snapshot.strengthMin < strengthScoreAnchorMin ? "Kraft unter Ziel" : null,
         snapshot.fatigueOverride ? "Fatigue-Override aktiv" : null,
         !snapshot.keySpacingOk ? "Key-Abstand verletzt" : null,
         monotony > 2.1 ? "Monotony-Schwelle überschritten" : null,
