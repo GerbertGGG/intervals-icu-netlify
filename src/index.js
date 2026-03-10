@@ -6566,15 +6566,17 @@ function buildComments(
 
     const diagnoseLines = [];
     diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
-    if ((distanceDiagnostics?.strengths || []).length) {
-      diagnoseLines.push(`Stärken: ${(distanceDiagnostics.strengths || []).slice(0, 2).join(", ")}`);
-    }
-    diagnoseLines.push(`Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`);
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const component = distanceDiagnostics?.components?.[name];
       if (!component) continue;
       diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
     }
+
+    const diagnoseDebugLines = [];
+    if ((distanceDiagnostics?.strengths || []).length) {
+      diagnoseDebugLines.push(`Stärken: ${(distanceDiagnostics.strengths || []).slice(0, 2).join(", ")}`);
+    }
+    diagnoseDebugLines.push(`Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`);
 
     if (normalizedVerbosity === "coach") {
       const statusLines = [
@@ -6585,8 +6587,10 @@ function buildComments(
       addDecisionBlock("FOKUS", focusLines.slice(0, 2));
       // Coach-first layout: quick decision blocks first, condensed diagnosis directly below.
       addDecisionBlock("DIAGNOSE", diagnoseLines);
+      if (diagnoseDebugLines.length) addDecisionBlock("DIAGNOSE / DEBUG", diagnoseDebugLines);
     } else {
       addDecisionBlock("DIAGNOSE", diagnoseLines);
+      if (diagnoseDebugLines.length) addDecisionBlock("DIAGNOSE / DEBUG", diagnoseDebugLines);
       addDecisionBlock("FOKUS", focusLines.slice(0, 2));
     }
     return lines.join("\n");
@@ -6600,9 +6604,16 @@ function buildComments(
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
 
   if (distanceDiagnostics) {
+    const diagSummary = [];
+    diagSummary.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
+    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
+      const component = distanceDiagnostics?.components?.[name];
+      if (!component) continue;
+      diagSummary.push(`${name.toUpperCase()}: ${component.score} → ${component.interpretation}`);
+    }
+    addDecisionBlock("DIAGNOSE", diagSummary);
+
     const diagDetails = [];
-    diagDetails.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
-    diagDetails.push("");
     diagDetails.push("Stärken:");
     for (const strength of (distanceDiagnostics?.strengths || []).slice(0, 2)) {
       diagDetails.push(`• ${strength}`);
@@ -6640,7 +6651,7 @@ function buildComments(
     }
     diagDetails.push("");
     diagDetails.push(`Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`);
-    addDecisionBlock("DIAGNOSE ERKLÄRT", diagDetails);
+    addDecisionBlock("DIAGNOSE / DEBUG", diagDetails);
   }
 
   addDecisionBlock("KRAFTPLAN", [
