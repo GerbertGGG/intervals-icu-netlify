@@ -1956,9 +1956,11 @@ function computeLongRunSummary7d(ctx, dayIso) {
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
     if (!longest || seconds > longest.seconds) {
       longest = {
+        activity: a,
         seconds,
         date: d,
         isKey: hasKeyTag(a),
+        keyType: getKeyType(a),
         ga: isGA(a),
         intensity: isIntensity(a) || isIntensityByHr(a) || !isAerobic(a),
       };
@@ -1977,6 +1979,95 @@ function computeLongRunSummary7d(ctx, dayIso) {
     quality,
     isKey: longest.isKey,
     intensity: longest.intensity,
+    keyType: longest.keyType || null,
+    activityId: longest.activity?.id ?? null,
+  };
+}
+
+function isLongrunSpecificMode(eventDistance, block) {
+  const dist = normalizeEventDistance(eventDistance);
+  return (dist === "hm" || dist === "m") && (block === "BUILD" || block === "RACE");
+}
+
+function estimateRunsPerWeek(ctx, dayIso, windowDays = 28) {
+  const safeWindow = Math.max(7, Number(windowDays) || 28);
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - (safeWindow - 1) * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  let runCount = 0;
+
+  for (const a of ctx.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    if (!isRun(a)) continue;
+    runCount++;
+  }
+
+  return runCount / (safeWindow / 7);
+}
+
+function evaluateLongrunSpecificity(ctx, dayIso, longRunSummary, { eventDistance, block } = {}) {
+  const dist = normalizeEventDistance(eventDistance) || "10k";
+  const summary = longRunSummary || { minutes: 0, isKey: false, intensity: false };
+  const isSpecificMode = isLongrunSpecificMode(dist, block);
+  const minutes = Number(summary?.minutes ?? 0);
+  const rawType = summary?.keyType || null;
+  const normalizedType = normalizeKeyType(rawType, {
+    movingTime: Number.isFinite(minutes) ? minutes * 60 : 0,
+  });
+  const runsPerWeek = estimateRunsPerWeek(ctx, dayIso, 28);
+  const lowFrequencyWeek = Number.isFinite(runsPerWeek) && runsPerWeek <= 4.2;
+
+  if (!isSpecificMode) {
+    return {
+      active: false,
+      specific: false,
+      dominantQuality: false,
+      qualityBudgetUsed: 0,
+      runsPerWeek,
+      confidence: "none",
+      notes: "Longrun bleibt primär aerob (Distanz/Block ohne Spezifitäts-Overlay).",
+    };
+  }
+
+  const specificType = normalizedType === "racepace" || normalizedType === "schwelle" || normalizedType === "longrun";
+  const blockDurationThresholds = {
+    hm: { BUILD: 95, RACE: 90 },
+    m: { BUILD: 120, RACE: 105 },
+  };
+  const minSpecificMinutes = Number(blockDurationThresholds?.[dist]?.[block] ?? 100);
+
+  const durationReady = minutes >= minSpecificMinutes;
+  const explicitSpecificLongrun = summary?.isKey === true && specificType;
+  const moderateSpecificLongrun = durationReady && specificType;
+
+  const specific = explicitSpecificLongrun || moderateSpecificLongrun;
+
+  let confidence = "none";
+  if (explicitSpecificLongrun && durationReady) confidence = "high";
+  else if (moderateSpecificLongrun) confidence = "medium";
+
+  const dominantQuality = specific && lowFrequencyWeek && confidence === "high";
+  const qualityBudgetUsed = dominantQuality ? 1 : specific ? confidence === "high" ? 0.75 : 0.5 : 0;
+
+  const typeLabel = specificType ? formatKeyType(normalizedType) : "aerob";
+  const notes = specific
+    ? dominantQuality
+      ? `Spezifischer HM/M-Longrun (${minutes}′, ${typeLabel}) zählt als dominanter Qualitätsreiz.`
+      : `Spezifischer HM/M-Longrun erkannt (${minutes}′, ${typeLabel}); weitere Qualität nur dosiert ergänzen.`
+    : `Longrun diese Woche aerob belassen (Spezifität erst ab ~${minSpecificMinutes}′ mit klarem HM/M-Reiz).`;
+
+  return {
+    active: true,
+    specific,
+    dominantQuality,
+    qualityBudgetUsed,
+    runsPerWeek,
+    confidence,
+    minutes,
+    minSpecificMinutes,
+    keyType: normalizedType || null,
+    notes,
   };
 }
 
@@ -3627,11 +3718,15 @@ function computeRacepaceBlockProgress(ctx, context = {}) {
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const expected = keyRules.expectedKeysPerWeek;
   const maxKeys = keyRules.maxKeysPerWeek;
-  const actual7 = keyStats7.count;
+  const actual7Raw = keyStats7.count;
+  const longrunSpecificity = context.longrunSpecificity || null;
+  const qualityBudget = Number(longrunSpecificity?.qualityBudgetUsed ?? 0);
+  const actual7 = actual7Raw + qualityBudget;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
   const maxKeysCap7 = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : (context.ctx?.runtimeConfig?.maxKeys7d ?? MAX_KEYS_7D);
   const capExceeded = actual7 >= maxKeysCap7;
+  const longrunDominant = longrunSpecificity?.dominantQuality === true;
 
   const actualTypes7 = keyStats7.list || [];
   const actualTypes14 = keyStats14.list || [];
@@ -3678,7 +3773,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   let keyAllowedNow = false;
 
   if (capExceeded) {
-    suggestion = `Key-Budget erschöpft (${actual7}/${maxKeysCap7} in 7 Tagen) – restliche Einheiten locker/GA.`;
+    suggestion = `Key-Budget erschöpft (${actual7.toFixed(1)}/${maxKeysCap7} in 7 Tagen) – restliche Einheiten locker/GA.`;
+  } else if (longrunDominant) {
+    suggestion = `Spezifischer Longrun war Hauptreiz der Woche (${actual7.toFixed(1)}/${maxKeysCap7} Budget) – kein zusätzlicher harter Key.`;
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
@@ -3730,6 +3827,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     maxKeys,
     maxKeysCap7,
     actual7,
+    actual7Raw,
     actual14,
     perWeek14,
     freqOk,
@@ -3753,6 +3851,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keyAllowedNow,
     explicitSession,
     racepaceBlockProgress,
+    longrunSpecificity,
   };
 }
 
@@ -4905,12 +5004,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(eventDistance) ? "BUILD" : "BASE");
     const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
+    const longrunSpecificityPre = evaluateLongrunSpecificity(ctx, day, longRunSummary, {
+      eventDistance,
+      block: baseBlock,
+    });
     const keyCompliancePre = evaluateKeyCompliance(keyRulesPre, keyStats7, keyStats14, {
       block: baseBlock,
       eventDistance,
       timeInBlockDays: previousBlockState?.timeInBlockDays ?? 0,
       weeksToEvent,
       lastKeyType,
+      longrunSpecificity: longrunSpecificityPre,
     });
 
     const baseRunFloorTarget =
@@ -5058,6 +5162,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       ...keyRulesBase,
       maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
     };
+    const longrunSpecificity = evaluateLongrunSpecificity(ctx, day, longRunSummary, {
+      eventDistance,
+      block: blockState.block,
+    });
     const intensityDistribution = computeIntensityDistribution(
       ctx,
       day,
@@ -5097,6 +5205,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
       historyMetrics,
+      longrunSpecificity,
     });
 if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
@@ -5568,6 +5677,8 @@ function buildComments(
 
   const keyCap7 = keyCompliance?.maxKeysCap7 ?? dynamicKeyCap?.maxKeys7d ?? MAX_KEYS_7D;
   const actualKeys7 = keyCompliance?.actual7 ?? 0;
+  const actualKeys7Raw = keyCompliance?.actual7Raw ?? actualKeys7;
+  const longrunSpecificity = keyCompliance?.longrunSpecificity || null;
   const runFloorCurrent = Math.round(Number.isFinite(runFloorEwma10) ? runFloorEwma10 : 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
   const runFloorGap = runTarget > 0 ? runFloorCurrent - runTarget : 0;
@@ -5818,8 +5929,11 @@ function buildComments(
     `Status: ${progressionStatus}. ${progressionExplanation}.`,
   ]);
 
+  const keyUsageText = Number.isFinite(actualKeys7Raw) && Math.abs(actualKeys7 - actualKeys7Raw) > 0.01
+    ? `${actualKeys7.toFixed(1)} (inkl. Longrun ${actualKeys7Raw.toFixed(0)} + ${(actualKeys7 - actualKeys7Raw).toFixed(1)})`
+    : `${Math.round(actualKeys7)}`;
   const keyCheckMetrics = [
-    `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
+    `Keys (7 Tage): ${keyUsageText}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     fatigue?.override
       ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
@@ -5830,6 +5944,7 @@ function buildComments(
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
   if (keyPatternLine && hasEventDistance) keyCheckMetrics.push(keyPatternLine);
+  if (longrunSpecificity?.active) keyCheckMetrics.push(`Longrun-Spezifik: ${longrunSpecificity.notes}`);
   if (bikeAllowanceLine) keyCheckMetrics.push(bikeAllowanceLine);
   if (transitionLine) keyCheckMetrics.push(transitionLine);
   addDecisionBlock("KEY-CHECK", keyCheckMetrics);
