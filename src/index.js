@@ -58,6 +58,7 @@ export default {
     if (url.pathname === "/sync") {
       const write = parseBooleanParam(url.searchParams, "write");
       const debug = parseBooleanParam(url.searchParams, "debug");
+      const reportVerbosity = parseReportVerbosity(url.searchParams, { debug });
 
       const date = url.searchParams.get("date");
       const from = url.searchParams.get("from");
@@ -122,6 +123,7 @@ export default {
           const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, {
             raceStartOverrideIso,
             blockStartOverrideIso,
+            reportVerbosity,
           });
           return json(result);
         } catch (e) {
@@ -149,13 +151,14 @@ export default {
           await syncRange(env, oldest, newest, write, false, warmupSkipSec, {
             raceStartOverrideIso,
             blockStartOverrideIso,
+            reportVerbosity,
           });
         })().catch((e) => {
           console.error("sync/model job failed", e);
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, reportVerbosity });
     }
 
     if (url.pathname === "/sync-step") {
@@ -267,9 +270,16 @@ const WATCHFACE_ERROR_HEADERS = {
 const STEP_SYNC_KV_PREFIX = "syncstep:state:";
 const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
+const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
 
 function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
+}
+
+function parseReportVerbosity(searchParams, { debug = false } = {}) {
+  const raw = String(searchParams.get("verbosity") || "").trim().toLowerCase();
+  if (REPORT_VERBOSITY_VALUES.has(raw)) return raw;
+  return debug ? "debug" : "coach";
 }
 
 function getSearchParamAny(searchParams, keys) {
@@ -354,6 +364,7 @@ async function handleStepSync(req, env, ctx) {
   const url = new URL(req.url);
   const write = parseBooleanParam(url.searchParams, "write");
   const debug = parseBooleanParam(url.searchParams, "debug");
+  const reportVerbosity = parseReportVerbosity(url.searchParams, { debug });
   const reset = parseBooleanParam(url.searchParams, "reset");
   const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
 
@@ -425,6 +436,7 @@ async function handleStepSync(req, env, ctx) {
   const result = await syncRange(env, day, day, write, debug, warmupSkipSec, {
     raceStartOverrideIso,
     blockStartOverrideIso,
+    reportVerbosity,
   });
 
   const next = addDaysIso(day, STEP_SYNC_ADVANCE_DAYS);
@@ -4787,6 +4799,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   ctx.runtimeConfig = loadRuntimeConfig(env);
   const runMetricsOnly = runtimeOverrides?.runMetricsOnly === true;
   const runMetricsOnlyIfExisting = runtimeOverrides?.runMetricsOnlyIfExisting === true;
+  const reportVerbosity = REPORT_VERBOSITY_VALUES.has(runtimeOverrides?.reportVerbosity)
+    ? runtimeOverrides.reportVerbosity
+    : (debug ? "debug" : "coach");
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
   // For this sync we only need enough to compute what we will write inside [oldest..newest].
@@ -5438,7 +5453,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       bikeSubFactor,
       weeksToEvent,
       eventDistance,
-    }, { debug });
+    }, { debug, verbosity: reportVerbosity });
     const dailyReportText = normalizeDailyReportText(day, dailyReportTextRaw);
 
     if (!runSectionOnly) {
@@ -6145,7 +6160,7 @@ function buildComments(
     weeksToEvent,
     eventDistance,
   },
-  { debug = false } = {}
+  { debug = false, verbosity = "coach" } = {}
 ) {
   const lines = [];
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
@@ -6166,6 +6181,11 @@ function buildComments(
       "EMPFEHLUNGEN": "🧭",
       "HEUTE-ENTSCHEIDUNG": "🎯",
       "BOTTOM LINE": "🧾",
+      "HEUTE": "🎯",
+      "WARUM": "🧩",
+      "STATUS": "🧠",
+      "DIAGNOSE": "🧠",
+      "FOKUS": "📌",
     };
     lines.push(`${titleEmojis[title] || "✅"} ${title}`);
     for (const metric of metrics) {
@@ -6450,6 +6470,7 @@ function buildComments(
 
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
+  const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
   const decisionCompact = buildRecommendationsAndBottomLine({
     runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
@@ -6485,11 +6506,10 @@ function buildComments(
     ? "Volumen"
     : (distanceDiagnostics?.primaryGap || "Stabilität");
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
-  addDecisionBlock("COACH-ENTSCHEIDUNG", [
-    `Heute: ${todayDecision}.`,
+  const todayBlock = [
+    `${todayDecision}.`,
     keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.",
-    `Fokus: ${focusLabel}.`,
-  ]);
+  ];
 
   const shortReasonsRanked = [
     {
@@ -6521,7 +6541,62 @@ function buildComments(
       reason: `Diagnose-Hauptlücke: ${distanceDiagnostics?.primaryGap}`,
     },
   ];
-  const shortReasons = shortReasonsRanked.filter((x) => x.active).map((x) => x.reason).slice(0, 4);
+  const shortReasons = shortReasonsRanked.filter((x) => x.active).map((x) => x.reason).slice(0, 3);
+
+  const focusLines = [];
+  if (!ignoreRunFloorGap && runFloorGap < 0) {
+    focusLines.push("Volumen stabilisieren.");
+  } else if (distanceDiagnostics?.primaryGap) {
+    focusLines.push(`${distanceDiagnostics.primaryGap} priorisieren.`);
+  } else {
+    focusLines.push(`${focusLabel} stabil halten.`);
+  }
+  if (Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0)) {
+    focusLines.push("Krafttraining zurückbringen.");
+  } else if (fatigue?.override) {
+    focusLines.push("Frische priorisieren.");
+  }
+
+  if (normalizedVerbosity !== "debug") {
+    addDecisionBlock("HEUTE", todayBlock);
+    const whyLines = shortReasons.length
+      ? shortReasons.map((reason) => `• ${reason}`)
+      : ["• Keine harten Restriktionen aktiv."];
+    addDecisionBlock("WARUM", whyLines);
+
+    const diagnoseLines = [];
+    diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
+    if ((distanceDiagnostics?.strengths || []).length) {
+      diagnoseLines.push(`Stärken: ${(distanceDiagnostics.strengths || []).slice(0, 2).join(", ")}`);
+    }
+    diagnoseLines.push(`Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`);
+    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
+      const component = distanceDiagnostics?.components?.[name];
+      if (!component) continue;
+      diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
+    }
+
+    if (normalizedVerbosity === "coach") {
+      const statusLines = [
+        `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`,
+        `Hauptlimit: ${distanceDiagnostics?.primaryGap || "n/a"}`,
+      ];
+      addDecisionBlock("STATUS", statusLines);
+      addDecisionBlock("FOKUS", focusLines.slice(0, 2));
+      // Coach-first layout: quick decision blocks first, condensed diagnosis directly below.
+      addDecisionBlock("DIAGNOSE", diagnoseLines);
+    } else {
+      addDecisionBlock("DIAGNOSE", diagnoseLines);
+      addDecisionBlock("FOKUS", focusLines.slice(0, 2));
+    }
+    return lines.join("\n");
+  }
+
+  addDecisionBlock("COACH-ENTSCHEIDUNG", [
+    `Heute: ${todayDecision}.`,
+    keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.",
+    `Fokus: ${focusLabel}.`,
+  ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
 
   if (distanceDiagnostics) {
@@ -7965,9 +8040,9 @@ function composeDecisionBlocks(blocks) {
 }
 
 function mergeTodayRunSection(existingText, freshText) {
-  const title = "HEUTIGER LAUF";
+  const candidateTitles = new Set(["HEUTIGER LAUF", "HEUTE"]);
   const freshBlocks = splitDecisionBlocks(freshText);
-  const freshTodayBlock = freshBlocks.find((b) => getDecisionBlockTitle(b) === title);
+  const freshTodayBlock = freshBlocks.find((b) => candidateTitles.has(getDecisionBlockTitle(b)));
   if (!freshTodayBlock) return fromHardLineBreakText(existingText);
 
   const existingBlocks = splitDecisionBlocks(existingText);
@@ -7975,7 +8050,7 @@ function mergeTodayRunSection(existingText, freshText) {
 
   let replaced = false;
   const merged = existingBlocks.map((b) => {
-    if (getDecisionBlockTitle(b) === title) {
+    if (candidateTitles.has(getDecisionBlockTitle(b))) {
       replaced = true;
       return freshTodayBlock;
     }
