@@ -5695,9 +5695,165 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const secondaryGap = entries[1]?.[0] || "specificity";
   const strengths = entries.slice(-2).reverse().map(([name]) => name);
 
+  const toConfidenceLabel = (value) => {
+    if (value >= 0.75) return "hoch";
+    if (value >= 0.45) return "mittel";
+    return "niedrig";
+  };
+  const baseConfidenceRaw = [
+    floorTarget > 0 ? 1 : 0.4,
+    snapshot.runsCount >= 2 ? 1 : snapshot.runsCount > 0 ? 0.6 : 0.2,
+    Number.isFinite(snapshot.easyShare) ? 1 : 0.3,
+    Number.isFinite(snapshot.efTrend) ? 1 : 0.4,
+    Number.isFinite(snapshot.driftTrend) ? 1 : 0.4,
+  ].reduce((sum, x) => sum + x, 0) / 5;
+  const specificityConfidenceRaw = [
+    focus.length > 0 ? 1 : 0.4,
+    keyTypes.length > 0 ? 1 : 0.4,
+    Number.isFinite(snapshot.hardShare) ? 1 : 0.4,
+  ].reduce((sum, x) => sum + x, 0) / 3;
+  const longrunConfidenceRaw = [
+    Number.isFinite(snapshot.longrunMin) ? 1 : 0.4,
+    Number.isFinite(longRunFreq) ? 1 : 0.4,
+    Number.isFinite(snapshot.longrunSpecificMin) ? 1 : 0.4,
+    Number.isFinite(spikeIndex) ? 1 : 0.4,
+  ].reduce((sum, x) => sum + x, 0) / 4;
+  const robustnessConfidenceRaw = [
+    Number.isFinite(snapshot.strengthMin) ? 1 : 0.4,
+    Number.isFinite(monotony) ? 1 : 0.4,
+    Number.isFinite(strain) ? 1 : 0.4,
+    Number.isFinite(acwr) ? 1 : 0.4,
+  ].reduce((sum, x) => sum + x, 0) / 4;
+  const executionConfidenceRaw = [
+    Number.isFinite(snapshot.executionScore) ? 1 : 0.4,
+    context?.keyCompliance ? 1 : 0.4,
+    context?.fatigue ? 1 : 0.4,
+  ].reduce((sum, x) => sum + x, 0) / 3;
+
+  const componentDetails = {
+    base: {
+      score: base,
+      confidence: {
+        value: Math.round(baseConfidenceRaw * 100),
+        label: toConfidenceLabel(baseConfidenceRaw),
+      },
+      inputs: [
+        `RunFloor: ${Math.round(snapshot.runFloor)}/${Math.round(floorTarget || 0)}`,
+        `Läufe/Woche: ${snapshot.runsCount}/${runsTarget}`,
+        `Easy-Anteil: ${Math.round((snapshot.easyShare || 0) * 100)}% (Ziel ≥${Math.round(intensityTargets.easyMin * 100)}%)`,
+        `EF-Trend: ${snapshot.efTrend >= 0 ? "+" : ""}${Number(snapshot.efTrend || 0).toFixed(1)}%`,
+        `Drift-Trend: ${snapshot.driftTrend >= 0 ? "+" : ""}${Number(snapshot.driftTrend || 0).toFixed(1)}`,
+      ],
+      factorsUp: [
+        floorTarget > 0 && snapshot.runFloor >= floorTarget ? "RunFloor-Ziel erreicht" : null,
+        snapshot.runsCount >= runsTarget ? "Frequenzziel erreicht" : null,
+        snapshot.easyShare >= intensityTargets.easyMin ? "Easy-Verteilung stabil" : null,
+      ].filter(Boolean),
+      factorsDown: [
+        floorTarget > 0 && snapshot.runFloor < floorTarget ? `RunFloor unter Ziel (${Math.round(floorTarget - snapshot.runFloor)} Gap)` : null,
+        snapshot.runsCount < runsTarget ? "Zu geringe Wochenfrequenz" : null,
+        snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil zu niedrig" : null,
+      ].filter(Boolean),
+      interpretation: base >= 75 ? "Aerobe Basis stabil." : base >= 55 ? "Basis ausbaufähig, Kontinuität priorisieren." : "Basis aktuell limitierend.",
+    },
+    specificity: {
+      score: specificity,
+      confidence: {
+        value: Math.round(specificityConfidenceRaw * 100),
+        label: toConfidenceLabel(specificityConfidenceRaw),
+      },
+      inputs: [
+        `Key-Fokus-Treffer: ${focusHits}/${focus.length || 0}`,
+        `Key-Typen: ${(snapshot.keyTypes || []).join(", ") || "n/a"}`,
+        `Hard-Anteil: ${Math.round((snapshot.hardShare || 0) * 100)}% (Max ${Math.round(intensityTargets.hardMax * 100)}%)`,
+        `Preferred-Key fehlt: ${context?.keyCompliance?.preferredMissing ? "ja" : "nein"}`,
+      ],
+      factorsUp: [
+        focusCoverage >= 0.66 ? "Distanzspezifische Reize gut abgedeckt" : null,
+        snapshot.block === "BASE" ? "BASE-Bonus aktiv" : null,
+      ].filter(Boolean),
+      factorsDown: [
+        focusCoverage < 0.5 ? "Zu wenig distanzspezifische Reize" : null,
+        intensityPenalty > 0 ? "Hard-Anteil über Ziel" : null,
+        context?.keyCompliance?.preferredMissing ? "Bevorzugter Reiz fehlt" : null,
+      ].filter(Boolean),
+      interpretation: specificity >= 75 ? "Spezifität passt zur Distanz." : specificity >= 55 ? "Spezifität teilweise getroffen." : "Spezifität ist aktuell Hauptlücke.",
+    },
+    longrun: {
+      score: longrun,
+      confidence: {
+        value: Math.round(longrunConfidenceRaw * 100),
+        label: toConfidenceLabel(longrunConfidenceRaw),
+      },
+      inputs: [
+        `Longrun-Min: ${Math.round(snapshot.longrunMin)}/${Math.round(longrunTarget)}′`,
+        `Longrun-Frequenz 21T: ${longRunFreq}/2`,
+        `Spezifischer Anteil: ${Math.round(snapshot.longrunSpecificMin)}′`,
+        `Spike-Index: ${Number(spikeIndex || 0).toFixed(2)} (Guard >1.15)`,
+      ],
+      factorsUp: [
+        snapshot.longrunMin >= longrunTarget ? "Longrun-Ziel erreicht" : null,
+        longRunFreq >= 2 ? "Longrun-Frequenz stabil" : null,
+      ].filter(Boolean),
+      factorsDown: [
+        snapshot.longrunMin < longrunTarget ? "Longrun zu kurz" : null,
+        longRunFreq < 2 ? "Longrun-Frequenz niedrig" : null,
+        spikePenalty > 0 ? "Spike-Guard gegriffen" : null,
+      ].filter(Boolean),
+      interpretation: longrun >= 75 ? "Longrun-Säule stabil." : longrun >= 55 ? "Longrun-Aufbau läuft, aber noch nicht voll stabil." : "Longrun limitiert die Readiness.",
+    },
+    robustness: {
+      score: robustness,
+      confidence: {
+        value: Math.round(robustnessConfidenceRaw * 100),
+        label: toConfidenceLabel(robustnessConfidenceRaw),
+      },
+      inputs: [
+        `Kraft 7T: ${Math.round(snapshot.strengthMin)}′/45′`,
+        `Fatigue-Override: ${snapshot.fatigueOverride ? "aktiv" : "aus"}`,
+        `Key-Spacing ok: ${snapshot.keySpacingOk ? "ja" : "nein"}`,
+        `Monotony/Strain/ACWR: ${Number(monotony || 0).toFixed(2)} / ${Math.round(strain || 0)} / ${Number(acwr || 0).toFixed(2)}`,
+      ],
+      factorsUp: [
+        snapshot.strengthMin >= 45 ? "Kraftziel erfüllt" : null,
+        !snapshot.fatigueOverride ? "Keine Fatigue-Sperre" : null,
+      ].filter(Boolean),
+      factorsDown: [
+        snapshot.strengthMin < 45 ? "Kraft unter Ziel" : null,
+        snapshot.fatigueOverride ? "Fatigue-Override aktiv" : null,
+        !snapshot.keySpacingOk ? "Key-Abstand verletzt" : null,
+        monotony > 2.1 ? "Monotony-Schwelle überschritten" : null,
+        strain > 1200 ? "Strain-Schwelle überschritten" : null,
+        acwr > 1.3 ? "ACWR-Schwelle überschritten" : null,
+      ].filter(Boolean),
+      interpretation: robustness >= 75 ? "Robustheit belastbar." : robustness >= 55 ? "Robustheit okay, aber fragil bei Zusatzlast." : "Robustheit derzeit limitierend.",
+    },
+    execution: {
+      score: execution,
+      confidence: {
+        value: Math.round(executionConfidenceRaw * 100),
+        label: toConfidenceLabel(executionConfidenceRaw),
+      },
+      inputs: [
+        `Execution-Score: ${execution}/100`,
+        `Key-Frequenz okay: ${context?.keyCompliance?.freqOk === false ? "nein" : "ja"}`,
+        `Key-Typen okay: ${context?.keyCompliance?.typeOk === false ? "nein" : "ja"}`,
+        `Fatigue-Bremse: ${context?.fatigue?.override ? "ja" : "nein"}`,
+      ],
+      factorsUp: [execution >= 75 ? "Sessions insgesamt gut umgesetzt" : null].filter(Boolean),
+      factorsDown: [
+        context?.keyCompliance?.freqOk === false ? "Key-Frequenz außerhalb Ziel" : null,
+        context?.keyCompliance?.typeOk === false ? "Key-Typen nicht passend" : null,
+        context?.fatigue?.override ? "Fatigue bremst Ausführung" : null,
+      ].filter(Boolean),
+      interpretation: execution >= 75 ? "Umsetzung im Plan." : execution >= 55 ? "Umsetzung solide, mit Inkonsistenzen." : "Ausführung derzeit zu inkonsistent.",
+    },
+  };
+
   return {
     readiness,
     scores: { base, specificity, longrun, robustness, execution },
+    components: componentDetails,
     primaryGap,
     secondaryGap,
     strengths,
@@ -5985,6 +6141,10 @@ function buildComments(
       : "n/a";
   const addDecisionBlock = (title, metrics = []) => {
     const titleEmojis = {
+      "COACH-ENTSCHEIDUNG": "🎯",
+      "KURZBEGRÜNDUNG": "🧩",
+      "DIAGNOSE ERKLÄRT": "🧠",
+      "DEBUG / NERD": "🛠️",
       "HEUTIGER LAUF": "🏃",
       "BELASTUNG & PROGRESSION": "📈",
       "KEY-CHECK": "🔑",
@@ -6241,9 +6401,9 @@ function buildComments(
       `RunFloor (neu): ${runFloorCurrent}${runTarget > 0 ? ` / ${runTarget}` : ""} (Δ ${runFloorDeltaLabel})`
     );
   }
-  addDecisionBlock("HEUTIGER LAUF", runMetrics);
+  const todayRunMetricsBlock = runMetrics;
 
-  addDecisionBlock("BELASTUNG & PROGRESSION", [
+  const progressionMetricsBlock = [
     `Longrun (14T): ${longRunDoneMin}′ → Ziel: ${longRunTargetMin}′`,
     `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((longRunDoneMin / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (14T vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
@@ -6253,7 +6413,7 @@ function buildComments(
     `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "im Aufbau"} (${runFloorState?.deloadActive ? "Erholung priorisieren" : "Kontinuität aufbauen"})`,
     `Status: ${progressionStatus}. ${progressionExplanation}.`,
-  ]);
+  ];
 
   const keyUsageText = Number.isFinite(actualKeys7Raw) && Math.abs(actualKeys7 - actualKeys7Raw) > 0.01
     ? `${actualKeys7.toFixed(1)} (inkl. Longrun ${actualKeys7Raw.toFixed(0)} + ${(actualKeys7 - actualKeys7Raw).toFixed(1)})`
@@ -6273,18 +6433,6 @@ function buildComments(
   if (longrunSpecificity?.active) keyCheckMetrics.push(`Longrun-Spezifik: ${longrunSpecificity.notes}`);
   if (bikeAllowanceLine) keyCheckMetrics.push(bikeAllowanceLine);
   if (transitionLine) keyCheckMetrics.push(transitionLine);
-  addDecisionBlock("KEY-CHECK", keyCheckMetrics);
-
-  if (distanceDiagnostics) {
-    const diagScores = distanceDiagnostics.scores || {};
-    addDecisionBlock("DIAGNOSE", [
-      `Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`,
-      `Scores → Base ${diagScores.base ?? "n/a"} | Specificity ${diagScores.specificity ?? "n/a"} | Longrun ${diagScores.longrun ?? "n/a"} | Robustness ${diagScores.robustness ?? "n/a"} | Execution ${diagScores.execution ?? "n/a"}`,
-      `Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`,
-      `Strengths: ${(distanceDiagnostics.strengths || []).join(", ") || "n/a"}`,
-      ...(gapRecommendations?.primaryFocus || []).slice(0, 2).map((x) => `Coach: ${x}`),
-    ]);
-  }
 
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
@@ -6314,20 +6462,76 @@ function buildComments(
     distanceDiagnostics,
     gapRecommendations,
   });
-  addDecisionBlock("EMPFEHLUNGEN", [
+  const recommendationMetricsBlock = [
     ...decisionCompact.recommendations,
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
+  ];
+
+  const focusLabel = !ignoreRunFloorGap && runFloorGap < 0
+    ? "Volumen"
+    : (distanceDiagnostics?.primaryGap || "Stabilität");
+  const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
+  addDecisionBlock("COACH-ENTSCHEIDUNG", [
+    `Heute: ${todayDecision}`,
+    keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.",
+    `Fokus: ${focusLabel}`,
+    `Modus: ${modeLabel}`,
   ]);
 
-  addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
-    `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
-    `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
-    `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus}) | Score ${strengthPolicy.score}/3`,
-    Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
-      ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
-      : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
-  ]);
+  const shortReasonsRanked = [
+    {
+      active: fatigue?.override === true,
+      reason: `Fatigue-Override aktiv (${(fatigue?.reasons || []).slice(0, 1).join(" | ") || "Belastungsschutz"})`,
+    },
+    {
+      active: budgetBlocked,
+      reason: `Key-Budget erreicht (${actualKeys7}/${keyCap7} in 7 Tagen)`,
+    },
+    {
+      active: spacingBlocked,
+      reason: `Key-Abstand noch nicht erfüllt (Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)})`,
+    },
+    {
+      active: !ignoreRunFloorGap && runFloorGap < 0,
+      reason: `RunFloor unter Ziel (${runFloorCurrent}/${runTarget}, Gap ${Math.abs(runFloorGap)})`,
+    },
+    {
+      active: Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0),
+      reason: `Krafttraining unter Soll (${strengthPolicy.minutes7d}′/${strengthPolicy.target}′)`,
+    },
+    {
+      active: keyCompliance?.intensityDistribution?.hardOver === true,
+      reason: `Hard-Anteil über Ziel (${Math.round((keyCompliance.intensityDistribution.hardShare || 0) * 100)}%)`,
+    },
+    {
+      active: Boolean(distanceDiagnostics?.primaryGap),
+      reason: `Diagnose-Hauptlücke: ${distanceDiagnostics?.primaryGap}`,
+    },
+  ];
+  const shortReasons = shortReasonsRanked.filter((x) => x.active).map((x) => x.reason).slice(0, 4);
+  if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
+
+  if (distanceDiagnostics) {
+    const diagDetails = [];
+    diagDetails.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
+    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
+      const component = distanceDiagnostics?.components?.[name];
+      if (!component) continue;
+      diagDetails.push(`${name.toUpperCase()}: ${component.score} (Confidence ${component?.confidence?.value ?? "n/a"}/100 · ${component?.confidence?.label || "n/a"})`);
+      for (const input of (component.inputs || []).slice(0, 4)) {
+        diagDetails.push(`Input: ${input}`);
+      }
+      for (const rule of (component.factorsDown || []).slice(0, 2)) {
+        diagDetails.push(`Score-Down: ${rule}`);
+      }
+      for (const rule of (component.factorsUp || []).slice(0, 1)) {
+        diagDetails.push(`Score-Up: ${rule}`);
+      }
+      diagDetails.push(`Interpretation: ${component.interpretation}`);
+    }
+    diagDetails.push(`Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`);
+    addDecisionBlock("DIAGNOSE ERKLÄRT", diagDetails);
+  }
 
   addDecisionBlock("KRAFTPLAN", [
     `Phase: ${strengthPlan.phase} · Fokus: ${strengthPlan.focus}`,
@@ -6338,6 +6542,19 @@ function buildComments(
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
+
+  addDecisionBlock("DEBUG / NERD", [
+    "HEUTIGER LAUF:",
+    ...todayRunMetricsBlock,
+    "BELASTUNG & PROGRESSION:",
+    ...progressionMetricsBlock,
+    "EMPFEHLUNGEN:",
+    ...recommendationMetricsBlock,
+    ...keyCheckMetrics,
+    `Scores RAW: Base ${distanceDiagnostics?.scores?.base ?? "n/a"} | Specificity ${distanceDiagnostics?.scores?.specificity ?? "n/a"} | Longrun ${distanceDiagnostics?.scores?.longrun ?? "n/a"} | Robustness ${distanceDiagnostics?.scores?.robustness ?? "n/a"} | Execution ${distanceDiagnostics?.scores?.execution ?? "n/a"}`,
+    `Strengths: ${(distanceDiagnostics?.strengths || []).join(", ") || "n/a"}`,
+    ...(gapRecommendations?.primaryFocus || []).slice(0, 2).map((x) => `Coach-Fokus: ${x}`),
+  ]);
 
   return lines.join("\n");
 }
