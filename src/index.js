@@ -655,7 +655,7 @@ const DETECTIVE_HISTORY_LIMIT = 12;
  *    - EVENT:RUN, EVENT:BIKE oder OPEN bestimmen Floors/Policies als Basis der Tagesbewertung.
  *
  * 3) computeRunFloorState(...)
- *    - operative Overlays: NORMAL, DELOAD, TAPER, RECOVER_OVERLAY.
+ *    - operative Overlays: NORMAL, DELOAD, TAPER, POST_RACE_RAMP.
  *    - beeinflusst Floor-Ziele, Key-Caps und Tagesempfehlung.
  *
  * 4) getKeyRules(...)
@@ -1353,14 +1353,19 @@ const RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE = {
   m: 14,
 };
 const RUN_FLOOR_TAPER_END_DAYS = 2;
-const RUN_FLOOR_RECOVER_DAYS = 9;
+const POST_RACE_RAMP_DAYS_BY_DISTANCE = {
+  "5k": [3, 9, 16],
+  "10k": [3, 10, 18],
+  hm: [4, 10, 21],
+  m: [5, 14, 28],
+};
+const POST_RACE_RAMP_FACTORS = [0.5, 0.65, 0.8, 1.0];
 const RUN_FLOOR_DELOAD_RANGE = { min: 0.6, max: 0.7 };
 const RUN_FLOOR_DELOAD_FACTOR = {
   BASE: 0.7,
   BUILD: 0.65,
   DEFAULT: 0.65,
 };
-const RUN_FLOOR_RECOVER_FACTOR = 0.65;
 const RUN_FLOOR_FLOOR_STEP = {
   BASE: 6,
   BUILD: 10,
@@ -1643,6 +1648,28 @@ function computeRunFloorEwma(
   return Number.isFinite(smooth) ? smooth : 0;
 }
 
+function computePostRaceRampFactor(daysSinceEvent, eventDistance) {
+  if (!Number.isFinite(daysSinceEvent) || daysSinceEvent < 0) {
+    return { factor: 1, phase: "NORMAL", keyAllowed: true, rampUntilDays: null };
+  }
+
+  const dist = normalizeEventDistance(eventDistance) || "10k";
+  const rampDays = POST_RACE_RAMP_DAYS_BY_DISTANCE[dist] || POST_RACE_RAMP_DAYS_BY_DISTANCE["10k"];
+  const [phase1End, phase2End, phase3End] = rampDays;
+
+  if (daysSinceEvent <= phase1End) {
+    return { factor: POST_RACE_RAMP_FACTORS[0], phase: "POST_RACE_RAMP_1", keyAllowed: false, rampUntilDays: phase3End };
+  }
+  if (daysSinceEvent <= phase2End) {
+    return { factor: POST_RACE_RAMP_FACTORS[1], phase: "POST_RACE_RAMP_2", keyAllowed: false, rampUntilDays: phase3End };
+  }
+  if (daysSinceEvent <= phase3End) {
+    return { factor: POST_RACE_RAMP_FACTORS[2], phase: "POST_RACE_RAMP_3", keyAllowed: true, rampUntilDays: phase3End };
+  }
+
+  return { factor: POST_RACE_RAMP_FACTORS[3], phase: "NORMAL", keyAllowed: true, rampUntilDays: phase3End };
+}
+
 function evaluateRunFloorState({
   todayISO,
   floorTarget,
@@ -1671,12 +1698,17 @@ function evaluateRunFloorState({
     ? previousState.lastFloorIncreaseDate
     : null;
   let lastEventDate = isIsoDate(previousState?.lastEventDate) ? previousState.lastEventDate : null;
+  let postRaceRampUntilISO = isIsoDate(previousState?.postRaceRampUntilISO) ? previousState.postRaceRampUntilISO : null;
   let lastLifeEventCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
   let lastLifeEventStartISO = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
   let lastLifeEventEndISO = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
 
   if (eventDateISO && safeEventInDays <= 0) {
     lastEventDate = eventDateISO;
+    const rampMeta = computePostRaceRampFactor(0, eventDistance);
+    if (Number.isFinite(rampMeta?.rampUntilDays)) {
+      postRaceRampUntilISO = isoDate(new Date(new Date(eventDateISO + "T00:00:00Z").getTime() + rampMeta.rampUntilDays * 86400000));
+    }
   }
 
   let daysSinceEvent = null;
@@ -1684,12 +1716,7 @@ function evaluateRunFloorState({
     const delta = daysBetween(lastEventDate, todayISO);
     if (Number.isFinite(delta) && delta >= 0) daysSinceEvent = Math.round(delta);
   }
-
-  if (deloadStartDate && diffDays(deloadStartDate, todayISO) >= RUN_FLOOR_DELOAD_DAYS) {
-    deloadStartDate = null;
-    lastDeloadCompletedISO = todayISO;
-    reasons.push("Deload beendet → neue Aufbauphase");
-  }
+  const postRaceRamp = computePostRaceRampFactor(daysSinceEvent, eventDistance);
 
   let deloadEndDate = null;
   let deloadActive = false;
@@ -1711,17 +1738,30 @@ function evaluateRunFloorState({
   const deloadReady = shouldTriggerDeload(sum21, activeDays21, deloadActive);
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
 
+  if (deloadStartDate && diffDays(deloadStartDate, todayISO) >= RUN_FLOOR_DELOAD_DAYS) {
+    const deloadExitStable = stabilityOK && !stabilityWarn && avg7 <= avg21 * 1.05;
+    if (deloadExitStable) {
+      deloadStartDate = null;
+      deloadEndDate = null;
+      deloadActive = false;
+      lastDeloadCompletedISO = todayISO;
+      reasons.push("Deload beendet → stabile Rückkehr erreicht");
+    } else {
+      reasons.push("Deload verlängert: Stabilitäts-Gate noch nicht erfüllt");
+    }
+  }
+
   let overlayMode = "NORMAL";
   const hasLifeEvent = lifeEventEffect?.active === true;
   if (hasLifeEvent) {
     overlayMode = lifeEventEffect.overlayMode || "LIFE_EVENT";
     reasons.push(lifeEventEffect.reason || "LifeEvent aktiv");
-  } else if (safeEventInDays >= 0 && safeEventInDays <= taperStartDays) {
+  } else if (safeEventInDays > 0 && safeEventInDays <= taperStartDays) {
     overlayMode = "TAPER";
     reasons.push(`Taper aktiv (Event in ≤${taperStartDays} Tagen)`);
-  } else if (daysSinceEvent != null && daysSinceEvent <= RUN_FLOOR_RECOVER_DAYS) {
-    overlayMode = "RECOVER_OVERLAY";
-    reasons.push("Recover-Overlay aktiv (Event gerade passiert)");
+  } else if (postRaceRamp.factor < 1) {
+    overlayMode = "POST_RACE_RAMP";
+    reasons.push(`Post-Race-Ramp aktiv (${postRaceRamp.phase})`);
   } else if (deloadActive) {
     overlayMode = "DELOAD";
     reasons.push("Deload läuft");
@@ -1758,8 +1798,8 @@ function evaluateRunFloorState({
     effectiveFloorTarget = applyDeloadRules({ floorTarget: updatedFloorTarget, phase }).effectiveFloorTarget;
   } else if (overlayMode === "TAPER") {
     effectiveFloorTarget = updatedFloorTarget * computeTaperFactor(safeEventInDays, taperStartDays);
-  } else if (overlayMode === "RECOVER_OVERLAY") {
-    effectiveFloorTarget = updatedFloorTarget * RUN_FLOOR_RECOVER_FACTOR;
+  } else if (overlayMode === "POST_RACE_RAMP") {
+    effectiveFloorTarget = updatedFloorTarget * postRaceRamp.factor;
   } else {
     const holidayRampFactor = computeHolidayWindowFactor({
       todayISO,
@@ -1788,13 +1828,21 @@ function evaluateRunFloorState({
 
   const deloadCompletedSinceIncrease =
     lastDeloadCompletedISO && (!lastFloorIncreaseDate || lastDeloadCompletedISO > lastFloorIncreaseDate);
+  const postRaceRampCompletedRecently =
+    Number.isFinite(postRaceRamp?.rampUntilDays) && Number.isFinite(daysSinceEvent)
+      ? daysSinceEvent <= postRaceRamp.rampUntilDays
+      : false;
 
   if (
     (phase === "BASE" || phase === "BUILD") &&
     overlayMode === "NORMAL" &&
     safeEventInDays > 28 &&
     !lifeEventEffect?.freezeFloorIncrease &&
-    deloadCompletedSinceIncrease
+    deloadCompletedSinceIncrease &&
+    !postRaceRampCompletedRecently &&
+    stabilityOK &&
+    !stabilityWarn &&
+    avg7 <= avg21 * 1.05
   ) {
     const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
     const maxIncrease = Math.max(1, Math.round(updatedFloorTarget * RUN_FLOOR_MAX_INCREASE_PCT));
@@ -1826,8 +1874,8 @@ function evaluateRunFloorState({
         ? "LifeEvent: Stop"
         : overlayMode === "LIFE_EVENT_HOLIDAY"
           ? "LifeEvent: Holiday"
-          : overlayMode === "RECOVER_OVERLAY"
-        ? "Recover"
+          : overlayMode === "POST_RACE_RAMP"
+        ? "Post-Race Ramp"
         : overlayMode === "DELOAD"
           ? "Deload"
           : stabilityWarn
@@ -1836,6 +1884,7 @@ function evaluateRunFloorState({
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
+    postRaceRampUntilISO,
     lastLifeEventCategory,
     lastLifeEventStartISO,
     lastLifeEventEndISO,
@@ -2891,7 +2940,7 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   const fatigueHigh = context?.fatigue?.override === true;
 
   if (block === "RESET") return "steady";
-  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY") return "steady";
+  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "POST_RACE_RAMP") return "steady";
 
   let planned = pickPatternKeyType({ ...context, block, eventDistance: dist });
   if (!planned) {
@@ -2991,7 +3040,7 @@ function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDist
 }
 
 function getVolumeFactorForOverlay(overlayMode, fatigue = null, weeksToEvent = null) {
-  if (overlayMode === "RECOVER_OVERLAY") return 0.55;
+  if (overlayMode === "POST_RACE_RAMP") return 0.55;
   if (overlayMode === "DELOAD") return fatigue?.override ? 0.6 : 0.7;
   if (overlayMode === "TAPER") {
     if (Number.isFinite(weeksToEvent) && weeksToEvent <= 1.5) return 0.5;
@@ -3048,7 +3097,7 @@ function pickProgressionStep({ block, dist, keyType, overlayMode, weeksToEvent, 
 
   if (overlayMode === "DELOAD") {
     idx = Math.max(0, idx - 1);
-  } else if (overlayMode === "RECOVER_OVERLAY") {
+  } else if (overlayMode === "POST_RACE_RAMP") {
     idx = 0;
   } else if (overlayMode === "TAPER") {
     idx = Math.max(0, idx - 1);
@@ -4307,6 +4356,7 @@ function extractPersistedBlockStateFromWellness(wellness) {
     lastDeloadCompletedISO: null,
     lastFloorIncreaseDate: null,
     lastEventDate: null,
+    postRaceRampUntilISO: null,
     lastLifeEventCategory: "",
     lastLifeEventStartISO: null,
     lastLifeEventEndISO: null,
@@ -4345,6 +4395,7 @@ function parseBlockStateFromComment(comment) {
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
       lastFloorIncreaseDate: isIsoDate(parsed.lastFloorIncreaseDate) ? parsed.lastFloorIncreaseDate : null,
       lastEventDate: isIsoDate(parsed.lastEventDate) ? parsed.lastEventDate : null,
+      postRaceRampUntilISO: isIsoDate(parsed.postRaceRampUntilISO) ? parsed.postRaceRampUntilISO : null,
       lastLifeEventCategory: parsed.lastLifeEventCategory ? normalizeEventCategory(parsed.lastLifeEventCategory) : "",
       lastLifeEventStartISO: isIsoDate(parsed.lastLifeEventStartISO) ? parsed.lastLifeEventStartISO : null,
       lastLifeEventEndISO: isIsoDate(parsed.lastLifeEventEndISO) ? parsed.lastLifeEventEndISO : null,
@@ -4408,6 +4459,7 @@ async function readLatestBlockStateKv(env, dayIso) {
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
     lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
+    postRaceRampUntilISO: isIsoDate(state.postRaceRampUntilISO) ? state.postRaceRampUntilISO : null,
     lastLifeEventCategory: state.lastLifeEventCategory ? normalizeEventCategory(state.lastLifeEventCategory) : "",
     lastLifeEventStartISO: isIsoDate(state.lastLifeEventStartISO) ? state.lastLifeEventStartISO : null,
     lastLifeEventEndISO: isIsoDate(state.lastLifeEventEndISO) ? state.lastLifeEventEndISO : null,
@@ -5116,6 +5168,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
     blockState.lastEventDate = runFloorState.lastEventDate;
+    blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
 
     const dynamicKeyCap = {
       maxKeys7d: ctx.runtimeConfig.maxKeys7d,
@@ -5125,9 +5178,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       dynamicKeyCap.maxKeys7d = 0;
       dynamicKeyCap.reasons.push(`LifeEvent ${modeInfo.lifeEventEffect.category}: Keys pausiert`);
-    } else if (runFloorState.overlayMode === "RECOVER_OVERLAY") {
+    } else if (runFloorState.overlayMode === "POST_RACE_RAMP") {
       dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push("Recover-Overlay aktiv");
+      dynamicKeyCap.reasons.push("Post-Race-Ramp aktiv");
     } else if (runFloorState.overlayMode === "TAPER") {
       dynamicKeyCap.maxKeys7d = 0;
       dynamicKeyCap.reasons.push("Taper aktiv");
@@ -5227,6 +5280,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
       lastEventDate: blockState.lastEventDate,
+      postRaceRampUntilISO: blockState.postRaceRampUntilISO,
       lastLifeEventCategory: runFloorState.lastLifeEventCategory,
       lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
       lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
@@ -5253,6 +5307,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       lastDeloadCompletedISO: runFloorState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: runFloorState.lastFloorIncreaseDate,
       lastEventDate: runFloorState.lastEventDate,
+      postRaceRampUntilISO: runFloorState.postRaceRampUntilISO,
       lastLifeEventCategory: runFloorState.lastLifeEventCategory,
       lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
       lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
@@ -5475,7 +5530,7 @@ function buildNextRunRecommendation({
     next = "Pause / nur Regeneration (LifeEvent)";
   } else if (overlay === "LIFE_EVENT_HOLIDAY") {
     next = "20–45 min locker (Holiday-Modus)";
-  } else if (overlay === "RECOVER_OVERLAY") {
+  } else if (overlay === "POST_RACE_RAMP") {
     next = "25–40 min locker / Technik / frei";
   } else if (overlay === "TAPER") {
     next = "20–35 min locker (Taper)";
@@ -5700,12 +5755,12 @@ function buildComments(
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
 
-  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
+  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "POST_RACE_RAMP" || overlayMode === "LIFE_EVENT_STOP";
   const budgetBlocked = keyCompliance?.capExceeded === true;
   const spacingBlocked = !spacingOk;
   const easyShareBlocked = intensityDistribution?.hasData && intensityDistribution?.easyUnder === true;
   const hardShareBlocked = intensityDistribution?.hasData && intensityDistribution?.hardOver === true;
-  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
+  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "POST_RACE_RAMP" || overlayMode === "LIFE_EVENT_STOP";
   const runFloorBlocked = !ignoreRunFloorGap && runTarget > 0 && runFloorGap < 0;
 
   let mainBlockReason = null;
@@ -5723,8 +5778,8 @@ function buildComments(
       ? "Deload"
       : overlayMode === "TAPER"
         ? "Taper"
-        : overlayMode === "RECOVER_OVERLAY"
-          ? "Recovery"
+        : overlayMode === "POST_RACE_RAMP"
+          ? "Post-Race Ramp"
           : overlayMode === "LIFE_EVENT_STOP"
             ? "LifeEvent Freeze"
             : overlayMode === "LIFE_EVENT_HOLIDAY"
@@ -5891,7 +5946,7 @@ function buildComments(
         } else if (lifeEventCategory === "SICK" || lifeEventCategory === "INJURED") {
           likelyCauses.push(`LifeEvent ${getLifeEventCategoryLabel(lifeEventCategory)} aktiv: erhöhte Drift kann regenerationsbedingt sein.`);
         }
-        if (overlayMode === "RECOVER_OVERLAY") {
+        if (overlayMode === "POST_RACE_RAMP") {
           likelyCauses.push("Recover-Overlay aktiv: erhöhte Drift nach Event/Belastung ist aktuell plausibel.");
         }
         if (!likelyCauses.length) {
