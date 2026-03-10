@@ -6603,6 +6603,7 @@ function buildComments(
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
 
+  const diagNerdBlock = [];
   if (distanceDiagnostics) {
     const diagSummary = [];
     diagSummary.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
@@ -6613,45 +6614,45 @@ function buildComments(
     }
     addDecisionBlock("DIAGNOSE", diagSummary);
 
-    const diagDetails = [];
-    diagDetails.push("Stärken:");
+    diagNerdBlock.push("DIAGNOSE / DEBUG:");
+    diagNerdBlock.push("Stärken:");
     for (const strength of (distanceDiagnostics?.strengths || []).slice(0, 2)) {
-      diagDetails.push(`• ${strength}`);
+      diagNerdBlock.push(`• ${strength}`);
     }
-    diagDetails.push("");
-    diagDetails.push("Limitierend:");
-    diagDetails.push(`• ${distanceDiagnostics.primaryGap}`);
-    if (distanceDiagnostics.secondaryGap) diagDetails.push(`• ${distanceDiagnostics.secondaryGap}`);
+    diagNerdBlock.push("");
+    diagNerdBlock.push("Limitierend:");
+    diagNerdBlock.push(`• ${distanceDiagnostics.primaryGap}`);
+    if (distanceDiagnostics.secondaryGap) diagNerdBlock.push(`• ${distanceDiagnostics.secondaryGap}`);
 
     const weights = distanceDiagnostics?.weights || {};
-    diagDetails.push("");
-    diagDetails.push("READINESS BREAKDOWN:");
+    diagNerdBlock.push("");
+    diagNerdBlock.push("READINESS BREAKDOWN:");
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const score = Number(distanceDiagnostics?.scores?.[name] ?? 0);
       const weight = Number(weights?.[name] ?? 0);
-      diagDetails.push(`${name.toUpperCase()}: ${score} × ${weight.toFixed(2)} = ${(score * weight).toFixed(1)}`);
+      diagNerdBlock.push(`${name.toUpperCase()}: ${score} × ${weight.toFixed(2)} = ${(score * weight).toFixed(1)}`);
     }
-    diagDetails.push(`Total: ${distanceDiagnostics.readiness}`);
+    diagNerdBlock.push(`Total: ${distanceDiagnostics.readiness}`);
 
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const component = distanceDiagnostics?.components?.[name];
       if (!component) continue;
-      diagDetails.push("");
-      diagDetails.push(`${name.toUpperCase()}: ${component.score} (Confidence: ${component?.confidence?.label || "n/a"} · ${component?.confidence?.value ?? "n/a"}/100)`);
+      diagNerdBlock.push("");
+      diagNerdBlock.push(`${name.toUpperCase()}: ${component.score} (Confidence: ${component?.confidence?.label || "n/a"} · ${component?.confidence?.value ?? "n/a"}/100)`);
       for (const input of (component.inputs || []).slice(0, 4)) {
-        diagDetails.push(`  Input: ${input}`);
+        diagNerdBlock.push(`  Input: ${input}`);
       }
       for (const rule of (component.factorsDown || []).slice(0, 2)) {
-        diagDetails.push(`  Score-Down: ${rule}`);
+        diagNerdBlock.push(`  Score-Down: ${rule}`);
       }
       for (const rule of (component.factorsUp || []).slice(0, 1)) {
-        diagDetails.push(`  Score-Up: ${rule}`);
+        diagNerdBlock.push(`  Score-Up: ${rule}`);
       }
-      diagDetails.push(`  Interpretation: ${component.interpretation}`);
+      diagNerdBlock.push(`  Interpretation: ${component.interpretation}`);
     }
-    diagDetails.push("");
-    diagDetails.push(`Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`);
-    addDecisionBlock("DIAGNOSE / DEBUG", diagDetails);
+    diagNerdBlock.push("");
+    diagNerdBlock.push(`Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`);
+    diagNerdBlock.push("");
   }
 
   addDecisionBlock("KRAFTPLAN", [
@@ -6665,6 +6666,7 @@ function buildComments(
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
 
   addDecisionBlock("DEBUG / NERD", [
+    ...diagNerdBlock,
     "HEUTIGER LAUF:",
     ...todayRunMetricsBlock,
     "BELASTUNG & PROGRESSION:",
