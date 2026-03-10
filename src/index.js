@@ -5778,6 +5778,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const recentFocusCoverage = focus.length ? matchedRecentFocusTypes.length / focus.length : 0;
   const keyDensity28 = clamp(keyStats28.count / Math.max(1, 4), 0, 1);
   const keyDensity42 = clamp(keyStats42.count / Math.max(1, 6), 0, 1);
+  const intensityPenalty = Math.max(0, Number(snapshot.hardShare || 0) - Number(intensityTargets.hardMax || 0));
   const weeksToEvent = Number(context?.weeksToEvent);
   const raceProximity = Number.isFinite(weeksToEvent)
     ? clamp((16 - clamp(weeksToEvent, 0, 16)) / 16, 0, 1)
