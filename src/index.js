@@ -5812,7 +5812,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         `Longrun-Min (7T max): ${Math.round(snapshot.longrunMin)}/${Math.round(longrunTarget)}′`,
         `Längster Lauf 14T: ${Math.round(longrunInput14d)}′`,
         `Diagnose-Ziel (Distanzprofil): ${Math.round(longrunTarget)}′`,
-        `Aktueller Progressionsschritt: ${Math.round(progressionLongrunTarget || longrunTarget)}′`,
+        `Plan-Ziel (ohne Progressions-Cap): ${Math.round(progressionLongrunTarget || longrunTarget)}′`,
         `Longrun-Frequenz 21T: ${longRunFreq}/2`,
         `Spezifischer Anteil: ${Math.round(snapshot.longrunSpecificMin)}′`,
         `Spike-Index: ${Number(spikeIndex || 0).toFixed(2)} (Guard >1.15)`,
@@ -6502,8 +6502,10 @@ function buildComments(
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
   ];
 
+  const robustnessLimited = (distanceDiagnostics?.primaryGap || "") === "robustness"
+    || Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0);
   const focusLabel = !ignoreRunFloorGap && runFloorGap < 0
-    ? "Volumen"
+    ? (robustnessLimited ? "Volumen + Robustheit" : "Volumen")
     : (distanceDiagnostics?.primaryGap || "Stabilität");
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
   const todayBlock = [
@@ -6603,7 +6605,6 @@ function buildComments(
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
 
-  const diagNerdBlock = [];
   if (distanceDiagnostics) {
     const diagSummary = [];
     diagSummary.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
@@ -6613,46 +6614,6 @@ function buildComments(
       diagSummary.push(`${name.toUpperCase()}: ${component.score} → ${component.interpretation}`);
     }
     addDecisionBlock("DIAGNOSE", diagSummary);
-
-    diagNerdBlock.push("DIAGNOSE / DEBUG:");
-    diagNerdBlock.push("Stärken:");
-    for (const strength of (distanceDiagnostics?.strengths || []).slice(0, 2)) {
-      diagNerdBlock.push(`• ${strength}`);
-    }
-    diagNerdBlock.push("");
-    diagNerdBlock.push("Limitierend:");
-    diagNerdBlock.push(`• ${distanceDiagnostics.primaryGap}`);
-    if (distanceDiagnostics.secondaryGap) diagNerdBlock.push(`• ${distanceDiagnostics.secondaryGap}`);
-
-    const weights = distanceDiagnostics?.weights || {};
-    diagNerdBlock.push("");
-    diagNerdBlock.push("READINESS BREAKDOWN:");
-    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
-      const score = Number(distanceDiagnostics?.scores?.[name] ?? 0);
-      const weight = Number(weights?.[name] ?? 0);
-      diagNerdBlock.push(`${name.toUpperCase()}: ${score} × ${weight.toFixed(2)} = ${(score * weight).toFixed(1)}`);
-    }
-    diagNerdBlock.push(`Total: ${distanceDiagnostics.readiness}`);
-
-    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
-      const component = distanceDiagnostics?.components?.[name];
-      if (!component) continue;
-      diagNerdBlock.push("");
-      diagNerdBlock.push(`${name.toUpperCase()}: ${component.score} (Confidence: ${component?.confidence?.label || "n/a"} · ${component?.confidence?.value ?? "n/a"}/100)`);
-      for (const input of (component.inputs || []).slice(0, 4)) {
-        diagNerdBlock.push(`  Input: ${input}`);
-      }
-      for (const rule of (component.factorsDown || []).slice(0, 2)) {
-        diagNerdBlock.push(`  Score-Down: ${rule}`);
-      }
-      for (const rule of (component.factorsUp || []).slice(0, 1)) {
-        diagNerdBlock.push(`  Score-Up: ${rule}`);
-      }
-      diagNerdBlock.push(`  Interpretation: ${component.interpretation}`);
-    }
-    diagNerdBlock.push("");
-    diagNerdBlock.push(`Primary Gap: ${distanceDiagnostics.primaryGap} | Secondary Gap: ${distanceDiagnostics.secondaryGap}`);
-    diagNerdBlock.push("");
   }
 
   addDecisionBlock("KRAFTPLAN", [
@@ -6665,18 +6626,56 @@ function buildComments(
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
 
+  const diagnoseKernelLines = [
+    "DIAGNOSE-KERN",
+    `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}`,
+    `Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}`,
+    `Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`,
+    `Scores: Base ${distanceDiagnostics?.scores?.base ?? "n/a"} | Specificity ${distanceDiagnostics?.scores?.specificity ?? "n/a"} | Longrun ${distanceDiagnostics?.scores?.longrun ?? "n/a"} | Robustness ${distanceDiagnostics?.scores?.robustness ?? "n/a"} | Execution ${distanceDiagnostics?.scores?.execution ?? "n/a"}`,
+    "",
+  ];
+  const scoreExplanationLines = [
+    "SCORE-ERKLÄRUNG",
+    `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
+    `Specificity · ${keyCompliance?.coverageSummary || "n/a"} | Hard ${Math.round((intensityDistribution?.hardShare || 0) * 100)}% | Block ${blockState?.block || "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
+    `Longrun · 14T ${longRunDoneMin}′ | Diagnose-Ziel ${prePlanLongRunTargetMin}′ | Progressionsschritt ${longRunSafetyCapMin}′ | Blockziel ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
+    `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
+    `Execution · Key-Frequenz ${keyStats7.count}/${keyGoal} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
+    "",
+  ];
+  const loadSignalsLines = [
+    "BELASTUNG / SIGNALS",
+    `Ramp: ${fmtSigned1(trend?.dv || 0)}%`,
+    `ACWR: ${Number(fatigue?.acwr || 0).toFixed(2)}`,
+    `Monotony: ${Number(fatigue?.monotony || 0).toFixed(2)}`,
+    `RunFloor: ${runFloorCurrent}/${runTarget}`,
+    `14T Distanz-Ratio: ${Number(fatigue?.runDist14dRatio || 0).toFixed(2)}`,
+    `Longrun 14T: ${longRunDoneMin}′`,
+    "",
+  ];
+  const rulesCapsLines = [
+    "REGELN / CAPs",
+    `Keys 7T: ${actualKeys7}/${keyCap7}`,
+    `Fatigue Override: ${fatigue?.override ? "aktiv" : "aus"}`,
+    `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
+    `Block: ${blockState?.block || "n/a"}`,
+    `Bike-Faktor: ${Number(bikeSubFactor || 0).toFixed(2)}`,
+    "",
+  ];
+  const coachConsequencesLines = [
+    "COACH-FOLGEN",
+    `• ${keyBlocked ? "Kein weiterer Key diese Woche" : "Key möglich, falls frisch"}`,
+    "• Volumen priorisieren",
+    `• Kraft auf ${Number(strengthPolicy.target || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
+    "• Load-Anstieg konservativ halten",
+  ];
+
   addDecisionBlock("DEBUG / NERD", [
-    ...diagNerdBlock,
-    "HEUTIGER LAUF:",
-    ...todayRunMetricsBlock,
-    "BELASTUNG & PROGRESSION:",
-    ...progressionMetricsBlock,
-    "EMPFEHLUNGEN:",
-    ...recommendationMetricsBlock,
-    ...keyCheckMetrics,
-    `Scores RAW: Base ${distanceDiagnostics?.scores?.base ?? "n/a"} | Specificity ${distanceDiagnostics?.scores?.specificity ?? "n/a"} | Longrun ${distanceDiagnostics?.scores?.longrun ?? "n/a"} | Robustness ${distanceDiagnostics?.scores?.robustness ?? "n/a"} | Execution ${distanceDiagnostics?.scores?.execution ?? "n/a"}`,
-    `Strengths: ${(distanceDiagnostics?.strengths || []).join(", ") || "n/a"}`,
-    ...(gapRecommendations?.primaryFocus || []).slice(0, 2).map((x) => `Coach-Fokus: ${x}`),
+    ...diagnoseKernelLines,
+    ...scoreExplanationLines,
+    ...loadSignalsLines,
+    ...rulesCapsLines,
+    ...coachConsequencesLines,
   ]);
 
   return lines.join("\n");
