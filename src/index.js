@@ -5701,33 +5701,33 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     return "niedrig";
   };
   const baseConfidenceRaw = [
-    floorTarget > 0 ? 1 : 0.4,
-    snapshot.runsCount >= 2 ? 1 : snapshot.runsCount > 0 ? 0.6 : 0.2,
-    Number.isFinite(snapshot.easyShare) ? 1 : 0.3,
-    Number.isFinite(snapshot.efTrend) ? 1 : 0.4,
-    Number.isFinite(snapshot.driftTrend) ? 1 : 0.4,
+    floorTarget > 0 ? 0.95 : 0.6,
+    clamp(snapshot.runsCount / Math.max(1, runsTarget), 0.35, 1),
+    Number.isFinite(snapshot.easyShare) ? clamp(snapshot.easyShare / Math.max(0.01, intensityTargets.easyMin), 0.45, 1) : 0.35,
+    Number.isFinite(snapshot.efTrend) ? clamp(1 - Math.abs(snapshot.efTrend) / 8, 0.4, 1) : 0.4,
+    Number.isFinite(snapshot.driftTrend) ? clamp(1 - Math.abs(snapshot.driftTrend) / 4, 0.4, 1) : 0.4,
   ].reduce((sum, x) => sum + x, 0) / 5;
   const specificityConfidenceRaw = [
-    focus.length > 0 ? 1 : 0.4,
-    keyTypes.length > 0 ? 1 : 0.4,
-    Number.isFinite(snapshot.hardShare) ? 1 : 0.4,
+    focus.length > 0 ? 0.95 : 0.55,
+    clamp((snapshot.keyCount || 0) / 2, 0.35, 1),
+    Number.isFinite(snapshot.hardShare) ? clamp(1 - Math.abs((snapshot.hardShare || 0) - intensityTargets.hardMax) / 0.18, 0.35, 1) : 0.4,
   ].reduce((sum, x) => sum + x, 0) / 3;
   const longrunConfidenceRaw = [
-    Number.isFinite(snapshot.longrunMin) ? 1 : 0.4,
-    Number.isFinite(longRunFreq) ? 1 : 0.4,
-    Number.isFinite(snapshot.longrunSpecificMin) ? 1 : 0.4,
-    Number.isFinite(spikeIndex) ? 1 : 0.4,
+    clamp((snapshot.longrunMin || 0) / Math.max(1, longrunTarget), 0.35, 1),
+    clamp(longRunFreq / 2, 0.35, 1),
+    Number.isFinite(snapshot.longrunSpecificMin) ? clamp(0.6 + Math.min(snapshot.longrunSpecificMin, 30) / 75, 0.35, 1) : 0.4,
+    Number.isFinite(spikeIndex) ? clamp(1 - Math.max(0, spikeIndex - 1) / 0.35, 0.35, 1) : 0.4,
   ].reduce((sum, x) => sum + x, 0) / 4;
   const robustnessConfidenceRaw = [
-    Number.isFinite(snapshot.strengthMin) ? 1 : 0.4,
-    Number.isFinite(monotony) ? 1 : 0.4,
-    Number.isFinite(strain) ? 1 : 0.4,
-    Number.isFinite(acwr) ? 1 : 0.4,
+    clamp((snapshot.strengthMin || 0) / 45, 0.35, 1),
+    Number.isFinite(monotony) ? clamp(1 - Math.max(0, monotony - 1.4) / 1.2, 0.35, 1) : 0.4,
+    Number.isFinite(strain) ? clamp(1 - Math.max(0, strain - 700) / 700, 0.35, 1) : 0.4,
+    Number.isFinite(acwr) ? clamp(1 - Math.max(0, acwr - 1.05) / 0.6, 0.35, 1) : 0.4,
   ].reduce((sum, x) => sum + x, 0) / 4;
   const executionConfidenceRaw = [
-    Number.isFinite(snapshot.executionScore) ? 1 : 0.4,
-    context?.keyCompliance ? 1 : 0.4,
-    context?.fatigue ? 1 : 0.4,
+    clamp((snapshot.executionScore || 0) / 100, 0.35, 1),
+    context?.keyCompliance ? 0.95 : 0.45,
+    context?.fatigue ? 0.95 : 0.45,
   ].reduce((sum, x) => sum + x, 0) / 3;
 
   const componentDetails = {
@@ -5786,7 +5786,8 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         label: toConfidenceLabel(longrunConfidenceRaw),
       },
       inputs: [
-        `Longrun-Min: ${Math.round(snapshot.longrunMin)}/${Math.round(longrunTarget)}′`,
+        `Longrun-Min (7T max): ${Math.round(snapshot.longrunMin)}/${Math.round(longrunTarget)}′`,
+        `Longrun-Max 14T: ${Math.round(Number(context?.longRunSummary?.longRun14d?.minutes ?? 0))}′`,
         `Longrun-Frequenz 21T: ${longRunFreq}/2`,
         `Spezifischer Anteil: ${Math.round(snapshot.longrunSpecificMin)}′`,
         `Spike-Index: ${Number(spikeIndex || 0).toFixed(2)} (Guard >1.15)`,
@@ -5796,11 +5797,11 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         longRunFreq >= 2 ? "Longrun-Frequenz stabil" : null,
       ].filter(Boolean),
       factorsDown: [
-        snapshot.longrunMin < longrunTarget ? "Longrun zu kurz" : null,
+        snapshot.longrunMin < longrunTarget ? "7T-Longrun noch unter Ziel" : null,
         longRunFreq < 2 ? "Longrun-Frequenz niedrig" : null,
         spikePenalty > 0 ? "Spike-Guard gegriffen" : null,
       ].filter(Boolean),
-      interpretation: longrun >= 75 ? "Longrun-Säule stabil." : longrun >= 55 ? "Longrun-Aufbau läuft, aber noch nicht voll stabil." : "Longrun limitiert die Readiness.",
+      interpretation: longrun >= 75 ? "Longrun stabil, Zielbereich weitgehend erreicht." : longrun >= 55 ? "Longrun fast im Zielbereich, Progression noch nicht abgeschlossen." : "Longrun limitiert die Readiness durch fehlendes Zielvolumen.",
     },
     robustness: {
       score: robustness,
@@ -5854,6 +5855,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     readiness,
     scores: { base, specificity, longrun, robustness, execution },
     components: componentDetails,
+    weights: req.weights,
     primaryGap,
     secondaryGap,
     strengths,
@@ -6472,10 +6474,9 @@ function buildComments(
     : (distanceDiagnostics?.primaryGap || "Stabilität");
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
-    `Heute: ${todayDecision}`,
+    `Heute: ${todayDecision}.`,
     keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.",
-    `Fokus: ${focusLabel}`,
-    `Modus: ${modeLabel}`,
+    `Fokus: ${focusLabel}.`,
   ]);
 
   const shortReasonsRanked = [
@@ -6514,10 +6515,27 @@ function buildComments(
   if (distanceDiagnostics) {
     const diagDetails = [];
     diagDetails.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
+    diagDetails.push("Stärken:");
+    for (const strength of (distanceDiagnostics?.strengths || []).slice(0, 2)) {
+      diagDetails.push(`• ${strength}`);
+    }
+    diagDetails.push("Limitierend:");
+    diagDetails.push(`• ${distanceDiagnostics.primaryGap}`);
+    if (distanceDiagnostics.secondaryGap) diagDetails.push(`• ${distanceDiagnostics.secondaryGap}`);
+
+    const weights = distanceDiagnostics?.weights || {};
+    diagDetails.push("READINESS BREAKDOWN:");
+    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
+      const score = Number(distanceDiagnostics?.scores?.[name] ?? 0);
+      const weight = Number(weights?.[name] ?? 0);
+      diagDetails.push(`${name.toUpperCase()}: ${score} × ${weight.toFixed(2)} = ${(score * weight).toFixed(1)}`);
+    }
+    diagDetails.push(`Total: ${distanceDiagnostics.readiness}`);
+
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const component = distanceDiagnostics?.components?.[name];
       if (!component) continue;
-      diagDetails.push(`${name.toUpperCase()}: ${component.score} (Confidence ${component?.confidence?.value ?? "n/a"}/100 · ${component?.confidence?.label || "n/a"})`);
+      diagDetails.push(`${name.toUpperCase()}: ${component.score} (Confidence: ${component?.confidence?.label || "n/a"} · ${component?.confidence?.value ?? "n/a"}/100)`);
       for (const input of (component.inputs || []).slice(0, 4)) {
         diagDetails.push(`Input: ${input}`);
       }
