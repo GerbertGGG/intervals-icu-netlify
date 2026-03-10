@@ -889,25 +889,25 @@ const LONGRUN_PREPLAN = {
 
 const DISTANCE_REQUIREMENTS = {
   "5k": {
-    weights: { base: 0.25, specificity: 0.30, longrun: 0.10, robustness: 0.20, execution: 0.15 },
+    weights: { base: 0.35, robustness: 0.25, specificity: 0.20, execution: 0.12, longrun: 0.08 },
     longrunTargetMin: 60,
     keyFocus: ["vo2", "racepace", "threshold"],
     intensityProfile: "5k",
   },
   "10k": {
-    weights: { base: 0.25, specificity: 0.28, longrun: 0.15, robustness: 0.18, execution: 0.14 },
+    weights: { base: 0.33, robustness: 0.22, specificity: 0.20, longrun: 0.15, execution: 0.10 },
     longrunTargetMin: 75,
     keyFocus: ["threshold", "vo2", "racepace"],
     intensityProfile: "10k",
   },
   hm: {
-    weights: { base: 0.28, specificity: 0.25, longrun: 0.22, robustness: 0.15, execution: 0.10 },
+    weights: { base: 0.30, longrun: 0.22, robustness: 0.20, specificity: 0.18, execution: 0.10 },
     longrunTargetMin: 90,
     keyFocus: ["threshold", "hm_specific_longrun", "racepace"],
     intensityProfile: "hm",
   },
   m: {
-    weights: { base: 0.30, specificity: 0.20, longrun: 0.28, robustness: 0.17, execution: 0.05 },
+    weights: { base: 0.28, longrun: 0.28, robustness: 0.18, specificity: 0.16, execution: 0.10 },
     longrunTargetMin: 120,
     keyFocus: ["marathonpace", "longrun", "threshold"],
     intensityProfile: "m",
@@ -5345,14 +5345,19 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       executionScore,
     });
     const longrunFrequency21d = computeLongrunFrequency21d(ctx, day);
+    const longrunFrequency35d = computeLongrunFrequency35d(ctx, day);
     const longrunSpikeIndex = computeLongrunSpikeIndex(longRunSummary);
     const distanceDiagnostics = computeDistanceDiagnostics(weeklySnapshot, {
+      dayIso: day,
+      activitiesAll: ctx.activitiesAll,
       runFloorTarget: runFloorState.effectiveFloorTarget,
       keyCompliance,
       fatigue,
       longRunSummary,
       strengthPolicy: robustness?.strengthPolicy,
+      weeksToEvent: blockState?.weeksToEvent,
       longrunFrequency21d,
+      longrunFrequency35d,
       longrunSpikeIndex,
     });
     const gapRecommendations = buildGapRecommendations(distanceDiagnostics);
@@ -5652,14 +5657,74 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const req = DISTANCE_REQUIREMENTS[dist] || DISTANCE_REQUIREMENTS["10k"];
   const intensityTargets = DISTANCE_INTENSITY_TARGETS[req.intensityProfile] || DISTANCE_INTENSITY_TARGETS["10k"];
 
+  const parseDay = (a) => String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+  const dayIso = String(context?.dayIso || "");
+  const end = dayIso ? new Date(dayIso + "T00:00:00Z") : new Date();
+
+  const collectRunStats = (windowDays = 28) => {
+    const safeDays = Math.max(7, Number(windowDays) || 28);
+    const startIso = isoDate(new Date(end.getTime() - (safeDays - 1) * 86400000));
+    const endIso = isoDate(new Date(end.getTime() + 86400000));
+    let runCount = 0;
+    let runMinutes = 0;
+    let easyMinutes = 0;
+    const days = new Set();
+
+    for (const a of context?.activitiesAll || []) {
+      if (!isRun(a)) continue;
+      const d = parseDay(a);
+      if (!d || d < startIso || d >= endIso) continue;
+      const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+      const min = sec / 60;
+      if (!(min > 0)) continue;
+      runCount += 1;
+      runMinutes += min;
+      days.add(d);
+      const isLikelyEasy = a?.is_key !== true && a?.key_session !== true;
+      if (isLikelyEasy) easyMinutes += min;
+    }
+
+    const weeks = safeDays / 7;
+    return {
+      runCount,
+      runMinutes,
+      easyMinutes,
+      runDays: days.size,
+      runsPerWeek: weeks > 0 ? runCount / weeks : 0,
+      runDaysPerWeek: weeks > 0 ? days.size / weeks : 0,
+    };
+  };
+
+  const scoreStrengthTier = (minutes7d) => {
+    const mins = Number(minutes7d || 0);
+    if (mins <= 15) return 25;
+    if (mins <= 35) return 55;
+    if (mins <= 60) return 78;
+    return 92;
+  };
+
   const floorTarget = Number(context?.runFloorTarget ?? 0);
-  const baseRunFloor = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget) : 55;
+  const stats28 = collectRunStats(28);
+  const stats42 = collectRunStats(42);
   const runsTarget = dist === "5k" ? 3 : dist === "10k" ? 3 : 4;
-  const runsScore = clamp(Math.round((snapshot.runsCount / runsTarget) * 100), 0, 100);
-  const easyScore = clamp(Math.round((snapshot.easyShare / Math.max(0.01, intensityTargets.easyMin)) * 100), 0, 100);
-  const efScore = clamp(Math.round(55 + (snapshot.efTrend || 0) * 8), 0, 100);
-  const driftScore = clamp(Math.round(70 - Math.max(0, snapshot.driftTrend || 0) * 12), 0, 100);
-  const base = clamp(Math.round(baseRunFloor * 0.35 + runsScore * 0.2 + easyScore * 0.2 + efScore * 0.15 + driftScore * 0.1), 0, 100);
+
+  const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget) : 58;
+  const consistencyScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget - 0.5)) * 100), 0, 100);
+  const freqScore = clamp(Math.round((stats28.runsPerWeek / runsTarget) * 100), 0, 100);
+  const easyVolumeTarget = Math.max(90, runsTarget * 35);
+  const easyVolumeScore = clamp(Math.round((stats28.easyMinutes / easyVolumeTarget) * 100), 0, 100);
+  const easyShareScore = clamp(Math.round((snapshot.easyShare / Math.max(0.01, intensityTargets.easyMin)) * 100), 0, 100);
+  const base = clamp(
+    Math.round(
+      runFloorScore * 0.28 +
+      consistencyScore * 0.24 +
+      freqScore * 0.20 +
+      easyVolumeScore * 0.16 +
+      easyShareScore * 0.12
+    ),
+    0,
+    100
+  );
 
   const focus = (req.keyFocus || []).map(normalizeDiagnosticKeyType);
   const keyTypes = (snapshot.keyTypes || []).map(normalizeDiagnosticKeyType);
@@ -5667,36 +5732,64 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const focusHits = matchedFocusTypes.length;
   const focusCoverage = focus.length ? focusHits / focus.length : 0;
   const intensityPenalty = Math.max(0, (snapshot.hardShare || 0) - intensityTargets.hardMax);
-  let specificity = clamp(Math.round(40 + focusCoverage * 45 - intensityPenalty * 200), 0, 100);
-  if (context?.keyCompliance?.preferredMissing) specificity = clamp(specificity - 10, 0, 100);
-  if (snapshot.block === "BASE") specificity = Math.min(100, specificity + 5);
+  const weeksToEvent = Number(context?.weeksToEvent);
+  const raceProximity = Number.isFinite(weeksToEvent)
+    ? clamp((16 - clamp(weeksToEvent, 0, 16)) / 16, 0, 1)
+    : snapshot.block === "RACE"
+      ? 1
+      : snapshot.block === "BUILD"
+        ? 0.6
+        : 0.25;
+  const specificityInfluence = 0.55 + raceProximity * 0.45;
+  const blockFit =
+    snapshot.block === "BASE"
+      ? clamp(0.75 + focusCoverage * 0.25, 0, 1)
+      : snapshot.block === "BUILD"
+        ? clamp(0.55 + focusCoverage * 0.45, 0, 1)
+        : clamp(0.45 + focusCoverage * 0.55, 0, 1);
+  let specificity = clamp(Math.round(45 + (focusCoverage * 35 + blockFit * 20) * specificityInfluence - intensityPenalty * 120), 0, 100);
+  if (context?.keyCompliance?.preferredMissing) specificity = clamp(specificity - 8, 0, 100);
 
   const longrunTarget = Math.max(Number(req.longrunTargetMin || 0), Number(LONGRUN_PREPLAN.targetMinByDistance?.[dist] || 0));
   const progressionLongrunTarget = Number(context?.longRunSummary?.plan?.targetMin ?? 0);
   const longrunInput14d = Number(context?.longRunSummary?.longRun14d?.minutes ?? 0);
-  const longrunVolumeScore = scoreByTargetRatio(snapshot.longrunMin, longrunTarget);
+  const longrunInput28d = Number(context?.longRunSummary?.longRun28d?.minutes ?? longrunInput14d);
+  const lastLongrunMin = Number(snapshot.longrunMin || 0);
   const longRunFreq = Number(context?.longrunFrequency21d ?? 0);
-  const longrunFreqScore = clamp(Math.round((longRunFreq / 2) * 100), 0, 100);
+  const longRunFreq35d = Number(context?.longrunFrequency35d ?? longRunFreq);
   const spikeIndex = Number(context?.longrunSpikeIndex ?? 1);
-  const spikePenalty = spikeIndex > 1.15 ? Math.round((spikeIndex - 1.15) * 120) : 0;
-  const specificLongrunScore = clamp(Math.round((snapshot.longrunSpecificMin / Math.max(1, longrunTarget * 0.2)) * 100), 0, 100);
-  const longrun = clamp(Math.round(longrunVolumeScore * 0.5 + longrunFreqScore * 0.2 + specificLongrunScore * 0.2 - spikePenalty * 0.1), 0, 100);
+  const capabilityScore = clamp(Math.round((Math.max(longrunInput14d, longrunInput28d) / Math.max(1, longrunTarget)) * 100), 0, 100);
+  const consistencyLongrunScore = clamp(Math.round((longRunFreq35d / 3) * 100), 0, 100);
+  const recencyLongrunScore = clamp(Math.round((Math.max(lastLongrunMin, Number(context?.longRunSummary?.longRun7d?.minutes ?? 0)) / Math.max(1, longrunTarget)) * 100), 0, 100);
+  const driftSignal = Number(snapshot.driftTrend || 0);
+  const driftDurabilityScore = clamp(Math.round(70 - Math.max(0, driftSignal) * 10), 0, 100);
+  const spikePenalty = spikeIndex > 1.18 ? Math.round((spikeIndex - 1.18) * 60) : 0;
+  const longrun = clamp(
+    Math.round(capabilityScore * 0.48 + consistencyLongrunScore * 0.28 + recencyLongrunScore * 0.20 + driftDurabilityScore * 0.04 - spikePenalty),
+    0,
+    100
+  );
 
-  const strengthScore = clamp(Math.round((snapshot.strengthMin / 45) * 100), 0, 100);
+  const strengthScore = scoreStrengthTier(snapshot.strengthMin);
   const strengthTargetCoachMin = Number(context?.strengthPolicy?.target ?? 60);
-  const strengthScoreAnchorMin = 45;
   const monotony = Number(context?.fatigue?.monotony ?? 0);
   const strain = Number(context?.fatigue?.strain ?? 0);
   const acwr = Number(context?.fatigue?.acwr ?? 0);
-  let robustness = clamp(Math.round(65 + strengthScore * 0.25), 0, 100);
-  if (snapshot.fatigueOverride) robustness -= 20;
-  if (!snapshot.keySpacingOk) robustness -= 10;
-  if (monotony > 2.1) robustness -= 10;
-  if (strain > 1200) robustness -= 10;
-  if (acwr > 1.3) robustness -= 10;
-  robustness = clamp(robustness, 0, 100);
+  const continuityScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget - 0.25)) * 100), 0, 100);
+  const runDayScore = clamp(Math.round((stats28.runDaysPerWeek / runsTarget) * 100), 0, 100);
+  let fatiguePenalty = 0;
+  if (snapshot.fatigueOverride) fatiguePenalty += 14;
+  if (monotony > 2.1) fatiguePenalty += 8;
+  if (strain > 1200) fatiguePenalty += 8;
+  if (acwr > 1.3) fatiguePenalty += 8;
+  if (!snapshot.keySpacingOk) fatiguePenalty += 6;
+  let robustness = clamp(Math.round(continuityScore * 0.34 + runDayScore * 0.20 + strengthScore * 0.26 + (100 - fatiguePenalty) * 0.20), 0, 100);
 
-  const execution = clamp(Math.round(snapshot.executionScore || 0), 0, 100);
+  const executionProcess = clamp(Math.round(snapshot.executionScore || 0), 0, 100);
+  const chaosPenalty = snapshot.keySpacingOk ? 0 : 14;
+  const compliancePenalty = context?.keyCompliance?.freqOk === false ? 10 : 0;
+  const execution = clamp(Math.round(executionProcess * 0.7 + (100 - chaosPenalty - compliancePenalty) * 0.3), 0, 100);
+
   const readinessRaw =
     base * req.weights.base +
     specificity * req.weights.specificity +
@@ -5723,34 +5816,36 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     return "niedrig";
   };
   const baseConfidenceRaw = [
-    floorTarget > 0 ? 0.95 : 0.6,
-    clamp(snapshot.runsCount / Math.max(1, runsTarget), 0.35, 1),
-    Number.isFinite(snapshot.easyShare) ? clamp(snapshot.easyShare / Math.max(0.01, intensityTargets.easyMin), 0.45, 1) : 0.35,
-    Number.isFinite(snapshot.efTrend) ? clamp(1 - Math.abs(snapshot.efTrend) / 8, 0.4, 1) : 0.4,
-    Number.isFinite(snapshot.driftTrend) ? clamp(1 - Math.abs(snapshot.driftTrend) / 4, 0.4, 1) : 0.4,
+    floorTarget > 0 ? 0.95 : 0.65,
+    clamp(consistencyScore / 100, 0.4, 1),
+    clamp(freqScore / 100, 0.4, 1),
+    clamp(easyVolumeScore / 100, 0.35, 1),
+    clamp(easyShareScore / 100, 0.35, 1),
   ].reduce((sum, x) => sum + x, 0) / 5;
   const specificityConfidenceRaw = [
     focus.length > 0 ? 0.95 : 0.55,
     clamp((snapshot.keyCount || 0) / 2, 0.35, 1),
-    Number.isFinite(snapshot.hardShare) ? clamp(1 - Math.abs((snapshot.hardShare || 0) - intensityTargets.hardMax) / 0.18, 0.35, 1) : 0.4,
+    clamp(specificityInfluence, 0.35, 1),
   ].reduce((sum, x) => sum + x, 0) / 3;
   const longrunConfidenceRaw = [
-    clamp((snapshot.longrunMin || 0) / Math.max(1, longrunTarget), 0.35, 1),
-    clamp(longRunFreq / 2, 0.35, 1),
-    Number.isFinite(snapshot.longrunSpecificMin) ? clamp(0.6 + Math.min(snapshot.longrunSpecificMin, 30) / 75, 0.35, 1) : 0.4,
-    Number.isFinite(spikeIndex) ? clamp(1 - Math.max(0, spikeIndex - 1) / 0.35, 0.35, 1) : 0.4,
+    clamp(capabilityScore / 100, 0.4, 1),
+    clamp(consistencyLongrunScore / 100, 0.35, 1),
+    clamp(recencyLongrunScore / 100, 0.35, 1),
+    clamp(driftDurabilityScore / 100, 0.35, 1),
   ].reduce((sum, x) => sum + x, 0) / 4;
   const robustnessConfidenceRaw = [
-    clamp((snapshot.strengthMin || 0) / 45, 0.35, 1),
-    Number.isFinite(monotony) ? clamp(1 - Math.max(0, monotony - 1.4) / 1.2, 0.35, 1) : 0.4,
-    Number.isFinite(strain) ? clamp(1 - Math.max(0, strain - 700) / 700, 0.35, 1) : 0.4,
-    Number.isFinite(acwr) ? clamp(1 - Math.max(0, acwr - 1.05) / 0.6, 0.35, 1) : 0.4,
+    clamp(continuityScore / 100, 0.4, 1),
+    clamp(runDayScore / 100, 0.35, 1),
+    clamp(strengthScore / 100, 0.35, 1),
+    snapshot.fatigueOverride ? 0.45 : 0.95,
   ].reduce((sum, x) => sum + x, 0) / 4;
   const executionConfidenceRaw = [
     clamp((snapshot.executionScore || 0) / 100, 0.35, 1),
     context?.keyCompliance ? 0.95 : 0.45,
     context?.fatigue ? 0.95 : 0.45,
   ].reduce((sum, x) => sum + x, 0) / 3;
+
+  const longrunCapabilityConfirmed = Math.max(longrunInput14d, longrunInput28d) >= longrunTarget;
 
   const componentDetails = {
     base: {
@@ -5759,24 +5854,26 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         value: Math.round(baseConfidenceRaw * 100),
         label: toConfidenceLabel(baseConfidenceRaw),
       },
-      inputs: [
-        `RunFloor: ${Math.round(snapshot.runFloor)}/${Math.round(floorTarget || 0)}`,
-        `Läufe/Woche: ${snapshot.runsCount}/${runsTarget}`,
-        `Easy-Anteil: ${Math.round((snapshot.easyShare || 0) * 100)}% (Ziel ≥${Math.round(intensityTargets.easyMin * 100)}%)`,
-        `EF-Trend: ${snapshot.efTrend >= 0 ? "+" : ""}${Number(snapshot.efTrend || 0).toFixed(1)}%`,
-        `Drift-Trend: ${snapshot.driftTrend >= 0 ? "+" : ""}${Number(snapshot.driftTrend || 0).toFixed(1)}`,
-      ],
-      factorsUp: [
-        floorTarget > 0 && snapshot.runFloor >= floorTarget ? "RunFloor-Ziel erreicht" : null,
-        snapshot.runsCount >= runsTarget ? "Frequenzziel erreicht" : null,
-        snapshot.easyShare >= intensityTargets.easyMin ? "Easy-Verteilung stabil" : null,
-      ].filter(Boolean),
-      factorsDown: [
+      confirmedAbility: runFloorScore >= 75 ? "Aerobe Basis im Zielkorridor nachgewiesen." : "Aerobe Basis teils nachgewiesen, noch unter Zielkorridor.",
+      consistency: `4-6 Wochen: ${stats42.runDaysPerWeek.toFixed(1)} Lauftage/Woche, Easy-Volumen ${Math.round(stats28.easyMinutes)}′/28T.`,
+      recency: `Aktuell: ${Math.round(stats28.runsPerWeek)} Läufe/Woche, Easy-Anteil ${Math.round((snapshot.easyShare || 0) * 100)}%.`,
+      constraints: [
         floorTarget > 0 && snapshot.runFloor < floorTarget ? `RunFloor unter Ziel (${Math.round(floorTarget - snapshot.runFloor)} Gap)` : null,
-        snapshot.runsCount < runsTarget ? "Zu geringe Wochenfrequenz" : null,
-        snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil zu niedrig" : null,
+        stats28.runsPerWeek < runsTarget ? "Wochenfrequenz unter Distanzprofil" : null,
+        snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil unter Ziel" : null,
       ].filter(Boolean),
-      interpretation: base >= 75 ? "Aerobe Basis stabil." : base >= 55 ? "Basis ausbaufähig, Kontinuität priorisieren." : "Basis aktuell limitierend.",
+      inputs: [
+        `confirmed ability: ${runFloorScore >= 75 ? "ja" : "teilweise"}`,
+        `consistency: ${stats42.runDaysPerWeek.toFixed(1)} Lauftage/Woche`,
+        `recency: ${Math.round(stats28.runsPerWeek)} Läufe/Woche`,
+      ],
+      factorsUp: [runFloorScore >= 75 ? "Fähigkeit bestätigt" : null, stats42.runDaysPerWeek >= runsTarget ? "Regelmäßigkeit stabil" : null].filter(Boolean),
+      factorsDown: [
+        floorTarget > 0 && snapshot.runFloor < floorTarget ? "RunFloor unter Ziel" : null,
+        stats28.runsPerWeek < runsTarget ? "Frequenz unter Ziel" : null,
+        snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil unter Ziel" : null,
+      ].filter(Boolean),
+      interpretation: base >= 75 ? "Basis stabil und amateurrobust." : base >= 55 ? "Basis solide, über Kontinuität weiter festigen." : "Basis ist aktuell der größte Hebel.",
     },
     specificity: {
       score: specificity,
@@ -5784,23 +5881,22 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         value: Math.round(specificityConfidenceRaw * 100),
         label: toConfidenceLabel(specificityConfidenceRaw),
       },
-      inputs: [
-        `Abgedeckte ${dist.toUpperCase()}-Keytypen: ${focusHits}/${focus.length || 0}`,
-        `Getroffen: ${(matchedFocusTypes.join(", ") || "keiner")}`,
-        `Key-Typen: ${(snapshot.keyTypes || []).join(", ") || "n/a"}`,
-        `Hard-Anteil: ${Math.round((snapshot.hardShare || 0) * 100)}% (Max ${Math.round(intensityTargets.hardMax * 100)}%)`,
-        `Preferred-Key fehlt: ${context?.keyCompliance?.preferredMissing ? "ja" : "nein"}`,
-      ],
-      factorsUp: [
-        focusCoverage >= 0.66 ? "Distanzspezifische Reize gut abgedeckt" : null,
-        snapshot.block === "BASE" ? "BASE-Bonus aktiv" : null,
-      ].filter(Boolean),
-      factorsDown: [
+      confirmedAbility: focusCoverage >= 0.66 ? "Distanzspezifische Reize sind nachgewiesen." : "Spezifische Reize bisher nur teilweise nachgewiesen.",
+      consistency: `Blockpassung: ${snapshot.block || "n/a"}, Fokusabdeckung ${focusHits}/${focus.length || 0}.`,
+      recency: `Wettkampfnähe-Faktor ${(specificityInfluence * 100).toFixed(0)}% (höher bei Rennnähe).`,
+      constraints: [
         focusCoverage < 0.5 ? "Zu wenig distanzspezifische Reize" : null,
         intensityPenalty > 0 ? "Hard-Anteil über Ziel" : null,
         context?.keyCompliance?.preferredMissing ? "Bevorzugter Reiz fehlt" : null,
       ].filter(Boolean),
-      interpretation: specificity >= 75 ? "Spezifität passt zur Distanz." : specificity >= 55 ? "Spezifität teilweise getroffen." : "Spezifität ist aktuell Hauptlücke.",
+      inputs: [
+        `confirmed ability: ${focusCoverage >= 0.66 ? "ja" : "teilweise"}`,
+        `consistency: Fokusabdeckung ${focusHits}/${focus.length || 0}`,
+        `recency: Wettkampfnähe ${(specificityInfluence * 100).toFixed(0)}%`,
+      ],
+      factorsUp: [focusCoverage >= 0.66 ? "Block-/Distanzfit gegeben" : null].filter(Boolean),
+      factorsDown: [focusCoverage < 0.5 ? "Abdeckung niedrig" : null, intensityPenalty > 0 ? "Hard-Anteil hoch" : null].filter(Boolean),
+      interpretation: specificity >= 75 ? "Spezifität passt zu Distanz und Zyklusphase." : specificity >= 55 ? "Spezifität vorhanden, gezielt weiter schärfen." : "Spezifität ist aktuell ausbaufähig.",
     },
     longrun: {
       score: longrun,
@@ -5808,25 +5904,29 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         value: Math.round(longrunConfidenceRaw * 100),
         label: toConfidenceLabel(longrunConfidenceRaw),
       },
+      confirmedAbility: longrunCapabilityConfirmed ? "Longrun-Ziel nachgewiesen, Fähigkeit vorhanden." : "Longrun-Fähigkeit teilweise nachgewiesen.",
+      consistency: `Longruns 35T: ${longRunFreq35d} (21T: ${longRunFreq}); Capability ${Math.round(Math.max(longrunInput14d, longrunInput28d))}/${Math.round(longrunTarget)}′.`,
+      recency: `Zuletzt ${Math.round(lastLongrunMin)}′ (7T), letzter Peak 14T ${Math.round(longrunInput14d)}′.`,
+      constraints: [
+        longRunFreq35d < 3 ? "Longrun-Frequenz über 5 Wochen niedrig" : null,
+        recencyLongrunScore < 70 && longrunCapabilityConfirmed ? "Zuletzt kürzer: Fähigkeit eher gehalten als ausgebaut" : null,
+        !longrunCapabilityConfirmed ? "Zielumfang noch nicht voll nachgewiesen" : null,
+        spikePenalty > 0 ? "Spike-Guard aktiv" : null,
+      ].filter(Boolean),
       inputs: [
-        `Longrun-Min (7T max): ${Math.round(snapshot.longrunMin)}/${Math.round(longrunTarget)}′`,
-        `Längster Lauf 14T: ${Math.round(longrunInput14d)}′`,
-        `Diagnose-Ziel (Distanzprofil): ${Math.round(longrunTarget)}′`,
-        `Plan-Ziel (ohne Progressions-Cap): ${Math.round(progressionLongrunTarget || longrunTarget)}′`,
-        `Longrun-Frequenz 21T: ${longRunFreq}/2`,
-        `Spezifischer Anteil: ${Math.round(snapshot.longrunSpecificMin)}′`,
-        `Spike-Index: ${Number(spikeIndex || 0).toFixed(2)} (Guard >1.15)`,
+        `confirmed ability: ${longrunCapabilityConfirmed ? "ja" : "teilweise"}`,
+        `consistency: Longruns35T ${longRunFreq35d}`,
+        `recency: letzter Longrun ${Math.round(lastLongrunMin)}′`,
       ],
-      factorsUp: [
-        snapshot.longrunMin >= longrunTarget ? "Longrun-Ziel erreicht" : null,
-        longRunFreq >= 2 ? "Longrun-Frequenz stabil" : null,
-      ].filter(Boolean),
-      factorsDown: [
-        snapshot.longrunMin < longrunTarget ? "7T-Longrun noch unter Ziel" : null,
-        longRunFreq < 2 ? "Longrun-Frequenz niedrig" : null,
-        spikePenalty > 0 ? "Spike-Guard gegriffen" : null,
-      ].filter(Boolean),
-      interpretation: longrun >= 75 ? "Longrun stabil, Zielbereich weitgehend erreicht." : longrun >= 55 ? "Longrun fast im Zielbereich, Progression noch nicht abgeschlossen." : "Longrun limitiert die Readiness durch fehlendes Zielvolumen.",
+      factorsUp: [longrunCapabilityConfirmed ? "Ziel nachgewiesen" : null, longRunFreq35d >= 3 ? "Frequenz stabil" : null].filter(Boolean),
+      factorsDown: [longRunFreq35d < 3 ? "Frequenz niedrig" : null, spikePenalty > 0 ? "Spike-Guard" : null].filter(Boolean),
+      interpretation: longrunCapabilityConfirmed
+        ? recencyLongrunScore >= 80
+          ? "Longrun-Fähigkeit bestätigt und aktuell gut gehalten."
+          : "Longrun-Fähigkeit bestätigt; zuletzt kürzer, aktuell eher gehalten als ausgebaut."
+        : longrun >= 55
+          ? "Longrun-Aufbau läuft, Fähigkeit noch nicht voll bestätigt."
+          : "Longrun bleibt ein klarer Entwicklungshebel.",
     },
     robustness: {
       score: robustness,
@@ -5834,27 +5934,26 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         value: Math.round(robustnessConfidenceRaw * 100),
         label: toConfidenceLabel(robustnessConfidenceRaw),
       },
-      inputs: [
-        `Kraft 7T: ${Math.round(snapshot.strengthMin)}′`,
-        `Coach-Ziel: ${Math.round(strengthTargetCoachMin)}′`,
-        `Score-Anker: ${strengthScoreAnchorMin}′`,
-        `Fatigue-Override: ${snapshot.fatigueOverride ? "aktiv" : "aus"}`,
-        `Key-Spacing ok: ${snapshot.keySpacingOk ? "ja" : "nein"}`,
-        `Monotony/Strain/ACWR: ${Number(monotony || 0).toFixed(2)} / ${Math.round(strain || 0)} / ${Number(acwr || 0).toFixed(2)}`,
-      ],
-      factorsUp: [
-        snapshot.strengthMin >= strengthScoreAnchorMin ? "Kraftziel erfüllt" : null,
-        !snapshot.fatigueOverride ? "Keine Fatigue-Sperre" : null,
-      ].filter(Boolean),
-      factorsDown: [
-        snapshot.strengthMin < strengthScoreAnchorMin ? "Kraft unter Ziel" : null,
+      confirmedAbility: robustness >= 70 ? "Belastbarkeit im Alltagstraining ist nachgewiesen." : "Belastbarkeit ist vorhanden, aber noch fragil.",
+      consistency: `Kontinuität 4-6 Wochen: ${stats42.runDaysPerWeek.toFixed(1)} Lauftage/Woche; Kraft ${Math.round(snapshot.strengthMin)}′/7T.`,
+      recency: `Fatigue-Status: Override ${snapshot.fatigueOverride ? "aktiv" : "aus"}, Key-Spacing ${snapshot.keySpacingOk ? "ok" : "verletzt"}.`,
+      constraints: [
+        snapshot.strengthMin <= 15 ? "Kraftumfang 0-15′/Woche (schwach)" : null,
+        snapshot.strengthMin > 15 && snapshot.strengthMin <= 35 ? "Kraftumfang 20-35′/Woche (okay)" : null,
         snapshot.fatigueOverride ? "Fatigue-Override aktiv" : null,
         !snapshot.keySpacingOk ? "Key-Abstand verletzt" : null,
         monotony > 2.1 ? "Monotony-Schwelle überschritten" : null,
         strain > 1200 ? "Strain-Schwelle überschritten" : null,
         acwr > 1.3 ? "ACWR-Schwelle überschritten" : null,
       ].filter(Boolean),
-      interpretation: robustness >= 75 ? "Robustheit belastbar." : robustness >= 55 ? "Robustheit okay, aber fragil bei Zusatzlast." : "Robustheit derzeit limitierend.",
+      inputs: [
+        `confirmed ability: ${robustness >= 70 ? "ja" : "teilweise"}`,
+        `consistency: ${stats42.runDaysPerWeek.toFixed(1)} Lauftage/Woche`,
+        `recency: Kraft ${Math.round(snapshot.strengthMin)}′/7T`,
+      ],
+      factorsUp: [robustness >= 75 ? "Belastbarkeit stabil" : null].filter(Boolean),
+      factorsDown: [snapshot.fatigueOverride ? "Fatigue-Flag" : null, !snapshot.keySpacingOk ? "Spacing-Verletzung" : null].filter(Boolean),
+      interpretation: robustness >= 75 ? "Robustheit gut ausgeprägt." : robustness >= 55 ? "Robustheit okay, mit Reserven in Kontinuität/Kraft." : "Robustheit limitiert derzeit die Belastbarkeit.",
     },
     execution: {
       score: execution,
@@ -5862,19 +5961,23 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         value: Math.round(executionConfidenceRaw * 100),
         label: toConfidenceLabel(executionConfidenceRaw),
       },
-      inputs: [
-        `Execution-Score: ${execution}/100`,
-        `Key-Frequenz okay: ${context?.keyCompliance?.freqOk === false ? "nein" : "ja"}`,
-        `Key-Typen okay: ${context?.keyCompliance?.typeOk === false ? "nein" : "ja"}`,
-        `Fatigue-Bremse: ${context?.fatigue?.override ? "ja" : "nein"}`,
-      ],
-      factorsUp: [execution >= 75 ? "Sessions insgesamt gut umgesetzt" : null].filter(Boolean),
-      factorsDown: [
+      confirmedAbility: execution >= 70 ? "Planumsetzung als Prozess ist stabil." : "Planumsetzung ist nur teilweise stabil.",
+      consistency: `Prozess: Key-Frequenz ${context?.keyCompliance?.freqOk === false ? "außerhalb Ziel" : "im Ziel"}, Spacing ${snapshot.keySpacingOk ? "stabil" : "chaotisch"}.`,
+      recency: `Aktuelle Compliance: Execution ${execution}/100, Fatigue-Bremse ${context?.fatigue?.override ? "ja" : "nein"}.`,
+      constraints: [
         context?.keyCompliance?.freqOk === false ? "Key-Frequenz außerhalb Ziel" : null,
         context?.keyCompliance?.typeOk === false ? "Key-Typen nicht passend" : null,
+        !snapshot.keySpacingOk ? "Wochenstruktur instabil" : null,
         context?.fatigue?.override ? "Fatigue bremst Ausführung" : null,
       ].filter(Boolean),
-      interpretation: execution >= 75 ? "Umsetzung im Plan." : execution >= 55 ? "Umsetzung solide, mit Inkonsistenzen." : "Ausführung derzeit zu inkonsistent.",
+      inputs: [
+        `confirmed ability: ${execution >= 70 ? "ja" : "teilweise"}`,
+        `consistency: Wochenstruktur ${snapshot.keySpacingOk ? "stabil" : "instabil"}`,
+        `recency: Compliance ${execution}/100`,
+      ],
+      factorsUp: [execution >= 75 ? "Prozess stabil" : null].filter(Boolean),
+      factorsDown: [context?.keyCompliance?.freqOk === false ? "Frequenzabweichung" : null, !snapshot.keySpacingOk ? "Chaos in Wochenstruktur" : null].filter(Boolean),
+      interpretation: execution >= 75 ? "Ausführung prozessstabil." : execution >= 55 ? "Ausführung solide mit leichten Brüchen." : "Ausführung aktuell inkonsistent.",
     },
   };
 
@@ -5909,6 +6012,21 @@ function buildGapRecommendations(diagnostics) {
 function computeLongrunFrequency21d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 20 * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  let count = 0;
+  for (const a of ctx?.activitiesAll || []) {
+    if (!isRun(a)) continue;
+    const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
+    if (min >= 60) count += 1;
+  }
+  return count;
+}
+
+function computeLongrunFrequency35d(ctx, dayIso) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - 34 * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
   let count = 0;
   for (const a of ctx?.activitiesAll || []) {
