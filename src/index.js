@@ -3791,7 +3791,7 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
     }
   }
 
-  if (!thresholdPlanned && pendingLeverPlanLine) {
+  if (!thresholdPlanned && pendingLeverPlanLine && domain !== "consistency") {
     pendingLeverPlanLine = pendingLeverPlanLine.replace(/^Geplante Anpassung:/, "Geplante Anpassung (modulierend):");
   }
 
@@ -7200,6 +7200,17 @@ function buildComments(
     keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion)
   );
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
+  const pendingLever = keyCompliance?.pendingLever || keyCompliance?.activeLever || null;
+  const pendingLeverPlan = !keyAllowedNow && pendingLever?.domain
+    ? formatPendingLeverPlan({
+        pendingLever,
+        nextKeyEarliest: nextAllowed,
+        plannedKeyType: keyCompliance?.plannedKeyType,
+        explicitSession: keyCompliance?.explicitSession,
+      })
+    : { pendingLeverLine: null, pendingLeverPlanLine: null };
+  const pendingLeverLine = pendingLeverPlan.pendingLeverLine || keyCompliance?.pendingLeverLine || null;
+  const pendingLeverPlanLine = pendingLeverPlan.pendingLeverPlanLine || keyCompliance?.pendingLeverPlanLine || null;
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
   const decisionCompact = buildRecommendationsAndBottomLine({
     runFloorEwma10,
@@ -7232,11 +7243,11 @@ function buildComments(
     ...decisionCompact.recommendations,
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
   ];
-  if (keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverLine) {
-    recommendationMetricsBlock.push(keyCompliance.pendingLeverLine);
+  if (!keyAllowedNow && pendingLeverLine) {
+    recommendationMetricsBlock.push(pendingLeverLine);
   }
-  if (keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverPlanLine) {
-    recommendationMetricsBlock.push(keyCompliance.pendingLeverPlanLine);
+  if (!keyAllowedNow && pendingLeverPlanLine) {
+    recommendationMetricsBlock.push(pendingLeverPlanLine);
   }
 
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
@@ -7367,11 +7378,11 @@ function buildComments(
     keyBlocked
       ? (nextAllowedHours != null ? `Nächster Key frühestens in ${nextAllowedHours}h.` : dailyDecisionLayer.hint)
       : dailyDecisionLayer.hint,
-    ...(keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverLine
-      ? [keyCompliance.pendingLeverLine]
+    ...(!keyAllowedNow && pendingLeverLine
+      ? [pendingLeverLine]
       : []),
-    ...(keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverPlanLine
-      ? [keyCompliance.pendingLeverPlanLine]
+    ...(!keyAllowedNow && pendingLeverPlanLine
+      ? [pendingLeverPlanLine]
       : []),
     `Fokus: ${focusLabel}.`,
   ]);
