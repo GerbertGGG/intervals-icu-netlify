@@ -4126,7 +4126,8 @@ function getLastKeyTypeBeforeDay(ctx, dayIso, windowDays = 21) {
   });
 }
 
-function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
+function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35, options = {}) {
+  const requireNoKeyAfter = options?.requireNoKeyAfter !== false;
   if (!dayIso || !isIsoDate(dayIso)) return null;
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
@@ -4159,7 +4160,7 @@ function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     return d && d > lastDate && d < endIso && hasKeyTag(a);
   });
-  if (hasAnyKeyAfterThreshold) return null;
+  if (requireNoKeyAfter && hasAnyKeyAfterThreshold) return null;
 
   const review = summarizeIntervalSessionQuality(lastThresholdActivity);
   if (!review?.nextLeverMeta?.domain) return null;
@@ -4168,6 +4169,11 @@ function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
     nextLever: review.nextLever || null,
     nextLeverMeta: review.nextLeverMeta,
   };
+}
+
+function getLastSessionLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
+  if (!dayIso || !isIsoDate(dayIso)) return null;
+  return getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays, { requireNoKeyAfter: false });
 }
 
 function computeRacepaceBlockProgress(ctx, context = {}) {
@@ -4282,6 +4288,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const preferredIntensity = mapKeyTypeToIntensity(preferred, context.eventDistance);
   const activeLever = context?.lastThresholdLever?.nextLeverMeta?.domain ? context.lastThresholdLever.nextLeverMeta : null;
   const activeLeverText = context?.lastThresholdLever?.nextLever || (activeLever ? leverMetaToText(activeLever) : "");
+  const pendingLeverSource = context?.lastSessionLever?.nextLeverMeta?.domain
+    ? context.lastSessionLever
+    : context?.lastThresholdLever?.nextLeverMeta?.domain
+      ? context.lastThresholdLever
+      : null;
+  const pendingLeverMeta = pendingLeverSource?.nextLeverMeta?.domain ? pendingLeverSource.nextLeverMeta : null;
 
   let suggestion = "";
   let keyAllowedNow = false;
@@ -4331,7 +4343,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   }
 
   const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
-  const pendingLever = !keyAllowedNow && activeLever ? activeLever : null;
+  const pendingLever = !keyAllowedNow && pendingLeverMeta ? pendingLeverMeta : null;
   const pendingLeverPlan = !keyAllowedNow
     ? formatPendingLeverPlan({
         pendingLever,
@@ -5538,6 +5550,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
     const lastThresholdReview = getLastThresholdLeverBeforeDay(ctx, day, 35);
+    const lastSessionLeverReview = getLastSessionLeverBeforeDay(ctx, day, 35);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
@@ -5745,6 +5758,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
       lastThresholdLever: lastThresholdReview || null,
+      lastSessionLever: lastSessionLeverReview || null,
       historyMetrics,
       longrunSpecificity,
     });
