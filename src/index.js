@@ -6247,6 +6247,16 @@ function shortExplicitSession(explicitSession) {
   return limitText(cleaned, 90);
 }
 
+function explicitSessionFromSuggestion(suggestion) {
+  const text = String(suggestion || "");
+  const match = text.match(/Konkrete Session-Idee:\s*([^\n]+)/i);
+  if (!match) return null;
+  return String(match[1] || "")
+    .split(".")[0]
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function capLines(lines, maxLines) {
   return (lines || []).filter(Boolean).slice(0, maxLines);
 }
@@ -6703,7 +6713,9 @@ function buildComments(
   if (bikeAllowanceLine) keyCheckMetrics.push(bikeAllowanceLine);
   if (transitionLine) keyCheckMetrics.push(transitionLine);
 
-  const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
+  const explicitSessionShort = shortExplicitSession(
+    keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion)
+  );
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
   const decisionCompact = buildRecommendationsAndBottomLine({
