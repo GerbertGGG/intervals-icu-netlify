@@ -5746,7 +5746,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const keyStats42 = collectKeyStats(42);
   const runsTarget = dist === "5k" ? 3 : dist === "10k" ? 3 : 4;
 
-  const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget, 0, 1.1) : 58;
+  const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget, 0, 1.05) : 58;
   const consistencyScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget)) * 100), 0, 100);
   const freqScore = clamp(Math.round((stats42.runsPerWeek / runsTarget) * 100), 0, 100);
   const easyVolumeTarget = Math.max(90, runsTarget * 40);
@@ -5765,8 +5765,14 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     0,
     100
   );
+  const runFloorRatio = floorTarget > 0 ? clamp((Number(snapshot.runFloor) || 0) / floorTarget, 0, 1.2) : 1;
+  if (floorTarget > 0 && runFloorRatio < 0.9) {
+    const floorPenalty = Math.round((0.9 - runFloorRatio) * 80);
+    base = clamp(base - floorPenalty, 0, 100);
+  }
   const easyShareDeficit = Math.max(0, intensityTargets.easyMin - (snapshot.easyShare || 0));
   if (easyShareDeficit > 0.06) base = clamp(base - Math.round(easyShareDeficit * 120), 0, 100);
+  if (floorTarget > 0 && runFloorRatio < 0.85 && stats42.runsPerWeek < runsTarget + 0.2) base = Math.min(base, 80);
   if (stats42.runDaysPerWeek < runsTarget - 0.1) base = Math.min(base, 89);
   const baseEliteUnlocked =
     stats42.runDaysPerWeek >= runsTarget + 0.4 &&
@@ -5780,7 +5786,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const keyTypes42 = keyStats42.types.length ? keyStats42.types : keyTypes;
   const matchedFocusTypes = focus.filter((type) => keyTypes42.includes(type));
   const matchedRecentFocusTypes = focus.filter((type) => keyTypes.includes(type));
-  const focusHits = matchedFocusTypes.length;
+  const focusHits = Number(context?.keyCompliance?.focusHits ?? matchedFocusTypes.length);
   const focusCoverage = focus.length ? focusHits / focus.length : 0;
   const recentFocusCoverage = focus.length ? matchedRecentFocusTypes.length / focus.length : 0;
   const keyDensity28 = clamp(keyStats28.count / Math.max(1, 4), 0, 1);
@@ -5850,9 +5856,9 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   if (strain > 1200) fatiguePenalty += 8;
   if (acwr > 1.3) fatiguePenalty += 8;
   if (!snapshot.keySpacingOk) fatiguePenalty += 12;
-  let robustness = clamp(Math.round(continuityScore * 0.32 + runDayScore * 0.18 + strengthScore * 0.28 + spacingScore * 0.12 + (100 - fatiguePenalty) * 0.10), 0, 100);
+  let robustness = clamp(Math.round(continuityScore * 0.30 + runDayScore * 0.18 + strengthScore * 0.36 + spacingScore * 0.10 + (100 - fatiguePenalty) * 0.06), 0, 100);
   if (snapshot.strengthMin <= 15 && !snapshot.keySpacingOk) robustness = Math.min(robustness, 62);
-  else if (snapshot.strengthMin <= 15) robustness = Math.min(robustness, 68);
+  else if (snapshot.strengthMin <= 15) robustness = Math.min(robustness, 64);
   else if (!snapshot.keySpacingOk) robustness = Math.min(robustness, 74);
 
   const executionProcess = clamp(Math.round(snapshot.executionScore || 0), 0, 100);
@@ -5943,7 +5949,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         stats28.runsPerWeek < runsTarget ? "Frequenz unter Ziel" : null,
         snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil unter Ziel" : null,
       ].filter(Boolean),
-      interpretation: base >= 75 ? "Basis stabil und amateurrobust." : base >= 55 ? "Basis solide, über Kontinuität weiter festigen." : "Basis ist aktuell der größte Hebel.",
+      interpretation: base >= 84 ? "Basis stabil und belastbar." : base >= 60 ? "Basis solide, aber noch unter Zielkorridor." : "Basis okay, über Kontinuität weiter festigen.",
     },
     specificity: {
       score: specificity,
@@ -6267,6 +6273,16 @@ function capText(s, maxChars) {
   return `${x.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function isEasyTodayDecision(text) {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized) return false;
+  const easySignals = ["locker", "steady", "ga", "regeneration", "easy"];
+  const hardSignals = ["@", "interval", "vo2", "schwelle", "racepace", "key", "tempo"];
+  const hasEasy = easySignals.some((signal) => normalized.includes(signal));
+  const hasHard = hardSignals.some((signal) => normalized.includes(signal));
+  return hasEasy && !hasHard;
+}
+
 function buildRecommendationsAndBottomLine(state) {
   const rec = [];
   const bottom = [];
@@ -6286,8 +6302,11 @@ function buildRecommendationsAndBottomLine(state) {
   const distanceDiagnostics = state?.distanceDiagnostics || null;
   const gapRecommendations = state?.gapRecommendations || null;
 
-  bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
-  if (state?.keyAllowedNow && explicitSessionShort) {
+  const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
+  const easyDecision = isEasyTodayDecision(todayAction);
+  bottom.push(`Heute: ${todayAction}.`);
+  if (!easyDecision && state?.keyAllowedNow && explicitSessionShort) {
+    // Nur bei einem expliziten Key-Tag als Tagesentscheidung in die Bottom-Line aufnehmen.
     bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
   }
 
@@ -6349,7 +6368,7 @@ function buildRecommendationsAndBottomLine(state) {
 
   return {
     recommendations: capLines(rec, 6).map((x) => capText(x, 180)),
-    bottomLine: capLines(bottom, 3).map((x) => capText(x, 180)),
+    bottomLine: capLines(bottom, 1).map((x) => capText(x, 180)),
   };
 }
 
