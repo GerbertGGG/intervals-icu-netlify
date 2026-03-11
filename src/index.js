@@ -6780,6 +6780,7 @@ function buildComments(
       if (diagnoseDebugLines.length) addDecisionBlock("DIAGNOSE / DEBUG", diagnoseDebugLines);
       addDecisionBlock("FOKUS", focusLines.slice(0, 2));
     }
+    addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
     return lines.join("\n");
   }
 
