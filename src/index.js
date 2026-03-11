@@ -3841,6 +3841,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const allowedHits = uniqueTypes7.filter((t) => keyRules.allowedKeyTypes.includes(t));
   const preferredHits = uniqueTypes7.filter((t) => keyRules.preferredKeyTypes.includes(t));
   const disallowedHits = uniqueTypes7.filter((t) => !keyRules.allowedKeyTypes.includes(t));
+  const focusTarget = keyRules.preferredKeyTypes.length || keyRules.allowedKeyTypes.length || 0;
+  const focusHits = focusTarget > 0
+    ? keyRules.preferredKeyTypes.filter((t) => uniqueTypes.includes(t)).length
+    : 0;
+  const coverageSummary = `${focusHits}/${focusTarget}`;
 
   const freqOk = actual7 >= expected;
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
@@ -3940,6 +3945,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     bannedHits,
     allowedHits,
     preferredHits,
+    focusHits,
+    focusTarget,
+    coverageSummary,
     actualTypes: uniqueTypes,
     disallowedHits,
     status,
@@ -6072,6 +6080,49 @@ function buildGapRecommendations(diagnostics) {
   };
 }
 
+const COACH_GAP_LANGUAGE = {
+  base: {
+    label: "Basis",
+    aliases: ["Volumen", "Kontinuität"],
+    focus: "Volumen stabilisieren.",
+  },
+  specificity: {
+    label: "Spezifik",
+    aliases: ["rennahe Reize"],
+    focus: "Den nächsten passenden Reiz sauber setzen.",
+  },
+  longrun: {
+    label: "Longrun",
+    aliases: ["längerer aerober Reiz"],
+    focus: "Longrun stabil halten.",
+  },
+  robustness: {
+    label: "Robustheit",
+    aliases: ["Kraft", "Belastbarkeit"],
+    focus: "Kraft zurückbringen.",
+  },
+  execution: {
+    label: "Struktur",
+    aliases: ["Rhythmus", "Wochenstruktur", "Planruhe"],
+    focus: "Rhythmus sauber halten.",
+  },
+};
+
+function mapGapToCoachLanguage(gap) {
+  return COACH_GAP_LANGUAGE[gap] || { label: "Stabilität", aliases: ["Rhythmus"], focus: "Wochenstruktur stabilisieren." };
+}
+
+function buildCoachFocusSummary(primaryGap, secondaryGap) {
+  const primary = mapGapToCoachLanguage(primaryGap);
+  const secondary = secondaryGap ? mapGapToCoachLanguage(secondaryGap) : null;
+  return {
+    label: secondary ? `${primary.label} + ${secondary.label}` : primary.label,
+    action: secondary ? `${primary.focus} ${secondary.focus}` : primary.focus,
+    primary,
+    secondary,
+  };
+}
+
 function computeLongrunFrequency21d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 20 * 86400000));
@@ -6687,61 +6738,64 @@ function buildComments(
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
   ];
 
-  const robustnessLimited = (distanceDiagnostics?.primaryGap || "") === "robustness"
-    || Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0);
-  const focusLabel = !ignoreRunFloorGap && runFloorGap < 0
-    ? (robustnessLimited ? "Volumen + Robustheit" : "Volumen")
-    : (distanceDiagnostics?.primaryGap || "Stabilität");
+  const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
+  const focusLabel = coachFocus.label;
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
   const todayBlock = [
     `${todayDecision}.`,
-    keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.",
+    spacingBlocked && nextAllowed
+      ? `Nächster Key frühestens in ${Math.max(0, diffDays(todayIso, nextAllowed)) * 24}h.`
+      : (keyBlocked ? "Heute kein zusätzlicher Key." : "Key-Fenster offen."),
   ];
 
-  const shortReasonsRanked = [
-    {
-      active: fatigue?.override === true,
-      reason: `Fatigue-Override aktiv (${(fatigue?.reasons || []).slice(0, 1).join(" | ") || "Belastungsschutz"})`,
-    },
-    {
-      active: budgetBlocked,
-      reason: `Key-Budget erreicht (${actualKeys7}/${keyCap7} in 7 Tagen)`,
-    },
-    {
-      active: spacingBlocked,
-      reason: `Key-Abstand noch nicht erfüllt (Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)})`,
-    },
-    {
-      active: !ignoreRunFloorGap && runFloorGap < 0,
-      reason: `RunFloor unter Ziel (${runFloorCurrent}/${runTarget}, Gap ${Math.abs(runFloorGap)})`,
-    },
-    {
-      active: Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0),
-      reason: `Krafttraining unter Soll (${strengthPolicy.minutes7d}′/${strengthPolicy.target}′)`,
-    },
-    {
-      active: keyCompliance?.intensityDistribution?.hardOver === true,
-      reason: `Hard-Anteil über Ziel (${Math.round((keyCompliance.intensityDistribution.hardShare || 0) * 100)}%)`,
-    },
-    {
-      active: Boolean(distanceDiagnostics?.primaryGap),
-      reason: `Diagnose-Hauptlücke: ${distanceDiagnostics?.primaryGap}`,
-    },
-  ];
-  const shortReasons = shortReasonsRanked.filter((x) => x.active).map((x) => x.reason).slice(0, 3);
+  const gapReasonMap = {
+    base: [
+      !ignoreRunFloorGap && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
+      intensityDistribution?.easyUnder ? `Easy-Anteil unter Ziel (${easySharePct}% < ${easyMinPct}%)` : null,
+      "Volumen noch nicht stabil.",
+    ],
+    specificity: [
+      keyCompliance?.preferredMissing ? "Distanzspezifische Reize noch nicht breit genug." : null,
+      keyCompliance?.freqOk === false ? "Passender Reiz fehlt oder ist noch zu selten." : null,
+      "Nächsten Reiz gezielter setzen.",
+    ],
+    longrun: [
+      longRunDoneMin < longRunTargetMin ? `Longrun zuletzt kürzer (${longRunDoneMin}′/${longRunTargetMin}′)` : null,
+      Number(distanceDiagnostics?.snapshot?.longrunFrequency35d ?? 0) < 2 ? "Longrun-Frequenz zu niedrig." : null,
+      "Längerer aerober Reiz nicht regelmäßig genug.",
+    ],
+    robustness: [
+      Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0)
+        ? `Krafttraining unter Soll (${strengthPolicy.minutes7d}′/${strengthPolicy.target}′)`
+        : null,
+      "Belastbarkeit noch nicht stabil genug.",
+    ],
+    execution: [
+      spacingBlocked ? `Key-Abstand noch nicht erfüllt (ab ${nextAllowed || "n/a"})` : null,
+      budgetBlocked ? `Key-Budget erreicht (${actualKeys7}/${keyCap7} in 7 Tagen)` : null,
+      "Wochenstruktur aktuell nicht sauber genug.",
+      fatigue?.override ? "Rhythmus aktuell unruhig." : null,
+    ],
+  };
 
-  const focusLines = [];
-  if (!ignoreRunFloorGap && runFloorGap < 0) {
-    focusLines.push("Volumen stabilisieren.");
-  } else if (distanceDiagnostics?.primaryGap) {
-    focusLines.push(`${distanceDiagnostics.primaryGap} priorisieren.`);
-  } else {
-    focusLines.push(`${focusLabel} stabil halten.`);
+  const rankedGaps = [distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap].filter(Boolean);
+  const shortReasons = [];
+  for (const gap of rankedGaps) {
+    for (const reason of gapReasonMap[gap] || []) {
+      if (!reason) continue;
+      if (!shortReasons.includes(reason)) shortReasons.push(reason);
+      if (shortReasons.length >= 3) break;
+    }
+    if (shortReasons.length >= 3) break;
   }
-  if (Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0)) {
-    focusLines.push("Krafttraining zurückbringen.");
-  } else if (fatigue?.override) {
-    focusLines.push("Frische priorisieren.");
+  if (shortReasons.length < 3 && Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0)) {
+    const strengthReason = `Krafttraining unter Soll (${strengthPolicy.minutes7d}′/${strengthPolicy.target}′)`;
+    if (!shortReasons.includes(strengthReason)) shortReasons.push(strengthReason);
+  }
+
+  const focusLines = [coachFocus.action || "Wochenstruktur stabilisieren."];
+  if (Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0) && !focusLines.includes("Kraft zurückbringen.")) {
+    focusLines.push("Kraft zurückbringen.");
   }
 
   if (normalizedVerbosity !== "debug") {
@@ -6763,12 +6817,12 @@ function buildComments(
     if ((distanceDiagnostics?.strengths || []).length) {
       diagnoseDebugLines.push(`Stärken: ${(distanceDiagnostics.strengths || []).slice(0, 2).join(", ")}`);
     }
-    diagnoseDebugLines.push(`Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`);
+    diagnoseDebugLines.push(`Limitierend: ${buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap).label || "n/a"}`);
 
     if (normalizedVerbosity === "coach") {
       const statusLines = [
         `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`,
-        `Hauptlimit: ${distanceDiagnostics?.primaryGap || "n/a"}`,
+        `Hauptlimit: ${mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a"}`,
       ];
       addDecisionBlock("STATUS", statusLines);
       addDecisionBlock("FOKUS", focusLines.slice(0, 2));
@@ -6784,11 +6838,12 @@ function buildComments(
     return lines.join("\n");
   }
 
-  const keyStatusLine = keyBlocked ? "Kein weiterer Key diese Woche." : "Key-Fenster offen.";
-  const keyStatusAlreadyInToday = /kein weiterer key diese woche/i.test(todayDecision);
+  const nextAllowedHours = spacingBlocked && nextAllowed ? Math.max(0, diffDays(todayIso, nextAllowed)) * 24 : null;
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
     `Heute: ${todayDecision}.`,
-    keyStatusAlreadyInToday ? null : keyStatusLine,
+    keyBlocked
+      ? (nextAllowedHours != null ? `Nächster Key frühestens in ${nextAllowedHours}h.` : "Heute kein zusätzlicher Key.")
+      : "Key-Fenster offen.",
     `Fokus: ${focusLabel}.`,
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
@@ -6825,7 +6880,7 @@ function buildComments(
   const scoreExplanationLines = [
     "SCORE-ERKLÄRUNG",
     `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
-    `Specificity · ${keyCompliance?.coverageSummary || "n/a"} | Hard ${Math.round((intensityDistribution?.hardShare || 0) * 100)}% | Block ${blockState?.block || "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
+    `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
     `Longrun · 14T ${longRunDoneMin}′ | Diagnose-Ziel ${prePlanLongRunTargetMin}′ | Progressionsschritt ${longRunSafetyCapMin}′ | Blockziel ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
     `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
     `Execution · Key-Frequenz ${actualKeys7Raw}/${keyCap7} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
