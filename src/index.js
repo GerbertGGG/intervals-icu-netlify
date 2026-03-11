@@ -6202,7 +6202,6 @@ function buildNextRunRecommendation({
   keyCapExceeded,
   keySpacingOk,
   keyAllowedNow,
-  keySuggestion,
   keyMinGapDays,
 }) {
   let next = "45–60 min locker/GA";
@@ -6227,12 +6226,46 @@ function buildNextRunRecommendation({
   } else if (!keySpacingOk) {
     const minGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
     next = `Nächster Key frühestens in ${minGapHours}h – bis dahin locker/GA.`;
-  } else if (keyAllowedNow) {
-    const optionalKeyHint = keySuggestion ? ` Optional: ${keySuggestion}` : " Optional: kurzer Key möglich, wenn du dich frisch fühlst.";
-    next = `${next}.${optionalKeyHint}`;
   }
 
   return next;
+}
+
+function buildDailyDecisionLayer({
+  primaryDecision,
+  keyAllowedNow,
+  fatigueOverride,
+  keyCapExceeded,
+  keySpacingOk,
+  keyBlocked,
+  overlayMode,
+  secondaryOptionCandidate,
+}) {
+  const hardStopModes = new Set(["DELOAD", "TAPER", "POST_RACE_RAMP", "LIFE_EVENT_STOP"]);
+  const hardBlockerActive = hardStopModes.has(overlayMode);
+  const easyPrimary = isEasyTodayDecision(primaryDecision);
+  const optionAllowed =
+    keyAllowedNow === true
+    && fatigueOverride !== true
+    && keyCapExceeded !== true
+    && keySpacingOk !== false
+    && keyBlocked !== true
+    && !hardBlockerActive;
+
+  const hint = optionAllowed && easyPrimary
+    ? "Key-Fenster offen, aber heute nicht priorisiert."
+    : (keyBlocked ? "Heute kein zusätzlicher Key." : "Key-Fenster offen.");
+
+  const secondaryOption = optionAllowed && easyPrimary && secondaryOptionCandidate
+    ? `Wenn du dich frisch fühlst: ${secondaryOptionCandidate}`
+    : null;
+
+  return {
+    primaryDecision,
+    optionAllowed,
+    secondaryOption,
+    hint,
+  };
 }
 
 function limitText(text, maxLen = 140) {
@@ -6558,7 +6591,6 @@ function buildComments(
     keyCapExceeded: budgetBlocked,
     keySpacingOk: spacingOk,
     keyAllowedNow: keyCompliance?.keyAllowedNow,
-    keySuggestion: keyCompliance?.suggestion,
     keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
@@ -6771,11 +6803,21 @@ function buildComments(
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
   const focusLabel = coachFocus.label;
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
+  const dailyDecisionLayer = buildDailyDecisionLayer({
+    primaryDecision: todayDecision,
+    keyAllowedNow,
+    fatigueOverride: fatigue?.override === true,
+    keyCapExceeded: budgetBlocked,
+    keySpacingOk: spacingOk,
+    keyBlocked,
+    overlayMode,
+    secondaryOptionCandidate: explicitSessionShort,
+  });
   const todayBlock = [
     `${todayDecision}.`,
     spacingBlocked && nextAllowed
       ? `Nächster Key frühestens in ${Math.max(0, diffDays(todayIso, nextAllowed)) * 24}h.`
-      : (keyBlocked ? "Heute kein zusätzlicher Key." : "Key-Fenster offen."),
+      : dailyDecisionLayer.hint,
   ];
 
   const gapReasonMap = {
@@ -6870,13 +6912,14 @@ function buildComments(
 
   const nextAllowedHours = spacingBlocked && nextAllowed ? Math.max(0, diffDays(todayIso, nextAllowed)) * 24 : null;
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
-    `Heute: ${todayDecision}.`,
+    `Heute: ${dailyDecisionLayer.primaryDecision}.`,
     keyBlocked
-      ? (nextAllowedHours != null ? `Nächster Key frühestens in ${nextAllowedHours}h.` : "Heute kein zusätzlicher Key.")
-      : "Key-Fenster offen.",
+      ? (nextAllowedHours != null ? `Nächster Key frühestens in ${nextAllowedHours}h.` : dailyDecisionLayer.hint)
+      : dailyDecisionLayer.hint,
     `Fokus: ${focusLabel}.`,
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
+  if (dailyDecisionLayer.secondaryOption) addDecisionBlock("OPTION", [dailyDecisionLayer.secondaryOption]);
 
   if (distanceDiagnostics) {
     const diagSummary = [];
