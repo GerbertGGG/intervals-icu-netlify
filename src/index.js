@@ -2472,8 +2472,10 @@ function summarizeIntervalSessionQuality(activity) {
     })
     .map((seg) => {
       const speed = Number(seg.average_speed);
+      const sec = Number(seg?.moving_time ?? seg?.elapsed_time);
       return {
         distM: Number(seg.distance),
+        sec,
         paceSecPerKm: 1000 / speed,
       };
     });
@@ -2482,8 +2484,11 @@ function summarizeIntervalSessionQuality(activity) {
 
   const recoveries = intervals
     .filter((seg) => String(seg?.type ?? "").toUpperCase() === "RECOVERY")
-    .map((seg) => Number(seg?.average_speed))
-    .filter((x) => Number.isFinite(x) && x > 0);
+    .map((seg) => ({
+      speed: Number(seg?.average_speed),
+      sec: Number(seg?.moving_time ?? seg?.elapsed_time),
+    }))
+    .filter((x) => Number.isFinite(x.speed) && x.speed > 0);
 
   const repPaces = reps.map((r) => r.paceSecPerKm);
   const avgPace = avg(repPaces);
@@ -2495,47 +2500,84 @@ function summarizeIntervalSessionQuality(activity) {
   const targetPace = parseTargetPaceSecPerKmFromActivity(activity);
   const hasTargetPace = Number.isFinite(targetPace) && targetPace > 0;
   const repMedianPace = median(repPaces);
-  let targetHitPoints = 2;
-  let targetHitRepShare = null;
-  let targetHitRepCount = null;
-  if (hasTargetPace) {
-    const relErrors = repPaces
-      .map((pace) => (Number.isFinite(pace) && targetPace > 0 ? Math.abs(pace - targetPace) / targetPace : null))
-      .filter((x) => Number.isFinite(x));
-    const hitCorridor = 0.04;
-    targetHitRepCount = relErrors.filter((err) => err <= hitCorridor).length;
-    targetHitRepShare = relErrors.length ? targetHitRepCount / relErrors.length : null;
+  const firstRepPace = repPaces[0];
+  const lastRepPace = repPaces[repPaces.length - 1];
+  const fastestRepPace = Math.min(...repPaces);
+  const slowestRepPace = Math.max(...repPaces);
+  const fastestRepIdx = repPaces.indexOf(fastestRepPace);
+  const firstHalfCutoff = Math.floor((repPaces.length - 1) / 2);
 
-    if (Number.isFinite(targetHitRepShare)) {
-      if (targetHitRepShare >= 0.85) targetHitPoints = 3;
-      else if (targetHitRepShare >= 0.65) targetHitPoints = 2.5;
-      else if (targetHitRepShare >= 0.45) targetHitPoints = 2;
-      else if (targetHitRepShare >= 0.25) targetHitPoints = 1.5;
-      else targetHitPoints = 1;
-    }
-  }
+  const startDeltaAbsPct = Number.isFinite(repMedianPace) && repMedianPace > 0
+    ? Math.abs(firstRepPace - repMedianPace) / repMedianPace
+    : null;
+  const startFastPct = Number.isFinite(repMedianPace) && repMedianPace > 0
+    ? Math.max(0, (repMedianPace - firstRepPace) / repMedianPace)
+    : null;
+  const finishLossPct = Number.isFinite(repMedianPace) && repMedianPace > 0
+    ? Math.max(0, (lastRepPace - repMedianPace) / repMedianPace)
+    : null;
+  const rangePct = Number.isFinite(repMedianPace) && repMedianPace > 0
+    ? (slowestRepPace - fastestRepPace) / repMedianPace
+    : null;
+  const closeShareTight = Number.isFinite(repMedianPace) && repMedianPace > 0
+    ? repPaces.filter((pace) => Math.abs(pace - repMedianPace) / repMedianPace <= 0.025).length / repPaces.length
+    : null;
+  const closeShareLoose = Number.isFinite(repMedianPace) && repMedianPace > 0
+    ? repPaces.filter((pace) => Math.abs(pace - repMedianPace) / repMedianPace <= 0.035).length / repPaces.length
+    : null;
+
+  const earlyFastestRep = fastestRepIdx <= firstHalfCutoff;
+  const overpacedStart = Number.isFinite(startFastPct) && startFastPct > 0.03;
+  const clearDrop = Number.isFinite(finishLossPct) && finishLossPct > 0.04;
+
+  let executionPenalty = 0;
+  if (Number.isFinite(startFastPct) && startFastPct > 0.03) executionPenalty += 0.5;
+  else if (Number.isFinite(startFastPct) && startFastPct > 0.015) executionPenalty += 0.25;
+
+  if (Number.isFinite(finishLossPct) && finishLossPct > 0.04) executionPenalty += 0.5;
+  else if (Number.isFinite(finishLossPct) && finishLossPct > 0.025) executionPenalty += 0.25;
+
+  if (earlyFastestRep && overpacedStart && clearDrop) executionPenalty += 0.5;
+  executionPenalty = Math.min(2, executionPenalty);
+  let executionPoints = Math.max(1, Math.min(3, 3 - executionPenalty));
+  executionPoints = Math.round(executionPoints * 2) / 2;
 
   let consistencyPoints = 1.5;
-  if (Number.isFinite(cvPct) && Number.isFinite(fadePct)) {
-    if (cvPct <= 3.5 && fadePct <= 0) consistencyPoints = 3;
-    else if (cvPct <= 5 && fadePct <= 0.02) consistencyPoints = 2.5;
-    else if (cvPct <= 7 && fadePct <= 0.04) consistencyPoints = 2;
-    else if (cvPct <= 9 && fadePct <= 0.06) consistencyPoints = 1.5;
+  if (Number.isFinite(cvPct) && Number.isFinite(fadePct) && Number.isFinite(rangePct)) {
+    if (cvPct <= 2.5 && fadePct <= 0.02 && rangePct <= 0.05 && (closeShareTight ?? 0) >= 0.8) consistencyPoints = 3;
+    else if (cvPct <= 4 && fadePct <= 0.04 && rangePct <= 0.07 && (closeShareLoose ?? 0) >= 0.6) consistencyPoints = 2.5;
+    else if (cvPct <= 6 && fadePct <= 0.06 && rangePct <= 0.1) consistencyPoints = 2;
+    else if (cvPct <= 8 && fadePct <= 0.08) consistencyPoints = 1.5;
     else consistencyPoints = 1;
   }
+  const lowRepConfidence = reps.length < 4;
 
-  let specificityVolume = 0.4;
-  if (qualityKm >= 4) specificityVolume = 2;
-  else if (qualityKm >= 3) specificityVolume = 1.6;
-  else if (qualityKm >= 2.4) specificityVolume = 1.2;
-  else if (qualityKm >= 1.6) specificityVolume = 0.8;
+  const qualitySec = reps.reduce((sum, r) => sum + (Number.isFinite(r.sec) ? r.sec : 0), 0);
+  const qualityMin = qualitySec / 60;
+  const repDurations = reps.map((r) => r.sec).filter((x) => Number.isFinite(x) && x > 0);
+  const medianRepSec = repDurations.length ? median(repDurations) : null;
+  const recoverySec = recoveries.reduce((sum, r) => sum + (Number.isFinite(r.sec) ? r.sec : 0), 0);
+  const recoveryWorkRatio = qualitySec > 0 ? recoverySec / qualitySec : null;
   const jogRecoveryShare = recoveries.length
-    ? recoveries.filter((v) => v >= 1.8).length / recoveries.length
+    ? recoveries.filter((v) => v.speed >= 1.8).length / recoveries.length
     : 0;
-  const specificityRecovery = recoveries.length ? (jogRecoveryShare >= 0.6 ? 1 : 0.4) : 0.5;
-  const specificityPoints = Math.min(3, specificityVolume + specificityRecovery);
 
-  const totalPoints = targetHitPoints + consistencyPoints + specificityPoints;
+  let specificityQualityTime = 0.7;
+  if (qualityMin >= 30) specificityQualityTime = 1.6;
+  else if (qualityMin >= 20) specificityQualityTime = 1.4;
+  else if (qualityMin >= 12) specificityQualityTime = 1.1;
+
+  let specificityRepDuration = 0.3;
+  if (Number.isFinite(medianRepSec) && medianRepSec >= 180 && medianRepSec <= 900) specificityRepDuration = 0.9;
+  else if (Number.isFinite(medianRepSec) && medianRepSec >= 120 && medianRepSec <= 1200) specificityRepDuration = 0.6;
+
+  let specificityRecovery = 0.3;
+  if (Number.isFinite(recoveryWorkRatio) && recoveryWorkRatio >= 0.25 && recoveryWorkRatio <= 0.9 && jogRecoveryShare >= 0.6) specificityRecovery = 0.8;
+  else if (Number.isFinite(recoveryWorkRatio) && recoveryWorkRatio <= 1.2) specificityRecovery = 0.5;
+
+  const specificityPoints = Math.max(1, Math.min(3, specificityQualityTime + specificityRepDuration + specificityRecovery));
+
+  const totalPoints = executionPoints + consistencyPoints + specificityPoints;
   let verdict = "gute Einheit";
   if (totalPoints >= 8.2) verdict = "sehr gute Einheit";
   else if (totalPoints < 6) verdict = "solide Einheit";
@@ -2547,15 +2589,77 @@ function summarizeIntervalSessionQuality(activity) {
     return `${min}:${String(sec).padStart(2, "0")}/km`;
   };
 
+  const executionLine = executionPoints >= 2.8
+    ? "Ausführung: sehr gut dosiert (kontrollierter Einstieg, Schluss haltbar)."
+    : executionPoints >= 2.4
+      ? "Ausführung: überwiegend sauber (leichter Start-/Finish-Drift, aber gut kontrolliert)."
+      : executionPoints >= 1.9
+        ? "Ausführung: solide, aber suboptimal eingeteilt (spürbarer Drift)."
+        : executionPoints >= 1.4
+          ? `Ausführung: eher unrund (${overpacedStart ? "zu schnell angelaufen" : "unruhige Dosierung"}${clearDrop ? ", mit deutlichem Abfall" : ""}).`
+          : `Ausführung: klar überzogen (${overpacedStart ? "aggressiver Start" : "schwache Einteilung"}${clearDrop ? ", starker Einbruch" : ""}).`;
+
+  const consistencyCoreLine = consistencyPoints >= 2.8
+    ? "Stabilität: sehr hoch (geringe Streuung, kaum Fade, Reps eng beieinander)."
+    : consistencyPoints >= 2.4
+      ? "Stabilität: gut (kleine Unruhe, insgesamt reproduzierbar)."
+      : consistencyPoints >= 1.9
+        ? "Stabilität: mittel (merkliche Streuung oder moderater Fade)."
+        : consistencyPoints >= 1.4
+          ? "Stabilität: eingeschränkt (deutlicher Fade oder unruhige Rep-Verteilung)."
+          : "Stabilität: schwach (Reps stark auseinandergefallen).";
+  const consistencyLine = lowRepConfidence
+    ? `${consistencyCoreLine} Hinweis: geringe Rep-Anzahl, Stabilitätsurteil mit reduzierter Sicherheit.`
+    : consistencyCoreLine;
+
+  const specificityLine = specificityPoints >= 2.8
+    ? "Spezifität: hoch (gute Qualitätszeit, passende Rep-Länge, sinnvolle Pausenstruktur)."
+    : specificityPoints >= 2.4
+      ? "Spezifität: solide (grundsätzlich threshold-taugliche Struktur)."
+      : specificityPoints >= 1.9
+        ? "Spezifität: mittel (Reiz vorhanden, aber noch ausbaufähig)."
+        : specificityPoints >= 1.4
+          ? "Spezifität: eher begrenzt (Struktur nur teilweise schwellen-spezifisch)."
+          : "Spezifität: niedrig (kein klarer Schwellencharakter in der Struktur).";
+
+  const targetContextLine = hasTargetPace
+    ? `RP-Kontext: Zielpace hinterlegt; Median ${formatPace(repMedianPace)}.`
+    : `RP-Kontext: keine Zielpace hinterlegt; Bewertung über Session-Struktur (Median ${formatPace(repMedianPace)}).`;
+
+  let nextLever = "Pausen aktiv und rhythmisch traben";
+  if (executionPoints <= 1.5) {
+    if (overpacedStart && clearDrop) nextLever = "Dosierung priorisieren: erster Rep klar kontrollierter, damit der Schluss nicht einbricht";
+    else if (overpacedStart) nextLever = "Dosierung priorisieren: kontrollierter anlaufen statt früh zu überpacen";
+    else if (clearDrop) nextLever = "Haltbarkeit priorisieren: Einstieg minimal defensiver, Schluss stabiler halten";
+    else nextLever = "Dosierung priorisieren: Einstieg konservativer und gleichmäßig aufbauen";
+  } else if (specificityPoints <= 1.5) {
+    if (qualityMin < 12) nextLever = "Spezifität erhöhen: mehr Qualitätszeit im Schwellenbereich sammeln";
+    else if (Number.isFinite(medianRepSec) && medianRepSec < 180) nextLever = "Spezifität erhöhen: etwas längere, threshold-typische Reps wählen";
+    else if (Number.isFinite(recoveryWorkRatio) && recoveryWorkRatio > 1.2) nextLever = "Spezifität erhöhen: Pausen kompakter/aktiver gestalten";
+    else nextLever = "Spezifität erhöhen: Struktur stärker auf zusammenhängenden Schwellenreiz ausrichten";
+  } else if (consistencyPoints <= 1.5) {
+    if (Number.isFinite(cvPct) && cvPct > 6) nextLever = "Konstanz erhöhen: Reps enger bündeln und Pace-Ausschläge reduzieren";
+    else if (Number.isFinite(fadePct) && fadePct > 0.06) nextLever = "Konstanz erhöhen: Tempoverlauf glätten, damit der Fade sinkt";
+    else nextLever = "Konstanz erhöhen: gleichmäßigeren Rhythmus über alle Reps halten";
+  } else {
+    if (executionPoints <= specificityPoints && executionPoints <= consistencyPoints) {
+      nextLever = "Feintuning Ausführung: Einstieg noch ruhiger setzen, Schluss maximal haltbar halten";
+    } else if (specificityPoints <= executionPoints && specificityPoints <= consistencyPoints) {
+      nextLever = "Feintuning Spezifität: etwas mehr schwellen-typische Qualitätszeit/Struktur setzen";
+    } else {
+      nextLever = "Feintuning Konstanz: Reps noch reproduzierbarer um den Session-Rhythmus laufen";
+    }
+  }
+
   return {
     qualityKm,
     specificityPoints,
     lines: [
-      hasTargetPace
-        ? `RP getroffen: ${targetHitPoints >= 2.5 ? "ja" : "teilweise"}${Number.isFinite(targetHitRepCount) ? ` (${targetHitRepCount}/${reps.length} Reps im Zielkorridor ±4%)` : ""}${Number.isFinite(repMedianPace) ? `; Rep-Median ${formatPace(repMedianPace)}` : ""}.`
-        : `RP-Check: offen (keine RP/Zielpace hinterlegt${Number.isFinite(repMedianPace) ? `; Rep-Median ${formatPace(repMedianPace)} nur als Kontext` : ""}).`,
-      `Stabil: ${consistencyPoints >= 2.5 ? "ja" : "eingeschränkt"} (${Number.isFinite(fadePct) && fadePct <= 0 ? "kein Einbruch" : "leichter Pace-Abfall"}${reps[reps.length - 1]?.paceSecPerKm <= reps[0]?.paceSecPerKm ? "; letzter Rep nicht langsamer" : ""}).`,
-      `Session-Score: ${totalPoints.toFixed(1)}/9 → ${verdict}${needsSpecificity ? ", aber noch nicht spezifisch genug" : ""}. Nächster Hebel: ${qualityKm < 3 ? "mehr RP-Volumen" : "Pausen aktiver traben"}.`,
+      executionLine,
+      consistencyLine,
+      specificityLine,
+      targetContextLine,
+      `Session-Score: ${totalPoints.toFixed(1)}/9 → ${verdict}${needsSpecificity ? ", aber noch nicht spezifisch genug" : ""}. Nächster Hebel: ${nextLever}.`,
     ],
   };
 }
