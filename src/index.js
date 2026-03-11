@@ -2454,7 +2454,7 @@ function parseTargetPaceSecPerKmFromActivity(activity) {
   return min * 60 + sec;
 }
 
-function deriveNextLeverMeta(metrics = {}) {
+function deriveThresholdLeverMeta(metrics = {}) {
   const {
     executionPoints,
     consistencyPoints,
@@ -2518,6 +2518,45 @@ function deriveNextLeverMeta(metrics = {}) {
   return { domain: "consistency", reason: "high_cv", severity: "low", action: "stabilize_rhythm", cue: "Reps reproduzierbar um den Session-Rhythmus laufen" };
 }
 
+function deriveRacepaceLeverMeta(metrics = {}) {
+  const base = deriveThresholdLeverMeta(metrics);
+  if (!base?.domain) return null;
+  return {
+    ...base,
+    cue: base.cue || "Racepace-Abschnitte kontrolliert eröffnen und stabil schließen",
+  };
+}
+
+function deriveVo2LeverMeta(metrics = {}) {
+  const base = deriveThresholdLeverMeta(metrics);
+  if (!base?.domain) return null;
+  return {
+    ...base,
+    cue: base.cue || "VO2-Abschnitte gleichmäßig steuern und Pausen aktiv halten",
+  };
+}
+
+function deriveKeyLeverMeta(session = {}, metrics = {}) {
+  const keyType = normalizeKeyType(session?.keyType, {
+    activity: session?.activity,
+    movingTime: Number(session?.activity?.moving_time ?? session?.activity?.elapsed_time ?? 0),
+  });
+  switch (keyType) {
+    case "schwelle":
+      return deriveThresholdLeverMeta(metrics);
+    case "racepace":
+      return deriveRacepaceLeverMeta(metrics);
+    case "vo2_touch":
+      return deriveVo2LeverMeta(metrics);
+    default:
+      return null;
+  }
+}
+
+function deriveNextLeverMeta(metrics = {}) {
+  return deriveThresholdLeverMeta(metrics);
+}
+
 function leverMetaToText(leverMeta = null) {
   if (!leverMeta?.domain) return "Pausen aktiv und rhythmisch traben";
   const textMap = {
@@ -2540,7 +2579,7 @@ function leverMetaToText(leverMeta = null) {
   return textMap?.[leverMeta.domain]?.[leverMeta.reason] || leverMeta.cue || "Pausen aktiv und rhythmisch traben";
 }
 
-function summarizeIntervalSessionQuality(activity) {
+function summarizeIntervalSessionQuality(activity, options = {}) {
   const intervals = getActivityIntervals(activity);
   if (!intervals.length) return null;
 
@@ -2712,7 +2751,10 @@ function summarizeIntervalSessionQuality(activity) {
     ? `RP-Kontext: Zielpace hinterlegt; Median ${formatPace(repMedianPace)}.`
     : `RP-Kontext: keine Zielpace hinterlegt; Bewertung über Session-Struktur (Median ${formatPace(repMedianPace)}).`;
 
-  const nextLeverMeta = deriveNextLeverMeta({
+  const nextLeverMeta = deriveKeyLeverMeta({
+    keyType: options?.keyType || getKeyType(activity),
+    activity,
+  }, {
     executionPoints,
     consistencyPoints,
     specificityPoints,
@@ -3737,7 +3779,7 @@ function formatLeverAwareSessionText(baseText, lever = null, adaptation = null) 
       ? "Konstanz"
       : "Spezifität";
   const reasonLabel = String(lever.reason || "").replace(/_/g, "-");
-  const leverLine = `Hebel aus letzter Schwellen-Session: ${domainLabel} / ${reasonLabel}.`;
+  const leverLine = `Hebel aus letzter Key-Session: ${domainLabel} / ${reasonLabel}.`;
   const adjustmentLine = adaptation?.adjustmentLine || "Anpassung: keine strukturelle Änderung, Fokus auf Ausführungscue.";
   const cueLine = adaptation?.cue ? `Cue: ${adaptation.cue}.` : "";
   return `${leverLine} ${adjustmentLine} ${baseText}${cueLine ? ` ${cueLine}` : ""}`.trim();
@@ -4126,46 +4168,50 @@ function getLastKeyTypeBeforeDay(ctx, dayIso, windowDays = 21) {
   });
 }
 
-function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35, options = {}) {
+function getLastRelevantKeyLeverBeforeDay(ctx, dayIso, lookbackDays = 35, options = {}) {
   const requireNoKeyAfter = options?.requireNoKeyAfter !== false;
   if (!dayIso || !isIsoDate(dayIso)) return null;
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
 
-  let lastThresholdActivity = null;
+  let lastKeyActivity = null;
+  let lastKeyType = null;
   let lastDate = "";
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const explicitKeyTag = hasKeyTag(a);
+    if (!explicitKeyTag) continue;
     const rawType = explicitKeyTag ? getKeyType(a) : null;
     const normalized = normalizeKeyType(rawType, {
       activity: a,
       movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
     });
-    const thresholdLike = normalized === "schwelle" || isTempoDauerlaufKey(a);
-    if (!thresholdLike) continue;
-    if (!lastThresholdActivity || d > lastDate) {
-      lastThresholdActivity = a;
+    const leverRelevantType = normalized === "schwelle" || normalized === "racepace" || normalized === "vo2_touch";
+    if (!leverRelevantType) continue;
+    if (!lastKeyActivity || d > lastDate) {
+      lastKeyActivity = a;
+      lastKeyType = normalized;
       lastDate = d;
     }
   }
 
-  if (!lastThresholdActivity || !lastDate) return null;
+  if (!lastKeyActivity || !lastDate || !lastKeyType) return null;
 
   // Hebel nur bis zum nächsten Key mitschleppen: sobald nach der Threshold-Session ein Key stattfand,
   // wird für die aktuelle Entscheidung neu bewertet statt den alten Hebel weiterzutragen.
-  const hasAnyKeyAfterThreshold = (ctx.activitiesAll || []).some((a) => {
+  const hasAnyKeyAfterLastRelevant = (ctx.activitiesAll || []).some((a) => {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     return d && d > lastDate && d < endIso && hasKeyTag(a);
   });
-  if (requireNoKeyAfter && hasAnyKeyAfterThreshold) return null;
+  if (requireNoKeyAfter && hasAnyKeyAfterLastRelevant) return null;
 
-  const review = summarizeIntervalSessionQuality(lastThresholdActivity);
+  const review = summarizeIntervalSessionQuality(lastKeyActivity, { keyType: lastKeyType });
   if (!review?.nextLeverMeta?.domain) return null;
   return {
     date: lastDate,
+    keyType: lastKeyType,
     nextLever: review.nextLever || null,
     nextLeverMeta: review.nextLeverMeta,
   };
@@ -4173,7 +4219,7 @@ function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35, options 
 
 function getLastSessionLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
   if (!dayIso || !isIsoDate(dayIso)) return null;
-  return getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays, { requireNoKeyAfter: false });
+  return getLastRelevantKeyLeverBeforeDay(ctx, dayIso, lookbackDays, { requireNoKeyAfter: false });
 }
 
 function computeRacepaceBlockProgress(ctx, context = {}) {
@@ -4286,12 +4332,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const midShareBlocked = intensityDistribution?.midOver === true;
   const easyShareBlocked = intensityDistribution?.easyUnder === true;
   const preferredIntensity = mapKeyTypeToIntensity(preferred, context.eventDistance);
-  const activeLever = context?.lastThresholdLever?.nextLeverMeta?.domain ? context.lastThresholdLever.nextLeverMeta : null;
-  const activeLeverText = context?.lastThresholdLever?.nextLever || (activeLever ? leverMetaToText(activeLever) : "");
+  const activeLever = context?.lastRelevantKeyLever?.nextLeverMeta?.domain ? context.lastRelevantKeyLever.nextLeverMeta : null;
+  const activeLeverText = context?.lastRelevantKeyLever?.nextLever || (activeLever ? leverMetaToText(activeLever) : "");
   const pendingLeverSource = context?.lastSessionLever?.nextLeverMeta?.domain
     ? context.lastSessionLever
-    : context?.lastThresholdLever?.nextLeverMeta?.domain
-      ? context.lastThresholdLever
+    : context?.lastRelevantKeyLever?.nextLeverMeta?.domain
+      ? context.lastRelevantKeyLever
       : null;
   const pendingLeverMeta = pendingLeverSource?.nextLeverMeta?.domain ? pendingLeverSource.nextLeverMeta : null;
 
@@ -4339,7 +4385,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   if (suggestion && keyAllowedNow) {
     const progressionHint = buildProgressionSuggestion(progression);
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
-    if (activeLeverText) suggestion = `${suggestion} Hebel aus letzter Schwellen-Session: ${activeLeverText}.`;
+    if (activeLeverText) suggestion = `${suggestion} Hebel aus letzter Key-Session: ${activeLeverText}.`;
   }
 
   const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
@@ -5549,7 +5595,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
-    const lastThresholdReview = getLastThresholdLeverBeforeDay(ctx, day, 35);
+    const lastRelevantKeyLeverReview = getLastRelevantKeyLeverBeforeDay(ctx, day, 35);
     const lastSessionLeverReview = getLastSessionLeverBeforeDay(ctx, day, 35);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
@@ -5757,7 +5803,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weekInBlock,
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
-      lastThresholdLever: lastThresholdReview || null,
+      lastRelevantKeyLever: lastRelevantKeyLeverReview || null,
       lastSessionLever: lastSessionLeverReview || null,
       historyMetrics,
       longrunSpecificity,
