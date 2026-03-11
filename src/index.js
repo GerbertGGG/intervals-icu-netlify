@@ -2454,6 +2454,92 @@ function parseTargetPaceSecPerKmFromActivity(activity) {
   return min * 60 + sec;
 }
 
+function deriveNextLeverMeta(metrics = {}) {
+  const {
+    executionPoints,
+    consistencyPoints,
+    specificityPoints,
+    overpacedStart,
+    clearDrop,
+    qualityMin,
+    medianRepSec,
+    recoveryWorkRatio,
+    cvPct,
+    fadePct,
+    rangePct,
+    lowRepConfidence,
+  } = metrics;
+
+  if (executionPoints <= 1.5) {
+    if (overpacedStart && clearDrop) {
+      return { domain: "execution", reason: "overpace_start", severity: "high", action: "control_start", cue: "1. Rep bewusst kontrolliert / nicht zu schnell anlaufen" };
+    }
+    if (overpacedStart) {
+      return { domain: "execution", reason: "overpace_start", severity: "medium", action: "control_start", cue: "1. Rep bewusst kontrolliert / nicht zu schnell anlaufen" };
+    }
+    if (clearDrop) {
+      return { domain: "execution", reason: "finish_loss", severity: "medium", action: "improve_durability", cue: "Schlussstabilität priorisieren" };
+    }
+    return { domain: "execution", reason: "pacing_general", severity: "low", action: "smooth_pacing", cue: "am Median orientieren, nicht aggressiv eröffnen" };
+  }
+
+  if (specificityPoints <= 1.5) {
+    if (qualityMin < 12) {
+      return { domain: "specificity", reason: "low_quality_time", severity: "high", action: "add_quality_time", cue: "mehr zusammenhängende Qualitätszeit" };
+    }
+    if (Number.isFinite(medianRepSec) && medianRepSec < 180) {
+      return { domain: "specificity", reason: "short_reps", severity: "medium", action: "lengthen_reps", cue: "längere, threshold-typische Reps wählen" };
+    }
+    if (Number.isFinite(recoveryWorkRatio) && recoveryWorkRatio > 1.2) {
+      return { domain: "specificity", reason: "long_recovery", severity: "medium", action: "tighten_recovery", cue: "Pausen kompakter und aktiver gestalten" };
+    }
+    return { domain: "specificity", reason: "low_quality_time", severity: "low", action: "add_quality_time", cue: "Struktur auf zusammenhängenden Schwellenreiz ausrichten" };
+  }
+
+  if (consistencyPoints <= 1.5) {
+    if (Number.isFinite(cvPct) && cvPct > 6) {
+      return { domain: "consistency", reason: "high_cv", severity: lowRepConfidence ? "medium" : "high", action: "stabilize_rhythm", cue: "alle Reps am Session-Median ausrichten" };
+    }
+    if (Number.isFinite(rangePct) && rangePct > 0.1) {
+      return { domain: "consistency", reason: "high_range", severity: "medium", action: "reduce_spread", cue: "gleichförmige Reps statt variabler Blöcke" };
+    }
+    if (Number.isFinite(fadePct) && fadePct > 0.06) {
+      return { domain: "consistency", reason: "high_fade", severity: "medium", action: "improve_evenness", cue: "keinen schnellen ersten Rep jagen" };
+    }
+    return { domain: "consistency", reason: "high_cv", severity: "low", action: "stabilize_rhythm", cue: "Rhythmus über alle Reps reproduzierbar halten" };
+  }
+
+  if (executionPoints <= specificityPoints && executionPoints <= consistencyPoints) {
+    return { domain: "execution", reason: "pacing_general", severity: "low", action: "smooth_pacing", cue: "ruhig anlaufen und Schluss stabil halten" };
+  }
+  if (specificityPoints <= executionPoints && specificityPoints <= consistencyPoints) {
+    return { domain: "specificity", reason: "low_quality_time", severity: "low", action: "add_quality_time", cue: "etwas mehr schwellen-typische Qualitätszeit setzen" };
+  }
+  return { domain: "consistency", reason: "high_cv", severity: "low", action: "stabilize_rhythm", cue: "Reps reproduzierbar um den Session-Rhythmus laufen" };
+}
+
+function leverMetaToText(leverMeta = null) {
+  if (!leverMeta?.domain) return "Pausen aktiv und rhythmisch traben";
+  const textMap = {
+    execution: {
+      overpace_start: "Dosierung priorisieren: kontrollierter anlaufen statt früh zu überpacen",
+      finish_loss: "Haltbarkeit priorisieren: Einstieg minimal defensiver, Schluss stabiler halten",
+      pacing_general: "Dosierung priorisieren: Einstieg konservativer und gleichmäßig aufbauen",
+    },
+    consistency: {
+      high_cv: "Konstanz erhöhen: Reps enger bündeln und Pace-Ausschläge reduzieren",
+      high_range: "Konstanz erhöhen: gleichförmige Reps mit engerem Korridor laufen",
+      high_fade: "Konstanz erhöhen: Tempoverlauf glätten, damit der Fade sinkt",
+    },
+    specificity: {
+      low_quality_time: "Spezifität erhöhen: mehr Qualitätszeit im Schwellenbereich sammeln",
+      short_reps: "Spezifität erhöhen: etwas längere, threshold-typische Reps wählen",
+      long_recovery: "Spezifität erhöhen: Pausen kompakter/aktiver gestalten",
+    },
+  };
+  return textMap?.[leverMeta.domain]?.[leverMeta.reason] || leverMeta.cue || "Pausen aktiv und rhythmisch traben";
+}
+
 function summarizeIntervalSessionQuality(activity) {
   const intervals = getActivityIntervals(activity);
   if (!intervals.length) return null;
@@ -2626,34 +2712,27 @@ function summarizeIntervalSessionQuality(activity) {
     ? `RP-Kontext: Zielpace hinterlegt; Median ${formatPace(repMedianPace)}.`
     : `RP-Kontext: keine Zielpace hinterlegt; Bewertung über Session-Struktur (Median ${formatPace(repMedianPace)}).`;
 
-  let nextLever = "Pausen aktiv und rhythmisch traben";
-  if (executionPoints <= 1.5) {
-    if (overpacedStart && clearDrop) nextLever = "Dosierung priorisieren: erster Rep klar kontrollierter, damit der Schluss nicht einbricht";
-    else if (overpacedStart) nextLever = "Dosierung priorisieren: kontrollierter anlaufen statt früh zu überpacen";
-    else if (clearDrop) nextLever = "Haltbarkeit priorisieren: Einstieg minimal defensiver, Schluss stabiler halten";
-    else nextLever = "Dosierung priorisieren: Einstieg konservativer und gleichmäßig aufbauen";
-  } else if (specificityPoints <= 1.5) {
-    if (qualityMin < 12) nextLever = "Spezifität erhöhen: mehr Qualitätszeit im Schwellenbereich sammeln";
-    else if (Number.isFinite(medianRepSec) && medianRepSec < 180) nextLever = "Spezifität erhöhen: etwas längere, threshold-typische Reps wählen";
-    else if (Number.isFinite(recoveryWorkRatio) && recoveryWorkRatio > 1.2) nextLever = "Spezifität erhöhen: Pausen kompakter/aktiver gestalten";
-    else nextLever = "Spezifität erhöhen: Struktur stärker auf zusammenhängenden Schwellenreiz ausrichten";
-  } else if (consistencyPoints <= 1.5) {
-    if (Number.isFinite(cvPct) && cvPct > 6) nextLever = "Konstanz erhöhen: Reps enger bündeln und Pace-Ausschläge reduzieren";
-    else if (Number.isFinite(fadePct) && fadePct > 0.06) nextLever = "Konstanz erhöhen: Tempoverlauf glätten, damit der Fade sinkt";
-    else nextLever = "Konstanz erhöhen: gleichmäßigeren Rhythmus über alle Reps halten";
-  } else {
-    if (executionPoints <= specificityPoints && executionPoints <= consistencyPoints) {
-      nextLever = "Feintuning Ausführung: Einstieg noch ruhiger setzen, Schluss maximal haltbar halten";
-    } else if (specificityPoints <= executionPoints && specificityPoints <= consistencyPoints) {
-      nextLever = "Feintuning Spezifität: etwas mehr schwellen-typische Qualitätszeit/Struktur setzen";
-    } else {
-      nextLever = "Feintuning Konstanz: Reps noch reproduzierbarer um den Session-Rhythmus laufen";
-    }
-  }
+  const nextLeverMeta = deriveNextLeverMeta({
+    executionPoints,
+    consistencyPoints,
+    specificityPoints,
+    overpacedStart,
+    clearDrop,
+    qualityMin,
+    medianRepSec,
+    recoveryWorkRatio,
+    cvPct,
+    fadePct,
+    rangePct,
+    lowRepConfidence,
+  });
+  const nextLever = leverMetaToText(nextLeverMeta);
 
   return {
     qualityKm,
     specificityPoints,
+    nextLever,
+    nextLeverMeta,
     lines: [
       executionLine,
       consistencyLine,
@@ -3486,7 +3565,38 @@ const THRESHOLD_FORMAT_TEMPLATES = {
   },
 };
 
-function chooseThresholdFormat(context = {}, keyRules = {}) {
+function maybeBiasThresholdFormatWithLever(baseDecision = {}, lever = null) {
+  if (!lever?.domain || !baseDecision?.format) return baseDecision;
+  if (lever?.severity === "low") return baseDecision;
+
+  const format = baseDecision.format;
+  const biasToIntervals = lever.domain === "execution" && (lever.reason === "overpace_start" || lever.reason === "finish_loss")
+    || lever.domain === "consistency" && (lever.reason === "high_cv" || lever.reason === "high_range" || lever.reason === "high_fade")
+    || lever.domain === "specificity" && lever.reason === "long_recovery";
+  const biasToContinuous = lever.domain === "specificity" && lever.reason === "low_quality_time";
+
+  if (biasToIntervals && format === "continuous") {
+    return {
+      ...baseDecision,
+      format: "intervals",
+      reason: `${baseDecision.reason} Lever-Bias: besser steuerbares Intervallformat für den nächsten Hebel.`,
+      leverBiased: true,
+    };
+  }
+
+  if (biasToContinuous && format === "intervals") {
+    return {
+      ...baseDecision,
+      format: "continuous",
+      reason: `${baseDecision.reason} Lever-Bias: leicht mehr zusammenhängende Qualitätszeit.`,
+      leverBiased: true,
+    };
+  }
+
+  return baseDecision;
+}
+
+function chooseThresholdFormat(context = {}, keyRules = {}, lever = null) {
   const block = String(context?.block || "BASE").toUpperCase();
   const distance = normalizeEventDistance(context?.eventDistance) || "10k";
   const weeklyQualitySlots = clampInt(String(keyRules?.maxKeysPerWeek ?? keyRules?.expectedKeysPerWeek ?? 2), 1, 3);
@@ -3494,23 +3604,20 @@ function chooseThresholdFormat(context = {}, keyRules = {}) {
   const rpeCreep = context?.intensityDistribution?.midOver === true;
   const nextDayFatigueHigh = context?.fatigue?.override === true || context?.overlayMode === "DELOAD";
 
+  let decision;
   if (block === "BASE") {
-    return { format: "intervals", reason: "BASE: keine Schwelle einplanen, stattdessen locker/ökonomisch halten." };
+    decision = { format: "intervals", reason: "BASE: keine Schwelle einplanen, stattdessen locker/ökonomisch halten." };
+  } else if (block === "BUILD" && (driftHigh || rpeCreep || nextDayFatigueHigh || weeklyQualitySlots <= 2)) {
+    decision = { format: "intervals", reason: "BUILD + Kontrollsignal: Intervalle vorziehen (geringere Drift/Cost)." };
+  } else if (block === "RACE" && (distance === "hm" || distance === "m")) {
+    decision = { format: "continuous", reason: "RACE HM/M: mehr Spezifität am Stück, Schwelle nur dosiert." };
+  } else if (block === "RACE" && (distance === "5k" || distance === "10k")) {
+    decision = { format: "maintenance", reason: "RACE 5k/10k: Schwelle nur kurz als Erhalt." };
+  } else {
+    decision = { format: "intervals", reason: "Standard: Schwellenintervalle für bessere Steuerbarkeit." };
   }
 
-  if (block === "BUILD" && (driftHigh || rpeCreep || nextDayFatigueHigh || weeklyQualitySlots <= 2)) {
-    return { format: "intervals", reason: "BUILD + Kontrollsignal: Intervalle vorziehen (geringere Drift/Cost)." };
-  }
-
-  if (block === "RACE" && (distance === "hm" || distance === "m")) {
-    return { format: "continuous", reason: "RACE HM/M: mehr Spezifität am Stück, Schwelle nur dosiert." };
-  }
-
-  if (block === "RACE" && (distance === "5k" || distance === "10k")) {
-    return { format: "maintenance", reason: "RACE 5k/10k: Schwelle nur kurz als Erhalt." };
-  }
-
-  return { format: "intervals", reason: "Standard: Schwellenintervalle für bessere Steuerbarkeit." };
+  return maybeBiasThresholdFormatWithLever(decision, lever);
 }
 
 function selectThresholdSessionTemplate(format, distance, fallback = null) {
@@ -3557,7 +3664,86 @@ function humanizeProgressionSessionText(keyType, progressionStepSession, fallbac
   return `${progressionStepSession} — ${intro}`.trim();
 }
 
-function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null) {
+function adaptSessionToLever({ chosenType, sessionText, progressionStepSession, context = {}, keyRules = {}, lever = null }) {
+  if (!sessionText || !lever?.domain) {
+    return { sessionText, applied: false, cue: null, adjustmentLine: null };
+  }
+
+  const severity = lever.severity || "low";
+  const thresholdKey = chosenType === "schwelle";
+  const allowStructureAdjust = thresholdKey && severity !== "low";
+  let adapted = String(sessionText);
+  let adjustmentLine = null;
+
+  const replaceFirst = (patterns, replacement) => {
+    for (const pattern of patterns) {
+      if (pattern.test(adapted)) {
+        adapted = adapted.replace(pattern, replacement);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (allowStructureAdjust) {
+    if (lever.domain === "execution") {
+      if (lever.reason === "overpace_start") {
+        const changed = replaceFirst([/2×15′/i, /3×10′/i], "4×6′");
+        if (changed) adjustmentLine = "Anpassung: steuerbarere Schwellenstruktur mit gleichförmigen Reps.";
+      } else if (lever.reason === "finish_loss" && severity === "high") {
+        const changed = replaceFirst([/4×8′/i, /3×10′/i, /2×15′/i], "3×8′");
+        if (changed) adjustmentLine = "Anpassung: Umfang leicht kompakter für stabileren Schluss.";
+      }
+    } else if (lever.domain === "consistency") {
+      if (lever.reason === "high_cv" || lever.reason === "high_range") {
+        const changed = replaceFirst([/2×15′/i, /3×10′/i], "4×6′");
+        if (changed) adjustmentLine = "Anpassung: gleichförmigere Reps für bessere Reproduzierbarkeit.";
+      } else if (lever.reason === "high_fade" && severity === "high") {
+        const changed = replaceFirst([/5×/i], "4×");
+        if (changed) adjustmentLine = "Anpassung: leicht reduzierte Wiederholungszahl für gleichmäßigeres Profil.";
+      }
+    } else if (lever.domain === "specificity") {
+      if (lever.reason === "low_quality_time") {
+        const changed = replaceFirst([/3×8′/i, /4×6′/i, /20–25′/i], severity === "high" ? "4×8′" : "3×10′");
+        if (changed) adjustmentLine = "Anpassung: moderat mehr zusammenhängende Qualitätszeit.";
+      } else if (lever.reason === "short_reps" && severity === "high") {
+        const changed = replaceFirst([/6×3′/i, /4×4′/i], "4×6′");
+        if (changed) adjustmentLine = "Anpassung: längere Reps statt sehr kurzer Schwellenstücke.";
+      } else if (lever.reason === "long_recovery") {
+        const changed = replaceFirst([/3′ Trabpause/i, /kurzer Pause/i], "2′ Trabpause");
+        if (changed) adjustmentLine = "Anpassung: kompaktere aktive Pausenstruktur.";
+      }
+    }
+  }
+
+  const cue = lever.cue || null;
+  if (!thresholdKey && !adjustmentLine && cue) {
+    adjustmentLine = "Anpassung: Key-Typ bleibt unverändert, Hebel nur als Coaching-Cue gesetzt.";
+  }
+
+  return {
+    sessionText: adapted,
+    applied: adapted !== sessionText || Boolean(adjustmentLine) || Boolean(cue),
+    cue,
+    adjustmentLine,
+  };
+}
+
+function formatLeverAwareSessionText(baseText, lever = null, adaptation = null) {
+  if (!baseText || !lever?.domain) return baseText;
+  const domainLabel = lever.domain === "execution"
+    ? "Dosierung"
+    : lever.domain === "consistency"
+      ? "Konstanz"
+      : "Spezifität";
+  const reasonLabel = String(lever.reason || "").replace(/_/g, "-");
+  const leverLine = `Hebel aus letzter Schwellen-Session: ${domainLabel} / ${reasonLabel}.`;
+  const adjustmentLine = adaptation?.adjustmentLine || "Anpassung: keine strukturelle Änderung, Fokus auf Ausführungscue.";
+  const cueLine = adaptation?.cue ? `Cue: ${adaptation.cue}.` : "";
+  return `${leverLine} ${adjustmentLine} ${baseText}${cueLine ? ` ${cueLine}` : ""}`.trim();
+}
+
+function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null, lever = null) {
   const block = context.block || "BASE";
   const distance = context.eventDistance || "10k";
   const preferredType = normalizeKeyType(plannedKeyType) || resolvePrimaryKeyType(keyRules, block);
@@ -3582,7 +3768,7 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
     : entries[0];
   let formatNote = "";
   if (chosenType === "schwelle") {
-    const thresholdDecision = chooseThresholdFormat(context, keyRules);
+    const thresholdDecision = chooseThresholdFormat(context, keyRules, lever);
     const thresholdTemplate = selectThresholdSessionTemplate(thresholdDecision?.format, distance, progressionStepSession || null);
     if (thresholdTemplate) {
       sessionText = progressionStepSession
@@ -3591,11 +3777,22 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
     }
     if (thresholdDecision?.reason) formatNote = ` Format-Entscheid: ${thresholdDecision.reason}`;
   }
+
+  const adaptation = adaptSessionToLever({
+    chosenType,
+    sessionText,
+    progressionStepSession,
+    context,
+    keyRules,
+    lever,
+  });
+  const finalSessionText = adaptation?.sessionText || sessionText;
   const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
   const racepaceTarget = chosenType === "racepace"
     ? getRacepaceTargetText(distance)
     : "";
-  return `${formatKeyType(chosenType)} konkret: ${sessionText}.${formatNote}${progressionMissingNote}${racepaceTarget}`;
+  const baseText = `${formatKeyType(chosenType)} konkret: ${finalSessionText}.${formatNote}${progressionMissingNote}${racepaceTarget}`;
+  return formatLeverAwareSessionText(baseText, lever, adaptation);
 }
 
 function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
@@ -3870,6 +4067,50 @@ function getLastKeyTypeBeforeDay(ctx, dayIso, windowDays = 21) {
   });
 }
 
+function getLastThresholdLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
+  if (!dayIso || !isIsoDate(dayIso)) return null;
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+
+  let lastThresholdActivity = null;
+  let lastDate = "";
+  for (const a of ctx.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso) continue;
+    const explicitKeyTag = hasKeyTag(a);
+    const rawType = explicitKeyTag ? getKeyType(a) : null;
+    const normalized = normalizeKeyType(rawType, {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    const thresholdLike = normalized === "schwelle" || isTempoDauerlaufKey(a);
+    if (!thresholdLike) continue;
+    if (!lastThresholdActivity || d > lastDate) {
+      lastThresholdActivity = a;
+      lastDate = d;
+    }
+  }
+
+  if (!lastThresholdActivity || !lastDate) return null;
+
+  // Hebel nur bis zum nächsten Key mitschleppen: sobald nach der Threshold-Session ein Key stattfand,
+  // wird für die aktuelle Entscheidung neu bewertet statt den alten Hebel weiterzutragen.
+  const hasAnyKeyAfterThreshold = (ctx.activitiesAll || []).some((a) => {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    return d && d > lastDate && d < endIso && hasKeyTag(a);
+  });
+  if (hasAnyKeyAfterThreshold) return null;
+
+  const review = summarizeIntervalSessionQuality(lastThresholdActivity);
+  if (!review?.nextLeverMeta?.domain) return null;
+  return {
+    date: lastDate,
+    nextLever: review.nextLever || null,
+    nextLeverMeta: review.nextLeverMeta,
+  };
+}
+
 function computeRacepaceBlockProgress(ctx, context = {}) {
   const block = context.block || "BASE";
   const eventDistance = context.eventDistance || "10k";
@@ -3980,6 +4221,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const midShareBlocked = intensityDistribution?.midOver === true;
   const easyShareBlocked = intensityDistribution?.easyUnder === true;
   const preferredIntensity = mapKeyTypeToIntensity(preferred, context.eventDistance);
+  const activeLever = context?.lastThresholdLever?.nextLeverMeta?.domain ? context.lastThresholdLever.nextLeverMeta : null;
+  const activeLeverText = context?.lastThresholdLever?.nextLever || (activeLever ? leverMetaToText(activeLever) : "");
 
   let suggestion = "";
   let keyAllowedNow = false;
@@ -3991,7 +4234,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
-    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapDays * 24}h Abstand). Bis dahin locker/GA.`;
+    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapDays * 24}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
   } else if (hardShareBlocked && preferredIntensity === "hard") {
     const hardPct = Math.round((intensityDistribution?.hardShare ?? 0) * 100);
     const maxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
@@ -4025,9 +4268,10 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   if (suggestion && keyAllowedNow) {
     const progressionHint = buildProgressionSuggestion(progression);
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
+    if (activeLeverText) suggestion = `${suggestion} Hebel aus letzter Schwellen-Session: ${activeLeverText}.`;
   }
 
-  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType);
+  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
   if (explicitSession && keyAllowedNow) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
@@ -4065,6 +4309,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     intensityDistribution,
     keyAllowedNow,
     explicitSession,
+    activeLever,
+    pendingLever: !keyAllowedNow && activeLever ? activeLever : null,
     racepaceBlockProgress,
     longrunSpecificity,
   };
@@ -5220,6 +5466,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
     const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
+    const lastThresholdReview = getLastThresholdLeverBeforeDay(ctx, day, 35);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
@@ -5426,6 +5673,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weekInBlock,
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
+      lastThresholdLever: lastThresholdReview || null,
       historyMetrics,
       longrunSpecificity,
     });
