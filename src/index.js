@@ -6331,6 +6331,7 @@ function buildRecommendationsAndBottomLine(state) {
   const longRunSpikeCapMin = Number(state?.longRunSpikeCapMin ?? 0);
   const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
+  const longRunDiagnosisTargetMin = Number(state?.longRunDiagnosisTargetMin ?? 0);
   const fatigue = state?.fatigue || null;
   const distanceDiagnostics = state?.distanceDiagnostics || null;
   const gapRecommendations = state?.gapRecommendations || null;
@@ -6348,13 +6349,20 @@ function buildRecommendationsAndBottomLine(state) {
     rec.push(`RunFloor ${Math.round(runFloorNow)}/${Math.round(runFloorTarget)} → Volumen priorisieren (Gap ${runGap}).`);
   }
   if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
-    if (longRunGapMin < 0) {
-      rec.push(`Longrun ${longRunDoneMin}′/${longRunTargetMin}′ → diese Woche locker auf ${longRunTargetMin}′ annähern.`);
-    } else if (longRunDoneMin > 0 && Number.isFinite(longRunStepCapMin) && Number.isFinite(blockLongRunNextWeekTargetMin)) {
+    const meetsBlockTarget = longRunDoneMin >= longRunTargetMin;
+    const meetsDiagnosisTarget = Number.isFinite(longRunDiagnosisTargetMin) && longRunDiagnosisTargetMin > 0
+      ? longRunDoneMin >= longRunDiagnosisTargetMin
+      : false;
+    if (meetsBlockTarget || meetsDiagnosisTarget) {
+      rec.push("Longrun über Blockziel → aktuell halten.");
+    } else {
       const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
         ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
         : "";
-      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).${spikeGuardNote}`);
+      const progressionTargetMin = Number.isFinite(longRunStepCapMin) && longRunStepCapMin > 0
+        ? longRunStepCapMin
+        : blockLongRunNextWeekTargetMin;
+      rec.push(`Longrun-Progression: nächster Schritt bis ${Math.round(progressionTargetMin)}′.${spikeGuardNote}`);
     }
   }
   if (state?.intensityDistribution?.easyUnder === true) {
@@ -6472,6 +6480,7 @@ function buildComments(
       "KEY-CHECK": "🔑",
       "DIAGNOSE": "🧠",
       "EMPFEHLUNGEN": "🧭",
+      "TRAININGSSTAND": "📊",
       "HEUTE-ENTSCHEIDUNG": "🎯",
       "BOTTOM LINE": "🧾",
       "HEUTE": "🎯",
@@ -6788,6 +6797,7 @@ function buildComments(
     longRunTargetMin,
     longRunGapMin,
     longRunStepCapMin: longRunSafetyCapMin,
+    longRunDiagnosisTargetMin: prePlanLongRunTargetMin,
     longRunSpikeCapMin,
     longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
@@ -6896,9 +6906,19 @@ function buildComments(
         `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`,
         `Hauptlimit: ${mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a"}`,
       ];
+      const trainingStateLines = [
+        runTarget > 0 && runFloorCurrent < runTarget
+          ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
+          : runTarget > 0
+            ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
+            : `RunFloor: ${runFloorCurrent} / n/a`,
+        `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+      ];
       addDecisionBlock("STATUS", statusLines);
       addDecisionBlock("FOKUS", focusLines.slice(0, 2));
-      // Coach-first layout: quick decision blocks first, condensed diagnosis directly below.
+      addDecisionBlock("TRAININGSSTAND", trainingStateLines);
+      addDecisionBlock("EMPFEHLUNGEN", recommendationMetricsBlock);
+      // Coach-first layout: operational guidance before condensed diagnosis.
       addDecisionBlock("DIAGNOSE", diagnoseLines);
       if (diagnoseDebugLines.length) addDecisionBlock("DIAGNOSE / DEBUG", diagnoseDebugLines);
     } else {
@@ -6919,7 +6939,20 @@ function buildComments(
     `Fokus: ${focusLabel}.`,
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
+
+  const trainingStateLines = [
+    runTarget > 0 && runFloorCurrent < runTarget
+      ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
+      : runTarget > 0
+        ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
+        : `RunFloor: ${runFloorCurrent} / n/a`,
+    `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+  ];
+  addDecisionBlock("TRAININGSSTAND", trainingStateLines);
+
   if (dailyDecisionLayer.secondaryOption) addDecisionBlock("OPTION", [dailyDecisionLayer.secondaryOption]);
+
+  addDecisionBlock("EMPFEHLUNGEN", recommendationMetricsBlock);
 
   if (distanceDiagnostics) {
     const diagSummary = [];
