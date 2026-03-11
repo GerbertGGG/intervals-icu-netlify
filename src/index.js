@@ -2519,12 +2519,59 @@ function deriveThresholdLeverMeta(metrics = {}) {
 }
 
 function deriveRacepaceLeverMeta(metrics = {}) {
-  const base = deriveThresholdLeverMeta(metrics);
-  if (!base?.domain) return null;
-  return {
-    ...base,
-    cue: base.cue || "Racepace-Abschnitte kontrolliert eröffnen und stabil schließen",
-  };
+  const {
+    executionPoints,
+    consistencyPoints,
+    specificityPoints,
+    overpacedStart,
+    clearDrop,
+    recoveryWorkRatio,
+    qualityMin,
+    cvPct,
+    rangePct,
+    fadePct,
+    medianRepSec,
+    lowRepConfidence,
+  } = metrics;
+
+  if (executionPoints <= 1.6) {
+    if (overpacedStart && clearDrop) {
+      return { domain: "execution", reason: "overpace_start", severity: "high", action: "control_start", cue: "1. Rep kontrollierter anlaufen und den Schluss stabil halten" };
+    }
+    if (overpacedStart) {
+      return { domain: "execution", reason: "overpace_start", severity: "medium", action: "control_start", cue: "1. Rep bewusst defensiver starten" };
+    }
+    if (clearDrop) {
+      return { domain: "execution", reason: "finish_loss", severity: "medium", action: "improve_durability", cue: "Start leicht defensiver wählen, Schlussverlust vermeiden" };
+    }
+  }
+
+  if (consistencyPoints <= 1.8) {
+    if (Number.isFinite(cvPct) && cvPct > 6) {
+      return { domain: "consistency", reason: "high_cv", severity: lowRepConfidence ? "medium" : "high", action: "stabilize_rhythm", cue: "Reps enger bündeln und Pace-Ausschläge reduzieren" };
+    }
+    if (Number.isFinite(rangePct) && rangePct > 0.1) {
+      return { domain: "consistency", reason: "high_range", severity: "medium", action: "reduce_spread", cue: "Reps enger bündeln und Pace-Ausschläge reduzieren" };
+    }
+    if (Number.isFinite(fadePct) && fadePct > 0.06) {
+      return { domain: "consistency", reason: "high_fade", severity: "medium", action: "improve_evenness", cue: "Pace-Verlauf glätten und keine aggressive Eröffnung setzen" };
+    }
+  }
+
+  if (Number.isFinite(recoveryWorkRatio) && recoveryWorkRatio > 1.05) {
+    return { domain: "density", reason: "long_recovery", severity: recoveryWorkRatio > 1.25 ? "high" : "medium", action: "tighten_recovery", cue: "Pausen kürzer/aktiver halten, damit die Dichte steigt" };
+  }
+
+  if (specificityPoints <= 1.7) {
+    if (qualityMin < 10) {
+      return { domain: "specificity", reason: "low_quality_time", severity: "medium", action: "add_quality_time", cue: "mehr zusammenhängende RP-Qualitätszeit sammeln" };
+    }
+    if (Number.isFinite(medianRepSec) && medianRepSec < 150) {
+      return { domain: "specificity", reason: "short_reps", severity: "medium", action: "lengthen_reps", cue: "RP-Reps etwas länger und wettkampfspezifischer wählen" };
+    }
+  }
+
+  return { domain: "execution", reason: "pacing_general", severity: "low", action: "smooth_pacing", cue: "Racepace kontrolliert eröffnen und stabil schließen" };
 }
 
 function deriveVo2LeverMeta(metrics = {}) {
@@ -2569,6 +2616,9 @@ function leverMetaToText(leverMeta = null) {
       high_cv: "Konstanz erhöhen: Reps enger bündeln und Pace-Ausschläge reduzieren",
       high_range: "Konstanz erhöhen: gleichförmige Reps mit engerem Korridor laufen",
       high_fade: "Konstanz erhöhen: Tempoverlauf glätten, damit der Fade sinkt",
+    },
+    density: {
+      long_recovery: "Dichte erhöhen: Pausen kürzer/aktiver halten und RP-Anteile enger takten",
     },
     specificity: {
       low_quality_time: "Spezifität erhöhen: mehr Qualitätszeit im Schwellenbereich sammeln",
@@ -3777,7 +3827,9 @@ function formatLeverAwareSessionText(baseText, lever = null, adaptation = null) 
     ? "Dosierung"
     : lever.domain === "consistency"
       ? "Konstanz"
-      : "Spezifität";
+      : lever.domain === "density"
+        ? "Dichte"
+        : "Spezifität";
   const reasonLabel = String(lever.reason || "").replace(/_/g, "-");
   const leverLine = `Hebel aus letzter Key-Session: ${domainLabel} / ${reasonLabel}.`;
   const adjustmentLine = adaptation?.adjustmentLine || "Anpassung: keine strukturelle Änderung, Fokus auf Ausführungscue.";
@@ -3798,6 +3850,7 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
     consistency: "Konstanz",
     execution: "Dosierung",
     specificity: "Spezifität",
+    density: "Dichte",
   };
   const focusLabel = focusLabelMap[domain] || "gezielte Qualitätssteuerung";
   const pendingLeverLine = `Hebel vorgemerkt: Der nächste erlaubte Key ${nextKeyLabel} wird auf ${focusLabel} ausgerichtet.`;
@@ -3818,6 +3871,9 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
       short_reps: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.",
       long_recovery: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.",
     },
+    density: {
+      long_recovery: "Geplante Anpassung: aktive, kürzere Pausen zur Erhöhung der Reizdichte.",
+    },
   };
 
   let pendingLeverPlanLine = fromReasonMap?.[domain]?.[reason] || null;
@@ -3828,6 +3884,8 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
       pendingLeverPlanLine = "Geplante Anpassung: steuerbareres Format mit kontrollierter erster Wiederholung und Fokus auf Schlussstabilität.";
     } else if (domain === "specificity") {
       pendingLeverPlanLine = "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.";
+    } else if (domain === "density") {
+      pendingLeverPlanLine = "Geplante Anpassung: aktive, kürzere Pausen zur Erhöhung der Reizdichte.";
     } else {
       pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key wird über den vorgemerkten Hebel gezielt, aber dosiert moduliert.";
     }
@@ -4199,15 +4257,19 @@ function getLastRelevantKeyLeverBeforeDay(ctx, dayIso, lookbackDays = 35, option
 
   if (!lastKeyActivity || !lastDate || !lastKeyType) return null;
 
-  // Hebel nur bis zum nächsten Key mitschleppen: sobald nach der Threshold-Session ein Key stattfand,
-  // wird für die aktuelle Entscheidung neu bewertet statt den alten Hebel weiterzutragen.
+  // Hebel nur bis zum nächsten Key mitschleppen: sobald nach der letzten lever-relevanten Key-Session
+  // (schwelle/racepace/vo2_touch) ein weiterer Key stattfand, wird für die aktuelle Entscheidung
+  // neu bewertet statt den alten Hebel weiterzutragen.
   const hasAnyKeyAfterLastRelevant = (ctx.activitiesAll || []).some((a) => {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     return d && d > lastDate && d < endIso && hasKeyTag(a);
   });
   if (requireNoKeyAfter && hasAnyKeyAfterLastRelevant) return null;
 
-  const review = summarizeIntervalSessionQuality(lastKeyActivity, { keyType: lastKeyType });
+  const review = summarizeIntervalSessionQuality(lastKeyActivity, { keyType: lastKeyType })
+    || lastKeyActivity?.sessionReview
+    || lastKeyActivity?.review
+    || null;
   if (!review?.nextLeverMeta?.domain) return null;
   return {
     date: lastDate,
