@@ -3743,6 +3743,63 @@ function formatLeverAwareSessionText(baseText, lever = null, adaptation = null) 
   return `${leverLine} ${adjustmentLine} ${baseText}${cueLine ? ` ${cueLine}` : ""}`.trim();
 }
 
+function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType, explicitSession } = {}) {
+  if (!pendingLever?.domain) return { pendingLeverLine: null, pendingLeverPlanLine: null };
+
+  const domain = String(pendingLever.domain || "").toLowerCase();
+  const reason = String(pendingLever.reason || "").toLowerCase();
+  const normalizedPlannedType = normalizeKeyType(plannedKeyType);
+  const thresholdPlanned = normalizedPlannedType === "schwelle";
+  const nextKeyLabel = nextKeyEarliest ? `ab ${nextKeyEarliest}` : "beim nächsten erlaubten Key";
+
+  const focusLabelMap = {
+    consistency: "Konstanz",
+    execution: "Dosierung / kontrollierten Einstieg",
+    specificity: "mehr schwellennahe Qualitätszeit",
+  };
+  const focusLabel = focusLabelMap[domain] || "gezielte Qualitätssteuerung";
+  const pendingLeverLine = `Hebel vorgemerkt: Der nächste erlaubte Key ${nextKeyLabel} wird auf ${focusLabel} ausgerichtet.`;
+
+  const fromReasonMap = {
+    consistency: {
+      high_cv: "Geplante Anpassung: gleichförmigere Rep-Struktur mit engerem Pacing-Fenster statt variabler oder progressiver Belastung.",
+      high_range: "Geplante Anpassung: identische Wiederholungen mit stabiler Trabpause, um Pace-Ausschläge zu reduzieren.",
+      high_fade: "Geplante Anpassung: identische Wiederholungen mit stabiler Trabpause, um Pace-Ausschläge zu reduzieren.",
+    },
+    execution: {
+      overpace_start: "Geplante Anpassung: steuerbareres Format mit kontrollierter erster Wiederholung und Fokus auf Schlussstabilität.",
+      finish_loss: "Geplante Anpassung: konservativerer Einstieg, damit die Einheit haltbarer bleibt.",
+      pacing_general: "Geplante Anpassung: konservativerer Einstieg, damit die Einheit haltbarer bleibt.",
+    },
+    specificity: {
+      low_quality_time: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit / längere schwellennahe Wiederholungen.",
+      short_reps: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit / längere schwellennahe Wiederholungen.",
+      long_recovery: "Geplante Anpassung: kompaktere Recovery-Struktur, damit der Reiz zusammenhängender bleibt.",
+    },
+  };
+
+  let pendingLeverPlanLine = fromReasonMap?.[domain]?.[reason] || null;
+  if (!pendingLeverPlanLine) {
+    if (domain === "consistency") {
+      pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key wird gleichförmiger aufgebaut, um Pace-Schwankungen zu reduzieren.";
+    } else if (domain === "execution") {
+      pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key wird dosierter eröffnet und auf stabileren Schluss ausgerichtet.";
+    } else if (domain === "specificity") {
+      pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key sammelt etwas mehr zusammenhängende Qualitätszeit.";
+    }
+  }
+
+  if (!thresholdPlanned && pendingLeverPlanLine) {
+    pendingLeverPlanLine = pendingLeverPlanLine.replace(/^Geplante Anpassung:/, "Geplante Anpassung (modulierend):");
+  }
+
+  if (!pendingLeverPlanLine && explicitSession) {
+    pendingLeverPlanLine = `Geplante Anpassung: beim nächsten erlaubten Key wird die Session-Idee gezielt über den Hebel angepasst (${explicitSession}).`;
+  }
+
+  return { pendingLeverLine, pendingLeverPlanLine };
+}
+
 function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, progression = null, plannedKeyType = null, lever = null) {
   const block = context.block || "BASE";
   const distance = context.eventDistance || "10k";
@@ -4272,6 +4329,15 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   }
 
   const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
+  const pendingLever = !keyAllowedNow && activeLever ? activeLever : null;
+  const pendingLeverPlan = !keyAllowedNow
+    ? formatPendingLeverPlan({
+        pendingLever,
+        nextKeyEarliest,
+        plannedKeyType,
+        explicitSession,
+      })
+    : { pendingLeverLine: null, pendingLeverPlanLine: null };
   if (explicitSession && keyAllowedNow) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
@@ -4310,7 +4376,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keyAllowedNow,
     explicitSession,
     activeLever,
-    pendingLever: !keyAllowedNow && activeLever ? activeLever : null,
+    pendingLever,
+    pendingLeverLine: pendingLeverPlan.pendingLeverLine,
+    pendingLeverPlanLine: pendingLeverPlan.pendingLeverPlanLine,
     racepaceBlockProgress,
     longrunSpecificity,
   };
@@ -7161,6 +7229,12 @@ function buildComments(
     ...decisionCompact.recommendations,
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
   ];
+  if (keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverLine) {
+    recommendationMetricsBlock.push(keyCompliance.pendingLeverLine);
+  }
+  if (keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverPlanLine) {
+    recommendationMetricsBlock.push(keyCompliance.pendingLeverPlanLine);
+  }
 
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
   const focusLabel = coachFocus.label;
@@ -7290,6 +7364,12 @@ function buildComments(
     keyBlocked
       ? (nextAllowedHours != null ? `Nächster Key frühestens in ${nextAllowedHours}h.` : dailyDecisionLayer.hint)
       : dailyDecisionLayer.hint,
+    ...(keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverLine
+      ? [keyCompliance.pendingLeverLine]
+      : []),
+    ...(keyCompliance?.keyAllowedNow === false && keyCompliance?.pendingLeverPlanLine
+      ? [keyCompliance.pendingLeverPlanLine]
+      : []),
     `Fokus: ${focusLabel}.`,
   ]);
   if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
