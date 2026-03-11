@@ -928,7 +928,6 @@ const MIN_STIMULUS_7D_BIKE_EVENT = 200;  // bike primary
 const RUN_FLOOR_EWMA_LOOKBACK_DAYS = 14;
 const WATCHFACE_LOAD_WINDOW_DAYS = 7;
 const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
-const WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN = 180;
 
 // Maintenance anchors (soft hints, not hard fails)
 
@@ -9412,21 +9411,13 @@ async function buildWatchfacePayload(env, endIso) {
   };
 }
 
-async function resolveWatchfaceRunSnapshot(env, dayIso = isoDateBerlin(new Date())) {
+async function resolveWatchfaceRunSnapshot(env) {
   const kv = await readLatestRunSnapshotKv(env);
-  const kvRunGoal = Number(kv?.runGoal);
-  const fallbackRunGoal = Number.isFinite(kvRunGoal) ? kvRunGoal : 0;
-
-  const kvUpdatedAtMs = Date.parse(String(kv?.updatedAt || ""));
-  const kvAgeMin = Number.isFinite(kvUpdatedAtMs) ? (Date.now() - kvUpdatedAtMs) / 60000 : Infinity;
-  const kvFreshEnough = kvAgeMin <= WATCHFACE_RUN_SNAPSHOT_MAX_AGE_MIN;
-  const kvDayComparable = isIsoDate(kv?.day) ? kv.day <= dayIso : true;
-
-  if (kv?.runValue != null && kv?.runGoal != null && kvFreshEnough && kvDayComparable) {
+  if (kv?.runValue != null && kv?.runGoal != null) {
     return { runValue: kv.runValue, runGoal: kv.runGoal, source: "kv" };
   }
 
-  return { runValue: null, runGoal: Math.round(fallbackRunGoal), source: "unavailable" };
+  return { runValue: null, runGoal: null, source: "unavailable" };
 }
 
 
