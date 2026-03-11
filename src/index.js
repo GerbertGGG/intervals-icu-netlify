@@ -6881,6 +6881,7 @@ function buildComments(
   }
 
   if (normalizedVerbosity !== "debug") {
+    addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
     addDecisionBlock("HEUTE", todayBlock);
     const whyLines = shortReasons.length
       ? shortReasons.map((reason) => `• ${reason}`)
@@ -6931,6 +6932,7 @@ function buildComments(
   }
 
   const nextAllowedHours = spacingBlocked && nextAllowed ? Math.max(0, diffDays(todayIso, nextAllowed)) * 24 : null;
+  addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
     `Heute: ${dailyDecisionLayer.primaryDecision}.`,
     keyBlocked
