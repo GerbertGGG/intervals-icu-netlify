@@ -3754,8 +3754,8 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
 
   const focusLabelMap = {
     consistency: "Konstanz",
-    execution: "Dosierung / kontrollierten Einstieg",
-    specificity: "mehr schwellennahe Qualitätszeit",
+    execution: "Dosierung",
+    specificity: "Spezifität",
   };
   const focusLabel = focusLabelMap[domain] || "gezielte Qualitätssteuerung";
   const pendingLeverLine = `Hebel vorgemerkt: Der nächste erlaubte Key ${nextKeyLabel} wird auf ${focusLabel} ausgerichtet.`;
@@ -3768,13 +3768,13 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
     },
     execution: {
       overpace_start: "Geplante Anpassung: steuerbareres Format mit kontrollierter erster Wiederholung und Fokus auf Schlussstabilität.",
-      finish_loss: "Geplante Anpassung: konservativerer Einstieg, damit die Einheit haltbarer bleibt.",
-      pacing_general: "Geplante Anpassung: konservativerer Einstieg, damit die Einheit haltbarer bleibt.",
+      finish_loss: "Geplante Anpassung: steuerbareres Format mit kontrollierter erster Wiederholung und Fokus auf Schlussstabilität.",
+      pacing_general: "Geplante Anpassung: steuerbareres Format mit kontrollierter erster Wiederholung und Fokus auf Schlussstabilität.",
     },
     specificity: {
-      low_quality_time: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit / längere schwellennahe Wiederholungen.",
-      short_reps: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit / längere schwellennahe Wiederholungen.",
-      long_recovery: "Geplante Anpassung: kompaktere Recovery-Struktur, damit der Reiz zusammenhängender bleibt.",
+      low_quality_time: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.",
+      short_reps: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.",
+      long_recovery: "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.",
     },
   };
 
@@ -3783,9 +3783,11 @@ function formatPendingLeverPlan({ pendingLever, nextKeyEarliest, plannedKeyType,
     if (domain === "consistency") {
       pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key wird gleichförmiger aufgebaut, um Pace-Schwankungen zu reduzieren.";
     } else if (domain === "execution") {
-      pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key wird dosierter eröffnet und auf stabileren Schluss ausgerichtet.";
+      pendingLeverPlanLine = "Geplante Anpassung: steuerbareres Format mit kontrollierter erster Wiederholung und Fokus auf Schlussstabilität.";
     } else if (domain === "specificity") {
-      pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key sammelt etwas mehr zusammenhängende Qualitätszeit.";
+      pendingLeverPlanLine = "Geplante Anpassung: mehr zusammenhängende Qualitätszeit bzw. passendere Rep-/Pausenstruktur.";
+    } else {
+      pendingLeverPlanLine = "Geplante Anpassung: der nächste erlaubte Key wird über den vorgemerkten Hebel gezielt, aber dosiert moduliert.";
     }
   }
 
@@ -4374,6 +4376,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keyMinGapDays: minGapDays,
     intensityDistribution,
     keyAllowedNow,
+    plannedKeyType,
     explicitSession,
     activeLever,
     pendingLever,
