@@ -2600,6 +2600,85 @@ function deriveKeyLeverMeta(session = {}, metrics = {}) {
   }
 }
 
+function extractNextLeverText(review = null) {
+  if (!review) return "";
+  if (typeof review?.nextLever === "string" && review.nextLever.trim()) return review.nextLever.trim();
+  const lines = Array.isArray(review?.lines) ? review.lines : [];
+  for (const line of lines) {
+    const match = String(line || "").match(/Nächster\s+Hebel\s*:\s*(.+?)(?:\.|$)/i);
+    if (match?.[1]) return match[1].trim();
+  }
+  return "";
+}
+
+function inferLeverMetaFromText(nextLeverText = "", keyType = null) {
+  const text = String(nextLeverText || "").toLowerCase().trim();
+  if (!text) return null;
+
+  const normalizedKeyType = normalizeKeyType(keyType);
+  const leverRelevantType = normalizedKeyType === "schwelle" || normalizedKeyType === "racepace" || normalizedKeyType === "vo2_touch";
+  if (!leverRelevantType) return null;
+
+  // bewusst konservative Rettungsnetz-Heuristik: nur klar erkennbare, bekannte Formulierungen mappen
+  if (/\bkonstanz\s+erh\w+/.test(text)) {
+    const reason = /pace\s*-?aussch|streu|korridor|enger/.test(text) ? "high_range" : "high_cv";
+    return {
+      domain: "consistency",
+      reason,
+      severity: "medium",
+      action: reason === "high_range" ? "reduce_spread" : "stabilize_rhythm",
+      cue: "Reps enger bündeln und Pace-Ausschläge reduzieren",
+    };
+  }
+
+  if (/\bdosierung\s+(priorisieren|verbessern)|kontrollierter\s+anlaufen/.test(text)) {
+    return {
+      domain: "execution",
+      reason: "pacing_general",
+      severity: "medium",
+      action: "smooth_pacing",
+      cue: normalizedKeyType === "racepace"
+        ? "Racepace kontrolliert eröffnen und stabil schließen"
+        : "ruhig anlaufen und Schluss stabil halten",
+    };
+  }
+
+  if (/\bspezifit\w*\s+erh\w+|mehr\s+qualit\w*zeit/.test(text)) {
+    return {
+      domain: "specificity",
+      reason: "low_quality_time",
+      severity: "medium",
+      action: "add_quality_time",
+      cue: normalizedKeyType === "racepace"
+        ? "mehr zusammenhängende RP-Qualitätszeit sammeln"
+        : "mehr zusammenhängende Qualitätszeit",
+    };
+  }
+
+  return null;
+}
+function ensureStructuredSessionReview(activity, keyType = null) {
+  if (!activity) return null;
+  const reviewFromAnalysis = summarizeIntervalSessionQuality(activity, { keyType }) || null;
+  let review = reviewFromAnalysis || activity?.sessionReview || activity?.review || null;
+  if (!review) return null;
+
+  let nextLeverMeta = review?.nextLeverMeta?.domain ? review.nextLeverMeta : null;
+  if (!nextLeverMeta) {
+    const leverText = extractNextLeverText(review);
+    nextLeverMeta = inferLeverMetaFromText(leverText, keyType);
+  }
+  if (!nextLeverMeta?.domain) return review;
+
+  const normalized = {
+    ...review,
+    nextLever: review?.nextLever || leverMetaToText(nextLeverMeta),
+    nextLeverMeta,
+  };
+  activity.sessionReview = normalized;
+  return normalized;
+}
+
 function deriveNextLeverMeta(metrics = {}) {
   return deriveThresholdLeverMeta(metrics);
 }
@@ -4266,10 +4345,7 @@ function getLastRelevantKeyLeverBeforeDay(ctx, dayIso, lookbackDays = 35, option
   });
   if (requireNoKeyAfter && hasAnyKeyAfterLastRelevant) return null;
 
-  const review = summarizeIntervalSessionQuality(lastKeyActivity, { keyType: lastKeyType })
-    || lastKeyActivity?.sessionReview
-    || lastKeyActivity?.review
-    || null;
+  const review = ensureStructuredSessionReview(lastKeyActivity, lastKeyType);
   if (!review?.nextLeverMeta?.domain) return null;
   return {
     date: lastDate,
@@ -7187,7 +7263,7 @@ function buildComments(
     const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey && !x.intervalSignal && !isTempoDauerlaufKey(x.activity));
     if (intervalToday) {
-      const sessionQuality = summarizeIntervalSessionQuality(intervalToday.activity);
+      const sessionQuality = ensureStructuredSessionReview(intervalToday.activity, getKeyType(intervalToday.activity));
       if (sessionQuality?.lines?.length) {
         runMetrics.push(...sessionQuality.lines);
       } else if (intervalToday?.intervalMetrics) {
