@@ -649,6 +649,7 @@ const PATTERN_MIN_GROUP_N = 3;
 const PATTERN_MIN_CORR_N = 6;
 const PATTERN_MIN_CORR_ABS = 0.25;
 const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
+const LEVER_REVIEW_KV_PREFIX = "lever:review:";
 const DETECTIVE_HISTORY_LIMIT = 12;
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
@@ -4360,6 +4361,68 @@ function getLastSessionLeverBeforeDay(ctx, dayIso, lookbackDays = 35) {
   return getLastRelevantKeyLeverBeforeDay(ctx, dayIso, lookbackDays, { requireNoKeyAfter: false });
 }
 
+function findLeverRelevantKeyOnDay(ctx, dayIso) {
+  if (!dayIso || !isIsoDate(dayIso)) return null;
+  let selected = null;
+  for (const a of ctx.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (d !== dayIso || !hasKeyTag(a)) continue;
+    const normalized = normalizeKeyType(getKeyType(a), {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    const leverRelevantType = normalized === "schwelle" || normalized === "racepace" || normalized === "vo2_touch";
+    if (!leverRelevantType) continue;
+    if (!selected) {
+      selected = { activity: a, keyType: normalized };
+      continue;
+    }
+    const prevTs = Number(new Date(selected.activity?.start_date_local || selected.activity?.start_date || 0).getTime() || 0);
+    const nextTs = Number(new Date(a?.start_date_local || a?.start_date || 0).getTime() || 0);
+    if (nextTs >= prevTs) selected = { activity: a, keyType: normalized };
+  }
+  return selected;
+}
+
+function buildLeverPersistenceDebug(ctx, dayIso) {
+  if (!dayIso || !isIsoDate(dayIso)) return null;
+  const prevDayIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - 86400000));
+  const prevDayLever = findLeverRelevantKeyOnDay(ctx, prevDayIso);
+  const persistedReview = prevDayLever?.activity?.sessionReview || prevDayLever?.activity?.review || null;
+  const persistedSessionReviewFound = !!(persistedReview && typeof persistedReview === "object");
+  const persistedNextLeverMetaFound = !!persistedReview?.nextLeverMeta?.domain;
+
+  const persistedCarry = getLastSessionLeverBeforeDay(ctx, dayIso, 35);
+  const persistedCarryFound = !!persistedCarry?.nextLeverMeta?.domain;
+  const carriedFromPrevDay = persistedCarryFound && persistedCarry?.date === prevDayIso;
+  let adoptedOrDiscarded = "discarded";
+  let reason = "no_historical_lever_found";
+  if (persistedCarryFound) {
+    if (carriedFromPrevDay) {
+      adoptedOrDiscarded = "adopted";
+      reason = "historical_lever_found_on_prev_day";
+    } else {
+      reason = "historical_lever_found_but_not_from_prev_day";
+    }
+  } else if (!persistedSessionReviewFound) {
+    reason = "no_persisted_sessionReview_on_prev_day";
+  } else if (!persistedNextLeverMetaFound) {
+    reason = "persisted_sessionReview_without_nextLeverMeta_on_prev_day";
+  }
+
+  return {
+    prevDayIso,
+    prevDayLeverRelevantKeyFound: !!prevDayLever,
+    persistedSessionReviewFound,
+    persistedNextLeverMetaFound,
+    persistedCarryFound,
+    carriedFromDate: persistedCarry?.date || null,
+    carriedFromPrevDay,
+    adoptedOrDiscarded,
+    reason,
+  };
+}
+
 function computeRacepaceBlockProgress(ctx, context = {}) {
   const block = context.block || "BASE";
   const eventDistance = context.eventDistance || "10k";
@@ -5204,6 +5267,58 @@ async function readLatestRunSnapshotKv(env) {
   };
 }
 
+
+function getLeverReviewKvKey(dayIso) {
+  return `${LEVER_REVIEW_KV_PREFIX}${dayIso}`;
+}
+
+async function readLeverReviewKv(env, dayIso) {
+  if (!hasKv(env) || !dayIso || !isIsoDate(dayIso)) return null;
+  const raw = await readKvJson(env, getLeverReviewKvKey(dayIso));
+  if (!raw?.nextLeverMeta?.domain) return null;
+  return raw;
+}
+
+async function writeLeverReviewKv(env, dayIso, payload) {
+  if (!hasKv(env) || !dayIso || !isIsoDate(dayIso) || !payload?.nextLeverMeta?.domain) return;
+  await writeKvJson(env, getLeverReviewKvKey(dayIso), {
+    ...payload,
+    dayIso,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function hydrateActivitiesWithPersistedLeverReviews(env, activities, oldestIso, newestIso) {
+  if (!Array.isArray(activities) || !activities.length) return;
+  const byDay = new Map();
+  for (const a of activities) {
+    const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+    if (!d) continue;
+    if (!byDay.has(d)) byDay.set(d, []);
+    byDay.get(d).push(a);
+  }
+
+  const days = listIsoDaysInclusive(oldestIso, newestIso);
+  for (const dayIso of days) {
+    const persisted = await readLeverReviewKv(env, dayIso);
+    if (!persisted?.nextLeverMeta?.domain) continue;
+    const onDay = byDay.get(dayIso) || [];
+    let target = null;
+    if (persisted?.activityId != null) {
+      target = onDay.find((a) => String(a?.id) === String(persisted.activityId)) || null;
+    }
+    if (!target) {
+      target = onDay.find((a) => hasKeyTag(a)) || onDay[0] || null;
+    }
+    if (!target) continue;
+    target.sessionReview = {
+      ...(target.sessionReview || {}),
+      nextLever: persisted.nextLever || target?.sessionReview?.nextLever || null,
+      nextLeverMeta: persisted.nextLeverMeta,
+    };
+  }
+}
+
 function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics) {
   if (!debugOut) return;
   debugOut.__blocks ??= {};
@@ -5444,6 +5559,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
   // 1) Fetch ALL activities once
   ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
+  await hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest);
   ctx.lifeEventsAll = await fetchIntervalsEvents(env, globalOldest, globalNewest).catch(() => []);
   ctx.modeEventsAll = await fetchIntervalsEvents(env, modeOldest, modeNewest).catch(() => []);
   const lifeEventsByExternalId = new Map(
@@ -5735,6 +5851,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
     const lastRelevantKeyLeverReview = getLastRelevantKeyLeverBeforeDay(ctx, day, 35);
     const lastSessionLeverReview = getLastSessionLeverBeforeDay(ctx, day, 35);
+    const leverPersistenceDebug = buildLeverPersistenceDebug(ctx, day);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
@@ -5773,6 +5890,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       fatigue: fatigueBase,
       keyStats14,
       keyCompliance: keyCompliancePre,
+      leverPersistenceDebug,
     };
 
     const blockState = determineBlockState({
@@ -6150,6 +6268,18 @@ Fehler: ${String(e?.message ?? e)}`;
     const patchToWrite = runSectionOnly ? pickRunMetricsPatch(patch) : patch;
 
     if (write) {
+      const leverOnDay = findLeverRelevantKeyOnDay(ctx, day);
+      if (leverOnDay?.activity) {
+        const persistedReview = ensureStructuredSessionReview(leverOnDay.activity, leverOnDay.keyType);
+        if (persistedReview?.nextLeverMeta?.domain) {
+          await writeLeverReviewKv(env, day, {
+            activityId: leverOnDay.activity?.id ?? null,
+            keyType: leverOnDay.keyType,
+            nextLever: persistedReview?.nextLever || null,
+            nextLeverMeta: persistedReview.nextLeverMeta,
+          });
+        }
+      }
       await putWellnessDay(env, day, patchToWrite);
       daysWritten++;
     }
