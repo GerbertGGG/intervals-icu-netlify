@@ -6402,6 +6402,12 @@ Fehler: ${String(e?.message ?? e)}`;
     const patchToWrite = runSectionOnly ? pickRunMetricsPatch(patch) : patch;
 
     let leverKvWriteDebug = {
+      leverRelevantKeySessionFound: false,
+      leverRelevantKeyType: null,
+      leverRelevantActivityHydrated: false,
+      hydrationError: null,
+      leverRelevantSessionHasReview: false,
+      leverRelevantSessionHasNextLeverMeta: false,
       leverReviewKvWriteAttempted: false,
       leverReviewKvKey: getLeverReviewKvKey(day),
       leverReviewKvPayloadExists: false,
@@ -6416,10 +6422,27 @@ Fehler: ${String(e?.message ?? e)}`;
 
     if (write) {
       const leverOnDay = findLeverRelevantKeyOnDay(ctx, day);
+      leverKvWriteDebug.leverRelevantKeySessionFound = !!leverOnDay?.activity;
+      leverKvWriteDebug.leverRelevantKeyType = leverOnDay?.keyType || null;
       if (leverOnDay?.activity) {
-        const persistedReview = ensureStructuredSessionReview(leverOnDay.activity, leverOnDay.keyType);
+        let leverActivityForReview = leverOnDay.activity;
+        try {
+          const detailedActivity = await getActivityWithIntervals(ctx, leverOnDay.activity);
+          if (detailedActivity) {
+            leverActivityForReview = detailedActivity;
+            leverKvWriteDebug.leverRelevantActivityHydrated = true;
+          }
+        } catch (err) {
+          leverKvWriteDebug.hydrationError = String(err?.message ?? err);
+          leverKvWriteDebug.leverRelevantActivityHydrated = false;
+        }
+
+        const persistedReview = ensureStructuredSessionReview(leverActivityForReview, leverOnDay.keyType);
+        leverKvWriteDebug.leverRelevantSessionHasReview = !!(persistedReview && typeof persistedReview === "object");
+        leverKvWriteDebug.leverRelevantSessionHasNextLeverMeta = !!persistedReview?.nextLeverMeta?.domain;
         if (persistedReview?.nextLeverMeta?.domain) {
           leverKvWriteDebug = await writeLeverReviewKv(env, day, {
+            ...leverKvWriteDebug,
             activityId: leverOnDay.activity?.id ?? null,
             keyType: leverOnDay.keyType,
             nextLever: persistedReview?.nextLever || null,
