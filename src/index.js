@@ -4384,9 +4384,10 @@ function findLeverRelevantKeyOnDay(ctx, dayIso) {
   return selected;
 }
 
-function buildLeverPersistenceDebug(ctx, dayIso) {
+async function buildLeverPersistenceDebug(ctx, dayIso) {
   if (!dayIso || !isIsoDate(dayIso)) return null;
   const prevDayIso = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - 86400000));
+  const persistedKvRead = await readLeverReviewKvDetailed(ctx?.env, prevDayIso);
   const prevDayLever = findLeverRelevantKeyOnDay(ctx, prevDayIso);
   const persistedReview = prevDayLever?.activity?.sessionReview || prevDayLever?.activity?.review || null;
   const persistedSessionReviewFound = !!(persistedReview && typeof persistedReview === "object");
@@ -4420,6 +4421,15 @@ function buildLeverPersistenceDebug(ctx, dayIso) {
     carriedFromPrevDay,
     adoptedOrDiscarded,
     reason,
+    leverReviewReadDebug: {
+      key: persistedKvRead?.key || getLeverReviewKvKey(prevDayIso),
+      kvFound: persistedKvRead?.kvFound === true,
+      parseOk: persistedKvRead?.parseOk === true,
+      payloadHasSessionReview: persistedKvRead?.payloadHasSessionReview === true,
+      payloadHasNextLeverMeta: persistedKvRead?.payloadHasNextLeverMeta === true,
+      readError: persistedKvRead?.readError || null,
+      parseError: persistedKvRead?.parseError || null,
+    },
   };
 }
 
@@ -5273,19 +5283,137 @@ function getLeverReviewKvKey(dayIso) {
 }
 
 async function readLeverReviewKv(env, dayIso) {
-  if (!hasKv(env) || !dayIso || !isIsoDate(dayIso)) return null;
-  const raw = await readKvJson(env, getLeverReviewKvKey(dayIso));
-  if (!raw?.nextLeverMeta?.domain) return null;
-  return raw;
+  const detailed = await readLeverReviewKvDetailed(env, dayIso);
+  return detailed?.normalized || null;
+}
+
+async function readLeverReviewKvDetailed(env, dayIso) {
+  const key = getLeverReviewKvKey(dayIso);
+  if (!hasKv(env) || !dayIso || !isIsoDate(dayIso)) {
+    return {
+      key,
+      kvFound: false,
+      parseOk: false,
+      payloadHasSessionReview: false,
+      payloadHasNextLeverMeta: false,
+      normalized: null,
+    };
+  }
+
+  let rawText = null;
+  try {
+    rawText = await env.KV.get(key);
+  } catch (err) {
+    return {
+      key,
+      kvFound: false,
+      parseOk: false,
+      payloadHasSessionReview: false,
+      payloadHasNextLeverMeta: false,
+      readError: String(err?.message ?? err),
+      normalized: null,
+    };
+  }
+
+  if (!rawText) {
+    return {
+      key,
+      kvFound: false,
+      parseOk: true,
+      payloadHasSessionReview: false,
+      payloadHasNextLeverMeta: false,
+      normalized: null,
+    };
+  }
+
+  let payload = null;
+  try {
+    payload = JSON.parse(rawText);
+  } catch (err) {
+    return {
+      key,
+      kvFound: true,
+      parseOk: false,
+      payloadHasSessionReview: false,
+      payloadHasNextLeverMeta: false,
+      parseError: String(err?.message ?? err),
+      normalized: null,
+    };
+  }
+
+  const payloadHasSessionReview = !!(payload?.sessionReview && typeof payload.sessionReview === "object");
+  const nextLeverMeta = payload?.nextLeverMeta?.domain
+    ? payload.nextLeverMeta
+    : (payload?.sessionReview?.nextLeverMeta?.domain ? payload.sessionReview.nextLeverMeta : null);
+  const nextLever = payload?.nextLever || payload?.sessionReview?.nextLever || null;
+  const payloadHasNextLeverMeta = !!nextLeverMeta?.domain;
+
+  return {
+    key,
+    kvFound: true,
+    parseOk: true,
+    payloadHasSessionReview,
+    payloadHasNextLeverMeta,
+    normalized: payloadHasNextLeverMeta
+      ? {
+          ...payload,
+          nextLever,
+          nextLeverMeta,
+        }
+      : null,
+  };
 }
 
 async function writeLeverReviewKv(env, dayIso, payload) {
-  if (!hasKv(env) || !dayIso || !isIsoDate(dayIso) || !payload?.nextLeverMeta?.domain) return;
-  await writeKvJson(env, getLeverReviewKvKey(dayIso), {
-    ...payload,
+  const key = getLeverReviewKvKey(dayIso);
+  const payloadHasSessionReview = !!(payload?.sessionReview && typeof payload.sessionReview === "object");
+  const payloadHasNextLeverMeta = !!(
+    payload?.nextLeverMeta?.domain || payload?.sessionReview?.nextLeverMeta?.domain
+  );
+  const normalizedPayload = payloadHasNextLeverMeta
+    ? {
+        ...payload,
+        sessionReview: payload?.sessionReview && typeof payload.sessionReview === "object"
+          ? payload.sessionReview
+          : {
+              nextLever: payload?.nextLever || null,
+              nextLeverMeta: payload?.nextLeverMeta || null,
+            },
+      }
+    : null;
+  if (!hasKv(env) || !dayIso || !isIsoDate(dayIso) || !normalizedPayload?.sessionReview?.nextLeverMeta?.domain) {
+    return {
+      leverReviewKvWriteAttempted: false,
+      leverReviewKvKey: key,
+      leverReviewKvPayloadExists: !!payload,
+      leverReviewKvWriteSuccess: false,
+      leverReviewWriteDebug: {
+        key,
+        payloadHasSessionReview,
+        payloadHasNextLeverMeta,
+        nextLeverMetaDomain: normalizedPayload?.sessionReview?.nextLeverMeta?.domain || null,
+      },
+    };
+  }
+  await writeKvJson(env, key, {
+    ...normalizedPayload,
+    nextLever: normalizedPayload?.nextLever || normalizedPayload?.sessionReview?.nextLever || null,
+    nextLeverMeta: normalizedPayload?.nextLeverMeta || normalizedPayload?.sessionReview?.nextLeverMeta || null,
     dayIso,
     updatedAt: new Date().toISOString(),
   });
+  return {
+    leverReviewKvWriteAttempted: true,
+    leverReviewKvKey: key,
+    leverReviewKvPayloadExists: !!payload,
+    leverReviewKvWriteSuccess: true,
+    leverReviewWriteDebug: {
+      key,
+      payloadHasSessionReview,
+      payloadHasNextLeverMeta,
+      nextLeverMetaDomain: normalizedPayload?.sessionReview?.nextLeverMeta?.domain || null,
+    },
+  };
 }
 
 async function hydrateActivitiesWithPersistedLeverReviews(env, activities, oldestIso, newestIso) {
@@ -5334,6 +5462,12 @@ function addRunFloorDebug(debugOut, day, payload) {
   if (!debugOut) return;
   debugOut.__runFloor ??= {};
   debugOut.__runFloor[day] = payload;
+}
+
+function addLeverKvDebug(debugOut, day, payload) {
+  if (!debugOut) return;
+  debugOut.__leverKv ??= {};
+  debugOut.__leverKv[day] = payload;
 }
 
 
@@ -5851,7 +5985,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const lastKeyType = getLastKeyTypeBeforeDay(ctx, day, 21);
     const lastRelevantKeyLeverReview = getLastRelevantKeyLeverBeforeDay(ctx, day, 35);
     const lastSessionLeverReview = getLastSessionLeverBeforeDay(ctx, day, 35);
-    const leverPersistenceDebug = buildLeverPersistenceDebug(ctx, day);
+    const leverPersistenceDebug = await buildLeverPersistenceDebug(ctx, day);
     const keySpacing = computeKeySpacing(ctx, day);
     const baseBlock =
       previousBlockState?.block ||
@@ -6267,21 +6401,42 @@ Fehler: ${String(e?.message ?? e)}`;
 
     const patchToWrite = runSectionOnly ? pickRunMetricsPatch(patch) : patch;
 
+    let leverKvWriteDebug = {
+      leverReviewKvWriteAttempted: false,
+      leverReviewKvKey: getLeverReviewKvKey(day),
+      leverReviewKvPayloadExists: false,
+      leverReviewKvWriteSuccess: false,
+      leverReviewWriteDebug: {
+        key: getLeverReviewKvKey(day),
+        payloadHasSessionReview: false,
+        payloadHasNextLeverMeta: false,
+        nextLeverMetaDomain: null,
+      },
+    };
+
     if (write) {
       const leverOnDay = findLeverRelevantKeyOnDay(ctx, day);
       if (leverOnDay?.activity) {
         const persistedReview = ensureStructuredSessionReview(leverOnDay.activity, leverOnDay.keyType);
         if (persistedReview?.nextLeverMeta?.domain) {
-          await writeLeverReviewKv(env, day, {
+          leverKvWriteDebug = await writeLeverReviewKv(env, day, {
             activityId: leverOnDay.activity?.id ?? null,
             keyType: leverOnDay.keyType,
             nextLever: persistedReview?.nextLever || null,
             nextLeverMeta: persistedReview.nextLeverMeta,
+            sessionReview: persistedReview,
           });
         }
       }
       await putWellnessDay(env, day, patchToWrite);
       daysWritten++;
+    }
+
+    if (debug) {
+      addLeverKvDebug(ctx.debugOut, day, {
+        ...leverKvWriteDebug,
+        leverReviewReadDebug: leverPersistenceDebug?.leverReviewReadDebug || null,
+      });
     }
 
     patches[day] = patchToWrite;
