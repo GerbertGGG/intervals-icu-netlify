@@ -188,7 +188,9 @@ export default {
     }
 
     // Sync only when today's run set changed since the previous crawl.
-    // Scheduled updates touch only the "HEUTIGER LAUF" section so the rest of the 07:00 baseline report remains unchanged.
+    // In runMetricsOnly mode we refresh the canonical decision blocks from fresh render output
+    // (HEUTE/WARUM/STATUS/FOKUS/TRAININGSSTAND/EMPFEHLUNGEN/DIAGNOSE/BOTTOM LINE) and avoid
+    // piecemeal legacy text carry-over from older baseline structures.
     const today = isoDate(new Date());
     const runMetricsOnly = true;
     const berlinHour = getBerlinHourFromScheduledEvent(event);
@@ -7131,6 +7133,8 @@ function buildNextRunRecommendation({
   keyCapExceeded,
   keySpacingOk,
   keyAllowedNow,
+  nextAllowed,
+  todayIso,
   keyMinGapDays,
 }) {
   let next = "45–60 min locker/GA";
@@ -7153,11 +7157,22 @@ function buildNextRunRecommendation({
   if (keyCapExceeded) {
     next = "Kein weiterer Key diese Woche – locker/GA.";
   } else if (!keySpacingOk) {
-    const minGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
-    next = `Nächster Key frühestens in ${minGapHours}h – bis dahin locker/GA.`;
+    if (nextAllowed && todayIso && isIsoDate(todayIso) && isIsoDate(nextAllowed)) {
+      const remainingWaitHours = Math.max(0, diffDays(todayIso, nextAllowed)) * 24;
+      next = `Nächster Key frühestens ab ${nextAllowed} (in ${remainingWaitHours}h) – bis dahin locker/GA.`;
+    } else {
+      const minGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
+      next = `Mindestabstand für Key-Reize: ${minGapHours}h – bis dahin locker/GA.`;
+    }
   }
 
   return next;
+}
+
+function isLegacyNextKeyText(text) {
+  const lower = String(text || "").toLowerCase();
+  if (!lower) return false;
+  return lower.includes("nächster key") || lower.includes("next key") || lower.includes("key frühestens");
 }
 
 function buildDailyDecisionLayer({
@@ -7205,14 +7220,18 @@ function addUniqueTopicLine(topicBucket, topic, line) {
 }
 
 
-function resolveNextKeyWaitHours({ spacingBlocked, nextAllowed, todayIso, keySpacingOk, keyMinGapDays }) {
-  if (spacingBlocked && nextAllowed) {
-    return Math.max(0, diffDays(todayIso, nextAllowed)) * 24;
-  }
-  if (keySpacingOk === false) {
-    return Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
-  }
-  return null;
+function resolveNextKeyTiming({ spacingBlocked, nextAllowed, todayIso, keySpacingOk, keyMinGapDays }) {
+  const requiredMinGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
+  const hasEarliestDate = spacingBlocked && nextAllowed && isIsoDate(nextAllowed);
+  const remainingWaitHours = hasEarliestDate && todayIso && isIsoDate(todayIso)
+    ? Math.max(0, diffDays(todayIso, nextAllowed)) * 24
+    : (keySpacingOk === false ? requiredMinGapHours : null);
+
+  return {
+    requiredMinGapHours,
+    remainingWaitHours,
+    nextKeyEarliestDate: hasEarliestDate ? nextAllowed : null,
+  };
 }
 
 function buildResolvedDecision({
@@ -7225,7 +7244,7 @@ function buildResolvedDecision({
   readinessScore,
   mainLimiter,
 }) {
-  const resolvedWaitHours = resolveNextKeyWaitHours({
+  const resolvedTiming = resolveNextKeyTiming({
     spacingBlocked,
     nextAllowed,
     todayIso,
@@ -7234,16 +7253,20 @@ function buildResolvedDecision({
   });
   return {
     todayDecision: `${todayDecision}.`,
-    nextKeyEarliestDate: spacingBlocked && nextAllowed ? nextAllowed : null,
-    nextKeyWaitHours: resolvedWaitHours,
+    requiredMinGapHours: resolvedTiming.requiredMinGapHours,
+    remainingWaitHours: resolvedTiming.remainingWaitHours,
+    nextKeyEarliestDate: resolvedTiming.nextKeyEarliestDate,
     readinessScore: Number.isFinite(readinessScore) ? readinessScore : null,
     mainLimiter: mainLimiter || "n/a",
   };
 }
 
 function buildResolvedNextKeyLine(resolvedDecision) {
-  if (resolvedDecision?.nextKeyWaitHours == null) return null;
-  return `Nächster Key frühestens in ${resolvedDecision.nextKeyWaitHours}h.`;
+  if (resolvedDecision?.remainingWaitHours == null) return null;
+  if (resolvedDecision?.nextKeyEarliestDate) {
+    return `Nächster Key frühestens ab ${resolvedDecision.nextKeyEarliestDate} (in ${resolvedDecision.remainingWaitHours}h; Mindestabstand ${resolvedDecision.requiredMinGapHours}h).`;
+  }
+  return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
 function resolveBottomLine({ candidate, todayDecision }) {
@@ -7589,6 +7612,8 @@ function buildComments(
     keyCapExceeded: budgetBlocked,
     keySpacingOk: spacingOk,
     keyAllowedNow: keyCompliance?.keyAllowedNow,
+    nextAllowed,
+    todayIso,
     keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
@@ -7778,6 +7803,18 @@ function buildComments(
   const pendingLeverLine = pendingLeverPlan.pendingLeverLine || keyCompliance?.pendingLeverLine || null;
   const pendingLeverPlanLine = pendingLeverPlan.pendingLeverPlanLine || keyCompliance?.pendingLeverPlanLine || null;
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
+  const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
+  const resolvedDecision = buildResolvedDecision({
+    todayDecision,
+    todayIso,
+    spacingBlocked,
+    nextAllowed,
+    keySpacingOk: spacingOk,
+    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
+    readinessScore: distanceDiagnostics?.readiness,
+    mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
+  });
+  const resolvedNextKeyLine = buildResolvedNextKeyLine(resolvedDecision);
   const decisionCompact = buildRecommendationsAndBottomLine({
     runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
@@ -7805,10 +7842,14 @@ function buildComments(
     distanceDiagnostics,
     gapRecommendations,
   });
-  const recommendationMetricsBlock = [
+  const recommendationMetricsBlockRaw = [
     ...decisionCompact.recommendations,
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
   ];
+  const recommendationMetricsBlock = recommendationMetricsBlockRaw.filter((line) => {
+    if (!resolvedDecision?.nextKeyEarliestDate) return true;
+    return !isLegacyNextKeyText(line);
+  });
   if (!keyAllowedNow && pendingLeverLine) {
     recommendationMetricsBlock.push(pendingLeverLine);
   }
@@ -7818,7 +7859,6 @@ function buildComments(
 
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
   const focusLabel = coachFocus.label;
-  const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
   const dailyDecisionLayer = buildDailyDecisionLayer({
     primaryDecision: todayDecision,
     keyAllowedNow,
@@ -7829,17 +7869,6 @@ function buildComments(
     overlayMode,
     secondaryOptionCandidate: explicitSessionShort,
   });
-  const resolvedDecision = buildResolvedDecision({
-    todayDecision,
-    todayIso,
-    spacingBlocked,
-    nextAllowed,
-    keySpacingOk: spacingOk,
-    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
-    readinessScore: distanceDiagnostics?.readiness,
-    mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
-  });
-  const resolvedNextKeyLine = buildResolvedNextKeyLine(resolvedDecision);
 
   const gapReasonMap = {
     base: [
@@ -7934,6 +7963,7 @@ function buildComments(
         || lower.includes("hebel vorgemerkt")
         || lower.includes("geplante anpassung")
         || lower.includes("fokus:")
+        || (resolvedDecision?.nextKeyEarliestDate && isLegacyNextKeyText(lower))
       ) continue;
       recommendationLines.push(text);
       if (recommendationLines.length >= 4) break;
@@ -7981,9 +8011,7 @@ function buildComments(
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
     `Heute: ${dailyDecisionLayer.primaryDecision}.`,
-    keyBlocked
-      ? (resolvedNextKeyLine || dailyDecisionLayer.hint)
-      : dailyDecisionLayer.hint,
+    resolvedNextKeyLine || dailyDecisionLayer.hint,
     ...(!keyAllowedNow && pendingLeverLine
       ? [pendingLeverLine]
       : []),
