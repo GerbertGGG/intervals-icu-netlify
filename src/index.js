@@ -281,7 +281,7 @@ function parseBooleanParam(searchParams, key) {
 function parseReportVerbosity(searchParams, { debug = false } = {}) {
   const raw = String(searchParams.get("verbosity") || "").trim().toLowerCase();
   if (REPORT_VERBOSITY_VALUES.has(raw)) return raw;
-  return debug ? "debug" : "coach";
+  return "coach";
 }
 
 function getSearchParamAny(searchParams, keys) {
@@ -7929,13 +7929,11 @@ function buildComments(
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
   if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
-  if (resolvedNextKeyLine) addUniqueTopicLine(renderedTopics, "next_key", resolvedNextKeyLine);
   if (focusLabel) addUniqueTopicLine(renderedTopics, "focus_cue", focusLabel);
   if (!keyAllowedNow && pendingLeverPlanLine) addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
 
   const focusRenderLines = [];
   if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
-  if (renderedTopics.has("next_key") && resolvedNextKeyLine) focusRenderLines.push(resolvedNextKeyLine);
   if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
   if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
 
