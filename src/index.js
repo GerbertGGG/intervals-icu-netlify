@@ -7197,6 +7197,64 @@ function buildDailyDecisionLayer({
   };
 }
 
+function addUniqueTopicLine(topicBucket, topic, line) {
+  if (!line) return;
+  if (topicBucket.has(topic)) return;
+  topicBucket.add(topic);
+  topicBucket.lines.push(line);
+}
+
+
+function resolveNextKeyWaitHours({ spacingBlocked, nextAllowed, todayIso, keySpacingOk, keyMinGapDays }) {
+  if (spacingBlocked && nextAllowed) {
+    return Math.max(0, diffDays(todayIso, nextAllowed)) * 24;
+  }
+  if (keySpacingOk === false) {
+    return Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
+  }
+  return null;
+}
+
+function buildResolvedDecision({
+  todayDecision,
+  todayIso,
+  spacingBlocked,
+  nextAllowed,
+  keySpacingOk,
+  keyMinGapDays,
+  readinessScore,
+  mainLimiter,
+}) {
+  const resolvedWaitHours = resolveNextKeyWaitHours({
+    spacingBlocked,
+    nextAllowed,
+    todayIso,
+    keySpacingOk,
+    keyMinGapDays,
+  });
+  return {
+    todayDecision: `${todayDecision}.`,
+    nextKeyEarliestDate: spacingBlocked && nextAllowed ? nextAllowed : null,
+    nextKeyWaitHours: resolvedWaitHours,
+    readinessScore: Number.isFinite(readinessScore) ? readinessScore : null,
+    mainLimiter: mainLimiter || "n/a",
+  };
+}
+
+function buildResolvedNextKeyLine(resolvedDecision) {
+  if (resolvedDecision?.nextKeyWaitHours == null) return null;
+  return `Nächster Key frühestens in ${resolvedDecision.nextKeyWaitHours}h.`;
+}
+
+function resolveBottomLine({ candidate, todayDecision }) {
+  const text = String(candidate || "").trim();
+  if (!text) return `${todayDecision}`;
+  const lower = text.toLowerCase();
+  const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
+  if (introducesPrimaryTopic) return `${todayDecision}`;
+  return text;
+}
+
 function limitText(text, maxLen = 140) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (clean.length <= maxLen) return clean;
@@ -7412,7 +7470,7 @@ function buildComments(
       "TRAININGSSTAND": "📊",
       "HEUTE-ENTSCHEIDUNG": "🎯",
       "BOTTOM LINE": "🧾",
-      "HEUTE": "🎯",
+      "HEUTE": "🏃",
       "WARUM": "🧩",
       "STATUS": "🧠",
       "DIAGNOSE": "🧠",
@@ -7769,12 +7827,17 @@ function buildComments(
     overlayMode,
     secondaryOptionCandidate: explicitSessionShort,
   });
-  const todayBlock = [
-    `${todayDecision}.`,
-    spacingBlocked && nextAllowed
-      ? `Nächster Key frühestens in ${Math.max(0, diffDays(todayIso, nextAllowed)) * 24}h.`
-      : dailyDecisionLayer.hint,
-  ];
+  const resolvedDecision = buildResolvedDecision({
+    todayDecision,
+    todayIso,
+    spacingBlocked,
+    nextAllowed,
+    keySpacingOk: spacingOk,
+    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
+    readinessScore: distanceDiagnostics?.readiness,
+    mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
+  });
+  const resolvedNextKeyLine = buildResolvedNextKeyLine(resolvedDecision);
 
   const gapReasonMap = {
     base: [
@@ -7827,62 +7890,74 @@ function buildComments(
   }
 
   if (normalizedVerbosity !== "debug") {
-    addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
-    addDecisionBlock("HEUTE", todayBlock);
+    const renderedTopics = new Set();
+    renderedTopics.lines = [];
+
     const whyLines = shortReasons.length
-      ? shortReasons.map((reason) => `• ${reason}`)
+      ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
       : ["• Keine harten Restriktionen aktiv."];
-    addDecisionBlock("WARUM", whyLines);
+
+    const statusLines = [
+      `Readiness: ${resolvedDecision.readinessScore ?? "n/a"}/100`,
+      `Hauptlimit: ${resolvedDecision.mainLimiter}`,
+    ];
+
+    const trainingStateLines = [
+      runTarget > 0 && runFloorCurrent < runTarget
+        ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
+        : runTarget > 0
+          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
+          : `RunFloor: ${runFloorCurrent} / n/a`,
+      `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+      `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
+    ];
+
+    const recommendationLines = [];
+    for (const rec of recommendationMetricsBlock) {
+      const text = String(rec || "").trim();
+      if (!text) continue;
+      const lower = text.toLowerCase();
+      if (lower.includes("readiness") || lower.includes("nächster key frühestens") || lower.includes("hauptlimit")) continue;
+      recommendationLines.push(text);
+      if (recommendationLines.length >= 4) break;
+    }
 
     const diagnoseLines = [];
-    diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
     for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
       const component = distanceDiagnostics?.components?.[name];
       if (!component) continue;
       diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
     }
 
-    const diagnoseDebugLines = [];
-    if ((distanceDiagnostics?.strengths || []).length) {
-      diagnoseDebugLines.push(`Stärken: ${(distanceDiagnostics.strengths || []).slice(0, 2).join(", ")}`);
-    }
-    diagnoseDebugLines.push(`Limitierend: ${buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap).label || "n/a"}`);
+    addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
 
-    if (normalizedVerbosity === "coach") {
-      const statusLines = [
-        `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`,
-        `Hauptlimit: ${mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a"}`,
-      ];
-      const trainingStateLines = [
-        runTarget > 0 && runFloorCurrent < runTarget
-          ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
-          : runTarget > 0
-            ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
-            : `RunFloor: ${runFloorCurrent} / n/a`,
-        `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
-      ];
-      addDecisionBlock("STATUS", statusLines);
-      addDecisionBlock("FOKUS", focusLines.slice(0, 2));
-      addDecisionBlock("TRAININGSSTAND", trainingStateLines);
-      addDecisionBlock("EMPFEHLUNGEN", recommendationMetricsBlock);
-      // Coach-first layout: operational guidance before condensed diagnosis.
-      addDecisionBlock("DIAGNOSE", diagnoseLines);
-      if (diagnoseDebugLines.length) addDecisionBlock("DIAGNOSE / DEBUG", diagnoseDebugLines);
-    } else {
-      addDecisionBlock("DIAGNOSE", diagnoseLines);
-      if (diagnoseDebugLines.length) addDecisionBlock("DIAGNOSE / DEBUG", diagnoseDebugLines);
-      addDecisionBlock("FOKUS", focusLines.slice(0, 2));
-    }
-    addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
+    if (resolvedNextKeyLine) addUniqueTopicLine(renderedTopics, "next_key", resolvedNextKeyLine);
+    const nextKeyRecommendation = renderedTopics.has("next_key") ? [resolvedNextKeyLine] : [];
+    const recommendationRenderLines = [
+      ...nextKeyRecommendation,
+      ...recommendationLines,
+    ].slice(0, 4);
+
+    addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
+    addDecisionBlock("WARUM", whyLines);
+    addDecisionBlock("STATUS", statusLines);
+    addDecisionBlock("FOKUS", focusLines.slice(0, 2));
+    addDecisionBlock("TRAININGSSTAND", trainingStateLines);
+    addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
+    addDecisionBlock("DIAGNOSE", diagnoseLines);
+    const bottomLine = resolveBottomLine({
+      candidate: capLines(decisionCompact.bottomLine, 1)[0],
+      todayDecision: resolvedDecision.todayDecision,
+    });
+    addDecisionBlock("BOTTOM LINE", [bottomLine]);
     return lines.join("\n");
   }
 
-  const nextAllowedHours = spacingBlocked && nextAllowed ? Math.max(0, diffDays(todayIso, nextAllowed)) * 24 : null;
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("COACH-ENTSCHEIDUNG", [
     `Heute: ${dailyDecisionLayer.primaryDecision}.`,
     keyBlocked
-      ? (nextAllowedHours != null ? `Nächster Key frühestens in ${nextAllowedHours}h.` : dailyDecisionLayer.hint)
+      ? (resolvedNextKeyLine || dailyDecisionLayer.hint)
       : dailyDecisionLayer.hint,
     ...(!keyAllowedNow && pendingLeverLine
       ? [pendingLeverLine]
@@ -7927,7 +8002,11 @@ function buildComments(
     `Notfallmodus: 2×12 Squats · 2×30s Plank · 2×12 Monster Walk`,
   ]);
 
-  addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
+  const debugBottomLine = resolveBottomLine({
+    candidate: capLines(decisionCompact.bottomLine, 1)[0],
+    todayDecision: resolvedDecision.todayDecision,
+  });
+  addDecisionBlock("BOTTOM LINE", [debugBottomLine]);
 
   const diagnoseKernelLines = [
     "DIAGNOSE-KERN",
