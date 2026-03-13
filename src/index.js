@@ -7942,6 +7942,7 @@ function buildComments(
     recommendationRenderLines.push("Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen.");
   }
 
+  addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
   addDecisionBlock("WARUM", whyLines);
   addDecisionBlock("STATUS", statusLines);
@@ -9386,6 +9387,7 @@ function composeDecisionBlocks(blocks) {
 
 function mergeTodayRunSection(existingText, freshText) {
   const canonicalTitles = [
+    "HEUTIGER LAUF",
     "HEUTE",
     "WARUM",
     "STATUS",
