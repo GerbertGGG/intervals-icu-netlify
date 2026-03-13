@@ -7248,10 +7248,12 @@ function buildResolvedNextKeyLine(resolvedDecision) {
 
 function resolveBottomLine({ candidate, todayDecision }) {
   const text = String(candidate || "").trim();
-  if (!text) return `${todayDecision}`;
+  const fallback = "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
+  if (!text) return fallback;
   const lower = text.toLowerCase();
   const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
-  if (introducesPrimaryTopic) return `${todayDecision}`;
+  if (introducesPrimaryTopic) return fallback;
+  if (text === String(todayDecision || "").trim()) return fallback;
   return text;
 }
 
@@ -7902,6 +7904,11 @@ function buildComments(
       `Hauptlimit: ${resolvedDecision.mainLimiter}`,
     ];
 
+    const intensityWindowLabel = `${intensityLookbackDays}T`;
+    const intensityLine = intensityDistribution?.hasData
+      ? `Intensitätsverteilung (${intensityWindowLabel}, Block): Easy ${easySharePct}% | Mid ${midSharePct}% | Hard ${hardSharePct}% (Ziel ≥${easyMinPct}% / ≤${midMaxPct}% / ≤${hardMaxPct}%)`
+      : `Intensitätsverteilung (${intensityWindowLabel}, Block): n/a (noch keine Laufdaten)`;
+
     const trainingStateLines = [
       runTarget > 0 && runFloorCurrent < runTarget
         ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
@@ -7910,6 +7917,7 @@ function buildComments(
           : `RunFloor: ${runFloorCurrent} / n/a`,
       `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
       `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
+      intensityLine,
     ];
 
     const recommendationLines = [];
@@ -7917,7 +7925,16 @@ function buildComments(
       const text = String(rec || "").trim();
       if (!text) continue;
       const lower = text.toLowerCase();
-      if (lower.includes("readiness") || lower.includes("nächster key frühestens") || lower.includes("hauptlimit")) continue;
+      if (
+        lower.includes("readiness")
+        || lower.includes("hauptlimit")
+        || lower.includes("nächster key frühestens")
+        || lower.includes("heute kein")
+        || lower.includes("heute:")
+        || lower.includes("hebel vorgemerkt")
+        || lower.includes("geplante anpassung")
+        || lower.includes("fokus:")
+      ) continue;
       recommendationLines.push(text);
       if (recommendationLines.length >= 4) break;
     }
@@ -7930,18 +7947,26 @@ function buildComments(
     }
 
     addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
-
+    if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
     if (resolvedNextKeyLine) addUniqueTopicLine(renderedTopics, "next_key", resolvedNextKeyLine);
-    const nextKeyRecommendation = renderedTopics.has("next_key") ? [resolvedNextKeyLine] : [];
-    const recommendationRenderLines = [
-      ...nextKeyRecommendation,
-      ...recommendationLines,
-    ].slice(0, 4);
+    if (focusLabel) addUniqueTopicLine(renderedTopics, "focus_cue", focusLabel);
+    if (!keyAllowedNow && pendingLeverPlanLine) addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
+
+    const focusRenderLines = [];
+    if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
+    if (renderedTopics.has("next_key") && resolvedNextKeyLine) focusRenderLines.push(resolvedNextKeyLine);
+    if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
+    if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
+
+    const recommendationRenderLines = recommendationLines.slice(0, 4);
+    if (!recommendationRenderLines.length) {
+      recommendationRenderLines.push("Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen.");
+    }
 
     addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
     addDecisionBlock("WARUM", whyLines);
     addDecisionBlock("STATUS", statusLines);
-    addDecisionBlock("FOKUS", focusLines.slice(0, 2));
+    addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
     addDecisionBlock("TRAININGSSTAND", trainingStateLines);
     addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
     addDecisionBlock("DIAGNOSE", diagnoseLines);
@@ -9434,24 +9459,27 @@ function composeDecisionBlocks(blocks) {
 }
 
 function mergeTodayRunSection(existingText, freshText) {
-  const candidateTitles = new Set(["HEUTIGER LAUF", "HEUTE"]);
+  const canonicalTitles = [
+    "HEUTE",
+    "WARUM",
+    "STATUS",
+    "FOKUS",
+    "TRAININGSSTAND",
+    "EMPFEHLUNGEN",
+    "DIAGNOSE",
+    "BOTTOM LINE",
+  ];
   const freshBlocks = splitDecisionBlocks(freshText);
-  const freshTodayBlock = freshBlocks.find((b) => candidateTitles.has(getDecisionBlockTitle(b)));
-  if (!freshTodayBlock) return fromHardLineBreakText(existingText);
+  if (!freshBlocks.length) return fromHardLineBreakText(existingText);
 
-  const existingBlocks = splitDecisionBlocks(existingText);
-  if (!existingBlocks.length) return composeDecisionBlocks([freshTodayBlock]);
+  const freshMap = new Map();
+  for (const block of freshBlocks) {
+    const title = getDecisionBlockTitle(block);
+    if (canonicalTitles.includes(title)) freshMap.set(title, block);
+  }
 
-  let replaced = false;
-  const merged = existingBlocks.map((b) => {
-    if (candidateTitles.has(getDecisionBlockTitle(b))) {
-      replaced = true;
-      return freshTodayBlock;
-    }
-    return b;
-  });
-  if (!replaced) merged.unshift(freshTodayBlock);
-  return composeDecisionBlocks(merged);
+  const canonicalBlocks = canonicalTitles.map((title) => freshMap.get(title)).filter(Boolean);
+  return composeDecisionBlocks(canonicalBlocks.length ? canonicalBlocks : freshBlocks);
 }
 
 async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, existingEvent = null) {
