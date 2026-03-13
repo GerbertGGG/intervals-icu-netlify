@@ -615,25 +615,7 @@ function getIntensityDistributionTargets(block, eventDistance) {
   const blockTargets = INTENSITY_DISTRIBUTION_TARGET[block] ?? INTENSITY_DISTRIBUTION_TARGET.BASE;
   const dist = normalizeEventDistance(eventDistance);
   const byDistance = blockTargets?.byDistance?.[dist];
-  const merged = byDistance ? { ...blockTargets, ...byDistance } : blockTargets;
-  const easyMax = Number(merged?.easyMax);
-  const midMax = Number(merged?.midMax);
-  const hardMax = Number(merged?.hardMax);
-  const maxSum =
-    (Number.isFinite(easyMax) ? easyMax : 0) +
-    (Number.isFinite(midMax) ? midMax : 0) +
-    (Number.isFinite(hardMax) ? hardMax : 0);
-
-  if (maxSum > 1) {
-    const scale = 1 / maxSum;
-    return {
-      ...merged,
-      easyMax: Number.isFinite(easyMax) ? round(easyMax * scale, 3) : merged.easyMax,
-      midMax: Number.isFinite(midMax) ? round(midMax * scale, 3) : merged.midMax,
-      hardMax: Number.isFinite(hardMax) ? round(hardMax * scale, 3) : merged.hardMax,
-    };
-  }
-  return merged;
+  return byDistance ? { ...blockTargets, ...byDistance } : blockTargets;
 }
 
 const INTENSITY_LOOKBACK_DAYS = 14;
@@ -4472,8 +4454,22 @@ function computeRacepaceBlockProgress(ctx, context = {}) {
     if (Number.isFinite(workKm) && workKm > 0) doneKm += workKm;
   }
 
-  const targetKm = Number(getRacepaceDistanceTarget(eventDistance)?.peak);
+  let targetKm = 0;
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    if (!step) continue;
+    const reps = Number(step.reps) || 0;
+    const workKm = Number.isFinite(step.total_work_km)
+      ? Number(step.total_work_km)
+      : reps * (Number(step.work_km) || 0);
+    if (Number.isFinite(workKm) && workKm > 0) targetKm += workKm;
+  }
+
+  const fallbackSingleSessionPeakKm = Number(getRacepaceDistanceTarget(eventDistance)?.peak);
+  if (!(targetKm > 0) && fallbackSingleSessionPeakKm > 0) targetKm = fallbackSingleSessionPeakKm;
+
   const doneRounded = Math.round(doneKm * 10) / 10;
+  const targetRounded = Math.round(targetKm * 10) / 10;
   const pct = Number.isFinite(targetKm) && targetKm > 0
     ? Math.min(999, Math.round((doneRounded / targetKm) * 100))
     : null;
@@ -4482,7 +4478,7 @@ function computeRacepaceBlockProgress(ctx, context = {}) {
     available: true,
     sessionsDone: racepaceActs.length,
     doneKm: doneRounded,
-    targetKm: Number.isFinite(targetKm) && targetKm > 0 ? targetKm : null,
+    targetKm: Number.isFinite(targetRounded) && targetRounded > 0 ? targetRounded : null,
     pct,
   };
 }
@@ -7329,7 +7325,7 @@ function buildRecommendationsAndBottomLine(state) {
       ? longRunDoneMin >= longRunDiagnosisTargetMin
       : false;
     if (meetsBlockTarget || meetsDiagnosisTarget) {
-      rec.push("Longrun über Blockziel → aktuell halten.");
+      rec.push("Longrun im Zielbereich → aktuell halten.");
     } else {
       const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
         ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
@@ -7880,7 +7876,7 @@ function buildComments(
     : ["• Keine harten Restriktionen aktiv."];
 
   const statusLines = [
-    `Readiness: ${resolvedDecision.readinessScore ?? "n/a"}/100`,
+    `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
   ];
 
