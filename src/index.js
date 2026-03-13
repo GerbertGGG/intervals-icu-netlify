@@ -7175,43 +7175,6 @@ function isLegacyNextKeyText(text) {
   return lower.includes("nächster key") || lower.includes("next key") || lower.includes("key frühestens");
 }
 
-function buildDailyDecisionLayer({
-  primaryDecision,
-  keyAllowedNow,
-  fatigueOverride,
-  keyCapExceeded,
-  keySpacingOk,
-  keyBlocked,
-  overlayMode,
-  secondaryOptionCandidate,
-}) {
-  const hardStopModes = new Set(["DELOAD", "TAPER", "POST_RACE_RAMP", "LIFE_EVENT_STOP"]);
-  const hardBlockerActive = hardStopModes.has(overlayMode);
-  const easyPrimary = isEasyTodayDecision(primaryDecision);
-  const optionAllowed =
-    keyAllowedNow === true
-    && fatigueOverride !== true
-    && keyCapExceeded !== true
-    && keySpacingOk !== false
-    && keyBlocked !== true
-    && !hardBlockerActive;
-
-  const hint = optionAllowed && easyPrimary
-    ? "Key-Fenster offen, aber heute nicht priorisiert."
-    : (keyBlocked ? "Heute kein zusätzlicher Key." : "Key-Fenster offen.");
-
-  const secondaryOption = optionAllowed && easyPrimary && secondaryOptionCandidate
-    ? `Wenn du dich frisch fühlst: ${secondaryOptionCandidate}`
-    : null;
-
-  return {
-    primaryDecision,
-    optionAllowed,
-    secondaryOption,
-    hint,
-  };
-}
-
 function addUniqueTopicLine(topicBucket, topic, line) {
   if (!line) return;
   if (topicBucket.has(topic)) return;
@@ -7859,17 +7822,6 @@ function buildComments(
 
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
   const focusLabel = coachFocus.label;
-  const dailyDecisionLayer = buildDailyDecisionLayer({
-    primaryDecision: todayDecision,
-    keyAllowedNow,
-    fatigueOverride: fatigue?.override === true,
-    keyCapExceeded: budgetBlocked,
-    keySpacingOk: spacingOk,
-    keyBlocked,
-    overlayMode,
-    secondaryOptionCandidate: explicitSessionShort,
-  });
-
   const gapReasonMap = {
     base: [
       !ignoreRunFloorGap && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
@@ -7920,107 +7872,22 @@ function buildComments(
     focusLines.push("Kraft zurückbringen.");
   }
 
-  if (normalizedVerbosity !== "debug") {
-    const renderedTopics = new Set();
-    renderedTopics.lines = [];
+  const renderedTopics = new Set();
+  renderedTopics.lines = [];
 
-    const whyLines = shortReasons.length
-      ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
-      : ["• Keine harten Restriktionen aktiv."];
+  const whyLines = shortReasons.length
+    ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
+    : ["• Keine harten Restriktionen aktiv."];
 
-    const statusLines = [
-      `Readiness: ${resolvedDecision.readinessScore ?? "n/a"}/100`,
-      `Hauptlimit: ${resolvedDecision.mainLimiter}`,
-    ];
+  const statusLines = [
+    `Readiness: ${resolvedDecision.readinessScore ?? "n/a"}/100`,
+    `Hauptlimit: ${resolvedDecision.mainLimiter}`,
+  ];
 
-    const intensityWindowLabel = `${intensityLookbackDays}T`;
-    const intensityLine = intensityDistribution?.hasData
-      ? `Intensitätsverteilung (${intensityWindowLabel}, Block): Easy ${easySharePct}% | Mid ${midSharePct}% | Hard ${hardSharePct}% (Ziel ≥${easyMinPct}% / ≤${midMaxPct}% / ≤${hardMaxPct}%)`
-      : `Intensitätsverteilung (${intensityWindowLabel}, Block): n/a (noch keine Laufdaten)`;
-
-    const trainingStateLines = [
-      runTarget > 0 && runFloorCurrent < runTarget
-        ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
-        : runTarget > 0
-          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
-          : `RunFloor: ${runFloorCurrent} / n/a`,
-      `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
-      `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
-      intensityLine,
-    ];
-
-    const recommendationLines = [];
-    for (const rec of recommendationMetricsBlock) {
-      const text = String(rec || "").trim();
-      if (!text) continue;
-      const lower = text.toLowerCase();
-      if (
-        lower.includes("readiness")
-        || lower.includes("hauptlimit")
-        || lower.includes("nächster key frühestens")
-        || lower.includes("heute kein")
-        || lower.includes("heute:")
-        || lower.includes("hebel vorgemerkt")
-        || lower.includes("geplante anpassung")
-        || lower.includes("fokus:")
-        || (resolvedDecision?.nextKeyEarliestDate && isLegacyNextKeyText(lower))
-      ) continue;
-      recommendationLines.push(text);
-      if (recommendationLines.length >= 4) break;
-    }
-
-    const diagnoseLines = [];
-    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
-      const component = distanceDiagnostics?.components?.[name];
-      if (!component) continue;
-      diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
-    }
-
-    addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
-    if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
-    if (resolvedNextKeyLine) addUniqueTopicLine(renderedTopics, "next_key", resolvedNextKeyLine);
-    if (focusLabel) addUniqueTopicLine(renderedTopics, "focus_cue", focusLabel);
-    if (!keyAllowedNow && pendingLeverPlanLine) addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
-
-    const focusRenderLines = [];
-    if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
-    if (renderedTopics.has("next_key") && resolvedNextKeyLine) focusRenderLines.push(resolvedNextKeyLine);
-    if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
-    if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
-
-    const recommendationRenderLines = recommendationLines.slice(0, 4);
-    if (!recommendationRenderLines.length) {
-      recommendationRenderLines.push("Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen.");
-    }
-
-    addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
-    addDecisionBlock("WARUM", whyLines);
-    addDecisionBlock("STATUS", statusLines);
-    addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
-    addDecisionBlock("TRAININGSSTAND", trainingStateLines);
-    addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
-    addDecisionBlock("DIAGNOSE", diagnoseLines);
-    const bottomLine = resolveBottomLine({
-      candidate: capLines(decisionCompact.bottomLine, 1)[0],
-      todayDecision: resolvedDecision.todayDecision,
-    });
-    addDecisionBlock("BOTTOM LINE", [bottomLine]);
-    return lines.join("\n");
-  }
-
-  addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
-  addDecisionBlock("COACH-ENTSCHEIDUNG", [
-    `Heute: ${dailyDecisionLayer.primaryDecision}.`,
-    resolvedNextKeyLine || dailyDecisionLayer.hint,
-    ...(!keyAllowedNow && pendingLeverLine
-      ? [pendingLeverLine]
-      : []),
-    ...(!keyAllowedNow && pendingLeverPlanLine
-      ? [pendingLeverPlanLine]
-      : []),
-    `Fokus: ${focusLabel}.`,
-  ]);
-  if (shortReasons.length) addDecisionBlock("KURZBEGRÜNDUNG", shortReasons);
+  const intensityWindowLabel = `${intensityLookbackDays}T`;
+  const intensityLine = intensityDistribution?.hasData
+    ? `Intensitätsverteilung (${intensityWindowLabel}, Block): Easy ${easySharePct}% | Mid ${midSharePct}% | Hard ${hardSharePct}% (Ziel ≥${easyMinPct}% / ≤${midMaxPct}% / ≤${hardMaxPct}%)`
+    : `Intensitätsverteilung (${intensityWindowLabel}, Block): n/a (noch keine Laufdaten)`;
 
   const trainingStateLines = [
     runTarget > 0 && runFloorCurrent < runTarget
@@ -8029,37 +7896,70 @@ function buildComments(
         ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+    `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
+    intensityLine,
   ];
-  addDecisionBlock("TRAININGSSTAND", trainingStateLines);
 
-  if (dailyDecisionLayer.secondaryOption) addDecisionBlock("OPTION", [dailyDecisionLayer.secondaryOption]);
-
-  addDecisionBlock("EMPFEHLUNGEN", recommendationMetricsBlock);
-
-  if (distanceDiagnostics) {
-    const diagSummary = [];
-    diagSummary.push(`Readiness: ${distanceDiagnostics.readiness}/100 (${formatEventDistance(eventDistance)})`);
-    for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
-      const component = distanceDiagnostics?.components?.[name];
-      if (!component) continue;
-      diagSummary.push(`${name.toUpperCase()}: ${component.score} → ${component.interpretation}`);
-    }
-    addDecisionBlock("DIAGNOSE", diagSummary);
+  const recommendationLines = [];
+  for (const rec of recommendationMetricsBlock) {
+    const text = String(rec || "").trim();
+    if (!text) continue;
+    const lower = text.toLowerCase();
+    if (
+      lower.includes("readiness")
+      || lower.includes("hauptlimit")
+      || lower.includes("nächster key frühestens")
+      || lower.includes("heute kein")
+      || lower.includes("heute:")
+      || lower.includes("hebel vorgemerkt")
+      || lower.includes("geplante anpassung")
+      || lower.includes("fokus:")
+      || (resolvedDecision?.nextKeyEarliestDate && isLegacyNextKeyText(lower))
+    ) continue;
+    recommendationLines.push(text);
+    if (recommendationLines.length >= 4) break;
   }
 
-  addDecisionBlock("KRAFTPLAN", [
-    `Phase: ${strengthPlan.phase} · Fokus: ${strengthPlan.focus}`,
-    `Ziel: ${strengthPlan.objective}`,
-    `Umfang: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`,
-    ...strengthPlan.sessions.map((session) => `${session.name}: ${session.exercises.join(" · ")}`),
-    `Notfallmodus: 2×12 Squats · 2×30s Plank · 2×12 Monster Walk`,
-  ]);
+  const diagnoseLines = [];
+  for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
+    const component = distanceDiagnostics?.components?.[name];
+    if (!component) continue;
+    diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
+  }
 
-  const debugBottomLine = resolveBottomLine({
+  addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
+  if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
+  if (resolvedNextKeyLine) addUniqueTopicLine(renderedTopics, "next_key", resolvedNextKeyLine);
+  if (focusLabel) addUniqueTopicLine(renderedTopics, "focus_cue", focusLabel);
+  if (!keyAllowedNow && pendingLeverPlanLine) addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
+
+  const focusRenderLines = [];
+  if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
+  if (renderedTopics.has("next_key") && resolvedNextKeyLine) focusRenderLines.push(resolvedNextKeyLine);
+  if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
+  if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
+
+  const recommendationRenderLines = recommendationLines.slice(0, 4);
+  if (!recommendationRenderLines.length) {
+    recommendationRenderLines.push("Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen.");
+  }
+
+  addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
+  addDecisionBlock("WARUM", whyLines);
+  addDecisionBlock("STATUS", statusLines);
+  addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
+  addDecisionBlock("TRAININGSSTAND", trainingStateLines);
+  addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
+  addDecisionBlock("DIAGNOSE", diagnoseLines);
+  const bottomLine = resolveBottomLine({
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
   });
-  addDecisionBlock("BOTTOM LINE", [debugBottomLine]);
+  addDecisionBlock("BOTTOM LINE", [bottomLine]);
+
+  if (normalizedVerbosity !== "debug") {
+    return lines.join("\n");
+  }
 
   const diagnoseKernelLines = [
     "DIAGNOSE-KERN",
