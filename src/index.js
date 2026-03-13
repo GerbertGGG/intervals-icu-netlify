@@ -620,6 +620,7 @@ function getIntensityDistributionTargets(block, eventDistance) {
 
 const INTENSITY_LOOKBACK_DAYS = 14;
 const INTENSITY_CLEAR_OVERSHOOT = 0.01;
+const INTENSITY_COMPARISON_TOLERANCE = INTENSITY_CLEAR_OVERSHOOT;
 const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
@@ -3671,11 +3672,19 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
 
   const hardOver =
     hasData && Number.isFinite(hardShare) && Number.isFinite(targets?.hardMax)
-      ? hardShare > targets.hardMax + INTENSITY_CLEAR_OVERSHOOT
+      ? hardShare > targets.hardMax + INTENSITY_COMPARISON_TOLERANCE
+      : false;
+  const hardOverStrict =
+    hasData && Number.isFinite(hardShare) && Number.isFinite(targets?.hardMax)
+      ? hardShare > targets.hardMax
       : false;
   const midOver =
     hasData && Number.isFinite(midShare) && Number.isFinite(targets?.midMax)
-      ? midShare > targets.midMax + INTENSITY_CLEAR_OVERSHOOT
+      ? midShare > targets.midMax + INTENSITY_COMPARISON_TOLERANCE
+      : false;
+  const midOverStrict =
+    hasData && Number.isFinite(midShare) && Number.isFinite(targets?.midMax)
+      ? midShare > targets.midMax
       : false;
   const easyUnder =
     hasData && Number.isFinite(easyShare) && Number.isFinite(targets?.easyMin)
@@ -3694,7 +3703,11 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
     hardMinutes: metrics?.hardMinutes ?? 0,
     totalMinutes: metrics?.totalMinutes ?? 0,
     hardOver,
+    hardOverStrict,
     midOver,
+    midOverStrict,
+    comparisonTolerance: INTENSITY_COMPARISON_TOLERANCE,
+    midStatus: midOver ? "over" : midOverStrict ? "within_tolerance" : "ok",
     easyUnder,
   };
 }
@@ -6561,6 +6574,7 @@ function buildWeeklySnapshot(ctx, dayIso, context = {}) {
     keySpacingOk: context?.keyCompliance?.keySpacingOk !== false,
     efTrend: Number(context?.trend?.dv ?? 0),
     driftTrend: Number(context?.trend?.dd ?? 0),
+    executionScoreRaw: Number(context?.executionScore ?? 0),
     executionScore: Number(context?.executionScore ?? 0),
   };
 }
@@ -6788,7 +6802,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   else if (snapshot.strengthMin <= 15) robustness = Math.min(robustness, 64);
   else if (!snapshot.keySpacingOk) robustness = Math.min(robustness, 74);
 
-  const executionProcess = clamp(Math.round(snapshot.executionScore || 0), 0, 100);
+  const executionProcess = clamp(Math.round(snapshot.executionScoreRaw || 0), 0, 100);
   const chaosPenalty = snapshot.keySpacingOk ? 0 : 14;
   const compliancePenalty = context?.keyCompliance?.freqOk === false ? 10 : 0;
   const execution = clamp(Math.round(executionProcess * 0.7 + (100 - chaosPenalty - compliancePenalty) * 0.3), 0, 100);
@@ -6843,7 +6857,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     snapshot.fatigueOverride ? 0.45 : 0.95,
   ].reduce((sum, x) => sum + x, 0) / 4;
   const executionConfidenceRaw = [
-    clamp((snapshot.executionScore || 0) / 100, 0.35, 1),
+    clamp((snapshot.executionScoreRaw || 0) / 100, 0.35, 1),
     context?.keyCompliance ? 0.95 : 0.45,
     context?.fatigue ? 0.95 : 0.45,
   ].reduce((sum, x) => sum + x, 0) / 3;
@@ -6984,6 +6998,12 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     },
   };
 
+  const diagnosticSnapshot = {
+    ...snapshot,
+    executionScoreRaw: executionProcess,
+    executionScoreFinal: execution,
+  };
+
   return {
     readiness,
     scores: { base, specificity, longrun, robustness, execution },
@@ -6992,7 +7012,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     primaryGap,
     secondaryGap,
     strengths,
-    snapshot,
+    snapshot: diagnosticSnapshot,
   };
 }
 
@@ -7034,7 +7054,7 @@ const COACH_GAP_LANGUAGE = {
     focus: "Kraft zurückbringen.",
   },
   execution: {
-    label: "Struktur",
+    label: "Struktur / Wochenrhythmus",
     aliases: ["Rhythmus", "Wochenstruktur", "Planruhe"],
     focus: "Rhythmus sauber halten.",
   },
@@ -7889,7 +7909,9 @@ function buildComments(
     runTarget > 0 && runFloorCurrent < runTarget
       ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
       : runTarget > 0
-        ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
+        ? runFloorState?.stabilityOK === false
+          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}), Stabilität noch nicht bestätigt`
+          : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
