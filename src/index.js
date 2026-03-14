@@ -1402,6 +1402,9 @@ const RUN_FLOOR_FLOOR_STEP = {
   BUILD: 10,
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
+const RUN_FLOOR_SOFT_DIP_PCT = 0.93;
+const RUN_FLOOR_AVG7_TO_AVG21_UPPER = 1.05;
+const RUN_FLOOR_AVG7_TO_AVG21_LOWER = 0.9;
 const LIFE_EVENT_CATEGORY_PRIORITY = ["SICK", "INJURED", "HOLIDAY"];
 
 function mapBlockToPhase(block) {
@@ -1777,9 +1780,27 @@ function evaluateRunFloorState({
   const { loadGap, stabilityOK } = computeStability(last14Loads, floorDaily);
   const deloadReady = shouldTriggerDeload(sum21, activeDays21, deloadActive);
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
+  const floorLevel =
+    floorDaily <= 0 || avg7 >= floorDaily
+      ? "GREEN"
+      : avg7 >= floorDaily * RUN_FLOOR_SOFT_DIP_PCT
+        ? "YELLOW"
+        : "RED";
+  const softDip = floorLevel === "YELLOW";
+  const avg7TrendOK = avg7 <= avg21 * RUN_FLOOR_AVG7_TO_AVG21_UPPER;
+  const avg7TrendSoftOK = avg7 >= avg21 * RUN_FLOOR_AVG7_TO_AVG21_LOWER;
+  const progressionTrendOK = avg7TrendOK || (softDip && avg7TrendSoftOK);
+  const plannedDip =
+    softDip &&
+    floorDaily > 0 &&
+    avg21 >= floorDaily &&
+    stabilityOK &&
+    !stabilityWarn &&
+    (phase === "BASE" || phase === "BUILD") &&
+    safeEventInDays > 2;
 
   if (deloadStartDate && diffDays(deloadStartDate, todayISO) >= RUN_FLOOR_DELOAD_DAYS) {
-    const deloadExitStable = stabilityOK && !stabilityWarn && avg7 <= avg21 * 1.05;
+    const deloadExitStable = stabilityOK && !stabilityWarn && progressionTrendOK;
     if (deloadExitStable) {
       deloadStartDate = null;
       deloadEndDate = null;
@@ -1813,6 +1834,8 @@ function evaluateRunFloorState({
     reasons.push("Deload ausgelöst (21T Summe + 14 aktive Tage)");
   } else if (stabilityWarn) {
     reasons.push("Aufgebaut aber instabil → erst stabilisieren");
+  } else if (plannedDip) {
+    reasons.push("Geplanter Mikrozyklus-Dip toleriert (7T leicht unter Floor)");
   }
 
   let effectiveFloorTarget = updatedFloorTarget;
@@ -1882,7 +1905,7 @@ function evaluateRunFloorState({
     !postRaceRampCompletedRecently &&
     stabilityOK &&
     !stabilityWarn &&
-    avg7 <= avg21 * 1.05
+    progressionTrendOK
   ) {
     const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
     const maxIncrease = Math.max(1, Math.round(updatedFloorTarget * RUN_FLOOR_MAX_INCREASE_PCT));
@@ -1907,6 +1930,8 @@ function evaluateRunFloorState({
     sum21,
     activeDays21,
     floorDaily,
+    floorLevel,
+    plannedDip,
     loadGap,
     stabilityOK,
     decisionText:
@@ -6242,6 +6267,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       dayIso: day,
       activitiesAll: ctx.activitiesAll,
       runFloorTarget: runFloorState.effectiveFloorTarget,
+      runFloorLevel: runFloorState.floorLevel,
+      runFloorPlannedDip: runFloorState.plannedDip,
       keyCompliance,
       fatigue,
       longRunSummary,
@@ -6688,6 +6715,8 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const runsTarget = dist === "5k" ? 3 : dist === "10k" ? 3 : 4;
 
   const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget, 0, 1.05) : 58;
+  const runFloorLevel = String(context?.runFloorLevel || "").toUpperCase();
+  const runFloorPlannedDip = context?.runFloorPlannedDip === true;
   const consistencyScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget)) * 100), 0, 100);
   const freqScore = clamp(Math.round((stats42.runsPerWeek / runsTarget) * 100), 0, 100);
   const easyVolumeTarget = Math.max(90, runsTarget * 40);
@@ -6708,12 +6737,13 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   );
   const runFloorRatio = floorTarget > 0 ? clamp((Number(snapshot.runFloor) || 0) / floorTarget, 0, 1.2) : 1;
   if (floorTarget > 0 && runFloorRatio < 0.9) {
-    const floorPenalty = Math.round((0.9 - runFloorRatio) * 80);
+    const penaltyScale = runFloorLevel === "YELLOW" || runFloorPlannedDip ? 30 : 80;
+    const floorPenalty = Math.round((0.9 - runFloorRatio) * penaltyScale);
     base = clamp(base - floorPenalty, 0, 100);
   }
   const easyShareDeficit = Math.max(0, intensityTargets.easyMin - (snapshot.easyShare || 0));
   if (easyShareDeficit > 0.06) base = clamp(base - Math.round(easyShareDeficit * 120), 0, 100);
-  if (floorTarget > 0 && runFloorRatio < 0.85 && stats42.runsPerWeek < runsTarget + 0.2) base = Math.min(base, 80);
+  if (floorTarget > 0 && runFloorRatio < 0.85 && runFloorLevel !== "YELLOW" && !runFloorPlannedDip && stats42.runsPerWeek < runsTarget + 0.2) base = Math.min(base, 80);
   if (stats42.runDaysPerWeek < runsTarget - 0.1) base = Math.min(base, 89);
   const baseEliteUnlocked =
     stats42.runDaysPerWeek >= runsTarget + 0.4 &&
@@ -6875,7 +6905,11 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
       consistency: `4-6 Wochen: ${stats42.runDaysPerWeek.toFixed(1)} Lauftage/Woche, Easy-Volumen ${Math.round(stats28.easyMinutes)}′/28T.`,
       recency: `Aktuell: ${Math.round(stats28.runsPerWeek)} Läufe/Woche, Easy-Anteil ${Math.round((snapshot.easyShare || 0) * 100)}%.`,
       constraints: [
-        floorTarget > 0 && snapshot.runFloor < floorTarget ? `RunFloor unter Ziel (${Math.round(floorTarget - snapshot.runFloor)} Gap)` : null,
+        floorTarget > 0 && snapshot.runFloor < floorTarget
+          ? runFloorLevel === "YELLOW" || runFloorPlannedDip
+            ? `RunFloor leicht unter Ziel (${Math.round(floorTarget - snapshot.runFloor)} Gap, toleriert)`
+            : `RunFloor unter Ziel (${Math.round(floorTarget - snapshot.runFloor)} Gap)`
+          : null,
         stats28.runsPerWeek < runsTarget ? "Wochenfrequenz unter Distanzprofil" : null,
         snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil unter Ziel" : null,
       ].filter(Boolean),
@@ -6886,7 +6920,11 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
       ],
       factorsUp: [runFloorScore >= 75 ? "Fähigkeit bestätigt" : null, stats42.runDaysPerWeek >= runsTarget ? "Regelmäßigkeit stabil" : null].filter(Boolean),
       factorsDown: [
-        floorTarget > 0 && snapshot.runFloor < floorTarget ? "RunFloor unter Ziel" : null,
+        floorTarget > 0 && snapshot.runFloor < floorTarget
+          ? runFloorLevel === "YELLOW" || runFloorPlannedDip
+            ? "RunFloor knapp unter Ziel (toleriert)"
+            : "RunFloor unter Ziel"
+          : null,
         stats28.runsPerWeek < runsTarget ? "Frequenz unter Ziel" : null,
         snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil unter Ziel" : null,
       ].filter(Boolean),
