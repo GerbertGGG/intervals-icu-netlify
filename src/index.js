@@ -1402,7 +1402,13 @@ const RUN_FLOOR_FLOOR_STEP = {
   BUILD: 10,
 };
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
-const RUN_FLOOR_SOFT_DIP_PCT = 0.93;
+const RUN_FLOOR_SOFT_DIP_PCT_BY_PHASE = {
+  BASE: 0.93,
+  BUILD: 0.95,
+  PEAK: 0.97,
+  RECOVER: 0.94,
+  DEFAULT: 0.94,
+};
 const RUN_FLOOR_AVG7_TO_AVG21_UPPER = 1.05;
 const RUN_FLOOR_AVG7_TO_AVG21_LOWER = 0.9;
 const LIFE_EVENT_CATEGORY_PRIORITY = ["SICK", "INJURED", "HOLIDAY"];
@@ -1713,6 +1719,51 @@ function computePostRaceRampFactor(daysSinceEvent, eventDistance) {
   return { factor: POST_RACE_RAMP_FACTORS[3], phase: "NORMAL", keyAllowed: true, rampUntilDays: phase3End };
 }
 
+function getRunFloorSoftDipPct(phase) {
+  const key = String(phase || "").toUpperCase();
+  return RUN_FLOOR_SOFT_DIP_PCT_BY_PHASE[key] ?? RUN_FLOOR_SOFT_DIP_PCT_BY_PHASE.DEFAULT;
+}
+
+function computeRunFloorSoftDipMetrics(dailyLoads, floorDaily, softDipPct) {
+  const safeLoads = Array.isArray(dailyLoads) ? dailyLoads : [];
+  if (!(floorDaily > 0) || !safeLoads.length) {
+    return {
+      softDipCount7d: 0,
+      softDipCount14d: 0,
+      softDipStreak: 0,
+    };
+  }
+
+  const states = [];
+  for (let i = 0; i < safeLoads.length; i += 1) {
+    const window = safeLoads.slice(Math.max(0, i - 6), i + 1);
+    const avg7Rolling = computeAvg(window.length, window);
+    if (avg7Rolling >= floorDaily) {
+      states.push("GREEN");
+    } else if (avg7Rolling >= floorDaily * softDipPct) {
+      states.push("YELLOW");
+    } else {
+      states.push("RED");
+    }
+  }
+
+  const trailing = (n) => states.slice(-Math.max(1, n));
+  const softDipCount7d = trailing(7).filter((level) => level === "YELLOW").length;
+  const softDipCount14d = trailing(14).filter((level) => level === "YELLOW").length;
+
+  let softDipStreak = 0;
+  for (let i = states.length - 1; i >= 0; i -= 1) {
+    if (states[i] !== "YELLOW") break;
+    softDipStreak += 1;
+  }
+
+  return {
+    softDipCount7d,
+    softDipCount14d,
+    softDipStreak,
+  };
+}
+
 function evaluateRunFloorState({
   todayISO,
   floorTarget,
@@ -1745,6 +1796,7 @@ function evaluateRunFloorState({
   let lastLifeEventCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
   let lastLifeEventStartISO = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
   let lastLifeEventEndISO = isIsoDate(previousState?.lastLifeEventEndISO) ? previousState.lastLifeEventEndISO : null;
+  let lastPlannedDipDate = isIsoDate(previousState?.lastPlannedDipDate) ? previousState.lastPlannedDipDate : null;
 
   if (eventDateISO && safeEventInDays <= 0) {
     lastEventDate = eventDateISO;
@@ -1780,16 +1832,33 @@ function evaluateRunFloorState({
   const { loadGap, stabilityOK } = computeStability(last14Loads, floorDaily);
   const deloadReady = shouldTriggerDeload(sum21, activeDays21, deloadActive);
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
+  const softDipPct = getRunFloorSoftDipPct(phase);
   const floorLevel =
     floorDaily <= 0 || avg7 >= floorDaily
       ? "GREEN"
-      : avg7 >= floorDaily * RUN_FLOOR_SOFT_DIP_PCT
+      : avg7 >= floorDaily * softDipPct
         ? "YELLOW"
         : "RED";
   const softDip = floorLevel === "YELLOW";
+  const {
+    softDipCount7d,
+    softDipCount14d,
+    softDipStreak,
+  } = computeRunFloorSoftDipMetrics(safeDailyLoads, floorDaily, softDipPct);
   const avg7TrendOK = avg7 <= avg21 * RUN_FLOOR_AVG7_TO_AVG21_UPPER;
   const avg7TrendSoftOK = avg7 >= avg21 * RUN_FLOOR_AVG7_TO_AVG21_LOWER;
-  const progressionTrendOK = avg7TrendOK || (softDip && avg7TrendSoftOK);
+  const noDipCluster = softDipCount7d <= 2 && softDipCount14d <= 4 && softDipStreak <= 2;
+  const noAdjacentPlannedDip = !lastPlannedDipDate || Math.abs(diffDays(lastPlannedDipDate, todayISO)) > 1;
+  const plannedDipEvidence = [
+    softDip,
+    floorDaily > 0 && avg21 >= floorDaily,
+    stabilityOK && !stabilityWarn,
+    phase === "BASE" || phase === "BUILD",
+    safeEventInDays > 2 && safeEventInDays <= 14,
+    noDipCluster,
+    noAdjacentPlannedDip,
+  ].filter(Boolean).length;
+  const plannedDipConfidence = plannedDipEvidence >= 7 ? "high" : plannedDipEvidence >= 5 ? "medium" : "low";
   const plannedDip =
     softDip &&
     floorDaily > 0 &&
@@ -1797,7 +1866,24 @@ function evaluateRunFloorState({
     stabilityOK &&
     !stabilityWarn &&
     (phase === "BASE" || phase === "BUILD") &&
-    safeEventInDays > 2;
+    safeEventInDays > 2 &&
+    noDipCluster &&
+    noAdjacentPlannedDip &&
+    plannedDipConfidence === "high";
+  const progressionTrendOK =
+    avg7TrendOK ||
+    (softDip && avg7TrendSoftOK && (plannedDipConfidence === "high" || plannedDipConfidence === "medium"));
+  const allowFloorIncreaseStrict =
+    floorLevel === "GREEN" &&
+    avg7TrendOK &&
+    stabilityOK &&
+    !stabilityWarn &&
+    softDipCount14d <= 2 &&
+    softDipStreak <= 1;
+
+  if (plannedDip) {
+    lastPlannedDipDate = todayISO;
+  }
 
   if (deloadStartDate && diffDays(deloadStartDate, todayISO) >= RUN_FLOOR_DELOAD_DAYS) {
     const deloadExitStable = stabilityOK && !stabilityWarn && progressionTrendOK;
@@ -1836,6 +1922,8 @@ function evaluateRunFloorState({
     reasons.push("Aufgebaut aber instabil → erst stabilisieren");
   } else if (plannedDip) {
     reasons.push("Geplanter Mikrozyklus-Dip toleriert (7T leicht unter Floor)");
+  } else if (softDip) {
+    reasons.push("Soft-Dip ohne belastbaren Plan-Kontext");
   }
 
   let effectiveFloorTarget = updatedFloorTarget;
@@ -1903,9 +1991,7 @@ function evaluateRunFloorState({
     !lifeEventEffect?.freezeFloorIncrease &&
     deloadCompletedSinceIncrease &&
     !postRaceRampCompletedRecently &&
-    stabilityOK &&
-    !stabilityWarn &&
-    progressionTrendOK
+    allowFloorIncreaseStrict
   ) {
     const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
     const maxIncrease = Math.max(1, Math.round(updatedFloorTarget * RUN_FLOOR_MAX_INCREASE_PCT));
@@ -1932,6 +2018,12 @@ function evaluateRunFloorState({
     floorDaily,
     floorLevel,
     plannedDip,
+    plannedDipConfidence,
+    softDipCount7d,
+    softDipCount14d,
+    softDipStreak,
+    allowFloorIncreaseStrict,
+    softDipPct,
     loadGap,
     stabilityOK,
     decisionText:
@@ -1953,6 +2045,7 @@ function evaluateRunFloorState({
     lastLifeEventCategory,
     lastLifeEventStartISO,
     lastLifeEventEndISO,
+    lastPlannedDipDate,
     daysSinceEvent,
     reasons,
     lifeEvent: lifeEventEffect?.active
@@ -6269,6 +6362,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       runFloorTarget: runFloorState.effectiveFloorTarget,
       runFloorLevel: runFloorState.floorLevel,
       runFloorPlannedDip: runFloorState.plannedDip,
+      runFloorPlannedDipConfidence: runFloorState.plannedDipConfidence,
       keyCompliance,
       fatigue,
       longRunSummary,
@@ -6301,6 +6395,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       lastLifeEventCategory: runFloorState.lastLifeEventCategory,
       lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
       lastLifeEventEndISO: runFloorState.lastLifeEventEndISO,
+      lastPlannedDipDate: runFloorState.lastPlannedDipDate,
     };
 
     if (write && !runSectionOnly) {
@@ -6318,6 +6413,14 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       avg21: runFloorState.avg21,
       avg7: runFloorState.avg7,
       floorDaily: runFloorState.floorDaily,
+      floorLevel: runFloorState.floorLevel,
+      softDipPct: runFloorState.softDipPct,
+      softDipCount7d: runFloorState.softDipCount7d,
+      softDipCount14d: runFloorState.softDipCount14d,
+      softDipStreak: runFloorState.softDipStreak,
+      plannedDip: runFloorState.plannedDip,
+      plannedDipConfidence: runFloorState.plannedDipConfidence,
+      allowFloorIncreaseStrict: runFloorState.allowFloorIncreaseStrict,
       loadGap: runFloorState.loadGap,
       stabilityOK: runFloorState.stabilityOK,
       decisionText: runFloorState.decisionText,
@@ -6717,6 +6820,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   const runFloorScore = floorTarget > 0 ? scoreByTargetRatio(snapshot.runFloor, floorTarget, 0, 1.05) : 58;
   const runFloorLevel = String(context?.runFloorLevel || "").toUpperCase();
   const runFloorPlannedDip = context?.runFloorPlannedDip === true;
+  const runFloorPlannedDipConfidence = String(context?.runFloorPlannedDipConfidence || "").toLowerCase();
   const consistencyScore = clamp(Math.round((stats42.runDaysPerWeek / Math.max(1, runsTarget)) * 100), 0, 100);
   const freqScore = clamp(Math.round((stats42.runsPerWeek / runsTarget) * 100), 0, 100);
   const easyVolumeTarget = Math.max(90, runsTarget * 40);
@@ -6737,7 +6841,14 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
   );
   const runFloorRatio = floorTarget > 0 ? clamp((Number(snapshot.runFloor) || 0) / floorTarget, 0, 1.2) : 1;
   if (floorTarget > 0 && runFloorRatio < 0.9) {
-    const penaltyScale = runFloorLevel === "YELLOW" || runFloorPlannedDip ? 30 : 80;
+    let penaltyScale = 80;
+    if (runFloorLevel === "YELLOW" && runFloorPlannedDip && runFloorPlannedDipConfidence === "high" && !snapshot.fatigueOverride) {
+      penaltyScale = 20;
+    } else if (runFloorLevel === "YELLOW" && (runFloorPlannedDip || runFloorPlannedDipConfidence === "medium")) {
+      penaltyScale = 45;
+    } else if (runFloorLevel === "YELLOW") {
+      penaltyScale = 65;
+    }
     const floorPenalty = Math.round((0.9 - runFloorRatio) * penaltyScale);
     base = clamp(base - floorPenalty, 0, 100);
   }
