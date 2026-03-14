@@ -7838,6 +7838,10 @@ function buildComments(
 
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
   const focusLabel = coachFocus.label;
+  const fatigueReasonSnippet = Array.isArray(fatigue?.reasons) && fatigue.reasons.length
+    ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
+    : "";
+  const fatigueWhyLine = fatigue?.override ? `Rhythmus aktuell unruhig${fatigueReasonSnippet}.` : null;
   const gapReasonMap = {
     base: [
       !ignoreRunFloorGap && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
@@ -7863,8 +7867,10 @@ function buildComments(
     execution: [
       spacingBlocked ? `Key-Abstand noch nicht erfüllt (ab ${nextAllowed || "n/a"})` : null,
       budgetBlocked ? `Key-Budget erreicht (${actualKeys7}/${keyCap7} in 7 Tagen)` : null,
-      "Wochenstruktur aktuell nicht sauber genug.",
-      fatigue?.override ? "Rhythmus aktuell unruhig." : null,
+      (spacingBlocked || budgetBlocked || keyCompliance?.freqOk === false || keyCompliance?.typeOk === false)
+        ? "Wochenstruktur aktuell nicht sauber genug."
+        : null,
+      fatigueWhyLine,
     ],
   };
 
