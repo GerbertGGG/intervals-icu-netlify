@@ -7863,7 +7863,9 @@ function buildComments(
     execution: [
       spacingBlocked ? `Key-Abstand noch nicht erfüllt (ab ${nextAllowed || "n/a"})` : null,
       budgetBlocked ? `Key-Budget erreicht (${actualKeys7}/${keyCap7} in 7 Tagen)` : null,
-      "Wochenstruktur aktuell nicht sauber genug.",
+      (spacingBlocked || budgetBlocked || keyCompliance?.freqOk === false || keyCompliance?.typeOk === false)
+        ? "Wochenstruktur aktuell nicht sauber genug."
+        : null,
       fatigue?.override ? "Rhythmus aktuell unruhig." : null,
     ],
   };
