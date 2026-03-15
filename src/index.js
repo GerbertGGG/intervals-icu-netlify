@@ -6336,9 +6336,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       historyMetrics,
       longrunSpecificity,
     });
-if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
+    if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
-      keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}: keine Keys (Freeze aktiv).`;
+      const lifeEventName = String(modeInfo.lifeEventEffect?.event?.name || "").trim();
+      const lifeEventSuffix = lifeEventName ? ` (${lifeEventName})` : "";
+      keyCompliance.suggestion = `LifeEvent ${modeInfo.lifeEventEffect.category}${lifeEventSuffix}: kein weiterer Key diese Woche (Freeze aktiv).`;
     }
 
     const executionScore = computeExecutionQualityScore({
