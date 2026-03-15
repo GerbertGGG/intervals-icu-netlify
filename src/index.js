@@ -5222,10 +5222,11 @@ function extractPersistedBlockStateFromWellness(wellness) {
   const blockRaw = wellness?.[FIELD_BLOCK] ?? wellness?.block ?? null;
   const block = String(blockRaw || "").trim().toUpperCase();
   if (!block) return null;
+  const normalizedBlock = block === "TAPER" ? "RACE" : block;
   const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
   const wave = Number.isFinite(Number(waveRaw)) ? Number(waveRaw) : 0;
   return {
-    block,
+    block: normalizedBlock,
     wave,
     startDate: null,
     eventDate: null,
@@ -6376,7 +6377,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
 
     historyMetrics.keyCompliance = keyCompliance;
     historyMetrics.distanceDiagnostics = distanceDiagnostics;
-    patch[FIELD_BLOCK] = blockState.block;
+    const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
+    patch[FIELD_BLOCK] = blockLabelForWellness;
 
     previousBlockState = {
       block: blockState.block,
@@ -7662,7 +7664,7 @@ function buildComments(
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
-  const runPhaseLabel = String(blockState?.block || "BASE").toUpperCase();
+  const runPhaseLabel = overlayMode === "TAPER" ? "TAPER" : String(blockState?.block || "BASE").toUpperCase();
   const runTargetOverlayLabel =
     runTarget > 0 && runBaseTarget > 0 && runTarget !== runBaseTarget
       ? ` (Basisziel ${runBaseTarget}, Phase ${runPhaseLabel}, Overlay ${overlayMode})`
