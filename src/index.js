@@ -5230,10 +5230,11 @@ function extractPersistedBlockStateFromWellness(wellness) {
   const blockRaw = wellness?.[FIELD_BLOCK] ?? wellness?.block ?? null;
   const block = String(blockRaw || "").trim().toUpperCase();
   if (!block) return null;
+  const normalizedBlock = block === "TAPER" ? "RACE" : block;
   const waveRaw = wellness?.BlockWave ?? wellness?.blockWave ?? 0;
   const wave = Number.isFinite(Number(waveRaw)) ? Number(waveRaw) : 0;
   return {
-    block,
+    block: normalizedBlock,
     wave,
     startDate: null,
     eventDate: null,
@@ -6384,7 +6385,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
 
     historyMetrics.keyCompliance = keyCompliance;
     historyMetrics.distanceDiagnostics = distanceDiagnostics;
-    patch[FIELD_BLOCK] = blockState.block;
+    const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
+    patch[FIELD_BLOCK] = blockLabelForWellness;
 
     previousBlockState = {
       block: blockState.block,
@@ -7651,6 +7653,7 @@ function buildComments(
   const longrunSpecificity = keyCompliance?.longrunSpecificity || null;
   const runFloorCurrent = Math.round(Number.isFinite(runFloorEwma10) ? runFloorEwma10 : 0);
   const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+  const runBaseTarget = Math.round(runFloorState?.floorTarget ?? runFloorState?.effectiveFloorTarget ?? 0);
   const runCount7 = Number.isFinite(distanceDiagnostics?.snapshot?.runsCount)
     ? Math.round(distanceDiagnostics.snapshot.runsCount)
     : 0;
@@ -7669,6 +7672,11 @@ function buildComments(
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
+  const runPhaseLabel = overlayMode === "TAPER" ? "TAPER" : String(blockState?.block || "BASE").toUpperCase();
+  const runTargetOverlayLabel =
+    runTarget > 0 && runBaseTarget > 0 && runTarget !== runBaseTarget
+      ? ` (Basisziel ${runBaseTarget}, Phase ${runPhaseLabel}, Overlay ${overlayMode})`
+      : "";
   const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
@@ -8071,11 +8079,11 @@ function buildComments(
 
   const trainingStateLines = [
     runTarget > 0 && runFloorCurrent < runTarget
-      ? `RunFloor: ${runFloorCurrent} / ${runTarget}`
+      ? `RunFloor: ${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}`
       : runTarget > 0
         ? runFloorState?.stabilityOK === false
-          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}), Stabilität noch nicht bestätigt`
-          : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget})`
+          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
+          : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
