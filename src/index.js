@@ -1370,7 +1370,10 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
 }
 
 const RUN_FLOOR_DELOAD_SUM21_MIN = 450;
-const RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN = 14;
+const RUN_FLOOR_DELOAD_RELEVANT_DAYS_MIN = 14;
+const RUN_FLOOR_DELOAD_RELEVANT_DAY_LOAD_MIN = 15;
+const RUN_FLOOR_DELOAD_SUM7_MIN = 120;
+const RUN_FLOOR_DELOAD_SUM7_TO_SUM21_MIN = 0.3;
 const RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS = 14;
 const RUN_FLOOR_DELOAD_LOAD_GAP_PCT = 0.25;
 const RUN_FLOOR_DELOAD_LOAD_GAP_MAX = 3;
@@ -1597,10 +1600,10 @@ function computeSum(windowDays, dailyLoads) {
   return slice.reduce((acc, v) => acc + (Number(v) || 0), 0);
 }
 
-function countActiveDays(windowDays, dailyLoads) {
+function countRelevantDays(windowDays, dailyLoads, minDayLoad = RUN_FLOOR_DELOAD_RELEVANT_DAY_LOAD_MIN) {
   if (!Array.isArray(dailyLoads) || windowDays <= 0) return 0;
   const slice = dailyLoads.slice(-windowDays);
-  return slice.reduce((acc, v) => acc + ((Number(v) || 0) > 0 ? 1 : 0), 0);
+  return slice.reduce((acc, v) => acc + ((Number(v) || 0) >= minDayLoad ? 1 : 0), 0);
 }
 
 function computeStability(last14Days, floorDaily) {
@@ -1612,10 +1615,13 @@ function computeStability(last14Days, floorDaily) {
   return { loadGap, stabilityOK: loadGap <= RUN_FLOOR_DELOAD_LOAD_GAP_MAX };
 }
 
-function shouldTriggerDeload(sum21, activeDays21, deloadActive) {
+function shouldTriggerDeload(sum21, relevantDays21, sum7, deloadActive) {
   if (deloadActive) return false;
+  const sum7OrRatioGate = sum7 >= RUN_FLOOR_DELOAD_SUM7_MIN || (sum21 > 0 && sum7 / sum21 >= RUN_FLOOR_DELOAD_SUM7_TO_SUM21_MIN);
   return (
-    sum21 >= RUN_FLOOR_DELOAD_SUM21_MIN && activeDays21 >= RUN_FLOOR_DELOAD_ACTIVE_DAYS_MIN
+    sum21 >= RUN_FLOOR_DELOAD_SUM21_MIN &&
+    relevantDays21 >= RUN_FLOOR_DELOAD_RELEVANT_DAYS_MIN &&
+    sum7OrRatioGate
   );
 }
 
@@ -1827,10 +1833,11 @@ function evaluateRunFloorState({
   const avg21 = computeAvg(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
   const avg7 = computeAvg(7, safeDailyLoads);
   const sum21 = computeSum(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
-  const activeDays21 = countActiveDays(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
+  const sum7 = computeSum(7, safeDailyLoads);
+  const relevantDays21 = countRelevantDays(RUN_FLOOR_DELOAD_WINDOW_DAYS, safeDailyLoads);
   const last14Loads = safeDailyLoads.slice(-RUN_FLOOR_DELOAD_STABILITY_WINDOW_DAYS);
   const { loadGap, stabilityOK } = computeStability(last14Loads, floorDaily);
-  const deloadReady = shouldTriggerDeload(sum21, activeDays21, deloadActive);
+  const deloadReady = shouldTriggerDeload(sum21, relevantDays21, sum7, deloadActive);
   const stabilityWarn = !stabilityOK && avg21 >= floorDaily * 1.0 && floorDaily > 0;
   const softDipPct = getRunFloorSoftDipPct(phase);
   const floorLevel =
@@ -1917,7 +1924,7 @@ function evaluateRunFloorState({
     deloadStartDate = todayISO;
     deloadEndDate = isoDate(new Date(new Date(todayISO + "T00:00:00Z").getTime() + 6 * 86400000));
     deloadActive = true;
-    reasons.push("Deload ausgelöst (21T Summe + 14 aktive Tage)");
+    reasons.push("Deload ausgelöst (21T Summe + relevante Dichte + 7T Recency)");
   } else if (stabilityWarn) {
     reasons.push("Aufgebaut aber instabil → erst stabilisieren");
   } else if (plannedDip) {
@@ -2014,7 +2021,8 @@ function evaluateRunFloorState({
     avg21,
     avg7,
     sum21,
-    activeDays21,
+    sum7,
+    relevantDays21,
     floorDaily,
     floorLevel,
     plannedDip,
@@ -7891,7 +7899,8 @@ function buildComments(
     `RunFloor (14T EWMA): ${runFloorCurrent} / ${runTarget > 0 ? runTarget : "n/a"}`,
     `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
     `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
-    `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
+    `Relevante Tage (21T, ≥${RUN_FLOOR_DELOAD_RELEVANT_DAY_LOAD_MIN}): ${Math.round(runFloorState?.relevantDays21 ?? 0)} / ${RUN_FLOOR_DELOAD_RELEVANT_DAYS_MIN}`,
+    `Recency (7T): ${Math.round(runFloorState?.sum7 ?? 0)} | Gate: ≥${RUN_FLOOR_DELOAD_SUM7_MIN} oder Ratio ≥${Math.round(RUN_FLOOR_DELOAD_SUM7_TO_SUM21_MIN * 100)}%`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "im Aufbau"} (${runFloorState?.deloadActive ? "Erholung priorisieren" : "Kontinuität aufbauen"})`,
     `Status: ${progressionStatus}. ${progressionExplanation}.`,
   ];
