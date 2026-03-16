@@ -1309,8 +1309,8 @@ function getStrengthPhasePlan(block) {
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const minGapDays = clampInt(String(ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT), 1, 7);
-  const minGapHours = Math.max(24, Math.round(minGapDays * 24));
+  const minGapHours = 72;
+  const minGapDays = minGapHours / 24;
   const minGapMs = minGapHours * 3600 * 1000;
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
@@ -1347,10 +1347,14 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
 
   const lastKeyIso = keyEntries.length ? keyEntries[keyEntries.length - 1].iso : null;
   const lastKeyTs = keyEntries.length ? keyEntries[keyEntries.length - 1].startTs : null;
-  const nextAllowedIso = Number.isFinite(lastKeyTs)
-    ? isoDate(new Date(lastKeyTs + minGapMs))
+  const nextAllowedAt = Number.isFinite(lastKeyTs)
+    ? new Date(lastKeyTs + minGapMs).toISOString()
     : null;
-  const currentTs = Date.parse(dayIso + "T00:00:00Z");
+  const nextAllowedIso = nextAllowedAt ? nextAllowedAt.slice(0, 10) : null;
+  const todayIso = isoDateBerlin(new Date());
+  const currentTs = dayIso === todayIso
+    ? Date.now()
+    : Date.parse(dayIso + "T23:59:59Z");
   const hoursSinceLastKey = Number.isFinite(lastKeyTs)
     ? Math.max(0, (currentTs - lastKeyTs) / 3600000)
     : null;
@@ -1361,6 +1365,7 @@ function computeKeySpacing(ctx, dayIso, windowDays = 14) {
     keySpacingNowOk,
     violation,
     lastKeyIso,
+    nextAllowedAt,
     nextAllowedIso,
     minGapDays,
     minGapHours,
@@ -4683,21 +4688,28 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
       ? context.lastRelevantKeyLever
       : null;
   const pendingLeverMeta = pendingLeverSource?.nextLeverMeta?.domain ? pendingLeverSource.nextLeverMeta : null;
+  const lifeEventCategory = normalizeEventCategory(context?.lifeEvent?.category);
+  const hardSafetyStop =
+    context.overlayMode === "LIFE_EVENT_STOP" ||
+    lifeEventCategory === "HOLIDAY" ||
+    lifeEventCategory === "SICK" ||
+    lifeEventCategory === "INJURED";
 
   let suggestion = "";
-  let keyAllowedNow = false;
+  let keyAllowedNow = keySpacingNowOk && !hardSafetyStop;
 
-  if (longrunDominant) {
+  if (hardSafetyStop) {
+    suggestion = "Key pausiert (Safety-Stop aktiv).";
+  } else if (!keySpacingNowOk && nextKeyEarliest) {
+    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapHours}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
+  } else if (longrunDominant) {
     suggestion = `Spezifischer Longrun war Hauptreiz der Woche (${actual7.toFixed(1)} Quality) – kein zusätzlicher harter Key.`;
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
-  } else if (!keySpacingNowOk && nextKeyEarliest) {
-    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapHours}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
   } else if (hardShareBlocked && preferredIntensity === "hard") {
     const hardPct = Math.round((intensityDistribution?.hardShare ?? 0) * 100);
     const maxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
     suggestion = `Hard-Anteil hoch (${hardPct}% > ${maxPct}%) – heute kein weiterer harter Key. Nur Mid/Easy.`;
-    keyAllowedNow = true;
   } else if (easyShareBlocked) {
     const easyPct = Math.round((intensityDistribution?.easyShare ?? 0) * 100);
     const minPct = Math.round((intensityDistribution?.targets?.easyMin ?? 0) * 100);
@@ -4709,16 +4721,13 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     const hardMax = intensityDistribution?.targets?.hardMax ?? 0;
     if (hardShare + INTENSITY_CLEAR_OVERSHOOT < hardMax && keyRules.allowedKeyTypes.includes("vo2_touch")) {
       suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, VO2 kurz optional.`;
-      keyAllowedNow = true;
     } else {
       suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, besser locker.`;
     }
   } else if (actual7 === 1 && typeOk) {
     suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
-    keyAllowedNow = true;
   } else if (!freqOk || preferredMissing) {
     suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
-    keyAllowedNow = true;
   } else {
     suggestion = "Kein Key geplant – locker/GA.";
   }
@@ -7637,11 +7646,11 @@ function buildComments(
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
 
-  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "POST_RACE_RAMP" || overlayMode === "LIFE_EVENT_STOP";
+  const keyBlocked = keyCompliance?.keyAllowedNow === false;
   const spacingBlocked = !spacingOk;
   const easyShareBlocked = intensityDistribution?.hasData && intensityDistribution?.easyUnder === true;
   const hardShareBlocked = intensityDistribution?.hasData && intensityDistribution?.hardOver === true;
-  const deloadBlocked = overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "POST_RACE_RAMP" || overlayMode === "LIFE_EVENT_STOP";
+  const deloadBlocked = overlayMode === "LIFE_EVENT_STOP";
   const runFloorBlocked = !ignoreRunFloorGap && runTarget > 0 && runFloorGap < 0;
 
   let mainBlockReason = null;
