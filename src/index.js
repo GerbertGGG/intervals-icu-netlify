@@ -82,6 +82,7 @@ export default {
         "blockStart",
       ]);
       let blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
+      let blockStartOverrideDerivedFromOldest = false;
 
       let oldest, newest;
       if (date) {
@@ -116,6 +117,7 @@ export default {
         // Dry-run tests with explicit date/range should not silently inherit a persisted block start.
         // This keeps /sync?date=...&debug=true&write=false predictable without requiring block_start.
         blockStartOverrideIso = oldest;
+        blockStartOverrideDerivedFromOldest = true;
       }
 
       if (debug) {
@@ -123,6 +125,7 @@ export default {
           const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, {
             raceStartOverrideIso,
             blockStartOverrideIso,
+            blockStartOverrideDerivedFromOldest,
             reportVerbosity,
           });
           return json(result);
@@ -139,6 +142,7 @@ export default {
               warmupSkipSec,
               raceStartOverrideIso,
               blockStartOverrideIso,
+              blockStartOverrideDerivedFromOldest,
             },
             500
           );
@@ -151,6 +155,7 @@ export default {
           await syncRange(env, oldest, newest, write, false, warmupSkipSec, {
             raceStartOverrideIso,
             blockStartOverrideIso,
+            blockStartOverrideDerivedFromOldest,
             reportVerbosity,
           });
         })().catch((e) => {
@@ -158,7 +163,7 @@ export default {
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, reportVerbosity });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, blockStartOverrideDerivedFromOldest, reportVerbosity });
     }
 
     if (url.pathname === "/sync-step") {
@@ -205,6 +210,8 @@ export default {
             runIdsSignature: "",
             runCount: 0,
             checkedAt: new Date().toISOString(),
+            scheduledSignatureVersion: SCHEDULED_SIGNATURE_VERSION,
+            scheduledSignaturePreview: [],
           });
           return;
         }
@@ -223,11 +230,14 @@ export default {
             runIdsSignature: "",
             runCount: 0,
             checkedAt: new Date().toISOString(),
+            scheduledSignatureVersion: SCHEDULED_SIGNATURE_VERSION,
+            scheduledSignaturePreview: [],
           });
           return;
         }
 
-        const currentSignature = buildRunIdsSignature(todaysRuns);
+        const signatureDescriptor = buildRunSignatureDescriptor(todaysRuns, { includeInputs: true });
+        const currentSignature = signatureDescriptor.runIdsSignature;
         const previousState = await readScheduledRunState(env);
         if (
           previousState?.day === today
@@ -243,6 +253,9 @@ export default {
           runIdsSignature: currentSignature,
           runCount: todaysRuns.length,
           checkedAt: new Date().toISOString(),
+          scheduledSignatureVersion: signatureDescriptor.scheduledSignatureVersion,
+          scheduledSignaturePreview: signatureDescriptor.scheduledSignaturePreview,
+          scheduledSignatureInputs: compactScheduledSignatureInputs(signatureDescriptor.scheduledSignatureInputs),
         });
       })().catch((e) => {
         console.error("scheduled sync/model job failed", e);
@@ -338,12 +351,53 @@ async function writeScheduledRunState(env, state) {
   await writeKvJson(env, makeScheduledRunStateKey(env), state);
 }
 
+const SCHEDULED_SIGNATURE_VERSION = 2;
+const SCHEDULED_SIGNATURE_INPUTS_MAX_PERSISTED = 3;
+
+function buildRunSignatureDescriptor(runs, options = {}) {
+  const includeInputs = options.includeInputs === true;
+  const signatures = [];
+  const signatureInputs = [];
+
+  for (const a of runs || []) {
+    const id = String(a?.id ?? "").trim();
+    if (!id) continue;
+    const tags = normalizeTags(a?.tags).sort();
+    const updated = String(a?.updated ?? a?.updated_at ?? a?.modified ?? a?.last_modified ?? "").trim();
+    const start = String(a?.start_date_local || a?.start_date || "").trim();
+    const moving = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    const load = Number(a?.icu_training_load ?? a?.hr_load ?? 0);
+    const name = String(a?.name || "").trim().toLowerCase();
+    const signatureParts = [id, start, moving, load, tags.join("|"), updated, name];
+    signatures.push(signatureParts.join("~"));
+    if (includeInputs) {
+      signatureInputs.push({ id, start, moving, load, tags, updated, name });
+    }
+  }
+
+  signatures.sort();
+  signatureInputs.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+  return {
+    scheduledSignatureVersion: SCHEDULED_SIGNATURE_VERSION,
+    runIdsSignature: signatures.join(","),
+    scheduledSignaturePreview: signatures.slice(0, 5),
+    scheduledSignatureInputs: includeInputs ? signatureInputs : undefined,
+  };
+}
+
+function compactScheduledSignatureInputs(inputs, maxEntries = SCHEDULED_SIGNATURE_INPUTS_MAX_PERSISTED) {
+  if (!Array.isArray(inputs) || !inputs.length || maxEntries <= 0) return undefined;
+  return inputs.slice(0, maxEntries).map((item) => ({
+    id: item?.id ?? null,
+    updated: item?.updated || null,
+    start: item?.start || null,
+    tags: Array.isArray(item?.tags) ? item.tags.slice(0, 6) : [],
+    name: String(item?.name || "").slice(0, 80),
+  }));
+}
+
 function buildRunIdsSignature(runs) {
-  const ids = (runs || [])
-    .map((a) => String(a?.id || "").trim())
-    .filter(Boolean)
-    .sort();
-  return ids.join(",");
+  return buildRunSignatureDescriptor(runs).runIdsSignature;
 }
 
 function normalizeStepSyncState(raw) {
@@ -977,6 +1031,7 @@ function createCtx(env, warmupSkipSec, debug) {
     byDayRuns: new Map(), // YYYY-MM-DD -> run activities
     // streams memo
     byDayBikes: new Map(), // NEW
+    byDayStrength: new Map(),
     streamsCache: new Map(), // activityId -> Promise(streams)
     activityDetailsCache: new Map(), // activityId -> Promise(activity with intervals)
     // derived GA samples cache (for windows)
@@ -4626,8 +4681,30 @@ function computeRacepaceBlockProgress(ctx, context = {}) {
   };
 }
 
+function adaptExpectedKeysForOverlay(expectedKeysPerWeek, context = {}) {
+  const baseExpected = Number(expectedKeysPerWeek);
+  if (!Number.isFinite(baseExpected) || baseExpected <= 0) return 0;
+
+  const overlayMode = String(context?.overlayMode || "NORMAL").toUpperCase();
+  const eventInDaysRaw = Number(context?.eventInDays);
+  const eventInDays = Number.isFinite(eventInDaysRaw) ? eventInDaysRaw : null;
+
+  if (overlayMode === "TAPER") {
+    if (eventInDays != null && eventInDays <= 3) return Math.max(0, baseExpected * 0.35);
+    if (eventInDays != null && eventInDays <= 7) return Math.max(0, baseExpected * 0.5);
+    return Math.max(0, baseExpected * 0.7);
+  }
+
+  if (eventInDays != null && eventInDays >= 0 && eventInDays <= 5) {
+    return Math.max(0, baseExpected * 0.65);
+  }
+
+  return baseExpected;
+}
+
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
-  const expected = keyRules.expectedKeysPerWeek;
+  const expectedBase = keyRules.expectedKeysPerWeek;
+  const expected = adaptExpectedKeysForOverlay(expectedBase, context);
   const maxKeys = keyRules.maxKeysPerWeek;
   const actual7Raw = keyStats7.count;
   const longrunSpecificity = context.longrunSpecificity || null;
@@ -4763,6 +4840,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
 
   return {
     expected,
+    expectedBase,
     maxKeys,
     actual7,
     actual7Raw,
@@ -5593,11 +5671,13 @@ async function hydrateActivitiesWithPersistedLeverReviews(env, activities, oldes
   }
 }
 
-function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics) {
+function addBlockDebug(debugOut, day, blockState, keyRules, keyCompliance, historyMetrics, overlayMode = "NORMAL") {
   if (!debugOut) return;
   debugOut.__blocks ??= {};
   debugOut.__blocks[day] = {
     blockState,
+    phase: String(blockState?.block || "BASE").toUpperCase(),
+    overlay: String(overlayMode || "NORMAL").toUpperCase(),
     keyRules,
     keyCompliance,
     historyMetrics,
@@ -5821,6 +5901,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   const reportVerbosity = REPORT_VERBOSITY_VALUES.has(runtimeOverrides?.reportVerbosity)
     ? runtimeOverrides.reportVerbosity
     : (debug ? "debug" : "coach");
+  const blockStartOverrideDerivedFromOldest = runtimeOverrides?.blockStartOverrideDerivedFromOldest === true;
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
   // For this sync we only need enough to compute what we will write inside [oldest..newest].
@@ -5848,7 +5929,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       .map((event) => [String(event.external_id), event])
   );
 
-  // 2) Build byDayRuns / byDayBikes for quick access
+  // 2) Build byDayRuns / byDayBikes / byDayStrength for quick access
   let activitiesSeen = 0;
   let activitiesUsed = 0;
 
@@ -5870,6 +5951,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     if (isBike(a)) {
       if (!ctx.byDayBikes.has(day)) ctx.byDayBikes.set(day, []);
       ctx.byDayBikes.get(day).push(a);
+      continue;
+    }
+
+    const strengthDetection = detectStrength(a);
+    if (strengthDetection.matched) {
+      if (!ctx.byDayStrength.has(day)) ctx.byDayStrength.set(day, []);
+      ctx.byDayStrength.get(day).push(a);
+      activitiesUsed++;
+      if (debug) addDebug(ctx.debugOut, day, a, "use:strength", { classifier: "strength", strengthDetection });
       continue;
     }
 
@@ -6304,6 +6394,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       fatigue,
       timeInBlockDays: blockState.timeInBlockDays,
       weeksToEvent: blockState.weeksToEvent,
+      eventInDays,
       weekInBlock,
       lifeEvent: runFloorState.lifeEvent,
       lastKeyType,
@@ -6390,8 +6481,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       await writeLatestBlockStateKv(env, day, previousBlockState);
     }
 
-    addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics);
+    addBlockDebug(ctx.debugOut, day, blockState, keyRules, keyCompliance, historyMetrics, runFloorState.overlayMode);
     addRunFloorDebug(ctx.debugOut, day, {
+      phase: String(blockState.block || "BASE").toUpperCase(),
       overlayMode: runFloorState.overlayMode,
       effectiveFloorTarget: runFloorState.effectiveFloorTarget,
       floorTarget: runFloorState.floorTarget,
@@ -6604,7 +6696,14 @@ Fehler: ${String(e?.message ?? e)}`;
     daysComputed: Object.keys(patches).length,
     daysWritten,
     patches: debug ? patches : undefined,
-    debug: debug ? ctx.debugOut : undefined,
+    debug: debug ? {
+      ...ctx.debugOut,
+      __runtimeOverrides: {
+        blockStartOverrideIso: runtimeOverrides?.blockStartOverrideIso ?? null,
+        blockStartOverrideDerivedFromOldest,
+        raceStartOverrideIso: runtimeOverrides?.raceStartOverrideIso ?? null,
+      },
+    } : undefined,
   };
 }
 
@@ -7571,6 +7670,12 @@ function buildBikeAllowanceLine({ bikeSubFactor }) {
 }
 
 // ================= COMMENT =================
+function formatPhaseOverlayLine(phase, overlay) {
+  const phaseLabel = String(phase || "BASE").toUpperCase();
+  const overlayLabel = String(overlay || "NORMAL").toUpperCase();
+  return `Steuerung: Phase ${phaseLabel} | Overlay ${overlayLabel}`;
+}
+
 function buildComments(
   {
     perRunInfo,
@@ -7661,11 +7766,12 @@ function buildComments(
   const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
   const nextAllowed = keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso ?? null;
   const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
-  const runPhaseLabel = overlayMode === "TAPER" ? "TAPER" : String(blockState?.block || "BASE").toUpperCase();
+  const runPhaseLabel = String(blockState?.block || "BASE").toUpperCase();
   const runTargetOverlayLabel =
     runTarget > 0 && runBaseTarget > 0 && runTarget !== runBaseTarget
       ? ` (Basisziel ${runBaseTarget}, Phase ${runPhaseLabel}, Overlay ${overlayMode})`
       : "";
+  const phaseOverlayLine = formatPhaseOverlayLine(runPhaseLabel, overlayMode);
   const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
@@ -8064,6 +8170,7 @@ function buildComments(
     : `Intensitätsverteilung (${intensityWindowLabel}, Block): n/a (noch keine Laufdaten)`;
 
   const trainingStateLines = [
+    phaseOverlayLine,
     runTarget > 0 && runFloorCurrent < runTarget
       ? `RunFloor: ${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}`
       : runTarget > 0
@@ -10613,14 +10720,45 @@ function normalizeTags(tags) {
   return (tags || []).map((t) => String(t || "").toLowerCase().trim()).filter(Boolean);
 }
 
-function isStrength(a) {
+function detectStrength(a) {
   const type = String(a?.type ?? "").toLowerCase();
-  const typeHit =
-    type.includes("strength") || type.includes("gym") || type.includes("workout") || type.includes("training");
-  if (typeHit) return true;
+  const typeMatch =
+    type.includes("strength")
+    || type.includes("weighttraining")
+    || type.includes("weight_training")
+    || type.includes("weight training")
+    || type.includes("gym")
+    || type.includes("workout")
+    || type.includes("training");
+
   const tags = normalizeTags(a?.tags);
-  const strengthTags = new Set(["strength", "stabi", "kraft", "gym", "core", "mobility"]);
-  return tags.some((t) => strengthTags.has(t));
+  const strengthTags = new Set([
+    "strength", "stabi", "kraft", "gym", "core", "mobility", "weighttraining", "weight_training", "weights", "lifting", "resistance",
+  ]);
+  const tagMatch = tags.some((t) => strengthTags.has(t));
+
+  const name = String(a?.name || "").toLowerCase();
+  const keywordMatch = ["kraft", "stabi", "strength", "gym", "weights", "lifting", "resistance", "mobility"].some((needle) => name.includes(needle));
+  const matched = typeMatch || tagMatch || keywordMatch;
+  const reason = !matched
+    ? "none"
+    : typeMatch
+      ? "type"
+      : tagMatch
+        ? "tag"
+        : "keyword";
+
+  return {
+    matched,
+    typeMatch,
+    tagMatch,
+    keywordMatch,
+    reason,
+  };
+}
+
+function isStrength(a) {
+  return detectStrength(a).matched;
 }
 
 async function buildWatchfacePayload(env, endIso) {
@@ -10808,6 +10946,25 @@ function vdotLikeFromEf(ef) {
 // ================= DEBUG =================
 function addDebug(debugOut, day, a, status, computed) {
   if (!debugOut) return;
+  if (status === "use:strength") {
+    const detection = computed?.strengthDetection || detectStrength(a);
+    debugOut.__summary ??= {};
+    debugOut.__summary.strengthDetection ??= {
+      typeMatch: 0,
+      tagMatch: 0,
+      keywordMatch: 0,
+      reasons: {},
+      totalMatched: 0,
+    };
+    const summary = debugOut.__summary.strengthDetection;
+    summary.totalMatched += 1;
+    if (detection.typeMatch) summary.typeMatch += 1;
+    if (detection.tagMatch) summary.tagMatch += 1;
+    if (detection.keywordMatch) summary.keywordMatch += 1;
+    const reason = String(detection.reason || "unknown");
+    summary.reasons[reason] = (summary.reasons[reason] || 0) + 1;
+  }
+
   if (String(status).startsWith("skip:unsupported")) {
     const type = String(a?.type ?? "unknown");
     debugOut.__summary ??= {};
@@ -11275,3 +11432,17 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 
   return events;
 }
+
+
+// INTERNAL TEST HOOKS ONLY: not part of the public/runtime API contract.
+// Keep usage scoped to local tests in this repository.
+const __internalTestHooks = Object.freeze({
+  detectStrength,
+  buildRunSignatureDescriptor,
+  adaptExpectedKeysForOverlay,
+  evaluateKeyCompliance,
+  formatPhaseOverlayLine,
+});
+
+export const __test = __internalTestHooks;
+export const __internalTestHooksForRepoTestsOnly = __internalTestHooks;
