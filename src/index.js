@@ -492,7 +492,6 @@ function isEveningBerlinRun(event) {
 
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
-const MAX_KEYS_7D = 2;
 const KEY_MIN_GAP_DAYS_DEFAULT = 3;
 const KRAFT_MIN_RUNFLOOR = 30;
 const KRAFT_TARGET = 60;
@@ -777,7 +776,6 @@ const RUN_DISTANCE_14D_LIMIT = 1.3; // +30% vs previous 14d
 
 const RUNTIME_CONFIG_DEFAULTS = {
   enableFatigueOverride: ENABLE_FATIGUE_OVERRIDE_DEFAULT,
-  maxKeys7d: MAX_KEYS_7D,
   keyMinGapDays: KEY_MIN_GAP_DAYS_DEFAULT,
   fatigueThresholds: {
     rampPct: RAMP_PCT_7D_LIMIT,
@@ -810,7 +808,6 @@ function loadRuntimeConfig(env) {
   const defaults = RUNTIME_CONFIG_DEFAULTS;
   return {
     enableFatigueOverride: parseBooleanEnv(env?.ENABLE_FATIGUE_OVERRIDE, defaults.enableFatigueOverride),
-    maxKeys7d: parseNumberEnv(env?.MAX_KEYS_7D, defaults.maxKeys7d, 0, 3),
     keyMinGapDays: parseNumberEnv(env?.KEY_MIN_GAP_DAYS, defaults.keyMinGapDays, 1, 7),
     fatigueThresholds: {
       rampPct: parseNumberEnv(env?.FATIGUE_RAMP_PCT_LIMIT, defaults.fatigueThresholds.rampPct, 0, 2),
@@ -1089,21 +1086,6 @@ function countHolidayDaysInWindow(events, startIsoInclusive, endIsoExclusive) {
   return holidayDays.size;
 }
 
-async function computeKeyCount7d(ctx, dayIso) {
-  const end = new Date(dayIso + "T00:00:00Z");
-  const startIso = isoDate(new Date(end.getTime() - 6 * 86400000));
-  const endIso = isoDate(new Date(end.getTime() + 86400000));
-
-  let keyCount7 = 0;
-
-  for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso) continue;
-    if (hasKeyTag(a)) keyCount7++;
-  }
-  return keyCount7;
-}
-
 function bucketAllLoadsByDay(acts) {
   const m = {};
   for (const a of acts) {
@@ -1183,11 +1165,7 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const chronicLoad = last28 / 28;
   const acwr = chronicLoad > 0 ? acuteLoad / chronicLoad : null;
 
-  const keyCount7 = await computeKeyCount7d(ctx, dayIso);
-  const keyCap = Number.isFinite(options.maxKeys7d) ? options.maxKeys7d : runtimeConfig.maxKeys7d;
-
   const reasons = [];
-  if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
   if (rampPct > thresholds.rampPct) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
   if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${thresholds.acwrHigh})`);
   const last14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start14Iso, endIsoExclusive);
@@ -1211,9 +1189,6 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   return {
     override,
     reasons: override ? reasons : [],
-    keyCount7,
-    keyCap,
-    keyCapExceeded: keyCount7 > keyCap,
     rampPct,
     monotony,
     strain,
@@ -1335,37 +1310,61 @@ function getStrengthPhasePlan(block) {
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   const end = new Date(dayIso + "T00:00:00Z");
   const minGapDays = clampInt(String(ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT), 1, 7);
+  const minGapHours = Math.max(24, Math.round(minGapDays * 24));
+  const minGapMs = minGapHours * 3600 * 1000;
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const keyDates = [];
+  const keyEntries = [];
 
   for (const a of ctx.activitiesAll) {
-    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    const startRaw = String(a.start_date_local || a.start_date || "");
+    const d = startRaw.slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
-    if (hasKeyTag(a)) keyDates.push(d);
+    if (!hasKeyTag(a)) continue;
+    const startTs = Date.parse(startRaw);
+    const fallbackTs = Date.parse(d + "T00:00:00Z");
+    keyEntries.push({
+      iso: d,
+      startTs: Number.isFinite(startTs) ? startTs : fallbackTs,
+    });
   }
-  keyDates.sort();
+  keyEntries.sort((a, b) => a.startTs - b.startTs);
 
   let ok = true;
   let violation = null;
-  for (let i = 1; i < keyDates.length; i++) {
-    const gap = diffDays(keyDates[i - 1], keyDates[i]);
-    if (gap < minGapDays) {
+  for (let i = 1; i < keyEntries.length; i++) {
+    const gapMs = keyEntries[i].startTs - keyEntries[i - 1].startTs;
+    if (gapMs < minGapMs) {
       ok = false;
-      violation = { prev: keyDates[i - 1], next: keyDates[i], gapDays: gap };
+      violation = {
+        prev: keyEntries[i - 1].iso,
+        next: keyEntries[i].iso,
+        gapHours: Math.round((gapMs / 3600000) * 10) / 10,
+      };
       break;
     }
   }
 
-  const lastKeyIso = keyDates.length ? keyDates[keyDates.length - 1] : null;
-  const nextAllowedIso = lastKeyIso ? isoDate(new Date(new Date(lastKeyIso + "T00:00:00Z").getTime() + minGapDays * 86400000)) : null;
+  const lastKeyIso = keyEntries.length ? keyEntries[keyEntries.length - 1].iso : null;
+  const lastKeyTs = keyEntries.length ? keyEntries[keyEntries.length - 1].startTs : null;
+  const nextAllowedIso = Number.isFinite(lastKeyTs)
+    ? isoDate(new Date(lastKeyTs + minGapMs))
+    : null;
+  const currentTs = Date.parse(dayIso + "T00:00:00Z");
+  const hoursSinceLastKey = Number.isFinite(lastKeyTs)
+    ? Math.max(0, (currentTs - lastKeyTs) / 3600000)
+    : null;
+  const keySpacingNowOk = !Number.isFinite(hoursSinceLastKey) || hoursSinceLastKey >= minGapHours;
 
   return {
     ok,
+    keySpacingNowOk,
     violation,
     lastKeyIso,
     nextAllowedIso,
     minGapDays,
+    minGapHours,
+    hoursSinceLastKey,
   };
 }
 
@@ -4631,8 +4630,6 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const actual7 = actual7Raw + qualityBudget;
   const actual14 = keyStats14.count;
   const perWeek14 = actual14 / 2;
-  const maxKeysCap7 = Number.isFinite(context.maxKeys7d) ? context.maxKeys7d : (context.ctx?.runtimeConfig?.maxKeys7d ?? MAX_KEYS_7D);
-  const capExceeded = actual7 >= maxKeysCap7;
   const longrunDominant = longrunSpecificity?.dominantQuality === true;
 
   const actualTypes7 = keyStats7.list || [];
@@ -4667,13 +4664,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     blockStartIso: context.blockStartIso,
   });
 
-  const dayIso = context.dayIso || null;
-  const lastKeyIso = context.keySpacing?.lastKeyIso ?? null;
-  const lastKeyGapDays =
-    dayIso && lastKeyIso && isIsoDate(dayIso) && isIsoDate(lastKeyIso) ? diffDays(lastKeyIso, dayIso) : null;
   const minGapDays = clampInt(String(context.keySpacing?.minGapDays ?? context.ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT), 1, 7);
-  const keySpacingNowOk = !Number.isFinite(lastKeyGapDays) || lastKeyGapDays >= minGapDays;
+  const minGapHours = Math.max(24, Math.round((context.keySpacing?.minGapHours ?? minGapDays * 24)));
+  const keySpacingNowOk = context.keySpacing?.keySpacingNowOk ?? context.keySpacing?.ok ?? true;
   const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
+  const hoursSinceLastKey = Number(context.keySpacing?.hoursSinceLastKey);
 
   const intensityDistribution = context.intensityDistribution || null;
   const hardShareBlocked = intensityDistribution?.hardOver === true;
@@ -4692,14 +4687,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   let suggestion = "";
   let keyAllowedNow = false;
 
-  if (capExceeded) {
-    suggestion = `Key-Budget erschöpft (${actual7.toFixed(1)}/${maxKeysCap7} in 7 Tagen) – restliche Einheiten locker/GA.`;
-  } else if (longrunDominant) {
-    suggestion = `Spezifischer Longrun war Hauptreiz der Woche (${actual7.toFixed(1)}/${maxKeysCap7} Budget) – kein zusätzlicher harter Key.`;
+  if (longrunDominant) {
+    suggestion = `Spezifischer Longrun war Hauptreiz der Woche (${actual7.toFixed(1)} Quality) – kein zusätzlicher harter Key.`;
   } else if (bannedHits.length) {
     suggestion = `Verbotener Key-Typ (${bannedHits[0]}) – Alternative: ${preferred}`;
   } else if (!keySpacingNowOk && nextKeyEarliest) {
-    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapDays * 24}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
+    suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapHours}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
   } else if (hardShareBlocked && preferredIntensity === "hard") {
     const hardPct = Math.round((intensityDistribution?.hardShare ?? 0) * 100);
     const maxPct = Math.round((intensityDistribution?.targets?.hardMax ?? 0) * 100);
@@ -4750,12 +4743,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
 
-  const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
+  const status = freqOk && typeOk ? "ok" : "warn";
 
   return {
     expected,
     maxKeys,
-    maxKeysCap7,
     actual7,
     actual7Raw,
     actual14,
@@ -4775,11 +4767,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion,
     progression,
     basedOn: "7T",
-    capExceeded,
     keySpacingOk: keySpacingNowOk,
     nextKeyEarliest,
-    lastKeyGapDays,
+    hoursSinceLastKey: Number.isFinite(hoursSinceLastKey) ? Math.round(hoursSinceLastKey * 10) / 10 : null,
     keyMinGapDays: minGapDays,
+    keyMinGapHours: minGapHours,
     intensityDistribution,
     keyAllowedNow,
     plannedKeyType,
@@ -6244,41 +6236,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastEventDate = runFloorState.lastEventDate;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
 
-    const dynamicKeyCap = {
-      maxKeys7d: ctx.runtimeConfig.maxKeys7d,
-      reasons: [],
-    };
-
-    if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push(`LifeEvent ${modeInfo.lifeEventEffect.category}: Keys pausiert`);
-    } else if (runFloorState.overlayMode === "POST_RACE_RAMP") {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push("Post-Race-Ramp aktiv");
-    } else if (runFloorState.overlayMode === "TAPER") {
-      dynamicKeyCap.maxKeys7d = 0;
-      dynamicKeyCap.reasons.push("Taper aktiv");
-    } else if (runFloorState.overlayMode === "DELOAD") {
-      dynamicKeyCap.maxKeys7d = 1;
-      dynamicKeyCap.reasons.push("Deload aktiv");
-    } else if (fatigueBase?.override) {
-      dynamicKeyCap.maxKeys7d = 2;
-      dynamicKeyCap.reasons.push("Fatigue/Overload (Cap bleibt 2, nur konservative Empfehlung)");
-   
-    } else if ((motor?.value ?? 0) >= 70) {
-      dynamicKeyCap.maxKeys7d = 2;
-      dynamicKeyCap.reasons.push("Motor stark");
-    } else {
-      dynamicKeyCap.maxKeys7d = 2;
-      dynamicKeyCap.reasons.push("Standard-Cap 2 Keys/7 Tage");
-    }
     const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
-    if (robustness && !robustness.strengthOk) {
-      dynamicKeyCap.reasons.push("Kraft unter Zielbereich (Hinweis)");
-    }
     let fatigue = fatigueBase;
     try {
-      fatigue = await computeFatigue7d(ctx, day, { maxKeys7d: dynamicKeyCap.maxKeys7d });
+      fatigue = await computeFatigue7d(ctx, day);
     } catch {
       fatigue = fatigueBase;
     }
@@ -6287,7 +6248,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
     const keyRules = {
       ...keyRulesBase,
-      maxKeysPerWeek: Math.min(keyRulesBase.maxKeysPerWeek, dynamicKeyCap.maxKeys7d),
+      maxKeysPerWeek: keyRulesBase.maxKeysPerWeek,
     };
     const longrunSpecificity = evaluateLongrunSpecificity(ctx, day, longRunSummary, {
       eventDistance,
@@ -6321,7 +6282,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       block: blockState.block,
       eventDistance,
       blockStartIso: blockState.startDate || blockState.blockStartEffective || day,
-      maxKeys7d: dynamicKeyCap.maxKeys7d,
       keySpacing,
       overlayMode: runFloorState.overlayMode,
       intensityDistribution,
@@ -6472,7 +6432,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       blockState,
       keyRules,
       keyCompliance,
-      dynamicKeyCap,
       keySpacing,
       todayIso: day,
       policy,
@@ -7307,12 +7266,11 @@ function buildNextRunRecommendation({
   hasSpecific,
   aerobicOk,
   intensitySignal,
-  keyCapExceeded,
   keySpacingOk,
   keyAllowedNow,
   nextAllowed,
-  todayIso,
-  keyMinGapDays,
+  keyMinGapHours,
+  hoursSinceLastKey,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
@@ -7331,14 +7289,14 @@ function buildNextRunRecommendation({
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
   }
-  if (keyCapExceeded) {
-    next = "Kein weiterer Key diese Woche – locker/GA.";
-  } else if (!keySpacingOk) {
-    if (nextAllowed && todayIso && isIsoDate(todayIso) && isIsoDate(nextAllowed)) {
-      const remainingWaitHours = Math.max(0, diffDays(todayIso, nextAllowed)) * 24;
-      next = `Nächster Key frühestens ab ${nextAllowed} (in ${remainingWaitHours}h) – bis dahin locker/GA.`;
+  if (!keySpacingOk) {
+    const minGapHours = Math.max(24, Math.round((Number(keyMinGapHours) || KEY_MIN_GAP_DAYS_DEFAULT * 24)));
+    const waitHours = Number.isFinite(hoursSinceLastKey)
+      ? Math.max(0, Math.ceil(minGapHours - hoursSinceLastKey))
+      : minGapHours;
+    if (nextAllowed) {
+      next = `Nächster Key frühestens ab ${nextAllowed} (in ${waitHours}h) – bis dahin locker/GA.`;
     } else {
-      const minGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
       next = `Mindestabstand für Key-Reize: ${minGapHours}h – bis dahin locker/GA.`;
     }
   }
@@ -7360,12 +7318,12 @@ function addUniqueTopicLine(topicBucket, topic, line) {
 }
 
 
-function resolveNextKeyTiming({ spacingBlocked, nextAllowed, todayIso, keySpacingOk, keyMinGapDays }) {
-  const requiredMinGapHours = Math.max(24, Math.round((Number(keyMinGapDays) || KEY_MIN_GAP_DAYS_DEFAULT) * 24));
+function resolveNextKeyTiming({ spacingBlocked, nextAllowed, keySpacingOk, keyMinGapHours, hoursSinceLastKey }) {
+  const requiredMinGapHours = Math.max(24, Math.round((Number(keyMinGapHours) || KEY_MIN_GAP_DAYS_DEFAULT * 24)));
   const hasEarliestDate = spacingBlocked && nextAllowed && isIsoDate(nextAllowed);
-  const remainingWaitHours = hasEarliestDate && todayIso && isIsoDate(todayIso)
-    ? Math.max(0, diffDays(todayIso, nextAllowed)) * 24
-    : (keySpacingOk === false ? requiredMinGapHours : null);
+  const remainingWaitHours = keySpacingOk === false
+    ? (Number.isFinite(hoursSinceLastKey) ? Math.max(0, Math.ceil(requiredMinGapHours - hoursSinceLastKey)) : requiredMinGapHours)
+    : null;
 
   return {
     requiredMinGapHours,
@@ -7376,20 +7334,20 @@ function resolveNextKeyTiming({ spacingBlocked, nextAllowed, todayIso, keySpacin
 
 function buildResolvedDecision({
   todayDecision,
-  todayIso,
   spacingBlocked,
   nextAllowed,
   keySpacingOk,
-  keyMinGapDays,
+  keyMinGapHours,
+  hoursSinceLastKey,
   readinessScore,
   mainLimiter,
 }) {
   const resolvedTiming = resolveNextKeyTiming({
     spacingBlocked,
     nextAllowed,
-    todayIso,
     keySpacingOk,
-    keyMinGapDays,
+    keyMinGapHours,
+    hoursSinceLastKey,
   });
   return {
     todayDecision: `${todayDecision}.`,
@@ -7527,11 +7485,8 @@ function buildRecommendationsAndBottomLine(state) {
     const hardMaxPct = Math.round((state.intensityDistribution?.targets?.hardMax || 0) * 100);
     rec.push(`Hard-Anteil ${hardPct}% (>${hardMaxPct}%) → kein weiterer harter Key.`);
   }
-  if (state?.budgetBlocked) {
-    rec.push(`Key-Budget ${state.actualKeys7}/${state.keyCap7} (7T) erreicht → kein weiterer Key.`);
-  }
   if (state?.spacingBlocked) {
-    const minGapText = Number.isFinite(state?.keyMinGapDays) ? `${state.keyMinGapDays * 24}h` : `${KEY_MIN_GAP_DAYS_DEFAULT * 24}h`;
+    const minGapText = Number.isFinite(state?.keyMinGapHours) ? `${state.keyMinGapHours}h` : `${KEY_MIN_GAP_DAYS_DEFAULT * 24}h`;
     rec.push(`Key-Abstand <${minGapText}${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
   }
   if (state?.overlayMode && state.overlayMode !== "NORMAL") {
@@ -7593,7 +7548,6 @@ function buildComments(
     blockState,
     keyRules,
     keyCompliance,
-    dynamicKeyCap,
     keySpacing,
     todayIso,
     policy,
@@ -7649,7 +7603,6 @@ function buildComments(
     lines.push("");
   };
 
-  const keyCap7 = keyCompliance?.maxKeysCap7 ?? dynamicKeyCap?.maxKeys7d ?? MAX_KEYS_7D;
   const actualKeys7 = keyCompliance?.actual7 ?? 0;
   const actualKeys7Raw = keyCompliance?.actual7Raw ?? actualKeys7;
   const longrunSpecificity = keyCompliance?.longrunSpecificity || null;
@@ -7685,7 +7638,6 @@ function buildComments(
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
 
   const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "POST_RACE_RAMP" || overlayMode === "LIFE_EVENT_STOP";
-  const budgetBlocked = keyCompliance?.capExceeded === true;
   const spacingBlocked = !spacingOk;
   const easyShareBlocked = intensityDistribution?.hasData && intensityDistribution?.easyUnder === true;
   const hardShareBlocked = intensityDistribution?.hasData && intensityDistribution?.hardOver === true;
@@ -7694,8 +7646,7 @@ function buildComments(
 
   let mainBlockReason = null;
   if (keyBlocked) {
-    if (budgetBlocked) mainBlockReason = `Budget ${actualKeys7}/${keyCap7} (7T)`;
-    else if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
+    if (spacingBlocked) mainBlockReason = `Spacing bis ${nextAllowed || "n/a"}`;
     else if (hardShareBlocked) mainBlockReason = `HardShare >${hardMaxPct}%`;
     else if (easyShareBlocked) mainBlockReason = `EasyShare <${easyMinPct}%`;
     else if (deloadBlocked) mainBlockReason = `Overlay ${overlayMode}`;
@@ -7755,12 +7706,11 @@ function buildComments(
     hasSpecific: Number.isFinite(specificValue),
     aerobicOk,
     intensitySignal: fatigue?.intensitySignal,
-    keyCapExceeded: budgetBlocked,
     keySpacingOk: spacingOk,
     keyAllowedNow: keyCompliance?.keyAllowedNow,
     nextAllowed,
-    todayIso,
-    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
+    keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
+    hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor });
@@ -7919,7 +7869,7 @@ function buildComments(
     ? `${actualKeys7.toFixed(1)} (inkl. Longrun ${actualKeys7Raw.toFixed(0)} + ${(actualKeys7 - actualKeys7Raw).toFixed(1)})`
     : `${Math.round(actualKeys7)}`;
   const keyCheckMetrics = [
-    `Keys (7 Tage): ${keyUsageText}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
+    `Keys (7 Tage): ${keyUsageText}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     fatigue?.override
       ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
@@ -7953,11 +7903,11 @@ function buildComments(
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
   const resolvedDecision = buildResolvedDecision({
     todayDecision,
-    todayIso,
     spacingBlocked,
     nextAllowed,
     keySpacingOk: spacingOk,
-    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
+    keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
+    hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
     readinessScore: distanceDiagnostics?.readiness,
     mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
   });
@@ -7966,16 +7916,14 @@ function buildComments(
     runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
     intensityDistribution: keyCompliance?.intensityDistribution,
-    budgetBlocked,
     spacingBlocked,
     nextAllowed,
-    keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
+    keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
     overlayMode: runFloorState?.overlayMode,
     keyAllowedNow,
     explicitSessionShort,
     todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
     actualKeys7,
-    keyCap7,
     strengthPolicy,
     longRunDoneMin,
     longRunTargetMin,
@@ -8034,8 +7982,7 @@ function buildComments(
     ],
     execution: [
       spacingBlocked ? `Key-Abstand noch nicht erfüllt (ab ${nextAllowed || "n/a"})` : null,
-      budgetBlocked ? `Key-Budget erreicht (${actualKeys7}/${keyCap7} in 7 Tagen)` : null,
-      (spacingBlocked || budgetBlocked || keyCompliance?.freqOk === false || keyCompliance?.typeOk === false)
+      (spacingBlocked || keyCompliance?.freqOk === false || keyCompliance?.typeOk === false)
         ? "Wochenstruktur aktuell nicht sauber genug."
         : null,
       fatigueWhyLine,
@@ -8166,7 +8113,7 @@ function buildComments(
     `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
     `Longrun · 14T ${longRunDoneMin}′ | Diagnose-Ziel ${prePlanLongRunTargetMin}′ | Progressionsschritt ${longRunSafetyCapMin}′ | Blockziel ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
     `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
-    `Execution · Key-Frequenz ${actualKeys7Raw}/${keyCap7} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
+    `Execution · Key-Frequenz ${actualKeys7Raw} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
     "",
   ];
   const loadSignalsLines = [
@@ -8181,7 +8128,7 @@ function buildComments(
   ];
   const rulesCapsLines = [
     "REGELN / CAPs",
-    `Keys 7T: ${actualKeys7}/${keyCap7}`,
+    `Keys 7T: ${actualKeys7}`,
     `Fatigue Override: ${fatigue?.override ? "aktiv" : "aus"}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `Block: ${blockState?.block || "n/a"}`,
@@ -8211,7 +8158,7 @@ function formatNextAllowed(dayIso, nextAllowedIso) {
   if (!nextAllowedIso) return "n/a";
   if (!dayIso || !isIsoDate(dayIso) || !isIsoDate(nextAllowedIso)) return nextAllowedIso;
   const delta = diffDays(dayIso, nextAllowedIso);
-  if (delta === 0) return `${nextAllowedIso} (ab heute, sofern Key-Budget frei)`;
+  if (delta === 0) return `${nextAllowedIso} (ab heute)`;
   if (delta <= 0) return `${nextAllowedIso} (ab heute)`;
   if (delta === 1) return `${nextAllowedIso} (in 1 Tag)`;
   return `${nextAllowedIso} (in ${delta} Tagen)`;
