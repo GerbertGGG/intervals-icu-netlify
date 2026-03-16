@@ -4656,9 +4656,10 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  const plannedKeyType = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const plannedKeyTypeCandidate = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  let plannedKeyType = plannedKeyTypeCandidate;
   keyRules.plannedPrimaryType = plannedKeyType;
-  const preferred = plannedKeyType;
+  let preferred = plannedKeyType;
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
   const distLabel = context.eventDistance ? `Distanz=${context.eventDistance}` : "Distanz=n/a";
   const progression = computeProgressionTarget(context, keyRules, context.overlayMode || "NORMAL");
@@ -4739,6 +4740,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   }
 
   const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
+  const explicitSessionType = inferKeyTypeFromExplicitSession(explicitSession);
+  if (explicitSessionType && explicitSessionType !== plannedKeyType) {
+    plannedKeyType = explicitSessionType;
+    keyRules.plannedPrimaryType = plannedKeyType;
+    preferred = plannedKeyType;
+  }
   const pendingLever = !keyAllowedNow && pendingLeverMeta ? pendingLeverMeta : null;
   const pendingLeverPlan = !keyAllowedNow
     ? formatPendingLeverPlan({
@@ -4775,7 +4782,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     status,
     suggestion,
     progression,
-    basedOn: "7T",
+    basedOn: "7T (informativ)",
     keySpacingOk: keySpacingNowOk,
     nextKeyEarliest,
     hoursSinceLastKey: Number.isFinite(hoursSinceLastKey) ? Math.round(hoursSinceLastKey * 10) / 10 : null,
@@ -7286,6 +7293,7 @@ function buildNextRunRecommendation({
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
+  const conciseExplicitSession = shortExplicitSession(explicitSession);
   const keySuggestedNow = keyAllowedNow && (
     keySuggestionText.includes("optional/erlaubt")
     || keySuggestionText.includes("nächster key:")
@@ -7298,7 +7306,7 @@ function buildNextRunRecommendation({
     next = "25–40 min locker / Technik / frei";
   } else if (overlay === "TAPER") {
     next = keySuggestedNow
-      ? `Kurzer, kontrollierter Key im Taper erlaubt.${explicitSession ? ` ${explicitSession}` : ""}`
+      ? `Kurzer, kontrollierter Key im Taper erlaubt${conciseExplicitSession ? `: ${conciseExplicitSession}` : "."} Fokus: konstante Reps, enge Pace-Streuung.`
       : "20–35 min locker (Taper)";
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
@@ -7412,6 +7420,14 @@ function shortExplicitSession(explicitSession) {
     .replace(/\s+/g, " ")
     .trim();
   return limitText(cleaned, 90);
+}
+
+function inferKeyTypeFromExplicitSession(explicitSession) {
+  const text = String(explicitSession || "").trim();
+  if (!text) return null;
+  const labelMatch = text.match(/^([A-Za-zäöüÄÖÜß _-]+)\s+konkret\s*:/i);
+  if (labelMatch?.[1]) return normalizeKeyType(labelMatch[1]);
+  return normalizeKeyType(text);
 }
 
 function explicitSessionFromSuggestion(suggestion) {
