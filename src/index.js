@@ -7280,9 +7280,16 @@ function buildNextRunRecommendation({
   nextAllowed,
   keyMinGapHours,
   hoursSinceLastKey,
+  keySuggestion,
+  explicitSession,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
+  const keySuggestionText = String(keySuggestion || "").toLowerCase();
+  const keySuggestedNow = keyAllowedNow && (
+    keySuggestionText.includes("optional/erlaubt")
+    || keySuggestionText.includes("nächster key:")
+  );
   if (overlay === "LIFE_EVENT_STOP") {
     next = "Pause / nur Regeneration (LifeEvent)";
   } else if (overlay === "LIFE_EVENT_HOLIDAY") {
@@ -7290,7 +7297,9 @@ function buildNextRunRecommendation({
   } else if (overlay === "POST_RACE_RAMP") {
     next = "25–40 min locker / Technik / frei";
   } else if (overlay === "TAPER") {
-    next = "20–35 min locker (Taper)";
+    next = keySuggestedNow
+      ? `Kurzer, kontrollierter Key im Taper erlaubt.${explicitSession ? ` ${explicitSession}` : ""}`
+      : "20–35 min locker (Taper)";
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
   } else if (hasSpecific && !specificOk) {
@@ -7708,6 +7717,7 @@ function buildComments(
     plannedType: keyRules?.plannedPrimaryType,
     weeksToEvent,
   });
+  const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
     policy,
@@ -7720,6 +7730,8 @@ function buildComments(
     nextAllowed,
     keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
     hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
+    keySuggestion: keyCompliance?.suggestion,
+    explicitSession: explicitSessionText,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor });
@@ -7894,7 +7906,7 @@ function buildComments(
   if (transitionLine) keyCheckMetrics.push(transitionLine);
 
   const explicitSessionShort = shortExplicitSession(
-    keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion)
+    explicitSessionText
   );
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
   const pendingLever = keyCompliance?.pendingLever || keyCompliance?.activeLever || null;
