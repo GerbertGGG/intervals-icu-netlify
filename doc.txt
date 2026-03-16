@@ -9,7 +9,7 @@ erzeugt tägliche und montägliche NOTE-Events und liefert ein kompaktes Watchfa
 Hauptfunktionen:
 - `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
-- `scheduled()`: triggert alle 30 Minuten im Fenster 08:00–21:00 (Berlin), prüft nur den heutigen Tag und aktualisiert nur den NOTE-Abschnitt „HEUTIGER LAUF“ (Rest bleibt vom 07:00-Basislauf); geschrieben wird nur, wenn seit dem letzten Crawl eine Änderung in den heutigen Lauf-IDs erkannt wurde
+- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin), prüft nur den heutigen Tag und aktualisiert nur den NOTE-Abschnitt „HEUTIGER LAUF“ (Rest bleibt vom 07:00-Basislauf); geschrieben wird nur, wenn seit dem letzten Crawl eine Änderung in den heutigen Lauf-IDs erkannt wurde
 
 Pro verarbeitetem Tag:
 - Wellness-Kommentar wird geleert (`comments = ""`)
@@ -76,6 +76,9 @@ Weitere Parameter:
 - `debug=true|false`
   - `true`: synchron, liefert umfangreiches JSON (`patches`, `debug`, `notesPreview`)
   - `false`: asynchron via `waitUntil`, Response sofort
+- `verbosity=coach|diagnose|debug` (optional, Default `coach`)
+  - steuert den Detailgrad der Report-Texte
+  - ungültige Werte fallen auf `coach` zurück
 - `warmup_skip=600` (Sekunden, clamp 0..1800)
 - `race_start=YYYY-MM-DD` (optional, manueller Startpunkt für RACE-Betrachtung)
 - `block_start=YYYY-MM-DD` (optional, manueller Block-Start für BASE/BUILD/RACE-Zeitrechnung)
@@ -104,6 +107,7 @@ Parameter:
 - `reset=true|false`
   - `true`: setzt den gespeicherten Fortschritt neu auf `from`
 - `write=true|false`, `debug=true|false`, `warmup_skip=...`, `race_start=...`, `block_start=...` wie bei `/sync`
+- optional auch `verbosity=coach|diagnose|debug` wie bei `/sync`
 
 Ablauf:
 1) Initialisieren: `/sync-step?from=2026-02-01&to=2026-03-02&write=true&reset=true`
@@ -113,15 +117,17 @@ Ablauf:
 Hinweis:
 - Sobald `done=true`, ist der Bereich vollständig verarbeitet.
 - Für einen neuen Bereich erneut mit `reset=true&from=...&to=...` starten.
+- Maximaler Startbereich pro Step-Sync: 62 Tage (`to - from`).
 
 5) SCHEDULED TRIGGER
 --------------------
 `scheduled()` verarbeitet:
-- `oldest = gestern`
-- `newest = heute`
+- nur `heute` (`oldest = newest = heute`)
+- um 07:00 Berlin als Basislauf immer ein vollständiges Tages-Update
+- danach im 30-Minuten-Raster nur bei geänderter Lauf-ID-Signatur erneut schreiben
 - intern mit `write=true`, `debug=false`, `warmup_skip=600`
 
-Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell zwei Läufe pro Tag).
+Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 30 Minuten im UTC-Fenster 05:00–20:59).
 
 6) KLASSIFIKATIONEN
 -------------------
