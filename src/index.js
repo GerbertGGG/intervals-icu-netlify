@@ -64,6 +64,10 @@ export default {
       const from = url.searchParams.get("from");
       const to = url.searchParams.get("to");
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
+      const manualFocusRaw = url.searchParams.get("focus") ?? null;
+      const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(manualFocusRaw)
+        ? manualFocusRaw
+        : null;
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
       const raceStartParamRaw = getSearchParamAny(url.searchParams, [
@@ -127,6 +131,7 @@ export default {
             blockStartOverrideIso,
             blockStartOverrideDerivedFromOldest,
             reportVerbosity,
+            manualFocus,
           });
           return json(result);
         } catch (e) {
@@ -143,6 +148,7 @@ export default {
               raceStartOverrideIso,
               blockStartOverrideIso,
               blockStartOverrideDerivedFromOldest,
+              manualFocus,
             },
             500
           );
@@ -157,13 +163,14 @@ export default {
             blockStartOverrideIso,
             blockStartOverrideDerivedFromOldest,
             reportVerbosity,
+            manualFocus,
           });
         })().catch((e) => {
           console.error("sync/model job failed", e);
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, blockStartOverrideDerivedFromOldest, reportVerbosity });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, blockStartOverrideDerivedFromOldest, reportVerbosity, manualFocus });
     }
 
     if (url.pathname === "/sync-step") {
@@ -6329,6 +6336,174 @@ function isMondayIso(dayIso) {
   const d = new Date(dayIso + "T00:00:00Z");
   return d.getUTCDay() === 1;
 }
+
+function safeRound(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+function extractWeeklyMemoryData(memory = {}) {
+  const runs = memory?.runs || {};
+  const strength = memory?.strength || {};
+  const efTrend = memory?.efTrend || {};
+  return {
+    dateFrom: String(memory?.dateFrom || memory?.from || "?") || "?",
+    dateTo: String(memory?.dateTo || memory?.to || "?") || "?",
+    runs: {
+      count: safeRound(runs?.count),
+      totalMinutes: safeRound(runs?.totalMinutes ?? runs?.minutes),
+      keyCount: safeRound(runs?.keyCount),
+      keyTypes: Array.isArray(runs?.keyTypes) ? runs.keyTypes.filter(Boolean) : [],
+      longestMinutes: safeRound(runs?.longestMinutes ?? memory?.longrunMin),
+    },
+    strength: {
+      totalMinutes: safeRound(strength?.totalMinutes ?? memory?.strengthMin),
+      sessionCount: safeRound(strength?.sessionCount),
+    },
+    efTrend: {
+      pct: safeRound(efTrend?.pct ?? memory?.efTrendPct ?? memory?.efTrend),
+      confidence: String(efTrend?.confidence || memory?.efTrendConfidence || "low"),
+    },
+  };
+}
+
+function buildWeeklyReview(ctx, todayIso, blockState, weekMemories) {
+  try {
+    if (!isMondayIso(todayIso)) return null;
+    if (!Array.isArray(weekMemories) || !weekMemories.length) return null;
+
+    const latest = extractWeeklyMemoryData(weekMemories[0]);
+    const previous = weekMemories.slice(1, 5).map(extractWeeklyMemoryData);
+    const strengthPlan = getStrengthPhasePlan(blockState?.block);
+    const strengthTarget = safeRound((Number(strengthPlan?.durationMin?.[1] || 0) || 0) * (Number(strengthPlan?.sessionsPerWeek || 0) || 0));
+    const efStatus = latest.efTrend.pct > 3 ? "Anpassung läuft" : latest.efTrend.pct < -3 ? "Rückgang beobachten" : "stabil";
+    const lines = [
+      `Letzte Woche (${latest.dateFrom}–${latest.dateTo}): ${latest.runs.count} Läufe, ${latest.runs.totalMinutes}′ gesamt, ${latest.runs.keyCount} Key (${latest.runs.keyTypes.join("/") || "-"}).`,
+      `Kraft: ${latest.strength.totalMinutes}′ in ${latest.strength.sessionCount} Einheiten (Ziel: ${strengthTarget}′).`,
+      `EF-Trend: ${latest.efTrend.pct > 0 ? "+" : ""}${latest.efTrend.pct}% (${latest.efTrend.confidence}) — ${efStatus}.`,
+    ];
+
+    if (weekMemories.length >= 3 && previous.length) {
+      const last4 = weekMemories.slice(0, 4).map(extractWeeklyMemoryData);
+      const weakStrengthWeeks = last4.filter((w) => w.strength.totalMinutes < strengthTarget * 0.5).length;
+      const weakFrequencyWeeks = last4.filter((w) => w.runs.count < 3).length;
+      const strongEfWeeks = last4.filter((w) => w.efTrend.pct > 3 && w.efTrend.confidence === "high").length;
+      if (weakStrengthWeeks >= 3) lines.push(`Muster: Kraft fehlt konsistent seit ${weakStrengthWeeks} Wochen.`);
+      else if (weakFrequencyWeeks >= 3) lines.push("Muster: Lauffrequenz unter 3 Läufe/Woche — Basis fragil.");
+      else if (strongEfWeeks >= 3) lines.push("Muster: EF-Trend durchgehend positiv — Fitness steigt stabil.");
+    }
+
+    const prevAvgMinutes = previous.length
+      ? Math.round(previous.reduce((acc, week) => acc + week.runs.totalMinutes, 0) / previous.length)
+      : latest.runs.totalMinutes;
+    const prevAvgKeyCount = previous.length
+      ? Math.round(previous.reduce((acc, week) => acc + week.runs.keyCount, 0) / previous.length)
+      : latest.runs.keyCount;
+    const deltaMinutes = safeRound(latest.runs.totalMinutes - prevAvgMinutes);
+    const deltaKeys = safeRound(latest.runs.keyCount - prevAvgKeyCount);
+    const volumeState = deltaMinutes > 10 ? "gestiegen" : deltaMinutes < -10 ? "gefallen" : "stabil";
+    lines.push(`Volumen ${volumeState} vs. Vorperiode (${deltaMinutes > 0 ? "+" : ""}${deltaMinutes}′, Key ${deltaKeys > 0 ? "+" : ""}${deltaKeys}).`);
+
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
+}
+
+function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorState, weekMemories, manualFocus) {
+  try {
+    if (!isMondayIso(todayIso)) return null;
+    const longRunPlan = computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance);
+    const longrunTarget = safeRound(longRunPlan?.plannedMin);
+    const strengthPlan = getStrengthPhasePlan(blockState?.block);
+    const strengthTarget = safeRound((Number(strengthPlan?.durationMin?.[1] || 0) || 0) * (Number(strengthPlan?.sessionsPerWeek || 0) || 0));
+    const strengthDuration = safeRound(strengthPlan?.durationMin?.[1] || 20);
+    const runsTarget = DISTANCE_REQUIREMENTS[normalizeEventDistance(blockState?.eventDistance) || "10k"]?.weights ? 4 : 3;
+    const latest = Array.isArray(weekMemories) && weekMemories.length ? extractWeeklyMemoryData(weekMemories[0]) : null;
+    const last4 = (Array.isArray(weekMemories) ? weekMemories : []).slice(0, 4).map(extractWeeklyMemoryData);
+    const strengthPattern = last4.filter((w) => w.strength.totalMinutes < strengthTarget * 0.5).length >= 3;
+    let primaryFocus = manualFocus || "basis";
+    let reason = "Alles im Lot, Kontinuität bleibt der Hebel.";
+
+    if (!manualFocus) {
+      if (latest && latest.strength.totalMinutes < strengthTarget * 0.5 && strengthPattern) {
+        primaryFocus = "kraft";
+        reason = "Kraftdefizit war zuletzt klar und wiederholt sichtbar.";
+      } else if (latest && latest.runs.count < 3) {
+        primaryFocus = "frequenz";
+        reason = "Zu wenige Läufe in der letzten Woche schwächen die Basis.";
+      } else if (latest && latest.runs.longestMinutes < longrunTarget * 0.8) {
+        primaryFocus = "longrun";
+        reason = "Der Longrun lag unter Ziel und braucht Priorität.";
+      } else if (latest && latest.efTrend.pct < -3 && latest.efTrend.confidence === "high") {
+        primaryFocus = "erholung";
+        reason = "EF-Trend fällt deutlich, daher Belastung reduzieren.";
+      } else if (keyCompliance?.freqOk === false) {
+        primaryFocus = "spezifik";
+        reason = "Der spezifische Key fehlt noch im Wochenmuster.";
+      }
+    } else {
+      reason = `Fokus manuell gesetzt: ${manualFocus}.`;
+    }
+
+    const mapping = {
+      kraft: [
+        `2× Kraft/Stabi je ${strengthDuration}′ — Di + Do bevorzugt`,
+        "GA-Läufe wie geplant, Kraft NICHT weglassen",
+        `${keyCompliance?.plannedKeyType || "steady"} Key wenn erlaubt`,
+      ],
+      longrun: [
+        `Longrun Sa oder So — Ziel ${longrunTarget}′`,
+        "Restliche Läufe locker, kein zusätzlicher Stress",
+        "Key nur wenn Longrun sicher eingeplant",
+      ],
+      frequenz: [
+        "Mind. 4 Läufe diese Woche — lieber kürzer als ausfallen",
+        "Jeden zweiten Tag laufen, Pausen strategisch",
+        "Key erst ab 3+ Läufen in der Woche",
+      ],
+      erholung: [
+        "Keine Intensität diese Woche — nur GA locker",
+        "Schlaf und Kraft priorisieren",
+        "Key erst nächste Woche wenn EF-Trend dreht",
+      ],
+      spezifik: [
+        `Key diese Woche: ${keyCompliance?.plannedKeyType || "steady"}`,
+        "Longrun mit leichtem Tempo-Einschluss wenn Block BUILD/RACE",
+        "Kraft nicht vergessen",
+      ],
+      basis: [
+        `Kontinuität halten — ${runsTarget} Läufe, davon 1 Key`,
+        `Longrun ${longrunTarget}′`,
+        `Kraft ${strengthTarget}′`,
+      ],
+    };
+    const [p1, p2, p3] = mapping[primaryFocus] || mapping.basis;
+    const focusLabel = {
+      kraft: "Kraft",
+      longrun: "Longrun",
+      frequenz: "Frequenz",
+      erholung: "Erholung",
+      spezifik: "Spezifik",
+      basis: "Basis",
+    }[primaryFocus] || "Basis";
+
+    const extraHint = !latest ? " Noch keine Verlaufsdaten." : "";
+    const text = [
+      `Fokus: ${focusLabel} ${manualFocus ? "(manuell)" : "(auto)"}`,
+      `Priorität 1: ${p1}`,
+      `Priorität 2: ${p2}`,
+      `Priorität 3: ${p3}`,
+      `Hinweis: ${reason}${extraHint}`,
+    ].join("\n");
+
+    ctx.__weeklyFocusMeta = { focus: primaryFocus, manual: manualFocus, priorities: [p1, p2, p3] };
+    return text;
+  } catch {
+    return null;
+  }
+}
+
 function getIsoWeekInfo(dayIso) {
   const date = parseISODateSafe(dayIso);
   if (!date) return null;
@@ -6369,6 +6544,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     ? runtimeOverrides.reportVerbosity
     : (debug ? "debug" : "coach");
   const blockStartOverrideDerivedFromOldest = runtimeOverrides?.blockStartOverrideDerivedFromOldest === true;
+  const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(runtimeOverrides?.manualFocus)
+    ? runtimeOverrides.manualFocus
+    : null;
+  try {
+    ctx.weekMemories = typeof readWeekMemories === "function" ? await readWeekMemories(env, newest) : [];
+  } catch {
+    ctx.weekMemories = [];
+  }
 
   // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
   // For this sync we only need enough to compute what we will write inside [oldest..newest].
@@ -7010,6 +7193,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       keyCompliance,
       runFloorState,
     });
+    ctx.__weeklyFocusMeta = null;
     const dailyReportTextRaw = buildComments({
       perRunInfo,
       trend,
@@ -7039,15 +7223,28 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weeksToEvent,
       eventDistance,
     }, { debug, verbosity: reportVerbosity });
+    const weeklyReview = isMondayIso(day)
+      ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
+      : null;
+    const weeklyFocus = isMondayIso(day)
+      ? buildWeeklyFocus(ctx, day, blockState, keyCompliance, runFloorState, ctx.weekMemories, manualFocus)
+      : null;
+    const weeklyMondayBlock = isMondayIso(day)
+      ? [
+          weeklyReview ? `\n📋 WOCHENRÜCKBLICK\n${weeklyReview}\n⸻\n` : null,
+          weeklyFocus ? `\n🎯 WOCHENFOKUS\n${weeklyFocus}\n⸻\n` : null,
+        ].filter(Boolean).join("\n")
+      : "";
     const weekPlanBlock = [
       "🗓 WOCHENPLAN",
       weekPreview?.text || "(Wochenplan nicht verfügbar)",
       "⸻",
       "",
     ].join("\n");
+    const insertBlock = `${weeklyMondayBlock}${weekPlanBlock}`;
     const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
-      ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${weekPlanBlock}🧠 DIAGNOSE`)
-      : [dailyReportTextRaw || "", "", weekPlanBlock].join("\n");
+      ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
+      : [dailyReportTextRaw || "", "", insertBlock].join("\n");
     const dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
 
     if (!runSectionOnly) {
@@ -7061,6 +7258,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       notesPreview[day] = dailyReportText || "";
       ctx.debugOut.__weekPreview ??= {};
       ctx.debugOut.__weekPreview[day] = weekPreview?.days || [];
+      ctx.debugOut.__weeklyReview ??= {};
+      ctx.debugOut.__weeklyReview[day] = isMondayIso(day) ? (weeklyReview || null) : null;
+      ctx.debugOut.__weeklyFocus ??= {};
+      ctx.debugOut.__weeklyFocus[day] = isMondayIso(day)
+        ? (ctx.__weeklyFocusMeta || { focus: null, manual: manualFocus, priorities: [] })
+        : null;
     }
 
     // Daily NOTE (calendar): stores the daily report text in blue
