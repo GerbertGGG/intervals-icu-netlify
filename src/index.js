@@ -1501,9 +1501,19 @@ function isARaceCategory(category) {
   const cat = normalizeEventCategory(category);
   if (!cat) return false;
 
+  const compact = cat.replace(/[^A-Z0-9]/g, "");
+
   // Intervals kann je nach Quelle unterschiedliche Schreibweisen liefern.
   // Wir berücksichtigen bewusst NUR A-Rennen.
-  return cat === "RACE_A" || cat === "A_RACE" || cat === "A-RACE" || cat === "RACE A";
+  return (
+    cat === "RACE_A" ||
+    cat === "A_RACE" ||
+    cat === "A-RACE" ||
+    cat === "RACE A" ||
+    cat === "A" ||
+    compact === "RACEA" ||
+    compact === "ARACE"
+  );
 }
 
 function isLifeEventCategory(category) {
@@ -3850,13 +3860,15 @@ function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventD
 
 function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null) {
   const targets = getIntensityDistributionTargets(block, eventDistance);
-  let lookbackDays = INTENSITY_LOOKBACK_DAYS;
+  let lookbackDaysRaw = Math.max(7, INTENSITY_LOOKBACK_DAYS);
   if (blockStartIso) {
     const end = new Date(dayIso + "T00:00:00Z");
     const start = new Date(blockStartIso + "T00:00:00Z");
     const blockDays = Math.floor((end.getTime() - start.getTime()) / 86400000);
-    if (Number.isFinite(blockDays)) lookbackDays = Math.max(1, blockDays + 1);
+    if (Number.isFinite(blockDays)) lookbackDaysRaw = Math.max(7, blockDays + 1);
   }
+
+  const lookbackDays = Math.max(28, lookbackDaysRaw);
 
   const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance);
 
@@ -12125,14 +12137,15 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 
   console.log("EVENT_DEBUG", JSON.stringify({
     url,
-    status: res.status,
+    httpStatus: res.status,
     totalEvents: events.length,
     raceEvents: races.length,
     allCategories: events.map(e => ({
       name: e.name,
       category: e.category,
-      start: String(e.start_date_local || e.start_date || "").slice(0,10)
-    }))
+      rawCategory: e?.category,
+      start: String(e.start_date_local || e.start_date || "").slice(0, 10),
+    })),
   }));
 
   if (debug) {
