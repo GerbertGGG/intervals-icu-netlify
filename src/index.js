@@ -880,6 +880,9 @@ const MOTOR_STALE_DAYS = 5;
 
 const TREND_WINDOW_DAYS = 28;
 const TREND_MIN_N = 3;
+const EF_TREND_POSITIVE_THRESHOLD = 0.03;
+const EF_TREND_NEGATIVE_THRESHOLD = -0.06;
+const EF_TREND_MIN_DAYS_IN_BASE_PCT = 0.8;
 
 const MOTOR_WINDOW_DAYS = 28;
 const MOTOR_NEED_N_PER_HALF = 2;
@@ -4912,14 +4915,85 @@ function computeWeeksToEvent(todayISO, eventDateISO, reasons) {
   return { weeksToEventRaw, weeksToEvent };
 }
 
+function computeEfTrend(ctx, dayIso, windowDays = 28) {
+  const fallback = { efTrendPct: null, n: 0, confidence: "none" };
+  try {
+    if (!ctx || !Array.isArray(ctx.activitiesAll) || !isIsoDate(dayIso)) return fallback;
+
+    const end = parseISODateSafe(dayIso);
+    if (!end) return fallback;
+
+    const safeWindowDays = Number.isFinite(windowDays) && windowDays > 1 ? Math.round(windowDays) : 28;
+    const halfWindowDays = Math.max(1, Math.floor(safeWindowDays / 2));
+    const startIso = isoDate(new Date(end.getTime() - safeWindowDays * 86400000));
+    const splitIso = isoDate(new Date(end.getTime() - halfWindowDays * 86400000));
+    const samples = [];
+
+    for (const a of ctx.activitiesAll) {
+      const date = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+      if (!date || date < startIso || date >= dayIso) continue;
+      if (!isRun(a)) continue;
+      if (!isGA(a)) continue;
+
+      const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+      if (!Number.isFinite(durationSec) || durationSec < GA_MIN_SECONDS) continue;
+
+      const avgSpeed = Number(a?.average_speed);
+      const avgHr = Number(a?.average_heartrate);
+      if (!Number.isFinite(avgSpeed) || !Number.isFinite(avgHr) || avgSpeed <= 0 || avgHr <= 0) continue;
+
+      const ef = avgSpeed / avgHr;
+      if (!Number.isFinite(ef) || ef <= 0) continue;
+      samples.push({ date, ef });
+    }
+
+    samples.sort((a, b) => a.date.localeCompare(b.date));
+    const n = samples.length;
+    if (!n) return fallback;
+
+    const firstHalf = samples.filter((x) => x.date < splitIso);
+    const lastHalf = samples.filter((x) => x.date >= splitIso);
+    if (firstHalf.length < 2 || lastHalf.length < 2) {
+      return { efTrendPct: null, n, confidence: "none" };
+    }
+
+    const avgFirst = avg(firstHalf.map((x) => x.ef));
+    const avgLast = avg(lastHalf.map((x) => x.ef));
+    if (!Number.isFinite(avgFirst) || avgFirst <= 0 || !Number.isFinite(avgLast)) {
+      return { efTrendPct: null, n, confidence: "none" };
+    }
+
+    const efTrendPct = (avgLast - avgFirst) / avgFirst;
+    const confidence = n >= 6 ? "high" : n >= 3 ? "medium" : n >= 1 ? "low" : "none";
+    return { efTrendPct, n, confidence };
+  } catch {
+    return fallback;
+  }
+}
+
+
 function determineBlockState({
   today,
   eventDate,
   eventDistance,
   historyMetrics,
   previousState,
+  efTrend = null,
 }) {
   const reasons = [];
+  let efReadyForBuild = null;
+  if (efTrend?.confidence === "high" && Number.isFinite(efTrend?.efTrendPct)) {
+    const efTrendPctDisplay = `${efTrend.efTrendPct >= 0 ? "+" : ""}${(efTrend.efTrendPct * 100).toFixed(1)}`;
+    if (efTrend.efTrendPct > EF_TREND_POSITIVE_THRESHOLD) {
+      reasons.push(`EF-Trend positiv (${efTrendPctDisplay}%) → BASE-Phase produktiv, BUILD-Bereitschaft erhöht`);
+      efReadyForBuild = true;
+    } else if (efTrend.efTrendPct < EF_TREND_NEGATIVE_THRESHOLD) {
+      reasons.push(`EF-Trend negativ (${efTrendPctDisplay}%) → BASE verlängern, kein Block-Wechsel`);
+      efReadyForBuild = false;
+    } else if (efTrend.efTrendPct < -EF_TREND_POSITIVE_THRESHOLD) {
+      reasons.push("EF leicht rückläufig — beobachten");
+    }
+  }
   const eventDistanceNorm = normalizeEventDistance(eventDistance) || "10k";
   const planStartWeeks = getPlanStartWeeks(eventDistanceNorm);
   const raceStartWeeks = getRaceStartWeeks(eventDistanceNorm);
@@ -4956,6 +5030,8 @@ function determineBlockState({
       timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -4979,6 +5055,8 @@ function determineBlockState({
       timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -5003,6 +5081,8 @@ function determineBlockState({
       timeInBlockDays: raceTimeInBlockDays,
       startDate: raceStartDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -5027,6 +5107,8 @@ function determineBlockState({
       timeInBlockDays: raceTimeInBlockDays,
       startDate: raceStartDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -5049,6 +5131,8 @@ function determineBlockState({
         timeInBlockDays: 0,
         startDate: todayISO,
         eventDistance: eventDistanceNorm,
+        efReadyForBuild: null,
+        efTrend: null,
       };
     }
     return {
@@ -5068,6 +5152,8 @@ function determineBlockState({
       timeInBlockDays: 0,
       startDate: todayISO,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -5093,6 +5179,8 @@ function determineBlockState({
       timeInBlockDays: freeBaseDays,
       startDate: freeBaseStart,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -5170,10 +5258,17 @@ function determineBlockState({
       timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
-  if (timeInBlockDays < blockLimits.minDays) {
+  const efAllowsEarlyBuild =
+    block === "BASE" &&
+    efReadyForBuild === true &&
+    timeInBlockDays >= blockLimits.minDays * EF_TREND_MIN_DAYS_IN_BASE_PCT;
+
+  if (timeInBlockDays < blockLimits.minDays && !efAllowsEarlyBuild) {
     reasons.push(`Mindestdauer ${blockLimits.minDays} Tage noch nicht erreicht`);
     return {
       block,
@@ -5192,6 +5287,8 @@ function determineBlockState({
       timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
@@ -5218,16 +5315,23 @@ function determineBlockState({
       timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
+      efReadyForBuild: null,
+      efTrend: null,
     };
   }
 
   if (block === "BASE") {
-    if (runFloorReady && aerobicReady && driftReady && fatigueOk) {
+    const efBlocksEarlyBuild = efReadyForBuild === false && weeksToEvent > raceStartWeeks + 4;
+    if (runFloorReady && aerobicReady && driftReady && fatigueOk && !efBlocksEarlyBuild) {
       reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
+      if (efAllowsEarlyBuild && timeInBlockDays < blockLimits.minDays) {
+        reasons.push("EF-Trend ermöglicht frühen BUILD-Start");
+      }
       block = "BUILD";
       startDate = todayISO;
       timeInBlockDays = 0;
     } else {
+      if (efBlocksEarlyBuild) reasons.push("EF-Trend blockiert vorzeitigen BUILD-Wechsel");
       if (!runFloorReady) reasons.push("BASE bleibt: RunFloor noch instabil");
       if (!aerobicReady) reasons.push("BASE bleibt: AerobicEq/Floor noch instabil");
       if (!driftReady) reasons.push("BASE bleibt: HR-Drift steigt");
@@ -5300,6 +5404,8 @@ function determineBlockState({
     timeInBlockDays,
     startDate,
     eventDistance: eventDistanceNorm,
+    efReadyForBuild,
+    efTrend,
   };
 }
 
@@ -5919,7 +6025,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   const modeNewest = isoDate(new Date(new Date(newest + "T00:00:00Z").getTime() + EVENT_LOOKAHEAD_DAYS * 86400000));
 
   // 1) Fetch ALL activities once
-  ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest);
+  ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest, debug);
   await hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest);
   ctx.lifeEventsAll = await fetchIntervalsEvents(env, globalOldest, globalNewest).catch(() => []);
   ctx.modeEventsAll = await fetchIntervalsEvents(env, modeOldest, modeNewest).catch(() => []);
@@ -6263,12 +6369,20 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       leverPersistenceDebug,
     };
 
+    let efTrend = null;
+    try {
+      efTrend = computeEfTrend(ctx, day, TREND_WINDOW_DAYS);
+    } catch {
+      efTrend = null;
+    }
+
     const blockState = determineBlockState({
       today: day,
       eventDate: eventDate || null,
       eventDistance,
       historyMetrics,
       previousState: previousBlockState,
+      efTrend,
     });
 
     if (manualRaceStartIso && blockState.block === "RACE") {
@@ -11230,7 +11344,7 @@ async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
   }
 }
 
-async function fetchIntervalsActivities(env, oldest, newest) {
+async function fetchIntervalsActivities(env, oldest, newest, debug = false) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/activities?oldest=${oldest}&newest=${newest}`;
   const r = await fetchIntervalsWithRetry(url, {
@@ -11239,7 +11353,33 @@ async function fetchIntervalsActivities(env, oldest, newest) {
     label: "activities",
   });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
-  return r.json();
+  const activities = await r.json();
+  if (debug && Array.isArray(activities) && activities.length > 0) {
+    const sample = activities[0];
+    const efRelatedKeys = Object.keys(sample).filter((k) => {
+      const key = String(k || "").toLowerCase();
+      return (
+        key.includes("ef") ||
+        key.includes("efficiency") ||
+        key.includes("aerobic") ||
+        key.includes("decouple") ||
+        key.includes("decoupling") ||
+        key.includes("cardiac") ||
+        key.includes("pace") ||
+        key.includes("average_speed") ||
+        key.includes("average_heart")
+      );
+    });
+    console.log(
+      "EF_DEBUG activity keys:",
+      JSON.stringify({
+        allKeys: Object.keys(sample).sort(),
+        efRelatedKeys,
+        efRelatedValues: Object.fromEntries(efRelatedKeys.map((k) => [k, sample[k]])),
+      })
+    );
+  }
+  return activities;
 }
 
 async function fetchActivityWithIntervals(env, activityId) {
