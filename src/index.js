@@ -5854,6 +5854,32 @@ function buildWeekPreview(
       if (type === "RECOVERY") return { sessionLabel: "Recovery", intensity: "LOW" };
       return { sessionLabel: "GA absolviert", intensity: "LOW" };
     };
+    const getOverlayForDate = (date, baseTodayIso, floorState, currentBlockState) => {
+      const baseOverlay = String(floorState?.overlayMode || "NORMAL");
+      const eventDateISO = currentBlockState?.eventDateISO || null;
+      if (!eventDateISO) return baseOverlay;
+
+      if (date === eventDateISO) return "RACE_DAY";
+
+      if (date > eventDateISO) {
+        const daysSinceEvent = diffDays(eventDateISO, date);
+        if (daysSinceEvent <= 3) return "POST_RACE_RAMP_REST";
+        if (daysSinceEvent <= 10) return "POST_RACE_RAMP_EASY";
+        return "NORMAL";
+      }
+
+      if (date < baseTodayIso) return baseOverlay;
+
+      const daysToEvent = diffDays(date, eventDateISO);
+      const taperStartDays = currentBlockState?.eventDistance === "m"
+        ? 14
+        : currentBlockState?.eventDistance === "hm"
+          ? 14
+          : 7;
+      if (daysToEvent >= 0 && daysToEvent <= taperStartDays) return "TAPER";
+
+      return baseOverlay;
+    };
 
     const todayWeekday = isoWeekdayBerlin(todayIso);
     const weekStart = addDaysIso(todayIso, -(todayWeekday - 1));
@@ -5898,7 +5924,6 @@ function buildWeekPreview(
     const plannedKeyDates = [];
     let plannedStrengthCount = 0;
     let longrunPlanned = false;
-    const overlayMode = String(runFloorState?.overlayMode || "NORMAL");
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
@@ -5914,7 +5939,25 @@ function buildWeekPreview(
       const weekday = isoWeekdayBerlin(date);
       const dayActivities = byDayAll.get(date) || [];
       const isToday = i === 0;
+      const overlayMode = getOverlayForDate(date, todayIso, runFloorState, blockState);
       let note = null;
+
+      if (date === blockState?.eventDateISO) {
+        const distanceSuffix = blockState?.eventDistance ? ` (${blockState.eventDistance})` : "";
+        days.push({
+          date,
+          dayLabel: dayLabels[weekday - 1],
+          isToday,
+          sessionType: "RACE",
+          sessionLabel: `🏁 Wettkampf${distanceSuffix}`,
+          keyType: null,
+          intensity: "HIGH",
+          overlayActive: false,
+          status: dayActivities.length ? "DONE" : (date < todayIso ? "MISSED" : "PLANNED"),
+          note: "Renntag — alles andere pausiert",
+        });
+        continue;
+      }
 
       if (dayActivities.length) {
         const sessionType = classifySessionType(dayActivities);
@@ -5965,15 +6008,13 @@ function buildWeekPreview(
         sessionType = "REST";
         sessionLabel = "Pause (Krankheit/Verletzung)";
         intensity = "NONE";
-      } else if (overlayMode === "POST_RACE_RAMP") {
-        if (i < 3) {
-          sessionType = "REST";
-          sessionLabel = "Erholung (Post-Race)";
-          intensity = "NONE";
-        } else {
-          sessionType = "GA";
-          sessionLabel = "GA locker (Ramp-up)";
-        }
+      } else if (overlayMode === "POST_RACE_RAMP_REST") {
+        sessionType = "REST";
+        sessionLabel = "Pause (Post-Race Erholung)";
+        intensity = "NONE";
+      } else if (overlayMode === "POST_RACE_RAMP_EASY") {
+        sessionType = "GA";
+        sessionLabel = "GA locker (Ramp-up)";
       } else {
         const keyBudget = Math.max(1, Number(keyCompliance?.maxKeysPerWeek ?? 1));
         const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudget;
