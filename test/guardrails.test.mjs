@@ -50,3 +50,28 @@ import { __test } from '../src/index.js';
 }
 
 console.log('guardrails ok');
+
+// 5) TAPER erlaubt genau einen Aktivierungs-Key bevorzugt 4–5 Tage vor Event
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
+    blockState: { block: 'RACE', weeksToEvent: 1, eventDate: '2026-01-10', eventDistance: '10k' },
+    keyCompliance: { keyAllowedNow: true, plannedKeyType: 'steady', maxKeysPerWeek: 2 },
+    runFloorState: { overlayMode: 'TAPER' },
+  });
+  const keys = week.days.filter((d) => d.sessionType === 'KEY');
+  assert.equal(keys.length, 1);
+  assert.equal(keys[0].date, '2026-01-05'); // 5 Tage vor Event
+  assert.match(keys[0].sessionLabel, /Aktivierungs-Key \(Taper\)/);
+  assert.equal(keys[0].intensity, 'HIGH');
+}
+
+// 6) TAPER-KEY wird nicht gesetzt, wenn keyAllowedNow=false
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
+    blockState: { block: 'RACE', weeksToEvent: 1, eventDate: '2026-01-10', eventDistance: '10k' },
+    keyCompliance: { keyAllowedNow: false, plannedKeyType: 'steady', maxKeysPerWeek: 2 },
+    runFloorState: { overlayMode: 'TAPER' },
+  });
+  const keys = week.days.filter((d) => d.sessionType === 'KEY');
+  assert.equal(keys.length, 0);
+}
