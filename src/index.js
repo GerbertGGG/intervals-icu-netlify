@@ -7231,7 +7231,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       keyStats7,
       longRunSummary,
       longrunSpecificity,
-      robustness,
+      robustness: robustness ? { ...robustness, strengthPolicy } : robustness,
       fatigue,
       keyCompliance,
       trend,
@@ -7250,7 +7250,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       keyCompliance,
       fatigue,
       longRunSummary,
-      strengthPolicy: robustness?.strengthPolicy,
+      strengthPolicy,
       weeksToEvent: blockState?.weeksToEvent,
       longrunFrequency21d,
       longrunFrequency35d,
@@ -7349,7 +7349,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       trend,
       motor,
       benchReports,
-      robustness,
+      robustness: robustness ? { ...robustness, strengthPolicy } : robustness,
+      strengthPolicy,
       modeInfo,
       blockState,
       keyRules,
@@ -8039,8 +8040,13 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
       consistency: `Kontinuität 4-6 Wochen: ${stats42.runDaysPerWeek.toFixed(1)} Lauftage/Woche; Kraft ${Math.round(snapshot.strengthMin)}′/7T.`,
       recency: `Fatigue-Status: Override ${snapshot.fatigueOverride ? "aktiv" : "aus"}, Key-Spacing ${snapshot.keySpacingOk ? "ok" : "verletzt"}.`,
       constraints: [
-        snapshot.strengthMin <= 15 ? "Kraftumfang 0-15′/Woche (schwach)" : null,
-        snapshot.strengthMin > 15 && snapshot.strengthMin <= 35 ? "Kraftumfang 20-35′/Woche (okay)" : null,
+        snapshot.strengthMin <= Math.max(10, Math.round(strengthTargetCoachMin * 0.5))
+          ? `Kraftumfang 0-${Math.max(10, Math.round(strengthTargetCoachMin * 0.5))}′/Woche (schwach)`
+          : null,
+        snapshot.strengthMin > Math.max(10, Math.round(strengthTargetCoachMin * 0.5))
+          && snapshot.strengthMin < strengthTargetCoachMin
+          ? `Kraftumfang ${Math.max(10, Math.round(strengthTargetCoachMin * 0.5)) + 1}-${Math.max(Math.max(10, Math.round(strengthTargetCoachMin * 0.5)) + 1, Math.round(strengthTargetCoachMin) - 1)}′/Woche (okay)`
+          : null,
         snapshot.fatigueOverride ? "Fatigue-Override aktiv" : null,
         !snapshot.keySpacingOk ? "Key-Abstand verletzt" : null,
         monotony > 2.1 ? "Monotony-Schwelle überschritten" : null,
@@ -8443,7 +8449,8 @@ function buildRecommendationsAndBottomLine(state) {
     bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
   }
 
-  if (Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
+  const taperPriorityWeek = state?.taperPriorityWeek === true || state?.overlayMode === "TAPER";
+  if (!taperPriorityWeek && Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
     const runGap = Math.round(runFloorTarget - runFloorNow);
     rec.push(`RunFloor ${Math.round(runFloorNow)}/${Math.round(runFloorTarget)} → Volumen priorisieren (Gap ${runGap}).`);
   }
@@ -8566,6 +8573,7 @@ function buildComments(
     motor,
     benchReports,
     robustness,
+    strengthPolicy,
     modeInfo,
     blockState,
     keyRules,
@@ -8655,7 +8663,7 @@ function buildComments(
       ? ` (Basisziel ${runBaseTarget}, Phase ${runPhaseLabel}, Overlay ${overlayMode})`
       : "";
   const phaseOverlayLine = formatPhaseOverlayLine(runPhaseLabel, overlayMode);
-  const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
+  const strengthPolicyResolved = strengthPolicy || robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
@@ -8901,8 +8909,8 @@ function buildComments(
     fatigue?.override
       ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
       : "Fatigue-Override: aus",
-    `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
-    `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
+    `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ (Runfloor ≥${strengthPolicyResolved.minRunfloor}′ | Ziel ${strengthPolicyResolved.target}′ | Max ${strengthPolicyResolved.max}′)`,
+    `Kraft-Score: ${strengthPolicyResolved.score}/3 | Confidence Δ ${strengthPolicyResolved.confidenceDelta >= 0 ? "+" : ""}${strengthPolicyResolved.confidenceDelta}`,
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
@@ -8927,6 +8935,7 @@ function buildComments(
   const pendingLeverLine = pendingLeverPlan.pendingLeverLine || keyCompliance?.pendingLeverLine || null;
   const pendingLeverPlanLine = pendingLeverPlan.pendingLeverPlanLine || keyCompliance?.pendingLeverPlanLine || null;
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
+  const taperPriorityWeek = overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
   const resolvedDecision = buildResolvedDecision({
     todayDecision,
@@ -8951,7 +8960,7 @@ function buildComments(
     explicitSessionShort,
     todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
     actualKeys7,
-    strengthPolicy,
+    strengthPolicy: strengthPolicyResolved,
     longRunDoneMin,
     longRunTargetMin,
     longRunGapMin,
@@ -8963,6 +8972,7 @@ function buildComments(
     fatigue,
     distanceDiagnostics,
     gapRecommendations,
+    taperPriorityWeek,
   });
   const recommendationMetricsBlockRaw = [
     ...decisionCompact.recommendations,
@@ -8985,7 +8995,6 @@ function buildComments(
     ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
     : "";
   const fatigueWhyLine = fatigue?.override ? `Rhythmus aktuell unruhig${fatigueReasonSnippet}.` : null;
-  const taperPriorityWeek = runFloorState?.overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
   const gapReasonMap = {
     base: [
       !ignoreRunFloorGap && !taperPriorityWeek && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
@@ -9003,8 +9012,8 @@ function buildComments(
       "Längerer aerober Reiz nicht regelmäßig genug.",
     ],
     robustness: [
-      Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0)
-        ? `Krafttraining unter Soll (${strengthPolicy.minutes7d}′/${strengthPolicy.target}′)`
+      Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
+        ? `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`
         : null,
       "Belastbarkeit noch nicht stabil genug.",
     ],
@@ -9027,13 +9036,13 @@ function buildComments(
     }
     if (shortReasons.length >= 3) break;
   }
-  if (shortReasons.length < 3 && Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0)) {
-    const strengthReason = `Krafttraining unter Soll (${strengthPolicy.minutes7d}′/${strengthPolicy.target}′)`;
+  if (shortReasons.length < 3 && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)) {
+    const strengthReason = `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`;
     if (!shortReasons.includes(strengthReason)) shortReasons.push(strengthReason);
   }
 
   const focusLines = [coachFocus.action || "Wochenstruktur stabilisieren."];
-  if (Number(strengthPolicy.minutes7d || 0) < Number(strengthPolicy.target || 0) && !focusLines.includes("Kraft zurückbringen.")) {
+  if (Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0) && !focusLines.includes("Kraft zurückbringen.")) {
     focusLines.push("Kraft zurückbringen.");
   }
 
@@ -9065,7 +9074,7 @@ function buildComments(
         : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
     bikeWeeklyRule.summaryLine,
-    `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
+    `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
     intensityLine,
   ];
 
@@ -9145,7 +9154,7 @@ function buildComments(
     `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
     `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
     `Longrun · aktuell ${longRunDoneMin}′ | Mindestziel ${prePlanLongRunTargetMin}′ | Entwicklungsziel (nächster Schritt) ${longRunSafetyCapMin}′ | Wochenziel (geplant) ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
-    `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
+    `Robustness · Kraft 7T ${strengthPolicyResolved.minutes7d}′ | Coach-Ziel ${strengthPolicyResolved.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
     `Execution · Key-Frequenz ${actualKeys7Raw} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
     "",
   ];
@@ -9171,8 +9180,8 @@ function buildComments(
   const coachConsequencesLines = [
     "COACH-FOLGEN",
     `• ${keyBlocked ? "Kein weiterer Key diese Woche" : "Key möglich, falls frisch"}`,
-    "• Volumen priorisieren",
-    `• Kraft auf ${Number(strengthPolicy.target || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
+    taperPriorityWeek ? "• Taper priorisieren (kein Volumen-Push)" : "• Volumen priorisieren",
+    `• Kraft auf ${Number(strengthPolicyResolved.target || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
     "• Load-Anstieg konservativ halten",
   ];
 
@@ -10150,7 +10159,7 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
   return appendFourWeekProgressSection(withWhy, fourWeekInsights);
 }
 
-function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
+function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLongrun = false }) {
   let runTarget = "3–4";
   if (runsPerWeek < 2) runTarget = "2–3";
   else if (runsPerWeek < 3) runTarget = "3";
@@ -10165,10 +10174,16 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
   }
 
   const includeKey = keyPerWeek >= 0.6 || (runsPerWeek >= 3 && weeklyLoad >= 140);
-  const longrunMinTarget = runsPerWeek < 2 ? "45–60′" : "60′";
-  const longrunDevelopmentTarget = "60–75′";
+  const longrunMinTarget = suppressLongrun ? "—" : runsPerWeek < 2 ? "45–60′" : "60′";
+  const longrunDevelopmentTarget = suppressLongrun ? "—" : "60–75′";
   const exampleWeek =
-    runTarget === "2–3"
+    suppressLongrun
+      ? runTarget === "2–3"
+        ? ["Mi 30–35′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
+        : includeKey
+        ? ["Di 30–40′ key (kurz/aktivierend)", "Fr 30–40′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
+        : ["Mi 30–35′ easy", "Fr 35–45′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
+      : runTarget === "2–3"
       ? ["Mi 30–35′ easy", "So 60–75′ longrun"]
       : includeKey
       ? ["Di 35–45′ key (Schwelle/VO2)", "Fr 40–50′ GA", "So 60–75′ longrun"]
@@ -10415,14 +10430,17 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     actions.unshift(`Kein Longrun diese Woche — Wettkampf in ${eventInDays} Tagen.`);
   }
   lines.push("Nächste Schritte:");
-  if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
-  else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
+  const filteredActions = taperRaceWeek
+    ? uniq(actions).filter((line) => !/longrun/i.test(String(line || "")))
+    : uniq(actions);
+  if (!filteredActions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
+  else for (const a of filteredActions.slice(0, 8)) lines.push(`- ${a}`);
 
-  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek });
+  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLongrun: taperRaceWeek });
   lines.push("");
   lines.push("Konkrete nächste Woche (Mini-Plan):");
   lines.push(
-    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | Longrun: Mindestziel ${miniPlan.longrunMinTarget}, Entwicklung ${miniPlan.longrunDevelopmentTarget}`
+    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | ${taperRaceWeek ? "Longrun: diese Woche bewusst ausgesetzt (Taper)" : `Longrun: Mindestziel ${miniPlan.longrunMinTarget}, Entwicklung ${miniPlan.longrunDevelopmentTarget}`}`
   );
   lines.push(`- Beispielwoche: ${miniPlan.exampleWeek.join(" · ")}`);
 
