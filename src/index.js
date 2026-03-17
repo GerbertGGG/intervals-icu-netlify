@@ -5802,6 +5802,271 @@ function addLeverKvDebug(debugOut, day, payload) {
   debugOut.__leverKv[day] = payload;
 }
 
+function buildWeekPreview(
+  ctx,
+  todayIso,
+  {
+    blockState,
+    keyCompliance,
+    runFloorState,
+  } = {}
+) {
+  try {
+    const dayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+    const isoWeekdayBerlin = (iso) => {
+      const date = parseISODateSafe(iso);
+      if (!date) return 1;
+      const weekday = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/Berlin",
+        weekday: "short",
+      }).format(date);
+      const map = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+      return map[weekday] || 1;
+    };
+    const addDaysIso = (iso, days) => {
+      const base = parseISODateSafe(iso);
+      if (!base) return iso;
+      return isoDate(new Date(base.getTime() + days * 86400000));
+    };
+    const shortSentence = (text) => {
+      const raw = String(text || "").trim();
+      if (!raw) return "";
+      const split = raw.split(/(?<=[.!?])\s+/);
+      return (split[0] || raw).trim();
+    };
+    const classifySessionType = (activities) => {
+      if (!Array.isArray(activities) || !activities.length) return "GA";
+      const hasKey = activities.some((a) => hasKeyTag(a) || !!getKeyType(a));
+      if (hasKey) return "KEY";
+      const longRun = activities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= LONGRUN_MIN_SECONDS);
+      if (longRun) return "LONGRUN";
+      const strength = activities.some((a) => isStrength(a));
+      if (strength) return "STRENGTH";
+      const ga = activities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= GA_MIN_SECONDS);
+      if (ga) return "GA";
+      return "RECOVERY";
+    };
+    const sessionMetaFromType = (type) => {
+      if (type === "KEY") return { sessionLabel: "Key absolviert", intensity: "HIGH" };
+      if (type === "LONGRUN") return { sessionLabel: "Langer Lauf absolviert", intensity: "MED" };
+      if (type === "STRENGTH") return { sessionLabel: "Kraft/Stabi absolviert", intensity: "LOW" };
+      if (type === "REST") return { sessionLabel: "Pause", intensity: "NONE" };
+      if (type === "RECOVERY") return { sessionLabel: "Recovery", intensity: "LOW" };
+      return { sessionLabel: "GA absolviert", intensity: "LOW" };
+    };
+
+    const todayWeekday = isoWeekdayBerlin(todayIso);
+    const weekStart = addDaysIso(todayIso, -(todayWeekday - 1));
+    const yesterdayIso = addDaysIso(todayIso, -1);
+    const byDayAll = new Map();
+    for (const a of ctx?.activitiesAll || []) {
+      const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+      if (!d) continue;
+      if (!byDayAll.has(d)) byDayAll.set(d, []);
+      byDayAll.get(d).push(a);
+    }
+
+    const thisWeekDays = listIsoDaysInclusive(weekStart, yesterdayIso);
+    let keyDone = false;
+    const keyDates = [];
+    const keyTypes = [];
+    let longrundDone = false;
+    let longrundMinutes = 0;
+    let strengthCount = 0;
+    let restDaysTaken = 0;
+    for (const d of thisWeekDays) {
+      const dayActivities = byDayAll.get(d) || [];
+      if (!dayActivities.length) restDaysTaken += 1;
+      for (const a of dayActivities) {
+        const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+        if (hasKeyTag(a) || !!getKeyType(a)) {
+          keyDone = true;
+          keyDates.push(d);
+          const t = getKeyType(a);
+          if (t) keyTypes.push(t);
+        }
+        if (isRun(a) && durationSec >= LONGRUN_MIN_SECONDS) {
+          longrundDone = true;
+          longrundMinutes = Math.max(longrundMinutes, Math.round(durationSec / 60));
+        }
+        if (isStrength(a)) strengthCount += 1;
+      }
+    }
+    const thisWeekActuals = { keyDone, keyDates, keyTypes, longrundDone, longrundMinutes, strengthCount, restDaysTaken };
+
+    const days = [];
+    const plannedKeyDates = [];
+    let plannedStrengthCount = 0;
+    let longrunPlanned = false;
+    const overlayMode = String(runFloorState?.overlayMode || "NORMAL");
+    const strengthPlan = getStrengthPhasePlan(blockState?.block);
+    const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
+    const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
+    const getPrefRank = (iso, preference) => {
+      const wd = isoWeekdayBerlin(iso);
+      return preference.indexOf(wd);
+    };
+    const keyPref = [3, 4, 2, 5, 1, 6, 7];
+    const strengthPref = [2, 4, 1, 5, 3, 6, 7];
+
+    for (let i = 0; i < 7; i += 1) {
+      const date = addDaysIso(todayIso, i);
+      const weekday = isoWeekdayBerlin(date);
+      const dayActivities = byDayAll.get(date) || [];
+      const isToday = i === 0;
+      let note = null;
+
+      if (dayActivities.length) {
+        const sessionType = classifySessionType(dayActivities);
+        const doneMeta = sessionMetaFromType(sessionType);
+        if (sessionType === "KEY") plannedKeyDates.push(date);
+        if (sessionType === "STRENGTH") plannedStrengthCount += 1;
+        if (sessionType === "LONGRUN") longrunPlanned = true;
+        days.push({
+          date,
+          dayLabel: dayLabels[weekday - 1],
+          isToday,
+          sessionType,
+          sessionLabel: doneMeta.sessionLabel,
+          keyType: sessionType === "KEY" ? (getKeyType(dayActivities[0]) || keyCompliance?.plannedKeyType || null) : null,
+          intensity: doneMeta.intensity,
+          overlayActive: overlayMode !== "NORMAL",
+          status: "DONE",
+          note,
+        });
+        continue;
+      }
+
+      if (date < todayIso) {
+        days.push({
+          date,
+          dayLabel: dayLabels[weekday - 1],
+          isToday,
+          sessionType: "REST",
+          sessionLabel: "Key nicht absolviert",
+          keyType: null,
+          intensity: "NONE",
+          overlayActive: overlayMode !== "NORMAL",
+          status: "MISSED",
+          note,
+        });
+        continue;
+      }
+
+      let sessionType = "GA";
+      let sessionLabel = "GA locker 45–60′";
+      let intensity = "LOW";
+      let keyType = null;
+
+      if (overlayMode === "TAPER") {
+        sessionType = "RECOVERY";
+        sessionLabel = "Lockerer Lauf oder Pause (Taper)";
+      } else if (overlayMode === "LIFE_EVENT_STOP") {
+        sessionType = "REST";
+        sessionLabel = "Pause (Krankheit/Verletzung)";
+        intensity = "NONE";
+      } else if (overlayMode === "POST_RACE_RAMP") {
+        if (i < 3) {
+          sessionType = "REST";
+          sessionLabel = "Erholung (Post-Race)";
+          intensity = "NONE";
+        } else {
+          sessionType = "GA";
+          sessionLabel = "GA locker (Ramp-up)";
+        }
+      } else {
+        const keyBudget = Math.max(1, Number(keyCompliance?.maxKeysPerWeek ?? 1));
+        const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudget;
+        const lastKnownKeyDate = [...thisWeekActuals.keyDates, ...plannedKeyDates].sort().at(-1) || null;
+        const spacingOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
+        const bestKeyRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
+          .map((d) => getPrefRank(d, keyPref))
+          .filter((rank) => rank >= 0)
+          .sort((a, b) => a - b)[0];
+        const isPreferredKeySlot = getPrefRank(date, keyPref) === bestKeyRankLeft;
+        const keyEligible = keyCompliance?.keyAllowedNow === true && canAddKeyByCount && spacingOk && isPreferredKeySlot;
+
+        if (keyEligible) {
+          sessionType = "KEY";
+          intensity = "HIGH";
+          keyType = keyCompliance?.plannedKeyType || null;
+          sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`;
+          plannedKeyDates.push(date);
+          if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
+            note = "Key aus dieser Woche nachholen";
+          }
+        } else {
+          const nearestKeyDistance = plannedKeyDates.length
+            ? Math.min(...plannedKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
+            : 99;
+          const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
+          const isLongrunPref = weekday === 7 || weekday === 6;
+          if (canPlanLongrun && isLongrunPref) {
+            sessionType = "LONGRUN";
+            intensity = "MED";
+            sessionLabel = `Langer Lauf ~${longRunTargetMin}′`;
+            longrunPlanned = true;
+          } else {
+            const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
+            const clashesWithKeyOrLong = sessionType === "KEY" || sessionType === "LONGRUN";
+            const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
+              .map((d) => getPrefRank(d, strengthPref))
+              .filter((rank) => rank >= 0)
+              .sort((a, b) => a - b)[0];
+            const isStrengthPref = getPrefRank(date, strengthPref) === bestStrengthRankLeft;
+            if (strengthNeed && !clashesWithKeyOrLong && isStrengthPref) {
+              sessionType = "STRENGTH";
+              intensity = "LOW";
+              sessionLabel = `Kraft/Stabi ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`;
+              note = "Kann nach GA-Lauf gemacht werden";
+              plannedStrengthCount += 1;
+            }
+          }
+        }
+      }
+
+      const prevIntensities = days.slice(-2).map((d) => d.intensity);
+      if (prevIntensities.length === 2 && prevIntensities.every((x) => x === "HIGH")) {
+        sessionType = "REST";
+        intensity = "NONE";
+        sessionLabel = "Pause oder Mobilität";
+        keyType = null;
+      }
+
+      days.push({
+        date,
+        dayLabel: dayLabels[weekday - 1],
+        isToday,
+        sessionType,
+        sessionLabel,
+        keyType,
+        intensity,
+        overlayActive: overlayMode !== "NORMAL",
+        status: "PLANNED",
+        note,
+      });
+    }
+
+    if (days.length) {
+      days[0].note = days[0].note ? `${days[0].note} · Vorschau — passt sich täglich an` : "Vorschau — passt sich täglich an";
+    }
+
+    const text = days
+      .map((entry) => {
+        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
+        const todayPrefix = entry.isToday ? "→ " : "";
+        const keyStar = entry.sessionType === "KEY" ? " ★" : "";
+        const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
+        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}`;
+      })
+      .join("\n");
+
+    return { days, text };
+  } catch {
+    return { days: [], text: "(Wochenplan nicht verfügbar)" };
+  }
+}
+
 
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
@@ -6644,6 +6909,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
 
     // Daily report text (used for calendar NOTE instead of wellness comments)
+    const weekPreview = buildWeekPreview(ctx, day, {
+      blockState,
+      keyCompliance,
+      runFloorState,
+    });
     const dailyReportTextRaw = buildComments({
       perRunInfo,
       trend,
@@ -6673,7 +6943,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weeksToEvent,
       eventDistance,
     }, { debug, verbosity: reportVerbosity });
-    const dailyReportText = normalizeDailyReportText(day, dailyReportTextRaw);
+    const weekPlanBlock = [
+      "🗓 WOCHENPLAN",
+      weekPreview?.text || "(Wochenplan nicht verfügbar)",
+      "⸻",
+      "",
+    ].join("\n");
+    const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
+      ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${weekPlanBlock}🧠 DIAGNOSE`)
+      : [dailyReportTextRaw || "", "", weekPlanBlock].join("\n");
+    const dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
 
     if (!runSectionOnly) {
       // Explicitly clear wellness comments; report is written only as NOTE.
@@ -6684,6 +6963,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     if (debug) {
       notesPreview[day] = dailyReportText || "";
+      ctx.debugOut.__weekPreview ??= {};
+      ctx.debugOut.__weekPreview[day] = weekPreview?.days || [];
     }
 
     // Daily NOTE (calendar): stores the daily report text in blue
