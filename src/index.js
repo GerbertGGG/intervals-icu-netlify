@@ -5927,6 +5927,8 @@ function buildWeekPreview(
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
+    const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
+    const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
     const getPrefRank = (iso, preference) => {
       const wd = isoWeekdayBerlin(iso);
       return preference.indexOf(wd);
@@ -6004,6 +6006,34 @@ function buildWeekPreview(
       if (overlayMode === "TAPER") {
         sessionType = "RECOVERY";
         sessionLabel = "Lockerer Lauf oder Pause (Taper)";
+        const daysToEvent = eventDateIso ? diffDays(date, eventDateIso) : null;
+        const keyExistsInPlan = days.some((entry) => entry.sessionType === "KEY");
+        const hasPreferredTaperKeyDayAhead = Boolean(
+          eventDateIso
+          && i <= 6
+          && listIsoDaysInclusive(date, addDaysIso(todayIso, 6)).some((iso) => {
+            const dte = diffDays(iso, eventDateIso);
+            return dte === 4 || dte === 5;
+          })
+        );
+        const isPreferredTaperKeyDay = daysToEvent === 4 || daysToEvent === 5;
+        const canPlaceTaperKeyToday = keyCompliance?.keyAllowedNow === true
+          && daysToEvent != null
+          && daysToEvent > 3
+          && !keyExistsInPlan
+          && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead);
+
+        if (canPlaceTaperKeyToday) {
+          const taperLabel = eventDistance === "5k" || eventDistance === "10k"
+            ? "4–6×200m @ Renntempo oder 3×1km locker-flott"
+            : (keyCompliance?.plannedKeyType || "kurze Reize");
+          sessionType = "KEY";
+          intensity = "HIGH";
+          keyType = keyCompliance?.plannedKeyType || null;
+          sessionLabel = `Aktivierungs-Key (Taper): ${taperLabel}`;
+          note = "Kurz und scharf — neuromuskuläre Aktivierung, kein Volumen";
+          plannedKeyDates.push(date);
+        }
       } else if (overlayMode === "LIFE_EVENT_STOP") {
         sessionType = "REST";
         sessionLabel = "Pause (Krankheit/Verletzung)";
@@ -11904,6 +11934,7 @@ const __internalTestHooks = Object.freeze({
   adaptExpectedKeysForOverlay,
   evaluateKeyCompliance,
   formatPhaseOverlayLine,
+  buildWeekPreview,
 });
 
 export const __test = __internalTestHooks;
