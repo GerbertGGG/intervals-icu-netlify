@@ -5030,8 +5030,8 @@ function determineBlockState({
       timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5055,8 +5055,8 @@ function determineBlockState({
       timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5081,8 +5081,8 @@ function determineBlockState({
       timeInBlockDays: raceTimeInBlockDays,
       startDate: raceStartDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5107,8 +5107,8 @@ function determineBlockState({
       timeInBlockDays: raceTimeInBlockDays,
       startDate: raceStartDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5131,8 +5131,8 @@ function determineBlockState({
         timeInBlockDays: 0,
         startDate: todayISO,
         eventDistance: eventDistanceNorm,
-        efReadyForBuild: null,
-        efTrend: null,
+        efReadyForBuild,
+        efTrend,
       };
     }
     return {
@@ -5152,8 +5152,8 @@ function determineBlockState({
       timeInBlockDays: 0,
       startDate: todayISO,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5179,8 +5179,8 @@ function determineBlockState({
       timeInBlockDays: freeBaseDays,
       startDate: freeBaseStart,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5258,8 +5258,8 @@ function determineBlockState({
       timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5287,8 +5287,8 @@ function determineBlockState({
       timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
@@ -5315,8 +5315,8 @@ function determineBlockState({
       timeInBlockDays,
       startDate,
       eventDistance: eventDistanceNorm,
-      efReadyForBuild: null,
-      efTrend: null,
+      efReadyForBuild,
+      efTrend,
     };
   }
 
