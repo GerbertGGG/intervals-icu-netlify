@@ -5935,6 +5935,20 @@ function buildWeekPreview(
     };
     const keyPref = [3, 4, 2, 5, 1, 6, 7];
     const strengthPref = [2, 4, 1, 5, 3, 6, 7];
+    const lastRunDaysAgo = (() => {
+      for (let i = 0; i <= 3; i += 1) {
+        const checkIso = isoDate(new Date(
+          new Date(`${todayIso}T00:00:00Z`).getTime() - i * 86400000
+        ));
+        const hasRun = (ctx?.activitiesAll || []).some((a) => {
+          const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+          return d === checkIso && isRun(a);
+        });
+        if (hasRun) return i;
+      }
+      return 99;
+    })();
+    const shouldDelayTaperKey = lastRunDaysAgo >= 2;
 
     for (let i = 0; i < 7; i += 1) {
       const date = addDaysIso(todayIso, i);
@@ -6008,20 +6022,31 @@ function buildWeekPreview(
         sessionLabel = "Lockerer Lauf oder Pause (Taper)";
         const daysToEvent = eventDateIso ? diffDays(date, eventDateIso) : null;
         const keyExistsInPlan = days.some((entry) => entry.sessionType === "KEY");
+        const effectivePreferredTaperDays = shouldDelayTaperKey ? [4] : [5, 4];
+        const isDelayedTaperEntryToday = isToday && shouldDelayTaperKey;
         const hasPreferredTaperKeyDayAhead = Boolean(
           eventDateIso
           && i <= 6
           && listIsoDaysInclusive(date, addDaysIso(todayIso, 6)).some((iso) => {
             const dte = diffDays(iso, eventDateIso);
-            return dte === 4 || dte === 5;
+            return effectivePreferredTaperDays.includes(dte);
           })
         );
-        const isPreferredTaperKeyDay = daysToEvent === 4 || daysToEvent === 5;
+        const isPreferredTaperKeyDay = effectivePreferredTaperDays.includes(daysToEvent);
         const canPlaceTaperKeyToday = keyCompliance?.keyAllowedNow === true
           && daysToEvent != null
           && daysToEvent > 3
+          && !isDelayedTaperEntryToday
           && !keyExistsInPlan
           && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead);
+
+        if (isDelayedTaperEntryToday) {
+          const layoffDays = lastRunDaysAgo === 99 ? "3+" : String(lastRunDaysAgo);
+          sessionType = "GA";
+          intensity = "LOW";
+          sessionLabel = `GA locker — erst wieder reinkommen (kein Lauf seit ${layoffDays} Tagen)`;
+          note = `${layoffDays} Tage ohne Lauf — erst lockerer GA vor Key`;
+        }
 
         if (canPlaceTaperKeyToday) {
           const taperLabel = eventDistance === "5k" || eventDistance === "10k"
