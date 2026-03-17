@@ -323,5 +323,20 @@ console.log('guardrails ok');
   };
   const diag = __test.computeDistanceDiagnostics(snapshot, ctx);
   const constraints = diag?.components?.robustness?.constraints || [];
-  assert.equal(constraints.some((line) => /Kraftumfang 20-35′\/Woche \(okay\)/.test(line)), true);
+  assert.equal(constraints.some((line) => /Kraftumfang 0-10′\/Woche \(schwach\)/.test(line)), false);
+}
+
+// 20) Taper-Empfehlungen unterdrücken RunFloor-Volumen-Push
+{
+  const out = __test.buildRecommendationsAndBottomLine({
+    runFloorEwma10: 93,
+    runFloorTarget: 113,
+    overlayMode: 'TAPER',
+    taperPriorityWeek: true,
+    todayAction: '30–40′ locker',
+    keyAllowedNow: false,
+  });
+  const joined = (out?.recommendations || []).join('\n');
+  assert.equal(/Volumen priorisieren/.test(joined), false);
+  assert.equal(/Overlay: TAPER/.test(joined), true);
 }
