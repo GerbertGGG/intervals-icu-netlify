@@ -217,3 +217,111 @@ console.log('guardrails ok');
   assert.equal(/Longrun aktuell im Mindestzielbereich/.test(text), true);
   assert.equal(/Longrun-Progression:/.test(text), false);
 }
+
+
+// 15) Taper-Woche priorisiert Wochenfokus über Frequenz
+{
+  const ctx = { distanceDiagnostics: { primaryGap: 'execution' } };
+  const weekly = __test.buildWeeklyFocus(
+    ctx,
+    '2026-01-05',
+    { block: 'RACE', weeksToEvent: 1, eventDistance: '5k' },
+    { plannedKeyType: 'schwelle' },
+    { overlayMode: 'TAPER' },
+    [],
+    null
+  );
+  assert.equal(/Fokus: Taper/.test(weekly), true);
+  assert.equal(/Frisch bleiben/.test(weekly), true);
+}
+
+// 16) Overlay-Taper senkt Kraft-Ziel in Raceweek
+{
+  const adjusted = __test.applyStrengthPolicyOverlay(
+    { minRunfloor: 30, target: 60, max: 75, minutes7d: 10, score: 0, confidenceDelta: -3, belowRunfloor: true },
+    { overlayMode: 'TAPER', weeksToEvent: 1 }
+  );
+  assert.equal(adjusted.target, 20);
+  assert.equal(adjusted.max, 30);
+}
+
+// 17) 2. Key optional nur mit verfügbarer Progressionsvorlage
+{
+  const keyRules = {
+    expectedKeysPerWeek: 1,
+    maxKeysPerWeek: 2,
+    allowedKeyTypes: ['steady'],
+    preferredKeyTypes: ['steady'],
+    bannedKeyTypes: [],
+    plannedPrimaryType: 'steady',
+  };
+  const out = __test.evaluateKeyCompliance(keyRules, { count: 1, list: ['steady'] }, { count: 2, list: ['steady'] }, {
+    block: 'BASE',
+    eventDistance: '10k',
+    dayIso: '2026-01-10',
+    blockStartIso: '2026-01-01',
+    weeksToEvent: 12,
+    overlayMode: 'NORMAL',
+    ctx: { activitiesAll: [] },
+    keySpacing: { keySpacingNowOk: true, ok: true },
+  });
+  assert.equal(/2\. Key diese Woche optional\/erlaubt/.test(out.suggestion), false);
+}
+
+
+// 18) Manueller Blockstart-Override setzt Persistenzfelder konsistent
+{
+  const base = {
+    startDate: '2026-03-16',
+    blockStartEffective: '2026-03-16',
+    blockStartPersisted: null,
+    startWasReset: true,
+    timeInBlockDays: 0,
+    reasons: [],
+  };
+  const out = __test.applyManualBlockStartOverride(base, '2026-02-01', '2026-03-16');
+  assert.equal(out.startDate, '2026-02-01');
+  assert.equal(out.blockStartEffective, '2026-02-01');
+  assert.equal(out.blockStartPersisted, '2026-02-01');
+  assert.equal(out.startWasReset, false);
+  assert.equal(out.timeInBlockDays > 0, true);
+}
+
+// 19) Robustness-Bewertung respektiert taper-reduziertes Kraftziel
+{
+  const snapshot = {
+    eventDistance: '10k',
+    block: 'RACE',
+    runFloor: 12,
+    runLoad7: 180,
+    runsCount: 4,
+    easyShare: 0.8,
+    midShare: 0.12,
+    hardShare: 0.06,
+    keyCount: 1,
+    keyTypes: ['steady'],
+    longrunMin: 60,
+    longrunSpecificMin: 0,
+    strengthMin: 20,
+    fatigueOverride: false,
+    keySpacingOk: true,
+    efTrend: 0,
+    driftTrend: 0,
+    executionScoreRaw: 80,
+    executionScore: 80,
+  };
+  const ctx = {
+    dayIso: '2026-03-16',
+    activitiesAll: [
+      { type: 'Run', start_date_local: '2026-03-10T08:00:00Z', moving_time: 2400 },
+      { type: 'Run', start_date_local: '2026-03-12T08:00:00Z', moving_time: 2400 },
+      { type: 'Run', start_date_local: '2026-03-14T08:00:00Z', moving_time: 3600 },
+    ],
+    strengthPolicy: { target: 20, max: 30 },
+    keyCompliance: { focusHits: 1, preferredMissing: false, freqOk: true },
+    runFloorState: { plannedDip: false },
+  };
+  const diag = __test.computeDistanceDiagnostics(snapshot, ctx);
+  const constraints = diag?.components?.robustness?.constraints || [];
+  assert.equal(constraints.some((line) => /Kraftumfang 20-35′\/Woche \(okay\)/.test(line)), true);
+}
