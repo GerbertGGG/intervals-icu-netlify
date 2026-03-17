@@ -8460,6 +8460,33 @@ function buildBikeAllowanceLine({ bikeSubFactor }) {
   return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
 }
 
+function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent }) {
+  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  const bikeAllowed = factor > 0;
+  const easyAllowed = bikeAllowed;
+  const gaAllowed = bikeAllowed && (Number.isFinite(weeksToEvent) ? weeksToEvent >= 10 : false);
+  const keyAllowed = false;
+  const longrunAllowed = false;
+  const maxReplaceableWeeklySharePct = bikeAllowed ? Math.round(factor * 100) : 0;
+  const practicalHint = bikeAllowed ? "praktisch meist 0–1 lockere Einheiten/Woche" : null;
+
+  return {
+    bikeAllowed,
+    easyAllowed,
+    gaAllowed,
+    keyAllowed,
+    longrunAllowed,
+    maxReplaceableWeeklySharePct,
+    practicalHint,
+    summaryLine: bikeAllowed
+      ? `Bike-Wochenregel: Rad erlaubt; Anrechnung bis zu ${maxReplaceableWeeklySharePct}% des RunFloor-Ziels; easy/frei ersetzbar${gaAllowed ? ", GA optional" : ""}; Key/Longrun nicht ersetzbar.`
+      : "Bike-Wochenregel: Kein Ersatzlauf per Rad (nur ergänzendes Crosstraining).",
+    recommendationLine: bikeAllowed
+      ? `Rad statt lockerem Lauf aktuell möglich, solange die zulässige RunFloor-Anrechnung durch Bike (${maxReplaceableWeeklySharePct}% des Ziels) nicht überschritten wird; Laufspezifik bleibt über echte Läufe, Key und Longrun abgesichert.${practicalHint ? ` (${practicalHint})` : ""}`
+      : "Rad statt Lauf: aktuell nein (Faktor 0,00).",
+  };
+}
+
 // ================= COMMENT =================
 function formatPhaseOverlayLine(phase, overlay) {
   const phaseLabel = String(phase || "BASE").toUpperCase();
@@ -8648,6 +8675,7 @@ function buildComments(
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor });
+  const bikeWeeklyRule = buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
@@ -8970,6 +8998,7 @@ function buildComments(
           : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+    bikeWeeklyRule.summaryLine,
     `Kraft 7T: ${strengthPolicy.minutes7d}′ / Ziel ${strengthPolicy.target}′`,
     intensityLine,
   ];
@@ -9014,6 +9043,9 @@ function buildComments(
   const recommendationRenderLines = recommendationLines.slice(0, 4);
   if (!recommendationRenderLines.length) {
     recommendationRenderLines.push("Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen.");
+  }
+  if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
+    recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
   }
 
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);

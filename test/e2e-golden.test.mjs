@@ -220,4 +220,74 @@ function makeCommentsInput({
   assert.equal(preview.days.some((d) => d.sessionType === 'LONGRUN'), true);
 }
 
+// E2E Golden 3: Bike-Substitution-Regel wird im Coach-Text explizit ausgegeben
+{
+  const todayIso = '2026-02-02';
+  const eventDistance = '10k';
+  const blockState = { block: 'BUILD', weeksToEvent: 12, eventDistance };
+  const keyRules = { plannedPrimaryType: 'steady' };
+  const keyCompliance = {
+    keyAllowedNow: true,
+    plannedKeyType: 'steady',
+    maxKeysPerWeek: 2,
+    intensityDistribution: {
+      hasData: true,
+      easyShare: 0.75,
+      midShare: 0.15,
+      hardShare: 0.1,
+      targets: { easyMin: 0.72, midMax: 0.2, hardMax: 0.16 },
+      lookbackDays: 7,
+    },
+    keySpacingOk: true,
+    actual7Raw: 1,
+  };
+  const runFloorState = {
+    overlayMode: 'NORMAL',
+    effectiveFloorTarget: 12,
+    floorTarget: 12,
+    floorLevel: 'GREEN',
+    stabilityOK: true,
+    avg7: 12,
+    decisionText: __test.resolveRunFloorDecisionText({ overlayMode: 'NORMAL', stabilityWarn: false, avg7: 12, stabilityOK: true }),
+  };
+  const distanceDiagnostics = {
+    readiness: 70,
+    primaryGap: 'specificity',
+    secondaryGap: 'base',
+    snapshot: { runsCount: 4 },
+    components: {
+      base: { score: 65, interpretation: 'Basis solide.' },
+      specificity: { score: 60, interpretation: 'Spezifität ausbaufähig.' },
+      longrun: { score: 62, interpretation: 'Longrun stabil.' },
+      robustness: { score: 68, interpretation: 'Robustheit gut.' },
+      execution: { score: 70, interpretation: 'Ausführung stabil.' },
+    },
+    scores: { base: 65, specificity: 60, longrun: 62, robustness: 68, execution: 70 },
+    strengths: ['execution', 'robustness'],
+  };
+
+  const comments = __test.buildComments(
+    {
+      ...makeCommentsInput({
+        todayIso,
+        blockState,
+        keyRules,
+        keyCompliance,
+        runFloorState,
+        distanceDiagnostics,
+        longRunSummary: { longRun14d: { minutes: 70 }, plan: { targetMin: 70 }, longestRun30d: { minutes: 75, windowDays: 14 } },
+        runFloorEwma10: 12,
+        eventDistance,
+      }),
+      bikeSubFactor: 0.5,
+      weeksToEvent: 12,
+    },
+    { verbosity: 'coach' }
+  );
+
+  assert.equal(/Bike-Wochenregel: Rad erlaubt; Anrechnung bis zu 50% des RunFloor-Ziels; easy\/frei ersetzbar, GA optional; Key\/Longrun nicht ersetzbar\./.test(comments), true);
+  assert.equal(/Rad statt lockerem Lauf aktuell möglich, solange die zulässige RunFloor-Anrechnung durch Bike \(50% des Ziels\) nicht überschritten wird; Laufspezifik bleibt über echte Läufe, Key und Longrun abgesichert\./.test(comments), true);
+  assert.equal(/praktisch meist 0–1 lockere Einheiten\/Woche/.test(comments), true);
+}
+
 console.log('e2e golden ok');
