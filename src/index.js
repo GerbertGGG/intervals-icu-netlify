@@ -12123,6 +12123,18 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 
   const races = events.filter((e) => isARaceCategory(e?.category));
 
+  console.log("EVENT_DEBUG", JSON.stringify({
+    url,
+    status: res.status,
+    totalEvents: events.length,
+    raceEvents: races.length,
+    allCategories: events.map(e => ({
+      name: e.name,
+      category: e.category,
+      start: String(e.start_date_local || e.start_date || "").slice(0,10)
+    }))
+  }));
+
   if (debug) {
   console.log(
     "🏁 races preview:",
