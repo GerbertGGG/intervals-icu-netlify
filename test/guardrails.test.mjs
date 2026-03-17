@@ -91,3 +91,129 @@ console.log('guardrails ok');
   assert.equal(keys.length, 1);
   assert.equal(keys[0].date, '2026-01-05');
 }
+
+// 8) Optionale LOW-Slots dürfen Report-Frequenz (2–3 Läufe/Woche) nicht überschreiten
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
+    blockState: { block: 'BASE', weeksToEvent: 20, eventDistance: '10k' },
+    keyCompliance: {
+      keyAllowedNow: true,
+      plannedKeyType: 'steady',
+      maxKeysPerWeek: 2,
+      suggestion: 'Starte mit 2–3 Läufen/Woche',
+    },
+    runFloorState: { overlayMode: 'NORMAL' },
+  });
+  const runLike = week.days.filter((d) => ['GA', 'KEY', 'LONGRUN'].includes(d.sessionType));
+  assert.equal(runLike.length <= 3, true);
+  assert.equal(runLike.filter((d) => d.sessionType === 'KEY').length >= 1, true);
+  assert.equal(runLike.filter((d) => d.sessionType === 'LONGRUN').length, 1);
+  const nonCoreEasyRuns = runLike.filter((d) => d.sessionType === 'GA').length;
+  assert.equal(nonCoreEasyRuns <= 1, true);
+}
+
+// 9) Bei hartem Frequenz-Cap (2 Läufe/Woche) bleiben Key + Longrun erhalten
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
+    blockState: { block: 'BASE', weeksToEvent: 20, eventDistance: '10k' },
+    keyCompliance: {
+      keyAllowedNow: true,
+      plannedKeyType: 'steady',
+      maxKeysPerWeek: 2,
+      suggestion: 'Diese Woche 2 Läufe/Woche',
+    },
+    runFloorState: { overlayMode: 'NORMAL' },
+  });
+  const runLike = week.days.filter((d) => ['GA', 'KEY', 'LONGRUN'].includes(d.sessionType));
+  assert.equal(runLike.length <= 2, true);
+  assert.equal(runLike.filter((d) => d.sessionType === 'KEY').length, 1);
+  assert.equal(runLike.filter((d) => d.sessionType === 'LONGRUN').length, 1);
+}
+
+// 10) KeyType-Inferenz: easy/GA => null, echte steady-Texte => steady
+{
+  const inferred = __test.inferKeyTypeFromExplicitSession('ga konkret: 60–75′ GA1 locker');
+  assert.equal(inferred, null);
+
+  const steadyA = __test.inferKeyTypeFromExplicitSession("2x10' steady");
+  const steadyB = __test.inferKeyTypeFromExplicitSession("40' steady");
+  const steadyC = __test.inferKeyTypeFromExplicitSession('steady mit Endbeschleunigung');
+  const steadyD = __test.inferKeyTypeFromExplicitSession('steady, aber kontrolliert');
+  const steadyE = __test.inferKeyTypeFromExplicitSession('locker/steady');
+  const gaWithStrides = __test.inferKeyTypeFromExplicitSession('GA locker mit Strides');
+  assert.equal(steadyA, 'steady');
+  assert.equal(steadyB, 'steady');
+  assert.equal(steadyC, 'steady');
+  assert.equal(steadyD, 'steady');
+  assert.equal(steadyE, 'steady');
+  assert.equal(gaWithStrides, null);
+}
+
+// 11) LOW/easy-frei bleibt optional und zählt nicht als harter Lauftag
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
+    blockState: { block: 'BASE', weeksToEvent: 20, eventDistance: '10k' },
+    keyCompliance: {
+      keyAllowedNow: true,
+      plannedKeyType: 'steady',
+      maxKeysPerWeek: 2,
+      suggestion: 'Starte mit 2–3 Läufen/Woche',
+    },
+    runFloorState: { overlayMode: 'NORMAL' },
+  });
+  const lowSlots = week.days.filter((d) => d.sessionType === 'LOW');
+  assert.equal(lowSlots.length >= 1, true);
+  const hardRuns = week.days.filter((d) => ['GA', 'KEY', 'LONGRUN'].includes(d.sessionType));
+  assert.equal(hardRuns.length <= 3, true);
+}
+
+// 12) decisionText-Semantik: RED/instabil klingt nicht mehr nach normalem Build
+{
+  const unstable = __test.resolveRunFloorDecisionText({
+    overlayMode: 'NORMAL',
+    stabilityWarn: false,
+    avg7: 0,
+    stabilityOK: false,
+  });
+  assert.equal(unstable, 'stabilize_base');
+
+  const stable = __test.resolveRunFloorDecisionText({
+    overlayMode: 'NORMAL',
+    stabilityWarn: false,
+    avg7: 8,
+    stabilityOK: true,
+  });
+  assert.equal(stable, 'rebuild');
+}
+
+// 13) Basis/Frequenz-Fokus bleibt textlich konsistent (kein impliziter Spezifik-Push in Bottom line)
+{
+  const out = __test.buildRecommendationsAndBottomLine({
+    todayAction: '35–45′ locker',
+    keyAllowedNow: true,
+    explicitSessionShort: "2x10' steady",
+    runFloorTarget: 10,
+    runFloorEwma10: 6,
+    distanceDiagnostics: { readiness: 40, primaryGap: 'base', secondaryGap: 'specificity' },
+    gapRecommendations: { primaryFocus: ['Basis sichern', 'Frequenz stabilisieren'] },
+    longRunDoneMin: 45,
+    longRunTargetMin: 45,
+    longRunDiagnosisTargetMin: 60,
+  });
+  const bottom = (out.bottomLine || []).join(' ');
+  assert.equal(/Key \(wenn frisch\)/.test(bottom), false);
+}
+
+// 14) Longrun-Kommunikation enthält keine ungetrennte Zielbereich-vs-zu-kurz-Kollision
+{
+  const out = __test.buildRecommendationsAndBottomLine({
+    longRunDoneMin: 45,
+    longRunTargetMin: 45,
+    longRunDiagnosisTargetMin: 60,
+    blockLongRunNextWeekTargetMin: 50,
+    longRunStepCapMin: 50,
+  });
+  const text = (out.recommendations || []).join(' | ');
+  assert.equal(/Longrun aktuell im Mindestzielbereich/.test(text), true);
+  assert.equal(/Longrun-Progression:/.test(text), false);
+}
