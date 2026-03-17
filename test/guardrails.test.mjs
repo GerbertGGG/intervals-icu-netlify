@@ -60,9 +60,13 @@ console.log('guardrails ok');
   });
   const keys = week.days.filter((d) => d.sessionType === 'KEY');
   assert.equal(keys.length, 1);
-  assert.equal(keys[0].date, '2026-01-05'); // 5 Tage vor Event
+  assert.equal(keys[0].date, '2026-01-06'); // 4 Tage vor Event (um 1 Tag verschoben nach Laufpause)
   assert.match(keys[0].sessionLabel, /Aktivierungs-Key \(Taper\)/);
   assert.equal(keys[0].intensity, 'HIGH');
+  const today = week.days.find((d) => d.date === '2026-01-05');
+  assert.equal(today.sessionType, 'GA');
+  assert.match(today.sessionLabel, /erst wieder reinkommen/);
+  assert.match(today.note, /Tage ohne Lauf/);
 }
 
 // 6) TAPER-KEY wird nicht gesetzt, wenn keyAllowedNow=false
@@ -74,4 +78,16 @@ console.log('guardrails ok');
   });
   const keys = week.days.filter((d) => d.sessionType === 'KEY');
   assert.equal(keys.length, 0);
+}
+
+// 7) Bei Lauf in den letzten 24h bleibt Taper-Key auf bevorzugtem 5-Tage-Slot
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [{ type: 'Run', start_date_local: '2026-01-04T07:00:00Z' }] }, '2026-01-05', {
+    blockState: { block: 'RACE', weeksToEvent: 1, eventDate: '2026-01-10', eventDistance: '10k' },
+    keyCompliance: { keyAllowedNow: true, plannedKeyType: 'steady', maxKeysPerWeek: 2 },
+    runFloorState: { overlayMode: 'TAPER' },
+  });
+  const keys = week.days.filter((d) => d.sessionType === 'KEY');
+  assert.equal(keys.length, 1);
+  assert.equal(keys[0].date, '2026-01-05');
 }
