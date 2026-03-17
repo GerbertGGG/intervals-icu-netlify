@@ -1694,6 +1694,15 @@ function computeStability(last14Days, floorDaily) {
   return { loadGap, stabilityOK: loadGap <= RUN_FLOOR_DELOAD_LOAD_GAP_MAX };
 }
 
+function resolveRunFloorDecisionText({ overlayMode, stabilityWarn, avg7, stabilityOK }) {
+  if (overlayMode === "LIFE_EVENT_STOP") return "LifeEvent: Stop";
+  if (overlayMode === "LIFE_EVENT_HOLIDAY") return "LifeEvent: Holiday";
+  if (overlayMode === "POST_RACE_RAMP") return "Post-Race Ramp";
+  if (overlayMode === "DELOAD") return "Deload";
+  if (stabilityWarn) return "Warn: Instabil";
+  return avg7 <= 0 || !stabilityOK ? "stabilize_base" : "rebuild";
+}
+
 function shouldTriggerDeload(sum21, relevantDays21, sum7, deloadActive) {
   if (deloadActive) return false;
   const sum7OrRatioGate = sum7 >= RUN_FLOOR_DELOAD_SUM7_MIN || (sum21 > 0 && sum7 / sum21 >= RUN_FLOOR_DELOAD_SUM7_TO_SUM21_MIN);
@@ -2113,18 +2122,7 @@ function evaluateRunFloorState({
     softDipPct,
     loadGap,
     stabilityOK,
-    decisionText:
-      overlayMode === "LIFE_EVENT_STOP"
-        ? "LifeEvent: Stop"
-        : overlayMode === "LIFE_EVENT_HOLIDAY"
-          ? "LifeEvent: Holiday"
-          : overlayMode === "POST_RACE_RAMP"
-        ? "Post-Race Ramp"
-        : overlayMode === "DELOAD"
-          ? "Deload"
-          : stabilityWarn
-            ? "Warn: Instabil"
-            : "Build",
+    decisionText: resolveRunFloorDecisionText({ overlayMode, stabilityWarn, avg7, stabilityOK }),
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
@@ -5828,6 +5826,7 @@ function buildWeekPreview(
     blockState,
     keyCompliance,
     runFloorState,
+    distanceDiagnostics,
   } = {}
 ) {
   try {
@@ -5852,6 +5851,17 @@ function buildWeekPreview(
       if (!raw) return "";
       const split = raw.split(/(?<=[.!?])\s+/);
       return (split[0] || raw).trim();
+    };
+    const parseRunTargetRange = (text) => {
+      const raw = String(text || "");
+      const range = raw.match(/(\d+)\s*[–-]\s*(\d+)\s*Läufe?n?\/?Woche/i);
+      if (range) return { min: Number(range[1]), max: Number(range[2]) };
+      const single = raw.match(/(\d+)\s*Läufe?n?\/?Woche/i);
+      if (single) {
+        const val = Number(single[1]);
+        return { min: val, max: val };
+      }
+      return null;
     };
     const classifySessionType = (activities) => {
       if (!Array.isArray(activities) || !activities.length) return "GA";
@@ -5968,6 +5978,17 @@ function buildWeekPreview(
       return 99;
     })();
     const shouldDelayTaperKey = lastRunDaysAgo >= 2;
+    const fallbackRunTargetRange = (() => {
+      const fromSuggestion = parseRunTargetRange(keyCompliance?.suggestion);
+      if (fromSuggestion) return fromSuggestion;
+      const goal = Number(distanceDiagnostics?.snapshot?.runGoal);
+      if (Number.isFinite(goal) && goal > 0) return { min: Math.max(2, Math.round(goal)), max: Math.max(2, Math.round(goal)) };
+      if (runFloorState?.stabilityOK === false || String(runFloorState?.floorLevel || "").toUpperCase() === "RED") {
+        return { min: 2, max: 3 };
+      }
+      return { min: 3, max: 4 };
+    })();
+    const frequencyAwareKeyCap = fallbackRunTargetRange.max <= 3 && !thisWeekActuals.longrundDone ? 1 : null;
 
     for (let i = 0; i < 7; i += 1) {
       const date = addDaysIso(todayIso, i);
@@ -6031,8 +6052,8 @@ function buildWeekPreview(
         continue;
       }
 
-      let sessionType = "GA";
-      let sessionLabel = "GA locker 45–60′";
+      let sessionType = "LOW";
+      let sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
       let intensity = "LOW";
       let keyType = null;
 
@@ -6091,7 +6112,8 @@ function buildWeekPreview(
         sessionLabel = "GA locker (Ramp-up)";
       } else {
         const keyBudget = Math.max(1, Number(keyCompliance?.maxKeysPerWeek ?? 1));
-        const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudget;
+        const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyBudget, frequencyAwareKeyCap) : keyBudget;
+        const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudgetByFrequency;
         const lastKnownKeyDate = [...thisWeekActuals.keyDates, ...plannedKeyDates].sort().at(-1) || null;
         const spacingOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
         const bestKeyRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
@@ -6160,6 +6182,42 @@ function buildWeekPreview(
         status: "PLANNED",
         note,
       });
+    }
+
+    const countPlannedRuns = (entries) => entries.filter((entry) =>
+      entry.status === "PLANNED"
+      && ["GA", "KEY", "LONGRUN"].includes(entry.sessionType)
+    ).length;
+    let plannedRuns = countPlannedRuns(days);
+    if (plannedRuns > fallbackRunTargetRange.max) {
+      const optionalLowIndices = [];
+      const nonCoreGaIndices = [];
+      for (let idx = 0; idx < days.length; idx += 1) {
+        const entry = days[idx];
+        if (entry.status !== "PLANNED") continue;
+        if (entry.sessionType === "LOW") optionalLowIndices.push(idx);
+        else if (entry.sessionType === "GA") nonCoreGaIndices.push(idx);
+      }
+      for (const idx of optionalLowIndices) {
+        if (plannedRuns <= fallbackRunTargetRange.max) break;
+        days[idx].sessionType = "REST";
+        days[idx].sessionLabel = "frei / optionaler Rest";
+        days[idx].intensity = "NONE";
+        days[idx].note = days[idx].note
+          ? `${days[idx].note} · reduziert auf Ziel-Frequenz`
+          : "Reduziert auf Ziel-Frequenz";
+        plannedRuns = countPlannedRuns(days);
+      }
+      for (const idx of nonCoreGaIndices) {
+        if (plannedRuns <= fallbackRunTargetRange.max) break;
+        days[idx].sessionType = "REST";
+        days[idx].sessionLabel = "frei / optionaler Rest";
+        days[idx].intensity = "NONE";
+        days[idx].note = days[idx].note
+          ? `${days[idx].note} · GA zugunsten Ziel-Frequenz gestrichen`
+          : "GA zugunsten Ziel-Frequenz gestrichen";
+        plannedRuns = countPlannedRuns(days);
+      }
     }
 
     if (days.length) {
@@ -6437,8 +6495,26 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
     let primaryFocus = manualFocus || "basis";
     let reason = "Alles im Lot, Kontinuität bleibt der Hebel.";
 
+    const diagnosedPrimaryGap = String(ctx?.distanceDiagnostics?.primaryGap || "").toLowerCase();
+    const hasWeakHistory = !latest;
+
     if (!manualFocus) {
-      if (latest && latest.strength.totalMinutes < strengthTarget * 0.5 && strengthPattern) {
+      if (hasWeakHistory) {
+        primaryFocus = diagnosedPrimaryGap === "base" ? "basis" : "frequenz";
+        reason = "Noch keine belastbare Verlaufshistorie — konservativ mit Basis/Frequenz starten.";
+      } else if (diagnosedPrimaryGap === "base") {
+        primaryFocus = "basis";
+        reason = "Hauptlimit liegt in der Basis, daher Basisfokus vor Spezifik.";
+      } else if (diagnosedPrimaryGap === "longrun") {
+        primaryFocus = "longrun";
+        reason = "Hauptlimit liegt beim Longrun — erst Kapazität stabilisieren.";
+      } else if (diagnosedPrimaryGap === "robustness") {
+        primaryFocus = "kraft";
+        reason = "Hauptlimit liegt in Robustheit/Belastbarkeit.";
+      } else if (diagnosedPrimaryGap === "execution") {
+        primaryFocus = "frequenz";
+        reason = "Hauptlimit liegt in der Prozessstabilität der Woche.";
+      } else if (latest && latest.strength.totalMinutes < strengthTarget * 0.5 && strengthPattern) {
         primaryFocus = "kraft";
         reason = "Kraftdefizit war zuletzt klar und wiederholt sichtbar.";
       } else if (latest && latest.runs.count < 3) {
@@ -6450,7 +6526,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       } else if (latest && latest.efTrend.pct < -3 && latest.efTrend.confidence === "high") {
         primaryFocus = "erholung";
         reason = "EF-Trend fällt deutlich, daher Belastung reduzieren.";
-      } else if (keyCompliance?.freqOk === false) {
+      } else if (keyCompliance?.freqOk === false && diagnosedPrimaryGap !== "base") {
         primaryFocus = "spezifik";
         reason = "Der spezifische Key fehlt noch im Wochenmuster.";
       }
@@ -7120,6 +7196,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longrunFrequency35d,
       longrunSpikeIndex,
     });
+    ctx.distanceDiagnostics = distanceDiagnostics;
     const gapRecommendations = buildGapRecommendations(distanceDiagnostics);
 
     historyMetrics.keyCompliance = keyCompliance;
@@ -7204,6 +7281,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       blockState,
       keyCompliance,
       runFloorState,
+      distanceDiagnostics,
     });
     ctx.__weeklyFocusMeta = null;
     const dailyReportTextRaw = buildComments({
@@ -7831,7 +7909,7 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
         stats28.runsPerWeek < runsTarget ? "Frequenz unter Ziel" : null,
         snapshot.easyShare < intensityTargets.easyMin ? "Easy-Anteil unter Ziel" : null,
       ].filter(Boolean),
-      interpretation: base >= 84 ? "Basis stabil und belastbar." : base >= 60 ? "Basis solide, aber noch unter Zielkorridor." : "Basis okay, über Kontinuität weiter festigen.",
+      interpretation: base >= 84 ? "Basis stabil und belastbar." : base >= 60 ? "Basis vorhanden, aber klar unter Zielkorridor." : "Basis aktuell klar defizitär — zuerst Frequenz/Kontinuität stabilisieren.",
     },
     specificity: {
       score: specificity,
@@ -8230,6 +8308,13 @@ function shortExplicitSession(explicitSession) {
 function inferKeyTypeFromExplicitSession(explicitSession) {
   const text = String(explicitSession || "").trim();
   if (!text) return null;
+  const lower = text.toLowerCase();
+  if (lower.includes("steady")) return "steady";
+  const easySignals = ["ga", "easy", "locker", "regeneration", "ruhig"];
+  const hardSignals = ["schwelle", "vo2", "racepace", "tempo", "interval", "key"];
+  if (easySignals.some((s) => lower.includes(s)) && !hardSignals.some((s) => lower.includes(s))) {
+    return null;
+  }
   const labelMatch = text.match(/^([A-Za-zäöüÄÖÜß _-]+)\s+konkret\s*:/i);
   if (labelMatch?.[1]) return normalizeKeyType(labelMatch[1]);
   return normalizeKeyType(text);
@@ -8303,7 +8388,7 @@ function buildRecommendationsAndBottomLine(state) {
       ? longRunDoneMin >= longRunDiagnosisTargetMin
       : false;
     if (meetsBlockTarget || meetsDiagnosisTarget) {
-      rec.push("Longrun im Zielbereich → aktuell halten.");
+      rec.push(`Longrun aktuell im Mindestzielbereich (Block ${Math.round(longRunTargetMin)}′${longRunDiagnosisTargetMin > 0 ? ` | Entwicklung ${Math.round(longRunDiagnosisTargetMin)}′` : ""}) → halten/behutsam ausbauen.`);
     } else {
       const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
         ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
@@ -8961,7 +9046,7 @@ function buildComments(
     "SCORE-ERKLÄRUNG",
     `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
     `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
-    `Longrun · 14T ${longRunDoneMin}′ | Diagnose-Ziel ${prePlanLongRunTargetMin}′ | Progressionsschritt ${longRunSafetyCapMin}′ | Blockziel ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
+    `Longrun · aktuell ${longRunDoneMin}′ | Mindestziel ${prePlanLongRunTargetMin}′ | Entwicklungsziel (nächster Schritt) ${longRunSafetyCapMin}′ | Wochenziel (geplant) ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
     `Robustness · Kraft 7T ${strengthPolicy.minutes7d}′ | Coach-Ziel ${strengthPolicy.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
     `Execution · Key-Frequenz ${actualKeys7Raw} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
     "",
@@ -9978,6 +10063,8 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
   }
 
   const includeKey = keyPerWeek >= 0.6 || (runsPerWeek >= 3 && weeklyLoad >= 140);
+  const longrunMinTarget = runsPerWeek < 2 ? "45–60′" : "60′";
+  const longrunDevelopmentTarget = "60–75′";
   const exampleWeek =
     runTarget === "2–3"
       ? ["Mi 30–35′ easy", "So 60–75′ longrun"]
@@ -9985,7 +10072,7 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek }) {
       ? ["Di 35–45′ key (Schwelle/VO2)", "Fr 40–50′ GA", "So 60–75′ longrun"]
       : ["Mi 30–35′ easy", "Fr 40–50′ GA", "So 60–75′ longrun"];
 
-  return { runTarget, loadTarget, exampleWeek };
+  return { runTarget, loadTarget, exampleWeek, longrunMinTarget, longrunDevelopmentTarget };
 }
 
 async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
@@ -10219,7 +10306,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   lines.push("");
   lines.push("Konkrete nächste Woche (Mini-Plan):");
   lines.push(
-    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | 1× Longrun 60–75′`
+    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | Longrun: Mindestziel ${miniPlan.longrunMinTarget}, Entwicklung ${miniPlan.longrunDevelopmentTarget}`
   );
   lines.push(`- Beispielwoche: ${miniPlan.exampleWeek.join(" · ")}`);
 
@@ -12188,6 +12275,11 @@ const __internalTestHooks = Object.freeze({
   evaluateKeyCompliance,
   formatPhaseOverlayLine,
   buildWeekPreview,
+  buildWeeklyFocus,
+  buildRecommendationsAndBottomLine,
+  buildComments,
+  inferKeyTypeFromExplicitSession,
+  resolveRunFloorDecisionText,
 });
 
 export const __test = __internalTestHooks;
