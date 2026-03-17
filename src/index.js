@@ -1367,6 +1367,30 @@ function evaluateStrengthPolicy(strengthMin7d) {
   };
 }
 
+function applyStrengthPolicyOverlay(strengthPolicy, { overlayMode = null, weeksToEvent = null } = {}) {
+  const base = {
+    ...(strengthPolicy || evaluateStrengthPolicy(0)),
+  };
+  const isTaperWeek = overlayMode === "TAPER" && Number.isFinite(weeksToEvent) && weeksToEvent <= 1;
+  if (!isTaperWeek) return base;
+
+  const taperTarget = 20;
+  const taperMax = 30;
+  const mins = Math.round(Number(base.minutes7d) || 0);
+  const belowRunfloor = mins < taperTarget;
+  const confidenceDelta = belowRunfloor ? -1 : mins >= taperMax ? 2 : 1;
+
+  return {
+    ...base,
+    minRunfloor: taperTarget,
+    target: taperTarget,
+    max: taperMax,
+    score: mins >= taperTarget ? Math.max(Number(base.score) || 0, 1) : 0,
+    confidenceDelta,
+    belowRunfloor,
+  };
+}
+
 function getStrengthPhasePlan(block) {
   const phase = ["BASE", "BUILD", "RACE"].includes(block) ? block : "BASE";
   return STRENGTH_PHASE_PLANS[phase] || STRENGTH_PHASE_PLANS.BASE;
@@ -4823,7 +4847,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
       suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, besser locker.`;
     }
   } else if (actual7 === 1 && typeOk) {
-    suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
+    if (progression?.available) {
+      suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
+    } else {
+      suggestion = `Kein 2. Key vorgeschlagen: für ${preferred} fehlt aktuell eine belastbare Progressionsvorlage.`;
+    }
   } else if (!freqOk || preferredMissing) {
     suggestion = `Nächster Key: ${preferred} (${blockLabel}, ${distLabel})`;
   } else {
@@ -6498,8 +6526,13 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
     const diagnosedPrimaryGap = String(ctx?.distanceDiagnostics?.primaryGap || "").toLowerCase();
     const hasWeakHistory = !latest;
 
+    const taperPriority = runFloorState?.overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
+
     if (!manualFocus) {
-      if (hasWeakHistory) {
+      if (taperPriority) {
+        primaryFocus = "taper";
+        reason = "Taper-Woche vor Event — Frische hat Vorrang vor Frequenz/Volumen.";
+      } else if (hasWeakHistory) {
         primaryFocus = diagnosedPrimaryGap === "base" ? "basis" : "frequenz";
         reason = "Noch keine belastbare Verlaufshistorie — konservativ mit Basis/Frequenz starten.";
       } else if (diagnosedPrimaryGap === "base") {
@@ -6565,6 +6598,11 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
         `Longrun ${longrunTarget}′`,
         `Kraft ${strengthTarget}′`,
       ],
+      taper: [
+        "Frisch bleiben — kein neues Volumen aufbauen",
+        "Key nur als Aktivierung (Mi), sonst locker/kurz",
+        "Kein Longrun diese Woche (Wettkampf ≤7 Tage)",
+      ],
     };
     const [p1, p2, p3] = mapping[primaryFocus] || mapping.basis;
     const focusLabel = {
@@ -6574,6 +6612,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       erholung: "Erholung",
       spezifik: "Spezifik",
       basis: "Basis",
+      taper: "Taper",
     }[primaryFocus] || "Basis";
 
     const extraHint = !latest ? " Noch keine Verlaufsdaten." : "";
@@ -6623,6 +6662,21 @@ function pickRunMetricsPatch(patch) {
 }
 
 // ================= MAIN =================
+function applyManualBlockStartOverride(blockState, overrideIso, dayIso) {
+  if (!blockState || !overrideIso || !isIsoDate(dayIso)) return blockState;
+  const overrideStart = clampStartDate(overrideIso, dayIso, 3650);
+  if (!overrideStart) return blockState;
+  return {
+    ...blockState,
+    startDate: overrideStart,
+    blockStartEffective: overrideStart,
+    blockStartPersisted: overrideStart,
+    startWasReset: false,
+    timeInBlockDays: Math.max(0, daysBetween(overrideStart, dayIso)),
+    reasons: [...(blockState.reasons || []), `Manueller Block-Start aktiv (${overrideStart})`],
+  };
+}
+
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
   const ctx = createCtx(env, warmupSkipSec, debug);
   ctx.runtimeConfig = loadRuntimeConfig(env);
@@ -7027,12 +7081,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
     }
     if (runtimeOverrides?.blockStartOverrideIso) {
-      const overrideStart = clampStartDate(runtimeOverrides.blockStartOverrideIso, day, 3650);
-      if (overrideStart) {
-        blockState.startDate = overrideStart;
-        blockState.blockStartEffective = overrideStart;
-        blockState.timeInBlockDays = Math.max(0, daysBetween(overrideStart, day));
-        blockState.reasons = [...(blockState.reasons || []), `Manueller Block-Start aktiv (${overrideStart})`];
+      const overridden = applyManualBlockStartOverride(blockState, runtimeOverrides.blockStartOverrideIso, day);
+      if (overridden) {
+        blockState.startDate = overridden.startDate;
+        blockState.blockStartEffective = overridden.blockStartEffective;
+        blockState.blockStartPersisted = overridden.blockStartPersisted;
+        blockState.startWasReset = overridden.startWasReset;
+        blockState.timeInBlockDays = overridden.timeInBlockDays;
+        blockState.reasons = overridden.reasons;
       }
     }
     blockState.eventDate = eventDate || null;
@@ -7088,7 +7144,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastEventDate = runFloorState.lastEventDate;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
 
-    const strengthPolicy = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
+    const strengthPolicyBase = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
+    const strengthPolicy = applyStrengthPolicyOverlay(strengthPolicyBase, {
+      overlayMode: runFloorState?.overlayMode,
+      weeksToEvent: blockState?.weeksToEvent,
+    });
     let fatigue = fatigueBase;
     try {
       fatigue = await computeFatigue7d(ctx, day);
@@ -7643,11 +7703,15 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     };
   };
 
-  const scoreStrengthTier = (minutes7d) => {
-    const mins = Number(minutes7d || 0);
-    if (mins <= 15) return 25;
-    if (mins <= 35) return 55;
-    if (mins <= 60) return 78;
+  const scoreStrengthTier = (minutes7d, targetMin = 60, maxMin = 75) => {
+    const mins = Math.max(0, Number(minutes7d || 0));
+    const target = Math.max(1, Number(targetMin || 60));
+    const max = Math.max(target, Number(maxMin || 75));
+    const lowerThreshold = Math.max(1, target * 0.5);
+    if (mins <= lowerThreshold * 0.5) return 25;
+    if (mins < lowerThreshold) return 55;
+    if (mins < target) return 70;
+    if (mins <= max) return 82;
     return 92;
   };
 
@@ -7794,8 +7858,9 @@ function computeDistanceDiagnostics(snapshot, context = {}) {
     100
   );
 
-  const strengthScore = scoreStrengthTier(snapshot.strengthMin);
   const strengthTargetCoachMin = Number(context?.strengthPolicy?.target ?? 60);
+  const strengthMaxCoachMin = Number(context?.strengthPolicy?.max ?? 75);
+  const strengthScore = scoreStrengthTier(snapshot.strengthMin, strengthTargetCoachMin, strengthMaxCoachMin);
   const monotony = Number(context?.fatigue?.monotony ?? 0);
   const strain = Number(context?.fatigue?.strain ?? 0);
   const acwr = Number(context?.fatigue?.acwr ?? 0);
@@ -8920,9 +8985,10 @@ function buildComments(
     ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
     : "";
   const fatigueWhyLine = fatigue?.override ? `Rhythmus aktuell unruhig${fatigueReasonSnippet}.` : null;
+  const taperPriorityWeek = runFloorState?.overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
   const gapReasonMap = {
     base: [
-      !ignoreRunFloorGap && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
+      !ignoreRunFloorGap && !taperPriorityWeek && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
       intensityDistribution?.easyUnder ? `Easy-Anteil unter Ziel (${easySharePct}% < ${easyMinPct}%)` : null,
       "Volumen noch nicht stabil.",
     ],
@@ -9855,8 +9921,12 @@ function buildDetectiveWhyInsights(current, previous) {
 
   if (!improvements.length && !regressions.length && !context.length) return null;
 
+  const previousWeekLabel = typeof previous?.week === "string" && isIsoDate(previous.week) && previous.week > current.week
+    ? current.week
+    : previous.week;
+
   return {
-    title: `Warum (Vergleich zu ${previous.week})`,
+    title: `Warum (Vergleich zu ${previousWeekLabel})`,
     improvements,
     regressions,
     context,
@@ -10133,6 +10203,17 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     .filter((x) => x.date);
 
   const weeks = Math.max(1, windowDays / 7);
+  const nextRace = (events || [])
+    .filter((event) => isARaceCategory(event?.category))
+    .map((event) => ({
+      iso: String(event?.start_date_local || event?.start_date || "").slice(0, 10),
+      event,
+    }))
+    .filter((x) => isIsoDate(x.iso))
+    .filter((x) => x.iso >= mondayIso)
+    .sort((a, b) => a.iso.localeCompare(b.iso))[0] || null;
+  const eventInDays = nextRace ? Math.max(0, daysBetween(mondayIso, nextRace.iso)) : null;
+  const taperRaceWeek = Number.isFinite(eventInDays) && eventInDays <= 7;
 
   const lifeEvents = (events || []).filter((e) => isLifeEventCategory(e?.category));
   const eventDaysWithinWindow = (event) => {
@@ -10221,10 +10302,10 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
     actions.push("Starte mit 2–3 lockeren Läufen/Woche (30–50min), bevor du harte Schlüsse ziehst.");
   } else {
     // Longrun
-    if (longRuns.length === 0 && !hasLifeEvent) {
+    if (longRuns.length === 0 && !hasLifeEvent && !taperRaceWeek) {
       findings.push(`Zu wenig Longruns: 0× ≥60min in ${windowDays} Tagen.`);
       actions.push("1×/Woche Longrun ≥60–75min (locker) als Basisbaustein.");
-    } else if (longPerWeek < 0.8 && windowDays >= 14 && !hasLifeEvent) {
+    } else if (longPerWeek < 0.8 && windowDays >= 14 && !hasLifeEvent && !taperRaceWeek) {
       findings.push(
         `Longrun-Frequenz niedrig: ${longRuns.length}× in ${windowDays} Tagen (~${longPerWeek.toFixed(1)}/Woche).`
       );
@@ -10330,6 +10411,9 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
   else for (const f of findings.slice(0, 8)) lines.push(`- ${f}`);
 
   lines.push("");
+  if (taperRaceWeek) {
+    actions.unshift(`Kein Longrun diese Woche — Wettkampf in ${eventInDays} Tagen.`);
+  }
   lines.push("Nächste Schritte:");
   if (!actions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
   else for (const a of uniq(actions).slice(0, 8)) lines.push(`- ${a}`);
@@ -12308,6 +12392,9 @@ const __internalTestHooks = Object.freeze({
   formatPhaseOverlayLine,
   buildWeekPreview,
   buildWeeklyFocus,
+  applyStrengthPolicyOverlay,
+  applyManualBlockStartOverride,
+  computeDistanceDiagnostics,
   buildRecommendationsAndBottomLine,
   buildComments,
   inferKeyTypeFromExplicitSession,
