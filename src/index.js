@@ -7134,7 +7134,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     // HRRc aus dem Key-Run des Tages schreiben
     const repKey = perRunInfo.find((x) => x.isKey && x.anaerobRaw?.hrrc != null);
-    if (repKey?.anaerobRaw?.hrrc != null) {
+    const isRaceActivity = (repKey?.tags ?? []).some((t) =>
+      String(t).toLowerCase().startsWith("race:")
+    );
+    if (repKey?.anaerobRaw?.hrrc != null && !isRaceActivity) {
       patch[FIELD_HRRC] = round(repKey.anaerobRaw.hrrc, 0);
     }
     if (repKey?.anaerobRaw?.speedCapacity != null) {
