@@ -9524,6 +9524,75 @@ function patternConfidence(groupA, groupB, diffAbs, threshold) {
   return "low";
 }
 
+/**
+ * Lädt Wellness-Daten für jeden Tag einer Woche (startIso bis endExclusiveIso)
+ * und berechnet Wochenaggregrate.
+ * Felder die nie befüllt sind (z.B. fatigue wenn nicht getrackt) bleiben null.
+ * Wird ohne ctx aufgerufen da upsertWeekDocAndIndex keinen ctx hat.
+ */
+async function aggregateWeekWellness(env, startIso, endExclusiveIso) {
+  const days = listIsoDaysInclusive(startIso, addDaysIso(endExclusiveIso, -1));
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+
+  const payloads = await Promise.all(
+    days.map((d) =>
+      fetchIntervalsWithRetry(
+        `${BASE_URL}/athlete/${athleteId}/wellness/${d}`,
+        { headers: { Authorization: authHeader(env) } },
+        { label: `wellness ${d}` }
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)
+    )
+  );
+
+  const valid = payloads.filter(Boolean);
+  if (!valid.length) return null;
+
+  // Hilfsfunktion: Durchschnitt über alle Tage mit gültigem Wert
+  const avg = (field) => {
+    const vals = valid.map((d) => Number(d?.[field])).filter((v) => Number.isFinite(v) && v > 0);
+    return vals.length ? round(vals.reduce((a, b) => a + b, 0) / vals.length, 2) : null;
+  };
+  // Hilfsfunktion: Maximum
+  const max = (field) => {
+    const vals = valid.map((d) => Number(d?.[field])).filter((v) => Number.isFinite(v));
+    return vals.length ? Math.max(...vals) : null;
+  };
+  // Hilfsfunktion: Anteil Tage mit Wert > 0
+  const coverage = (field) => {
+    const filled = valid.filter((d) => Number.isFinite(Number(d?.[field])) && d?.[field] != null).length;
+    return round(filled / valid.length, 2);
+  };
+
+  return {
+    // Objektive Felder (kommen von der Uhr – morgens verfügbar)
+    resting_hr_avg: avg("restingHR"),
+    hrv_avg: avg("hrv"),
+    sleep_score_avg: avg("sleepScore"), // 0–100
+    sleep_quality_avg: avg("sleepQuality"), // 1–5
+    sleep_hours_avg: (() => {
+      const vals = valid.map((d) => Number(d?.sleepSecs)).filter((v) => Number.isFinite(v) && v > 0);
+      return vals.length ? round(vals.reduce((a, b) => a + b, 0) / vals.length / 3600, 2) : null;
+    })(),
+
+    // Subjektive Felder (oft null – werden gesammelt wenn vorhanden)
+    fatigue_avg: avg("fatigue"), // 1–10 Skala in intervals.icu
+    soreness_avg: avg("soreness"),
+    mood_avg: avg("mood"),
+    motivation_avg: avg("motivation"),
+
+    // Maximale Belastungssignale (worst-case der Woche)
+    soreness_max: max("soreness"),
+    fatigue_max: max("fatigue"),
+
+    // Datenverfügbarkeit (wie viele Tage hatten HRV-Daten?)
+    hrv_coverage: coverage("hrv"),
+    days_with_data: valid.length,
+    days_total: days.length,
+  };
+}
+
 async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}) {
   if (!hasKv(env)) return null;
 
@@ -9566,6 +9635,7 @@ async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}
   const totalMinutes = easyMinutes + midMinutes + hardMinutes;
 
   const comp = await gatherComparableGASamples(env, endExclusiveIso, warmupSkipSec, 7);
+  const wellnessAgg = await aggregateWeekWellness(env, startIso, endExclusiveIso);
 
   const weekDoc = {
     weekId: weekInfo.weekId,
@@ -9593,7 +9663,12 @@ async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}
       drift_level: comp?.driftMed != null ? round(comp.driftMed, 2) : null,
       drift_delta: null,
     },
-    wellness: null,
+    // Wochenaggregrate aus intervals.icu Wellness-Endpoint.
+    // Objektive Felder (resting_hr, hrv, sleep) kommen von der Uhr und sind
+    // morgens verfügbar. Subjektive Felder (fatigue, soreness) sind oft null
+    // wenn der Athlet sie nicht täglich einträgt – das ist ok, sie werden
+    // in buildPatternAnalysis nur ausgewertet wenn genug Wochen Daten haben.
+    wellness: wellnessAgg,
     quality: {
       ga_comparable_n: Number(comp?.n || 0),
       drift_has_data: Number.isFinite(comp?.driftMed),
@@ -9765,9 +9840,26 @@ function buildPatternAnalysis(weeks) {
 
   }
 
-  const wellnessWeeks = usableWeeks.filter((w) => w?.wellness && Number.isFinite(w?.wellness?.sleep_avg));
+  // Wellness-Analyse: objektive Felder priorisieren (HRV + Schlaf von der Uhr).
+  // sleep_score_avg: 0–100 Skala (Garmin/Polar etc.)
+  // hrv_avg: höher = besser erholt
+  // fatigue_max: 1–10, niedrig = gut (subjektiv, oft null)
+  const wellnessWeeks = usableWeeks.filter((w) =>
+    w?.wellness && (
+      Number.isFinite(w.wellness.sleep_score_avg) ||
+      Number.isFinite(w.wellness.hrv_avg)
+    )
+  );
   if (wellnessWeeks.length >= 6) {
-    const wellGood = wellnessWeeks.filter((w) => Number(w.wellness.sleep_avg) >= 3.5 && Number(w.wellness.fatigue_avg) <= 3.2 && Number(w.wellness.pain_max) === 0);
+    // "Gut erholt" = Schlaf ≥70/100 UND HRV im oberen Drittel der eigenen Werte
+    const hrvValues = wellnessWeeks.map((w) => Number(w.wellness.hrv_avg)).filter(Number.isFinite);
+    const hrvMedian = hrvValues.length ? median(hrvValues) : null;
+    const wellGood = wellnessWeeks.filter((w) => {
+      const sleepOk = !Number.isFinite(w.wellness.sleep_score_avg) || Number(w.wellness.sleep_score_avg) >= 70;
+      const hrvOk = !Number.isFinite(w.wellness.hrv_avg) || !Number.isFinite(hrvMedian) || Number(w.wellness.hrv_avg) >= hrvMedian;
+      const fatigueOk = !Number.isFinite(w.wellness.fatigue_max) || Number(w.wellness.fatigue_max) <= 5;
+      return sleepOk && hrvOk && fatigueOk;
+    });
     const wellBad = wellnessWeeks.filter((w) => !wellGood.includes(w));
     if (wellGood.length >= PATTERN_MIN_GROUP_N && wellBad.length >= PATTERN_MIN_GROUP_N) {
       const goodDrift = asMedianOutput(wellGood, "drift_delta");
