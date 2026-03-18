@@ -6090,7 +6090,26 @@ function buildWeekPreview(
         sessionLabel = "Lockerer Lauf oder Pause (Taper)";
         const daysToEvent = eventDateIso ? diffDays(date, eventDateIso) : null;
         const keyExistsInPlan = days.some((entry) => entry.sessionType === "KEY");
-        const effectivePreferredTaperDays = shouldDelayTaperKey ? [4] : [5, 4];
+        // Mindestabstand Key → Rennen nach Distanz (Trainingslehre):
+        // 5k:  Key noch 1 Tag vorher ok (neuromuskuläre Schärfe wichtiger als Ruhe)
+        // 10k: Key noch 2 Tage vorher ok
+        // HM:  Key mindestens 3 Tage vorher
+        // m:   Key mindestens 4 Tage vorher (default)
+        const minDaysBeforeRace =
+          eventDistance === "5k" ? 1
+            : eventDistance === "10k" ? 2
+              : eventDistance === "hm" ? 3 : 4;
+
+        // Bevorzugte Tage für den Taper-Key (daysToEvent-Werte):
+        // Bei Verzögerung (shouldDelayTaperKey) einen Tag näher ans Rennen schieben,
+        // damit der Key nicht ganz wegfällt wenn heute GA für Wiedereinstieg gebraucht wird.
+        const effectivePreferredTaperDays =
+          eventDistance === "5k"
+            ? (shouldDelayTaperKey ? [2, 3] : [3, 2])
+            : eventDistance === "10k"
+              ? (shouldDelayTaperKey ? [3, 2] : [4, 3])
+              : (shouldDelayTaperKey ? [4] : [5, 4]); // HM/Marathon unverändert
+
         const isDelayedTaperEntryToday = isToday && shouldDelayTaperKey;
         const hasPreferredTaperKeyDayAhead = Boolean(
           eventDateIso
@@ -6103,7 +6122,7 @@ function buildWeekPreview(
         const isPreferredTaperKeyDay = effectivePreferredTaperDays.includes(daysToEvent);
         const canPlaceTaperKeyToday = keyCompliance?.keyAllowedNow === true
           && daysToEvent != null
-          && daysToEvent > 3
+          && daysToEvent > minDaysBeforeRace
           && !isDelayedTaperEntryToday
           && !keyExistsInPlan
           && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead);
