@@ -687,8 +687,8 @@ const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const WEEKDOC_KV_PREFIX = "u:";
 const WEEKDOC_INDEX_SUFFIX = ":idx:weeks";
 const WEEKDOC_KEY_PREFIX = ":week:";
-const WEEKDOC_INDEX_LIMIT = 20;
-const PATTERN_WINDOW_WEEKS = 8;
+const WEEKDOC_INDEX_LIMIT = 52;
+const PATTERN_WINDOW_WEEKS = 16;
 const PATTERN_MIN_WEEKS = 4;
 const PATTERN_MIN_GROUP_N = 3;
 const PATTERN_MIN_CORR_N = 6;
@@ -9577,6 +9577,9 @@ async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}
       minutes_total: round(minutesTotal, 1),
       keys_count: keyRuns.length,
       key_types: keyTypes,
+      // Dominanter Key-Typ dieser Woche (erster Key wenn mehrere, sonst null).
+      // Wird für die Key-Typ-Wirkungsanalyse in buildPatternAnalysis verwendet.
+      dominant_key_type: keyTypes.length > 0 ? keyTypes[0] : null,
       longruns_count: longrunsCount,
       easy_share: totalMinutes > 0 ? round(easyMinutes / totalMinutes, 3) : null,
       mid_share: totalMinutes > 0 ? round(midMinutes / totalMinutes, 3) : null,
@@ -9628,9 +9631,9 @@ async function loadWeekDocsForPattern(env) {
   if (!hasKv(env)) return [];
   const uid = mustEnv(env, "ATHLETE_ID");
   const idx = (await readKvJson(env, buildWeekIndexKey(uid))) || [];
-  const last8 = idx.filter((w) => typeof w === "string").slice(0, PATTERN_WINDOW_WEEKS);
+  const lastWeeks = idx.filter((w) => typeof w === "string").slice(0, PATTERN_WINDOW_WEEKS);
   const docs = [];
-  for (const weekId of last8) {
+  for (const weekId of lastWeeks) {
     const doc = await readKvJson(env, buildWeekDocKey(uid, weekId));
     if (doc) docs.push(doc);
   }
@@ -9648,7 +9651,7 @@ function buildPatternAnalysis(weeks) {
 
   if (usableWeeks.length < PATTERN_MIN_WEEKS) {
     return {
-      header: "🧠 MUSTER-ANALYSE (8W)",
+      header: "🧠 MUSTER-ANALYSE (16W)",
       insufficientData: true,
       findings: [buildPatternFinding("Zu wenig Daten", `Auswertbare Wochen: n=${usableWeeks.length} (mind. ${PATTERN_MIN_WEEKS} nötig).`, "Weiter WeekDocs sammeln und vergleichbare GA-Läufe priorisieren.", "medium")],
       guidance: {
@@ -9656,7 +9659,7 @@ function buildPatternAnalysis(weeks) {
         easyShareMin: 0.75,
         loadChangePctCap: 0.1,
         flags: ["insufficient_pattern_data"],
-        rationale: ["<4 Wochen mit Output-Daten im 8W-Fenster."],
+        rationale: ["<4 Wochen mit Output-Daten im 16W-Fenster."],
       },
     };
   }
@@ -9711,6 +9714,57 @@ function buildPatternAnalysis(weeks) {
     }
   }
 
+  // Key-Typ-Wirkungsanalyse: Welcher Key-Typ korreliert mit besseren Outputs?
+  // Vergleicht Wochen mit einem bestimmten Key-Typ gegen alle anderen Wochen.
+  // Benötigt mindestens PATTERN_MIN_GROUP_N Wochen pro Gruppe.
+  const KEY_TYPES_TO_ANALYSE = ["schwelle", "vo2_touch", "racepace"];
+  for (const keyType of KEY_TYPES_TO_ANALYSE) {
+    const withType = usableWeeks.filter((w) => Array.isArray(w?.input?.key_types) && w.input.key_types.includes(keyType));
+    const withoutType = usableWeeks.filter((w) => !Array.isArray(w?.input?.key_types) || !w.input.key_types.includes(keyType));
+    if (withType.length < PATTERN_MIN_GROUP_N || withoutType.length < PATTERN_MIN_GROUP_N) continue;
+
+    const efWith = asMedianOutput(withType, "ef_delta_pct");
+    const efWithout = asMedianOutput(withoutType, "ef_delta_pct");
+    const driftWith = asMedianOutput(withType, "drift_delta");
+    const driftWithout = asMedianOutput(withoutType, "drift_delta");
+
+    if (!Number.isFinite(efWith) || !Number.isFinite(efWithout)) continue;
+
+    const efDiff = efWith - efWithout;
+    const driftDiff = Number.isFinite(driftWith) && Number.isFinite(driftWithout) ? driftWith - driftWithout : null;
+
+    // Positiv-Signal: EF besser UND Drift nicht wesentlich schlechter
+    if (efDiff >= 0.5 && (driftDiff == null || driftDiff <= 0.5)) {
+      findings.push(
+        buildPatternFinding(
+          `${keyType}-Wochen: EF ↑${driftDiff != null && driftDiff <= 0 ? ", Drift stabil" : ""}`,
+          `Mit ${keyType} (n=${withType.length}): EFΔ=${efWith.toFixed(1)}%` +
+            (Number.isFinite(driftWith) ? `, DriftΔ=${driftWith.toFixed(1)}` : "") +
+            ` | Ohne (n=${withoutType.length}): EFΔ=${efWithout.toFixed(1)}%` +
+            (Number.isFinite(driftWithout) ? `, DriftΔ=${driftWithout.toFixed(1)}` : ""),
+          `${keyType}-Einheiten scheinen bei dir zu wirken — beibehalten.`,
+          patternConfidence(withType, withoutType, Math.abs(efDiff), 0.8)
+        )
+      );
+    }
+
+    // Negativ-Signal: Drift deutlich schlechter in Wochen mit diesem Key-Typ
+    if (driftDiff != null && driftDiff >= 1.0) {
+      findings.push(
+        buildPatternFinding(
+          `${keyType}-Wochen: Drift ↑ (Überlastungsrisiko)`,
+          `Mit ${keyType} (n=${withType.length}): DriftΔ=${driftWith.toFixed(1)}` +
+            (Number.isFinite(efWith) ? `, EFΔ=${efWith.toFixed(1)}%` : "") +
+            ` | Ohne (n=${withoutType.length}): DriftΔ=${driftWithout.toFixed(1)}` +
+            (Number.isFinite(efWithout) ? `, EFΔ=${efWithout.toFixed(1)}%` : ""),
+          `Nach ${keyType}-Wochen mehr Erholung einplanen oder Frequenz reduzieren.`,
+          patternConfidence(withType, withoutType, Math.abs(driftDiff), 1.0)
+        )
+      );
+    }
+
+  }
+
   const wellnessWeeks = usableWeeks.filter((w) => w?.wellness && Number.isFinite(w?.wellness?.sleep_avg));
   if (wellnessWeeks.length >= 6) {
     const wellGood = wellnessWeeks.filter((w) => Number(w.wellness.sleep_avg) >= 3.5 && Number(w.wellness.fatigue_avg) <= 3.2 && Number(w.wellness.pain_max) === 0);
@@ -9757,6 +9811,8 @@ function buildPatternAnalysis(weeks) {
       { a: "keys_count", b: "drift_delta", label: "corr(Keys, DriftΔ)" },
       { a: "keys_count", b: "ef_delta_pct", label: "corr(Keys, EFΔ%)" },
       { a: "load_total", b: "vdot_delta", label: "corr(Load, VDOTΔ)" },
+      { a: "hard_share", b: "ef_delta_pct", label: "corr(HardShare, EFΔ%)" },
+      { a: "hard_share", b: "drift_delta", label: "corr(HardShare, DriftΔ)" },
     ];
     for (const def of corrDefs) {
       const r = pearsonCorrelation(usableWeeks.map((w) => [Number(w?.input?.[def.a]), Number(w?.output?.[def.b])]));
@@ -9799,7 +9855,7 @@ function buildPatternAnalysis(weeks) {
   }
 
   return {
-    header: "🧠 MUSTER-ANALYSE (8W)",
+    header: "🧠 MUSTER-ANALYSE (16W)",
     insufficientData: false,
     findings: findings.slice(0, 5),
     guidance,
