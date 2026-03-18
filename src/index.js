@@ -961,6 +961,42 @@ const DISTANCE_REQUIREMENTS = {
   },
 };
 
+// Gewichtungen und Zielwerte pro Wettkampfdistanz für das Fitnessprofil
+const RACE_FITNESS_PROFILE = {
+  "5k": {
+    aerobWeight: 0.45, anaerobWeight: 0.55,
+    minAerobTarget: 65, minAnaerobTarget: 70,
+    focusIfAerobLow: "Mehr Schwellen- und GA-Arbeit — aerobe Basis trägt 45% bei 5k.",
+    focusIfAnaerobLow: "Speed-Reserve fehlt: Strides, Hill-Sprints, kurze Reps (200–400m).",
+    focusIfBothLow: "Basis zuerst: 4 Wochen GA-Block, dann Speed einführen.",
+    focusIfOk: "Profil ausgewogen — Execution und Spezifität weiter schärfen.",
+  },
+  "10k": {
+    aerobWeight: 0.60, anaerobWeight: 0.40,
+    minAerobTarget: 70, minAnaerobTarget: 60,
+    focusIfAerobLow: "Schwelle ist der Engpass: 1× Schwellenintervall/Woche priorisieren.",
+    focusIfAnaerobLow: "Speed-Endurance: 600–1000m Reps bei 5k-Pace einbauen.",
+    focusIfBothLow: "Schwelle hat Priorität — gibt dir aerob und Pace-Bewusstsein.",
+    focusIfOk: "Profil ausgewogen — weiter auf Distanzspezifität fokussieren.",
+  },
+  hm: {
+    aerobWeight: 0.80, anaerobWeight: 0.20,
+    minAerobTarget: 75, minAnaerobTarget: 50,
+    focusIfAerobLow: "Motor/EF ist alles: GA-Volumen und Longrun konsequent priorisieren.",
+    focusIfAnaerobLow: "HRRc niedrig: 1–2× kurze Intervall-Einheiten/Monat reichen für HM.",
+    focusIfBothLow: "Aerob zuerst — beim HM entscheidet die aerobe Basis fast alles.",
+    focusIfOk: "Profil ausgewogen — Longrun-Qualität und Drift im Blick behalten.",
+  },
+  m: {
+    aerobWeight: 0.90, anaerobWeight: 0.10,
+    minAerobTarget: 80, minAnaerobTarget: 45,
+    focusIfAerobLow: "Longrun und Gesamtvolumen sind der Engpass.",
+    focusIfAnaerobLow: "Bei Marathon ist anaerob kaum limitierend — nicht übergewichten.",
+    focusIfBothLow: "Aerob-Fundament aufbauen — alles andere ist sekundär.",
+    focusIfOk: "Profil ausgewogen — Motor und Drift weiter stabilisieren.",
+  },
+};
+
 const DISTANCE_INTENSITY_TARGETS = {
   "5k": { easyMin: 0.70, hardMax: 0.18 },
   "10k": { easyMin: 0.72, hardMax: 0.16 },
@@ -999,6 +1035,12 @@ const FIELD_MOTOR = "Motor";
 const FIELD_EF = "EF";
 const FIELD_BLOCK = "Block";
 const FIELD_RACE_START_OVERRIDE = "RaceStartOverride";
+// Fitness-Profil Wellness-Felder (custom fields müssen in intervals.icu angelegt sein)
+const FIELD_HRRC = "HRRc";
+const FIELD_SPEED_CAP = "SpeedCap";
+const FIELD_PACE_CV = "PaceCV";
+const FIELD_AEROB_SCORE = "AerobScore";
+const FIELD_ANAEROB_SCORE = "AnaerobScore";
 
 // Streams/types we need often
 const STREAM_TYPES_GA = ["time", "velocity_smooth", "heartrate"];
@@ -6917,6 +6959,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         }
       }
 
+      // Anaerobe Rohdaten aus icu_intervals (race-pace Proxy aus EF)
+      let anaerobRaw = null;
+      if (isKey && activityWithIntervals?.icu_intervals?.length) {
+        try {
+          const dist = normalizeEventDistance(ctx?.distanceDiagnostics?.snapshot?.eventDistance);
+          const racePaceMs = deriveRacePaceMsFromEf(ef, dist);
+          anaerobRaw = extractAnaerobMetricsFromActivity(activityWithIntervals, racePaceMs);
+        } catch {
+          anaerobRaw = null;
+        }
+      }
+
       perRunInfo.push({
         activityId: a.id,
         activity: activityWithIntervals,
@@ -6934,6 +6988,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         intervalMetrics,
         intervalStructureHint,
         paceConsistencyHint,
+        anaerobRaw,
         moving_time: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
       });
 
@@ -6956,6 +7011,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       if (rep.ef != null) patch[FIELD_VDOT] = round(vdotLikeFromEf(rep.ef), 1);
       if (rep.ef != null) patch[FIELD_EF] = round(rep.ef, 3);
       if (rep.drift != null) patch[FIELD_DRIFT] = round(rep.drift, 1);
+    }
+    // HRRc aus dem Key-Run des Tages schreiben
+    const repKey = perRunInfo.find((x) => x.isKey && x.anaerobRaw?.hrrc != null);
+    if (repKey?.anaerobRaw?.hrrc != null) {
+      patch[FIELD_HRRC] = round(repKey.anaerobRaw.hrrc, 0);
+    }
+    if (repKey?.anaerobRaw?.speedCapacity != null) {
+      patch[FIELD_SPEED_CAP] = round(repKey.anaerobRaw.speedCapacity, 3);
+    }
+    if (repKey?.anaerobRaw?.paceCV != null) {
+      patch[FIELD_PACE_CV] = round(repKey.anaerobRaw.paceCV, 3);
     }
 
     // Aerobic trend (GA-only)
@@ -7275,6 +7341,33 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longrunFrequency35d,
       longrunSpikeIndex,
     });
+    // Fitness-Profil berechnen
+    let fitnessProfile = null;
+    try {
+      const keyRunToday = perRunInfo.find((x) => x.isKey);
+      const dist = normalizeEventDistance(distanceDiagnostics?.snapshot?.eventDistance) || "10k";
+
+      const aerobInputs = {
+        ef: keyRunToday?.ef ?? perRunInfo.find((x) => x.ga)?.ef ?? null,
+        motorValue: motor?.value ?? null,
+        drift: perRunInfo.find((x) => x.ga && x.drift != null)?.drift ?? null,
+        longrunScore: distanceDiagnostics?.components?.longrun?.score ?? null,
+      };
+      const anaerobInputs = {
+        hrrc: keyRunToday?.anaerobRaw?.hrrc ?? null,
+        speedCapacity: keyRunToday?.anaerobRaw?.speedCapacity ?? null,
+        paceCV: keyRunToday?.anaerobRaw?.paceCV ?? null,
+      };
+
+      fitnessProfile = computeFitnessProfile(aerobInputs, anaerobInputs, dist);
+
+      if (fitnessProfile) {
+        patch[FIELD_AEROB_SCORE] = fitnessProfile.aerobScore;
+        patch[FIELD_ANAEROB_SCORE] = fitnessProfile.anaerobScore;
+      }
+    } catch {
+      fitnessProfile = null;
+    }
     ctx.distanceDiagnostics = distanceDiagnostics;
     const gapRecommendations = buildGapRecommendations(distanceDiagnostics);
 
@@ -7392,6 +7485,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       bikeSubFactor,
       weeksToEvent,
       eventDistance,
+      fitnessProfile,
     }, { debug, verbosity: reportVerbosity });
     const weeklyReview = isMondayIso(day)
       ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
@@ -8615,6 +8709,7 @@ function buildComments(
     bikeSubFactor,
     weeksToEvent,
     eventDistance,
+    fitnessProfile,
   },
   { debug = false, verbosity = "coach" } = {}
 ) {
@@ -9118,10 +9213,29 @@ function buildComments(
   }
 
   const diagnoseLines = [];
+
+  // Bestehende 5 Scores (unverändert)
   for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
     const component = distanceDiagnostics?.components?.[name];
     if (!component) continue;
     diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
+  }
+
+  // Fitness-Profil Block (neu)
+  if (fitnessProfile) {
+    const fp = fitnessProfile;
+    const dist = fp.dist || eventDistance || "10k";
+    const distLabel = { "5k": "5k", "10k": "10k", hm: "Halbmarathon", m: "Marathon" }[dist] || dist;
+
+    const barAerob = buildScoreBar(fp.aerobScore);
+    const barAnaerob = buildScoreBar(fp.anaerobScore);
+
+    diagnoseLines.push("");
+    diagnoseLines.push(`🔬 FITNESS-PROFIL [${distLabel}]`);
+    diagnoseLines.push(`Aerob:   ${fp.aerobScore}/100 ${barAerob}`);
+    diagnoseLines.push(`Anaerob: ${fp.anaerobScore}/100 ${barAnaerob}`);
+    diagnoseLines.push(`Profil: ${fp.profileType}${fp.confidence !== "hoch" ? ` (Datenbasis: ${fp.confidence})` : ""}`);
+    diagnoseLines.push(`→ ${fp.focusText}`);
   }
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
@@ -9166,6 +9280,9 @@ function buildComments(
     `Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}`,
     `Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`,
     `Scores: Base ${distanceDiagnostics?.scores?.base ?? "n/a"} | Specificity ${distanceDiagnostics?.scores?.specificity ?? "n/a"} | Longrun ${distanceDiagnostics?.scores?.longrun ?? "n/a"} | Robustness ${distanceDiagnostics?.scores?.robustness ?? "n/a"} | Execution ${distanceDiagnostics?.scores?.execution ?? "n/a"}`,
+    fitnessProfile
+      ? `Fitness: Aerob ${fitnessProfile.aerobScore} | Anaerob ${fitnessProfile.anaerobScore} | Profil: ${fitnessProfile.profileType} | Konfidenz: ${fitnessProfile.confidence}`
+      : "Fitness: n/a (zu wenig Daten)",
     "",
   ];
   const scoreExplanationLines = [
@@ -11213,6 +11330,12 @@ function pct(a, b) {
   return a != null && b != null && Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? ((a - b) / b) * 100 : null;
 }
 
+/** Erzeugt einen einfachen ASCII-Balken für Score-Visualisierung (0–100). */
+function buildScoreBar(score) {
+  const filled = Math.round(clamp(Number(score) || 0, 0, 100) / 10);
+  return "▓".repeat(filled) + "░".repeat(10 - filled);
+}
+
 function fmtSigned1(x) {
   if (!Number.isFinite(x)) return "n/a";
   return (x > 0 ? "+" : "") + x.toFixed(1);
@@ -11690,6 +11813,160 @@ async function computeIntervalMetrics(env, activity, { intervalType } = {}) {
   };
 }
 
+/**
+ * Extrahiert anaerobe Rohdaten aus einer Intervall-Aktivität.
+ * Gibt null zurück wenn keine auswertbaren Reps vorhanden.
+ *
+ * speedCapacity: Verhältnis der Intervall-GAP zu racePaceMs (> 1.05 = gut)
+ * paceCV:        Variationskoeffizient der Intervall-GAP (< 0.03 = konsistent)
+ * avgStride:     Schrittlänge bei Reps in Metern
+ * hrrc:          Natives icu_hrr.hrr (wird hier mit weitergegeben)
+ */
+function extractAnaerobMetricsFromActivity(activity, racePaceMs) {
+  const intervals = getActivityIntervals(activity);
+  const groups = getActivityGroups(activity);
+
+  const hrrc = Number(activity?.icu_hrr?.hrr);
+  const hrrcVal = Number.isFinite(hrrc) && hrrc > 0 ? hrrc : null;
+
+  const candidateGroup = groups
+    .filter((g) => Number(g?.count) >= 2 && Number(g?.zone) >= 4)
+    .sort((a, b) => Number(b?.average_speed) - Number(a?.average_speed))[0] ?? null;
+
+  if (!candidateGroup) return { hrrc: hrrcVal, speedCapacity: null, paceCV: null, avgStride: null };
+
+  const groupId = String(candidateGroup?.id ?? "");
+  const reps = intervals.filter((x) => String(x?.group_id ?? "") === groupId);
+  if (reps.length < 2) return { hrrc: hrrcVal, speedCapacity: null, paceCV: null, avgStride: null };
+
+  const gaps = reps.map((x) => Number(x?.gap)).filter((v) => Number.isFinite(v) && v > 0);
+  if (gaps.length < 2) return { hrrc: hrrcVal, speedCapacity: null, paceCV: null, avgStride: null };
+
+  const meanGap = avg(gaps);
+  const stdGap = std(gaps);
+  const paceCV = Number.isFinite(meanGap) && meanGap > 0 && Number.isFinite(stdGap)
+    ? stdGap / meanGap
+    : null;
+
+  const raceMs = Number(racePaceMs);
+  const speedCapacity = Number.isFinite(raceMs) && raceMs > 0 && Number.isFinite(meanGap)
+    ? meanGap / raceMs
+    : null;
+
+  const strides = reps.map((x) => Number(x?.average_stride)).filter((v) => Number.isFinite(v) && v > 0);
+  const avgStride = strides.length ? avg(strides) : null;
+
+  return { hrrc: hrrcVal, speedCapacity, paceCV, avgStride };
+}
+
+/**
+ * Berechnet das race-spezifische Fitnessprofil.
+ *
+ * Inputs:
+ *   aerobInputs  = { ef, motorValue, drift, longrunScore }
+ *   anaerobInputs = { hrrc, speedCapacity, paceCV }
+ *   dist          = normalisierter Distanzstring ("5k"|"10k"|"hm"|"m")
+ *
+ * Returns: { aerobScore, anaerobScore, profileType, focusText,
+ *            aerobGap, anaerobGap, weightedGap, confidence }
+ * or null if insufficient data.
+ */
+function computeFitnessProfile(aerobInputs, anaerobInputs, dist) {
+  const profile = RACE_FITNESS_PROFILE[dist] || RACE_FITNESS_PROFILE["10k"];
+
+  const efScore = (() => {
+    const ef = Number(aerobInputs?.ef);
+    if (!Number.isFinite(ef) || ef <= 0) return null;
+    return clamp(Math.round((ef - 0.016) / (0.030 - 0.016) * 100), 20, 100);
+  })();
+  const motorScore = (() => {
+    const v = Number(aerobInputs?.motorValue);
+    if (!Number.isFinite(v)) return null;
+    return clamp(Math.round(50 + v * 10), 0, 100);
+  })();
+  const driftScore = (() => {
+    const d = Number(aerobInputs?.drift);
+    if (!Number.isFinite(d)) return null;
+    return clamp(Math.round(100 - (d / 8) * 100), 0, 100);
+  })();
+  const longrunScore = (() => {
+    const s = Number(aerobInputs?.longrunScore);
+    return Number.isFinite(s) ? clamp(s, 0, 100) : null;
+  })();
+
+  const aerobComponents = [efScore, motorScore, driftScore, longrunScore].filter((v) => v != null);
+  if (aerobComponents.length < 2) return null;
+
+  const aerobScore = Math.round(aerobComponents.reduce((s, v) => s + v, 0) / aerobComponents.length);
+
+  const hrrcScore = (() => {
+    const h = Number(anaerobInputs?.hrrc);
+    if (!Number.isFinite(h) || h <= 0) return null;
+    if (h >= 50) return 100;
+    if (h >= 40) return 85;
+    if (h >= 30) return 70;
+    if (h >= 20) return 50;
+    return 20;
+  })();
+  const speedScore = (() => {
+    const sc = Number(anaerobInputs?.speedCapacity);
+    if (!Number.isFinite(sc)) return null;
+    return clamp(Math.round((sc - 0.90) / (1.15 - 0.90) * 100), 0, 100);
+  })();
+  const cvScore = (() => {
+    const cv = Number(anaerobInputs?.paceCV);
+    if (!Number.isFinite(cv)) return null;
+    return clamp(Math.round(100 - (cv / 0.08) * 100), 0, 100);
+  })();
+
+  const anaerobComponents = [hrrcScore, speedScore, cvScore].filter((v) => v != null);
+  if (anaerobComponents.length < 1) return null;
+
+  const anaerobScore = Math.round(anaerobComponents.reduce((s, v) => s + v, 0) / anaerobComponents.length);
+
+  const aerobGap = Math.max(0, profile.minAerobTarget - aerobScore);
+  const anaerobGap = Math.max(0, profile.minAnaerobTarget - anaerobScore);
+  const weightedGap = aerobGap * profile.aerobWeight + anaerobGap * profile.anaerobWeight;
+
+  const aerobLimited = aerobGap > 8 && aerobGap >= anaerobGap;
+  const anaerobLimited = anaerobGap > 8 && anaerobGap > aerobGap;
+  const bothLimited = aerobGap > 8 && anaerobGap > 8;
+
+  let profileType, focusText;
+  if (bothLimited) {
+    profileType = "beides limitiert";
+    focusText = profile.focusIfBothLow;
+  } else if (aerobLimited) {
+    profileType = "aerob-limitiert";
+    focusText = profile.focusIfAerobLow;
+  } else if (anaerobLimited) {
+    profileType = "anaerob-limitiert";
+    focusText = profile.focusIfAnaerobLow;
+  } else {
+    profileType = "ausgewogen";
+    focusText = profile.focusIfOk;
+  }
+
+  const presentComponents = aerobComponents.length + anaerobComponents.length;
+  const confidence = presentComponents >= 5 ? "hoch"
+    : presentComponents >= 3 ? "mittel"
+      : "niedrig";
+
+  return {
+    aerobScore,
+    anaerobScore,
+    aerobGap,
+    anaerobGap,
+    weightedGap,
+    profileType,
+    focusText,
+    confidence,
+    dist,
+    _aerobComponents: { efScore, motorScore, driftScore, longrunScore },
+    _anaerobComponents: { hrrcScore, speedScore, cvScore },
+  };
+}
+
 function computeDriftAndStabilityFromStreams(streams, warmupSkipSec = 600) {
   if (!streams) return null;
 
@@ -12020,6 +12297,19 @@ function isGAComparable(a) {
   if (hasKeyTag(a)) return false;
   const dur = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
   return Number.isFinite(dur) && dur >= GA_COMPARABLE_MIN_SECONDS;
+}
+
+/**
+ * Leitet die Race-Pace in m/s aus dem VDOT-Proxy und der Zieldistanz ab.
+ * Wird für speedCapacity in extractAnaerobMetricsFromActivity benötigt.
+ * Gibt null zurück wenn keine belastbaren Werte vorhanden.
+ */
+function deriveRacePaceMsFromEf(ef, dist) {
+  const distFactor = { "5k": 1.15, "10k": 1.03, hm: 0.98, m: 0.94 };
+  const factor = distFactor[dist] ?? 1.0;
+  if (!Number.isFinite(ef) || ef <= 0) return null;
+  const gaSpeedProxy = ef * 135;
+  return gaSpeedProxy * factor;
 }
 
 function vdotLikeFromEf(ef) {
