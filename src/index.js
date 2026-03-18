@@ -6959,12 +6959,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         }
       }
 
-      // Anaerobe Rohdaten aus icu_intervals (race-pace Proxy aus EF)
+      // Anaerobe Rohdaten aus icu_intervals (race-pace Proxy aus threshold_pace)
       let anaerobRaw = null;
       if (isKey && activityWithIntervals?.icu_intervals?.length) {
         try {
           const dist = normalizeEventDistance(ctx?.distanceDiagnostics?.snapshot?.eventDistance);
-          const racePaceMs = deriveRacePaceMsFromEf(ef, dist);
+          const racePaceMs = deriveRacePaceMsFromThreshold(activityWithIntervals, dist);
           anaerobRaw = extractAnaerobMetricsFromActivity(activityWithIntervals, racePaceMs);
         } catch {
           anaerobRaw = null;
@@ -12300,16 +12300,24 @@ function isGAComparable(a) {
 }
 
 /**
- * Leitet die Race-Pace in m/s aus dem VDOT-Proxy und der Zieldistanz ab.
- * Wird für speedCapacity in extractAnaerobMetricsFromActivity benötigt.
- * Gibt null zurück wenn keine belastbaren Werte vorhanden.
+ * Leitet die Race-Pace in m/s aus threshold_pace der Aktivität ab.
+ * threshold_pace (m/s) entspricht ca. Laktatschwelle / ~10k-Pace.
+ * Renntempo pro Distanz liegt prozentual darüber oder darunter.
  */
-function deriveRacePaceMsFromEf(ef, dist) {
-  const distFactor = { "5k": 1.15, "10k": 1.03, hm: 0.98, m: 0.94 };
+function deriveRacePaceMsFromThreshold(activity, dist) {
+  const tp = Number(activity?.threshold_pace);
+  if (!Number.isFinite(tp) || tp <= 0) return null;
+
+  // Faktoren relativ zur Schwelle (threshold = ~10k-Pace)
+  const distFactor = {
+    "5k": 1.06,
+    "10k": 1.0,
+    hm: 0.95,
+    m: 0.89,
+  };
+
   const factor = distFactor[dist] ?? 1.0;
-  if (!Number.isFinite(ef) || ef <= 0) return null;
-  const gaSpeedProxy = ef * 135;
-  return gaSpeedProxy * factor;
+  return tp * factor;
 }
 
 function vdotLikeFromEf(ef) {
