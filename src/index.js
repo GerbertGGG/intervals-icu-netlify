@@ -5588,6 +5588,117 @@ async function fetchWellnessDay(ctx, env, dayIso) {
   return p;
 }
 
+/**
+ * Liest HRRc-Werte aus den letzten `lookbackDays` Wellness-Einträgen.
+ * Gibt nur Tage zurück die einen gültigen HRRc-Wert haben (> 0).
+ * Nutzt den Wellness-Cache wo möglich.
+ *
+ * Returns: Array von { date: "YYYY-MM-DD", hrrc: number }, älteste zuerst.
+ */
+async function fetchHrrcHistory(ctx, env, dayIso, lookbackDays = 42) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const days = [];
+  for (let i = lookbackDays; i >= 1; i--) {
+    days.push(isoDate(new Date(end.getTime() - i * 86400000)));
+  }
+
+  const results = await Promise.all(
+    days.map(async (d) => {
+      const w = await fetchWellnessDay(ctx, env, d).catch(() => null);
+      const hrrc = Number(w?.[FIELD_HRRC]);
+      return Number.isFinite(hrrc) && hrrc > 0 ? { date: d, hrrc } : null;
+    })
+  );
+
+  return results.filter(Boolean);
+}
+
+/**
+ * Berechnet den HRRc-Trend aus der History.
+ *
+ * Strategie: Vergleicht die letzten 2 Werte mit den 2 davor (gleitend),
+ * um Tagesrauschen herauszufiltern. Mindestens 3 Datenpunkte nötig.
+ *
+ * Returns:
+ *   {
+ *     trend: "rising" | "stable" | "falling" | "unknown",
+ *     delta: number | null,        // bpm Differenz recent vs. prev
+ *     recentAvg: number | null,    // Ø der letzten 2 Werte
+ *     prevAvg: number | null,      // Ø der 2 davor
+ *     n: number,                   // Anzahl Datenpunkte
+ *     latest: number | null,       // letzter HRRc-Wert
+ *     warning: boolean,            // true wenn klinisch relevant fallend
+ *     peaking: boolean,            // true wenn klinisch relevant steigend
+ *     text: string,                // Kommentarzeile für DIAGNOSE
+ *   }
+ */
+function computeHrrcTrend(history) {
+  if (!Array.isArray(history) || history.length < 3) {
+    return {
+      trend: "unknown", delta: null, recentAvg: null, prevAvg: null,
+      n: history?.length ?? 0, latest: history?.at(-1)?.hrrc ?? null,
+      warning: false, peaking: false,
+      text: history?.length
+        ? `HRRc-Trend: ${history.length} Messung(en) — noch zu wenig für Trend (min. 3).`
+        : "HRRc-Trend: keine Daten.",
+    };
+  }
+
+  const vals = history.map((x) => x.hrrc);
+  const n = vals.length;
+  const latest = vals[n - 1];
+
+  // Gleitender Vergleich: letzte 2 vs. 2 davor
+  const recentSlice = vals.slice(-2);
+  const prevSlice = vals.slice(-4, -2);
+
+  const recentAvg = prevSlice.length >= 1
+    ? round(recentSlice.reduce((a, b) => a + b, 0) / recentSlice.length, 1)
+    : null;
+  const prevAvg = prevSlice.length >= 1
+    ? round(prevSlice.reduce((a, b) => a + b, 0) / prevSlice.length, 1)
+    : null;
+
+  const delta = (recentAvg != null && prevAvg != null)
+    ? round(recentAvg - prevAvg, 1)
+    : null;
+
+  // Trend-Klassifikation
+  let trend = "stable";
+  if (delta != null) {
+    if (delta >= 5) trend = "rising";
+    else if (delta <= -8) trend = "falling";
+  }
+
+  // Klinische Schwellen
+  const warning = trend === "falling" && delta != null && delta <= -8;
+  const peaking = trend === "rising" && delta != null && delta >= 5;
+
+  // Kommentarzeile
+  const trendLabel = trend === "rising"
+    ? "↑ steigend"
+    : trend === "falling"
+      ? "↓ fallend"
+      : "→ stabil";
+
+  const deltaText = delta != null
+    ? ` (${delta >= 0 ? "+" : ""}${delta} bpm)`
+    : "";
+
+  const warningText = warning
+    ? " ⚠️ Erholung verschlechtert sich — nächsten Key ggf. verschieben."
+    : peaking
+      ? " ✓ Erholung verbessert sich — Taper wirkt."
+      : "";
+
+  const text = `HRRc-Trend (letzte ${n} Sessions): ${latest} bpm · ${trendLabel}${deltaText}.${warningText}`;
+
+  return {
+    trend, delta, recentAvg, prevAvg, n, latest,
+    warning, peaking, text,
+  };
+}
+
 async function getPersistedBlockState(ctx, env, dayIso) {
   if (ctx.blockStateCache.has(dayIso)) return ctx.blockStateCache.get(dayIso);
   const wellness = await fetchWellnessDay(ctx, env, dayIso);
@@ -6898,6 +7009,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       motor = { ok: false, value: null, text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})` };
     }
 
+    // HRRc-Trend (aus Wellness-History)
+    let hrrcTrend = null;
+    try {
+      const hrrcHistory = await fetchHrrcHistory(ctx, env, day, 42);
+      hrrcTrend = computeHrrcTrend(hrrcHistory);
+    } catch {
+      hrrcTrend = null;
+    }
+
     // Process runs (collect detailed info, but write VDOT/Drift from a single representative GA run)
     for (const a of runs) {
       const activityWithIntervals = await getActivityWithIntervals(ctx, a);
@@ -7240,6 +7360,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     } catch {
       fatigue = fatigueBase;
     }
+    // HRRc-Trend als zusätzliches Fatigue-Signal
+    if (hrrcTrend?.warning && fatigue) {
+      fatigue = {
+        ...fatigue,
+        override: true,
+        reasons: [
+          ...(fatigue.reasons || []),
+          `HRRc-Trend fallend (${hrrcTrend.delta} bpm) — ANS-Erholung verschlechtert sich`,
+        ],
+      };
+    }
     historyMetrics.fatigueCap = fatigue;
 
     const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
@@ -7486,6 +7617,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weeksToEvent,
       eventDistance,
       fitnessProfile,
+      hrrcTrend,
     }, { debug, verbosity: reportVerbosity });
     const weeklyReview = isMondayIso(day)
       ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
@@ -8710,6 +8842,7 @@ function buildComments(
     weeksToEvent,
     eventDistance,
     fitnessProfile,
+    hrrcTrend,
   },
   { debug = false, verbosity = "coach" } = {}
 ) {
@@ -9236,6 +9369,10 @@ function buildComments(
     diagnoseLines.push(`Anaerob: ${fp.anaerobScore}/100 ${barAnaerob}`);
     diagnoseLines.push(`Profil: ${fp.profileType}${fp.confidence !== "hoch" ? ` (Datenbasis: ${fp.confidence})` : ""}`);
     diagnoseLines.push(`→ ${fp.focusText}`);
+    // HRRc-Trend-Zeile im Fitness-Profil
+    if (hrrcTrend && hrrcTrend.trend !== "unknown") {
+      diagnoseLines.push(hrrcTrend.text);
+    }
   }
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
