@@ -8818,18 +8818,18 @@ function buildComments(
               ? "leicht ansteigend"
               : "deutlich ansteigend"
           : "n/a";
-        const hrr60 = Number(intervalToday.intervalMetrics.HRR60_median);
-        const hrrLabel = Number.isFinite(hrr60)
-          ? hrr60 >= 20
+        const hrrc = Number(intervalToday.intervalMetrics.HRRc);
+        const hrrLabel = Number.isFinite(hrrc)
+          ? hrrc >= 30
             ? "gut"
-            : hrr60 >= 15
+            : hrrc >= 20
               ? "ok"
               : "ausbaufähig"
           : "n/a";
 
         runMetrics.push(`Intervall-Bewertung: via Stream-Analyse (Fallback), trotz Geh-/Stehpausen auswertbar.`);
         runMetrics.push(`Intervall-Drift: ${Number.isFinite(driftBpm) ? `${fmtSigned1(driftBpm)} bpm` : "n/a"} (${driftLabel}).`);
-        runMetrics.push(`Erholung zwischen Reps (HRR60): ${Number.isFinite(hrr60) ? `${hrr60.toFixed(0)} bpm` : "n/a"} (${hrrLabel}).`);
+        runMetrics.push(`Erholung (HRRc): ${Number.isFinite(hrrc) ? `${hrrc.toFixed(0)} bpm` : "n/a"} (${hrrLabel}).`);
       } else {
         const paceConsistency = intervalToday?.paceConsistencyHint?.label || "n/a";
         const qualityReason = getIntervalDataQualityReason(intervalToday.activity, intervalToday?.intervalMetrics);
@@ -10986,8 +10986,8 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       const driftPctText = Number.isFinite(driftPct) ? `, ${fmtSigned1(driftPct)}%` : "";
       lines.push(`HF-Drift (Intervall): ${fmtSigned1(intervalMetrics.HR_Drift_bpm)} bpm${driftPctText}${driftFlag}`);
     }
-    if (intervalMetrics?.HRR60_median != null) {
-      lines.push(`Erholung: HRR60 ${intervalMetrics.HRR60_median.toFixed(0)} bpm (HF-Abfall in 60s)`);
+    if (intervalMetrics?.HRRc != null) {
+      lines.push(`Erholung (HRRc): ${intervalMetrics.HRRc.toFixed(0)} bpm (HF-Abfall in 60s, intervals.icu nativ)`);
     }
     if (!intervalMetrics?.HR_Drift_bpm && isKey) {
       if (same.length && last?.avgSpeed != null) {
@@ -11021,14 +11021,14 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
       ? `Longrun-Progression teilweise verfehlt: ${failReasons.join(", ")}.`
       : "Longrun-Progression erfüllt: Steady stabil, Progression kontrolliert.";
   } else if (same.length && intervalMetrics && lastIntervalMetrics) {
-    if (intervalMetrics.HRR60_median != null && lastIntervalMetrics.HRR60_median != null) {
-      const hrr60Delta = intervalMetrics.HRR60_median - lastIntervalMetrics.HRR60_median;
-      if (hrr60Delta >= 3) {
-        verdict = `Einheit besser – schnellere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
-      } else if (hrr60Delta <= -3) {
-        verdict = `Einheit schlechter – langsamere Erholung (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+    if (intervalMetrics.HRRc != null && lastIntervalMetrics.HRRc != null) {
+      const hrrcDelta = intervalMetrics.HRRc - lastIntervalMetrics.HRRc;
+      if (hrrcDelta >= 3) {
+        verdict = `Einheit besser – schnellere Erholung (HRRc ${fmtSigned1(hrrcDelta)} bpm vs letzte).`;
+      } else if (hrrcDelta <= -3) {
+        verdict = `Einheit schlechter – langsamere Erholung (HRRc ${fmtSigned1(hrrcDelta)} bpm vs letzte).`;
       } else {
-        verdict = `Einheit ähnlich – Erholung nahezu gleich (HRR60 ${fmtSigned1(hrr60Delta)} bpm vs letzte).`;
+        verdict = `Einheit ähnlich – Erholung nahezu gleich (HRRc ${fmtSigned1(hrrcDelta)} bpm vs letzte).`;
       }
     } else if (intervalMetrics.HR_Drift_bpm != null && lastIntervalMetrics.HR_Drift_bpm != null) {
       const driftDelta = intervalMetrics.HR_Drift_bpm - lastIntervalMetrics.HR_Drift_bpm;
@@ -11052,8 +11052,8 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
   }
 
   if (verdict === "Stabil – Basis bestätigt (Trend intakt).") {
-    if (intervalMetrics?.HRR60_median != null && intervalMetrics.HRR60_median < 15) {
-      verdict = "Hohe Belastung – Erholung limitiert.";
+    if (intervalMetrics?.HRRc != null && intervalMetrics.HRRc < 20) {
+      verdict = "Hohe Belastung – Erholung limitiert (HRRc < 20).";
     } else if (intervalMetrics?.drift_flag === "too_hard") {
       verdict = "Hohe Belastung – HF-Drift zu hoch.";
     } else if (intervalMetrics?.drift_flag === "overreaching") {
@@ -11422,15 +11422,6 @@ function computeHRDriftAndDecoupling(samples, intensityKey) {
   return { driftBpm, driftPct, decouplingPct };
 }
 
-function computeHRR60(fullStreams, intervalEndSec) {
-  const endWindow = sliceStreamsByTime(fullStreams, Math.max(0, intervalEndSec - 10), intervalEndSec);
-  const afterWindow = sliceStreamsByTime(fullStreams, intervalEndSec + 50, intervalEndSec + 60);
-  const hrEnd = median(endWindow?.heartrate ?? []);
-  const hrAfter = median(afterWindow?.heartrate ?? []);
-  if (!Number.isFinite(hrEnd) || !Number.isFinite(hrAfter)) return null;
-  return hrEnd - hrAfter;
-}
-
 function computePerIntervalMetrics(fullStreams, interval, { dropPaused = true } = {}) {
   const rawSlice = sliceStreamsByTime(fullStreams, interval.start, interval.end);
   if (!rawSlice) return null;
@@ -11450,7 +11441,6 @@ function computePerIntervalMetrics(fullStreams, interval, { dropPaused = true } 
     hr_drift_bpm: drift?.driftBpm ?? null,
     hr_drift_pct: drift?.driftPct ?? null,
     decoupling_pct: drift?.decouplingPct ?? null,
-    hrr60: computeHRR60(fullStreams, interval.end),
   };
 }
 
@@ -11459,7 +11449,6 @@ function reduceIntervalMetrics(perInterval) {
     intervals: perInterval.length,
     hr_drift_bpm_median: median(perInterval.map((x) => x.hr_drift_bpm)),
     hr_drift_pct_median: median(perInterval.map((x) => x.hr_drift_pct)),
-    hrr60_median: median(perInterval.map((x) => x.hrr60)),
     decoupling_pct_median: median(perInterval.map((x) => x.decoupling_pct)),
   };
 }
@@ -11688,12 +11677,12 @@ async function computeIntervalMetrics(env, activity, { intervalType } = {}) {
 
   const drift = Number(stable.summary.hr_drift_bpm_median);
   const driftPct = Number(stable.summary.hr_drift_pct_median);
-  const hrr60 = Number(stable.summary.hrr60_median);
+  const hrrc = Number(activity?.icu_hrr?.hrr);
   const decoupling = Number(stable.summary.decoupling_pct_median);
   return {
     HR_Drift_bpm: Number.isFinite(drift) ? drift : null,
     HR_Drift_pct: Number.isFinite(driftPct) ? driftPct : null,
-    HRR60_median: Number.isFinite(hrr60) ? hrr60 : null,
+    HRRc: Number.isFinite(hrrc) ? hrrc : null,
     drift_flag: classifyIntervalDrift(intervalType, drift),
     interval_type: intervalType ?? null,
     intensity_source: stable.interval_source || 'intervals_stable',
