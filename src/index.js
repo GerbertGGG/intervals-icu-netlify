@@ -12714,6 +12714,11 @@ function parseRetryAfterMs(value) {
   return null;
 }
 
+function isWorkerSubrequestLimitError(err) {
+  const message = String(err?.message || err || "").toLowerCase();
+  return message.includes("too many subrequests");
+}
+
 async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
   const label = meta.label || "intervals_api";
   const maxRetries = Number.isFinite(meta.maxRetries) ? meta.maxRetries : 3;
@@ -12729,6 +12734,9 @@ async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
       response = await fetch(url, { ...options, signal: controller.signal });
     } catch (err) {
       clearTimeout(timeoutId);
+      if (isWorkerSubrequestLimitError(err)) {
+        throw err;
+      }
       if (attempt >= maxRetries) throw err;
       const delayMs = Math.min(baseDelayMs * Math.pow(2, attempt), INTERVALS_MAX_RETRY_DELAY_MS);
       console.warn(`${label} network error, retrying in ${delayMs}ms`, err);
@@ -12997,6 +13005,7 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 // INTERNAL TEST HOOKS ONLY: not part of the public/runtime API contract.
 // Keep usage scoped to local tests in this repository.
 const __internalTestHooks = Object.freeze({
+  isWorkerSubrequestLimitError,
   detectStrength,
   buildRunSignatureDescriptor,
   adaptExpectedKeysForOverlay,
