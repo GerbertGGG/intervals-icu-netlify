@@ -7694,12 +7694,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       try {
         const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec, {
           prefetchedActivities: ctx.activitiesAll,
+          prefetchedEvents: ctx.lifeEventsAll,
           skipFourWeek: oldest === newest,
         });
         detectiveNoteText = detectiveNote?.text ?? "";
         if (write) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
-          await upsertWeekDocAndIndex(env, day, ctx.warmupSkipSec, { activitiesAll: ctx.activitiesAll, eventDistance });
+          await upsertWeekDocAndIndex(env, day, ctx.warmupSkipSec, {
+            activitiesAll: ctx.activitiesAll,
+            eventDistance,
+            skipWellness: oldest === newest,
+          });
         }
         const weekDocs = await loadWeekDocsForPattern(env);
         patternAnalysis = buildPatternAnalysis(weekDocs);
@@ -9911,8 +9916,8 @@ async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}
   }
   const totalMinutes = easyMinutes + midMinutes + hardMinutes;
 
-  const comp = await gatherComparableGASamples(env, endExclusiveIso, warmupSkipSec, 7);
-  const wellnessAgg = await aggregateWeekWellness(env, startIso, endExclusiveIso);
+  const comp = await gatherComparableGASamples(env, endExclusiveIso, warmupSkipSec, 7, allActivities);
+  const wellnessAgg = context?.skipWellness ? null : await aggregateWeekWellness(env, startIso, endExclusiveIso);
 
   const weekDoc = {
     weekId: weekInfo.weekId,
@@ -10519,11 +10524,31 @@ function buildFourWeekValuesLine(insights) {
   return `EF ${efText} | VDOT ${vdotText} | Drift ${driftText} | Load/Woche ${loadText} | Läufe/Woche ${runsText}`;
 }
 
-async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities = null) {
-  const current = await computeDetectiveNote(env, mondayIso, warmupSkipSec, 28, prefetchedActivities);
+async function computeFourWeekProgressInsights(
+  env,
+  mondayIso,
+  warmupSkipSec,
+  prefetchedActivities = null,
+  prefetchedEvents = null
+) {
+  const current = await computeDetectiveNote(
+    env,
+    mondayIso,
+    warmupSkipSec,
+    28,
+    prefetchedActivities,
+    prefetchedEvents
+  );
   const mondayDate = new Date(mondayIso + "T00:00:00Z");
   const prevMondayIso = isoDate(new Date(mondayDate.getTime() - 28 * 86400000));
-  const previous = await computeDetectiveNote(env, prevMondayIso, warmupSkipSec, 28, prefetchedActivities);
+  const previous = await computeDetectiveNote(
+    env,
+    prevMondayIso,
+    warmupSkipSec,
+    28,
+    prefetchedActivities,
+    prefetchedEvents
+  );
 
   if (!current?.summary || !previous?.summary) return null;
 
@@ -10580,16 +10605,17 @@ function buildFourWeekProgressMetrics(current, previous) {
 
 async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec, options = {}) {
   const prefetchedActivities = Array.isArray(options?.prefetchedActivities) ? options.prefetchedActivities : null;
+  const prefetchedEvents = Array.isArray(options?.prefetchedEvents) ? options.prefetchedEvents : null;
   const skipFourWeek = options?.skipFourWeek === true;
   for (const w of DETECTIVE_WINDOWS) {
-    const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w, prefetchedActivities);
+    const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w, prefetchedActivities, prefetchedEvents);
     if (rep.ok) {
       const history = await loadDetectiveHistory(env, mondayIso);
       const insights = buildDetectiveWhyInsights(rep.summary, history[0]);
       const withWhy = applyDetectiveWhy(rep, insights);
       const fourWeekInsights = skipFourWeek
         ? null
-        : await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities);
+        : await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities, prefetchedEvents);
       return appendFourWeekProgressSection(withWhy, fourWeekInsights);
     }
   }
@@ -10599,14 +10625,15 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec, optio
     mondayIso,
     warmupSkipSec,
     DETECTIVE_WINDOWS[DETECTIVE_WINDOWS.length - 1],
-    prefetchedActivities
+    prefetchedActivities,
+    prefetchedEvents
   );
   const history = await loadDetectiveHistory(env, mondayIso);
   const insights = buildDetectiveWhyInsights(last.summary, history[0]);
   const withWhy = applyDetectiveWhy(last, insights);
   const fourWeekInsights = skipFourWeek
     ? null
-    : await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities);
+    : await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities, prefetchedEvents);
   return appendFourWeekProgressSection(withWhy, fourWeekInsights);
 }
 
@@ -10643,7 +10670,14 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLon
   return { runTarget, loadTarget, exampleWeek, longrunMinTarget, longrunDevelopmentTarget };
 }
 
-async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays, prefetchedActivities = null) {
+async function computeDetectiveNote(
+  env,
+  mondayIso,
+  warmupSkipSec,
+  windowDays,
+  prefetchedActivities = null,
+  prefetchedEvents = null
+) {
   const end = new Date(mondayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - windowDays * 86400000);
   const startIso = isoDate(start);
@@ -10656,7 +10690,12 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays, p
         return d >= startIso && d < endIsoExclusive;
       })
     : await fetchIntervalsActivities(env, startIso, endIsoExclusive);
-  const events = await fetchIntervalsEvents(env, startIso, endIsoInclusive).catch(() => []);
+  const events = Array.isArray(prefetchedEvents)
+    ? prefetchedEvents.filter((e) => {
+        const d = String(e?.start_date_local || e?.start_date || "").slice(0, 10);
+        return d >= startIso && d <= endIsoInclusive;
+      })
+    : await fetchIntervalsEvents(env, startIso, endIsoInclusive).catch(() => []);
   const runs = acts
     .filter((a) => isRun(a))
     .map((a) => ({
@@ -10748,7 +10787,7 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays, p
   const strain = monotony * sum(loadArr);
 
   // Optional: comparable GA evidence (EF/Drift)
-  const comp = await gatherComparableGASamples(env, mondayIso, warmupSkipSec, windowDays);
+  const comp = await gatherComparableGASamples(env, mondayIso, warmupSkipSec, windowDays, prefetchedActivities);
   // comp: { n, efMed, driftMed, droppedNegCount, cvTooHighCount, insufficientCount }
 
   // Findings (Trainingslehre)
@@ -10927,10 +10966,17 @@ async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays, p
   return { ok, text: lines.join("\n"), summary };
 }
 
-async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays) {
+async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDays, prefetchedActivities = null) {
   const end = new Date(endDayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - windowDays * 86400000);
-  const acts = await fetchIntervalsActivities(env, isoDate(start), isoDate(end));
+  const startIso = isoDate(start);
+  const endIsoExclusive = isoDate(end);
+  const acts = Array.isArray(prefetchedActivities)
+    ? prefetchedActivities.filter((a) => {
+        const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+        return d >= startIso && d < endIsoExclusive;
+      })
+    : await fetchIntervalsActivities(env, startIso, endIsoExclusive);
 
   let droppedNegCount = 0;
   let cvTooHighCount = 0;
