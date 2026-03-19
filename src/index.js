@@ -838,6 +838,8 @@ const RUN_DISTANCE_14D_LIMIT = 1.3; // +30% vs previous 14d
 const RUNTIME_CONFIG_DEFAULTS = {
   enableFatigueOverride: ENABLE_FATIGUE_OVERRIDE_DEFAULT,
   keyMinGapDays: KEY_MIN_GAP_DAYS_DEFAULT,
+  syncMaxDaysPerInvocation: 1,
+  intervalsMaxRetries: 1,
   fatigueThresholds: {
     rampPct: RAMP_PCT_7D_LIMIT,
     monotony: MONOTONY_7D_LIMIT,
@@ -870,6 +872,8 @@ function loadRuntimeConfig(env) {
   return {
     enableFatigueOverride: parseBooleanEnv(env?.ENABLE_FATIGUE_OVERRIDE, defaults.enableFatigueOverride),
     keyMinGapDays: parseNumberEnv(env?.KEY_MIN_GAP_DAYS, defaults.keyMinGapDays, 1, 7),
+    syncMaxDaysPerInvocation: parseNumberEnv(env?.SYNC_MAX_DAYS_PER_INVOCATION, defaults.syncMaxDaysPerInvocation, 1, 31),
+    intervalsMaxRetries: parseNumberEnv(env?.INTERVALS_MAX_RETRIES, defaults.intervalsMaxRetries, 0, 5),
     fatigueThresholds: {
       rampPct: parseNumberEnv(env?.FATIGUE_RAMP_PCT_LIMIT, defaults.fatigueThresholds.rampPct, 0, 2),
       monotony: parseNumberEnv(env?.FATIGUE_MONOTONY_LIMIT, defaults.fatigueThresholds.monotony, 0, 10),
@@ -6935,7 +6939,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   const notesPreview = debug ? {} : null;
 
   let daysWritten = 0;
-  const daysList = listIsoDaysInclusive(oldest, newest);
+  const requestedDaysList = listIsoDaysInclusive(oldest, newest);
+  const maxDaysPerInvocation = Number.isFinite(runtimeOverrides?.maxDaysPerInvocation)
+    ? Math.max(1, Number(runtimeOverrides.maxDaysPerInvocation))
+    : (ctx.runtimeConfig?.syncMaxDaysPerInvocation ?? 1);
+  const daysList = requestedDaysList.slice(0, maxDaysPerInvocation);
+  if (requestedDaysList.length > daysList.length) {
+    console.warn(
+      `syncRange truncated from ${requestedDaysList.length} to ${daysList.length} day(s) to stay within subrequest budget`,
+      { oldest, newest, maxDaysPerInvocation }
+    );
+  }
   let previousBlockState = null;
 
   for (const day of daysList) {
@@ -7787,6 +7801,8 @@ Fehler: ${String(e?.message ?? e)}`;
     activitiesSeen,
     activitiesUsed,
     daysComputed: Object.keys(patches).length,
+    requestedDays: requestedDaysList.length,
+    truncatedDays: Math.max(0, requestedDaysList.length - daysList.length),
     daysWritten,
     patches: debug ? patches : undefined,
     debug: debug ? {
@@ -9796,7 +9812,7 @@ async function aggregateWeekWellness(env, startIso, endExclusiveIso) {
       fetchIntervalsWithRetry(
         `${BASE_URL}/athlete/${athleteId}/wellness/${d}`,
         { headers: { Authorization: authHeader(env) } },
-        { label: `wellness ${d}` }
+        { label: `wellness ${d}`, env }
       )
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null)
@@ -12719,9 +12735,17 @@ function isWorkerSubrequestLimitError(err) {
   return message.includes("too many subrequests");
 }
 
+function getIntervalsMaxRetries(env, explicitMaxRetries) {
+  if (Number.isFinite(explicitMaxRetries)) return Math.max(0, Number(explicitMaxRetries));
+  const runtimeConfig = loadRuntimeConfig(env);
+  return Number.isFinite(runtimeConfig?.intervalsMaxRetries)
+    ? Math.max(0, Number(runtimeConfig.intervalsMaxRetries))
+    : 1;
+}
+
 async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
   const label = meta.label || "intervals_api";
-  const maxRetries = Number.isFinite(meta.maxRetries) ? meta.maxRetries : 3;
+  const maxRetries = getIntervalsMaxRetries(meta?.env, meta?.maxRetries);
   const baseDelayMs = Number.isFinite(meta.baseDelayMs) ? meta.baseDelayMs : 500;
 
   let attempt = 0;
@@ -12766,6 +12790,7 @@ async function fetchIntervalsActivities(env, oldest, newest, debug = false) {
     headers: { Authorization: authHeader(env) },
   }, {
     label: "activities",
+    env,
   });
   if (!r.ok) throw new Error(`activities ${r.status}: ${await r.text()}`);
   const activities = await r.json();
@@ -12803,6 +12828,7 @@ async function fetchActivityWithIntervals(env, activityId) {
     headers: { Authorization: authHeader(env) },
   }, {
     label: `activity ${activityId} intervals`,
+    env,
   });
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
@@ -12817,6 +12843,7 @@ async function fetchActivityIntervals(env, activityId) {
     headers: { Authorization: authHeader(env) },
   }, {
     label: `activity ${activityId} dedicated intervals`,
+    env,
   });
   if (!r.ok) {
     const txt = await r.text().catch(() => "");
@@ -12838,6 +12865,7 @@ async function fetchIntervalsStreams(env, activityId, types) {
       headers: { Authorization: authHeader(env) },
     }, {
       label: `streams ${activityId}`,
+      env,
     });
     if (r.ok) {
       const raw = await r.json();
@@ -12882,6 +12910,7 @@ async function putWellnessDay(env, day, patch) {
     body: JSON.stringify(patch),
   }, {
     label: `wellness PUT ${day}`,
+    env,
   });
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
@@ -12895,6 +12924,7 @@ async function fetchIntervalsEvents(env, oldest, newest) {
     headers: { Authorization: authHeader(env) },
   }, {
     label: "events",
+    env,
   });
   if (!r.ok) throw new Error(`events ${r.status}: ${await r.text()}`);
   return r.json();
@@ -12909,6 +12939,7 @@ async function createIntervalsEvent(env, eventObj) {
     body: JSON.stringify(eventObj),
   }, {
     label: "events POST",
+    env,
   });
   if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
   return r.json();
@@ -12923,6 +12954,7 @@ async function updateIntervalsEvent(env, eventId, eventObj) {
     body: JSON.stringify(eventObj),
   }, {
     label: `events PUT ${eventId}`,
+    env,
   });
   if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
   return r.json();
@@ -12946,6 +12978,7 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
   const res = await fetchIntervalsWithRetry(url, { headers: { Authorization: auth } }, {
     label: "events preview",
+    env,
   });
 
   if (!res.ok) {
