@@ -695,6 +695,7 @@ const PATTERN_MIN_CORR_N = 6;
 const PATTERN_MIN_CORR_ABS = 0.25;
 const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const LEVER_REVIEW_KV_PREFIX = "lever:review:";
+const HRRC_HISTORY_KV_PREFIX = "hrrc:history:";
 const DETECTIVE_HISTORY_LIMIT = 12;
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
@@ -5600,10 +5601,43 @@ async function fetchWellnessDay(ctx, env, dayIso) {
  *
  * Returns: Array von { date: "YYYY-MM-DD", hrrc: number }, älteste zuerst.
  */
+function hrrcHistoryKvKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${HRRC_HISTORY_KV_PREFIX}${athleteId}`;
+}
+
+async function appendHrrcToKv(env, dayIso, hrrcValue) {
+  if (!hasKv(env)) return;
+  const key = hrrcHistoryKvKey(env);
+  const existing = (await readKvJson(env, key)) || [];
+  const filtered = existing.filter((x) => x.date !== dayIso);
+  filtered.push({ date: dayIso, hrrc: Number(hrrcValue) });
+  filtered.sort((a, b) => a.date.localeCompare(b.date));
+  const trimmed = filtered.slice(-90);
+  await writeKvJson(env, key, trimmed);
+}
+
+async function readHrrcHistoryFromKv(env, dayIso, lookbackDays) {
+  if (!hasKv(env)) return null;
+  const key = hrrcHistoryKvKey(env);
+  const all = await readKvJson(env, key);
+  if (!Array.isArray(all) || all.length === 0) return null;
+  const cutoff = isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() - lookbackDays * 86400000));
+  return all.filter((x) => x.date >= cutoff && x.date < dayIso && Number.isFinite(x.hrrc) && x.hrrc > 0);
+}
+
 async function fetchHrrcHistory(ctx, env, dayIso, lookbackDays = 42) {
+  // Fast path: 1 KV-Read statt N API-Calls.
+  // KV wird täglich durch appendHrrcToKv() befüllt.
+  const kvHistory = await readHrrcHistoryFromKv(env, dayIso, lookbackDays);
+  if (kvHistory !== null) return kvHistory;
+
+  // Fallback: KV noch leer (erster Tag nach Deploy) → Live-Fetch, aber auf 14 Tage
+  // begrenzt damit das Free-Plan Subrequest-Limit (50) nicht überschritten wird.
+  const effectiveLookback = Math.min(lookbackDays, 14);
   const end = new Date(dayIso + "T00:00:00Z");
   const days = [];
-  for (let i = lookbackDays; i >= 1; i--) {
+  for (let i = effectiveLookback; i >= 1; i--) {
     days.push(isoDate(new Date(end.getTime() - i * 86400000)));
   }
 
@@ -7154,6 +7188,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     );
     if (repKey?.anaerobRaw?.hrrc != null && !isRaceActivity) {
       patch[FIELD_HRRC] = round(repKey.anaerobRaw.hrrc, 0);
+      // In KV persistieren damit fetchHrrcHistory künftig nur 1 KV-Read braucht
+      if (write) {
+        appendHrrcToKv(env, day, patch[FIELD_HRRC]).catch(() => {});
+      }
     }
     if (repKey?.anaerobRaw?.speedCapacity != null) {
       patch[FIELD_SPEED_CAP] = round(repKey.anaerobRaw.speedCapacity, 3);
