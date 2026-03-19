@@ -558,6 +558,12 @@ const KRAFT_MIN_RUNFLOOR = 30;
 const KRAFT_TARGET = 60;
 const KRAFT_MAX = 75;
 const STRENGTH_MIN_7D = KRAFT_TARGET;
+const STRENGTH_MOBILITY_DEFAULT = [
+  "Hüftbeuger Stretch 60s/Seite",
+  "Hüftkreisen 10×/Seite",
+  "Soleus Stretch 45s/Seite",
+  "Thorax-Rotation 30s/Seite",
+];
 const STRENGTH_PHASE_PLANS = {
   BASE: {
     phase: "BASE",
@@ -569,6 +575,13 @@ const STRENGTH_PHASE_PLANS = {
       {
         name: "Einheit A – Unterkörper stabil",
         exercises: ["3×12 Split Squats", "3×12 Hip Thrust mit Band", "3×30s Plank", "2×12 Clamshell mit Band"],
+        progression: [
+          ["2×10 Split Squats", "2×10 Hip Thrust mit Band", "2×25s Plank", "2×10 Clamshell mit Band"],
+          ["3×10 Split Squats", "3×10 Hip Thrust mit Band", "3×25s Plank", "2×12 Clamshell mit Band"],
+          ["3×12 Split Squats", "3×12 Hip Thrust mit Band", "3×30s Plank", "3×12 Clamshell mit Band"],
+          ["Deload: 2×8 Split Squats", "Deload: 2×8 Hip Thrust mit Band", "Deload: 2×20s Plank", "Deload: 2×8 Clamshell mit Band"],
+        ],
+        mobility: STRENGTH_MOBILITY_DEFAULT,
       },
       {
         name: "Einheit B – Balance & Core",
@@ -579,6 +592,13 @@ const STRENGTH_PHASE_PLANS = {
           "2×30s Stabikissen Einbeinstand",
           "2×8–10 Tibialis Raises (optional)",
         ],
+        progression: [
+          ["2×8 Single Leg RDL", "2×25s Seitstütz", "2×10 Monster Walk", "2×25s Stabikissen Einbeinstand", "2×8 Tibialis Raises (optional)"],
+          ["3×8 Single Leg RDL", "3×25s Seitstütz", "2×12 Monster Walk", "2×30s Stabikissen Einbeinstand", "2×10 Tibialis Raises (optional)"],
+          ["3×10 Single Leg RDL", "3×30s Seitstütz", "3×12 Monster Walk", "3×30s Stabikissen Einbeinstand", "2×10 Tibialis Raises (optional)"],
+          ["Deload: 2×6 Single Leg RDL", "Deload: 2×20s Seitstütz", "Deload: 2×10 Monster Walk", "Deload: 2×20s Stabikissen Einbeinstand"],
+        ],
+        mobility: STRENGTH_MOBILITY_DEFAULT,
       },
     ],
   },
@@ -598,10 +618,24 @@ const STRENGTH_PHASE_PLANS = {
           "2×30s Plank",
           "2×30–45s Waden isometrisch (Soleus) pro Seite",
         ],
+        progression: [
+          ["3×6 Bulgarian Split Squat", "3×6 Hip Thrust einbeinig", "3×5 Jump Squats (kontrolliert)", "2×25s Plank", "2×30s Waden isometrisch (Soleus) pro Seite"],
+          ["3×8 Bulgarian Split Squat", "3×8 Hip Thrust einbeinig", "3×6 Jump Squats (kontrolliert)", "2×30s Plank", "2×35s Waden isometrisch (Soleus) pro Seite"],
+          ["4×8 Bulgarian Split Squat", "4×8 Hip Thrust einbeinig", "3×8 Jump Squats (kontrolliert)", "3×30s Plank", "2×45s Waden isometrisch (Soleus) pro Seite"],
+          ["Deload: 2×6 Bulgarian Split Squat", "Deload: 2×6 Hip Thrust einbeinig", "Deload: 2×4 Jump Squats", "Deload: 2×20s Plank"],
+        ],
+        mobility: STRENGTH_MOBILITY_DEFAULT,
       },
       {
         name: "Einheit B – Kraft (ohne Plyo)",
         exercises: ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "2×12 Monster Walk", "2×30s Seitstütz"],
+        progression: [
+          ["3×6 Step-Ups (kontrolliert, sauber)", "3×6 Single Leg Deadlift", "2×10 Monster Walk", "2×25s Seitstütz"],
+          ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "2×12 Monster Walk", "2×30s Seitstütz"],
+          ["4×8 Step-Ups (kontrolliert, sauber)", "4×8 Single Leg Deadlift", "3×12 Monster Walk", "3×30s Seitstütz"],
+          ["Deload: 2×6 Step-Ups", "Deload: 2×6 Single Leg Deadlift", "Deload: 2×10 Monster Walk", "Deload: 2×20s Seitstütz"],
+        ],
+        mobility: STRENGTH_MOBILITY_DEFAULT,
       },
     ],
   },
@@ -621,6 +655,13 @@ const STRENGTH_PHASE_PLANS = {
           "1×30s Stabikissen Einbein",
           "1×30–45s Waden isometrisch (Soleus) pro Seite",
         ],
+        progression: [
+          ["2×8 Split Squats", "2×8 Hip Thrust", "2×20s Plank", "1×30s Stabikissen Einbein"],
+          ["2×8 Split Squats", "2×8 Hip Thrust", "2×20s Plank", "1×30s Stabikissen Einbein"],
+          ["2×8 Split Squats", "2×8 Hip Thrust", "2×20s Plank", "1×30s Stabikissen Einbein"],
+          ["Deload: 1–2×6 Split Squats", "Deload: 1–2×6 Hip Thrust", "Deload: 1×20s Plank"],
+        ],
+        mobility: STRENGTH_MOBILITY_DEFAULT,
       },
     ],
   },
@@ -1442,6 +1483,51 @@ function applyStrengthPolicyOverlay(strengthPolicy, { overlayMode = null, weeksT
 function getStrengthPhasePlan(block) {
   const phase = ["BASE", "BUILD", "RACE"].includes(block) ? block : "BASE";
   return STRENGTH_PHASE_PLANS[phase] || STRENGTH_PHASE_PLANS.BASE;
+}
+
+function getStrengthSessionForDay(blockState, strengthCountThisWeek = 0) {
+  const strengthPlan = getStrengthPhasePlan(blockState?.block);
+  const sessions = Array.isArray(strengthPlan?.sessions) ? strengthPlan.sessions : [];
+  if (!sessions.length) return null;
+  const normalizedCount = Math.max(0, Math.floor(Number(strengthCountThisWeek) || 0));
+  const sessionIndex = normalizedCount % sessions.length;
+  const session = sessions[sessionIndex] || sessions[0];
+  const timeInBlockDays = Math.max(0, Math.floor(Number(blockState?.timeInBlockDays) || 0));
+  const cycleWeek = Math.floor((timeInBlockDays % 28) / 7);
+  const progressionWeek = Array.isArray(session?.progression) ? session.progression[cycleWeek] : null;
+  const exercises = Array.isArray(progressionWeek) && progressionWeek.length
+    ? progressionWeek
+    : (Array.isArray(session?.exercises) ? session.exercises : []);
+  const mobility = Array.isArray(session?.mobility) && session.mobility.length
+    ? session.mobility
+    : STRENGTH_MOBILITY_DEFAULT;
+  const isDeload = cycleWeek === 3;
+  return {
+    name: session?.name || "Kraft",
+    exercises,
+    mobility,
+    isDeload,
+    cycleWeek,
+    durationMin: strengthPlan?.durationMin || [15, 20],
+  };
+}
+
+function formatStrengthBlock(session) {
+  if (!session) return [];
+  const lines = [
+    `💪 Kraft – ${session.name}`,
+    `KW ${Number(session.cycleWeek) + 1}/4${session.isDeload ? " · Deload" : ""}`,
+  ];
+  for (const exercise of session.exercises || []) {
+    lines.push(`· ${exercise}`);
+  }
+  if (Array.isArray(session.mobility) && session.mobility.length) {
+    lines.push("🧘 Mobility");
+    for (const mob of session.mobility) {
+      lines.push(`· ${mob}`);
+    }
+  }
+  return lines;
 }
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
@@ -6391,9 +6477,14 @@ function buildWeekPreview(
               .sort((a, b) => a - b)[0];
             const isStrengthPref = getPrefRank(date, strengthPref) === bestStrengthRankLeft;
             if (strengthNeed && !clashesWithKeyOrLong && isStrengthPref) {
+              const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
+              const strengthSession = getStrengthSessionForDay(blockState, plannedStrengthTotal);
+              const cycleLabel = strengthSession ? ` (KW ${Number(strengthSession.cycleWeek) + 1}/4)` : "";
               sessionType = "STRENGTH";
               intensity = "LOW";
-              sessionLabel = `Kraft/Stabi ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`;
+              sessionLabel = strengthSession
+                ? `💪 Kraft – ${strengthSession.name}${cycleLabel}`
+                : `Kraft/Stabi ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`;
               note = "Kann nach GA-Lauf gemacht werden";
               plannedStrengthCount += 1;
             }
@@ -6473,9 +6564,9 @@ function buildWeekPreview(
       })
       .join("\n");
 
-    return { days, text };
+    return { days, text, thisWeekActuals };
   } catch {
-    return { days: [], text: "(Wochenplan nicht verfügbar)" };
+    return { days: [], text: "(Wochenplan nicht verfügbar)", thisWeekActuals: null };
   }
 }
 
@@ -7674,6 +7765,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       eventDistance,
       fitnessProfile,
       hrrcTrend,
+      weekPreview,
     }, { debug, verbosity: reportVerbosity });
     const weeklyReview = isMondayIso(day)
       ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
@@ -8909,6 +9001,7 @@ function buildComments(
     eventDistance,
     fitnessProfile,
     hrrcTrend,
+    weekPreview,
   },
   { debug = false, verbosity = "coach" } = {}
 ) {
@@ -9457,6 +9550,17 @@ function buildComments(
   }
   if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
     recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
+  }
+  try {
+    const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
+    if (todayPlanEntry?.sessionType === "STRENGTH") {
+      const strengthCountThisWeek = Number(weekPreview?.thisWeekActuals?.strengthCount || 0);
+      const strengthSession = getStrengthSessionForDay(blockState, strengthCountThisWeek);
+      const formattedStrength = formatStrengthBlock(strengthSession);
+      if (formattedStrength.length) recommendationRenderLines.push(...formattedStrength);
+    }
+  } catch {
+    // no-op: recommendation block should never crash if strength session cannot be resolved
   }
 
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
