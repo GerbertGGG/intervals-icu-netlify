@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
 import { __test } from '../src/index.js';
 
+// 0) Cloudflare-Subrequest-Limit Fehler darf nicht erneut retried werden
+{
+  assert.equal(
+    __test.isWorkerSubrequestLimitError(new Error('Too many subrequests by single Worker invocation.')),
+    true
+  );
+  assert.equal(
+    __test.isWorkerSubrequestLimitError(new Error('network timeout')),
+    false
+  );
+}
+
 // 1) WeightTraining muss als strength zählen
 {
   const d = __test.detectStrength({ type: 'WeightTraining', tags: [], name: 'Upper body' });
