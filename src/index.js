@@ -1028,6 +1028,7 @@ const DETECTIVE_MIN_RUNS = 3;
 const MIN_RUN_SPEED = 1.8;
 const MIN_POINTS = 300;
 const GA_SPEED_CV_MAX = 0.10;
+const MAX_STREAM_FETCHES = 8;
 
 // Bench
 const BENCH_LOOKBACK_DAYS = 180;
@@ -7691,7 +7692,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       let detectiveNoteText = null;
       let patternAnalysis = null;
       try {
-        const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec);
+        const detectiveNote = await computeDetectiveNoteAdaptive(env, day, ctx.warmupSkipSec, {
+          prefetchedActivities: ctx.activitiesAll,
+          skipFourWeek: oldest === newest,
+        });
         detectiveNoteText = detectiveNote?.text ?? "";
         if (write) {
           await persistDetectiveSummary(env, day, detectiveNote?.summary);
@@ -10515,11 +10519,11 @@ function buildFourWeekValuesLine(insights) {
   return `EF ${efText} | VDOT ${vdotText} | Drift ${driftText} | Load/Woche ${loadText} | Läufe/Woche ${runsText}`;
 }
 
-async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec) {
-  const current = await computeDetectiveNote(env, mondayIso, warmupSkipSec, 28);
+async function computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities = null) {
+  const current = await computeDetectiveNote(env, mondayIso, warmupSkipSec, 28, prefetchedActivities);
   const mondayDate = new Date(mondayIso + "T00:00:00Z");
   const prevMondayIso = isoDate(new Date(mondayDate.getTime() - 28 * 86400000));
-  const previous = await computeDetectiveNote(env, prevMondayIso, warmupSkipSec, 28);
+  const previous = await computeDetectiveNote(env, prevMondayIso, warmupSkipSec, 28, prefetchedActivities);
 
   if (!current?.summary || !previous?.summary) return null;
 
@@ -10574,14 +10578,18 @@ function buildFourWeekProgressMetrics(current, previous) {
   };
 }
 
-async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
+async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec, options = {}) {
+  const prefetchedActivities = Array.isArray(options?.prefetchedActivities) ? options.prefetchedActivities : null;
+  const skipFourWeek = options?.skipFourWeek === true;
   for (const w of DETECTIVE_WINDOWS) {
-    const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w);
+    const rep = await computeDetectiveNote(env, mondayIso, warmupSkipSec, w, prefetchedActivities);
     if (rep.ok) {
       const history = await loadDetectiveHistory(env, mondayIso);
       const insights = buildDetectiveWhyInsights(rep.summary, history[0]);
       const withWhy = applyDetectiveWhy(rep, insights);
-      const fourWeekInsights = await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec);
+      const fourWeekInsights = skipFourWeek
+        ? null
+        : await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities);
       return appendFourWeekProgressSection(withWhy, fourWeekInsights);
     }
   }
@@ -10590,12 +10598,15 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec) {
     env,
     mondayIso,
     warmupSkipSec,
-    DETECTIVE_WINDOWS[DETECTIVE_WINDOWS.length - 1]
+    DETECTIVE_WINDOWS[DETECTIVE_WINDOWS.length - 1],
+    prefetchedActivities
   );
   const history = await loadDetectiveHistory(env, mondayIso);
   const insights = buildDetectiveWhyInsights(last.summary, history[0]);
   const withWhy = applyDetectiveWhy(last, insights);
-  const fourWeekInsights = await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec);
+  const fourWeekInsights = skipFourWeek
+    ? null
+    : await computeFourWeekProgressInsights(env, mondayIso, warmupSkipSec, prefetchedActivities);
   return appendFourWeekProgressSection(withWhy, fourWeekInsights);
 }
 
@@ -10632,14 +10643,19 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLon
   return { runTarget, loadTarget, exampleWeek, longrunMinTarget, longrunDevelopmentTarget };
 }
 
-async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays) {
+async function computeDetectiveNote(env, mondayIso, warmupSkipSec, windowDays, prefetchedActivities = null) {
   const end = new Date(mondayIso + "T00:00:00Z");
   const start = new Date(end.getTime() - windowDays * 86400000);
   const startIso = isoDate(start);
   const endIsoExclusive = isoDate(end);
   const endIsoInclusive = isoDate(new Date(end.getTime() - 86400000));
 
-  const acts = await fetchIntervalsActivities(env, startIso, endIsoExclusive);
+  const acts = prefetchedActivities
+    ? prefetchedActivities.filter((a) => {
+        const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+        return d >= startIso && d < endIsoExclusive;
+      })
+    : await fetchIntervalsActivities(env, startIso, endIsoExclusive);
   const events = await fetchIntervalsEvents(env, startIso, endIsoInclusive).catch(() => []);
   const runs = acts
     .filter((a) => isRun(a))
@@ -10921,8 +10937,10 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
   let insufficientCount = 0;
 
   const samples = [];
+  let streamFetches = 0;
 
   for (const a of acts) {
+    if (streamFetches >= MAX_STREAM_FETCHES) break;
     if (!isRun(a)) continue;
     if (hasKeyTag(a)) continue;
     if (!isGAComparable(a)) continue;
@@ -10931,6 +10949,7 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
     if (ef == null) continue;
 
     try {
+      streamFetches++;
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
       let drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
