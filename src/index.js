@@ -10937,19 +10937,19 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
   let insufficientCount = 0;
 
   const samples = [];
-  let streamFetches = 0;
+  let fetched = 0;
 
   for (const a of acts) {
-    if (streamFetches >= MAX_STREAM_FETCHES) break;
     if (!isRun(a)) continue;
     if (hasKeyTag(a)) continue;
     if (!isGAComparable(a)) continue;
 
     const ef = extractEF(a);
     if (ef == null) continue;
+    if (fetched >= MAX_STREAM_FETCHES) break;
 
     try {
-      streamFetches++;
+      fetched++;
       const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
       let drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
