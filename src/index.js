@@ -7977,6 +7977,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
     let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
 
+    const strengthPolicyResolved = strengthPolicy
+      || robustness?.strengthPolicy
+      || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/🗓 HEUTE\n([^\n]+)/);
     const coachSnapshot = {
       block: blockState?.block ?? "BASE",
