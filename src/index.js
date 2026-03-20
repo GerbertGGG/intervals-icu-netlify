@@ -7981,6 +7981,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       || robustness?.strengthPolicy
       || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/🗓 HEUTE\n([^\n]+)/);
+    const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
     const coachSnapshot = {
       block: blockState?.block ?? "BASE",
       weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
