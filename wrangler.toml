@@ -10,3 +10,6 @@ triggers = { crons = ["*/30 5-20 * * *"] }
 binding = "KV"
 id = "95402760eee9445fa98df09aad54cdfc"
 preview_id = "95402760eee9445fa98df09aad54cdfc"
+
+[ai]
+binding = "AI"

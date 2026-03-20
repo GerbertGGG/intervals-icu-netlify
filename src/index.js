@@ -6756,6 +6756,38 @@ async function writeKvJson(env, key, value) {
   await env.KV.put(key, JSON.stringify(value));
 }
 
+async function buildCoachAnalysis(env, snapshot) {
+  if (!env?.AI) return null;
+
+  const prompt = `Du bist ein erfahrener Lauftrainer. Analysiere folgende Trainingsdaten und schreibe 3–5 Sätze auf Deutsch. Erkläre warum die heutige Empfehlung sinnvoll ist, was der Trend der letzten Wochen bedeutet, und worauf der Athlet diese Woche achten sollte. Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
+
+Daten:
+- Block: ${snapshot.block}
+- Woche im Block: ${snapshot.weekInBlock}
+- Heutige Empfehlung: ${snapshot.todayDecision}
+- EF-Trend 28 Tage: ${snapshot.efTrendPct != null ? `${snapshot.efTrendPct > 0 ? "+" : ""}${snapshot.efTrendPct}%` : "keine Daten"}
+- 7-Tage-Last vs. Vorwoche: ${snapshot.rampPct != null ? `${snapshot.rampPct > 0 ? "+" : ""}${snapshot.rampPct}%` : "keine Daten"}
+- Drift letzte GA: ${snapshot.driftMed != null ? `${snapshot.driftMed.toFixed(1)}%` : "keine Daten"}
+- Kraft diese Woche: ${snapshot.strengthMin7d ?? 0} Min (Ziel: ${snapshot.strengthTarget ?? 30} Min)
+- Longrun letzte 14 Tage: ${snapshot.longrunMin ?? 0} Min
+- Kraftwochen in Folge unter Ziel: ${snapshot.weakStrengthWeeks ?? 0}
+- Nächster Wettkampf: ${snapshot.eventInDays != null ? `in ${snapshot.eventInDays} Tagen` : "keiner eingetragen"}`;
+
+  try {
+    const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 200,
+    });
+
+    const text = response?.response?.trim();
+    if (!text || text.length < 30) return null;
+
+    return `🧠 COACH-ANALYSE\n${text}`;
+  } catch {
+    return null;
+  }
+}
+
 function authHeader(env) {
   return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
@@ -7894,7 +7926,30 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
-    const dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
+    let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
+
+    const todayDecisionMatch = String(dailyReportTextRaw || "").match(/🗓 HEUTE\n([^\n]+)/);
+    const coachSnapshot = {
+      block: blockState?.block ?? "BASE",
+      weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
+      todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
+      efTrendPct: trend?.dv != null ? Math.round(trend.dv * 10) / 10 : null,
+      rampPct: fatigue?.rampPct ?? null,
+      driftMed: motor?.driftMed ?? null,
+      strengthMin7d: strengthPolicyResolved?.minutes7d ?? 0,
+      strengthTarget: strengthPolicyResolved?.target ?? 30,
+      longrunMin: longRunDoneMin ?? 0,
+      weakStrengthWeeks: Array.isArray(ctx.weekMemories)
+        ? ctx.weekMemories.filter(
+            (w) => (w?.strength?.totalMinutes ?? 0) < (strengthPolicyResolved?.target ?? 30) * 0.5
+          ).length
+        : 0,
+      eventInDays: eventInDays ?? null,
+    };
+    const coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
+    if (coachAnalysis) {
+      dailyReportText = dailyReportText + "\n\n" + coachAnalysis;
+    }
 
     if (!runSectionOnly) {
       // Explicitly clear wellness comments; report is written only as NOTE.
