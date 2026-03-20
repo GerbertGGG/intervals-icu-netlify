@@ -738,6 +738,8 @@ const PATTERN_MIN_CORR_ABS = 0.25;
 const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const LEVER_REVIEW_KV_PREFIX = "lever:review:";
 const HRRC_HISTORY_KV_PREFIX = "hrrc:history:";
+const STREAMS_KV_PREFIX = "streams:v1:";
+const STREAMS_KV_TTL_SEC = 60 * 60 * 24 * 90; // 90 days – streams never change
 const DETECTIVE_HISTORY_LIMIT = 12;
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
@@ -1157,12 +1159,59 @@ async function getStreams(ctx, activityId, types) {
   if (ctx.streamsCache.has(key)) return ctx.streamsCache.get(key);
 
   const p = ctx.limit(async () => {
-    // nutzt env aus ctx, damit authHeader funktioniert
-    return fetchIntervalsStreams(ctx.env, activityId, types);
+    const sortedTypes = (types || []).slice().sort().join(",");
+    const kvKey = `${STREAMS_KV_PREFIX}${activityId}:${sortedTypes}`;
+
+    if (hasKv(ctx.env)) {
+      try {
+        const cached = await readKvJson(ctx.env, kvKey);
+        if (cached?.data) return cached.data;
+      } catch {
+        // fall through to live fetch
+      }
+    }
+
+    const streams = await fetchIntervalsStreams(ctx.env, activityId, types);
+
+    if (hasKv(ctx.env) && streams) {
+      ctx.env.KV.put(
+        kvKey,
+        JSON.stringify({ data: streams, cachedAt: new Date().toISOString() }),
+        { expirationTtl: STREAMS_KV_TTL_SEC }
+      ).catch(() => {});
+    }
+
+    return streams;
   });
 
   ctx.streamsCache.set(key, p);
   return p;
+}
+
+async function getStreamsKvCached(env, activityId, types) {
+  const sortedTypes = (types || []).slice().sort().join(",");
+  const kvKey = `${STREAMS_KV_PREFIX}${activityId}:${sortedTypes}`;
+
+  if (hasKv(env)) {
+    try {
+      const cached = await readKvJson(env, kvKey);
+      if (cached?.data) return cached.data;
+    } catch {
+      // fall through to live fetch
+    }
+  }
+
+  const streams = await fetchIntervalsStreams(env, activityId, types);
+
+  if (hasKv(env) && streams) {
+    env.KV.put(
+      kvKey,
+      JSON.stringify({ data: streams, cachedAt: new Date().toISOString() }),
+      { expirationTtl: STREAMS_KV_TTL_SEC }
+    ).catch(() => {});
+  }
+
+  return streams;
 }
 
 async function getActivityWithIntervals(ctx, activity) {
@@ -11302,7 +11351,7 @@ async function gatherComparableGASamples(env, endDayIso, warmupSkipSec, windowDa
 
     try {
       fetched++;
-      const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+      const streams = await getStreamsKvCached(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
       let drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
 
@@ -11557,7 +11606,7 @@ async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
 
   let progressionMetrics = null;
   if (isLongrunProgression) {
-    const streams = await fetchIntervalsStreams(env, activity.id, ["time", "velocity_smooth", "heartrate"]);
+    const streams = await getStreamsKvCached(env, activity.id, ["time", "velocity_smooth", "heartrate"]);
     progressionMetrics = computeLongrunProgressionMetricsFromStreams(streams, warmupSkipSec);
   }
 
@@ -11835,7 +11884,7 @@ async function computeBenchMetrics(env, a, warmupSkipSec, { allowDrift = true } 
   let drift = null;
   if (allowDrift) {
     try {
-      const streams = await fetchIntervalsStreams(env, a.id, ["time", "velocity_smooth", "heartrate"]);
+      const streams = await getStreamsKvCached(env, a.id, ["time", "velocity_smooth", "heartrate"]);
       const ds = computeDriftAndStabilityFromStreams(streams, warmupSkipSec);
       drift = Number.isFinite(ds?.pa_hr_decouple_pct) ? ds.pa_hr_decouple_pct : null;
 
@@ -12215,7 +12264,7 @@ async function computeIntervalMetricsStable(env, activity, options = {}) {
   if (!types.includes('time')) types.unshift('time');
   if (!types.includes('heartrate')) types.push('heartrate');
 
-  const fullStreams = await fetchIntervalsStreams(env, activity.id, types);
+  const fullStreams = await getStreamsKvCached(env, activity.id, types);
   if (!Array.isArray(fullStreams?.time) || !Array.isArray(fullStreams?.heartrate)) return null;
 
   if (!intervals.length) {
