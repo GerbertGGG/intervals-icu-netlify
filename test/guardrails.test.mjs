@@ -230,6 +230,33 @@ console.log('guardrails ok');
   assert.equal(/Longrun-Progression:/.test(text), false);
 }
 
+// 15) WHY-Narrativ normalisiert Rohtexte und vermeidet Komma-Aufzählung
+{
+  const text = __test.buildWhyNarrative(['krafttraining unter Soll (0′/20′)', 'ef leicht rückläufig']);
+  assert.match(text, /Krafttraining unter Soll \(0 von 20 Minuten\)/);
+  assert.match(text, /Effizienzfaktor leicht rückläufig/);
+}
+
+// 16) Renntag-Block zeigt 5k-Zieltempo nur bei plausibler Pace
+{
+  const block = __test.buildRaceDayPrepBlock({
+    eventInDays: 1,
+    eventDistance: '10k',
+    vdotMed: 50,
+    efMed: null,
+  });
+  assert.match(block, /Zieltempo: ~/);
+  assert.match(block, /entspricht ca\./);
+
+  const noLine = __test.buildRaceDayPrepBlock({
+    eventInDays: 1,
+    eventDistance: '10k',
+    vdotMed: 90,
+    efMed: null,
+  });
+  assert.equal(/Zieltempo: ~/.test(noLine), false);
+}
+
 
 // 15) Taper-Woche priorisiert Wochenfokus über Frequenz
 {
