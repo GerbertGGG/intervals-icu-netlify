@@ -7996,13 +7996,26 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           weeklyFocus ? `\n🎯 WOCHENFOKUS\n${weeklyFocus}\n⸻\n` : null,
         ].filter(Boolean).join("\n")
       : "";
+    let raceDayBlock = "";
+    try {
+      const efMed = computeRecentEfMedian(ctx, day, 28);
+      const vdotMed = Number.isFinite(efMed) ? vdotLikeFromEf(efMed) : null;
+      raceDayBlock = buildRaceDayPrepBlock({
+        eventInDays,
+        eventDistance,
+        vdotMed,
+        efMed,
+      });
+    } catch {
+      raceDayBlock = "";
+    }
     const weekPlanBlock = [
       "🗓 WOCHENPLAN",
       weekPreview?.text || "(Wochenplan nicht verfügbar)",
       "⸻",
       "",
     ].join("\n");
-    const insertBlock = `${weeklyMondayBlock}${weekPlanBlock}`;
+    const insertBlock = `${weeklyMondayBlock}${raceDayBlock}${weekPlanBlock}`;
     const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
@@ -8011,7 +8024,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const strengthPolicyResolved = strengthPolicy
       || robustness?.strengthPolicy
       || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
-    const todayDecisionMatch = String(dailyReportTextRaw || "").match(/🗓 HEUTE\n([^\n]+)/);
+    const todayDecisionMatch = String(dailyReportTextRaw || "").match(/(?:🏃|🗓) HEUTE\n([^\n]+)/);
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
     const coachSnapshot = {
       block: blockState?.block ?? "BASE",
@@ -8032,7 +8045,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     };
     const coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
     if (coachAnalysis) {
-      dailyReportText = dailyReportText + "\n\n" + coachAnalysis;
+      dailyReportText = insertCoachAnalysisAfterHeute(dailyReportText, coachAnalysis);
     }
 
     if (!runSectionOnly) {
@@ -8816,6 +8829,141 @@ function buildCoachFocusSummary(primaryGap, secondaryGap) {
   };
 }
 
+function buildLimiterSentence(primaryGap, secondaryGap) {
+  const primary = mapGapToCoachLanguage(primaryGap);
+  const secondary = secondaryGap ? mapGapToCoachLanguage(secondaryGap) : null;
+  if (!secondary) return `${primary.label} limitiert aktuell am stärksten.`;
+  return `${primary.label} limitiert aktuell am stärksten, gefolgt von ${secondary.label}.`;
+}
+
+function buildWhyNarrative(reasons = []) {
+  const cleaned = (Array.isArray(reasons) ? reasons : [])
+    .map((r) => String(r || "").trim().replace(/^•\s*/, ""))
+    .filter(Boolean)
+    .slice(0, 3);
+  if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
+  if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0].charAt(0).toLowerCase()}${cleaned[0].slice(1)}.`;
+  if (cleaned.length === 2) {
+    return `Heute kontrolliert, weil ${cleaned[0].charAt(0).toLowerCase()}${cleaned[0].slice(1)} und ${cleaned[1].charAt(0).toLowerCase()}${cleaned[1].slice(1)}. Das hält den Wochenrhythmus stabil und bereitet den nächsten sinnvollen Reiz vor.`;
+  }
+  return `Heute kontrolliert, weil ${cleaned[0].charAt(0).toLowerCase()}${cleaned[0].slice(1)}, ${cleaned[1].charAt(0).toLowerCase()}${cleaned[1].slice(1)} und ${cleaned[2].charAt(0).toLowerCase()}${cleaned[2].slice(1)}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
+}
+
+function insertCoachAnalysisAfterHeute(reportText, coachAnalysis) {
+  const report = String(reportText || "");
+  const coachText = String(coachAnalysis || "").trim();
+  if (!coachText) return report;
+  try {
+    const blocks = splitDecisionBlocks(report);
+    if (!blocks.length) return report ? `${report}\n\n${coachText}` : coachText;
+    const coachHeader = coachText.split("\n")[0];
+    const coachBody = coachText.split("\n").slice(1).join("\n").trim();
+    const coachBlock = [coachHeader, coachBody, "⸻"].filter(Boolean).join("\n");
+    const heuteIdx = blocks.findIndex((block) => block.startsWith("🏃 HEUTE") || block.startsWith("🗓 HEUTE"));
+    if (heuteIdx === -1) return `${report}\n\n${coachText}`;
+    const withoutCoach = blocks.filter((block) => !block.startsWith("🧠 COACH-ANALYSE"));
+    const targetIdx = withoutCoach.findIndex((block) => block.startsWith("🏃 HEUTE") || block.startsWith("🗓 HEUTE"));
+    if (targetIdx === -1) return `${report}\n\n${coachText}`;
+    withoutCoach.splice(targetIdx + 1, 0, coachBlock);
+    return `${withoutCoach.join("\n\n")}\n`;
+  } catch {
+    return `${report}\n\n${coachText}`;
+  }
+}
+
+function estimateFiveKTimeFromVdot(vdot) {
+  const v = Number(vdot);
+  if (!Number.isFinite(v) || v < 30 || v > 80) return null;
+  const anchors = [
+    [30, 34 * 60],
+    [35, 30 * 60],
+    [40, 26 * 60],
+    [45, 23 * 60],
+    [50, 20 * 60],
+    [55, 18 * 60],
+    [60, 16 * 60],
+    [65, 14 * 60 + 45],
+    [70, 13 * 60 + 45],
+    [75, 12 * 60 + 55],
+    [80, 12 * 60 + 10],
+  ];
+  for (let i = 0; i < anchors.length - 1; i++) {
+    const [v0, t0] = anchors[i];
+    const [v1, t1] = anchors[i + 1];
+    if (v >= v0 && v <= v1) {
+      const ratio = (v - v0) / (v1 - v0);
+      return Math.round(t0 + ratio * (t1 - t0));
+    }
+  }
+  return null;
+}
+
+function formatPacePerKm(seconds) {
+  const sec = Math.round(Number(seconds));
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")} min/km`;
+}
+
+function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
+  try {
+    if (!Number.isFinite(eventInDays) || eventInDays < 0 || eventInDays > 1) return "";
+    const dist = normalizeEventDistance(eventDistance) || "10k";
+    const distLabel = { "5k": "5k", "10k": "10k", hm: "Halbmarathon", m: "Marathon" }[dist] || dist;
+    const lines = [
+      `🏁 MORGEN — RENNTAG (${distLabel})`,
+      "",
+      "Aufwärmen (15 Min vor Start):",
+      "· 10 Min locker einlaufen",
+      "· 4–6 × 20s Strides mit voller Pause",
+      "· 2 Min locker auslaufen",
+      "",
+    ];
+    if (dist === "5k") {
+      const resolvedVdot = Number.isFinite(vdotMed) ? Number(vdotMed) : (Number.isFinite(efMed) ? vdotLikeFromEf(Number(efMed)) : null);
+      const predicted5kSec = estimateFiveKTimeFromVdot(resolvedVdot);
+      if (predicted5kSec != null) {
+        const paceSec = predicted5kSec / 5;
+        const totalMin = Math.floor(predicted5kSec / 60);
+        const totalSec = predicted5kSec % 60;
+        const paceLabel = formatPacePerKm(paceSec);
+        if (paceLabel) {
+          lines.push(`Zieltempo: ca. ${paceLabel} (≈ ${totalMin}:${String(totalSec).padStart(2, "0")} auf 5k).`);
+          lines.push("");
+        }
+      }
+    }
+    lines.push("Renntipp: Erste 400m kontrolliert — Zieltempo, nicht schneller. Die letzten 1000m alles geben.");
+    lines.push("");
+    lines.push("Danach: mindestens 10 Min auslaufen, heute Abend die Beine hochlegen.");
+    lines.push("⸻");
+    lines.push("");
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function computeRecentEfMedian(ctx, dayIso, windowDays = 28) {
+  try {
+    const end = new Date(`${dayIso}T00:00:00Z`);
+    const startIso = isoDate(new Date(end.getTime() - (Math.max(7, Number(windowDays) || 28) - 1) * 86400000));
+    const endIso = isoDate(new Date(end.getTime() + 86400000));
+    const samples = [];
+    for (const a of ctx?.activitiesAll || []) {
+      if (!isRun(a)) continue;
+      const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+      if (!d || d < startIso || d >= endIso) continue;
+      const ef = extractEF(a);
+      if (Number.isFinite(ef)) samples.push(ef);
+    }
+    return samples.length ? median(samples) : null;
+  } catch {
+    return null;
+  }
+}
+
 function computeLongrunFrequency21d(ctx, dayIso) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - 20 * 86400000));
@@ -9274,6 +9422,7 @@ function buildComments(
       "HEUTE-ENTSCHEIDUNG": "🎯",
       "BOTTOM LINE": "🧾",
       "HEUTE": "🏃",
+      "COACH-ANALYSE": "🧠",
       "WARUM": "🧩",
       "STATUS": "🧠",
       "DIAGNOSE": "🧠",
@@ -9703,9 +9852,14 @@ function buildComments(
   const renderedTopics = new Set();
   renderedTopics.lines = [];
 
-  const whyLines = shortReasons.length
-    ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
-    : ["• Keine harten Restriktionen aktiv."];
+  let whyLines;
+  try {
+    whyLines = [buildWhyNarrative(shortReasons)];
+  } catch {
+    whyLines = shortReasons.length
+      ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
+      : ["• Keine harten Restriktionen aktiv."];
+  }
 
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
@@ -9753,34 +9907,9 @@ function buildComments(
   }
 
   const diagnoseLines = [];
-
-  // Bestehende 5 Scores (unverändert)
-  for (const name of ["base", "specificity", "longrun", "robustness", "execution"]) {
-    const component = distanceDiagnostics?.components?.[name];
-    if (!component) continue;
-    diagnoseLines.push(`${name[0].toUpperCase()}${name.slice(1)}: ${component.score} → ${component.interpretation}`);
-  }
-
-  // Fitness-Profil Block (neu)
-  if (fitnessProfile) {
-    const fp = fitnessProfile;
-    const dist = fp.dist || eventDistance || "10k";
-    const distLabel = { "5k": "5k", "10k": "10k", hm: "Halbmarathon", m: "Marathon" }[dist] || dist;
-
-    const barAerob = buildScoreBar(fp.aerobScore);
-    const barAnaerob = buildScoreBar(fp.anaerobScore);
-
-    diagnoseLines.push("");
-    diagnoseLines.push(`🔬 FITNESS-PROFIL [${distLabel}]`);
-    diagnoseLines.push(`Aerob:   ${fp.aerobScore}/100 ${barAerob}`);
-    diagnoseLines.push(`Anaerob: ${fp.anaerobScore}/100 ${barAnaerob}`);
-    diagnoseLines.push(`Profil: ${fp.profileType}${fp.confidence !== "hoch" ? ` (Datenbasis: ${fp.confidence})` : ""}`);
-    diagnoseLines.push(`→ ${fp.focusText}`);
-    // HRRc-Trend-Zeile im Fitness-Profil
-    if (hrrcTrend && hrrcTrend.trend !== "unknown") {
-      diagnoseLines.push(hrrcTrend.text);
-    }
-  }
+  diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
+  diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
+  diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
   if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
