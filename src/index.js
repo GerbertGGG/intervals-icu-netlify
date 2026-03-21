@@ -6807,50 +6807,64 @@ async function writeKvJson(env, key, value) {
 
 async function buildCoachAnalysis(env, snapshot) {
   if (!env?.AI) return null;
+  const safeSnapshot = {
+    block: ["BASE", "BUILD", "RACE", "RESET"].includes(String(snapshot?.block || "").toUpperCase())
+      ? String(snapshot.block).toUpperCase()
+      : "BASE",
+    weekInBlock: Number.isFinite(Number(snapshot?.weekInBlock)) ? Math.max(1, Math.round(Number(snapshot.weekInBlock))) : 1,
+    todayDecision: sanitizeCoachFact(snapshot?.todayDecision, "GA-Lauf"),
+    efTrendPct: Number.isFinite(Number(snapshot?.efTrendPct)) ? Math.round(Number(snapshot.efTrendPct) * 10) / 10 : null,
+    rampPct: Number.isFinite(Number(snapshot?.rampPct)) ? Math.round(Number(snapshot.rampPct) * 10) / 10 : null,
+    strengthMin7d: Number.isFinite(Number(snapshot?.strengthMin7d)) ? Math.max(0, Math.round(Number(snapshot.strengthMin7d))) : 0,
+    strengthTarget: Number.isFinite(Number(snapshot?.strengthTarget)) ? Math.max(0, Math.round(Number(snapshot.strengthTarget))) : 30,
+    weakStrengthWeeks: Number.isFinite(Number(snapshot?.weakStrengthWeeks)) ? Math.max(0, Math.round(Number(snapshot.weakStrengthWeeks))) : 0,
+    longrunMin: Number.isFinite(Number(snapshot?.longrunMin)) ? Math.max(0, Math.round(Number(snapshot.longrunMin))) : 0,
+    eventInDays: Number.isFinite(Number(snapshot?.eventInDays)) ? Math.max(0, Math.round(Number(snapshot.eventInDays))) : null,
+  };
 
   // Fakten vorformulieren damit das Modell nicht halluziniert
-  const kraftStatus = snapshot.strengthMin7d >= snapshot.strengthTarget
-    ? `${snapshot.strengthMin7d} Min — Ziel erreicht`
-    : `${snapshot.strengthMin7d} Min — Ziel NICHT erreicht (fehlen ${snapshot.strengthTarget - snapshot.strengthMin7d} Min)`;
+  const kraftStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthTarget
+    ? `${safeSnapshot.strengthMin7d} Min — Ziel erreicht`
+    : `${safeSnapshot.strengthMin7d} Min — Ziel NICHT erreicht (fehlen ${safeSnapshot.strengthTarget - safeSnapshot.strengthMin7d} Min)`;
 
-  const kraftMuster = snapshot.weakStrengthWeeks >= 2
-    ? `${snapshot.weakStrengthWeeks} Wochen in Folge unter Ziel — wiederkehrendes Problem`
-    : snapshot.weakStrengthWeeks === 1
+  const kraftMuster = safeSnapshot.weakStrengthWeeks >= 2
+    ? `${safeSnapshot.weakStrengthWeeks} Wochen in Folge unter Ziel — wiederkehrendes Problem`
+    : safeSnapshot.weakStrengthWeeks === 1
     ? "letzte Woche unter Ziel"
     : "zuletzt konstant";
 
-  const efStatus = snapshot.efTrendPct == null
+  const efStatus = safeSnapshot.efTrendPct == null
     ? "keine Daten"
-    : snapshot.efTrendPct > 0
-    ? `+${snapshot.efTrendPct}% — positive Entwicklung`
-    : `${snapshot.efTrendPct}% — Rückgang`;
+    : safeSnapshot.efTrendPct > 0
+    ? `+${safeSnapshot.efTrendPct}% — positive Entwicklung`
+    : `${safeSnapshot.efTrendPct}% — Rückgang`;
 
-  const lastStatus = snapshot.rampPct == null
+  const lastStatus = safeSnapshot.rampPct == null
     ? "keine Daten"
-    : snapshot.rampPct > 10
-    ? `+${snapshot.rampPct}% — zu hoher Anstieg, Erholung nötig`
-    : snapshot.rampPct < -10
-    ? `${snapshot.rampPct}% — deutlich weniger als Vorwoche`
-    : `${snapshot.rampPct}% — im normalen Bereich`;
+    : safeSnapshot.rampPct > 10
+    ? `+${safeSnapshot.rampPct}% — zu hoher Anstieg, Erholung nötig`
+    : safeSnapshot.rampPct < -10
+    ? `${safeSnapshot.rampPct}% — deutlich weniger als Vorwoche`
+    : `${safeSnapshot.rampPct}% — im normalen Bereich`;
 
-  const wettkampf = snapshot.eventInDays == null
+  const wettkampf = safeSnapshot.eventInDays == null
     ? "keiner eingetragen"
-    : snapshot.eventInDays <= 7
-    ? `in ${snapshot.eventInDays} Tagen — Taperwoche`
-    : `in ${snapshot.eventInDays} Tagen`;
+    : safeSnapshot.eventInDays <= 7
+    ? `in ${safeSnapshot.eventInDays} Tagen — Taperwoche`
+    : `in ${safeSnapshot.eventInDays} Tagen`;
 
   const prompt = `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte. Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
 
 Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.
 
 Fakten:
-- Block: ${snapshot.block}, Woche ${snapshot.weekInBlock} im Block
-- Heutige Empfehlung: ${snapshot.todayDecision}
+- Block: ${safeSnapshot.block}, Woche ${safeSnapshot.weekInBlock} im Block
+- Heutige Empfehlung: ${safeSnapshot.todayDecision}
 - EF-Trend 28 Tage: ${efStatus}
 - 7-Tage-Last vs. Vorwoche: ${lastStatus}
 - Kraft diese Woche: ${kraftStatus}
 - Kraftmuster: ${kraftMuster}
-- Longrun letzte 14 Tage: ${snapshot.longrunMin ?? 0} Min
+- Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min
 - Nächster Wettkampf: ${wettkampf}`;
 
   try {
@@ -8838,15 +8852,15 @@ function buildLimiterSentence(primaryGap, secondaryGap) {
 
 function buildWhyNarrative(reasons = []) {
   const cleaned = (Array.isArray(reasons) ? reasons : [])
-    .map((r) => String(r || "").trim().replace(/^•\s*/, ""))
+    .map((r) => normalizeWhyReason(String(r || "").trim().replace(/^•\s*/, "")))
     .filter(Boolean)
     .slice(0, 3);
   if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
-  if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0].charAt(0).toLowerCase()}${cleaned[0].slice(1)}.`;
+  if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0]}.`;
   if (cleaned.length === 2) {
-    return `Heute kontrolliert, weil ${cleaned[0].charAt(0).toLowerCase()}${cleaned[0].slice(1)} und ${cleaned[1].charAt(0).toLowerCase()}${cleaned[1].slice(1)}. Das hält den Wochenrhythmus stabil und bereitet den nächsten sinnvollen Reiz vor.`;
+    return `Heute kontrolliert, weil ${cleaned[0]} und ${cleaned[1]}. Das hält den Wochenrhythmus stabil und bereitet den nächsten sinnvollen Reiz vor.`;
   }
-  return `Heute kontrolliert, weil ${cleaned[0].charAt(0).toLowerCase()}${cleaned[0].slice(1)}, ${cleaned[1].charAt(0).toLowerCase()}${cleaned[1].slice(1)} und ${cleaned[2].charAt(0).toLowerCase()}${cleaned[2].slice(1)}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
+  return `Heute kontrolliert, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
 }
 
 function insertCoachAnalysisAfterHeute(reportText, coachAnalysis) {
@@ -8906,6 +8920,12 @@ function formatPacePerKm(seconds) {
   return `${m}:${String(s).padStart(2, "0")} min/km`;
 }
 
+function vdotTo5kPaceSecPerKm(vdot) {
+  const predicted5kSec = estimateFiveKTimeFromVdot(vdot);
+  if (!Number.isFinite(predicted5kSec)) return null;
+  return predicted5kSec / 5;
+}
+
 function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
   try {
     if (!Number.isFinite(eventInDays) || eventInDays < 0 || eventInDays > 1) return "";
@@ -8920,18 +8940,16 @@ function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
       "· 2 Min locker auslaufen",
       "",
     ];
-    if (dist === "5k") {
-      const resolvedVdot = Number.isFinite(vdotMed) ? Number(vdotMed) : (Number.isFinite(efMed) ? vdotLikeFromEf(Number(efMed)) : null);
-      const predicted5kSec = estimateFiveKTimeFromVdot(resolvedVdot);
-      if (predicted5kSec != null) {
-        const paceSec = predicted5kSec / 5;
-        const totalMin = Math.floor(predicted5kSec / 60);
-        const totalSec = predicted5kSec % 60;
-        const paceLabel = formatPacePerKm(paceSec);
-        if (paceLabel) {
-          lines.push(`Zieltempo: ca. ${paceLabel} (≈ ${totalMin}:${String(totalSec).padStart(2, "0")} auf 5k).`);
-          lines.push("");
-        }
+    const resolvedVdot = Number.isFinite(vdotMed) ? Number(vdotMed) : (Number.isFinite(efMed) ? vdotLikeFromEf(Number(efMed)) : null);
+    const paceSec = vdotTo5kPaceSecPerKm(resolvedVdot);
+    if (Number.isFinite(paceSec) && paceSec >= 180 && paceSec <= 480) {
+      const predicted5kSec = Math.round(paceSec * 5);
+      const totalMin = Math.floor(predicted5kSec / 60);
+      const totalSec = predicted5kSec % 60;
+      const paceLabel = formatPacePerKm(paceSec);
+      if (paceLabel) {
+        lines.push(`Zieltempo: ~${paceLabel.replace(" min/km", "")} min/km (entspricht ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit)`);
+        lines.push("");
       }
     }
     lines.push("Renntipp: Erste 400m kontrolliert — Zieltempo, nicht schneller. Die letzten 1000m alles geben.");
@@ -8943,6 +8961,32 @@ function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
   } catch {
     return "";
   }
+}
+
+function sanitizeCoachFact(value, fallback = "keine Angabe") {
+  const text = String(value || "")
+    .replace(/\s+/g, " ")
+    .replace(/[{}[\]`]/g, " ")
+    .replace(/\b(explicitSession|suggestion|cue)\b/gi, " ")
+    .trim();
+  if (!text) return fallback;
+  if (/[;=]|\b(function|const|let|var|return|=>)\b/i.test(text)) return fallback;
+  return text.slice(0, 140);
+}
+
+function normalizeWhyReason(reason) {
+  let text = String(reason || "").trim();
+  if (!text) return "";
+  text = text
+    .replace(/(\d+)\s*[′']\s*\/\s*(\d+)\s*[′']/g, "$1 von $2 Minuten")
+    .replace(/\b(\d+)T\b/g, "$1 Tage")
+    .replace(/\bEF\b/gi, "Effizienzfaktor")
+    .replace(/\bHR\b/gi, "Herzfrequenz")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/, "")
+    .trim();
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function computeRecentEfMedian(ctx, dayIso, windowDays = 28) {
@@ -13637,6 +13681,8 @@ const __internalTestHooks = Object.freeze({
   buildComments,
   inferKeyTypeFromExplicitSession,
   resolveRunFloorDecisionText,
+  buildWhyNarrative,
+  buildRaceDayPrepBlock,
 });
 
 export const __test = __internalTestHooks;
