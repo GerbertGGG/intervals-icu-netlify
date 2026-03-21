@@ -6808,19 +6808,50 @@ async function writeKvJson(env, key, value) {
 async function buildCoachAnalysis(env, snapshot) {
   if (!env?.AI) return null;
 
-  const prompt = `Du bist ein erfahrener Lauftrainer. Analysiere folgende Trainingsdaten und schreibe 3–5 Sätze auf Deutsch. Erkläre warum die heutige Empfehlung sinnvoll ist, was der Trend der letzten Wochen bedeutet, und worauf der Athlet diese Woche achten sollte. Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
+  // Fakten vorformulieren damit das Modell nicht halluziniert
+  const kraftStatus = snapshot.strengthMin7d >= snapshot.strengthTarget
+    ? `${snapshot.strengthMin7d} Min — Ziel erreicht`
+    : `${snapshot.strengthMin7d} Min — Ziel NICHT erreicht (fehlen ${snapshot.strengthTarget - snapshot.strengthMin7d} Min)`;
 
-Daten:
-- Block: ${snapshot.block}
-- Woche im Block: ${snapshot.weekInBlock}
+  const kraftMuster = snapshot.weakStrengthWeeks >= 2
+    ? `${snapshot.weakStrengthWeeks} Wochen in Folge unter Ziel — wiederkehrendes Problem`
+    : snapshot.weakStrengthWeeks === 1
+    ? "letzte Woche unter Ziel"
+    : "zuletzt konstant";
+
+  const efStatus = snapshot.efTrendPct == null
+    ? "keine Daten"
+    : snapshot.efTrendPct > 0
+    ? `+${snapshot.efTrendPct}% — positive Entwicklung`
+    : `${snapshot.efTrendPct}% — Rückgang`;
+
+  const lastStatus = snapshot.rampPct == null
+    ? "keine Daten"
+    : snapshot.rampPct > 10
+    ? `+${snapshot.rampPct}% — zu hoher Anstieg, Erholung nötig`
+    : snapshot.rampPct < -10
+    ? `${snapshot.rampPct}% — deutlich weniger als Vorwoche`
+    : `${snapshot.rampPct}% — im normalen Bereich`;
+
+  const wettkampf = snapshot.eventInDays == null
+    ? "keiner eingetragen"
+    : snapshot.eventInDays <= 7
+    ? `in ${snapshot.eventInDays} Tagen — Taperwoche`
+    : `in ${snapshot.eventInDays} Tagen`;
+
+  const prompt = `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte. Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
+
+Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.
+
+Fakten:
+- Block: ${snapshot.block}, Woche ${snapshot.weekInBlock} im Block
 - Heutige Empfehlung: ${snapshot.todayDecision}
-- EF-Trend 28 Tage: ${snapshot.efTrendPct != null ? `${snapshot.efTrendPct > 0 ? "+" : ""}${snapshot.efTrendPct}%` : "keine Daten"}
-- 7-Tage-Last vs. Vorwoche: ${snapshot.rampPct != null ? `${snapshot.rampPct > 0 ? "+" : ""}${snapshot.rampPct}%` : "keine Daten"}
-- Drift letzte GA: ${snapshot.driftMed != null ? `${snapshot.driftMed.toFixed(1)}%` : "keine Daten"}
-- Kraft diese Woche: ${snapshot.strengthMin7d ?? 0} Min (Ziel: ${snapshot.strengthTarget ?? 30} Min)
+- EF-Trend 28 Tage: ${efStatus}
+- 7-Tage-Last vs. Vorwoche: ${lastStatus}
+- Kraft diese Woche: ${kraftStatus}
+- Kraftmuster: ${kraftMuster}
 - Longrun letzte 14 Tage: ${snapshot.longrunMin ?? 0} Min
-- Kraftwochen in Folge unter Ziel: ${snapshot.weakStrengthWeeks ?? 0}
-- Nächster Wettkampf: ${snapshot.eventInDays != null ? `in ${snapshot.eventInDays} Tagen` : "keiner eingetragen"}`;
+- Nächster Wettkampf: ${wettkampf}`;
 
   try {
     const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
