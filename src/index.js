@@ -6870,7 +6870,7 @@ Fakten:
   try {
     const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 200,
+      max_tokens: 350,
     });
 
     const text = response?.response?.trim();
@@ -8940,15 +8940,21 @@ function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
       "· 2 Min locker auslaufen",
       "",
     ];
-    const resolvedVdot = Number.isFinite(vdotMed) ? Number(vdotMed) : (Number.isFinite(efMed) ? vdotLikeFromEf(Number(efMed)) : null);
+    const hasEfMedian = Number.isFinite(efMed);
+    const resolvedVdot = Number.isFinite(vdotMed)
+      ? Number(vdotMed)
+      : (hasEfMedian ? vdotLikeFromEf(Number(efMed)) : null);
     const paceSec = vdotTo5kPaceSecPerKm(resolvedVdot);
-    if (Number.isFinite(paceSec) && paceSec >= 180 && paceSec <= 480) {
-      const predicted5kSec = Math.round(paceSec * 5);
+    const plausiblePace = Number.isFinite(paceSec) && paceSec >= 180 && paceSec <= 480;
+    const shouldShowPace = Number.isFinite(paceSec) && (plausiblePace || hasEfMedian);
+    if (shouldShowPace) {
+      const displayPaceSec = hasEfMedian ? clamp(Number(paceSec), 150, 480) : Number(paceSec);
+      const predicted5kSec = Math.round(displayPaceSec * 5);
       const totalMin = Math.floor(predicted5kSec / 60);
       const totalSec = predicted5kSec % 60;
-      const paceLabel = formatPacePerKm(paceSec);
+      const paceLabel = formatPacePerKm(displayPaceSec);
       if (paceLabel) {
-        lines.push(`Zieltempo: ~${paceLabel.replace(" min/km", "")} min/km (entspricht ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit)`);
+        lines.push(`Zieltempo: ~${paceLabel.replace(" min/km", "")} min/km (ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit über 5 km)`);
         lines.push("");
       }
     }
