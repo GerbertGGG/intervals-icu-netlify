@@ -246,7 +246,7 @@ console.log('guardrails ok');
     efMed: null,
   });
   assert.match(block, /Zieltempo: ~/);
-  assert.match(block, /entspricht ca\./);
+  assert.match(block, /Gesamtzeit über 5 km/);
 
   const noLine = __test.buildRaceDayPrepBlock({
     eventInDays: 1,
@@ -255,6 +255,14 @@ console.log('guardrails ok');
     efMed: null,
   });
   assert.equal(/Zieltempo: ~/.test(noLine), false);
+
+  const efFallback = __test.buildRaceDayPrepBlock({
+    eventInDays: 1,
+    eventDistance: '10k',
+    vdotMed: null,
+    efMed: 0.05,
+  });
+  assert.match(efFallback, /Zieltempo: ~/);
 }
 
 
