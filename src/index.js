@@ -738,6 +738,7 @@ const PATTERN_MIN_CORR_ABS = 0.25;
 const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const LEVER_REVIEW_KV_PREFIX = "lever:review:";
 const HRRC_HISTORY_KV_PREFIX = "hrrc:history:";
+const RACE_POSTMORTEM_KV_PREFIX = "race:postmortem:";
 const STREAMS_KV_PREFIX = "streams:v1:";
 const STREAMS_KV_TTL_SEC = 60 * 60 * 24 * 90; // 90 days – streams never change
 const DETECTIVE_HISTORY_LIMIT = 12;
@@ -6789,6 +6790,11 @@ function hasKv(env) {
   return Boolean(env?.KV && typeof env.KV.get === "function" && typeof env.KV.put === "function");
 }
 
+function getRacePostmortemKvKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${RACE_POSTMORTEM_KV_PREFIX}${athleteId}`;
+}
+
 async function readKvJson(env, key) {
   if (!hasKv(env)) return null;
   const raw = await env.KV.get(key);
@@ -6803,6 +6809,164 @@ async function readKvJson(env, key) {
 async function writeKvJson(env, key, value) {
   if (!hasKv(env)) return;
   await env.KV.put(key, JSON.stringify(value));
+}
+
+function isRaceActivity(activity) {
+  if (!activity || !isRun(activity)) return false;
+  const tags = Array.isArray(activity?.tags) ? activity.tags : [];
+  if (tags.some((tag) => String(tag || "").trim().toLowerCase().startsWith("race:"))) return true;
+  const cat = String(activity?.category || "").trim().toUpperCase();
+  if (cat === "RACE" || cat === "RACE_A" || cat === "A_RACE") return true;
+  const title = String(activity?.name || activity?.title || "").toLowerCase();
+  return /\b(race|wettkampf|competition)\b/.test(title);
+}
+
+function inferRaceDistanceLabel(distanceM) {
+  const d = Number(distanceM);
+  if (!Number.isFinite(d) || d <= 0) return "10k";
+  if (Math.abs(d - 5000) <= 600) return "5k";
+  if (Math.abs(d - 10000) <= 900) return "10k";
+  if (Math.abs(d - 21097) <= 1500) return "HM";
+  if (Math.abs(d - 42195) <= 2500) return "M";
+  return d < 7500 ? "5k" : d < 15500 ? "10k" : d < 32000 ? "HM" : "M";
+}
+
+function estimateVdotFromRacePerformance(distanceM, totalTimeSec) {
+  const distM = Number(distanceM);
+  const timeSec = Number(totalTimeSec);
+  if (!(distM > 0) || !(timeSec > 0)) return null;
+  const timeMin = timeSec / 60;
+  const velocityMPerMin = distM / timeMin;
+  const vo2 = -4.6 + 0.182258 * velocityMPerMin + 0.000104 * velocityMPerMin * velocityMPerMin;
+  const pctMax = 0.8 + 0.1894393 * Math.exp(-0.012778 * timeMin) + 0.2989558 * Math.exp(-0.1932605 * timeMin);
+  if (!(pctMax > 0)) return null;
+  return round(vo2 / pctMax, 1);
+}
+
+async function loadRaceHistory(env) {
+  try {
+    const key = getRacePostmortemKvKey(env);
+    const data = await readKvJson(env, key);
+    if (!Array.isArray(data)) return [];
+    return data.filter((entry) => isIsoDate(String(entry?.date || "")));
+  } catch {
+    return [];
+  }
+}
+
+async function buildRacePostmortem(env, day, raceActivity, historyMetrics, blockState) {
+  if (!hasKv(env) || !isIsoDate(day) || !raceActivity) return null;
+  const distanceKm = extractRunDistanceKm(raceActivity);
+  const distanceM = Math.round(distanceKm * 1000);
+  const totalTimeSec = Number(raceActivity?.moving_time ?? raceActivity?.elapsed_time ?? 0);
+  if (!(distanceM > 0) || !(totalTimeSec > 0)) return null;
+  const totalTimeMin = round(totalTimeSec / 60, 1);
+  const paceSecPerKm = round(totalTimeSec / Math.max(0.1, distanceKm), 1);
+  const longRunTargetMin = Math.round(
+    computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.targetMin || 0
+  );
+  const diagnostics = historyMetrics?.distanceDiagnostics || {};
+  const entry = {
+    date: day,
+    distanceM,
+    distanceLabel: inferRaceDistanceLabel(distanceM),
+    totalTimeMin,
+    paceSecPerKm,
+    vdotActual: estimateVdotFromRacePerformance(distanceM, totalTimeSec),
+    readiness: Number.isFinite(diagnostics?.readiness) ? Math.round(diagnostics.readiness) : null,
+    scores: {
+      base: Number.isFinite(diagnostics?.scores?.base) ? Math.round(diagnostics.scores.base) : null,
+      specificity: Number.isFinite(diagnostics?.scores?.specificity) ? Math.round(diagnostics.scores.specificity) : null,
+      longrun: Number.isFinite(diagnostics?.scores?.longrun) ? Math.round(diagnostics.scores.longrun) : null,
+      robustness: Number.isFinite(diagnostics?.scores?.robustness) ? Math.round(diagnostics.scores.robustness) : null,
+      execution: Number.isFinite(diagnostics?.scores?.execution) ? Math.round(diagnostics.scores.execution) : null,
+    },
+    efTrendPct: Number.isFinite(historyMetrics?.efDeltaPct) ? round(historyMetrics.efDeltaPct, 1) : null,
+    strengthMin7d: Number.isFinite(diagnostics?.snapshot?.strengthMin) ? Math.round(diagnostics.snapshot.strengthMin) : 0,
+    longrunMin: Number.isFinite(diagnostics?.snapshot?.longrunMin) ? Math.round(diagnostics.snapshot.longrunMin) : 0,
+    block: String(blockState?.block || "BASE"),
+    primaryGap: diagnostics?.primaryGap || null,
+    secondaryGap: diagnostics?.secondaryGap || null,
+    strengths: Array.isArray(diagnostics?.strengths) ? diagnostics.strengths.slice(0, 3) : [],
+    longrunTargetMin,
+  };
+  const current = await loadRaceHistory(env);
+  const next = [entry, ...current.filter((item) => String(item?.date || "") !== day)]
+    .sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")))
+    .slice(0, 10);
+  await writeKvJson(env, getRacePostmortemKvKey(env), next);
+  return entry;
+}
+
+function buildRaceInsights(raceHistory) {
+  const sorted = Array.isArray(raceHistory)
+    ? raceHistory
+      .filter((entry) => isIsoDate(String(entry?.date || "")))
+      .sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")))
+    : [];
+  if (!sorted.length) return { insights: [], nextPrep: [] };
+  const latest = sorted[0];
+  const insights = [];
+  const nextPrep = [];
+
+  if (Number(latest?.scores?.specificity) < 75) {
+    insights.push("Spezifität war zu niedrig — zu wenig Racepace-Einheiten vor dem Rennen.");
+    nextPrep.push("Spezifität-Ziel: mindestens 78 — ab Woche 3 jede Woche einen Racepace-Reiz einbauen.");
+  }
+  if (Number(latest?.scores?.robustness) < 70) {
+    insights.push("Robustheit war limitiert — Kraft/Stabi hat die Rennstabilität gebremst.");
+    nextPrep.push("Kraft-Ziel: mindestens 6 von 8 Wochen im Zielbereich abschließen.");
+  }
+  const longrunTarget = Number(latest?.longrunTargetMin ?? 0);
+  if (longrunTarget > 0 && Number(latest?.longrunMin ?? 0) < longrunTarget) {
+    insights.push("Longrun lag unter dem Blockziel — die Ausdauer ist vor dem Rennen zu früh abgeflacht.");
+    nextPrep.push(`Longrun-Ziel: mindestens ${longrunTarget} Minuten vor der Taperphase absichern.`);
+  }
+
+  const sameDistance = sorted.filter((entry) => String(entry?.distanceLabel || "") === String(latest?.distanceLabel || ""));
+  if (sameDistance.length >= 2) {
+    const prev = sameDistance[1];
+    const latestReadiness = Number(latest?.readiness);
+    const prevReadiness = Number(prev?.readiness);
+    if (Number.isFinite(latestReadiness) && Number.isFinite(prevReadiness)) {
+      const delta = Math.round((latestReadiness - prevReadiness) * 10) / 10;
+      const sign = delta > 0 ? "+" : "";
+      insights.push(
+        `Readiness gegenüber dem letzten ${latest.distanceLabel}-Rennen: ${sign}${delta} Punkte (${prev.date} → ${latest.date}).`
+      );
+    }
+  }
+
+  return {
+    insights: uniq(insights),
+    nextPrep: uniq(nextPrep),
+  };
+}
+
+function formatRaceHistorySection(raceHistory, raceInsights) {
+  const latest = Array.isArray(raceHistory) ? raceHistory[0] : null;
+  if (!latest) return "";
+  const dateLabel = new Intl.DateTimeFormat("de-DE", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${latest.date}T00:00:00Z`));
+  const lines = [
+    "📊 LETZTE RENNEN",
+    `${latest.distanceLabel || "Rennen"} — ${dateLabel}`,
+    `Readiness: ${latest.readiness ?? "n/a"}/100 | Spezifität: ${latest?.scores?.specificity ?? "n/a"} | Robustheit: ${latest?.scores?.robustness ?? "n/a"}`,
+  ];
+  if (Array.isArray(raceInsights?.insights) && raceInsights.insights.length) {
+    lines.push("Erkenntnisse:");
+    for (const insight of raceInsights.insights) lines.push(`· ${insight}`);
+  }
+  if (Array.isArray(raceInsights?.nextPrep) && raceInsights.nextPrep.length) {
+    lines.push("Für diese Vorbereitung:");
+    for (const goal of raceInsights.nextPrep) lines.push(`· ${goal}`);
+  }
+  lines.push("⸻", "");
+  return lines.join("\n");
 }
 
 async function buildCoachAnalysis(env, snapshot) {
@@ -6820,6 +6984,12 @@ async function buildCoachAnalysis(env, snapshot) {
     weakStrengthWeeks: Number.isFinite(Number(snapshot?.weakStrengthWeeks)) ? Math.max(0, Math.round(Number(snapshot.weakStrengthWeeks))) : 0,
     longrunMin: Number.isFinite(Number(snapshot?.longrunMin)) ? Math.max(0, Math.round(Number(snapshot.longrunMin))) : 0,
     eventInDays: Number.isFinite(Number(snapshot?.eventInDays)) ? Math.max(0, Math.round(Number(snapshot.eventInDays))) : null,
+    raceInsightsFacts: Array.isArray(snapshot?.raceInsightsFacts)
+      ? snapshot.raceInsightsFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
+      : [],
+    raceNextPrepFacts: Array.isArray(snapshot?.raceNextPrepFacts)
+      ? snapshot.raceNextPrepFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
+      : [],
   };
 
   // Fakten vorformulieren damit das Modell nicht halluziniert
@@ -6853,6 +7023,13 @@ async function buildCoachAnalysis(env, snapshot) {
     ? `in ${safeSnapshot.eventInDays} Tagen — Taperwoche`
     : `in ${safeSnapshot.eventInDays} Tagen`;
 
+  const raceInsightsFactLine = safeSnapshot.raceInsightsFacts.length
+    ? safeSnapshot.raceInsightsFacts.join(" | ")
+    : "keine Rennhistorie vorhanden";
+  const raceNextPrepFactLine = safeSnapshot.raceNextPrepFacts.length
+    ? safeSnapshot.raceNextPrepFacts.join(" | ")
+    : "keine abgeleiteten Ziele";
+
   const prompt = `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte. Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
 
 Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.
@@ -6865,7 +7042,9 @@ Fakten:
 - Kraft diese Woche: ${kraftStatus}
 - Kraftmuster: ${kraftMuster}
 - Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min
-- Nächster Wettkampf: ${wettkampf}`;
+- Nächster Wettkampf: ${wettkampf}
+- Erkenntnisse aus letzten Rennen: ${raceInsightsFactLine}
+- Ziele für aktuelle Vorbereitung: ${raceNextPrepFactLine}`;
 
   try {
     const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
@@ -7502,10 +7681,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     // HRRc aus dem Key-Run des Tages schreiben
     const repKey = perRunInfo.find((x) => x.isKey && x.anaerobRaw?.hrrc != null);
-    const isRaceActivity = (repKey?.tags ?? []).some((t) =>
-      String(t).toLowerCase().startsWith("race:")
-    );
-    if (repKey?.anaerobRaw?.hrrc != null && !isRaceActivity) {
+    if (repKey?.anaerobRaw?.hrrc != null && !isRaceActivity(repKey?.activity)) {
       patch[FIELD_HRRC] = round(repKey.anaerobRaw.hrrc, 0);
       // In KV persistieren damit fetchHrrcHistory künftig nur 1 KV-Read braucht
       if (write) {
@@ -7882,6 +8058,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
     patch[FIELD_BLOCK] = blockLabelForWellness;
 
+    if (write && day === isoDate(new Date())) {
+      try {
+        const raceActivityToday = runs.find((activity) => isRaceActivity(activity));
+        if (raceActivityToday) {
+          await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
+        }
+      } catch (error) {
+        console.warn("race postmortem write failed", { day, message: String(error?.message ?? error) });
+      }
+    }
+
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
@@ -8023,13 +8210,27 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     } catch {
       raceDayBlock = "";
     }
+    let raceHistoryBlock = "";
+    let raceInsights = { insights: [], nextPrep: [] };
+    if (blockState?.block === "RACE" && Number(blockState?.timeInBlockDays ?? 0) <= 7) {
+      try {
+        const raceHistory = await loadRaceHistory(env);
+        if (raceHistory.length > 0) {
+          raceInsights = buildRaceInsights(raceHistory);
+          raceHistoryBlock = formatRaceHistorySection(raceHistory, raceInsights);
+        }
+      } catch (error) {
+        console.warn("race insights load failed", { day, message: String(error?.message ?? error) });
+      }
+    }
+
     const weekPlanBlock = [
       "🗓 WOCHENPLAN",
       weekPreview?.text || "(Wochenplan nicht verfügbar)",
       "⸻",
       "",
     ].join("\n");
-    const insertBlock = `${weeklyMondayBlock}${raceDayBlock}${weekPlanBlock}`;
+    const insertBlock = `${weeklyMondayBlock}${raceDayBlock}${raceHistoryBlock}${weekPlanBlock}`;
     const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
@@ -8075,6 +8276,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           ).length
         : 0,
       eventInDays: eventInDays ?? null,
+      raceInsightsFacts: Array.isArray(raceInsights?.insights) ? raceInsights.insights : [],
+      raceNextPrepFacts: Array.isArray(raceInsights?.nextPrep) ? raceInsights.nextPrep : [],
     };
     const coachAnalysis = isRaceDayToday ? null : await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
     if (coachAnalysis && !isRaceDayToday) {
