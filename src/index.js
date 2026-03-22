@@ -6821,6 +6821,40 @@ function isRaceActivity(activity) {
   return /\b(race|wettkampf|competition)\b/.test(title);
 }
 
+function resolveRaceActivityForPlannedRaceDay(runs, weekPreview, dayIso) {
+  try {
+    const safeRuns = Array.isArray(runs) ? runs.filter((activity) => isRun(activity)) : [];
+    if (!safeRuns.length) return null;
+
+    // Primärer Pfad bleibt race:-Tag/Heuristik.
+    const taggedRace = safeRuns.find((activity) => isRaceActivity(activity));
+    if (taggedRace) return taggedRace;
+
+    // Fallback: Wenn der Wochenplan den Tag als RACE markiert und ein Lauf existiert,
+    // gilt dieser Lauf als Rennen (auch ohne race:-Tag).
+    const todayPlanEntry = Array.isArray(weekPreview?.days)
+      ? weekPreview.days.find((entry) => entry?.isToday === true || entry?.date === dayIso)
+      : null;
+    const isPlannedRaceDay = todayPlanEntry?.sessionType === "RACE";
+    if (!isPlannedRaceDay) return null;
+
+    return (
+      safeRuns
+        .slice()
+        .sort((a, b) => {
+          const distA = Number(a?.distance ?? 0);
+          const distB = Number(b?.distance ?? 0);
+          if (distA !== distB) return distB - distA;
+          const timeA = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+          const timeB = Number(b?.moving_time ?? b?.elapsed_time ?? 0);
+          return timeB - timeA;
+        })[0] || safeRuns[0]
+    );
+  } catch {
+    return null;
+  }
+}
+
 function inferRaceDistanceLabel(distanceM) {
   const d = Number(distanceM);
   if (!Number.isFinite(d) || d <= 0) return "10k";
@@ -7535,7 +7569,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
-    const raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
+    let raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
     const patch = {};
     const perRunInfo = [];
     const existingDailyReportEvent =
@@ -8059,16 +8093,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
     patch[FIELD_BLOCK] = blockLabelForWellness;
 
-    if (write && day === isoDate(new Date())) {
-      try {
-        if (raceActivityToday) {
-          await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
-        }
-      } catch (error) {
-        console.warn("race postmortem write failed", { day, message: String(error?.message ?? error) });
-      }
-    }
-
     previousBlockState = {
       block: blockState.block,
       wave: blockState.wave,
@@ -8235,6 +8259,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
     let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
+    try {
+      const raceResolvedFromPlan = resolveRaceActivityForPlannedRaceDay(runs, weekPreview, day);
+      if (raceResolvedFromPlan) raceActivityToday = raceResolvedFromPlan;
+    } catch {
+      // no-op: fallback bleibt Tag-basierte Erkennung
+    }
     const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
     const isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
     if (isRaceDayToday && !raceActivityToday) {
