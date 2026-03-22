@@ -281,6 +281,22 @@ console.log('guardrails ok');
   assert.equal(noPast, '');
 }
 
+// 17) Rennergebnis-Block zeigt Zeit, Pace, VDOT und Postmortem-Hinweis
+{
+  const block = __test.buildRaceResultBlock({
+    type: 'Run',
+    distance: 5000,
+    moving_time: 1500,
+    elapsed_time: 1500,
+    name: 'City 5k',
+  }, { postmortemSaved: true });
+  assert.match(block, /🏁 RENNERGEBNIS — 5k/);
+  assert.match(block, /Zeit: 25:00 min/);
+  assert.match(block, /Pace: 5:00 min\/km/);
+  assert.match(block, /VDOT \(aus Rennzeit\): \d+/);
+  assert.match(block, /Postmortem gespeichert/);
+}
+
 
 // 15) Taper-Woche priorisiert Wochenfokus über Frequenz
 {

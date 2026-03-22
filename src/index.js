@@ -7535,6 +7535,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
+    const raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
     const patch = {};
     const perRunInfo = [];
     const existingDailyReportEvent =
@@ -8060,7 +8061,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     if (write && day === isoDate(new Date())) {
       try {
-        const raceActivityToday = runs.find((activity) => isRaceActivity(activity));
         if (raceActivityToday) {
           await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
         }
@@ -8237,7 +8237,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
     const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
     const isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
-    if (isRaceDayToday) {
+    if (isRaceDayToday && !raceActivityToday) {
       let efMedRace = null;
       let vdotMedRace = null;
       try {
@@ -8253,6 +8253,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         efMed: efMedRace,
         weekPlanText: weekPreview?.text || "(Wochenplan nicht verfügbar)",
       });
+    }
+    if (isRaceDayToday && raceActivityToday) {
+      let postmortemSaved = false;
+      if (write && day === isoDate(new Date())) {
+        try {
+          const entry = await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
+          postmortemSaved = Boolean(entry);
+        } catch (error) {
+          console.warn("race postmortem write failed (report)", { day, message: String(error?.message ?? error) });
+        }
+      }
+      const raceResultBlock = buildRaceResultBlock(raceActivityToday, { postmortemSaved });
+      if (raceResultBlock) {
+        dailyReportText = `${dailyReportText}\n\n${raceResultBlock}`;
+      }
     }
 
     const strengthPolicyResolved = strengthPolicy
@@ -9219,6 +9234,42 @@ function buildRaceDayMinimalReport({ eventDistance, vdotMed, efMed, weekPlanText
   lines.push("");
   lines.push("🗓 WOCHENPLAN");
   lines.push(weekPlanText || "(Wochenplan nicht verfügbar)");
+  return lines.join("\n");
+}
+
+function formatRaceTimeLabel(totalTimeSec) {
+  const sec = Math.round(Number(totalTimeSec));
+  if (!Number.isFinite(sec) || sec <= 0) return null;
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")} min`;
+}
+
+function normalizeRaceDistanceLabel(distanceLabel) {
+  const normalized = String(distanceLabel || "").trim().toUpperCase();
+  if (normalized === "HM") return "Halbmarathon";
+  if (normalized === "M") return "Marathon";
+  if (normalized === "5K" || normalized === "10K") return normalized.toLowerCase();
+  return normalized ? normalized.toLowerCase() : "5k";
+}
+
+function buildRaceResultBlock(raceActivity, { postmortemSaved = false } = {}) {
+  if (!raceActivity) return "";
+  const distanceKm = extractRunDistanceKm(raceActivity);
+  const distanceM = Math.round(distanceKm * 1000);
+  const totalTimeSec = Number(raceActivity?.moving_time ?? raceActivity?.elapsed_time ?? 0);
+  const paceSecPerKm = distanceKm > 0 ? totalTimeSec / distanceKm : null;
+  const vdotRace = estimateVdotFromRacePerformance(distanceM, totalTimeSec);
+  const distanceLabel = normalizeRaceDistanceLabel(inferRaceDistanceLabel(distanceM));
+  const lines = [
+    `🏁 RENNERGEBNIS — ${distanceLabel}`,
+    `Zeit: ${formatRaceTimeLabel(totalTimeSec) || "n/a"}`,
+    `Pace: ${formatPacePerKm(paceSecPerKm) || "n/a"}`,
+    `VDOT (aus Rennzeit): ${Number.isFinite(vdotRace) ? Math.round(vdotRace) : "n/a"}`,
+  ];
+  if (postmortemSaved) {
+    lines.push("Postmortem gespeichert — wird beim nächsten RACE-Block ausgewertet.");
+  }
   return lines.join("\n");
 }
 
@@ -13947,6 +13998,7 @@ const __internalTestHooks = Object.freeze({
   resolveRunFloorDecisionText,
   buildWhyNarrative,
   buildRaceDayPrepBlock,
+  buildRaceResultBlock,
 });
 
 export const __test = __internalTestHooks;
