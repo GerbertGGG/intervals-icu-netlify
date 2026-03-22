@@ -7024,7 +7024,14 @@ async function buildCoachAnalysis(env, snapshot) {
     raceNextPrepFacts: Array.isArray(snapshot?.raceNextPrepFacts)
       ? snapshot.raceNextPrepFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
       : [],
+    raceTimeMin: Number.isFinite(Number(snapshot?.raceTimeMin)) ? Math.max(0, Math.round(Number(snapshot.raceTimeMin) * 10) / 10) : null,
+    racePaceSecPerKm: Number.isFinite(Number(snapshot?.racePaceSecPerKm))
+      ? Math.max(0, Math.round(Number(snapshot.racePaceSecPerKm) * 10) / 10)
+      : null,
+    vdotActual: Number.isFinite(Number(snapshot?.vdotActual)) ? Math.round(Number(snapshot.vdotActual) * 10) / 10 : null,
+    vdotTrend: Number.isFinite(Number(snapshot?.vdotTrend)) ? Math.round(Number(snapshot.vdotTrend) * 10) / 10 : null,
   };
+  const isRaceDaySnapshot = safeSnapshot.raceTimeMin != null || safeSnapshot.vdotActual != null;
 
   // Fakten vorformulieren damit das Modell nicht halluziniert
   const kraftStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthTarget
@@ -7064,7 +7071,17 @@ async function buildCoachAnalysis(env, snapshot) {
     ? safeSnapshot.raceNextPrepFacts.join(" | ")
     : "keine abgeleiteten Ziele";
 
-  const prompt = `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte. Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
+  const raceTimeLine = safeSnapshot.raceTimeMin == null ? "n/a" : `${safeSnapshot.raceTimeMin.toFixed(1)} Min`;
+  const racePaceLine = formatPacePerKm(safeSnapshot.racePaceSecPerKm) || "n/a";
+  const vdotActualLine = safeSnapshot.vdotActual == null ? "n/a" : safeSnapshot.vdotActual.toFixed(1);
+  const vdotTrendLine = safeSnapshot.vdotTrend == null
+    ? "n/a"
+    : `${safeSnapshot.vdotTrend > 0 ? "+" : ""}${safeSnapshot.vdotTrend.toFixed(1)} (aus EF-Trend geschätzt)`;
+  const promptGoal = isRaceDaySnapshot
+    ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
+    : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte.";
+
+  const prompt = `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. ${promptGoal} Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
 
 Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.
 
@@ -7078,7 +7095,11 @@ Fakten:
 - Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min
 - Nächster Wettkampf: ${wettkampf}
 - Erkenntnisse aus letzten Rennen: ${raceInsightsFactLine}
-- Ziele für aktuelle Vorbereitung: ${raceNextPrepFactLine}`;
+- Ziele für aktuelle Vorbereitung: ${raceNextPrepFactLine}
+- Rennergebnis Zeit: ${raceTimeLine}
+- Rennpace: ${racePaceLine}
+- VDOT aktuell: ${vdotActualLine}
+- VDOT-Trend: ${vdotTrendLine}`;
 
   try {
     const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
@@ -8305,28 +8326,54 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/(?:🏃|🗓) HEUTE\n([^\n]+)/);
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
-    const coachSnapshot = {
-      block: blockState?.block ?? "BASE",
-      weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
-      todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
-      efTrendPct: trend?.dv != null ? Math.round(trend.dv * 10) / 10 : null,
-      rampPct: fatigue?.rampPct ?? null,
-      driftMed: motor?.driftMed ?? null,
-      strengthMin7d: strengthPolicyResolved?.minutes7d ?? 0,
-      strengthTarget: strengthPolicyResolved?.target ?? 30,
-      longrunMin: longRunDoneMin ?? 0,
-      weakStrengthWeeks: Array.isArray(ctx.weekMemories)
-        ? ctx.weekMemories.filter(
-            (w) => (w?.strength?.totalMinutes ?? 0) < (strengthPolicyResolved?.target ?? 30) * 0.5
-          ).length
-        : 0,
-      eventInDays: eventInDays ?? null,
-      raceInsightsFacts: Array.isArray(raceInsights?.insights) ? raceInsights.insights : [],
-      raceNextPrepFacts: Array.isArray(raceInsights?.nextPrep) ? raceInsights.nextPrep : [],
-    };
-    const coachAnalysis = isRaceDayToday ? null : await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
-    if (coachAnalysis && !isRaceDayToday) {
-      dailyReportText = insertCoachAnalysisAfterHeute(dailyReportText, coachAnalysis);
+    let coachAnalysis = null;
+    try {
+      const raceDistanceKm = raceActivityToday ? extractRunDistanceKm(raceActivityToday) : null;
+      const raceTimeSec = raceActivityToday ? Number(raceActivityToday?.moving_time ?? raceActivityToday?.elapsed_time ?? 0) : null;
+      const racePaceSecPerKm = raceDistanceKm > 0 && Number.isFinite(raceTimeSec) ? raceTimeSec / raceDistanceKm : null;
+      const raceDistanceM = Number.isFinite(raceDistanceKm) ? Math.round(raceDistanceKm * 1000) : null;
+      const vdotActual = Number.isFinite(raceDistanceM) && Number.isFinite(raceTimeSec)
+        ? estimateVdotFromRacePerformance(raceDistanceM, raceTimeSec)
+        : null;
+      const efTrendPct = trend?.dv != null ? Math.round(trend.dv * 10) / 10 : null;
+      const coachSnapshot = {
+        block: blockState?.block ?? "BASE",
+        weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
+        todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
+        efTrendPct,
+        rampPct: fatigue?.rampPct ?? null,
+        driftMed: motor?.driftMed ?? null,
+        strengthMin7d: strengthPolicyResolved?.minutes7d ?? 0,
+        strengthTarget: strengthPolicyResolved?.target ?? 30,
+        longrunMin: longRunDoneMin ?? 0,
+        weakStrengthWeeks: Array.isArray(ctx.weekMemories)
+          ? ctx.weekMemories.filter(
+              (w) => (w?.strength?.totalMinutes ?? 0) < (strengthPolicyResolved?.target ?? 30) * 0.5
+            ).length
+          : 0,
+        eventInDays: eventInDays ?? null,
+        raceInsightsFacts: Array.isArray(raceInsights?.insights) ? raceInsights.insights : [],
+        raceNextPrepFacts: Array.isArray(raceInsights?.nextPrep) ? raceInsights.nextPrep : [],
+        raceTimeMin: Number.isFinite(raceTimeSec) ? raceTimeSec / 60 : null,
+        racePaceSecPerKm,
+        vdotActual,
+        vdotTrend: estimateVdotTrendFromEfTrend(vdotActual, efTrendPct),
+      };
+      coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
+    } catch {
+      coachAnalysis = null;
+    }
+    try {
+      if (coachAnalysis && !isRaceDayToday) {
+        dailyReportText = insertCoachAnalysisAfterHeute(dailyReportText, coachAnalysis);
+      } else if (isRaceDayToday) {
+        dailyReportText = buildRaceDayOrderedReport(dailyReportText, {
+          coachAnalysis,
+          weekPlanText: weekPreview?.text || "(Wochenplan nicht verfügbar)",
+        });
+      }
+    } catch {
+      // no-op: final report rendering must remain resilient
     }
 
     if (!runSectionOnly) {
@@ -9301,6 +9348,55 @@ function buildRaceResultBlock(raceActivity, { postmortemSaved = false } = {}) {
     lines.push("Postmortem gespeichert — wird beim nächsten RACE-Block ausgewertet.");
   }
   return lines.join("\n");
+}
+
+function estimateVdotTrendFromEfTrend(vdotValue, efTrendPct) {
+  const vdot = Number(vdotValue);
+  const efTrend = Number(efTrendPct);
+  if (!Number.isFinite(vdot) || !Number.isFinite(efTrend)) return null;
+  const prevFactor = 1 + efTrend / 100;
+  if (!Number.isFinite(prevFactor) || prevFactor <= 0) return null;
+  const prevVdot = vdot / prevFactor;
+  if (!Number.isFinite(prevVdot)) return null;
+  return Math.round((vdot - prevVdot) * 10) / 10;
+}
+
+function buildRaceDayOrderedReport(reportText, { weekPlanText = "", coachAnalysis = "" } = {}) {
+  try {
+    const blocks = splitDecisionBlocks(reportText);
+    if (!blocks.length) return String(reportText || "");
+    const byTitle = new Map();
+    for (const block of blocks) {
+      const title = getDecisionBlockTitle(block);
+      if (title && !byTitle.has(title)) byTitle.set(title, block);
+    }
+    const preferredOrder = [
+      "RENNERGEBNIS",
+      "HEUTIGER LAUF",
+      "COACH-ANALYSE",
+      "WOCHENPLAN",
+      "DIAGNOSE",
+      "BOTTOM LINE",
+    ];
+    if (!byTitle.has("COACH-ANALYSE") && String(coachAnalysis || "").trim()) {
+      byTitle.set("COACH-ANALYSE", String(coachAnalysis || "").trim());
+    }
+    if (!byTitle.has("WOCHENPLAN") && String(weekPlanText || "").trim()) {
+      byTitle.set("WOCHENPLAN", `🗓 WOCHENPLAN\n${String(weekPlanText || "").trim()}`);
+    }
+    const ordered = preferredOrder
+      .map((title) => byTitle.get(title))
+      .filter(Boolean)
+      .map((block) => {
+        const clean = String(block || "").trim();
+        if (!clean) return "";
+        return clean.endsWith("⸻") ? clean : `${clean}\n⸻`;
+      })
+      .filter(Boolean);
+    return ordered.length ? `${ordered.join("\n\n")}\n` : String(reportText || "");
+  } catch {
+    return String(reportText || "");
+  }
 }
 
 function sanitizeCoachFact(value, fallback = "keine Angabe") {
