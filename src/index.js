@@ -739,6 +739,7 @@ const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
 const LEVER_REVIEW_KV_PREFIX = "lever:review:";
 const HRRC_HISTORY_KV_PREFIX = "hrrc:history:";
 const RACE_POSTMORTEM_KV_PREFIX = "race:postmortem:";
+const RACE_PREDICTION_KV_PREFIX = "race:prediction:";
 const STREAMS_KV_PREFIX = "streams:v1:";
 const STREAMS_KV_TTL_SEC = 60 * 60 * 24 * 90; // 90 days – streams never change
 const DETECTIVE_HISTORY_LIMIT = 12;
@@ -6795,6 +6796,11 @@ function getRacePostmortemKvKey(env) {
   return `${RACE_POSTMORTEM_KV_PREFIX}${athleteId}`;
 }
 
+function getRacePredictionKvKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${RACE_PREDICTION_KV_PREFIX}${athleteId}`;
+}
+
 async function readKvJson(env, key) {
   if (!hasKv(env)) return null;
   const raw = await env.KV.get(key);
@@ -6900,6 +6906,31 @@ async function buildRacePostmortem(env, day, raceActivity, historyMetrics, block
     computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.targetMin || 0
   );
   const diagnostics = historyMetrics?.distanceDiagnostics || {};
+  const prediction = await readKvJson(env, getRacePredictionKvKey(env)).catch(() => null);
+  const raceDistanceLabel = normalizeEventDistance(inferRaceDistanceLabel(distanceM)) || "10k";
+
+  let predictionComparison = null;
+  if (prediction && prediction.distanceLabel === raceDistanceLabel) {
+    const diff = totalTimeSec - Number(prediction.targetSec);
+    const diffPct = Number(prediction.targetSec) > 0 ? Math.round((diff / Number(prediction.targetSec)) * 100) : null;
+    const within = totalTimeSec >= Number(prediction.minSec) && totalTimeSec <= Number(prediction.maxSec);
+
+    predictionComparison = {
+      predictedSec: Number(prediction.targetSec),
+      predictedMin: Number(prediction.minSec),
+      predictedMax: Number(prediction.maxSec),
+      actualSec: totalTimeSec,
+      diffSec: diff,
+      diffPct,
+      withinRange: within,
+      assessment: within
+        ? "innerhalb der Prognose"
+        : diff < 0
+          ? `${Math.abs(diffPct)}% schneller als erwartet`
+          : `${diffPct}% langsamer als erwartet`,
+    };
+  }
+
   const entry = {
     date: day,
     distanceM,
@@ -6923,6 +6954,7 @@ async function buildRacePostmortem(env, day, raceActivity, historyMetrics, block
     secondaryGap: diagnostics?.secondaryGap || null,
     strengths: Array.isArray(diagnostics?.strengths) ? diagnostics.strengths.slice(0, 3) : [],
     longrunTargetMin,
+    predictionComparison,
   };
   const current = await loadRaceHistory(env);
   const next = [entry, ...current.filter((item) => String(item?.date || "") !== day)]
@@ -8197,6 +8229,43 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       strengthCountThisWeek = Math.max(0, Math.floor(Number(weekPreview?.thisWeekActuals?.strengthCount || 0)));
     }
     ctx.__weeklyFocusMeta = null;
+    let racePrediction = null;
+    try {
+      if (String(blockState?.block || "").toUpperCase() === "RACE") {
+        const compRace = await gatherComparableGASamples(env, day, ctx.warmupSkipSec, 28, ctx.activitiesAll);
+        const distanceLabel = normalizeEventDistance(eventDistance) || "10k";
+        if (Number(compRace?.n || 0) >= 3 && Number.isFinite(compRace?.efMed)) {
+          const prediction = estimateRaceTime(compRace.efMed, distanceLabel);
+          if (prediction) {
+            racePrediction = { available: true, prediction, sampleCount: Number(compRace.n), windowDays: 28, efMed: compRace.efMed };
+            if (write === true) {
+              await writeKvJson(env, getRacePredictionKvKey(env), {
+                date: day,
+                distanceLabel,
+                targetSec: prediction.targetSec,
+                minSec: prediction.minSec,
+                maxSec: prediction.maxSec,
+                vdotLike: prediction.vdotLike,
+                scores: {
+                  base: distanceDiagnostics?.scores?.base ?? null,
+                  specificity: distanceDiagnostics?.scores?.specificity ?? null,
+                  longrun: distanceDiagnostics?.scores?.longrun ?? null,
+                  robustness: distanceDiagnostics?.scores?.robustness ?? null,
+                  execution: distanceDiagnostics?.scores?.execution ?? null,
+                },
+                efMed: compRace.efMed,
+                savedAt: day,
+              });
+            }
+          }
+        } else {
+          racePrediction = { available: false, reason: "insufficient_samples", sampleCount: Number(compRace?.n || 0), windowDays: 28 };
+        }
+      }
+    } catch (error) {
+      console.warn("race prediction failed", { day, message: String(error?.message || error) });
+    }
+
     const dailyReportTextRaw = buildComments({
       perRunInfo,
       trend,
@@ -8229,6 +8298,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       fitnessProfile,
       hrrcTrend,
       weekPreview,
+      racePrediction,
     }, { debug, verbosity: reportVerbosity });
     const weeklyReview = isMondayIso(day)
       ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
@@ -8307,15 +8377,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     if (isRaceDayToday && raceActivityToday) {
       let postmortemSaved = false;
+      let postmortemEntry = null;
       if (write && day === isoDate(new Date())) {
         try {
-          const entry = await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
-          postmortemSaved = Boolean(entry);
+          postmortemEntry = await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
+          postmortemSaved = Boolean(postmortemEntry);
         } catch (error) {
           console.warn("race postmortem write failed (report)", { day, message: String(error?.message ?? error) });
         }
       }
-      const raceResultBlock = buildRaceResultBlock(raceActivityToday, { postmortemSaved });
+      const raceResultBlock = buildRaceResultBlock(raceActivityToday, { postmortemSaved, predictionComparison: postmortemEntry?.predictionComparison || null, primaryGap: postmortemEntry?.primaryGap || null, secondaryGap: postmortemEntry?.secondaryGap || null });
       if (raceResultBlock) {
         dailyReportText = `${dailyReportText}\n\n${raceResultBlock}`;
       }
@@ -9240,6 +9311,45 @@ function vdotTo5kPaceSecPerKm(vdot) {
   return predicted5kSec / 5;
 }
 
+function estimateRaceTime(efMed, distanceLabel) {
+  if (!Number.isFinite(efMed) || efMed <= 0) return null;
+
+  const vdotLike = vdotLikeFromEf(efMed);
+  if (!Number.isFinite(vdotLike) || vdotLike < 15) return null;
+
+  const table = {
+    "5k": [{ v: 30, sec: 1944 }, { v: 35, sec: 1710 }, { v: 37, sec: 1635 }, { v: 40, sec: 1512 }, { v: 45, sec: 1332 }, { v: 50, sec: 1200 }, { v: 55, sec: 1092 }],
+    "10k": [{ v: 30, sec: 4020 }, { v: 35, sec: 3540 }, { v: 37, sec: 3390 }, { v: 40, sec: 3120 }, { v: 45, sec: 2760 }, { v: 50, sec: 2490 }, { v: 55, sec: 2268 }],
+    hm: [{ v: 30, sec: 8820 }, { v: 35, sec: 7740 }, { v: 37, sec: 7410 }, { v: 40, sec: 6840 }, { v: 45, sec: 6060 }, { v: 50, sec: 5460 }, { v: 55, sec: 4980 }],
+    m: [{ v: 30, sec: 18360 }, { v: 35, sec: 16200 }, { v: 37, sec: 15480 }, { v: 40, sec: 14280 }, { v: 45, sec: 12660 }, { v: 50, sec: 11400 }, { v: 55, sec: 10380 }],
+  };
+
+  const entries = table[distanceLabel];
+  if (!entries) return null;
+
+  const lower = entries.filter((x) => x.v <= vdotLike).at(-1);
+  const upper = entries.find((x) => x.v > vdotLike);
+  let baseSec;
+  if (!lower && !upper) return null;
+  if (!lower) baseSec = upper.sec;
+  else if (!upper) baseSec = lower.sec;
+  else {
+    const t = (vdotLike - lower.v) / (upper.v - lower.v);
+    baseSec = Math.round(lower.sec + t * (upper.sec - lower.sec));
+  }
+
+  const uncertainty = 0.10;
+  return {
+    vdotLike: Math.round(vdotLike * 10) / 10,
+    targetSec: baseSec,
+    minSec: Math.round(baseSec * (1 - uncertainty)),
+    maxSec: Math.round(baseSec * (1 + uncertainty)),
+    distanceLabel,
+    basis: "EF-Median GA-Läufe",
+    uncertainty: "±10%",
+  };
+}
+
 function buildRacePaceGuidance(vdotMed, efMed) {
   const hasEfMedian = Number.isFinite(efMed);
   const resolvedVdot = Number.isFinite(vdotMed)
@@ -9330,7 +9440,7 @@ function normalizeRaceDistanceLabel(distanceLabel) {
   return normalized ? normalized.toLowerCase() : "5k";
 }
 
-function buildRaceResultBlock(raceActivity, { postmortemSaved = false } = {}) {
+function buildRaceResultBlock(raceActivity, { postmortemSaved = false, predictionComparison = null, primaryGap = null, secondaryGap = null } = {}) {
   if (!raceActivity) return "";
   const distanceKm = extractRunDistanceKm(raceActivity);
   const distanceM = Math.round(distanceKm * 1000);
@@ -9344,6 +9454,20 @@ function buildRaceResultBlock(raceActivity, { postmortemSaved = false } = {}) {
     `Pace: ${formatPacePerKm(paceSecPerKm) || "n/a"}`,
     `VDOT (aus Rennzeit): ${Number.isFinite(vdotRace) ? Math.round(vdotRace) : "n/a"}`,
   ];
+  if (predictionComparison?.predictedMin && predictionComparison?.predictedMax) {
+    const rangeText = `${formatRaceTimeLabel(predictionComparison.predictedMin) || "n/a"}–${formatRaceTimeLabel(predictionComparison.predictedMax) || "n/a"}`;
+    const assessment = predictionComparison.withinRange
+      ? "Ergebnis innerhalb der Prognose ✓"
+      : `Ergebnis ${predictionComparison.assessment}.`;
+    lines.push(`Prognose war: ${rangeText} → ${assessment}`);
+    if (!predictionComparison.withinRange) {
+      const causes = [primaryGap, secondaryGap]
+        .filter(Boolean)
+        .map((gap) => mapGapToCoachLanguage(gap).label)
+        .filter(Boolean);
+      if (causes.length) lines.push(`Mögliche Ursachen: ${causes.join(", ")}.`);
+    }
+  }
   if (postmortemSaved) {
     lines.push("Postmortem gespeichert — wird beim nächsten RACE-Block ausgewertet.");
   }
@@ -9878,6 +10002,7 @@ function buildComments(
     fitnessProfile,
     hrrcTrend,
     weekPreview,
+    racePrediction,
   },
   { debug = false, verbosity = "coach" } = {}
 ) {
@@ -9907,6 +10032,7 @@ function buildComments(
       "STATUS": "🧠",
       "DIAGNOSE": "🧠",
       "FOKUS": "📌",
+      "ZIELZEIT-PROGNOSE": "🎯",
     };
     lines.push(`${titleEmojis[title] || "✅"} ${title}`);
     for (const metric of metrics) {
@@ -10433,6 +10559,36 @@ function buildComments(
   addDecisionBlock("TRAININGSSTAND", trainingStateLines);
   addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
   addDecisionBlock("DIAGNOSE", diagnoseLines);
+
+  if (String(blockState?.block || "").toUpperCase() === "RACE") {
+    if (racePrediction?.available) {
+      const pred = racePrediction.prediction;
+      const minLabel = formatRaceTimeLabel(pred?.minSec) || "n/a";
+      const maxLabel = formatRaceTimeLabel(pred?.maxSec) || "n/a";
+      const targetLabel = formatRaceTimeLabel(pred?.targetSec) || "n/a";
+      const scoreSpec = Number(distanceDiagnostics?.scores?.specificity);
+      const strengthMin = Number(distanceDiagnostics?.snapshot?.strengthMin ?? strengthPolicyResolved.minutes7d ?? 0);
+      const improving = [];
+      if (scoreSpec >= 75) improving.push("Spezifität höher als 75");
+      if (strengthMin >= Number(strengthPolicyResolved.target || 45)) improving.push("Kraft konsistent");
+      if (Number(distanceDiagnostics?.scores?.longrun) >= 65) improving.push("Longrun im Zielbereich");
+      const slowing = [];
+      if (Number.isFinite(scoreSpec) && scoreSpec < 75) slowing.push(`Specificity ${Math.round(scoreSpec)} (unter Ziel)`);
+      if (strengthMin <= 0) slowing.push("Kraft 0′ diese Woche");
+      addDecisionBlock("ZIELZEIT-PROGNOSE", [
+        `${pred?.distanceLabel || normalizeEventDistance(eventDistance) || "10k"}`,
+        `Basis: EF-Median aus ${racePrediction.sampleCount} vergleichbaren GA-Läufen (letzten ${racePrediction.windowDays} Tage)`,
+        `Geschätzte Zeit: ${minLabel}–${maxLabel} (Mitte: ${targetLabel})`,
+        `VDOT-Schätzung: ${Number.isFinite(pred?.vdotLike) ? pred.vdotLike.toFixed(1) : "n/a"}`,
+        `Hinweis: Prognose basiert auf GA-Tempo — Unsicherheit ${pred?.uncertainty || "±10%"}.`,
+        improving.length ? `Faktoren die das Ergebnis verbessern können: ${improving.join(", ")}.` : null,
+        slowing.length ? `Faktoren die bremsen: ${slowing.join(", ")}.` : null,
+      ]);
+    } else if (racePrediction && racePrediction.reason === "insufficient_samples") {
+      addDecisionBlock("ZIELZEIT-PROGNOSE", ["Zu wenig vergleichbare GA-Läufe für Prognose."]);
+    }
+  }
+
   const bottomLine = resolveBottomLine({
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
