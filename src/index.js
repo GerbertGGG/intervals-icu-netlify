@@ -8034,6 +8034,25 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
     let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
+    const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
+    const isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
+    if (isRaceDayToday) {
+      let efMedRace = null;
+      let vdotMedRace = null;
+      try {
+        efMedRace = computeRecentEfMedian(ctx, day, 28);
+        vdotMedRace = Number.isFinite(efMedRace) ? vdotLikeFromEf(efMedRace) : null;
+      } catch {
+        efMedRace = null;
+        vdotMedRace = null;
+      }
+      dailyReportText = buildRaceDayMinimalReport({
+        eventDistance,
+        vdotMed: vdotMedRace,
+        efMed: efMedRace,
+        weekPlanText: weekPreview?.text || "(Wochenplan nicht verfügbar)",
+      });
+    }
 
     const strengthPolicyResolved = strengthPolicy
       || robustness?.strengthPolicy
@@ -8057,8 +8076,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         : 0,
       eventInDays: eventInDays ?? null,
     };
-    const coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
-    if (coachAnalysis) {
+    const coachAnalysis = isRaceDayToday ? null : await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
+    if (coachAnalysis && !isRaceDayToday) {
       dailyReportText = insertCoachAnalysisAfterHeute(dailyReportText, coachAnalysis);
     }
 
@@ -8926,9 +8945,28 @@ function vdotTo5kPaceSecPerKm(vdot) {
   return predicted5kSec / 5;
 }
 
+function buildRacePaceGuidance(vdotMed, efMed) {
+  const hasEfMedian = Number.isFinite(efMed);
+  const resolvedVdot = Number.isFinite(vdotMed)
+    ? Number(vdotMed)
+    : (hasEfMedian ? vdotLikeFromEf(Number(efMed)) : null);
+  const paceSec = vdotTo5kPaceSecPerKm(resolvedVdot);
+  const plausiblePace = Number.isFinite(paceSec) && paceSec >= 180 && paceSec <= 480;
+  const shouldShowPace = Number.isFinite(paceSec) && (plausiblePace || hasEfMedian);
+  if (!shouldShowPace) return null;
+
+  const displayPaceSec = hasEfMedian ? clamp(Number(paceSec), 150, 480) : Number(paceSec);
+  const predicted5kSec = Math.round(displayPaceSec * 5);
+  const totalMin = Math.floor(predicted5kSec / 60);
+  const totalSec = predicted5kSec % 60;
+  const paceLabel = formatPacePerKm(displayPaceSec);
+  if (!paceLabel) return null;
+  return `Zieltempo: ~${paceLabel.replace(" min/km", "")} min/km (ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit über 5 km)`;
+}
+
 function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
   try {
-    if (!Number.isFinite(eventInDays) || eventInDays < 0 || eventInDays > 1) return "";
+    if (!Number.isFinite(eventInDays) || eventInDays !== 1) return "";
     const dist = normalizeEventDistance(eventDistance) || "10k";
     const distLabel = { "5k": "5k", "10k": "10k", hm: "Halbmarathon", m: "Marathon" }[dist] || dist;
     const lines = [
@@ -8940,23 +8978,10 @@ function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
       "· 2 Min locker auslaufen",
       "",
     ];
-    const hasEfMedian = Number.isFinite(efMed);
-    const resolvedVdot = Number.isFinite(vdotMed)
-      ? Number(vdotMed)
-      : (hasEfMedian ? vdotLikeFromEf(Number(efMed)) : null);
-    const paceSec = vdotTo5kPaceSecPerKm(resolvedVdot);
-    const plausiblePace = Number.isFinite(paceSec) && paceSec >= 180 && paceSec <= 480;
-    const shouldShowPace = Number.isFinite(paceSec) && (plausiblePace || hasEfMedian);
-    if (shouldShowPace) {
-      const displayPaceSec = hasEfMedian ? clamp(Number(paceSec), 150, 480) : Number(paceSec);
-      const predicted5kSec = Math.round(displayPaceSec * 5);
-      const totalMin = Math.floor(predicted5kSec / 60);
-      const totalSec = predicted5kSec % 60;
-      const paceLabel = formatPacePerKm(displayPaceSec);
-      if (paceLabel) {
-        lines.push(`Zieltempo: ~${paceLabel.replace(" min/km", "")} min/km (ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit über 5 km)`);
-        lines.push("");
-      }
+    const paceLine = buildRacePaceGuidance(vdotMed, efMed);
+    if (paceLine) {
+      lines.push(paceLine);
+      lines.push("");
     }
     lines.push("Renntipp: Erste 400m kontrolliert — Zieltempo, nicht schneller. Die letzten 1000m alles geben.");
     lines.push("");
@@ -8967,6 +8992,31 @@ function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
   } catch {
     return "";
   }
+}
+
+function buildRaceDayMinimalReport({ eventDistance, vdotMed, efMed, weekPlanText }) {
+  const dist = normalizeEventDistance(eventDistance) || "5k";
+  const distLabel = { "5k": "5k", "10k": "10k", hm: "Halbmarathon", m: "Marathon" }[dist] || dist;
+  const lines = [
+    `🏁 HEUTE — RENNTAG (${distLabel})`,
+    "",
+    "Aufwärmen (15 Min vor Start):",
+    "· 10 Min locker einlaufen",
+    "· 4–6 × 20s Strides mit voller Pause",
+    "· 2 Min locker auslaufen",
+    "",
+  ];
+  const paceLine = buildRacePaceGuidance(vdotMed, efMed);
+  if (paceLine) {
+    lines.push(paceLine);
+    lines.push("");
+  }
+  lines.push("Tipp: Erste 400m kontrolliert — Zieltempo, nicht schneller. Letzte 1000m alles geben.");
+  lines.push("Danach: 10 Min auslaufen, Beine hochlegen.");
+  lines.push("");
+  lines.push("🗓 WOCHENPLAN");
+  lines.push(weekPlanText || "(Wochenplan nicht verfügbar)");
+  return lines.join("\n");
 }
 
 function sanitizeCoachFact(value, fallback = "keine Angabe") {
@@ -9848,6 +9898,7 @@ function buildComments(
     ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
     : "";
   const fatigueWhyLine = fatigue?.override ? `Rhythmus aktuell unruhig${fatigueReasonSnippet}.` : null;
+  const includeStrengthInWhy = overlayMode !== "POST_RACE_RAMP";
   const gapReasonMap = {
     base: [
       !ignoreRunFloorGap && !taperPriorityWeek && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
@@ -9865,7 +9916,7 @@ function buildComments(
       "Längerer aerober Reiz nicht regelmäßig genug.",
     ],
     robustness: [
-      Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
+      includeStrengthInWhy && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
         ? `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`
         : null,
       "Belastbarkeit noch nicht stabil genug.",
@@ -9889,7 +9940,11 @@ function buildComments(
     }
     if (shortReasons.length >= 3) break;
   }
-  if (shortReasons.length < 3 && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)) {
+  if (
+    includeStrengthInWhy
+    && shortReasons.length < 3
+    && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
+  ) {
     const strengthReason = `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`;
     if (!shortReasons.includes(strengthReason)) shortReasons.push(strengthReason);
   }

@@ -263,6 +263,22 @@ console.log('guardrails ok');
     efMed: 0.05,
   });
   assert.match(efFallback, /Zieltempo: ~/);
+
+  const noToday = __test.buildRaceDayPrepBlock({
+    eventInDays: 0,
+    eventDistance: '10k',
+    vdotMed: 50,
+    efMed: null,
+  });
+  assert.equal(noToday, '');
+
+  const noPast = __test.buildRaceDayPrepBlock({
+    eventInDays: -1,
+    eventDistance: '10k',
+    vdotMed: 50,
+    efMed: null,
+  });
+  assert.equal(noPast, '');
 }
 
 
