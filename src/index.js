@@ -118,9 +118,9 @@ export default {
         return json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400);
       }
 
-      if (!write && debug && !blockStartOverrideIso) {
-        // Dry-run tests with explicit date/range should not silently inherit a persisted block start.
-        // This keeps /sync?date=...&debug=true&write=false predictable without requiring block_start.
+      if (!write && debug && !blockStartOverrideIso && oldest !== newest) {
+        // Dry-run range tests should not silently inherit a persisted block start.
+        // Single-day dry-runs keep persisted context (e.g. yesterday's race) unless block_start is set explicitly.
         blockStartOverrideIso = oldest;
         blockStartOverrideDerivedFromOldest = true;
       }

@@ -72,7 +72,7 @@ Weitere Parameter:
 - `write=true|false`
   - `true`: schreibt Wellness + NOTE-Events
   - `false`: nur Berechnung/Preview
-  - Hinweis: Bei `write=false&debug=true` ohne explizites `block_start` wird bei explizitem Datum/Range automatisch `block_start=oldest` verwendet (vorhersagbare Dry-Run-Simulation).
+  - Hinweis: Bei `write=false&debug=true` ohne explizites `block_start` wird nur bei Mehrtages-Bereichen (`from/to` mit unterschiedlichen Tagen) automatisch `block_start=oldest` verwendet; Einzel-Tag-Dry-Runs behalten den persistierten Kontext (z. B. Wettkampf vom Vortag).
 - `debug=true|false`
   - `true`: synchron, liefert umfangreiches JSON (`patches`, `debug`, `notesPreview`)
   - `false`: asynchron via `waitUntil`, Response sofort
