@@ -1982,6 +1982,22 @@ function computeBikeSubstitutionFactor(weeksToEvent, overlayMode = null) {
   return clamp(raw, 0, 1);
 }
 
+function resolvePostRaceRampWindow(dayIso, blockState) {
+  try {
+    const day = isIsoDate(dayIso) ? dayIso : null;
+    const until = isIsoDate(blockState?.postRaceRampUntilISO) ? blockState.postRaceRampUntilISO : null;
+    const lastEventDate = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
+    if (!day || !until) return { active: false, until, lastEventDate };
+    return {
+      active: day <= until,
+      until,
+      lastEventDate,
+    };
+  } catch {
+    return { active: false, until: null, lastEventDate: null };
+  }
+}
+
 function computeAvg(windowDays, dailyLoads) {
   if (!Array.isArray(dailyLoads) || windowDays <= 0) return 0;
   const slice = dailyLoads.slice(-windowDays);
@@ -7043,32 +7059,69 @@ function formatRaceHistorySection(raceHistory, raceInsights) {
 
 async function buildCoachAnalysis(env, snapshot) {
   if (!env?.AI) return null;
-  const safeSnapshot = {
-    block: ["BASE", "BUILD", "RACE", "RESET"].includes(String(snapshot?.block || "").toUpperCase())
-      ? String(snapshot.block).toUpperCase()
-      : "BASE",
-    weekInBlock: Number.isFinite(Number(snapshot?.weekInBlock)) ? Math.max(1, Math.round(Number(snapshot.weekInBlock))) : 1,
-    todayDecision: sanitizeCoachFact(snapshot?.todayDecision, "GA-Lauf"),
-    efTrendPct: Number.isFinite(Number(snapshot?.efTrendPct)) ? Math.round(Number(snapshot.efTrendPct) * 10) / 10 : null,
-    rampPct: Number.isFinite(Number(snapshot?.rampPct)) ? Math.round(Number(snapshot.rampPct) * 10) / 10 : null,
-    strengthMin7d: Number.isFinite(Number(snapshot?.strengthMin7d)) ? Math.max(0, Math.round(Number(snapshot.strengthMin7d))) : 0,
-    strengthTarget: Number.isFinite(Number(snapshot?.strengthTarget)) ? Math.max(0, Math.round(Number(snapshot.strengthTarget))) : 30,
-    weakStrengthWeeks: Number.isFinite(Number(snapshot?.weakStrengthWeeks)) ? Math.max(0, Math.round(Number(snapshot.weakStrengthWeeks))) : 0,
-    longrunMin: Number.isFinite(Number(snapshot?.longrunMin)) ? Math.max(0, Math.round(Number(snapshot.longrunMin))) : 0,
-    eventInDays: Number.isFinite(Number(snapshot?.eventInDays)) ? Math.max(0, Math.round(Number(snapshot.eventInDays))) : null,
-    raceInsightsFacts: Array.isArray(snapshot?.raceInsightsFacts)
-      ? snapshot.raceInsightsFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
-      : [],
-    raceNextPrepFacts: Array.isArray(snapshot?.raceNextPrepFacts)
-      ? snapshot.raceNextPrepFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
-      : [],
-    raceTimeMin: Number.isFinite(Number(snapshot?.raceTimeMin)) ? Math.max(0, Math.round(Number(snapshot.raceTimeMin) * 10) / 10) : null,
-    racePaceSecPerKm: Number.isFinite(Number(snapshot?.racePaceSecPerKm))
-      ? Math.max(0, Math.round(Number(snapshot.racePaceSecPerKm) * 10) / 10)
-      : null,
-    vdotActual: Number.isFinite(Number(snapshot?.vdotActual)) ? Math.round(Number(snapshot.vdotActual) * 10) / 10 : null,
-    vdotTrend: Number.isFinite(Number(snapshot?.vdotTrend)) ? Math.round(Number(snapshot.vdotTrend) * 10) / 10 : null,
-  };
+  const safeSnapshot = (() => {
+    try {
+      const hasRecentRace = snapshot?.hasRecentRace === true;
+      const parseRaceMetric = (value, decimals = 1) => {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n <= 0) return null;
+        const base = Math.max(0, n);
+        return Math.round(base * 10 ** decimals) / 10 ** decimals;
+      };
+      const raceTimeMin = hasRecentRace ? parseRaceMetric(snapshot?.raceTimeMin, 1) : null;
+      const racePaceSecPerKm = hasRecentRace ? parseRaceMetric(snapshot?.racePaceSecPerKm, 1) : null;
+      const vdotActual = hasRecentRace ? parseRaceMetric(snapshot?.vdotActual, 1) : null;
+      const vdotTrendRaw = Number(snapshot?.vdotTrend);
+      const vdotTrend = hasRecentRace && Number.isFinite(vdotTrendRaw) && vdotTrendRaw !== 0
+        ? Math.round(vdotTrendRaw * 10) / 10
+        : null;
+      return {
+        block: ["BASE", "BUILD", "RACE", "RESET"].includes(String(snapshot?.block || "").toUpperCase())
+          ? String(snapshot.block).toUpperCase()
+          : "BASE",
+        weekInBlock: Number.isFinite(Number(snapshot?.weekInBlock)) ? Math.max(1, Math.round(Number(snapshot.weekInBlock))) : 1,
+        todayDecision: sanitizeCoachFact(snapshot?.todayDecision, "GA-Lauf"),
+        efTrendPct: Number.isFinite(Number(snapshot?.efTrendPct)) ? Math.round(Number(snapshot.efTrendPct) * 10) / 10 : null,
+        rampPct: Number.isFinite(Number(snapshot?.rampPct)) ? Math.round(Number(snapshot.rampPct) * 10) / 10 : null,
+        strengthMin7d: Number.isFinite(Number(snapshot?.strengthMin7d)) ? Math.max(0, Math.round(Number(snapshot.strengthMin7d))) : 0,
+        strengthTarget: Number.isFinite(Number(snapshot?.strengthTarget)) ? Math.max(0, Math.round(Number(snapshot.strengthTarget))) : 30,
+        weakStrengthWeeks: Number.isFinite(Number(snapshot?.weakStrengthWeeks)) ? Math.max(0, Math.round(Number(snapshot.weakStrengthWeeks))) : 0,
+        longrunMin: Number.isFinite(Number(snapshot?.longrunMin)) ? Math.max(0, Math.round(Number(snapshot.longrunMin))) : 0,
+        eventInDays: Number.isFinite(Number(snapshot?.eventInDays)) ? Math.max(0, Math.round(Number(snapshot.eventInDays))) : null,
+        raceInsightsFacts: Array.isArray(snapshot?.raceInsightsFacts)
+          ? snapshot.raceInsightsFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
+          : [],
+        raceNextPrepFacts: Array.isArray(snapshot?.raceNextPrepFacts)
+          ? snapshot.raceNextPrepFacts.map((item) => sanitizeCoachFact(item, "")).filter(Boolean).slice(0, 4)
+          : [],
+        hasRecentRace,
+        raceTimeMin,
+        racePaceSecPerKm,
+        vdotActual,
+        vdotTrend,
+      };
+    } catch {
+      return {
+        block: "BASE",
+        weekInBlock: 1,
+        todayDecision: "GA-Lauf",
+        efTrendPct: null,
+        rampPct: null,
+        strengthMin7d: 0,
+        strengthTarget: 30,
+        weakStrengthWeeks: 0,
+        longrunMin: 0,
+        eventInDays: null,
+        raceInsightsFacts: [],
+        raceNextPrepFacts: [],
+        hasRecentRace: false,
+        raceTimeMin: null,
+        racePaceSecPerKm: null,
+        vdotActual: null,
+        vdotTrend: null,
+      };
+    }
+  })();
   const isRaceDaySnapshot = safeSnapshot.raceTimeMin != null || safeSnapshot.vdotActual != null;
 
   // Fakten vorformulieren damit das Modell nicht halluziniert
@@ -7109,35 +7162,39 @@ async function buildCoachAnalysis(env, snapshot) {
     ? safeSnapshot.raceNextPrepFacts.join(" | ")
     : "keine abgeleiteten Ziele";
 
-  const raceTimeLine = safeSnapshot.raceTimeMin == null ? "n/a" : `${safeSnapshot.raceTimeMin.toFixed(1)} Min`;
-  const racePaceLine = formatPacePerKm(safeSnapshot.racePaceSecPerKm) || "n/a";
-  const vdotActualLine = safeSnapshot.vdotActual == null ? "n/a" : safeSnapshot.vdotActual.toFixed(1);
+  const raceTimeLine = safeSnapshot.raceTimeMin == null ? null : `${safeSnapshot.raceTimeMin.toFixed(1)} Min`;
+  const racePaceLine = safeSnapshot.racePaceSecPerKm == null ? null : (formatPacePerKm(safeSnapshot.racePaceSecPerKm) || null);
+  const vdotActualLine = safeSnapshot.vdotActual == null ? null : safeSnapshot.vdotActual.toFixed(1);
   const vdotTrendLine = safeSnapshot.vdotTrend == null
-    ? "n/a"
+    ? null
     : `${safeSnapshot.vdotTrend > 0 ? "+" : ""}${safeSnapshot.vdotTrend.toFixed(1)} (aus EF-Trend geschätzt)`;
   const promptGoal = isRaceDaySnapshot
     ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
     : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte.";
 
-  const prompt = `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. ${promptGoal} Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.
+  const promptLines = [
+    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. ${promptGoal} Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
+    "",
+    "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
+    "",
+    "Fakten:",
+    `- Block: ${safeSnapshot.block}, Woche ${safeSnapshot.weekInBlock} im Block`,
+    `- Heutige Empfehlung: ${safeSnapshot.todayDecision}`,
+    `- EF-Trend 28 Tage: ${efStatus}`,
+    `- 7-Tage-Last vs. Vorwoche: ${lastStatus}`,
+    `- Kraft diese Woche: ${kraftStatus}`,
+    `- Kraftmuster: ${kraftMuster}`,
+    `- Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min`,
+    `- Nächster Wettkampf: ${wettkampf}`,
+    `- Erkenntnisse aus letzten Rennen: ${raceInsightsFactLine}`,
+    `- Ziele für aktuelle Vorbereitung: ${raceNextPrepFactLine}`,
+  ];
+  if (raceTimeLine) promptLines.push(`- Rennergebnis Zeit: ${raceTimeLine}`);
+  if (racePaceLine) promptLines.push(`- Rennpace: ${racePaceLine}`);
+  if (vdotActualLine) promptLines.push(`- VDOT aktuell: ${vdotActualLine}`);
+  if (vdotTrendLine) promptLines.push(`- VDOT-Trend: ${vdotTrendLine}`);
 
-Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.
-
-Fakten:
-- Block: ${safeSnapshot.block}, Woche ${safeSnapshot.weekInBlock} im Block
-- Heutige Empfehlung: ${safeSnapshot.todayDecision}
-- EF-Trend 28 Tage: ${efStatus}
-- 7-Tage-Last vs. Vorwoche: ${lastStatus}
-- Kraft diese Woche: ${kraftStatus}
-- Kraftmuster: ${kraftMuster}
-- Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min
-- Nächster Wettkampf: ${wettkampf}
-- Erkenntnisse aus letzten Rennen: ${raceInsightsFactLine}
-- Ziele für aktuelle Vorbereitung: ${raceNextPrepFactLine}
-- Rennergebnis Zeit: ${raceTimeLine}
-- Rennpace: ${racePaceLine}
-- VDOT aktuell: ${vdotActualLine}
-- VDOT-Trend: ${vdotTrendLine}`;
+  const prompt = promptLines.join("\n");
 
   try {
     const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
@@ -7312,6 +7369,12 @@ function buildWeeklyReview(ctx, todayIso, blockState, weekMemories) {
 function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorState, weekMemories, manualFocus) {
   try {
     if (!isMondayIso(todayIso)) return null;
+    let postRaceWindowActive = false;
+    try {
+      postRaceWindowActive = resolvePostRaceRampWindow(todayIso, blockState).active;
+    } catch {
+      postRaceWindowActive = false;
+    }
     const longRunPlan = computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance);
     const longrunTarget = safeRound(longRunPlan?.plannedMin);
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
@@ -7332,16 +7395,17 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       String(blockState?.block || "").toUpperCase() === "BASE" &&
       String(blockState?.previousBlock || "").toUpperCase() === "RACE";
     const postRaceRecoveryFocus =
+      postRaceWindowActive ||
       runFloorState?.overlayMode === "POST_RACE_RAMP" ||
       (inFreshBaseAfterRace && Number(blockState?.timeInBlockDays ?? 0) <= 7);
 
-    if (!manualFocus) {
+    if (postRaceRecoveryFocus) {
+      primaryFocus = "post_race_recovery";
+      reason = "Post-Race-Fenster aktiv — diese Woche zählt nur Erholung/Wiederaufbau, kein Frequenzdruck.";
+    } else if (!manualFocus) {
       if (taperPriority) {
         primaryFocus = "taper";
         reason = "Taper-Woche vor Event — Frische hat Vorrang vor Frequenz/Volumen.";
-      } else if (postRaceRecoveryFocus) {
-        primaryFocus = "post_race_recovery";
-        reason = "Frischer Übergang nach Rennen — zuerst Erholung/Wiederaufbau statt Frequenzdruck.";
       } else if (hasWeakHistory) {
         primaryFocus = diagnosedPrimaryGap === "base" ? "basis" : "frequenz";
         reason = "Noch keine belastbare Verlaufshistorie — konservativ mit Basis/Frequenz starten.";
@@ -7825,6 +7889,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     let bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
+    try {
+      const postRaceWindow = resolvePostRaceRampWindow(day, previousBlockState);
+      if (postRaceWindow.active) bikeSubFactor = 0.4;
+    } catch {
+      // keep default factor
+    }
     const longRun14d = computeLongRunSummary14d(ctx, day);
     const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
     const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
@@ -8009,6 +8079,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
     blockState.lastEventDate = runFloorState.lastEventDate;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
+    try {
+      const postRaceWindow = resolvePostRaceRampWindow(day, blockState);
+      if (postRaceWindow.active) bikeSubFactor = 0.4;
+    } catch {
+      // keep computed overlay/week-based factor
+    }
 
     const strengthPolicyBase = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const strengthPolicy = applyStrengthPolicyOverlay(strengthPolicyBase, {
@@ -8421,13 +8497,39 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
     let coachAnalysis = null;
     try {
-      const raceDistanceKm = raceActivityToday ? extractRunDistanceKm(raceActivityToday) : null;
-      const raceTimeSec = raceActivityToday ? Number(raceActivityToday?.moving_time ?? raceActivityToday?.elapsed_time ?? 0) : null;
-      const racePaceSecPerKm = raceDistanceKm > 0 && Number.isFinite(raceTimeSec) ? raceTimeSec / raceDistanceKm : null;
+      let latestRaceDateIso = null;
+      let latestRaceEntry = null;
+      try {
+        if (raceActivityToday) {
+          latestRaceDateIso = day;
+        } else {
+          const raceHistoryForCoach = await loadRaceHistory(env);
+          latestRaceEntry = raceHistoryForCoach?.[0] || null;
+          const latestHistoryDate = String(latestRaceEntry?.date || "");
+          latestRaceDateIso = isIsoDate(latestHistoryDate) ? latestHistoryDate : null;
+        }
+      } catch {
+        latestRaceDateIso = raceActivityToday ? day : null;
+      }
+      const hasRecentRace = Boolean(
+        latestRaceDateIso &&
+        isIsoDate(latestRaceDateIso) &&
+        daysBetween(latestRaceDateIso, day) >= 0 &&
+        daysBetween(latestRaceDateIso, day) <= 7
+      );
+      const raceDistanceKm = hasRecentRace && raceActivityToday ? extractRunDistanceKm(raceActivityToday) : null;
+      const raceTimeSec = hasRecentRace && raceActivityToday ? Number(raceActivityToday?.moving_time ?? raceActivityToday?.elapsed_time ?? 0) : null;
+      const racePaceSecPerKmLive = raceDistanceKm > 0 && Number.isFinite(raceTimeSec) ? raceTimeSec / raceDistanceKm : null;
       const raceDistanceM = Number.isFinite(raceDistanceKm) ? Math.round(raceDistanceKm * 1000) : null;
-      const vdotActual = Number.isFinite(raceDistanceM) && Number.isFinite(raceTimeSec)
+      const vdotActualLive = Number.isFinite(raceDistanceM) && Number.isFinite(raceTimeSec)
         ? estimateVdotFromRacePerformance(raceDistanceM, raceTimeSec)
         : null;
+      const raceTimeMinFromHistory = Number.isFinite(Number(latestRaceEntry?.totalTimeMin)) ? Number(latestRaceEntry.totalTimeMin) : null;
+      const racePaceFromHistory = Number.isFinite(Number(latestRaceEntry?.paceSecPerKm)) ? Number(latestRaceEntry.paceSecPerKm) : null;
+      const vdotActualFromHistory = Number.isFinite(Number(latestRaceEntry?.vdotActual)) ? Number(latestRaceEntry.vdotActual) : null;
+      const raceTimeMin = Number.isFinite(raceTimeSec) ? raceTimeSec / 60 : raceTimeMinFromHistory;
+      const racePaceSecPerKm = Number.isFinite(racePaceSecPerKmLive) ? racePaceSecPerKmLive : racePaceFromHistory;
+      const vdotActual = Number.isFinite(vdotActualLive) ? vdotActualLive : vdotActualFromHistory;
       const efTrendPct = trend?.dv != null ? Math.round(trend.dv * 10) / 10 : null;
       const coachSnapshot = {
         block: blockState?.block ?? "BASE",
@@ -8447,10 +8549,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         eventInDays: eventInDays ?? null,
         raceInsightsFacts: Array.isArray(raceInsights?.insights) ? raceInsights.insights : [],
         raceNextPrepFacts: Array.isArray(raceInsights?.nextPrep) ? raceInsights.nextPrep : [],
-        raceTimeMin: Number.isFinite(raceTimeSec) ? raceTimeSec / 60 : null,
-        racePaceSecPerKm,
-        vdotActual,
-        vdotTrend: estimateVdotTrendFromEfTrend(vdotActual, efTrendPct),
+        hasRecentRace,
+        raceTimeMin: hasRecentRace ? raceTimeMin : null,
+        racePaceSecPerKm: hasRecentRace ? racePaceSecPerKm : null,
+        vdotActual: hasRecentRace ? vdotActual : null,
+        vdotTrend: hasRecentRace ? estimateVdotTrendFromEfTrend(vdotActual, efTrendPct) : null,
       };
       coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
     } catch {
@@ -9962,8 +10065,19 @@ function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
   return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
 }
 
-function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL" }) {
-  if (overlayMode === "POST_RACE_RAMP") {
+function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL", dayIso = null, postRaceRampUntilISO = null, lastEventDate = null }) {
+  let postRaceWindowActive = false;
+  try {
+    const postRaceWindow = resolvePostRaceRampWindow(dayIso, {
+      postRaceRampUntilISO,
+      lastEventDate,
+    });
+    postRaceWindowActive = postRaceWindow.active;
+  } catch {
+    postRaceWindowActive = false;
+  }
+  if (overlayMode === "POST_RACE_RAMP" || postRaceWindowActive) {
+    const untilText = isIsoDate(postRaceRampUntilISO) ? postRaceRampUntilISO : "n/a";
     return {
       bikeAllowed: true,
       easyAllowed: true,
@@ -9972,7 +10086,7 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
       longrunAllowed: false,
       maxReplaceableWeeklySharePct: 0,
       practicalHint: "Post-Race aktiv erholen: 1–2 sehr lockere Rad-Einheiten ergänzend, Läufe nur wenn Beine bereit.",
-      summaryLine: "Bike-Wochenregel: Post-Race Ramp aktiv — Rad nur ergänzend als aktive Erholung (Faktor 0,40), kein Laufersatz.",
+      summaryLine: `Bike-Wochenregel: Rad als Crosstraining empfohlen (Post-Race Erholung, bis ${untilText}).`,
       recommendationLine:
         "Post-Race Ramp: Rad als lockeres Crosstraining nutzen, aber nicht als Ersatz für Laufpflichten/RunFloor rechnen; Key und Longrun bleiben laufspezifisch.",
     };
@@ -10198,7 +10312,14 @@ function buildComments(
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
-  const bikeWeeklyRule = buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode });
+  const bikeWeeklyRule = buildBikeWeeklyRule({
+    bikeSubFactor,
+    weeksToEvent,
+    overlayMode,
+    dayIso: todayIso,
+    postRaceRampUntilISO: blockState?.postRaceRampUntilISO ?? runFloorState?.postRaceRampUntilISO ?? null,
+    lastEventDate: blockState?.lastEventDate ?? runFloorState?.lastEventDate ?? null,
+  });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
