@@ -966,6 +966,7 @@ const TRANSITION_BIKE_EQ = {
   startFactor: 0.2,
   endFactor: 0.0,
 };
+const BIKE_SUB_FACTOR_NO_EVENT = 0.4;
 
 const PREPLAN_RUN_SHARE = {
   min: 0.5,
@@ -1819,7 +1820,7 @@ function isARaceCategory(category) {
   const compact = cat.replace(/[^A-Z0-9]/g, "");
 
   // Intervals kann je nach Quelle unterschiedliche Schreibweisen liefern.
-  // Wir berücksichtigen bewusst NUR A-Rennen.
+  // Bewusst NUR A-Rennen (kein B/C) für weeksToEvent-Planung.
   return (
     cat === "RACE_A" ||
     cat === "A_RACE" ||
@@ -1829,6 +1830,33 @@ function isARaceCategory(category) {
     compact === "RACEA" ||
     compact === "ARACE"
   );
+}
+
+function isARaceEvent(event) {
+  if (!event || typeof event !== "object") return false;
+  if (isARaceCategory(event?.category)) return true;
+
+  // Fallback: manche Quellen liefern "A" nicht in category,
+  // sondern in separaten Prioritätsfeldern.
+  const priorityFields = [
+    event?.priority,
+    event?.racePriority,
+    event?.race_priority,
+    event?.raceCategory,
+    event?.race_category,
+    event?.importance,
+    event?.targetLevel,
+    event?.goalPriority,
+  ];
+  const hasAPriority = priorityFields
+    .map((v) => normalizeEventCategory(v))
+    .some((v) => v === "A" || v === "RACE_A" || v === "A_RACE" || v === "A-RACE");
+  if (!hasAPriority) return false;
+
+  const raceSignals = [event?.type, event?.eventType, event?.event_type, event?.discipline]
+    .map((v) => normalizeEventCategory(v))
+    .some((v) => v === "RACE" || v.includes("RACE"));
+  return raceSignals;
 }
 
 function isLifeEventCategory(category) {
@@ -1960,7 +1988,7 @@ function computeTaperFactor(eventInDays, taperStartDays) {
 
 function computeBikeSubstitutionFactor(weeksToEvent, overlayMode = null) {
   if (overlayMode === "POST_RACE_RAMP") return 0.4;
-  if (!Number.isFinite(weeksToEvent)) return 0;
+  if (!Number.isFinite(weeksToEvent)) return BIKE_SUB_FACTOR_NO_EVENT;
 
   if (weeksToEvent >= TRANSITION_BIKE_EQ.prePlanWeeks) {
     return clamp(TRANSITION_BIKE_EQ.prePlanFactor, 0, 1);
@@ -7486,7 +7514,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
         "Key nur wenn Longrun sicher eingeplant",
       ],
       frequenz: [
-        "Mind. 4 Läufe diese Woche — lieber kürzer als ausfallen",
+        "2–3 Läufe diese Woche reichen — lieber kürzer als ausfallen",
         "Jeden zweiten Tag laufen, Pausen strategisch",
         "Key erst ab 3+ Läufen in der Woche",
       ],
@@ -12109,7 +12137,7 @@ async function computeDetectiveNote(
 
   const weeks = Math.max(1, windowDays / 7);
   const nextRace = (events || [])
-    .filter((event) => isARaceCategory(event?.category))
+    .filter((event) => isARaceEvent(event))
     .map((event) => ({
       iso: String(event?.start_date_local || event?.start_date || "").slice(0, 10),
       event,
@@ -13939,7 +13967,7 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
   const events = Array.isArray(prefetchedEvents)
     ? prefetchedEvents
     : await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
-  const races = (events || []).filter((e) => isARaceCategory(e?.category));
+  const races = (events || []).filter((e) => isARaceEvent(e));
   const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
 
   const activeLifeEvents = (events || []).filter(
@@ -14398,7 +14426,7 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
   const payload = await res.json();
   const events = Array.isArray(payload) ? payload : Array.isArray(payload?.events) ? payload.events : [];
 
-  const races = events.filter((e) => isARaceCategory(e?.category));
+  const races = events.filter((e) => isARaceEvent(e));
 
   console.log("EVENT_DEBUG", JSON.stringify({
     url,
