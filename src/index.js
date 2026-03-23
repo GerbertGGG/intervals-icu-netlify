@@ -4275,10 +4275,14 @@ function classifyIntensityCategory(a, eventDistance) {
   return "easy";
 }
 
-function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance) {
+function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance, blockStartIso = null) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const effectiveStartIso =
+    isIsoDate(blockStartIso) && blockStartIso > startIso
+      ? blockStartIso
+      : startIso;
 
   let easyMinutes = 0;
   let midMinutes = 0;
@@ -4287,7 +4291,7 @@ function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventD
 
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
-    if (!d || d < startIso || d >= endIso || !isRun(a)) continue;
+    if (!d || d < effectiveStartIso || d >= endIso || !isRun(a)) continue;
     const minutes = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
     if (!(minutes > 0)) continue;
 
@@ -4326,7 +4330,7 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
 
   const lookbackDays = Math.max(28, lookbackDaysRaw);
 
-  const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance);
+  const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance, blockStartIso);
 
   const hasData = (metrics?.totalMinutes ?? 0) > 0;
   const easyShare = metrics?.easyShare;
