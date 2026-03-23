@@ -1662,14 +1662,15 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek) {
       ? getStrengthSessionForDay(blockState, normalizedStrengthCount + 1)
       : null;
     const cycleWeekDisplay = Number(sessionA?.cycleWeek) + 1 || 1;
+    const fromAddress = String(env?.RESEND_FROM_EMAIL || "noreply@resend.dev").trim() || "noreply@resend.dev";
     const payload = {
-      from: "Training <onboarding@resend.dev>",
+      from: `Training <${fromAddress}>`,
       to: "Markushausdorf@web.de",
       subject: `💪 Kraftplan KW ${cycleWeekDisplay}/4 — ${String(blockState?.block || "BASE")}`,
       html: buildStrengthMailHtml(sessionA, sessionB, blockState),
     };
     if (!payload.html) return;
-    await fetch("https://api.resend.com/emails", {
+    const result = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1677,8 +1678,12 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek) {
       },
       body: JSON.stringify(payload),
     });
-  } catch {
-    // never throw: mail is best-effort only
+    if (!result.ok) {
+      const text = await result.text().catch(() => "");
+      console.warn("Resend API error:", result.status, text.slice(0, 200));
+    }
+  } catch (err) {
+    console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
   }
 }
 
@@ -1953,7 +1958,8 @@ function computeTaperFactor(eventInDays, taperStartDays) {
   return 0.6 + ratio * (0.9 - 0.6);
 }
 
-function computeBikeSubstitutionFactor(weeksToEvent) {
+function computeBikeSubstitutionFactor(weeksToEvent, overlayMode = null) {
+  if (overlayMode === "POST_RACE_RAMP") return 0.4;
   if (!Number.isFinite(weeksToEvent)) return 0;
 
   if (weeksToEvent >= TRANSITION_BIKE_EQ.prePlanWeeks) {
@@ -7322,11 +7328,20 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
     const hasWeakHistory = !latest;
 
     const taperPriority = runFloorState?.overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
+    const inFreshBaseAfterRace =
+      String(blockState?.block || "").toUpperCase() === "BASE" &&
+      String(blockState?.previousBlock || "").toUpperCase() === "RACE";
+    const postRaceRecoveryFocus =
+      runFloorState?.overlayMode === "POST_RACE_RAMP" ||
+      (inFreshBaseAfterRace && Number(blockState?.timeInBlockDays ?? 0) <= 7);
 
     if (!manualFocus) {
       if (taperPriority) {
         primaryFocus = "taper";
         reason = "Taper-Woche vor Event — Frische hat Vorrang vor Frequenz/Volumen.";
+      } else if (postRaceRecoveryFocus) {
+        primaryFocus = "post_race_recovery";
+        reason = "Frischer Übergang nach Rennen — zuerst Erholung/Wiederaufbau statt Frequenzdruck.";
       } else if (hasWeakHistory) {
         primaryFocus = diagnosedPrimaryGap === "base" ? "basis" : "frequenz";
         reason = "Noch keine belastbare Verlaufshistorie — konservativ mit Basis/Frequenz starten.";
@@ -7345,7 +7360,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       } else if (latest && latest.strength.totalMinutes < strengthTarget * 0.5 && strengthPattern) {
         primaryFocus = "kraft";
         reason = "Kraftdefizit war zuletzt klar und wiederholt sichtbar.";
-      } else if (latest && latest.runs.count < 3) {
+      } else if (latest && latest.runs.count < 3 && Number(blockState?.timeInBlockDays ?? 0) > 14) {
         primaryFocus = "frequenz";
         reason = "Zu wenige Läufe in der letzten Woche schwächen die Basis.";
       } else if (latest && latest.runs.longestMinutes < longrunTarget * 0.8) {
@@ -7398,6 +7413,11 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
         "Key nur als Aktivierung (Mi), sonst locker/kurz",
         "Kein Longrun diese Woche (Wettkampf ≤7 Tage)",
       ],
+      post_race_recovery: [
+        "Erst vollständig erholen — kein Druck diese Woche",
+        "2–3 kurze lockere Läufe wenn Beine bereit",
+        "Kraft frühestens ab Tag 3 nach Rennen",
+      ],
     };
     const [p1, p2, p3] = mapping[primaryFocus] || mapping.basis;
     const focusLabel = {
@@ -7408,6 +7428,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       spezifik: "Spezifik",
       basis: "Basis",
       taper: "Taper",
+      post_race_recovery: "Erholung & Wiederaufbau",
     }[primaryFocus] || "Basis";
 
     const extraHint = !latest ? " Noch keine Verlaufsdaten." : "";
@@ -7803,7 +7824,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
-    const bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
+    let bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
     const longRun14d = computeLongRunSummary14d(ctx, day);
     const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
     const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
@@ -7961,6 +7982,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
       recentHolidayEvent: modeInfo?.recentHolidayEvent || null,
     });
+    bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent, runFloorState?.overlayMode);
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
       policy = {
@@ -8588,7 +8610,9 @@ Fehler: ${String(e?.message ?? e)}`;
   }
 
   if (write && isMondayIso(oldest)) {
-    sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch(() => {});
+    sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
+      console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
+    });
   }
 
   return {
@@ -9928,14 +9952,31 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
-function buildBikeAllowanceLine({ bikeSubFactor }) {
+function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
+  if (overlayMode === "POST_RACE_RAMP") {
+    return "Rad als Crosstraining erlaubt (Post-Race, Faktor 0.4) — kein Laufersatz, ergänzend.";
+  }
   const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
   const allowed = factor > 0;
   const factorPct = Math.round(factor * 100);
   return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
 }
 
-function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent }) {
+function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL" }) {
+  if (overlayMode === "POST_RACE_RAMP") {
+    return {
+      bikeAllowed: true,
+      easyAllowed: true,
+      gaAllowed: false,
+      keyAllowed: false,
+      longrunAllowed: false,
+      maxReplaceableWeeklySharePct: 0,
+      practicalHint: "Post-Race aktiv erholen: 1–2 sehr lockere Rad-Einheiten ergänzend, Läufe nur wenn Beine bereit.",
+      summaryLine: "Bike-Wochenregel: Post-Race Ramp aktiv — Rad nur ergänzend als aktive Erholung (Faktor 0,40), kein Laufersatz.",
+      recommendationLine:
+        "Post-Race Ramp: Rad als lockeres Crosstraining nutzen, aber nicht als Ersatz für Laufpflichten/RunFloor rechnen; Key und Longrun bleiben laufspezifisch.",
+    };
+  }
   const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
   const bikeAllowed = factor > 0;
   const easyAllowed = bikeAllowed;
@@ -10156,8 +10197,8 @@ function buildComments(
     explicitSession: explicitSessionText,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
-  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor });
-  const bikeWeeklyRule = buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent });
+  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
+  const bikeWeeklyRule = buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
@@ -11544,7 +11585,10 @@ function buildDetectiveWhyInsights(current, previous) {
     : previous.week;
 
   return {
-    title: `Warum (Vergleich zu ${previousWeekLabel})`,
+    title: `Vergleich zur Vorwoche (${previousWeekLabel})`,
+    loadDeltaPct: loadPct,
+    runFreqDelta,
+    longrunDelta: longDelta,
     improvements,
     regressions,
     context,
@@ -11556,7 +11600,13 @@ function buildDetectiveWhyInsights(current, previous) {
 function appendWhySection(lines, insights) {
   if (!insights) return;
   lines.push("");
-  lines.push(insights.title);
+  lines.push(insights.title || "Vergleich zur Vorwoche");
+  if (Number.isFinite(insights?.loadDeltaPct) || Number.isFinite(insights?.runFreqDelta) || Number.isFinite(insights?.longrunDelta)) {
+    const loadText = Number.isFinite(insights?.loadDeltaPct) ? `${insights.loadDeltaPct >= 0 ? "+" : ""}${insights.loadDeltaPct.toFixed(0)}%` : "n/a";
+    const freqText = Number.isFinite(insights?.runFreqDelta) ? `${insights.runFreqDelta >= 0 ? "+" : ""}${insights.runFreqDelta.toFixed(1)}/Woche` : "n/a";
+    const longText = Number.isFinite(insights?.longrunDelta) ? `${insights.longrunDelta >= 0 ? "+" : ""}${insights.longrunDelta.toFixed(1)}/Woche` : "n/a";
+    lines.push(`- Delta Load: ${loadText} | Delta Frequenz: ${freqText} | Delta Longrun: ${longText}`);
+  }
   lines.push(`- Kurz gesagt: ${buildWhySummary(insights)}.`);
   if (!insights.improvements.length && !insights.regressions.length) {
     lines.push("- Keine klaren Veränderungen.");
@@ -12034,70 +12084,19 @@ async function computeDetectiveNote(
     actions.push("Für Diagnose: 1×/Woche steady GA 45–60min (oder bench:GA45) auf möglichst ähnlicher Strecke.");
   }
 
-  // Key type distribution (if tagged)
-  const keyTypeCounts = countBy(keyRuns.map((x) => x.keyType).filter(Boolean));
-  const keyTypeLine = Object.keys(keyTypeCounts).length
-    ? `Key-Typen: ${Object.entries(keyTypeCounts)
-        .map(([k, v]) => `${k}=${v}`)
-        .join(", ")}`
-    : "Key-Typen: n/a (keine key:<type> Untertags genutzt)";
-
   // Compose note
   const title = `🕵️‍♂️ Montags-Report (${windowDays}T)`;
   const lines = [];
   lines.push(title);
   lines.push("");
-  lines.push("Struktur (Trainingslehre):");
-  if (hasActiveLifeEventAtWindowEnd) {
-    lines.push(
-      `- Verfügbarkeit: eingeschränkt (aktives LifeEvent: ${Object.entries(activeLifeEventSummary)
-        .map(([category, count]) => `${getLifeEventCategoryLabel(category)}${count > 1 ? ` ×${count}` : ""}`)
-        .join(" · ")})`
-    );
-  } else if (hasLifeEvent) {
-    lines.push(
-      `- Verfügbarkeit: normal (aktuell kein LifeEvent; im Fenster: ${Object.entries(lifeEventSummary)
-        .map(([category, days]) => `${getLifeEventCategoryLabel(category)} ${days}d`)
-        .join(" · ")})`
-    );
-  } else {
-    lines.push("- Verfügbarkeit: normal (kein Urlaub/krank/verletzt im Fenster)");
-  }
-  lines.push(`- Läufe: ${totalRuns} (Ø ${runsPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`- Minuten: ${Math.round(totalMin)} | Load: ${Math.round(totalLoad)} (~${Math.round(weeklyLoad)}/Woche)`);
-  lines.push(`- Longruns (≥60min): ${longRuns.length} (Ø ${longPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`- Key (key:*): ${keyRuns.length} (Ø ${keyPerWeek.toFixed(1)}/Woche)`);
-  lines.push(`- GA (≥30min, nicht key): ${gaRuns.length}`);
-  lines.push(`- Kurz (<30min): ${shortRuns.length}`);
-  lines.push(`- ${keyTypeLine}`);
-  lines.push("");
-  lines.push("Belastungsbild:");
-  lines.push(`- Monotony: ${isFiniteNumber(monotony) ? monotony.toFixed(2) : "n/a"} | Strain: ${isFiniteNumber(strain) ? strain.toFixed(0) : "n/a"}`);
-  lines.push(`- Basis: tägliche Run-Loads inkl. 0-Tage (Fenster: ${windowDays} Tage, nur Run).`);
+  lines.push(
+    `Fenster: ${startIso}–${endIsoInclusive} | Läufe ${totalRuns} | Load/Woche ~${Math.round(weeklyLoad)} | Frequenz ${runsPerWeek.toFixed(1)}/Woche`
+  );
   lines.push("");
 
   lines.push("Fundstücke:");
   if (!findings.length) lines.push("- Keine klaren strukturellen Probleme gefunden.");
   else for (const f of findings.slice(0, 8)) lines.push(`- ${f}`);
-
-  lines.push("");
-  if (taperRaceWeek) {
-    actions.unshift(`Kein Longrun diese Woche — Wettkampf in ${eventInDays} Tagen.`);
-  }
-  lines.push("Nächste Schritte:");
-  const filteredActions = taperRaceWeek
-    ? uniq(actions).filter((line) => !/longrun/i.test(String(line || "")))
-    : uniq(actions);
-  if (!filteredActions.length) lines.push("- Struktur beibehalten, Bench/GA comparable weiter sammeln.");
-  else for (const a of filteredActions.slice(0, 8)) lines.push(`- ${a}`);
-
-  const miniPlan = buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLongrun: taperRaceWeek });
-  lines.push("");
-  lines.push("Konkrete nächste Woche (Mini-Plan):");
-  lines.push(
-    `- Zielwerte: ${miniPlan.runTarget} Läufe/Woche | ${miniPlan.loadTarget} Run-Load/Woche | ${taperRaceWeek ? "Longrun: diese Woche bewusst ausgesetzt (Taper)" : `Longrun: Mindestziel ${miniPlan.longrunMinTarget}, Entwicklung ${miniPlan.longrunDevelopmentTarget}`}`
-  );
-  lines.push(`- Beispielwoche: ${miniPlan.exampleWeek.join(" · ")}`);
 
   const summary = {
     week: mondayIso,
