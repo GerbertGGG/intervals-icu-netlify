@@ -11,6 +11,7 @@
 //   /sync?date=YYYY-MM-DD&write=true&debug=true
 //   /sync?days=14&write=true&debug=true
 //   /sync?from=YYYY-MM-DD&to=YYYY-MM-DD&write=true&debug=true
+//   /test-strength-mail?dry=true
 // Optional:
 //   &warmup_skip=600
 
@@ -189,6 +190,43 @@ export default {
       }
     }
 
+    if (url.pathname === "/test-strength-mail") {
+      try {
+        const dryRun = parseBooleanParam(url.searchParams, "dry");
+        const blockRaw = String(url.searchParams.get("block") || "BASE").toUpperCase();
+        const allowedBlocks = new Set(["BASE", "BUILD", "RACE", "RESET"]);
+        const block = allowedBlocks.has(blockRaw) ? blockRaw : "BASE";
+        const strengthCountThisWeek = clampInt(url.searchParams.get("strength_count") ?? "0", 0, 20);
+        const toOverride = String(url.searchParams.get("to") || "").trim() || null;
+
+        const result = await sendWeeklyStrengthMail(
+          env,
+          { block },
+          strengthCountThisWeek,
+          { dryRun, toOverride }
+        );
+        return json({
+          ok: true,
+          endpoint: "/test-strength-mail",
+          dryRun,
+          block,
+          strengthCountThisWeek,
+          ...(toOverride ? { toOverride } : {}),
+          mail: result,
+        });
+      } catch (e) {
+        return json(
+          {
+            ok: false,
+            error: "Worker exception",
+            message: String(e?.message ?? e),
+            stack: String(e?.stack ?? ""),
+          },
+          500
+        );
+      }
+    }
+
     return new Response("Not found", { status: 404 });
   },
 
@@ -206,7 +244,8 @@ export default {
     const today = isoDate(new Date());
     const runMetricsOnly = true;
     const berlinHour = getBerlinHourFromScheduledEvent(event);
-    const isSevenAmBaselineRun = berlinHour === 7;
+    const berlinMinute = getBerlinMinuteFromScheduledEvent(event);
+    const isSevenAmBaselineRun = berlinHour === 7 && berlinMinute === 0;
 
     ctx.waitUntil(
       (async () => {
@@ -539,6 +578,19 @@ function getBerlinHourFromScheduledEvent(event) {
     }).format(new Date(t))
   );
   return Number.isFinite(hour) ? hour : null;
+}
+
+function getBerlinMinuteFromScheduledEvent(event) {
+  const t = Number(event?.scheduledTime);
+  if (!Number.isFinite(t)) return null;
+  const minute = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Europe/Berlin",
+    }).format(new Date(t))
+  );
+  return Number.isFinite(minute) ? minute : null;
 }
 
 function isScheduledWindowBerlin(event) {
@@ -1652,9 +1704,9 @@ function buildStrengthMailHtml(sessionA, sessionB, blockState) {
   }
 }
 
-async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek) {
+async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, options = {}) {
   try {
-    if (!env?.RESEND_API_KEY) return;
+    if (!env?.RESEND_API_KEY) return { ok: false, skipped: "missing_resend_api_key" };
     const normalizedStrengthCount = Math.max(0, Math.floor(Number(strengthCountThisWeek) || 0));
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const sessionA = getStrengthSessionForDay(blockState, normalizedStrengthCount);
@@ -1663,13 +1715,23 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek) {
       : null;
     const cycleWeekDisplay = Number(sessionA?.cycleWeek) + 1 || 1;
     const fromAddress = String(env?.RESEND_FROM_EMAIL || "noreply@resend.dev").trim() || "noreply@resend.dev";
+    const toAddress = String(options?.toOverride || env?.RESEND_TO_EMAIL || "Markushausdorf@web.de").trim() || "Markushausdorf@web.de";
     const payload = {
       from: `Training <${fromAddress}>`,
-      to: "Markushausdorf@web.de",
+      to: toAddress,
       subject: `💪 Kraftplan KW ${cycleWeekDisplay}/4 — ${String(blockState?.block || "BASE")}`,
       html: buildStrengthMailHtml(sessionA, sessionB, blockState),
     };
-    if (!payload.html) return;
+    if (!payload.html) return { ok: false, skipped: "empty_html", to: toAddress };
+    if (options?.dryRun) {
+      return {
+        ok: true,
+        dryRun: true,
+        to: toAddress,
+        from: payload.from,
+        subject: payload.subject,
+      };
+    }
     const result = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -1681,9 +1743,12 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek) {
     if (!result.ok) {
       const text = await result.text().catch(() => "");
       console.warn("Resend API error:", result.status, text.slice(0, 200));
+      return { ok: false, status: result.status, error: text.slice(0, 200), to: toAddress };
     }
+    return { ok: true, sent: true, to: toAddress };
   } catch (err) {
     console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
+    return { ok: false, error: String(err?.message ?? err) };
   }
 }
 
