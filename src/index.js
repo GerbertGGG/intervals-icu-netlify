@@ -7738,6 +7738,22 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         previousBlockState = await getPersistedBlockState(ctx, env, day);
       }
     }
+    let savedPostRaceRampUntilISO = null;
+    let savedLastEventDate = null;
+    try {
+      savedPostRaceRampUntilISO =
+        blockStartOverrideDerivedFromOldest &&
+        isIsoDate(previousBlockState?.postRaceRampUntilISO) &&
+        previousBlockState.postRaceRampUntilISO >= day
+          ? previousBlockState.postRaceRampUntilISO
+          : null;
+      savedLastEventDate = savedPostRaceRampUntilISO
+        ? (previousBlockState?.lastEventDate ?? null)
+        : null;
+    } catch {
+      savedPostRaceRampUntilISO = null;
+      savedLastEventDate = null;
+    }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
     let raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
@@ -8113,19 +8129,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastEventDate = runFloorState.lastEventDate;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
     try {
-      if (
-        blockStartOverrideDerivedFromOldest &&
-        isIsoDate(previousBlockState?.postRaceRampUntilISO) &&
-        previousBlockState.postRaceRampUntilISO > day
-      ) {
-        const shouldPreserveWindow =
-          !isIsoDate(blockState?.postRaceRampUntilISO) || blockState.postRaceRampUntilISO < day;
-        if (shouldPreserveWindow) {
-          blockState.postRaceRampUntilISO = previousBlockState.postRaceRampUntilISO;
-          if (isIsoDate(previousBlockState?.lastEventDate)) {
-            blockState.lastEventDate = previousBlockState.lastEventDate;
-          }
-        }
+      if (savedPostRaceRampUntilISO && !isIsoDate(blockState?.postRaceRampUntilISO)) {
+        blockState.postRaceRampUntilISO = savedPostRaceRampUntilISO;
+        if (savedLastEventDate) blockState.lastEventDate = savedLastEventDate;
+      }
+      if (savedPostRaceRampUntilISO && !isIsoDate(runFloorState?.postRaceRampUntilISO)) {
+        runFloorState.postRaceRampUntilISO = savedPostRaceRampUntilISO;
+        if (savedLastEventDate) runFloorState.lastEventDate = savedLastEventDate;
       }
     } catch {}
     try {
