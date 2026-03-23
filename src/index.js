@@ -10278,6 +10278,35 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
   };
 }
 
+function buildBikeReplacementGuidanceLine({
+  bikeSubFactor,
+  runFloorGap = null,
+  runTarget = null,
+  maxReplaceableWeeklySharePct = null,
+  overlayMode = "NORMAL",
+}) {
+  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  if (!(factor > 0)) return "Bike→Lauf-TSS Ersatz: aktuell nicht möglich (Faktor 0,00).";
+
+  const pct = Math.round(factor * 100);
+  const bikeForTenRunTss = Math.round((10 / factor) * 10) / 10;
+  const replaceCapText = Number.isFinite(maxReplaceableWeeklySharePct)
+    ? ` (Wochenlimit: bis ${Math.max(0, Math.round(maxReplaceableWeeklySharePct))}% des RunFloor-Ziels)`
+    : "";
+
+  if (overlayMode === "POST_RACE_RAMP") {
+    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; rechnerisch 10 Lauf-TSS ≈ ${bikeForTenRunTss} Bike-TSS${replaceCapText}. Hinweis: Post-Race nur ergänzend nutzen, nicht als Pflicht-Laufersatz.`;
+  }
+
+  if (Number.isFinite(runFloorGap) && runFloorGap < 0 && Number.isFinite(runTarget) && runTarget > 0) {
+    const neededRunTss = Math.abs(runFloorGap);
+    const bikeTssEquivalent = Math.round((neededRunTss / factor) * 10) / 10;
+    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; offenes Gap ${Math.round(neededRunTss)} Lauf-TSS ≈ ${bikeTssEquivalent} Bike-TSS${replaceCapText}.`;
+  }
+
+  return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; 10 Lauf-TSS ≈ ${bikeForTenRunTss} Bike-TSS${replaceCapText}.`;
+}
+
 // ================= COMMENT =================
 function formatPhaseOverlayLine(phase, overlay) {
   const phaseLabel = String(phase || "BASE").toUpperCase();
@@ -10480,6 +10509,13 @@ function buildComments(
     dayIso: todayIso,
     postRaceRampUntilISO: blockState?.postRaceRampUntilISO ?? runFloorState?.postRaceRampUntilISO ?? null,
     lastEventDate: blockState?.lastEventDate ?? runFloorState?.lastEventDate ?? null,
+  });
+  const bikeReplacementGuidanceLine = buildBikeReplacementGuidanceLine({
+    bikeSubFactor,
+    runFloorGap,
+    runTarget,
+    maxReplaceableWeeklySharePct: bikeWeeklyRule?.maxReplaceableWeeklySharePct,
+    overlayMode,
   });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
@@ -10816,6 +10852,7 @@ function buildComments(
         : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
     bikeWeeklyRule.summaryLine,
+    bikeReplacementGuidanceLine,
     `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
     intensityLine,
   ];

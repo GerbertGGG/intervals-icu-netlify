@@ -288,6 +288,7 @@ function makeCommentsInput({
   assert.equal(/Bike-Wochenregel: Rad erlaubt; Anrechnung bis zu 50% des RunFloor-Ziels; easy\/frei ersetzbar, GA optional; Key\/Longrun nicht ersetzbar\./.test(comments), true);
   assert.equal(/Rad statt lockerem Lauf aktuell möglich, solange die zulässige RunFloor-Anrechnung durch Bike \(50% des Ziels\) nicht überschritten wird; Laufspezifik bleibt über echte Läufe, Key und Longrun abgesichert\./.test(comments), true);
   assert.equal(/praktisch meist 0–1 lockere Einheiten\/Woche/.test(comments), true);
+  assert.equal(/Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ 50% Lauf-TSS; 10 Lauf-TSS ≈ 20 Bike-TSS \(Wochenlimit: bis 50% des RunFloor-Ziels\)\./.test(comments), true);
 }
 
 console.log('e2e golden ok');

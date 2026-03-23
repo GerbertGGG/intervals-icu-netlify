@@ -186,6 +186,21 @@ Aus Streams (`time`, `velocity_smooth`, `heartrate`):
 - kombiniert EF- und Drift-Entwicklung (verschiedene Fenster)
 - Stale-Logik: bei fehlender aktueller Messbasis wird Motor als nicht belastbar markiert
 
+7.5 RunFloor-TSS inkl. Rad (wichtige Formel)
+- Für den RunFloor wird pro Tag ein kombinierter Load gerechnet:
+  - `tss_day = run_load_day + bike_load_day * bikeSubFactor`
+- Dieser kombinierte Tageswert läuft dann in eine EWMA-Glättung (Lookback standardmäßig 42 Tage).
+- Der `bikeSubFactor` hängt **an `weeksToEvent` (Event-Nähe)** und nicht direkt an `weekInBlock`.
+- Relevante Standardwerte:
+  - `weeksToEvent >= 48`  → `bikeSubFactor = 0.5`
+  - `24 < weeksToEvent < 48` → linear von `0.2` auf `0.5`
+  - `12 < weeksToEvent <= 24` → linear von `0.0` auf `0.2`
+  - `weeksToEvent <= 12` → `bikeSubFactor = 0.0`
+  - kein Event (`weeksToEvent = null`) → `bikeSubFactor = 0.4`
+- Konsequenz für „BASE Woche 1“:
+  - Es gibt **keinen Sonderfall nur für Woche 1**.
+  - Entscheidend ist, wie viele Wochen bis zum Event verbleiben.
+
 8) MODE / POLICY (EVENT vs OPEN)
 ---------------------------------
 Der Worker ermittelt aus kommenden Events einen Modus:
