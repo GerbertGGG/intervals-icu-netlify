@@ -1982,7 +1982,7 @@ function computeBikeSubstitutionFactor(weeksToEvent, overlayMode = null) {
   return clamp(raw, 0, 1);
 }
 
-function resolvePostRaceRampWindow(dayIso, blockState) {
+function resolvePostRaceRampWindowSync(dayIso, blockState) {
   try {
     const day = isIsoDate(dayIso) ? dayIso : null;
     const until = isIsoDate(blockState?.postRaceRampUntilISO) ? blockState.postRaceRampUntilISO : null;
@@ -1992,6 +1992,39 @@ function resolvePostRaceRampWindow(dayIso, blockState) {
       active: day <= until,
       until,
       lastEventDate,
+    };
+  } catch {
+    return { active: false, until: null, lastEventDate: null };
+  }
+}
+
+async function resolvePostRaceRampWindow(dayIso, blockState, env) {
+  try {
+    const base = resolvePostRaceRampWindowSync(dayIso, blockState);
+    if (base?.until || !env) return base;
+
+    const raceHistory = await loadRaceHistory(env);
+    if (!Array.isArray(raceHistory) || !raceHistory.length) return base;
+    const latestRace = raceHistory
+      .filter((entry) => isIsoDate(String(entry?.date || "")))
+      .sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")))[0];
+    const latestRaceDate = isIsoDate(latestRace?.date) ? latestRace.date : null;
+    if (!latestRaceDate) return base;
+
+    const maxRampDays = Math.max(
+      0,
+      ...Object.values(POST_RACE_RAMP_DAYS_BY_DISTANCE)
+        .flatMap((steps) => Array.isArray(steps) ? steps : [])
+        .map((v) => Number(v) || 0)
+    );
+    if (!(maxRampDays > 0)) return base;
+
+    const until = isoDate(new Date(new Date(latestRaceDate + "T00:00:00Z").getTime() + maxRampDays * 86400000));
+    const day = isIsoDate(dayIso) ? dayIso : null;
+    return {
+      active: !!day && day <= until,
+      until,
+      lastEventDate: isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : latestRaceDate,
     };
   } catch {
     return { active: false, until: null, lastEventDate: null };
@@ -7371,7 +7404,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
     if (!isMondayIso(todayIso)) return null;
     let postRaceWindowActive = false;
     try {
-      postRaceWindowActive = resolvePostRaceRampWindow(todayIso, blockState).active;
+      postRaceWindowActive = resolvePostRaceRampWindowSync(todayIso, blockState).active;
     } catch {
       postRaceWindowActive = false;
     }
@@ -7890,7 +7923,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
     let bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
     try {
-      const postRaceWindow = resolvePostRaceRampWindow(day, previousBlockState);
+      const postRaceWindow = await resolvePostRaceRampWindow(day, previousBlockState, env);
       if (postRaceWindow.active) bikeSubFactor = 0.4;
     } catch {
       // keep default factor
@@ -8080,7 +8113,23 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastEventDate = runFloorState.lastEventDate;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
     try {
-      const postRaceWindow = resolvePostRaceRampWindow(day, blockState);
+      if (
+        blockStartOverrideDerivedFromOldest &&
+        isIsoDate(previousBlockState?.postRaceRampUntilISO) &&
+        previousBlockState.postRaceRampUntilISO > day
+      ) {
+        const shouldPreserveWindow =
+          !isIsoDate(blockState?.postRaceRampUntilISO) || blockState.postRaceRampUntilISO < day;
+        if (shouldPreserveWindow) {
+          blockState.postRaceRampUntilISO = previousBlockState.postRaceRampUntilISO;
+          if (isIsoDate(previousBlockState?.lastEventDate)) {
+            blockState.lastEventDate = previousBlockState.lastEventDate;
+          }
+        }
+      }
+    } catch {}
+    try {
+      const postRaceWindow = await resolvePostRaceRampWindow(day, blockState, env);
       if (postRaceWindow.active) bikeSubFactor = 0.4;
     } catch {
       // keep computed overlay/week-based factor
@@ -10068,7 +10117,7 @@ function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
 function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL", dayIso = null, postRaceRampUntilISO = null, lastEventDate = null }) {
   let postRaceWindowActive = false;
   try {
-    const postRaceWindow = resolvePostRaceRampWindow(dayIso, {
+    const postRaceWindow = resolvePostRaceRampWindowSync(dayIso, {
       postRaceRampUntilISO,
       lastEventDate,
     });
