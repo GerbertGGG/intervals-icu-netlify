@@ -7623,11 +7623,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   const modeOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - 21 * 86400000));
   const modeNewest = isoDate(new Date(new Date(newest + "T00:00:00Z").getTime() + EVENT_LOOKAHEAD_DAYS * 86400000));
 
-  // 1) Fetch ALL activities once
-  ctx.activitiesAll = await fetchIntervalsActivities(env, globalOldest, globalNewest, debug);
+  // 1) Fetch base datasets early and in parallel where possible.
+  //    activities are still awaited first because hydration depends on them.
+  const activitiesPromise = fetchIntervalsActivities(env, globalOldest, globalNewest, debug);
+  const lifeEventsPromise = fetchIntervalsEvents(env, globalOldest, globalNewest);
+  const modeEventsPromise = fetchIntervalsEvents(env, modeOldest, modeNewest);
+
+  ctx.activitiesAll = await activitiesPromise;
   await hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest);
-  ctx.lifeEventsAll = await fetchIntervalsEvents(env, globalOldest, globalNewest).catch(() => []);
-  ctx.modeEventsAll = await fetchIntervalsEvents(env, modeOldest, modeNewest).catch(() => []);
+  ctx.lifeEventsAll = await lifeEventsPromise.catch(() => []);
+  ctx.modeEventsAll = await modeEventsPromise.catch(() => []);
   const lifeEventsByExternalId = new Map(
     (ctx.lifeEventsAll || [])
       .filter((event) => event?.external_id)
