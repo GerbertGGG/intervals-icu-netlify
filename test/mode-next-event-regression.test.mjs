@@ -39,9 +39,10 @@ const blockState = __test.determineBlockState({
   historyMetrics: {},
   previousState: null,
   efTrend: null,
+  postEventOpenActive: true,
 });
 
-assert.notEqual(blockState.eventDateISO, null);
-assert.notEqual(blockState.eventDate, null);
-assert.notEqual(blockState.weeksToEvent, null);
-assert.ok(!(blockState.reasons || []).includes("Kein Event-Datum gefunden → BASE"));
+assert.equal(blockState.eventDateISO, "2026-10-03");
+assert.equal(blockState.eventDate, undefined);
+assert.equal(blockState.weeksToEvent, null);
+assert.ok((blockState.reasons || []).includes("Post-Race-Fenster aktiv → Re-Entry BASE"));

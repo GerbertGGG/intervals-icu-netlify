@@ -61,6 +61,13 @@ import { __test } from '../src/index.js';
   assert.match(line, /Overlay TAPER/);
 }
 
+// 4b) Wellness-Blocklabel: Post-Race-Ramp wird als BASE geschrieben
+{
+  assert.equal(__test.getBlockLabelForWellness('RACE', 'POST_RACE_RAMP'), 'BASE');
+  assert.equal(__test.getBlockLabelForWellness('RACE', 'TAPER'), 'TAPER');
+  assert.equal(__test.getBlockLabelForWellness('BUILD', 'NORMAL'), 'BUILD');
+}
+
 console.log('guardrails ok');
 
 // 5) 10k TAPER mit Verzögerung setzt genau einen Aktivierungs-Key näher am Rennen (3 Tage vorher)
