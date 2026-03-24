@@ -438,3 +438,21 @@ console.log('guardrails ok');
   assert.equal(dist.hasData, false);
   assert.equal(dist.totalMinutes, 0);
 }
+
+// 22) Bike-RunFloor-Ersatz folgt distanzbasierter Top-down-Regel (ohne Interpolation)
+{
+  assert.equal(__test.computeBikeAllowanceFactor(30, { daysSinceEvent: null }), 0.6);
+  assert.equal(__test.computeBikeAllowanceFactor(20, { daysSinceEvent: null }), 0.5);
+  assert.equal(__test.computeBikeAllowanceFactor(14, { daysSinceEvent: null }), 0.4);
+  assert.equal(__test.computeBikeAllowanceFactor(10, { daysSinceEvent: null }), 0.3);
+  assert.equal(__test.computeBikeAllowanceFactor(8, { daysSinceEvent: null }), 0.0);
+  assert.equal(__test.computeBikeAllowanceFactor(null, { daysSinceEvent: null }), 0.6);
+}
+
+// 23) Post-Race-Fenster übersteuert Wochen-zum-Event-Regel und gibt 100% Freiheitsgrad
+{
+  assert.equal(__test.computeBikeAllowanceFactor(2, { daysSinceEvent: 0 }), 1.0);
+  assert.equal(__test.computeBikeAllowanceFactor(2, { daysSinceEvent: 7 }), 1.0);
+  assert.equal(__test.computeBikeAllowanceFactor(2, { daysSinceEvent: 13 }), 1.0);
+  assert.equal(__test.computeBikeAllowanceFactor(2, { daysSinceEvent: 14 }), 0.0);
+}
