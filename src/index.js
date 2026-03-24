@@ -1860,7 +1860,13 @@ const RUN_FLOOR_FLOOR_STEP = {
   BASE: 6,
   BUILD: 10,
 };
+const RUN_FLOOR_FLOOR_STEP_SOFT = {
+  BASE: 3,
+  BUILD: 5,
+};
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
+const RUN_FLOOR_MAX_INCREASE_PCT_SOFT = 0.05;
+const RUN_FLOOR_SOFT_RAISE_MIN_DAYS_SINCE_LAST = 7;
 const RUN_FLOOR_SOFT_DIP_PCT_BY_PHASE = {
   BASE: 0.93,
   BUILD: 0.95,
@@ -2229,6 +2235,88 @@ function buildRunDailyLoads(ctx, todayISO, windowDays) {
   return days.map((d) => Number(dailyLoads[d]) || 0);
 }
 
+function getFloorRaiseDecision({
+  phase,
+  overlayMode,
+  safeEventInDays,
+  freezeFloorIncrease,
+  lifeEventCategory,
+  floorLevel,
+  deloadCompletedSinceIncrease,
+  allowFloorIncreaseStrict,
+  postRaceRampCompletedRecently,
+  lastFloorIncreaseDate,
+  todayISO,
+  floorTarget,
+}) {
+  const normalizedPhase = String(phase || "").toUpperCase();
+  const normalizedOverlay = String(overlayMode || "NORMAL").toUpperCase();
+  const normalizedLifeEvent = normalizeEventCategory(lifeEventCategory);
+  const normalizedFloorLevel = String(floorLevel || "").toUpperCase();
+  const eventDays = Number.isFinite(safeEventInDays) ? safeEventInDays : 9999;
+  const isBaseOrBuild = normalizedPhase === "BASE" || normalizedPhase === "BUILD";
+  const freezeActive = freezeFloorIncrease === true;
+  const daysSinceLastRaise =
+    isIsoDate(lastFloorIncreaseDate) && isIsoDate(todayISO)
+      ? Math.max(0, diffDays(lastFloorIncreaseDate, todayISO))
+      : Number.POSITIVE_INFINITY;
+
+  if (!isBaseOrBuild) {
+    return { mode: "BLOCK", step: 0, reason: `Phase ${normalizedPhase || "UNKNOWN"} blockiert` };
+  }
+  if (freezeActive) return { mode: "BLOCK", step: 0, reason: "Freeze aktiv" };
+  if (normalizedLifeEvent === "SICK" || normalizedLifeEvent === "INJURED") {
+    return { mode: "BLOCK", step: 0, reason: `${normalizedLifeEvent}: keine Progression` };
+  }
+  if (normalizedOverlay === "POST_RACE_RAMP") {
+    return { mode: "BLOCK", step: 0, reason: "Post-Race-Ramp blockiert Erhöhung" };
+  }
+  if (normalizedOverlay === "TAPER") {
+    return { mode: "BLOCK", step: 0, reason: "Taper blockiert Erhöhung" };
+  }
+  if (normalizedOverlay === "DELOAD") {
+    return { mode: "BLOCK", step: 0, reason: "Deload aktiv" };
+  }
+  if (eventDays <= 14) {
+    return { mode: "BLOCK", step: 0, reason: "Eventnähe ≤14 Tage" };
+  }
+  if (normalizedFloorLevel === "RED") {
+    return { mode: "BLOCK", step: 0, reason: "RunFloor-Level RED" };
+  }
+
+  const fullEligible =
+    normalizedOverlay === "NORMAL" &&
+    eventDays > 28 &&
+    deloadCompletedSinceIncrease === true &&
+    allowFloorIncreaseStrict === true &&
+    !postRaceRampCompletedRecently;
+  if (fullEligible) {
+    const baseStep = RUN_FLOOR_FLOOR_STEP[normalizedPhase] ?? 6;
+    const maxIncrease = Math.max(1, Math.round((Number(floorTarget) || 0) * RUN_FLOOR_MAX_INCREASE_PCT));
+    return {
+      mode: "FULL",
+      step: Math.min(baseStep, maxIncrease),
+      reason: "FULL: sauberer Zustand + Deload abgeschlossen",
+    };
+  }
+
+  const softEligible =
+    eventDays > 21 &&
+    normalizedOverlay === "NORMAL" &&
+    daysSinceLastRaise >= RUN_FLOOR_SOFT_RAISE_MIN_DAYS_SINCE_LAST;
+  if (!softEligible) {
+    return { mode: "BLOCK", step: 0, reason: "SOFT-Gates nicht erfüllt" };
+  }
+
+  const baseStepSoft = RUN_FLOOR_FLOOR_STEP_SOFT[normalizedPhase] ?? 3;
+  const maxIncreaseSoft = Math.max(1, Math.round((Number(floorTarget) || 0) * RUN_FLOOR_MAX_INCREASE_PCT_SOFT));
+  return {
+    mode: "SOFT",
+    step: Math.min(baseStepSoft, maxIncreaseSoft),
+    reason: "SOFT: stabil genug, aber FULL-Gates nicht komplett erfüllt",
+  };
+}
+
 function computeRunFloorEwma(
   ctx,
   dayIso,
@@ -2586,23 +2674,28 @@ function evaluateRunFloorState({
       ? daysSinceEvent <= postRaceRamp.rampUntilDays
       : false;
 
-  if (
-    (phase === "BASE" || phase === "BUILD") &&
-    overlayMode === "NORMAL" &&
-    safeEventInDays > 28 &&
-    !lifeEventEffect?.freezeFloorIncrease &&
-    deloadCompletedSinceIncrease &&
-    !postRaceRampCompletedRecently &&
-    allowFloorIncreaseStrict
-  ) {
-    const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
-    const maxIncrease = Math.max(1, Math.round(updatedFloorTarget * RUN_FLOOR_MAX_INCREASE_PCT));
-    const increase = Math.min(step, maxIncrease);
-    if (increase > 0) {
-      updatedFloorTarget += increase;
-      lastFloorIncreaseDate = todayISO;
-      reasons.push(`RunFloor erhöht (+${increase}) nach Deload`);
-    }
+  const raiseDecision = getFloorRaiseDecision({
+    phase,
+    overlayMode,
+    safeEventInDays,
+    freezeFloorIncrease: lifeEventEffect?.freezeFloorIncrease,
+    lifeEventCategory: lifeEventEffect?.category,
+    floorLevel,
+    deloadCompletedSinceIncrease: deloadCompletedSinceIncrease === true,
+    allowFloorIncreaseStrict: allowFloorIncreaseStrict === true,
+    postRaceRampCompletedRecently: postRaceRampCompletedRecently === true,
+    lastFloorIncreaseDate,
+    todayISO,
+    floorTarget: updatedFloorTarget,
+  });
+  let floorRaised = false;
+  if (raiseDecision.step > 0 && (raiseDecision.mode === "FULL" || raiseDecision.mode === "SOFT")) {
+    updatedFloorTarget += raiseDecision.step;
+    lastFloorIncreaseDate = todayISO;
+    floorRaised = true;
+    reasons.push(`RunFloor erhöht (+${raiseDecision.step}) via ${raiseDecision.mode}`);
+  } else if (raiseDecision.mode === "BLOCK" && raiseDecision.reason) {
+    reasons.push(`RunFloor-Anhebung blockiert: ${raiseDecision.reason}`);
   }
 
   return {
@@ -2626,6 +2719,10 @@ function evaluateRunFloorState({
     softDipCount14d,
     softDipStreak,
     allowFloorIncreaseStrict,
+    floorRaiseMode: raiseDecision.mode,
+    floorRaiseStep: raiseDecision.step,
+    floorRaised,
+    floorRaiseReason: raiseDecision.reason,
     softDipPct,
     loadGap,
     stabilityOK,
@@ -14658,6 +14755,8 @@ const __internalTestHooks = Object.freeze({
   buildComments,
   inferKeyTypeFromExplicitSession,
   resolveRunFloorDecisionText,
+  getFloorRaiseDecision,
+  evaluateRunFloorState,
   buildWhyNarrative,
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
