@@ -1010,7 +1010,7 @@ const VO2_HR_PCT = 0.94;
 const PLAN_START_WEEKS = 24;
 const PREPLAN_WINDOW_WEEKS = 48;
 
-const TRANSITION_BIKE_EQ = {
+const TRANSITION_BIKE_ALLOWANCE = {
   prePlanWeeks: PREPLAN_WINDOW_WEEKS,
   startWeeks: PLAN_START_WEEKS,
   endWeeks: 12,
@@ -1018,7 +1018,13 @@ const TRANSITION_BIKE_EQ = {
   startFactor: 0.2,
   endFactor: 0.0,
 };
-const BIKE_SUB_FACTOR_NO_EVENT = 0.4;
+const BIKE_ALLOWANCE_FACTOR_NO_EVENT = 0.4;
+const BIKE_CONVERSION_FACTOR_BY_EFFORT = Object.freeze({
+  easy: 0.55,
+  moderate: 0.65,
+  hard: 0.75,
+});
+const BIKE_CONVERSION_FACTOR_FALLBACK = 0.65;
 
 const PREPLAN_RUN_SHARE = {
   min: 0.5,
@@ -2051,28 +2057,52 @@ function computeTaperFactor(eventInDays, taperStartDays) {
   return 0.6 + ratio * (0.9 - 0.6);
 }
 
-function computeBikeSubstitutionFactor(weeksToEvent, overlayMode = null) {
-  if (overlayMode === "POST_RACE_RAMP") return 0.4;
-  if (!Number.isFinite(weeksToEvent)) return BIKE_SUB_FACTOR_NO_EVENT;
+function computeBikeAllowanceFactor(weeksToEvent, overlayMode = null, eventDistance = null) {
+  if (overlayMode === "POST_RACE_RAMP") return 0;
+  if (!Number.isFinite(weeksToEvent)) return BIKE_ALLOWANCE_FACTOR_NO_EVENT;
 
-  if (weeksToEvent >= TRANSITION_BIKE_EQ.prePlanWeeks) {
-    return clamp(TRANSITION_BIKE_EQ.prePlanFactor, 0, 1);
+  let base;
+  if (weeksToEvent >= TRANSITION_BIKE_ALLOWANCE.prePlanWeeks) {
+    base = clamp(TRANSITION_BIKE_ALLOWANCE.prePlanFactor, 0, 1);
+  } else if (weeksToEvent > TRANSITION_BIKE_ALLOWANCE.startWeeks) {
+    const span = TRANSITION_BIKE_ALLOWANCE.prePlanWeeks - TRANSITION_BIKE_ALLOWANCE.startWeeks;
+    if (span <= 0) base = clamp(TRANSITION_BIKE_ALLOWANCE.startFactor, 0, 1);
+    else {
+      const ratio = (weeksToEvent - TRANSITION_BIKE_ALLOWANCE.startWeeks) / span;
+      const raw = TRANSITION_BIKE_ALLOWANCE.startFactor + ratio * (TRANSITION_BIKE_ALLOWANCE.prePlanFactor - TRANSITION_BIKE_ALLOWANCE.startFactor);
+      base = clamp(raw, 0, 1);
+    }
+  } else if (weeksToEvent <= TRANSITION_BIKE_ALLOWANCE.endWeeks) {
+    base = clamp(TRANSITION_BIKE_ALLOWANCE.endFactor, 0, 1);
+  } else {
+    const span = TRANSITION_BIKE_ALLOWANCE.startWeeks - TRANSITION_BIKE_ALLOWANCE.endWeeks;
+    if (span <= 0) base = clamp(TRANSITION_BIKE_ALLOWANCE.endFactor, 0, 1);
+    else {
+      const ratio = (weeksToEvent - TRANSITION_BIKE_ALLOWANCE.endWeeks) / span;
+      const raw = TRANSITION_BIKE_ALLOWANCE.endFactor + ratio * (TRANSITION_BIKE_ALLOWANCE.startFactor - TRANSITION_BIKE_ALLOWANCE.endFactor);
+      base = clamp(raw, 0, 1);
+    }
   }
 
-  if (weeksToEvent > TRANSITION_BIKE_EQ.startWeeks) {
-    const span = TRANSITION_BIKE_EQ.prePlanWeeks - TRANSITION_BIKE_EQ.startWeeks;
-    if (span <= 0) return clamp(TRANSITION_BIKE_EQ.startFactor, 0, 1);
-    const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.startWeeks) / span;
-    const raw = TRANSITION_BIKE_EQ.startFactor + ratio * (TRANSITION_BIKE_EQ.prePlanFactor - TRANSITION_BIKE_EQ.startFactor);
-    return clamp(raw, 0, 1);
-  }
+  const dist = normalizeEventDistance(eventDistance);
+  let distanceMultiplier = 1;
+  if (dist === "m" && weeksToEvent >= 10) distanceMultiplier = 1.1;
+  else if (dist === "5k" && weeksToEvent <= 16) distanceMultiplier = 0.85;
+  else if (dist === "10k" && weeksToEvent <= 12) distanceMultiplier = 0.9;
 
-  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
-  const span = TRANSITION_BIKE_EQ.startWeeks - TRANSITION_BIKE_EQ.endWeeks;
-  if (span <= 0) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
-  const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.endWeeks) / span;
-  const raw = TRANSITION_BIKE_EQ.endFactor + ratio * (TRANSITION_BIKE_EQ.startFactor - TRANSITION_BIKE_EQ.endFactor);
-  return clamp(raw, 0, 1);
+  return clamp(base * distanceMultiplier, 0, 1);
+}
+
+function classifyBikeEffort(activity) {
+  if (!activity || typeof activity !== "object") return "moderate";
+  if (hasKeyTag(activity) || isIntensityByHr(activity)) return "hard";
+  if (isAerobic(activity)) return "easy";
+  return "moderate";
+}
+
+function computeBikeToRunConversionFactor(activity = null) {
+  const effort = classifyBikeEffort(activity);
+  return BIKE_CONVERSION_FACTOR_BY_EFFORT[effort] ?? BIKE_CONVERSION_FACTOR_FALLBACK;
 }
 
 function resolvePostRaceRampWindowSync(dayIso, blockState) {
@@ -2205,6 +2235,7 @@ function computeRunFloorEwma(
   {
     eventDate = null,
     eventDistance = null,
+    runFloorTarget = MIN_STIMULUS_7D_RUN_EVENT,
     lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS,
     debugTrace = false,
   } = {}
@@ -2221,12 +2252,14 @@ function computeRunFloorEwma(
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const load = Number(extractLoad(a)) || 0;
+    if (!(load > 0)) continue;
     if (isRun(a)) {
-      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0 };
+      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0, bikeEquivalent: 0 };
       dailyLoads[d].run += load;
     } else if (isBike(a)) {
-      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0 };
+      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0, bikeEquivalent: 0 };
       dailyLoads[d].bike += load;
+      dailyLoads[d].bikeEquivalent += load * computeBikeToRunConversionFactor(a);
     }
   }
 
@@ -2234,12 +2267,28 @@ function computeRunFloorEwma(
   const debugRows = [];
   const days = listIsoDaysInclusive(startIso, dayIso);
   for (const d of days) {
-    const loads = dailyLoads[d] || { run: 0, bike: 0 };
+    const loads = dailyLoads[d] || { run: 0, bike: 0, bikeEquivalent: 0 };
     const weeksInfo = eventDate ? computeWeeksToEvent(d, eventDate, eventDistance) : { weeksToEvent: null };
-    const bikeSubFactor = computeBikeSubstitutionFactor(weeksInfo?.weeksToEvent ?? null);
-    const tss = loads.run + loads.bike * bikeSubFactor;
+    const allowanceFactor = computeBikeAllowanceFactor(weeksInfo?.weeksToEvent ?? null, null, eventDistance);
+    const maxBikeContribution = Math.max(0, (Number(runFloorTarget) || 0) * allowanceFactor);
+    const remainingAllowance = Math.max(0, maxBikeContribution - loads.run);
+    const credited = Math.min(loads.bikeEquivalent, remainingAllowance);
+    const tss = loads.run + credited;
     smooth = smooth == null ? tss : tss + decay * smooth;
-    if (debugTrace) debugRows.push({ day: d, run: loads.run, bike: loads.bike, bikeSubFactor, tss, smooth });
+    if (debugTrace) {
+      debugRows.push({
+        day: d,
+        run: loads.run,
+        bike: loads.bike,
+        bikeEquivalent: loads.bikeEquivalent,
+        allowanceFactor,
+        maxBikeContribution,
+        remainingAllowance,
+        credited,
+        tss,
+        smooth,
+      });
+    }
   }
 
   if (debugTrace) {
@@ -8039,10 +8088,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
-    let bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
+    const bikeConversionFactor = BIKE_CONVERSION_FACTOR_FALLBACK;
+    let bikeAllowanceFactor = computeBikeAllowanceFactor(weeksToEvent, null, eventDistance);
     try {
       const postRaceWindow = await resolvePostRaceRampWindow(day, previousBlockState, env);
-      if (postRaceWindow.active) bikeSubFactor = 0.4;
+      if (postRaceWindow.active) bikeAllowanceFactor = 0;
     } catch {
       // keep default factor
     }
@@ -8060,9 +8110,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       (typeof globalThis !== "undefined" && globalThis?.process?.env
         ? globalThis.process.env.RUN_FLOOR_DEBUG_TRACE
         : "");
+    const baseRunFloorTarget =
+      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
+        ? previousBlockState.floorTarget
+        : MIN_STIMULUS_7D_RUN_EVENT;
+
     const runFloorEwma10 = computeRunFloorEwma(ctx, day, {
       eventDate,
       eventDistance,
+      runFloorTarget: baseRunFloorTarget,
       debugTrace: /^1|true|yes$/i.test(String(runFloorDebugFlag || "")),
     });
 
@@ -8086,8 +8142,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       loads7Prev = await computeLoads7d(ctx, prevWindowDay);
     } catch {}
     const weeksPrev = eventDate ? computeWeeksToEvent(prevWindowDay, eventDate, null) : { weeksToEvent: null };
-    const bikeSubFactorPrev = computeBikeSubstitutionFactor(weeksPrev.weeksToEvent ?? null);
-    const runFloorEwma10Prev = computeRunFloorEwma(ctx, prevWindowDay, { eventDate, eventDistance });
+    const runFloorEwma10Prev = computeRunFloorEwma(ctx, prevWindowDay, {
+      eventDate,
+      eventDistance,
+      runFloorTarget: baseRunFloorTarget,
+    });
 
     const prevIntensitySignal = loads7Prev.intensitySignal ?? "none";
     const prevAerobicFloorActive = policy.useAerobicFloor && prevIntensitySignal === "ok";
@@ -8117,11 +8176,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastKeyType,
       longrunSpecificity: longrunSpecificityPre,
     });
-
-    const baseRunFloorTarget =
-      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
-        ? previousBlockState.floorTarget
-        : MIN_STIMULUS_7D_RUN_EVENT;
 
     const historyMetrics = {
       runFloorEwma10: runFloorEwma10 ?? 0,
@@ -8203,7 +8257,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
       recentHolidayEvent: modeInfo?.recentHolidayEvent || null,
     });
-    bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent, runFloorState?.overlayMode);
+    bikeAllowanceFactor = computeBikeAllowanceFactor(weeksToEvent, runFloorState?.overlayMode, eventDistance);
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
       policy = {
@@ -8242,7 +8296,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     } catch {}
     try {
       const postRaceWindow = await resolvePostRaceRampWindow(day, blockState, env);
-      if (postRaceWindow.active) bikeSubFactor = 0.4;
+      if (postRaceWindow.active) bikeAllowanceFactor = 0;
     } catch {
       // keep computed overlay/week-based factor
     }
@@ -8551,7 +8605,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longRunSummary,
       distanceDiagnostics,
       gapRecommendations,
-      bikeSubFactor,
+      bikeAllowanceFactor,
+      bikeConversionFactor,
       weeksToEvent,
       eventDistance,
       fitnessProfile,
@@ -10207,26 +10262,26 @@ function buildRecommendationsAndBottomLine(state) {
   };
 }
 
-function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
-  if (!(bikeSubFactor > 0)) return null;
-  const pct = Math.round(bikeSubFactor * 100);
+function buildTransitionLine({ bikeAllowanceFactor, weeksToEvent, eventDistance }) {
+  if (!(bikeAllowanceFactor > 0)) return null;
+  const pct = Math.round(bikeAllowanceFactor * 100);
   const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
   const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
-function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
+function buildBikeAllowanceLine({ bikeAllowanceFactor, overlayMode = "NORMAL" }) {
   if (overlayMode === "POST_RACE_RAMP") {
-    return "Rad als Crosstraining erlaubt (Post-Race, Faktor 0.4) — kein Laufersatz, ergänzend.";
+    return "Rad als Crosstraining erlaubt (Post-Race) — kein Laufersatz, ergänzend.";
   }
-  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  const factor = Number.isFinite(bikeAllowanceFactor) ? clamp(bikeAllowanceFactor, 0, 1) : 0;
   const allowed = factor > 0;
   const factorPct = Math.round(factor * 100);
   return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
 }
 
-function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL", dayIso = null, postRaceRampUntilISO = null, lastEventDate = null }) {
+function buildBikeWeeklyRule({ bikeAllowanceFactor, weeksToEvent, overlayMode = "NORMAL", dayIso = null, postRaceRampUntilISO = null, lastEventDate = null }) {
   let postRaceWindowActive = false;
   try {
     const postRaceWindow = resolvePostRaceRampWindowSync(dayIso, {
@@ -10252,7 +10307,7 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
         "Post-Race Ramp: Rad als lockeres Crosstraining nutzen, aber nicht als Ersatz für Laufpflichten/RunFloor rechnen; Key und Longrun bleiben laufspezifisch.",
     };
   }
-  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  const factor = Number.isFinite(bikeAllowanceFactor) ? clamp(bikeAllowanceFactor, 0, 1) : 0;
   const bikeAllowed = factor > 0;
   const easyAllowed = bikeAllowed;
   const gaAllowed = bikeAllowed && (Number.isFinite(weeksToEvent) ? weeksToEvent >= 10 : false);
@@ -10279,17 +10334,19 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
 }
 
 function buildBikeReplacementGuidanceLine({
-  bikeSubFactor,
+  bikeAllowanceFactor,
+  bikeConversionFactor = BIKE_CONVERSION_FACTOR_FALLBACK,
   runFloorGap = null,
   runTarget = null,
   maxReplaceableWeeklySharePct = null,
   overlayMode = "NORMAL",
 }) {
-  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
-  if (!(factor > 0)) return "Bike→Lauf-TSS Ersatz: aktuell nicht möglich (Faktor 0,00).";
+  const allowanceFactor = Number.isFinite(bikeAllowanceFactor) ? clamp(bikeAllowanceFactor, 0, 1) : 0;
+  const conversionFactor = Number.isFinite(bikeConversionFactor) ? clamp(bikeConversionFactor, 0, 1) : BIKE_CONVERSION_FACTOR_FALLBACK;
+  if (!(allowanceFactor > 0)) return "Bike→Lauf-TSS Ersatz: aktuell nicht möglich (Allowance 0,00).";
 
-  const pct = Math.round(factor * 100);
-  const bikeForTenRunTss = Math.round((10 / factor) * 10) / 10;
+  const pct = Math.round(conversionFactor * 100);
+  const bikeForTenRunTss = Math.round((10 / conversionFactor) * 10) / 10;
   const replaceCapText = Number.isFinite(maxReplaceableWeeklySharePct)
     ? ` (Wochenlimit: bis ${Math.max(0, Math.round(maxReplaceableWeeklySharePct))}% des RunFloor-Ziels)`
     : "";
@@ -10300,7 +10357,7 @@ function buildBikeReplacementGuidanceLine({
 
   if (Number.isFinite(runFloorGap) && runFloorGap < 0 && Number.isFinite(runTarget) && runTarget > 0) {
     const neededRunTss = Math.abs(runFloorGap);
-    const bikeTssEquivalent = Math.round((neededRunTss / factor) * 10) / 10;
+    const bikeTssEquivalent = Math.round((neededRunTss / conversionFactor) * 10) / 10;
     return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; offenes Gap ${Math.round(neededRunTss)} Lauf-TSS ≈ ${bikeTssEquivalent} Bike-TSS${replaceCapText}.`;
   }
 
@@ -10341,6 +10398,8 @@ function buildComments(
     longRunSummary,
     distanceDiagnostics,
     gapRecommendations,
+    bikeAllowanceFactor,
+    bikeConversionFactor,
     bikeSubFactor,
     weeksToEvent,
     eventDistance,
@@ -10500,10 +10559,12 @@ function buildComments(
     keySuggestion: keyCompliance?.suggestion,
     explicitSession: explicitSessionText,
   });
-  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
-  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
+  const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
+  const resolvedBikeConversionFactor = Number.isFinite(bikeConversionFactor) ? bikeConversionFactor : BIKE_CONVERSION_FACTOR_FALLBACK;
+  const transitionLine = buildTransitionLine({ bikeAllowanceFactor: resolvedBikeAllowanceFactor, weeksToEvent, eventDistance });
+  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeAllowanceFactor: resolvedBikeAllowanceFactor, overlayMode });
   const bikeWeeklyRule = buildBikeWeeklyRule({
-    bikeSubFactor,
+    bikeAllowanceFactor: resolvedBikeAllowanceFactor,
     weeksToEvent,
     overlayMode,
     dayIso: todayIso,
@@ -10511,7 +10572,8 @@ function buildComments(
     lastEventDate: blockState?.lastEventDate ?? runFloorState?.lastEventDate ?? null,
   });
   const bikeReplacementGuidanceLine = buildBikeReplacementGuidanceLine({
-    bikeSubFactor,
+    bikeAllowanceFactor: resolvedBikeAllowanceFactor,
+    bikeConversionFactor: resolvedBikeConversionFactor,
     runFloorGap,
     runTarget,
     maxReplaceableWeeklySharePct: bikeWeeklyRule?.maxReplaceableWeeklySharePct,
@@ -10995,7 +11057,7 @@ function buildComments(
     `Fatigue Override: ${fatigue?.override ? "aktiv" : "aus"}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `Block: ${blockState?.block || "n/a"}`,
-    `Bike-Faktor: ${Number(bikeSubFactor || 0).toFixed(2)}`,
+    `Bike-Allowance: ${Number(resolvedBikeAllowanceFactor || 0).toFixed(2)} | Bike-Conversion: ${Number(resolvedBikeConversionFactor || 0).toFixed(2)}`,
     "",
   ];
   const coachConsequencesLines = [
