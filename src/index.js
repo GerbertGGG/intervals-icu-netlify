@@ -66,26 +66,14 @@ export default {
       const to = url.searchParams.get("to");
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
       const manualFocusRaw = url.searchParams.get("focus") ?? null;
-      const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(manualFocusRaw)
+      const manualFocus = MANUAL_FOCUS_VALUES.has(manualFocusRaw)
         ? manualFocusRaw
         : null;
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
-      const raceStartParamRaw = getSearchParamAny(url.searchParams, [
-        "race_start",
-        "race_start_override",
-        "race_start_iso",
-        "racestart",
-        "raceStart",
-      ]);
+      const raceStartParamRaw = getSearchParamAny(url.searchParams, RACE_START_PARAM_KEYS);
       const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-      const blockStartParamRaw = getSearchParamAny(url.searchParams, [
-        "block_start",
-        "block_start_override",
-        "block_start_iso",
-        "blockstart",
-        "blockStart",
-      ]);
+      const blockStartParamRaw = getSearchParamAny(url.searchParams, BLOCK_START_PARAM_KEYS);
       let blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
       let blockStartOverrideDerivedFromOldest = false;
 
@@ -194,8 +182,7 @@ export default {
       try {
         const dryRun = parseBooleanParam(url.searchParams, "dry");
         const blockRaw = String(url.searchParams.get("block") || "BASE").toUpperCase();
-        const allowedBlocks = new Set(["BASE", "BUILD", "RACE", "RESET"]);
-        const block = allowedBlocks.has(blockRaw) ? blockRaw : "BASE";
+        const block = TEST_STRENGTH_ALLOWED_BLOCKS.has(blockRaw) ? blockRaw : "BASE";
         const strengthCountThisWeek = clampInt(url.searchParams.get("strength_count") ?? "0", 0, 20);
         const toOverride = String(url.searchParams.get("to") || "").trim() || null;
 
@@ -332,6 +319,12 @@ const STEP_SYNC_KV_PREFIX = "syncstep:state:";
 const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
 const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
+const MANUAL_FOCUS_VALUES = new Set(["kraft", "longrun", "frequenz", "erholung", "spezifik"]);
+const TEST_STRENGTH_ALLOWED_BLOCKS = new Set(["BASE", "BUILD", "RACE", "RESET"]);
+const RACE_START_PARAM_KEYS = ["race_start", "race_start_override", "race_start_iso", "racestart", "raceStart"];
+const BLOCK_START_PARAM_KEYS = ["block_start", "block_start_override", "block_start_iso", "blockstart", "blockStart"];
+const BERLIN_HOUR_FORMATTER = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" });
+const BERLIN_MINUTE_FORMATTER = new Intl.DateTimeFormat("en-GB", { minute: "2-digit", hour12: false, timeZone: "Europe/Berlin" });
 
 function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
@@ -476,21 +469,9 @@ async function handleStepSync(req, env, ctx) {
 
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
-  const raceStartParamRaw = getSearchParamAny(url.searchParams, [
-    "race_start",
-    "race_start_override",
-    "race_start_iso",
-    "racestart",
-    "raceStart",
-  ]);
+  const raceStartParamRaw = getSearchParamAny(url.searchParams, RACE_START_PARAM_KEYS);
   const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-  const blockStartParamRaw = getSearchParamAny(url.searchParams, [
-    "block_start",
-    "block_start_override",
-    "block_start_iso",
-    "blockstart",
-    "blockStart",
-  ]);
+  const blockStartParamRaw = getSearchParamAny(url.searchParams, BLOCK_START_PARAM_KEYS);
   const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
   if (raceStartParamRaw && !raceStartOverrideIso) {
@@ -570,26 +551,14 @@ async function handleStepSync(req, env, ctx) {
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
   if (!Number.isFinite(t)) return null;
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      hour12: false,
-      timeZone: "Europe/Berlin",
-    }).format(new Date(t))
-  );
+  const hour = Number(BERLIN_HOUR_FORMATTER.format(new Date(t)));
   return Number.isFinite(hour) ? hour : null;
 }
 
 function getBerlinMinuteFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
   if (!Number.isFinite(t)) return null;
-  const minute = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      minute: "2-digit",
-      hour12: false,
-      timeZone: "Europe/Berlin",
-    }).format(new Date(t))
-  );
+  const minute = Number(BERLIN_MINUTE_FORMATTER.format(new Date(t)));
   return Number.isFinite(minute) ? minute : null;
 }
 
