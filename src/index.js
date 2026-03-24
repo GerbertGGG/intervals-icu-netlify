@@ -5596,6 +5596,7 @@ function determineBlockState({
   historyMetrics,
   previousState,
   efTrend = null,
+  postEventOpenActive = false,
 }) {
   const reasons = [];
   let efReadyForBuild = null;
@@ -5646,6 +5647,32 @@ function determineBlockState({
       nextSuggestedBlock: "BUILD",
       timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
+      eventDistance: eventDistanceNorm,
+      efReadyForBuild,
+      efTrend,
+    };
+  }
+
+  if (postEventOpenActive) {
+    const stayedInBase = previousState?.block === "BASE";
+    const reentryStart = stayedInBase ? startDate : todayISO;
+    const reentryDays = stayedInBase ? Math.max(0, daysBetween(reentryStart, todayISO)) : 0;
+    return {
+      block: "BASE",
+      wave: 0,
+      weeksToEvent: null,
+      weeksToEventRaw: null,
+      todayISO,
+      eventDateISO,
+      blockStartPersisted: persistedStart,
+      blockStartEffective: reentryStart,
+      startWasReset,
+      reasons: [...reasons, "Post-Race-Fenster aktiv → Re-Entry BASE"],
+      readinessScore: 55,
+      forcedSwitch: false,
+      nextSuggestedBlock: "BUILD",
+      timeInBlockDays: reentryDays,
+      startDate: reentryStart,
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
@@ -8322,6 +8349,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       historyMetrics,
       previousState: previousBlockState,
       efTrend,
+      postEventOpenActive: Boolean(modeInfo?.postEventOpenActive),
     });
 
     if (manualRaceStartIso && blockState.block === "RACE") {
@@ -8568,7 +8596,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     historyMetrics.keyCompliance = keyCompliance;
     historyMetrics.distanceDiagnostics = distanceDiagnostics;
-    const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
+    const blockLabelForWellness = getBlockLabelForWellness(blockState.block, runFloorState.overlayMode);
     patch[FIELD_BLOCK] = blockLabelForWellness;
 
     previousBlockState = {
@@ -10453,6 +10481,15 @@ function formatPhaseOverlayLine(phase, overlay) {
   const phaseLabel = String(phase || "BASE").toUpperCase();
   const overlayLabel = String(overlay || "NORMAL").toUpperCase();
   return `Steuerung: Phase ${phaseLabel} | Overlay ${overlayLabel}`;
+}
+
+function getBlockLabelForWellness(block, overlayMode) {
+  const normalizedOverlay = String(overlayMode || "NORMAL").toUpperCase();
+  if (normalizedOverlay === "TAPER") return "TAPER";
+  if (normalizedOverlay === "POST_RACE_RAMP") return "BASE";
+  const normalizedBlock = String(block || "BASE").toUpperCase();
+  if (["BASE", "BUILD", "RACE", "RESET"].includes(normalizedBlock)) return normalizedBlock;
+  return "BASE";
 }
 
 function buildComments(
@@ -14780,6 +14817,7 @@ const __internalTestHooks = Object.freeze({
   adaptExpectedKeysForOverlay,
   evaluateKeyCompliance,
   formatPhaseOverlayLine,
+  getBlockLabelForWellness,
   buildWeekPreview,
   buildWeeklyFocus,
   applyStrengthPolicyOverlay,
