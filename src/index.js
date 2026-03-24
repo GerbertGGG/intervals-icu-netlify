@@ -4421,10 +4421,20 @@ function classifyIntensityCategory(a, eventDistance) {
   return "easy";
 }
 
-function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance, blockStartIso = null) {
+function computeIntensityDistributionForWindow(
+  ctx,
+  dayIso,
+  lookbackDays,
+  eventDistance,
+  blockStartIso = null,
+  options = {}
+) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const overlayMode = String(options?.overlayMode || "").toUpperCase();
+  const lastEventDate = isIsoDate(options?.lastEventDate) ? options.lastEventDate : null;
+  const excludeLastEventDayRuns = overlayMode === "POST_RACE_RAMP" && !!lastEventDate;
   const effectiveStartIso =
     isIsoDate(blockStartIso) && blockStartIso > startIso
       ? blockStartIso
@@ -4438,6 +4448,7 @@ function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventD
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < effectiveStartIso || d >= endIso || !isRun(a)) continue;
+    if (excludeLastEventDayRuns && d === lastEventDate) continue;
     const minutes = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
     if (!(minutes > 0)) continue;
 
@@ -4464,7 +4475,7 @@ function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventD
   };
 }
 
-function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null) {
+function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null, options = {}) {
   const targets = getIntensityDistributionTargets(block, eventDistance);
   let lookbackDaysRaw = Math.max(7, INTENSITY_LOOKBACK_DAYS);
   if (blockStartIso) {
@@ -4476,7 +4487,14 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
 
   const lookbackDays = Math.max(28, lookbackDaysRaw);
 
-  const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance, blockStartIso);
+  const metrics = computeIntensityDistributionForWindow(
+    ctx,
+    dayIso,
+    lookbackDays,
+    eventDistance,
+    blockStartIso,
+    options
+  );
 
   const hasData = (metrics?.totalMinutes ?? 0) > 0;
   const easyShare = metrics?.easyShare;
@@ -8461,7 +8479,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       day,
       blockState.block,
       eventDistance,
-      blockState.startDate || blockState.blockStartEffective || null
+      blockState.startDate || blockState.blockStartEffective || null,
+      {
+        overlayMode: runFloorState?.overlayMode,
+        lastEventDate: blockState?.lastEventDate || runFloorState?.lastEventDate || null,
+      }
     );
     const weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
     const plannedPrimaryType = decideKeyType1PerWeek(
@@ -14836,6 +14858,7 @@ const __internalTestHooks = Object.freeze({
   buildWhyNarrative,
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
+  computeIntensityDistribution,
 });
 
 export const __test = __internalTestHooks;
