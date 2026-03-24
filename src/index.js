@@ -7876,6 +7876,24 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   await hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest);
   ctx.lifeEventsAll = await lifeEventsPromise.catch(() => []);
   ctx.modeEventsAll = await modeEventsPromise.catch(() => []);
+  if (ctx.debug) {
+    const modeEvents = Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll : [];
+    const modeRaceCandidates = modeEvents.filter((event) => isARaceEvent(event));
+    const compact = (event) => ({
+      name: event?.name ?? null,
+      category: event?.category ?? null,
+      start_date_local: event?.start_date_local ?? null,
+      type: event?.type ?? null,
+      distance: event?.distance ?? null,
+      isARaceEvent: isARaceEvent(event),
+    });
+    console.log("[debug:syncRange:modeEventsAll]", {
+      modeEventsCount: modeEvents.length,
+      modeRaceCandidatesCount: modeRaceCandidates.length,
+      modeRaceLast3: modeRaceCandidates.slice(-3).map(compact),
+      modeRaceNext3: modeRaceCandidates.slice(0, 3).map(compact),
+    });
+  }
   const lifeEventsByExternalId = new Map(
     (ctx.lifeEventsAll || [])
       .filter((event) => event?.external_id)
@@ -7946,6 +7964,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
       policy = getModePolicy(modeInfo);
     } catch (e) {
+      console.error("[mode] determineMode failed, using OPEN fallback", {
+        day,
+        error: e?.message || String(e),
+        stack: e?.stack || null,
+        modeEventsAllType: Array.isArray(ctx.modeEventsAll) ? "array" : typeof ctx.modeEventsAll,
+        modeEventsAllCount: Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll.length : null,
+      });
       modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
       policy = getModePolicy(modeInfo);
     }
@@ -14229,9 +14254,18 @@ function addDebug(debugOut, day, a, status, computed) {
 
 async function determineMode(env, dayIso, debug = false, prefetchedEvents = null) {
   const auth = authHeader(env);
-  const events = Array.isArray(prefetchedEvents)
+  const hasPrefetchedEvents = Array.isArray(prefetchedEvents);
+  const events = hasPrefetchedEvents
     ? prefetchedEvents
     : await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
+  if (debug) {
+    const eventsCount = Array.isArray(events) ? events.length : 0;
+    console.log("[debug:determineMode:events]", {
+      dayIso,
+      source: hasPrefetchedEvents ? "prefetched" : "live_fetch",
+      eventsCount,
+    });
+  }
   const races = (events || []).filter((e) => isARaceEvent(e));
   const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
 
@@ -14255,14 +14289,52 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
 
   const next = sorted.find((x) => x.day >= dayIso) || null;
   const lastPast = [...sorted].reverse().find((x) => x.day < dayIso) || null;
+  if (debug) {
+    const compactEvent = (eventEntry) => {
+      if (!eventEntry?.e) return null;
+      const event = eventEntry.e;
+      return {
+        name: event?.name ?? null,
+        category: event?.category ?? null,
+        start_date_local: event?.start_date_local ?? null,
+        type: event?.type ?? null,
+        distance: event?.distance ?? null,
+        isARaceEvent: isARaceEvent(event),
+      };
+    };
+    console.log("[debug:determineMode:candidates]", {
+      dayIso,
+      raceCount: races.length,
+      lastPast: compactEvent(lastPast),
+      next: compactEvent(next),
+    });
+  }
 
   if (lastPast) {
     const daysSinceLastEvent = diffDays(lastPast.day, dayIso);
     if (Number.isFinite(daysSinceLastEvent) && daysSinceLastEvent >= 0 && daysSinceLastEvent <= POST_EVENT_OPEN_DAYS) {
+      if (debug) {
+        console.log("[debug:determineMode:postEventOpen]", {
+          dayIso,
+          daysSinceLastEvent,
+          postEventOpenDays: POST_EVENT_OPEN_DAYS,
+          keepNextEvent: Boolean(next?.e),
+          nextEvent: next?.e
+            ? {
+              name: next.e?.name ?? null,
+              category: next.e?.category ?? null,
+              start_date_local: next.e?.start_date_local ?? null,
+              type: next.e?.type ?? null,
+              distance: next.e?.distance ?? null,
+              isARaceEvent: isARaceEvent(next.e),
+            }
+            : null,
+        });
+      }
       return {
         mode: "OPEN",
         primary: "open",
-        nextEvent: null,
+        nextEvent: next?.e || null,
         eventError: null,
         postEventOpenActive: true,
         postEventOpenDaysLeft: POST_EVENT_OPEN_DAYS - daysSinceLastEvent,
@@ -14740,6 +14812,10 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 // INTERNAL TEST HOOKS ONLY: not part of the public/runtime API contract.
 // Keep usage scoped to local tests in this repository.
 const __internalTestHooks = Object.freeze({
+  determineMode,
+  determineBlockState,
+  isARaceCategory,
+  isARaceEvent,
   isWorkerSubrequestLimitError,
   detectStrength,
   buildRunSignatureDescriptor,
