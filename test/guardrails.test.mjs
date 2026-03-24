@@ -419,3 +419,22 @@ console.log('guardrails ok');
   assert.equal(/Volumen priorisieren/.test(joined), false);
   assert.equal(/Overlay: TAPER/.test(joined), true);
 }
+
+// 21) POST_RACE_RAMP: Wettkampftag wird aus Intensitätsverteilung entfernt
+{
+  const ctx = {
+    activitiesAll: [
+      { type: 'Run', start_date_local: '2026-03-22T09:00:00', moving_time: 1800, tags: ['key:racepace'] },
+    ],
+  };
+  const dist = __test.computeIntensityDistribution(
+    ctx,
+    '2026-03-24',
+    'RACE',
+    'hm',
+    '2026-03-22',
+    { overlayMode: 'POST_RACE_RAMP', lastEventDate: '2026-03-22' }
+  );
+  assert.equal(dist.hasData, false);
+  assert.equal(dist.totalMinutes, 0);
+}
