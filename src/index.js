@@ -8016,6 +8016,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
+    const bikesToday = ctx.byDayBikes.get(day) ?? [];
     let raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
     const patch = {};
     const perRunInfo = [];
@@ -8719,6 +8720,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       gapRecommendations,
       bikeAllowanceFactor,
       bikeConversionFactor,
+      bikesToday,
       weeksToEvent,
       eventDistance,
       fitnessProfile,
@@ -10494,6 +10496,7 @@ function buildComments(
     bikeAllowanceFactor,
     bikeConversionFactor,
     bikeSubFactor,
+    bikesToday,
     weeksToEvent,
     eventDistance,
     fitnessProfile,
@@ -10504,6 +10507,7 @@ function buildComments(
   { debug = false, verbosity = "coach" } = {}
 ) {
   const lines = [];
+  const bikesTodayList = Array.isArray(bikesToday) ? bikesToday : [];
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
   const formatSignedPct1 = (value) =>
     Number.isFinite(value)
@@ -10701,6 +10705,19 @@ function buildComments(
   const runMetrics = [];
   if (!perRunInfo?.length) {
     runMetrics.push("Status: Heute kein Lauf.");
+    if (bikesTodayList.length) {
+      const bikeMinutesToday = Math.round(
+        sum(bikesTodayList.map((a) => Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0)) / 60
+      );
+      const bikeLoadTodayRaw = sum(bikesTodayList.map((a) => Number(extractLoad(a)) || 0));
+      const bikeLoadToday = Number.isFinite(bikeLoadTodayRaw) && bikeLoadTodayRaw > 0
+        ? Math.round(bikeLoadTodayRaw)
+        : null;
+      const bikeCountLabel = bikesTodayList.length > 1 ? `${bikesTodayList.length} Einheiten` : "1 Einheit";
+      const bikeDurationLabel = bikeMinutesToday > 0 ? `${bikeMinutesToday}′` : "n/a";
+      runMetrics.push(`Rad heute: ${bikeCountLabel}, gesamt ${bikeDurationLabel}${bikeLoadToday != null ? `, Load ~${bikeLoadToday}` : ""}.`);
+      runMetrics.push("Interpretation: Gute aerobe Arbeit ohne Lauf-Impact; laufspezifischer Reiz (Sehnen/Ökonomie) bleibt dennoch offen und sollte mit dem nächsten echten Lauf gesetzt werden.");
+    }
   } else {
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
     const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
