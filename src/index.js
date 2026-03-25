@@ -14005,7 +14005,7 @@ async function buildWatchfacePayload(env, endIso) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || !(d in runLoadByDay)) continue;
 
-    if (isRun(a)) {
+    if (isRun(a) || isBike(a)) {
       runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
       continue;
     }
