@@ -1088,7 +1088,7 @@ const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
 // Streams/types
 
 // "Trainingslehre" detective
-const LONGRUN_MIN_SECONDS = 60 * 60; // >= 60 minutes
+const LONGRUN_MIN_SECONDS = 45 * 60; // >= 45 minutes
 const DETECTIVE_WINDOWS = [14, 28, 42, 56, 84];
 const DETECTIVE_MIN_RUNS = 3;
 
@@ -2789,6 +2789,7 @@ function computeLongRunSummary7d(ctx, dayIso) {
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (seconds < LONGRUN_MIN_SECONDS) continue;
     if (!longest || seconds > longest.seconds) {
       longest = {
         activity: a,
@@ -2918,6 +2919,7 @@ function computeLongestRunSummaryWindow(ctx, dayIso, windowDays = LONGRUN_PREPLA
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (seconds < LONGRUN_MIN_SECONDS) continue;
     if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
   }
 
@@ -2940,6 +2942,7 @@ function computeLongRunSummary14d(ctx, dayIso) {
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (seconds < LONGRUN_MIN_SECONDS) continue;
     if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
   }
 
@@ -10030,7 +10033,7 @@ function computeLongrunFrequency21d(ctx, dayIso) {
     const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
-    if (min >= 60) count += 1;
+    if (min * 60 >= LONGRUN_MIN_SECONDS) count += 1;
   }
   return count;
 }
@@ -10045,7 +10048,7 @@ function computeLongrunFrequency35d(ctx, dayIso) {
     const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
-    if (min >= 60) count += 1;
+    if (min * 60 >= LONGRUN_MIN_SECONDS) count += 1;
   }
   return count;
 }
@@ -11568,7 +11571,7 @@ async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}
 
   const minutesTotal = sum(runs.map((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60));
   const loadTotal = sum(runs.map((a) => extractLoad(a)));
-  const longrunsCount = runs.filter((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) >= 60 * 60).length;
+  const longrunsCount = runs.filter((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) >= LONGRUN_MIN_SECONDS).length;
 
   const eventDistance = normalizeEventDistance(context?.eventDistance) || "10k";
   let easyMinutes = 0;
