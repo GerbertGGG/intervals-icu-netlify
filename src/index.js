@@ -1890,8 +1890,8 @@ const RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE = {
 };
 const RUN_FLOOR_TAPER_END_DAYS = 2;
 const POST_RACE_RAMP_DAYS_BY_DISTANCE = {
-  "5k": [3, 9, 16],
-  "10k": [3, 10, 18],
+  "5k": [2, 7, 12],
+  "10k": [3, 9, 16],
   hm: [4, 10, 21],
   m: [5, 14, 28],
 };
