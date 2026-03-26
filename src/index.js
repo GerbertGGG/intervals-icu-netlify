@@ -6786,12 +6786,24 @@ function buildWeekPreview(
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
     const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
-    const getPrefRank = (iso, preference) => {
-      const wd = isoWeekdayBerlin(iso);
-      return preference.indexOf(wd);
-    };
-    const keyPref = [3, 4, 2, 5, 1, 6, 7];
+    const getOffsetPrefRank = (offset, preference) => preference.indexOf(offset);
+    // Flexible statt fixer Wochentage:
+    // Key bevorzugt nach ~72h (offset 2–3), Longrun nach ~4–5 Tagen.
+    const keyOffsetPref = [2, 3, 1, 4, 0, 5, 6];
+    const longrunOffsetPref = [4, 5, 3, 6, 2, 1, 0];
     const strengthPref = [2, 4, 1, 5, 3, 6, 7];
+    const lastLongrunDateBeforeToday = (() => {
+      const dates = (ctx?.activitiesAll || [])
+        .filter((a) => {
+          const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+          const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+          return isRun(a) && durationSec >= LONGRUN_MIN_SECONDS && d && d < todayIso;
+        })
+        .map((a) => String(a?.start_date_local || a?.start_date || "").slice(0, 10))
+        .filter((d) => isIsoDate(d))
+        .sort();
+      return dates.at(-1) || null;
+    })();
     const lastRunDaysAgo = (() => {
       for (let i = 0; i <= 3; i += 1) {
         const checkIso = isoDate(new Date(
@@ -6963,11 +6975,11 @@ function buildWeekPreview(
         const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudgetByFrequency;
         const lastKnownKeyDate = [...thisWeekActuals.keyDates, ...plannedKeyDates].sort().at(-1) || null;
         const spacingOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
-        const bestKeyRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
-          .map((d) => getPrefRank(d, keyPref))
+        const bestKeyRankLeft = Array.from({ length: 7 - i }, (_, offset) => i + offset)
+          .map((offset) => getOffsetPrefRank(offset, keyOffsetPref))
           .filter((rank) => rank >= 0)
           .sort((a, b) => a - b)[0];
-        const isPreferredKeySlot = getPrefRank(date, keyPref) === bestKeyRankLeft;
+        const isPreferredKeySlot = getOffsetPrefRank(i, keyOffsetPref) === bestKeyRankLeft;
         const keyEligible = keyCompliance?.keyAllowedNow === true && canAddKeyByCount && spacingOk && isPreferredKeySlot;
 
         if (keyEligible) {
@@ -6984,8 +6996,13 @@ function buildWeekPreview(
             ? Math.min(...plannedKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
             : 99;
           const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
-          const isLongrunPref = weekday === 7 || weekday === 6;
-          if (canPlanLongrun && isLongrunPref) {
+          const longrunGapOk = !lastLongrunDateBeforeToday || diffDays(lastLongrunDateBeforeToday, date) >= 4;
+          const bestLongrunRankLeft = Array.from({ length: 7 - i }, (_, offset) => i + offset)
+            .map((offset) => getOffsetPrefRank(offset, longrunOffsetPref))
+            .filter((rank) => rank >= 0)
+            .sort((a, b) => a - b)[0];
+          const isLongrunPrefSlot = getOffsetPrefRank(i, longrunOffsetPref) === bestLongrunRankLeft;
+          if (canPlanLongrun && longrunGapOk && isLongrunPrefSlot) {
             sessionType = "LONGRUN";
             intensity = "MED";
             sessionLabel = `Langer Lauf ~${longRunTargetMin}′`;
@@ -6994,10 +7011,11 @@ function buildWeekPreview(
             const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
             const clashesWithKeyOrLong = sessionType === "KEY" || sessionType === "LONGRUN";
             const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
-              .map((d) => getPrefRank(d, strengthPref))
+              .map((d) => isoWeekdayBerlin(d))
+              .map((wd) => strengthPref.indexOf(wd))
               .filter((rank) => rank >= 0)
               .sort((a, b) => a - b)[0];
-            const isStrengthPref = getPrefRank(date, strengthPref) === bestStrengthRankLeft;
+            const isStrengthPref = strengthPref.indexOf(weekday) === bestStrengthRankLeft;
             if (strengthNeed && !clashesWithKeyOrLong && isStrengthPref) {
               const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
               const strengthSession = getStrengthSessionForDay(blockState, plannedStrengthTotal);
@@ -7791,12 +7809,12 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
 
     const mapping = {
       kraft: [
-        `2× Kraft/Stabi je ${strengthDuration}′ — Di + Do bevorzugt`,
+        `2× Kraft/Stabi je ${strengthDuration}′ — mit 48h Abstand verteilt`,
         "GA-Läufe wie geplant, Kraft NICHT weglassen",
         `${keyCompliance?.plannedKeyType || "steady"} Key wenn erlaubt`,
       ],
       longrun: [
-        `Longrun Sa oder So — Ziel ${longrunTarget}′`,
+        `Longrun alle 4–6 Tage — Ziel ${longrunTarget}′`,
         "Restliche Läufe locker, kein zusätzlicher Stress",
         "Key nur wenn Longrun sicher eingeplant",
       ],
@@ -7822,7 +7840,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       ],
       taper: [
         "Frisch bleiben — kein neues Volumen aufbauen",
-        "Key nur als Aktivierung (Mi), sonst locker/kurz",
+        "Key nur als kurze Aktivierung mit Abstand zum Rennen",
         "Kein Longrun diese Woche (Wettkampf ≤7 Tage)",
       ],
       post_race_recovery: [
@@ -12439,15 +12457,15 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLon
   const exampleWeek =
     suppressLongrun
       ? runTarget === "2–3"
-        ? ["Mi 30–35′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
+        ? ["Slot A: 30–35′ easy", "Slot B: 20–30′ shakeout + Mobilität (48h später)"]
         : includeKey
-        ? ["Di 30–40′ key (kurz/aktivierend)", "Fr 30–40′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
-        : ["Mi 30–35′ easy", "Fr 35–45′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
+        ? ["Slot A: 30–40′ key (kurz/aktivierend)", "Slot B: 30–40′ easy (48–72h nach Key)", "Slot C: 20–30′ shakeout + Mobilität"]
+        : ["Slot A: 30–35′ easy", "Slot B: 35–45′ easy (48h später)", "Slot C: 20–30′ shakeout + Mobilität"]
       : runTarget === "2–3"
-      ? ["Mi 30–35′ easy", "So 60–75′ longrun"]
+      ? ["Slot A: 30–35′ easy", "Slot B: 60–75′ longrun (4–6 Tage später)"]
       : includeKey
-      ? ["Di 35–45′ key (Schwelle/VO2)", "Fr 40–50′ GA", "So 60–75′ longrun"]
-      : ["Mi 30–35′ easy", "Fr 40–50′ GA", "So 60–75′ longrun"];
+      ? ["Slot A: 35–45′ key (Schwelle/VO2)", "Slot B: 40–50′ GA (48h nach Key)", "Slot C: 60–75′ longrun (4–6 Tage nach letztem Longrun)"]
+      : ["Slot A: 30–35′ easy", "Slot B: 40–50′ GA", "Slot C: 60–75′ longrun (4–6 Tage Rhythmus)"];
 
   return { runTarget, loadTarget, exampleWeek, longrunMinTarget, longrunDevelopmentTarget };
 }
