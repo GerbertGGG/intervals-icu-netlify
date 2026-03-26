@@ -10804,10 +10804,21 @@ function buildComments(
       runMetrics.push("Interpretation: Gute aerobe Arbeit ohne Lauf-Impact; laufspezifischer Reiz (Sehnen/Ökonomie) bleibt dennoch offen und sollte mit dem nächsten echten Lauf gesetzt werden.");
     }
   } else {
+    const raceToday = perRunInfo.find((x) => isRaceActivity(x.activity));
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
     const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey && !x.intervalSignal && !isTempoDauerlaufKey(x.activity));
-    if (intervalToday) {
+    if (raceToday) {
+      const raceDistanceKm = extractRunDistanceKm(raceToday.activity);
+      const raceTimeSec = Number(raceToday.activity?.moving_time ?? raceToday.activity?.elapsed_time ?? 0);
+      const racePaceSecPerKm = raceDistanceKm > 0 ? raceTimeSec / raceDistanceKm : null;
+      const raceVdot = estimateVdotFromRacePerformance(Math.round(raceDistanceKm * 1000), raceTimeSec);
+      const raceDistanceLabel = normalizeRaceDistanceLabel(inferRaceDistanceLabel(Math.round(raceDistanceKm * 1000)));
+      runMetrics.push(`Wettkampf erkannt: ${raceDistanceLabel}.`);
+      runMetrics.push(`Rennzeit: ${formatRaceTimeLabel(raceTimeSec) || "n/a"} | Pace: ${formatPacePerKm(racePaceSecPerKm) || "n/a"}.`);
+      runMetrics.push(`Race-VDOT: ${Number.isFinite(raceVdot) ? Math.round(raceVdot) : "n/a"} (aus Rennzeit berechnet).`);
+      runMetrics.push("Hinweis: Renntag separat bewerten — GA-Metriken (EF/Drift) heute nur als Nebeninfo.");
+    } else if (intervalToday) {
       const sessionQuality = ensureStructuredSessionReview(intervalToday.activity, getKeyType(intervalToday.activity));
       if (sessionQuality?.lines?.length) {
         runMetrics.push(...sessionQuality.lines);
@@ -11130,10 +11141,12 @@ function buildComments(
     if (recommendationLines.length >= 4) break;
   }
 
+  const raceDayToday = Boolean((weekPreview?.days || []).find((entry) => entry?.isToday && entry?.sessionType === "RACE"));
   const diagnoseLines = [];
-  diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
+  diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100${raceDayToday ? " (Renntag: nur eingeschränkt vergleichbar)" : ""}`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
+  if (raceDayToday) diagnoseLines.push("Renntag-Diagnose: Fokus auf Rennauswertung und Erholung, nicht auf normalen Trainingsfortschritt.");
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
   if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
