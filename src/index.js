@@ -7450,6 +7450,7 @@ async function buildCoachAnalysis(env, snapshot) {
         efTrendPct: Number.isFinite(Number(snapshot?.efTrendPct)) ? Math.round(Number(snapshot.efTrendPct) * 10) / 10 : null,
         rampPct: Number.isFinite(Number(snapshot?.rampPct)) ? Math.round(Number(snapshot.rampPct) * 10) / 10 : null,
         strengthMin7d: Number.isFinite(Number(snapshot?.strengthMin7d)) ? Math.max(0, Math.round(Number(snapshot.strengthMin7d))) : 0,
+        strengthMinRunfloor: Number.isFinite(Number(snapshot?.strengthMinRunfloor)) ? Math.max(0, Math.round(Number(snapshot.strengthMinRunfloor))) : 30,
         strengthTarget: Number.isFinite(Number(snapshot?.strengthTarget)) ? Math.max(0, Math.round(Number(snapshot.strengthTarget))) : 30,
         weakStrengthWeeks: Number.isFinite(Number(snapshot?.weakStrengthWeeks)) ? Math.max(0, Math.round(Number(snapshot.weakStrengthWeeks))) : 0,
         longrunMin: Number.isFinite(Number(snapshot?.longrunMin)) ? Math.max(0, Math.round(Number(snapshot.longrunMin))) : 0,
@@ -7474,6 +7475,7 @@ async function buildCoachAnalysis(env, snapshot) {
         efTrendPct: null,
         rampPct: null,
         strengthMin7d: 0,
+        strengthMinRunfloor: 30,
         strengthTarget: 30,
         weakStrengthWeeks: 0,
         longrunMin: 0,
@@ -7494,6 +7496,9 @@ async function buildCoachAnalysis(env, snapshot) {
   const kraftStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthTarget
     ? `${safeSnapshot.strengthMin7d} Min — Ziel erreicht`
     : `${safeSnapshot.strengthMin7d} Min — Ziel NICHT erreicht (fehlen ${safeSnapshot.strengthTarget - safeSnapshot.strengthMin7d} Min)`;
+  const kraftMindestzielStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthMinRunfloor
+    ? `${safeSnapshot.strengthMinRunfloor} Min Mindestziel erreicht`
+    : `${safeSnapshot.strengthMinRunfloor} Min Mindestziel NICHT erreicht`;
 
   const kraftMuster = safeSnapshot.weakStrengthWeeks >= 2
     ? `${safeSnapshot.weakStrengthWeeks} Wochen in Folge unter Ziel — wiederkehrendes Problem`
@@ -7536,10 +7541,10 @@ async function buildCoachAnalysis(env, snapshot) {
     : `${safeSnapshot.vdotTrend > 0 ? "+" : ""}${safeSnapshot.vdotTrend.toFixed(1)} (aus EF-Trend geschätzt)`;
   const promptGoal = isRaceDaySnapshot
     ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
-    : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte.";
+    : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf du diese Woche achten solltest.";
 
   const promptLines = [
-    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. ${promptGoal} Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
+    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
     "",
     "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
     "",
@@ -7549,6 +7554,7 @@ async function buildCoachAnalysis(env, snapshot) {
     `- EF-Trend 28 Tage: ${efStatus}`,
     `- 7-Tage-Last vs. Vorwoche: ${lastStatus}`,
     `- Kraft diese Woche: ${kraftStatus}`,
+    `- Kraft Mindestziel: ${kraftMindestzielStatus}`,
     `- Kraftmuster: ${kraftMuster}`,
     `- Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min`,
     `- Nächster Wettkampf: ${wettkampf}`,
@@ -8972,6 +8978,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         rampPct: fatigue?.rampPct ?? null,
         driftMed: motor?.driftMed ?? null,
         strengthMin7d: strengthPolicyResolved?.minutes7d ?? 0,
+        strengthMinRunfloor: strengthPolicyResolved?.minRunfloor ?? 30,
         strengthTarget: strengthPolicyResolved?.target ?? 30,
         longrunMin: longRunDoneMin ?? 0,
         weakStrengthWeeks: Array.isArray(ctx.weekMemories)
