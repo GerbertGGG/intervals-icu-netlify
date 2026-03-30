@@ -9153,7 +9153,7 @@ Fehler: ${String(e?.message ?? e)}`;
   }
 
   if (write && isMondayIso(oldest)) {
-    sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
+    await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
       console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
     });
   }
