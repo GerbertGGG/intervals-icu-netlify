@@ -1725,29 +1725,143 @@ function buildStrengthMailHtml(sessionA, sessionB, blockState) {
       if (!session) return "";
       const exercises = Array.isArray(session.exercises) ? session.exercises : [];
       const mobility = Array.isArray(session.mobility) ? session.mobility : STRENGTH_MOBILITY_DEFAULT;
-      const deloadLabel = session.isDeload ? " <span style=\"color:#6b7280;\">— Deload-Woche, weniger Volumen</span>" : "";
-      const exerciseItems = exercises.map((entry) => `<li style="margin:0 0 6px 0;">${escapeHtml(entry)}</li>`).join("");
-      const mobilityItems = mobility.map((entry) => `<li style="margin:0 0 6px 0;">${escapeHtml(entry)}</li>`).join("");
+      const deloadLabel = session.isDeload ? " <span class=\"muted\">— Deload-Woche, weniger Volumen</span>" : "";
+      const exerciseItems = exercises.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("");
+      const mobilityItems = mobility.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("");
       return `
-        <div style="margin:0 0 18px 0;padding:14px;border:1px solid #e5e7eb;border-radius:10px;">
-          <h3 style="margin:0 0 8px 0;font-size:18px;">${escapeHtml(title)} — ${escapeHtml(session.name || "Einheit")}${deloadLabel}</h3>
-          <p style="margin:0 0 10px 0;color:#374151;">Dauer: ca. ${(session.durationMin || [15, 20])[0]}–${(session.durationMin || [15, 20])[1]} Min</p>
-          <ul style="margin:0 0 12px 18px;padding:0;">${exerciseItems}</ul>
-          <p style="margin:0 0 8px 0;font-weight:600;">Mobility danach:</p>
-          <ul style="margin:0 0 0 18px;padding:0;">${mobilityItems}</ul>
-        </div>
+        <section class="session">
+          <h3>${escapeHtml(title)} — ${escapeHtml(session.name || "Einheit")}${deloadLabel}</h3>
+          <p class="meta">Dauer: ca. ${(session.durationMin || [15, 20])[0]}–${(session.durationMin || [15, 20])[1]} Min</p>
+          <ul class="compact-list">${exerciseItems}</ul>
+          <p class="meta strong">Mobility danach:</p>
+          <ul class="compact-list">${mobilityItems}</ul>
+        </section>
       `;
     };
     return `<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;color:#111827;">
-    <div style="max-width:600px;margin:0 auto;padding:20px;">
-      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;">
-        <h2 style="margin:0 0 8px 0;">💪 Kraftplan — ${escapeHtml(block)}</h2>
-        <p style="margin:0 0 16px 0;color:#374151;">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
-        ${renderSession("Einheit A", sessionA)}
-        ${sessionB ? renderSession("Einheit B", sessionB) : ""}
-        <p style="margin:12px 0 0 0;color:#4b5563;font-size:13px;">Einheiten in intervals.icu als Kraft/Stabi loggen damit dein Score grün bleibt.</p>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 0;
+        background: #f9fafb;
+        font-family: Arial, sans-serif;
+        color: #111827;
+      }
+      .sheet {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 14px;
+      }
+      .card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 14px;
+      }
+      h2 {
+        margin: 0 0 4px 0;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+      .subtitle {
+        margin: 0 0 10px 0;
+        color: #374151;
+        font-size: 14px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .session {
+        margin: 0;
+        padding: 10px 11px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+      .session h3 {
+        margin: 0 0 6px 0;
+        font-size: 16px;
+        line-height: 1.25;
+      }
+      .meta {
+        margin: 0 0 6px 0;
+        color: #374151;
+        font-size: 13px;
+      }
+      .meta.strong {
+        margin-top: 4px;
+        margin-bottom: 4px;
+        font-weight: 700;
+        color: #111827;
+      }
+      .compact-list {
+        margin: 0 0 6px 16px;
+        padding: 0;
+      }
+      .compact-list li {
+        margin: 0 0 3px 0;
+        font-size: 13px;
+        line-height: 1.25;
+      }
+      .muted {
+        color: #6b7280;
+        font-size: 13px;
+      }
+      .footnote {
+        margin: 8px 0 0 0;
+        color: #4b5563;
+        font-size: 12px;
+      }
+      @media (max-width: 700px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+      @media print {
+        @page { size: A4 portrait; margin: 9mm; }
+        body {
+          background: #fff !important;
+          font-size: 12px;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
+        .sheet {
+          max-width: 100%;
+          margin: 0;
+          padding: 0;
+        }
+        .card {
+          border-radius: 0;
+          border: 1px solid #d1d5db;
+          padding: 8px;
+        }
+        h2 { font-size: 18px; margin-bottom: 2px; }
+        .subtitle { margin-bottom: 6px; font-size: 12px; }
+        .grid { gap: 6px; }
+        .session { padding: 7px 8px; }
+        .session h3 { font-size: 13px; margin-bottom: 4px; }
+        .meta, .muted, .compact-list li, .footnote { font-size: 11px; line-height: 1.2; }
+        .compact-list { margin-left: 13px; margin-bottom: 4px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="card">
+        <h2>💪 Kraftplan — ${escapeHtml(block)}</h2>
+        <p class="subtitle">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
+        <div class="grid">
+          ${renderSession("Einheit A", sessionA)}
+          ${sessionB ? renderSession("Einheit B", sessionB) : ""}
+        </div>
+        <p class="footnote">Einheiten in intervals.icu als Kraft/Stabi loggen, damit dein Score grün bleibt.</p>
       </div>
     </div>
   </body>
