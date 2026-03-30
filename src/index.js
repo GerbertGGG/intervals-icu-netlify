@@ -10215,13 +10215,17 @@ function buildNextRunRecommendation({
   hoursSinceLastKey,
   keySuggestion,
   explicitSession,
+  plannedSessionType,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
+  const keyScheduledToday = String(plannedSessionType || "").toUpperCase() === "KEY";
   const keySuggestedNow = keyAllowedNow && (
-    keySuggestionText.includes("optional/erlaubt")
+    keyScheduledToday
+    || keySuggestionText.includes("key heute")
+    || keySuggestionText.includes("optional/erlaubt")
     || keySuggestionText.includes("nächster key:")
   );
   if (overlay === "LIFE_EVENT_STOP") {
@@ -10236,6 +10240,10 @@ function buildNextRunRecommendation({
       : "20–35 min locker (Taper)";
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
+  } else if (keySuggestedNow) {
+    next = conciseExplicitSession
+      ? `Key wie im Wochenplan: ${conciseExplicitSession}.`
+      : "Key wie im Wochenplan (kontrolliert, sauber laufen).";
   } else if (hasSpecific && !specificOk) {
     next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
@@ -10753,6 +10761,7 @@ function buildComments(
     weeksToEvent,
   });
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
+  const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday || entry?.date === todayIso);
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
     policy,
@@ -10767,6 +10776,7 @@ function buildComments(
     hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
     keySuggestion: keyCompliance?.suggestion,
     explicitSession: explicitSessionText,
+    plannedSessionType: todayPlanEntry?.sessionType,
   });
   const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
   const resolvedBikeConversionFactor = Number.isFinite(bikeConversionFactor) ? bikeConversionFactor : BIKE_CONVERSION_FACTOR_FALLBACK;
