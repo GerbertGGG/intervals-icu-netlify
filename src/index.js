@@ -2505,6 +2505,7 @@ function evaluateRunFloorState({
     ? previousState.lastFloorIncreaseDate
     : null;
   let lastEventDate = isIsoDate(previousState?.lastEventDate) ? previousState.lastEventDate : null;
+  let lastEventDistance = normalizeEventDistance(previousState?.lastEventDistance) || null;
   let postRaceRampUntilISO = isIsoDate(previousState?.postRaceRampUntilISO) ? previousState.postRaceRampUntilISO : null;
   let lastLifeEventCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
   let lastLifeEventStartISO = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
@@ -2513,7 +2514,8 @@ function evaluateRunFloorState({
 
   if (eventDateISO && safeEventInDays <= 0) {
     lastEventDate = eventDateISO;
-    const rampMeta = computePostRaceRampFactor(0, eventDistance);
+    lastEventDistance = normalizeEventDistance(eventDistance) || lastEventDistance;
+    const rampMeta = computePostRaceRampFactor(0, lastEventDistance || eventDistance);
     if (Number.isFinite(rampMeta?.rampUntilDays)) {
       postRaceRampUntilISO = isoDate(new Date(new Date(eventDateISO + "T00:00:00Z").getTime() + rampMeta.rampUntilDays * 86400000));
     }
@@ -2524,7 +2526,8 @@ function evaluateRunFloorState({
     const delta = daysBetween(lastEventDate, todayISO);
     if (Number.isFinite(delta) && delta >= 0) daysSinceEvent = Math.round(delta);
   }
-  const postRaceRamp = computePostRaceRampFactor(daysSinceEvent, eventDistance);
+  const postRaceDistance = lastEventDistance || eventDistance;
+  const postRaceRamp = computePostRaceRampFactor(daysSinceEvent, postRaceDistance);
 
   let deloadEndDate = null;
   let deloadActive = false;
@@ -2754,6 +2757,7 @@ function evaluateRunFloorState({
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
+    lastEventDistance,
     postRaceRampUntilISO,
     lastLifeEventCategory,
     lastLifeEventStartISO,
@@ -5448,12 +5452,23 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     lifeEventCategory === "HOLIDAY" ||
     lifeEventCategory === "SICK" ||
     lifeEventCategory === "INJURED";
+  const lastEventDateIso = isIsoDate(context?.lastEventDate) ? context.lastEventDate : null;
+  const daysSinceLastEvent = lastEventDateIso && isIsoDate(context?.dayIso)
+    ? diffDays(lastEventDateIso, context.dayIso)
+    : null;
+  const postRaceDistance = normalizeEventDistance(context?.lastEventDistance) || context.eventDistance;
+  const postRaceRamp = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
+  const postRaceKeyAllowed = context.overlayMode === "POST_RACE_RAMP"
+    ? postRaceRamp.keyAllowed === true
+    : true;
 
   let suggestion = "";
   // Gate A: nur ACWR. Weitere Timing-/Wochenlogik passiert in der dynamischen Wochenplanung.
-  let keyAllowedNow = acwrGateOk;
+  let keyAllowedNow = acwrGateOk && postRaceKeyAllowed;
 
-  if (!acwrGateOk) {
+  if (!postRaceKeyAllowed) {
+    suggestion = `Post-Race Ramp aktiv (${postRaceRamp.phase}) – heute noch kein Key.`;
+  } else if (!acwrGateOk) {
     suggestion = `ACWR zu hoch (${acwr.toFixed(2)} > ${acwrHighLimit.toFixed(2)}) – heute kein Key.`;
   } else if (hardSafetyStop) {
     suggestion = "Key pausiert (Safety-Stop aktiv).";
@@ -6145,6 +6160,7 @@ function extractPersistedBlockStateFromWellness(wellness) {
     lastDeloadCompletedISO: null,
     lastFloorIncreaseDate: null,
     lastEventDate: null,
+    lastEventDistance: null,
     postRaceRampUntilISO: null,
     lastLifeEventCategory: "",
     lastLifeEventStartISO: null,
@@ -6184,6 +6200,7 @@ function parseBlockStateFromComment(comment) {
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
       lastFloorIncreaseDate: isIsoDate(parsed.lastFloorIncreaseDate) ? parsed.lastFloorIncreaseDate : null,
       lastEventDate: isIsoDate(parsed.lastEventDate) ? parsed.lastEventDate : null,
+      lastEventDistance: parsed.lastEventDistance ?? null,
       postRaceRampUntilISO: isIsoDate(parsed.postRaceRampUntilISO) ? parsed.postRaceRampUntilISO : null,
       lastLifeEventCategory: parsed.lastLifeEventCategory ? normalizeEventCategory(parsed.lastLifeEventCategory) : "",
       lastLifeEventStartISO: isIsoDate(parsed.lastLifeEventStartISO) ? parsed.lastLifeEventStartISO : null,
@@ -6392,6 +6409,7 @@ async function readLatestBlockStateKv(env, dayIso) {
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
     lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
+    lastEventDistance: state.lastEventDistance ?? null,
     postRaceRampUntilISO: isIsoDate(state.postRaceRampUntilISO) ? state.postRaceRampUntilISO : null,
     lastLifeEventCategory: state.lastLifeEventCategory ? normalizeEventCategory(state.lastLifeEventCategory) : "",
     lastLifeEventStartISO: isIsoDate(state.lastLifeEventStartISO) ? state.lastLifeEventStartISO : null,
@@ -6986,7 +7004,16 @@ function buildWeekPreview(
         const lastKnownLongrunDate = [...(thisWeekActuals.longrunDates || []), ...plannedLongrunDates].sort().at(-1) || null;
         const keySpacing72hOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
         const keyLongrunGap48hOk = !lastKnownLongrunDate || diffDays(lastKnownLongrunDate, date) >= 2;
-        const keyEligible = keyCompliance?.keyAllowedNow === true && canAddKeyByCount && keySpacing72hOk && keyLongrunGap48hOk;
+        const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
+        const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
+        const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
+        const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
+        const overlayBlocksPlannedKey = overlayMode === "POST_RACE_RAMP" && postRaceRampMeta.keyAllowed !== true;
+        const keyEligible = keyCompliance?.keyAllowedNow === true
+          && !overlayBlocksPlannedKey
+          && canAddKeyByCount
+          && keySpacing72hOk
+          && keyLongrunGap48hOk;
 
         if (keyEligible) {
           sessionType = "KEY";
@@ -8111,6 +8138,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     let savedPostRaceRampUntilISO = null;
     let savedLastEventDate = null;
+    let savedLastEventDistance = null;
     try {
       savedPostRaceRampUntilISO =
         blockStartOverrideDerivedFromOldest &&
@@ -8121,9 +8149,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       savedLastEventDate = savedPostRaceRampUntilISO
         ? (previousBlockState?.lastEventDate ?? null)
         : null;
+      savedLastEventDistance = savedPostRaceRampUntilISO
+        ? (normalizeEventDistance(previousBlockState?.lastEventDistance) || null)
+        : null;
     } catch {
       savedPostRaceRampUntilISO = null;
       savedLastEventDate = null;
+      savedLastEventDistance = null;
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
@@ -8470,6 +8502,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
     const dailyRunLoads = buildRunDailyLoads(ctx, day, RUN_FLOOR_DELOAD_WINDOW_DAYS);
+    const modeLastEventDistance = normalizeEventDistance(modeInfo?.lastEventDistance) || null;
+    const previousStateForRunFloor = {
+      ...(previousBlockState || {}),
+      lastEventDistance: modeLastEventDistance || normalizeEventDistance(previousBlockState?.lastEventDistance) || null,
+    };
     const runFloorState = evaluateRunFloorState({
       todayISO: day,
       floorTarget: baseRunFloorTarget,
@@ -8477,7 +8514,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       eventInDays,
       eventDistance,
       eventDateISO: eventDate || null,
-      previousState: previousBlockState,
+      previousState: previousStateForRunFloor,
       dailyRunLoads,
       lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
       recentHolidayEvent: modeInfo?.recentHolidayEvent || null,
@@ -8510,15 +8547,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
     blockState.lastEventDate = runFloorState.lastEventDate;
+    blockState.lastEventDistance = runFloorState.lastEventDistance || modeLastEventDistance || null;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
     try {
       if (savedPostRaceRampUntilISO && !isIsoDate(blockState?.postRaceRampUntilISO)) {
         blockState.postRaceRampUntilISO = savedPostRaceRampUntilISO;
         if (savedLastEventDate) blockState.lastEventDate = savedLastEventDate;
+        if (savedLastEventDistance) blockState.lastEventDistance = savedLastEventDistance;
       }
       if (savedPostRaceRampUntilISO && !isIsoDate(runFloorState?.postRaceRampUntilISO)) {
         runFloorState.postRaceRampUntilISO = savedPostRaceRampUntilISO;
         if (savedLastEventDate) runFloorState.lastEventDate = savedLastEventDate;
+        if (savedLastEventDistance) runFloorState.lastEventDistance = savedLastEventDistance;
       }
     } catch {}
     const strengthPolicyBase = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
@@ -8600,6 +8640,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastSessionLever: lastSessionLeverReview || null,
       historyMetrics,
       longrunSpecificity,
+      lastEventDate: blockState.lastEventDate || runFloorState.lastEventDate || null,
+      lastEventDistance: blockState.lastEventDistance || runFloorState.lastEventDistance || null,
     });
     if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
@@ -8696,6 +8738,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
       lastEventDate: blockState.lastEventDate,
+      lastEventDistance: blockState.lastEventDistance,
       postRaceRampUntilISO: blockState.postRaceRampUntilISO,
       lastLifeEventCategory: runFloorState.lastLifeEventCategory,
       lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
@@ -14458,6 +14501,7 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
         postEventOpenActive: true,
         postEventOpenDaysLeft: POST_EVENT_OPEN_DAYS - daysSinceLastEvent,
         lastEventDate: lastPast.day,
+        lastEventDistance: getEventDistanceFromEvent(lastPast.e),
         activeLifeEvent,
         lifeEventEffect,
         recentHolidayEvent,
