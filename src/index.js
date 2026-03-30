@@ -1768,7 +1768,7 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
       : null;
     const cycleWeekDisplay = Number(sessionA?.cycleWeek) + 1 || 1;
     const fromAddress = String(env?.RESEND_FROM_EMAIL || "noreply@resend.dev").trim() || "noreply@resend.dev";
-    const toAddress = String(options?.toOverride || env?.RESEND_TO_EMAIL || "Markushausdorf@web.de").trim() || "Markushausdorf@web.de";
+    const toAddress = String(options?.toOverride || env?.RESEND_TO_EMAIL || "markushausdorf@web.de").trim() || "markushausdorf@web.de";
     const payload = {
       from: `Training <${fromAddress}>`,
       to: toAddress,
