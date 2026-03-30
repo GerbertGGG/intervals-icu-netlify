@@ -1890,10 +1890,10 @@ const RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE = {
 };
 const RUN_FLOOR_TAPER_END_DAYS = 2;
 const POST_RACE_RAMP_DAYS_BY_DISTANCE = {
-  "5k": [2, 7, 12],
-  "10k": [3, 9, 16],
-  hm: [4, 10, 21],
-  m: [5, 14, 28],
+  "5k": [2, 5, 8],
+  "10k": [3, 6, 10],
+  hm: [4, 8, 14],
+  m: [5, 10, 21],
 };
 const POST_RACE_RAMP_FACTORS = [0.5, 0.65, 0.8, 1.0];
 const RUN_FLOOR_DELOAD_RANGE = { min: 0.6, max: 0.7 };
@@ -5411,7 +5411,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
   const plannedKeyTypeCandidate = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
-  let plannedKeyType = plannedKeyTypeCandidate;
+  let plannedKeyType = resolvePlannableKeyType(plannedKeyTypeCandidate, keyRules) || "steady";
   keyRules.plannedPrimaryType = plannedKeyType;
   let preferred = plannedKeyType;
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
@@ -5514,12 +5514,20 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (activeLeverText) suggestion = `${suggestion} Hebel aus letzter Key-Session: ${activeLeverText}.`;
   }
 
-  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
-  const explicitSessionType = inferKeyTypeFromExplicitSession(explicitSession);
+  const explicitSessionRaw = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
+  const explicitSessionType = inferKeyTypeFromExplicitSession(explicitSessionRaw);
   if (explicitSessionType && explicitSessionType !== plannedKeyType) {
-    plannedKeyType = explicitSessionType;
+    plannedKeyType = resolvePlannableKeyType(explicitSessionType, keyRules) || plannedKeyType;
     keyRules.plannedPrimaryType = plannedKeyType;
     preferred = plannedKeyType;
+  }
+  plannedKeyType = resolvePlannableKeyType(plannedKeyType, keyRules);
+  keyRules.plannedPrimaryType = plannedKeyType || keyRules.plannedPrimaryType || "steady";
+  const explicitSession = isConcreteKeySession(explicitSessionRaw) ? explicitSessionRaw : null;
+  const hasConcreteKeySession = !!(plannedKeyType && explicitSession);
+  if (keyAllowedNow && !hasConcreteKeySession) {
+    keyAllowedNow = false;
+    suggestion = "Heute kein Key-Slot: es liegt aktuell keine belastbare, erlaubte Key-Session vor.";
   }
   const pendingLever = !keyAllowedNow && pendingLeverMeta ? pendingLeverMeta : null;
   const pendingLeverPlan = !keyAllowedNow
@@ -5557,6 +5565,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     disallowedHits,
     status,
     suggestion,
+    allowedKeyTypes: [...(keyRules?.allowedKeyTypes || [])],
+    preferredKeyTypes: [...(keyRules?.preferredKeyTypes || [])],
+    bannedKeyTypes: [...(keyRules?.bannedKeyTypes || [])],
     progression,
     basedOn: "7T (informativ)",
     keySpacingOk: keySpacingNowOk,
@@ -5568,6 +5579,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keyAllowedNow,
     plannedKeyType,
     explicitSession,
+    hasConcreteKeySession,
     activeLever,
     pendingLever,
     pendingLeverLine: pendingLeverPlan.pendingLeverLine,
@@ -6704,6 +6716,27 @@ function buildWeekPreview(
       const split = raw.split(/(?<=[.!?])\s+/);
       return (split[0] || raw).trim();
     };
+    const resolvePlannableKeyForDay = (candidateType, compliance) => resolvePlannableKeyType(
+      candidateType || compliance?.plannedKeyType || null,
+      {
+        allowedKeyTypes: compliance?.allowedKeyTypes || [],
+        preferredKeyTypes: compliance?.preferredKeyTypes || [],
+        bannedKeyTypes: compliance?.bannedKeyTypes || [],
+      }
+    );
+    const shouldShowKeySlot = ({ compliance, overlayMode, explicitSession, plannedKeyType, date }) => {
+      if (compliance?.keyAllowedNow !== true) return false;
+      if (!plannedKeyType) return false;
+      if (!isConcreteKeySession(explicitSession)) return false;
+      if (overlayMode === "POST_RACE_RAMP") {
+        const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
+        const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
+        const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
+        const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
+        if (postRaceRampMeta?.keyAllowed !== true) return false;
+      }
+      return true;
+    };
     const parseRunTargetRange = (text) => {
       const raw = String(text || "");
       const range = raw.match(/(\d+)\s*[–-]\s*(\d+)\s*Läufe?n?\/?Woche/i);
@@ -6743,10 +6776,16 @@ function buildWeekPreview(
       if (date === eventDateISO) return "RACE_DAY";
 
       if (date > eventDateISO) {
-        const daysSinceEvent = diffDays(eventDateISO, date);
-        if (daysSinceEvent <= 3) return "POST_RACE_RAMP_REST";
-        if (daysSinceEvent <= 10) return "POST_RACE_RAMP_EASY";
-        return "NORMAL";
+        const postRaceAnchor = isIsoDate(currentBlockState?.lastEventDate)
+          ? currentBlockState.lastEventDate
+          : eventDateISO;
+        const postRaceDistance = normalizeEventDistance(currentBlockState?.lastEventDistance || currentBlockState?.eventDistance);
+        const daysSinceEvent = diffDays(postRaceAnchor, date);
+        const rampMeta = computePostRaceRampFactor(daysSinceEvent, postRaceDistance);
+        if (rampMeta.phase === "POST_RACE_RAMP_1") return "POST_RACE_RAMP_REST";
+        if (rampMeta.phase === "POST_RACE_RAMP_2") return "POST_RACE_RAMP_EASY";
+        if (rampMeta.phase === "POST_RACE_RAMP_3") return "POST_RACE_RAMP";
+        return baseOverlay === "POST_RACE_RAMP" ? "NORMAL" : baseOverlay;
       }
 
       if (date < baseTodayIso) return baseOverlay;
@@ -6964,7 +7003,14 @@ function buildWeekPreview(
           && daysToEvent > minDaysBeforeRace
           && !isDelayedTaperEntryToday
           && !keyExistsInPlan
-          && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead);
+          && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead)
+          && shouldShowKeySlot({
+            compliance: keyCompliance,
+            overlayMode,
+            explicitSession: keyCompliance?.explicitSession,
+            plannedKeyType: resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance),
+            date,
+          });
 
         if (isDelayedTaperEntryToday) {
           const layoffDays = lastRunDaysAgo === 99 ? "3+" : String(lastRunDaysAgo);
@@ -6978,9 +7024,10 @@ function buildWeekPreview(
           const taperLabel = eventDistance === "5k" || eventDistance === "10k"
             ? "4–6×200m @ Renntempo oder 3×1km locker-flott"
             : (keyCompliance?.plannedKeyType || "kurze Reize");
+          const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
           sessionType = "KEY";
           intensity = "HIGH";
-          keyType = keyCompliance?.plannedKeyType || null;
+          keyType = resolvedKeyType || null;
           sessionLabel = `Aktivierungs-Key (Taper): ${taperLabel}`;
           note = "Kurz und scharf — neuromuskuläre Aktivierung, kein Volumen";
           plannedKeyDates.push(date);
@@ -7009,16 +7056,25 @@ function buildWeekPreview(
         const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
         const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
         const overlayBlocksPlannedKey = overlayMode === "POST_RACE_RAMP" && postRaceRampMeta.keyAllowed !== true;
+        const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
+        const keySessionReady = shouldShowKeySlot({
+          compliance: keyCompliance,
+          overlayMode,
+          explicitSession: keyCompliance?.explicitSession,
+          plannedKeyType: resolvedKeyType,
+          date,
+        });
         const keyEligible = keyCompliance?.keyAllowedNow === true
           && !overlayBlocksPlannedKey
           && canAddKeyByCount
           && keySpacing72hOk
-          && keyLongrunGap48hOk;
+          && keyLongrunGap48hOk
+          && keySessionReady;
 
         if (keyEligible) {
           sessionType = "KEY";
           intensity = "HIGH";
-          keyType = keyCompliance?.plannedKeyType || null;
+          keyType = resolvedKeyType || null;
           sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`;
           plannedKeyDates.push(date);
           if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
@@ -10412,6 +10468,54 @@ function inferKeyTypeFromExplicitSession(explicitSession) {
   const labelMatch = text.match(/^([A-Za-zäöüÄÖÜß _-]+)\s+konkret\s*:/i);
   if (labelMatch?.[1]) return normalizeKeyType(labelMatch[1]);
   return normalizeKeyType(text);
+}
+
+function resolvePlannableKeyType(plannedKeyType, keyRules = {}) {
+  const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
+  const banned = Array.isArray(keyRules?.bannedKeyTypes) ? keyRules.bannedKeyTypes : [];
+  const preferred = Array.isArray(keyRules?.preferredKeyTypes) ? keyRules.preferredKeyTypes : [];
+  const normalizedPlanned = normalizeKeyType(plannedKeyType);
+
+  const allowedPool = allowed.filter((type) => !banned.includes(type));
+  const plannedAllowed = normalizedPlanned && allowedPool.includes(normalizedPlanned);
+  if (plannedAllowed) return normalizedPlanned;
+
+  const preferredFallback = preferred.find((type) => allowedPool.includes(type));
+  if (preferredFallback) return preferredFallback;
+  if (allowedPool.length) return allowedPool[0];
+  if (normalizedPlanned && !banned.includes(normalizedPlanned)) return normalizedPlanned;
+  return null;
+}
+
+function isConcreteKeySession(explicitSession) {
+  const raw = String(explicitSession || "").trim();
+  if (!raw) return false;
+  const lower = raw.toLowerCase();
+  const placeholderSignals = [
+    "hebel aus letzter key-session",
+    "progression template missing",
+    "geplante anpassung:",
+    "cue:",
+  ];
+  if (placeholderSignals.some((signal) => lower.includes(signal))) return false;
+
+  const normalized = raw
+    .replace(/^[^:]{1,40}\s+konkret:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return false;
+
+  const hasWorkoutStructure =
+    /\d+\s*[x×]\s*\d+/i.test(normalized)
+    || /\d+\s*(km|m|min|′|sec|s)\b/i.test(normalized)
+    || /@\s*[^\s]/.test(normalized);
+  if (!hasWorkoutStructure) return false;
+
+  const genericOnlySignals = ["locker", "frei", "regeneration", "technik"];
+  const hardSignals = ["schwelle", "vo2", "racepace", "tempo", "interval", "@", "x"];
+  const genericOnly = genericOnlySignals.some((signal) => lower.includes(signal))
+    && !hardSignals.some((signal) => lower.includes(signal));
+  return !genericOnly;
 }
 
 function explicitSessionFromSuggestion(suggestion) {
