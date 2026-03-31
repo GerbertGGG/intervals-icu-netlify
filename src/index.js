@@ -6866,9 +6866,18 @@ function buildWeekPreview(
     keyCompliance,
     runFloorState,
     distanceDiagnostics,
+    fatigue,
   } = {}
 ) {
   try {
+    const LONGRUN_OVERLAY_BLOCKERS = new Set([
+      "TAPER",
+      "DELOAD",
+      "LIFE_EVENT_STOP",
+      "POST_RACE_RAMP",
+      "POST_RACE_RAMP_REST",
+      "POST_RACE_RAMP_EASY",
+    ]);
     const dayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
     const isoWeekdayBerlin = (iso) => {
       const date = parseISODateSafe(iso);
@@ -7024,7 +7033,51 @@ function buildWeekPreview(
     let longrunPlanned = false;
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
-    const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
+    const longRunBaseTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
+    const recentLongruns = (ctx?.activitiesAll || [])
+      .filter((a) => {
+        if (!isRun(a)) return false;
+        const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+        return durationSec >= LONGRUN_MIN_SECONDS;
+      })
+      .map((a) => {
+        const date = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+        const minutes = Math.round((Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60);
+        return { date, minutes };
+      })
+      .filter((entry) => isIsoDate(entry.date) && entry.date <= todayIso)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const longRunDoneMin14d = recentLongruns
+      .filter((entry) => diffDays(entry.date, todayIso) <= 14)
+      .reduce((max, entry) => Math.max(max, entry.minutes), 0);
+    const longestRunLookbackMin = recentLongruns
+      .filter((entry) => diffDays(entry.date, todayIso) <= LONGRUN_PREPLAN.spikeGuardLookbackDays)
+      .reduce((max, entry) => Math.max(max, entry.minutes), 0);
+    const longRunStepCapRawMin = longRunDoneMin14d > 0
+      ? Math.round(longRunDoneMin14d * (1 + LONGRUN_PREPLAN.maxStepPct))
+      : LONGRUN_PREPLAN.startMin;
+    const eventDistanceNorm = normalizeEventDistance(blockState?.eventDistance);
+    const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistanceNorm || "10k"]?.longrun ?? 0);
+    const longRunStepCapMin = phaseLongRunMaxMin > 0
+      ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
+      : longRunStepCapRawMin;
+    const longRunSpikeCapMin = longestRunLookbackMin > 0
+      ? Math.round(longestRunLookbackMin * (1 + LONGRUN_PREPLAN.maxStepPct))
+      : 0;
+    const longRunSafetyCapMin = longRunSpikeCapMin > 0
+      ? Math.min(longRunStepCapMin, longRunSpikeCapMin)
+      : longRunStepCapMin;
+    const longRunProgressionTargetMin = longRunDoneMin14d > 0
+      ? Math.max(longRunDoneMin14d, longRunSafetyCapMin)
+      : longRunBaseTargetMin;
+    const baseOverlayMode = String(runFloorState?.overlayMode || "NORMAL").toUpperCase();
+    const longrunBlockedByFatigue = fatigue?.override === true || runFloorState?.fatigueOverride === true;
+    const longrunBlockedByOverlay = LONGRUN_OVERLAY_BLOCKERS.has(baseOverlayMode) || runFloorState?.deloadActive === true;
+    const longrunBlockedBySpikeGuard = longRunSpikeCapMin > 0 && longRunStepCapMin > longRunSpikeCapMin;
+    const longrunBlocked = longrunBlockedByFatigue || longrunBlockedByOverlay || longrunBlockedBySpikeGuard;
+    const longRunTargetMin = longrunBlocked
+      ? (longRunDoneMin14d > 0 ? longRunDoneMin14d : longRunBaseTargetMin)
+      : longRunProgressionTargetMin;
     const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
     // Flexible statt fixer Wochentage:
@@ -9036,6 +9089,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       keyCompliance,
       runFloorState,
       distanceDiagnostics,
+      fatigue,
     });
     if (day === oldest) {
       strengthCountThisWeek = Math.max(0, Math.floor(Number(weekPreview?.thisWeekActuals?.strengthCount || 0)));
@@ -10742,10 +10796,13 @@ function buildRecommendationsAndBottomLine(state) {
   const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
   const longRunGapMin = Number(state?.longRunGapMin ?? 0);
   const longRunStepCapMin = Number(state?.longRunStepCapMin ?? 0);
+  const longRunProgressionTargetMin = Number(state?.longRunProgressionTargetMin ?? longRunStepCapMin ?? 0);
   const longRunSpikeCapMin = Number(state?.longRunSpikeCapMin ?? 0);
   const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
   const longRunDiagnosisTargetMin = Number(state?.longRunDiagnosisTargetMin ?? 0);
+  const longrunProgressionBlocked = state?.longrunProgressionBlocked === true;
+  const longrunProgressionBlockers = Array.isArray(state?.longrunProgressionBlockers) ? state.longrunProgressionBlockers.filter(Boolean) : [];
   const fatigue = state?.fatigue || null;
   const distanceDiagnostics = state?.distanceDiagnostics || null;
   const gapRecommendations = state?.gapRecommendations || null;
@@ -10774,10 +10831,15 @@ function buildRecommendationsAndBottomLine(state) {
       const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
         ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
         : "";
-      const progressionTargetMin = Number.isFinite(longRunStepCapMin) && longRunStepCapMin > 0
-        ? longRunStepCapMin
+      const progressionTargetMin = Number.isFinite(longRunProgressionTargetMin) && longRunProgressionTargetMin > 0
+        ? longRunProgressionTargetMin
         : blockLongRunNextWeekTargetMin;
-      rec.push(`Longrun-Progression: nächster Schritt bis ${Math.round(progressionTargetMin)}′.${spikeGuardNote}`);
+      if (longrunProgressionBlocked && progressionTargetMin > blockLongRunNextWeekTargetMin) {
+        const blockersText = longrunProgressionBlockers.length ? ` (${longrunProgressionBlockers.join(" | ")})` : "";
+        rec.push(`Longrun-Ziel perspektivisch ${Math.round(progressionTargetMin)}′; aktuell auf ${Math.round(blockLongRunNextWeekTargetMin)}′ zurückgestellt.${blockersText}${spikeGuardNote}`);
+      } else {
+        rec.push(`Longrun-Progression: nächster Schritt bis ${Math.round(progressionTargetMin)}′.${spikeGuardNote}`);
+      }
     }
   }
   if (state?.intensityDistribution?.easyUnder === true) {
@@ -11153,6 +11215,16 @@ function buildComments(
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunSafetyCapMin
     : LONGRUN_PREPLAN.startMin;
+  const longrunOverlayBlockedModes = new Set(["TAPER", "DELOAD", "LIFE_EVENT_STOP", "POST_RACE_RAMP", "POST_RACE_RAMP_REST", "POST_RACE_RAMP_EASY"]);
+  const longrunBlockedByFatigue = fatigue?.override === true;
+  const longrunBlockedByOverlay = longrunOverlayBlockedModes.has(String(overlayMode || "NORMAL").toUpperCase()) || runFloorState?.deloadActive === true;
+  const longrunBlockedBySpikeGuard = longRunSpikeCapMin > 0 && longRunStepCapMin > longRunSpikeCapMin;
+  const longrunProgressionBlocked = longrunBlockedByFatigue || longrunBlockedByOverlay || longrunBlockedBySpikeGuard;
+  const longrunProgressionBlockers = [
+    longrunBlockedByFatigue ? "Fatigue override aktiv" : null,
+    longrunBlockedByOverlay ? `Overlay ${String(overlayMode || "NORMAL").toUpperCase()} aktiv` : null,
+    longrunBlockedBySpikeGuard ? `Spike-Guard limitiert auf ${Math.round(longRunSpikeCapMin)}′` : null,
+  ].filter(Boolean);
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
@@ -11365,10 +11437,13 @@ function buildComments(
     longRunTargetMin,
     longRunGapMin,
     longRunStepCapMin: longRunSafetyCapMin,
+    longRunProgressionTargetMin: longRunStepCapMin,
     longRunDiagnosisTargetMin: prePlanLongRunTargetMin,
     longRunSpikeCapMin,
     longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
+    longrunProgressionBlocked,
+    longrunProgressionBlockers,
     fatigue,
     distanceDiagnostics,
     gapRecommendations,
