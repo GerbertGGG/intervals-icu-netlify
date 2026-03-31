@@ -7822,11 +7822,13 @@ async function buildCoachAnalysis(env, snapshot) {
   const isRaceDaySnapshot = safeSnapshot.raceTimeMin != null || safeSnapshot.vdotActual != null;
 
   // Fakten vorformulieren damit das Modell nicht halluziniert
+  const strengthMissingToTargetMin = Math.max(0, safeSnapshot.strengthTarget - safeSnapshot.strengthMin7d);
+  const strengthOverMinimumMin = Math.max(0, safeSnapshot.strengthMin7d - safeSnapshot.strengthMinRunfloor);
   const kraftStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthTarget
-    ? `${safeSnapshot.strengthMin7d} Min — Ziel erreicht`
-    : `${safeSnapshot.strengthMin7d} Min — Ziel NICHT erreicht (fehlen ${safeSnapshot.strengthTarget - safeSnapshot.strengthMin7d} Min)`;
+    ? `${safeSnapshot.strengthMin7d} Min — Wochenziel ${safeSnapshot.strengthTarget} Min erreicht`
+    : `${safeSnapshot.strengthMin7d} Min — bis zum Wochenziel von ${safeSnapshot.strengthTarget} Min fehlen noch ${strengthMissingToTargetMin} Min`;
   const kraftMindestzielStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthMinRunfloor
-    ? `${safeSnapshot.strengthMinRunfloor} Min Mindestziel erreicht`
+    ? `${safeSnapshot.strengthMinRunfloor} Min Mindestziel erreicht (aktuell ${strengthOverMinimumMin} Min darüber)`
     : `${safeSnapshot.strengthMinRunfloor} Min Mindestziel NICHT erreicht`;
 
   const kraftMuster = safeSnapshot.weakStrengthWeeks >= 2
@@ -7878,9 +7880,13 @@ async function buildCoachAnalysis(env, snapshot) {
       : safeSnapshot.sessionType === "STRENGTH"
         ? "Priorisierung heute: Kraft ist Hauptthema. Optional kurzer Laufhinweis nur ergänzend."
         : "Priorisierung heute: Lauf-/Erholungsziel zuerst, ergänzende Themen danach.";
+  const keyDayStrengthSideNoteRule = isRealKeyDay
+    ? "Key-Tag-Regel: Nach dem Key maximal EIN kurzer Kraft-Nebenhinweis (genau 1 Satz). Dieser Satz darf den Key nicht überlagern. Verwende dafür nur die unten stehenden Kraftzahlen (Wochenziel/Mindestziel), keine Distanz-/Eventsprache wie Marathonvorbereitung."
+    : "";
+  const languageCleanlinessRule = "Sprachregel: Keine doppelten Wörter oder Holperer (z. B. niemals „Lass uns uns“).";
 
   const promptLines = [
-    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} ${priorityInstruction} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
+    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} ${priorityInstruction}${keyDayStrengthSideNoteRule ? ` ${keyDayStrengthSideNoteRule}` : ""} ${languageCleanlinessRule} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
     "",
     "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
     "",
