@@ -4999,12 +4999,25 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
     lever,
   });
   const finalSessionText = adaptation?.sessionText || sessionText;
-  const progressionMissingNote = progressionStepSession ? "" : " Progression template missing.";
+  const easyFallbackSession = !progressionStepSession ? buildEasyKeyFallbackSession(chosenType) : null;
+  const resolvedSessionText = easyFallbackSession || finalSessionText;
+  const progressionMissingNote = progressionStepSession || easyFallbackSession ? "" : " Progression template missing.";
   const racepaceTarget = chosenType === "racepace"
     ? getRacepaceTargetText(distance)
     : "";
-  const baseText = `${formatKeyType(chosenType)} konkret: ${finalSessionText}.${formatNote}${progressionMissingNote}${racepaceTarget}`;
+  const baseText = `${formatKeyType(chosenType)} konkret: ${resolvedSessionText}.${formatNote}${progressionMissingNote}${racepaceTarget}`;
   return formatLeverAwareSessionText(baseText, lever, adaptation);
+}
+
+function buildEasyKeyFallbackSession(keyType = null) {
+  const type = normalizeKeyType(keyType);
+  if (type === "steady") {
+    return "35–45′ locker + 10–15′ steady (oder 2×8–10′ steady mit lockerer Pause)";
+  }
+  if (type === "strides") {
+    return "30–40′ locker + 4–6 Strides";
+  }
+  return null;
 }
 
 function buildDefaultConcreteKeySession(plannedKeyType = null, eventDistance = null) {
@@ -5678,7 +5691,14 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   }
   plannedKeyType = resolvePlannableKeyType(plannedKeyType, keyRules);
   keyRules.plannedPrimaryType = plannedKeyType || keyRules.plannedPrimaryType || "steady";
-  const explicitSession = isConcreteKeySession(explicitSessionRaw) ? explicitSessionRaw : null;
+  let explicitSession = isConcreteKeySession(explicitSessionRaw) ? explicitSessionRaw : null;
+  if (!explicitSession) {
+    const easyFallback = buildEasyKeyFallbackSession(plannedKeyType);
+    const easyFallbackLabel = easyFallback ? `${formatKeyType(plannedKeyType || "steady")} konkret: ${easyFallback}.` : null;
+    if (easyFallbackLabel && isConcreteKeySession(easyFallbackLabel)) {
+      explicitSession = easyFallbackLabel;
+    }
+  }
   const hasConcreteKeySession = !!(plannedKeyType && explicitSession);
   if (keyAllowedNow && !hasConcreteKeySession) {
     keyAllowedNow = false;
@@ -10673,7 +10693,7 @@ function isConcreteKeySession(explicitSession) {
   if (!hasWorkoutStructure) return false;
 
   const genericOnlySignals = ["locker", "frei", "regeneration", "technik"];
-  const hardSignals = ["schwelle", "vo2", "racepace", "tempo", "interval", "@", "x"];
+  const hardSignals = ["steady", "strides", "schwelle", "vo2", "racepace", "tempo", "interval", "@", "x"];
   const genericOnly = genericOnlySignals.some((signal) => lower.includes(signal))
     && !hardSignals.some((signal) => lower.includes(signal));
   return !genericOnly;

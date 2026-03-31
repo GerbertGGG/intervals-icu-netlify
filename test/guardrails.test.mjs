@@ -42,6 +42,27 @@ import { __test } from '../src/index.js';
   assert.equal(compliance.freqOk, true);
 }
 
+// 2b) Leichter Key bleibt erlaubt, wenn Progression fehlt (Fallback-Session muss gesetzt werden)
+{
+  const keyRules = {
+    expectedKeysPerWeek: 1,
+    maxKeysPerWeek: 2,
+    allowedKeyTypes: ['steady', 'strides'],
+    preferredKeyTypes: ['steady'],
+    bannedKeyTypes: [],
+  };
+  const compliance = __test.evaluateKeyCompliance(keyRules, { count: 0, list: [] }, { count: 0, list: [] }, {
+    block: 'BASE',
+    eventDistance: '10k',
+    keySpacing: { ok: true },
+  });
+  assert.equal(compliance.progression?.available, false);
+  assert.equal(compliance.keySpacingOk, true);
+  assert.equal(compliance.plannedKeyType, 'steady');
+  assert.equal(compliance.keyAllowedNow, true);
+  assert.match(String(compliance.explicitSession || ''), /35–45′ locker \+ 10–15′ steady|2×8–10′ steady/);
+}
+
 // 3) Änderungen an Tags/Name müssen Scheduled-Signatur ändern
 {
   const base = [{ id: 1, start_date_local: '2026-01-01T07:00:00', moving_time: 3600, icu_training_load: 50, tags: ['easy'], name: 'Morning Run' }];
