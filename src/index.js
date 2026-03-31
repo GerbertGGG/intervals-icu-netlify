@@ -10607,10 +10607,11 @@ function buildResolvedNextKeyLine(resolvedDecision) {
   return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
-function resolveBottomLine({ candidate, todayDecision }) {
+function resolveBottomLine({ candidate, todayDecision, forceKeyToday = false }) {
   const text = String(candidate || "").trim();
   const fallback = "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
   if (!text) return fallback;
+  if (forceKeyToday) return text;
   const lower = text.toLowerCase();
   const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
   if (introducesPrimaryTopic) return fallback;
@@ -10750,11 +10751,11 @@ function buildRecommendationsAndBottomLine(state) {
   const gapRecommendations = state?.gapRecommendations || null;
 
   const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
-  const easyDecision = isEasyTodayDecision(todayAction);
-  bottom.push(`Heute: ${todayAction}.`);
-  if (!easyDecision && state?.keyAllowedNow && explicitSessionShort) {
-    // Nur bei einem expliziten Key-Tag als Tagesentscheidung in die Bottom-Line aufnehmen.
-    bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
+  const hasConcreteKeySession = state?.hasConcreteKeySession === true;
+  if (state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort) {
+    bottom.push(`Key heute: ${explicitSessionShort}.`);
+  } else {
+    bottom.push(`Heute: ${todayAction}.`);
   }
 
   const taperPriorityWeek = state?.taperPriorityWeek === true || state?.overlayMode === "TAPER";
@@ -11355,6 +11356,7 @@ function buildComments(
     keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
     overlayMode: runFloorState?.overlayMode,
     keyAllowedNow,
+    hasConcreteKeySession: keyCompliance?.hasConcreteKeySession === true,
     explicitSessionShort,
     todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
     actualKeys7,
@@ -11584,6 +11586,7 @@ function buildComments(
   const bottomLine = resolveBottomLine({
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
+    forceKeyToday: keyAllowedNow && keyCompliance?.hasConcreteKeySession === true,
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
