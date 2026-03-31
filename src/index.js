@@ -7779,6 +7779,11 @@ async function buildCoachAnalysis(env, snapshot) {
         racePaceSecPerKm,
         vdotActual,
         vdotTrend,
+        keyAllowedNow: snapshot?.keyAllowedNow === true,
+        hasConcreteKeySession: snapshot?.hasConcreteKeySession === true,
+        sessionType: String(snapshot?.sessionType || "").toUpperCase() || "UNKNOWN",
+        explicitSession: sanitizeCoachFact(snapshot?.explicitSession, ""),
+        todaySessionNote: sanitizeCoachFact(snapshot?.todaySessionNote, ""),
       };
     } catch {
       return {
@@ -7800,9 +7805,20 @@ async function buildCoachAnalysis(env, snapshot) {
         racePaceSecPerKm: null,
         vdotActual: null,
         vdotTrend: null,
+        keyAllowedNow: false,
+        hasConcreteKeySession: false,
+        sessionType: "UNKNOWN",
+        explicitSession: "",
+        todaySessionNote: "",
       };
     }
   })();
+  const isRealKeyDay = safeSnapshot.keyAllowedNow
+    && safeSnapshot.hasConcreteKeySession
+    && safeSnapshot.sessionType === "KEY"
+    && isConcreteKeySession(safeSnapshot.explicitSession);
+  const strengthDayWithRunAddon = safeSnapshot.sessionType === "STRENGTH"
+    && String(safeSnapshot.todaySessionNote || "").toLowerCase().includes("ga-lauf");
   const isRaceDaySnapshot = safeSnapshot.raceTimeMin != null || safeSnapshot.vdotActual != null;
 
   // Fakten vorformulieren damit das Modell nicht halluziniert
@@ -7855,15 +7871,27 @@ async function buildCoachAnalysis(env, snapshot) {
   const promptGoal = isRaceDaySnapshot
     ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
     : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf du diese Woche achten solltest.";
+  const priorityInstruction = isRealKeyDay
+    ? "Priorisierung heute: Starte zwingend mit der heutigen Key-Session (Einordnung + warum heute passend + Dosierung). Kraft nur als kurzer Nebenhinweis am Ende, falls relevant."
+    : strengthDayWithRunAddon
+      ? "Priorisierung heute: Tag ist laufgetrieben mit Kraft-Zusatz. Starte mit dem Laufteil; Kraft nur ergänzend."
+      : safeSnapshot.sessionType === "STRENGTH"
+        ? "Priorisierung heute: Kraft ist Hauptthema. Optional kurzer Laufhinweis nur ergänzend."
+        : "Priorisierung heute: Lauf-/Erholungsziel zuerst, ergänzende Themen danach.";
 
   const promptLines = [
-    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
+    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} ${priorityInstruction} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
     "",
     "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
     "",
     "Fakten:",
     `- Block: ${safeSnapshot.block}, Woche ${safeSnapshot.weekInBlock} im Block`,
     `- Heutige Empfehlung: ${safeSnapshot.todayDecision}`,
+    `- Heutiger Session-Typ: ${safeSnapshot.sessionType}`,
+    `- Key heute erlaubt: ${safeSnapshot.keyAllowedNow ? "ja" : "nein"}`,
+    `- Konkrete Key-Session vorhanden: ${safeSnapshot.hasConcreteKeySession ? "ja" : "nein"}`,
+    `- Konkrete Session-Idee heute: ${safeSnapshot.explicitSession || "n/a"}`,
+    `- Heutige Plan-Notiz: ${safeSnapshot.todaySessionNote || "n/a"}`,
     `- EF-Trend 28 Tage: ${efStatus}`,
     `- 7-Tage-Last vs. Vorwoche: ${lastStatus}`,
     `- Kraft diese Woche: ${kraftStatus}`,
@@ -7887,13 +7915,32 @@ async function buildCoachAnalysis(env, snapshot) {
       max_tokens: 350,
     });
 
-    const text = response?.response?.trim();
+    const text = sanitizeCoachAnalysisText(response?.response);
     if (!text || text.length < 30) return null;
 
     return `🧠 COACH-ANALYSE\n${text}`;
   } catch {
     return null;
   }
+}
+
+function sanitizeCoachAnalysisText(rawText) {
+  let text = String(rawText ?? "").trim();
+  if (!text) return "";
+
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim();
+  }
+
+  if (text.includes('\\"')) text = text.replace(/\\"/g, '"');
+  if (text.includes("\\n")) text = text.replace(/\\n/g, "\n");
+
+  text = text.trim();
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    text = text.slice(1, -1).trim();
+  }
+
+  return text.replace(/\s+\n/g, "\n");
 }
 
 function authHeader(env) {
@@ -9305,6 +9352,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         block: blockState?.block ?? "BASE",
         weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
         todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
+        sessionType: todayPlanEntry?.sessionType || null,
+        todaySessionNote: todayPlanEntry?.note || "",
+        keyAllowedNow: keyCompliance?.keyAllowedNow === true,
+        hasConcreteKeySession: keyCompliance?.hasConcreteKeySession === true,
+        explicitSession: keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion) || "",
         efTrendPct,
         rampPct: fatigue?.rampPct ?? null,
         driftMed: motor?.driftMed ?? null,
