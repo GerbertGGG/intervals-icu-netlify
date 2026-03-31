@@ -226,11 +226,12 @@ console.log('guardrails ok');
   assert.equal(stable, 'rebuild');
 }
 
-// 13) Basis/Frequenz-Fokus bleibt textlich konsistent (kein impliziter Spezifik-Push in Bottom line)
+// 13) Bei freigegebenem, konkretem Key setzt die Bottom line explizit auf "Key heute"
 {
   const out = __test.buildRecommendationsAndBottomLine({
     todayAction: '35–45′ locker',
     keyAllowedNow: true,
+    hasConcreteKeySession: true,
     explicitSessionShort: "2x10' steady",
     runFloorTarget: 10,
     runFloorEwma10: 6,
@@ -241,7 +242,7 @@ console.log('guardrails ok');
     longRunDiagnosisTargetMin: 60,
   });
   const bottom = (out.bottomLine || []).join(' ');
-  assert.equal(/Key \(wenn frisch\)/.test(bottom), false);
+  assert.equal(/Key heute:/.test(bottom), true);
 }
 
 // 14) Longrun-Kommunikation enthält keine ungetrennte Zielbereich-vs-zu-kurz-Kollision
