@@ -5007,6 +5007,21 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   return formatLeverAwareSessionText(baseText, lever, adaptation);
 }
 
+function buildDefaultConcreteKeySession(plannedKeyType = null, eventDistance = null) {
+  const type = normalizeKeyType(plannedKeyType) || "steady";
+  const distance = normalizeEventDistance(eventDistance) || "10k";
+  const defaults = {
+    steady: "steady konkret: 3×8′ kontrolliert (2′ trab)",
+    schwelle: "schwelle konkret: 3×10′ kontrolliert (2–3′ trab)",
+    vo2: "vo2 konkret: 5×3′ zügig (2′ trab)",
+    vo2_touch: "vo2_touch konkret: 6×1′ schnell (90″ locker)",
+    hills: "hills konkret: 8×45″ bergauf locker-hart (jog down)",
+    racepace: `racepace konkret: 4×1 km @ ${String(distance).toUpperCase()}-RP (2′ trab)`,
+    strides: "strides konkret: 8×20″ locker-schnell mit voller Erholung",
+  };
+  return defaults[type] || defaults.steady;
+}
+
 function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
   const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
   if (!Array.isArray(steps) || !steps.length) return null;
@@ -5653,7 +5668,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (activeLeverText) suggestion = `${suggestion} Hebel aus letzter Key-Session: ${activeLeverText}.`;
   }
 
-  const explicitSessionRaw = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
+  const explicitSessionRaw = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever)
+    || buildDefaultConcreteKeySession(plannedKeyType, context?.eventDistance);
   const explicitSessionType = inferKeyTypeFromExplicitSession(explicitSessionRaw);
   if (explicitSessionType && explicitSessionType !== plannedKeyType) {
     plannedKeyType = resolvePlannableKeyType(explicitSessionType, keyRules) || plannedKeyType;
@@ -7247,8 +7263,8 @@ function buildWeekPreview(
               sessionType = "STRENGTH";
               intensity = "LOW";
               sessionLabel = strengthSession
-                ? `💪 Kraft – ${strengthSession.name}${cycleLabel}`
-                : `💪 Kraft – Einheit A${cycleLabel}`;
+                ? `🏃 GA locker + 💪 Kraft – ${strengthSession.name}${cycleLabel}`
+                : `🏃 GA locker + 💪 Kraft – Einheit A${cycleLabel}`;
               note = "Kann nach GA-Lauf gemacht werden";
               plannedStrengthCount += 1;
             }
@@ -10455,12 +10471,15 @@ function buildNextRunRecommendation({
   keySuggestion,
   explicitSession,
   plannedSessionType,
+  plannedSessionNote,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
   const keyScheduledToday = String(plannedSessionType || "").toUpperCase() === "KEY";
+  const strengthWithRunAddon = String(plannedSessionType || "").toUpperCase() === "STRENGTH"
+    && String(plannedSessionNote || "").toLowerCase().includes("ga-lauf");
   const keySuggestedNow = keyAllowedNow && (
     keyScheduledToday
     || keySuggestionText.includes("key heute")
@@ -10483,6 +10502,8 @@ function buildNextRunRecommendation({
     next = conciseExplicitSession
       ? `Key wie im Wochenplan: ${conciseExplicitSession}.`
       : "Key wie im Wochenplan (kontrolliert, sauber laufen).";
+  } else if (strengthWithRunAddon) {
+    next = "35–50 min locker/steady + Kraft (Kombi-Tag)";
   } else if (hasSpecific && !specificOk) {
     next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
@@ -11064,6 +11085,7 @@ function buildComments(
     keySuggestion: keyCompliance?.suggestion,
     explicitSession: explicitSessionText,
     plannedSessionType: todayPlanEntry?.sessionType,
+    plannedSessionNote: todayPlanEntry?.note,
   });
   const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
   const resolvedBikeConversionFactor = Number.isFinite(bikeConversionFactor) ? bikeConversionFactor : BIKE_CONVERSION_FACTOR_FALLBACK;
