@@ -5524,7 +5524,32 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  const plannedKeyTypeCandidate = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const normalizedBlock = String(context?.block || "").toUpperCase();
+  const runFloorCurrent = Number(
+    context?.runFloorState?.ewma10
+      ?? context?.runFloorState?.runFloorEwma10
+      ?? context?.runFloorState?.runFloorNow
+      ?? NaN
+  );
+  const runFloorTarget = Number(
+    context?.runFloorState?.effectiveFloorTarget
+      ?? context?.runFloorState?.floorTarget
+      ?? NaN
+  );
+  const runFloorRatio = runFloorTarget > 0 && Number.isFinite(runFloorCurrent)
+    ? runFloorCurrent / runFloorTarget
+    : null;
+  const baseLimiterActive = normalizedBlock === "BASE" && Number.isFinite(runFloorRatio) && runFloorRatio < 0.9;
+  const baseSafeTypes = ["steady", "strides"];
+
+  const plannedKeyTypeCandidateRaw = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const plannedKeyTypeCandidate = baseLimiterActive
+    ? (
+      baseSafeTypes.find((type) => keyRules.allowedKeyTypes.includes(type))
+      || keyRules.allowedKeyTypes[0]
+      || plannedKeyTypeCandidateRaw
+    )
+    : plannedKeyTypeCandidateRaw;
   let plannedKeyType = resolvePlannableKeyType(plannedKeyTypeCandidate, keyRules) || "steady";
   keyRules.plannedPrimaryType = plannedKeyType;
   let preferred = plannedKeyType;
@@ -8810,6 +8835,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastSessionLever: lastSessionLeverReview || null,
       historyMetrics,
       longrunSpecificity,
+      runFloorState,
       lastEventDate: blockState.lastEventDate || runFloorState.lastEventDate || null,
       lastEventDistance: blockState.lastEventDistance || runFloorState.lastEventDistance || null,
     });

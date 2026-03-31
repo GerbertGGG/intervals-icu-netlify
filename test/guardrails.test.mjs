@@ -355,7 +355,32 @@ console.log('guardrails ok');
 }
 
 
-// 18) Manueller Blockstart-Override setzt Persistenzfelder konsistent
+// 18) BASE mit niedrigem RunFloor bleibt key-fähig, begrenzt aber auf leichte Key-Typen
+{
+  const keyRules = {
+    expectedKeysPerWeek: 1,
+    maxKeysPerWeek: 2,
+    allowedKeyTypes: ['steady', 'strides', 'vo2_touch'],
+    preferredKeyTypes: ['steady', 'vo2_touch'],
+    bannedKeyTypes: ['schwelle', 'racepace'],
+    plannedPrimaryType: 'vo2_touch',
+  };
+  const out = __test.evaluateKeyCompliance(keyRules, { count: 0, list: [] }, { count: 0, list: [] }, {
+    block: 'BASE',
+    eventDistance: '10k',
+    dayIso: '2026-01-10',
+    blockStartIso: '2026-01-01',
+    weeksToEvent: 12,
+    overlayMode: 'NORMAL',
+    ctx: { activitiesAll: [] },
+    runFloorState: { ewma10: 59, effectiveFloorTarget: 135 },
+    keySpacing: { keySpacingNowOk: true, ok: true },
+  });
+  assert.equal(out.keyAllowedNow, true);
+  assert.equal(['steady', 'strides'].includes(out.plannedKeyType), true);
+}
+
+// 19) Manueller Blockstart-Override setzt Persistenzfelder konsistent
 {
   const base = {
     startDate: '2026-03-16',
@@ -373,7 +398,7 @@ console.log('guardrails ok');
   assert.equal(out.timeInBlockDays > 0, true);
 }
 
-// 19) Robustness-Bewertung respektiert taper-reduziertes Kraftziel
+// 20) Robustness-Bewertung respektiert taper-reduziertes Kraftziel
 {
   const snapshot = {
     eventDistance: '10k',
