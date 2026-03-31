@@ -7873,6 +7873,11 @@ async function buildCoachAnalysis(env, snapshot) {
   const promptGoal = isRaceDaySnapshot
     ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
     : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf du diese Woche achten solltest.";
+  const focusMode = isRealKeyDay
+    ? "KEY_DAY"
+    : safeSnapshot.sessionType === "STRENGTH"
+      ? "STRENGTH_DAY"
+      : "RUN_OR_RECOVERY_DAY";
   const priorityInstruction = isRealKeyDay
     ? "Priorisierung heute: Starte zwingend mit der heutigen Key-Session (Einordnung + warum heute passend + Dosierung). Kraft nur als kurzer Nebenhinweis am Ende, falls relevant."
     : strengthDayWithRunAddon
@@ -7883,14 +7888,40 @@ async function buildCoachAnalysis(env, snapshot) {
   const keyDayStrengthSideNoteRule = isRealKeyDay
     ? "Key-Tag-Regel: Nach dem Key maximal EIN kurzer Kraft-Nebenhinweis (genau 1 Satz). Dieser Satz darf den Key nicht überlagern. Verwende dafür nur die unten stehenden Kraftzahlen (Wochenziel/Mindestziel), keine Distanz-/Eventsprache wie Marathonvorbereitung."
     : "";
-  const languageCleanlinessRule = "Sprachregel: Keine doppelten Wörter oder Holperer (z. B. niemals „Lass uns uns“).";
+  const languageCleanlinessRule = "Sprachregel: Keine doppelten Wörter oder Holperer (z. B. niemals „Lass uns uns“), keine schiefen oder technisch falschen Formulierungen.";
+  const hierarchyRule = focusMode === "KEY_DAY"
+    ? "Hierarchie (MUSS): Satz 1 beginnt mit der Key-Session von heute. Satz 2 steuert Dosierung/Einordnung. Optional Satz 3 für Wochenkontext. Optional Satz 4 nur als kurzer Nebenhinweis."
+    : focusMode === "STRENGTH_DAY"
+      ? "Hierarchie (MUSS): Kraft ist heute Hauptthema. Lauf nur ergänzend und kurz."
+      : "Hierarchie (MUSS): Lauf/Erholung/Volumen ist heute Hauptthema. Kraft nicht als Hauptthema ausbauen.";
+  const secondaryTopicRule = focusMode === "KEY_DAY" || focusMode === "RUN_OR_RECOVERY_DAY"
+    ? "Nebenpunkte-Regel: Sekundäre Themen (z. B. Kraft) nur als kurzer Nebensatz oder maximal ein kurzer Zusatzsatz, niemals als zweiter Hauptfokus."
+    : "Nebenpunkte-Regel: Sekundäre Themen kurz halten und klar nachrangig formulieren.";
 
   const promptLines = [
-    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} ${priorityInstruction}${keyDayStrengthSideNoteRule ? ` ${keyDayStrengthSideNoteRule}` : ""} ${languageCleanlinessRule} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
+    `Rolle: Du bist ein erfahrener Laufcoach.`,
+    `Stil: Schreibe frei, natürlich, präzise, ruhig, motivierend und menschlich in direkter Du-Ansprache. Keine starren Templates, keine Aufzählungen, nur fließender Text.`,
+    `Länge: 2–4 kurze Sätze, maximal 120 Wörter.`,
+    `Ziel: ${promptGoal}`,
+    `Priorisierung: ${priorityInstruction}${keyDayStrengthSideNoteRule ? ` ${keyDayStrengthSideNoteRule}` : ""}`,
+    `${hierarchyRule}`,
+    `${secondaryTopicRule}`,
+    `${languageCleanlinessRule} Vermeide Formulierungen wie "der Athlet".`,
     "",
-    "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
+    "Guardrails (MUSS):",
+    "- Nutze ausschließlich die unten stehenden Fakten als Rahmen.",
+    "- Erfinde keine neuen Trainingsentscheidungen, Ziele, Einheiten oder Kontexte.",
+    "- Keine Widersprüche zu HEUTE / WOCHENPLAN / BOTTOM LINE.",
+    "- Keine Umdeutung der Zahlen; Werte nur korrekt und im gelieferten Rahmen verwenden.",
+    "- Keine falschen Distanz-/Kontextbegriffe und keine neuen Ableitungen außerhalb der Fakten.",
+    "- Keine unnötig harten oder wertenden Formulierungen.",
+    "- Keine doppelte Wortwiederholung.",
+    "- Falls Kraft heute nicht primär ist, nur kurz und klar nachrangig erwähnen.",
+    "",
+    "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt, ohne neue Interpretationsebene.",
     "",
     "Fakten:",
+    `- Fokus-Modus heute: ${focusMode}`,
     `- Block: ${safeSnapshot.block}, Woche ${safeSnapshot.weekInBlock} im Block`,
     `- Heutige Empfehlung: ${safeSnapshot.todayDecision}`,
     `- Heutiger Session-Typ: ${safeSnapshot.sessionType}`,
