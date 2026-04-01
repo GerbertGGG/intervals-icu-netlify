@@ -63,6 +63,14 @@ import { __test } from '../src/index.js';
   assert.match(String(compliance.explicitSession || ''), /35–45′ locker \+ 10–15′ steady|2×8–10′ steady/);
 }
 
+// 2c) Steady-Keys gelten nicht als Intervall-Keytype
+{
+  assert.equal(__test.isIntervalLikeKeyType('steady'), false);
+  assert.equal(__test.isIntervalLikeKeyType('key:steady'), false);
+  assert.equal(__test.isIntervalLikeKeyType('vo2'), true);
+  assert.equal(__test.isIntervalLikeKeyType('racepace'), true);
+}
+
 // 3) Änderungen an Tags/Name müssen Scheduled-Signatur ändern
 {
   const base = [{ id: 1, start_date_local: '2026-01-01T07:00:00', moving_time: 3600, icu_training_load: 50, tags: ['easy'], name: 'Morning Run' }];
