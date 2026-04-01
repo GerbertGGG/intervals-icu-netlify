@@ -3248,6 +3248,11 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
   return "steady";
 }
 
+function isIntervalLikeKeyType(rawType) {
+  const normalized = normalizeKeyType(rawType);
+  return normalized === "vo2_touch" || normalized === "racepace";
+}
+
 function hasRacepaceHint(a) {
   const text = [a?.name, a?.description, a?.workout_name, a?.workout_doc]
     .filter(Boolean)
@@ -8564,13 +8569,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const activityWithIntervals = await getActivityWithIntervals(ctx, a);
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
-      const intervalSignal = isKey
-        || hasExplicitIntervalStructure(activityWithIntervals)
-        || hasIcuIntervalSignal(activityWithIntervals);
-
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
+      const normalizedKeyType = normalizeKeyType(keyType);
+      const intervalSignal = hasExplicitIntervalStructure(activityWithIntervals)
+        || hasIcuIntervalSignal(activityWithIntervals)
+        || (isKey && isIntervalLikeKeyType(keyType));
       const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(activityWithIntervals) : false;
       const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(activityWithIntervals) : null;
 
@@ -8581,7 +8586,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
       const isTempoDauerlauf = isTempoDauerlaufKey(a);
 
-      if ((ga && !isKey) || isTempoDauerlauf) {
+      if ((ga && !isKey) || isTempoDauerlauf || (isKey && normalizedKeyType === "steady" && !intervalSignal)) {
         drift_source = "streams";
         try {
           const streams = await getStreams(ctx, a.id, STREAM_TYPES_GA);
@@ -8641,6 +8646,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         isKey,
         intervalSignal,
         keyType,
+        normalizedKeyType,
         ef,
         drift,
         drift_raw,
@@ -11334,6 +11340,7 @@ function buildComments(
   } else {
     const raceToday = perRunInfo.find((x) => isRaceActivity(x.activity));
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
+    const steadyKeyToday = perRunInfo.find((x) => x.isKey && x.normalizedKeyType === "steady" && !x.intervalSignal);
     const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey && !x.intervalSignal && !isTempoDauerlaufKey(x.activity));
     if (raceToday) {
@@ -11378,6 +11385,18 @@ function buildComments(
         runMetrics.push(`Pace-Konsistenz: ${paceConsistency}.`);
         runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
       }
+    } else if (steadyKeyToday) {
+      const drift = steadyKeyToday.drift;
+      const driftText = formatPct1(drift);
+      const driftEval =
+        drift == null
+          ? "keine belastbare Einordnung (zu wenig Daten/zu kurzer Abschnitt)."
+          : drift <= 5
+            ? "kontrolliert für steady."
+            : "erhöht für steady (> 5 %): vermutlich zu hart oder kumulierte Ermüdung.";
+      runMetrics.push("Steady-Key erkannt: Bewertung als durchgehender Lauf (kein Intervallformat).");
+      runMetrics.push(`Steady-Drift: ${driftText} → ${driftEval}`);
+      runMetrics.push("Hinweis: Endbeschleunigung ist ok, solange der Großteil kontrolliert bleibt.");
     } else if (tdlToday) {
       const drift = tdlToday.drift;
       const driftText = formatPct1(drift);
@@ -15455,6 +15474,7 @@ const __internalTestHooks = Object.freeze({
   buildRaceResultBlock,
   computeIntensityDistribution,
   computeBikeAllowanceFactor,
+  isIntervalLikeKeyType,
 });
 
 export const __test = __internalTestHooks;
