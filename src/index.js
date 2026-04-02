@@ -7314,8 +7314,9 @@ function buildWeekPreview(
             note = "Key aus dieser Woche nachholen";
           }
         } else {
-          const nearestKeyDistance = plannedKeyDates.length
-            ? Math.min(...plannedKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
+          const allKnownKeyDates = [...(thisWeekActuals.keyDates || []), ...plannedKeyDates];
+          const nearestKeyDistance = allKnownKeyDates.length
+            ? Math.min(...allKnownKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
             : 99;
           const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
           const longrunGapOk = !lastLongrunDateBeforeToday || diffDays(lastLongrunDateBeforeToday, date) >= 4;
