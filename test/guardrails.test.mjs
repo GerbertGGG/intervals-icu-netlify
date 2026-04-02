@@ -178,6 +178,27 @@ console.log('guardrails ok');
   assert.equal(runLike.filter((d) => d.sessionType === 'LONGRUN').length, 1);
 }
 
+// 9b) Nach Key am Vortag wird Longrun nicht innerhalb von 48h geplant
+{
+  const week = __test.buildWeekPreview(
+    { activitiesAll: [{ type: 'Run', start_date_local: '2026-01-05T07:00:00Z', tags: ['key:steady'] }] },
+    '2026-01-06',
+    {
+      blockState: { block: 'BASE', weeksToEvent: 20, eventDistance: '10k' },
+      keyCompliance: {
+        keyAllowedNow: false,
+        plannedKeyType: 'steady',
+        maxKeysPerWeek: 2,
+      },
+      runFloorState: { overlayMode: 'NORMAL' },
+    }
+  );
+  const today = week.days.find((d) => d.isToday);
+  assert.equal(today.sessionType === 'LONGRUN', false);
+  const firstLongrun = week.days.find((d) => d.sessionType === 'LONGRUN');
+  assert.equal(firstLongrun?.date >= '2026-01-07', true);
+}
+
 // 10) KeyType-Inferenz: easy/GA => null, echte steady-Texte => steady
 {
   const inferred = __test.inferKeyTypeFromExplicitSession('ga konkret: 60–75′ GA1 locker');
