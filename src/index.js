@@ -13882,28 +13882,31 @@ function composeDecisionBlocks(blocks) {
 }
 
 function mergeTodayRunSection(existingText, freshText) {
-  const canonicalTitles = [
-    "HEUTIGER LAUF",
-    "HEUTE",
-    "WARUM",
-    "STATUS",
-    "FOKUS",
-    "TRAININGSSTAND",
-    "EMPFEHLUNGEN",
-    "DIAGNOSE",
-    "BOTTOM LINE",
-  ];
+  const targetTitle = "HEUTIGER LAUF";
   const freshBlocks = splitDecisionBlocks(freshText);
   if (!freshBlocks.length) return fromHardLineBreakText(existingText);
 
-  const freshMap = new Map();
-  for (const block of freshBlocks) {
-    const title = getDecisionBlockTitle(block);
-    if (canonicalTitles.includes(title)) freshMap.set(title, block);
+  const freshTodayRunBlock = freshBlocks.find((block) => getDecisionBlockTitle(block) === targetTitle);
+  if (!freshTodayRunBlock) return fromHardLineBreakText(existingText);
+
+  const existingNormalized = fromHardLineBreakText(existingText);
+  const existingBlocks = splitDecisionBlocks(existingNormalized);
+  if (!existingBlocks.length) {
+    return composeDecisionBlocks([freshTodayRunBlock]);
   }
 
-  const canonicalBlocks = canonicalTitles.map((title) => freshMap.get(title)).filter(Boolean);
-  return composeDecisionBlocks(canonicalBlocks.length ? canonicalBlocks : freshBlocks);
+  const existingRunBlock = existingBlocks.find((block) => getDecisionBlockTitle(block) === targetTitle);
+  if (existingRunBlock) {
+    // Keep every other character in the persisted note untouched and only replace HEUTIGER-LAUF content.
+    return existingNormalized.replace(existingRunBlock, freshTodayRunBlock);
+  }
+
+  const existingHeuteBlock = existingBlocks.find((block) => getDecisionBlockTitle(block) === "HEUTE");
+  if (existingHeuteBlock) {
+    return existingNormalized.replace(existingHeuteBlock, `${freshTodayRunBlock}\n⸻\n\n${existingHeuteBlock}`);
+  }
+
+  return `${freshTodayRunBlock}\n⸻\n\n${existingNormalized}`.trimEnd() + "\n";
 }
 
 async function upsertDailyReportTodayRunSection(env, dayIso, freshNoteText, existingEvent = null) {
@@ -15973,6 +15976,7 @@ const __internalTestHooks = Object.freeze({
   validateResolvedDecisionRenderConsistency,
   resolveBottomLine,
   isIntervalLikeKeyType,
+  mergeTodayRunSection,
 });
 
 export const __test = __internalTestHooks;
