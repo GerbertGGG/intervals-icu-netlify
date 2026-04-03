@@ -71,6 +71,27 @@ import { __test } from '../src/index.js';
   assert.equal(__test.isIntervalLikeKeyType('racepace'), true);
 }
 
+// 2d) Key ist bei Spacing-Verletzung nie "jetzt erlaubt" und Status wird warn
+{
+  const keyRules = {
+    expectedKeysPerWeek: 1,
+    maxKeysPerWeek: 2,
+    allowedKeyTypes: ['steady'],
+    preferredKeyTypes: ['steady'],
+    bannedKeyTypes: [],
+  };
+  const compliance = __test.evaluateKeyCompliance(keyRules, { count: 0, list: [] }, { count: 0, list: [] }, {
+    block: 'BASE',
+    eventDistance: '10k',
+    dayIso: '2026-04-03',
+    keySpacing: { ok: false, keySpacingNowOk: false, nextAllowedIso: '2026-04-04', minGapHours: 72, hoursSinceLastKey: 38.1 },
+  });
+  assert.equal(compliance.keySpacingOk, false);
+  assert.equal(compliance.keyAllowedNow, false);
+  assert.equal(compliance.status, 'warn');
+  assert.match(String(compliance.suggestion || ''), /Nächster Key frühestens 2026-04-04/);
+}
+
 // 3) Änderungen an Tags/Name müssen Scheduled-Signatur ändern
 {
   const base = [{ id: 1, start_date_local: '2026-01-01T07:00:00', moving_time: 3600, icu_training_load: 50, tags: ['easy'], name: 'Morning Run' }];
