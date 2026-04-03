@@ -2013,14 +2013,9 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
   }
 }
 
-function computeKeySpacing(ctx, dayIso, windowDays = 14, options = {}) {
+function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const configuredGapDays = clampInt(
-    String(options?.minGapDays ?? ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT),
-    1,
-    7
-  );
-  const minGapDays = configuredGapDays;
+  const minGapDays = 3;
   const minGapHours = minGapDays * 24;
   const minGapMs = minGapHours * 3600 * 1000;
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
@@ -7252,11 +7247,7 @@ function buildWeekPreview(
     );
     const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyWeekCap, frequencyAwareKeyCap) : keyWeekCap;
     const keyNextAllowedIso = isIsoDate(keyCompliance?.nextAllowed) ? keyCompliance.nextAllowed : null;
-    const keyMinGapDays = clampInt(
-      String(keyCompliance?.keyMinGapDays ?? ctx?.runtimeConfig?.keyMinGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT),
-      1,
-      7
-    );
+    const keyMinGapDays = 3;
     const keyLongrunGapDays = 2;
     const baseStrengthTarget = plannedStrengthTargetByPhase(blockState?.block, baseOverlayMode);
     const strengthTarget = Math.max(0, Math.min(baseStrengthTarget, Number(strengthPlan?.sessionsPerWeek ?? baseStrengthTarget)));
@@ -9070,9 +9061,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const lastRelevantKeyLeverReview = getLastRelevantKeyLeverBeforeDay(ctx, day, 35);
     const lastSessionLeverReview = getLastSessionLeverBeforeDay(ctx, day, 35);
     const leverPersistenceDebug = await buildLeverPersistenceDebug(ctx, day);
-    const keySpacing = computeKeySpacing(ctx, day, 14, {
-      minGapDays: ctx?.runtimeConfig?.keyMinGapDays,
-    });
+    const keySpacing = computeKeySpacing(ctx, day, 14);
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(eventDistance) ? "BUILD" : "BASE");
