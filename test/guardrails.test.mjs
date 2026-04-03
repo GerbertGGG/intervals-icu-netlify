@@ -291,6 +291,41 @@ console.log('guardrails ok');
   assert.equal(/Longrun priorisieren: nächster langer Lauf bis ~50′\./.test(bottom), true);
 }
 
+// 13c) HEUTE priorisiert Longrun-Planung statt Key-Abstands-Text, wenn heute Longrun im Wochenplan steht
+{
+  const next = __test.buildNextRunRecommendation({
+    runFloorState: { overlayMode: 'NORMAL' },
+    keySpacingOk: false,
+    keyAllowedNow: true,
+    nextAllowed: '2026-04-04',
+    keyMinGapHours: 48,
+    hoursSinceLastKey: 12,
+    keySuggestion: 'Nächster Key: steady',
+    explicitSession: "2x10' steady",
+    plannedSessionType: 'LONGRUN',
+    plannedSessionLabel: 'Langer Lauf ~45′',
+  });
+  assert.equal(/Longrun wie im Wochenplan: Langer Lauf ~45′\./.test(next), true);
+  assert.equal(/Nächster Key frühestens/.test(next), false);
+}
+
+// 13d) Key-Abstands-Text bleibt aktiv, wenn heute tatsächlich ein Key geplant wäre
+{
+  const next = __test.buildNextRunRecommendation({
+    runFloorState: { overlayMode: 'NORMAL' },
+    keySpacingOk: false,
+    keyAllowedNow: true,
+    nextAllowed: '2026-04-04',
+    keyMinGapHours: 48,
+    hoursSinceLastKey: 12,
+    keySuggestion: 'Nächster Key: steady',
+    explicitSession: "2x10' steady",
+    plannedSessionType: 'KEY',
+    plannedSessionLabel: "2x10' steady",
+  });
+  assert.equal(/Nächster Key frühestens ab 2026-04-04/.test(next), true);
+}
+
 // 14) Longrun-Kommunikation enthält keine ungetrennte Zielbereich-vs-zu-kurz-Kollision
 {
   const out = __test.buildRecommendationsAndBottomLine({
