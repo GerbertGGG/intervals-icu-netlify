@@ -10973,7 +10973,66 @@ function resolveNextKeyTiming({ spacingBlocked, nextAllowed, keySpacingOk, keyMi
   };
 }
 
+function extractDurationMinutesFromLabel(label) {
+  const text = String(label || "");
+  const match = text.match(/(\d{2,3})\s*[′']/);
+  return match ? Number(match[1]) : null;
+}
+
+function normalizeResolvedSessionType(type) {
+  const normalized = String(type || "UNKNOWN").toUpperCase();
+  if (["KEY", "LONGRUN", "STRENGTH", "GA", "LOW", "REST", "RECOVERY", "RACE"].includes(normalized)) {
+    return normalized;
+  }
+  return "UNKNOWN";
+}
+
+function buildResolvedSessionDecision({
+  todaySessionType,
+  todayDecisionCandidate,
+  plannedSessionLabel,
+  longrunProgressionTargetMin,
+}) {
+  const sessionType = normalizeResolvedSessionType(todaySessionType);
+  const hasLongrunProgression = Number.isFinite(longrunProgressionTargetMin) && longrunProgressionTargetMin > 0;
+  const plannedDurationMin = extractDurationMinutesFromLabel(plannedSessionLabel);
+  const resolvedLongrunMin = hasLongrunProgression
+    ? Math.round(longrunProgressionTargetMin)
+    : plannedDurationMin;
+
+  if (sessionType === "LONGRUN") {
+    const longrunLabel = resolvedLongrunMin > 0 ? `Longrun ${resolvedLongrunMin}′` : "Longrun";
+    return {
+      sessionType,
+      sessionLabel: longrunLabel,
+      sessionDurationMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null,
+      todayDecision: longrunLabel,
+      longrunTargetMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null,
+    };
+  }
+
+  let todayDecision = String(todayDecisionCandidate || "").replace(/ Optional:.*$/i, "").replace(/\.$/, "").trim();
+  if ((/longrun|langer lauf/i).test(todayDecision)) {
+    if (sessionType === "KEY") todayDecision = "Key wie im Wochenplan";
+    else if (sessionType === "STRENGTH") todayDecision = "Kraft wie im Wochenplan (Lauf nur ergänzend falls geplant)";
+    else if (["GA", "LOW", "RECOVERY", "REST"].includes(sessionType)) todayDecision = "Locker/GA wie im Wochenplan";
+    else todayDecision = "Einheit wie im Wochenplan";
+  }
+
+  return {
+    sessionType,
+    sessionLabel: String(plannedSessionLabel || "").trim() || null,
+    sessionDurationMin: plannedDurationMin,
+    todayDecision: todayDecision || "Einheit wie im Wochenplan",
+    longrunTargetMin: null,
+  };
+}
+
 function buildResolvedDecision({
+  sessionType,
+  sessionLabel,
+  sessionDurationMin,
+  longrunTargetMin,
   todayDecision,
   spacingBlocked,
   nextAllowed,
@@ -10992,12 +11051,53 @@ function buildResolvedDecision({
   });
   return {
     todayDecision: `${todayDecision}.`,
+    sessionType: normalizeResolvedSessionType(sessionType),
+    sessionLabel: sessionLabel || null,
+    sessionDurationMin: Number.isFinite(sessionDurationMin) ? Math.round(sessionDurationMin) : null,
+    longrunTargetMin: Number.isFinite(longrunTargetMin) ? Math.round(longrunTargetMin) : null,
     requiredMinGapHours: resolvedTiming.requiredMinGapHours,
     remainingWaitHours: resolvedTiming.remainingWaitHours,
     nextKeyEarliestDate: resolvedTiming.nextKeyEarliestDate,
     readinessScore: Number.isFinite(readinessScore) ? readinessScore : null,
     mainLimiter: mainLimiter || "n/a",
   };
+}
+
+function validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision) {
+  const text = String(renderedText || "");
+  if (!text) return;
+  const sessionType = normalizeResolvedSessionType(resolvedDecision?.sessionType);
+  if (sessionType === "UNKNOWN") return;
+  const canonicalLongrunMin = Number(resolvedDecision?.longrunTargetMin || 0);
+  const sectionsToInspect = ["HEUTE", "COACH-ANALYSE", "WOCHENPLAN", "BOTTOM LINE", "TRAININGSSTAND", "EMPFEHLUNGEN"];
+  const blocks = splitDecisionBlocks(text)
+    .map((block) => ({ title: getDecisionBlockTitle(block), text: block }))
+    .filter((entry) => sectionsToInspect.includes(entry.title));
+  const mismatches = [];
+
+  for (const block of blocks) {
+    const lower = block.text.toLowerCase();
+    const longrunMentioned = lower.includes("longrun") || lower.includes("langer lauf");
+    if (sessionType !== "LONGRUN" && longrunMentioned) {
+      mismatches.push(`${block.title}: enthält Longrun-Label bei sessionType=${sessionType}`);
+      continue;
+    }
+    if (sessionType === "LONGRUN" && canonicalLongrunMin > 0 && longrunMentioned) {
+      const minutes = Array.from(block.text.matchAll(/(\d{2,3})\s*[′']/g)).map((m) => Number(m[1]));
+      const hasWrongLongrunDuration = minutes.some((min) => min !== canonicalLongrunMin && Math.abs(min - canonicalLongrunMin) <= 20);
+      if (hasWrongLongrunDuration) {
+        mismatches.push(`${block.title}: Longrun-Dauer weicht vom Kanon (${canonicalLongrunMin}′) ab`);
+      }
+    }
+  }
+
+  if (mismatches.length) {
+    console.warn("render_consistency_mismatch", {
+      sessionType,
+      canonicalLongrunMin: canonicalLongrunMin || null,
+      mismatches,
+    });
+  }
 }
 
 function buildResolvedNextKeyLine(resolvedDecision) {
@@ -11552,6 +11652,13 @@ function buildComments(
     plannedSessionLabel: todayPlanEntry?.sessionLabel,
     plannedSessionNote: todayPlanEntry?.note,
   });
+  const canonicalLongrunProgressionTargetMin = longRunSummary?.plan?.targetMin;
+  const resolvedSessionDecision = buildResolvedSessionDecision({
+    todaySessionType: todayPlanEntry?.sessionType,
+    todayDecisionCandidate: nextRunText,
+    plannedSessionLabel: todayPlanEntry?.sessionLabel,
+    longrunProgressionTargetMin: canonicalLongrunProgressionTargetMin,
+  });
   const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
   const resolvedBikeConversionFactor = Number.isFinite(bikeConversionFactor) ? bikeConversionFactor : BIKE_CONVERSION_FACTOR_FALLBACK;
   const transitionLine = buildTransitionLine({ bikeAllowanceFactor: resolvedBikeAllowanceFactor, weeksToEvent, eventDistance });
@@ -11800,8 +11907,12 @@ function buildComments(
   const pendingLeverPlanLine = pendingLeverPlan.pendingLeverPlanLine || keyCompliance?.pendingLeverPlanLine || null;
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
   const taperPriorityWeek = overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
-  const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
+  const todayDecision = resolvedSessionDecision.todayDecision;
   const resolvedDecision = buildResolvedDecision({
+    sessionType: resolvedSessionDecision.sessionType,
+    sessionLabel: resolvedSessionDecision.sessionLabel,
+    sessionDurationMin: resolvedSessionDecision.sessionDurationMin,
+    longrunTargetMin: resolvedSessionDecision.longrunTargetMin,
     todayDecision,
     spacingBlocked,
     nextAllowed,
@@ -11811,6 +11922,26 @@ function buildComments(
     readinessScore: distanceDiagnostics?.readiness,
     mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
   });
+  if (weekPreview && Array.isArray(weekPreview.days)) {
+    const todayPreviewEntry = weekPreview.days.find((entry) => entry?.isToday || entry?.date === todayIso);
+    if (todayPreviewEntry) {
+      todayPreviewEntry.sessionType = resolvedDecision.sessionType;
+      if (resolvedDecision.sessionType === "LONGRUN" && resolvedDecision.longrunTargetMin > 0) {
+        todayPreviewEntry.sessionLabel = `Langer Lauf ~${resolvedDecision.longrunTargetMin}′`;
+      } else if (resolvedDecision.sessionLabel) {
+        todayPreviewEntry.sessionLabel = resolvedDecision.sessionLabel;
+      }
+    }
+    weekPreview.text = weekPreview.days
+      .map((entry) => {
+        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
+        const todayPrefix = entry.isToday ? "→ " : "";
+        const keyStar = entry.sessionType === "KEY" ? " ★" : "";
+        const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
+        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}`;
+      })
+      .join("\n");
+  }
   const resolvedNextKeyLine = buildResolvedNextKeyLine(resolvedDecision);
   const plannedWeekDays = (weekPreview?.days || []).filter((entry) => entry?.status === "PLANNED");
   const hasPlannedKeyThisWeek = plannedWeekDays.some((entry) => entry?.sessionType === "KEY");
@@ -11966,7 +12097,7 @@ function buildComments(
           ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
           : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
-    `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+    `Longrun 14T: ${longRunDoneMin}′ → ${resolvedDecision.sessionType === "LONGRUN" && resolvedDecision.longrunTargetMin > 0 ? `Nächster Schritt ${resolvedDecision.longrunTargetMin}′` : `Blockziel ${longRunTargetMin}′`}`,
     bikeWeeklyRule.summaryLine,
     bikeReplacementGuidanceLine,
     `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
@@ -12073,13 +12204,16 @@ function buildComments(
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
     forceKeyToday: keyAllowedNow && keyCompliance?.hasConcreteKeySession === true,
-    todaySessionType: todaySessionContext.todaySessionType,
+    todaySessionType: resolvedDecision.sessionType,
     explicitSessionShort,
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
+  const renderedText = lines.join("\n");
+  validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision);
+
   if (normalizedVerbosity !== "debug") {
-    return lines.join("\n");
+    return renderedText;
   }
 
   const diagnoseKernelLines = [
@@ -12137,7 +12271,9 @@ function buildComments(
     ...coachConsequencesLines,
   ]);
 
-  return lines.join("\n");
+  const debugRenderedText = lines.join("\n");
+  validateResolvedDecisionRenderConsistency(debugRenderedText, resolvedDecision);
+  return debugRenderedText;
 }
 
 function formatNextAllowed(dayIso, nextAllowedIso) {
@@ -15789,6 +15925,8 @@ const __internalTestHooks = Object.freeze({
   computeBikeAllowanceFactor,
   buildNextRunRecommendation,
   resolveTodaySessionContext,
+  buildResolvedSessionDecision,
+  validateResolvedDecisionRenderConsistency,
   resolveBottomLine,
   isIntervalLikeKeyType,
 });
