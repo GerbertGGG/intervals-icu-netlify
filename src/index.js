@@ -8729,33 +8729,34 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     let raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
     const patch = {};
     const perRunInfo = [];
-    const existingDailyReportEvent =
-      write && runMetricsOnlyIfExisting ? await fetchDailyReportNoteEvent(env, day, lifeEventsByExternalId) : null;
+    const existingDailyReportEventPromise =
+      write && runMetricsOnlyIfExisting
+        ? fetchDailyReportNoteEvent(env, day, lifeEventsByExternalId).catch(() => null)
+        : Promise.resolve(null);
+    const wellnessTodayPromise = fetchWellnessDay(ctx, env, day).catch(() => null);
+    const motorPromise = computeMotorIndex(ctx, day).catch((e) => ({
+      ok: false,
+      value: null,
+      text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})`,
+    }));
+    const hrrcTrendPromise = fetchHrrcHistory(ctx, env, day, 42)
+      .then((hrrcHistory) => computeHrrcTrend(hrrcHistory))
+      .catch(() => null);
+
+    const [existingDailyReportEvent, wellnessToday, motor, hrrcTrend] = await Promise.all([
+      existingDailyReportEventPromise,
+      wellnessTodayPromise,
+      motorPromise,
+      hrrcTrendPromise,
+    ]);
+
     const runSectionOnly =
       runMetricsOnly && (!runMetricsOnlyIfExisting || Boolean(existingDailyReportEvent?.id));
-    const wellnessToday = await fetchWellnessDay(ctx, env, day);
     const manualRaceStartIso = parseManualRaceStartIso(
       runtimeOverrides?.raceStartOverrideIso,
       day
     ) || getManualRaceStartOverride(env, wellnessToday, day);
-
-    // Motor Index (works even if no run today)
-    let motor = null;
-    try {
-      motor = await computeMotorIndex(ctx, day);
-      if (motor?.value != null) patch[FIELD_MOTOR] = round(motor.value, 1);
-    } catch (e) {
-      motor = { ok: false, value: null, text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})` };
-    }
-
-    // HRRc-Trend (aus Wellness-History)
-    let hrrcTrend = null;
-    try {
-      const hrrcHistory = await fetchHrrcHistory(ctx, env, day, 42);
-      hrrcTrend = computeHrrcTrend(hrrcHistory);
-    } catch {
-      hrrcTrend = null;
-    }
+    if (motor?.value != null) patch[FIELD_MOTOR] = round(motor.value, 1);
 
     // Process runs (collect detailed info, but write VDOT/Drift from a single representative GA run)
     for (const a of runs) {
