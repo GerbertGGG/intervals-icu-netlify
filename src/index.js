@@ -7493,14 +7493,10 @@ function buildWeekPreview(
                 : `🏃 GA locker + 💪 Kraft – Einheit A${cycleLabel}`;
               note = "Kann nach GA-Lauf gemacht werden";
               plannedStrengthCount += 1;
-            } else if (!thisWeekActuals.longrundDone && !longrunPlanned) {
-              sessionType = "GA";
-              sessionLabel = "GA locker 35–50′";
-              intensity = "LOW";
             } else {
-              sessionType = "REST";
-              sessionLabel = "frei / Regeneration";
-              intensity = "NONE";
+              sessionType = "GA";
+              intensity = "LOW";
+              sessionLabel = longrunPlanned ? "GA locker 30–45′" : "GA locker 35–50′";
             }
           }
         }
