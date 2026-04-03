@@ -7496,7 +7496,9 @@ function buildWeekPreview(
             } else {
               sessionType = "GA";
               intensity = "LOW";
-              sessionLabel = longrunPlanned ? "GA locker 30–45′" : "GA locker 35–50′";
+              sessionLabel = (longrunPlanned || thisWeekActuals.longrundDone)
+                ? "GA locker 30–45′"
+                : "GA locker 35–50′";
             }
           }
         }
