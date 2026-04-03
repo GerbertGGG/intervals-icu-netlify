@@ -1950,13 +1950,18 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
         subject: payload.subject,
       };
     }
-    const result = await fetch("https://api.resend.com/emails", {
+    const result = await fetchIntervalsWithRetry("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
       },
       body: JSON.stringify(payload),
+    }, {
+      label: "resend emails",
+      env,
+      timeoutMs: 8000,
+      maxRetries: 1,
     });
     if (!result.ok) {
       const text = await result.text().catch(() => "");
@@ -6458,7 +6463,10 @@ async function fetchWellnessDay(ctx, env, dayIso) {
   if (ctx.wellnessCache.has(dayIso)) return ctx.wellnessCache.get(dayIso);
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${dayIso}`;
-  const p = fetch(url, { headers: { Authorization: authHeader(env) } })
+  const p = fetchIntervalsWithRetry(url, { headers: { Authorization: authHeader(env) } }, {
+    label: `wellness GET ${dayIso}`,
+    env,
+  })
     .then(async (r) => {
       if (!r.ok) return null;
       return r.json();
