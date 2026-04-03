@@ -1042,6 +1042,7 @@ const RUNTIME_CONFIG_DEFAULTS = {
   keyMinGapDays: KEY_MIN_GAP_DAYS_DEFAULT,
   syncMaxDaysPerInvocation: 1,
   intervalsMaxRetries: 1,
+  intervalsFetchTimeoutMs: 15000,
   fatigueThresholds: {
     rampPct: RAMP_PCT_7D_LIMIT,
     monotony: MONOTONY_7D_LIMIT,
@@ -1076,6 +1077,7 @@ function loadRuntimeConfig(env) {
     keyMinGapDays: parseNumberEnv(env?.KEY_MIN_GAP_DAYS, defaults.keyMinGapDays, 1, 7),
     syncMaxDaysPerInvocation: parseNumberEnv(env?.SYNC_MAX_DAYS_PER_INVOCATION, defaults.syncMaxDaysPerInvocation, 1, 31),
     intervalsMaxRetries: parseNumberEnv(env?.INTERVALS_MAX_RETRIES, defaults.intervalsMaxRetries, 0, 5),
+    intervalsFetchTimeoutMs: parseNumberEnv(env?.INTERVALS_FETCH_TIMEOUT_MS, defaults.intervalsFetchTimeoutMs, 3000, 60000),
     fatigueThresholds: {
       rampPct: parseNumberEnv(env?.FATIGUE_RAMP_PCT_LIMIT, defaults.fatigueThresholds.rampPct, 0, 2),
       monotony: parseNumberEnv(env?.FATIGUE_MONOTONY_LIMIT, defaults.fatigueThresholds.monotony, 0, 10),
@@ -15268,7 +15270,7 @@ function getModePolicy(modeInfo) {
 // ================= INTERVALS API =================
 const INTERVALS_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const INTERVALS_FETCH_TIMEOUT_MS = 8000;
-const INTERVALS_MAX_RETRY_DELAY_MS = 250;
+const INTERVALS_MAX_RETRY_DELAY_MS = 2000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -15303,12 +15305,16 @@ async function fetchIntervalsWithRetry(url, options = {}, meta = {}) {
   const label = meta.label || "intervals_api";
   const maxRetries = getIntervalsMaxRetries(meta?.env, meta?.maxRetries);
   const baseDelayMs = Number.isFinite(meta.baseDelayMs) ? meta.baseDelayMs : 500;
+  const runtimeConfig = loadRuntimeConfig(meta?.env);
+  const timeoutFromRuntime = runtimeConfig?.intervalsFetchTimeoutMs;
 
   let attempt = 0;
   while (true) {
     let response;
     const controller = new AbortController();
-    const timeoutMs = Number.isFinite(meta.timeoutMs) ? meta.timeoutMs : INTERVALS_FETCH_TIMEOUT_MS;
+    const timeoutMs = Number.isFinite(meta.timeoutMs)
+      ? meta.timeoutMs
+      : (Number.isFinite(timeoutFromRuntime) ? timeoutFromRuntime : INTERVALS_FETCH_TIMEOUT_MS);
     const timeoutId = setTimeout(() => controller.abort(`timeout ${timeoutMs}ms`), timeoutMs);
     try {
       response = await fetch(url, { ...options, signal: controller.signal });
