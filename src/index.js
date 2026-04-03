@@ -5635,8 +5635,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     : true;
 
   let suggestion = "";
-  // Gate A: nur ACWR. Weitere Timing-/Wochenlogik passiert in der dynamischen Wochenplanung.
-  let keyAllowedNow = acwrGateOk && postRaceKeyAllowed;
+  // Gate A: Nur wenn die globalen Sicherheits-Gates erfüllt sind.
+  let keyAllowedNow = acwrGateOk && postRaceKeyAllowed && keySpacingNowOk && !hardSafetyStop;
 
   if (!postRaceKeyAllowed) {
     suggestion = `Post-Race Ramp aktiv (${postRaceRamp.phase}) – heute noch kein Key.`;
@@ -5722,7 +5722,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
 
-  const status = freqOk && typeOk ? "ok" : "warn";
+  const status = freqOk && typeOk && keySpacingNowOk ? "ok" : "warn";
 
   return {
     expected,
