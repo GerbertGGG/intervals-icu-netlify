@@ -10905,10 +10905,24 @@ function buildRecommendationsAndBottomLine(state) {
 
   const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
   const hasConcreteKeySession = state?.hasConcreteKeySession === true;
-  if (state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort) {
+  const todayActionLower = todayAction.toLowerCase();
+  const todaySignalsNoKey = ["nächster key", "kein key", "bis dahin locker/ga", "mindestabstand"];
+  const todaySignalsNoRun = ["kein lauf", "ruhetag", "easy / frei"];
+  const suppressKeyBottomLine = todaySignalsNoKey.some((token) => todayActionLower.includes(token))
+    || todaySignalsNoRun.some((token) => todayActionLower.includes(token));
+  const keyTodayBottomLine = state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort && !suppressKeyBottomLine;
+  const shouldAppendLongrunPriority = !keyTodayBottomLine
+    && Number.isFinite(longRunDoneMin)
+    && Number.isFinite(longRunTargetMin)
+    && longRunTargetMin > 0
+    && longRunDoneMin < longRunTargetMin;
+  if (keyTodayBottomLine) {
     bottom.push(`Key heute: ${explicitSessionShort}.`);
   } else {
-    bottom.push(`Heute: ${todayAction}.`);
+    const longrunPrioritySuffix = shouldAppendLongrunPriority
+      ? ` Longrun priorisieren: nächster langer Lauf bis ~${Math.round(longRunTargetMin)}′.`
+      : "";
+    bottom.push(`Heute: ${todayAction}.${longrunPrioritySuffix}`);
   }
 
   const taperPriorityWeek = state?.taperPriorityWeek === true || state?.overlayMode === "TAPER";
