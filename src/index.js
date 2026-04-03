@@ -10641,14 +10641,18 @@ function buildNextRunRecommendation({
   keySuggestion,
   explicitSession,
   plannedSessionType,
+  plannedSessionLabel,
   plannedSessionNote,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
-  const keyScheduledToday = String(plannedSessionType || "").toUpperCase() === "KEY";
-  const strengthWithRunAddon = String(plannedSessionType || "").toUpperCase() === "STRENGTH"
+  const concisePlanLabel = String(plannedSessionLabel || "").split(/(?<=[.!?])\s+/)[0]?.trim() || "";
+  const plannedTypeUpper = String(plannedSessionType || "").toUpperCase();
+  const keyScheduledToday = plannedTypeUpper === "KEY";
+  const longrunScheduledToday = plannedTypeUpper === "LONGRUN";
+  const strengthWithRunAddon = plannedTypeUpper === "STRENGTH"
     && String(plannedSessionNote || "").toLowerCase().includes("ga-lauf");
   const keySuggestedNow = keyAllowedNow && (
     keyScheduledToday
@@ -10658,6 +10662,9 @@ function buildNextRunRecommendation({
   );
   if (overlay === "LIFE_EVENT_STOP") {
     next = "Pause / nur Regeneration (LifeEvent)";
+  } else if (longrunScheduledToday) {
+    const longrunLabel = concisePlanLabel || "Langer Lauf";
+    next = `Longrun wie im Wochenplan: ${longrunLabel}.`;
   } else if (overlay === "LIFE_EVENT_HOLIDAY") {
     next = "20–45 min locker (Holiday-Modus)";
   } else if (overlay === "POST_RACE_RAMP") {
@@ -10679,7 +10686,8 @@ function buildNextRunRecommendation({
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
   }
-  if (!keySpacingOk) {
+  const shouldApplyKeySpacingGate = !longrunScheduledToday && !keySpacingOk && (keyScheduledToday || keySuggestedNow || keySuggestionText.includes("key"));
+  if (shouldApplyKeySpacingGate) {
     const minGapHours = Math.max(24, Math.round((Number(keyMinGapHours) || KEY_MIN_GAP_DAYS_DEFAULT * 24)));
     const waitHours = Number.isFinite(hoursSinceLastKey)
       ? Math.max(0, Math.ceil(minGapHours - hoursSinceLastKey))
@@ -10905,10 +10913,24 @@ function buildRecommendationsAndBottomLine(state) {
 
   const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
   const hasConcreteKeySession = state?.hasConcreteKeySession === true;
-  if (state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort) {
+  const todayActionLower = todayAction.toLowerCase();
+  const todaySignalsNoKey = ["nächster key", "kein key", "bis dahin locker/ga", "mindestabstand"];
+  const todaySignalsNoRun = ["kein lauf", "ruhetag", "easy / frei"];
+  const suppressKeyBottomLine = todaySignalsNoKey.some((token) => todayActionLower.includes(token))
+    || todaySignalsNoRun.some((token) => todayActionLower.includes(token));
+  const keyTodayBottomLine = state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort && !suppressKeyBottomLine;
+  const shouldAppendLongrunPriority = !keyTodayBottomLine
+    && Number.isFinite(longRunDoneMin)
+    && Number.isFinite(longRunTargetMin)
+    && longRunTargetMin > 0
+    && longRunDoneMin < longRunTargetMin;
+  if (keyTodayBottomLine) {
     bottom.push(`Key heute: ${explicitSessionShort}.`);
   } else {
-    bottom.push(`Heute: ${todayAction}.`);
+    const longrunPrioritySuffix = shouldAppendLongrunPriority
+      ? ` Longrun priorisieren: nächster langer Lauf bis ~${Math.round(longRunTargetMin)}′.`
+      : "";
+    bottom.push(`Heute: ${todayAction}.${longrunPrioritySuffix}`);
   }
 
   const taperPriorityWeek = state?.taperPriorityWeek === true || state?.overlayMode === "TAPER";
@@ -11264,6 +11286,7 @@ function buildComments(
     keySuggestion: keyCompliance?.suggestion,
     explicitSession: explicitSessionText,
     plannedSessionType: todayPlanEntry?.sessionType,
+    plannedSessionLabel: todayPlanEntry?.sessionLabel,
     plannedSessionNote: todayPlanEntry?.note,
   });
   const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
@@ -11528,6 +11551,15 @@ function buildComments(
     mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
   });
   const resolvedNextKeyLine = buildResolvedNextKeyLine(resolvedDecision);
+  const plannedWeekDays = (weekPreview?.days || []).filter((entry) => entry?.status === "PLANNED");
+  const hasPlannedKeyThisWeek = plannedWeekDays.some((entry) => entry?.sessionType === "KEY");
+  const hasPlannedStrengthThisWeek = plannedWeekDays.some((entry) => entry?.sessionType === "STRENGTH");
+  const conservativeOverlayModes = new Set(["LIFE_EVENT_HOLIDAY", "LIFE_EVENT_STOP", "POST_RACE_RAMP", "POST_RACE_RAMP_EASY", "POST_RACE_RAMP_REST"]);
+  const conservativeWeekPlanReason = conservativeOverlayModes.has(String(overlayMode || "NORMAL").toUpperCase())
+    && !hasPlannedKeyThisWeek
+    && !hasPlannedStrengthThisWeek
+    ? `Wochenplan bewusst konservativ (${String(overlayMode || "NORMAL").toUpperCase()}): aktuell kein zusätzlicher Key/Kraft geplant.`
+    : null;
   const decisionCompact = buildRecommendationsAndBottomLine({
     runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
@@ -11560,8 +11592,9 @@ function buildComments(
   });
   const recommendationMetricsBlockRaw = [
     ...decisionCompact.recommendations,
+    conservativeWeekPlanReason,
     `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
-  ];
+  ].filter(Boolean);
   const recommendationMetricsBlock = recommendationMetricsBlockRaw.filter((line) => {
     if (!resolvedDecision?.nextKeyEarliestDate) return true;
     return !isLegacyNextKeyText(line);
@@ -15475,6 +15508,7 @@ const __internalTestHooks = Object.freeze({
   buildRaceResultBlock,
   computeIntensityDistribution,
   computeBikeAllowanceFactor,
+  buildNextRunRecommendation,
   isIntervalLikeKeyType,
 });
 

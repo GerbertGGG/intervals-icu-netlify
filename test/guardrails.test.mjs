@@ -274,6 +274,58 @@ console.log('guardrails ok');
   assert.equal(/Key heute:/.test(bottom), true);
 }
 
+
+// 13b) Bottom line nutzt keinen Key-Text, wenn HEUTE bereits auf kein Key/kein Lauf zeigt
+{
+  const out = __test.buildRecommendationsAndBottomLine({
+    todayAction: 'Nächster Key frühestens ab 2026-04-04 (in 36h) – bis dahin locker/GA.',
+    keyAllowedNow: true,
+    hasConcreteKeySession: true,
+    explicitSessionShort: "2x10' steady",
+    longRunDoneMin: 45,
+    longRunTargetMin: 50,
+  });
+  const bottom = (out.bottomLine || []).join(' | ');
+  assert.equal(/Key heute:/.test(bottom), false);
+  assert.equal(/Heute: Nächster Key frühestens ab 2026-04-04/.test(bottom), true);
+  assert.equal(/Longrun priorisieren: nächster langer Lauf bis ~50′\./.test(bottom), true);
+}
+
+// 13c) HEUTE priorisiert Longrun-Planung statt Key-Abstands-Text, wenn heute Longrun im Wochenplan steht
+{
+  const next = __test.buildNextRunRecommendation({
+    runFloorState: { overlayMode: 'NORMAL' },
+    keySpacingOk: false,
+    keyAllowedNow: true,
+    nextAllowed: '2026-04-04',
+    keyMinGapHours: 48,
+    hoursSinceLastKey: 12,
+    keySuggestion: 'Nächster Key: steady',
+    explicitSession: "2x10' steady",
+    plannedSessionType: 'LONGRUN',
+    plannedSessionLabel: 'Langer Lauf ~45′',
+  });
+  assert.equal(/Longrun wie im Wochenplan: Langer Lauf ~45′\./.test(next), true);
+  assert.equal(/Nächster Key frühestens/.test(next), false);
+}
+
+// 13d) Key-Abstands-Text bleibt aktiv, wenn heute tatsächlich ein Key geplant wäre
+{
+  const next = __test.buildNextRunRecommendation({
+    runFloorState: { overlayMode: 'NORMAL' },
+    keySpacingOk: false,
+    keyAllowedNow: true,
+    nextAllowed: '2026-04-04',
+    keyMinGapHours: 48,
+    hoursSinceLastKey: 12,
+    keySuggestion: 'Nächster Key: steady',
+    explicitSession: "2x10' steady",
+    plannedSessionType: 'KEY',
+    plannedSessionLabel: "2x10' steady",
+  });
+  assert.equal(/Nächster Key frühestens ab 2026-04-04/.test(next), true);
+}
+
 // 14) Longrun-Kommunikation enthält keine ungetrennte Zielbereich-vs-zu-kurz-Kollision
 {
   const out = __test.buildRecommendationsAndBottomLine({
