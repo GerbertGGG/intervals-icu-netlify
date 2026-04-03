@@ -323,6 +323,8 @@ const MANUAL_FOCUS_VALUES = new Set(["kraft", "longrun", "frequenz", "erholung",
 const TEST_STRENGTH_ALLOWED_BLOCKS = new Set(["BASE", "BUILD", "RACE", "RESET"]);
 const RACE_START_PARAM_KEYS = ["race_start", "race_start_override", "race_start_iso", "racestart", "raceStart"];
 const BLOCK_START_PARAM_KEYS = ["block_start", "block_start_override", "block_start_iso", "blockstart", "blockStart"];
+const LOWERCASE_RACE_START_PARAM_KEYS = new Set(RACE_START_PARAM_KEYS.map((key) => String(key).toLowerCase()));
+const LOWERCASE_BLOCK_START_PARAM_KEYS = new Set(BLOCK_START_PARAM_KEYS.map((key) => String(key).toLowerCase()));
 const BERLIN_HOUR_FORMATTER = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" });
 const BERLIN_MINUTE_FORMATTER = new Intl.DateTimeFormat("en-GB", { minute: "2-digit", hour12: false, timeZone: "Europe/Berlin" });
 
@@ -391,16 +393,16 @@ function getSearchParamAny(searchParams, keys) {
     if (direct) return direct;
   }
 
-  const lowerMap = new Map();
+  const lowerKeys = keys === RACE_START_PARAM_KEYS
+    ? LOWERCASE_RACE_START_PARAM_KEYS
+    : keys === BLOCK_START_PARAM_KEYS
+      ? LOWERCASE_BLOCK_START_PARAM_KEYS
+      : new Set(keys.map((key) => String(key).toLowerCase()));
+
   for (const [key, value] of searchParams.entries()) {
     if (!value) continue;
     const normalizedKey = String(key || "").toLowerCase();
-    if (!lowerMap.has(normalizedKey)) lowerMap.set(normalizedKey, value);
-  }
-
-  for (const key of keys) {
-    const value = lowerMap.get(String(key).toLowerCase());
-    if (value) return value;
+    if (lowerKeys.has(normalizedKey)) return value;
   }
   return "";
 }
@@ -14754,6 +14756,13 @@ function normalizeTags(tags) {
   return (tags || []).map((t) => String(t || "").toLowerCase().trim()).filter(Boolean);
 }
 
+const STRENGTH_TAG_SET = new Set([
+  "strength", "stabi", "kraft", "gym", "core", "mobility", "weighttraining", "weight_training", "weights", "lifting", "resistance",
+]);
+const STRENGTH_KEYWORDS = ["kraft", "stabi", "strength", "gym", "weights", "lifting", "resistance", "mobility"];
+const KEY_TYPE_FROM_TEXT_REGEX = /(?:^|\s)#\s*key\s*:\s*([a-z0-9_:-]+)/i;
+const KEY_TAG_TEXT_REGEX = /(?:^|\s)#\s*key(?:\s*:[a-z0-9_:-]+)?\b/i;
+
 function detectStrength(a) {
   const type = String(a?.type ?? "").toLowerCase();
   const typeMatch =
@@ -14766,13 +14775,10 @@ function detectStrength(a) {
     || type.includes("training");
 
   const tags = normalizeTags(a?.tags);
-  const strengthTags = new Set([
-    "strength", "stabi", "kraft", "gym", "core", "mobility", "weighttraining", "weight_training", "weights", "lifting", "resistance",
-  ]);
-  const tagMatch = tags.some((t) => strengthTags.has(t));
+  const tagMatch = tags.some((t) => STRENGTH_TAG_SET.has(t));
 
   const name = String(a?.name || "").toLowerCase();
-  const keywordMatch = ["kraft", "stabi", "strength", "gym", "weights", "lifting", "resistance", "mobility"].some((needle) => name.includes(needle));
+  const keywordMatch = STRENGTH_KEYWORDS.some((needle) => name.includes(needle));
   const matched = typeMatch || tagMatch || keywordMatch;
   const reason = !matched
     ? "none"
@@ -14906,7 +14912,7 @@ function extractKeyTypeFromText(a) {
     .map((v) => String(v))
     .join(" ");
   if (!text) return null;
-  const match = text.match(/(?:^|\s)#\s*key\s*:\s*([a-z0-9_:-]+)/i);
+  const match = text.match(KEY_TYPE_FROM_TEXT_REGEX);
   if (!match) return null;
   const typed = normalizeKeyToken(match[1]);
   return typed || null;
@@ -14925,7 +14931,7 @@ function hasKeyTag(a) {
     .filter(Boolean)
     .map((v) => String(v))
     .join(" ");
-  return /(?:^|\s)#\s*key(?:\s*:[a-z0-9_:-]+)?\b/i.test(text);
+  return KEY_TAG_TEXT_REGEX.test(text);
 }
 
 function getKeyType(a) {
