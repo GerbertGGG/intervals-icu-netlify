@@ -2015,8 +2015,8 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
   const end = new Date(dayIso + "T00:00:00Z");
-  const minGapHours = 72;
-  const minGapDays = minGapHours / 24;
+  const minGapDays = 3;
+  const minGapHours = minGapDays * 24;
   const minGapMs = minGapHours * 3600 * 1000;
   const startIso = isoDate(new Date(end.getTime() - windowDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
@@ -7034,7 +7034,6 @@ function buildWeekPreview(
     const shouldShowKeySlot = ({ compliance, overlayMode, explicitSession, plannedKeyType, date, keyAllowedOnDate = null }) => {
       if (keyAllowedOnDate !== true) return false;
       if (!plannedKeyType) return false;
-      if (!isConcreteKeySession(explicitSession)) return false;
       if (overlayMode === "POST_RACE_RAMP") {
         const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
         const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
@@ -7057,10 +7056,10 @@ function buildWeekPreview(
     };
     const classifySessionType = (activities) => {
       if (!Array.isArray(activities) || !activities.length) return "GA";
-      const hasKey = activities.some((a) => hasKeyTag(a) || !!getKeyType(a));
-      if (hasKey) return "KEY";
       const longRun = activities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= LONGRUN_MIN_SECONDS);
       if (longRun) return "LONGRUN";
+      const hasKey = activities.some((a) => hasKeyTag(a) || !!getKeyType(a));
+      if (hasKey) return "KEY";
       const strength = activities.some((a) => isStrength(a));
       if (strength) return "STRENGTH";
       const ga = activities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= GA_MIN_SECONDS);
@@ -7248,17 +7247,24 @@ function buildWeekPreview(
     );
     const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyWeekCap, frequencyAwareKeyCap) : keyWeekCap;
     const keyNextAllowedIso = isIsoDate(keyCompliance?.nextAllowed) ? keyCompliance.nextAllowed : null;
+    const keyMinGapDays = 3;
+    const keyLongrunGapDays = 2;
     const baseStrengthTarget = plannedStrengthTargetByPhase(blockState?.block, baseOverlayMode);
     const strengthTarget = Math.max(0, Math.min(baseStrengthTarget, Number(strengthPlan?.sessionsPerWeek ?? baseStrengthTarget)));
+    const weeklySlots = {
+      keyTarget: keyBudgetByFrequency,
+      longrunTarget: thisWeekActuals.longrundDone ? 0 : 1,
+      strengthTarget,
+    };
     const plannedDateHasRun = (date) => days.some((entry) =>
       entry?.date === date && ["GA", "KEY", "LONGRUN"].includes(entry?.sessionType)
     );
     const getKeyEligibilityForPlannedDate = ({ date, overlayMode, lastKnownKeyDate, lastKnownLongrunDate, keyCountPlanned }) => {
       const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
       const keyDateGateOk = !keyNextAllowedIso || date >= keyNextAllowedIso;
-      const keySpacing72hOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
-      const keyLongrunGap48hOk = !lastKnownLongrunDate || diffDays(lastKnownLongrunDate, date) >= 2;
-      const canAddKeyByCount = keyCountPlanned < keyBudgetByFrequency;
+      const keySpacingGapOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= keyMinGapDays;
+      const keyLongrunGapOk = !lastKnownLongrunDate || diffDays(lastKnownLongrunDate, date) >= keyLongrunGapDays;
+      const canAddKeyByCount = keyCountPlanned < weeklySlots.keyTarget;
       const dayIdle = !plannedDateHasRun(date);
       const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
       const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
@@ -7266,7 +7272,7 @@ function buildWeekPreview(
       const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
       const overlayBlocksPlannedKey = overlayMode === "POST_RACE_RAMP" && postRaceRampMeta.keyAllowed !== true;
       const keyAllowedOnDate = keyDateGateOk
-        && keySpacing72hOk
+        && keySpacingGapOk
         && !overlayBlocksPlannedKey;
       const keySessionReady = shouldShowKeySlot({
         compliance: keyCompliance,
@@ -7279,7 +7285,7 @@ function buildWeekPreview(
       return {
         keyEligible: keyAllowedOnDate
           && canAddKeyByCount
-          && keyLongrunGap48hOk
+          && keyLongrunGapOk
           && dayIdle
           && keySessionReady,
         resolvedKeyType,
@@ -7314,9 +7320,11 @@ function buildWeekPreview(
       if (dayActivities.length) {
         const sessionType = classifySessionType(dayActivities);
         const doneMeta = sessionMetaFromType(sessionType);
-        if (sessionType === "KEY") plannedKeyDates.push(date);
+        const hasKeyInDay = dayActivities.some((a) => hasKeyTag(a) || !!getKeyType(a));
+        const hasLongrunInDay = dayActivities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= LONGRUN_MIN_SECONDS);
+        if (hasKeyInDay) plannedKeyDates.push(date);
         if (sessionType === "STRENGTH") plannedStrengthCount += 1;
-        if (sessionType === "LONGRUN") {
+        if (hasLongrunInDay) {
           longrunPlanned = true;
           plannedLongrunDates.push(date);
         }
@@ -7455,7 +7463,7 @@ function buildWeekPreview(
           sessionType = "KEY";
           intensity = "HIGH";
           keyType = resolvedKeyType || null;
-          sessionLabel = `Key – ${keyTypeLabel(keyType || resolvedKeyType || keyCompliance?.plannedKeyType || "steady")}`;
+          sessionLabel = `Key – ${formatKeyType(keyType || resolvedKeyType || keyCompliance?.plannedKeyType || "steady")}`;
           plannedKeyDates.push(date);
           if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
             note = "Key aus dieser Woche nachholen";
@@ -7465,7 +7473,7 @@ function buildWeekPreview(
           const nearestKeyDistance = allKnownKeyDates.length
             ? Math.min(...allKnownKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
             : 99;
-          const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
+          const canPlanLongrun = weeklySlots.longrunTarget > 0 && !longrunPlanned && nearestKeyDistance >= keyLongrunGapDays;
           const longrunGapOk = !lastLongrunDateBeforeToday || diffDays(lastLongrunDateBeforeToday, date) >= 4;
           if (canPlanLongrun && longrunGapOk) {
             sessionType = "LONGRUN";
@@ -7474,7 +7482,7 @@ function buildWeekPreview(
             longrunPlanned = true;
             plannedLongrunDates.push(date);
           } else {
-            const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
+            const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < weeklySlots.strengthTarget;
             const clashesWithKeyOrLong = sessionType === "KEY" || sessionType === "LONGRUN";
             const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
               .map((d) => isoWeekdayBerlin(d))
@@ -7494,11 +7502,23 @@ function buildWeekPreview(
               note = "Kann nach GA-Lauf gemacht werden";
               plannedStrengthCount += 1;
             } else {
-              sessionType = "GA";
-              intensity = "LOW";
-              sessionLabel = (longrunPlanned || thisWeekActuals.longrundDone)
-                ? "GA locker 30–45′"
-                : "GA locker 35–50′";
+              const keyCountKnown = thisWeekActuals.keyDates.length + plannedKeyDates.length;
+              const keyTargetReached = keyCountKnown >= weeklySlots.keyTarget;
+              const plannedRunCountSoFar = days.filter((entry) =>
+                entry.status === "PLANNED" && ["GA", "KEY", "LONGRUN"].includes(entry.sessionType)
+              ).length;
+              const runMinReached = plannedRunCountSoFar >= fallbackRunTargetRange.min;
+              if (keyTargetReached && (longrunPlanned || thisWeekActuals.longrundDone) && runMinReached) {
+                sessionType = "LOW";
+                intensity = "LOW";
+                sessionLabel = "Optional: 20–30′ sehr locker oder frei";
+              } else {
+                sessionType = "GA";
+                intensity = "LOW";
+                sessionLabel = (longrunPlanned || thisWeekActuals.longrundDone)
+                  ? "GA locker 30–45′"
+                  : "GA locker 35–50′";
+              }
             }
           }
         }
@@ -9041,7 +9061,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const lastRelevantKeyLeverReview = getLastRelevantKeyLeverBeforeDay(ctx, day, 35);
     const lastSessionLeverReview = getLastSessionLeverBeforeDay(ctx, day, 35);
     const leverPersistenceDebug = await buildLeverPersistenceDebug(ctx, day);
-    const keySpacing = computeKeySpacing(ctx, day);
+    const keySpacing = computeKeySpacing(ctx, day, 14);
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(eventDistance) ? "BUILD" : "BASE");
