@@ -119,6 +119,15 @@ Hinweis:
 - Für einen neuen Bereich erneut mit `reset=true&from=...&to=...` starten.
 - Maximaler Startbereich pro Step-Sync: 62 Tage (`to - from`).
 
+
+
+4.5 Deployment-/Erreichbarkeits-Check (Workers.dev)
+- Erwartete URL: `https://intervals-icu-netlify.<ACCOUNT_SUBDOMAIN>.workers.dev`
+- In `wrangler.toml` muss `workers_dev = true` gesetzt sein, sonst ist die workers.dev-URL nicht aktiv.
+- Nach Änderungen neu deployen: `wrangler deploy`
+- Schneller Health-Check:
+  - `curl -i https://intervals-icu-netlify.<ACCOUNT_SUBDOMAIN>.workers.dev/`
+  - Erwartung: HTTP 200 und Body `ok`
 5) SCHEDULED TRIGGER
 --------------------
 `scheduled()` verarbeitet:

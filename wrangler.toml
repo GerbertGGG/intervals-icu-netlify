@@ -1,6 +1,8 @@
 name = "intervals-icu-netlify"
+# Explizit aktivieren: Service ist unter <name>.<account-subdomain>.workers.dev erreichbar.
 main = "src/index.js"
 compatibility_date = "2025-11-11"
+workers_dev = true
 
 # Alle 30 Minuten (05:00–20:59 UTC), damit 07:00 Berlin (Sommerzeit) sicher erfasst wird.
 # Das effektive Fenster bleibt durch die Berlin-Zeit-Prüfung im Worker auf 07:00–21:00 begrenzt.
