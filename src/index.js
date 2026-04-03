@@ -11652,13 +11652,6 @@ function buildComments(
     plannedSessionLabel: todayPlanEntry?.sessionLabel,
     plannedSessionNote: todayPlanEntry?.note,
   });
-  const canonicalLongrunProgressionTargetMin = longRunSummary?.plan?.targetMin;
-  const resolvedSessionDecision = buildResolvedSessionDecision({
-    todaySessionType: todayPlanEntry?.sessionType,
-    todayDecisionCandidate: nextRunText,
-    plannedSessionLabel: todayPlanEntry?.sessionLabel,
-    longrunProgressionTargetMin: canonicalLongrunProgressionTargetMin,
-  });
   const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
   const resolvedBikeConversionFactor = Number.isFinite(bikeConversionFactor) ? bikeConversionFactor : BIKE_CONVERSION_FACTOR_FALLBACK;
   const transitionLine = buildTransitionLine({ bikeAllowanceFactor: resolvedBikeAllowanceFactor, weeksToEvent, eventDistance });
@@ -11700,6 +11693,13 @@ function buildComments(
   const longRunTargetMin = longRunSafetyCapMin > 0
     ? Math.min(longRunTargetPhaseCapMin, longRunSafetyCapMin)
     : longRunTargetPhaseCapMin;
+  const canonicalLongrunProgressionTargetMin = longRunTargetMin;
+  const resolvedSessionDecision = buildResolvedSessionDecision({
+    todaySessionType: todayPlanEntry?.sessionType,
+    todayDecisionCandidate: nextRunText,
+    plannedSessionLabel: todayPlanEntry?.sessionLabel,
+    longrunProgressionTargetMin: canonicalLongrunProgressionTargetMin,
+  });
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunSafetyCapMin
