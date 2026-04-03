@@ -7787,8 +7787,10 @@ async function buildCoachAnalysis(env, snapshot) {
         vdotTrend,
         keyAllowedNow: snapshot?.keyAllowedNow === true,
         hasConcreteKeySession: snapshot?.hasConcreteKeySession === true,
+        todayCanUseExplicitKeySession: snapshot?.todayCanUseExplicitKeySession === true,
         sessionType: String(snapshot?.sessionType || "").toUpperCase() || "UNKNOWN",
         explicitSession: sanitizeCoachFact(snapshot?.explicitSession, ""),
+        nextKeyEarliest: isIsoDate(String(snapshot?.nextKeyEarliest || "")) ? String(snapshot.nextKeyEarliest) : null,
         todaySessionNote: sanitizeCoachFact(snapshot?.todaySessionNote, ""),
       };
     } catch {
@@ -7813,13 +7815,16 @@ async function buildCoachAnalysis(env, snapshot) {
         vdotTrend: null,
         keyAllowedNow: false,
         hasConcreteKeySession: false,
+        todayCanUseExplicitKeySession: false,
         sessionType: "UNKNOWN",
         explicitSession: "",
+        nextKeyEarliest: null,
         todaySessionNote: "",
       };
     }
   })();
-  const isRealKeyDay = safeSnapshot.keyAllowedNow
+  const isRealKeyDay = safeSnapshot.todayCanUseExplicitKeySession
+    && safeSnapshot.keyAllowedNow
     && safeSnapshot.hasConcreteKeySession
     && safeSnapshot.sessionType === "KEY"
     && isConcreteKeySession(safeSnapshot.explicitSession);
@@ -7923,6 +7928,7 @@ async function buildCoachAnalysis(env, snapshot) {
     "- Keine unnötig harten oder wertenden Formulierungen.",
     "- Keine doppelte Wortwiederholung.",
     "- Falls Kraft heute nicht primär ist, nur kurz und klar nachrangig erwähnen.",
+    !isRealKeyDay ? "- Wenn heute kein KEY-Tag ist: keine konkrete Key-Session als heutige Handlung formulieren." : null,
     "",
     "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt, ohne neue Interpretationsebene.",
     "",
@@ -7933,7 +7939,8 @@ async function buildCoachAnalysis(env, snapshot) {
     `- Heutiger Session-Typ: ${safeSnapshot.sessionType}`,
     `- Key heute erlaubt: ${safeSnapshot.keyAllowedNow ? "ja" : "nein"}`,
     `- Konkrete Key-Session vorhanden: ${safeSnapshot.hasConcreteKeySession ? "ja" : "nein"}`,
-    `- Konkrete Session-Idee heute: ${safeSnapshot.explicitSession || "n/a"}`,
+    `- Konkrete Session-Idee heute: ${isRealKeyDay ? (safeSnapshot.explicitSession || "n/a") : "n/a (nicht heutiger Auftrag)"}`,
+    `- Nächster Key frühestens: ${safeSnapshot.nextKeyEarliest || "n/a"}`,
     `- Heutige Plan-Notiz: ${safeSnapshot.todaySessionNote || "n/a"}`,
     `- EF-Trend 28 Tage: ${efStatus}`,
     `- 7-Tage-Last vs. Vorwoche: ${lastStatus}`,
@@ -7950,7 +7957,7 @@ async function buildCoachAnalysis(env, snapshot) {
   if (vdotActualLine) promptLines.push(`- VDOT aktuell: ${vdotActualLine}`);
   if (vdotTrendLine) promptLines.push(`- VDOT-Trend: ${vdotTrendLine}`);
 
-  const prompt = promptLines.join("\n");
+  const prompt = promptLines.filter(Boolean).join("\n");
 
   try {
     const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
@@ -9400,6 +9407,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         todaySessionNote: todayPlanEntry?.note || "",
         keyAllowedNow: keyCompliance?.keyAllowedNow === true,
         hasConcreteKeySession: keyCompliance?.hasConcreteKeySession === true,
+        todayCanUseExplicitKeySession: todayPlanEntry?.sessionType === "KEY"
+          && keyCompliance?.keyAllowedNow === true
+          && keyCompliance?.hasConcreteKeySession === true,
+        nextKeyEarliest: keyCompliance?.nextKeyEarliest || null,
         explicitSession: keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion) || "",
         efTrendPct,
         rampPct: fatigue?.rampPct ?? null,
@@ -10702,6 +10713,31 @@ function buildNextRunRecommendation({
   return next;
 }
 
+function resolveTodaySessionContext(todayPlanEntry, keyCompliance, nextAllowed) {
+  const todaySessionType = String(todayPlanEntry?.sessionType || "UNKNOWN").toUpperCase();
+  const isTodayKey = todaySessionType === "KEY";
+  const isTodayLongrun = todaySessionType === "LONGRUN";
+  const isTodayLow = ["LOW", "REST", "RECOVERY", "GA"].includes(todaySessionType);
+  const isTodayStrength = todaySessionType === "STRENGTH";
+  const hasConcreteKeySession = keyCompliance?.hasConcreteKeySession === true
+    && isConcreteKeySession(keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion));
+  const todayCanUseExplicitKeySession = isTodayKey
+    && keyCompliance?.keyAllowedNow === true
+    && hasConcreteKeySession;
+  const nextKeyHint = !isTodayKey && nextAllowed
+    ? `Nächster Key frühestens ab ${nextAllowed}.`
+    : null;
+  return {
+    todaySessionType,
+    isTodayKey,
+    isTodayLongrun,
+    isTodayLow,
+    isTodayStrength,
+    todayCanUseExplicitKeySession,
+    nextKeyHint,
+  };
+}
+
 function isLegacyNextKeyText(text) {
   const lower = String(text || "").toLowerCase();
   if (!lower) return false;
@@ -10765,7 +10801,24 @@ function buildResolvedNextKeyLine(resolvedDecision) {
   return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
-function resolveBottomLine({ candidate, todayDecision, forceKeyToday = false }) {
+function resolveBottomLine({
+  candidate,
+  todayDecision,
+  forceKeyToday = false,
+  todaySessionType = "UNKNOWN",
+  explicitSessionShort = null,
+}) {
+  const sessionType = String(todaySessionType || "UNKNOWN").toUpperCase();
+  if (sessionType === "KEY") {
+    if (explicitSessionShort) return `Key heute: ${explicitSessionShort}.`;
+    return "Key heute kontrolliert und sauber absolvieren.";
+  }
+  if (sessionType === "LONGRUN") return "Heute Longrun sauber und kontrolliert absolvieren.";
+  if (sessionType === "STRENGTH") return "Heute Kraft sauber absolvieren, Lauf nur ergänzend falls geplant.";
+  if (["LOW", "REST", "RECOVERY", "GA"].includes(sessionType)) {
+    return "Heute locker bleiben / Erholung und Volumen sauber absichern.";
+  }
+
   const text = String(candidate || "").trim();
   const fallback = "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
   if (!text) return fallback;
@@ -11271,6 +11324,9 @@ function buildComments(
   });
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
   const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday || entry?.date === todayIso);
+  const todaySessionContext = resolveTodaySessionContext(todayPlanEntry, keyCompliance, nextAllowed);
+  const explicitSessionToday = todaySessionContext.todayCanUseExplicitKeySession ? explicitSessionText : null;
+  const keySuggestionToday = todaySessionContext.isTodayKey ? keyCompliance?.suggestion : null;
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
     policy,
@@ -11279,12 +11335,12 @@ function buildComments(
     aerobicOk,
     intensitySignal: fatigue?.intensitySignal,
     keySpacingOk: spacingOk,
-    keyAllowedNow: keyCompliance?.keyAllowedNow,
+    keyAllowedNow: todaySessionContext.isTodayKey && keyCompliance?.keyAllowedNow === true,
     nextAllowed,
     keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
     hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
-    keySuggestion: keyCompliance?.suggestion,
-    explicitSession: explicitSessionText,
+    keySuggestion: keySuggestionToday,
+    explicitSession: explicitSessionToday,
     plannedSessionType: todayPlanEntry?.sessionType,
     plannedSessionLabel: todayPlanEntry?.sessionLabel,
     plannedSessionNote: todayPlanEntry?.note,
@@ -11522,9 +11578,7 @@ function buildComments(
   if (bikeAllowanceLine) keyCheckMetrics.push(bikeAllowanceLine);
   if (transitionLine) keyCheckMetrics.push(transitionLine);
 
-  const explicitSessionShort = shortExplicitSession(
-    explicitSessionText
-  );
+  const explicitSessionShort = shortExplicitSession(explicitSessionToday);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
   const pendingLever = keyCompliance?.pendingLever || keyCompliance?.activeLever || null;
   const pendingLeverPlan = !keyAllowedNow && pendingLever?.domain
@@ -11599,11 +11653,14 @@ function buildComments(
     if (!resolvedDecision?.nextKeyEarliestDate) return true;
     return !isLegacyNextKeyText(line);
   });
-  if (!keyAllowedNow && pendingLeverLine) {
+  if (todaySessionContext.isTodayKey && !keyAllowedNow && pendingLeverLine) {
     recommendationMetricsBlock.push(pendingLeverLine);
   }
-  if (!keyAllowedNow && pendingLeverPlanLine) {
+  if (todaySessionContext.isTodayKey && !keyAllowedNow && pendingLeverPlanLine) {
     recommendationMetricsBlock.push(pendingLeverPlanLine);
+  }
+  if (todaySessionContext.nextKeyHint) {
+    recommendationMetricsBlock.push(todaySessionContext.nextKeyHint);
   }
 
   const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
@@ -11683,6 +11740,9 @@ function buildComments(
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
+    !todaySessionContext.isTodayKey && resolvedDecision?.nextKeyEarliestDate
+      ? `Nächster Key frühestens ab ${resolvedDecision.nextKeyEarliestDate}.`
+      : null,
   ];
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;
@@ -11736,7 +11796,9 @@ function buildComments(
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
   if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
   if (focusLabel) addUniqueTopicLine(renderedTopics, "focus_cue", focusLabel);
-  if (!keyAllowedNow && pendingLeverPlanLine) addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
+  if (todaySessionContext.isTodayKey && !keyAllowedNow && pendingLeverPlanLine) {
+    addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
+  }
 
   const focusRenderLines = [];
   if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
@@ -11804,6 +11866,8 @@ function buildComments(
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
     forceKeyToday: keyAllowedNow && keyCompliance?.hasConcreteKeySession === true,
+    todaySessionType: todaySessionContext.todaySessionType,
+    explicitSessionShort,
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
@@ -15509,6 +15573,8 @@ const __internalTestHooks = Object.freeze({
   computeIntensityDistribution,
   computeBikeAllowanceFactor,
   buildNextRunRecommendation,
+  resolveTodaySessionContext,
+  resolveBottomLine,
   isIntervalLikeKeyType,
 });
 
