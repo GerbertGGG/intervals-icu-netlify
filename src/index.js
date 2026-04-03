@@ -34,7 +34,7 @@ export default {
       const endIso = date && isIsoDate(date) ? date : isoDateBerlin(new Date());
 
       try {
-        const payload = await buildWatchfacePayload(env, endIso);
+        const payload = await getWatchfacePayloadCached(env, endIso);
 
         return new Response(JSON.stringify(payload), {
           headers: WATCHFACE_JSON_HEADERS,
@@ -328,6 +328,55 @@ const BERLIN_MINUTE_FORMATTER = new Intl.DateTimeFormat("en-GB", { minute: "2-di
 
 function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
+}
+
+const WATCHFACE_CACHE_TTL_MS = 30_000;
+const watchfacePayloadCache = new Map();
+
+async function getWatchfacePayloadCached(env, endIso) {
+  const cacheKey = String(endIso || "");
+  const now = Date.now();
+  pruneWatchfacePayloadCache(now);
+  const existing = watchfacePayloadCache.get(cacheKey);
+
+  if (existing && Number.isFinite(existing.expiresAt) && existing.expiresAt > now && existing.payload) {
+    return existing.payload;
+  }
+
+  if (existing?.inflightPromise) {
+    return existing.inflightPromise;
+  }
+
+  const inflightPromise = (async () => {
+    const payload = await buildWatchfacePayload(env, endIso);
+    watchfacePayloadCache.set(cacheKey, {
+      payload,
+      expiresAt: Date.now() + WATCHFACE_CACHE_TTL_MS,
+      inflightPromise: null,
+    });
+    return payload;
+  })().catch((err) => {
+    watchfacePayloadCache.delete(cacheKey);
+    throw err;
+  });
+
+  watchfacePayloadCache.set(cacheKey, {
+    payload: null,
+    expiresAt: 0,
+    inflightPromise,
+  });
+
+  return inflightPromise;
+}
+
+function pruneWatchfacePayloadCache(now = Date.now()) {
+  if (watchfacePayloadCache.size <= 20) return;
+  for (const [key, value] of watchfacePayloadCache.entries()) {
+    const expiresAt = Number(value?.expiresAt) || 0;
+    if (expiresAt <= now && !value?.inflightPromise) {
+      watchfacePayloadCache.delete(key);
+    }
+  }
 }
 
 function parseReportVerbosity(searchParams, { debug = false } = {}) {
