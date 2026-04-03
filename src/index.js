@@ -14,6 +14,7 @@
 //   /test-strength-mail?dry=true
 // Optional:
 //   &warmup_skip=600
+//   &debug_part=compact|full
 
 export default {
   async fetch(req, env, ctx) {
@@ -60,6 +61,7 @@ export default {
       const write = parseBooleanParam(url.searchParams, "write");
       const debug = parseBooleanParam(url.searchParams, "debug");
       const reportVerbosity = parseReportVerbosity(url.searchParams, { debug });
+      const debugResponsePart = parseDebugResponsePart(url.searchParams);
 
       const date = url.searchParams.get("date");
       const from = url.searchParams.get("from");
@@ -120,6 +122,7 @@ export default {
             blockStartOverrideIso,
             blockStartOverrideDerivedFromOldest,
             reportVerbosity,
+            debugResponsePart,
             manualFocus,
           });
           return json(result);
@@ -138,6 +141,7 @@ export default {
               blockStartOverrideIso,
               blockStartOverrideDerivedFromOldest,
               manualFocus,
+              debugResponsePart,
             },
             500
           );
@@ -152,6 +156,7 @@ export default {
             blockStartOverrideIso,
             blockStartOverrideDerivedFromOldest,
             reportVerbosity,
+            debugResponsePart,
             manualFocus,
           });
         })().catch((e) => {
@@ -159,7 +164,7 @@ export default {
         })
       );
 
-      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, blockStartOverrideDerivedFromOldest, reportVerbosity, manualFocus });
+      return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso, blockStartOverrideDerivedFromOldest, reportVerbosity, debugResponsePart, manualFocus });
     }
 
     if (url.pathname === "/sync-step") {
@@ -319,6 +324,7 @@ const STEP_SYNC_KV_PREFIX = "syncstep:state:";
 const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
 const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
+const DEBUG_RESPONSE_PART_VALUES = new Set(["compact", "full"]);
 const MANUAL_FOCUS_VALUES = new Set(["kraft", "longrun", "frequenz", "erholung", "spezifik"]);
 const TEST_STRENGTH_ALLOWED_BLOCKS = new Set(["BASE", "BUILD", "RACE", "RESET"]);
 const RACE_START_PARAM_KEYS = ["race_start", "race_start_override", "race_start_iso", "racestart", "raceStart"];
@@ -385,6 +391,17 @@ function parseReportVerbosity(searchParams, { debug = false } = {}) {
   const raw = String(searchParams.get("verbosity") || "").trim().toLowerCase();
   if (REPORT_VERBOSITY_VALUES.has(raw)) return raw;
   return "coach";
+}
+
+function parseDebugResponsePart(searchParams) {
+  const raw = String(
+    searchParams.get("debug_part")
+      || searchParams.get("debug_response")
+      || searchParams.get("debugview")
+      || ""
+  ).trim().toLowerCase();
+  if (DEBUG_RESPONSE_PART_VALUES.has(raw)) return raw;
+  return "compact";
 }
 
 function getSearchParamAny(searchParams, keys) {
@@ -511,6 +528,7 @@ async function handleStepSync(req, env, ctx) {
   const write = parseBooleanParam(url.searchParams, "write");
   const debug = parseBooleanParam(url.searchParams, "debug");
   const reportVerbosity = parseReportVerbosity(url.searchParams, { debug });
+  const debugResponsePart = parseDebugResponsePart(url.searchParams);
   const reset = parseBooleanParam(url.searchParams, "reset");
   const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
 
@@ -571,6 +589,7 @@ async function handleStepSync(req, env, ctx) {
     raceStartOverrideIso,
     blockStartOverrideIso,
     reportVerbosity,
+    debugResponsePart,
   });
 
   const next = addDaysIso(day, STEP_SYNC_ADVANCE_DAYS);
@@ -6924,6 +6943,33 @@ function addLeverKvDebug(debugOut, day, payload) {
   debugOut.__leverKv[day] = payload;
 }
 
+function buildDebugResponsePayload(debugOut, runtimeOverrides = {}, debugResponsePart = "compact") {
+  if (!debugOut || typeof debugOut !== "object") return undefined;
+  const normalizedPart = DEBUG_RESPONSE_PART_VALUES.has(debugResponsePart) ? debugResponsePart : "compact";
+
+  if (normalizedPart === "full") {
+    return {
+      ...debugOut,
+      __runtimeOverrides: {
+        blockStartOverrideIso: runtimeOverrides?.blockStartOverrideIso ?? null,
+        blockStartOverrideDerivedFromOldest: !!runtimeOverrides?.blockStartOverrideDerivedFromOldest,
+        raceStartOverrideIso: runtimeOverrides?.raceStartOverrideIso ?? null,
+        debugResponsePart: normalizedPart,
+      },
+    };
+  }
+
+  return {
+    __summary: debugOut.__summary || null,
+    __runtimeOverrides: {
+      blockStartOverrideIso: runtimeOverrides?.blockStartOverrideIso ?? null,
+      blockStartOverrideDerivedFromOldest: !!runtimeOverrides?.blockStartOverrideDerivedFromOldest,
+      raceStartOverrideIso: runtimeOverrides?.raceStartOverrideIso ?? null,
+      debugResponsePart: normalizedPart,
+    },
+  };
+}
+
 function buildWeekPreview(
   ctx,
   todayIso,
@@ -8409,6 +8455,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     ? runtimeOverrides.reportVerbosity
     : (debug ? "debug" : "coach");
   const blockStartOverrideDerivedFromOldest = runtimeOverrides?.blockStartOverrideDerivedFromOldest === true;
+  const debugResponsePart = DEBUG_RESPONSE_PART_VALUES.has(runtimeOverrides?.debugResponsePart)
+    ? runtimeOverrides.debugResponsePart
+    : "compact";
   const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(runtimeOverrides?.manualFocus)
     ? runtimeOverrides.manualFocus
     : null;
@@ -9669,15 +9718,15 @@ Fehler: ${String(e?.message ?? e)}`;
     requestedDays: requestedDaysList.length,
     truncatedDays: Math.max(0, requestedDaysList.length - daysList.length),
     daysWritten,
-    patches: debug ? patches : undefined,
-    debug: debug ? {
-      ...ctx.debugOut,
-      __runtimeOverrides: {
-        blockStartOverrideIso: runtimeOverrides?.blockStartOverrideIso ?? null,
+    patches: debug && debugResponsePart === "full" ? patches : undefined,
+    debug: debug ? buildDebugResponsePayload(
+      ctx.debugOut,
+      {
+        ...runtimeOverrides,
         blockStartOverrideDerivedFromOldest,
-        raceStartOverrideIso: runtimeOverrides?.raceStartOverrideIso ?? null,
       },
-    } : undefined,
+      debugResponsePart
+    ) : undefined,
   };
 }
 
