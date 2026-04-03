@@ -1717,6 +1717,20 @@ function getStrengthPhasePlan(block) {
   return STRENGTH_PHASE_PLANS[phase] || STRENGTH_PHASE_PLANS.BASE;
 }
 
+function plannedStrengthTargetByPhase(block, overlayMode = "NORMAL") {
+  const mode = String(overlayMode || "NORMAL").toUpperCase();
+  if (mode === "LIFE_EVENT_STOP" || mode === "POST_RACE_RAMP_REST") return 0;
+  if (mode === "TAPER" || mode === "DELOAD") return 1;
+  if (mode === "POST_RACE_RAMP_EASY") return 1;
+  if (mode === "POST_RACE_RAMP") return 1;
+
+  const phase = String(block || "BASE").toUpperCase();
+  if (phase === "BASE") return 2;
+  if (phase === "BUILD") return 2;
+  if (phase === "RACE") return 1;
+  return 1;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -7009,12 +7023,6 @@ function buildWeekPreview(
       if (!base) return iso;
       return isoDate(new Date(base.getTime() + days * 86400000));
     };
-    const shortSentence = (text) => {
-      const raw = String(text || "").trim();
-      if (!raw) return "";
-      const split = raw.split(/(?<=[.!?])\s+/);
-      return (split[0] || raw).trim();
-    };
     const resolvePlannableKeyForDay = (candidateType, compliance) => resolvePlannableKeyType(
       candidateType || compliance?.plannedKeyType || null,
       {
@@ -7023,8 +7031,8 @@ function buildWeekPreview(
         bannedKeyTypes: compliance?.bannedKeyTypes || [],
       }
     );
-    const shouldShowKeySlot = ({ compliance, overlayMode, explicitSession, plannedKeyType, date }) => {
-      if (compliance?.keyAllowedNow !== true) return false;
+    const shouldShowKeySlot = ({ compliance, overlayMode, explicitSession, plannedKeyType, date, keyAllowedOnDate = null }) => {
+      if (keyAllowedOnDate !== true) return false;
       if (!plannedKeyType) return false;
       if (!isConcreteKeySession(explicitSession)) return false;
       if (overlayMode === "POST_RACE_RAMP") {
@@ -7147,7 +7155,6 @@ function buildWeekPreview(
     let plannedStrengthCount = 0;
     let longrunPlanned = false;
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
-    const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
     const longRunBaseTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
     const recentLongruns = (ctx?.activitiesAll || [])
       .filter((a) => {
@@ -7235,6 +7242,49 @@ function buildWeekPreview(
       return { min: 3, max: 4 };
     })();
     const frequencyAwareKeyCap = fallbackRunTargetRange.max <= 3 && !thisWeekActuals.longrundDone ? 1 : null;
+    const keyWeekCap = Math.max(
+      1,
+      Number(keyCompliance?.keyRules?.maxKeysPerWeek ?? keyCompliance?.keyRules?.expectedKeysPerWeek ?? 2) || 2
+    );
+    const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyWeekCap, frequencyAwareKeyCap) : keyWeekCap;
+    const keyNextAllowedIso = isIsoDate(keyCompliance?.nextAllowed) ? keyCompliance.nextAllowed : null;
+    const baseStrengthTarget = plannedStrengthTargetByPhase(blockState?.block, baseOverlayMode);
+    const strengthTarget = Math.max(0, Math.min(baseStrengthTarget, Number(strengthPlan?.sessionsPerWeek ?? baseStrengthTarget)));
+    const plannedDateHasRun = (date) => days.some((entry) =>
+      entry?.date === date && ["GA", "KEY", "LONGRUN"].includes(entry?.sessionType)
+    );
+    const getKeyEligibilityForPlannedDate = ({ date, overlayMode, lastKnownKeyDate, lastKnownLongrunDate, keyCountPlanned }) => {
+      const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
+      const keyDateGateOk = !keyNextAllowedIso || date >= keyNextAllowedIso;
+      const keySpacing72hOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
+      const keyLongrunGap48hOk = !lastKnownLongrunDate || diffDays(lastKnownLongrunDate, date) >= 2;
+      const canAddKeyByCount = keyCountPlanned < keyBudgetByFrequency;
+      const dayIdle = !plannedDateHasRun(date);
+      const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
+      const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
+      const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
+      const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
+      const overlayBlocksPlannedKey = overlayMode === "POST_RACE_RAMP" && postRaceRampMeta.keyAllowed !== true;
+      const keyAllowedOnDate = keyDateGateOk
+        && keySpacing72hOk
+        && !overlayBlocksPlannedKey;
+      const keySessionReady = shouldShowKeySlot({
+        compliance: keyCompliance,
+        overlayMode,
+        explicitSession: keyCompliance?.explicitSession,
+        plannedKeyType: resolvedKeyType,
+        date,
+        keyAllowedOnDate,
+      });
+      return {
+        keyEligible: keyAllowedOnDate
+          && canAddKeyByCount
+          && keyLongrunGap48hOk
+          && dayIdle
+          && keySessionReady,
+        resolvedKeyType,
+      };
+    };
 
     for (let i = 0; i < 7; i += 1) {
       const date = addDaysIso(todayIso, i);
@@ -7301,8 +7351,8 @@ function buildWeekPreview(
         continue;
       }
 
-      let sessionType = "LOW";
-      let sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
+      let sessionType = "GA";
+      let sessionLabel = "GA locker 35–45′";
       let intensity = "LOW";
       let keyType = null;
 
@@ -7353,6 +7403,7 @@ function buildWeekPreview(
             explicitSession: keyCompliance?.explicitSession,
             plannedKeyType: resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance),
             date,
+            keyAllowedOnDate: keyCompliance?.keyAllowedNow === true,
           });
 
         if (isDelayedTaperEntryToday) {
@@ -7385,40 +7436,26 @@ function buildWeekPreview(
         intensity = "NONE";
       } else if (overlayMode === "POST_RACE_RAMP_EASY") {
         sessionType = "GA";
-        sessionLabel = "GA locker (Ramp-up)";
+        sessionLabel = "GA locker 25–35′ (Ramp-up)";
       } else {
-        const keyBudget = 2;
-        const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyBudget, frequencyAwareKeyCap) : keyBudget;
-        const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudgetByFrequency;
+        const keyCountPlanned = thisWeekActuals.keyDates.length + plannedKeyDates.length;
         const lastKnownKeyDate = [...thisWeekActuals.keyDates, ...plannedKeyDates].sort().at(-1) || null;
         const lastKnownLongrunDate = [...(thisWeekActuals.longrunDates || []), ...plannedLongrunDates].sort().at(-1) || null;
-        const keySpacing72hOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
-        const keyLongrunGap48hOk = !lastKnownLongrunDate || diffDays(lastKnownLongrunDate, date) >= 2;
-        const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
-        const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
-        const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
-        const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
-        const overlayBlocksPlannedKey = overlayMode === "POST_RACE_RAMP" && postRaceRampMeta.keyAllowed !== true;
-        const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
-        const keySessionReady = shouldShowKeySlot({
-          compliance: keyCompliance,
-          overlayMode,
-          explicitSession: keyCompliance?.explicitSession,
-          plannedKeyType: resolvedKeyType,
+        const keyEligibility = getKeyEligibilityForPlannedDate({
           date,
+          overlayMode,
+          lastKnownKeyDate,
+          lastKnownLongrunDate,
+          keyCountPlanned,
         });
-        const keyEligible = keyCompliance?.keyAllowedNow === true
-          && !overlayBlocksPlannedKey
-          && canAddKeyByCount
-          && keySpacing72hOk
-          && keyLongrunGap48hOk
-          && keySessionReady;
+        const keyEligible = keyEligibility.keyEligible;
+        const resolvedKeyType = keyEligibility.resolvedKeyType;
 
         if (keyEligible) {
           sessionType = "KEY";
           intensity = "HIGH";
           keyType = resolvedKeyType || null;
-          sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`;
+          sessionLabel = `Key – ${keyTypeLabel(keyType || resolvedKeyType || keyCompliance?.plannedKeyType || "steady")}`;
           plannedKeyDates.push(date);
           if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
             note = "Key aus dieser Woche nachholen";
@@ -7433,7 +7470,7 @@ function buildWeekPreview(
           if (canPlanLongrun && longrunGapOk) {
             sessionType = "LONGRUN";
             intensity = "MED";
-            sessionLabel = `Langer Lauf ~${longRunTargetMin}′`;
+            sessionLabel = `Longrun ~${longRunTargetMin}′`;
             longrunPlanned = true;
             plannedLongrunDates.push(date);
           } else {
@@ -7456,6 +7493,14 @@ function buildWeekPreview(
                 : `🏃 GA locker + 💪 Kraft – Einheit A${cycleLabel}`;
               note = "Kann nach GA-Lauf gemacht werden";
               plannedStrengthCount += 1;
+            } else if (!thisWeekActuals.longrundDone && !longrunPlanned) {
+              sessionType = "GA";
+              sessionLabel = "GA locker 35–50′";
+              intensity = "LOW";
+            } else {
+              sessionType = "REST";
+              sessionLabel = "frei / Regeneration";
+              intensity = "NONE";
             }
           }
         }
@@ -7529,7 +7574,8 @@ function buildWeekPreview(
         const todayPrefix = entry.isToday ? "→ " : "";
         const keyStar = entry.sessionType === "KEY" ? " ★" : "";
         const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
-        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}`;
+        const noteSuffix = entry.status === "PLANNED" && entry.note ? ` — ${entry.note}` : "";
+        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}${noteSuffix}`;
       })
       .join("\n");
 
@@ -11939,7 +11985,8 @@ function buildComments(
         const todayPrefix = entry.isToday ? "→ " : "";
         const keyStar = entry.sessionType === "KEY" ? " ★" : "";
         const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
-        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}`;
+        const noteSuffix = entry.status === "PLANNED" && entry.note ? ` — ${entry.note}` : "";
+        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}${noteSuffix}`;
       })
       .join("\n");
   }
