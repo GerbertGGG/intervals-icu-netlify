@@ -1256,6 +1256,9 @@ const MAX_STREAM_FETCHES = 8;
 
 // Bench
 const BENCH_LOOKBACK_DAYS = 180;
+const FAST_DEBUG_LOOKBACK_DAYS = 28;
+const FAST_DEBUG_EVENT_LOOKAHEAD_DAYS = 45;
+const FAST_DEBUG_LIMITER_MAX = 2;
 
 // Wellness field codes
 const FIELD_VDOT = "VDOT";
@@ -1301,7 +1304,7 @@ function createLimiter(max = 6) {
     });
 }
 
-function createCtx(env, warmupSkipSec, debug) {
+function createCtx(env, warmupSkipSec, debug, limiterMax = 6) {
   return {
     env,
     warmupSkipSec,
@@ -1320,7 +1323,7 @@ function createCtx(env, warmupSkipSec, debug) {
     wellnessCache: new Map(), // dayIso -> wellness payload
     blockStateCache: new Map(), // dayIso -> block state
     // concurrency limiter
-    limit: createLimiter(6),
+    limit: createLimiter(limiterMax),
     // debug accumulator
     debugOut: debug ? {} : null,
     runtimeConfig: RUNTIME_CONFIG_DEFAULTS,
@@ -8431,6 +8434,31 @@ function pickRunMetricsPatch(patch) {
 }
 
 // ================= MAIN =================
+function isSingleDayDebugFastPath({ oldest, newest, write, debug }) {
+  return debug === true && write === false && oldest === newest;
+}
+
+function getSyncWindows({ oldest, newest, fastPath }) {
+  const neededLookbackDays = fastPath
+    ? FAST_DEBUG_LOOKBACK_DAYS
+    : Math.max(
+        2 * MOTOR_WINDOW_DAYS,
+        2 * TREND_WINDOW_DAYS,
+        7,
+        ...DETECTIVE_WINDOWS,
+        BENCH_LOOKBACK_DAYS
+      );
+  const modeLookaheadDays = fastPath ? FAST_DEBUG_EVENT_LOOKAHEAD_DAYS : EVENT_LOOKAHEAD_DAYS;
+  return {
+    neededLookbackDays,
+    modeLookaheadDays,
+    globalOldest: isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - neededLookbackDays * 86400000)),
+    globalNewest: newest,
+    modeOldest: isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - 21 * 86400000)),
+    modeNewest: isoDate(new Date(new Date(newest + "T00:00:00Z").getTime() + modeLookaheadDays * 86400000)),
+  };
+}
+
 function applyManualBlockStartOverride(blockState, overrideIso, dayIso) {
   if (!blockState || !overrideIso || !isIsoDate(dayIso)) return blockState;
   const overrideStart = clampStartDate(overrideIso, dayIso, 3650);
@@ -8447,7 +8475,9 @@ function applyManualBlockStartOverride(blockState, overrideIso, dayIso) {
 }
 
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
-  const ctx = createCtx(env, warmupSkipSec, debug);
+  const singleDayDebugFastPath = isSingleDayDebugFastPath({ oldest, newest, write, debug });
+  const limiterMax = debug ? FAST_DEBUG_LIMITER_MAX : 6;
+  const ctx = createCtx(env, warmupSkipSec, debug, limiterMax);
   ctx.runtimeConfig = loadRuntimeConfig(env);
   const runMetricsOnly = runtimeOverrides?.runMetricsOnly === true;
   const runMetricsOnlyIfExisting = runtimeOverrides?.runMetricsOnlyIfExisting === true;
@@ -8461,35 +8491,79 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(runtimeOverrides?.manualFocus)
     ? runtimeOverrides.manualFocus
     : null;
+  const perf = debug
+    ? {
+        singleDayDebugFastPath,
+        limiterMax,
+        fetchIntervalsActivities: null,
+        fetchIntervalsEventsLife: null,
+        fetchIntervalsEventsMode: null,
+        hydrateActivitiesWithPersistedLeverReviews: null,
+        mainPerDayProcessing: null,
+      }
+    : null;
+  const timed = async (key, fn, extra = {}) => {
+    const started = Date.now();
+    try {
+      return await fn();
+    } finally {
+      if (perf) perf[key] = { ms: Date.now() - started, ...extra };
+    }
+  };
   try {
     ctx.weekMemories = typeof readWeekMemories === "function" ? await readWeekMemories(env, newest) : [];
   } catch {
     ctx.weekMemories = [];
   }
 
-  // We need lookback up to 2*MOTOR_WINDOW_DAYS (and detective up to 84d and bench 180d).
-  // For this sync we only need enough to compute what we will write inside [oldest..newest].
-  const neededLookbackDays = Math.max(
-    2 * MOTOR_WINDOW_DAYS,
-    2 * TREND_WINDOW_DAYS,
-    7,
-    ...DETECTIVE_WINDOWS,
-    BENCH_LOOKBACK_DAYS
-  );
-
-  const globalOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - neededLookbackDays * 86400000));
-  const globalNewest = newest;
-  const modeOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - 21 * 86400000));
-  const modeNewest = isoDate(new Date(new Date(newest + "T00:00:00Z").getTime() + EVENT_LOOKAHEAD_DAYS * 86400000));
+  const {
+    neededLookbackDays,
+    modeLookaheadDays,
+    globalOldest,
+    globalNewest,
+    modeOldest,
+    modeNewest,
+  } = getSyncWindows({ oldest, newest, fastPath: singleDayDebugFastPath });
+  if (perf) {
+    perf.windows = {
+      neededLookbackDays,
+      modeLookaheadDays,
+      globalOldest,
+      globalNewest,
+      modeOldest,
+      modeNewest,
+    };
+  }
 
   // 1) Fetch base datasets early and in parallel where possible.
   //    activities are still awaited first because hydration depends on them.
-  const activitiesPromise = fetchIntervalsActivities(env, globalOldest, globalNewest, debug);
-  const lifeEventsPromise = fetchIntervalsEvents(env, globalOldest, globalNewest);
-  const modeEventsPromise = fetchIntervalsEvents(env, modeOldest, modeNewest);
+  const activitiesPromise = timed(
+    "fetchIntervalsActivities",
+    () => fetchIntervalsActivities(env, globalOldest, globalNewest, debug)
+  );
+  const lifeEventsPromise = timed(
+    "fetchIntervalsEventsLife",
+    () => fetchIntervalsEvents(env, globalOldest, globalNewest)
+  );
+  const modeEventsPromise = timed(
+    "fetchIntervalsEventsMode",
+    () => fetchIntervalsEvents(env, modeOldest, modeNewest)
+  );
 
   ctx.activitiesAll = await activitiesPromise;
-  await hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest);
+  if (singleDayDebugFastPath) {
+    if (perf) {
+      perf.hydrateActivitiesWithPersistedLeverReviews = {
+        ms: null,
+        skippedForFastPath: true,
+      };
+    }
+  } else {
+    await timed(
+      "hydrateActivitiesWithPersistedLeverReviews",
+      () => hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest)
+    );
+  }
   ctx.lifeEventsAll = await lifeEventsPromise.catch(() => []);
   ctx.modeEventsAll = await modeEventsPromise.catch(() => []);
   if (ctx.debug) {
@@ -8572,24 +8646,25 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   }
   let previousBlockState = null;
 
-  for (const day of daysList) {
-    // NEW: mode + policy for this day (based on next event)
-    let modeInfo;
-    let policy;
-    try {
-      modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
-      policy = getModePolicy(modeInfo);
-    } catch (e) {
-      console.error("[mode] determineMode failed, using OPEN fallback", {
-        day,
-        error: e?.message || String(e),
-        stack: e?.stack || null,
-        modeEventsAllType: Array.isArray(ctx.modeEventsAll) ? "array" : typeof ctx.modeEventsAll,
-        modeEventsAllCount: Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll.length : null,
-      });
-      modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
-      policy = getModePolicy(modeInfo);
-    }
+  const processDays = async () => {
+    for (const day of daysList) {
+      // NEW: mode + policy for this day (based on next event)
+      let modeInfo;
+      let policy;
+      try {
+        modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
+        policy = getModePolicy(modeInfo);
+      } catch (e) {
+        console.error("[mode] determineMode failed, using OPEN fallback", {
+          day,
+          error: e?.message || String(e),
+          stack: e?.stack || null,
+          modeEventsAllType: Array.isArray(ctx.modeEventsAll) ? "array" : typeof ctx.modeEventsAll,
+          modeEventsAllCount: Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll.length : null,
+        });
+        modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
+        policy = getModePolicy(modeInfo);
+      }
     // NEW: fatigue / key-cap metrics (keine RECOVERY-Logik mehr)
     let fatigueBase = null;
     try {
@@ -8684,16 +8759,29 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     // Process runs (collect detailed info, but write VDOT/Drift from a single representative GA run)
     for (const a of runs) {
-      const activityWithIntervals = await getActivityWithIntervals(ctx, a);
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
       const normalizedKeyType = normalizeKeyType(keyType);
-      const intervalSignal = hasExplicitIntervalStructure(activityWithIntervals)
+      let activityWithIntervals = a;
+      let activityHydrated = false;
+      const ensureActivityWithIntervals = async () => {
+        if (activityHydrated) return activityWithIntervals;
+        activityWithIntervals = await getActivityWithIntervals(ctx, a);
+        activityHydrated = true;
+        return activityWithIntervals;
+      };
+      let intervalSignal = hasExplicitIntervalStructure(activityWithIntervals)
         || hasIcuIntervalSignal(activityWithIntervals)
         || (isKey && isIntervalLikeKeyType(keyType));
+      if ((intervalSignal || isKey) && !activityHydrated) {
+        activityWithIntervals = await ensureActivityWithIntervals();
+        intervalSignal = hasExplicitIntervalStructure(activityWithIntervals)
+          || hasIcuIntervalSignal(activityWithIntervals)
+          || (isKey && isIntervalLikeKeyType(keyType));
+      }
       const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(activityWithIntervals) : false;
       const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(activityWithIntervals) : null;
 
@@ -8745,8 +8833,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
       // Anaerobe Rohdaten aus icu_intervals (race-pace Proxy aus threshold_pace)
       let anaerobRaw = null;
-      if (isKey && activityWithIntervals?.icu_intervals?.length) {
+      if (isKey) {
         try {
+          if (!activityHydrated) activityWithIntervals = await ensureActivityWithIntervals();
           const dist = normalizeEventDistance(ctx?.distanceDiagnostics?.snapshot?.eventDistance);
           const racePaceMs = deriveRacePaceMsFromThreshold(activityWithIntervals, dist);
           anaerobRaw = extractAnaerobMetricsFromActivity(activityWithIntervals, racePaceMs);
@@ -9698,7 +9787,12 @@ Fehler: ${String(e?.message ?? e)}`;
     }
 
     patches[day] = patchToWrite;
-  }
+    }
+  };
+
+  await timed("mainPerDayProcessing", processDays, {
+    days: daysList.length,
+  });
 
   if (write && isMondayIso(oldest)) {
     await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
@@ -9719,14 +9813,17 @@ Fehler: ${String(e?.message ?? e)}`;
     truncatedDays: Math.max(0, requestedDaysList.length - daysList.length),
     daysWritten,
     patches: debug && debugResponsePart === "full" ? patches : undefined,
-    debug: debug ? buildDebugResponsePayload(
-      ctx.debugOut,
-      {
-        ...runtimeOverrides,
-        blockStartOverrideDerivedFromOldest,
-      },
-      debugResponsePart
-    ) : undefined,
+    debug: debug ? {
+      ...buildDebugResponsePayload(
+        ctx.debugOut,
+        {
+          ...runtimeOverrides,
+          blockStartOverrideDerivedFromOldest,
+        },
+        debugResponsePart
+      ),
+      perf,
+    } : undefined,
   };
 }
 
