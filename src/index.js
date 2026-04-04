@@ -11047,7 +11047,7 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
     lines.push(`Fokus heute: Longrun-Fenster nutzen (${Number.isFinite(longrunPlan?.targetMin) ? `~${Math.round(longrunPlan.targetMin)}′` : "wie geplant"}).`);
   } else if (keyPlan?.status === "due" && resolvedDecision?.sessionType === "KEY") {
     lines.push(`Fokus heute: Key-Slot setzen${keyPlan?.keyType ? ` (${formatKeyType(keyPlan.keyType)})` : ""}.`);
-  } else if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType === "STRENGTH") {
+  } else if (isStrengthWorkOpen(strengthState) && resolvedDecision?.sessionType === "STRENGTH") {
     lines.push(`Fokus heute: Kraft-/Stabi-Schwerpunkt setzen (${strengthState.remainingSessions || 0} Einheiten, ${strengthState.remainingMinutes || 0}′ offen).`);
   } else if (policy?.priorities?.preferGA) {
     lines.push("Fokus heute: Wochenrhythmus über kontrollierten GA/Regen-Tag stabil halten.");
@@ -11060,7 +11060,7 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
   if (keyPlan?.status === "not_today" && keyPlan?.nextAllowedIso == null) {
     lines.push("Qualitätseinheit heute nicht priorisiert, bleibt aber für diese Woche offen.");
   }
-  if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType !== "STRENGTH") {
+  if (isStrengthWorkOpen(strengthState) && resolvedDecision?.sessionType !== "STRENGTH") {
     lines.push(`Kraft-/Stabi bleibt offen (${strengthState.remainingSessions || 0} Einheiten).`);
   }
   return lines.slice(0, 3);
@@ -11081,7 +11081,8 @@ function deriveKeyStatusLineFromResolver(keyPlan) {
 
 function deriveStrengthStatusLineFromState(strengthState) {
   if (!strengthState) return null;
-  return `Strength-Status: ${strengthState.needsStrengthSlot ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Einheiten)` : "Ziel erfüllt"}.`;
+  const strengthOpen = isStrengthWorkOpen(strengthState);
+  return `Strength-Status: ${strengthOpen ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Einheiten)` : "Ziel erfüllt"}.`;
 }
 
 function deriveTrainingStatusFromPolicy({
@@ -11141,7 +11142,7 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
   } else if (keyPlan?.status === "due") {
     lines.push("• Nächster Key: diese Woche priorisiert offen.");
   } else if (["blocked", "not_today"].includes(keyPlan?.status)) {
-    lines.push("• Nächster Key: heute noch nicht dran, nächstes passendes Fenster nutzen.");
+    lines.push("• Nächster Key: ab heute wieder möglich, sinnvoll in die Woche legen.");
   } else {
     lines.push("• Nächster Key: aktuell offen, im Wochenverlauf passend setzen.");
   }
@@ -11153,14 +11154,21 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
   } else if (longrunPlan?.status === "blocked") {
     lines.push("• Longrun: heute noch nicht sinnvoll, späteres Zeitfenster nutzen.");
   } else {
-    lines.push("• Longrun: aktuell nicht Priorität, Lage im Wochenverlauf prüfen.");
+    lines.push("• Longrun: diese Woche aktuell nicht im Fokus, später prüfen.");
   }
-  if (strengthState?.needsStrengthSlot === true) {
+  if (isStrengthWorkOpen(strengthState)) {
     lines.push(`• Kraft/Stabi: noch offen (${strengthState.remainingSessions || 0} Einheiten, ${strengthState.remainingMinutes || 0}′).`);
   } else {
     lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
   }
   return lines.slice(0, 5).join("\n");
+}
+
+function isStrengthWorkOpen(strengthState) {
+  if (!strengthState) return false;
+  const remainingMinutes = Number(strengthState?.remainingMinutes || 0);
+  const remainingSessions = Number(strengthState?.remainingSessions || 0);
+  return strengthState?.needsStrengthSlot === true || remainingMinutes > 0 || remainingSessions > 0;
 }
 
 function insertCoachAnalysisAfterHeute(reportText, coachAnalysis) {
@@ -11565,7 +11573,7 @@ function buildNextRunRecommendation({
   plannedSessionLabel,
   plannedSessionNote,
 }) {
-  let next = "Heute Einheit kontrolliert umsetzen.";
+  let next = "Heute: geplante Einheit kontrolliert umsetzen.";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const conciseExplicitSession = shortExplicitSession(explicitSession);
   const concisePlanLabel = String(plannedSessionLabel || "").split(/(?<=[.!?])\s+/)[0]?.trim() || "";
@@ -11816,6 +11824,7 @@ function validateResolvedDecisionRenderConsistency(renderedText, resolvedDecisio
 
 function runRenderQualityChecks({ renderedText, weekPlanAvailable }) {
   const text = String(renderedText || "");
+  const lower = text.toLowerCase();
   const issues = [];
   const heuteMatch = text.match(/(?:🏃|🗓)\sHEUTE\n([^\n]+)/);
   const warumMatch = text.match(/🧩\sWARUM\n([\s\S]*?)\n⸻/);
@@ -11834,6 +11843,19 @@ function runRenderQualityChecks({ renderedText, weekPlanAvailable }) {
   }
   if (!weekPlanAvailable && !text.includes("🗓 NÄCHSTE SCHRITTE")) {
     issues.push("missing_next_steps_fallback");
+  }
+  if (/strength-status:\s*offen[\s\S]*?kraft\/stabi:\s*ziel für diese woche erfüllt/i.test(text)) {
+    issues.push("strength_conflict_open_vs_fulfilled");
+  }
+  if (/[A-Za-zÄÖÜäöü]\.\./.test(text)) {
+    issues.push("double_punctuation");
+  }
+  if (/\bweil\s+(Die|Der|Das|Den|Dem|Heute|Morgen|Nächste|Nächster)\b/.test(text)) {
+    issues.push("capitalized_after_weil");
+  }
+  if ((/status bisher:\s*kein lauf absolviert/i.test(lower) || /status:\s*bisher heute noch kein lauf absolviert/i.test(lower))
+    && /(?:🏃|🗓)\sHEUTE\n(?!Heute:)([^\n]+)/.test(text)) {
+    issues.push("today_status_mismatch");
   }
   return { renderQualityPass: issues.length === 0, issues };
 }
@@ -11875,10 +11897,10 @@ function evaluateNarrativeConsistency({
   if (["blocked", "not_today"].includes(keyPlan?.status) && /key-status:\s*(due|optional)/.test(trainingStatusText)) {
     mismatches.push("key_blocked_but_training_status_claims_open");
   }
-  if (strengthState?.needsStrengthSlot === false && combinedText.includes("strength offen")) {
+  if (!isStrengthWorkOpen(strengthState) && combinedText.includes("strength offen")) {
     mismatches.push("strength_not_needed_but_primary_recommendation");
   }
-  if (strengthState?.needsStrengthSlot === false && /fokus heute:.*strength/.test(focusText)) {
+  if (!isStrengthWorkOpen(strengthState) && /fokus heute:.*strength/.test(focusText)) {
     mismatches.push("strength_met_but_focus_claims_primary_deficit");
   }
   if (policy?.safety?.forceRest === true) {
@@ -12317,7 +12339,7 @@ function deriveRecommendationFromDecision({ narrativeContext, distanceDiagnostic
   } else if (longrunPlan?.status === "blocked") {
     rec.push(`Longrun heute geblockt${Array.isArray(longrunPlan?.reasons) && longrunPlan.reasons.length ? ` (${longrunPlan.reasons.slice(0, 1).join(" | ")})` : ""}.`);
   }
-  if (strengthState?.needsStrengthSlot === true) {
+  if (isStrengthWorkOpen(strengthState)) {
     rec.push(`Strength offen: ${strengthState.remainingSessions || 0} Einheiten / ${strengthState.remainingMinutes || 0}′ verbleibend.`);
   }
   if (distanceDiagnostics?.readiness != null) {
@@ -12707,7 +12729,7 @@ function buildComments(
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
-    runMetrics.push("Status: Heute kein Lauf.");
+    runMetrics.push("Status bisher: Kein Lauf absolviert.");
     if (bikesTodayList.length) {
       const bikeMinutesToday = Math.round(
         sum(bikesTodayList.map((a) => Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0)) / 60
@@ -13047,7 +13069,7 @@ function buildComments(
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
   if (narrativeContext?.keyPlan?.status) diagnoseLines.push(`Key-Status: ${narrativeContext.keyPlan.status}.`);
   if (narrativeContext?.longrunPlan?.status) diagnoseLines.push(`Longrun-Status: ${narrativeContext.longrunPlan.status}${Number.isFinite(narrativeContext?.longrunPlan?.targetMin) ? ` (~${Math.round(narrativeContext.longrunPlan.targetMin)}′)` : ""}.`);
-  if (Number.isFinite(strengthStateResolved?.remainingMinutes)) diagnoseLines.push(`Strength-Status: ${strengthStateResolved.needsStrengthSlot ? `offen (${strengthStateResolved.remainingMinutes}′)` : "Ziel erfüllt"}.`);
+  if (Number.isFinite(strengthStateResolved?.remainingMinutes)) diagnoseLines.push(`Strength-Status: ${isStrengthWorkOpen(strengthStateResolved) ? `offen (${strengthStateResolved.remainingMinutes}′)` : "Ziel erfüllt"}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
   if (raceDayToday) diagnoseLines.push("Renntag-Diagnose: Fokus auf Rennauswertung und Erholung, nicht auf normalen Trainingsfortschritt.");
 
