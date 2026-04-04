@@ -10871,6 +10871,129 @@ function buildWhyNarrative(reasons = []) {
   return `Heute kontrolliert, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
 }
 
+function humanizeDecisionReason(reasonToken) {
+  const token = String(reasonToken || "").trim();
+  if (!token) return null;
+  const map = {
+    longrun_due: "der Longrun laut Wochenbudget fällig ist",
+    key_due: "der Key laut Wochenbudget fällig ist",
+    policy_force_rest: "die Safety-Policy heute Erholung erzwingt",
+    overlay_force_rest: "das aktive Overlay heute Erholung erzwingt",
+    next_allowed_not_reached: "der Key-Mindestabstand noch nicht erreicht ist",
+    min_gap_not_reached: "Mindestabstände aktuell nicht erfüllt sind",
+    longrun_proximity_block: "Key und Longrun heute zu nah beieinander lägen",
+    fatigue_blocked: "ein Fatigue-Block aktiv ist",
+    overlay_blocked: "das Overlay den Reiz heute blockiert",
+    spike_guard_blocked: "der Spike-Guard die Longrun-Progression begrenzt",
+    session_not_ready: "die geplante Session noch nicht bereit ist",
+  };
+  if (map[token]) return map[token];
+  return normalizeWhyReason(token.replace(/[_:]/g, " "));
+}
+
+function deriveWhyFromDecisionTrace({ resolvedDecision, narrativeContext }) {
+  const policy = narrativeContext?.policy || null;
+  const selected = narrativeContext?.selected || null;
+  const keyPlan = narrativeContext?.keyPlan || null;
+  const longrunPlan = narrativeContext?.longrunPlan || null;
+  const mainReasons = Array.isArray(narrativeContext?.mainReasons) ? narrativeContext.mainReasons : [];
+  const selectedReasons = Array.isArray(selected?.reasons) ? selected.reasons : [];
+  const reasonPool = [...mainReasons, ...selectedReasons, ...(Array.isArray(policy?.reasons) ? policy.reasons : [])];
+  const reasonLines = [];
+  for (const reason of reasonPool) {
+    const rendered = humanizeDecisionReason(reason);
+    if (!rendered || reasonLines.includes(rendered)) continue;
+    reasonLines.push(rendered);
+    if (reasonLines.length >= 3) break;
+  }
+  if (!reasonLines.length) {
+    const resolvedType = normalizeResolvedSessionType(resolvedDecision?.sessionType || selected?.sessionType);
+    if (policy?.safety?.forceRest) reasonLines.push("die Safety-Policy heute Erholung priorisiert");
+    else if (resolvedType === "LONGRUN" && longrunPlan?.status === "due") reasonLines.push("der Longrun heute laut Resolver priorisiert ist");
+    else if (resolvedType === "KEY" && keyPlan?.status === "due") reasonLines.push("der Key heute laut Resolver priorisiert ist");
+    else reasonLines.push("die heutige Auswahl direkt aus Policy und Wochenresolvern kommt");
+  }
+  return [buildWhyNarrative(reasonLines)];
+}
+
+function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
+  const policy = narrativeContext?.policy || null;
+  const keyPlan = narrativeContext?.keyPlan || null;
+  const longrunPlan = narrativeContext?.longrunPlan || null;
+  const strengthState = narrativeContext?.strengthState || null;
+  if (policy?.safety?.forceRest) return ["Fokus heute: Erholung absichern (Safety forceRest)."];
+
+  const lines = [];
+  if (longrunPlan?.status === "due" && resolvedDecision?.sessionType === "LONGRUN") {
+    lines.push(`Fokus heute: Longrun-Fenster nutzen (${Number.isFinite(longrunPlan?.targetMin) ? `~${Math.round(longrunPlan.targetMin)}′` : "wie geplant"}).`);
+  } else if (keyPlan?.status === "due" && resolvedDecision?.sessionType === "KEY") {
+    lines.push(`Fokus heute: Key-Slot setzen${keyPlan?.keyType ? ` (${formatKeyType(keyPlan.keyType)})` : ""}.`);
+  } else if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType === "STRENGTH") {
+    lines.push(`Fokus heute: offenes Strength-Budget schließen (${strengthState.remainingSessions || 0} Session(s), ${strengthState.remainingMinutes || 0}′).`);
+  } else if (policy?.priorities?.preferGA) {
+    lines.push("Fokus heute: Wochenrhythmus über kontrollierten GA/Regen-Tag stabil halten.");
+  }
+
+  if (policy?.budgets?.keyRemaining > 0 && keyPlan?.status === "blocked" && keyPlan?.nextAllowedIso) {
+    lines.push(`Key bleibt offen, aber frühestens ab ${keyPlan.nextAllowedIso}.`);
+  }
+  if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType !== "STRENGTH") {
+    lines.push(`Strength-Budget bleibt offen (${strengthState.remainingSessions || 0} Session(s)).`);
+  }
+  return lines.slice(0, 3);
+}
+
+function deriveLongrunStatusLineFromResolver({ longrunPlan, resolvedDecision }) {
+  if (!longrunPlan?.status) return "Longrun-Status: n/a.";
+  const targetMin = Number(longrunPlan?.targetMin ?? resolvedDecision?.longrunTargetMin ?? 0);
+  return `Longrun-Status: ${longrunPlan.status}${targetMin > 0 ? ` (~${Math.round(targetMin)}′)` : ""}.`;
+}
+
+function deriveKeyStatusLineFromResolver(keyPlan) {
+  if (!keyPlan?.status) return "Key-Status: n/a.";
+  return `Key-Status: ${keyPlan.status}${keyPlan?.nextAllowedIso ? ` (ab ${keyPlan.nextAllowedIso})` : ""}.`;
+}
+
+function deriveStrengthStatusLineFromState(strengthState) {
+  if (!strengthState) return "Strength-Status: n/a.";
+  return `Strength-Status: ${strengthState.needsStrengthSlot ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Session(s))` : "Ziel erfüllt"}.`;
+}
+
+function deriveTrainingStatusFromPolicy({
+  narrativeContext,
+  resolvedDecision,
+  phaseOverlayLine,
+  runFloorCurrent,
+  runTarget,
+  runTargetOverlayLabel,
+  runFloorState,
+  bikeWeeklyRule,
+  bikeReplacementGuidanceLine,
+  intensityLine,
+}) {
+  const policy = narrativeContext?.policy || null;
+  const keyPlan = narrativeContext?.keyPlan || null;
+  const longrunPlan = narrativeContext?.longrunPlan || null;
+  const strengthState = narrativeContext?.strengthState || null;
+  return [
+    phaseOverlayLine,
+    runTarget > 0 && runFloorCurrent < runTarget
+      ? `RunFloor: ${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}`
+      : runTarget > 0
+        ? runFloorState?.stabilityOK === false
+          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
+          : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
+        : `RunFloor: ${runFloorCurrent} / n/a`,
+    `Run-Frequenz (Policy): ${policy?.budgets?.plannedRunsSoFar ?? "n/a"} geplant bei Ziel ${policy?.budgets?.runFrequencyMin ?? "n/a"}-${policy?.budgets?.runFrequencyMax ?? "n/a"}.`,
+    deriveKeyStatusLineFromResolver(keyPlan),
+    deriveLongrunStatusLineFromResolver({ longrunPlan, resolvedDecision }),
+    deriveStrengthStatusLineFromState(strengthState),
+    bikeWeeklyRule?.summaryLine || null,
+    bikeReplacementGuidanceLine,
+    intensityLine,
+  ].filter(Boolean);
+}
+
 function insertCoachAnalysisAfterHeute(reportText, coachAnalysis) {
   const report = String(reportText || "");
   const coachText = String(coachAnalysis || "").trim();
@@ -11508,14 +11631,27 @@ function validateResolvedDecisionRenderConsistency(renderedText, resolvedDecisio
   }
 }
 
-function evaluateNarrativeConsistency({ resolvedDecision, narrativeContext, recommendationLines = [], bottomLine = "", diagnoseLines = [] }) {
+function evaluateNarrativeConsistency({
+  resolvedDecision,
+  narrativeContext,
+  recommendationLines = [],
+  bottomLine = "",
+  diagnoseLines = [],
+  whyLines = [],
+  focusLines = [],
+  trainingStatusLines = [],
+}) {
   const mismatches = [];
   const resolvedType = normalizeResolvedSessionType(resolvedDecision?.sessionType);
   const selectedType = normalizeResolvedSessionType(narrativeContext?.selected?.sessionType || resolvedDecision?.sessionType);
   const policy = narrativeContext?.policy || null;
   const keyPlan = narrativeContext?.keyPlan || null;
+  const longrunPlan = narrativeContext?.longrunPlan || null;
   const strengthState = narrativeContext?.strengthState || null;
-  const combinedText = [bottomLine, ...recommendationLines, ...diagnoseLines].join(" ").toLowerCase();
+  const combinedText = [bottomLine, ...recommendationLines, ...diagnoseLines, ...whyLines, ...focusLines, ...trainingStatusLines].join(" ").toLowerCase();
+  const whyText = (whyLines || []).join(" ").toLowerCase();
+  const focusText = (focusLines || []).join(" ").toLowerCase();
+  const trainingStatusText = (trainingStatusLines || []).join(" ").toLowerCase();
 
   if (resolvedType !== "UNKNOWN" && selectedType !== "UNKNOWN" && resolvedType !== selectedType) {
     mismatches.push(`resolved_vs_selected:${resolvedType}->${selectedType}`);
@@ -11523,17 +11659,35 @@ function evaluateNarrativeConsistency({ resolvedDecision, narrativeContext, reco
   if (resolvedType === "LONGRUN" && combinedText.includes("key heute")) {
     mismatches.push("longrun_with_key_today_narrative");
   }
+  if (resolvedType === "LONGRUN" && /fokus heute: key|key-slot setzen/.test(focusText)) {
+    mismatches.push("longrun_resolved_but_focus_claims_key");
+  }
   if (keyPlan?.status === "blocked" && combinedText.includes("key-fenster offen")) {
     mismatches.push("key_blocked_but_recommended_today");
   }
+  if (keyPlan?.status === "blocked" && /key-status:\s*(due|optional)/.test(trainingStatusText)) {
+    mismatches.push("key_blocked_but_training_status_claims_open");
+  }
   if (strengthState?.needsStrengthSlot === false && combinedText.includes("strength offen")) {
     mismatches.push("strength_not_needed_but_primary_recommendation");
+  }
+  if (strengthState?.needsStrengthSlot === false && /fokus heute:.*strength/.test(focusText)) {
+    mismatches.push("strength_met_but_focus_claims_primary_deficit");
   }
   if (policy?.safety?.forceRest === true) {
     const activeSignals = ["key heute", "longrun", "ga locker", "intervall"];
     if (activeSignals.some((signal) => combinedText.includes(signal))) {
       mismatches.push("force_rest_with_active_training_narrative");
     }
+    if (/fokus heute:/.test(focusText) && !focusText.includes("erholung")) {
+      mismatches.push("force_rest_but_focus_not_recovery");
+    }
+  }
+  if (longrunPlan?.status === "due" && /longrun-status:\s*(blocked|done)/.test(trainingStatusText)) {
+    mismatches.push("longrun_due_but_training_status_conflict");
+  }
+  if (resolvedType === "REST" && whyText.includes("key")) {
+    mismatches.push("rest_resolved_but_why_claims_key");
   }
   return { pass: mismatches.length === 0, mismatches };
 }
@@ -11573,6 +11727,39 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
     TAPER_RECOVERY_DEFAULT: (entry) => String(entry?.overlayMode || "") === "TAPER",
     POST_RACE_RAMP: (entry) => String(entry?.overlayMode || "").startsWith("POST_RACE_RAMP"),
     LIFE_EVENT_STOP: (entry) => String(entry?.overlayMode || "") === "LIFE_EVENT_STOP",
+  };
+
+  const evaluateScenarioNarrativeBlockConsistency = ({ selected, policy, keyPlan, longrunPlan, strengthState, mainReasons = [] }) => {
+    const mismatches = [];
+    const selectedType = normalizeResolvedSessionType(selected?.sessionType);
+    const whyPass = mainReasons.length > 0;
+    if (!whyPass) mismatches.push("why_missing_main_reasons");
+
+    let focusPass = true;
+    if (policy?.safety?.forceRest === true && !["REST", "RECOVERY", "LOW"].includes(selectedType)) {
+      focusPass = false;
+      mismatches.push(`focus_force_rest_vs_selected:${selectedType}`);
+    }
+    if (selectedType === "LONGRUN" && keyPlan?.status === "due") {
+      focusPass = false;
+      mismatches.push("focus_longrun_selected_while_key_due");
+    }
+    if (selectedType === "STRENGTH" && strengthState?.remainingSessions === 0) {
+      focusPass = false;
+      mismatches.push("focus_strength_selected_while_target_met");
+    }
+
+    let trainingStatusPass = true;
+    if (keyPlan?.status === "blocked" && selectedType === "KEY") {
+      trainingStatusPass = false;
+      mismatches.push("training_status_key_blocked_vs_selected_key");
+    }
+    if (longrunPlan?.status === "due" && selectedType === "KEY") {
+      trainingStatusPass = false;
+      mismatches.push("training_status_longrun_due_vs_selected_key");
+    }
+
+    return { whyPass, focusPass, trainingStatusPass, mismatches };
   };
 
   return (Array.isArray(scenarios) ? scenarios : []).map((scenario) => {
@@ -11620,26 +11807,17 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
       }
     }
 
-    const narrativeMismatches = [];
-    const selectedType = normalizeResolvedSessionType(actual?.selected?.sessionType);
-    if (actual?.policy?.safety?.forceRest === true && !["REST", "RECOVERY", "LOW"].includes(selectedType)) {
-      narrativeMismatches.push(`forceRest_vs_selected:${selectedType}`);
-    }
-    if (selectedType === "LONGRUN" && actual?.keyPlan?.status === "due") {
-      narrativeMismatches.push("longrun_selected_while_key_due");
-    }
-    if (selectedType === "KEY" && actual?.keyPlan?.status === "blocked") {
-      narrativeMismatches.push("key_selected_while_key_blocked");
-    }
-    if (selectedType === "STRENGTH" && actual?.strengthState?.remainingSessions === 0) {
-      narrativeMismatches.push("strength_selected_while_target_met");
-    }
+    const blockConsistency = evaluateScenarioNarrativeBlockConsistency(actual);
+    const narrativeMismatches = [...blockConsistency.mismatches];
 
     return {
       scenarioId: scenario?.id || "UNKNOWN",
       pass: mismatches.length === 0 && narrativeMismatches.length === 0,
       logicPass: mismatches.length === 0,
       narrativePass: narrativeMismatches.length === 0,
+      whyPass: blockConsistency.whyPass,
+      focusPass: blockConsistency.focusPass,
+      trainingStatusPass: blockConsistency.trainingStatusPass,
       expected,
       actual,
       mismatches: [...mismatches, ...narrativeMismatches],
@@ -12559,79 +12737,16 @@ function buildComments(
     recommendationMetricsBlock.push(todaySessionContext.nextKeyHint);
   }
 
-  const coachFocus = buildCoachFocusSummary(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap);
-  const focusLabel = coachFocus.label;
-  const fatigueReasonSnippet = Array.isArray(fatigue?.reasons) && fatigue.reasons.length
-    ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
-    : "";
-  const fatigueWhyLine = fatigue?.override ? `Rhythmus aktuell unruhig${fatigueReasonSnippet}.` : null;
-  const includeStrengthInWhy = overlayMode !== "POST_RACE_RAMP";
-  const gapReasonMap = {
-    base: [
-      !ignoreRunFloorGap && !taperPriorityWeek && runFloorGap < 0 ? `RunFloor unter Ziel (${runFloorCurrent}/${runTarget})` : null,
-      intensityDistribution?.easyUnder ? `Easy-Anteil unter Ziel (${easySharePct}% < ${easyMinPct}%)` : null,
-      "Volumen noch nicht stabil.",
-    ],
-    specificity: [
-      keyCompliance?.preferredMissing ? "Distanzspezifische Reize noch nicht breit genug." : null,
-      keyCompliance?.freqOk === false ? "Passender Reiz fehlt oder ist noch zu selten." : null,
-      "Nächsten Reiz gezielter setzen.",
-    ],
-    longrun: [
-      longRunDoneMin < longRunTargetMin ? `Longrun zuletzt kürzer (${longRunDoneMin}′/${longRunTargetMin}′)` : null,
-      Number(distanceDiagnostics?.snapshot?.longrunFrequency35d ?? 0) < 2 ? "Longrun-Frequenz zu niedrig." : null,
-      "Längerer aerober Reiz nicht regelmäßig genug.",
-    ],
-    robustness: [
-      includeStrengthInWhy && strengthStateResolved.remainingMinutes > 0
-        ? `Krafttraining unter Soll (${strengthStateResolved.completedMinutes}′/${strengthStateResolved.targetMinutes}′)`
-        : null,
-      "Belastbarkeit noch nicht stabil genug.",
-    ],
-    execution: [
-      spacingBlocked ? `Key-Abstand noch nicht erfüllt (ab ${nextAllowed || "n/a"})` : null,
-      (spacingBlocked || keyCompliance?.freqOk === false || keyCompliance?.typeOk === false)
-        ? "Wochenstruktur aktuell nicht sauber genug."
-        : null,
-      fatigueWhyLine,
-    ],
-  };
-
-  const rankedGaps = [distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap].filter(Boolean);
-  const shortReasons = [];
-  for (const gap of rankedGaps) {
-    for (const reason of gapReasonMap[gap] || []) {
-      if (!reason) continue;
-      if (!shortReasons.includes(reason)) shortReasons.push(reason);
-      if (shortReasons.length >= 3) break;
-    }
-    if (shortReasons.length >= 3) break;
-  }
-  if (
-    includeStrengthInWhy
-    && shortReasons.length < 3
-    && strengthStateResolved.remainingMinutes > 0
-  ) {
-    const strengthReason = `Krafttraining unter Soll (${strengthStateResolved.completedMinutes}′/${strengthStateResolved.targetMinutes}′)`;
-    if (!shortReasons.includes(strengthReason)) shortReasons.push(strengthReason);
-  }
-
-  const focusLines = [coachFocus.action || "Wochenstruktur stabilisieren."];
-  if (strengthStateResolved.remainingMinutes > 0 && !focusLines.includes("Kraft zurückbringen.")) {
-    focusLines.push("Kraft zurückbringen.");
-  }
+  const focusLabel = [
+    narrativeContext?.policy?.priorities?.preferLongrun ? "Longrun" : null,
+    narrativeContext?.policy?.priorities?.preferKey ? "Key" : null,
+    narrativeContext?.policy?.priorities?.preferStrength ? "Strength" : null,
+  ].filter(Boolean).join(" + ");
 
   const renderedTopics = new Set();
   renderedTopics.lines = [];
 
-  let whyLines;
-  try {
-    whyLines = [buildWhyNarrative(shortReasons)];
-  } catch {
-    whyLines = shortReasons.length
-      ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
-      : ["• Keine harten Restriktionen aktiv."];
-  }
+  const whyLines = deriveWhyFromDecisionTrace({ resolvedDecision, narrativeContext });
 
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
@@ -12646,21 +12761,18 @@ function buildComments(
     ? `Intensitätsverteilung (${intensityWindowLabel}, Block): Easy ${easySharePct}% | Mid ${midSharePct}% | Hard ${hardSharePct}% (Ziel ≥${easyMinPct}% / ≤${midMaxPct}% / ≤${hardMaxPct}%)`
     : `Intensitätsverteilung (${intensityWindowLabel}, Block): n/a (noch keine Laufdaten)`;
 
-  const trainingStateLines = [
+  const trainingStateLines = deriveTrainingStatusFromPolicy({
+    narrativeContext,
+    resolvedDecision,
     phaseOverlayLine,
-    runTarget > 0 && runFloorCurrent < runTarget
-      ? `RunFloor: ${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}`
-      : runTarget > 0
-        ? runFloorState?.stabilityOK === false
-          ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
-          : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
-        : `RunFloor: ${runFloorCurrent} / n/a`,
-    `Longrun 14T: ${longRunDoneMin}′ → ${resolvedDecision.sessionType === "LONGRUN" && resolvedDecision.longrunTargetMin > 0 ? `Nächster Schritt ${resolvedDecision.longrunTargetMin}′` : `Blockziel ${longRunTargetMin}′`}`,
-    bikeWeeklyRule.summaryLine,
+    runFloorCurrent,
+    runTarget,
+    runTargetOverlayLabel,
+    runFloorState,
+    bikeWeeklyRule,
     bikeReplacementGuidanceLine,
-    `Kraft 7T: ${strengthStateResolved.completedMinutes}′ / Ziel ${strengthStateResolved.targetMinutes}′ (${strengthStateResolved.completedSessions}/${strengthStateResolved.targetSessions} Sessions)`,
     intensityLine,
-  ];
+  });
 
   const recommendationLines = [];
   for (const rec of recommendationMetricsBlock) {
@@ -12699,10 +12811,9 @@ function buildComments(
     addUniqueTopicLine(renderedTopics, "lever_plan", pendingLeverPlanLine);
   }
 
-  const focusRenderLines = [];
-  if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
+  const focusRenderLines = deriveFocusFromPolicy({ resolvedDecision, narrativeContext });
+  if (focusLabel && !focusRenderLines.length) focusRenderLines.push(`Fokus: ${focusLabel}.`);
   if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
-  if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
 
   const recommendationRenderLines = recommendationLines.slice(0, 4);
   if (!recommendationRenderLines.length) {
@@ -12774,6 +12885,9 @@ function buildComments(
     recommendationLines: recommendationRenderLines,
     bottomLine,
     diagnoseLines,
+    whyLines,
+    focusLines: focusRenderLines,
+    trainingStatusLines: trainingStateLines,
   });
   if (weekPreview) {
     const coachTrust = deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency });
