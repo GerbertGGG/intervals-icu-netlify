@@ -503,10 +503,6 @@ function compactScheduledSignatureInputs(inputs, maxEntries = SCHEDULED_SIGNATUR
   }));
 }
 
-function buildRunIdsSignature(runs) {
-  return buildRunSignatureDescriptor(runs).runIdsSignature;
-}
-
 function normalizeStepSyncState(raw) {
   if (!raw || typeof raw !== "object") return null;
   const from = isIsoDate(raw.from) ? raw.from : null;
@@ -635,11 +631,6 @@ function getBerlinMinuteFromScheduledEvent(event) {
 function isScheduledWindowBerlin(event) {
   const hour = getBerlinHourFromScheduledEvent(event);
   return Number.isFinite(hour) && hour >= 7 && hour <= 21;
-}
-
-function isEveningBerlinRun(event) {
-  const hour = getBerlinHourFromScheduledEvent(event);
-  return Number.isFinite(hour) && hour >= 20;
 }
 
 // ================= CONFIG =================
@@ -2395,39 +2386,6 @@ function resolvePostRaceRampWindowSync(dayIso, blockState) {
   }
 }
 
-async function resolvePostRaceRampWindow(dayIso, blockState, env) {
-  try {
-    const base = resolvePostRaceRampWindowSync(dayIso, blockState);
-    if (base?.until || !env) return base;
-
-    const raceHistory = await loadRaceHistory(env);
-    if (!Array.isArray(raceHistory) || !raceHistory.length) return base;
-    const latestRace = raceHistory
-      .filter((entry) => isIsoDate(String(entry?.date || "")))
-      .sort((a, b) => String(b?.date || "").localeCompare(String(a?.date || "")))[0];
-    const latestRaceDate = isIsoDate(latestRace?.date) ? latestRace.date : null;
-    if (!latestRaceDate) return base;
-
-    const maxRampDays = Math.max(
-      0,
-      ...Object.values(POST_RACE_RAMP_DAYS_BY_DISTANCE)
-        .flatMap((steps) => Array.isArray(steps) ? steps : [])
-        .map((v) => Number(v) || 0)
-    );
-    if (!(maxRampDays > 0)) return base;
-
-    const until = isoDate(new Date(new Date(latestRaceDate + "T00:00:00Z").getTime() + maxRampDays * 86400000));
-    const day = isIsoDate(dayIso) ? dayIso : null;
-    return {
-      active: !!day && day <= until,
-      until,
-      lastEventDate: isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : latestRaceDate,
-    };
-  } catch {
-    return { active: false, until: null, lastEventDate: null };
-  }
-}
-
 function computeAvg(windowDays, dailyLoads) {
   if (!Array.isArray(dailyLoads) || windowDays <= 0) return 0;
   const slice = dailyLoads.slice(-windowDays);
@@ -3754,10 +3712,6 @@ function ensureStructuredSessionReview(activity, keyType = null) {
   };
   activity.sessionReview = normalized;
   return normalized;
-}
-
-function deriveNextLeverMeta(metrics = {}) {
-  return deriveThresholdLeverMeta(metrics);
 }
 
 function leverMetaToText(leverMeta = null) {
@@ -8752,14 +8706,6 @@ function uniq(arr) {
   }
   return out;
 }
-function countBy(arr) {
-  const m = {};
-  for (const x of arr) {
-    const k = String(x);
-    m[k] = (m[k] || 0) + 1;
-  }
-  return m;
-}
 function isMondayIso(dayIso) {
   const d = new Date(dayIso + "T00:00:00Z");
   return d.getUTCDay() === 1;
@@ -11010,17 +10956,6 @@ function mapGapToCoachLanguage(gap) {
   return COACH_GAP_LANGUAGE[gap] || { label: "Stabilität", aliases: ["Rhythmus"], focus: "Wochenstruktur stabilisieren." };
 }
 
-function buildCoachFocusSummary(primaryGap, secondaryGap) {
-  const primary = mapGapToCoachLanguage(primaryGap);
-  const secondary = secondaryGap ? mapGapToCoachLanguage(secondaryGap) : null;
-  return {
-    label: secondary ? `${primary.label} + ${secondary.label}` : primary.label,
-    action: secondary ? `${primary.focus} ${secondary.focus}` : primary.focus,
-    primary,
-    secondary,
-  };
-}
-
 function buildLimiterSentence(primaryGap, secondaryGap) {
   const primary = mapGapToCoachLanguage(primaryGap);
   const secondary = secondaryGap ? mapGapToCoachLanguage(secondaryGap) : null;
@@ -12206,16 +12141,6 @@ function capText(s, maxChars) {
   const x = String(s || "").trim();
   if (x.length <= maxChars) return x;
   return `${x.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function isEasyTodayDecision(text) {
-  const normalized = String(text || "").toLowerCase();
-  if (!normalized) return false;
-  const easySignals = ["locker", "steady", "ga", "regeneration", "easy"];
-  const hardSignals = ["@", "interval", "vo2", "schwelle", "racepace", "key", "tempo"];
-  const hasEasy = easySignals.some((signal) => normalized.includes(signal));
-  const hasHard = hardSignals.some((signal) => normalized.includes(signal));
-  return hasEasy && !hasHard;
 }
 
 function deriveNarrativeContext({
@@ -14349,39 +14274,6 @@ async function computeDetectiveNoteAdaptive(env, mondayIso, warmupSkipSec, optio
   return appendFourWeekProgressSection(withWhy, fourWeekInsights);
 }
 
-function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLongrun = false }) {
-  let runTarget = "3–4";
-  if (runsPerWeek < 2) runTarget = "2–3";
-  else if (runsPerWeek < 3) runTarget = "3";
-
-  let loadTarget = "150–210";
-  if (weeklyLoad < 120) loadTarget = "110–160";
-  else if (weeklyLoad < 180) loadTarget = "140–200";
-  else if (weeklyLoad >= 180) {
-    const low = Math.max(120, Math.round(weeklyLoad * 0.9));
-    const high = Math.round(weeklyLoad * 1.1);
-    loadTarget = `${low}–${high}`;
-  }
-
-  const includeKey = keyPerWeek >= 0.6 || (runsPerWeek >= 3 && weeklyLoad >= 140);
-  const longrunMinTarget = suppressLongrun ? "—" : runsPerWeek < 2 ? "45–60′" : "60′";
-  const longrunDevelopmentTarget = suppressLongrun ? "—" : "60–75′";
-  const exampleWeek =
-    suppressLongrun
-      ? runTarget === "2–3"
-        ? ["Slot A: 30–35′ easy", "Slot B: 20–30′ shakeout + Mobilität (48h später)"]
-        : includeKey
-        ? ["Slot A: 30–40′ key (kurz/aktivierend)", "Slot B: 30–40′ easy (48–72h nach Key)", "Slot C: 20–30′ shakeout + Mobilität"]
-        : ["Slot A: 30–35′ easy", "Slot B: 35–45′ easy (48h später)", "Slot C: 20–30′ shakeout + Mobilität"]
-      : runTarget === "2–3"
-      ? ["Slot A: 30–35′ easy", "Slot B: 60–75′ longrun (4–6 Tage später)"]
-      : includeKey
-      ? ["Slot A: 35–45′ key (Schwelle/VO2)", "Slot B: 40–50′ GA (48h nach Key)", "Slot C: 60–75′ longrun (4–6 Tage nach letztem Longrun)"]
-      : ["Slot A: 30–35′ easy", "Slot B: 40–50′ GA", "Slot C: 60–75′ longrun (4–6 Tage Rhythmus)"];
-
-  return { runTarget, loadTarget, exampleWeek, longrunMinTarget, longrunDevelopmentTarget };
-}
-
 async function computeDetectiveNote(
   env,
   mondayIso,
@@ -15213,12 +15105,6 @@ async function computeBenchMetrics(env, a, warmupSkipSec, { allowDrift = true } 
 
 function pct(a, b) {
   return a != null && b != null && Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? ((a - b) / b) * 100 : null;
-}
-
-/** Erzeugt einen einfachen ASCII-Balken für Score-Visualisierung (0–100). */
-function buildScoreBar(score) {
-  const filled = Math.round(clamp(Number(score) || 0, 0, 100) / 10);
-  return "▓".repeat(filled) + "░".repeat(10 - filled);
 }
 
 function fmtSigned1(x) {
