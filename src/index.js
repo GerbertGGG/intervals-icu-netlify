@@ -8538,7 +8538,7 @@ async function buildCoachAnalysis(env, snapshot) {
     ? "KEY_DAY"
     : safeSnapshot.sessionType === "STRENGTH"
       ? "STRENGTH_DAY"
-      : "RUN_OR_RECOVERY_DAY";
+      : "RUN_OR_RECOVERY";
   const priorityInstruction = isRealKeyDay
     ? "Priorisierung heute: Starte zwingend mit der heutigen Key-Session (Einordnung + warum heute passend + Dosierung). Kraft nur als kurzer Nebenhinweis am Ende, falls relevant."
     : strengthDayWithRunAddon
@@ -8555,7 +8555,7 @@ async function buildCoachAnalysis(env, snapshot) {
     : focusMode === "STRENGTH_DAY"
       ? "Hierarchie (MUSS): Kraft ist heute Hauptthema. Lauf nur ergänzend und kurz."
       : "Hierarchie (MUSS): Lauf/Erholung/Volumen ist heute Hauptthema. Kraft nicht als Hauptthema ausbauen.";
-  const secondaryTopicRule = focusMode === "KEY_DAY" || focusMode === "RUN_OR_RECOVERY_DAY"
+  const secondaryTopicRule = focusMode === "KEY_DAY" || focusMode === "RUN_OR_RECOVERY"
     ? "Nebenpunkte-Regel: Sekundäre Themen (z. B. Kraft) nur als kurzer Nebensatz oder maximal ein kurzer Zusatzsatz, niemals als zweiter Hauptfokus."
     : "Nebenpunkte-Regel: Sekundäre Themen kurz halten und klar nachrangig formulieren.";
 
@@ -9007,6 +9007,58 @@ function applyManualBlockStartOverride(blockState, overrideIso, dayIso) {
 }
 
 async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runtimeOverrides = {}) {
+  const perfNow = () =>
+    (typeof performance !== "undefined" && typeof performance.now === "function")
+      ? performance.now()
+      : Date.now();
+  const DAY_PERF_KEYS = [
+    "modeAndPolicyMs",
+    "fatigueAndRobustnessMs",
+    "activityHydrationAndStreamsMs",
+    "resolverAndPlanningMs",
+    "weekPreviewMs",
+    "commentsAndNarrativeMs",
+    "renderAndPostProcessingMs",
+    "acceptanceAndTrustChecksMs",
+    "heavyActivityLoopsMs",
+  ];
+  const createDayPerfBucket = () =>
+    DAY_PERF_KEYS.reduce((acc, key) => {
+      acc[key] = 0;
+      return acc;
+    }, { __spanCount: 0 });
+  const startPerfSpan = (bucket, key) => {
+    if (!bucket || !key) return null;
+    return { key, startedAt: perfNow() };
+  };
+  const endPerfSpan = (bucket, span) => {
+    if (!bucket || !span?.key) return 0;
+    const elapsed = Math.max(0, perfNow() - Number(span.startedAt || perfNow()));
+    bucket[span.key] = (Number(bucket[span.key]) || 0) + elapsed;
+    bucket.__spanCount = (Number(bucket.__spanCount) || 0) + 1;
+    return elapsed;
+  };
+  const withPerfSpan = async (bucket, key, fn) => {
+    const span = startPerfSpan(bucket, key);
+    try {
+      return await fn();
+    } finally {
+      endPerfSpan(bucket, span);
+    }
+  };
+  const finalizeDayPerf = (bucket) => {
+    if (!bucket) return null;
+    const finalized = {};
+    let totalMs = 0;
+    for (const key of DAY_PERF_KEYS) {
+      const value = Math.max(0, Number(bucket[key]) || 0);
+      finalized[key] = Math.round(value);
+      totalMs += value;
+    }
+    finalized.totalMs = Math.round(totalMs);
+    finalized.instrumentedSpans = Math.max(0, Math.round(Number(bucket.__spanCount) || 0));
+    return finalized;
+  };
   const singleDayDebugFastPath = isSingleDayDebugFastPath({ oldest, newest, write, debug });
   const limiterMax = debug ? FAST_DEBUG_LIMITER_MAX : 6;
   const ctx = createCtx(env, warmupSkipSec, debug, limiterMax);
@@ -9043,14 +9095,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       if (perf) perf[key] = { ms: Date.now() - started, ...extra };
     }
   };
-  const timedSync = async (bucket, key, fn) => {
-    const started = Date.now();
-    try {
-      return await fn();
-    } finally {
-      if (bucket) bucket[key] = (bucket[key] || 0) + (Date.now() - started);
-    }
-  };
+  const timedSync = withPerfSpan;
   try {
     ctx.weekMemories = typeof readWeekMemories === "function" ? await readWeekMemories(env, newest) : [];
   } catch {
@@ -9193,17 +9238,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
   const processDays = async () => {
     for (const day of daysList) {
-      const dayPerf = perf ? {
-        modeAndPolicyMs: 0,
-        fatigueAndRobustnessMs: 0,
-        activityHydrationAndStreamsMs: 0,
-        resolverAndPlanningMs: 0,
-        weekPreviewMs: 0,
-        commentsAndNarrativeMs: 0,
-        renderAndPostProcessingMs: 0,
-        acceptanceAndTrustChecksMs: 0,
-        heavyActivityLoopsMs: 0,
-      } : null;
+      const dayPerf = perf ? createDayPerfBucket() : null;
       const shouldRunDeepValidationChecks = !(singleDayDebugFastPath && debugResponsePart !== "full");
       // NEW: mode + policy for this day (based on next event)
       let modeInfo;
@@ -9292,26 +9327,32 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     let raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
     const patch = {};
     const perRunInfo = [];
-    const existingDailyReportEventPromise =
-      write && runMetricsOnlyIfExisting
-        ? fetchDailyReportNoteEvent(env, day, lifeEventsByExternalId).catch(() => null)
-        : Promise.resolve(null);
-    const wellnessTodayPromise = fetchWellnessDay(ctx, env, day).catch(() => null);
-    const motorPromise = computeMotorIndex(ctx, day).catch((e) => ({
-      ok: false,
-      value: null,
-      text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})`,
-    }));
-    const hrrcTrendPromise = fetchHrrcHistory(ctx, env, day, 42)
-      .then((hrrcHistory) => computeHrrcTrend(hrrcHistory))
-      .catch(() => null);
+    let existingDailyReportEvent = null;
+    let wellnessToday = null;
+    let motor = null;
+    let hrrcTrend = null;
+    await timedSync(dayPerf, "activityHydrationAndStreamsMs", async () => {
+      const existingDailyReportEventPromise =
+        write && runMetricsOnlyIfExisting
+          ? fetchDailyReportNoteEvent(env, day, lifeEventsByExternalId).catch(() => null)
+          : Promise.resolve(null);
+      const wellnessTodayPromise = fetchWellnessDay(ctx, env, day).catch(() => null);
+      const motorPromise = computeMotorIndex(ctx, day).catch((e) => ({
+        ok: false,
+        value: null,
+        text: `🏎️ Motor-Index: n/a – Fehler (${String(e?.message ?? e)})`,
+      }));
+      const hrrcTrendPromise = fetchHrrcHistory(ctx, env, day, 42)
+        .then((hrrcHistory) => computeHrrcTrend(hrrcHistory))
+        .catch(() => null);
 
-    const [existingDailyReportEvent, wellnessToday, motor, hrrcTrend] = await Promise.all([
-      existingDailyReportEventPromise,
-      wellnessTodayPromise,
-      motorPromise,
-      hrrcTrendPromise,
-    ]);
+      [existingDailyReportEvent, wellnessToday, motor, hrrcTrend] = await Promise.all([
+        existingDailyReportEventPromise,
+        wellnessTodayPromise,
+        motorPromise,
+        hrrcTrendPromise,
+      ]);
+    });
 
     const runSectionOnly =
       runMetricsOnly && (!runMetricsOnlyIfExisting || Boolean(existingDailyReportEvent?.id));
@@ -9470,21 +9511,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     // Aerobic trend (GA-only)
     let trend;
-    try {
-      trend = await computeAerobicTrend(ctx, day);
-    } catch (e) {
-      trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
-    }
-
-    // NEW: loads + min stimulus depends on mode
     let loads7 = { runLoad7: 0, bikeLoad7: 0, aerobicEq7: 0 };
-    try {
-      loads7 = await computeLoads7d(ctx, day);
-    } catch {}
     let longRunSummary = { minutes: 0, date: null, quality: "n/a", isKey: false, intensity: false, longRun14d: { minutes: 0, date: null }, longestRun30d: { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays }, plan: null };
-    try {
-      longRunSummary = computeLongRunSummary7d(ctx, day);
-    } catch {}
+    await timedSync(dayPerf, "resolverAndPlanningMs", async () => {
+      try {
+        trend = await computeAerobicTrend(ctx, day);
+      } catch (e) {
+        trend = { ok: false, text: `ℹ️ Aerober Kontext (nur GA)\nTrend: n/a – Fehler (${String(e?.message ?? e)})` };
+      }
+      try {
+        loads7 = await computeLoads7d(ctx, day);
+      } catch {}
+      try {
+        longRunSummary = computeLongRunSummary7d(ctx, day);
+      } catch {}
+    });
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
@@ -9540,9 +9581,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     const prevWindowDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 7 * 86400000));
     let loads7Prev = { runTotal7: 0, bikeTotal7: 0, aerobicEq7: 0, intensity7: 0, intensitySignal: "none" };
-    try {
-      loads7Prev = await computeLoads7d(ctx, prevWindowDay);
-    } catch {}
+    await timedSync(dayPerf, "resolverAndPlanningMs", async () => {
+      try {
+        loads7Prev = await computeLoads7d(ctx, prevWindowDay);
+      } catch {}
+    });
     const weeksPrev = eventDate ? computeWeeksToEvent(prevWindowDay, eventDate, null) : { weeksToEvent: null };
     const runFloorEwma10Prev = computeRunFloorEwma(ctx, prevWindowDay, {
       eventDate,
@@ -9714,11 +9757,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weeksToEvent: blockState?.weeksToEvent,
     });
     let fatigue = fatigueBase;
-    try {
-      fatigue = await computeFatigue7d(ctx, day);
-    } catch {
-      fatigue = fatigueBase;
-    }
+    await timedSync(dayPerf, "fatigueAndRobustnessMs", async () => {
+      try {
+        fatigue = await computeFatigue7d(ctx, day);
+      } catch {
+        fatigue = fatigueBase;
+      }
+    });
     // HRRc-Trend als zusätzliches Fatigue-Signal
     if (hrrcTrend?.warning && fatigue) {
       fatigue = {
@@ -10386,10 +10431,7 @@ Fehler: ${String(e?.message ?? e)}`;
 
     patches[day] = patchToWrite;
     if (perf && dayPerf) {
-      perf.dayProcessing[day] = {
-        ...dayPerf,
-        totalMs: Object.values(dayPerf).reduce((acc, value) => acc + (Number(value) || 0), 0),
-      };
+      perf.dayProcessing[day] = finalizeDayPerf(dayPerf);
     }
     }
   };
@@ -10397,6 +10439,22 @@ Fehler: ${String(e?.message ?? e)}`;
   await timed("mainPerDayProcessing", processDays, {
     days: daysList.length,
   });
+  if (perf?.mainPerDayProcessing?.ms > 1000) {
+    const unhealthyDays = Object.entries(perf.dayProcessing || {})
+      .filter(([, dayMetrics]) => {
+        const subSum = DAY_PERF_KEYS.reduce((sum, key) => sum + (Number(dayMetrics?.[key]) || 0), 0);
+        return subSum <= 0;
+      })
+      .map(([dayIso]) => dayIso);
+    perf.perfInstrumentationHealthy = unhealthyDays.length === 0;
+    if (unhealthyDays.length) {
+      const warning = `Perf instrumentation warning: mainPerDayProcessing=${perf.mainPerDayProcessing.ms}ms but sub-timings are all zero for ${unhealthyDays.join(", ")}`;
+      perf.warnings = [...(perf.warnings || []), warning];
+      console.warn(warning);
+    }
+  } else if (perf) {
+    perf.perfInstrumentationHealthy = true;
+  }
 
   if (write && isMondayIso(oldest)) {
     await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
@@ -11229,7 +11287,15 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
   const strengthRemainingSessions = parseInt(String(strengthState?.remainingSessions ?? 0), 10) || 0;
   const strengthWorkOpen = isStrengthWorkOpen(strengthState) || strengthRemainingMinutes > 0 || strengthRemainingSessions > 0;
   if (strengthWorkOpen) {
-    lines.push(`• Kraft/Stabi: noch ${strengthRemainingSessions} Einheiten bzw. ${strengthRemainingMinutes}′ offen.`);
+    if (strengthRemainingSessions > 0 && strengthRemainingMinutes > 0) {
+      lines.push(`• Kraft/Stabi: noch ${strengthRemainingSessions} Einheiten bzw. ${strengthRemainingMinutes}′ offen.`);
+    } else if (strengthRemainingMinutes > 0) {
+      lines.push(`• Kraft/Stabi: diese Woche noch ${strengthRemainingMinutes}′ offen.`);
+    } else if (strengthRemainingSessions > 0) {
+      lines.push(`• Kraft/Stabi: diese Woche noch ${strengthRemainingSessions} Einheiten offen.`);
+    } else {
+      lines.push("• Kraft/Stabi: noch eine kurze Stabi-Einheit einplanen.");
+    }
   } else {
     lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
   }
