@@ -6990,6 +6990,7 @@ function buildWeekPreview(
     runFloorState,
     distanceDiagnostics,
     fatigue,
+    includeAcceptanceScenarios = true,
   } = {}
 ) {
   try {
@@ -7104,12 +7105,15 @@ function buildWeekPreview(
     const todayWeekday = isoWeekdayBerlin(todayIso);
     const weekStart = addDaysIso(todayIso, -(todayWeekday - 1));
     const yesterdayIso = addDaysIso(todayIso, -1);
-    const byDayAll = new Map();
-    for (const a of ctx?.activitiesAll || []) {
-      const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-      if (!d) continue;
-      if (!byDayAll.has(d)) byDayAll.set(d, []);
-      byDayAll.get(d).push(a);
+    const byDayAll = ctx?.byDayAll instanceof Map ? ctx.byDayAll : new Map();
+    if (!(ctx?.byDayAll instanceof Map)) {
+      for (const a of ctx?.activitiesAll || []) {
+        const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+        if (!d) continue;
+        if (!byDayAll.has(d)) byDayAll.set(d, []);
+        byDayAll.get(d).push(a);
+      }
+      if (ctx) ctx.byDayAll = byDayAll;
     }
 
     const thisWeekDays = listIsoDaysInclusive(weekStart, yesterdayIso);
@@ -7149,19 +7153,20 @@ function buildWeekPreview(
     let longrunPlanned = false;
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const longRunBaseTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
-    const recentLongruns = (ctx?.activitiesAll || [])
-      .filter((a) => {
-        if (!isRun(a)) return false;
+    const recentLongruns = [];
+    for (const [date, activities] of byDayAll.entries()) {
+      if (!isIsoDate(date) || date > todayIso) continue;
+      for (const a of activities) {
+        if (!isRun(a)) continue;
         const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
-        return durationSec >= LONGRUN_MIN_SECONDS;
-      })
-      .map((a) => {
-        const date = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-        const minutes = Math.round((Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60);
-        return { date, minutes };
-      })
-      .filter((entry) => isIsoDate(entry.date) && entry.date <= todayIso)
-      .sort((a, b) => a.date.localeCompare(b.date));
+        if (durationSec < LONGRUN_MIN_SECONDS) continue;
+        recentLongruns.push({
+          date,
+          minutes: Math.round(durationSec / 60),
+        });
+      }
+    }
+    recentLongruns.sort((a, b) => a.date.localeCompare(b.date));
     const longRunDoneMin14d = recentLongruns
       .filter((entry) => diffDays(entry.date, todayIso) <= 14)
       .reduce((max, entry) => Math.max(max, entry.minutes), 0);
@@ -7206,14 +7211,9 @@ function buildWeekPreview(
     });
     const strengthPref = strengthState.preferredStrengthDays;
     const lastLongrunDateBeforeToday = (() => {
-      const dates = (ctx?.activitiesAll || [])
-        .filter((a) => {
-          const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
-          const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-          return isRun(a) && durationSec >= LONGRUN_MIN_SECONDS && d && d < todayIso;
-        })
-        .map((a) => String(a?.start_date_local || a?.start_date || "").slice(0, 10))
-        .filter((d) => isIsoDate(d))
+      const dates = recentLongruns
+        .filter((entry) => entry.date < todayIso)
+        .map((entry) => entry.date)
         .sort();
       return dates.at(-1) || null;
     })();
@@ -7222,10 +7222,7 @@ function buildWeekPreview(
         const checkIso = isoDate(new Date(
           new Date(`${todayIso}T00:00:00Z`).getTime() - i * 86400000
         ));
-        const hasRun = (ctx?.activitiesAll || []).some((a) => {
-          const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-          return d === checkIso && isRun(a);
-        });
+        const hasRun = (ctx?.byDayRuns?.get(checkIso)?.length || 0) > 0;
         if (hasRun) return i;
       }
       return 99;
@@ -8052,10 +8049,12 @@ function buildWeekPreview(
       { id: "POST_RACE_RAMP", key: "blocked", longrun: "blocked", expectedDay: "GA", reasons: ["overlay:post_race_ramp_easy"] },
       { id: "LIFE_EVENT_STOP", key: "blocked", longrun: "blocked", expectedDay: "REST", reasons: ["overlay_force_rest"] },
     ];
-    const policyAcceptanceResults = runPolicyAcceptanceScenarios({
-      scenarios: policyAcceptanceScenarios,
-      days,
-    });
+    const policyAcceptanceResults = includeAcceptanceScenarios
+      ? runPolicyAcceptanceScenarios({
+          scenarios: policyAcceptanceScenarios,
+          days,
+        })
+      : null;
     const text = days
       .map((entry) => {
         const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
@@ -8067,7 +8066,14 @@ function buildWeekPreview(
       })
       .join("\n");
 
-    return { days, text, thisWeekActuals, strengthState, policyAcceptanceScenarios, policyAcceptanceResults };
+    return {
+      days,
+      text,
+      thisWeekActuals,
+      strengthState,
+      policyAcceptanceScenarios: includeAcceptanceScenarios ? policyAcceptanceScenarios : [],
+      policyAcceptanceResults,
+    };
   } catch {
     return { days: [], text: "(Wochenplan nicht verfügbar)", thisWeekActuals: null };
   }
@@ -9026,6 +9032,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         fetchIntervalsEventsMode: null,
         hydrateActivitiesWithPersistedLeverReviews: null,
         mainPerDayProcessing: null,
+        dayProcessing: {},
       }
     : null;
   const timed = async (key, fn, extra = {}) => {
@@ -9034,6 +9041,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       return await fn();
     } finally {
       if (perf) perf[key] = { ms: Date.now() - started, ...extra };
+    }
+  };
+  const timedSync = async (bucket, key, fn) => {
+    const started = Date.now();
+    try {
+      return await fn();
+    } finally {
+      if (bucket) bucket[key] = (bucket[key] || 0) + (Date.now() - started);
     }
   };
   try {
@@ -9119,6 +9134,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   // 2) Build byDayRuns / byDayBikes / byDayStrength for quick access
   let activitiesSeen = 0;
   let activitiesUsed = 0;
+  const byDayAll = new Map();
 
   for (const a of ctx.activitiesAll) {
     activitiesSeen++;
@@ -9127,6 +9143,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       if (debug) addDebug(ctx.debugOut, "unknown-day", a, "skip:no_day", null);
       continue;
     }
+    if (!byDayAll.has(day)) byDayAll.set(day, []);
+    byDayAll.get(day).push(a);
 
     if (isRun(a)) {
       if (!ctx.byDayRuns.has(day)) ctx.byDayRuns.set(day, []);
@@ -9152,6 +9170,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     if (debug) addDebug(ctx.debugOut, day, a, `skip:unsupported:${a.type ?? "unknown"}`, null);
   }
+  ctx.byDayAll = byDayAll;
 
 
   const patches = {};
@@ -9174,37 +9193,55 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
   const processDays = async () => {
     for (const day of daysList) {
+      const dayPerf = perf ? {
+        modeAndPolicyMs: 0,
+        fatigueAndRobustnessMs: 0,
+        activityHydrationAndStreamsMs: 0,
+        resolverAndPlanningMs: 0,
+        weekPreviewMs: 0,
+        commentsAndNarrativeMs: 0,
+        renderAndPostProcessingMs: 0,
+        acceptanceAndTrustChecksMs: 0,
+        heavyActivityLoopsMs: 0,
+      } : null;
+      const shouldRunDeepValidationChecks = !(singleDayDebugFastPath && debugResponsePart !== "full");
       // NEW: mode + policy for this day (based on next event)
       let modeInfo;
       let policy;
-      try {
-        modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
-        policy = getModePolicy(modeInfo);
-      } catch (e) {
-        console.error("[mode] determineMode failed, using OPEN fallback", {
-          day,
-          error: e?.message || String(e),
-          stack: e?.stack || null,
-          modeEventsAllType: Array.isArray(ctx.modeEventsAll) ? "array" : typeof ctx.modeEventsAll,
-          modeEventsAllCount: Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll.length : null,
-        });
-        modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
-        policy = getModePolicy(modeInfo);
-      }
+      await timedSync(dayPerf, "modeAndPolicyMs", async () => {
+        try {
+          modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
+          policy = getModePolicy(modeInfo);
+        } catch (e) {
+          console.error("[mode] determineMode failed, using OPEN fallback", {
+            day,
+            error: e?.message || String(e),
+            stack: e?.stack || null,
+            modeEventsAllType: Array.isArray(ctx.modeEventsAll) ? "array" : typeof ctx.modeEventsAll,
+            modeEventsAllCount: Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll.length : null,
+          });
+          modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
+          policy = getModePolicy(modeInfo);
+        }
+      });
     // NEW: fatigue / key-cap metrics (keine RECOVERY-Logik mehr)
     let fatigueBase = null;
-    try {
-      fatigueBase = await computeFatigue7d(ctx, day);
-    } catch {
-      fatigueBase = null;
-    }
+    await timedSync(dayPerf, "fatigueAndRobustnessMs", async () => {
+      try {
+        fatigueBase = await computeFatigue7d(ctx, day);
+      } catch {
+        fatigueBase = null;
+      }
+    });
 
     let robustness = null;
-    try {
-      robustness = computeRobustness(ctx, day);
-    } catch {
-      robustness = null;
-    }
+    await timedSync(dayPerf, "fatigueAndRobustnessMs", () => {
+      try {
+        robustness = computeRobustness(ctx, day);
+      } catch {
+        robustness = null;
+      }
+    });
 
     const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
     const eventDistance = getEventDistanceFromEvent(modeInfo?.nextEvent);
@@ -9285,7 +9322,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     if (motor?.value != null) patch[FIELD_MOTOR] = round(motor.value, 1);
 
     // Process runs (collect detailed info, but write VDOT/Drift from a single representative GA run)
-    for (const a of runs) {
+    await timedSync(dayPerf, "activityHydrationAndStreamsMs", async () => {
+      for (const a of runs) {
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
       const ef = extractEF(a);
@@ -9404,7 +9442,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           load,
         });
       }
-    }
+      }
+    });
 
     // Choose ONE representative GA run for numeric fields (prevents overwrite randomness)
     const rep = pickRepresentativeGARun(perRunInfo);
@@ -9693,42 +9732,48 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     historyMetrics.fatigueCap = fatigue;
 
-    const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
-    const keyRules = {
-      ...keyRulesBase,
-      maxKeysPerWeek: keyRulesBase.maxKeysPerWeek,
-    };
-    const longrunSpecificity = evaluateLongrunSpecificity(ctx, day, longRunSummary, {
-      eventDistance,
-      block: blockState.block,
-    });
-    const intensityDistribution = computeIntensityDistribution(
-      ctx,
-      day,
-      blockState.block,
-      eventDistance,
-      blockState.startDate || blockState.blockStartEffective || null,
-      {
-        overlayMode: runFloorState?.overlayMode,
-        lastEventDate: blockState?.lastEventDate || runFloorState?.lastEventDate || null,
-      }
-    );
-    const weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
-    const plannedPrimaryType = decideKeyType1PerWeek(
-      {
-        block: blockState.block,
+    let keyRules = null;
+    let longrunSpecificity = null;
+    let intensityDistribution = null;
+    let weekInBlock = 1;
+    let keyCompliance = null;
+    await timedSync(dayPerf, "resolverAndPlanningMs", () => {
+      const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
+      keyRules = {
+        ...keyRulesBase,
+        maxKeysPerWeek: keyRulesBase.maxKeysPerWeek,
+      };
+      longrunSpecificity = evaluateLongrunSpecificity(ctx, day, longRunSummary, {
         eventDistance,
-        weeksToEvent: blockState.weeksToEvent,
-        overlayMode: runFloorState.overlayMode,
-        intensityDistribution,
-        fatigue,
-        weekInBlock,
-        lastKeyType,
-      },
-      keyRules
-    );
-    keyRules.plannedPrimaryType = plannedPrimaryType;
-    const keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
+        block: blockState.block,
+      });
+      intensityDistribution = computeIntensityDistribution(
+        ctx,
+        day,
+        blockState.block,
+        eventDistance,
+        blockState.startDate || blockState.blockStartEffective || null,
+        {
+          overlayMode: runFloorState?.overlayMode,
+          lastEventDate: blockState?.lastEventDate || runFloorState?.lastEventDate || null,
+        }
+      );
+      weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
+      const plannedPrimaryType = decideKeyType1PerWeek(
+        {
+          block: blockState.block,
+          eventDistance,
+          weeksToEvent: blockState.weeksToEvent,
+          overlayMode: runFloorState.overlayMode,
+          intensityDistribution,
+          fatigue,
+          weekInBlock,
+          lastKeyType,
+        },
+        keyRules
+      );
+      keyRules.plannedPrimaryType = plannedPrimaryType;
+      keyCompliance = evaluateKeyCompliance(keyRules, keyStats7, keyStats14, {
       ctx,
       dayIso: day,
       block: blockState.block,
@@ -9752,6 +9797,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastEventDate: blockState.lastEventDate || runFloorState.lastEventDate || null,
       lastEventDistance: blockState.lastEventDistance || runFloorState.lastEventDistance || null,
     });
+    });
     if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
       const lifeEventName = String(modeInfo.lifeEventEffect?.event?.name || "").trim();
@@ -9765,25 +9811,31 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longRunSummary,
       fatigue,
     });
-    const weeklySnapshot = buildWeeklySnapshot(ctx, day, {
-      eventDistance,
-      block: blockState.block,
-      runFloor: runFloorEwma10,
-      runLoad7: loads7.runTotal7,
-      intensityDistribution,
-      keyStats7,
-      longRunSummary,
-      longrunSpecificity,
-      robustness: robustness ? { ...robustness, strengthPolicy } : robustness,
-      fatigue,
-      keyCompliance,
-      trend,
-      executionScore,
-    });
-    const longrunFrequency21d = computeLongrunFrequency21d(ctx, day);
-    const longrunFrequency35d = computeLongrunFrequency35d(ctx, day);
-    const longrunSpikeIndex = computeLongrunSpikeIndex(longRunSummary);
-    const distanceDiagnostics = computeDistanceDiagnostics(weeklySnapshot, {
+    let weeklySnapshot = null;
+    let longrunFrequency21d = 0;
+    let longrunFrequency35d = 0;
+    let longrunSpikeIndex = 0;
+    let distanceDiagnostics = null;
+    await timedSync(dayPerf, "heavyActivityLoopsMs", () => {
+      weeklySnapshot = buildWeeklySnapshot(ctx, day, {
+        eventDistance,
+        block: blockState.block,
+        runFloor: runFloorEwma10,
+        runLoad7: loads7.runTotal7,
+        intensityDistribution,
+        keyStats7,
+        longRunSummary,
+        longrunSpecificity,
+        robustness: robustness ? { ...robustness, strengthPolicy } : robustness,
+        fatigue,
+        keyCompliance,
+        trend,
+        executionScore,
+      });
+      longrunFrequency21d = computeLongrunFrequency21d(ctx, day);
+      longrunFrequency35d = computeLongrunFrequency35d(ctx, day);
+      longrunSpikeIndex = computeLongrunSpikeIndex(longRunSummary);
+      distanceDiagnostics = computeDistanceDiagnostics(weeklySnapshot, {
       dayIso: day,
       activitiesAll: ctx.activitiesAll,
       runFloorTarget: runFloorState.effectiveFloorTarget,
@@ -9798,6 +9850,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longrunFrequency21d,
       longrunFrequency35d,
       longrunSpikeIndex,
+    });
     });
     // Fitness-Profil berechnen
     let fitnessProfile = null;
@@ -9908,13 +9961,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
 
     // Daily report text (used for calendar NOTE instead of wellness comments)
-    const weekPreview = buildWeekPreview(ctx, day, {
+    const weekPreview = await timedSync(dayPerf, "weekPreviewMs", () => buildWeekPreview(ctx, day, {
       blockState,
       keyCompliance,
       runFloorState,
       distanceDiagnostics,
       fatigue,
-    });
+      includeAcceptanceScenarios: shouldRunDeepValidationChecks,
+    }));
     if (day === oldest) {
       strengthCountThisWeek = Math.max(0, Math.floor(Number(weekPreview?.thisWeekActuals?.strengthCount || 0)));
     }
@@ -9956,7 +10010,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       console.warn("race prediction failed", { day, message: String(error?.message || error) });
     }
 
-    const dailyReportTextRaw = buildComments({
+    const commentsPerf = dayPerf ? {} : null;
+    const dailyReportTextRaw = await timedSync(dayPerf, "commentsAndNarrativeMs", () => buildComments({
       perRunInfo,
       trend,
       motor,
@@ -9991,7 +10046,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       hrrcTrend,
       weekPreview,
       racePrediction,
-    }, { debug, verbosity: reportVerbosity });
+    }, {
+      debug,
+      verbosity: reportVerbosity,
+      enableDeepChecks: shouldRunDeepValidationChecks,
+      perfSink: commentsPerf,
+    }));
+    if (dayPerf && commentsPerf?.acceptanceAndTrustChecksMs) {
+      dayPerf.acceptanceAndTrustChecksMs += commentsPerf.acceptanceAndTrustChecksMs;
+    }
+    const renderStartedAt = Date.now();
     const weeklyReview = isMondayIso(day)
       ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
       : null;
@@ -10005,17 +10069,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         ].filter(Boolean).join("\n")
       : "";
     let raceDayBlock = "";
+    let cachedEfMed28 = null;
+    let cachedVdotMed28 = null;
     try {
-      const efMed = computeRecentEfMedian(ctx, day, 28);
-      const vdotMed = Number.isFinite(efMed) ? vdotLikeFromEf(efMed) : null;
+      cachedEfMed28 = computeRecentEfMedian(ctx, day, 28);
+      cachedVdotMed28 = Number.isFinite(cachedEfMed28) ? vdotLikeFromEf(cachedEfMed28) : null;
       raceDayBlock = buildRaceDayPrepBlock({
         eventInDays,
         eventDistance,
-        vdotMed,
-        efMed,
+        vdotMed: cachedVdotMed28,
+        efMed: cachedEfMed28,
       });
     } catch {
       raceDayBlock = "";
+      cachedEfMed28 = null;
+      cachedVdotMed28 = null;
     }
     let raceHistoryBlock = "";
     let raceInsights = { insights: [], nextPrep: [] };
@@ -10060,19 +10128,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
     const isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
     if (isRaceDayToday && !raceActivityToday) {
-      let efMedRace = null;
-      let vdotMedRace = null;
-      try {
-        efMedRace = computeRecentEfMedian(ctx, day, 28);
-        vdotMedRace = Number.isFinite(efMedRace) ? vdotLikeFromEf(efMedRace) : null;
-      } catch {
-        efMedRace = null;
-        vdotMedRace = null;
-      }
       dailyReportText = buildRaceDayMinimalReport({
         eventDistance,
-        vdotMed: vdotMedRace,
-        efMed: efMedRace,
+        vdotMed: cachedVdotMed28,
+        efMed: cachedEfMed28,
         weekPlanText: hasStructuredWeekPreview ? weekPreview?.text : weekPlanFallback,
       });
     }
@@ -10091,6 +10150,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       if (raceResultBlock) {
         dailyReportText = `${dailyReportText}\n\n${raceResultBlock}`;
       }
+    }
+    if (dayPerf) {
+      dayPerf.renderAndPostProcessingMs += (Date.now() - renderStartedAt);
     }
 
     const strengthPolicyResolved = strengthPolicy
@@ -10323,6 +10385,12 @@ Fehler: ${String(e?.message ?? e)}`;
     }
 
     patches[day] = patchToWrite;
+    if (perf && dayPerf) {
+      perf.dayProcessing[day] = {
+        ...dayPerf,
+        totalMs: Object.values(dayPerf).reduce((acc, value) => acc + (Number(value) || 0), 0),
+      };
+    }
     }
   };
 
@@ -12501,9 +12569,20 @@ function buildComments(
     weekPreview,
     racePrediction,
   },
-  { debug = false, verbosity = "coach" } = {}
+  { debug = false, verbosity = "coach", enableDeepChecks = true, perfSink = null } = {}
 ) {
   const lines = [];
+  const localPerf = perfSink && typeof perfSink === "object"
+    ? perfSink
+    : null;
+  const measure = (key, fn) => {
+    const started = Date.now();
+    try {
+      return fn();
+    } finally {
+      if (localPerf) localPerf[key] = (localPerf[key] || 0) + (Date.now() - started);
+    }
+  };
   const bikesTodayList = Array.isArray(bikesToday) ? bikesToday : [];
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
   const formatSignedPct1 = (value) =>
@@ -13152,40 +13231,48 @@ function buildComments(
     todaySessionType: resolvedDecision.sessionType,
     explicitSessionShort,
   });
-  const narrativeConsistency = evaluateNarrativeConsistency({
-    resolvedDecision,
-    narrativeContext,
-    recommendationLines: recommendationRenderLines,
-    bottomLine,
-    diagnoseLines,
-    whyLines,
-    focusLines: focusRenderLines,
-    trainingStatusLines: trainingStateLines,
-  });
-  if (weekPreview) {
-    const coachTrust = deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency });
-    weekPreview.coachTrustCheck = coachTrust;
-    weekPreview.narrativeConsistency = narrativeConsistency;
-    if (!coachTrust.explainable) {
-      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
-      weekPreview.debugFlags.push("coach_trust_check_failed");
+  let narrativeConsistency = null;
+  if (enableDeepChecks) {
+    narrativeConsistency = measure("acceptanceAndTrustChecksMs", () => evaluateNarrativeConsistency({
+      resolvedDecision,
+      narrativeContext,
+      recommendationLines: recommendationRenderLines,
+      bottomLine,
+      diagnoseLines,
+      whyLines,
+      focusLines: focusRenderLines,
+      trainingStatusLines: trainingStateLines,
+    }));
+    if (weekPreview) {
+      const coachTrust = measure("acceptanceAndTrustChecksMs", () => deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency }));
+      weekPreview.coachTrustCheck = coachTrust;
+      weekPreview.narrativeConsistency = narrativeConsistency;
+      if (!coachTrust.explainable) {
+        weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+        weekPreview.debugFlags.push("coach_trust_check_failed");
+      }
+      if (!narrativeConsistency.pass) {
+        weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+        weekPreview.debugFlags.push("narrative_consistency_warning");
+      }
     }
-    if (!narrativeConsistency.pass) {
-      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
-      weekPreview.debugFlags.push("narrative_consistency_warning");
-    }
+  } else if (weekPreview) {
+    weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+    weekPreview.debugFlags.push("deep_validation_checks_skipped_fast_path");
   }
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
   const renderedText = lines.join("\n");
   validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision);
-  const renderQuality = runRenderQualityChecks({
-    renderedText,
-    weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
-  });
-  if (weekPreview) weekPreview.renderQuality = renderQuality;
-  if (!renderQuality.renderQualityPass) {
-    console.warn("render_quality_warning", renderQuality);
+  if (enableDeepChecks) {
+    const renderQuality = measure("acceptanceAndTrustChecksMs", () => runRenderQualityChecks({
+      renderedText,
+      weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
+    }));
+    if (weekPreview) weekPreview.renderQuality = renderQuality;
+    if (!renderQuality.renderQualityPass) {
+      console.warn("render_quality_warning", renderQuality);
+    }
   }
 
   if (normalizedVerbosity !== "debug") {
@@ -13249,11 +13336,11 @@ function buildComments(
 
   const debugRenderedText = lines.join("\n");
   validateResolvedDecisionRenderConsistency(debugRenderedText, resolvedDecision);
-  if (weekPreview && !weekPreview.renderQuality) {
-    weekPreview.renderQuality = runRenderQualityChecks({
+  if (enableDeepChecks && weekPreview && !weekPreview.renderQuality) {
+    weekPreview.renderQuality = measure("acceptanceAndTrustChecksMs", () => runRenderQualityChecks({
       renderedText: debugRenderedText,
       weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
-    });
+    }));
   }
   return debugRenderedText;
 }
