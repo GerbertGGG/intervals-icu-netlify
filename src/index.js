@@ -10977,12 +10977,13 @@ function buildWhyNarrative(reasons = []) {
     .map((r) => normalizeWhyReason(String(r || "").trim().replace(/^•\s*/, "")))
     .filter(Boolean)
     .slice(0, 3);
+  const lowerLead = (text) => String(text || "").replace(/^([A-ZÄÖÜ])/, (ch) => ch.toLowerCase());
   if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
-  if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0]}.`;
+  if (cleaned.length === 1) return `Heute kontrolliert, weil ${lowerLead(cleaned[0])}.`;
   if (cleaned.length === 2) {
-    return `Heute kontrolliert, weil ${cleaned[0]} und ${cleaned[1]}. Das hält den Wochenrhythmus stabil und bereitet den nächsten sinnvollen Reiz vor.`;
+    return `Heute kontrolliert, weil ${lowerLead(cleaned[0])} und ${lowerLead(cleaned[1])}. Das hält den Wochenrhythmus stabil und bereitet den nächsten sinnvollen Reiz vor.`;
   }
-  return `Heute kontrolliert, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
+  return `Heute kontrolliert, weil ${lowerLead(cleaned[0])} und zusätzlich ${lowerLead(cleaned[1])} sowie ${lowerLead(cleaned[2])}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
 }
 
 function humanizeDecisionReason(reasonToken) {
@@ -11156,9 +11157,10 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
   } else {
     lines.push("• Longrun: diese Woche aktuell nicht im Fokus, später prüfen.");
   }
-  const strengthRemainingMinutes = Number(strengthState?.remainingMinutes || 0);
-  const strengthRemainingSessions = Number(strengthState?.remainingSessions || 0);
-  if (isStrengthWorkOpen(strengthState) || strengthRemainingMinutes > 0 || strengthRemainingSessions > 0) {
+  const strengthRemainingMinutes = parseInt(String(strengthState?.remainingMinutes ?? 0), 10) || 0;
+  const strengthRemainingSessions = parseInt(String(strengthState?.remainingSessions ?? 0), 10) || 0;
+  const strengthWorkOpen = isStrengthWorkOpen(strengthState) || strengthRemainingMinutes > 0 || strengthRemainingSessions > 0;
+  if (strengthWorkOpen) {
     lines.push(`• Kraft/Stabi: noch ${strengthRemainingSessions} Einheiten bzw. ${strengthRemainingMinutes}′ offen.`);
   } else {
     lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
