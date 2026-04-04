@@ -7465,6 +7465,11 @@ function buildWeekPreview(
         plannedStrengthTotal,
       });
       traceInput.policy = policy;
+      traceInput.strength = {
+        targetSessions: policy?.budgets?.strengthTargetSessions ?? 0,
+        remainingSessions: policy?.budgets?.strengthRemainingSessions ?? 0,
+        preferredDays: strengthPref,
+      };
 
       if (overlayMode === "TAPER") {
         decisionTrace.push("overlay:taper");
@@ -7645,11 +7650,16 @@ function buildWeekPreview(
       const prevIntensities = days.slice(-2).map((d) => d.intensity);
       if (prevIntensities.length === 2 && prevIntensities.every((x) => x === "HIGH")) {
         decisionTrace.push("safety_override:too_many_high_days");
+        const reconciledFrom = { sessionType, sessionLabel, intensity, keyType: keyType || null };
         sessionType = "REST";
         intensity = "NONE";
         sessionLabel = "Pause oder Mobilität";
         keyType = null;
         decisionCandidates.push({ candidate: "REST", status: "selected", reason: "safety_too_many_high_days" });
+        traceInput.reconciled = {
+          from: reconciledFrom,
+          reason: "safety_too_many_high_days",
+        };
       }
       return {
         sessionType,
@@ -7663,6 +7673,7 @@ function buildWeekPreview(
           inputs: traceInput,
           candidates: decisionCandidates,
           selected: { sessionType, sessionLabel, intensity, keyType: keyType || null },
+          reconciled: traceInput.reconciled || null,
           mainReasons: decisionTrace.slice(-3),
         },
       };
@@ -7678,6 +7689,7 @@ function buildWeekPreview(
           sessionLabel: `🏁 Wettkampf${distanceSuffix}`,
           keyType: null,
           intensity: "HIGH",
+          overlayMode,
           overlayActive: false,
           status: dayActivities.length ? "DONE" : (date < todayIso ? "MISSED" : "PLANNED"),
           note: "Renntag — alles andere pausiert",
@@ -7710,6 +7722,7 @@ function buildWeekPreview(
           sessionLabel: doneMeta.sessionLabel,
           keyType: sessionType === "KEY" ? (getKeyType(dayActivities[0]) || keyCompliance?.plannedKeyType || null) : null,
           intensity: doneMeta.intensity,
+          overlayMode,
           overlayActive: overlayMode !== "NORMAL",
           status: "DONE",
           note: null,
@@ -7732,6 +7745,7 @@ function buildWeekPreview(
           sessionLabel: "Key nicht absolviert",
           keyType: null,
           intensity: "NONE",
+          overlayMode,
           overlayActive: overlayMode !== "NORMAL",
           status: "MISSED",
           note: null,
@@ -7760,6 +7774,7 @@ function buildWeekPreview(
         sessionLabel: decision.sessionLabel,
         keyType: decision.keyType,
         intensity: decision.intensity,
+        overlayMode,
         overlayActive: overlayMode !== "NORMAL",
         status: "PLANNED",
         note: decision.note,
@@ -7791,8 +7806,16 @@ function buildWeekPreview(
       entry.status === "PLANNED"
       && ["GA", "KEY", "LONGRUN"].includes(entry.sessionType)
     ).length;
+    const deriveRunFrequencyCapFromPolicy = (entries, fallbackMax) => {
+      for (const entry of entries) {
+        const cap = Number(entry?.decisionTraceStructured?.inputs?.policy?.budgets?.runFrequencyMax);
+        if (Number.isFinite(cap) && cap > 0) return cap;
+      }
+      return fallbackMax;
+    };
     let plannedRuns = countPlannedRuns(days);
-    if (plannedRuns > fallbackRunTargetRange.max) {
+    const weeklyRunFrequencyMax = deriveRunFrequencyCapFromPolicy(days, fallbackRunTargetRange.max);
+    if (plannedRuns > weeklyRunFrequencyMax) {
       const optionalLowIndices = [];
       const nonCoreGaIndices = [];
       for (let idx = 0; idx < days.length; idx += 1) {
@@ -7802,7 +7825,7 @@ function buildWeekPreview(
         else if (entry.sessionType === "GA") nonCoreGaIndices.push(idx);
       }
       for (const idx of optionalLowIndices) {
-        if (plannedRuns <= fallbackRunTargetRange.max) break;
+        if (plannedRuns <= weeklyRunFrequencyMax) break;
         const previousSelection = {
           sessionType: days[idx].sessionType,
           sessionLabel: days[idx].sessionLabel,
@@ -7847,7 +7870,7 @@ function buildWeekPreview(
         plannedRuns = countPlannedRuns(days);
       }
       for (const idx of nonCoreGaIndices) {
-        if (plannedRuns <= fallbackRunTargetRange.max) break;
+        if (plannedRuns <= weeklyRunFrequencyMax) break;
         const previousSelection = {
           sessionType: days[idx].sessionType,
           sessionLabel: days[idx].sessionLabel,
@@ -7905,6 +7928,10 @@ function buildWeekPreview(
       { id: "POST_RACE_RAMP", key: "blocked", longrun: "blocked", expectedDay: "GA", reasons: ["overlay:post_race_ramp_easy"] },
       { id: "LIFE_EVENT_STOP", key: "blocked", longrun: "blocked", expectedDay: "REST", reasons: ["overlay_force_rest"] },
     ];
+    const policyAcceptanceResults = runPolicyAcceptanceScenarios({
+      scenarios: policyAcceptanceScenarios,
+      days,
+    });
     const text = days
       .map((entry) => {
         const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
@@ -7916,7 +7943,7 @@ function buildWeekPreview(
       })
       .join("\n");
 
-    return { days, text, thisWeekActuals, strengthState, policyAcceptanceScenarios };
+    return { days, text, thisWeekActuals, strengthState, policyAcceptanceScenarios, policyAcceptanceResults };
   } catch {
     return { days: [], text: "(Wochenplan nicht verfügbar)", thisWeekActuals: null };
   }
@@ -11364,6 +11391,7 @@ function normalizeResolvedSessionType(type) {
 
 function buildResolvedSessionDecision({
   todaySessionType,
+  todayDecisionCandidate,
   plannedSessionLabel,
   longrunProgressionTargetMin,
 }) {
@@ -11376,13 +11404,25 @@ function buildResolvedSessionDecision({
 
   if (sessionType === "LONGRUN") {
     const longrunLabel = resolvedLongrunMin > 0 ? `Longrun ${resolvedLongrunMin}′` : "Longrun";
-    return { sessionType, sessionLabel: longrunLabel, sessionDurationMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null, longrunTargetMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null };
+    return {
+      sessionType,
+      sessionLabel: longrunLabel,
+      sessionDurationMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null,
+      longrunTargetMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null,
+      todayDecision: longrunLabel,
+    };
   }
+  const legacyCandidate = String(todayDecisionCandidate || "");
+  const containsLongrunNarrative = /longrun|langer lauf/i.test(legacyCandidate);
+  const fallbackTodayDecision = containsLongrunNarrative
+    ? "Locker/GA wie im Wochenplan"
+    : String(legacyCandidate || "").replace(/\.$/, "").trim();
   return {
     sessionType,
     sessionLabel: String(plannedSessionLabel || "").trim() || null,
     sessionDurationMin: plannedDurationMin,
     longrunTargetMin: null,
+    todayDecision: fallbackTodayDecision || "Locker/GA wie im Wochenplan",
   };
 }
 
@@ -11492,6 +11532,89 @@ function checkTodayWeeklyConsistency({ todayPlanEntry, resolvedDecision, todayDe
     return { ok: false, ...payload };
   }
   return { ok: true, weekSessionType, resolvedSessionType, narrativeSessionType, mismatches: [] };
+}
+
+function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
+  const normalizedDays = Array.isArray(days) ? days : [];
+  const scenarioMatchers = {
+    BASE_KEY_BLOCKED_TODAY: (entry) => entry?.isToday === true && String(entry?.overlayMode || "NORMAL") === "NORMAL",
+    BASE_LONGRUN_AND_STRENGTH_OPEN: (entry) => entry?.status === "PLANNED" && entry?.sessionType === "LONGRUN",
+    BUILD_KEY_DUE: (entry) => entry?.status === "PLANNED" && entry?.sessionType === "KEY",
+    TAPER_RECOVERY_DEFAULT: (entry) => String(entry?.overlayMode || "") === "TAPER",
+    POST_RACE_RAMP: (entry) => String(entry?.overlayMode || "").startsWith("POST_RACE_RAMP"),
+    LIFE_EVENT_STOP: (entry) => String(entry?.overlayMode || "") === "LIFE_EVENT_STOP",
+  };
+
+  return (Array.isArray(scenarios) ? scenarios : []).map((scenario) => {
+    const matcher = scenarioMatchers[scenario?.id] || (() => false);
+    const matchedDay = normalizedDays.find((entry) => matcher(entry));
+    const trace = matchedDay?.decisionTraceStructured || {};
+    const actual = {
+      dayIso: matchedDay?.date || null,
+      overlayMode: matchedDay?.overlayMode || null,
+      policy: trace?.inputs?.policy || null,
+      keyPlan: trace?.inputs?.key || null,
+      longrunPlan: trace?.inputs?.longrun || null,
+      selected: trace?.selected || null,
+      mainReasons: Array.isArray(trace?.mainReasons) ? trace.mainReasons : [],
+    };
+    const expected = {
+      expectedDay: scenario?.expectedDay || null,
+      key: scenario?.key || null,
+      longrun: scenario?.longrun || null,
+      reasons: Array.isArray(scenario?.reasons) ? scenario.reasons : [],
+    };
+    const mismatches = [];
+    if (!matchedDay) {
+      mismatches.push("no_matching_day_in_current_preview");
+    } else {
+      if (expected.expectedDay && String(actual?.selected?.sessionType || "").toUpperCase() !== String(expected.expectedDay).toUpperCase()) {
+        mismatches.push(`expectedDay:${expected.expectedDay}!=${actual?.selected?.sessionType || "n/a"}`);
+      }
+      if (expected.key && expected.key !== "optional") {
+        const keyStatus = actual?.keyPlan?.status || (actual?.policy?.safety?.allowKey ? "optional" : "blocked");
+        if (String(keyStatus) !== String(expected.key)) mismatches.push(`key:${expected.key}!=${keyStatus}`);
+      }
+      if (expected.longrun && expected.longrun !== "optional") {
+        const longrunStatus = actual?.longrunPlan?.status || (actual?.policy?.safety?.allowLongrun ? "optional" : "blocked");
+        if (String(longrunStatus) !== String(expected.longrun)) mismatches.push(`longrun:${expected.longrun}!=${longrunStatus}`);
+      }
+      for (const reason of expected.reasons) {
+        const reasonFound = actual.mainReasons.some((line) => String(line || "").includes(reason))
+          || String(actual?.keyPlan?.reasons || "").includes(reason)
+          || String(actual?.longrunPlan?.reasons || "").includes(reason)
+          || String(actual?.policy?.reasons || "").includes(reason)
+          || String(actual?.policy?.safety?.reasons || "").includes(reason);
+        if (!reasonFound) mismatches.push(`missing_reason:${reason}`);
+      }
+    }
+
+    return {
+      scenarioId: scenario?.id || "UNKNOWN",
+      pass: mismatches.length === 0,
+      expected,
+      actual,
+      mismatches,
+    };
+  });
+}
+
+function deriveCoachTrustSummary({ resolvedDecision, weekPreview }) {
+  const today = (weekPreview?.days || []).find((entry) => entry?.isToday) || null;
+  const trace = today?.decisionTraceStructured || null;
+  if (!trace || !resolvedDecision?.sessionType) {
+    return { explainable: false, reasons: ["missing_today_trace_or_resolved_decision"] };
+  }
+  const required = [
+    trace?.inputs?.policy ? null : "missing_policy",
+    trace?.selected?.sessionType ? null : "missing_selected",
+    Array.isArray(trace?.mainReasons) && trace.mainReasons.length ? null : "missing_main_reasons",
+  ].filter(Boolean);
+  const explainable = required.length === 0;
+  const explanation = explainable
+    ? `${resolvedDecision.sessionType}: gewählt aus Policy (${trace.inputs.policy?.overlayMode || "n/a"}) mit Gründen ${trace.mainReasons.slice(0, 2).join(" | ")}.`
+    : null;
+  return { explainable, reasons: required, explanation };
 }
 
 function buildResolvedNextKeyLine(resolvedDecision) {
@@ -11666,14 +11789,17 @@ function buildRecommendationsAndBottomLine(state) {
   const gapRecommendations = state?.gapRecommendations || null;
 
   const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
+  const resolvedSessionType = normalizeResolvedSessionType(state?.resolvedSessionType);
   const hasConcreteKeySession = state?.hasConcreteKeySession === true;
   const todayActionLower = todayAction.toLowerCase();
   const todaySignalsNoKey = ["nächster key", "kein key", "bis dahin locker/ga", "mindestabstand"];
   const todaySignalsNoRun = ["kein lauf", "ruhetag", "easy / frei"];
   const suppressKeyBottomLine = todaySignalsNoKey.some((token) => todayActionLower.includes(token))
     || todaySignalsNoRun.some((token) => todayActionLower.includes(token));
-  const keyTodayBottomLine = state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort && !suppressKeyBottomLine;
+  const keyTodayBottomLine = resolvedSessionType === "KEY"
+    || (state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort && !suppressKeyBottomLine);
   const shouldAppendLongrunPriority = !keyTodayBottomLine
+    && resolvedSessionType !== "LONGRUN"
     && Number.isFinite(longRunDoneMin)
     && Number.isFinite(longRunTargetMin)
     && longRunTargetMin > 0
@@ -12338,6 +12464,12 @@ function buildComments(
       weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
       weekPreview.debugFlags.push("today_weekly_consistency_warning");
     }
+    const coachTrust = deriveCoachTrustSummary({ resolvedDecision, weekPreview });
+    weekPreview.coachTrustCheck = coachTrust;
+    if (!coachTrust.explainable) {
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("coach_trust_check_failed");
+    }
     weekPreview.text = weekPreview.days
       .map((entry) => {
         const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
@@ -12360,6 +12492,7 @@ function buildComments(
     ? `Wochenplan bewusst konservativ (${String(overlayMode || "NORMAL").toUpperCase()}): aktuell kein zusätzlicher Key/Kraft geplant.`
     : null;
   const decisionCompact = buildRecommendationsAndBottomLine({
+    resolvedSessionType: resolvedDecision?.sessionType,
     runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
     intensityDistribution: keyCompliance?.intensityDistribution,
@@ -16336,6 +16469,8 @@ const __internalTestHooks = Object.freeze({
   buildNextRunRecommendation,
   resolveTodaySessionContext,
   buildResolvedSessionDecision,
+  runPolicyAcceptanceScenarios,
+  deriveCoachTrustSummary,
   validateResolvedDecisionRenderConsistency,
   resolveBottomLine,
   isIntervalLikeKeyType,
