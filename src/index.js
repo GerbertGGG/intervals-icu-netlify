@@ -6992,8 +6992,15 @@ function buildWeekPreview(
     distanceDiagnostics,
     fatigue,
     includeAcceptanceScenarios = true,
+    perfSink = null,
   } = {}
 ) {
+  const addAcceptanceBreakdown = (label, ms) => {
+    if (!perfSink || !label) return;
+    const elapsed = Math.max(0, Number(ms) || 0);
+    perfSink.acceptanceAndTrustBreakdown = perfSink.acceptanceAndTrustBreakdown || {};
+    perfSink.acceptanceAndTrustBreakdown[label] = (Number(perfSink.acceptanceAndTrustBreakdown[label]) || 0) + elapsed;
+  };
   try {
     const LONGRUN_OVERLAY_BLOCKERS = new Set([
       "TAPER",
@@ -8050,12 +8057,17 @@ function buildWeekPreview(
       { id: "POST_RACE_RAMP", key: "blocked", longrun: "blocked", expectedDay: "GA", reasons: ["overlay:post_race_ramp_easy"] },
       { id: "LIFE_EVENT_STOP", key: "blocked", longrun: "blocked", expectedDay: "REST", reasons: ["overlay_force_rest"] },
     ];
+    const scenarioRunnerStartedAt = Date.now();
     const policyAcceptanceResults = includeAcceptanceScenarios
       ? runPolicyAcceptanceScenarios({
           scenarios: policyAcceptanceScenarios,
           days,
+          onTiming: (timing) => {
+            addAcceptanceBreakdown("compareMismatchLoopsMs", timing?.compareMismatchLoopsMs);
+          },
         })
       : null;
+    addAcceptanceBreakdown("scenarioRunnerMs", Date.now() - scenarioRunnerStartedAt);
     const text = days
       .map((entry) => {
         const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
@@ -9064,7 +9076,32 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     finalized.totalMs = Math.round(totalMs);
     finalized.attributedMs = Math.round(attributedMs);
     finalized.instrumentedSpans = Math.max(0, Math.round(Number(bucket.__spanCount) || 0));
+    if (bucket.acceptanceAndTrustBreakdown && typeof bucket.acceptanceAndTrustBreakdown === "object") {
+      const breakdown = {};
+      let breakdownTotal = 0;
+      for (const [key, value] of Object.entries(bucket.acceptanceAndTrustBreakdown)) {
+        const normalizedValue = Math.max(0, Number(value) || 0);
+        breakdown[key] = Math.round(normalizedValue);
+        breakdownTotal += normalizedValue;
+      }
+      const acceptanceTotal = Math.max(0, Number(bucket.acceptanceAndTrustChecksMs) || 0);
+      const otherMs = Math.max(0, acceptanceTotal - breakdownTotal);
+      breakdown.otherMs = Math.round(otherMs);
+      finalized.acceptanceAndTrustBreakdown = breakdown;
+    }
     return finalized;
+  };
+  const addAcceptanceBreakdown = (bucket, label, ms) => {
+    if (!bucket || !label) return;
+    const elapsed = Math.max(0, Number(ms) || 0);
+    bucket.acceptanceAndTrustBreakdown = bucket.acceptanceAndTrustBreakdown || {};
+    bucket.acceptanceAndTrustBreakdown[label] = (Number(bucket.acceptanceAndTrustBreakdown[label]) || 0) + elapsed;
+  };
+  const mergeAcceptanceBreakdown = (targetBucket, sourceBucket) => {
+    if (!targetBucket || !sourceBucket?.acceptanceAndTrustBreakdown) return;
+    for (const [label, value] of Object.entries(sourceBucket.acceptanceAndTrustBreakdown)) {
+      addAcceptanceBreakdown(targetBucket, label, value);
+    }
   };
   const singleDayDebugFastPath = isSingleDayDebugFastPath({ oldest, newest, write, debug });
   const limiterMax = debug ? FAST_DEBUG_LIMITER_MAX : 6;
@@ -10031,6 +10068,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       distanceDiagnostics,
       fatigue,
       includeAcceptanceScenarios: shouldRunDeepValidationChecks,
+      perfSink: dayPerf,
     }));
     if (day === oldest) {
       strengthCountThisWeek = Math.max(0, Math.floor(Number(weekPreview?.thisWeekActuals?.strengthCount || 0)));
@@ -10118,6 +10156,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     if (dayPerf && commentsPerf?.acceptanceAndTrustChecksMs) {
       dayPerf.acceptanceAndTrustChecksMs += commentsPerf.acceptanceAndTrustChecksMs;
     }
+    mergeAcceptanceBreakdown(dayPerf, commentsPerf);
     let weeklyReview = null;
     let weeklyFocus = null;
     let dailyReportText = "";
@@ -10228,6 +10267,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
     let coachAnalysis = null;
     await timedSync(dayPerf, "acceptanceAndTrustChecksMs", async () => {
+      const coachTrustStartedAt = Date.now();
       try {
       let latestRaceDateIso = null;
       let latestRaceEntry = null;
@@ -10300,6 +10340,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
       } catch {
         coachAnalysis = null;
+      } finally {
+        addAcceptanceBreakdown(dayPerf, "coachTrustMs", Date.now() - coachTrustStartedAt);
       }
     });
     try {
@@ -12108,7 +12150,7 @@ function checkTodayWeeklyConsistency({ todayPlanEntry, resolvedDecision, todayDe
   return { ok: true, weekSessionType, resolvedSessionType, narrativeSessionType, mismatches: [] };
 }
 
-function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
+function runPolicyAcceptanceScenarios({ scenarios = [], days = [], onTiming = null }) {
   const normalizedDays = Array.isArray(days) ? days : [];
   const scenarioMatchers = {
     BASE_KEY_BLOCKED_TODAY: (entry) => entry?.isToday === true && String(entry?.overlayMode || "NORMAL") === "NORMAL",
@@ -12192,7 +12234,8 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
     };
   };
 
-  return (Array.isArray(scenarios) ? scenarios : []).map((scenario) => {
+  const compareLoopStartedAt = Date.now();
+  const results = (Array.isArray(scenarios) ? scenarios : []).map((scenario) => {
     const matcher = scenarioMatchers[scenario?.id] || (() => false);
     const matchedDay = normalizedDays.find((entry) => matcher(entry));
     const trace = matchedDay?.decisionTraceStructured || {};
@@ -12261,6 +12304,12 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
       mismatches: [...mismatches, ...narrativeMismatches, ...coachEvaluation.coachingConcerns],
     };
   });
+  if (typeof onTiming === "function") {
+    onTiming({
+      compareMismatchLoopsMs: Date.now() - compareLoopStartedAt,
+    });
+  }
+  return results;
 }
 
 function deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency = null }) {
@@ -12670,6 +12719,18 @@ function buildComments(
       return fn();
     } finally {
       if (localPerf) localPerf[key] = (localPerf[key] || 0) + (Date.now() - started);
+    }
+  };
+  const measureAcceptance = (label, fn) => {
+    const started = Date.now();
+    try {
+      return measure("acceptanceAndTrustChecksMs", fn);
+    } finally {
+      if (localPerf && label) {
+        localPerf.acceptanceAndTrustBreakdown = localPerf.acceptanceAndTrustBreakdown || {};
+        localPerf.acceptanceAndTrustBreakdown[label] =
+          (Number(localPerf.acceptanceAndTrustBreakdown[label]) || 0) + (Date.now() - started);
+      }
     }
   };
   const bikesTodayList = Array.isArray(bikesToday) ? bikesToday : [];
@@ -13322,7 +13383,7 @@ function buildComments(
   });
   let narrativeConsistency = null;
   if (enableDeepChecks) {
-    narrativeConsistency = measure("acceptanceAndTrustChecksMs", () => evaluateNarrativeConsistency({
+    narrativeConsistency = measureAcceptance("narrativeConsistencyMs", () => evaluateNarrativeConsistency({
       resolvedDecision,
       narrativeContext,
       recommendationLines: recommendationRenderLines,
@@ -13333,7 +13394,7 @@ function buildComments(
       trainingStatusLines: trainingStateLines,
     }));
     if (weekPreview) {
-      const coachTrust = measure("acceptanceAndTrustChecksMs", () => deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency }));
+      const coachTrust = measureAcceptance("coachTrustMs", () => deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency }));
       weekPreview.coachTrustCheck = coachTrust;
       weekPreview.narrativeConsistency = narrativeConsistency;
       if (!coachTrust.explainable) {
@@ -13352,9 +13413,9 @@ function buildComments(
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
   const renderedText = lines.join("\n");
-  validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision);
+  measureAcceptance("otherTextValidationMs", () => validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision));
   if (enableDeepChecks) {
-    const renderQuality = measure("acceptanceAndTrustChecksMs", () => runRenderQualityChecks({
+    const renderQuality = measureAcceptance("renderQualityMs", () => runRenderQualityChecks({
       renderedText,
       weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
     }));
@@ -13424,9 +13485,9 @@ function buildComments(
   ]);
 
   const debugRenderedText = lines.join("\n");
-  validateResolvedDecisionRenderConsistency(debugRenderedText, resolvedDecision);
+  measureAcceptance("otherTextValidationMs", () => validateResolvedDecisionRenderConsistency(debugRenderedText, resolvedDecision));
   if (enableDeepChecks && weekPreview && !weekPreview.renderQuality) {
-    weekPreview.renderQuality = measure("acceptanceAndTrustChecksMs", () => runRenderQualityChecks({
+    weekPreview.renderQuality = measureAcceptance("renderQualityMs", () => runRenderQualityChecks({
       renderedText: debugRenderedText,
       weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
     }));
