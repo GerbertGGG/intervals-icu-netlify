@@ -7921,10 +7921,36 @@ function buildWeekPreview(
     }
 
     const policyAcceptanceScenarios = [
-      { id: "BASE_KEY_BLOCKED_TODAY", key: "blocked", longrun: "optional", expectedDay: "GA", reasons: ["next_allowed_not_reached"] },
-      { id: "BASE_LONGRUN_AND_STRENGTH_OPEN", key: "optional", longrun: "due", expectedDay: "LONGRUN", reasons: ["longrun_due"] },
-      { id: "BUILD_KEY_DUE", key: "due", longrun: "optional", expectedDay: "KEY", reasons: ["key_due"] },
-      { id: "TAPER_RECOVERY_DEFAULT", key: "optional", longrun: "blocked", expectedDay: "RECOVERY", reasons: ["overlay:taper"] },
+      {
+        id: "BASE_KEY_BLOCKED_TODAY",
+        key: "blocked",
+        longrun: "optional",
+        expectedDay: "GA",
+        reasons: ["next_allowed_not_reached"],
+        expectedPriority: ["GA"],
+        expectedNonPriority: ["KEY"],
+        maxAcceptableAlternative: ["REST"],
+      },
+      {
+        id: "BASE_LONGRUN_AND_STRENGTH_OPEN",
+        key: "optional",
+        longrun: "due",
+        expectedDay: "LONGRUN",
+        reasons: ["longrun_due"],
+        expectedPriority: ["LONGRUN"],
+        expectedNonPriority: ["STRENGTH"],
+        coachingConcern: "longrun sollte Vorrang vor zusätzlicher Strength-Session haben, wenn longrun fällig ist",
+      },
+      {
+        id: "BUILD_KEY_DUE",
+        key: "due",
+        longrun: "optional",
+        expectedDay: "KEY",
+        reasons: ["key_due"],
+        expectedPriority: ["KEY"],
+        expectedNonPriority: ["LONGRUN"],
+      },
+      { id: "TAPER_RECOVERY_DEFAULT", key: "optional", longrun: "blocked", expectedDay: "RECOVERY", reasons: ["overlay:taper"], expectedPriority: ["RECOVERY"], maxAcceptableAlternative: ["GA"] },
       { id: "POST_RACE_RAMP", key: "blocked", longrun: "blocked", expectedDay: "GA", reasons: ["overlay:post_race_ramp_easy"] },
       { id: "LIFE_EVENT_STOP", key: "blocked", longrun: "blocked", expectedDay: "REST", reasons: ["overlay_force_rest"] },
     ];
@@ -11762,6 +11788,42 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
     return { whyPass, focusPass, trainingStatusPass, mismatches };
   };
 
+  const evaluateScenarioCoachConsistency = ({ selected, keyPlan, longrunPlan }, scenario) => {
+    const coachingConcerns = [];
+    const selectedType = normalizeResolvedSessionType(selected?.sessionType);
+    const expectedPriority = Array.isArray(scenario?.expectedPriority)
+      ? scenario.expectedPriority.map((v) => String(v || "").toUpperCase()).filter(Boolean)
+      : (scenario?.expectedPriority ? [String(scenario.expectedPriority).toUpperCase()] : []);
+    const expectedNonPriority = Array.isArray(scenario?.expectedNonPriority)
+      ? scenario.expectedNonPriority.map((v) => String(v || "").toUpperCase()).filter(Boolean)
+      : (scenario?.expectedNonPriority ? [String(scenario.expectedNonPriority).toUpperCase()] : []);
+    const maxAcceptableAlternative = Array.isArray(scenario?.maxAcceptableAlternative)
+      ? scenario.maxAcceptableAlternative.map((v) => String(v || "").toUpperCase()).filter(Boolean)
+      : (scenario?.maxAcceptableAlternative ? [String(scenario.maxAcceptableAlternative).toUpperCase()] : []);
+
+    if (selectedType === "UNKNOWN") coachingConcerns.push("coach_selected_unknown");
+    if (expectedPriority.length && !expectedPriority.includes(selectedType)) {
+      const altOk = maxAcceptableAlternative.includes(selectedType);
+      if (!altOk) coachingConcerns.push(`coach_priority_missed:${expectedPriority.join("|")}->${selectedType}`);
+    }
+    if (expectedNonPriority.includes(selectedType)) {
+      coachingConcerns.push(`coach_non_priority_selected:${selectedType}`);
+    }
+    if (keyPlan?.status === "due" && selectedType === "LONGRUN") {
+      coachingConcerns.push("coach_key_due_but_longrun_selected");
+    }
+    if (longrunPlan?.status === "due" && selectedType === "STRENGTH") {
+      coachingConcerns.push("coach_longrun_due_but_strength_selected");
+    }
+    return {
+      coachPass: coachingConcerns.length === 0,
+      coachingConcerns,
+      expectedPriority,
+      expectedNonPriority,
+      maxAcceptableAlternative,
+    };
+  };
+
   return (Array.isArray(scenarios) ? scenarios : []).map((scenario) => {
     const matcher = scenarioMatchers[scenario?.id] || (() => false);
     const matchedDay = normalizedDays.find((entry) => matcher(entry));
@@ -11781,6 +11843,7 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
       key: scenario?.key || null,
       longrun: scenario?.longrun || null,
       reasons: Array.isArray(scenario?.reasons) ? scenario.reasons : [],
+      coachingConcern: scenario?.coachingConcern || null,
     };
     const mismatches = [];
     if (!matchedDay) {
@@ -11810,17 +11873,24 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
     const blockConsistency = evaluateScenarioNarrativeBlockConsistency(actual);
     const narrativeMismatches = [...blockConsistency.mismatches];
 
+    const coachEvaluation = evaluateScenarioCoachConsistency(actual, scenario);
+
     return {
       scenarioId: scenario?.id || "UNKNOWN",
-      pass: mismatches.length === 0 && narrativeMismatches.length === 0,
+      pass: mismatches.length === 0 && narrativeMismatches.length === 0 && coachEvaluation.coachPass,
       logicPass: mismatches.length === 0,
       narrativePass: narrativeMismatches.length === 0,
+      coachPass: coachEvaluation.coachPass,
       whyPass: blockConsistency.whyPass,
       focusPass: blockConsistency.focusPass,
       trainingStatusPass: blockConsistency.trainingStatusPass,
+      coachingConcerns: coachEvaluation.coachingConcerns,
+      expectedPriority: coachEvaluation.expectedPriority,
+      expectedNonPriority: coachEvaluation.expectedNonPriority,
+      maxAcceptableAlternative: coachEvaluation.maxAcceptableAlternative,
       expected,
       actual,
-      mismatches: [...mismatches, ...narrativeMismatches],
+      mismatches: [...mismatches, ...narrativeMismatches, ...coachEvaluation.coachingConcerns],
     };
   });
 }
