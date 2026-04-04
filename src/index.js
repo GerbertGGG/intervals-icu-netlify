@@ -9076,6 +9076,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     finalized.totalMs = Math.round(totalMs);
     finalized.attributedMs = Math.round(attributedMs);
     finalized.instrumentedSpans = Math.max(0, Math.round(Number(bucket.__spanCount) || 0));
+    if (bucket.validationMode) finalized.validationMode = bucket.validationMode;
     if (bucket.acceptanceAndTrustBreakdown && typeof bucket.acceptanceAndTrustBreakdown === "object") {
       const breakdown = {};
       let breakdownTotal = 0;
@@ -9284,7 +9285,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     for (const day of daysList) {
       const dayProcessingStartedAt = perfNow();
       const dayPerf = perf ? createDayPerfBucket() : null;
-      const shouldRunDeepValidationChecks = !(singleDayDebugFastPath && debugResponsePart !== "full");
+      const runtimeValidationMode = runtimeOverrides?.validationMode === "light" || runtimeOverrides?.validationMode === "full"
+        ? runtimeOverrides.validationMode
+        : null;
+      const validationMode = runtimeValidationMode
+        || ((singleDayDebugFastPath && debugResponsePart !== "full") ? "light" : "full");
+      const shouldRunDeepValidationChecks = validationMode === "full";
+      const shouldRunScenarioRunner = validationMode === "full" && runtimeOverrides?.includeAcceptanceScenarios !== false;
+      const shouldRunCoachAnalysis = validationMode === "full" || runtimeOverrides?.enableCoachAnalysis === true;
+      if (dayPerf) dayPerf.validationMode = validationMode;
       // NEW: mode + policy for this day (based on next event)
       let modeInfo;
       let policy;
@@ -10061,13 +10070,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     });
 
     // Daily report text (used for calendar NOTE instead of wellness comments)
-    const weekPreview = await timedSync(dayPerf, "weekPreviewMs", () => buildWeekPreview(ctx, day, {
+      const weekPreview = await timedSync(dayPerf, "weekPreviewMs", () => buildWeekPreview(ctx, day, {
       blockState,
       keyCompliance,
       runFloorState,
       distanceDiagnostics,
       fatigue,
-      includeAcceptanceScenarios: shouldRunDeepValidationChecks,
+      includeAcceptanceScenarios: shouldRunScenarioRunner,
       perfSink: dayPerf,
     }));
     if (day === oldest) {
@@ -10151,6 +10160,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       debug,
       verbosity: reportVerbosity,
       enableDeepChecks: shouldRunDeepValidationChecks,
+      validationMode,
       perfSink: commentsPerf,
     }));
     if (dayPerf && commentsPerf?.acceptanceAndTrustChecksMs) {
@@ -10266,9 +10276,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/(?:🏃|🗓) HEUTE\n([^\n]+)/);
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
     let coachAnalysis = null;
-    await timedSync(dayPerf, "acceptanceAndTrustChecksMs", async () => {
-      const coachTrustStartedAt = Date.now();
-      try {
+    if (shouldRunCoachAnalysis) {
+      await timedSync(dayPerf, "acceptanceAndTrustChecksMs", async () => {
+        const coachTrustStartedAt = Date.now();
+        try {
       let latestRaceDateIso = null;
       let latestRaceEntry = null;
       try {
@@ -10338,12 +10349,16 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         vdotTrend: hasRecentRace ? estimateVdotTrendFromEfTrend(vdotActual, efTrendPct) : null,
       };
         coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
-      } catch {
-        coachAnalysis = null;
-      } finally {
-        addAcceptanceBreakdown(dayPerf, "coachTrustMs", Date.now() - coachTrustStartedAt);
-      }
-    });
+        } catch {
+          coachAnalysis = null;
+        } finally {
+          addAcceptanceBreakdown(dayPerf, "coachTrustMs", Date.now() - coachTrustStartedAt);
+        }
+      });
+    } else if (weekPreview) {
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("coach_analysis_skipped_light_validation");
+    }
     try {
       if (coachAnalysis && !isRaceDayToday) {
         dailyReportText = insertCoachAnalysisAfterHeute(dailyReportText, coachAnalysis);
@@ -11361,8 +11376,10 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
     } else {
       lines.push("• Kraft/Stabi: noch eine kurze Stabi-Einheit einplanen.");
     }
-  } else {
+  } else if (strengthState && typeof strengthState === "object") {
     lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
+  } else {
+    lines.push("• Kraft/Stabi: Status prüfen (keine belastbaren Strength-Daten gefunden).");
   }
   return lines.slice(0, 5).join("\n");
 }
@@ -12063,6 +12080,23 @@ function runRenderQualityChecks({ renderedText, weekPlanAvailable }) {
   return { renderQualityPass: issues.length === 0, issues };
 }
 
+function runRenderQualityChecksLight({ renderedText = "", weekPlanAvailable = true } = {}) {
+  const issues = [];
+  const text = String(renderedText || "");
+  const lower = text.toLowerCase();
+  if (!text.includes("🏃 HEUTE") && !text.includes("🗓 HEUTE")) issues.push("missing_heute_block");
+  if (!text.includes("🧩 WARUM")) issues.push("missing_why_block");
+  if (!weekPlanAvailable && !text.includes("🗓 NÄCHSTE SCHRITTE")) issues.push("missing_next_steps_fallback");
+  if (/strength-status:\s*offen[\s\S]*?kraft\/stabi:\s*ziel für diese woche erfüllt/i.test(text)) {
+    issues.push("strength_conflict_open_vs_fulfilled");
+  }
+  if ((/status bisher:\s*kein lauf absolviert/i.test(lower) || /status:\s*bisher heute noch kein lauf absolviert/i.test(lower))
+    && /(?:🏃|🗓)\sHEUTE\n(?!Heute:)([^\n]+)/.test(text)) {
+    issues.push("today_status_mismatch");
+  }
+  return { renderQualityPass: issues.length === 0, issues };
+}
+
 function evaluateNarrativeConsistency({
   resolvedDecision,
   narrativeContext,
@@ -12120,6 +12154,32 @@ function evaluateNarrativeConsistency({
   }
   if (resolvedType === "REST" && whyText.includes("key")) {
     mismatches.push("rest_resolved_but_why_claims_key");
+  }
+  return { pass: mismatches.length === 0, mismatches };
+}
+
+function evaluateNarrativeConsistencyLight({
+  resolvedDecision,
+  narrativeContext,
+  recommendationLines = [],
+  whyLines = [],
+  focusLines = [],
+}) {
+  const mismatches = [];
+  const resolvedType = normalizeResolvedSessionType(resolvedDecision?.sessionType);
+  const selectedType = normalizeResolvedSessionType(narrativeContext?.selected?.sessionType || resolvedDecision?.sessionType);
+  const keyPlan = narrativeContext?.keyPlan || null;
+  const combinedText = [...recommendationLines, ...whyLines, ...focusLines].join(" ").toLowerCase();
+  const focusText = (focusLines || []).join(" ").toLowerCase();
+
+  if (resolvedType !== "UNKNOWN" && selectedType !== "UNKNOWN" && resolvedType !== selectedType) {
+    mismatches.push(`resolved_vs_selected:${resolvedType}->${selectedType}`);
+  }
+  if (["blocked", "not_today"].includes(keyPlan?.status) && /fokus heute: key|key-fenster offen/.test(focusText)) {
+    mismatches.push("key_blocked_but_focus_claims_open");
+  }
+  if (resolvedType === "REST" && /(key|interval|longrun)/.test(combinedText)) {
+    mismatches.push("rest_narrative_contains_quality_signals");
   }
   return { pass: mismatches.length === 0, mismatches };
 }
@@ -12707,7 +12767,7 @@ function buildComments(
     weekPreview,
     racePrediction,
   },
-  { debug = false, verbosity = "coach", enableDeepChecks = true, perfSink = null } = {}
+  { debug = false, verbosity = "coach", enableDeepChecks = true, validationMode = "full", perfSink = null } = {}
 ) {
   const lines = [];
   const localPerf = perfSink && typeof perfSink === "object"
@@ -12733,6 +12793,8 @@ function buildComments(
       }
     }
   };
+  const resolvedValidationMode = validationMode === "light" ? "light" : "full";
+  const runFullValidation = enableDeepChecks && resolvedValidationMode === "full";
   const bikesTodayList = Array.isArray(bikesToday) ? bikesToday : [];
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
   const formatSignedPct1 = (value) =>
@@ -13382,7 +13444,7 @@ function buildComments(
     explicitSessionShort,
   });
   let narrativeConsistency = null;
-  if (enableDeepChecks) {
+  if (runFullValidation) {
     narrativeConsistency = measureAcceptance("narrativeConsistencyMs", () => evaluateNarrativeConsistency({
       resolvedDecision,
       narrativeContext,
@@ -13406,93 +13468,98 @@ function buildComments(
         weekPreview.debugFlags.push("narrative_consistency_warning");
       }
     }
+  } else if (resolvedValidationMode === "light") {
+    narrativeConsistency = measureAcceptance("narrativeConsistencyMs", () => evaluateNarrativeConsistencyLight({
+      resolvedDecision,
+      narrativeContext,
+      recommendationLines: recommendationRenderLines,
+      whyLines,
+      focusLines: focusRenderLines,
+    }));
+    if (weekPreview) {
+      weekPreview.narrativeConsistency = narrativeConsistency;
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("light_validation_mode_active");
+    }
   } else if (weekPreview) {
     weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
     weekPreview.debugFlags.push("deep_validation_checks_skipped_fast_path");
   }
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
+  let finalRenderedText = lines.join("\n");
+  if (normalizedVerbosity === "debug") {
+    const diagnoseKernelLines = [
+      "DIAGNOSE-KERN",
+      `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}`,
+      `Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}`,
+      `Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`,
+      `Scores: Base ${distanceDiagnostics?.scores?.base ?? "n/a"} | Specificity ${distanceDiagnostics?.scores?.specificity ?? "n/a"} | Longrun ${distanceDiagnostics?.scores?.longrun ?? "n/a"} | Robustness ${distanceDiagnostics?.scores?.robustness ?? "n/a"} | Execution ${distanceDiagnostics?.scores?.execution ?? "n/a"}`,
+      fitnessProfile
+        ? `Fitness: Aerob ${fitnessProfile.aerobScore} | Anaerob ${fitnessProfile.anaerobScore} | Profil: ${fitnessProfile.profileType} | Konfidenz: ${fitnessProfile.confidence}`
+        : "Fitness: n/a (zu wenig Daten)",
+      "",
+    ];
+    const scoreExplanationLines = [
+      "SCORE-ERKLÄRUNG",
+      `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
+      `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
+      `Longrun · aktuell ${longRunDoneMin}′ | Mindestziel ${prePlanLongRunTargetMin}′ | Entwicklungsziel (nächster Schritt) ${longRunSafetyCapMin}′ | Wochenziel (geplant) ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
+      `Robustness · Kraft 7T ${strengthStateResolved.completedMinutes}′ | Coach-Ziel ${strengthStateResolved.targetMinutes}′ | Sessions ${strengthStateResolved.completedSessions}/${strengthStateResolved.targetSessions} → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
+      `Execution · Key-Frequenz ${actualKeys7Raw} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
+      "",
+    ];
+    const loadSignalsLines = [
+      "BELASTUNG / SIGNALS",
+      `Ramp: ${fmtSigned1(trend?.dv || 0)}%`,
+      `ACWR: ${Number(fatigue?.acwr || 0).toFixed(2)}`,
+      `Monotony: ${Number(fatigue?.monotony || 0).toFixed(2)}`,
+      `RunFloor: ${runFloorCurrent}/${runTarget}`,
+      `14T Distanz-Ratio: ${Number(fatigue?.runDist14dRatio || 0).toFixed(2)}`,
+      `Longrun 14T: ${longRunDoneMin}′`,
+      "",
+    ];
+    const rulesCapsLines = [
+      "REGELN / CAPs",
+      `Keys 7T: ${actualKeys7}`,
+      `Fatigue Override: ${fatigue?.override ? "aktiv" : "aus"}`,
+      `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
+      `Block: ${blockState?.block || "n/a"}`,
+      `Bike-Allowance: ${Number(resolvedBikeAllowanceFactor || 0).toFixed(2)} | Bike-Conversion: ${Number(resolvedBikeConversionFactor || 0).toFixed(2)}`,
+      "",
+    ];
+    const coachConsequencesLines = [
+      "COACH-FOLGEN",
+      `• ${keyBlocked ? "Kein weiterer Key diese Woche" : "Key möglich, falls frisch"}`,
+      taperPriorityWeek ? "• Taper priorisieren (kein Volumen-Push)" : "• Volumen priorisieren",
+      `• Kraft auf ${Number(strengthStateResolved.targetMinutes || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
+      "• Load-Anstieg konservativ halten",
+    ];
 
-  const renderedText = lines.join("\n");
-  measureAcceptance("otherTextValidationMs", () => validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision));
-  if (enableDeepChecks) {
-    const renderQuality = measureAcceptance("renderQualityMs", () => runRenderQualityChecks({
-      renderedText,
+    addDecisionBlock("DEBUG / NERD", [
+      ...diagnoseKernelLines,
+      ...scoreExplanationLines,
+      ...loadSignalsLines,
+      ...rulesCapsLines,
+      ...coachConsequencesLines,
+    ]);
+    finalRenderedText = lines.join("\n");
+  }
+
+  measureAcceptance("otherTextValidationMs", () => validateResolvedDecisionRenderConsistency(finalRenderedText, resolvedDecision));
+  const renderQuality = runFullValidation
+    ? measureAcceptance("renderQualityMs", () => runRenderQualityChecks({
+      renderedText: finalRenderedText,
+      weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
+    }))
+    : measureAcceptance("renderQualityMs", () => runRenderQualityChecksLight({
+      renderedText: finalRenderedText,
       weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
     }));
-    if (weekPreview) weekPreview.renderQuality = renderQuality;
-    if (!renderQuality.renderQualityPass) {
-      console.warn("render_quality_warning", renderQuality);
-    }
+  if (weekPreview && (runFullValidation || resolvedValidationMode === "light")) weekPreview.renderQuality = renderQuality;
+  if (runFullValidation && !renderQuality.renderQualityPass) {
+    console.warn("render_quality_warning", renderQuality);
   }
-
-  if (normalizedVerbosity !== "debug") {
-    return renderedText;
-  }
-
-  const diagnoseKernelLines = [
-    "DIAGNOSE-KERN",
-    `Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}`,
-    `Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}`,
-    `Limitierend: ${distanceDiagnostics?.primaryGap || "n/a"}${distanceDiagnostics?.secondaryGap ? `, ${distanceDiagnostics.secondaryGap}` : ""}`,
-    `Scores: Base ${distanceDiagnostics?.scores?.base ?? "n/a"} | Specificity ${distanceDiagnostics?.scores?.specificity ?? "n/a"} | Longrun ${distanceDiagnostics?.scores?.longrun ?? "n/a"} | Robustness ${distanceDiagnostics?.scores?.robustness ?? "n/a"} | Execution ${distanceDiagnostics?.scores?.execution ?? "n/a"}`,
-    fitnessProfile
-      ? `Fitness: Aerob ${fitnessProfile.aerobScore} | Anaerob ${fitnessProfile.anaerobScore} | Profil: ${fitnessProfile.profileType} | Konfidenz: ${fitnessProfile.confidence}`
-      : "Fitness: n/a (zu wenig Daten)",
-    "",
-  ];
-  const scoreExplanationLines = [
-    "SCORE-ERKLÄRUNG",
-    `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
-    `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
-    `Longrun · aktuell ${longRunDoneMin}′ | Mindestziel ${prePlanLongRunTargetMin}′ | Entwicklungsziel (nächster Schritt) ${longRunSafetyCapMin}′ | Wochenziel (geplant) ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
-    `Robustness · Kraft 7T ${strengthStateResolved.completedMinutes}′ | Coach-Ziel ${strengthStateResolved.targetMinutes}′ | Sessions ${strengthStateResolved.completedSessions}/${strengthStateResolved.targetSessions} → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
-    `Execution · Key-Frequenz ${actualKeys7Raw} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
-    "",
-  ];
-  const loadSignalsLines = [
-    "BELASTUNG / SIGNALS",
-    `Ramp: ${fmtSigned1(trend?.dv || 0)}%`,
-    `ACWR: ${Number(fatigue?.acwr || 0).toFixed(2)}`,
-    `Monotony: ${Number(fatigue?.monotony || 0).toFixed(2)}`,
-    `RunFloor: ${runFloorCurrent}/${runTarget}`,
-    `14T Distanz-Ratio: ${Number(fatigue?.runDist14dRatio || 0).toFixed(2)}`,
-    `Longrun 14T: ${longRunDoneMin}′`,
-    "",
-  ];
-  const rulesCapsLines = [
-    "REGELN / CAPs",
-    `Keys 7T: ${actualKeys7}`,
-    `Fatigue Override: ${fatigue?.override ? "aktiv" : "aus"}`,
-    `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
-    `Block: ${blockState?.block || "n/a"}`,
-    `Bike-Allowance: ${Number(resolvedBikeAllowanceFactor || 0).toFixed(2)} | Bike-Conversion: ${Number(resolvedBikeConversionFactor || 0).toFixed(2)}`,
-    "",
-  ];
-  const coachConsequencesLines = [
-    "COACH-FOLGEN",
-    `• ${keyBlocked ? "Kein weiterer Key diese Woche" : "Key möglich, falls frisch"}`,
-    taperPriorityWeek ? "• Taper priorisieren (kein Volumen-Push)" : "• Volumen priorisieren",
-    `• Kraft auf ${Number(strengthStateResolved.targetMinutes || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
-    "• Load-Anstieg konservativ halten",
-  ];
-
-  addDecisionBlock("DEBUG / NERD", [
-    ...diagnoseKernelLines,
-    ...scoreExplanationLines,
-    ...loadSignalsLines,
-    ...rulesCapsLines,
-    ...coachConsequencesLines,
-  ]);
-
-  const debugRenderedText = lines.join("\n");
-  measureAcceptance("otherTextValidationMs", () => validateResolvedDecisionRenderConsistency(debugRenderedText, resolvedDecision));
-  if (enableDeepChecks && weekPreview && !weekPreview.renderQuality) {
-    weekPreview.renderQuality = measureAcceptance("renderQualityMs", () => runRenderQualityChecks({
-      renderedText: debugRenderedText,
-      weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
-    }));
-  }
-  return debugRenderedText;
+  return finalRenderedText;
 }
 
 function formatNextAllowed(dayIso, nextAllowedIso) {
