@@ -11156,8 +11156,10 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
   } else {
     lines.push("• Longrun: diese Woche aktuell nicht im Fokus, später prüfen.");
   }
-  if (isStrengthWorkOpen(strengthState)) {
-    lines.push(`• Kraft/Stabi: noch offen (${strengthState.remainingSessions || 0} Einheiten, ${strengthState.remainingMinutes || 0}′).`);
+  const strengthRemainingMinutes = Number(strengthState?.remainingMinutes || 0);
+  const strengthRemainingSessions = Number(strengthState?.remainingSessions || 0);
+  if (isStrengthWorkOpen(strengthState) || strengthRemainingMinutes > 0 || strengthRemainingSessions > 0) {
+    lines.push(`• Kraft/Stabi: noch ${strengthRemainingSessions} Einheiten bzw. ${strengthRemainingMinutes}′ offen.`);
   } else {
     lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
   }
@@ -11772,7 +11774,7 @@ function buildResolvedDecision({
     hoursSinceLastKey,
   });
   return {
-    todayDecision: `${todayDecision}.`,
+    todayDecision: `${String(todayDecision || "Heute: geplante Einheit kontrolliert umsetzen").replace(/[.!?]+$/, "")}.`,
     sessionType: normalizeResolvedSessionType(sessionType),
     sessionLabel: sessionLabel || null,
     sessionDurationMin: Number.isFinite(sessionDurationMin) ? Math.round(sessionDurationMin) : null,
@@ -12309,7 +12311,7 @@ function deriveBottomLineFromDecision({ narrativeContext, explicitSessionShort }
   }
   if (sessionType === "STRENGTH") return "Heute Strength wie geplant absolvieren; Lauf nur ergänzend falls im Plan.";
   if (["REST", "RECOVERY", "LOW", "GA"].includes(sessionType)) return "Heute locker/erholsam im Plan bleiben.";
-  return selectedLabel ? `Heute wie geplant: ${selectedLabel}.` : "Heute kontrolliert trainieren und den Tagesfokus sauber umsetzen.";
+  return selectedLabel ? `Heute wie geplant: ${selectedLabel}.` : "Heute kontrolliert bleiben und den Plan sauber umsetzen.";
 }
 
 function deriveRecommendationFromDecision({ narrativeContext, distanceDiagnostics, gapRecommendations }) {
@@ -12729,7 +12731,7 @@ function buildComments(
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
-    runMetrics.push("Status bisher: Kein Lauf absolviert.");
+    runMetrics.push("Status bisher: Noch kein Lauf absolviert.");
     if (bikesTodayList.length) {
       const bikeMinutesToday = Math.round(
         sum(bikesTodayList.map((a) => Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0)) / 60
