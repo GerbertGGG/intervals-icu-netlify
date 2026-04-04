@@ -7312,6 +7312,25 @@ function buildWeekPreview(
       let keyType = null;
       let note = null;
       const decisionTrace = [];
+      const decisionCandidates = [];
+      const traceInput = {
+        dayIso: date,
+        isToday,
+        weekday,
+        overlayMode,
+        dayIndex,
+        budgets: {
+          keyTarget: weeklySlots.keyTarget,
+          longrunTarget: weeklySlots.longrunTarget,
+          strengthTarget: weeklySlots.strengthTarget,
+        },
+        actuals: {
+          keyDone: thisWeekActuals.keyDone,
+          keyCount: thisWeekActuals.keyDates.length,
+          longrunDone: thisWeekActuals.longrundDone,
+          strengthCount: thisWeekActuals.strengthCount,
+        },
+      };
 
       if (overlayMode === "TAPER") {
         decisionTrace.push("overlay:taper");
@@ -7354,6 +7373,7 @@ function buildWeekPreview(
             keyAllowedOnDate: keyCompliance?.keyAllowedNow === true,
           });
         if (!canPlaceTaperKeyToday) decisionTrace.push("key_rejected:taper_gate");
+        if (!canPlaceTaperKeyToday) decisionCandidates.push({ candidate: "KEY", status: "rejected", reason: "taper_gate" });
         if (isDelayedTaperEntryToday) {
           const layoffDays = lastRunDaysAgo === 99 ? "3+" : String(lastRunDaysAgo);
           sessionType = "GA";
@@ -7373,6 +7393,7 @@ function buildWeekPreview(
           note = "Kurz und scharf — neuromuskuläre Aktivierung, kein Volumen";
           plannedKeyDates.push(date);
           decisionTrace.push("key_selected:taper_activation");
+          decisionCandidates.push({ candidate: "KEY", status: "selected", reason: "taper_activation" });
         }
       } else if (overlayMode === "LIFE_EVENT_STOP") {
         decisionTrace.push("overlay:life_event_stop");
@@ -7409,8 +7430,10 @@ function buildWeekPreview(
           if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
             note = "Key aus dieser Woche nachholen";
           }
+          decisionCandidates.push({ candidate: "KEY", status: "selected", reason: "eligible" });
         } else {
           decisionTrace.push("key_rejected:eligibility_or_budget");
+          decisionCandidates.push({ candidate: "KEY", status: "rejected", reason: "eligibility_or_budget" });
           const allKnownKeyDates = [...(thisWeekActuals.keyDates || []), ...plannedKeyDates];
           const nearestKeyDistance = allKnownKeyDates.length
             ? Math.min(...allKnownKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
@@ -7424,9 +7447,12 @@ function buildWeekPreview(
             sessionLabel = `Longrun ~${longRunTargetMin}′`;
             longrunPlanned = true;
             plannedLongrunDates.push(date);
+            decisionCandidates.push({ candidate: "LONGRUN", status: "selected", reason: "slot_open" });
           } else {
             if (!canPlanLongrun) decisionTrace.push("longrun_rejected:slot_or_key_proximity");
             if (!longrunGapOk) decisionTrace.push("longrun_rejected:min_gap");
+            if (!canPlanLongrun) decisionCandidates.push({ candidate: "LONGRUN", status: "rejected", reason: "slot_or_key_proximity" });
+            if (!longrunGapOk) decisionCandidates.push({ candidate: "LONGRUN", status: "rejected", reason: "min_gap" });
             const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < weeklySlots.strengthTarget;
             const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
               .map((d) => isoWeekdayBerlin(d))
@@ -7446,9 +7472,12 @@ function buildWeekPreview(
                 : `🏃 GA locker + 💪 Kraft – Einheit A${cycleLabel}`;
               note = "Kann nach GA-Lauf gemacht werden";
               plannedStrengthCount += 1;
+              decisionCandidates.push({ candidate: "STRENGTH", status: "selected", reason: "target_gap" });
             } else {
               if (!strengthNeed) decisionTrace.push("strength_rejected:target_met");
               if (!isStrengthPref) decisionTrace.push("strength_rejected:weekday_preference");
+              if (!strengthNeed) decisionCandidates.push({ candidate: "STRENGTH", status: "rejected", reason: "target_met" });
+              if (!isStrengthPref) decisionCandidates.push({ candidate: "STRENGTH", status: "rejected", reason: "weekday_preference" });
               const keyCountKnown = thisWeekActuals.keyDates.length + plannedKeyDates.length;
               const keyTargetReached = keyCountKnown >= weeklySlots.keyTarget;
               const plannedRunCountSoFar = days.filter((entry) =>
@@ -7460,6 +7489,7 @@ function buildWeekPreview(
                 sessionType = "LOW";
                 intensity = "LOW";
                 sessionLabel = "Optional: 20–30′ sehr locker oder frei";
+                decisionCandidates.push({ candidate: "LOW", status: "selected", reason: "optional_low_after_targets" });
               } else {
                 decisionTrace.push("fallback:selected_ga");
                 sessionType = "GA";
@@ -7467,6 +7497,7 @@ function buildWeekPreview(
                 sessionLabel = (longrunPlanned || thisWeekActuals.longrundDone)
                   ? "GA locker 30–45′"
                   : "GA locker 35–50′";
+                decisionCandidates.push({ candidate: "GA", status: "selected", reason: "ga_fallback" });
               }
             }
           }
@@ -7480,8 +7511,23 @@ function buildWeekPreview(
         intensity = "NONE";
         sessionLabel = "Pause oder Mobilität";
         keyType = null;
+        decisionCandidates.push({ candidate: "REST", status: "selected", reason: "safety_too_many_high_days" });
       }
-      return { sessionType, sessionLabel, intensity, keyType, note, decisionTrace };
+      return {
+        sessionType,
+        sessionLabel,
+        intensity,
+        keyType,
+        note,
+        decisionTrace,
+        decisionTraceStructured: {
+          dayIso: date,
+          inputs: traceInput,
+          candidates: decisionCandidates,
+          selected: { sessionType, sessionLabel, intensity, keyType: keyType || null },
+          mainReasons: decisionTrace.slice(-3),
+        },
+      };
     };
     const decideDayEntry = ({ date, dayActivities, isToday, weekday, overlayMode, dayIndex }) => {
       if (date === blockState?.eventDateISO) {
@@ -7498,6 +7544,13 @@ function buildWeekPreview(
           status: dayActivities.length ? "DONE" : (date < todayIso ? "MISSED" : "PLANNED"),
           note: "Renntag — alles andere pausiert",
           decisionTrace: ["race_day_priority"],
+          decisionTraceStructured: {
+            dayIso: date,
+            inputs: { source: "race_day_guard" },
+            candidates: [{ candidate: "RACE", status: "selected", reason: "race_day_priority" }],
+            selected: { sessionType: "RACE", sessionLabel: `🏁 Wettkampf${distanceSuffix}`, intensity: "HIGH", keyType: null },
+            mainReasons: ["race_day_priority"],
+          },
         };
       }
       if (dayActivities.length) {
@@ -7523,6 +7576,13 @@ function buildWeekPreview(
           status: "DONE",
           note: null,
           decisionTrace: ["historical_activity_locked"],
+          decisionTraceStructured: {
+            dayIso: date,
+            inputs: { source: "historical_activity_locked" },
+            candidates: [{ candidate: sessionType, status: "selected", reason: "historical_activity_locked" }],
+            selected: { sessionType, sessionLabel: doneMeta.sessionLabel, intensity: doneMeta.intensity, keyType: sessionType === "KEY" ? (getKeyType(dayActivities[0]) || keyCompliance?.plannedKeyType || null) : null },
+            mainReasons: ["historical_activity_locked"],
+          },
         };
       }
       if (date < todayIso) {
@@ -7538,6 +7598,13 @@ function buildWeekPreview(
           status: "MISSED",
           note: null,
           decisionTrace: ["past_day_without_activity"],
+          decisionTraceStructured: {
+            dayIso: date,
+            inputs: { source: "past_day_without_activity" },
+            candidates: [{ candidate: "REST", status: "selected", reason: "past_day_without_activity" }],
+            selected: { sessionType: "REST", sessionLabel: "Key nicht absolviert", intensity: "NONE", keyType: null },
+            mainReasons: ["past_day_without_activity"],
+          },
         };
       }
       const decision = decideSessionForDay({
@@ -7562,6 +7629,7 @@ function buildWeekPreview(
           `planned_via_decideSessionForDay:${decision.sessionType}`,
           ...(Array.isArray(decision.decisionTrace) ? decision.decisionTrace : []),
         ],
+        decisionTraceStructured: decision.decisionTraceStructured || null,
       };
     };
 
@@ -7607,6 +7675,22 @@ function buildWeekPreview(
           ...(Array.isArray(days[idx].decisionTrace) ? days[idx].decisionTrace : []),
           "weekly_reconcile:run_frequency_cap_optional_removed",
         ];
+        if (days[idx].decisionTraceStructured) {
+          days[idx].decisionTraceStructured.candidates = [
+            ...(Array.isArray(days[idx].decisionTraceStructured.candidates) ? days[idx].decisionTraceStructured.candidates : []),
+            { candidate: "REST", status: "selected", reason: "weekly_reconcile_run_frequency_cap_optional_removed" },
+          ];
+          days[idx].decisionTraceStructured.selected = {
+            sessionType: "REST",
+            sessionLabel: "frei / optionaler Rest",
+            intensity: "NONE",
+            keyType: null,
+          };
+          days[idx].decisionTraceStructured.mainReasons = [
+            ...(Array.isArray(days[idx].decisionTraceStructured.mainReasons) ? days[idx].decisionTraceStructured.mainReasons : []),
+            "weekly_reconcile:run_frequency_cap_optional_removed",
+          ].slice(-3);
+        }
         plannedRuns = countPlannedRuns(days);
       }
       for (const idx of nonCoreGaIndices) {
@@ -7621,6 +7705,22 @@ function buildWeekPreview(
           ...(Array.isArray(days[idx].decisionTrace) ? days[idx].decisionTrace : []),
           "weekly_reconcile:run_frequency_cap_ga_removed",
         ];
+        if (days[idx].decisionTraceStructured) {
+          days[idx].decisionTraceStructured.candidates = [
+            ...(Array.isArray(days[idx].decisionTraceStructured.candidates) ? days[idx].decisionTraceStructured.candidates : []),
+            { candidate: "REST", status: "selected", reason: "weekly_reconcile_run_frequency_cap_ga_removed" },
+          ];
+          days[idx].decisionTraceStructured.selected = {
+            sessionType: "REST",
+            sessionLabel: "frei / optionaler Rest",
+            intensity: "NONE",
+            keyType: null,
+          };
+          days[idx].decisionTraceStructured.mainReasons = [
+            ...(Array.isArray(days[idx].decisionTraceStructured.mainReasons) ? days[idx].decisionTraceStructured.mainReasons : []),
+            "weekly_reconcile:run_frequency_cap_ga_removed",
+          ].slice(-3);
+        }
         plannedRuns = countPlannedRuns(days);
       }
     }
@@ -12033,11 +12133,43 @@ function buildComments(
   if (weekPreview && Array.isArray(weekPreview.days)) {
     const todayPreviewEntry = weekPreview.days.find((entry) => entry?.isToday || entry?.date === todayIso);
     if (todayPreviewEntry) {
+      const previousSessionType = todayPreviewEntry.sessionType;
+      const previousSessionLabel = todayPreviewEntry.sessionLabel;
       todayPreviewEntry.sessionType = resolvedDecision.sessionType;
       if (resolvedDecision.sessionType === "LONGRUN" && resolvedDecision.longrunTargetMin > 0) {
         todayPreviewEntry.sessionLabel = `Langer Lauf ~${resolvedDecision.longrunTargetMin}′`;
       } else if (resolvedDecision.sessionLabel) {
         todayPreviewEntry.sessionLabel = resolvedDecision.sessionLabel;
+      }
+      if (previousSessionType !== todayPreviewEntry.sessionType || previousSessionLabel !== todayPreviewEntry.sessionLabel) {
+        todayPreviewEntry.decisionTrace = [
+          ...(Array.isArray(todayPreviewEntry.decisionTrace) ? todayPreviewEntry.decisionTrace : []),
+          "today_render_override:resolvedDecision_applied",
+        ];
+        if (todayPreviewEntry.decisionTraceStructured) {
+          todayPreviewEntry.decisionTraceStructured.candidates = [
+            ...(Array.isArray(todayPreviewEntry.decisionTraceStructured.candidates)
+              ? todayPreviewEntry.decisionTraceStructured.candidates
+              : []),
+            {
+              candidate: String(resolvedDecision.sessionType || "UNKNOWN"),
+              status: "selected",
+              reason: "today_render_override_resolved_decision",
+            },
+          ];
+          todayPreviewEntry.decisionTraceStructured.selected = {
+            sessionType: todayPreviewEntry.sessionType,
+            sessionLabel: todayPreviewEntry.sessionLabel,
+            intensity: todayPreviewEntry.intensity,
+            keyType: todayPreviewEntry.keyType || null,
+          };
+          todayPreviewEntry.decisionTraceStructured.mainReasons = [
+            ...(Array.isArray(todayPreviewEntry.decisionTraceStructured.mainReasons)
+              ? todayPreviewEntry.decisionTraceStructured.mainReasons
+              : []),
+            "today_render_override:resolvedDecision_applied",
+          ].slice(-3);
+        }
       }
     }
     weekPreview.text = weekPreview.days
