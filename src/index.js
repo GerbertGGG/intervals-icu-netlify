@@ -11376,8 +11376,15 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
     } else {
       lines.push("• Kraft/Stabi: noch eine kurze Stabi-Einheit einplanen.");
     }
-  } else if (strengthState && typeof strengthState === "object") {
+  } else if (
+    strengthState
+    && typeof strengthState === "object"
+    && strengthRemainingMinutes === 0
+    && strengthRemainingSessions === 0
+  ) {
     lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
+  } else if (strengthState && typeof strengthState === "object") {
+    lines.push("• Kraft/Stabi: noch eine kurze Stabi-Einheit einplanen.");
   } else {
     lines.push("• Kraft/Stabi: Status prüfen (keine belastbaren Strength-Daten gefunden).");
   }
