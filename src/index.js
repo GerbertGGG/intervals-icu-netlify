@@ -9021,6 +9021,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     "renderAndPostProcessingMs",
     "acceptanceAndTrustChecksMs",
     "heavyActivityLoopsMs",
+    "unattributedMs",
   ];
   const createDayPerfBucket = () =>
     DAY_PERF_KEYS.reduce((acc, key) => {
@@ -9046,16 +9047,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       endPerfSpan(bucket, span);
     }
   };
-  const finalizeDayPerf = (bucket) => {
+  const finalizeDayPerf = (bucket, totalRuntimeMs = null) => {
     if (!bucket) return null;
     const finalized = {};
-    let totalMs = 0;
+    let attributedMs = 0;
     for (const key of DAY_PERF_KEYS) {
+      if (key === "unattributedMs") continue;
       const value = Math.max(0, Number(bucket[key]) || 0);
       finalized[key] = Math.round(value);
-      totalMs += value;
+      attributedMs += value;
     }
+    const totalMs = Number.isFinite(totalRuntimeMs) ? Math.max(0, Number(totalRuntimeMs)) : attributedMs;
+    const unattributedMs = Math.max(0, totalMs - attributedMs);
+    finalized.unattributedMs = Math.round(unattributedMs);
     finalized.totalMs = Math.round(totalMs);
+    finalized.attributedMs = Math.round(attributedMs);
     finalized.instrumentedSpans = Math.max(0, Math.round(Number(bucket.__spanCount) || 0));
     return finalized;
   };
@@ -9238,6 +9244,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
   const processDays = async () => {
     for (const day of daysList) {
+      const dayProcessingStartedAt = perfNow();
       const dayPerf = perf ? createDayPerfBucket() : null;
       const shouldRunDeepValidationChecks = !(singleDayDebugFastPath && debugResponsePart !== "full");
       // NEW: mode + policy for this day (based on next event)
@@ -9527,42 +9534,50 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       } catch {}
     });
 
-    const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
-    const weeksToEvent = weeksInfo.weeksToEvent ?? null;
+    let weeksToEvent = null;
     const bikeConversionFactor = BIKE_CONVERSION_FACTOR_FALLBACK;
-    const previousDaysSinceEvent = isIsoDate(previousBlockState?.lastEventDate)
-      ? daysBetween(previousBlockState.lastEventDate, day)
-      : null;
-    let bikeAllowanceFactor = computeBikeAllowanceFactor(weeksToEvent, {
-      daysSinceEvent: Number.isFinite(previousDaysSinceEvent) && previousDaysSinceEvent >= 0
-        ? Math.round(previousDaysSinceEvent)
-        : null,
-    });
-    const longRun14d = computeLongRunSummary14d(ctx, day);
-    const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
-    const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
-    longRunSummary = {
-      ...longRunSummary,
-      longRun14d,
-      longestRun30d,
-      plan: longRunPlan,
-    };
-    const runFloorDebugFlag =
-      ctx?.env?.RUN_FLOOR_DEBUG_TRACE ??
-      (typeof globalThis !== "undefined" && globalThis?.process?.env
-        ? globalThis.process.env.RUN_FLOOR_DEBUG_TRACE
-        : "");
-    const baseRunFloorTarget =
-      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
-        ? previousBlockState.floorTarget
-        : MIN_STIMULUS_7D_RUN_EVENT;
-
-    const runFloorEwma10 = computeRunFloorEwma(ctx, day, {
-      eventDate,
-      lastEventDate: previousBlockState?.lastEventDate || null,
-      eventDistance,
-      runFloorTarget: baseRunFloorTarget,
-      debugTrace: /^1|true|yes$/i.test(String(runFloorDebugFlag || "")),
+    let bikeAllowanceFactor = BIKE_ALLOWANCE_FACTOR_MAX;
+    let runFloorEwma10 = 0;
+    let runFloorState = null;
+    let baseRunFloorTarget = MIN_STIMULUS_7D_RUN_EVENT;
+    let blockState = null;
+    let historyMetrics = null;
+    await timedSync(dayPerf, "modeAndPolicyMs", async () => {
+      const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
+      weeksToEvent = weeksInfo.weeksToEvent ?? null;
+      const previousDaysSinceEvent = isIsoDate(previousBlockState?.lastEventDate)
+        ? daysBetween(previousBlockState.lastEventDate, day)
+        : null;
+      bikeAllowanceFactor = computeBikeAllowanceFactor(weeksToEvent, {
+        daysSinceEvent: Number.isFinite(previousDaysSinceEvent) && previousDaysSinceEvent >= 0
+          ? Math.round(previousDaysSinceEvent)
+          : null,
+      });
+      const longRun14d = computeLongRunSummary14d(ctx, day);
+      const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
+      const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
+      longRunSummary = {
+        ...longRunSummary,
+        longRun14d,
+        longestRun30d,
+        plan: longRunPlan,
+      };
+      const runFloorDebugFlag =
+        ctx?.env?.RUN_FLOOR_DEBUG_TRACE ??
+        (typeof globalThis !== "undefined" && globalThis?.process?.env
+          ? globalThis.process.env.RUN_FLOOR_DEBUG_TRACE
+          : "");
+      baseRunFloorTarget =
+        Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
+          ? previousBlockState.floorTarget
+          : MIN_STIMULUS_7D_RUN_EVENT;
+      runFloorEwma10 = computeRunFloorEwma(ctx, day, {
+        eventDate,
+        lastEventDate: previousBlockState?.lastEventDate || null,
+        eventDistance,
+        runFloorTarget: baseRunFloorTarget,
+        debugTrace: /^1|true|yes$/i.test(String(runFloorDebugFlag || "")),
+      });
     });
 
     let specificValue = 0;
@@ -9623,7 +9638,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longrunSpecificity: longrunSpecificityPre,
     });
 
-    const historyMetrics = {
+    historyMetrics = {
       runFloorEwma10: runFloorEwma10 ?? 0,
       runFloorEwma10Prev: runFloorEwma10Prev ?? 0,
       runFloorTarget: baseRunFloorTarget,
@@ -9648,7 +9663,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       efTrend = null;
     }
 
-    const blockState = determineBlockState({
+    blockState = determineBlockState({
       today: day,
       eventDate: eventDate || null,
       eventDistance,
@@ -9697,7 +9712,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       ...(previousBlockState || {}),
       lastEventDistance: modeLastEventDistance || normalizeEventDistance(previousBlockState?.lastEventDistance) || null,
     };
-    const runFloorState = evaluateRunFloorState({
+    runFloorState = evaluateRunFloorState({
       todayISO: day,
       floorTarget: baseRunFloorTarget,
       phase,
@@ -9994,16 +10009,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     // Bench reports only on bench days
     const benchReports = [];
-    for (const a of runs) {
-      const benchName = getBenchTag(a);
-      if (!benchName) continue;
-      try {
-        const rep = await computeBenchReport(env, a, benchName, ctx.warmupSkipSec);
-        if (rep) benchReports.push(rep);
-      } catch (e) {
-        benchReports.push(`🧪 bench:${benchName}\nFehler: ${String(e?.message ?? e)}`);
+    await timedSync(dayPerf, "heavyActivityLoopsMs", async () => {
+      for (const a of runs) {
+        const benchName = getBenchTag(a);
+        if (!benchName) continue;
+        try {
+          const rep = await computeBenchReport(env, a, benchName, ctx.warmupSkipSec);
+          if (rep) benchReports.push(rep);
+        } catch (e) {
+          benchReports.push(`🧪 bench:${benchName}\nFehler: ${String(e?.message ?? e)}`);
+        }
       }
-    }
+    });
 
     // Daily report text (used for calendar NOTE instead of wellness comments)
     const weekPreview = await timedSync(dayPerf, "weekPreviewMs", () => buildWeekPreview(ctx, day, {
@@ -10100,19 +10117,25 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     if (dayPerf && commentsPerf?.acceptanceAndTrustChecksMs) {
       dayPerf.acceptanceAndTrustChecksMs += commentsPerf.acceptanceAndTrustChecksMs;
     }
-    const renderStartedAt = Date.now();
-    const weeklyReview = isMondayIso(day)
-      ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
-      : null;
-    const weeklyFocus = isMondayIso(day)
-      ? buildWeeklyFocus(ctx, day, blockState, keyCompliance, runFloorState, ctx.weekMemories, manualFocus)
-      : null;
-    const weeklyMondayBlock = isMondayIso(day)
-      ? [
-          weeklyReview ? `\n📋 WOCHENRÜCKBLICK\n${weeklyReview}\n⸻\n` : null,
-          weeklyFocus ? `\n🎯 WOCHENFOKUS\n${weeklyFocus}\n⸻\n` : null,
-        ].filter(Boolean).join("\n")
-      : "";
+    let weeklyReview = null;
+    let weeklyFocus = null;
+    let dailyReportText = "";
+    let todayPlanEntry = null;
+    let isRaceDayToday = false;
+    let raceInsights = { insights: [], nextPrep: [] };
+    await timedSync(dayPerf, "renderAndPostProcessingMs", async () => {
+      weeklyReview = isMondayIso(day)
+        ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
+        : null;
+      weeklyFocus = isMondayIso(day)
+        ? buildWeeklyFocus(ctx, day, blockState, keyCompliance, runFloorState, ctx.weekMemories, manualFocus)
+        : null;
+      const weeklyMondayBlock = isMondayIso(day)
+        ? [
+            weeklyReview ? `\n📋 WOCHENRÜCKBLICK\n${weeklyReview}\n⸻\n` : null,
+            weeklyFocus ? `\n🎯 WOCHENFOKUS\n${weeklyFocus}\n⸻\n` : null,
+          ].filter(Boolean).join("\n")
+        : "";
     let raceDayBlock = "";
     let cachedEfMed28 = null;
     let cachedVdotMed28 = null;
@@ -10131,7 +10154,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       cachedVdotMed28 = null;
     }
     let raceHistoryBlock = "";
-    let raceInsights = { insights: [], nextPrep: [] };
     if (blockState?.block === "RACE" && Number(blockState?.timeInBlockDays ?? 0) <= 7) {
       try {
         const raceHistory = await loadRaceHistory(env);
@@ -10163,42 +10185,40 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
-    let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
-    try {
-      const raceResolvedFromPlan = resolveRaceActivityForPlannedRaceDay(runs, weekPreview, day);
-      if (raceResolvedFromPlan) raceActivityToday = raceResolvedFromPlan;
-    } catch {
-      // no-op: fallback bleibt Tag-basierte Erkennung
-    }
-    const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
-    const isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
-    if (isRaceDayToday && !raceActivityToday) {
-      dailyReportText = buildRaceDayMinimalReport({
-        eventDistance,
-        vdotMed: cachedVdotMed28,
-        efMed: cachedEfMed28,
-        weekPlanText: hasStructuredWeekPreview ? weekPreview?.text : weekPlanFallback,
-      });
-    }
-    if (isRaceDayToday && raceActivityToday) {
-      let postmortemSaved = false;
-      let postmortemEntry = null;
-      if (write && day === isoDate(new Date())) {
-        try {
-          postmortemEntry = await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
-          postmortemSaved = Boolean(postmortemEntry);
-        } catch (error) {
-          console.warn("race postmortem write failed (report)", { day, message: String(error?.message ?? error) });
+      dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
+      try {
+        const raceResolvedFromPlan = resolveRaceActivityForPlannedRaceDay(runs, weekPreview, day);
+        if (raceResolvedFromPlan) raceActivityToday = raceResolvedFromPlan;
+      } catch {
+        // no-op: fallback bleibt Tag-basierte Erkennung
+      }
+      todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
+      isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
+      if (isRaceDayToday && !raceActivityToday) {
+        dailyReportText = buildRaceDayMinimalReport({
+          eventDistance,
+          vdotMed: cachedVdotMed28,
+          efMed: cachedEfMed28,
+          weekPlanText: hasStructuredWeekPreview ? weekPreview?.text : weekPlanFallback,
+        });
+      }
+      if (isRaceDayToday && raceActivityToday) {
+        let postmortemSaved = false;
+        let postmortemEntry = null;
+        if (write && day === isoDate(new Date())) {
+          try {
+            postmortemEntry = await buildRacePostmortem(env, day, raceActivityToday, historyMetrics, blockState);
+            postmortemSaved = Boolean(postmortemEntry);
+          } catch (error) {
+            console.warn("race postmortem write failed (report)", { day, message: String(error?.message ?? error) });
+          }
+        }
+        const raceResultBlock = buildRaceResultBlock(raceActivityToday, { postmortemSaved, predictionComparison: postmortemEntry?.predictionComparison || null, primaryGap: postmortemEntry?.primaryGap || null, secondaryGap: postmortemEntry?.secondaryGap || null });
+        if (raceResultBlock) {
+          dailyReportText = `${dailyReportText}\n\n${raceResultBlock}`;
         }
       }
-      const raceResultBlock = buildRaceResultBlock(raceActivityToday, { postmortemSaved, predictionComparison: postmortemEntry?.predictionComparison || null, primaryGap: postmortemEntry?.primaryGap || null, secondaryGap: postmortemEntry?.secondaryGap || null });
-      if (raceResultBlock) {
-        dailyReportText = `${dailyReportText}\n\n${raceResultBlock}`;
-      }
-    }
-    if (dayPerf) {
-      dayPerf.renderAndPostProcessingMs += (Date.now() - renderStartedAt);
-    }
+    });
 
     const strengthPolicyResolved = strengthPolicy
       || robustness?.strengthPolicy
@@ -10206,7 +10226,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/(?:🏃|🗓) HEUTE\n([^\n]+)/);
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
     let coachAnalysis = null;
-    try {
+    await timedSync(dayPerf, "acceptanceAndTrustChecksMs", async () => {
+      try {
       let latestRaceDateIso = null;
       let latestRaceEntry = null;
       try {
@@ -10275,10 +10296,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         vdotActual: hasRecentRace ? vdotActual : null,
         vdotTrend: hasRecentRace ? estimateVdotTrendFromEfTrend(vdotActual, efTrendPct) : null,
       };
-      coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
-    } catch {
-      coachAnalysis = null;
-    }
+        coachAnalysis = await buildCoachAnalysis(env, coachSnapshot).catch(() => null);
+      } catch {
+        coachAnalysis = null;
+      }
+    });
     try {
       if (coachAnalysis && !isRaceDayToday) {
         dailyReportText = insertCoachAnalysisAfterHeute(dailyReportText, coachAnalysis);
@@ -10431,7 +10453,7 @@ Fehler: ${String(e?.message ?? e)}`;
 
     patches[day] = patchToWrite;
     if (perf && dayPerf) {
-      perf.dayProcessing[day] = finalizeDayPerf(dayPerf);
+      perf.dayProcessing[day] = finalizeDayPerf(dayPerf, perfNow() - dayProcessingStartedAt);
     }
     }
   };
