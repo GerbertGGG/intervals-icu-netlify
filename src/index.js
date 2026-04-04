@@ -11508,6 +11508,36 @@ function validateResolvedDecisionRenderConsistency(renderedText, resolvedDecisio
   }
 }
 
+function evaluateNarrativeConsistency({ resolvedDecision, narrativeContext, recommendationLines = [], bottomLine = "", diagnoseLines = [] }) {
+  const mismatches = [];
+  const resolvedType = normalizeResolvedSessionType(resolvedDecision?.sessionType);
+  const selectedType = normalizeResolvedSessionType(narrativeContext?.selected?.sessionType || resolvedDecision?.sessionType);
+  const policy = narrativeContext?.policy || null;
+  const keyPlan = narrativeContext?.keyPlan || null;
+  const strengthState = narrativeContext?.strengthState || null;
+  const combinedText = [bottomLine, ...recommendationLines, ...diagnoseLines].join(" ").toLowerCase();
+
+  if (resolvedType !== "UNKNOWN" && selectedType !== "UNKNOWN" && resolvedType !== selectedType) {
+    mismatches.push(`resolved_vs_selected:${resolvedType}->${selectedType}`);
+  }
+  if (resolvedType === "LONGRUN" && combinedText.includes("key heute")) {
+    mismatches.push("longrun_with_key_today_narrative");
+  }
+  if (keyPlan?.status === "blocked" && combinedText.includes("key-fenster offen")) {
+    mismatches.push("key_blocked_but_recommended_today");
+  }
+  if (strengthState?.needsStrengthSlot === false && combinedText.includes("strength offen")) {
+    mismatches.push("strength_not_needed_but_primary_recommendation");
+  }
+  if (policy?.safety?.forceRest === true) {
+    const activeSignals = ["key heute", "longrun", "ga locker", "intervall"];
+    if (activeSignals.some((signal) => combinedText.includes(signal))) {
+      mismatches.push("force_rest_with_active_training_narrative");
+    }
+  }
+  return { pass: mismatches.length === 0, mismatches };
+}
+
 function checkTodayWeeklyConsistency({ todayPlanEntry, resolvedDecision, todayDecision, trace = [] }) {
   const weekSessionType = normalizeResolvedSessionType(todayPlanEntry?.sessionType);
   const resolvedSessionType = normalizeResolvedSessionType(resolvedDecision?.sessionType);
@@ -11555,6 +11585,7 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
       policy: trace?.inputs?.policy || null,
       keyPlan: trace?.inputs?.key || null,
       longrunPlan: trace?.inputs?.longrun || null,
+      strengthState: trace?.inputs?.strength || null,
       selected: trace?.selected || null,
       mainReasons: Array.isArray(trace?.mainReasons) ? trace.mainReasons : [],
     };
@@ -11589,17 +11620,34 @@ function runPolicyAcceptanceScenarios({ scenarios = [], days = [] }) {
       }
     }
 
+    const narrativeMismatches = [];
+    const selectedType = normalizeResolvedSessionType(actual?.selected?.sessionType);
+    if (actual?.policy?.safety?.forceRest === true && !["REST", "RECOVERY", "LOW"].includes(selectedType)) {
+      narrativeMismatches.push(`forceRest_vs_selected:${selectedType}`);
+    }
+    if (selectedType === "LONGRUN" && actual?.keyPlan?.status === "due") {
+      narrativeMismatches.push("longrun_selected_while_key_due");
+    }
+    if (selectedType === "KEY" && actual?.keyPlan?.status === "blocked") {
+      narrativeMismatches.push("key_selected_while_key_blocked");
+    }
+    if (selectedType === "STRENGTH" && actual?.strengthState?.remainingSessions === 0) {
+      narrativeMismatches.push("strength_selected_while_target_met");
+    }
+
     return {
       scenarioId: scenario?.id || "UNKNOWN",
-      pass: mismatches.length === 0,
+      pass: mismatches.length === 0 && narrativeMismatches.length === 0,
+      logicPass: mismatches.length === 0,
+      narrativePass: narrativeMismatches.length === 0,
       expected,
       actual,
-      mismatches,
+      mismatches: [...mismatches, ...narrativeMismatches],
     };
   });
 }
 
-function deriveCoachTrustSummary({ resolvedDecision, weekPreview }) {
+function deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency = null }) {
   const today = (weekPreview?.days || []).find((entry) => entry?.isToday) || null;
   const trace = today?.decisionTraceStructured || null;
   if (!trace || !resolvedDecision?.sessionType) {
@@ -11610,6 +11658,9 @@ function deriveCoachTrustSummary({ resolvedDecision, weekPreview }) {
     trace?.selected?.sessionType ? null : "missing_selected",
     Array.isArray(trace?.mainReasons) && trace.mainReasons.length ? null : "missing_main_reasons",
   ].filter(Boolean);
+  if (narrativeConsistency && narrativeConsistency.pass === false) {
+    required.push(...(narrativeConsistency.mismatches || []).map((m) => `narrative:${m}`));
+  }
   const explainable = required.length === 0;
   const explanation = explainable
     ? `${resolvedDecision.sessionType}: gewählt aus Policy (${trace.inputs.policy?.overlayMode || "n/a"}) mit Gründen ${trace.mainReasons.slice(0, 2).join(" | ")}.`
@@ -11647,9 +11698,6 @@ function resolveBottomLine({
   const fallback = "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
   if (!text) return fallback;
   if (forceKeyToday) return text;
-  const lower = text.toLowerCase();
-  const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
-  if (introducesPrimaryTopic) return fallback;
   if (text === String(todayDecision || "").trim()) return fallback;
   return text;
 }
@@ -11765,119 +11813,108 @@ function isEasyTodayDecision(text) {
   return hasEasy && !hasHard;
 }
 
-function buildRecommendationsAndBottomLine(state) {
+function deriveNarrativeContext({
+  resolvedDecision,
+  todayPlanEntry,
+  weekPreview,
+  policy,
+  keyPlan,
+  longrunPlan,
+  strengthState,
+}) {
+  const todayEntry = todayPlanEntry
+    || (weekPreview?.days || []).find((entry) => entry?.isToday)
+    || null;
+  const trace = todayEntry?.decisionTraceStructured || null;
+  const traceSelected = trace?.selected || null;
+  return {
+    resolvedSessionType: normalizeResolvedSessionType(resolvedDecision?.sessionType || traceSelected?.sessionType || todayEntry?.sessionType),
+    selected: traceSelected || {
+      sessionType: normalizeResolvedSessionType(resolvedDecision?.sessionType),
+      sessionLabel: resolvedDecision?.sessionLabel || todayEntry?.sessionLabel || null,
+      intensity: todayEntry?.intensity || null,
+      keyType: todayEntry?.keyType || null,
+    },
+    mainReasons: Array.isArray(trace?.mainReasons) ? trace.mainReasons.filter(Boolean) : [],
+    policy: trace?.inputs?.policy || policy || null,
+    keyPlan: trace?.inputs?.key || keyPlan || null,
+    longrunPlan: trace?.inputs?.longrun || longrunPlan || null,
+    strengthState: strengthState || weekPreview?.strengthState || null,
+    trace,
+  };
+}
+
+function deriveBottomLineFromDecision({ narrativeContext, explicitSessionShort }) {
+  const sessionType = normalizeResolvedSessionType(narrativeContext?.resolvedSessionType || narrativeContext?.selected?.sessionType);
+  const selectedLabel = String(narrativeContext?.selected?.sessionLabel || "").trim();
+  const policy = narrativeContext?.policy || null;
+  const longrunPlan = narrativeContext?.longrunPlan || null;
+
+  if (policy?.safety?.forceRest) {
+    return "Heute Erholung/Pause priorisieren (Policy Safety: forceRest).";
+  }
+  if (sessionType === "KEY") {
+    return explicitSessionShort
+      ? `Key heute: ${explicitSessionShort}.`
+      : (selectedLabel ? `Key heute wie geplant: ${selectedLabel}.` : "Key heute kontrolliert und sauber absolvieren.");
+  }
+  if (sessionType === "LONGRUN") {
+    const targetMin = Number(longrunPlan?.targetMin ?? 0) || Number(narrativeContext?.selected?.sessionDurationMin ?? 0);
+    return targetMin > 0 ? `Heute Longrun ~${Math.round(targetMin)}′ wie geplant absolvieren.` : "Heute Longrun wie geplant absolvieren.";
+  }
+  if (sessionType === "STRENGTH") return "Heute Strength wie geplant absolvieren; Lauf nur ergänzend falls im Plan.";
+  if (["REST", "RECOVERY", "LOW", "GA"].includes(sessionType)) return "Heute locker/erholsam im Plan bleiben.";
+  return selectedLabel ? `Heute wie geplant: ${selectedLabel}.` : "Heute plankonform und kontrolliert trainieren.";
+}
+
+function deriveRecommendationFromDecision({ narrativeContext, distanceDiagnostics, gapRecommendations }) {
   const rec = [];
-  const bottom = [];
-  const insight = [];
+  const policy = narrativeContext?.policy || null;
+  const keyPlan = narrativeContext?.keyPlan || null;
+  const longrunPlan = narrativeContext?.longrunPlan || null;
+  const strengthState = narrativeContext?.strengthState || null;
 
-  const runFloorTarget = state?.runFloorTarget;
-  const runFloorNow = state?.runFloorEwma10 ?? state?.runFloor7;
-  const explicitSessionShort = state?.explicitSessionShort;
-  const longRunDoneMin = Number(state?.longRunDoneMin ?? 0);
-  const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
-  const longRunGapMin = Number(state?.longRunGapMin ?? 0);
-  const longRunStepCapMin = Number(state?.longRunStepCapMin ?? 0);
-  const longRunProgressionTargetMin = Number(state?.longRunProgressionTargetMin ?? longRunStepCapMin ?? 0);
-  const longRunSpikeCapMin = Number(state?.longRunSpikeCapMin ?? 0);
-  const longRunSpikeWindowDays = Number(state?.longRunSpikeWindowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays);
-  const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
-  const longRunDiagnosisTargetMin = Number(state?.longRunDiagnosisTargetMin ?? 0);
-  const longrunProgressionBlocked = state?.longrunProgressionBlocked === true;
-  const longrunProgressionBlockers = Array.isArray(state?.longrunProgressionBlockers) ? state.longrunProgressionBlockers.filter(Boolean) : [];
-  const fatigue = state?.fatigue || null;
-  const distanceDiagnostics = state?.distanceDiagnostics || null;
-  const gapRecommendations = state?.gapRecommendations || null;
-
-  const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
-  const resolvedSessionType = normalizeResolvedSessionType(state?.resolvedSessionType);
-  const hasConcreteKeySession = state?.hasConcreteKeySession === true;
-  const todayActionLower = todayAction.toLowerCase();
-  const todaySignalsNoKey = ["nächster key", "kein key", "bis dahin locker/ga", "mindestabstand"];
-  const todaySignalsNoRun = ["kein lauf", "ruhetag", "easy / frei"];
-  const suppressKeyBottomLine = todaySignalsNoKey.some((token) => todayActionLower.includes(token))
-    || todaySignalsNoRun.some((token) => todayActionLower.includes(token));
-  const keyTodayBottomLine = resolvedSessionType === "KEY"
-    || (state?.keyAllowedNow && hasConcreteKeySession && explicitSessionShort && !suppressKeyBottomLine);
-  const shouldAppendLongrunPriority = !keyTodayBottomLine
-    && resolvedSessionType !== "LONGRUN"
-    && Number.isFinite(longRunDoneMin)
-    && Number.isFinite(longRunTargetMin)
-    && longRunTargetMin > 0
-    && longRunDoneMin < longRunTargetMin;
-  if (keyTodayBottomLine) {
-    bottom.push(`Key heute: ${explicitSessionShort}.`);
-  } else {
-    const longrunPrioritySuffix = shouldAppendLongrunPriority
-      ? ` Longrun priorisieren: nächster langer Lauf bis ~${Math.round(longRunTargetMin)}′.`
-      : "";
-    bottom.push(`Heute: ${todayAction}.${longrunPrioritySuffix}`);
+  if (policy?.overlayMode && policy.overlayMode !== "NORMAL") {
+    rec.push(`Overlay aktiv: ${policy.overlayMode} → konservativ und planstabil bleiben.`);
   }
-
-  const taperPriorityWeek = state?.taperPriorityWeek === true || state?.overlayMode === "TAPER";
-  if (!taperPriorityWeek && Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
-    const runGap = Math.round(runFloorTarget - runFloorNow);
-    rec.push(`RunFloor ${Math.round(runFloorNow)}/${Math.round(runFloorTarget)} → Volumen priorisieren (Gap ${runGap}).`);
+  if (policy?.safety?.forceRest) {
+    rec.push("Safety-Regel aktiv: heute keine aktive Key/Longrun-Empfehlung.");
+    return rec;
   }
-  if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
-    const meetsBlockTarget = longRunDoneMin >= longRunTargetMin;
-    const meetsDiagnosisTarget = Number.isFinite(longRunDiagnosisTargetMin) && longRunDiagnosisTargetMin > 0
-      ? longRunDoneMin >= longRunDiagnosisTargetMin
-      : false;
-    if (meetsBlockTarget || meetsDiagnosisTarget) {
-      rec.push(`Longrun aktuell im Mindestzielbereich (Block ${Math.round(longRunTargetMin)}′${longRunDiagnosisTargetMin > 0 ? ` | Entwicklung ${Math.round(longRunDiagnosisTargetMin)}′` : ""}) → halten/behutsam ausbauen.`);
-    } else {
-      const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
-        ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
-        : "";
-      const progressionTargetMin = Number.isFinite(longRunProgressionTargetMin) && longRunProgressionTargetMin > 0
-        ? longRunProgressionTargetMin
-        : blockLongRunNextWeekTargetMin;
-      if (longrunProgressionBlocked && progressionTargetMin > blockLongRunNextWeekTargetMin) {
-        const blockersText = longrunProgressionBlockers.length ? ` (${longrunProgressionBlockers.join(" | ")})` : "";
-        rec.push(`Longrun-Ziel perspektivisch ${Math.round(progressionTargetMin)}′; aktuell auf ${Math.round(blockLongRunNextWeekTargetMin)}′ zurückgestellt.${blockersText}${spikeGuardNote}`);
-      } else {
-        rec.push(`Longrun-Progression: nächster Schritt bis ${Math.round(progressionTargetMin)}′.${spikeGuardNote}`);
-      }
-    }
+  if (keyPlan?.status === "blocked") {
+    rec.push(`Key heute geblockt${keyPlan?.nextAllowedIso ? ` (frühestens ${keyPlan.nextAllowedIso})` : ""}.`);
   }
-  if (state?.intensityDistribution?.easyUnder === true) {
-    const easyPct = Math.round((state.intensityDistribution.easyShare || 0) * 100);
-    const easyMinPct = Math.round((state.intensityDistribution?.targets?.easyMin || 0) * 100);
-    rec.push(`Easy-Anteil ${easyPct}% (<${easyMinPct}%) → nächste Einheit locker.`);
+  if (keyPlan?.allowedOnDate === true) {
+    rec.push("Key-Fenster offen: geplanter Qualitätsreiz kann heute gesetzt werden.");
   }
-  if (state?.intensityDistribution?.hardOver === true) {
-    const hardPct = Math.round((state.intensityDistribution.hardShare || 0) * 100);
-    const hardMaxPct = Math.round((state.intensityDistribution?.targets?.hardMax || 0) * 100);
-    rec.push(`Hard-Anteil ${hardPct}% (>${hardMaxPct}%) → kein weiterer harter Key.`);
+  if (longrunPlan?.status === "due") {
+    rec.push(`Longrun fällig: ${Number.isFinite(longrunPlan?.targetMin) ? `~${Math.round(longrunPlan.targetMin)}′` : "wie geplant"} priorisieren.`);
+  } else if (longrunPlan?.status === "blocked") {
+    rec.push(`Longrun heute geblockt${Array.isArray(longrunPlan?.reasons) && longrunPlan.reasons.length ? ` (${longrunPlan.reasons.slice(0, 1).join(" | ")})` : ""}.`);
   }
-  if (state?.spacingBlocked) {
-    const minGapText = Number.isFinite(state?.keyMinGapHours) ? `${state.keyMinGapHours}h` : `${KEY_MIN_GAP_DAYS_DEFAULT * 24}h`;
-    rec.push(`Key-Abstand <${minGapText}${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
+  if (strengthState?.needsStrengthSlot === true) {
+    rec.push(`Strength offen: ${strengthState.remainingSessions || 0} Session(s) / ${strengthState.remainingMinutes || 0}′ verbleibend.`);
   }
-  if (state?.overlayMode && state.overlayMode !== "NORMAL") {
-    rec.push(`Overlay: ${state.overlayMode} → konservativ bleiben.`);
-  }
-
-  if (fatigue?.override && Array.isArray(fatigue?.reasons) && fatigue.reasons.length) {
-    insight.push(`Fatigue-Override aktiv: ${fatigue.reasons.slice(0, 2).join(" | ")}.`);
-  }
-  if (Number.isFinite(fatigue?.runDist14dRatio)) {
-    insight.push(`Belastungs-Ratio 14T: ${fatigue.runDist14dRatio.toFixed(2)} (Guard <= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)}).`);
-  }
-  if (Number.isFinite(fatigue?.acwr)) {
-    insight.push(`ACWR: ${fatigue.acwr.toFixed(2)} (${fatigue.acwr > 1.3 ? "erhöht" : "stabil"}).`);
-  }
-
-  if (insight.length) {
-    rec.push(...insight.map((line) => `Evidenz: ${line}`));
-  }
-
-  if (distanceDiagnostics) {
+  if (distanceDiagnostics?.readiness != null) {
     rec.unshift(`Readiness ${distanceDiagnostics.readiness}/100 · Gap: ${distanceDiagnostics.primaryGap}${distanceDiagnostics.secondaryGap ? ` → ${distanceDiagnostics.secondaryGap}` : ""}.`);
-    for (const line of (gapRecommendations?.primaryFocus || []).slice(0, 2)) {
-      rec.push(`Diagnose-Fokus: ${line}.`);
-    }
   }
+  for (const line of (gapRecommendations?.primaryFocus || []).slice(0, 2)) {
+    rec.push(`Diagnose-Fokus: ${line}.`);
+  }
+  return rec;
+}
+
+function buildRecommendationsAndBottomLine(state) {
+  const narrativeContext = state?.narrativeContext || null;
+  const rec = deriveRecommendationFromDecision({
+    narrativeContext,
+    distanceDiagnostics: state?.distanceDiagnostics || null,
+    gapRecommendations: state?.gapRecommendations || null,
+  });
+  const bottom = [deriveBottomLineFromDecision({
+    narrativeContext,
+    explicitSessionShort: state?.explicitSessionShort || null,
+  })];
 
   return {
     recommendations: capLines(rec, 6).map((x) => capText(x, 180)),
@@ -12196,6 +12233,8 @@ function buildComments(
     maxReplaceableWeeklySharePct: bikeWeeklyRule?.maxReplaceableWeeklySharePct,
   });
 
+  // TODO(narrative-readonly): Diese Legacy-Langrun-Aggregation dient aktuell nur Trainingsstand-Rendering;
+  // Today-/Bottom-Line-Empfehlungen laufen bereits über Resolver/Trace (narrativeContext).
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
   const longRun30d = longRunSummary?.longestRun30d || { minutes: 0, date: null, windowDays: LONGRUN_PREPLAN.spikeGuardLookbackDays };
   const longRunPlan = longRunSummary?.plan || computeLongRunTargetMinutes(weeksToEvent, eventDistance || modeInfo?.nextEvent?.distance_type);
@@ -12452,6 +12491,16 @@ function buildComments(
     readinessScore: distanceDiagnostics?.readiness,
     mainLimiter: mapGapToCoachLanguage(distanceDiagnostics?.primaryGap).label || "n/a",
   });
+  const todayTrace = todayPlanEntry?.decisionTraceStructured || null;
+  const narrativeContext = deriveNarrativeContext({
+    resolvedDecision,
+    todayPlanEntry,
+    weekPreview,
+    policy: todayTrace?.inputs?.policy || policy || null,
+    keyPlan: todayTrace?.inputs?.key || null,
+    longrunPlan: todayTrace?.inputs?.longrun || null,
+    strengthState: strengthStateResolved,
+  });
   if (weekPreview && Array.isArray(weekPreview.days)) {
     const todayPreviewEntry = weekPreview.days.find((entry) => entry?.isToday || entry?.date === todayIso);
     const todayConsistency = checkTodayWeeklyConsistency({
@@ -12463,12 +12512,6 @@ function buildComments(
     if (!todayConsistency.ok) {
       weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
       weekPreview.debugFlags.push("today_weekly_consistency_warning");
-    }
-    const coachTrust = deriveCoachTrustSummary({ resolvedDecision, weekPreview });
-    weekPreview.coachTrustCheck = coachTrust;
-    if (!coachTrust.explainable) {
-      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
-      weekPreview.debugFlags.push("coach_trust_check_failed");
     }
     weekPreview.text = weekPreview.days
       .map((entry) => {
@@ -12492,35 +12535,10 @@ function buildComments(
     ? `Wochenplan bewusst konservativ (${String(overlayMode || "NORMAL").toUpperCase()}): aktuell kein zusätzlicher Key/Kraft geplant.`
     : null;
   const decisionCompact = buildRecommendationsAndBottomLine({
-    resolvedSessionType: resolvedDecision?.sessionType,
-    runFloorEwma10,
-    runFloorTarget: runTarget > 0 ? runTarget : null,
-    intensityDistribution: keyCompliance?.intensityDistribution,
-    spacingBlocked,
-    nextAllowed,
-    keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
-    overlayMode: runFloorState?.overlayMode,
-    keyAllowedNow,
-    hasConcreteKeySession: keyCompliance?.hasConcreteKeySession === true,
+    narrativeContext,
     explicitSessionShort,
-    todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
-    actualKeys7,
-    strengthPolicy: strengthPolicyResolved,
-    longRunDoneMin,
-    longRunTargetMin,
-    longRunGapMin,
-    longRunStepCapMin: longRunSafetyCapMin,
-    longRunProgressionTargetMin: longRunStepCapMin,
-    longRunDiagnosisTargetMin: prePlanLongRunTargetMin,
-    longRunSpikeCapMin,
-    longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
-    blockLongRunNextWeekTargetMin,
-    longrunProgressionBlocked,
-    longrunProgressionBlockers,
-    fatigue,
     distanceDiagnostics,
     gapRecommendations,
-    taperPriorityWeek,
   });
   const recommendationMetricsBlockRaw = [
     ...decisionCompact.recommendations,
@@ -12668,6 +12686,9 @@ function buildComments(
   const diagnoseLines = [];
   diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100${raceDayToday ? " (Renntag: nur eingeschränkt vergleichbar)" : ""}`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
+  if (narrativeContext?.keyPlan?.status) diagnoseLines.push(`Key-Status (Resolver): ${narrativeContext.keyPlan.status}.`);
+  if (narrativeContext?.longrunPlan?.status) diagnoseLines.push(`Longrun-Status (Resolver): ${narrativeContext.longrunPlan.status}${Number.isFinite(narrativeContext?.longrunPlan?.targetMin) ? ` (~${Math.round(narrativeContext.longrunPlan.targetMin)}′)` : ""}.`);
+  if (Number.isFinite(strengthStateResolved?.remainingMinutes)) diagnoseLines.push(`Strength-Status (Resolver): ${strengthStateResolved.needsStrengthSlot ? `offen (${strengthStateResolved.remainingMinutes}′)` : "Ziel erfüllt"}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
   if (raceDayToday) diagnoseLines.push("Renntag-Diagnose: Fokus auf Rennauswertung und Erholung, nicht auf normalen Trainingsfortschritt.");
 
@@ -12743,10 +12764,30 @@ function buildComments(
   const bottomLine = resolveBottomLine({
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
-    forceKeyToday: keyAllowedNow && keyCompliance?.hasConcreteKeySession === true,
+    forceKeyToday: false,
     todaySessionType: resolvedDecision.sessionType,
     explicitSessionShort,
   });
+  const narrativeConsistency = evaluateNarrativeConsistency({
+    resolvedDecision,
+    narrativeContext,
+    recommendationLines: recommendationRenderLines,
+    bottomLine,
+    diagnoseLines,
+  });
+  if (weekPreview) {
+    const coachTrust = deriveCoachTrustSummary({ resolvedDecision, weekPreview, narrativeConsistency });
+    weekPreview.coachTrustCheck = coachTrust;
+    weekPreview.narrativeConsistency = narrativeConsistency;
+    if (!coachTrust.explainable) {
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("coach_trust_check_failed");
+    }
+    if (!narrativeConsistency.pass) {
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("narrative_consistency_warning");
+    }
+  }
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
   const renderedText = lines.join("\n");
