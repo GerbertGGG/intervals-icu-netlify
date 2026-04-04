@@ -11048,7 +11048,7 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
   } else if (keyPlan?.status === "due" && resolvedDecision?.sessionType === "KEY") {
     lines.push(`Fokus heute: Key-Slot setzen${keyPlan?.keyType ? ` (${formatKeyType(keyPlan.keyType)})` : ""}.`);
   } else if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType === "STRENGTH") {
-    lines.push(`Fokus heute: Kraft-/Stabi-Schwerpunkt setzen (${strengthState.remainingSessions || 0} Einheit(en), ${strengthState.remainingMinutes || 0}′ offen).`);
+    lines.push(`Fokus heute: Kraft-/Stabi-Schwerpunkt setzen (${strengthState.remainingSessions || 0} Einheiten, ${strengthState.remainingMinutes || 0}′ offen).`);
   } else if (policy?.priorities?.preferGA) {
     lines.push("Fokus heute: Wochenrhythmus über kontrollierten GA/Regen-Tag stabil halten.");
   }
@@ -11061,7 +11061,7 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
     lines.push("Qualitätseinheit heute nicht priorisiert, bleibt aber für diese Woche offen.");
   }
   if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType !== "STRENGTH") {
-    lines.push(`Kraft-/Stabi bleibt offen (${strengthState.remainingSessions || 0} Einheit(en)).`);
+    lines.push(`Kraft-/Stabi bleibt offen (${strengthState.remainingSessions || 0} Einheiten).`);
   }
   return lines.slice(0, 3);
 }
@@ -11081,7 +11081,7 @@ function deriveKeyStatusLineFromResolver(keyPlan) {
 
 function deriveStrengthStatusLineFromState(strengthState) {
   if (!strengthState) return null;
-  return `Strength-Status: ${strengthState.needsStrengthSlot ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Session(s))` : "Ziel erfüllt"}.`;
+  return `Strength-Status: ${strengthState.needsStrengthSlot ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Einheiten)` : "Ziel erfüllt"}.`;
 }
 
 function deriveTrainingStatusFromPolicy({
@@ -11122,28 +11122,43 @@ function deriveTrainingStatusFromPolicy({
 }
 
 function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, strengthState, resolvedSessionType }) {
-  const lines = ["🗓 NÄCHSTE SCHRITTE"];
+  const lines = [];
   const todayType = normalizeResolvedSessionType(resolvedSessionType || (weekPreview?.days || []).find((entry) => entry?.isToday)?.sessionType);
   const todayMap = {
-    REST: "Heute: Regeneration priorisieren.",
-    GA: "Heute: lockere Einheit sauber umsetzen.",
-    LOW: "Heute: lockere Einheit sauber umsetzen.",
-    RECOVERY: "Heute: lockere Regenerationseinheit umsetzen.",
-    LONGRUN: "Heute: Longrun kontrolliert durchführen.",
-    KEY: "Heute: Qualitätseinheit kontrolliert durchführen.",
-    STRENGTH: "Heute: Kraft-/Stabi-Schwerpunkt setzen.",
-    RACE: "Heute: Wettkampf mit klarem Pacing laufen.",
+    REST: "Heute: kein Lauf, Fokus auf Regeneration.",
+    GA: "Heute: lockere Einheit wie geplant.",
+    LOW: "Heute: lockere Einheit wie geplant.",
+    RECOVERY: "Heute: lockere Einheit wie geplant.",
+    LONGRUN: "Heute: Longrun wie geplant.",
+    KEY: "Heute: Qualitätseinheit wie geplant.",
+    STRENGTH: "Heute: Kraft-/Stabi-Schwerpunkt wie geplant.",
+    RACE: "Heute: Wettkampf / Race-Day.",
   };
-  lines.push(`• ${todayMap[todayType] || "Heute: geplante Einheit kontrolliert umsetzen."}`);
+  lines.push(`• ${todayMap[todayType] || "Heute: Tagesfokus kontrolliert umsetzen."}`);
 
-  if (keyPlan?.nextAllowedIso) lines.push(`• Nächster Key: frühestens ab ${keyPlan.nextAllowedIso}.`);
-  else if (keyPlan?.status === "due") lines.push("• Nächster Key: priorisiert offen, im nächsten passenden Slot einplanen.");
+  if (keyPlan?.nextAllowedIso) {
+    lines.push(`• Nächster Key: frühestens ab ${keyPlan.nextAllowedIso}.`);
+  } else if (keyPlan?.status === "due") {
+    lines.push("• Nächster Key: diese Woche priorisiert offen.");
+  } else if (["blocked", "not_today"].includes(keyPlan?.status)) {
+    lines.push("• Nächster Key: heute noch nicht dran, nächstes passendes Fenster nutzen.");
+  } else {
+    lines.push("• Nächster Key: aktuell offen, im Wochenverlauf passend setzen.");
+  }
 
   if (["due", "important"].includes(longrunPlan?.status)) {
-    lines.push(`• Longrun: ${Number.isFinite(longrunPlan?.targetMin) ? `~${Math.round(longrunPlan.targetMin)}′` : "diese Woche noch"} einplanen.`);
+    lines.push(`• Longrun: ${Number.isFinite(longrunPlan?.targetMin) ? `~${Math.round(longrunPlan.targetMin)}′ diese Woche noch offen` : "diese Woche noch offen"}.`);
+  } else if (longrunPlan?.status === "done") {
+    lines.push("• Longrun: diese Woche bereits erledigt.");
+  } else if (longrunPlan?.status === "blocked") {
+    lines.push("• Longrun: heute noch nicht sinnvoll, späteres Zeitfenster nutzen.");
+  } else {
+    lines.push("• Longrun: aktuell nicht Priorität, Lage im Wochenverlauf prüfen.");
   }
   if (strengthState?.needsStrengthSlot === true) {
-    lines.push(`• Kraft/Stabi noch offen: ${strengthState.remainingSessions || 0} Einheit(en), ${strengthState.remainingMinutes || 0}′.`);
+    lines.push(`• Kraft/Stabi: noch offen (${strengthState.remainingSessions || 0} Einheiten, ${strengthState.remainingMinutes || 0}′).`);
+  } else {
+    lines.push("• Kraft/Stabi: Ziel für diese Woche erfüllt.");
   }
   return lines.slice(0, 5).join("\n");
 }
@@ -11550,7 +11565,7 @@ function buildNextRunRecommendation({
   plannedSessionLabel,
   plannedSessionNote,
 }) {
-  let next = "Einheit wie im Wochenplan.";
+  let next = "Heute Einheit kontrolliert umsetzen.";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const conciseExplicitSession = shortExplicitSession(explicitSession);
   const concisePlanLabel = String(plannedSessionLabel || "").split(/(?<=[.!?])\s+/)[0]?.trim() || "";
@@ -11692,14 +11707,24 @@ function buildResolvedSessionDecision({
   const legacyCandidate = String(todayDecisionCandidate || "");
   const containsLongrunNarrative = /longrun|langer lauf/i.test(legacyCandidate);
   const fallbackTodayDecision = containsLongrunNarrative
-    ? "Locker/GA wie im Wochenplan"
+    ? "Heute lockere Einheit wie geplant"
     : String(legacyCandidate || "").replace(/\.$/, "").trim();
+  const coachFallbackByType = {
+    REST: "Heute kein Lauf. Fokus auf Regeneration.",
+    GA: "Heute lockere Einheit wie geplant.",
+    LOW: "Heute lockere Einheit wie geplant.",
+    RECOVERY: "Heute lockere Einheit wie geplant.",
+    LONGRUN: "Heute Longrun wie geplant.",
+    KEY: "Heute Qualitätseinheit wie geplant.",
+    STRENGTH: "Heute Kraft-/Stabi-Schwerpunkt wie geplant.",
+    RACE: "Heute Wettkampf / Race-Day.",
+  };
   return {
     sessionType,
     sessionLabel: String(plannedSessionLabel || "").trim() || null,
     sessionDurationMin: plannedDurationMin,
     longrunTargetMin: null,
-    todayDecision: fallbackTodayDecision || "Locker/GA wie im Wochenplan",
+    todayDecision: fallbackTodayDecision || coachFallbackByType[sessionType] || "Heute Tagesfokus kontrolliert umsetzen.",
   };
 }
 
@@ -11714,7 +11739,7 @@ function deriveTodayNarrativeFromDecision({ resolvedSessionDecision, todayPlanEn
   if (sessionType === "KEY") return label ? `Heute Qualitätseinheit wie geplant: ${label}.` : "Heute Qualitätseinheit wie geplant.";
   if (sessionType === "STRENGTH") return label ? `Heute Kraft-/Stabi-Schwerpunkt wie geplant: ${label}.` : "Heute Kraft-/Stabi-Schwerpunkt wie geplant.";
   if (sessionType === "RACE") return label ? `Heute Wettkampf wie geplant: ${label}.` : "Heute Wettkampf wie geplant.";
-  return `${String(nextRunText || "Heute lockere Einheit kontrolliert durchführen").replace(/\.$/, "")}.`;
+  return `${String(nextRunText || "Heute Tagesfokus kontrolliert umsetzen").replace(/\.$/, "")}.`;
 }
 
 function buildResolvedDecision({
@@ -12262,7 +12287,7 @@ function deriveBottomLineFromDecision({ narrativeContext, explicitSessionShort }
   }
   if (sessionType === "STRENGTH") return "Heute Strength wie geplant absolvieren; Lauf nur ergänzend falls im Plan.";
   if (["REST", "RECOVERY", "LOW", "GA"].includes(sessionType)) return "Heute locker/erholsam im Plan bleiben.";
-  return selectedLabel ? `Heute wie geplant: ${selectedLabel}.` : "Heute plankonform und kontrolliert trainieren.";
+  return selectedLabel ? `Heute wie geplant: ${selectedLabel}.` : "Heute kontrolliert trainieren und den Tagesfokus sauber umsetzen.";
 }
 
 function deriveRecommendationFromDecision({ narrativeContext, distanceDiagnostics, gapRecommendations }) {
@@ -12293,7 +12318,7 @@ function deriveRecommendationFromDecision({ narrativeContext, distanceDiagnostic
     rec.push(`Longrun heute geblockt${Array.isArray(longrunPlan?.reasons) && longrunPlan.reasons.length ? ` (${longrunPlan.reasons.slice(0, 1).join(" | ")})` : ""}.`);
   }
   if (strengthState?.needsStrengthSlot === true) {
-    rec.push(`Strength offen: ${strengthState.remainingSessions || 0} Session(s) / ${strengthState.remainingMinutes || 0}′ verbleibend.`);
+    rec.push(`Strength offen: ${strengthState.remainingSessions || 0} Einheiten / ${strengthState.remainingMinutes || 0}′ verbleibend.`);
   }
   if (distanceDiagnostics?.readiness != null) {
     rec.unshift(`Readiness ${distanceDiagnostics.readiness}/100 · Gap: ${distanceDiagnostics.primaryGap}${distanceDiagnostics.secondaryGap ? ` → ${distanceDiagnostics.secondaryGap}` : ""}.`);
