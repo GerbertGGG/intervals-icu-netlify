@@ -10031,9 +10031,18 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
     }
 
+    const weekPreviewDays = Array.isArray(weekPreview?.days) ? weekPreview.days : [];
+    const hasStructuredWeekPreview = weekPreviewDays.length >= 3;
+    const weekPlanFallback = buildNextStepsFallbackLines({
+      weekPreview,
+      keyPlan: weekPreviewDays.find((entry) => entry?.isToday)?.decisionTraceStructured?.inputs?.key || null,
+      longrunPlan: weekPreviewDays.find((entry) => entry?.isToday)?.decisionTraceStructured?.inputs?.longrun || null,
+      strengthState: weekPreview?.strengthState || null,
+      resolvedSessionType: weekPreviewDays.find((entry) => entry?.isToday)?.sessionType || null,
+    });
     const weekPlanBlock = [
-      "🗓 WOCHENPLAN",
-      weekPreview?.text || "(Wochenplan nicht verfügbar)",
+      hasStructuredWeekPreview ? "🗓 WOCHENPLAN" : "🗓 NÄCHSTE SCHRITTE",
+      hasStructuredWeekPreview ? (weekPreview?.text || weekPlanFallback) : weekPlanFallback,
       "⸻",
       "",
     ].join("\n");
@@ -10064,7 +10073,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         eventDistance,
         vdotMed: vdotMedRace,
         efMed: efMedRace,
-        weekPlanText: weekPreview?.text || "(Wochenplan nicht verfügbar)",
+        weekPlanText: hasStructuredWeekPreview ? weekPreview?.text : weekPlanFallback,
       });
     }
     if (isRaceDayToday && raceActivityToday) {
@@ -10982,18 +10991,18 @@ function humanizeDecisionReason(reasonToken) {
   const map = {
     longrun_due: "der Longrun laut Wochenbudget fällig ist",
     key_due: "der Key laut Wochenbudget fällig ist",
-    policy_force_rest: "die Safety-Policy heute Erholung erzwingt",
-    overlay_force_rest: "das aktive Overlay heute Erholung erzwingt",
+    policy_force_rest: "heute Erholung Vorrang hat",
+    overlay_force_rest: "heute bewusst regenerativ geplant wird",
     next_allowed_not_reached: "der Key-Mindestabstand noch nicht erreicht ist",
     post_race_ramp_key_block: "die Post-Race-Ramp heute keinen Key erlaubt",
     min_gap_not_reached: "Mindestabstände aktuell nicht erfüllt sind",
     longrun_proximity_block: "Key und Longrun heute zu nah beieinander lägen",
-    key_optional_window: "der Key diese Woche möglich, aber heute nicht zwingend priorisiert ist",
+    key_optional_window: "die Qualitätseinheit diese Woche möglich ist, aber heute nicht priorisiert wurde",
     longrun_important: "der Longrun diese Woche wichtig bleibt und das Zeitfenster passt",
     longrun_due: "der Longrun diese Woche klar priorisiert offen ist",
     strength_anchor_guard: "mindestens ein robuster Strength-Slot abgesichert wird",
-    fatigue_blocked: "ein Fatigue-Block aktiv ist",
-    overlay_blocked: "das Overlay den Reiz heute blockiert",
+    fatigue_blocked: "heute die Ermüdung gegen zusätzlichen Qualitätsreiz spricht",
+    overlay_blocked: "heute bewusst konservativ gesteuert wird",
     spike_guard_blocked: "der Spike-Guard die Longrun-Progression begrenzt",
     session_not_ready: "die geplante Session noch nicht bereit ist",
   };
@@ -11018,10 +11027,10 @@ function deriveWhyFromDecisionTrace({ resolvedDecision, narrativeContext }) {
   }
   if (!reasonLines.length) {
     const resolvedType = normalizeResolvedSessionType(resolvedDecision?.sessionType || selected?.sessionType);
-    if (policy?.safety?.forceRest) reasonLines.push("die Safety-Policy heute Erholung priorisiert");
-    else if (resolvedType === "LONGRUN" && ["due", "important"].includes(longrunPlan?.status)) reasonLines.push("der Longrun heute laut Resolver priorisiert ist");
-    else if (resolvedType === "KEY" && keyPlan?.status === "due") reasonLines.push("der Key heute laut Resolver priorisiert ist");
-    else reasonLines.push("die heutige Auswahl direkt aus Policy und Wochenresolvern kommt");
+    if (policy?.safety?.forceRest) reasonLines.push("heute Regeneration klar Vorrang hat");
+    else if (resolvedType === "LONGRUN" && ["due", "important"].includes(longrunPlan?.status)) reasonLines.push("der Longrun diese Woche Priorität hat und das Zeitfenster passt");
+    else if (resolvedType === "KEY" && keyPlan?.status === "due") reasonLines.push("die Qualitätseinheit diese Woche priorisiert offen ist");
+    else reasonLines.push("die heutige Einheit sauber zum Wochenrhythmus passt");
   }
   return [buildWhyNarrative(reasonLines)];
 }
@@ -11031,7 +11040,7 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
   const keyPlan = narrativeContext?.keyPlan || null;
   const longrunPlan = narrativeContext?.longrunPlan || null;
   const strengthState = narrativeContext?.strengthState || null;
-  if (policy?.safety?.forceRest) return ["Fokus heute: Erholung absichern (Safety forceRest)."];
+  if (policy?.safety?.forceRest) return ["Fokus heute: Erholung absichern und Belastung bewusst niedrig halten."];
 
   const lines = [];
   if (["due", "important"].includes(longrunPlan?.status) && resolvedDecision?.sessionType === "LONGRUN") {
@@ -11039,37 +11048,39 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
   } else if (keyPlan?.status === "due" && resolvedDecision?.sessionType === "KEY") {
     lines.push(`Fokus heute: Key-Slot setzen${keyPlan?.keyType ? ` (${formatKeyType(keyPlan.keyType)})` : ""}.`);
   } else if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType === "STRENGTH") {
-    lines.push(`Fokus heute: offenes Strength-Budget schließen (${strengthState.remainingSessions || 0} Session(s), ${strengthState.remainingMinutes || 0}′).`);
+    lines.push(`Fokus heute: Kraft-/Stabi-Schwerpunkt setzen (${strengthState.remainingSessions || 0} Einheit(en), ${strengthState.remainingMinutes || 0}′ offen).`);
   } else if (policy?.priorities?.preferGA) {
     lines.push("Fokus heute: Wochenrhythmus über kontrollierten GA/Regen-Tag stabil halten.");
   }
 
   if (policy?.budgets?.keyRemaining > 0 && ["blocked", "not_today"].includes(keyPlan?.status) && keyPlan?.nextAllowedIso) {
     const statusHint = keyPlan?.status === "blocked" ? "gesperrt" : "heute zurückgestellt";
-    lines.push(`Key bleibt offen (${statusHint}), frühestens ab ${keyPlan.nextAllowedIso}.`);
+    lines.push(`Qualitätseinheit bleibt offen (${statusHint}), frühestens ab ${keyPlan.nextAllowedIso}.`);
   }
   if (keyPlan?.status === "not_today" && keyPlan?.nextAllowedIso == null) {
-    lines.push("Key heute nicht priorisiert, aber als Restwochen-Priorität offen.");
+    lines.push("Qualitätseinheit heute nicht priorisiert, bleibt aber für diese Woche offen.");
   }
   if (strengthState?.needsStrengthSlot === true && resolvedDecision?.sessionType !== "STRENGTH") {
-    lines.push(`Strength-Budget bleibt offen (${strengthState.remainingSessions || 0} Session(s)).`);
+    lines.push(`Kraft-/Stabi bleibt offen (${strengthState.remainingSessions || 0} Einheit(en)).`);
   }
   return lines.slice(0, 3);
 }
 
 function deriveLongrunStatusLineFromResolver({ longrunPlan, resolvedDecision }) {
-  if (!longrunPlan?.status) return "Longrun-Status: n/a.";
+  if (!longrunPlan?.status) return null;
   const targetMin = Number(longrunPlan?.targetMin ?? resolvedDecision?.longrunTargetMin ?? 0);
-  return `Longrun-Status: ${longrunPlan.status}${targetMin > 0 ? ` (~${Math.round(targetMin)}′)` : ""}.`;
+  const statusMap = { due: "diese Woche priorisiert", important: "wichtig eingeplant", blocked: "heute noch nicht sinnvoll", optional: "optional offen", done: "bereits abgedeckt" };
+  return `Longrun-Status: ${statusMap[longrunPlan.status] || "in Abstimmung"}${targetMin > 0 ? ` (~${Math.round(targetMin)}′)` : ""}.`;
 }
 
 function deriveKeyStatusLineFromResolver(keyPlan) {
-  if (!keyPlan?.status) return "Key-Status: n/a.";
-  return `Key-Status: ${keyPlan.status}${keyPlan?.hardBlocked ? " (hard block)" : ""}${keyPlan?.nextAllowedIso ? ` (ab ${keyPlan.nextAllowedIso})` : ""}.`;
+  if (!keyPlan?.status) return null;
+  const statusMap = { due: "priorisiert offen", important: "wichtig", blocked: "heute noch nicht sinnvoll", not_today: "für heute zurückgestellt", optional: "optional offen", done: "bereits abgedeckt" };
+  return `Key-Status: ${statusMap[keyPlan.status] || "in Abstimmung"}${keyPlan?.hardBlocked ? " (heute noch gesperrt)" : ""}${keyPlan?.nextAllowedIso ? ` (ab ${keyPlan.nextAllowedIso})` : ""}.`;
 }
 
 function deriveStrengthStatusLineFromState(strengthState) {
-  if (!strengthState) return "Strength-Status: n/a.";
+  if (!strengthState) return null;
   return `Strength-Status: ${strengthState.needsStrengthSlot ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Session(s))` : "Ziel erfüllt"}.`;
 }
 
@@ -11097,8 +11108,10 @@ function deriveTrainingStatusFromPolicy({
         ? runFloorState?.stabilityOK === false
           ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
           : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
-        : `RunFloor: ${runFloorCurrent} / n/a`,
-    `Run-Frequenz (Policy): ${policy?.budgets?.plannedRunsSoFar ?? "n/a"} geplant bei Ziel ${policy?.budgets?.runFrequencyMin ?? "n/a"}-${policy?.budgets?.runFrequencyMax ?? "n/a"}.`,
+        : `RunFloor: ${runFloorCurrent} (Zielbereich aktuell noch ohne klare Planbasis)`,
+    Number.isFinite(policy?.budgets?.plannedRunsSoFar) && Number.isFinite(policy?.budgets?.runFrequencyMin) && Number.isFinite(policy?.budgets?.runFrequencyMax)
+      ? `Run-Frequenz: ${policy.budgets.plannedRunsSoFar} geplant bei Ziel ${policy.budgets.runFrequencyMin}-${policy.budgets.runFrequencyMax}.`
+      : null,
     deriveKeyStatusLineFromResolver(keyPlan),
     deriveLongrunStatusLineFromResolver({ longrunPlan, resolvedDecision }),
     deriveStrengthStatusLineFromState(strengthState),
@@ -11106,6 +11119,33 @@ function deriveTrainingStatusFromPolicy({
     bikeReplacementGuidanceLine,
     intensityLine,
   ].filter(Boolean);
+}
+
+function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, strengthState, resolvedSessionType }) {
+  const lines = ["🗓 NÄCHSTE SCHRITTE"];
+  const todayType = normalizeResolvedSessionType(resolvedSessionType || (weekPreview?.days || []).find((entry) => entry?.isToday)?.sessionType);
+  const todayMap = {
+    REST: "Heute: Regeneration priorisieren.",
+    GA: "Heute: lockere Einheit sauber umsetzen.",
+    LOW: "Heute: lockere Einheit sauber umsetzen.",
+    RECOVERY: "Heute: lockere Regenerationseinheit umsetzen.",
+    LONGRUN: "Heute: Longrun kontrolliert durchführen.",
+    KEY: "Heute: Qualitätseinheit kontrolliert durchführen.",
+    STRENGTH: "Heute: Kraft-/Stabi-Schwerpunkt setzen.",
+    RACE: "Heute: Wettkampf mit klarem Pacing laufen.",
+  };
+  lines.push(`• ${todayMap[todayType] || "Heute: geplante Einheit kontrolliert umsetzen."}`);
+
+  if (keyPlan?.nextAllowedIso) lines.push(`• Nächster Key: frühestens ab ${keyPlan.nextAllowedIso}.`);
+  else if (keyPlan?.status === "due") lines.push("• Nächster Key: priorisiert offen, im nächsten passenden Slot einplanen.");
+
+  if (["due", "important"].includes(longrunPlan?.status)) {
+    lines.push(`• Longrun: ${Number.isFinite(longrunPlan?.targetMin) ? `~${Math.round(longrunPlan.targetMin)}′` : "diese Woche noch"} einplanen.`);
+  }
+  if (strengthState?.needsStrengthSlot === true) {
+    lines.push(`• Kraft/Stabi noch offen: ${strengthState.remainingSessions || 0} Einheit(en), ${strengthState.remainingMinutes || 0}′.`);
+  }
+  return lines.slice(0, 5).join("\n");
 }
 
 function insertCoachAnalysisAfterHeute(reportText, coachAnalysis) {
@@ -11279,8 +11319,8 @@ function buildRaceDayMinimalReport({ eventDistance, vdotMed, efMed, weekPlanText
   lines.push("Tipp: Erste 400m kontrolliert — Zieltempo, nicht schneller. Letzte 1000m alles geben.");
   lines.push("Danach: 10 Min auslaufen, Beine hochlegen.");
   lines.push("");
-  lines.push("🗓 WOCHENPLAN");
-  lines.push(weekPlanText || "(Wochenplan nicht verfügbar)");
+  lines.push(weekPlanText?.includes("NÄCHSTE SCHRITTE") ? "🗓 NÄCHSTE SCHRITTE" : "🗓 WOCHENPLAN");
+  lines.push(weekPlanText || "• Heute: Renntag fokussiert laufen.\n• Danach: Erholung aktiv steuern.");
   return lines.join("\n");
 }
 
@@ -11666,11 +11706,15 @@ function buildResolvedSessionDecision({
 function deriveTodayNarrativeFromDecision({ resolvedSessionDecision, todayPlanEntry, nextRunText }) {
   const sessionType = normalizeResolvedSessionType(resolvedSessionDecision?.sessionType || todayPlanEntry?.sessionType);
   const label = String(resolvedSessionDecision?.sessionLabel || todayPlanEntry?.sessionLabel || "").trim();
-  if (sessionType === "LONGRUN") return resolvedSessionDecision?.longrunTargetMin > 0 ? `Longrun ${resolvedSessionDecision.longrunTargetMin}′.` : "Longrun wie im Wochenplan.";
-  if (sessionType === "KEY") return label ? `Key wie geplant: ${label}.` : "Key wie im Wochenplan.";
-  if (sessionType === "STRENGTH") return label ? `Kraft/Stabi wie geplant: ${label}.` : "Kraft/Stabi wie im Wochenplan.";
-  if (["LOW", "REST", "RECOVERY", "GA", "RACE"].includes(sessionType)) return label ? `Heute wie geplant: ${label}.` : "Heute wie im Wochenplan.";
-  return `${String(nextRunText || "Einheit wie im Wochenplan").replace(/\.$/, "")}.`;
+  if (sessionType === "REST") return "Heute kein Lauf. Fokus auf Regeneration.";
+  if (sessionType === "GA" || sessionType === "LOW" || sessionType === "RECOVERY") {
+    return label ? `Heute lockere Einheit wie geplant: ${label}.` : "Heute lockere Einheit wie geplant.";
+  }
+  if (sessionType === "LONGRUN") return resolvedSessionDecision?.longrunTargetMin > 0 ? `Heute Longrun wie geplant (~${resolvedSessionDecision.longrunTargetMin}′).` : "Heute Longrun wie geplant.";
+  if (sessionType === "KEY") return label ? `Heute Qualitätseinheit wie geplant: ${label}.` : "Heute Qualitätseinheit wie geplant.";
+  if (sessionType === "STRENGTH") return label ? `Heute Kraft-/Stabi-Schwerpunkt wie geplant: ${label}.` : "Heute Kraft-/Stabi-Schwerpunkt wie geplant.";
+  if (sessionType === "RACE") return label ? `Heute Wettkampf wie geplant: ${label}.` : "Heute Wettkampf wie geplant.";
+  return `${String(nextRunText || "Heute lockere Einheit kontrolliert durchführen").replace(/\.$/, "")}.`;
 }
 
 function buildResolvedDecision({
@@ -11704,7 +11748,7 @@ function buildResolvedDecision({
     remainingWaitHours: resolvedTiming.remainingWaitHours,
     nextKeyEarliestDate: resolvedTiming.nextKeyEarliestDate,
     readinessScore: Number.isFinite(readinessScore) ? readinessScore : null,
-    mainLimiter: mainLimiter || "n/a",
+    mainLimiter: mainLimiter || null,
   };
 }
 
@@ -11743,6 +11787,30 @@ function validateResolvedDecisionRenderConsistency(renderedText, resolvedDecisio
       mismatches,
     });
   }
+}
+
+function runRenderQualityChecks({ renderedText, weekPlanAvailable }) {
+  const text = String(renderedText || "");
+  const issues = [];
+  const heuteMatch = text.match(/(?:🏃|🗓)\sHEUTE\n([^\n]+)/);
+  const warumMatch = text.match(/🧩\sWARUM\n([\s\S]*?)\n⸻/);
+  const internalWords = /\b(policy|resolver|budget|trace|candidate|reconcile|selected)\b/i;
+  if (!heuteMatch || !String(heuteMatch[1] || "").trim()) {
+    issues.push("heute_missing");
+  }
+  if (!weekPlanAvailable && /wie im wochenplan/i.test(String(heuteMatch?.[1] || ""))) {
+    issues.push("heute_refers_missing_weekplan");
+  }
+  if (internalWords.test(String(warumMatch?.[1] || ""))) {
+    issues.push("warum_contains_internal_terms");
+  }
+  if (/(\bn\/a\b|nicht verfügbar)/i.test(text) && /(🏃 HEUTE|🧩 WARUM|📊 TRAININGSSTAND|🧠 STATUS)/.test(text)) {
+    issues.push("important_blocks_contain_na");
+  }
+  if (!weekPlanAvailable && !text.includes("🗓 NÄCHSTE SCHRITTE")) {
+    issues.push("missing_next_steps_fallback");
+  }
+  return { renderQualityPass: issues.length === 0, issues };
 }
 
 function evaluateNarrativeConsistency({
@@ -12181,7 +12249,7 @@ function deriveBottomLineFromDecision({ narrativeContext, explicitSessionShort }
   const longrunPlan = narrativeContext?.longrunPlan || null;
 
   if (policy?.safety?.forceRest) {
-    return "Heute Erholung/Pause priorisieren (Policy Safety: forceRest).";
+    return "Heute Erholung/Pause priorisieren.";
   }
   if (sessionType === "KEY") {
     return explicitSessionShort
@@ -12903,17 +12971,17 @@ function buildComments(
   const whyLines = deriveWhyFromDecisionTrace({ resolvedDecision, narrativeContext });
 
   const statusLines = [
-    `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
-    `Hauptlimit: ${resolvedDecision.mainLimiter}`,
+    Number.isFinite(resolvedDecision.readinessScore) ? `Readiness (overall): ${resolvedDecision.readinessScore}/100` : null,
+    resolvedDecision.mainLimiter ? `Hauptlimit: ${resolvedDecision.mainLimiter}` : null,
     !todaySessionContext.isTodayKey && resolvedDecision?.nextKeyEarliestDate
       ? `Nächster Key frühestens ab ${resolvedDecision.nextKeyEarliestDate}.`
       : null,
-  ];
+  ].filter(Boolean);
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;
   const intensityLine = intensityDistribution?.hasData
     ? `Intensitätsverteilung (${intensityWindowLabel}, Block): Easy ${easySharePct}% | Mid ${midSharePct}% | Hard ${hardSharePct}% (Ziel ≥${easyMinPct}% / ≤${midMaxPct}% / ≤${hardMaxPct}%)`
-    : `Intensitätsverteilung (${intensityWindowLabel}, Block): n/a (noch keine Laufdaten)`;
+    : `Intensitätsverteilung (${intensityWindowLabel}, Block): noch ohne belastbare Laufdaten.`;
 
   const trainingStateLines = deriveTrainingStatusFromPolicy({
     narrativeContext,
@@ -12952,9 +13020,9 @@ function buildComments(
   const diagnoseLines = [];
   diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100${raceDayToday ? " (Renntag: nur eingeschränkt vergleichbar)" : ""}`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
-  if (narrativeContext?.keyPlan?.status) diagnoseLines.push(`Key-Status (Resolver): ${narrativeContext.keyPlan.status}.`);
-  if (narrativeContext?.longrunPlan?.status) diagnoseLines.push(`Longrun-Status (Resolver): ${narrativeContext.longrunPlan.status}${Number.isFinite(narrativeContext?.longrunPlan?.targetMin) ? ` (~${Math.round(narrativeContext.longrunPlan.targetMin)}′)` : ""}.`);
-  if (Number.isFinite(strengthStateResolved?.remainingMinutes)) diagnoseLines.push(`Strength-Status (Resolver): ${strengthStateResolved.needsStrengthSlot ? `offen (${strengthStateResolved.remainingMinutes}′)` : "Ziel erfüllt"}.`);
+  if (narrativeContext?.keyPlan?.status) diagnoseLines.push(`Key-Status: ${narrativeContext.keyPlan.status}.`);
+  if (narrativeContext?.longrunPlan?.status) diagnoseLines.push(`Longrun-Status: ${narrativeContext.longrunPlan.status}${Number.isFinite(narrativeContext?.longrunPlan?.targetMin) ? ` (~${Math.round(narrativeContext.longrunPlan.targetMin)}′)` : ""}.`);
+  if (Number.isFinite(strengthStateResolved?.remainingMinutes)) diagnoseLines.push(`Strength-Status: ${strengthStateResolved.needsStrengthSlot ? `offen (${strengthStateResolved.remainingMinutes}′)` : "Ziel erfüllt"}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
   if (raceDayToday) diagnoseLines.push("Renntag-Diagnose: Fokus auf Rennauswertung und Erholung, nicht auf normalen Trainingsfortschritt.");
 
@@ -13060,6 +13128,14 @@ function buildComments(
 
   const renderedText = lines.join("\n");
   validateResolvedDecisionRenderConsistency(renderedText, resolvedDecision);
+  const renderQuality = runRenderQualityChecks({
+    renderedText,
+    weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
+  });
+  if (weekPreview) weekPreview.renderQuality = renderQuality;
+  if (!renderQuality.renderQualityPass) {
+    console.warn("render_quality_warning", renderQuality);
+  }
 
   if (normalizedVerbosity !== "debug") {
     return renderedText;
@@ -13122,6 +13198,12 @@ function buildComments(
 
   const debugRenderedText = lines.join("\n");
   validateResolvedDecisionRenderConsistency(debugRenderedText, resolvedDecision);
+  if (weekPreview && !weekPreview.renderQuality) {
+    weekPreview.renderQuality = runRenderQualityChecks({
+      renderedText: debugRenderedText,
+      weekPlanAvailable: Array.isArray(weekPreview?.days) && weekPreview.days.length >= 3,
+    });
+  }
   return debugRenderedText;
 }
 
