@@ -1688,6 +1688,42 @@ function evaluateStrengthPolicy(strengthMin7d) {
   };
 }
 
+function deriveStrengthState({
+  strengthMinutes7d = 0,
+  strengthCountThisWeek = 0,
+  block = null,
+  overlayMode = "NORMAL",
+  weeksToEvent = null,
+} = {}) {
+  const policyBase = evaluateStrengthPolicy(strengthMinutes7d);
+  const policy = applyStrengthPolicyOverlay(policyBase, { overlayMode, weeksToEvent });
+  const targetSessionsBase = plannedStrengthTargetByPhase(block, overlayMode);
+  const targetSessions = Math.max(0, Math.min(targetSessionsBase, Number(getStrengthPhasePlan(block)?.sessionsPerWeek ?? targetSessionsBase)));
+  const completedSessions = Math.max(0, Math.floor(Number(strengthCountThisWeek) || 0));
+  const completedMinutes = Math.max(0, Math.round(Number(policy.minutes7d) || 0));
+  const targetMinutes = Math.max(0, Math.round(Number(policy.target) || 0));
+  const remainingMinutes = Math.max(0, targetMinutes - completedMinutes);
+  const remainingSessions = Math.max(0, targetSessions - completedSessions);
+  const preferredStrengthDays = [2, 4, 1, 5, 3, 6, 7];
+  const reasons = [];
+  if (remainingSessions > 0) reasons.push("session_target_gap");
+  if (remainingMinutes > 0) reasons.push("minute_target_gap");
+  if (policy.belowRunfloor) reasons.push("below_runfloor");
+  return {
+    targetMinutes,
+    completedMinutes,
+    remainingMinutes,
+    targetSessions,
+    completedSessions,
+    remainingSessions,
+    needsStrengthSlot: remainingSessions > 0 || remainingMinutes > 0,
+    preferredStrengthDays,
+    confidenceDelta: Number(policy.confidenceDelta) || 0,
+    reasons,
+    policy,
+  };
+}
+
 function applyStrengthPolicyOverlay(strengthPolicy, { overlayMode = null, weeksToEvent = null } = {}) {
   const base = {
     ...(strengthPolicy || evaluateStrengthPolicy(0)),
@@ -7207,7 +7243,14 @@ function buildWeekPreview(
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
     // Flexible statt fixer Wochentage:
     // Key/Longrun sind vollständig dynamisch und folgen nur den Gating-Regeln.
-    const strengthPref = [2, 4, 1, 5, 3, 6, 7];
+    const strengthState = deriveStrengthState({
+      strengthMinutes7d: robustness?.strengthMinutes7d || 0,
+      strengthCountThisWeek: thisWeekActuals.strengthCount,
+      block: blockState?.block,
+      overlayMode: baseOverlayMode,
+      weeksToEvent: blockState?.weeksToEvent,
+    });
+    const strengthPref = strengthState.preferredStrengthDays;
     const lastLongrunDateBeforeToday = (() => {
       const dates = (ctx?.activitiesAll || [])
         .filter((a) => {
@@ -7257,12 +7300,10 @@ function buildWeekPreview(
       7
     );
     const keyLongrunGapDays = 2;
-    const baseStrengthTarget = plannedStrengthTargetByPhase(blockState?.block, baseOverlayMode);
-    const strengthTarget = Math.max(0, Math.min(baseStrengthTarget, Number(strengthPlan?.sessionsPerWeek ?? baseStrengthTarget)));
     const weeklySlots = {
       keyTarget: keyBudgetByFrequency,
       longrunTarget: thisWeekActuals.longrundDone ? 0 : 1,
-      strengthTarget,
+      strengthTarget: strengthState.targetSessions,
     };
     const plannedDateHasRun = (date) => days.some((entry) =>
       entry?.date === date && ["GA", "KEY", "LONGRUN"].includes(entry?.sessionType)
@@ -7453,7 +7494,9 @@ function buildWeekPreview(
             if (!longrunGapOk) decisionTrace.push("longrun_rejected:min_gap");
             if (!canPlanLongrun) decisionCandidates.push({ candidate: "LONGRUN", status: "rejected", reason: "slot_or_key_proximity" });
             if (!longrunGapOk) decisionCandidates.push({ candidate: "LONGRUN", status: "rejected", reason: "min_gap" });
-            const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < weeklySlots.strengthTarget;
+            const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
+            const remainingStrengthSessions = Math.max(0, strengthState.targetSessions - plannedStrengthTotal);
+            const strengthNeed = remainingStrengthSessions > 0;
             const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
               .map((d) => isoWeekdayBerlin(d))
               .map((wd) => strengthPref.indexOf(wd))
@@ -7462,7 +7505,6 @@ function buildWeekPreview(
             const isStrengthPref = strengthPref.indexOf(weekday) === bestStrengthRankLeft;
             if (strengthNeed && isStrengthPref) {
               decisionTrace.push("strength_selected:target_gap");
-              const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
               const strengthSession = getStrengthSessionForDay(blockState, plannedStrengthTotal);
               const cycleLabel = strengthSession ? ` (KW ${Number(strengthSession.cycleWeek) + 1}/4)` : "";
               sessionType = "STRENGTH";
@@ -7665,9 +7707,16 @@ function buildWeekPreview(
       }
       for (const idx of optionalLowIndices) {
         if (plannedRuns <= fallbackRunTargetRange.max) break;
+        const previousSelection = {
+          sessionType: days[idx].sessionType,
+          sessionLabel: days[idx].sessionLabel,
+          intensity: days[idx].intensity,
+        };
         days[idx].sessionType = "REST";
         days[idx].sessionLabel = "frei / optionaler Rest";
         days[idx].intensity = "NONE";
+        days[idx].reconciledFrom = previousSelection;
+        days[idx].reconcileReason = "weekly_frequency_cap_optional_removed";
         days[idx].note = days[idx].note
           ? `${days[idx].note} · reduziert auf Ziel-Frequenz`
           : "Reduziert auf Ziel-Frequenz";
@@ -7676,6 +7725,14 @@ function buildWeekPreview(
           "weekly_reconcile:run_frequency_cap_optional_removed",
         ];
         if (days[idx].decisionTraceStructured) {
+          days[idx].decisionTraceStructured.reconciledFrom = previousSelection;
+          days[idx].decisionTraceStructured.reconciledTo = {
+            sessionType: "REST",
+            sessionLabel: "frei / optionaler Rest",
+            intensity: "NONE",
+            keyType: null,
+          };
+          days[idx].decisionTraceStructured.reconcileReason = "weekly_frequency_cap_optional_removed";
           days[idx].decisionTraceStructured.candidates = [
             ...(Array.isArray(days[idx].decisionTraceStructured.candidates) ? days[idx].decisionTraceStructured.candidates : []),
             { candidate: "REST", status: "selected", reason: "weekly_reconcile_run_frequency_cap_optional_removed" },
@@ -7695,9 +7752,16 @@ function buildWeekPreview(
       }
       for (const idx of nonCoreGaIndices) {
         if (plannedRuns <= fallbackRunTargetRange.max) break;
+        const previousSelection = {
+          sessionType: days[idx].sessionType,
+          sessionLabel: days[idx].sessionLabel,
+          intensity: days[idx].intensity,
+        };
         days[idx].sessionType = "REST";
         days[idx].sessionLabel = "frei / optionaler Rest";
         days[idx].intensity = "NONE";
+        days[idx].reconciledFrom = previousSelection;
+        days[idx].reconcileReason = "weekly_frequency_cap_ga_removed";
         days[idx].note = days[idx].note
           ? `${days[idx].note} · GA zugunsten Ziel-Frequenz gestrichen`
           : "GA zugunsten Ziel-Frequenz gestrichen";
@@ -7706,6 +7770,14 @@ function buildWeekPreview(
           "weekly_reconcile:run_frequency_cap_ga_removed",
         ];
         if (days[idx].decisionTraceStructured) {
+          days[idx].decisionTraceStructured.reconciledFrom = previousSelection;
+          days[idx].decisionTraceStructured.reconciledTo = {
+            sessionType: "REST",
+            sessionLabel: "frei / optionaler Rest",
+            intensity: "NONE",
+            keyType: null,
+          };
+          days[idx].decisionTraceStructured.reconcileReason = "weekly_frequency_cap_ga_removed";
           days[idx].decisionTraceStructured.candidates = [
             ...(Array.isArray(days[idx].decisionTraceStructured.candidates) ? days[idx].decisionTraceStructured.candidates : []),
             { candidate: "REST", status: "selected", reason: "weekly_reconcile_run_frequency_cap_ga_removed" },
@@ -7740,7 +7812,7 @@ function buildWeekPreview(
       })
       .join("\n");
 
-    return { days, text, thisWeekActuals };
+    return { days, text, thisWeekActuals, strengthState };
   } catch {
     return { days: [], text: "(Wochenplan nicht verfügbar)", thisWeekActuals: null };
   }
@@ -11070,49 +11142,40 @@ function buildNextRunRecommendation({
   plannedSessionLabel,
   plannedSessionNote,
 }) {
-  let next = "45–60 min locker/GA";
+  let next = "Einheit wie im Wochenplan.";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
-  const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
   const concisePlanLabel = String(plannedSessionLabel || "").split(/(?<=[.!?])\s+/)[0]?.trim() || "";
   const plannedTypeUpper = String(plannedSessionType || "").toUpperCase();
-  const keyScheduledToday = plannedTypeUpper === "KEY";
-  const longrunScheduledToday = plannedTypeUpper === "LONGRUN";
-  const strengthWithRunAddon = plannedTypeUpper === "STRENGTH"
+  const plannedIsRunAddonStrength = plannedTypeUpper === "STRENGTH"
     && String(plannedSessionNote || "").toLowerCase().includes("ga-lauf");
-  const keySuggestedNow = keyAllowedNow && (
-    keyScheduledToday
-    || keySuggestionText.includes("key heute")
-    || keySuggestionText.includes("optional/erlaubt")
-    || keySuggestionText.includes("nächster key:")
-  );
   if (overlay === "LIFE_EVENT_STOP") {
-    next = "Pause / nur Regeneration (LifeEvent)";
-  } else if (longrunScheduledToday) {
+    next = "Pause/Regeneration wie im Wochenplan (LifeEvent).";
+  } else if (plannedTypeUpper === "LONGRUN") {
     const longrunLabel = concisePlanLabel || "Langer Lauf";
     next = `Longrun wie im Wochenplan: ${longrunLabel}.`;
-  } else if (overlay === "LIFE_EVENT_HOLIDAY") {
-    next = "20–45 min locker (Holiday-Modus)";
-  } else if (overlay === "POST_RACE_RAMP") {
-    next = "25–40 min locker / Technik / frei";
-  } else if (overlay === "TAPER") {
-    next = keySuggestedNow
-      ? `Kurzer, kontrollierter Key im Taper erlaubt${conciseExplicitSession ? `: ${conciseExplicitSession}` : "."} Fokus: konstante Reps, enge Pace-Streuung.`
-      : "20–35 min locker (Taper)";
-  } else if (overlay === "DELOAD") {
-    next = "30–45 min locker / Technik (Deload)";
-  } else if (keySuggestedNow) {
+  } else if (plannedTypeUpper === "KEY") {
     next = conciseExplicitSession
       ? `Key wie im Wochenplan: ${conciseExplicitSession}.`
       : "Key wie im Wochenplan (kontrolliert, sauber laufen).";
-  } else if (strengthWithRunAddon) {
-    next = "35–50 min locker/steady + Kraft (Kombi-Tag)";
-  } else if (hasSpecific && !specificOk) {
-    next = "35–50 min locker/steady (Volumenaufbau)";
-  } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
-    next = "30–45 min locker (kein Key) – Intensität deckeln";
+  } else if (plannedTypeUpper === "STRENGTH") {
+    next = plannedIsRunAddonStrength
+      ? "Strength-Tag wie im Wochenplan (Kombi mit lockerem Lauf falls notiert)."
+      : "Kraft/Stabi wie im Wochenplan.";
+  } else if (["LOW", "REST", "RECOVERY", "GA", "RACE"].includes(plannedTypeUpper)) {
+    next = concisePlanLabel
+      ? `Heute wie geplant: ${concisePlanLabel}.`
+      : "Heute locker/Erholung wie im Wochenplan.";
+  } else if (overlay === "LIFE_EVENT_HOLIDAY") {
+    next = "Konservativ bleiben (Holiday-Modus), Wochenplan priorisieren.";
+  } else if (overlay === "POST_RACE_RAMP") {
+    next = "Post-Race-Ramp: locker/Technik gemäß Wochenplan.";
+  } else if (overlay === "TAPER") {
+    next = "Taper-Modus: geplante Einheit kompakt und kontrolliert absolvieren.";
+  } else if (overlay === "DELOAD") {
+    next = "Deload-Modus: Umfang konservativ halten, Wochenplan folgen.";
   }
-  const shouldApplyKeySpacingGate = !longrunScheduledToday && !keySpacingOk && (keyScheduledToday || keySuggestedNow || keySuggestionText.includes("key"));
+  const shouldApplyKeySpacingGate = plannedTypeUpper === "KEY" && keySpacingOk === false;
   if (shouldApplyKeySpacingGate) {
     const minGapHours = Math.max(24, Math.round((Number(keyMinGapHours) || KEY_MIN_GAP_DAYS_DEFAULT * 24)));
     const waitHours = Number.isFinite(hoursSinceLastKey)
@@ -11197,7 +11260,6 @@ function normalizeResolvedSessionType(type) {
 
 function buildResolvedSessionDecision({
   todaySessionType,
-  todayDecisionCandidate,
   plannedSessionLabel,
   longrunProgressionTargetMin,
 }) {
@@ -11210,30 +11272,24 @@ function buildResolvedSessionDecision({
 
   if (sessionType === "LONGRUN") {
     const longrunLabel = resolvedLongrunMin > 0 ? `Longrun ${resolvedLongrunMin}′` : "Longrun";
-    return {
-      sessionType,
-      sessionLabel: longrunLabel,
-      sessionDurationMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null,
-      todayDecision: longrunLabel,
-      longrunTargetMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null,
-    };
+    return { sessionType, sessionLabel: longrunLabel, sessionDurationMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null, longrunTargetMin: resolvedLongrunMin > 0 ? resolvedLongrunMin : null };
   }
-
-  let todayDecision = String(todayDecisionCandidate || "").replace(/ Optional:.*$/i, "").replace(/\.$/, "").trim();
-  if ((/longrun|langer lauf/i).test(todayDecision)) {
-    if (sessionType === "KEY") todayDecision = "Key wie im Wochenplan";
-    else if (sessionType === "STRENGTH") todayDecision = "Kraft wie im Wochenplan (Lauf nur ergänzend falls geplant)";
-    else if (["GA", "LOW", "RECOVERY", "REST"].includes(sessionType)) todayDecision = "Locker/GA wie im Wochenplan";
-    else todayDecision = "Einheit wie im Wochenplan";
-  }
-
   return {
     sessionType,
     sessionLabel: String(plannedSessionLabel || "").trim() || null,
     sessionDurationMin: plannedDurationMin,
-    todayDecision: todayDecision || "Einheit wie im Wochenplan",
     longrunTargetMin: null,
   };
+}
+
+function deriveTodayNarrativeFromDecision({ resolvedSessionDecision, todayPlanEntry, nextRunText }) {
+  const sessionType = normalizeResolvedSessionType(resolvedSessionDecision?.sessionType || todayPlanEntry?.sessionType);
+  const label = String(resolvedSessionDecision?.sessionLabel || todayPlanEntry?.sessionLabel || "").trim();
+  if (sessionType === "LONGRUN") return resolvedSessionDecision?.longrunTargetMin > 0 ? `Longrun ${resolvedSessionDecision.longrunTargetMin}′.` : "Longrun wie im Wochenplan.";
+  if (sessionType === "KEY") return label ? `Key wie geplant: ${label}.` : "Key wie im Wochenplan.";
+  if (sessionType === "STRENGTH") return label ? `Kraft/Stabi wie geplant: ${label}.` : "Kraft/Stabi wie im Wochenplan.";
+  if (["LOW", "REST", "RECOVERY", "GA", "RACE"].includes(sessionType)) return label ? `Heute wie geplant: ${label}.` : "Heute wie im Wochenplan.";
+  return `${String(nextRunText || "Einheit wie im Wochenplan").replace(/\.$/, "")}.`;
 }
 
 function buildResolvedDecision({
@@ -11306,6 +11362,32 @@ function validateResolvedDecisionRenderConsistency(renderedText, resolvedDecisio
       mismatches,
     });
   }
+}
+
+function checkTodayWeeklyConsistency({ todayPlanEntry, resolvedDecision, todayDecision, trace = [] }) {
+  const weekSessionType = normalizeResolvedSessionType(todayPlanEntry?.sessionType);
+  const resolvedSessionType = normalizeResolvedSessionType(resolvedDecision?.sessionType);
+  const narrativeSessionType = normalizeResolvedSessionType(todayPlanEntry?.sessionType);
+  const mismatches = [];
+  if (weekSessionType !== "UNKNOWN" && resolvedSessionType !== "UNKNOWN" && weekSessionType !== resolvedSessionType) {
+    mismatches.push(`week_vs_resolved:${weekSessionType}->${resolvedSessionType}`);
+  }
+  const text = String(todayDecision || "").toLowerCase();
+  if (weekSessionType === "KEY" && !text.includes("key")) mismatches.push("narrative_missing_key");
+  if (weekSessionType === "LONGRUN" && !(text.includes("longrun") || text.includes("langer lauf"))) mismatches.push("narrative_missing_longrun");
+  if (weekSessionType === "STRENGTH" && !(text.includes("kraft") || text.includes("stabi"))) mismatches.push("narrative_missing_strength");
+  if (mismatches.length) {
+    const payload = {
+      weekSessionType,
+      resolvedSessionType,
+      narrativeSessionType,
+      mismatches,
+    };
+    trace.push(`today_weekly_consistency_warning:${mismatches.join(",")}`);
+    console.warn("today_weekly_consistency_warning", payload);
+    return { ok: false, ...payload };
+  }
+  return { ok: true, weekSessionType, resolvedSessionType, narrativeSessionType, mismatches: [] };
 }
 
 function buildResolvedNextKeyLine(resolvedDecision) {
@@ -11770,7 +11852,14 @@ function buildComments(
       ? ` (Basisziel ${runBaseTarget}, Phase ${runPhaseLabel}, Overlay ${overlayMode})`
       : "";
   const phaseOverlayLine = formatPhaseOverlayLine(runPhaseLabel, overlayMode);
-  const strengthPolicyResolved = strengthPolicy || robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
+  const strengthStateResolved = weekPreview?.strengthState || deriveStrengthState({
+    strengthMinutes7d: robustness?.strengthMinutes7d || 0,
+    strengthCountThisWeek: weekPreview?.thisWeekActuals?.strengthCount || 0,
+    block: blockState?.block,
+    overlayMode,
+    weeksToEvent: blockState?.weeksToEvent,
+  });
+  const strengthPolicyResolved = strengthStateResolved.policy || strengthPolicy || robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
@@ -11904,7 +11993,6 @@ function buildComments(
   const canonicalLongrunProgressionTargetMin = longRunTargetMin;
   const resolvedSessionDecision = buildResolvedSessionDecision({
     todaySessionType: todayPlanEntry?.sessionType,
-    todayDecisionCandidate: nextRunText,
     plannedSessionLabel: todayPlanEntry?.sessionLabel,
     longrunProgressionTargetMin: canonicalLongrunProgressionTargetMin,
   });
@@ -12090,8 +12178,8 @@ function buildComments(
     fatigue?.override
       ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
       : "Fatigue-Override: aus",
-    `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ (Runfloor ≥${strengthPolicyResolved.minRunfloor}′ | Ziel ${strengthPolicyResolved.target}′ | Max ${strengthPolicyResolved.max}′)`,
-    `Kraft-Score: ${strengthPolicyResolved.score}/3 | Confidence Δ ${strengthPolicyResolved.confidenceDelta >= 0 ? "+" : ""}${strengthPolicyResolved.confidenceDelta}`,
+    `Kraft 7T: ${strengthStateResolved.completedMinutes}′ (Runfloor ≥${strengthPolicyResolved.minRunfloor}′ | Ziel ${strengthStateResolved.targetMinutes}′ | Max ${strengthPolicyResolved.max}′)`,
+    `Kraft-Score: ${strengthPolicyResolved.score}/3 | Confidence Δ ${strengthStateResolved.confidenceDelta >= 0 ? "+" : ""}${strengthStateResolved.confidenceDelta} | Sessions ${strengthStateResolved.completedSessions}/${strengthStateResolved.targetSessions}`,
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
@@ -12115,7 +12203,11 @@ function buildComments(
   const pendingLeverPlanLine = pendingLeverPlan.pendingLeverPlanLine || keyCompliance?.pendingLeverPlanLine || null;
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
   const taperPriorityWeek = overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
-  const todayDecision = resolvedSessionDecision.todayDecision;
+  const todayDecision = deriveTodayNarrativeFromDecision({
+    resolvedSessionDecision,
+    todayPlanEntry,
+    nextRunText,
+  });
   const resolvedDecision = buildResolvedDecision({
     sessionType: resolvedSessionDecision.sessionType,
     sessionLabel: resolvedSessionDecision.sessionLabel,
@@ -12132,45 +12224,15 @@ function buildComments(
   });
   if (weekPreview && Array.isArray(weekPreview.days)) {
     const todayPreviewEntry = weekPreview.days.find((entry) => entry?.isToday || entry?.date === todayIso);
-    if (todayPreviewEntry) {
-      const previousSessionType = todayPreviewEntry.sessionType;
-      const previousSessionLabel = todayPreviewEntry.sessionLabel;
-      todayPreviewEntry.sessionType = resolvedDecision.sessionType;
-      if (resolvedDecision.sessionType === "LONGRUN" && resolvedDecision.longrunTargetMin > 0) {
-        todayPreviewEntry.sessionLabel = `Langer Lauf ~${resolvedDecision.longrunTargetMin}′`;
-      } else if (resolvedDecision.sessionLabel) {
-        todayPreviewEntry.sessionLabel = resolvedDecision.sessionLabel;
-      }
-      if (previousSessionType !== todayPreviewEntry.sessionType || previousSessionLabel !== todayPreviewEntry.sessionLabel) {
-        todayPreviewEntry.decisionTrace = [
-          ...(Array.isArray(todayPreviewEntry.decisionTrace) ? todayPreviewEntry.decisionTrace : []),
-          "today_render_override:resolvedDecision_applied",
-        ];
-        if (todayPreviewEntry.decisionTraceStructured) {
-          todayPreviewEntry.decisionTraceStructured.candidates = [
-            ...(Array.isArray(todayPreviewEntry.decisionTraceStructured.candidates)
-              ? todayPreviewEntry.decisionTraceStructured.candidates
-              : []),
-            {
-              candidate: String(resolvedDecision.sessionType || "UNKNOWN"),
-              status: "selected",
-              reason: "today_render_override_resolved_decision",
-            },
-          ];
-          todayPreviewEntry.decisionTraceStructured.selected = {
-            sessionType: todayPreviewEntry.sessionType,
-            sessionLabel: todayPreviewEntry.sessionLabel,
-            intensity: todayPreviewEntry.intensity,
-            keyType: todayPreviewEntry.keyType || null,
-          };
-          todayPreviewEntry.decisionTraceStructured.mainReasons = [
-            ...(Array.isArray(todayPreviewEntry.decisionTraceStructured.mainReasons)
-              ? todayPreviewEntry.decisionTraceStructured.mainReasons
-              : []),
-            "today_render_override:resolvedDecision_applied",
-          ].slice(-3);
-        }
-      }
+    const todayConsistency = checkTodayWeeklyConsistency({
+      todayPlanEntry: todayPreviewEntry,
+      resolvedDecision,
+      todayDecision,
+      trace: todayPreviewEntry?.decisionTrace || [],
+    });
+    if (!todayConsistency.ok) {
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("today_weekly_consistency_warning");
     }
     weekPreview.text = weekPreview.days
       .map((entry) => {
@@ -12266,8 +12328,8 @@ function buildComments(
       "Längerer aerober Reiz nicht regelmäßig genug.",
     ],
     robustness: [
-      includeStrengthInWhy && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
-        ? `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`
+      includeStrengthInWhy && strengthStateResolved.remainingMinutes > 0
+        ? `Krafttraining unter Soll (${strengthStateResolved.completedMinutes}′/${strengthStateResolved.targetMinutes}′)`
         : null,
       "Belastbarkeit noch nicht stabil genug.",
     ],
@@ -12293,14 +12355,14 @@ function buildComments(
   if (
     includeStrengthInWhy
     && shortReasons.length < 3
-    && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
+    && strengthStateResolved.remainingMinutes > 0
   ) {
-    const strengthReason = `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`;
+    const strengthReason = `Krafttraining unter Soll (${strengthStateResolved.completedMinutes}′/${strengthStateResolved.targetMinutes}′)`;
     if (!shortReasons.includes(strengthReason)) shortReasons.push(strengthReason);
   }
 
   const focusLines = [coachFocus.action || "Wochenstruktur stabilisieren."];
-  if (Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0) && !focusLines.includes("Kraft zurückbringen.")) {
+  if (strengthStateResolved.remainingMinutes > 0 && !focusLines.includes("Kraft zurückbringen.")) {
     focusLines.push("Kraft zurückbringen.");
   }
 
@@ -12341,7 +12403,7 @@ function buildComments(
     `Longrun 14T: ${longRunDoneMin}′ → ${resolvedDecision.sessionType === "LONGRUN" && resolvedDecision.longrunTargetMin > 0 ? `Nächster Schritt ${resolvedDecision.longrunTargetMin}′` : `Blockziel ${longRunTargetMin}′`}`,
     bikeWeeklyRule.summaryLine,
     bikeReplacementGuidanceLine,
-    `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
+    `Kraft 7T: ${strengthStateResolved.completedMinutes}′ / Ziel ${strengthStateResolved.targetMinutes}′ (${strengthStateResolved.completedSessions}/${strengthStateResolved.targetSessions} Sessions)`,
     intensityLine,
   ];
 
@@ -12419,10 +12481,10 @@ function buildComments(
       const maxLabel = formatRaceTimeLabel(pred?.maxSec) || "n/a";
       const targetLabel = formatRaceTimeLabel(pred?.targetSec) || "n/a";
       const scoreSpec = Number(distanceDiagnostics?.scores?.specificity);
-      const strengthMin = Number(distanceDiagnostics?.snapshot?.strengthMin ?? strengthPolicyResolved.minutes7d ?? 0);
+      const strengthMin = Number(distanceDiagnostics?.snapshot?.strengthMin ?? strengthStateResolved.completedMinutes ?? 0);
       const improving = [];
       if (scoreSpec >= 75) improving.push("Spezifität höher als 75");
-      if (strengthMin >= Number(strengthPolicyResolved.target || 45)) improving.push("Kraft konsistent");
+      if (strengthMin >= Number(strengthStateResolved.targetMinutes || 45)) improving.push("Kraft konsistent");
       if (Number(distanceDiagnostics?.scores?.longrun) >= 65) improving.push("Longrun im Zielbereich");
       const slowing = [];
       if (Number.isFinite(scoreSpec) && scoreSpec < 75) slowing.push(`Specificity ${Math.round(scoreSpec)} (unter Ziel)`);
@@ -12473,7 +12535,7 @@ function buildComments(
     `Base · RunFloor ${runFloorCurrent}/${runTarget} | Läufe/Woche ${runCount7}/${runGoal} | Easy ${Math.round((intensityDistribution?.easyShare || 0) * 100)}% → ${(distanceDiagnostics?.components?.base?.interpretation || "n/a")}`,
     `Specificity · Keytyp ${formatKeyType(keyRules?.plannedPrimaryType || "steady")} | Fokusabdeckung ${keyCompliance?.focusHits ?? 0}/${keyCompliance?.focusTarget ?? 0} | Block ${blockState?.block || "n/a"} | Wettkampfnähe ${Number.isFinite(keyCompliance?.racepaceBlockProgress?.pct) ? `${keyCompliance.racepaceBlockProgress.pct}%` : "n/a"} → ${(distanceDiagnostics?.components?.specificity?.interpretation || "n/a")}`,
     `Longrun · aktuell ${longRunDoneMin}′ | Mindestziel ${prePlanLongRunTargetMin}′ | Entwicklungsziel (nächster Schritt) ${longRunSafetyCapMin}′ | Wochenziel (geplant) ${blockLongRunNextWeekTargetMin}′ → ${(distanceDiagnostics?.components?.longrun?.interpretation || "n/a")}`,
-    `Robustness · Kraft 7T ${strengthPolicyResolved.minutes7d}′ | Coach-Ziel ${strengthPolicyResolved.target}′ | Score-Anker 45′ → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
+    `Robustness · Kraft 7T ${strengthStateResolved.completedMinutes}′ | Coach-Ziel ${strengthStateResolved.targetMinutes}′ | Sessions ${strengthStateResolved.completedSessions}/${strengthStateResolved.targetSessions} → ${(distanceDiagnostics?.components?.robustness?.interpretation || "n/a")}`,
     `Execution · Key-Frequenz ${actualKeys7Raw} | Spacing ${spacingOk ? "ok" : "nicht ok"} | Fatigue-Bremse ${fatigue?.override ? "ja" : "nein"} → ${(distanceDiagnostics?.components?.execution?.interpretation || "n/a")}`,
     "",
   ];
@@ -12500,7 +12562,7 @@ function buildComments(
     "COACH-FOLGEN",
     `• ${keyBlocked ? "Kein weiterer Key diese Woche" : "Key möglich, falls frisch"}`,
     taperPriorityWeek ? "• Taper priorisieren (kein Volumen-Push)" : "• Volumen priorisieren",
-    `• Kraft auf ${Number(strengthPolicyResolved.target || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
+    `• Kraft auf ${Number(strengthStateResolved.targetMinutes || 60) >= 60 ? "1–2 kurze Einheiten" : "mind. 1 kurze Einheit"} stabilisieren`,
     "• Load-Anstieg konservativ halten",
   ];
 
