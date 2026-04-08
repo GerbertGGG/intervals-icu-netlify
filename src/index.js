@@ -8924,7 +8924,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
 
     if (holidayFocus) {
       primaryFocus = "holiday";
-      reason = "Holiday aktiv — Woche auf Erhaltung, Flexibilität und Frische ausrichten (kein Pflicht-Aufbau).";
+      reason = "Urlaub aktiv — Trainingsziele pausieren, kein Trainingsdruck.";
     } else if (postRaceRecoveryFocus) {
       primaryFocus = "post_race_recovery";
       reason = "Post-Race-Fenster aktiv — diese Woche zählt nur Erholung/Wiederaufbau, kein Frequenzdruck.";
@@ -9009,9 +9009,9 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
         "Kraft frühestens ab Tag 3 nach Rennen",
       ],
       holiday: [
-        "Erhaltung vor Aufbau: 2–3 lockere Läufe reichen",
-        "Kein Pflicht-Key und kein Pflicht-Longrun",
-        "Kraft/Stabi nur optional und kurz ergänzen",
+        "Urlaub aktiv — Trainingsziele pausieren",
+        "Heute kein Trainingsfokus, kein Pflicht-Key, kein Pflicht-Longrun",
+        "Wiedereinstieg nach dem Urlaub schrittweise planen",
       ],
     };
     const [p1, p2, p3] = mapping[primaryFocus] || mapping.basis;
@@ -9024,7 +9024,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       basis: "Basis",
       taper: "Taper",
       post_race_recovery: "Erholung & Wiederaufbau",
-      holiday: "Holiday-Modus",
+      holiday: "Urlaub / Pause",
     }[primaryFocus] || "Basis";
 
     const extraHint = !latest ? " Noch keine Verlaufsdaten." : "";
@@ -10275,6 +10275,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       weeklyFocus = isMondayIso(day)
         ? buildWeeklyFocus(ctx, day, blockState, keyCompliance, runFloorState, ctx.weekMemories, manualFocus)
         : null;
+      if (isHolidayOverlayMode(runFloorState?.overlayMode)) {
+        weeklyFocus = null;
+      }
       const weeklyMondayBlock = isMondayIso(day)
         ? [
             weeklyReview ? `\n📋 WOCHENRÜCKBLICK\n${weeklyReview}\n⸻\n` : null,
@@ -11349,14 +11352,11 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
   const holidayMode = isHolidayOverlayMode(policy?.overlayMode);
   if (policy?.safety?.forceRest) return ["Fokus heute: Erholung absichern und Belastung bewusst niedrig halten."];
   if (holidayMode) {
-    const lines = [
-      "Fokus heute: Urlaubswoche auf Erhaltung steuern (frisch bleiben, kein Pflichtreiz).",
-      "Qualität/Longrun nur optional, wenn Tagesform und Umfeld stabil sind.",
+    return [
+      "Fokus heute: Urlaub aktiv — Trainingsziele pausieren.",
+      "Heute kein Trainingsfokus und kein Trainingsdruck.",
+      "Wiedereinstieg nach dem Urlaub.",
     ];
-    if (isStrengthWorkOpen(strengthState) && resolvedDecision?.sessionType === "STRENGTH") {
-      lines.push("Kraft/Stabi bleibt ergänzend und kurz, nur wenn es gut passt.");
-    }
-    return lines.slice(0, 3);
   }
 
   const lines = [];
@@ -11385,7 +11385,7 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
 
 function deriveLongrunStatusLineFromResolver({ longrunPlan, resolvedDecision }) {
   if (!longrunPlan?.status) return null;
-  if (isHolidayOverlayMode(longrunPlan?.overlayMode)) return "Longrun-Status: im Holiday-Modus optional, kein Pflichtblock diese Woche.";
+  if (isHolidayOverlayMode(longrunPlan?.overlayMode)) return "Longrun-Status: Urlaub aktiv — kein Longrun-Fokus.";
   const targetMin = Number(longrunPlan?.targetMin ?? resolvedDecision?.longrunTargetMin ?? 0);
   const statusMap = { due: "diese Woche priorisiert", important: "wichtig eingeplant", blocked: "heute noch nicht sinnvoll", optional: "optional offen", done: "bereits abgedeckt" };
   return `Longrun-Status: ${statusMap[longrunPlan.status] || "in Abstimmung"}${targetMin > 0 ? ` (~${Math.round(targetMin)}′)` : ""}.`;
@@ -11394,7 +11394,7 @@ function deriveLongrunStatusLineFromResolver({ longrunPlan, resolvedDecision }) 
 function deriveKeyStatusLineFromResolver(keyPlan, overlayMode = null) {
   if (!keyPlan?.status) return null;
   if (isHolidayOverlayMode(overlayMode || keyPlan?.overlayMode)) {
-    return "Key-Status: Holiday-Modus — diese Woche kein Pflicht-Key (optional nur bei klarer Frische).";
+    return "Key-Status: Urlaub aktiv — kein Key-Fokus.";
   }
   const statusMap = { due: "priorisiert offen", important: "wichtig", blocked: "heute noch nicht sinnvoll", not_today: "für heute zurückgestellt", optional: "optional offen", done: "bereits abgedeckt" };
   return `Key-Status: ${statusMap[keyPlan.status] || "in Abstimmung"}${keyPlan?.hardBlocked ? " (heute noch gesperrt)" : ""}${keyPlan?.nextAllowedIso ? ` (ab ${keyPlan.nextAllowedIso})` : ""}.`;
@@ -11402,6 +11402,7 @@ function deriveKeyStatusLineFromResolver(keyPlan, overlayMode = null) {
 
 function deriveStrengthStatusLineFromState(strengthState) {
   if (!strengthState) return null;
+  if (isHolidayOverlayMode(strengthState?.overlayMode)) return "Strength-Status: Urlaub aktiv — kein Strength-Fokus.";
   const strengthOpen = isStrengthWorkOpen(strengthState);
   return `Strength-Status: ${strengthOpen ? `offen (${strengthState.remainingMinutes || 0}′ / ${strengthState.remainingSessions || 0} Einheiten)` : "Ziel erfüllt"}.`;
 }
@@ -11434,7 +11435,7 @@ function deriveTrainingStatusFromPolicy({
         : `RunFloor: ${runFloorCurrent} (Zielbereich aktuell noch ohne klare Planbasis)`,
     Number.isFinite(policy?.budgets?.plannedRunsSoFar) && Number.isFinite(policy?.budgets?.runFrequencyMin) && Number.isFinite(policy?.budgets?.runFrequencyMax)
       ? holidayMode
-        ? `Run-Frequenz: ${policy.budgets.plannedRunsSoFar} geplant (Holiday konservativ: ${policy.budgets.runFrequencyMin}-${policy.budgets.runFrequencyMax} locker/flexibel).`
+        ? `Run-Frequenz: ${policy.budgets.plannedRunsSoFar} geplant (Urlaub aktiv — Trainingsziele pausiert).`
         : `Run-Frequenz: ${policy.budgets.plannedRunsSoFar} geplant bei Ziel ${policy.budgets.runFrequencyMin}-${policy.budgets.runFrequencyMax}.`
       : null,
     deriveKeyStatusLineFromResolver(keyPlan, policy?.overlayMode),
@@ -11466,10 +11467,10 @@ function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, streng
   };
   lines.push(`• ${todayMap[todayType] || "Heute: Tagesfokus kontrolliert umsetzen."}`);
   if (holidayMode) {
-    lines.push("• Holiday-Modus: Erhaltung vor Aufbau — Umfang und Intensität flexibel an Urlaub/Erholung anpassen.");
-    lines.push("• Nächster Key: diese Woche kein Pflichtslot (optional nur bei klarer Frische und Zeitfenster).");
-    lines.push("• Longrun: optional kurz/locker, kein Muss.");
-    if (isStrengthWorkOpen(strengthState)) lines.push("• Kraft/Stabi: optional kurz als Ergänzung, sonst pausieren.");
+    lines.push("• Urlaub aktiv: Trainingsziele pausiert.");
+    lines.push("• Heute kein Trainingsfokus.");
+    lines.push("• Urlaub ist Urlaub.");
+    lines.push("• Wiedereinstieg nach dem Urlaub.");
     return lines.slice(0, 5).join("\n");
   }
 
@@ -11940,10 +11941,10 @@ function buildNextRunRecommendation({
   if (overlay === "LIFE_EVENT_STOP") {
     next = "Pause/Regeneration wie im Wochenplan (LifeEvent).";
   } else if (holidayMode) {
-    if (plannedTypeUpper === "KEY") next = "Holiday-Modus: Key heute nur optional bei klarer Frische, sonst locker laufen.";
-    else if (plannedTypeUpper === "LONGRUN") next = "Holiday-Modus: Longrun nur optional/verkürzt, kein Pflichtreiz.";
-    else if (plannedTypeUpper === "STRENGTH") next = "Holiday-Modus: Kraft/Stabi optional kurz ergänzen.";
-    else next = "Holiday-Modus: locker und flexibel bleiben, Erhaltung vor Aufbau.";
+    if (plannedTypeUpper === "KEY") next = "Urlaub aktiv: heute kein Key-Fokus.";
+    else if (plannedTypeUpper === "LONGRUN") next = "Urlaub aktiv: heute kein Longrun-Fokus.";
+    else if (plannedTypeUpper === "STRENGTH") next = "Urlaub aktiv: heute kein Strength-Fokus.";
+    else next = "Urlaub aktiv — Trainingsziele pausieren.";
   } else if (plannedTypeUpper === "LONGRUN") {
     const longrunLabel = concisePlanLabel || "Langer Lauf";
     next = `Longrun wie im Wochenplan: ${longrunLabel}.`;
@@ -11960,7 +11961,7 @@ function buildNextRunRecommendation({
       ? `Heute wie geplant: ${concisePlanLabel}.`
       : "Heute locker/Erholung wie im Wochenplan.";
   } else if (overlay === "LIFE_EVENT_HOLIDAY") {
-    next = "Konservativ bleiben (Holiday-Modus), Wochenplan priorisieren.";
+    next = "Urlaub ist Urlaub — Wiedereinstieg nach dem Urlaub.";
   } else if (overlay === "POST_RACE_RAMP") {
     next = "Post-Race-Ramp: locker/Technik gemäß Wochenplan.";
   } else if (overlay === "TAPER") {
@@ -12711,7 +12712,7 @@ function deriveBottomLineFromDecision({ narrativeContext, explicitSessionShort }
   if (policy?.safety?.forceRest) {
     return "Heute Erholung/Pause priorisieren.";
   }
-  if (holidayMode) return "Holiday-Woche: Training erhalten, flexibel bleiben, kein Pflichtreiz.";
+  if (holidayMode) return "Urlaub aktiv — Trainingsziele pausieren. Wiedereinstieg nach dem Urlaub.";
   if (sessionType === "KEY") {
     return explicitSessionShort
       ? `Key heute: ${explicitSessionShort}.`
@@ -12735,12 +12736,12 @@ function deriveRecommendationFromDecision({ narrativeContext, distanceDiagnostic
   const holidayMode = isHolidayOverlayMode(policy?.overlayMode);
 
   if (holidayMode) {
-    if (distanceDiagnostics?.readiness != null) rec.push(`Holiday-Modus aktiv (Readiness ${distanceDiagnostics.readiness}/100): Erhaltung statt Aufbau.`);
-    else rec.push("Holiday-Modus aktiv: Erhaltung statt Aufbau.");
-    rec.push("Wochenziel: 2–3 lockere Läufe, Qualität/Longrun nur optional und kurz.");
-    rec.push("Priorität: Frische, Flexibilität und saubere Technik statt Pflicht-Volumen.");
-    if (isStrengthWorkOpen(strengthState)) rec.push("Kraft/Stabi optional ergänzen (kurz), nur wenn es gut passt.");
-    rec.push("Belastung täglich an Urlaub, Schlaf und Tagesform anpassen.");
+    rec.push("Urlaub aktiv — Trainingsziele pausieren.");
+    rec.push("Heute kein Trainingsfokus.");
+    rec.push("Kein Key-/Longrun-/Strength-Druck.");
+    rec.push("Urlaub ist Urlaub.");
+    if (distanceDiagnostics?.readiness != null) rec.push(`Status: Readiness ${distanceDiagnostics.readiness}/100 (nur Info, ohne Trainingspflicht).`);
+    rec.push("Wiedereinstieg nach dem Urlaub.");
     return rec;
   }
 
@@ -13556,14 +13557,24 @@ function buildComments(
     // no-op: recommendation block should never crash if strength session cannot be resolved
   }
 
+  const holidayReportMode = isHolidayOverlayMode(narrativeContext?.policy?.overlayMode);
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
   addDecisionBlock("WARUM", whyLines);
-  addDecisionBlock("STATUS", statusLines);
-  addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
-  addDecisionBlock("TRAININGSSTAND", trainingStateLines);
-  addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
-  addDecisionBlock("DIAGNOSE", diagnoseLines);
+  if (holidayReportMode) {
+    const compactHolidayStatus = [
+      statusLines.find((line) => /^Overlay:/i.test(String(line || ""))) || "Overlay: LIFE_EVENT_HOLIDAY (Urlaub aktiv)",
+      statusLines.find((line) => /^RunFloor:/i.test(String(line || ""))) || null,
+      "Trainingsziele pausiert — kein Trainingsdruck.",
+    ].filter(Boolean);
+    addDecisionBlock("STATUS", compactHolidayStatus.slice(0, 3));
+  } else {
+    addDecisionBlock("STATUS", statusLines);
+    addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
+    addDecisionBlock("TRAININGSSTAND", trainingStateLines);
+    addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
+    addDecisionBlock("DIAGNOSE", diagnoseLines);
+  }
 
   if (String(blockState?.block || "").toUpperCase() === "RACE") {
     if (racePrediction?.available) {
