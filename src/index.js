@@ -10322,6 +10322,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longrunPlan: weekPreviewDays.find((entry) => entry?.isToday)?.decisionTraceStructured?.inputs?.longrun || null,
       strengthState: weekPreview?.strengthState || null,
       resolvedSessionType: weekPreviewDays.find((entry) => entry?.isToday)?.sessionType || null,
+      fallbackOverlayMode: runFloorState?.overlayMode || null,
     });
     const weekPlanBlock = [
       hasStructuredWeekPreview ? "🗓 WOCHENPLAN" : "🗓 NÄCHSTE SCHRITTE",
@@ -11450,11 +11451,23 @@ function deriveTrainingStatusFromPolicy({
   ].filter(Boolean);
 }
 
-function buildNextStepsFallbackLines({ weekPreview, keyPlan, longrunPlan, strengthState, resolvedSessionType }) {
+function buildNextStepsFallbackLines({
+  weekPreview,
+  keyPlan,
+  longrunPlan,
+  strengthState,
+  resolvedSessionType,
+  fallbackOverlayMode = null,
+}) {
   const lines = [];
   const todayEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
   const todayType = normalizeResolvedSessionType(resolvedSessionType || todayEntry?.sessionType);
-  const holidayMode = isHolidayOverlayMode(todayEntry?.overlayMode || keyPlan?.overlayMode || longrunPlan?.overlayMode);
+  const holidayMode = isHolidayOverlayMode(
+    todayEntry?.overlayMode
+      || keyPlan?.overlayMode
+      || longrunPlan?.overlayMode
+      || fallbackOverlayMode
+  );
   const todayMap = {
     REST: "Heute: kein Lauf, Fokus auf Regeneration.",
     GA: "Heute: lockere Einheit wie geplant.",
@@ -12679,12 +12692,22 @@ function deriveNarrativeContext({
   keyPlan,
   longrunPlan,
   strengthState,
+  fallbackOverlayMode,
 }) {
   const todayEntry = todayPlanEntry
     || (weekPreview?.days || []).find((entry) => entry?.isToday)
     || null;
   const trace = todayEntry?.decisionTraceStructured || null;
   const traceSelected = trace?.selected || null;
+  const basePolicy = trace?.inputs?.policy || policy || null;
+  const resolvedOverlayMode =
+    basePolicy?.overlayMode
+    || todayEntry?.overlayMode
+    || fallbackOverlayMode
+    || null;
+  const resolvedPolicy = basePolicy
+    ? { ...basePolicy, ...(resolvedOverlayMode ? { overlayMode: resolvedOverlayMode } : {}) }
+    : (resolvedOverlayMode ? { overlayMode: resolvedOverlayMode } : null);
   return {
     resolvedSessionType: normalizeResolvedSessionType(resolvedDecision?.sessionType || traceSelected?.sessionType || todayEntry?.sessionType),
     selected: traceSelected || {
@@ -12694,7 +12717,7 @@ function deriveNarrativeContext({
       keyType: todayEntry?.keyType || null,
     },
     mainReasons: Array.isArray(trace?.mainReasons) ? trace.mainReasons.filter(Boolean) : [],
-    policy: trace?.inputs?.policy || policy || null,
+    policy: resolvedPolicy,
     keyPlan: trace?.inputs?.key || keyPlan || null,
     longrunPlan: trace?.inputs?.longrun || longrunPlan || null,
     strengthState: strengthState || weekPreview?.strengthState || null,
@@ -13398,6 +13421,7 @@ function buildComments(
     keyPlan: todayTrace?.inputs?.key || null,
     longrunPlan: todayTrace?.inputs?.longrun || null,
     strengthState: strengthStateResolved,
+    fallbackOverlayMode: overlayMode,
   });
   if (weekPreview && Array.isArray(weekPreview.days)) {
     const todayPreviewEntry = weekPreview.days.find((entry) => entry?.isToday || entry?.date === todayIso);
@@ -13557,7 +13581,12 @@ function buildComments(
     // no-op: recommendation block should never crash if strength session cannot be resolved
   }
 
-  const holidayReportMode = isHolidayOverlayMode(narrativeContext?.policy?.overlayMode);
+  const holidayReportMode = isHolidayOverlayMode(
+    narrativeContext?.policy?.overlayMode
+      || todayPlanEntry?.overlayMode
+      || runFloorState?.overlayMode
+      || overlayMode
+  );
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
   addDecisionBlock("WARUM", whyLines);
