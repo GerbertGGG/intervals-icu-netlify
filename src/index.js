@@ -8509,6 +8509,7 @@ async function buildCoachAnalysis(env, snapshot) {
         ? Math.round(vdotTrendRaw * 10) / 10
         : null;
       return {
+        overlayMode: String(snapshot?.overlayMode || "").toUpperCase(),
         block: ["BASE", "BUILD", "RACE", "RESET"].includes(String(snapshot?.block || "").toUpperCase())
           ? String(snapshot.block).toUpperCase()
           : "BASE",
@@ -8543,6 +8544,7 @@ async function buildCoachAnalysis(env, snapshot) {
       };
     } catch {
       return {
+        overlayMode: String(snapshot?.overlayMode || "").toUpperCase(),
         block: "BASE",
         weekInBlock: 1,
         todayDecision: "GA-Lauf",
@@ -8571,6 +8573,9 @@ async function buildCoachAnalysis(env, snapshot) {
       };
     }
   })();
+  if (isHolidayOverlayMode(safeSnapshot.overlayMode)) {
+    return "🧠 COACH-ANALYSE\nUrlaub aktiv. Heute kein Trainingsfokus. Nutze die Zeit zur Erholung und zum Abschalten.";
+  }
   const isRealKeyDay = safeSnapshot.todayCanUseExplicitKeySession
     && safeSnapshot.keyAllowedNow
     && safeSnapshot.hasConcreteKeySession
@@ -10415,6 +10420,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const efTrendPct = trend?.dv != null ? Math.round(trend.dv * 10) / 10 : null;
       const coachSnapshot = {
         block: blockState?.block ?? "BASE",
+        overlayMode: overlayMode || null,
         weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
         todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
         sessionType: todayPlanEntry?.sessionType || null,
@@ -11318,6 +11324,9 @@ function humanizeDecisionReason(reasonToken) {
 
 function deriveWhyFromDecisionTrace({ resolvedDecision, narrativeContext }) {
   const policy = narrativeContext?.policy || null;
+  if (isHolidayOverlayMode(policy?.overlayMode)) {
+    return ["Im Urlaub pausieren Trainingsinhalte bewusst. Erholung steht im Vordergrund."];
+  }
   const selected = narrativeContext?.selected || null;
   const keyPlan = narrativeContext?.keyPlan || null;
   const longrunPlan = narrativeContext?.longrunPlan || null;
@@ -11354,8 +11363,8 @@ function deriveFocusFromPolicy({ resolvedDecision, narrativeContext }) {
   if (policy?.safety?.forceRest) return ["Fokus heute: Erholung absichern und Belastung bewusst niedrig halten."];
   if (holidayMode) {
     return [
-      "Fokus heute: Urlaub aktiv — Trainingsziele pausieren.",
-      "Heute kein Trainingsfokus und kein Trainingsdruck.",
+      "Fokus heute: Urlaub aktiv.",
+      "Training pausiert, Erholung im Fokus.",
       "Wiedereinstieg nach dem Urlaub.",
     ];
   }
@@ -11468,6 +11477,11 @@ function buildNextStepsFallbackLines({
       || longrunPlan?.overlayMode
       || fallbackOverlayMode
   );
+  if (holidayMode) {
+    lines.push("• Urlaub aktiv: kein Trainingsdruck.");
+    lines.push("• Wiedereinstieg nach dem Urlaub.");
+    return lines.join("\n");
+  }
   const todayMap = {
     REST: "Heute: kein Lauf, Fokus auf Regeneration.",
     GA: "Heute: lockere Einheit wie geplant.",
@@ -11479,13 +11493,6 @@ function buildNextStepsFallbackLines({
     RACE: "Heute: Wettkampf / Race-Day.",
   };
   lines.push(`• ${todayMap[todayType] || "Heute: Tagesfokus kontrolliert umsetzen."}`);
-  if (holidayMode) {
-    lines.push("• Urlaub aktiv: Trainingsziele pausiert.");
-    lines.push("• Heute kein Trainingsfokus.");
-    lines.push("• Urlaub ist Urlaub.");
-    lines.push("• Wiedereinstieg nach dem Urlaub.");
-    return lines.slice(0, 5).join("\n");
-  }
 
   if (keyPlan?.nextAllowedIso) {
     lines.push(`• Nächster Key: frühestens ab ${keyPlan.nextAllowedIso}.`);
