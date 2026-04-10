@@ -7295,8 +7295,11 @@ function buildWeekPreview(
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
     // Flexible statt fixer Wochentage:
     // Key/Longrun sind vollständig dynamisch und folgen nur den Gating-Regeln.
+    const robustnessState = (ctx && typeof ctx === "object" && ctx.robustness && typeof ctx.robustness === "object")
+      ? ctx.robustness
+      : {};
     const strengthState = deriveStrengthState({
-      strengthMinutes7d: robustness?.strengthMinutes7d || 0,
+      strengthMinutes7d: robustnessState?.strengthMinutes7d || 0,
       strengthCountThisWeek: thisWeekActuals.strengthCount,
       block: blockState?.block,
       overlayMode: baseOverlayMode,
