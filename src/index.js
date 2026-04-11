@@ -10382,8 +10382,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/(?:🏃|🗓) HEUTE\n([^\n]+)/);
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
+    const holidayOverlayActive = isHolidayOverlayMode(overlayMode || runFloorState?.overlayMode);
     let coachAnalysis = null;
-    if (shouldRunCoachAnalysis) {
+    if (shouldRunCoachAnalysis && !holidayOverlayActive) {
       await timedSync(dayPerf, "acceptanceAndTrustChecksMs", async () => {
         const coachTrustStartedAt = Date.now();
         try {
@@ -10463,6 +10464,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           addAcceptanceBreakdown(dayPerf, "coachTrustMs", Date.now() - coachTrustStartedAt);
         }
       });
+    } else if (holidayOverlayActive && weekPreview) {
+      weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
+      weekPreview.debugFlags.push("coach_analysis_skipped_holiday_overlay");
     } else if (weekPreview) {
       weekPreview.debugFlags = Array.isArray(weekPreview.debugFlags) ? weekPreview.debugFlags : [];
       weekPreview.debugFlags.push("coach_analysis_skipped_light_validation");
