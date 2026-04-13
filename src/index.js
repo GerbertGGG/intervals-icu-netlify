@@ -6311,6 +6311,14 @@ function determineBlockState({
   }
 
   let block = previousState?.block || (weeksToEvent <= raceStartWeeks ? "BUILD" : "BASE");
+  if (block === "RACE" && weeksToEvent > raceStartWeeks) {
+    const fallbackBlock = weeksToEvent <= planStartWeeks ? "BUILD" : "BASE";
+    reasons.push(
+      `Persistierter RACE-Status invalidiert: Event außerhalb Race-Fenster (${weeksToEvent.toFixed(1)} Wochen > ${raceStartWeeks}) → ${fallbackBlock}`
+    );
+    block = fallbackBlock;
+    startDate = todayISO;
+  }
 
   const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
   const runFloorNow = historyMetrics?.runFloorEwma10 ?? historyMetrics?.runFloor7 ?? 0;
@@ -9337,6 +9345,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const compact = (event) => ({
       name: event?.name ?? null,
       category: event?.category ?? null,
+      priority: event?.priority ?? null,
+      racePriority: event?.racePriority ?? null,
+      race_priority: event?.race_priority ?? null,
+      raceCategory: event?.raceCategory ?? null,
+      race_category: event?.race_category ?? null,
       start_date_local: event?.start_date_local ?? null,
       type: event?.type ?? null,
       distance: event?.distance ?? null,
@@ -9347,6 +9360,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       modeRaceCandidatesCount: modeRaceCandidates.length,
       modeRaceLast3: modeRaceCandidates.slice(-3).map(compact),
       modeRaceNext3: modeRaceCandidates.slice(0, 3).map(compact),
+      modeEventsSample: modeEvents.slice(0, 20).map(compact),
     });
   }
   const lifeEventsByExternalId = new Map(
@@ -16838,10 +16852,24 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
     : await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
   if (debug) {
     const eventsCount = Array.isArray(events) ? events.length : 0;
+    const compactEvent = (event) => ({
+      name: event?.name ?? null,
+      category: event?.category ?? null,
+      priority: event?.priority ?? null,
+      racePriority: event?.racePriority ?? null,
+      race_priority: event?.race_priority ?? null,
+      raceCategory: event?.raceCategory ?? null,
+      race_category: event?.race_category ?? null,
+      start_date_local: event?.start_date_local ?? null,
+      type: event?.type ?? null,
+      distance: event?.distance ?? null,
+      isARaceEvent: isARaceEvent(event),
+    });
     console.log("[debug:determineMode:events]", {
       dayIso,
       source: hasPrefetchedEvents ? "prefetched" : "live_fetch",
       eventsCount,
+      eventsSample: (events || []).slice(0, 20).map(compactEvent),
     });
   }
   const races = (events || []).filter((e) => isARaceEvent(e));
@@ -16868,7 +16896,7 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
   const next = sorted.find((x) => x.day >= dayIso) || null;
   const lastPast = [...sorted].reverse().find((x) => x.day < dayIso) || null;
   if (debug) {
-    const compactEvent = (eventEntry) => {
+    const compactRaceCandidate = (eventEntry) => {
       if (!eventEntry?.e) return null;
       const event = eventEntry.e;
       return {
@@ -16883,8 +16911,17 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
     console.log("[debug:determineMode:candidates]", {
       dayIso,
       raceCount: races.length,
-      lastPast: compactEvent(lastPast),
-      next: compactEvent(next),
+      lastPast: compactRaceCandidate(lastPast),
+      next: compactRaceCandidate(next),
+      selectedNextEvent: next?.e
+        ? {
+          name: next.e?.name ?? null,
+          category: next.e?.category ?? null,
+          start_date_local: next.e?.start_date_local ?? null,
+          type: next.e?.type ?? null,
+          isARaceEvent: isARaceEvent(next.e),
+        }
+        : null,
     });
   }
 
