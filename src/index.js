@@ -2261,15 +2261,12 @@ function normalizeEventCategory(category) {
   return String(category ?? "").toUpperCase().trim();
 }
 
-function isARaceCategory(category) {
+function getRaceTierFromCategory(category) {
   const cat = normalizeEventCategory(category);
-  if (!cat) return false;
+  if (!cat) return null;
 
   const compact = cat.replace(/[^A-Z0-9]/g, "");
-
-  // Intervals kann je nach Quelle unterschiedliche Schreibweisen liefern.
-  // Bewusst NUR A-Rennen (kein B/C) für weeksToEvent-Planung.
-  return (
+  if (
     cat === "RACE_A" ||
     cat === "A_RACE" ||
     cat === "A-RACE" ||
@@ -2277,15 +2274,39 @@ function isARaceCategory(category) {
     cat === "A" ||
     compact === "RACEA" ||
     compact === "ARACE"
-  );
+  ) return "A";
+
+  if (
+    cat === "RACE_B" ||
+    cat === "B_RACE" ||
+    cat === "B-RACE" ||
+    cat === "RACE B" ||
+    cat === "B" ||
+    compact === "RACEB" ||
+    compact === "BRACE"
+  ) return "B";
+
+  if (
+    cat === "RACE_C" ||
+    cat === "C_RACE" ||
+    cat === "C-RACE" ||
+    cat === "RACE C" ||
+    cat === "C" ||
+    compact === "RACEC" ||
+    compact === "CRACE"
+  ) return "C";
+
+  return null;
+}
+
+function isARaceCategory(category) {
+  // Intervals kann je nach Quelle unterschiedliche Schreibweisen liefern.
+  // Bewusst NUR A-Rennen (kein B/C) für weeksToEvent-Planung.
+  return getRaceTierFromCategory(category) === "A";
 }
 
 function isARaceEvent(event) {
   if (!event || typeof event !== "object") return false;
-  if (isARaceCategory(event?.category)) return true;
-
-  // Fallback: manche Quellen liefern "A" nicht in category,
-  // sondern in separaten Prioritätsfeldern.
   const priorityFields = [
     event?.priority,
     event?.racePriority,
@@ -2296,6 +2317,16 @@ function isARaceEvent(event) {
     event?.targetLevel,
     event?.goalPriority,
   ];
+
+  const hasExplicitNonAPriority = [event?.category, ...priorityFields]
+    .map((v) => getRaceTierFromCategory(v))
+    .some((tier) => tier === "B" || tier === "C");
+  if (hasExplicitNonAPriority) return false;
+
+  if (isARaceCategory(event?.category)) return true;
+
+  // Fallback: manche Quellen liefern "A" nicht in category,
+  // sondern in separaten Prioritätsfeldern.
   const hasAPriority = priorityFields
     .map((v) => normalizeEventCategory(v))
     .some((v) => v === "A" || v === "RACE_A" || v === "A_RACE" || v === "A-RACE");
