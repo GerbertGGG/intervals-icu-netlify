@@ -1806,6 +1806,7 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
   if (racepaceRegex.test(s) || s.includes("wettkampf") || s.includes("wettkampftempo")) return "racepace";
   if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) return "schwelle";
   if (s.includes("vo2") || s.includes("v02")) return "vo2_touch";
+  if (s.includes("longrun") || s.includes("long run") || s.includes("langer lauf")) return "longrun";
   if (s.includes("strides") || s.includes("hill sprint")) return "strides";
   return "steady";
 }
@@ -2312,6 +2313,113 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
+const KEY_TYPE_POOL = ["steady", "longrun", "strides", "schwelle", "vo2_touch", "racepace"];
+const KEY_PRIORITY_PROFILES = {
+  RESET: {
+    default: {
+      primary: ["steady"],
+      secondary: ["strides"],
+      maintenance: [],
+      optional: [],
+    },
+  },
+  BASE: {
+    "5k": {
+      primary: ["steady", "longrun", "schwelle"],
+      secondary: ["strides"],
+      maintenance: ["vo2_touch"],
+      optional: [],
+    },
+    "10k": {
+      primary: ["steady", "longrun", "schwelle"],
+      secondary: ["strides"],
+      maintenance: ["vo2_touch"],
+      optional: [],
+    },
+    hm: {
+      primary: ["steady", "longrun"],
+      secondary: ["schwelle", "strides"],
+      maintenance: ["vo2_touch"],
+      optional: [],
+    },
+    m: {
+      primary: ["longrun", "steady"],
+      secondary: ["schwelle", "strides"],
+      maintenance: ["vo2_touch"],
+      optional: [],
+    },
+    default: {
+      primary: ["steady", "longrun"],
+      secondary: ["strides"],
+      maintenance: ["schwelle"],
+      optional: [],
+    },
+  },
+  BUILD: {
+    "5k": {
+      primary: ["vo2_touch", "schwelle"],
+      secondary: ["racepace"],
+      maintenance: ["longrun", "strides"],
+      optional: ["steady"],
+    },
+    "10k": {
+      primary: ["vo2_touch", "schwelle"],
+      secondary: ["racepace"],
+      maintenance: ["longrun", "strides"],
+      optional: ["steady"],
+    },
+    hm: {
+      primary: ["schwelle", "longrun"],
+      secondary: ["racepace"],
+      maintenance: ["vo2_touch", "strides"],
+      optional: ["steady"],
+    },
+    m: {
+      primary: ["longrun", "racepace"],
+      secondary: ["schwelle"],
+      maintenance: ["vo2_touch", "strides"],
+      optional: ["steady"],
+    },
+    default: {
+      primary: ["schwelle", "steady"],
+      secondary: ["longrun"],
+      maintenance: ["strides"],
+      optional: [],
+    },
+  },
+  RACE: {
+    "5k": {
+      primary: ["racepace"],
+      secondary: ["vo2_touch", "schwelle"],
+      maintenance: ["strides"],
+      optional: ["steady"],
+    },
+    "10k": {
+      primary: ["racepace"],
+      secondary: ["schwelle", "vo2_touch"],
+      maintenance: ["strides"],
+      optional: ["steady"],
+    },
+    hm: {
+      primary: ["racepace"],
+      secondary: ["schwelle", "longrun"],
+      maintenance: ["vo2_touch"],
+      optional: ["steady"],
+    },
+    m: {
+      primary: ["racepace", "longrun"],
+      secondary: ["schwelle"],
+      maintenance: ["vo2_touch"],
+      optional: ["steady"],
+    },
+    default: {
+      primary: ["racepace"],
+      secondary: ["schwelle"],
+      maintenance: ["strides"],
+      optional: ["steady"],
+    },
+  },
+};
 const KEY_PATTERN_1PERWEEK = {
   BASE: {
     "5k": ["schwelle", "schwelle", "vo2_touch"],
@@ -2353,6 +2461,193 @@ function pickPatternKeyType(context = {}) {
   return pattern[idx] || null;
 }
 
+function toUniqueOrderedTypes(lists = []) {
+  const out = [];
+  for (const list of lists) {
+    for (const type of list || []) {
+      if (!KEY_TYPE_POOL.includes(type)) continue;
+      if (!out.includes(type)) out.push(type);
+    }
+  }
+  return out;
+}
+
+function getKeyPriorityProfile(block, eventDistance, weeksToEvent) {
+  const phase = block || "BASE";
+  const dist = normalizeEventDistance(eventDistance) || "10k";
+  const source = KEY_PRIORITY_PROFILES?.[phase]?.[dist] || KEY_PRIORITY_PROFILES?.[phase]?.default || KEY_PRIORITY_PROFILES.BASE.default;
+  const profile = {
+    primary: [...(source?.primary || [])],
+    secondary: [...(source?.secondary || [])],
+    maintenance: [...(source?.maintenance || [])],
+    optional: [...(source?.optional || [])],
+  };
+
+  const raceStartWeeks = getRaceStartWeeks(dist);
+  const raceRamp = Number.isFinite(weeksToEvent)
+    ? clamp(1 - Math.max(weeksToEvent, 0) / Math.max(1, raceStartWeeks), 0, 1)
+    : 0;
+
+  if (phase === "RESET") {
+    profile.primary = ["steady"];
+    profile.secondary = ["strides"];
+    profile.maintenance = [];
+    profile.optional = [];
+  }
+
+  return {
+    ...profile,
+    raceRamp,
+    ranked: toUniqueOrderedTypes([profile.primary, profile.secondary, profile.maintenance, profile.optional]),
+  };
+}
+
+function getRecentStimulusHistory(ctx, dayIso, lookbackDays = 21) {
+  const end = new Date(dayIso + "T00:00:00Z");
+  const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
+  const endIso = isoDate(new Date(end.getTime() + 86400000));
+  const counts = {};
+  const lastSeenDays = {};
+  let entries = 0;
+
+  for (const a of ctx?.activitiesAll || []) {
+    const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
+    if (!d || d < startIso || d >= endIso || !hasKeyTag(a)) continue;
+    const type = normalizeKeyType(getKeyType(a), {
+      activity: a,
+      movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+    });
+    counts[type] = (counts[type] || 0) + 1;
+    const ageDays = Math.max(0, diffDays(d, dayIso));
+    const currentAge = lastSeenDays[type];
+    lastSeenDays[type] = Number.isFinite(currentAge) ? Math.min(currentAge, ageDays) : ageDays;
+    entries++;
+  }
+
+  return { lookbackDays, counts, lastSeenDays, entries };
+}
+
+function scoreKeyType(type, context = {}) {
+  const normalizedType = normalizeKeyType(type);
+  const profile = context.priorityProfile || getKeyPriorityProfile(context.block, context.eventDistance, context.weeksToEvent);
+  const reasons = [];
+  let score = 0;
+
+  const categoryWeights = { primary: 48, secondary: 34, maintenance: 20, optional: 10 };
+  const category = profile.primary.includes(normalizedType)
+    ? "primary"
+    : profile.secondary.includes(normalizedType)
+      ? "secondary"
+      : profile.maintenance.includes(normalizedType)
+        ? "maintenance"
+        : profile.optional.includes(normalizedType)
+          ? "optional"
+          : "optional";
+  score += categoryWeights[category] || 0;
+  reasons.push(`Profil ${category}`);
+
+  const recencyAge = Number(context.recentStimulus?.lastSeenDays?.[normalizedType]);
+  if (Number.isFinite(recencyAge)) {
+    const recencyBonus = clamp(recencyAge * 1.6, 0, 12);
+    score += recencyBonus;
+    reasons.push(`zuletzt vor ${recencyAge}d (+${Math.round(recencyBonus)})`);
+  } else {
+    score += 8;
+    reasons.push("zuletzt nicht genutzt (+8)");
+  }
+
+  const usageCount = Number(context.recentStimulus?.counts?.[normalizedType] ?? 0);
+  if (usageCount > 0) {
+    const penalty = Math.min(usageCount * 5, 15);
+    score -= penalty;
+    reasons.push(`Häufigkeit ${usageCount}x (-${penalty})`);
+  }
+
+  const intensityDistribution = context.intensityDistribution || {};
+  const intensity = mapKeyTypeToIntensity(normalizedType, context.eventDistance);
+  if (intensity === "hard" && intensityDistribution?.hardOver) {
+    score -= 30;
+    reasons.push("Hard-Budget überschritten");
+  }
+  if (intensity === "mid" && intensityDistribution?.midOver) {
+    score -= 20;
+    reasons.push("Mid-Budget überschritten");
+  }
+  if (intensity === "easy" && intensityDistribution?.easyUnder) {
+    score += 12;
+    reasons.push("Easy-Anteil zu niedrig (+12)");
+  }
+
+  const fatigueHigh = context?.fatigue?.override === true;
+  if (fatigueHigh) {
+    if (intensity === "hard") {
+      score -= 36;
+      reasons.push("Fatigue aktiv: hard runter");
+    } else if (intensity === "mid") {
+      score -= 16;
+      reasons.push("Fatigue aktiv: mid reduziert");
+    } else {
+      score += 6;
+      reasons.push("Fatigue aktiv: easy bevorzugt");
+    }
+  }
+
+  if (context.overlayMode === "DELOAD" || context.overlayMode === "TAPER" || context.overlayMode === "RECOVER_OVERLAY" || context.overlayMode === "LIFE_EVENT_HOLIDAY") {
+    if (normalizedType === "racepace") score -= 8;
+    if (normalizedType === "vo2_touch") score -= 14;
+    if (normalizedType === "strides") score += 3;
+    reasons.push(`Overlay ${context.overlayMode}`);
+  }
+
+  const raceRamp = Number(context.priorityProfile?.raceRamp ?? 0);
+  if (normalizedType === "racepace") {
+    const phaseFactor = context.block === "RACE" ? 1.2 : context.block === "BUILD" ? 1 : 0.7;
+    const racepaceBoost = Math.round(24 * raceRamp * phaseFactor);
+    score += racepaceBoost;
+    reasons.push(`Eventnähe RP +${racepaceBoost}`);
+  }
+  if (normalizedType === "vo2_touch" && (context.block === "BASE" || context.eventDistance === "hm" || context.eventDistance === "m")) {
+    score -= 10;
+    reasons.push("VO2 nur Maintenance");
+  }
+
+  if (context.block === "BASE" && (context.eventDistance === "hm" || context.eventDistance === "m") && normalizedType === "strides") {
+    score += 8;
+    reasons.push("Neuromuskuläre Ergänzung");
+  }
+
+  return { type: normalizedType, score: Math.round(score), category, reasons };
+}
+
+function pickBestKeyType(context = {}) {
+  const keyRules = context.keyRules || {};
+  const profile = getKeyPriorityProfile(context.block, context.eventDistance, context.weeksToEvent);
+  const recentStimulus = getRecentStimulusHistory(context.ctx, context.dayIso || context.todayIso || isoDate(new Date()), 21);
+
+  const allowed = Array.isArray(keyRules.allowedKeyTypes) && keyRules.allowedKeyTypes.length
+    ? keyRules.allowedKeyTypes
+    : profile.ranked;
+  const disallowed = new Set([...(keyRules.bannedKeyTypes || [])]);
+  const candidates = profile.ranked.filter((type) => allowed.includes(type) && !disallowed.has(type));
+  if (!candidates.length) {
+    return { type: "steady", reason: "Fallback auf steady (keine Kandidaten)", ranked: [] };
+  }
+
+  const scored = candidates
+    .map((type) =>
+      scoreKeyType(type, {
+        ...context,
+        priorityProfile: profile,
+        recentStimulus,
+      })
+    )
+    .sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  const reason = `${formatKeyType(best.type)} gewählt: ${best.reasons.slice(0, 4).join("; ")}.`;
+  return { type: best.type, reason, ranked: scored, priorityProfile: profile, recentStimulus };
+}
+
 function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   const block = context.block || "BASE";
   const dist = normalizeEventDistance(context.eventDistance) || "10k";
@@ -2368,49 +2663,44 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   if (block === "RESET") return "steady";
   if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY") return "steady";
 
-  let planned = pickPatternKeyType({ ...context, block, eventDistance: dist });
-  if (!planned) {
-    planned = keyRules?.preferredKeyTypes?.find((k) => k !== "steady") || "steady";
-  }
+  const selection = pickBestKeyType({
+    ...context,
+    block,
+    eventDistance: dist,
+    keyRules,
+  });
+  keyRules.selectionReason = selection?.reason || "";
+  keyRules.priorityProfile = selection?.priorityProfile || null;
+  keyRules.rankedCandidates = selection?.ranked || [];
+  keyRules.recentStimulus = selection?.recentStimulus || null;
+  let planned = selection?.type || pickPatternKeyType({ ...context, block, eventDistance: dist }) || keyRules?.preferredKeyTypes?.find((k) => k !== "steady") || "steady";
+  const initiallyPlanned = planned;
 
-  if (block === "RACE" && dist === "5k") {
-    planned = "racepace";
-  }
-
-  if (overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") {
-    if (planned === "vo2_touch" || planned === "strides") {
-      planned = block === "RACE" ? "racepace" : "schwelle";
+  if (lastKeyType && planned === lastKeyType) {
+    const ranked = Array.isArray(selection?.ranked) ? selection.ranked : [];
+    const alternative = ranked.find((candidate) => candidate?.type && candidate.type !== planned);
+    if (alternative && Number(alternative.score) >= Number(ranked?.[0]?.score ?? 0) - 8) {
+      planned = alternative.type;
     }
-    if (block === "RACE" && dist === "5k") {
-      planned = "schwelle";
-    }
   }
 
-  const patternBlock = pickPatternBlock({ ...context, block, eventDistance: dist });
-  const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist] || [];
-  if (lastKeyType && planned === lastKeyType && pattern.length > 1) {
-    const alternatives = pattern.filter((type) => type !== planned);
-    if (alternatives.length) planned = alternatives[0];
+  if ((overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") && (planned === "vo2_touch" || planned === "racepace")) {
+    const ranked = Array.isArray(selection?.ranked) ? selection.ranked : [];
+    const conservative = ranked.find((candidate) => mapKeyTypeToIntensity(candidate?.type, dist) !== "hard");
+    planned = conservative?.type || "steady";
   }
 
-  if ((planned === "vo2_touch" || planned === "strides") && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
-    planned = block === "RACE" ? "racepace" : "schwelle";
-  }
-
-  if (block === "RACE" && dist === "5k" && fatigueHigh) {
-    planned = "schwelle";
-  }
-
-  if (planned === "racepace" && dist === "5k" && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
-    planned = "schwelle";
-  }
-
-  if ((planned === "vo2_touch" || planned === "strides" || (planned === "racepace" && dist === "5k")) && Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax) {
-    planned = "schwelle";
+  if ((planned === "vo2_touch" || planned === "racepace") && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
+    const ranked = Array.isArray(selection?.ranked) ? selection.ranked : [];
+    const fallback = ranked.find((candidate) => {
+      const intensity = mapKeyTypeToIntensity(candidate?.type, dist);
+      return candidate?.type !== planned && intensity !== "hard";
+    });
+    planned = fallback?.type || (block === "RACE" ? "schwelle" : "steady");
   }
 
   if (planned === "schwelle" && Number.isFinite(midShare) && Number.isFinite(midMax) && midShare > midMax) {
-    planned = "steady";
+    planned = keyRules?.allowedKeyTypes?.includes("longrun") ? "longrun" : "steady";
   }
 
   if (block === "BASE" && (dist === "hm" || dist === "m") && planned === "strides") {
@@ -2422,6 +2712,9 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   if (allowed.length && !allowed.includes(planned)) {
     const preferredAllowed = (keyRules?.preferredKeyTypes || []).find((k) => allowed.includes(k));
     planned = preferredAllowed || allowed[0] || "steady";
+  }
+  if (planned !== initiallyPlanned) {
+    keyRules.selectionReason = `${keyRules.selectionReason} Guardrail-Override: ${formatKeyType(initiallyPlanned)} → ${formatKeyType(planned)}.`.trim();
   }
 
   return planned;
@@ -2622,7 +2915,7 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
 
 function mapKeyTypeToIntensity(type, eventDistance) {
   const normalized = normalizeKeyType(type);
-  if (normalized === "ga" || normalized === "steady" || normalized === "strides") return "easy";
+  if (normalized === "ga" || normalized === "steady" || normalized === "longrun" || normalized === "strides") return "easy";
   if (normalized === "schwelle") return "mid";
   if (normalized === "racepace") return eventDistance === "5k" ? "hard" : "mid";
   if (normalized === "vo2_touch") return "hard";
@@ -2954,8 +3247,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "schwelle", "strides", "vo2_touch"],
-        preferredKeyTypes: ["schwelle", "steady"],
+        allowedKeyTypes: ["steady", "longrun", "schwelle", "strides", "vo2_touch"],
+        preferredKeyTypes: ["steady", "longrun", "schwelle"],
         bannedKeyTypes: ["racepace"],
       };
     }
@@ -2963,9 +3256,9 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "schwelle", "strides"],
+        allowedKeyTypes: ["steady", "longrun", "schwelle", "strides", "vo2_touch"],
         preferredKeyTypes: ["schwelle", "steady"],
-        bannedKeyTypes: ["racepace", "vo2_touch"],
+        bannedKeyTypes: ["racepace"],
       };
     }
     return {
@@ -2982,7 +3275,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides", "steady"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "longrun", "strides", "steady"],
         preferredKeyTypes: ["vo2_touch", "schwelle", "racepace"],
         bannedKeyTypes: [],
       };
@@ -2991,29 +3284,29 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides", "steady"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "longrun", "strides", "steady"],
         preferredKeyTypes: ["schwelle", "vo2_touch", "racepace"],
         bannedKeyTypes: [],
       };
     }
     if (dist === "hm") {
-      const allowRacePace = weeksToEvent != null && weeksToEvent <= 8;
-      return {
-        expectedKeysPerWeek: 1,
-        maxKeysPerWeek: 2,
-        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
-        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
-        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
-      };
-    }
-    if (dist === "m") {
       const allowRacePace = weeksToEvent != null && weeksToEvent <= 10;
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "steady"] : ["schwelle", "steady"],
-        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle"] : ["schwelle"],
-        bannedKeyTypes: allowRacePace ? ["vo2_touch", "strides"] : ["racepace", "vo2_touch", "strides"],
+        allowedKeyTypes: allowRacePace ? ["schwelle", "longrun", "racepace", "vo2_touch", "steady", "strides"] : ["schwelle", "longrun", "vo2_touch", "steady", "strides"],
+        preferredKeyTypes: allowRacePace ? ["schwelle", "longrun", "racepace"] : ["schwelle", "longrun"],
+        bannedKeyTypes: allowRacePace ? [] : ["racepace"],
+      };
+    }
+    if (dist === "m") {
+      const allowRacePace = weeksToEvent != null && weeksToEvent <= 12;
+      return {
+        expectedKeysPerWeek: 1,
+        maxKeysPerWeek: 2,
+        allowedKeyTypes: allowRacePace ? ["longrun", "racepace", "schwelle", "vo2_touch", "steady", "strides"] : ["longrun", "schwelle", "vo2_touch", "steady", "strides"],
+        preferredKeyTypes: allowRacePace ? ["longrun", "racepace", "schwelle"] : ["longrun", "schwelle"],
+        bannedKeyTypes: allowRacePace ? [] : ["racepace"],
       };
     }
   }
@@ -3041,8 +3334,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch", "steady"],
-        preferredKeyTypes: ["racepace", "schwelle"],
+        allowedKeyTypes: ["racepace", "longrun", "schwelle", "vo2_touch", "steady"],
+        preferredKeyTypes: ["racepace", "schwelle", "longrun"],
         bannedKeyTypes: ["strides"],
       };
     }
@@ -3050,9 +3343,9 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "schwelle", "steady"],
-        preferredKeyTypes: ["racepace"],
-        bannedKeyTypes: ["vo2_touch", "strides"],
+        allowedKeyTypes: ["racepace", "longrun", "schwelle", "vo2_touch", "steady"],
+        preferredKeyTypes: ["racepace", "longrun"],
+        bannedKeyTypes: ["strides"],
       };
     }
   }
@@ -3265,6 +3558,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   if (explicitSession && keyAllowedNow) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
+  if (keyRules?.selectionReason && keyAllowedNow) {
+    suggestion = `${suggestion} Auswahl-Logik: ${keyRules.selectionReason}`;
+  }
 
   const status = capExceeded ? "red" : freqOk && typeOk ? "ok" : "warn";
 
@@ -3295,6 +3591,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     intensityDistribution,
     keyAllowedNow,
     explicitSession,
+    selectionReason: keyRules?.selectionReason || "",
     racepaceBlockProgress,
   };
 }
@@ -4786,6 +5083,7 @@ function formatKeyType(type) {
   if (type === "schwelle") return "Schwelle";
   if (type === "racepace") return "Racepace";
   if (type === "vo2_touch") return "VO2";
+  if (type === "longrun") return "Longrun";
   if (type === "strides") return "Strides";
   if (type === "steady") return "GA";
   return type || "n/a";
@@ -4810,7 +5108,14 @@ function buildKeyPatternDistributionLine({ block, eventDistance, plannedType, we
   const dist = normalizeEventDistance(eventDistance) || "10k";
   const patternBlock = pickPatternBlock({ block, eventDistance: dist, weeksToEvent });
   const pattern = KEY_PATTERN_1PERWEEK?.[patternBlock]?.[dist];
-  if (!Array.isArray(pattern) || !pattern.length) return null;
+  const profile = getKeyPriorityProfile(patternBlock, dist, weeksToEvent);
+
+  const plannedLabel = plannedType ? formatKeyType(plannedType) : "n/a";
+  const profileText = `Primary ${formatKeyTypeList(profile.primary)}, Secondary ${formatKeyTypeList(profile.secondary)}, Maintenance ${formatKeyTypeList(profile.maintenance)}, Optional ${formatKeyTypeList(profile.optional)}`;
+
+  if (!Array.isArray(pattern) || !pattern.length) {
+    return `Key-Priorität (${patternBlock}, ${formatEventDistance(dist)}): geplant ${plannedLabel}; ${profileText}.`;
+  }
 
   const counts = pattern.reduce((acc, type) => {
     acc[type] = (acc[type] || 0) + 1;
@@ -4819,8 +5124,7 @@ function buildKeyPatternDistributionLine({ block, eventDistance, plannedType, we
   const distribution = Object.entries(counts)
     .map(([type, count]) => `${formatKeyType(type)} ${Math.round((count / pattern.length) * 100)}%`)
     .join(" | ");
-  const plannedLabel = plannedType ? formatKeyType(plannedType) : "n/a";
-  return `Pattern 1 Key/Woche (${patternBlock}, ${formatEventDistance(dist)}): geplant ${plannedLabel}; Verteilung ${distribution}.`;
+  return `Key-Priorität (${patternBlock}, ${formatEventDistance(dist)}): geplant ${plannedLabel}; ${profileText}; Pattern-Fallback ${distribution}.`;
 }
 
 function buildNextRunRecommendation({
@@ -7771,3 +8075,14 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 
   return events;
 }
+
+export const __test = {
+  getKeyPriorityProfile,
+  getRecentStimulusHistory,
+  scoreKeyType,
+  pickBestKeyType,
+  decideKeyType1PerWeek,
+  getKeyRules,
+  mapKeyTypeToIntensity,
+  normalizeKeyType,
+};
