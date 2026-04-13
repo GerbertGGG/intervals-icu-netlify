@@ -165,6 +165,14 @@ export default {
         console.error("scheduled syncRange failed", e);
       })
     );
+
+    if (isMondayMorningBerlin(event)) {
+      ctx.waitUntil(
+        sendWeeklyStrengthPlanEmail(env, event).catch((e) => {
+          console.error("scheduled weekly strength email failed", e);
+        })
+      );
+    }
   },
 };
 
@@ -222,6 +230,33 @@ function isEveningBerlinRun(event) {
     }).format(new Date(t))
   );
   return Number.isFinite(hour) && hour >= 20;
+}
+
+function getBerlinDateParts(timestampMs = Date.now()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Berlin",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(timestampMs));
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  return {
+    isoDate: `${get("year")}-${get("month")}-${get("day")}`,
+    weekdayShort: get("weekday"),
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+  };
+}
+
+function isMondayMorningBerlin(event) {
+  const t = Number(event?.scheduledTime);
+  if (!Number.isFinite(t)) return false;
+  const berlin = getBerlinDateParts(t);
+  return berlin.weekdayShort === "Mon" && Number.isFinite(berlin.hour) && berlin.hour >= 6 && berlin.hour <= 11;
 }
 
 // ================= CONFIG =================
@@ -298,6 +333,133 @@ const STRENGTH_PHASE_PLANS = {
       },
     ],
   },
+};
+const WEEKLY_STRENGTH_SESSIONS = {
+  BASE: [
+    {
+      name: "Session 1 – Stabilität Unterkörper",
+      focus: "sauber, kontrolliert, strukturiert",
+      exercises: [
+        "Split Squat mit Theraband: 3×8 je Seite (Tempo 3-1-1)",
+        "Hip Thrust mit Theraband: 3×10",
+        "Pallof Press mit Theraband: 3×10 je Seite",
+        "Stabikissen Einbeinstand + Kniehub: 2×40s je Seite",
+      ],
+    },
+    {
+      name: "Session 2 – Core & Rückenlinie",
+      focus: "anti-rotation und rumpfspannung",
+      exercises: [
+        "Blackroll Glute + Wade: 60s je Seite",
+        "Side Plank mit oberem Beinheben: 3×25s je Seite",
+        "Monster Walk mit Theraband: 3×12 Schritte je Richtung",
+        "Dead Bug mit Theraband-Zug: 3×8 je Seite",
+      ],
+    },
+    {
+      name: "Session 3 – Fuß/Knie Kontrolle",
+      focus: "laufökonomie über achsenkontrolle",
+      exercises: [
+        "Step-Down (langsam, kontrolliert): 3×8 je Seite",
+        "Single-Leg RDL mit Theraband: 3×8 je Seite",
+        "Stabikissen Squat Hold: 3×25s",
+        "Soleus Isometrie (Wand): 3×35s je Seite",
+      ],
+    },
+  ],
+  BUILD: [
+    {
+      name: "Session 1 – Kraftfokus",
+      focus: "höhere spannung, laufverträglich",
+      exercises: [
+        "Bulgarian Split Squat mit Theraband: 4×6 je Seite",
+        "Single-Leg Hip Thrust: 4×8 je Seite",
+        "Pallof Press Step-Out mit Theraband: 3×8 je Seite",
+        "Soleus Isometrie: 3×45s je Seite",
+      ],
+    },
+    {
+      name: "Session 2 – Elastizität & Core",
+      focus: "kurz, präzise, keine restmüdigkeit",
+      exercises: [
+        "Mini Pogos (beidbeinig): 3×20s",
+        "Lateral Band Walk: 3×10 Schritte je Richtung",
+        "Side Plank Reach Through: 3×8 je Seite",
+        "Stabikissen Einbeinstand mit Kopfrotation: 2×45s je Seite",
+      ],
+    },
+    {
+      name: "Session 3 – Posterior Chain",
+      focus: "hamstrings/glutes für schrittlänge",
+      exercises: [
+        "Single-Leg RDL (Bandzug): 4×6 je Seite",
+        "Hamstring Bridge March: 3×10 je Seite",
+        "Plank mit Band Row: 3×8 je Seite",
+        "Blackroll T-Spine + Hüftbeuger: 60s je Zone",
+      ],
+    },
+  ],
+  RACE: [
+    {
+      name: "Session 1 – Erhalt Spannung",
+      focus: "kurz und frisch",
+      exercises: [
+        "Split Squat: 2×6 je Seite",
+        "Hip Thrust mit Theraband: 2×8",
+        "Pallof Press: 2×8 je Seite",
+        "Soleus Isometrie: 2×30s je Seite",
+      ],
+    },
+    {
+      name: "Session 2 – Aktivierung",
+      focus: "neuromuskulär ohne muskelkater",
+      exercises: [
+        "Pogos: 2×15s",
+        "Monster Walk mit Theraband: 2×10 Schritte",
+        "Side Plank: 2×20s je Seite",
+        "Stabikissen Einbeinstand: 2×30s je Seite",
+      ],
+    },
+    {
+      name: "Session 3 – Mobility/Reset",
+      focus: "beweglichkeit + tonussteuerung",
+      exercises: [
+        "Blackroll Waden/Glute: 45s je Seite",
+        "World's Greatest Stretch: 2×5 je Seite",
+        "Dead Bug: 2×6 je Seite",
+        "Atemfokus (90/90 breathing): 3×5 ruhige Atemzüge",
+      ],
+    },
+  ],
+  RESET: [
+    {
+      name: "Session 1 – Optional Recovery",
+      focus: "sehr leicht, nur wenn frisch",
+      exercises: [
+        "Blackroll Ganzkörper: 6–8 Minuten",
+        "Cat-Camel + Hüftmobilität: 2×6",
+        "Stabikissen Balance leicht: 2×30s je Seite",
+      ],
+    },
+    {
+      name: "Session 2 – Optional Core Light",
+      focus: "nur spannung erhalten",
+      exercises: [
+        "Dead Bug: 2×6 je Seite",
+        "Side Plank (Knie): 2×20s je Seite",
+        "Theraband Pull-Apart: 2×12",
+      ],
+    },
+    {
+      name: "Session 3 – Optional Tissue Care",
+      focus: "regeneration priorisieren",
+      exercises: [
+        "Blackroll Wade/Hamstring/Glute: 45s je Seite",
+        "Ankle Mobility an der Wand: 2×8 je Seite",
+        "Atemfokus (Box Breathing): 4×4 Atemzüge",
+      ],
+    },
+  ],
 };
 const INTENSITY_DISTRIBUTION_TARGET = {
   BASE: {
@@ -376,7 +538,9 @@ const BASE_URL = "https://intervals.icu/api/v1";
 const DETECTIVE_KV_PREFIX = "detective:week:";
 const DETECTIVE_KV_HISTORY_KEY = "detective:history";
 const BLOCK_STATE_KV_PREFIX = "blockstate:latest:";
+const WEEKLY_STRENGTH_EMAIL_KV_PREFIX = "strength:weekly-email:";
 const DETECTIVE_HISTORY_LIMIT = 12;
+const RESEND_API_URL = "https://api.resend.com/emails";
 /*
  * TRAININGSPHASEN / BLOCK-LOGIK / PROGRESSION (Konzept, bisher in separater Doku)
  *
@@ -993,6 +1157,151 @@ function evaluateStrengthPolicy(strengthMin7d) {
 function getStrengthPhasePlan(block) {
   const phase = ["BASE", "BUILD", "RACE"].includes(block) ? block : "BASE";
   return STRENGTH_PHASE_PLANS[phase] || STRENGTH_PHASE_PLANS.BASE;
+}
+
+function getWeeklyStrengthEmailKvKey(mondayIso) {
+  return `${WEEKLY_STRENGTH_EMAIL_KV_PREFIX}${mondayIso}`;
+}
+
+function getWeeklyStrengthPhase(block, overlayMode) {
+  if (overlayMode === "DELOAD" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "TAPER") return "RESET";
+  if (["BASE", "BUILD", "RACE", "RESET"].includes(block)) return block;
+  return "BASE";
+}
+
+function buildWeeklyStrengthPlan({ block, overlayMode, strengthPolicy, fatigueOverride }) {
+  const phase = getWeeklyStrengthPhase(block, overlayMode);
+  const sessionPool = WEEKLY_STRENGTH_SESSIONS[phase] || WEEKLY_STRENGTH_SESSIONS.BASE;
+  const score = Number(strengthPolicy?.score ?? 0);
+  const lowStrength = score <= 1;
+  const highFatigue = fatigueOverride || phase === "RESET";
+
+  const progressionText = highFatigue
+    ? "Deload/Recovery aktiv: Volumen -40–50 %, nur saubere Bewegung, keine neue Last."
+    : lowStrength
+      ? "Einstieg: in Woche 1 nur 2 Sätze pro Übung. Wenn RPE <= 6 bleibt, ab Woche 2 auf 3 Sätze steigern."
+      : "Progression: pro Woche entweder +1 Wiederholung pro Satz oder +1 Satz in genau einer Hauptübung.";
+
+  const sessionDuration = highFatigue ? "15–20" : "18–22";
+  const sessions = sessionPool.slice(0, 3).map((session, index) => ({
+    ...session,
+    progression: highFatigue
+      ? "Optional halten; stoppen bei Schweregefühl in den Beinen."
+      : index === 0
+        ? "Priorität A: zuerst diese Session erhöhen."
+        : "Steigerung nur, wenn Session 1 gut vertragen wurde.",
+  }));
+
+  return {
+    phase,
+    sessionDuration,
+    progressionText,
+    sessions,
+    equipment: ["Theraband", "Blackroll", "Stabikissen"],
+  };
+}
+
+function renderWeeklyStrengthEmailText({ mondayIso, phase, overlayMode, plan, score }) {
+  const lines = [
+    `Wöchentlicher Kraftplan – Woche ab ${mondayIso}`,
+    "",
+    `Phase: ${phase}${overlayMode && overlayMode !== "NORMAL" ? ` (Overlay: ${overlayMode})` : ""}`,
+    `Umfang: 3 Sessions à ca. ${plan.sessionDuration} Minuten`,
+    `Ausrüstung: ${plan.equipment.join(", ")}`,
+    `Kraft-Score (7T): ${score}/3`,
+    `Progression: ${plan.progressionText}`,
+    "",
+  ];
+
+  for (const session of plan.sessions) {
+    lines.push(`${session.name} – ${session.focus}`);
+    for (const exercise of session.exercises) {
+      lines.push(`- ${exercise}`);
+    }
+    lines.push(`- Progression-Hinweis: ${session.progression}`);
+    lines.push("");
+  }
+
+  lines.push("Leitplanke: Keine harte Kraftsession <24h vor Key-Run oder Longrun.");
+  return lines.join("\n");
+}
+
+async function sendResendEmail(env, { subject, text }) {
+  const apiKey = String(env?.RESEND_API_KEY || "").trim();
+  const from = String(env?.RESEND_FROM || "").trim();
+  const toRaw = String(env?.RESEND_TO || "").trim();
+  if (!apiKey || !from || !toRaw) {
+    throw new Error("Missing RESEND_API_KEY/RESEND_FROM/RESEND_TO");
+  }
+  const to = toRaw.split(",").map((x) => x.trim()).filter(Boolean);
+  if (!to.length) throw new Error("RESEND_TO has no recipients");
+
+  const res = await fetch(RESEND_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ from, to, subject, text }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Resend send failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
+async function sendWeeklyStrengthPlanEmail(env, event) {
+  if (!hasKv(env)) {
+    console.warn("weekly strength email skipped: KV binding missing");
+    return { ok: false, reason: "missing_kv" };
+  }
+  const berlinNow = getBerlinDateParts(Number(event?.scheduledTime) || Date.now());
+  if (berlinNow.weekdayShort !== "Mon") return { ok: false, reason: "not_monday" };
+  const mondayIso = berlinNow.isoDate;
+  const dedupeKey = getWeeklyStrengthEmailKvKey(mondayIso);
+  const existing = await readKvJson(env, dedupeKey);
+  if (existing?.sent === true) return { ok: true, skipped: "already_sent", mondayIso };
+
+  const state = await readLatestBlockStateKv(env, mondayIso);
+  const phase = state?.block || "BASE";
+  const strengthPolicy = evaluateStrengthPolicy(0);
+  const runSnapshot = await readLatestRunSnapshotKv(env);
+  const runLoadRatio =
+    Number.isFinite(runSnapshot?.runValue) && Number.isFinite(runSnapshot?.runGoal) && runSnapshot.runGoal > 0
+      ? runSnapshot.runValue / runSnapshot.runGoal
+      : null;
+  const overlayMode =
+    phase === "RESET"
+      ? "RECOVER_OVERLAY"
+      : Number.isFinite(daysBetween(mondayIso, state?.eventDate)) && daysBetween(mondayIso, state?.eventDate) >= 0 && daysBetween(mondayIso, state?.eventDate) <= 2
+        ? "TAPER"
+        : Number.isFinite(runLoadRatio) && runLoadRatio >= 1.25
+          ? "DELOAD"
+        : "NORMAL";
+  const fatigueOverride = overlayMode !== "NORMAL" || (Number.isFinite(runLoadRatio) && runLoadRatio >= 1.15);
+  const plan = buildWeeklyStrengthPlan({ block: phase, overlayMode, strengthPolicy, fatigueOverride });
+  const subject = `Wochenplan Kraft/Stabi – ${mondayIso} (${plan.phase})`;
+  const text = renderWeeklyStrengthEmailText({
+    mondayIso,
+    phase,
+    overlayMode,
+    plan,
+    score: strengthPolicy.score,
+  });
+  const resendResponse = await sendResendEmail(env, { subject, text });
+
+  await writeKvJson(env, dedupeKey, {
+    sent: true,
+    mondayIso,
+    phase,
+    overlayMode,
+    runLoadRatio,
+    sentAt: new Date().toISOString(),
+    resendResponse,
+  });
+  return { ok: true, mondayIso, phase, overlayMode };
 }
 
 function computeKeySpacing(ctx, dayIso, windowDays = 14) {
@@ -5580,25 +5889,17 @@ function buildComments(
   });
   addDecisionBlock("EMPFEHLUNGEN", [
     ...decisionCompact.recommendations,
-    `Kraft-Integration: 2×/Woche, nach GA1≤60′ oder Strides; kein Kraftblock vor Longrun / <24h vor Key.`,
+    `Kraft-Integration: Wochenplan kommt montags per E-Mail (3× ~20′); kein Kraftblock vor Longrun / <24h vor Key.`,
   ]);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
     `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    `Kraft-Phase ${strengthPlan.phase}: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′ (${strengthPlan.focus}) | Score ${strengthPolicy.score}/3`,
+    `Kraft-Phase ${strengthPlan.phase}: Score ${strengthPolicy.score}/3 · Detaillierter 3er-Wochenplan per Montags-Mail.`,
     Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
       ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
       : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
-  ]);
-
-  addDecisionBlock("KRAFTPLAN", [
-    `Phase: ${strengthPlan.phase} · Fokus: ${strengthPlan.focus}`,
-    `Ziel: ${strengthPlan.objective}`,
-    `Umfang: ${strengthPlan.sessionsPerWeek}×/Woche à ${strengthPlan.durationMin[0]}–${strengthPlan.durationMin[1]}′`,
-    ...strengthPlan.sessions.map((session) => `${session.name}: ${session.exercises.join(" · ")}`),
-    `Notfallmodus: 2×12 Squats · 2×30s Plank · 2×12 Monster Walk`,
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
