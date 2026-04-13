@@ -10382,7 +10382,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const todayDecisionMatch = String(dailyReportTextRaw || "").match(/(?:🏃|🗓) HEUTE\n([^\n]+)/);
     const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
-    const holidayOverlayActive = isHolidayOverlayMode(overlayMode || runFloorState?.overlayMode);
+    const holidayOverlayActive = isHolidayOverlayMode(runFloorState?.overlayMode);
     let coachAnalysis = null;
     if (shouldRunCoachAnalysis && !holidayOverlayActive) {
       await timedSync(dayPerf, "acceptanceAndTrustChecksMs", async () => {
@@ -10424,7 +10424,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const efTrendPct = trend?.dv != null ? Math.round(trend.dv * 10) / 10 : null;
       const coachSnapshot = {
         block: blockState?.block ?? "BASE",
-        overlayMode: overlayMode || null,
+        overlayMode: runFloorState?.overlayMode || null,
         weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
         todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
         sessionType: todayPlanEntry?.sessionType || null,
