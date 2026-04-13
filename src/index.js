@@ -8197,7 +8197,7 @@ function buildWeekPreview(
     addAcceptanceBreakdown("scenarioRunnerMs", Date.now() - scenarioRunnerStartedAt);
     const text = days
       .map((entry) => {
-        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
+        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "✗ " : "";
         const todayPrefix = entry.isToday ? "→ " : "";
         const keyStar = entry.sessionType === "KEY" ? " ★" : "";
         const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
@@ -13502,7 +13502,7 @@ function buildComments(
     }
     weekPreview.text = weekPreview.days
       .map((entry) => {
-        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
+        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "✗ " : "";
         const todayPrefix = entry.isToday ? "→ " : "";
         const keyStar = entry.sessionType === "KEY" ? " ★" : "";
         const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
