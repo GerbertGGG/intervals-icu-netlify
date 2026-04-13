@@ -70,3 +70,22 @@ assert.equal(blockState.eventDateISO, "2026-10-03");
 assert.equal(blockState.eventDate, undefined);
 assert.equal(blockState.weeksToEvent, null);
 assert.ok((blockState.reasons || []).includes("Post-Race-Fenster aktiv → Re-Entry BASE"));
+
+const staleRaceBlock = __test.determineBlockState({
+  today: "2026-07-01",
+  eventDate: "2026-09-05",
+  eventDistance: "10k",
+  historyMetrics: {},
+  previousState: {
+    block: "RACE",
+    startDate: "2026-06-01",
+  },
+  efTrend: null,
+  postEventOpenActive: false,
+});
+
+assert.equal(staleRaceBlock.block, "BUILD");
+assert.equal(staleRaceBlock.startDate, "2026-07-01");
+assert.ok((staleRaceBlock.reasons || []).some((reason) =>
+  String(reason).includes("Persistierter RACE-Status invalidiert")
+));
