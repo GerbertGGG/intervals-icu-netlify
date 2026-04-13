@@ -1060,6 +1060,7 @@ const BLOCK_CONFIG = {
     keyGrace: 0.25,
   },
 };
+const BASE_BUILD_HOLIDAY_GUARD_DAYS = 14;
 
 const BLOCK_LENGTHS_WEEKS_BY_DISTANCE = {
   "5k": { base: 10, build: 8, race: 6, taper: 1 },
@@ -1086,6 +1087,13 @@ function getRaceStartWeeks(eventDistance) {
 function getForceRaceWeeks(eventDistance) {
   const lengths = getBlockLengthsWeeks(eventDistance);
   return lengths.taper || BLOCK_CONFIG.cutoffs.forceRaceWeeks;
+}
+
+function computeNormalRunFloorReady(runFloorTarget, runFloorNow, runFloorPrev, runFloorPct = BLOCK_CONFIG.thresholds.runFloorPct) {
+  const target = Number(runFloorTarget);
+  if (!(target > 0)) return true;
+  const required = target * runFloorPct;
+  return Number(runFloorNow) >= required && Number(runFloorPrev) >= required;
 }
 
 function getBlockDurationForDistance(block, eventDistance) {
@@ -6341,16 +6349,23 @@ function determineBlockState({
   const blockLimits = getBlockDurationForDistance(block, eventDistanceNorm);
   
 
-  const runFloorReady =
-    runFloorTarget > 0
-      ? runFloorNow >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct &&
-        runFloorPrev >= runFloorTarget * BLOCK_CONFIG.thresholds.runFloorPct
-      : true;
+  const normalRunFloorReady = typeof historyMetrics?.normalRunFloorReady === "boolean"
+    ? historyMetrics.normalRunFloorReady
+    : computeNormalRunFloorReady(runFloorTarget, runFloorNow, runFloorPrev, BLOCK_CONFIG.thresholds.runFloorPct);
+  const runFloorReady = normalRunFloorReady;
+  const recentHolidayDaysForBuild = Math.max(0, Number(historyMetrics?.recentHolidayDaysForBuild ?? 0));
+  const recentHolidayBlockForBuild = recentHolidayDaysForBuild > 0;
 
   const aerobicReady = historyMetrics?.aerobicOk && historyMetrics?.aerobicOkPrev;
   const driftReady =
     historyMetrics?.hrDriftDelta == null || historyMetrics.hrDriftDelta <= BLOCK_CONFIG.thresholds.hrDriftMax;
   const fatigueOk = !historyMetrics?.fatigue?.override;
+  const baseStableForBuild =
+    normalRunFloorReady &&
+    !recentHolidayBlockForBuild &&
+    aerobicReady &&
+    driftReady &&
+    fatigueOk;
 
   let readinessScore = 40;
   if (runFloorReady) readinessScore += 20;
@@ -6449,8 +6464,9 @@ function determineBlockState({
 
   if (block === "BASE") {
     const efBlocksEarlyBuild = efReadyForBuild === false && weeksToEvent > raceStartWeeks + 4;
-    if (runFloorReady && aerobicReady && driftReady && fatigueOk && !efBlocksEarlyBuild) {
+    if (baseStableForBuild && !efBlocksEarlyBuild) {
       reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
+      reasons.push(`BASE->BUILD Guard ok: normaler RunFloor erreicht + kein Holiday in ${BASE_BUILD_HOLIDAY_GUARD_DAYS} Tagen`);
       if (efAllowsEarlyBuild && timeInBlockDays < blockLimits.minDays) {
         reasons.push("EF-Trend ermöglicht frühen BUILD-Start");
       }
@@ -6459,7 +6475,12 @@ function determineBlockState({
       timeInBlockDays = 0;
     } else {
       if (efBlocksEarlyBuild) reasons.push("EF-Trend blockiert vorzeitigen BUILD-Wechsel");
-      if (!runFloorReady) reasons.push("BASE bleibt: RunFloor noch instabil");
+      if (!normalRunFloorReady) reasons.push("BASE bleibt: normaler RunFloor (ohne Holiday-Faktor) noch instabil");
+      if (recentHolidayBlockForBuild) {
+        reasons.push(
+          `BASE->BUILD Guard blockiert: Holiday in letzten ${BASE_BUILD_HOLIDAY_GUARD_DAYS} Tagen (${recentHolidayDaysForBuild}d)`
+        );
+      }
       if (!aerobicReady) reasons.push("BASE bleibt: AerobicEq/Floor noch instabil");
       if (!driftReady) reasons.push("BASE bleibt: HR-Drift steigt");
       if (!fatigueOk) reasons.push("BASE bleibt: Overload/Monotony");
@@ -9808,6 +9829,15 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const prevAerobicFloorActive = policy.useAerobicFloor && prevIntensitySignal === "ok";
     const prevAerobicFloor = prevAerobicFloorActive ? policy.aerobicK * (loads7Prev.intensity7 ?? 0) : 0;
     const aerobicOkPrev = prevAerobicFloorActive ? (loads7Prev.aerobicEq7 ?? 0) >= prevAerobicFloor : true;
+    const holidayGuardStartIso = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - (BASE_BUILD_HOLIDAY_GUARD_DAYS - 1) * 86400000));
+    const holidayGuardEndIsoExclusive = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() + 86400000));
+    const recentHolidayDaysForBuild = countHolidayDaysInWindow(ctx?.lifeEventsAll, holidayGuardStartIso, holidayGuardEndIsoExclusive);
+    const normalRunFloorReady = computeNormalRunFloorReady(
+      baseRunFloorTarget,
+      runFloorEwma10,
+      runFloorEwma10Prev,
+      BLOCK_CONFIG.thresholds.runFloorPct
+    );
 
     const keyStats7 = collectKeyStats(ctx, day, 7);
     const keyStats14 = collectKeyStats(ctx, day, 14);
@@ -9837,6 +9867,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       runFloorEwma10: runFloorEwma10 ?? 0,
       runFloorEwma10Prev: runFloorEwma10Prev ?? 0,
       runFloorTarget: baseRunFloorTarget,
+      normalRunFloorReady,
+      recentHolidayDaysForBuild,
+      recentHolidayBlockForBuild: recentHolidayDaysForBuild > 0,
       aerobicOk,
       aerobicOkPrev,
       aerobicEq7: loads7.aerobicEq7 ?? 0,

@@ -612,3 +612,49 @@ console.log('guardrails ok');
   assert.equal(__test.computeBikeAllowanceFactor(2, { daysSinceEvent: 13 }), 1.0);
   assert.equal(__test.computeBikeAllowanceFactor(2, { daysSinceEvent: 14 }), 0.0);
 }
+
+// 24) BASE->BUILD Guard: jüngster Holiday blockiert Wechsel trotz sonst grüner Signale
+{
+  const out = __test.determineBlockState({
+    today: '2026-04-13',
+    eventDate: '2026-08-30',
+    eventDistance: '10k',
+    previousState: { block: 'BASE', startDate: '2026-02-12' },
+    efTrend: { confidence: 'high', efTrendPct: 0.05 },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 95,
+      runFloorEwma10Prev: 93,
+      aerobicOk: true,
+      aerobicOkPrev: true,
+      hrDriftDelta: 0.2,
+      fatigue: { override: false },
+      recentHolidayDaysForBuild: 3,
+    },
+  });
+  assert.equal(out.block, 'BASE');
+  assert.equal(out.reasons.some((line) => /Holiday in letzten 14 Tagen/.test(String(line))), true);
+}
+
+// 25) BASE->BUILD Guard: ohne Holiday und mit normalem RunFloor ist BUILD erlaubt
+{
+  const out = __test.determineBlockState({
+    today: '2026-04-13',
+    eventDate: '2026-08-30',
+    eventDistance: '10k',
+    previousState: { block: 'BASE', startDate: '2026-02-12' },
+    efTrend: { confidence: 'high', efTrendPct: 0.05 },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 95,
+      runFloorEwma10Prev: 93,
+      aerobicOk: true,
+      aerobicOkPrev: true,
+      hrDriftDelta: 0.2,
+      fatigue: { override: false },
+      recentHolidayDaysForBuild: 0,
+    },
+  });
+  assert.equal(out.block, 'BUILD');
+  assert.equal(out.reasons.some((line) => /Guard ok/.test(String(line))), true);
+}
