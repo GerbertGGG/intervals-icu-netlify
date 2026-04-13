@@ -96,7 +96,22 @@ Beispiele:
 - `/sync?days=7&write=false&debug=true`
 - `/sync?from=2026-01-01&to=2026-01-14&write=true&warmup_skip=900`
 
-4.4 Step-Sync (inkrementell, mit Merken des Fortschritts in KV)
+4.4 Test Weekly Strength E-Mail
+- `GET /test-weekly-email`
+- Zweck: manueller Test des Montags-Kraftplans per E-Mail (oder als Dry-Run ohne Versand)
+- Parameter:
+  - `dry_run=true|false` (Default `true`)
+  - `date=YYYY-MM-DD` (optional, setzt die zu testende „Montags“-Woche)
+  - `force=true|false` (optional, erlaubt Test auch wenn `date` kein Montag ist und ignoriert Dedupe)
+- Beispiele:
+  - Nur Vorschau (kein Versand): `/test-weekly-email?dry_run=true`
+  - Vorschau für bestimmten Montag: `/test-weekly-email?dry_run=true&date=2026-04-13`
+  - Echter Versand erzwungen: `/test-weekly-email?dry_run=false&date=2026-04-13&force=true`
+- Voraussetzungen für echten Versand:
+  - `RESEND_API_KEY`
+  - `RESEND_FROM`
+  - `RESEND_TO` (kommagetrennt möglich)
+4.5 Step-Sync (inkrementell, mit Merken des Fortschritts in KV)
 - `GET /sync-step`
 - Zweck: verarbeitet pro Aufruf **einen Tag** und springt anschließend standardmäßig um **7 Tage** weiter; der nächste Verarbeitungstag wird in KV gemerkt.
   So lassen sich große Bereiche robust in mehreren Calls abarbeiten (gegen 'Too many subrequests').
@@ -121,7 +136,7 @@ Hinweis:
 
 
 
-4.5 Deployment-/Erreichbarkeits-Check (Workers.dev)
+4.6 Deployment-/Erreichbarkeits-Check (Workers.dev)
 - Erwartete URL: `https://intervals-icu-netlify.<ACCOUNT_SUBDOMAIN>.workers.dev`
 - In `wrangler.toml` muss `workers_dev = true` gesetzt sein, sonst ist die workers.dev-URL nicht aktiv.
 - Nach Änderungen neu deployen: `wrangler deploy`
