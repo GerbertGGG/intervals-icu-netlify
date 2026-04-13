@@ -6072,6 +6072,8 @@ function determineBlockState({
   previousState,
   efTrend = null,
   postEventOpenActive = false,
+  includeBaseBuildDecisionDebug = false,
+  debugContext = null,
 }) {
   const reasons = [];
   let efReadyForBuild = null;
@@ -6125,6 +6127,7 @@ function determineBlockState({
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
+      baseBuildDecision: null,
     };
   }
 
@@ -6151,6 +6154,7 @@ function determineBlockState({
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
+      baseBuildDecision: null,
     };
   }
 
@@ -6352,6 +6356,46 @@ function determineBlockState({
     historyMetrics?.hrDriftDelta == null || historyMetrics.hrDriftDelta <= BLOCK_CONFIG.thresholds.hrDriftMax;
   const fatigueOk = !historyMetrics?.fatigue?.override;
 
+  const baseBuildDecisionDebug = includeBaseBuildDecisionDebug
+    ? {
+        previousBlock: previousState?.block ?? null,
+        blockBeforeDecision: block,
+        finalBlock: null,
+        weeksToEvent,
+        raceStartWeeks,
+        planStartWeeks,
+        timeInBlockDays,
+        blockMinDays: blockLimits?.minDays ?? null,
+        blockMaxDays: blockLimits?.maxDays ?? null,
+        runFloorReady,
+        aerobicReady,
+        driftReady,
+        fatigueOk,
+        efReadyForBuild,
+        efAllowsEarlyBuild: null,
+        efBlocksEarlyBuild: null,
+        runFloorNow,
+        runFloorPrev,
+        runFloorTarget,
+        effectiveFloorTarget: debugContext?.effectiveFloorTarget ?? null,
+        normalRunFloorReady: typeof debugContext?.normalRunFloorReady !== "undefined" ? debugContext.normalRunFloorReady : null,
+        lifeEventActive: !!debugContext?.lifeEventEffect?.active,
+        lifeEventCategory: debugContext?.lifeEventEffect?.category ?? null,
+        recentHolidayDays: typeof debugContext?.recentHolidayDays !== "undefined" ? debugContext.recentHolidayDays : null,
+        holidayWindowFactor: typeof debugContext?.holidayWindowFactor !== "undefined" ? debugContext.holidayWindowFactor : null,
+        reasonsBeforeDecision: reasons.slice(),
+        reasonsAfterDecision: null,
+        buildBlockedReason: null,
+        buildAllowedReason: null,
+      }
+    : null;
+  const finalizeBaseBuildDecisionDebug = () => {
+    if (!baseBuildDecisionDebug) return null;
+    baseBuildDecisionDebug.finalBlock = block;
+    baseBuildDecisionDebug.reasonsAfterDecision = reasons.slice();
+    return baseBuildDecisionDebug;
+  };
+
   let readinessScore = 40;
   if (runFloorReady) readinessScore += 20;
   if (aerobicReady) readinessScore += 15;
@@ -6387,6 +6431,7 @@ function determineBlockState({
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
+      baseBuildDecision: finalizeBaseBuildDecisionDebug(),
     };
   }
 
@@ -6394,6 +6439,7 @@ function determineBlockState({
     block === "BASE" &&
     efReadyForBuild === true &&
     timeInBlockDays >= blockLimits.minDays * EF_TREND_MIN_DAYS_IN_BASE_PCT;
+  if (baseBuildDecisionDebug) baseBuildDecisionDebug.efAllowsEarlyBuild = efAllowsEarlyBuild;
 
   if (timeInBlockDays < blockLimits.minDays && !efAllowsEarlyBuild) {
     reasons.push(`Mindestdauer ${blockLimits.minDays} Tage noch nicht erreicht`);
@@ -6416,6 +6462,7 @@ function determineBlockState({
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
+      baseBuildDecision: finalizeBaseBuildDecisionDebug(),
     };
   }
 
@@ -6444,16 +6491,19 @@ function determineBlockState({
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
+      baseBuildDecision: finalizeBaseBuildDecisionDebug(),
     };
   }
 
   if (block === "BASE") {
     const efBlocksEarlyBuild = efReadyForBuild === false && weeksToEvent > raceStartWeeks + 4;
+    if (baseBuildDecisionDebug) baseBuildDecisionDebug.efBlocksEarlyBuild = efBlocksEarlyBuild;
     if (runFloorReady && aerobicReady && driftReady && fatigueOk && !efBlocksEarlyBuild) {
       reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
       if (efAllowsEarlyBuild && timeInBlockDays < blockLimits.minDays) {
         reasons.push("EF-Trend ermöglicht frühen BUILD-Start");
       }
+      if (baseBuildDecisionDebug) baseBuildDecisionDebug.buildAllowedReason = "all_gates_passed";
       block = "BUILD";
       startDate = todayISO;
       timeInBlockDays = 0;
@@ -6463,6 +6513,15 @@ function determineBlockState({
       if (!aerobicReady) reasons.push("BASE bleibt: AerobicEq/Floor noch instabil");
       if (!driftReady) reasons.push("BASE bleibt: HR-Drift steigt");
       if (!fatigueOk) reasons.push("BASE bleibt: Overload/Monotony");
+      if (baseBuildDecisionDebug) {
+        const blockedBy = [];
+        if (efBlocksEarlyBuild) blockedBy.push("ef_blocks_early_build");
+        if (!runFloorReady) blockedBy.push("run_floor_not_ready");
+        if (!aerobicReady) blockedBy.push("aerobic_not_ready");
+        if (!driftReady) blockedBy.push("drift_not_ready");
+        if (!fatigueOk) blockedBy.push("fatigue_not_ok");
+        baseBuildDecisionDebug.buildBlockedReason = blockedBy.length ? blockedBy.join("|") : "unknown";
+      }
     }
   } else if (block === "BUILD") {
     const keyCompliance = historyMetrics?.keyCompliance;
@@ -6533,6 +6592,7 @@ function determineBlockState({
     eventDistance: eventDistanceNorm,
     efReadyForBuild,
     efTrend,
+    baseBuildDecision: finalizeBaseBuildDecisionDebug(),
   };
 }
 
@@ -9866,6 +9926,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       previousState: previousBlockState,
       efTrend,
       postEventOpenActive: Boolean(modeInfo?.postEventOpenActive),
+      includeBaseBuildDecisionDebug: debug,
+      debugContext: {
+        lifeEventEffect: modeInfo?.lifeEventEffect || null,
+      },
     });
 
     if (manualRaceStartIso && blockState.block === "RACE") {
