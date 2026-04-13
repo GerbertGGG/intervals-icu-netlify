@@ -10648,10 +10648,15 @@ Fehler: ${String(e?.message ?? e)}`;
     perf.perfInstrumentationHealthy = true;
   }
 
+  let weeklyStrengthMail = null;
   if (write && isMondayIso(oldest)) {
-    await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
+    weeklyStrengthMail = await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
       console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
+      return { ok: false, error: String(err?.message ?? err) };
     });
+    if (!weeklyStrengthMail?.ok) {
+      console.warn("sendWeeklyStrengthMail skipped/failed:", JSON.stringify(weeklyStrengthMail || {}));
+    }
   }
 
   return {
@@ -10676,6 +10681,7 @@ Fehler: ${String(e?.message ?? e)}`;
         },
         debugResponsePart
       ),
+      weeklyStrengthMail,
       perf,
     } : undefined,
   };
