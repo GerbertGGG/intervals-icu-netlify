@@ -150,6 +150,35 @@ export default {
       return json({ ok: true, oldest, newest, write, warmupSkipSec, raceStartOverrideIso, blockStartOverrideIso });
     }
 
+    if (url.pathname === "/test-weekly-email") {
+      const dryRunRaw = url.searchParams.get("dry_run");
+      const dryRun = dryRunRaw === null ? true : parseBooleanParam(url.searchParams, "dry_run");
+      const force = parseBooleanParam(url.searchParams, "force");
+      const date = url.searchParams.get("date");
+      if (date && !isIsoDate(date)) {
+        return json({ ok: false, error: "Invalid date format (YYYY-MM-DD)" }, 400);
+      }
+
+      try {
+        const result = await sendWeeklyStrengthPlanEmail(env, { scheduledTime: Date.now() }, {
+          dryRun,
+          forceMondayIso: date || null,
+          allowNonMonday: force,
+          forceSend: force,
+        });
+        return json({ ok: true, ...result });
+      } catch (e) {
+        return json(
+          {
+            ok: false,
+            error: "weekly_email_test_failed",
+            message: String(e?.message ?? e),
+          },
+          500
+        );
+      }
+    }
+
     return new Response("Not found", { status: 404 });
   },
 
@@ -257,6 +286,15 @@ function isMondayMorningBerlin(event) {
   if (!Number.isFinite(t)) return false;
   const berlin = getBerlinDateParts(t);
   return berlin.weekdayShort === "Mon" && Number.isFinite(berlin.hour) && berlin.hour >= 6 && berlin.hour <= 11;
+}
+
+function weekdayShortFromIsoInBerlin(iso) {
+  if (!isIsoDate(iso)) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    weekday: "short",
+  }).formatToParts(new Date(`${iso}T12:00:00Z`));
+  return parts.find((p) => p.type === "weekday")?.value || "";
 }
 
 // ================= CONFIG =================
@@ -1252,17 +1290,23 @@ async function sendResendEmail(env, { subject, text }) {
   return res.json().catch(() => ({}));
 }
 
-async function sendWeeklyStrengthPlanEmail(env, event) {
+async function sendWeeklyStrengthPlanEmail(env, event, opts = {}) {
+  const forceMondayIso = opts?.forceMondayIso && isIsoDate(opts.forceMondayIso) ? opts.forceMondayIso : null;
+  const allowNonMonday = opts?.allowNonMonday === true;
+  const dryRun = opts?.dryRun === true;
+  const forceSend = opts?.forceSend === true;
   if (!hasKv(env)) {
     console.warn("weekly strength email skipped: KV binding missing");
     return { ok: false, reason: "missing_kv" };
   }
   const berlinNow = getBerlinDateParts(Number(event?.scheduledTime) || Date.now());
-  if (berlinNow.weekdayShort !== "Mon") return { ok: false, reason: "not_monday" };
-  const mondayIso = berlinNow.isoDate;
+  const mondayIso = forceMondayIso || berlinNow.isoDate;
+  const weekday = forceMondayIso ? weekdayShortFromIsoInBerlin(forceMondayIso) : berlinNow.weekdayShort;
+  if (weekday !== "Mon" && !allowNonMonday) return { ok: false, reason: "not_monday", mondayIso, weekday };
+
   const dedupeKey = getWeeklyStrengthEmailKvKey(mondayIso);
   const existing = await readKvJson(env, dedupeKey);
-  if (existing?.sent === true) return { ok: true, skipped: "already_sent", mondayIso };
+  if (existing?.sent === true && !forceSend) return { ok: true, skipped: "already_sent", mondayIso };
 
   const state = await readLatestBlockStateKv(env, mondayIso);
   const phase = state?.block || "BASE";
@@ -1290,6 +1334,9 @@ async function sendWeeklyStrengthPlanEmail(env, event) {
     plan,
     score: strengthPolicy.score,
   });
+  if (dryRun) {
+    return { ok: true, dryRun: true, mondayIso, phase, overlayMode, subject, text };
+  }
   const resendResponse = await sendResendEmail(env, { subject, text });
 
   await writeKvJson(env, dedupeKey, {
