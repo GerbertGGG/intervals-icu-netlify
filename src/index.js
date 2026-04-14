@@ -5323,7 +5323,8 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
     }
 
     // Daily report text (used for calendar NOTE instead of wellness comments)
-    const dailyReportTextRaw = buildComments({
+    const aiReportEligible = !debug && !runSectionOnly && daysList.length === 1;
+    const dailyReportTextRaw = await buildDailyReportText({
       perRunInfo,
       trend,
       motor,
@@ -5350,7 +5351,7 @@ if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === 
       bikeSubFactor,
       weeksToEvent,
       eventDistance,
-    }, { debug });
+    }, { debug, env, aiEnabled: aiReportEligible });
     const dailyReportText = normalizeDailyReportText(day, dailyReportTextRaw);
 
     if (!runSectionOnly) {
@@ -5689,6 +5690,156 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
+}
+
+const AI_REPORT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+
+async function buildDailyReportText(input, { debug = false, env = null, aiEnabled = false } = {}) {
+  const deterministicText = buildComments(input, { debug });
+  const aiInput = buildCoachSummaryInput(input);
+  const fallback = deterministicText || renderCoachSummaryFallback(aiInput);
+
+  if (!aiEnabled || !isAiReportEnabled(env, { debug })) {
+    return fallback;
+  }
+
+  const polished = await renderCoachSummaryWithAI(env, aiInput, { fallbackText: fallback });
+  return polished || fallback || deterministicText;
+}
+
+function isAiReportEnabled(env, { debug = false } = {}) {
+  if (debug) return false;
+  const flag = String(env?.AI_REPORT_ENABLED || "false").trim().toLowerCase();
+  if (flag !== "true") return false;
+  return Boolean(env?.AI?.run);
+}
+
+function buildCoachSummaryInput({
+  runFloorEwma10,
+  blockState,
+  runFloorState,
+  keyCompliance,
+  keySpacing,
+  fatigue,
+  longRunSummary,
+  modeInfo,
+  todayIso,
+  weeksToEvent,
+  eventDistance,
+} = {}) {
+  const overlayMode = runFloorState?.overlayMode ?? "NORMAL";
+  const keyCap7 = keyCompliance?.maxKeysCap7 ?? MAX_KEYS_7D;
+  const actualKeys7 = keyCompliance?.actual7 ?? 0;
+  const spacingOk = keyCompliance?.keySpacingOk ?? keySpacing?.ok ?? true;
+  const keyBlocked = keyCompliance?.keyAllowedNow === false || overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "LIFE_EVENT_STOP";
+  const runFloorCurrent = Math.round(Number.isFinite(runFloorEwma10) ? runFloorEwma10 : 0);
+  const runTarget = Math.round(runFloorState?.effectiveFloorTarget ?? 0);
+  const runFloorGap = runTarget > 0 ? runFloorCurrent - runTarget : 0;
+  const longRunDoneMin = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
+  const longRunTargetMin = Math.round((longRunSummary?.plan?.plannedMin ?? LONGRUN_PREPLAN.startMin) || 0);
+  const longrunDecision = shouldRecommendLongrun({
+    overlayMode,
+    longRunDoneMin,
+    longRunTargetMin,
+    runFloorGap,
+    block: blockState?.block,
+    keyAllowedNow: keyCompliance?.keyAllowedNow,
+  });
+  const todayDecision = buildTodayDecision({
+    nextRunText: buildNextRunRecommendation({
+      runFloorState,
+      policy: null,
+      specificOk: true,
+      hasSpecific: false,
+      aerobicOk: true,
+      intensitySignal: fatigue?.intensitySignal,
+      keyCapExceeded: keyCompliance?.capExceeded === true,
+      keySpacingOk: spacingOk,
+      keyAllowedNow: keyCompliance?.keyAllowedNow,
+      keySuggestion: keyCompliance?.suggestion,
+      keyMinGapDays: keyCompliance?.keyMinGapDays ?? keySpacing?.minGapDays ?? KEY_MIN_GAP_DAYS_DEFAULT,
+    }).replace(/ Optional:.*$/i, "").trim(),
+    longrunDecision,
+    keyAllowedNow: keyCompliance?.keyAllowedNow === true && !keyBlocked,
+    explicitSessionShort: shortExplicitSession(keyCompliance?.explicitSession),
+  });
+
+  const shortWhy = [];
+  if (overlayMode !== "NORMAL") shortWhy.push(`Modus: ${overlayMode}`);
+  if (runTarget > 0 && runFloorGap < 0) shortWhy.push(`RunFloor unter Ziel (${runFloorCurrent}/${runTarget})`);
+  if (keyCompliance?.capExceeded === true) shortWhy.push(`Key-Budget erreicht (${actualKeys7}/${keyCap7})`);
+  if (!spacingOk) shortWhy.push(`Key-Abstand noch nicht frei (${formatNextAllowed(todayIso, keyCompliance?.nextKeyEarliest ?? keySpacing?.nextAllowedIso)})`);
+  if (longrunDecision?.recommendLongrun) shortWhy.push("Longrun diese Woche noch offen");
+  if (fatigue?.override) shortWhy.push("Fatigue-Override aktiv");
+
+  return {
+    todayAction: todayDecision.todayAction,
+    focus: runFloorGap < 0 ? "Volumen und Stabilität" : "Stabilität und saubere Ausführung",
+    keyStatus: keyBlocked ? "kein Key heute" : "Key optional wenn frisch",
+    longrunStatus: longrunDecision?.recommendLongrun ? "longrun_offen" : "kein_longrun_druck",
+    fatigueFlag: fatigue?.override === true,
+    block: blockState?.block || "BASE",
+    phase: overlayMode,
+    event: {
+      distance: formatEventDistance(modeInfo?.nextEvent?.distance_type || eventDistance),
+      weeksToEvent: Number.isFinite(weeksToEvent) ? Math.round(weeksToEvent) : null,
+    },
+    shortWhy: shortWhy.slice(0, 4),
+  };
+}
+
+function renderCoachSummaryFallback(summary = {}) {
+  const lines = [];
+  lines.push(`Heute: ${String(summary.todayAction || "35–50 min locker/steady").replace(/\.$/, "")}.`);
+  lines.push(`Fokus: ${summary.focus || "ruhig und kontrolliert"}.`);
+  if (summary.longrunStatus === "longrun_offen") {
+    lines.push("Der Longrun ist diese Woche noch offen, priorisiere dafür eine kontrollierte, lockere Einheit.");
+  }
+  lines.push(`Key-Status: ${summary.keyStatus || "heute kein harter Reiz"}.`);
+  if (summary.fatigueFlag) {
+    lines.push("Ermüdung ist erhöht, daher heute konservativ bleiben.");
+  }
+  if (Array.isArray(summary.shortWhy) && summary.shortWhy.length) {
+    lines.push(`Kurz warum: ${summary.shortWhy.join("; ")}.`);
+  }
+  return lines.slice(0, 5).join(" ");
+}
+
+async function renderCoachSummaryWithAI(env, summary, { fallbackText = "" } = {}) {
+  const ai = env?.AI;
+  if (!ai?.run) return fallbackText;
+
+  const compact = {
+    todayAction: summary?.todayAction || "",
+    focus: summary?.focus || "",
+    keyStatus: summary?.keyStatus || "",
+    longrunStatus: summary?.longrunStatus || "",
+    fatigueFlag: Boolean(summary?.fatigueFlag),
+    shortWhy: Array.isArray(summary?.shortWhy) ? summary.shortWhy.slice(0, 4) : [],
+  };
+
+  const system =
+    "Du bist ein knapper, hilfreicher Laufcoach. Formuliere freundlich, klar, nicht kitschig. 4-6 Sätze, keine Emojis, keine neuen Trainingsanweisungen erfinden, nur aus Input formulieren.";
+  const user = `Formuliere eine kurze Tageszusammenfassung aus diesem JSON:\n${JSON.stringify(compact)}`;
+
+  try {
+    const out = await ai.run(AI_REPORT_MODEL, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      max_tokens: 180,
+      temperature: 0.2,
+    });
+    const raw = String(out?.response || out?.result?.response || out?.output_text || "").trim();
+    if (!raw) return fallbackText;
+    const normalized = raw.replace(/\s+/g, " ").trim();
+    if (!normalized) return fallbackText;
+    return normalized;
+  } catch (err) {
+    console.warn("renderCoachSummaryWithAI failed, using fallback", String(err?.message || err));
+    return fallbackText;
+  }
 }
 
 // ================= COMMENT =================
