@@ -5709,8 +5709,6 @@ async function buildDailyReportText(input, { debug = false, env = null, aiEnable
 
 function isAiReportEnabled(env, { debug = false } = {}) {
   if (debug) return false;
-  const flag = String(env?.AI_REPORT_ENABLED || "false").trim().toLowerCase();
-  if (flag !== "true") return false;
   return Boolean(env?.AI?.run);
 }
 
