@@ -2669,7 +2669,8 @@ const KEY_SESSION_RECOMMENDATIONS = {
 
 const PROGRESSION_DELOAD_EVERY_WEEKS = 4;
 const RACEPACE_BUDGET_DAYS = 4;
-const KEY_TYPE_POOL = ["steady", "longrun", "strides", "schwelle", "vo2_touch", "racepace"];
+const QUALITY_KEY_TYPES = ["schwelle", "vo2_touch", "racepace", "strides"];
+const KEY_TYPE_POOL = [...QUALITY_KEY_TYPES];
 const KEY_PRIORITY_PROFILES = {
   RESET: {
     default: {
@@ -2828,6 +2829,11 @@ function toUniqueOrderedTypes(lists = []) {
   return out;
 }
 
+function isQualityKeyType(type) {
+  const normalized = normalizeKeyType(type);
+  return QUALITY_KEY_TYPES.includes(normalized);
+}
+
 function getKeyPriorityProfile(block, eventDistance, weeksToEvent) {
   const phase = block || "BASE";
   const dist = normalizeEventDistance(eventDistance) || "10k";
@@ -2981,12 +2987,12 @@ function pickBestKeyType(context = {}) {
   const recentStimulus = getRecentStimulusHistory(context.ctx, context.dayIso || context.todayIso || isoDate(new Date()), 21);
 
   const allowed = Array.isArray(keyRules.allowedKeyTypes) && keyRules.allowedKeyTypes.length
-    ? keyRules.allowedKeyTypes
+    ? keyRules.allowedKeyTypes.filter((type) => isQualityKeyType(type))
     : profile.ranked;
   const disallowed = new Set([...(keyRules.bannedKeyTypes || [])]);
   const candidates = profile.ranked.filter((type) => allowed.includes(type) && !disallowed.has(type));
   if (!candidates.length) {
-    return { type: "steady", reason: "Fallback auf steady (keine Kandidaten)", ranked: [] };
+    return { type: null, reason: "Kein Quality-Key-Kandidat verfügbar", ranked: [], priorityProfile: profile, recentStimulus };
   }
 
   const scored = candidates
@@ -3016,8 +3022,8 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   const midMax = Number(intensityDistribution?.targets?.midMax);
   const fatigueHigh = context?.fatigue?.override === true;
 
-  if (block === "RESET") return "steady";
-  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY") return "steady";
+  if (block === "RESET") return null;
+  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY") return null;
 
   const selection = pickBestKeyType({
     ...context,
@@ -3029,7 +3035,11 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   keyRules.priorityProfile = selection?.priorityProfile || null;
   keyRules.rankedCandidates = selection?.ranked || [];
   keyRules.recentStimulus = selection?.recentStimulus || null;
-  let planned = selection?.type || pickPatternKeyType({ ...context, block, eventDistance: dist }) || keyRules?.preferredKeyTypes?.find((k) => k !== "steady") || "steady";
+  const patternCandidate = pickPatternKeyType({ ...context, block, eventDistance: dist });
+  let planned = selection?.type
+    || (isQualityKeyType(patternCandidate) ? patternCandidate : null)
+    || keyRules?.preferredKeyTypes?.find((k) => isQualityKeyType(k))
+    || null;
   const initiallyPlanned = planned;
 
   if (lastKeyType && planned === lastKeyType) {
@@ -3043,7 +3053,7 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
   if ((overlayMode === "DELOAD" || overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_HOLIDAY") && (planned === "vo2_touch" || planned === "racepace")) {
     const ranked = Array.isArray(selection?.ranked) ? selection.ranked : [];
     const conservative = ranked.find((candidate) => mapKeyTypeToIntensity(candidate?.type, dist) !== "hard");
-    planned = conservative?.type || "steady";
+    planned = conservative?.type || null;
   }
 
   if ((planned === "vo2_touch" || planned === "racepace") && (fatigueHigh || (Number.isFinite(hardShare) && Number.isFinite(hardMax) && hardShare > hardMax))) {
@@ -3052,22 +3062,22 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
       const intensity = mapKeyTypeToIntensity(candidate?.type, dist);
       return candidate?.type !== planned && intensity !== "hard";
     });
-    planned = fallback?.type || (block === "RACE" ? "schwelle" : "steady");
+    planned = fallback?.type || (block === "RACE" ? "schwelle" : null);
   }
 
   if (planned === "schwelle" && Number.isFinite(midShare) && Number.isFinite(midMax) && midShare > midMax) {
-    planned = keyRules?.allowedKeyTypes?.includes("longrun") ? "longrun" : "steady";
+    planned = keyRules?.allowedKeyTypes?.includes("vo2_touch") ? "vo2_touch" : null;
   }
 
   if (block === "BASE" && (dist === "hm" || dist === "m") && planned === "strides") {
     const stridesSeconds = Number(context?.stridesSeconds ?? context?.stridesDurationSec ?? context?.keyWorkSec ?? 0);
-    if (!Number.isFinite(stridesSeconds) || stridesSeconds > 60) planned = "schwelle";
+    if (!Number.isFinite(stridesSeconds) || stridesSeconds > 60) planned = keyRules?.allowedKeyTypes?.includes("schwelle") ? "schwelle" : null;
   }
 
   const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
-  if (allowed.length && !allowed.includes(planned)) {
-    const preferredAllowed = (keyRules?.preferredKeyTypes || []).find((k) => allowed.includes(k));
-    planned = preferredAllowed || allowed[0] || "steady";
+  if (planned && allowed.length && !allowed.includes(planned)) {
+    const preferredAllowed = (keyRules?.preferredKeyTypes || []).find((k) => allowed.includes(k) && isQualityKeyType(k));
+    planned = preferredAllowed || allowed.find((k) => isQualityKeyType(k)) || null;
   }
   if (planned !== initiallyPlanned) {
     keyRules.selectionReason = `${keyRules.selectionReason} Guardrail-Override: ${formatKeyType(initiallyPlanned)} → ${formatKeyType(planned)}.`.trim();
@@ -3078,11 +3088,10 @@ function decideKeyType1PerWeek(context = {}, keyRules = {}) {
 
 function resolvePrimaryKeyType(keyRules, block) {
   if (keyRules?.plannedPrimaryType) return keyRules.plannedPrimaryType;
-  const preferred = keyRules?.preferredKeyTypes?.find((k) => k !== "steady");
+  const preferred = keyRules?.preferredKeyTypes?.find((k) => isQualityKeyType(k));
   if (preferred) return preferred;
-  if (block === "BASE") return "ga";
   if (block === "RACE") return "racepace";
-  return "steady";
+  return null;
 }
 
 function getSessionsDoneInBlock(ctx, { blockStartIso, dayIso, keyType, eventDistance } = {}) {
@@ -3461,6 +3470,7 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
   const block = context.block || "BASE";
   const distance = context.eventDistance || "10k";
   const preferredType = normalizeKeyType(plannedKeyType) || resolvePrimaryKeyType(keyRules, block);
+  if (!isQualityKeyType(preferredType)) return null;
   const catalog = KEY_SESSION_RECOMMENDATIONS?.[block]?.[distance] || null;
   if (!catalog) return null;
 
@@ -3471,7 +3481,7 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
     : (keyRules?.preferredKeyTypes || []).find((type) => allowed.includes(type)) || allowed[0] || null;
 
   const preferredList = safePreferred && Array.isArray(catalog?.[safePreferred]) ? catalog[safePreferred] : null;
-  const fallbackType = Object.keys(catalog).find((type) => Array.isArray(catalog[type]) && catalog[type].length > 0) || null;
+  const fallbackType = Object.keys(catalog).find((type) => isQualityKeyType(type) && Array.isArray(catalog[type]) && catalog[type].length > 0) || null;
   const chosenType = preferredList?.length ? safePreferred : fallbackType;
   const entries = chosenType ? catalog[chosenType] : null;
   if (!Array.isArray(entries) || !entries.length) return null;
@@ -3603,8 +3613,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "longrun", "schwelle", "strides", "vo2_touch"],
-        preferredKeyTypes: ["steady", "longrun", "schwelle"],
+        allowedKeyTypes: ["schwelle", "strides", "vo2_touch"],
+        preferredKeyTypes: ["schwelle", "strides"],
         bannedKeyTypes: ["racepace"],
       };
     }
@@ -3612,8 +3622,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "longrun", "schwelle", "strides", "vo2_touch"],
-        preferredKeyTypes: ["schwelle", "steady"],
+        allowedKeyTypes: ["schwelle", "strides", "vo2_touch"],
+        preferredKeyTypes: ["schwelle", "strides"],
         bannedKeyTypes: ["racepace"],
       };
     }
@@ -3631,7 +3641,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "longrun", "strides", "steady"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides"],
         preferredKeyTypes: ["vo2_touch", "schwelle", "racepace"],
         bannedKeyTypes: [],
       };
@@ -3640,7 +3650,7 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "longrun", "strides", "steady"],
+        allowedKeyTypes: ["schwelle", "vo2_touch", "racepace", "strides"],
         preferredKeyTypes: ["schwelle", "vo2_touch", "racepace"],
         bannedKeyTypes: [],
       };
@@ -3650,8 +3660,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: allowRacePace ? ["schwelle", "longrun", "racepace", "vo2_touch", "steady", "strides"] : ["schwelle", "longrun", "vo2_touch", "steady", "strides"],
-        preferredKeyTypes: allowRacePace ? ["schwelle", "longrun", "racepace"] : ["schwelle", "longrun"],
+        allowedKeyTypes: allowRacePace ? ["schwelle", "racepace", "vo2_touch", "strides"] : ["schwelle", "vo2_touch", "strides"],
+        preferredKeyTypes: allowRacePace ? ["schwelle", "racepace", "vo2_touch"] : ["schwelle", "vo2_touch"],
         bannedKeyTypes: allowRacePace ? [] : ["racepace"],
       };
     }
@@ -3660,8 +3670,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: allowRacePace ? ["longrun", "racepace", "schwelle", "vo2_touch", "steady", "strides"] : ["longrun", "schwelle", "vo2_touch", "steady", "strides"],
-        preferredKeyTypes: allowRacePace ? ["longrun", "racepace", "schwelle"] : ["longrun", "schwelle"],
+        allowedKeyTypes: allowRacePace ? ["racepace", "schwelle", "vo2_touch", "strides"] : ["schwelle", "vo2_touch", "strides"],
+        preferredKeyTypes: allowRacePace ? ["racepace", "schwelle", "vo2_touch"] : ["schwelle", "vo2_touch"],
         bannedKeyTypes: allowRacePace ? [] : ["racepace"],
       };
     }
@@ -3690,8 +3700,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "longrun", "schwelle", "vo2_touch", "steady"],
-        preferredKeyTypes: ["racepace", "schwelle", "longrun"],
+        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch"],
+        preferredKeyTypes: ["racepace", "schwelle", "vo2_touch"],
         bannedKeyTypes: ["strides"],
       };
     }
@@ -3699,8 +3709,8 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["racepace", "longrun", "schwelle", "vo2_touch", "steady"],
-        preferredKeyTypes: ["racepace", "longrun"],
+        allowedKeyTypes: ["racepace", "schwelle", "vo2_touch"],
+        preferredKeyTypes: ["racepace", "schwelle", "vo2_touch"],
         bannedKeyTypes: ["strides"],
       };
     }
@@ -3839,7 +3849,10 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const typeOk = bannedHits.length === 0 && disallowedHits.length === 0;
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
-  const plannedKeyType = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
+  const plannedKeyType = decideKeyType1PerWeek(context, keyRules)
+    || keyRules.preferredKeyTypes.find((t) => isQualityKeyType(t))
+    || keyRules.allowedKeyTypes.find((t) => isQualityKeyType(t))
+    || null;
   keyRules.plannedPrimaryType = plannedKeyType;
   const preferred = plannedKeyType;
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
@@ -3864,7 +3877,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const hardShareBlocked = intensityDistribution?.hardOver === true;
   const midShareBlocked = intensityDistribution?.midOver === true;
   const easyShareBlocked = intensityDistribution?.easyUnder === true;
-  const preferredIntensity = mapKeyTypeToIntensity(preferred, context.eventDistance);
+  const preferredIntensity = preferred ? mapKeyTypeToIntensity(preferred, context.eventDistance) : "easy";
 
   let suggestion = "";
   let keyAllowedNow = false;
@@ -3895,6 +3908,8 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     } else {
       suggestion = `Mid-Anteil hoch (${midPct}% > ${maxPct}%) – heute keine zusätzliche Schwelle, besser locker.`;
     }
+  } else if (!preferred) {
+    suggestion = "Kein Key heute – Volumen/Longrun priorisieren.";
   } else if (actual7 === 1 && typeOk) {
     suggestion = `2. Key diese Woche optional/erlaubt: ${preferred} (${blockLabel}, ${distLabel}).`;
     keyAllowedNow = true;
@@ -3910,7 +3925,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (progressionHint) suggestion = `${suggestion} ${progressionHint}`;
   }
 
-  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType);
+  const explicitSession = isQualityKeyType(plannedKeyType)
+    ? buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType)
+    : null;
   if (explicitSession && keyAllowedNow) {
     suggestion = `${suggestion} Konkrete Session-Idee: ${explicitSession}`;
   }
@@ -5526,6 +5543,60 @@ function buildNextRunRecommendation({
   return next;
 }
 
+function shouldRecommendLongrun(context = {}) {
+  const overlayMode = context.overlayMode || "NORMAL";
+  const longRunDoneMin = Number(context.longRunDoneMin ?? 0);
+  const longRunTargetMin = Number(context.longRunTargetMin ?? 0);
+  const runFloorGap = Number(context.runFloorGap ?? 0);
+  const block = context.block || "BASE";
+  const keyAllowedNow = context.keyAllowedNow === true;
+
+  if (overlayMode === "LIFE_EVENT_STOP" || overlayMode === "RECOVER_OVERLAY" || overlayMode === "TAPER") {
+    return { recommendLongrun: false, recommendVolume: false, prioritizeOverKey: false, text: null, reason: "overlay" };
+  }
+
+  const hasLongrunGap = Number.isFinite(longRunTargetMin) && longRunTargetMin >= 60 && longRunDoneMin + 5 < longRunTargetMin;
+  if (hasLongrunGap) {
+    const low = Math.max(50, Math.round(Math.max(longRunDoneMin + 5, longRunTargetMin - 15) / 5) * 5);
+    const high = Math.max(low + 5, Math.round(longRunTargetMin / 5) * 5);
+    const prioritizeOverKey = block === "BASE" || runFloorGap < 0;
+    return {
+      recommendLongrun: true,
+      recommendVolume: false,
+      prioritizeOverKey,
+      text: `Longrun heute empfohlen: ${low}–${high}′ locker.`,
+      reason: keyAllowedNow && prioritizeOverKey ? "konservativ vor Key" : "Longrun-Lücke",
+    };
+  }
+
+  if (runFloorGap < 0) {
+    return {
+      recommendLongrun: false,
+      recommendVolume: true,
+      prioritizeOverKey: block === "BASE",
+      text: "Volumenfokus: 35–50′ locker/steady.",
+      reason: "RunFloor-Gap",
+    };
+  }
+
+  return { recommendLongrun: false, recommendVolume: false, prioritizeOverKey: false, text: null, reason: "none" };
+}
+
+function buildTodayDecision(context = {}) {
+  const longrunDecision = context.longrunDecision || {};
+  const keyAllowedNow = context.keyAllowedNow === true;
+  if (longrunDecision.text && (!keyAllowedNow || longrunDecision.prioritizeOverKey)) {
+    return {
+      todayAction: longrunDecision.text,
+      keyLine: "Kein Key heute.",
+    };
+  }
+  return {
+    todayAction: context.nextRunText || "35–50 min locker/steady",
+    keyLine: keyAllowedNow && context.explicitSessionShort ? `Key (wenn frisch): ${context.explicitSessionShort}.` : null,
+  };
+}
+
 function limitText(text, maxLen = 140) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (clean.length <= maxLen) return clean;
@@ -5560,7 +5631,6 @@ function buildRecommendationsAndBottomLine(state) {
 
   const runFloorTarget = state?.runFloorTarget;
   const runFloorNow = state?.runFloorEwma10 ?? state?.runFloor7;
-  const explicitSessionShort = state?.explicitSessionShort;
   const longRunDoneMin = Number(state?.longRunDoneMin ?? 0);
   const longRunTargetMin = Number(state?.longRunTargetMin ?? 0);
   const longRunGapMin = Number(state?.longRunGapMin ?? 0);
@@ -5570,9 +5640,7 @@ function buildRecommendationsAndBottomLine(state) {
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
 
   bottom.push(`Heute: ${String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "")}.`);
-  if (state?.keyAllowedNow && explicitSessionShort) {
-    bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
-  }
+  if (state?.todayKeyLine) bottom.push(String(state.todayKeyLine).replace(/\.$/, "") + ".");
 
   if (Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
     rec.push(`RunFloor ${runFloorNow}/${runFloorTarget} → Volumen priorisieren.`);
@@ -5801,6 +5869,14 @@ function buildComments(
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunSafetyCapMin
     : LONGRUN_PREPLAN.startMin;
+  const longrunDecision = shouldRecommendLongrun({
+    overlayMode,
+    longRunDoneMin,
+    longRunTargetMin,
+    runFloorGap,
+    block: blockState?.block,
+    keyAllowedNow: keyCompliance?.keyAllowedNow,
+  });
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
@@ -5911,6 +5987,12 @@ function buildComments(
 
   const explicitSessionShort = shortExplicitSession(keyCompliance?.explicitSession);
   const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
+  const todayDecision = buildTodayDecision({
+    nextRunText: nextRunText.replace(/ Optional:.*$/i, "").trim(),
+    longrunDecision,
+    keyAllowedNow,
+    explicitSessionShort,
+  });
   const decisionCompact = buildRecommendationsAndBottomLine({
     runFloorEwma10,
     runFloorTarget: runTarget > 0 ? runTarget : null,
@@ -5922,7 +6004,8 @@ function buildComments(
     overlayMode: runFloorState?.overlayMode,
     keyAllowedNow,
     explicitSessionShort,
-    todayAction: nextRunText.replace(/ Optional:.*$/i, "").trim(),
+    todayAction: todayDecision.todayAction,
+    todayKeyLine: todayDecision.keyLine,
     actualKeys7,
     keyCap7,
     strengthPolicy,
