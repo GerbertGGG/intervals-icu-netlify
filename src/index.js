@@ -1058,10 +1058,10 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
 
   const reasons = [];
   if (keyCount7 > keyCap) reasons.push(`Key-Cap: ${keyCount7}/${keyCap} Key in 7 Tagen`);
-  if (rampPct > thresholds.rampPct) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
-  if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${thresholds.acwrHigh})`);
+  if (rampPct > thresholds.rampPct) reasons.push(`Ramp: ${fmtPct(rampPct * 100)} vs. vorherige 7 Tage`);
+  if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${fmt2(acwr)} (${fmtThreshold(thresholds.acwrHigh, ">", 1)})`);
   if (acwr != null && acwr < thresholds.acwrLow && last7 > 0)
-    reasons.push(`ACWR: ${acwr.toFixed(2)} (< ${thresholds.acwrLow})`);
+    reasons.push(`ACWR: ${fmt2(acwr)} (${fmtThreshold(thresholds.acwrLow, "<", 1)})`);
   const last14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start14Iso, endIsoExclusive);
   const prev14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start28To14Iso, start14Iso);
   const last14TrainableDays = Math.max(0, 14 - last14HolidayDays);
@@ -1071,11 +1071,11 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const runDist14dRatio = prev14RunDistAdjKm > 0 ? last14RunDistAdjKm / prev14RunDistAdjKm : null;
   if (runDist14dRatio != null && runDist14dRatio > thresholds.runDistance14dLimit) {
     reasons.push(
-      `Run-Distanz 14d (Urlaub bereinigt): ${(runDist14dRatio * 100).toFixed(0)}% der Vorperiode (> ${(thresholds.runDistance14dLimit * 100).toFixed(0)}%)`
+      `Run-Distanz 14d (Urlaub bereinigt): ${fmtPct(runDist14dRatio * 100)} der Vorperiode (${fmtThreshold(thresholds.runDistance14dLimit * 100, ">", 0)} %)`
     );
   }
-  if (monotony > thresholds.monotony) reasons.push(`Monotony: ${monotony.toFixed(2)} (> ${thresholds.monotony})`);
-  if (strain > thresholds.strain) reasons.push(`Strain: ${strain.toFixed(0)} (> ${thresholds.strain})`);
+  if (monotony > thresholds.monotony) reasons.push(`Monotony: ${fmt2(monotony)} (${fmtThreshold(thresholds.monotony, ">", 1)})`);
+  if (strain > thresholds.strain) reasons.push(`Strain: ${fmtInt(strain)} (> ${fmtInt(thresholds.strain)})`);
 
   const overrideEnabled = options.enableOverride ?? runtimeConfig.enableFatigueOverride;
   const override = overrideEnabled && reasons.length > 0;
@@ -5565,7 +5565,7 @@ function shouldRecommendLongrun(context = {}) {
       recommendLongrun: true,
       recommendVolume: false,
       prioritizeOverKey,
-      text: `Longrun heute empfohlen: ${low}–${high}′ locker.`,
+      text: `Longrun empfohlen: ${low}–${high}′ locker.`,
       reason: keyAllowedNow && prioritizeOverKey ? "konservativ vor Key" : "Longrun-Lücke",
     };
   }
@@ -5666,6 +5666,13 @@ function fmtRatio(value) {
   return fmt2(value);
 }
 
+function fmtThreshold(value, operator = "<", digits = 1) {
+  const n = toFiniteNumber(value);
+  if (n == null) return "n/a";
+  const fmt = digits === 2 ? fmt2(n) : digits === 0 ? fmtInt(n) : fmt1(n);
+  return `${operator} ${fmt}`;
+}
+
 function toBulletLine(text) {
   const clean = String(text ?? "").trim();
   if (!clean) return null;
@@ -5735,7 +5742,7 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
   const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
-  return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
+  return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct} % zum RunFloor.`;
 }
 
 const AI_REPORT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
@@ -6220,7 +6227,7 @@ function buildComments(
   });
   addDecisionBlock("EMPFEHLUNGEN", [
     ...decisionCompact.recommendations,
-    `Kraft-Integration: Wochenplan kommt montags per E-Mail (3× ~20′) · kein Kraftblock vor Longrun / <24h vor Key.`,
+    `Kraft-Integration: Wochenplan kommt montags per E-Mail (3 × ca. 20′) · kein Kraftblock vor Longrun / <24 h vor Key.`,
   ]);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
@@ -6230,7 +6237,7 @@ function buildComments(
     `Kraft-Phase ${strengthPlan.phase}: Score ${fmtInt(strengthPolicy.score)} / 3 · Detaillierter 3er-Wochenplan per Montags-Mail.`,
     Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
       ? `Freie Vorphase (> ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Zielmix Lauf/Rad ~${fmtInt(Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}/${fmtInt(Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)))}`
-      : `Planphase aktiv (<= ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Blocksteuerung BASE / BUILD / RACE`,
+      : `Planphase aktiv (bis ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Blocksteuerung BASE / BUILD / RACE`,
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
@@ -6242,7 +6249,8 @@ function formatNextAllowed(dayIso, nextAllowedIso) {
   if (!nextAllowedIso) return "n/a";
   if (!dayIso || !isIsoDate(dayIso) || !isIsoDate(nextAllowedIso)) return nextAllowedIso;
   const delta = diffDays(dayIso, nextAllowedIso);
-  if (delta <= 0) return `${nextAllowedIso} (ab heute)`;
+  if (delta === 0) return "ab heute";
+  if (delta < 0) return `ab heute (seit ${nextAllowedIso})`;
   if (delta === 1) return `${nextAllowedIso} (in 1 Tag)`;
   return `${nextAllowedIso} (in ${delta} Tagen)`;
 }
