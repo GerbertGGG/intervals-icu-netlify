@@ -5598,6 +5598,62 @@ function buildTodayDecision(context = {}) {
   };
 }
 
+function buildDecisionStatus(context = {}) {
+  const decision = context.todayDecision || {};
+  const hasKeyExecutionToday = Boolean(decision.keyLine && /^Key/i.test(String(decision.keyLine).trim()));
+  const overlayMode = context.overlayMode || "NORMAL";
+  const longrunDecision = context.longrunDecision || {};
+
+  let reason = "Stabilität und saubere Ausführung haben heute Priorität.";
+  if (longrunDecision?.recommendLongrun || longrunDecision?.recommendVolume || longrunDecision?.prioritizeOverKey) {
+    reason = "Longrun/Volumen hat heute Priorität.";
+  } else if (context.budgetBlocked) {
+    reason = `Key-Budget erreicht (${fmtInt(context.actualKeys7)}/${fmtInt(context.keyCap7)} in 7 Tagen).`;
+  } else if (context.spacingBlocked) {
+    reason = `Key-Abstand noch nicht frei${context.nextAllowed ? ` (frühestens ${formatNextAllowed(context.todayIso, context.nextAllowed)})` : ""}.`;
+  } else if (overlayMode !== "NORMAL") {
+    reason = `Overlay aktiv (${overlayMode}) – heute konservativ.`;
+  } else if (context.runFloorBlocked) {
+    reason = "RunFloor-Gap schließen, bevor zusätzliche Intensität gesetzt wird.";
+  } else if (hasKeyExecutionToday) {
+    reason = "Guardrails erfüllt und konkrete Key-Session vorhanden.";
+  }
+
+  return {
+    isKeyPlannedToday: hasKeyExecutionToday,
+    decisionLine: hasKeyExecutionToday ? "Entscheidung: Optionaler Key möglich (nur wenn frisch)." : "Entscheidung: Kein Key heute.",
+    reasonLine: `Grund: ${reason}`,
+  };
+}
+
+function buildEligibilityHint(context = {}) {
+  if (context.keyTechnicallyPossible && !context.isKeyPlannedToday) {
+    return "Hinweis: Key grundsätzlich möglich, heute aber nicht priorisiert.";
+  }
+  return null;
+}
+
+function renderTodayDecision(context = {}) {
+  const decisionStatus = buildDecisionStatus(context);
+  const eligibilityHint = buildEligibilityHint({
+    keyTechnicallyPossible: context.keyTechnicallyPossible,
+    isKeyPlannedToday: decisionStatus.isKeyPlannedToday,
+  });
+  const focus = !context.ignoreRunFloorGap && context.runFloorGap < 0
+    ? "Volumenaufbau (RunFloor-Gap schließen)"
+    : "Stabilität";
+
+  return [
+    `Fokus: ${focus}`,
+    decisionStatus.decisionLine,
+    decisionStatus.reasonLine,
+    eligibilityHint,
+    `Key-Status 7T: ${fmtInt(context.actualKeys7)} / ${fmtInt(context.keyCap7)}${context.budgetBlocked ? " ⚠️" : ""}`,
+    `Kraft-Phase ${context.strengthPhase}: Score ${fmtInt(context.strengthScore)} / 3 · Detaillierter 3er-Wochenplan per Montags-Mail.`,
+    context.planPhaseLine,
+  ].filter(Boolean);
+}
+
 function limitText(text, maxLen = 140) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
   if (clean.length <= maxLen) return clean;
@@ -5995,21 +6051,6 @@ function buildComments(
     else if (runFloorBlocked) mainBlockReason = `RunFloor-Gap ${runFloorGap}`;
   }
 
-  const modeLabel =
-    overlayMode === "DELOAD"
-      ? "Deload"
-      : overlayMode === "TAPER"
-        ? "Taper"
-        : overlayMode === "RECOVER_OVERLAY"
-          ? "Recovery"
-          : overlayMode === "LIFE_EVENT_STOP"
-            ? "LifeEvent Freeze"
-            : overlayMode === "LIFE_EVENT_HOLIDAY"
-              ? "Holiday"
-          : keyBlocked
-            ? "Easy only"
-            : "Key möglich";
-  const ampel = keyBlocked ? "🟠" : "🟢";
   const missingKeyFrequency = keyCompliance?.freqOk === false;
   const regressionSignal =
     runFloorBlocked ||
@@ -6231,13 +6272,27 @@ function buildComments(
   ]);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
-    `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
-    `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
-    `Key: ${fmtInt(actualKeys7)} / ${fmtInt(keyCap7)} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    `Kraft-Phase ${strengthPlan.phase}: Score ${fmtInt(strengthPolicy.score)} / 3 · Detaillierter 3er-Wochenplan per Montags-Mail.`,
-    Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
-      ? `Freie Vorphase (> ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Zielmix Lauf/Rad ~${fmtInt(Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}/${fmtInt(Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)))}`
-      : `Planphase aktiv (bis ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Blocksteuerung BASE / BUILD / RACE`,
+    ...renderTodayDecision({
+      todayDecision,
+      longrunDecision,
+      keyTechnicallyPossible: keyCompliance?.keyAllowedNow === true,
+      overlayMode,
+      budgetBlocked,
+      spacingBlocked,
+      runFloorBlocked,
+      nextAllowed,
+      todayIso,
+      ignoreRunFloorGap,
+      runFloorGap,
+      actualKeys7,
+      keyCap7,
+      strengthPhase: strengthPlan.phase,
+      strengthScore: strengthPolicy.score,
+      planPhaseLine:
+        Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
+          ? `Freie Vorphase (> ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Zielmix Lauf/Rad ~${fmtInt(Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}/${fmtInt(Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)))}`
+          : `Planphase aktiv (bis ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Blocksteuerung BASE / BUILD / RACE`,
+    }),
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
