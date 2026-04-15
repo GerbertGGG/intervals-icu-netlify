@@ -504,7 +504,33 @@ console.log('guardrails ok');
   assert.equal(['steady', 'strides'].includes(out.plannedKeyType), true);
 }
 
-// 19) Manueller Blockstart-Override setzt Persistenzfelder konsistent
+
+// 19) Post-Holiday-Ramp blockiert Keys nicht pauschal (allowKeys=null)
+{
+  const keyRules = {
+    expectedKeysPerWeek: 1,
+    maxKeysPerWeek: 2,
+    allowedKeyTypes: ['steady', 'strides'],
+    preferredKeyTypes: ['steady'],
+    bannedKeyTypes: ['schwelle', 'racepace', 'vo2_touch'],
+    plannedPrimaryType: 'steady',
+  };
+  const out = __test.evaluateKeyCompliance(keyRules, { count: 0, list: [] }, { count: 1, list: ['steady'] }, {
+    block: 'BASE',
+    eventDistance: 'hm',
+    dayIso: '2026-04-15',
+    blockStartIso: '2026-04-15',
+    weeksToEvent: 24,
+    overlayMode: 'NORMAL',
+    ctx: { activitiesAll: [] },
+    keySpacing: { keySpacingNowOk: true, ok: true },
+    lifeEvent: { category: 'HOLIDAY', allowKeys: null, name: 'post_holiday_ramp' },
+  });
+  assert.equal(out.keyAllowedNow, true);
+  assert.equal(/Safety-Stop/.test(out.suggestion), false);
+}
+
+// 20) Manueller Blockstart-Override setzt Persistenzfelder konsistent
 {
   const base = {
     startDate: '2026-03-16',
@@ -522,7 +548,7 @@ console.log('guardrails ok');
   assert.equal(out.timeInBlockDays > 0, true);
 }
 
-// 20) Robustness-Bewertung respektiert taper-reduziertes Kraftziel
+// 21) Robustness-Bewertung respektiert taper-reduziertes Kraftziel
 {
   const snapshot = {
     eventDistance: '10k',
