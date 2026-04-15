@@ -5251,9 +5251,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const lifeEventCategory = normalizeEventCategory(context?.lifeEvent?.category);
   const hardSafetyStop =
     context.overlayMode === "LIFE_EVENT_STOP" ||
-    lifeEventCategory === "HOLIDAY" ||
-    lifeEventCategory === "SICK" ||
-    lifeEventCategory === "INJURED";
+    context?.lifeEvent?.allowKeys === false;
 
   let suggestion = "";
   let keyAllowedNow = keySpacingNowOk && !hardSafetyStop;
