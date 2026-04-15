@@ -659,7 +659,7 @@ const STRENGTH_PHASE_PLANS = {
     phase: "BUILD",
     focus: "Schwelle-Block kompatibel",
     objective: "Kraft + Laufökonomie ohne Ermüdungs-Overkill",
-    sessionsPerWeek: 2,
+    sessionsPerWeek: 3,
     durationMin: [20, 25],
     sessions: [
       {
@@ -681,12 +681,88 @@ const STRENGTH_PHASE_PLANS = {
       },
       {
         name: "Einheit B",
-        exercises: ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "2×12 Monster Walk", "2×30s Seitstütz"],
+        exercises: [
+          "3×8 Step-Ups (kontrolliert, sauber)",
+          "3×8 Single Leg Deadlift",
+          "2×8 Hip Hike je Seite",
+          "2×10 Mini-Band Lateral Walk je Seite",
+          "2×12 Monster Walk",
+          "2×30s Seitstütz",
+        ],
         progression: [
-          ["2×6 Step-Ups (kontrolliert, sauber)", "2×6 Single Leg Deadlift", "2×10 Monster Walk", "2×20s Seitstütz"],
-          ["3×6 Step-Ups (kontrolliert, sauber)", "3×6 Single Leg Deadlift", "2×12 Monster Walk", "2×25s Seitstütz"],
-          ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "3×12 Monster Walk", "3×30s Seitstütz"],
-          ["2×6 Step-Ups", "2×6 Single Leg Deadlift", "2×8 Monster Walk", "2×20s Seitstütz"],
+          [
+            "2×6 Step-Ups (kontrolliert, sauber)",
+            "2×6 Single Leg Deadlift",
+            "2×8 Hip Hike je Seite",
+            "2×10 Mini-Band Lateral Walk je Seite",
+            "2×10 Monster Walk",
+            "2×20s Seitstütz",
+          ],
+          [
+            "3×6 Step-Ups (kontrolliert, sauber)",
+            "3×6 Single Leg Deadlift",
+            "2×8 Hip Hike je Seite",
+            "2×10 Mini-Band Lateral Walk je Seite",
+            "2×10 Monster Walk",
+            "2×25s Seitstütz",
+          ],
+          [
+            "3×8 Step-Ups (kontrolliert, sauber)",
+            "3×8 Single Leg Deadlift",
+            "2×8 Hip Hike je Seite",
+            "2×10 Mini-Band Lateral Walk je Seite",
+            "2×12 Monster Walk",
+            "2×30s Seitstütz",
+          ],
+          [
+            "2×6 Step-Ups",
+            "2×6 Single Leg Deadlift",
+            "2×6 Hip Hike je Seite",
+            "2×8 Mini-Band Lateral Walk je Seite",
+            "2×8 Monster Walk",
+            "2×20s Seitstütz",
+          ],
+        ],
+        mobility: STRENGTH_MOBILITY_DEFAULT,
+      },
+      {
+        name: "Einheit C",
+        exercises: [
+          "3×8 Box Step-Down je Seite",
+          "3×8 Romanian Deadlift (beidbeinig, moderat)",
+          "2×20s Split Squat Isometric Hold je Seite",
+          "2×8 Pallof Press je Seite",
+          "2×20s Soleus-Wand-Sitz je Seite",
+        ],
+        progression: [
+          [
+            "2×6 Box Step-Down je Seite",
+            "2×6 Romanian Deadlift (beidbeinig, moderat)",
+            "2×15s Split Squat Isometric Hold je Seite",
+            "2×6 Pallof Press je Seite",
+            "2×15s Soleus-Wand-Sitz je Seite",
+          ],
+          [
+            "3×6 Box Step-Down je Seite",
+            "3×6 Romanian Deadlift (beidbeinig, moderat)",
+            "2×20s Split Squat Isometric Hold je Seite",
+            "2×8 Pallof Press je Seite",
+            "2×20s Soleus-Wand-Sitz je Seite",
+          ],
+          [
+            "3×8 Box Step-Down je Seite",
+            "3×8 Romanian Deadlift (beidbeinig, moderat)",
+            "2×20s Split Squat Isometric Hold je Seite",
+            "2×8 Pallof Press je Seite",
+            "2×20s Soleus-Wand-Sitz je Seite",
+          ],
+          [
+            "2×6 Box Step-Down je Seite",
+            "2×6 Romanian Deadlift (beidbeinig)",
+            "2×15s Split Squat Isometric Hold je Seite",
+            "2×6 Pallof Press je Seite",
+            "2×15s Soleus-Wand-Sitz je Seite",
+          ],
         ],
         mobility: STRENGTH_MOBILITY_DEFAULT,
       },
@@ -1665,10 +1741,11 @@ function formatStrengthBlock(session) {
   }
 }
 
-function buildStrengthMailHtml(sessionA, sessionB, blockState) {
+function buildStrengthMailHtml(sessions, blockState) {
   try {
     const block = String(blockState?.block || "BASE");
-    const cycleWeek = Number(sessionA?.cycleWeek) + 1 || 1;
+    const safeSessions = Array.isArray(sessions) ? sessions.filter(Boolean) : [];
+    const cycleWeek = Number(safeSessions[0]?.cycleWeek) + 1 || 1;
     const renderSession = (title, session) => {
       if (!session) return "";
       const exercises = Array.isArray(session.exercises) ? session.exercises : [];
@@ -1677,25 +1754,24 @@ function buildStrengthMailHtml(sessionA, sessionB, blockState) {
       const exerciseItems = exercises.map((entry) => `<li style="margin:0 0 6px 0;">${escapeHtml(entry)}</li>`).join("");
       const mobilityItems = mobility.map((entry) => `<li style="margin:0 0 6px 0;">${escapeHtml(entry)}</li>`).join("");
       return `
-        <div style="margin:0 0 18px 0;padding:14px;border:1px solid #e5e7eb;border-radius:10px;">
-          <h3 style="margin:0 0 8px 0;font-size:18px;">${escapeHtml(title)} — ${escapeHtml(session.name || "Einheit")}${deloadLabel}</h3>
-          <p style="margin:0 0 10px 0;color:#374151;">Dauer: ca. ${(session.durationMin || [15, 20])[0]}–${(session.durationMin || [15, 20])[1]} Min</p>
+        <div style="margin:0 0 18px 0;padding:14px;border:1px solid #374151;border-radius:10px;background:#1f2937;">
+          <h3 style="margin:0 0 8px 0;font-size:26px;color:#f3f4f6;">${escapeHtml(title)} — ${escapeHtml(session.name || "Einheit")}${deloadLabel}</h3>
+          <p style="margin:0 0 10px 0;color:#d1d5db;">Dauer: ca. ${(session.durationMin || [15, 20])[0]}–${(session.durationMin || [15, 20])[1]} Min</p>
           <ul style="margin:0 0 12px 18px;padding:0;">${exerciseItems}</ul>
-          <p style="margin:0 0 8px 0;font-weight:600;">Mobility danach:</p>
+          <p style="margin:0 0 8px 0;font-weight:600;color:#f3f4f6;">Mobility danach:</p>
           <ul style="margin:0 0 0 18px;padding:0;">${mobilityItems}</ul>
         </div>
       `;
     };
     return `<!doctype html>
 <html>
-  <body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;color:#111827;">
+  <body style="margin:0;padding:0;background:#111827;font-family:Arial,sans-serif;color:#f9fafb;">
     <div style="max-width:600px;margin:0 auto;padding:20px;">
-      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;">
-        <h2 style="margin:0 0 8px 0;">💪 Kraftplan — ${escapeHtml(block)}</h2>
-        <p style="margin:0 0 16px 0;color:#374151;">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
-        ${renderSession("Einheit A", sessionA)}
-        ${sessionB ? renderSession("Einheit B", sessionB) : ""}
-        <p style="margin:12px 0 0 0;color:#4b5563;font-size:13px;">Einheiten in intervals.icu als Kraft/Stabi loggen damit dein Score grün bleibt.</p>
+      <div style="background:#111827;border:1px solid #374151;border-radius:12px;padding:18px;">
+        <h2 style="margin:0 0 8px 0;color:#f9fafb;">💪 Kraftplan — ${escapeHtml(block)}</h2>
+        <p style="margin:0 0 16px 0;color:#d1d5db;">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
+        ${safeSessions.map((session, idx) => renderSession(`Einheit ${String.fromCharCode(65 + idx)}`, session)).join("")}
+        <p style="margin:12px 0 0 0;color:#9ca3af;font-size:13px;">Einheiten in intervals.icu als Kraft/Stabi loggen, damit dein Score grün bleibt.</p>
       </div>
     </div>
   </body>
@@ -1710,18 +1786,18 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
     if (!env?.RESEND_API_KEY) return { ok: false, skipped: "missing_resend_api_key" };
     const normalizedStrengthCount = Math.max(0, Math.floor(Number(strengthCountThisWeek) || 0));
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
-    const sessionA = getStrengthSessionForDay(blockState, normalizedStrengthCount);
-    const sessionB = Array.isArray(strengthPlan?.sessions) && strengthPlan.sessions.length > 1
-      ? getStrengthSessionForDay(blockState, normalizedStrengthCount + 1)
-      : null;
-    const cycleWeekDisplay = Number(sessionA?.cycleWeek) + 1 || 1;
+    const sessionCount = Math.max(1, Number(strengthPlan?.sessionsPerWeek) || 1);
+    const sessions = Array.from({ length: sessionCount }, (_, idx) =>
+      getStrengthSessionForDay(blockState, normalizedStrengthCount + idx)
+    ).filter(Boolean);
+    const cycleWeekDisplay = Number(sessions[0]?.cycleWeek) + 1 || 1;
     const fromAddress = String(env?.RESEND_FROM_EMAIL || "noreply@resend.dev").trim() || "noreply@resend.dev";
     const toAddress = String(options?.toOverride || env?.RESEND_TO_EMAIL || "Markushausdorf@web.de").trim() || "Markushausdorf@web.de";
     const payload = {
       from: `Training <${fromAddress}>`,
       to: toAddress,
       subject: `💪 Kraftplan KW ${cycleWeekDisplay}/4 — ${String(blockState?.block || "BASE")}`,
-      html: buildStrengthMailHtml(sessionA, sessionB, blockState),
+      html: buildStrengthMailHtml(sessions, blockState),
     };
     if (!payload.html) return { ok: false, skipped: "empty_html", to: toAddress };
     if (options?.dryRun) {
