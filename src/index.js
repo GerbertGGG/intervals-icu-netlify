@@ -66,14 +66,26 @@ export default {
       const to = url.searchParams.get("to");
       const days = clampInt(url.searchParams.get("days") ?? "14", 1, 31);
       const manualFocusRaw = url.searchParams.get("focus") ?? null;
-      const manualFocus = MANUAL_FOCUS_VALUES.has(manualFocusRaw)
+      const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(manualFocusRaw)
         ? manualFocusRaw
         : null;
 
       const warmupSkipSec = clampInt(url.searchParams.get("warmup_skip") ?? "600", 0, 1800);
-      const raceStartParamRaw = getSearchParamAny(url.searchParams, RACE_START_PARAM_KEYS);
+      const raceStartParamRaw = getSearchParamAny(url.searchParams, [
+        "race_start",
+        "race_start_override",
+        "race_start_iso",
+        "racestart",
+        "raceStart",
+      ]);
       const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-      const blockStartParamRaw = getSearchParamAny(url.searchParams, BLOCK_START_PARAM_KEYS);
+      const blockStartParamRaw = getSearchParamAny(url.searchParams, [
+        "block_start",
+        "block_start_override",
+        "block_start_iso",
+        "blockstart",
+        "blockStart",
+      ]);
       let blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
       let blockStartOverrideDerivedFromOldest = false;
 
@@ -182,7 +194,8 @@ export default {
       try {
         const dryRun = parseBooleanParam(url.searchParams, "dry");
         const blockRaw = String(url.searchParams.get("block") || "BASE").toUpperCase();
-        const block = TEST_STRENGTH_ALLOWED_BLOCKS.has(blockRaw) ? blockRaw : "BASE";
+        const allowedBlocks = new Set(["BASE", "BUILD", "RACE", "RESET"]);
+        const block = allowedBlocks.has(blockRaw) ? blockRaw : "BASE";
         const strengthCountThisWeek = clampInt(url.searchParams.get("strength_count") ?? "0", 0, 20);
         const toOverride = String(url.searchParams.get("to") || "").trim() || null;
 
@@ -319,12 +332,6 @@ const STEP_SYNC_KV_PREFIX = "syncstep:state:";
 const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
 const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
-const MANUAL_FOCUS_VALUES = new Set(["kraft", "longrun", "frequenz", "erholung", "spezifik"]);
-const TEST_STRENGTH_ALLOWED_BLOCKS = new Set(["BASE", "BUILD", "RACE", "RESET"]);
-const RACE_START_PARAM_KEYS = ["race_start", "race_start_override", "race_start_iso", "racestart", "raceStart"];
-const BLOCK_START_PARAM_KEYS = ["block_start", "block_start_override", "block_start_iso", "blockstart", "blockStart"];
-const BERLIN_HOUR_FORMATTER = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" });
-const BERLIN_MINUTE_FORMATTER = new Intl.DateTimeFormat("en-GB", { minute: "2-digit", hour12: false, timeZone: "Europe/Berlin" });
 
 function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
@@ -469,9 +476,21 @@ async function handleStepSync(req, env, ctx) {
 
   const fromParam = url.searchParams.get("from");
   const toParam = url.searchParams.get("to");
-  const raceStartParamRaw = getSearchParamAny(url.searchParams, RACE_START_PARAM_KEYS);
+  const raceStartParamRaw = getSearchParamAny(url.searchParams, [
+    "race_start",
+    "race_start_override",
+    "race_start_iso",
+    "racestart",
+    "raceStart",
+  ]);
   const raceStartOverrideIso = raceStartParamRaw && isIsoDate(raceStartParamRaw) ? raceStartParamRaw : null;
-  const blockStartParamRaw = getSearchParamAny(url.searchParams, BLOCK_START_PARAM_KEYS);
+  const blockStartParamRaw = getSearchParamAny(url.searchParams, [
+    "block_start",
+    "block_start_override",
+    "block_start_iso",
+    "blockstart",
+    "blockStart",
+  ]);
   const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
   if (raceStartParamRaw && !raceStartOverrideIso) {
@@ -551,14 +570,26 @@ async function handleStepSync(req, env, ctx) {
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
   if (!Number.isFinite(t)) return null;
-  const hour = Number(BERLIN_HOUR_FORMATTER.format(new Date(t)));
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: "Europe/Berlin",
+    }).format(new Date(t))
+  );
   return Number.isFinite(hour) ? hour : null;
 }
 
 function getBerlinMinuteFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
   if (!Number.isFinite(t)) return null;
-  const minute = Number(BERLIN_MINUTE_FORMATTER.format(new Date(t)));
+  const minute = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Europe/Berlin",
+    }).format(new Date(t))
+  );
   return Number.isFinite(minute) ? minute : null;
 }
 
@@ -596,47 +627,12 @@ const STRENGTH_PHASE_PLANS = {
     sessions: [
       {
         name: "Einheit A",
-        exercises: [
-          "3×12 Split Squats",
-          "3×12 Hip Thrust mit Band",
-          "2×10 Hip Hike je Seite",
-          "2×12 Clamshell mit Band",
-          "2×12 Stehende Hüft-Außenrotation mit Band je Seite",
-          "3×30s Plank",
-        ],
+        exercises: ["3×12 Split Squats", "3×12 Hip Thrust mit Band", "3×30s Plank", "2×12 Clamshell mit Band"],
         progression: [
-          [
-            "2×10 Split Squats",
-            "2×10 Hip Thrust mit Band",
-            "2×8 Hip Hike je Seite",
-            "2×10 Clamshell mit Band",
-            "2×10 Stehende Hüft-Außenrotation mit Band je Seite",
-            "2×25s Plank",
-          ],
-          [
-            "3×10 Split Squats",
-            "3×10 Hip Thrust mit Band",
-            "2×10 Hip Hike je Seite",
-            "2×12 Clamshell mit Band",
-            "2×10 Stehende Hüft-Außenrotation mit Band je Seite",
-            "2×25s Plank",
-          ],
-          [
-            "3×12 Split Squats",
-            "3×12 Hip Thrust mit Band",
-            "2×12 Hip Hike je Seite",
-            "3×12 Clamshell mit Band",
-            "2×12 Stehende Hüft-Außenrotation mit Band je Seite",
-            "3×30s Plank",
-          ],
-          [
-            "2×8 Split Squats",
-            "2×8 Hip Thrust mit Band",
-            "2×8 Hip Hike je Seite",
-            "2×8 Clamshell mit Band",
-            "2×8 Stehende Hüft-Außenrotation mit Band je Seite",
-            "2×20s Plank",
-          ],
+          ["2×10 Split Squats", "2×10 Hip Thrust mit Band", "2×25s Plank", "2×10 Clamshell mit Band"],
+          ["3×10 Split Squats", "3×10 Hip Thrust mit Band", "2×25s Plank", "2×12 Clamshell mit Band"],
+          ["3×12 Split Squats", "3×12 Hip Thrust mit Band", "3×30s Plank", "3×12 Clamshell mit Band"],
+          ["2×8 Split Squats", "2×8 Hip Thrust mit Band", "2×20s Plank", "2×8 Clamshell mit Band"],
         ],
         mobility: STRENGTH_MOBILITY_DEFAULT,
       },
@@ -644,38 +640,16 @@ const STRENGTH_PHASE_PLANS = {
         name: "Einheit B",
         exercises: [
           "3×10 Single Leg RDL",
-          "2×12 Mini-Band Lateral Walk je Seite",
           "3×30s Seitstütz",
           "2×12 Monster Walk",
           "2×30s Stabikissen Einbeinstand",
           "2×8–10 Tibialis Raises (optional)",
         ],
         progression: [
-          [
-            "2×10 Single Leg RDL",
-            "2×10 Mini-Band Lateral Walk je Seite",
-            "2×25s Seitstütz",
-            "2×10 Monster Walk",
-            "2×25s Stabikissen Einbeinstand",
-            "2×8 Tibialis Raises (optional)",
-          ],
-          [
-            "3×10 Single Leg RDL",
-            "2×12 Mini-Band Lateral Walk je Seite",
-            "3×25s Seitstütz",
-            "2×12 Monster Walk",
-            "2×30s Stabikissen Einbeinstand",
-            "2×10 Tibialis Raises (optional)",
-          ],
-          [
-            "3×10 Single Leg RDL",
-            "3×12 Mini-Band Lateral Walk je Seite",
-            "3×30s Seitstütz",
-            "3×12 Monster Walk",
-            "3×30s Stabikissen Einbeinstand",
-            "2×10 Tibialis Raises (optional)",
-          ],
-          ["2×8 Single Leg RDL", "2×8 Mini-Band Lateral Walk je Seite", "2×20s Seitstütz", "2×8 Monster Walk", "2×20s Stabikissen Einbeinstand"],
+          ["2×10 Single Leg RDL", "2×25s Seitstütz", "2×10 Monster Walk", "2×25s Stabikissen Einbeinstand", "2×8 Tibialis Raises (optional)"],
+          ["3×10 Single Leg RDL", "3×25s Seitstütz", "2×12 Monster Walk", "2×30s Stabikissen Einbeinstand", "2×10 Tibialis Raises (optional)"],
+          ["3×10 Single Leg RDL", "3×30s Seitstütz", "3×12 Monster Walk", "3×30s Stabikissen Einbeinstand", "2×10 Tibialis Raises (optional)"],
+          ["2×8 Single Leg RDL", "2×20s Seitstütz", "2×8 Monster Walk", "2×20s Stabikissen Einbeinstand"],
         ],
         mobility: STRENGTH_MOBILITY_DEFAULT,
       },
@@ -707,40 +681,12 @@ const STRENGTH_PHASE_PLANS = {
       },
       {
         name: "Einheit B",
-        exercises: [
-          "3×8 Step-Ups (kontrolliert, sauber)",
-          "3×8 Single Leg Deadlift",
-          "2×10 Hip Hike je Seite",
-          "2×12 Mini-Band Lateral Walk je Seite",
-          "2×12 Monster Walk",
-          "2×30s Seitstütz",
-        ],
+        exercises: ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "2×12 Monster Walk", "2×30s Seitstütz"],
         progression: [
-          [
-            "2×6 Step-Ups (kontrolliert, sauber)",
-            "2×6 Single Leg Deadlift",
-            "2×8 Hip Hike je Seite",
-            "2×10 Mini-Band Lateral Walk je Seite",
-            "2×10 Monster Walk",
-            "2×20s Seitstütz",
-          ],
-          [
-            "3×6 Step-Ups (kontrolliert, sauber)",
-            "3×6 Single Leg Deadlift",
-            "2×10 Hip Hike je Seite",
-            "2×12 Mini-Band Lateral Walk je Seite",
-            "2×12 Monster Walk",
-            "2×25s Seitstütz",
-          ],
-          [
-            "3×8 Step-Ups (kontrolliert, sauber)",
-            "3×8 Single Leg Deadlift",
-            "2×12 Hip Hike je Seite",
-            "3×12 Mini-Band Lateral Walk je Seite",
-            "3×12 Monster Walk",
-            "3×30s Seitstütz",
-          ],
-          ["2×6 Step-Ups", "2×6 Single Leg Deadlift", "2×8 Hip Hike je Seite", "2×8 Mini-Band Lateral Walk je Seite", "2×8 Monster Walk", "2×20s Seitstütz"],
+          ["2×6 Step-Ups (kontrolliert, sauber)", "2×6 Single Leg Deadlift", "2×10 Monster Walk", "2×20s Seitstütz"],
+          ["3×6 Step-Ups (kontrolliert, sauber)", "3×6 Single Leg Deadlift", "2×12 Monster Walk", "2×25s Seitstütz"],
+          ["3×8 Step-Ups (kontrolliert, sauber)", "3×8 Single Leg Deadlift", "3×12 Monster Walk", "3×30s Seitstütz"],
+          ["2×6 Step-Ups", "2×6 Single Leg Deadlift", "2×8 Monster Walk", "2×20s Seitstütz"],
         ],
         mobility: STRENGTH_MOBILITY_DEFAULT,
       },
@@ -1064,13 +1010,15 @@ const VO2_HR_PCT = 0.94;
 const PLAN_START_WEEKS = 24;
 const PREPLAN_WINDOW_WEEKS = 48;
 
-const BIKE_ALLOWANCE_FACTOR_NO_EVENT = 0.6;
-const BIKE_CONVERSION_FACTOR_BY_EFFORT = Object.freeze({
-  easy: 0.55,
-  moderate: 0.65,
-  hard: 0.75,
-});
-const BIKE_CONVERSION_FACTOR_FALLBACK = 0.65;
+const TRANSITION_BIKE_EQ = {
+  prePlanWeeks: PREPLAN_WINDOW_WEEKS,
+  startWeeks: PLAN_START_WEEKS,
+  endWeeks: 12,
+  prePlanFactor: 0.5,
+  startFactor: 0.2,
+  endFactor: 0.0,
+};
+const BIKE_SUB_FACTOR_NO_EVENT = 0.4;
 
 const PREPLAN_RUN_SHARE = {
   min: 0.5,
@@ -1173,7 +1121,7 @@ const WATCHFACE_STRENGTH_WINDOW_DAYS = 7;
 // Streams/types
 
 // "Trainingslehre" detective
-const LONGRUN_MIN_SECONDS = 45 * 60; // >= 45 minutes
+const LONGRUN_MIN_SECONDS = 60 * 60; // >= 60 minutes
 const DETECTIVE_WINDOWS = [14, 28, 42, 56, 84];
 const DETECTIVE_MIN_RUNS = 3;
 
@@ -1725,143 +1673,29 @@ function buildStrengthMailHtml(sessionA, sessionB, blockState) {
       if (!session) return "";
       const exercises = Array.isArray(session.exercises) ? session.exercises : [];
       const mobility = Array.isArray(session.mobility) ? session.mobility : STRENGTH_MOBILITY_DEFAULT;
-      const deloadLabel = session.isDeload ? " <span class=\"muted\">— Deload-Woche, weniger Volumen</span>" : "";
-      const exerciseItems = exercises.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("");
-      const mobilityItems = mobility.map((entry) => `<li>${escapeHtml(entry)}</li>`).join("");
+      const deloadLabel = session.isDeload ? " <span style=\"color:#6b7280;\">— Deload-Woche, weniger Volumen</span>" : "";
+      const exerciseItems = exercises.map((entry) => `<li style="margin:0 0 6px 0;">${escapeHtml(entry)}</li>`).join("");
+      const mobilityItems = mobility.map((entry) => `<li style="margin:0 0 6px 0;">${escapeHtml(entry)}</li>`).join("");
       return `
-        <section class="session">
-          <h3>${escapeHtml(title)} — ${escapeHtml(session.name || "Einheit")}${deloadLabel}</h3>
-          <p class="meta">Dauer: ca. ${(session.durationMin || [15, 20])[0]}–${(session.durationMin || [15, 20])[1]} Min</p>
-          <ul class="compact-list">${exerciseItems}</ul>
-          <p class="meta strong">Mobility danach:</p>
-          <ul class="compact-list">${mobilityItems}</ul>
-        </section>
+        <div style="margin:0 0 18px 0;padding:14px;border:1px solid #e5e7eb;border-radius:10px;">
+          <h3 style="margin:0 0 8px 0;font-size:18px;">${escapeHtml(title)} — ${escapeHtml(session.name || "Einheit")}${deloadLabel}</h3>
+          <p style="margin:0 0 10px 0;color:#374151;">Dauer: ca. ${(session.durationMin || [15, 20])[0]}–${(session.durationMin || [15, 20])[1]} Min</p>
+          <ul style="margin:0 0 12px 18px;padding:0;">${exerciseItems}</ul>
+          <p style="margin:0 0 8px 0;font-weight:600;">Mobility danach:</p>
+          <ul style="margin:0 0 0 18px;padding:0;">${mobilityItems}</ul>
+        </div>
       `;
     };
     return `<!doctype html>
-<html lang="de">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <style>
-      :root { color-scheme: light; }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        padding: 0;
-        background: #f9fafb;
-        font-family: Arial, sans-serif;
-        color: #111827;
-      }
-      .sheet {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 14px;
-      }
-      .card {
-        background: #ffffff;
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
-        padding: 14px;
-      }
-      h2 {
-        margin: 0 0 4px 0;
-        font-size: 22px;
-        line-height: 1.2;
-      }
-      .subtitle {
-        margin: 0 0 10px 0;
-        color: #374151;
-        font-size: 14px;
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-      }
-      .session {
-        margin: 0;
-        padding: 10px 11px;
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        break-inside: avoid;
-        page-break-inside: avoid;
-      }
-      .session h3 {
-        margin: 0 0 6px 0;
-        font-size: 16px;
-        line-height: 1.25;
-      }
-      .meta {
-        margin: 0 0 6px 0;
-        color: #374151;
-        font-size: 13px;
-      }
-      .meta.strong {
-        margin-top: 4px;
-        margin-bottom: 4px;
-        font-weight: 700;
-        color: #111827;
-      }
-      .compact-list {
-        margin: 0 0 6px 16px;
-        padding: 0;
-      }
-      .compact-list li {
-        margin: 0 0 3px 0;
-        font-size: 13px;
-        line-height: 1.25;
-      }
-      .muted {
-        color: #6b7280;
-        font-size: 13px;
-      }
-      .footnote {
-        margin: 8px 0 0 0;
-        color: #4b5563;
-        font-size: 12px;
-      }
-      @media (max-width: 700px) {
-        .grid { grid-template-columns: 1fr; }
-      }
-      @media print {
-        @page { size: A4 portrait; margin: 9mm; }
-        body {
-          background: #fff !important;
-          font-size: 12px;
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
-        .sheet {
-          max-width: 100%;
-          margin: 0;
-          padding: 0;
-        }
-        .card {
-          border-radius: 0;
-          border: 1px solid #d1d5db;
-          padding: 8px;
-        }
-        h2 { font-size: 18px; margin-bottom: 2px; }
-        .subtitle { margin-bottom: 6px; font-size: 12px; }
-        .grid { gap: 6px; }
-        .session { padding: 7px 8px; }
-        .session h3 { font-size: 13px; margin-bottom: 4px; }
-        .meta, .muted, .compact-list li, .footnote { font-size: 11px; line-height: 1.2; }
-        .compact-list { margin-left: 13px; margin-bottom: 4px; }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="sheet">
-      <div class="card">
-        <h2>💪 Kraftplan — ${escapeHtml(block)}</h2>
-        <p class="subtitle">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
-        <div class="grid">
-          ${renderSession("Einheit A", sessionA)}
-          ${sessionB ? renderSession("Einheit B", sessionB) : ""}
-        </div>
-        <p class="footnote">Einheiten in intervals.icu als Kraft/Stabi loggen, damit dein Score grün bleibt.</p>
+<html>
+  <body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;color:#111827;">
+    <div style="max-width:600px;margin:0 auto;padding:20px;">
+      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:18px;">
+        <h2 style="margin:0 0 8px 0;">💪 Kraftplan — ${escapeHtml(block)}</h2>
+        <p style="margin:0 0 16px 0;color:#374151;">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
+        ${renderSession("Einheit A", sessionA)}
+        ${sessionB ? renderSession("Einheit B", sessionB) : ""}
+        <p style="margin:12px 0 0 0;color:#4b5563;font-size:13px;">Einheiten in intervals.icu als Kraft/Stabi loggen damit dein Score grün bleibt.</p>
       </div>
     </div>
   </body>
@@ -1882,7 +1716,7 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
       : null;
     const cycleWeekDisplay = Number(sessionA?.cycleWeek) + 1 || 1;
     const fromAddress = String(env?.RESEND_FROM_EMAIL || "noreply@resend.dev").trim() || "noreply@resend.dev";
-    const toAddress = String(options?.toOverride || env?.RESEND_TO_EMAIL || "markushausdorf@web.de").trim() || "markushausdorf@web.de";
+    const toAddress = String(options?.toOverride || env?.RESEND_TO_EMAIL || "Markushausdorf@web.de").trim() || "Markushausdorf@web.de";
     const payload = {
       from: `Training <${fromAddress}>`,
       to: toAddress,
@@ -2004,10 +1838,10 @@ const RUN_FLOOR_TAPER_START_DAYS_BY_DISTANCE = {
 };
 const RUN_FLOOR_TAPER_END_DAYS = 2;
 const POST_RACE_RAMP_DAYS_BY_DISTANCE = {
-  "5k": [2, 5, 8],
-  "10k": [3, 6, 10],
-  hm: [4, 8, 14],
-  m: [5, 10, 21],
+  "5k": [3, 9, 16],
+  "10k": [3, 10, 18],
+  hm: [4, 10, 21],
+  m: [5, 14, 28],
 };
 const POST_RACE_RAMP_FACTORS = [0.5, 0.65, 0.8, 1.0];
 const RUN_FLOOR_DELOAD_RANGE = { min: 0.6, max: 0.7 };
@@ -2020,13 +1854,7 @@ const RUN_FLOOR_FLOOR_STEP = {
   BASE: 6,
   BUILD: 10,
 };
-const RUN_FLOOR_FLOOR_STEP_SOFT = {
-  BASE: 3,
-  BUILD: 5,
-};
 const RUN_FLOOR_MAX_INCREASE_PCT = 0.1;
-const RUN_FLOOR_MAX_INCREASE_PCT_SOFT = 0.05;
-const RUN_FLOOR_SOFT_RAISE_MIN_DAYS_SINCE_LAST = 7;
 const RUN_FLOOR_SOFT_DIP_PCT_BY_PHASE = {
   BASE: 0.93,
   BUILD: 0.95,
@@ -2223,26 +2051,28 @@ function computeTaperFactor(eventInDays, taperStartDays) {
   return 0.6 + ratio * (0.9 - 0.6);
 }
 
-function computeBikeAllowanceFactor(weeksToEvent, { daysSinceEvent = null } = {}) {
-  if (Number.isFinite(daysSinceEvent) && daysSinceEvent >= 0 && daysSinceEvent <= 13) return 1.0;
-  if (!Number.isFinite(weeksToEvent)) return BIKE_ALLOWANCE_FACTOR_NO_EVENT;
-  if (weeksToEvent > 24) return 0.60;
-  if (weeksToEvent > 16) return 0.50;
-  if (weeksToEvent > 12) return 0.40;
-  if (weeksToEvent > 8) return 0.30;
-  return 0.0;
-}
+function computeBikeSubstitutionFactor(weeksToEvent, overlayMode = null) {
+  if (overlayMode === "POST_RACE_RAMP") return 0.4;
+  if (!Number.isFinite(weeksToEvent)) return BIKE_SUB_FACTOR_NO_EVENT;
 
-function classifyBikeEffort(activity) {
-  if (!activity || typeof activity !== "object") return "moderate";
-  if (hasKeyTag(activity) || isIntensityByHr(activity)) return "hard";
-  if (isAerobic(activity)) return "easy";
-  return "moderate";
-}
+  if (weeksToEvent >= TRANSITION_BIKE_EQ.prePlanWeeks) {
+    return clamp(TRANSITION_BIKE_EQ.prePlanFactor, 0, 1);
+  }
 
-function computeBikeToRunConversionFactor(activity = null) {
-  const effort = classifyBikeEffort(activity);
-  return BIKE_CONVERSION_FACTOR_BY_EFFORT[effort] ?? BIKE_CONVERSION_FACTOR_FALLBACK;
+  if (weeksToEvent > TRANSITION_BIKE_EQ.startWeeks) {
+    const span = TRANSITION_BIKE_EQ.prePlanWeeks - TRANSITION_BIKE_EQ.startWeeks;
+    if (span <= 0) return clamp(TRANSITION_BIKE_EQ.startFactor, 0, 1);
+    const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.startWeeks) / span;
+    const raw = TRANSITION_BIKE_EQ.startFactor + ratio * (TRANSITION_BIKE_EQ.prePlanFactor - TRANSITION_BIKE_EQ.startFactor);
+    return clamp(raw, 0, 1);
+  }
+
+  if (weeksToEvent <= TRANSITION_BIKE_EQ.endWeeks) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
+  const span = TRANSITION_BIKE_EQ.startWeeks - TRANSITION_BIKE_EQ.endWeeks;
+  if (span <= 0) return clamp(TRANSITION_BIKE_EQ.endFactor, 0, 1);
+  const ratio = (weeksToEvent - TRANSITION_BIKE_EQ.endWeeks) / span;
+  const raw = TRANSITION_BIKE_EQ.endFactor + ratio * (TRANSITION_BIKE_EQ.startFactor - TRANSITION_BIKE_EQ.endFactor);
+  return clamp(raw, 0, 1);
 }
 
 function resolvePostRaceRampWindowSync(dayIso, blockState) {
@@ -2369,96 +2199,12 @@ function buildRunDailyLoads(ctx, todayISO, windowDays) {
   return days.map((d) => Number(dailyLoads[d]) || 0);
 }
 
-function getFloorRaiseDecision({
-  phase,
-  overlayMode,
-  safeEventInDays,
-  freezeFloorIncrease,
-  lifeEventCategory,
-  floorLevel,
-  deloadCompletedSinceIncrease,
-  allowFloorIncreaseStrict,
-  postRaceRampCompletedRecently,
-  lastFloorIncreaseDate,
-  todayISO,
-  floorTarget,
-}) {
-  const normalizedPhase = String(phase || "").toUpperCase();
-  const normalizedOverlay = String(overlayMode || "NORMAL").toUpperCase();
-  const normalizedLifeEvent = normalizeEventCategory(lifeEventCategory);
-  const normalizedFloorLevel = String(floorLevel || "").toUpperCase();
-  const eventDays = Number.isFinite(safeEventInDays) ? safeEventInDays : 9999;
-  const isBaseOrBuild = normalizedPhase === "BASE" || normalizedPhase === "BUILD";
-  const freezeActive = freezeFloorIncrease === true;
-  const daysSinceLastRaise =
-    isIsoDate(lastFloorIncreaseDate) && isIsoDate(todayISO)
-      ? Math.max(0, diffDays(lastFloorIncreaseDate, todayISO))
-      : Number.POSITIVE_INFINITY;
-
-  if (!isBaseOrBuild) {
-    return { mode: "BLOCK", step: 0, reason: `Phase ${normalizedPhase || "UNKNOWN"} blockiert` };
-  }
-  if (freezeActive) return { mode: "BLOCK", step: 0, reason: "Freeze aktiv" };
-  if (normalizedLifeEvent === "SICK" || normalizedLifeEvent === "INJURED") {
-    return { mode: "BLOCK", step: 0, reason: `${normalizedLifeEvent}: keine Progression` };
-  }
-  if (normalizedOverlay === "POST_RACE_RAMP") {
-    return { mode: "BLOCK", step: 0, reason: "Post-Race-Ramp blockiert Erhöhung" };
-  }
-  if (normalizedOverlay === "TAPER") {
-    return { mode: "BLOCK", step: 0, reason: "Taper blockiert Erhöhung" };
-  }
-  if (normalizedOverlay === "DELOAD") {
-    return { mode: "BLOCK", step: 0, reason: "Deload aktiv" };
-  }
-  if (eventDays <= 14) {
-    return { mode: "BLOCK", step: 0, reason: "Eventnähe ≤14 Tage" };
-  }
-  if (normalizedFloorLevel === "RED") {
-    return { mode: "BLOCK", step: 0, reason: "RunFloor-Level RED" };
-  }
-
-  const fullEligible =
-    normalizedOverlay === "NORMAL" &&
-    eventDays > 28 &&
-    deloadCompletedSinceIncrease === true &&
-    allowFloorIncreaseStrict === true &&
-    !postRaceRampCompletedRecently;
-  if (fullEligible) {
-    const baseStep = RUN_FLOOR_FLOOR_STEP[normalizedPhase] ?? 6;
-    const maxIncrease = Math.max(1, Math.round((Number(floorTarget) || 0) * RUN_FLOOR_MAX_INCREASE_PCT));
-    return {
-      mode: "FULL",
-      step: Math.min(baseStep, maxIncrease),
-      reason: "FULL: sauberer Zustand + Deload abgeschlossen",
-    };
-  }
-
-  const softEligible =
-    eventDays > 21 &&
-    normalizedOverlay === "NORMAL" &&
-    daysSinceLastRaise >= RUN_FLOOR_SOFT_RAISE_MIN_DAYS_SINCE_LAST;
-  if (!softEligible) {
-    return { mode: "BLOCK", step: 0, reason: "SOFT-Gates nicht erfüllt" };
-  }
-
-  const baseStepSoft = RUN_FLOOR_FLOOR_STEP_SOFT[normalizedPhase] ?? 3;
-  const maxIncreaseSoft = Math.max(1, Math.round((Number(floorTarget) || 0) * RUN_FLOOR_MAX_INCREASE_PCT_SOFT));
-  return {
-    mode: "SOFT",
-    step: Math.min(baseStepSoft, maxIncreaseSoft),
-    reason: "SOFT: stabil genug, aber FULL-Gates nicht komplett erfüllt",
-  };
-}
-
 function computeRunFloorEwma(
   ctx,
   dayIso,
   {
     eventDate = null,
-    lastEventDate = null,
     eventDistance = null,
-    runFloorTarget = MIN_STIMULUS_7D_RUN_EVENT,
     lookbackDays = RUN_FLOOR_EWMA_LOOKBACK_DAYS,
     debugTrace = false,
   } = {}
@@ -2475,14 +2221,12 @@ function computeRunFloorEwma(
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const load = Number(extractLoad(a)) || 0;
-    if (!(load > 0)) continue;
     if (isRun(a)) {
-      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0, bikeEquivalent: 0 };
+      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0 };
       dailyLoads[d].run += load;
     } else if (isBike(a)) {
-      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0, bikeEquivalent: 0 };
+      dailyLoads[d] = dailyLoads[d] || { run: 0, bike: 0 };
       dailyLoads[d].bike += load;
-      dailyLoads[d].bikeEquivalent += load * computeBikeToRunConversionFactor(a);
     }
   }
 
@@ -2490,31 +2234,12 @@ function computeRunFloorEwma(
   const debugRows = [];
   const days = listIsoDaysInclusive(startIso, dayIso);
   for (const d of days) {
-    const loads = dailyLoads[d] || { run: 0, bike: 0, bikeEquivalent: 0 };
+    const loads = dailyLoads[d] || { run: 0, bike: 0 };
     const weeksInfo = eventDate ? computeWeeksToEvent(d, eventDate, eventDistance) : { weeksToEvent: null };
-    const daysSinceEvent = isIsoDate(lastEventDate) ? daysBetween(lastEventDate, d) : null;
-    const allowanceFactor = computeBikeAllowanceFactor(weeksInfo?.weeksToEvent ?? null, {
-      daysSinceEvent: Number.isFinite(daysSinceEvent) && daysSinceEvent >= 0 ? Math.round(daysSinceEvent) : null,
-    });
-    const maxBikeContribution = Math.max(0, (Number(runFloorTarget) || 0) * allowanceFactor);
-    const remainingAllowance = Math.max(0, maxBikeContribution - loads.run);
-    const credited = Math.min(loads.bikeEquivalent, remainingAllowance);
-    const tss = loads.run + credited;
+    const bikeSubFactor = computeBikeSubstitutionFactor(weeksInfo?.weeksToEvent ?? null);
+    const tss = loads.run + loads.bike * bikeSubFactor;
     smooth = smooth == null ? tss : tss + decay * smooth;
-    if (debugTrace) {
-      debugRows.push({
-        day: d,
-        run: loads.run,
-        bike: loads.bike,
-        bikeEquivalent: loads.bikeEquivalent,
-        allowanceFactor,
-        maxBikeContribution,
-        remainingAllowance,
-        credited,
-        tss,
-        smooth,
-      });
-    }
+    if (debugTrace) debugRows.push({ day: d, run: loads.run, bike: loads.bike, bikeSubFactor, tss, smooth });
   }
 
   if (debugTrace) {
@@ -2619,7 +2344,6 @@ function evaluateRunFloorState({
     ? previousState.lastFloorIncreaseDate
     : null;
   let lastEventDate = isIsoDate(previousState?.lastEventDate) ? previousState.lastEventDate : null;
-  let lastEventDistance = normalizeEventDistance(previousState?.lastEventDistance) || null;
   let postRaceRampUntilISO = isIsoDate(previousState?.postRaceRampUntilISO) ? previousState.postRaceRampUntilISO : null;
   let lastLifeEventCategory = normalizeEventCategory(previousState?.lastLifeEventCategory);
   let lastLifeEventStartISO = isIsoDate(previousState?.lastLifeEventStartISO) ? previousState.lastLifeEventStartISO : null;
@@ -2628,8 +2352,7 @@ function evaluateRunFloorState({
 
   if (eventDateISO && safeEventInDays <= 0) {
     lastEventDate = eventDateISO;
-    lastEventDistance = normalizeEventDistance(eventDistance) || lastEventDistance;
-    const rampMeta = computePostRaceRampFactor(0, lastEventDistance || eventDistance);
+    const rampMeta = computePostRaceRampFactor(0, eventDistance);
     if (Number.isFinite(rampMeta?.rampUntilDays)) {
       postRaceRampUntilISO = isoDate(new Date(new Date(eventDateISO + "T00:00:00Z").getTime() + rampMeta.rampUntilDays * 86400000));
     }
@@ -2640,8 +2363,7 @@ function evaluateRunFloorState({
     const delta = daysBetween(lastEventDate, todayISO);
     if (Number.isFinite(delta) && delta >= 0) daysSinceEvent = Math.round(delta);
   }
-  const postRaceDistance = lastEventDistance || eventDistance;
-  const postRaceRamp = computePostRaceRampFactor(daysSinceEvent, postRaceDistance);
+  const postRaceRamp = computePostRaceRampFactor(daysSinceEvent, eventDistance);
 
   let deloadEndDate = null;
   let deloadActive = false;
@@ -2815,28 +2537,23 @@ function evaluateRunFloorState({
       ? daysSinceEvent <= postRaceRamp.rampUntilDays
       : false;
 
-  const raiseDecision = getFloorRaiseDecision({
-    phase,
-    overlayMode,
-    safeEventInDays,
-    freezeFloorIncrease: lifeEventEffect?.freezeFloorIncrease,
-    lifeEventCategory: lifeEventEffect?.category,
-    floorLevel,
-    deloadCompletedSinceIncrease: deloadCompletedSinceIncrease === true,
-    allowFloorIncreaseStrict: allowFloorIncreaseStrict === true,
-    postRaceRampCompletedRecently: postRaceRampCompletedRecently === true,
-    lastFloorIncreaseDate,
-    todayISO,
-    floorTarget: updatedFloorTarget,
-  });
-  let floorRaised = false;
-  if (raiseDecision.step > 0 && (raiseDecision.mode === "FULL" || raiseDecision.mode === "SOFT")) {
-    updatedFloorTarget += raiseDecision.step;
-    lastFloorIncreaseDate = todayISO;
-    floorRaised = true;
-    reasons.push(`RunFloor erhöht (+${raiseDecision.step}) via ${raiseDecision.mode}`);
-  } else if (raiseDecision.mode === "BLOCK" && raiseDecision.reason) {
-    reasons.push(`RunFloor-Anhebung blockiert: ${raiseDecision.reason}`);
+  if (
+    (phase === "BASE" || phase === "BUILD") &&
+    overlayMode === "NORMAL" &&
+    safeEventInDays > 28 &&
+    !lifeEventEffect?.freezeFloorIncrease &&
+    deloadCompletedSinceIncrease &&
+    !postRaceRampCompletedRecently &&
+    allowFloorIncreaseStrict
+  ) {
+    const step = RUN_FLOOR_FLOOR_STEP[phase] ?? 6;
+    const maxIncrease = Math.max(1, Math.round(updatedFloorTarget * RUN_FLOOR_MAX_INCREASE_PCT));
+    const increase = Math.min(step, maxIncrease);
+    if (increase > 0) {
+      updatedFloorTarget += increase;
+      lastFloorIncreaseDate = todayISO;
+      reasons.push(`RunFloor erhöht (+${increase}) nach Deload`);
+    }
   }
 
   return {
@@ -2860,10 +2577,6 @@ function evaluateRunFloorState({
     softDipCount14d,
     softDipStreak,
     allowFloorIncreaseStrict,
-    floorRaiseMode: raiseDecision.mode,
-    floorRaiseStep: raiseDecision.step,
-    floorRaised,
-    floorRaiseReason: raiseDecision.reason,
     softDipPct,
     loadGap,
     stabilityOK,
@@ -2871,7 +2584,6 @@ function evaluateRunFloorState({
     lastDeloadCompletedISO,
     lastFloorIncreaseDate,
     lastEventDate,
-    lastEventDistance,
     postRaceRampUntilISO,
     lastLifeEventCategory,
     lastLifeEventStartISO,
@@ -2992,7 +2704,6 @@ function computeLongRunSummary7d(ctx, dayIso) {
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (seconds < LONGRUN_MIN_SECONDS) continue;
     if (!longest || seconds > longest.seconds) {
       longest = {
         activity: a,
@@ -3122,7 +2833,6 @@ function computeLongestRunSummaryWindow(ctx, dayIso, windowDays = LONGRUN_PREPLA
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (seconds < LONGRUN_MIN_SECONDS) continue;
     if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
   }
 
@@ -3145,7 +2855,6 @@ function computeLongRunSummary14d(ctx, dayIso) {
     if (!d || d < startIso || d >= endIso) continue;
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-    if (seconds < LONGRUN_MIN_SECONDS) continue;
     if (!longest || seconds > longest.seconds) longest = { seconds, date: d };
   }
 
@@ -4566,20 +4275,10 @@ function classifyIntensityCategory(a, eventDistance) {
   return "easy";
 }
 
-function computeIntensityDistributionForWindow(
-  ctx,
-  dayIso,
-  lookbackDays,
-  eventDistance,
-  blockStartIso = null,
-  options = {}
-) {
+function computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance, blockStartIso = null) {
   const end = new Date(dayIso + "T00:00:00Z");
   const startIso = isoDate(new Date(end.getTime() - lookbackDays * 86400000));
   const endIso = isoDate(new Date(end.getTime() + 86400000));
-  const overlayMode = String(options?.overlayMode || "").toUpperCase();
-  const lastEventDate = isIsoDate(options?.lastEventDate) ? options.lastEventDate : null;
-  const excludeLastEventDayRuns = overlayMode === "POST_RACE_RAMP" && !!lastEventDate;
   const effectiveStartIso =
     isIsoDate(blockStartIso) && blockStartIso > startIso
       ? blockStartIso
@@ -4593,7 +4292,6 @@ function computeIntensityDistributionForWindow(
   for (const a of ctx.activitiesAll || []) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || d < effectiveStartIso || d >= endIso || !isRun(a)) continue;
-    if (excludeLastEventDayRuns && d === lastEventDate) continue;
     const minutes = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
     if (!(minutes > 0)) continue;
 
@@ -4620,7 +4318,7 @@ function computeIntensityDistributionForWindow(
   };
 }
 
-function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null, options = {}) {
+function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockStartIso = null) {
   const targets = getIntensityDistributionTargets(block, eventDistance);
   let lookbackDaysRaw = Math.max(7, INTENSITY_LOOKBACK_DAYS);
   if (blockStartIso) {
@@ -4632,14 +4330,7 @@ function computeIntensityDistribution(ctx, dayIso, block, eventDistance, blockSt
 
   const lookbackDays = Math.max(28, lookbackDaysRaw);
 
-  const metrics = computeIntensityDistributionForWindow(
-    ctx,
-    dayIso,
-    lookbackDays,
-    eventDistance,
-    blockStartIso,
-    options
-  );
+  const metrics = computeIntensityDistributionForWindow(ctx, dayIso, lookbackDays, eventDistance, blockStartIso);
 
   const hasData = (metrics?.totalMinutes ?? 0) > 0;
   const easyShare = metrics?.easyShare;
@@ -5525,7 +5216,7 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const preferredMissing = keyRules.preferredKeyTypes.length > 0 && preferredHits.length === 0;
 
   const plannedKeyTypeCandidate = decideKeyType1PerWeek(context, keyRules) || keyRules.preferredKeyTypes[0] || keyRules.allowedKeyTypes[0] || "steady";
-  let plannedKeyType = resolvePlannableKeyType(plannedKeyTypeCandidate, keyRules) || "steady";
+  let plannedKeyType = plannedKeyTypeCandidate;
   keyRules.plannedPrimaryType = plannedKeyType;
   let preferred = plannedKeyType;
   const blockLabel = context.block ? `Block=${context.block}` : "Block=n/a";
@@ -5543,9 +5234,6 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const keySpacingNowOk = context.keySpacing?.keySpacingNowOk ?? context.keySpacing?.ok ?? true;
   const nextKeyEarliest = context.keySpacing?.nextAllowedIso ?? null;
   const hoursSinceLastKey = Number(context.keySpacing?.hoursSinceLastKey);
-  const acwr = Number(context?.fatigue?.acwr);
-  const acwrHighLimit = Number(context?.ctx?.runtimeConfig?.fatigueThresholds?.acwrHigh ?? ACWR_HIGH_LIMIT);
-  const acwrGateOk = !Number.isFinite(acwr) || acwr <= acwrHighLimit;
 
   const intensityDistribution = context.intensityDistribution || null;
   const hardShareBlocked = intensityDistribution?.hardOver === true;
@@ -5566,25 +5254,11 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     lifeEventCategory === "HOLIDAY" ||
     lifeEventCategory === "SICK" ||
     lifeEventCategory === "INJURED";
-  const lastEventDateIso = isIsoDate(context?.lastEventDate) ? context.lastEventDate : null;
-  const daysSinceLastEvent = lastEventDateIso && isIsoDate(context?.dayIso)
-    ? diffDays(lastEventDateIso, context.dayIso)
-    : null;
-  const postRaceDistance = normalizeEventDistance(context?.lastEventDistance) || context.eventDistance;
-  const postRaceRamp = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
-  const postRaceKeyAllowed = context.overlayMode === "POST_RACE_RAMP"
-    ? postRaceRamp.keyAllowed === true
-    : true;
 
   let suggestion = "";
-  // Gate A: nur ACWR. Weitere Timing-/Wochenlogik passiert in der dynamischen Wochenplanung.
-  let keyAllowedNow = acwrGateOk && postRaceKeyAllowed;
+  let keyAllowedNow = keySpacingNowOk && !hardSafetyStop;
 
-  if (!postRaceKeyAllowed) {
-    suggestion = `Post-Race Ramp aktiv (${postRaceRamp.phase}) – heute noch kein Key.`;
-  } else if (!acwrGateOk) {
-    suggestion = `ACWR zu hoch (${acwr.toFixed(2)} > ${acwrHighLimit.toFixed(2)}) – heute kein Key.`;
-  } else if (hardSafetyStop) {
+  if (hardSafetyStop) {
     suggestion = "Key pausiert (Safety-Stop aktiv).";
   } else if (!keySpacingNowOk && nextKeyEarliest) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapHours}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
@@ -5628,20 +5302,12 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     if (activeLeverText) suggestion = `${suggestion} Hebel aus letzter Key-Session: ${activeLeverText}.`;
   }
 
-  const explicitSessionRaw = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
-  const explicitSessionType = inferKeyTypeFromExplicitSession(explicitSessionRaw);
+  const explicitSession = buildExplicitKeySessionRecommendation(context, keyRules, progression, plannedKeyType, activeLever);
+  const explicitSessionType = inferKeyTypeFromExplicitSession(explicitSession);
   if (explicitSessionType && explicitSessionType !== plannedKeyType) {
-    plannedKeyType = resolvePlannableKeyType(explicitSessionType, keyRules) || plannedKeyType;
+    plannedKeyType = explicitSessionType;
     keyRules.plannedPrimaryType = plannedKeyType;
     preferred = plannedKeyType;
-  }
-  plannedKeyType = resolvePlannableKeyType(plannedKeyType, keyRules);
-  keyRules.plannedPrimaryType = plannedKeyType || keyRules.plannedPrimaryType || "steady";
-  const explicitSession = isConcreteKeySession(explicitSessionRaw) ? explicitSessionRaw : null;
-  const hasConcreteKeySession = !!(plannedKeyType && explicitSession);
-  if (keyAllowedNow && !hasConcreteKeySession) {
-    keyAllowedNow = false;
-    suggestion = "Heute kein Key-Slot: es liegt aktuell keine belastbare, erlaubte Key-Session vor.";
   }
   const pendingLever = !keyAllowedNow && pendingLeverMeta ? pendingLeverMeta : null;
   const pendingLeverPlan = !keyAllowedNow
@@ -5679,9 +5345,6 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     disallowedHits,
     status,
     suggestion,
-    allowedKeyTypes: [...(keyRules?.allowedKeyTypes || [])],
-    preferredKeyTypes: [...(keyRules?.preferredKeyTypes || [])],
-    bannedKeyTypes: [...(keyRules?.bannedKeyTypes || [])],
     progression,
     basedOn: "7T (informativ)",
     keySpacingOk: keySpacingNowOk,
@@ -5693,7 +5356,6 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keyAllowedNow,
     plannedKeyType,
     explicitSession,
-    hasConcreteKeySession,
     activeLever,
     pendingLever,
     pendingLeverLine: pendingLeverPlan.pendingLeverLine,
@@ -5800,7 +5462,6 @@ function determineBlockState({
   historyMetrics,
   previousState,
   efTrend = null,
-  postEventOpenActive = false,
 }) {
   const reasons = [];
   let efReadyForBuild = null;
@@ -5851,32 +5512,6 @@ function determineBlockState({
       nextSuggestedBlock: "BUILD",
       timeInBlockDays: Number.isFinite(timeInBlockDays) ? timeInBlockDays : null,
       startDate,
-      eventDistance: eventDistanceNorm,
-      efReadyForBuild,
-      efTrend,
-    };
-  }
-
-  if (postEventOpenActive) {
-    const stayedInBase = previousState?.block === "BASE";
-    const reentryStart = stayedInBase ? startDate : todayISO;
-    const reentryDays = stayedInBase ? Math.max(0, daysBetween(reentryStart, todayISO)) : 0;
-    return {
-      block: "BASE",
-      wave: 0,
-      weeksToEvent: null,
-      weeksToEventRaw: null,
-      todayISO,
-      eventDateISO,
-      blockStartPersisted: persistedStart,
-      blockStartEffective: reentryStart,
-      startWasReset,
-      reasons: [...reasons, "Post-Race-Fenster aktiv → Re-Entry BASE"],
-      readinessScore: 55,
-      forcedSwitch: false,
-      nextSuggestedBlock: "BUILD",
-      timeInBlockDays: reentryDays,
-      startDate: reentryStart,
       eventDistance: eventDistanceNorm,
       efReadyForBuild,
       efTrend,
@@ -6286,7 +5921,6 @@ function extractPersistedBlockStateFromWellness(wellness) {
     lastDeloadCompletedISO: null,
     lastFloorIncreaseDate: null,
     lastEventDate: null,
-    lastEventDistance: null,
     postRaceRampUntilISO: null,
     lastLifeEventCategory: "",
     lastLifeEventStartISO: null,
@@ -6326,7 +5960,6 @@ function parseBlockStateFromComment(comment) {
       lastDeloadCompletedISO: isIsoDate(parsed.lastDeloadCompletedISO) ? parsed.lastDeloadCompletedISO : null,
       lastFloorIncreaseDate: isIsoDate(parsed.lastFloorIncreaseDate) ? parsed.lastFloorIncreaseDate : null,
       lastEventDate: isIsoDate(parsed.lastEventDate) ? parsed.lastEventDate : null,
-      lastEventDistance: parsed.lastEventDistance ?? null,
       postRaceRampUntilISO: isIsoDate(parsed.postRaceRampUntilISO) ? parsed.postRaceRampUntilISO : null,
       lastLifeEventCategory: parsed.lastLifeEventCategory ? normalizeEventCategory(parsed.lastLifeEventCategory) : "",
       lastLifeEventStartISO: isIsoDate(parsed.lastLifeEventStartISO) ? parsed.lastLifeEventStartISO : null,
@@ -6535,7 +6168,6 @@ async function readLatestBlockStateKv(env, dayIso) {
     lastDeloadCompletedISO: isIsoDate(state.lastDeloadCompletedISO) ? state.lastDeloadCompletedISO : null,
     lastFloorIncreaseDate: isIsoDate(state.lastFloorIncreaseDate) ? state.lastFloorIncreaseDate : null,
     lastEventDate: isIsoDate(state.lastEventDate) ? state.lastEventDate : null,
-    lastEventDistance: state.lastEventDistance ?? null,
     postRaceRampUntilISO: isIsoDate(state.postRaceRampUntilISO) ? state.postRaceRampUntilISO : null,
     lastLifeEventCategory: state.lastLifeEventCategory ? normalizeEventCategory(state.lastLifeEventCategory) : "",
     lastLifeEventStartISO: isIsoDate(state.lastLifeEventStartISO) ? state.lastLifeEventStartISO : null,
@@ -6830,27 +6462,6 @@ function buildWeekPreview(
       const split = raw.split(/(?<=[.!?])\s+/);
       return (split[0] || raw).trim();
     };
-    const resolvePlannableKeyForDay = (candidateType, compliance) => resolvePlannableKeyType(
-      candidateType || compliance?.plannedKeyType || null,
-      {
-        allowedKeyTypes: compliance?.allowedKeyTypes || [],
-        preferredKeyTypes: compliance?.preferredKeyTypes || [],
-        bannedKeyTypes: compliance?.bannedKeyTypes || [],
-      }
-    );
-    const shouldShowKeySlot = ({ compliance, overlayMode, explicitSession, plannedKeyType, date }) => {
-      if (compliance?.keyAllowedNow !== true) return false;
-      if (!plannedKeyType) return false;
-      if (!isConcreteKeySession(explicitSession)) return false;
-      if (overlayMode === "POST_RACE_RAMP") {
-        const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
-        const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
-        const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
-        const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
-        if (postRaceRampMeta?.keyAllowed !== true) return false;
-      }
-      return true;
-    };
     const parseRunTargetRange = (text) => {
       const raw = String(text || "");
       const range = raw.match(/(\d+)\s*[–-]\s*(\d+)\s*Läufe?n?\/?Woche/i);
@@ -6890,16 +6501,10 @@ function buildWeekPreview(
       if (date === eventDateISO) return "RACE_DAY";
 
       if (date > eventDateISO) {
-        const postRaceAnchor = isIsoDate(currentBlockState?.lastEventDate)
-          ? currentBlockState.lastEventDate
-          : eventDateISO;
-        const postRaceDistance = normalizeEventDistance(currentBlockState?.lastEventDistance || currentBlockState?.eventDistance);
-        const daysSinceEvent = diffDays(postRaceAnchor, date);
-        const rampMeta = computePostRaceRampFactor(daysSinceEvent, postRaceDistance);
-        if (rampMeta.phase === "POST_RACE_RAMP_1") return "POST_RACE_RAMP_REST";
-        if (rampMeta.phase === "POST_RACE_RAMP_2") return "POST_RACE_RAMP_EASY";
-        if (rampMeta.phase === "POST_RACE_RAMP_3") return "POST_RACE_RAMP";
-        return baseOverlay === "POST_RACE_RAMP" ? "NORMAL" : baseOverlay;
+        const daysSinceEvent = diffDays(eventDateISO, date);
+        if (daysSinceEvent <= 3) return "POST_RACE_RAMP_REST";
+        if (daysSinceEvent <= 10) return "POST_RACE_RAMP_EASY";
+        return "NORMAL";
       }
 
       if (date < baseTodayIso) return baseOverlay;
@@ -6932,7 +6537,6 @@ function buildWeekPreview(
     const keyTypes = [];
     let longrundDone = false;
     let longrundMinutes = 0;
-    const longrunDates = [];
     let strengthCount = 0;
     let restDaysTaken = 0;
     for (const d of thisWeekDays) {
@@ -6949,16 +6553,14 @@ function buildWeekPreview(
         if (isRun(a) && durationSec >= LONGRUN_MIN_SECONDS) {
           longrundDone = true;
           longrundMinutes = Math.max(longrundMinutes, Math.round(durationSec / 60));
-          longrunDates.push(d);
         }
         if (isStrength(a)) strengthCount += 1;
       }
     }
-    const thisWeekActuals = { keyDone, keyDates, keyTypes, longrundDone, longrundMinutes, longrunDates, strengthCount, restDaysTaken };
+    const thisWeekActuals = { keyDone, keyDates, keyTypes, longrundDone, longrundMinutes, strengthCount, restDaysTaken };
 
     const days = [];
     const plannedKeyDates = [];
-    const plannedLongrunDates = [];
     let plannedStrengthCount = 0;
     let longrunPlanned = false;
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
@@ -6966,21 +6568,12 @@ function buildWeekPreview(
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
     const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
-    // Flexible statt fixer Wochentage:
-    // Key/Longrun sind vollständig dynamisch und folgen nur den Gating-Regeln.
+    const getPrefRank = (iso, preference) => {
+      const wd = isoWeekdayBerlin(iso);
+      return preference.indexOf(wd);
+    };
+    const keyPref = [3, 4, 2, 5, 1, 6, 7];
     const strengthPref = [2, 4, 1, 5, 3, 6, 7];
-    const lastLongrunDateBeforeToday = (() => {
-      const dates = (ctx?.activitiesAll || [])
-        .filter((a) => {
-          const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
-          const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-          return isRun(a) && durationSec >= LONGRUN_MIN_SECONDS && d && d < todayIso;
-        })
-        .map((a) => String(a?.start_date_local || a?.start_date || "").slice(0, 10))
-        .filter((d) => isIsoDate(d))
-        .sort();
-      return dates.at(-1) || null;
-    })();
     const lastRunDaysAgo = (() => {
       for (let i = 0; i <= 3; i += 1) {
         const checkIso = isoDate(new Date(
@@ -7037,10 +6630,7 @@ function buildWeekPreview(
         const doneMeta = sessionMetaFromType(sessionType);
         if (sessionType === "KEY") plannedKeyDates.push(date);
         if (sessionType === "STRENGTH") plannedStrengthCount += 1;
-        if (sessionType === "LONGRUN") {
-          longrunPlanned = true;
-          plannedLongrunDates.push(date);
-        }
+        if (sessionType === "LONGRUN") longrunPlanned = true;
         days.push({
           date,
           dayLabel: dayLabels[weekday - 1],
@@ -7117,14 +6707,7 @@ function buildWeekPreview(
           && daysToEvent > minDaysBeforeRace
           && !isDelayedTaperEntryToday
           && !keyExistsInPlan
-          && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead)
-          && shouldShowKeySlot({
-            compliance: keyCompliance,
-            overlayMode,
-            explicitSession: keyCompliance?.explicitSession,
-            plannedKeyType: resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance),
-            date,
-          });
+          && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead);
 
         if (isDelayedTaperEntryToday) {
           const layoffDays = lastRunDaysAgo === 99 ? "3+" : String(lastRunDaysAgo);
@@ -7138,10 +6721,9 @@ function buildWeekPreview(
           const taperLabel = eventDistance === "5k" || eventDistance === "10k"
             ? "4–6×200m @ Renntempo oder 3×1km locker-flott"
             : (keyCompliance?.plannedKeyType || "kurze Reize");
-          const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
           sessionType = "KEY";
           intensity = "HIGH";
-          keyType = resolvedKeyType || null;
+          keyType = keyCompliance?.plannedKeyType || null;
           sessionLabel = `Aktivierungs-Key (Taper): ${taperLabel}`;
           note = "Kurz und scharf — neuromuskuläre Aktivierung, kein Volumen";
           plannedKeyDates.push(date);
@@ -7158,37 +6740,22 @@ function buildWeekPreview(
         sessionType = "GA";
         sessionLabel = "GA locker (Ramp-up)";
       } else {
-        const keyBudget = 2;
+        const keyBudget = Math.max(1, Number(keyCompliance?.maxKeysPerWeek ?? 1));
         const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyBudget, frequencyAwareKeyCap) : keyBudget;
         const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudgetByFrequency;
         const lastKnownKeyDate = [...thisWeekActuals.keyDates, ...plannedKeyDates].sort().at(-1) || null;
-        const lastKnownLongrunDate = [...(thisWeekActuals.longrunDates || []), ...plannedLongrunDates].sort().at(-1) || null;
-        const keySpacing72hOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
-        const keyLongrunGap48hOk = !lastKnownLongrunDate || diffDays(lastKnownLongrunDate, date) >= 2;
-        const lastEventDateIso = isIsoDate(blockState?.lastEventDate) ? blockState.lastEventDate : null;
-        const daysSinceLastEvent = lastEventDateIso ? diffDays(lastEventDateIso, date) : null;
-        const postRaceDistance = normalizeEventDistance(blockState?.lastEventDistance) || blockState?.eventDistance;
-        const postRaceRampMeta = computePostRaceRampFactor(daysSinceLastEvent, postRaceDistance);
-        const overlayBlocksPlannedKey = overlayMode === "POST_RACE_RAMP" && postRaceRampMeta.keyAllowed !== true;
-        const resolvedKeyType = resolvePlannableKeyForDay(keyCompliance?.plannedKeyType, keyCompliance);
-        const keySessionReady = shouldShowKeySlot({
-          compliance: keyCompliance,
-          overlayMode,
-          explicitSession: keyCompliance?.explicitSession,
-          plannedKeyType: resolvedKeyType,
-          date,
-        });
-        const keyEligible = keyCompliance?.keyAllowedNow === true
-          && !overlayBlocksPlannedKey
-          && canAddKeyByCount
-          && keySpacing72hOk
-          && keyLongrunGap48hOk
-          && keySessionReady;
+        const spacingOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
+        const bestKeyRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
+          .map((d) => getPrefRank(d, keyPref))
+          .filter((rank) => rank >= 0)
+          .sort((a, b) => a - b)[0];
+        const isPreferredKeySlot = getPrefRank(date, keyPref) === bestKeyRankLeft;
+        const keyEligible = keyCompliance?.keyAllowedNow === true && canAddKeyByCount && spacingOk && isPreferredKeySlot;
 
         if (keyEligible) {
           sessionType = "KEY";
           intensity = "HIGH";
-          keyType = resolvedKeyType || null;
+          keyType = keyCompliance?.plannedKeyType || null;
           sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`;
           plannedKeyDates.push(date);
           if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
@@ -7199,22 +6766,20 @@ function buildWeekPreview(
             ? Math.min(...plannedKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
             : 99;
           const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
-          const longrunGapOk = !lastLongrunDateBeforeToday || diffDays(lastLongrunDateBeforeToday, date) >= 4;
-          if (canPlanLongrun && longrunGapOk) {
+          const isLongrunPref = weekday === 7 || weekday === 6;
+          if (canPlanLongrun && isLongrunPref) {
             sessionType = "LONGRUN";
             intensity = "MED";
             sessionLabel = `Langer Lauf ~${longRunTargetMin}′`;
             longrunPlanned = true;
-            plannedLongrunDates.push(date);
           } else {
             const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
             const clashesWithKeyOrLong = sessionType === "KEY" || sessionType === "LONGRUN";
             const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
-              .map((d) => isoWeekdayBerlin(d))
-              .map((wd) => strengthPref.indexOf(wd))
+              .map((d) => getPrefRank(d, strengthPref))
               .filter((rank) => rank >= 0)
               .sort((a, b) => a - b)[0];
-            const isStrengthPref = strengthPref.indexOf(weekday) === bestStrengthRankLeft;
+            const isStrengthPref = getPrefRank(date, strengthPref) === bestStrengthRankLeft;
             if (strengthNeed && !clashesWithKeyOrLong && isStrengthPref) {
               const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
               const strengthSession = getStrengthSessionForDay(blockState, plannedStrengthTotal);
@@ -7649,7 +7214,6 @@ async function buildCoachAnalysis(env, snapshot) {
         efTrendPct: Number.isFinite(Number(snapshot?.efTrendPct)) ? Math.round(Number(snapshot.efTrendPct) * 10) / 10 : null,
         rampPct: Number.isFinite(Number(snapshot?.rampPct)) ? Math.round(Number(snapshot.rampPct) * 10) / 10 : null,
         strengthMin7d: Number.isFinite(Number(snapshot?.strengthMin7d)) ? Math.max(0, Math.round(Number(snapshot.strengthMin7d))) : 0,
-        strengthMinRunfloor: Number.isFinite(Number(snapshot?.strengthMinRunfloor)) ? Math.max(0, Math.round(Number(snapshot.strengthMinRunfloor))) : 30,
         strengthTarget: Number.isFinite(Number(snapshot?.strengthTarget)) ? Math.max(0, Math.round(Number(snapshot.strengthTarget))) : 30,
         weakStrengthWeeks: Number.isFinite(Number(snapshot?.weakStrengthWeeks)) ? Math.max(0, Math.round(Number(snapshot.weakStrengthWeeks))) : 0,
         longrunMin: Number.isFinite(Number(snapshot?.longrunMin)) ? Math.max(0, Math.round(Number(snapshot.longrunMin))) : 0,
@@ -7674,7 +7238,6 @@ async function buildCoachAnalysis(env, snapshot) {
         efTrendPct: null,
         rampPct: null,
         strengthMin7d: 0,
-        strengthMinRunfloor: 30,
         strengthTarget: 30,
         weakStrengthWeeks: 0,
         longrunMin: 0,
@@ -7695,9 +7258,6 @@ async function buildCoachAnalysis(env, snapshot) {
   const kraftStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthTarget
     ? `${safeSnapshot.strengthMin7d} Min — Ziel erreicht`
     : `${safeSnapshot.strengthMin7d} Min — Ziel NICHT erreicht (fehlen ${safeSnapshot.strengthTarget - safeSnapshot.strengthMin7d} Min)`;
-  const kraftMindestzielStatus = safeSnapshot.strengthMin7d >= safeSnapshot.strengthMinRunfloor
-    ? `${safeSnapshot.strengthMinRunfloor} Min Mindestziel erreicht`
-    : `${safeSnapshot.strengthMinRunfloor} Min Mindestziel NICHT erreicht`;
 
   const kraftMuster = safeSnapshot.weakStrengthWeeks >= 2
     ? `${safeSnapshot.weakStrengthWeeks} Wochen in Folge unter Ziel — wiederkehrendes Problem`
@@ -7740,10 +7300,10 @@ async function buildCoachAnalysis(env, snapshot) {
     : `${safeSnapshot.vdotTrend > 0 ? "+" : ""}${safeSnapshot.vdotTrend.toFixed(1)} (aus EF-Trend geschätzt)`;
   const promptGoal = isRaceDaySnapshot
     ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
-    : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf du diese Woche achten solltest.";
+    : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte.";
 
   const promptLines = [
-    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch in direkter Du-Ansprache über den aktuellen Trainingsstand. ${promptGoal} Vermeide Formulierungen wie "der Athlet". Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
+    `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. ${promptGoal} Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
     "",
     "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
     "",
@@ -7753,7 +7313,6 @@ async function buildCoachAnalysis(env, snapshot) {
     `- EF-Trend 28 Tage: ${efStatus}`,
     `- 7-Tage-Last vs. Vorwoche: ${lastStatus}`,
     `- Kraft diese Woche: ${kraftStatus}`,
-    `- Kraft Mindestziel: ${kraftMindestzielStatus}`,
     `- Kraftmuster: ${kraftMuster}`,
     `- Longrun letzte 14 Tage: ${safeSnapshot.longrunMin} Min`,
     `- Nächster Wettkampf: ${wettkampf}`,
@@ -8014,12 +7573,12 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
 
     const mapping = {
       kraft: [
-        `2× Kraft/Stabi je ${strengthDuration}′ — mit 48h Abstand verteilt`,
+        `2× Kraft/Stabi je ${strengthDuration}′ — Di + Do bevorzugt`,
         "GA-Läufe wie geplant, Kraft NICHT weglassen",
         `${keyCompliance?.plannedKeyType || "steady"} Key wenn erlaubt`,
       ],
       longrun: [
-        `Longrun alle 4–6 Tage — Ziel ${longrunTarget}′`,
+        `Longrun Sa oder So — Ziel ${longrunTarget}′`,
         "Restliche Läufe locker, kein zusätzlicher Stress",
         "Key nur wenn Longrun sicher eingeplant",
       ],
@@ -8045,7 +7604,7 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
       ],
       taper: [
         "Frisch bleiben — kein neues Volumen aufbauen",
-        "Key nur als kurze Aktivierung mit Abstand zum Rennen",
+        "Key nur als Aktivierung (Mi), sonst locker/kurz",
         "Kein Longrun diese Woche (Wettkampf ≤7 Tage)",
       ],
       post_race_recovery: [
@@ -8171,24 +7730,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
   await hydrateActivitiesWithPersistedLeverReviews(env, ctx.activitiesAll, globalOldest, globalNewest);
   ctx.lifeEventsAll = await lifeEventsPromise.catch(() => []);
   ctx.modeEventsAll = await modeEventsPromise.catch(() => []);
-  if (ctx.debug) {
-    const modeEvents = Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll : [];
-    const modeRaceCandidates = modeEvents.filter((event) => isARaceEvent(event));
-    const compact = (event) => ({
-      name: event?.name ?? null,
-      category: event?.category ?? null,
-      start_date_local: event?.start_date_local ?? null,
-      type: event?.type ?? null,
-      distance: event?.distance ?? null,
-      isARaceEvent: isARaceEvent(event),
-    });
-    console.log("[debug:syncRange:modeEventsAll]", {
-      modeEventsCount: modeEvents.length,
-      modeRaceCandidatesCount: modeRaceCandidates.length,
-      modeRaceLast3: modeRaceCandidates.slice(-3).map(compact),
-      modeRaceNext3: modeRaceCandidates.slice(0, 3).map(compact),
-    });
-  }
   const lifeEventsByExternalId = new Map(
     (ctx.lifeEventsAll || [])
       .filter((event) => event?.external_id)
@@ -8259,13 +7800,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       modeInfo = await determineMode(env, day, ctx.debug, ctx.modeEventsAll);
       policy = getModePolicy(modeInfo);
     } catch (e) {
-      console.error("[mode] determineMode failed, using OPEN fallback", {
-        day,
-        error: e?.message || String(e),
-        stack: e?.stack || null,
-        modeEventsAllType: Array.isArray(ctx.modeEventsAll) ? "array" : typeof ctx.modeEventsAll,
-        modeEventsAllCount: Array.isArray(ctx.modeEventsAll) ? ctx.modeEventsAll.length : null,
-      });
       modeInfo = { mode: "OPEN", primary: "open", nextEvent: null, activeLifeEvent: null, lifeEventEffect: getLifeEventEffect(null) };
       policy = getModePolicy(modeInfo);
     }
@@ -8308,7 +7842,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     let savedPostRaceRampUntilISO = null;
     let savedLastEventDate = null;
-    let savedLastEventDistance = null;
     try {
       savedPostRaceRampUntilISO =
         blockStartOverrideDerivedFromOldest &&
@@ -8319,17 +7852,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       savedLastEventDate = savedPostRaceRampUntilISO
         ? (previousBlockState?.lastEventDate ?? null)
         : null;
-      savedLastEventDistance = savedPostRaceRampUntilISO
-        ? (normalizeEventDistance(previousBlockState?.lastEventDistance) || null)
-        : null;
     } catch {
       savedPostRaceRampUntilISO = null;
       savedLastEventDate = null;
-      savedLastEventDistance = null;
     }
 
     const runs = ctx.byDayRuns.get(day) ?? [];
-    const bikesToday = ctx.byDayBikes.get(day) ?? [];
     let raceActivityToday = runs.find((activity) => isRaceActivity(activity)) || null;
     const patch = {};
     const perRunInfo = [];
@@ -8511,15 +8039,13 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     const weeksInfo = eventDate ? computeWeeksToEvent(day, eventDate, null) : { weeksToEvent: null };
     const weeksToEvent = weeksInfo.weeksToEvent ?? null;
-    const bikeConversionFactor = BIKE_CONVERSION_FACTOR_FALLBACK;
-    const previousDaysSinceEvent = isIsoDate(previousBlockState?.lastEventDate)
-      ? daysBetween(previousBlockState.lastEventDate, day)
-      : null;
-    let bikeAllowanceFactor = computeBikeAllowanceFactor(weeksToEvent, {
-      daysSinceEvent: Number.isFinite(previousDaysSinceEvent) && previousDaysSinceEvent >= 0
-        ? Math.round(previousDaysSinceEvent)
-        : null,
-    });
+    let bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent);
+    try {
+      const postRaceWindow = await resolvePostRaceRampWindow(day, previousBlockState, env);
+      if (postRaceWindow.active) bikeSubFactor = 0.4;
+    } catch {
+      // keep default factor
+    }
     const longRun14d = computeLongRunSummary14d(ctx, day);
     const longestRun30d = computeLongestRunSummaryWindow(ctx, day, LONGRUN_PREPLAN.spikeGuardLookbackDays);
     const longRunPlan = computeLongRunTargetMinutes(weeksToEvent, eventDistance);
@@ -8534,16 +8060,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       (typeof globalThis !== "undefined" && globalThis?.process?.env
         ? globalThis.process.env.RUN_FLOOR_DEBUG_TRACE
         : "");
-    const baseRunFloorTarget =
-      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
-        ? previousBlockState.floorTarget
-        : MIN_STIMULUS_7D_RUN_EVENT;
-
     const runFloorEwma10 = computeRunFloorEwma(ctx, day, {
       eventDate,
-      lastEventDate: previousBlockState?.lastEventDate || null,
       eventDistance,
-      runFloorTarget: baseRunFloorTarget,
       debugTrace: /^1|true|yes$/i.test(String(runFloorDebugFlag || "")),
     });
 
@@ -8567,12 +8086,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       loads7Prev = await computeLoads7d(ctx, prevWindowDay);
     } catch {}
     const weeksPrev = eventDate ? computeWeeksToEvent(prevWindowDay, eventDate, null) : { weeksToEvent: null };
-    const runFloorEwma10Prev = computeRunFloorEwma(ctx, prevWindowDay, {
-      eventDate,
-      lastEventDate: previousBlockState?.lastEventDate || null,
-      eventDistance,
-      runFloorTarget: baseRunFloorTarget,
-    });
+    const bikeSubFactorPrev = computeBikeSubstitutionFactor(weeksPrev.weeksToEvent ?? null);
+    const runFloorEwma10Prev = computeRunFloorEwma(ctx, prevWindowDay, { eventDate, eventDistance });
 
     const prevIntensitySignal = loads7Prev.intensitySignal ?? "none";
     const prevAerobicFloorActive = policy.useAerobicFloor && prevIntensitySignal === "ok";
@@ -8602,6 +8117,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastKeyType,
       longrunSpecificity: longrunSpecificityPre,
     });
+
+    const baseRunFloorTarget =
+      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
+        ? previousBlockState.floorTarget
+        : MIN_STIMULUS_7D_RUN_EVENT;
 
     const historyMetrics = {
       runFloorEwma10: runFloorEwma10 ?? 0,
@@ -8635,7 +8155,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       historyMetrics,
       previousState: previousBlockState,
       efTrend,
-      postEventOpenActive: Boolean(modeInfo?.postEventOpenActive),
     });
 
     if (manualRaceStartIso && blockState.block === "RACE") {
@@ -8672,11 +8191,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const phase = mapBlockToPhase(blockState.block);
     const eventInDays = eventDate ? daysBetween(day, eventDate) : null;
     const dailyRunLoads = buildRunDailyLoads(ctx, day, RUN_FLOOR_DELOAD_WINDOW_DAYS);
-    const modeLastEventDistance = normalizeEventDistance(modeInfo?.lastEventDistance) || null;
-    const previousStateForRunFloor = {
-      ...(previousBlockState || {}),
-      lastEventDistance: modeLastEventDistance || normalizeEventDistance(previousBlockState?.lastEventDistance) || null,
-    };
     const runFloorState = evaluateRunFloorState({
       todayISO: day,
       floorTarget: baseRunFloorTarget,
@@ -8684,14 +8198,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       eventInDays,
       eventDistance,
       eventDateISO: eventDate || null,
-      previousState: previousStateForRunFloor,
+      previousState: previousBlockState,
       dailyRunLoads,
       lifeEventEffect: modeInfo?.lifeEventEffect || getLifeEventEffect(null),
       recentHolidayEvent: modeInfo?.recentHolidayEvent || null,
     });
-    bikeAllowanceFactor = computeBikeAllowanceFactor(weeksToEvent, {
-      daysSinceEvent: runFloorState?.daysSinceEvent,
-    });
+    bikeSubFactor = computeBikeSubstitutionFactor(weeksToEvent, runFloorState?.overlayMode);
 
     if (policy.specificKind === "run" || policy.specificKind === "open") {
       policy = {
@@ -8717,20 +8229,24 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.lastDeloadCompletedISO = runFloorState.lastDeloadCompletedISO;
     blockState.lastFloorIncreaseDate = runFloorState.lastFloorIncreaseDate;
     blockState.lastEventDate = runFloorState.lastEventDate;
-    blockState.lastEventDistance = runFloorState.lastEventDistance || modeLastEventDistance || null;
     blockState.postRaceRampUntilISO = runFloorState.postRaceRampUntilISO;
     try {
       if (savedPostRaceRampUntilISO && !isIsoDate(blockState?.postRaceRampUntilISO)) {
         blockState.postRaceRampUntilISO = savedPostRaceRampUntilISO;
         if (savedLastEventDate) blockState.lastEventDate = savedLastEventDate;
-        if (savedLastEventDistance) blockState.lastEventDistance = savedLastEventDistance;
       }
       if (savedPostRaceRampUntilISO && !isIsoDate(runFloorState?.postRaceRampUntilISO)) {
         runFloorState.postRaceRampUntilISO = savedPostRaceRampUntilISO;
         if (savedLastEventDate) runFloorState.lastEventDate = savedLastEventDate;
-        if (savedLastEventDistance) runFloorState.lastEventDistance = savedLastEventDistance;
       }
     } catch {}
+    try {
+      const postRaceWindow = await resolvePostRaceRampWindow(day, blockState, env);
+      if (postRaceWindow.active) bikeSubFactor = 0.4;
+    } catch {
+      // keep computed overlay/week-based factor
+    }
+
     const strengthPolicyBase = robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
     const strengthPolicy = applyStrengthPolicyOverlay(strengthPolicyBase, {
       overlayMode: runFloorState?.overlayMode,
@@ -8769,11 +8285,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       day,
       blockState.block,
       eventDistance,
-      blockState.startDate || blockState.blockStartEffective || null,
-      {
-        overlayMode: runFloorState?.overlayMode,
-        lastEventDate: blockState?.lastEventDate || runFloorState?.lastEventDate || null,
-      }
+      blockState.startDate || blockState.blockStartEffective || null
     );
     const weekInBlock = Math.max(1, Math.floor((blockState.timeInBlockDays ?? 0) / 7) + 1);
     const plannedPrimaryType = decideKeyType1PerWeek(
@@ -8810,8 +8322,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastSessionLever: lastSessionLeverReview || null,
       historyMetrics,
       longrunSpecificity,
-      lastEventDate: blockState.lastEventDate || runFloorState.lastEventDate || null,
-      lastEventDistance: blockState.lastEventDistance || runFloorState.lastEventDistance || null,
     });
     if (modeInfo?.lifeEventEffect?.active && modeInfo.lifeEventEffect.allowKeys === false) {
       keyCompliance.keyAllowedNow = false;
@@ -8892,7 +8402,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     historyMetrics.keyCompliance = keyCompliance;
     historyMetrics.distanceDiagnostics = distanceDiagnostics;
-    const blockLabelForWellness = getBlockLabelForWellness(blockState.block, runFloorState.overlayMode);
+    const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
     patch[FIELD_BLOCK] = blockLabelForWellness;
 
     previousBlockState = {
@@ -8908,7 +8418,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastDeloadCompletedISO: blockState.lastDeloadCompletedISO,
       lastFloorIncreaseDate: blockState.lastFloorIncreaseDate,
       lastEventDate: blockState.lastEventDate,
-      lastEventDistance: blockState.lastEventDistance,
       postRaceRampUntilISO: blockState.postRaceRampUntilISO,
       lastLifeEventCategory: runFloorState.lastLifeEventCategory,
       lastLifeEventStartISO: runFloorState.lastLifeEventStartISO,
@@ -9042,9 +8551,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       longRunSummary,
       distanceDiagnostics,
       gapRecommendations,
-      bikeAllowanceFactor,
-      bikeConversionFactor,
-      bikesToday,
+      bikeSubFactor,
       weeksToEvent,
       eventDistance,
       fitnessProfile,
@@ -9193,7 +8700,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         rampPct: fatigue?.rampPct ?? null,
         driftMed: motor?.driftMed ?? null,
         strengthMin7d: strengthPolicyResolved?.minutes7d ?? 0,
-        strengthMinRunfloor: strengthPolicyResolved?.minRunfloor ?? 30,
         strengthTarget: strengthPolicyResolved?.target ?? 30,
         longrunMin: longRunDoneMin ?? 0,
         weakStrengthWeeks: Array.isArray(ctx.weekMemories)
@@ -9368,7 +8874,7 @@ Fehler: ${String(e?.message ?? e)}`;
   }
 
   if (write && isMondayIso(oldest)) {
-    await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
+    sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
       console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
     });
   }
@@ -10360,7 +9866,7 @@ function computeLongrunFrequency21d(ctx, dayIso) {
     const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
-    if (min * 60 >= LONGRUN_MIN_SECONDS) count += 1;
+    if (min >= 60) count += 1;
   }
   return count;
 }
@@ -10375,7 +9881,7 @@ function computeLongrunFrequency35d(ctx, dayIso) {
     const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (!d || d < startIso || d >= endIso) continue;
     const min = (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60;
-    if (min * 60 >= LONGRUN_MIN_SECONDS) count += 1;
+    if (min >= 60) count += 1;
   }
   return count;
 }
@@ -10428,17 +9934,13 @@ function buildNextRunRecommendation({
   hoursSinceLastKey,
   keySuggestion,
   explicitSession,
-  plannedSessionType,
 }) {
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
-  const keyScheduledToday = String(plannedSessionType || "").toUpperCase() === "KEY";
   const keySuggestedNow = keyAllowedNow && (
-    keyScheduledToday
-    || keySuggestionText.includes("key heute")
-    || keySuggestionText.includes("optional/erlaubt")
+    keySuggestionText.includes("optional/erlaubt")
     || keySuggestionText.includes("nächster key:")
   );
   if (overlay === "LIFE_EVENT_STOP") {
@@ -10453,10 +9955,6 @@ function buildNextRunRecommendation({
       : "20–35 min locker (Taper)";
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
-  } else if (keySuggestedNow) {
-    next = conciseExplicitSession
-      ? `Key wie im Wochenplan: ${conciseExplicitSession}.`
-      : "Key wie im Wochenplan (kontrolliert, sauber laufen).";
   } else if (hasSpecific && !specificOk) {
     next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
@@ -10584,54 +10082,6 @@ function inferKeyTypeFromExplicitSession(explicitSession) {
   return normalizeKeyType(text);
 }
 
-function resolvePlannableKeyType(plannedKeyType, keyRules = {}) {
-  const allowed = Array.isArray(keyRules?.allowedKeyTypes) ? keyRules.allowedKeyTypes : [];
-  const banned = Array.isArray(keyRules?.bannedKeyTypes) ? keyRules.bannedKeyTypes : [];
-  const preferred = Array.isArray(keyRules?.preferredKeyTypes) ? keyRules.preferredKeyTypes : [];
-  const normalizedPlanned = normalizeKeyType(plannedKeyType);
-
-  const allowedPool = allowed.filter((type) => !banned.includes(type));
-  const plannedAllowed = normalizedPlanned && allowedPool.includes(normalizedPlanned);
-  if (plannedAllowed) return normalizedPlanned;
-
-  const preferredFallback = preferred.find((type) => allowedPool.includes(type));
-  if (preferredFallback) return preferredFallback;
-  if (allowedPool.length) return allowedPool[0];
-  if (normalizedPlanned && !banned.includes(normalizedPlanned)) return normalizedPlanned;
-  return null;
-}
-
-function isConcreteKeySession(explicitSession) {
-  const raw = String(explicitSession || "").trim();
-  if (!raw) return false;
-  const lower = raw.toLowerCase();
-  const placeholderSignals = [
-    "hebel aus letzter key-session",
-    "progression template missing",
-    "geplante anpassung:",
-    "cue:",
-  ];
-  if (placeholderSignals.some((signal) => lower.includes(signal))) return false;
-
-  const normalized = raw
-    .replace(/^[^:]{1,40}\s+konkret:\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!normalized) return false;
-
-  const hasWorkoutStructure =
-    /\d+\s*[x×]\s*\d+/i.test(normalized)
-    || /\d+\s*(km|m|min|′|sec|s)\b/i.test(normalized)
-    || /@\s*[^\s]/.test(normalized);
-  if (!hasWorkoutStructure) return false;
-
-  const genericOnlySignals = ["locker", "frei", "regeneration", "technik"];
-  const hardSignals = ["schwelle", "vo2", "racepace", "tempo", "interval", "@", "x"];
-  const genericOnly = genericOnlySignals.some((signal) => lower.includes(signal))
-    && !hardSignals.some((signal) => lower.includes(signal));
-  return !genericOnly;
-}
-
 function explicitSessionFromSuggestion(suggestion) {
   const text = String(suggestion || "");
   const match = text.match(/Konkrete Session-Idee:\s*([^\n]+)/i);
@@ -10757,36 +10207,59 @@ function buildRecommendationsAndBottomLine(state) {
   };
 }
 
-function buildTransitionLine({ bikeAllowanceFactor, weeksToEvent, eventDistance }) {
-  if (!(bikeAllowanceFactor > 0)) return null;
-  const pct = Math.round(bikeAllowanceFactor * 100);
+function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
+  if (!(bikeSubFactor > 0)) return null;
+  const pct = Math.round(bikeSubFactor * 100);
   const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
   const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
   return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
-function buildBikeAllowanceLine({ bikeAllowanceFactor, overlayMode = "NORMAL" }) {
-  const factor = Number.isFinite(bikeAllowanceFactor) ? clamp(bikeAllowanceFactor, 0, 1) : 0;
+function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
+  if (overlayMode === "POST_RACE_RAMP") {
+    return "Rad als Crosstraining erlaubt (Post-Race, Faktor 0.4) — kein Laufersatz, ergänzend.";
+  }
+  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
   const allowed = factor > 0;
   const factorPct = Math.round(factor * 100);
   return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
 }
 
-function buildBikeWeeklyRule({ bikeAllowanceFactor, weeksToEvent, daysSinceEvent = null }) {
-  const factor = Number.isFinite(bikeAllowanceFactor) ? clamp(bikeAllowanceFactor, 0, 1) : 0;
+function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL", dayIso = null, postRaceRampUntilISO = null, lastEventDate = null }) {
+  let postRaceWindowActive = false;
+  try {
+    const postRaceWindow = resolvePostRaceRampWindowSync(dayIso, {
+      postRaceRampUntilISO,
+      lastEventDate,
+    });
+    postRaceWindowActive = postRaceWindow.active;
+  } catch {
+    postRaceWindowActive = false;
+  }
+  if (overlayMode === "POST_RACE_RAMP" || postRaceWindowActive) {
+    const untilText = isIsoDate(postRaceRampUntilISO) ? postRaceRampUntilISO : "n/a";
+    return {
+      bikeAllowed: true,
+      easyAllowed: true,
+      gaAllowed: false,
+      keyAllowed: false,
+      longrunAllowed: false,
+      maxReplaceableWeeklySharePct: 0,
+      practicalHint: "Post-Race aktiv erholen: 1–2 sehr lockere Rad-Einheiten ergänzend, Läufe nur wenn Beine bereit.",
+      summaryLine: `Bike-Wochenregel: Rad als Crosstraining empfohlen (Post-Race Erholung, bis ${untilText}).`,
+      recommendationLine:
+        "Post-Race Ramp: Rad als lockeres Crosstraining nutzen, aber nicht als Ersatz für Laufpflichten/RunFloor rechnen; Key und Longrun bleiben laufspezifisch.",
+    };
+  }
+  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
   const bikeAllowed = factor > 0;
   const easyAllowed = bikeAllowed;
-  const gaAllowed = bikeAllowed && (Number.isFinite(weeksToEvent) ? weeksToEvent > 8 : true);
+  const gaAllowed = bikeAllowed && (Number.isFinite(weeksToEvent) ? weeksToEvent >= 10 : false);
   const keyAllowed = false;
   const longrunAllowed = false;
   const maxReplaceableWeeklySharePct = bikeAllowed ? Math.round(factor * 100) : 0;
-  const practicalHint =
-    Number.isFinite(daysSinceEvent) && daysSinceEvent >= 0 && daysSinceEvent <= 13
-      ? "Post-Race-Fenster: maximal flexibel, trotzdem Key/Longrun laufspezifisch halten"
-      : bikeAllowed
-        ? "praktisch meist 0–1 lockere Einheiten/Woche"
-        : null;
+  const practicalHint = bikeAllowed ? "praktisch meist 0–1 lockere Einheiten/Woche" : null;
 
   return {
     bikeAllowed,
@@ -10806,25 +10279,28 @@ function buildBikeWeeklyRule({ bikeAllowanceFactor, weeksToEvent, daysSinceEvent
 }
 
 function buildBikeReplacementGuidanceLine({
-  bikeAllowanceFactor,
-  bikeConversionFactor = BIKE_CONVERSION_FACTOR_FALLBACK,
+  bikeSubFactor,
   runFloorGap = null,
   runTarget = null,
   maxReplaceableWeeklySharePct = null,
+  overlayMode = "NORMAL",
 }) {
-  const allowanceFactor = Number.isFinite(bikeAllowanceFactor) ? clamp(bikeAllowanceFactor, 0, 1) : 0;
-  const conversionFactor = Number.isFinite(bikeConversionFactor) ? clamp(bikeConversionFactor, 0, 1) : BIKE_CONVERSION_FACTOR_FALLBACK;
-  if (!(allowanceFactor > 0)) return "Bike→Lauf-TSS Ersatz: aktuell nicht möglich (Allowance 0,00).";
+  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  if (!(factor > 0)) return "Bike→Lauf-TSS Ersatz: aktuell nicht möglich (Faktor 0,00).";
 
-  const pct = Math.round(conversionFactor * 100);
-  const bikeForTenRunTss = Math.round((10 / conversionFactor) * 10) / 10;
+  const pct = Math.round(factor * 100);
+  const bikeForTenRunTss = Math.round((10 / factor) * 10) / 10;
   const replaceCapText = Number.isFinite(maxReplaceableWeeklySharePct)
     ? ` (Wochenlimit: bis ${Math.max(0, Math.round(maxReplaceableWeeklySharePct))}% des RunFloor-Ziels)`
     : "";
 
+  if (overlayMode === "POST_RACE_RAMP") {
+    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; rechnerisch 10 Lauf-TSS ≈ ${bikeForTenRunTss} Bike-TSS${replaceCapText}. Hinweis: Post-Race nur ergänzend nutzen, nicht als Pflicht-Laufersatz.`;
+  }
+
   if (Number.isFinite(runFloorGap) && runFloorGap < 0 && Number.isFinite(runTarget) && runTarget > 0) {
     const neededRunTss = Math.abs(runFloorGap);
-    const bikeTssEquivalent = Math.round((neededRunTss / conversionFactor) * 10) / 10;
+    const bikeTssEquivalent = Math.round((neededRunTss / factor) * 10) / 10;
     return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; offenes Gap ${Math.round(neededRunTss)} Lauf-TSS ≈ ${bikeTssEquivalent} Bike-TSS${replaceCapText}.`;
   }
 
@@ -10836,15 +10312,6 @@ function formatPhaseOverlayLine(phase, overlay) {
   const phaseLabel = String(phase || "BASE").toUpperCase();
   const overlayLabel = String(overlay || "NORMAL").toUpperCase();
   return `Steuerung: Phase ${phaseLabel} | Overlay ${overlayLabel}`;
-}
-
-function getBlockLabelForWellness(block, overlayMode) {
-  const normalizedOverlay = String(overlayMode || "NORMAL").toUpperCase();
-  if (normalizedOverlay === "TAPER") return "TAPER";
-  if (normalizedOverlay === "POST_RACE_RAMP") return "BASE";
-  const normalizedBlock = String(block || "BASE").toUpperCase();
-  if (["BASE", "BUILD", "RACE", "RESET"].includes(normalizedBlock)) return normalizedBlock;
-  return "BASE";
 }
 
 function buildComments(
@@ -10874,10 +10341,7 @@ function buildComments(
     longRunSummary,
     distanceDiagnostics,
     gapRecommendations,
-    bikeAllowanceFactor,
-    bikeConversionFactor,
     bikeSubFactor,
-    bikesToday,
     weeksToEvent,
     eventDistance,
     fitnessProfile,
@@ -10888,7 +10352,6 @@ function buildComments(
   { debug = false, verbosity = "coach" } = {}
 ) {
   const lines = [];
-  const bikesTodayList = Array.isArray(bikesToday) ? bikesToday : [];
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
   const formatSignedPct1 = (value) =>
     Number.isFinite(value)
@@ -11022,7 +10485,6 @@ function buildComments(
     weeksToEvent,
   });
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
-  const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday || entry?.date === todayIso);
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
     policy,
@@ -11037,23 +10499,23 @@ function buildComments(
     hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
     keySuggestion: keyCompliance?.suggestion,
     explicitSession: explicitSessionText,
-    plannedSessionType: todayPlanEntry?.sessionType,
   });
-  const resolvedBikeAllowanceFactor = Number.isFinite(bikeAllowanceFactor) ? bikeAllowanceFactor : bikeSubFactor;
-  const resolvedBikeConversionFactor = Number.isFinite(bikeConversionFactor) ? bikeConversionFactor : BIKE_CONVERSION_FACTOR_FALLBACK;
-  const transitionLine = buildTransitionLine({ bikeAllowanceFactor: resolvedBikeAllowanceFactor, weeksToEvent, eventDistance });
-  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeAllowanceFactor: resolvedBikeAllowanceFactor, overlayMode });
+  const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
+  const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
   const bikeWeeklyRule = buildBikeWeeklyRule({
-    bikeAllowanceFactor: resolvedBikeAllowanceFactor,
+    bikeSubFactor,
     weeksToEvent,
-    daysSinceEvent: runFloorState?.daysSinceEvent ?? null,
+    overlayMode,
+    dayIso: todayIso,
+    postRaceRampUntilISO: blockState?.postRaceRampUntilISO ?? runFloorState?.postRaceRampUntilISO ?? null,
+    lastEventDate: blockState?.lastEventDate ?? runFloorState?.lastEventDate ?? null,
   });
   const bikeReplacementGuidanceLine = buildBikeReplacementGuidanceLine({
-    bikeAllowanceFactor: resolvedBikeAllowanceFactor,
-    bikeConversionFactor: resolvedBikeConversionFactor,
+    bikeSubFactor,
     runFloorGap,
     runTarget,
     maxReplaceableWeeklySharePct: bikeWeeklyRule?.maxReplaceableWeeklySharePct,
+    overlayMode,
   });
 
   const longRun14d = longRunSummary?.longRun14d || { minutes: 0, date: null };
@@ -11088,35 +10550,11 @@ function buildComments(
   const runMetrics = [];
   if (!perRunInfo?.length) {
     runMetrics.push("Status: Heute kein Lauf.");
-    if (bikesTodayList.length) {
-      const bikeMinutesToday = Math.round(
-        sum(bikesTodayList.map((a) => Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0)) / 60
-      );
-      const bikeLoadTodayRaw = sum(bikesTodayList.map((a) => Number(extractLoad(a)) || 0));
-      const bikeLoadToday = Number.isFinite(bikeLoadTodayRaw) && bikeLoadTodayRaw > 0
-        ? Math.round(bikeLoadTodayRaw)
-        : null;
-      const bikeCountLabel = bikesTodayList.length > 1 ? `${bikesTodayList.length} Einheiten` : "1 Einheit";
-      const bikeDurationLabel = bikeMinutesToday > 0 ? `${bikeMinutesToday}′` : "n/a";
-      runMetrics.push(`Rad heute: ${bikeCountLabel}, gesamt ${bikeDurationLabel}${bikeLoadToday != null ? `, Load ~${bikeLoadToday}` : ""}.`);
-      runMetrics.push("Interpretation: Gute aerobe Arbeit ohne Lauf-Impact; laufspezifischer Reiz (Sehnen/Ökonomie) bleibt dennoch offen und sollte mit dem nächsten echten Lauf gesetzt werden.");
-    }
   } else {
-    const raceToday = perRunInfo.find((x) => isRaceActivity(x.activity));
     const intervalToday = perRunInfo.find((x) => x.intervalSignal && (x.intervalMetrics || x.intervalStructureHint || x.paceConsistencyHint));
     const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey && !x.intervalSignal && !isTempoDauerlaufKey(x.activity));
-    if (raceToday) {
-      const raceDistanceKm = extractRunDistanceKm(raceToday.activity);
-      const raceTimeSec = Number(raceToday.activity?.moving_time ?? raceToday.activity?.elapsed_time ?? 0);
-      const racePaceSecPerKm = raceDistanceKm > 0 ? raceTimeSec / raceDistanceKm : null;
-      const raceVdot = estimateVdotFromRacePerformance(Math.round(raceDistanceKm * 1000), raceTimeSec);
-      const raceDistanceLabel = normalizeRaceDistanceLabel(inferRaceDistanceLabel(Math.round(raceDistanceKm * 1000)));
-      runMetrics.push(`Wettkampf erkannt: ${raceDistanceLabel}.`);
-      runMetrics.push(`Rennzeit: ${formatRaceTimeLabel(raceTimeSec) || "n/a"} | Pace: ${formatPacePerKm(racePaceSecPerKm) || "n/a"}.`);
-      runMetrics.push(`Race-VDOT: ${Number.isFinite(raceVdot) ? Math.round(raceVdot) : "n/a"} (aus Rennzeit berechnet).`);
-      runMetrics.push("Hinweis: Renntag separat bewerten — GA-Metriken (EF/Drift) heute nur als Nebeninfo.");
-    } else if (intervalToday) {
+    if (intervalToday) {
       const sessionQuality = ensureStructuredSessionReview(intervalToday.activity, getKeyType(intervalToday.activity));
       if (sessionQuality?.lines?.length) {
         runMetrics.push(...sessionQuality.lines);
@@ -11439,12 +10877,10 @@ function buildComments(
     if (recommendationLines.length >= 4) break;
   }
 
-  const raceDayToday = Boolean((weekPreview?.days || []).find((entry) => entry?.isToday && entry?.sessionType === "RACE"));
   const diagnoseLines = [];
-  diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100${raceDayToday ? " (Renntag: nur eingeschränkt vergleichbar)" : ""}`);
+  diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
-  if (raceDayToday) diagnoseLines.push("Renntag-Diagnose: Fokus auf Rennauswertung und Erholung, nicht auf normalen Trainingsfortschritt.");
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
   if (resolvedDecision.mainLimiter) addUniqueTopicLine(renderedTopics, "main_limiter", resolvedDecision.mainLimiter);
@@ -11559,7 +10995,7 @@ function buildComments(
     `Fatigue Override: ${fatigue?.override ? "aktiv" : "aus"}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     `Block: ${blockState?.block || "n/a"}`,
-    `Bike-Allowance: ${Number(resolvedBikeAllowanceFactor || 0).toFixed(2)} | Bike-Conversion: ${Number(resolvedBikeConversionFactor || 0).toFixed(2)}`,
+    `Bike-Faktor: ${Number(bikeSubFactor || 0).toFixed(2)}`,
     "",
   ];
   const coachConsequencesLines = [
@@ -11984,7 +11420,7 @@ async function upsertWeekDocAndIndex(env, mondayIso, warmupSkipSec, context = {}
 
   const minutesTotal = sum(runs.map((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) / 60));
   const loadTotal = sum(runs.map((a) => extractLoad(a)));
-  const longrunsCount = runs.filter((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) >= LONGRUN_MIN_SECONDS).length;
+  const longrunsCount = runs.filter((a) => (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0) >= 60 * 60).length;
 
   const eventDistance = normalizeEventDistance(context?.eventDistance) || "10k";
   let easyMinutes = 0;
@@ -12750,15 +12186,15 @@ function buildMiniPlanTargets({ runsPerWeek, weeklyLoad, keyPerWeek, suppressLon
   const exampleWeek =
     suppressLongrun
       ? runTarget === "2–3"
-        ? ["Slot A: 30–35′ easy", "Slot B: 20–30′ shakeout + Mobilität (48h später)"]
+        ? ["Mi 30–35′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
         : includeKey
-        ? ["Slot A: 30–40′ key (kurz/aktivierend)", "Slot B: 30–40′ easy (48–72h nach Key)", "Slot C: 20–30′ shakeout + Mobilität"]
-        : ["Slot A: 30–35′ easy", "Slot B: 35–45′ easy (48h später)", "Slot C: 20–30′ shakeout + Mobilität"]
+        ? ["Di 30–40′ key (kurz/aktivierend)", "Fr 30–40′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
+        : ["Mi 30–35′ easy", "Fr 35–45′ easy", "Sa/So 20–30′ shakeout + Mobilität"]
       : runTarget === "2–3"
-      ? ["Slot A: 30–35′ easy", "Slot B: 60–75′ longrun (4–6 Tage später)"]
+      ? ["Mi 30–35′ easy", "So 60–75′ longrun"]
       : includeKey
-      ? ["Slot A: 35–45′ key (Schwelle/VO2)", "Slot B: 40–50′ GA (48h nach Key)", "Slot C: 60–75′ longrun (4–6 Tage nach letztem Longrun)"]
-      : ["Slot A: 30–35′ easy", "Slot B: 40–50′ GA", "Slot C: 60–75′ longrun (4–6 Tage Rhythmus)"];
+      ? ["Di 35–45′ key (Schwelle/VO2)", "Fr 40–50′ GA", "So 60–75′ longrun"]
+      : ["Mi 30–35′ easy", "Fr 40–50′ GA", "So 60–75′ longrun"];
 
   return { runTarget, loadTarget, exampleWeek, longrunMinTarget, longrunDevelopmentTarget };
 }
@@ -14401,7 +13837,7 @@ async function buildWatchfacePayload(env, endIso) {
     const d = String(a.start_date_local || a.start_date || "").slice(0, 10);
     if (!d || !(d in runLoadByDay)) continue;
 
-    if (isRun(a) || isBike(a)) {
+    if (isRun(a)) {
       runLoadByDay[d] += Number(extractLoad(a)) || 0; // dein “TSS/Load”-Proxy (icu_training_load/hr_load)
       continue;
     }
@@ -14634,18 +14070,9 @@ function addDebug(debugOut, day, a, status, computed) {
 
 async function determineMode(env, dayIso, debug = false, prefetchedEvents = null) {
   const auth = authHeader(env);
-  const hasPrefetchedEvents = Array.isArray(prefetchedEvents);
-  const events = hasPrefetchedEvents
+  const events = Array.isArray(prefetchedEvents)
     ? prefetchedEvents
     : await fetchUpcomingEvents(env, auth, debug, 8000, dayIso);
-  if (debug) {
-    const eventsCount = Array.isArray(events) ? events.length : 0;
-    console.log("[debug:determineMode:events]", {
-      dayIso,
-      source: hasPrefetchedEvents ? "prefetched" : "live_fetch",
-      eventsCount,
-    });
-  }
   const races = (events || []).filter((e) => isARaceEvent(e));
   const recentHolidayEvent = findRecentHolidayEvent(events || [], dayIso);
 
@@ -14669,57 +14096,18 @@ async function determineMode(env, dayIso, debug = false, prefetchedEvents = null
 
   const next = sorted.find((x) => x.day >= dayIso) || null;
   const lastPast = [...sorted].reverse().find((x) => x.day < dayIso) || null;
-  if (debug) {
-    const compactEvent = (eventEntry) => {
-      if (!eventEntry?.e) return null;
-      const event = eventEntry.e;
-      return {
-        name: event?.name ?? null,
-        category: event?.category ?? null,
-        start_date_local: event?.start_date_local ?? null,
-        type: event?.type ?? null,
-        distance: event?.distance ?? null,
-        isARaceEvent: isARaceEvent(event),
-      };
-    };
-    console.log("[debug:determineMode:candidates]", {
-      dayIso,
-      raceCount: races.length,
-      lastPast: compactEvent(lastPast),
-      next: compactEvent(next),
-    });
-  }
 
   if (lastPast) {
     const daysSinceLastEvent = diffDays(lastPast.day, dayIso);
     if (Number.isFinite(daysSinceLastEvent) && daysSinceLastEvent >= 0 && daysSinceLastEvent <= POST_EVENT_OPEN_DAYS) {
-      if (debug) {
-        console.log("[debug:determineMode:postEventOpen]", {
-          dayIso,
-          daysSinceLastEvent,
-          postEventOpenDays: POST_EVENT_OPEN_DAYS,
-          keepNextEvent: Boolean(next?.e),
-          nextEvent: next?.e
-            ? {
-              name: next.e?.name ?? null,
-              category: next.e?.category ?? null,
-              start_date_local: next.e?.start_date_local ?? null,
-              type: next.e?.type ?? null,
-              distance: next.e?.distance ?? null,
-              isARaceEvent: isARaceEvent(next.e),
-            }
-            : null,
-        });
-      }
       return {
         mode: "OPEN",
         primary: "open",
-        nextEvent: next?.e || null,
+        nextEvent: null,
         eventError: null,
         postEventOpenActive: true,
         postEventOpenDaysLeft: POST_EVENT_OPEN_DAYS - daysSinceLastEvent,
         lastEventDate: lastPast.day,
-        lastEventDistance: getEventDistanceFromEvent(lastPast.e),
         activeLifeEvent,
         lifeEventEffect,
         recentHolidayEvent,
@@ -15193,17 +14581,12 @@ async function fetchUpcomingEvents(env, auth, debug, timeoutMs, dayIso) {
 // INTERNAL TEST HOOKS ONLY: not part of the public/runtime API contract.
 // Keep usage scoped to local tests in this repository.
 const __internalTestHooks = Object.freeze({
-  determineMode,
-  determineBlockState,
-  isARaceCategory,
-  isARaceEvent,
   isWorkerSubrequestLimitError,
   detectStrength,
   buildRunSignatureDescriptor,
   adaptExpectedKeysForOverlay,
   evaluateKeyCompliance,
   formatPhaseOverlayLine,
-  getBlockLabelForWellness,
   buildWeekPreview,
   buildWeeklyFocus,
   applyStrengthPolicyOverlay,
@@ -15213,13 +14596,9 @@ const __internalTestHooks = Object.freeze({
   buildComments,
   inferKeyTypeFromExplicitSession,
   resolveRunFloorDecisionText,
-  getFloorRaiseDecision,
-  evaluateRunFloorState,
   buildWhyNarrative,
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
-  computeIntensityDistribution,
-  computeBikeAllowanceFactor,
 });
 
 export const __test = __internalTestHooks;
