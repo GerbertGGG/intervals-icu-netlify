@@ -5626,6 +5626,52 @@ function capText(s, maxChars) {
   return `${x.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function toFiniteNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtInt(value) {
+  const n = toFiniteNumber(value);
+  return n == null ? "n/a" : String(Math.round(n));
+}
+
+function fmt1(value) {
+  const n = toFiniteNumber(value);
+  return n == null ? "n/a" : n.toFixed(1).replace(".", ",");
+}
+
+function fmt2(value) {
+  const n = toFiniteNumber(value);
+  return n == null ? "n/a" : n.toFixed(2).replace(".", ",");
+}
+
+function fmtPct(value, digits = 0) {
+  const n = toFiniteNumber(value);
+  if (n == null) return "n/a";
+  return `${n.toFixed(digits).replace(".", ",")} %`;
+}
+
+function fmtMinutes(value) {
+  const n = toFiniteNumber(value);
+  return n == null ? "n/a" : `${Math.round(n)}′`;
+}
+
+function fmtKm(value) {
+  const n = toFiniteNumber(value);
+  return n == null ? "n/a" : `${n.toFixed(1).replace(".", ",")} km`;
+}
+
+function fmtRatio(value) {
+  return fmt2(value);
+}
+
+function toBulletLine(text) {
+  const clean = String(text ?? "").trim();
+  if (!clean) return null;
+  return clean.startsWith("• ") ? clean : `• ${clean}`;
+}
+
 function buildRecommendationsAndBottomLine(state) {
   const rec = [];
   const bottom = [];
@@ -5644,33 +5690,33 @@ function buildRecommendationsAndBottomLine(state) {
   if (state?.todayKeyLine) bottom.push(String(state.todayKeyLine).replace(/\.$/, "") + ".");
 
   if (Number.isFinite(runFloorNow) && Number.isFinite(runFloorTarget) && runFloorNow < runFloorTarget) {
-    rec.push(`RunFloor ${runFloorNow}/${runFloorTarget} → Volumen priorisieren.`);
+    rec.push(`RunFloor ${fmtInt(runFloorNow)} / ${fmtInt(runFloorTarget)} → Volumen priorisieren.`);
   }
   if (Number.isFinite(longRunDoneMin) && Number.isFinite(longRunTargetMin) && longRunTargetMin > 0) {
     if (longRunGapMin < 0) {
-      rec.push(`Longrun ${longRunDoneMin}′/${longRunTargetMin}′ → diese Woche locker auf ${longRunTargetMin}′ annähern.`);
+      rec.push(`Longrun ${fmtMinutes(longRunDoneMin)} / ${fmtMinutes(longRunTargetMin)} → diese Woche locker an ${fmtMinutes(longRunTargetMin)} annähern.`);
     } else if (longRunDoneMin > 0 && Number.isFinite(longRunStepCapMin) && Number.isFinite(blockLongRunNextWeekTargetMin)) {
       const spikeGuardNote = Number.isFinite(longRunSpikeCapMin) && longRunSpikeCapMin > 0
-        ? ` (Spike-Guard ${longRunSpikeWindowDays}T: ≤${longRunSpikeCapMin}′)`
+        ? ` · Spike-Guard ${fmtInt(longRunSpikeWindowDays)}T: ≤${fmtMinutes(longRunSpikeCapMin)}`
         : "";
-      rec.push(`Longrun-Progression: nächster Schritt bis ${longRunStepCapMin}′ (Blockziel ${blockLongRunNextWeekTargetMin}′).${spikeGuardNote}`);
+      rec.push(`Longrun-Progression: nächster Schritt bis ${fmtMinutes(longRunStepCapMin)} · Blockziel ${fmtMinutes(blockLongRunNextWeekTargetMin)}${spikeGuardNote}.`);
     }
   }
   if (state?.intensityDistribution?.easyUnder === true) {
-    const easyPct = Math.round((state.intensityDistribution.easyShare || 0) * 100);
-    const easyMinPct = Math.round((state.intensityDistribution?.targets?.easyMin || 0) * 100);
-    rec.push(`Easy-Anteil ${easyPct}% (<${easyMinPct}%) → nächste Einheit locker.`);
+    const easyPct = (state.intensityDistribution.easyShare || 0) * 100;
+    const easyMinPct = (state.intensityDistribution?.targets?.easyMin || 0) * 100;
+    rec.push(`Easy-Anteil ${fmtPct(easyPct)} (<${fmtPct(easyMinPct)}) → nächste Einheit locker.`);
   }
   if (state?.intensityDistribution?.hardOver === true) {
-    const hardPct = Math.round((state.intensityDistribution.hardShare || 0) * 100);
-    const hardMaxPct = Math.round((state.intensityDistribution?.targets?.hardMax || 0) * 100);
-    rec.push(`Hard-Anteil ${hardPct}% (>${hardMaxPct}%) → kein weiterer harter Key.`);
+    const hardPct = (state.intensityDistribution.hardShare || 0) * 100;
+    const hardMaxPct = (state.intensityDistribution?.targets?.hardMax || 0) * 100;
+    rec.push(`Hard-Anteil ${fmtPct(hardPct)} (>${fmtPct(hardMaxPct)}) → kein weiterer harter Key.`);
   }
   if (state?.budgetBlocked) {
-    rec.push(`Key-Budget ${state.actualKeys7}/${state.keyCap7} (7T) erreicht → kein weiterer Key.`);
+    rec.push(`Key-Budget ${fmtInt(state.actualKeys7)} / ${fmtInt(state.keyCap7)} (7T) erreicht → kein weiterer Key.`);
   }
   if (state?.spacingBlocked) {
-    const minGapText = Number.isFinite(state?.keyMinGapDays) ? `${state.keyMinGapDays * 24}h` : `${KEY_MIN_GAP_DAYS_DEFAULT * 24}h`;
+    const minGapText = Number.isFinite(state?.keyMinGapDays) ? `${fmtInt(state.keyMinGapDays * 24)}h` : `${fmtInt(KEY_MIN_GAP_DAYS_DEFAULT * 24)}h`;
     rec.push(`Key-Abstand <${minGapText}${state.nextAllowed ? ` (ab ${state.nextAllowed})` : ""} → heute kein Key.`);
   }
   if (state?.overlayMode && state.overlayMode !== "NORMAL") {
@@ -5873,11 +5919,16 @@ function buildComments(
   { debug = false } = {}
 ) {
   const lines = [];
-  const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
+  const formatPct1 = (value) => (Number.isFinite(value) ? fmtPct(value, 1) : "n/a");
   const formatSignedPct1 = (value) =>
     Number.isFinite(value)
-      ? `${value >= 0 ? "+" : ""}${value.toFixed(1).replace('.', ',')} %`
+      ? `${value >= 0 ? "+" : ""}${fmtPct(value, 1)}`
       : "n/a";
+  const addMetric = (metrics, label, value, { skipIfNA = false } = {}) => {
+    const valueText = String(value ?? "").trim();
+    if (skipIfNA && (!valueText || valueText.toLowerCase() === "n/a")) return;
+    metrics.push(`${label}: ${valueText}`.replace(/\.\./g, "."));
+  };
   const addDecisionBlock = (title, metrics = []) => {
     const titleEmojis = {
       "HEUTIGER LAUF": "🏃",
@@ -5889,7 +5940,8 @@ function buildComments(
     };
     lines.push(`${titleEmojis[title] || "✅"} ${title}`);
     for (const metric of metrics) {
-      if (metric) lines.push(metric);
+      const line = toBulletLine(metric);
+      if (line) lines.push(line);
     }
     lines.push("⸻");
     lines.push("");
@@ -6029,7 +6081,7 @@ function buildComments(
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
-    runMetrics.push("Status: Heute kein Lauf.");
+    addMetric(runMetrics, "Status", "Heute kein Lauf.");
   } else {
     const gaToday = perRunInfo.find((x) => x.ga && !x.isKey);
     const tdlToday = perRunInfo.find((x) => isTempoDauerlaufKey(x.activity));
@@ -6102,31 +6154,31 @@ function buildComments(
         runMetrics.push("Nächster Hebel: Zielpace im Workouttext angeben und Reps mit konsistenter Struktur laufen.");
       }
     } else {
-      runMetrics.push("Status: Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
+      addMetric(runMetrics, "Status", "Lauf vorhanden, aber kein GA- oder Intervallsignal mit ausreichender Datenqualität.");
     }
   }
   addDecisionBlock("HEUTIGER LAUF", runMetrics);
 
   addDecisionBlock("BELASTUNG & PROGRESSION", [
-    `Longrun: ${Math.round(longRun7d?.minutes ?? 0)}′ → Ziel: ${longRunTargetMin}′`,
-    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? (Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100).toFixed(2) : "n/a"} (heute vs. max ${longRun30d?.windowDays ?? 30}T; Guard <= 1.10)`,
+    `Longrun: ${fmtMinutes(longRun7d?.minutes ?? 0)} → Ziel: ${fmtMinutes(longRunTargetMin)}`,
+    `Longrun-Spike-Index: ${longestRun30dMin > 0 ? fmtRatio(Math.max(0, Math.round((Math.round(longRun7d?.minutes ?? 0) / longestRun30dMin) * 100)) / 100) : "n/a"} · Guard ≤ 1,10`,
     `Qualität: ${longRun7d?.quality || "n/a"}${longRun7d?.date ? ` (${longRun7d.date})` : ""}`,
-    `RunFloor (14T EWMA): ${runFloorCurrent} / ${runTarget > 0 ? runTarget : "n/a"}`,
-    `Run-Distanz 14T (Urlaub bereinigt): ${Number.isFinite(fatigue?.runDistLast14AdjKm) ? fatigue.runDistLast14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistLast14Km) ? fatigue.runDistLast14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistLast14HolidayDays) ? fatigue.runDistLast14HolidayDays : 0}d) | Vorperiode: ${Number.isFinite(fatigue?.runDistPrev14AdjKm) ? fatigue.runDistPrev14AdjKm.toFixed(1) : "n/a"} km (raw ${Number.isFinite(fatigue?.runDistPrev14Km) ? fatigue.runDistPrev14Km.toFixed(1) : "n/a"}, Urlaub ${Number.isFinite(fatigue?.runDistPrev14HolidayDays) ? fatigue.runDistPrev14HolidayDays : 0}d) | Ratio: ${Number.isFinite(fatigue?.runDist14dRatio) ? fatigue.runDist14dRatio.toFixed(2) : "n/a"} (<= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)})`,
-    `21-Tage Progression: ${Math.round(runFloorState?.sum21 ?? 0)} / ${Math.round(runFloorState?.baseSum21Target ?? 0) || 450}`,
-    `Aktive Tage (21T): ${Math.round(runFloorState?.activeDays21 ?? 0)} / ${Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14}`,
+    `RunFloor (14T EWMA): ${fmtInt(runFloorCurrent)} / ${runTarget > 0 ? fmtInt(runTarget) : "n/a"}`,
+    `Run-Distanz 14T (Urlaub bereinigt): ${fmtKm(fatigue?.runDistLast14AdjKm)} · Vorperiode: ${fmtKm(fatigue?.runDistPrev14AdjKm)} · Ratio: ${fmtRatio(fatigue?.runDist14dRatio)}`,
+    `21-Tage Progression: ${fmtInt(runFloorState?.sum21 ?? 0)} / ${fmtInt(Math.round(runFloorState?.baseSum21Target ?? 0) || 450)}`,
+    `Aktive Tage (21T): ${fmtInt(runFloorState?.activeDays21 ?? 0)} / ${fmtInt(Math.round(runFloorState?.baseActiveDays21Target ?? 0) || 14)}`,
     `Stabilität: ${runFloorState?.deloadActive ? "kritisch" : "wackelig"}`,
     `Status: ${progressionStatus}.`,
   ]);
 
   const keyCheckMetrics = [
-    `Keys (7 Tage): ${actualKeys7}/${keyCap7}${budgetBlocked ? " ⚠️" : ""}`,
+    `Keys (7 Tage): ${fmtInt(actualKeys7)} / ${fmtInt(keyCap7)}${budgetBlocked ? " ⚠️" : ""}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
     fatigue?.override
-      ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
+      ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" · ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
       : "Fatigue-Override: aus",
-    `Kraft 7T: ${strengthPolicy.minutes7d}′ (Runfloor ≥${strengthPolicy.minRunfloor}′ | Ziel ${strengthPolicy.target}′ | Max ${strengthPolicy.max}′)`,
-    `Kraft-Score: ${strengthPolicy.score}/3 | Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${strengthPolicy.confidenceDelta}`,
+    `Kraft 7T: ${fmtMinutes(strengthPolicy.minutes7d)} · Ziel ${fmtMinutes(strengthPolicy.target)}`,
+    `Kraft-Score: ${fmtInt(strengthPolicy.score)} / 3 · Confidence Δ ${strengthPolicy.confidenceDelta >= 0 ? "+" : ""}${fmtInt(strengthPolicy.confidenceDelta)}`,
   ];
   const hasEventDistance = formatEventDistance(modeInfo?.nextEvent?.distance_type) !== "n/a";
   if (keyRuleLine && hasEventDistance) keyCheckMetrics.push(keyRuleLine);
@@ -6168,17 +6220,17 @@ function buildComments(
   });
   addDecisionBlock("EMPFEHLUNGEN", [
     ...decisionCompact.recommendations,
-    `Kraft-Integration: Wochenplan kommt montags per E-Mail (3× ~20′); kein Kraftblock vor Longrun / <24h vor Key.`,
+    `Kraft-Integration: Wochenplan kommt montags per E-Mail (3× ~20′) · kein Kraftblock vor Longrun / <24h vor Key.`,
   ]);
 
   addDecisionBlock("HEUTE-ENTSCHEIDUNG", [
     `Modus: ${modeLabel}${keyBlocked ? " (kein weiterer Key)" : ""}`,
     `Fokus: ${ampel} ${!ignoreRunFloorGap && runFloorGap < 0 ? "Volumen (RunFloor-Gap schließen)" : "Stabilität"}`,
-    `Key: ${actualKeys7} / ${keyCap7} (7T)${budgetBlocked ? " ⚠️" : ""}`,
-    `Kraft-Phase ${strengthPlan.phase}: Score ${strengthPolicy.score}/3 · Detaillierter 3er-Wochenplan per Montags-Mail.`,
+    `Key: ${fmtInt(actualKeys7)} / ${fmtInt(keyCap7)} (7T)${budgetBlocked ? " ⚠️" : ""}`,
+    `Kraft-Phase ${strengthPlan.phase}: Score ${fmtInt(strengthPolicy.score)} / 3 · Detaillierter 3er-Wochenplan per Montags-Mail.`,
     Number.isFinite(weeksToEvent) && weeksToEvent > getPlanStartWeeks(eventDistance)
-      ? `Freie Vorphase (> ${getPlanStartWeeks(eventDistance)} Wochen): Zielmix Lauf/Rad ~${Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)}/${Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}`
-      : `Planphase aktiv (<= ${getPlanStartWeeks(eventDistance)} Wochen): Blocksteuerung BASE/BUILD/RACE`,
+      ? `Freie Vorphase (> ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Zielmix Lauf/Rad ~${fmtInt(Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100))}/${fmtInt(Math.max(0, 100 - Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100)))}`
+      : `Planphase aktiv (<= ${fmtInt(getPlanStartWeeks(eventDistance))} Wochen): Blocksteuerung BASE / BUILD / RACE`,
   ]);
 
   addDecisionBlock("BOTTOM LINE", decisionCompact.bottomLine);
