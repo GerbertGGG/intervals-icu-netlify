@@ -7,7 +7,10 @@ import { __test } from "../src/index.js";
 
   const why = __test.buildWhyNarrative(["Volumen stabil", "Key-Abstand erfüllt"], { dayMode: keyMode });
   assert.match(why, /^Heute KEY,/);
-  assert.doesNotMatch(why, /nächsten sinnvollen Reiz vor/i);
+  assert.match(why, /Key freigegeben/i);
+  assert.match(why, /kurzer, konservativer Reiz/i);
+  assert.match(why, /ergänzt die aktuelle Spezifik/i);
+  assert.doesNotMatch(why, /Volumen noch nicht stabil/i);
 
   const bottom = __test.resolveBottomLine({
     candidate: "",
@@ -41,6 +44,15 @@ import { __test } from "../src/index.js";
     explicitSession: "Strides konkret: 4–6×8–10″ (Sekunden) Hill Sprints, volle 2–3′ Pause.",
   });
   assert.match(next, /8–10″ \(Sekunden\)/);
+}
+
+{
+  const keyRecommendations = __test.prependKeyRecommendationContext(
+    ["Volumen über die Woche graduell steigern.", "Longrun stabil halten."],
+    { dayMode: "KEY" }
+  );
+  assert.match(keyRecommendations[0], /^Heute: kurzer KEY-Reiz; insgesamt bleibt Volumen Priorität\./);
+  assert.match(keyRecommendations[1], /Volumen über die Woche/i);
 }
 
 console.log("day-mode copy consistency ok");

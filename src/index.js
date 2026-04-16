@@ -9609,12 +9609,14 @@ function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
     .filter(Boolean)
     .slice(0, 3);
   if (dayMode === "KEY") {
-    if (!cleaned.length) return "Heute KEY, weil die Freigabe aktiv ist und der Qualitätsreiz planmäßig gesetzt werden kann.";
-    if (cleaned.length === 1) return `Heute KEY, weil ${cleaned[0]}.`;
-    if (cleaned.length === 2) {
-      return `Heute KEY, weil ${cleaned[0]} und ${cleaned[1]}. So wird der Qualitätsreiz heute sauber umgesetzt.`;
-    }
-    return `Heute KEY, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. Damit wird der Qualitätsreiz heute gezielt gesetzt.`;
+    const neutralized = cleaned
+      .map((reason) => reason.replace(/\.?$/u, ""))
+      .map((reason) => reason.replace(/^weil\s+/iu, ""))
+      .filter(Boolean);
+    const supportHint = neutralized.length
+      ? ` Reizabdeckung aktuell: ${neutralized.slice(0, 2).join(" | ")}.`
+      : "";
+    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind. Im BASE wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
   }
   if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
   if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0]}.`;
@@ -9622,6 +9624,16 @@ function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
     return `Heute kontrolliert, weil ${cleaned[0]} und ${cleaned[1]}. Das hält den Wochenrhythmus stabil und bereitet den nächsten sinnvollen Reiz vor.`;
   }
   return `Heute kontrolliert, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
+}
+
+function prependKeyRecommendationContext(lines = [], { dayMode = "LOW" } = {}) {
+  const normalized = (Array.isArray(lines) ? lines : [])
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+  if (dayMode !== "KEY") return normalized;
+  const intro = "Heute: kurzer KEY-Reiz; insgesamt bleibt Volumen Priorität.";
+  if (normalized.length && normalized[0].toLowerCase().startsWith("heute: kurzer key-reiz")) return normalized;
+  return [intro, ...normalized];
 }
 
 function insertCoachAnalysisAfterHeute(reportText, coachAnalysis) {
@@ -11080,13 +11092,14 @@ function buildComments(
   if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
     recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
   }
+  const recommendationRenderLinesFinal = prependKeyRecommendationContext(recommendationRenderLines, { dayMode }).slice(0, 5);
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
   addDecisionBlock("WARUM", whyLines);
   addDecisionBlock("STATUS", statusLines);
   addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
   addDecisionBlock("TRAININGSSTAND", trainingStateLines);
-  addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLines);
+  addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLinesFinal);
   addDecisionBlock("DIAGNOSE", diagnoseLines);
 
   if (String(blockState?.block || "").toUpperCase() === "RACE") {
@@ -14770,6 +14783,7 @@ const __internalTestHooks = Object.freeze({
   resolveBottomLine,
   resolveDayModeFromKeyDecision,
   buildWhyNarrative,
+  prependKeyRecommendationContext,
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
 });
