@@ -9608,7 +9608,7 @@ function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
     const supportHint = neutralized.length
       ? ` Reizabdeckung aktuell: ${neutralized.slice(0, 2).join(" | ")}.`
       : "";
-    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind. Im BASE wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
+    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind. Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
   }
   if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
   if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0]}.`;
