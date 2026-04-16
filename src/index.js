@@ -5617,6 +5617,17 @@ function determineBlockState({
     };
   }
 
+  if (
+    String(previousState?.block || "").toUpperCase() === "RACE"
+    && weeksToEvent > raceStartWeeks
+  ) {
+    const fallbackBlock = weeksToEvent <= BLOCK_CONFIG.cutoffs.wave2StartWeeks ? "BUILD" : "BASE";
+    reasons.push(
+      `Persistierter RACE-Status invalidiert (${weeksToEvent.toFixed(1)} Wochen bis Event > RACE-Fenster ${raceStartWeeks} Wochen) → ${fallbackBlock}`
+    );
+    startDate = todayISO;
+  }
+
   if (weeksToEvent <= 4 && weeksToEvent >= 0) {
     const keepRaceStart = previousState?.block === "RACE";
     const raceStartDate = keepRaceStart ? startDate : todayISO;
@@ -5749,6 +5760,12 @@ function determineBlockState({
   }
 
   let block = previousState?.block || (weeksToEvent <= raceStartWeeks ? "BUILD" : "BASE");
+  if (
+    String(previousState?.block || "").toUpperCase() === "RACE"
+    && weeksToEvent > raceStartWeeks
+  ) {
+    block = weeksToEvent <= BLOCK_CONFIG.cutoffs.wave2StartWeeks ? "BUILD" : "BASE";
+  }
 
   const runFloorTarget = historyMetrics?.runFloorTarget ?? 0;
   const runFloorNow = historyMetrics?.runFloorEwma10 ?? historyMetrics?.runFloor7 ?? 0;
