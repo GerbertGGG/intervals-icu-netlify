@@ -8677,13 +8677,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
     }
 
-    const weekPlanBlock = [
-      "🗓 WOCHENPLAN",
-      weekPreview?.text || "(Wochenplan nicht verfügbar)",
-      "⸻",
-      "",
-    ].join("\n");
-    const insertBlock = `${weeklyMondayBlock}${raceDayBlock}${raceHistoryBlock}${weekPlanBlock}`;
+    const insertBlock = `${weeklyMondayBlock}${raceDayBlock}${raceHistoryBlock}`;
     const dailyReportWithWeekPlan = String(dailyReportTextRaw || "").includes("🧠 DIAGNOSE")
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
@@ -8710,7 +8704,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         eventDistance,
         vdotMed: vdotMedRace,
         efMed: efMedRace,
-        weekPlanText: weekPreview?.text || "(Wochenplan nicht verfügbar)",
       });
     }
     if (isRaceDayToday && raceActivityToday) {
@@ -8806,7 +8799,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       } else if (isRaceDayToday) {
         dailyReportText = buildRaceDayOrderedReport(dailyReportText, {
           coachAnalysis,
-          weekPlanText: weekPreview?.text || "(Wochenplan nicht verfügbar)",
         });
       }
     } catch {
@@ -9787,7 +9779,7 @@ function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
   }
 }
 
-function buildRaceDayMinimalReport({ eventDistance, vdotMed, efMed, weekPlanText }) {
+function buildRaceDayMinimalReport({ eventDistance, vdotMed, efMed }) {
   const dist = normalizeEventDistance(eventDistance) || "5k";
   const distLabel = { "5k": "5k", "10k": "10k", hm: "Halbmarathon", m: "Marathon" }[dist] || dist;
   const lines = [
@@ -9806,9 +9798,6 @@ function buildRaceDayMinimalReport({ eventDistance, vdotMed, efMed, weekPlanText
   }
   lines.push("Tipp: Erste 400m kontrolliert — Zieltempo, nicht schneller. Letzte 1000m alles geben.");
   lines.push("Danach: 10 Min auslaufen, Beine hochlegen.");
-  lines.push("");
-  lines.push("🗓 WOCHENPLAN");
-  lines.push(weekPlanText || "(Wochenplan nicht verfügbar)");
   return lines.join("\n");
 }
 
@@ -9873,7 +9862,7 @@ function estimateVdotTrendFromEfTrend(vdotValue, efTrendPct) {
   return Math.round((vdot - prevVdot) * 10) / 10;
 }
 
-function buildRaceDayOrderedReport(reportText, { weekPlanText = "", coachAnalysis = "" } = {}) {
+function buildRaceDayOrderedReport(reportText, { coachAnalysis = "" } = {}) {
   try {
     const blocks = splitDecisionBlocks(reportText);
     if (!blocks.length) return String(reportText || "");
@@ -9886,15 +9875,11 @@ function buildRaceDayOrderedReport(reportText, { weekPlanText = "", coachAnalysi
       "RENNERGEBNIS",
       "HEUTIGER LAUF",
       "COACH-ANALYSE",
-      "WOCHENPLAN",
       "DIAGNOSE",
       "BOTTOM LINE",
     ];
     if (!byTitle.has("COACH-ANALYSE") && String(coachAnalysis || "").trim()) {
       byTitle.set("COACH-ANALYSE", String(coachAnalysis || "").trim());
-    }
-    if (!byTitle.has("WOCHENPLAN") && String(weekPlanText || "").trim()) {
-      byTitle.set("WOCHENPLAN", `🗓 WOCHENPLAN\n${String(weekPlanText || "").trim()}`);
     }
     const ordered = preferredOrder
       .map((title) => byTitle.get(title))
