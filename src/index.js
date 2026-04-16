@@ -7375,11 +7375,16 @@ async function buildCoachAnalysis(env, snapshot) {
   const promptGoal = isRaceDaySnapshot
     ? "Ordne das Rennergebnis ein: war es über oder unter Erwartung, nenne was funktioniert hat und formuliere genau eine wichtigste Erkenntnis für die nächste Vorbereitung."
     : "Erkläre warum die heutige Empfehlung sinnvoll ist und worauf der Athlet diese Woche achten sollte.";
+  const dayMode = String(safeSnapshot.dayMode || "LOW").toUpperCase() === "KEY" ? "KEY" : "LOW";
 
   const promptLines = [
     `Du bist ein erfahrener Lauftrainer. Schreibe 3–5 Sätze auf Deutsch über den aktuellen Trainingsstand. ${promptGoal} Keine Aufzählungen, nur fließender Text. Maximal 120 Wörter.`,
     "",
     "Wichtig: Gib die Fakten exakt so wieder wie sie sind. Wenn ein Ziel nicht erreicht wurde, benenne das klar und direkt. Erfinde keine positiven Interpretationen. Zahlen nicht abrunden oder schönreden.",
+    `Tagmodus: ${dayMode}.`,
+    dayMode === "KEY"
+      ? "Wichtig für Textlogik: Beschreibe den heutigen Tag als echten KEY-Tag. Formuliere NICHT, dass heute nur kontrolliert/locker gelaufen wird oder der Qualitätsreiz auf später verschoben wird."
+      : "Wichtig für Textlogik: Beschreibe den heutigen Tag als LOW-/kontrollierten Tag (kein KEY heute).",
     "",
     "Fakten:",
     `- Block: ${safeSnapshot.block}, Woche ${safeSnapshot.weekInBlock} im Block`,
@@ -8770,6 +8775,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         block: blockState?.block ?? "BASE",
         weekInBlock: Math.floor((blockState?.timeInBlockDays ?? 0) / 7) + 1,
         todayDecision: todayDecisionMatch?.[1]?.trim() || "GA-Lauf",
+        dayMode: keyDecision?.allowKey === true ? "KEY" : "LOW",
         efTrendPct,
         rampPct: fatigue?.rampPct ?? null,
         driftMed: motor?.driftMed ?? null,
@@ -9597,11 +9603,19 @@ function buildLimiterSentence(primaryGap, secondaryGap) {
   return `${primary.label} limitiert aktuell am stärksten, gefolgt von ${secondary.label}.`;
 }
 
-function buildWhyNarrative(reasons = []) {
+function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
   const cleaned = (Array.isArray(reasons) ? reasons : [])
     .map((r) => normalizeWhyReason(String(r || "").trim().replace(/^•\s*/, "")))
     .filter(Boolean)
     .slice(0, 3);
+  if (dayMode === "KEY") {
+    if (!cleaned.length) return "Heute KEY, weil die Freigabe aktiv ist und der Qualitätsreiz planmäßig gesetzt werden kann.";
+    if (cleaned.length === 1) return `Heute KEY, weil ${cleaned[0]}.`;
+    if (cleaned.length === 2) {
+      return `Heute KEY, weil ${cleaned[0]} und ${cleaned[1]}. So wird der Qualitätsreiz heute sauber umgesetzt.`;
+    }
+    return `Heute KEY, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. Damit wird der Qualitätsreiz heute gezielt gesetzt.`;
+  }
   if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
   if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0]}.`;
   if (cleaned.length === 2) {
@@ -10072,7 +10086,7 @@ function buildNextRunRecommendation({
   );
   const canPlaceKeyNow = keyDecision?.allowKey === true;
   const fallbackSessionByType = {
-    strides: "Strides konkret: 4–6×8–10″ Hill Sprints, volle 2–3′ Pause.",
+    strides: "Strides konkret: 4–6×8–10″ (Sekunden) Hill Sprints, volle 2–3′ Pause.",
     steady: "Steady konkret: 20–30′ steady im mittleren GA-Bereich.",
     schwelle: "Schwelle konkret: 3×8′ @ Schwelle, 2′ locker Trabpause.",
     vo2_touch: "VO2_touch konkret: 5×2′ zügig, 2′ locker dazwischen.",
@@ -10179,9 +10193,11 @@ function buildResolvedNextKeyLine(resolvedDecision) {
   return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
-function resolveBottomLine({ candidate, todayDecision }) {
+function resolveBottomLine({ candidate, todayDecision, dayMode = "LOW" }) {
   const text = String(candidate || "").trim();
-  const fallback = "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
+  const fallback = dayMode === "KEY"
+    ? "Heute den geplanten KEY-Reiz sauber und kontrolliert umsetzen."
+    : "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
   if (!text) return fallback;
   const lower = text.toLowerCase();
   const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
@@ -10206,6 +10222,10 @@ function shortExplicitSession(explicitSession) {
     .replace(/\s+/g, " ")
     .trim();
   return limitText(cleaned, 90);
+}
+
+function resolveDayModeFromKeyDecision(keyDecision) {
+  return keyDecision?.allowKey === true ? "KEY" : "LOW";
 }
 
 function inferKeyTypeFromExplicitSession(explicitSession) {
@@ -10844,7 +10864,8 @@ function buildComments(
   const explicitSessionShort = shortExplicitSession(
     explicitSessionText
   );
-  const keyAllowedNow = keyDecision.allowKey === true;
+  const dayMode = resolveDayModeFromKeyDecision(keyDecision);
+  const keyAllowedNow = dayMode === "KEY";
   const pendingLever = keyCompliance?.pendingLever || keyCompliance?.activeLever || null;
   const pendingLeverPlan = !keyAllowedNow && pendingLever?.domain
     ? formatPendingLeverPlan({
@@ -10978,7 +10999,7 @@ function buildComments(
 
   let whyLines;
   try {
-    whyLines = [buildWhyNarrative(shortReasons)];
+    whyLines = [buildWhyNarrative(shortReasons, { dayMode })];
   } catch {
     whyLines = shortReasons.length
       ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
@@ -11050,7 +11071,11 @@ function buildComments(
 
   const recommendationRenderLines = recommendationLines.slice(0, 4);
   if (!recommendationRenderLines.length) {
-    recommendationRenderLines.push("Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen.");
+    recommendationRenderLines.push(
+      dayMode === "KEY"
+        ? "Heute KEY sauber absolvieren; Umfang außen herum kontrolliert halten."
+        : "Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen."
+    );
   }
   if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
     recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
@@ -11096,6 +11121,7 @@ function buildComments(
   const bottomLine = resolveBottomLine({
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
+    dayMode,
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
@@ -14738,8 +14764,11 @@ const __internalTestHooks = Object.freeze({
   computeDistanceDiagnostics,
   buildRecommendationsAndBottomLine,
   buildComments,
+  buildNextRunRecommendation,
   inferKeyTypeFromExplicitSession,
   resolveRunFloorDecisionText,
+  resolveBottomLine,
+  resolveDayModeFromKeyDecision,
   buildWhyNarrative,
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
