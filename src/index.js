@@ -9994,6 +9994,40 @@ function buildKeyPatternDistributionLine({ block, eventDistance, plannedType, we
   return `Pattern 1 Key/Woche (${patternBlock}, ${formatEventDistance(dist)}): geplant ${plannedLabel}; Verteilung ${distribution}.`;
 }
 
+function evaluateDayBasedKeyDecision({
+  dayIso,
+  keyAllowedNow,
+  lastKeyIso,
+  lastLongrunIso,
+  fatigueOverride,
+} = {}) {
+  const daysSinceLastKey = isIsoDate(lastKeyIso) && isIsoDate(dayIso) ? diffDays(lastKeyIso, dayIso) : null;
+  const daysSinceLastLongrun = isIsoDate(lastLongrunIso) && isIsoDate(dayIso) ? diffDays(lastLongrunIso, dayIso) : null;
+  const blockedByKeySpacing = Number.isFinite(daysSinceLastKey) && daysSinceLastKey < 3;
+  const blockedByLongrunSpacing = Number.isFinite(daysSinceLastLongrun) && daysSinceLastLongrun < 2;
+  const blockedByFatigue = fatigueOverride === true;
+  const spacingOk = !blockedByKeySpacing && !blockedByLongrunSpacing;
+
+  let reason = "key_allowed";
+  if (keyAllowedNow !== true) reason = "key_not_allowed";
+  else if (blockedByKeySpacing) reason = "blocked_by_key_spacing";
+  else if (blockedByLongrunSpacing) reason = "blocked_by_longrun_spacing";
+  else if (blockedByFatigue) reason = "fatigue_override";
+
+  return {
+    keyAllowedNow: keyAllowedNow === true,
+    daysSinceLastKey,
+    daysSinceLastLongrun,
+    blockedByKeySpacing,
+    blockedByLongrunSpacing,
+    blockedByFatigue,
+    spacingOk,
+    finalDecision: reason === "key_allowed" ? "KEY" : "LOW",
+    reason,
+    allowKey: reason === "key_allowed",
+  };
+}
+
 function buildNextRunRecommendation({
   runFloorState,
   policy,
@@ -10008,7 +10042,26 @@ function buildNextRunRecommendation({
   hoursSinceLastKey,
   keySuggestion,
   explicitSession,
+  plannedKeyType,
+  keyRulesPlannedPrimaryType,
+  allowedKeyTypes,
+  preferredKeyTypes,
+  block,
+  keyDecision,
 }) {
+  const resolvedBlock = String(block || "BASE").toUpperCase();
+  const normalizedAllowed = Array.isArray(allowedKeyTypes) ? allowedKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
+  const normalizedPreferred = Array.isArray(preferredKeyTypes) ? preferredKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
+  const plannedCandidate = normalizeKeyType(plannedKeyType) || normalizeKeyType(keyRulesPlannedPrimaryType) || null;
+  const preferredAllowed = normalizedPreferred.find((type) => normalizedAllowed.includes(type));
+  let resolvedKeyType = plannedCandidate && normalizedAllowed.includes(plannedCandidate)
+    ? plannedCandidate
+    : preferredAllowed || normalizedAllowed[0] || "steady";
+
+  if (resolvedBlock === "BASE" && !["steady", "strides"].includes(resolvedKeyType)) {
+    resolvedKeyType = normalizedAllowed.includes("strides") ? "strides" : "steady";
+  }
+
   let next = "45–60 min locker/GA";
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
@@ -10017,6 +10070,20 @@ function buildNextRunRecommendation({
     keySuggestionText.includes("optional/erlaubt")
     || keySuggestionText.includes("nächster key:")
   );
+  const canPlaceKeyNow = keyDecision?.allowKey === true;
+  const fallbackSessionByType = {
+    strides: "Strides konkret: 4–6×8–10″ Hill Sprints, volle 2–3′ Pause.",
+    steady: "Steady konkret: 20–30′ steady im mittleren GA-Bereich.",
+    schwelle: "Schwelle konkret: 3×8′ @ Schwelle, 2′ locker Trabpause.",
+    vo2_touch: "VO2_touch konkret: 5×2′ zügig, 2′ locker dazwischen.",
+    racepace: "Racepace konkret: 4–5×1 km @ Wettkampftempo, 2′ locker.",
+  };
+  const concreteKeySession = conciseExplicitSession || fallbackSessionByType[resolvedKeyType] || fallbackSessionByType.steady;
+
+  if (canPlaceKeyNow) {
+    return `Key heute: ${concreteKeySession}`;
+  }
+
   if (overlay === "LIFE_EVENT_STOP") {
     next = "Pause / nur Regeneration (LifeEvent)";
   } else if (overlay === "LIFE_EVENT_HOLIDAY") {
@@ -10033,17 +10100,17 @@ function buildNextRunRecommendation({
     next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
+  } else if (keyDecision?.blockedByFatigue) {
+    next = "30–45 min locker oder frei (Regeneration priorisieren)";
   }
-  if (!keySpacingOk) {
-    const minGapHours = Math.max(24, Math.round((Number(keyMinGapHours) || KEY_MIN_GAP_DAYS_DEFAULT * 24)));
-    const waitHours = Number.isFinite(hoursSinceLastKey)
-      ? Math.max(0, Math.ceil(minGapHours - hoursSinceLastKey))
-      : minGapHours;
-    if (nextAllowed) {
-      next = `Nächster Key frühestens ab ${nextAllowed} (in ${waitHours}h) – bis dahin locker/GA.`;
-    } else {
-      next = `Mindestabstand für Key-Reize: ${minGapHours}h – bis dahin locker/GA.`;
-    }
+  if (keyDecision?.blockedByKeySpacing) {
+    next = "Heute kein Key (Key-Spacer): 30–60 min locker oder Rest.";
+  } else if (keyDecision?.blockedByLongrunSpacing) {
+    next = "Heute kein Key (Longrun-Spacer): 30–60 min locker oder Rest.";
+  } else if (!keySpacingOk) {
+    next = nextAllowed
+      ? `Nächster Key frühestens ab ${nextAllowed} – bis dahin locker/GA.`
+      : "Heute kein Key: 30–60 min locker oder Rest.";
   }
 
   return next;
@@ -10495,6 +10562,13 @@ function buildComments(
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
+  const keyDecision = evaluateDayBasedKeyDecision({
+    dayIso: todayIso,
+    keyAllowedNow: keyCompliance?.keyAllowedNow,
+    lastKeyIso: keySpacing?.lastKeyIso ?? null,
+    lastLongrunIso: longRunSummary?.longRun14d?.date ?? null,
+    fatigueOverride: fatigue?.override === true,
+  });
 
   const keyBlocked = keyCompliance?.keyAllowedNow === false;
   const spacingBlocked = !spacingOk;
@@ -10523,10 +10597,10 @@ function buildComments(
             ? "LifeEvent Freeze"
             : overlayMode === "LIFE_EVENT_HOLIDAY"
               ? "Holiday"
-          : keyBlocked
+          : (keyBlocked || keyDecision?.allowKey === false)
             ? "Easy only"
             : "Key möglich";
-  const ampel = keyBlocked ? "🟠" : "🟢";
+  const ampel = (keyBlocked || keyDecision?.allowKey === false) ? "🟠" : "🟢";
   const missingKeyFrequency = keyCompliance?.freqOk === false;
   const regressionSignal =
     runFloorBlocked ||
@@ -10573,6 +10647,12 @@ function buildComments(
     hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
     keySuggestion: keyCompliance?.suggestion,
     explicitSession: explicitSessionText,
+    plannedKeyType: keyCompliance?.plannedKeyType,
+    keyRulesPlannedPrimaryType: keyRules?.plannedPrimaryType,
+    allowedKeyTypes: keyRules?.allowedKeyTypes,
+    preferredKeyTypes: keyRules?.preferredKeyTypes,
+    block: blockState?.block,
+    keyDecision,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
@@ -10764,7 +10844,7 @@ function buildComments(
   const explicitSessionShort = shortExplicitSession(
     explicitSessionText
   );
-  const keyAllowedNow = keyCompliance?.keyAllowedNow === true && !keyBlocked;
+  const keyAllowedNow = keyDecision.allowKey === true;
   const pendingLever = keyCompliance?.pendingLever || keyCompliance?.activeLever || null;
   const pendingLeverPlan = !keyAllowedNow && pendingLever?.domain
     ? formatPendingLeverPlan({
@@ -10908,6 +10988,7 @@ function buildComments(
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
+    `Key-Entscheid: keyAllowedNow=${keyDecision?.keyAllowedNow ? "ja" : "nein"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
   ];
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;
@@ -10954,6 +11035,7 @@ function buildComments(
   const diagnoseLines = [];
   diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
+  diagnoseLines.push(`Key-Debug: blockedByKeySpacing=${keyDecision?.blockedByKeySpacing ? "ja" : "nein"}, blockedByLongrunSpacing=${keyDecision?.blockedByLongrunSpacing ? "ja" : "nein"}, spacingOk=${keyDecision?.spacingOk ? "ja" : "nein"}, reason=${keyDecision?.reason || "key_not_allowed"}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
@@ -10973,18 +11055,6 @@ function buildComments(
   if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
     recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
   }
-  try {
-    const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
-    if (todayPlanEntry?.sessionType === "STRENGTH") {
-      const strengthCountThisWeek = Number(weekPreview?.thisWeekActuals?.strengthCount || 0);
-      const strengthSession = getStrengthSessionForDay(blockState, strengthCountThisWeek);
-      const formattedStrength = formatStrengthBlock(strengthSession);
-      if (formattedStrength.length) recommendationRenderLines.push(...formattedStrength);
-    }
-  } catch {
-    // no-op: recommendation block should never crash if strength session cannot be resolved
-  }
-
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
   addDecisionBlock("WARUM", whyLines);
