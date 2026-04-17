@@ -2781,12 +2781,15 @@ function computeLongRunSummary7d(ctx, dayIso) {
     if (!isRun(a)) continue;
     const seconds = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
     if (!longest || seconds > longest.seconds) {
+      const keyTypeRaw = getKeyType(a);
+      const keyMeta = normalizeKeyTypeMeta(keyTypeRaw, { activity: a, movingTime: seconds });
       longest = {
         activity: a,
         seconds,
         date: d,
         isKey: hasKeyTag(a),
-        keyType: getKeyType(a),
+        keyType: keyMeta.keyType || null,
+        keySubtype: keyMeta.keySubtype || null,
         ga: isGA(a),
         intensity: isIntensity(a) || isIntensityByHr(a) || !isAerobic(a),
       };
@@ -2806,6 +2809,7 @@ function computeLongRunSummary7d(ctx, dayIso) {
     isKey: longest.isKey,
     intensity: longest.intensity,
     keyType: longest.keyType || null,
+    keySubtype: longest.keyType === "steady" ? (longest.keySubtype || "continuous") : null,
     activityId: longest.activity?.id ?? null,
   };
 }
@@ -2893,6 +2897,7 @@ function evaluateLongrunSpecificity(ctx, dayIso, longRunSummary, { eventDistance
     minutes,
     minSpecificMinutes,
     keyType: normalizedType || null,
+    keySubtype: normalizedType === "steady" ? normalizeSteadySubtype(summary?.keySubtype) : null,
     notes,
   };
 }
@@ -3098,17 +3103,48 @@ function getEventDistanceFromEvent(event) {
 
 
 
-function normalizeKeyType(rawType, workoutMeta = {}) {
+function normalizeSteadySubtype(rawSubtype) {
+  const s = String(rawSubtype || "").toLowerCase().replace(/[_-]+/g, " ").trim();
+  if (!s) return "continuous";
+  if (s.includes("interval")) return "intervals";
+  if (s.includes("continu")) return "continuous";
+  return "continuous";
+}
+
+function normalizeKeyTypeMeta(rawType, workoutMeta = {}) {
   const s = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
-  if (!s) return "steady";
+  if (!s) return { keyType: "steady", keySubtype: inferSteadySubtype(workoutMeta?.activity || null, rawType) };
 
   const racepaceRegex = /\b(race\s?pace|racepace|rp|wk\s?pace|5k\s?pace|10k\s?pace|hm\s?pace|mp)\b/;
-  if (racepaceRegex.test(s) || s.includes("wettkampf") || s.includes("wettkampftempo")) return "racepace";
-  if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) return "schwelle";
-  if (s.includes("vo2") || s.includes("v02")) return "vo2_touch";
-  if (s.includes("strides") || s.includes("hill sprint")) return "strides";
-  if (s.includes("longrun") || s.includes("long run") || s.includes("langer lauf") || s.includes("lsd")) return "longrun";
-  return "steady";
+  if (racepaceRegex.test(s) || s.includes("wettkampf") || s.includes("wettkampftempo")) {
+    return { keyType: "racepace", keySubtype: null };
+  }
+  if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) {
+    return { keyType: "schwelle", keySubtype: null };
+  }
+  if (s.includes("vo2") || s.includes("v02")) {
+    return { keyType: "vo2_touch", keySubtype: null };
+  }
+  if (s.includes("strides") || s.includes("hill sprint")) {
+    return { keyType: "strides", keySubtype: null };
+  }
+  if (s.includes("longrun") || s.includes("long run") || s.includes("langer lauf") || s.includes("lsd")) {
+    return { keyType: "longrun", keySubtype: null };
+  }
+
+  const steadyAlias = /\bsteady\b/.test(s)
+    || /\bga\b/.test(s)
+    || s.includes("steady intervals")
+    || s.includes("steady continuous");
+  if (steadyAlias) {
+    return { keyType: "steady", keySubtype: inferSteadySubtype(workoutMeta?.activity || null, rawType) };
+  }
+
+  return { keyType: "steady", keySubtype: inferSteadySubtype(workoutMeta?.activity || null, rawType) };
+}
+
+function normalizeKeyType(rawType, workoutMeta = {}) {
+  return normalizeKeyTypeMeta(rawType, workoutMeta).keyType;
 }
 
 function hasRacepaceHint(a) {
@@ -3176,6 +3212,35 @@ function hasIcuIntervalSignal(activity) {
       && Number.isFinite(dist) && dist >= 300;
   });
   return workReps.length >= 2;
+}
+
+function inferSteadySubtype(activity, rawType = null) {
+  const token = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
+  if (token.includes("steady intervals")) return "intervals";
+  if (token.includes("steady continuous")) return "continuous";
+
+  if (activity && (hasExplicitIntervalStructure(activity) || hasIcuIntervalSignal(activity))) {
+    return "intervals";
+  }
+
+  const text = [activity?.name, activity?.description, activity?.workout_name, activity?.workout_doc]
+    .filter(Boolean)
+    .map((v) => String(v).toLowerCase())
+    .join(" ")
+    .replace(/[_-]+/g, " ");
+  if (!text) return "continuous";
+
+  const intervalKeywords = /\b(interval(le|s)?|reps?|bl(ö|oe)cke?|sets?|pause(n)?|trabpause)\b/i;
+  if (intervalKeywords.test(text)) return "intervals";
+  return "continuous";
+}
+
+function inferSteadySubtypeFromText(text = "") {
+  const normalized = String(text || "").toLowerCase().replace(/[_-]+/g, " ").trim();
+  if (!normalized) return "continuous";
+  if (/\b\d{1,2}\s*[x×]\s*\d+/.test(normalized)) return "intervals";
+  if (/\b(interval(le|s)?|reps?|bl(ö|oe)cke?|sets?|pause(n)?|trabpause)\b/i.test(normalized)) return "intervals";
+  return "continuous";
 }
 
 function inferPaceConsistencyFromIcu(activity) {
@@ -4634,6 +4699,15 @@ function buildProgressionSuggestion(progression) {
     const note = progression?.note ? ` ${progression.note}` : "";
     const text = Number.isFinite(minutes) ? `Diese Woche ~${Math.round(minutes)}′ Schwelle.` : "";
     return `Schwelle: ${text}${note}${progression?.templateText ? ` ${progression.templateText}` : ""}`;
+  }
+
+  if (progression.primaryType === "steady") {
+    const inferredSubtype = inferSteadySubtypeFromText(progression?.templateText || progression?.note || "");
+    const progressionFocus = inferredSubtype === "intervals"
+      ? "Progression über Wiederholungen/Blockdauer/Pausen."
+      : "Progression über Dauer am Stück.";
+    const label = formatKeyType("steady", inferredSubtype);
+    return `${label}: ${(progression?.templateText || progression?.note || "").trim()} ${progressionFocus}`.trim();
   }
 
   const keyType = formatKeyType(progression.primaryType);
@@ -8075,6 +8149,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
+      const normalizedKeyMeta = isKey
+        ? normalizeKeyTypeMeta(keyType, {
+          activity: activityWithIntervals,
+          movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
+        })
+        : { keyType: null, keySubtype: null };
       const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(activityWithIntervals) : false;
       const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(activityWithIntervals) : null;
 
@@ -8144,7 +8224,8 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
         ga,
         isKey,
         intervalSignal,
-        keyType,
+        keyType: normalizedKeyMeta.keyType,
+        keySubtype: normalizedKeyMeta.keyType === "steady" ? normalizedKeyMeta.keySubtype : null,
         ef,
         drift,
         drift_raw,
@@ -9098,12 +9179,16 @@ function formatEventDistance(dist) {
   return String(dist);
 }
 
-function formatKeyType(type) {
+function formatKeyType(type, subtype = null) {
   if (type === "schwelle") return "Schwelle";
   if (type === "racepace") return "Racepace";
   if (type === "vo2_touch") return "VO2";
   if (type === "strides") return "Strides";
-  if (type === "steady") return "GA";
+  if (type === "steady") {
+    if (subtype == null) return "GA";
+    const normalizedSubtype = normalizeSteadySubtype(subtype);
+    return `Steady (${normalizedSubtype})`;
+  }
   return type || "n/a";
 }
 
@@ -14880,6 +14965,8 @@ const __internalTestHooks = Object.freeze({
   prependKeyRecommendationContext,
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
+  inferSteadySubtype,
+  normalizeKeyTypeMeta,
 });
 
 export const __test = __internalTestHooks;
