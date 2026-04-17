@@ -44,4 +44,16 @@ import { __test } from "../src/index.js";
   }), true);
 }
 
+{
+  assert.equal(__test.isTempoDauerlaufKey({
+    tags: ["#key:steady_continuous"],
+    moving_time: 28 * 60,
+  }), true);
+
+  assert.equal(__test.isTempoDauerlaufKey({
+    tags: ["#key:steady_intervals"],
+    moving_time: 28 * 60,
+  }), false);
+}
+
 console.log("steady continuous interval signal ok");

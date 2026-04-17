@@ -13097,8 +13097,16 @@ function getBenchTag(a) {
 }
 
 function isTempoDauerlaufKey(activity) {
-  const keyType = String(getKeyType(activity) || "").toLowerCase();
-  return keyType.includes("tdl") || keyType.includes("tempo");
+  const rawKeyType = String(getKeyType(activity) || "").toLowerCase();
+  if (!rawKeyType) return false;
+  if (rawKeyType.includes("tdl") || rawKeyType.includes("tempo")) return true;
+
+  const normalized = normalizeKeyTypeMeta(rawKeyType, {
+    activity,
+    movingTime: Number(activity?.moving_time ?? activity?.elapsed_time ?? 0),
+  });
+  return normalized?.keyType === "steady"
+    && normalizeSteadySubtype(normalized?.keySubtype) === "continuous";
 }
 
 async function computeBenchReport(env, activity, benchName, warmupSkipSec) {
@@ -15003,6 +15011,7 @@ const __internalTestHooks = Object.freeze({
   keyImpliesIntervalSignal,
   shouldSearchIntervalsForRun,
   normalizeKeyTypeMeta,
+  isTempoDauerlaufKey,
 });
 
 export const __test = __internalTestHooks;
