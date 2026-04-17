@@ -239,6 +239,27 @@ console.log('guardrails ok');
   assert.equal(gaWithStrides, null);
 }
 
+// 10b) Steady-Subtype: Continuous vs Intervals sauber getrennt
+{
+  const continuous = __test.inferSteadySubtype({
+    name: '25min steady continuous',
+    description: 'locker einlaufen, dann 25min steady am Stück',
+  }, 'steady');
+  assert.equal(continuous, 'continuous');
+
+  const intervalsByToken = __test.normalizeKeyTypeMeta('steady_intervals', {
+    activity: {
+      name: "3x8' steady",
+      description: "3x8' steady mit 2' Trabpause",
+    },
+  });
+  assert.equal(intervalsByToken.keyType, 'steady');
+  assert.equal(intervalsByToken.keySubtype, 'intervals');
+
+  const fallback = __test.normalizeKeyTypeMeta('steady', {});
+  assert.equal(fallback.keySubtype, 'continuous');
+}
+
 // 11) LOW/easy-frei bleibt optional und zählt nicht als harter Lauftag
 {
   const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
