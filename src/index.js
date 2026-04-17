@@ -3218,6 +3218,7 @@ function inferSteadySubtype(activity, rawType = null) {
   const token = String(rawType || "").toLowerCase().replace(/[_-]+/g, " ").trim();
   if (token.includes("steady intervals")) return "intervals";
   if (token.includes("steady continuous")) return "continuous";
+  if (token.includes("steady continious")) return "continuous"; // tolerate common typo
 
   if (activity && (hasExplicitIntervalStructure(activity) || hasIcuIntervalSignal(activity))) {
     return "intervals";
