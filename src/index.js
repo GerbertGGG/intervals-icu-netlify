@@ -8732,6 +8732,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       hrrcTrend,
       weekPreview,
       racePrediction,
+      contextCtx: ctx,
     }, { debug, verbosity: reportVerbosity });
     const weeklyReview = isMondayIso(day)
       ? buildWeeklyReview(ctx, day, blockState, ctx.weekMemories)
@@ -10607,6 +10608,7 @@ function buildComments(
     hrrcTrend,
     weekPreview,
     racePrediction,
+    contextCtx,
   },
   { debug = false, verbosity = "coach" } = {}
 ) {
@@ -10680,7 +10682,9 @@ function buildComments(
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
-  const lastLongrun = findLastTrueLongrunActivity(ctx, todayIso);
+  const lastLongrun = Array.isArray(contextCtx?.activitiesAll)
+    ? findLastTrueLongrunActivity(contextCtx, todayIso)
+    : null;
   const keyDecision = evaluateDayBasedKeyDecision({
     dayIso: todayIso,
     keyAllowedNow: keyCompliance?.keyAllowedNow,
