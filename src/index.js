@@ -2938,6 +2938,83 @@ function computeLongRunSummary14d(ctx, dayIso) {
   return { minutes: Math.round(longest.seconds / 60), date: longest.date };
 }
 
+function inferLongrunReason(activity) {
+  if (!activity || !isRun(activity)) return null;
+  const durationSec = Number(activity?.moving_time ?? activity?.elapsed_time ?? 0);
+  const normalizedFromKeyType = normalizeKeyType(getKeyType(activity), { movingTime: durationSec });
+  if (normalizedFromKeyType === "longrun") return "key_type_longrun";
+
+  const tags = Array.isArray(activity?.tags) ? activity.tags : [];
+  for (const tag of tags) {
+    const candidates = extractTagCandidates(tag);
+    for (const raw of candidates) {
+      const token = String(raw || "").toLowerCase().trim().replace(/[_-]+/g, " ");
+      if (/(^|\s)(longrun|long run|langer lauf|lsd)(\s|$)/.test(token)) return "tag_longrun";
+    }
+  }
+
+  const structuredSessionType = [
+    activity?.session_type,
+    activity?.sessionType,
+    activity?.workout_type,
+    activity?.workoutType,
+    activity?.category,
+  ]
+    .map((value) => String(value || "").toLowerCase().trim())
+    .find((value) => value === "longrun" || value === "long_run" || value === "long run" || value === "langer lauf");
+  if (structuredSessionType) return "session_type_longrun";
+
+  const text = [activity?.name, activity?.description, activity?.workout_name, activity?.workout_doc]
+    .filter(Boolean)
+    .map((value) => String(value || "").toLowerCase())
+    .join(" ")
+    .replace(/[_-]+/g, " ");
+  if (/(?:^|\s)#\s*key\s*:\s*longrun\b/.test(text) || /(?:^|\s)#\s*longrun\b/.test(text)) return "text_longrun";
+
+  return null;
+}
+
+function findLastTrueLongrunActivity(ctx, dayIso) {
+  const activities = Array.isArray(ctx?.activitiesAll) ? ctx.activitiesAll : [];
+  let best = null;
+  for (const activity of activities) {
+    if (!isRun(activity)) continue;
+    const dateIso = String(activity?.start_date_local || activity?.start_date || "").slice(0, 10);
+    if (!isIsoDate(dateIso)) continue;
+    if (isIsoDate(dayIso) && dateIso > dayIso) continue;
+    const reason = inferLongrunReason(activity);
+    if (!reason) continue;
+    const sortKey = String(activity?.start_date_local || activity?.start_date || `${dateIso}T00:00:00Z`);
+    if (!best || dateIso > best.date || (dateIso === best.date && sortKey > best.sortKey)) {
+      best = {
+        activity,
+        activityId: activity?.id ?? null,
+        date: dateIso,
+        durationMin: Math.round((Number(activity?.moving_time ?? activity?.elapsed_time ?? 0) || 0) / 60),
+        reason,
+        sortKey,
+      };
+    }
+  }
+
+  if (!best) {
+    return {
+      found: false,
+      activityId: null,
+      date: null,
+      durationMin: null,
+      reason: null,
+    };
+  }
+  return {
+    found: true,
+    activityId: best.activityId,
+    date: best.date,
+    durationMin: best.durationMin,
+    reason: best.reason,
+  };
+}
+
 function computeLongRunTargetMinutes(weeksToEvent, eventDistance) {
   const dist = normalizeEventDistance(eventDistance) || "10k";
   const planStartWeeks = getPlanStartWeeks(dist);
@@ -3030,6 +3107,7 @@ function normalizeKeyType(rawType, workoutMeta = {}) {
   if (s.includes("threshold") || s.includes("schwelle") || s.includes("tempo")) return "schwelle";
   if (s.includes("vo2") || s.includes("v02")) return "vo2_touch";
   if (s.includes("strides") || s.includes("hill sprint")) return "strides";
+  if (s.includes("longrun") || s.includes("long run") || s.includes("langer lauf") || s.includes("lsd")) return "longrun";
   return "steady";
 }
 
@@ -10026,13 +10104,14 @@ function evaluateDayBasedKeyDecision({
   dayIso,
   keyAllowedNow,
   lastKeyIso,
-  lastLongrunIso,
+  lastLongrun,
   fatigueOverride,
 } = {}) {
+  const lastLongrunIso = lastLongrun?.found === true ? lastLongrun?.date : null;
   const daysSinceLastKey = isIsoDate(lastKeyIso) && isIsoDate(dayIso) ? diffDays(lastKeyIso, dayIso) : null;
   const daysSinceLastLongrun = isIsoDate(lastLongrunIso) && isIsoDate(dayIso) ? diffDays(lastLongrunIso, dayIso) : null;
   const blockedByKeySpacing = Number.isFinite(daysSinceLastKey) && daysSinceLastKey < 3;
-  const blockedByLongrunSpacing = Number.isFinite(daysSinceLastLongrun) && daysSinceLastLongrun < 2;
+  const blockedByLongrunSpacing = lastLongrun?.found === true && Number.isFinite(daysSinceLastLongrun) && daysSinceLastLongrun < 2;
   const blockedByFatigue = fatigueOverride === true;
   const spacingOk = !blockedByKeySpacing && !blockedByLongrunSpacing;
 
@@ -10050,6 +10129,11 @@ function evaluateDayBasedKeyDecision({
     blockedByLongrunSpacing,
     blockedByFatigue,
     spacingOk,
+    lastLongrunFound: lastLongrun?.found === true,
+    lastLongrunActivityId: lastLongrun?.found === true ? (lastLongrun?.activityId ?? null) : null,
+    lastLongrunDate: lastLongrun?.found === true ? (lastLongrun?.date ?? null) : null,
+    lastLongrunDurationMin: lastLongrun?.found === true ? (lastLongrun?.durationMin ?? null) : null,
+    lastLongrunReason: lastLongrun?.found === true ? (lastLongrun?.reason ?? null) : null,
     finalDecision: reason === "key_allowed" ? "KEY" : "LOW",
     reason,
     allowKey: reason === "key_allowed",
@@ -10596,11 +10680,12 @@ function buildComments(
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
+  const lastLongrun = findLastTrueLongrunActivity(ctx, todayIso);
   const keyDecision = evaluateDayBasedKeyDecision({
     dayIso: todayIso,
     keyAllowedNow: keyCompliance?.keyAllowedNow,
     lastKeyIso: keySpacing?.lastKeyIso ?? null,
-    lastLongrunIso: longRunSummary?.longRun14d?.date ?? null,
+    lastLongrun,
     fatigueOverride: fatigue?.override === true,
   });
 
@@ -11071,6 +11156,7 @@ function buildComments(
   diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
   diagnoseLines.push(`Key-Debug: blockedByKeySpacing=${keyDecision?.blockedByKeySpacing ? "ja" : "nein"}, blockedByLongrunSpacing=${keyDecision?.blockedByLongrunSpacing ? "ja" : "nein"}, spacingOk=${keyDecision?.spacingOk ? "ja" : "nein"}, reason=${keyDecision?.reason || "key_not_allowed"}.`);
+  diagnoseLines.push(`Longrun-Debug: found=${keyDecision?.lastLongrunFound ? "ja" : "nein"}, id=${keyDecision?.lastLongrunActivityId ?? "n/a"}, date=${keyDecision?.lastLongrunDate ?? "n/a"}, durationMin=${keyDecision?.lastLongrunDurationMin ?? "n/a"}, reason=${keyDecision?.lastLongrunReason ?? "n/a"}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
@@ -14781,6 +14867,8 @@ const __internalTestHooks = Object.freeze({
   buildComments,
   buildNextRunRecommendation,
   inferKeyTypeFromExplicitSession,
+  evaluateDayBasedKeyDecision,
+  findLastTrueLongrunActivity,
   resolveRunFloorDecisionText,
   resolveBottomLine,
   resolveDayModeFromKeyDecision,
