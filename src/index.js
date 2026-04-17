@@ -3247,6 +3247,25 @@ function inferSteadySubtype(activity, rawType = null) {
   return "continuous";
 }
 
+function keyImpliesIntervalSignal(keyMeta = null) {
+  const keyType = String(keyMeta?.keyType || "").toLowerCase();
+  const keySubtype = normalizeSteadySubtype(keyMeta?.keySubtype);
+  if (!keyType) return false;
+  if (keyType === "steady" && keySubtype === "continuous") return false;
+  if (keyType === "steady" && keySubtype === "intervals") return true;
+  return true; // alle anderen key-Typen bleiben intervallrelevant
+}
+
+function shouldSearchIntervalsForRun({ isKey = false, keyMeta = null, activity = null } = {}) {
+  const steadyContinuousKey =
+    keyMeta?.keyType === "steady"
+    && normalizeSteadySubtype(keyMeta?.keySubtype) === "continuous";
+  if (steadyContinuousKey) return false;
+  return (isKey && keyImpliesIntervalSignal(keyMeta))
+    || hasExplicitIntervalStructure(activity)
+    || hasIcuIntervalSignal(activity);
+}
+
 function inferSteadySubtypeFromText(text = "") {
   const normalized = String(text || "").toLowerCase().replace(/[_-]+/g, " ").trim();
   if (!normalized) return "continuous";
@@ -8156,10 +8175,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       const activityWithIntervals = await getActivityWithIntervals(ctx, a);
       const isKey = hasKeyTag(a);
       const ga = isGA(a);
-      const intervalSignal = isKey
-        || hasExplicitIntervalStructure(activityWithIntervals)
-        || hasIcuIntervalSignal(activityWithIntervals);
-
       const ef = extractEF(a);
       const load = extractLoad(a);
       const keyType = isKey ? getKeyType(a) : null;
@@ -8169,6 +8184,11 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
           movingTime: Number(a?.moving_time ?? a?.elapsed_time ?? 0),
         })
         : { keyType: null, keySubtype: null };
+      const intervalSignal = shouldSearchIntervalsForRun({
+        isKey,
+        keyMeta: normalizedKeyMeta,
+        activity: activityWithIntervals,
+      });
       const intervalStructureHint = intervalSignal ? hasExplicitIntervalStructure(activityWithIntervals) : false;
       const paceConsistencyHint = intervalSignal ? inferPaceConsistencyFromIcu(activityWithIntervals) : null;
 
@@ -14980,6 +15000,8 @@ const __internalTestHooks = Object.freeze({
   buildRaceDayPrepBlock,
   buildRaceResultBlock,
   inferSteadySubtype,
+  keyImpliesIntervalSignal,
+  shouldSearchIntervalsForRun,
   normalizeKeyTypeMeta,
 });
 
