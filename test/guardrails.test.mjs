@@ -256,6 +256,25 @@ console.log('guardrails ok');
   assert.equal(intervalsByToken.keyType, 'steady');
   assert.equal(intervalsByToken.keySubtype, 'intervals');
 
+  const continuousByToken = __test.normalizeKeyTypeMeta('steady_continuous', {
+    activity: {
+      name: "30' steady",
+      description: 'ohne Pause am Stück',
+    },
+  });
+  assert.equal(continuousByToken.keyType, 'steady');
+  assert.equal(continuousByToken.keySubtype, 'continuous');
+
+  const intervalsByRecovery = __test.inferSteadySubtype({
+    name: "steady blocks",
+    intervals: [
+      { type: 'WORK', moving_time: 480, distance: 1700 },
+      { type: 'RECOVERY', moving_time: 120, distance: 300 },
+      { type: 'WORK', moving_time: 480, distance: 1700 },
+    ],
+  }, 'steady');
+  assert.equal(intervalsByRecovery, 'intervals');
+
   const fallback = __test.normalizeKeyTypeMeta('steady', {});
   assert.equal(fallback.keySubtype, 'continuous');
 }

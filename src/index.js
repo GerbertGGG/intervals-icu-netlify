@@ -3223,6 +3223,15 @@ function inferSteadySubtype(activity, rawType = null) {
     return "intervals";
   }
 
+  const intervals = getActivityIntervals(activity);
+  if (intervals.length) {
+    const hasRecoverySegment = intervals.some((seg) => {
+      const type = String(seg?.type ?? "").toUpperCase();
+      return type === "REST" || type === "RECOVERY" || type === "OFF";
+    });
+    if (hasRecoverySegment) return "intervals";
+  }
+
   const text = [activity?.name, activity?.description, activity?.workout_name, activity?.workout_doc]
     .filter(Boolean)
     .map((v) => String(v).toLowerCase())
@@ -3230,7 +3239,9 @@ function inferSteadySubtype(activity, rawType = null) {
     .replace(/[_-]+/g, " ");
   if (!text) return "continuous";
 
-  const intervalKeywords = /\b(interval(le|s)?|reps?|bl(ö|oe)cke?|sets?|pause(n)?|trabpause)\b/i;
+  const intervalKeywords = /\b(interval(le|s)?|reps?|bl(ö|oe)cke?|sets?|pause(n)?|trabpause|recover(y|ies)|off)\b/i;
+  const repeatWithPause = /\b\d{1,2}\s*[x×]\s*\d+(?:[.,]\d+)?\s*(?:min|s|sec|"|''|′|″|')\b.{0,30}\b(?:pause|trab|locker|easy|jog|recover(y|ies)|off)\b/i;
+  if (repeatWithPause.test(text)) return "intervals";
   if (intervalKeywords.test(text)) return "intervals";
   return "continuous";
 }
@@ -4702,7 +4713,9 @@ function buildProgressionSuggestion(progression) {
   }
 
   if (progression.primaryType === "steady") {
-    const inferredSubtype = inferSteadySubtypeFromText(progression?.templateText || progression?.note || "");
+    const inferredSubtype = normalizeSteadySubtype(
+      progression?.keySubtype || inferSteadySubtypeFromText(progression?.templateText || progression?.note || "")
+    );
     const progressionFocus = inferredSubtype === "intervals"
       ? "Progression über Wiederholungen/Blockdauer/Pausen."
       : "Progression über Dauer am Stück.";
