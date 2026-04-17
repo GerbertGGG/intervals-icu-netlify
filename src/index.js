@@ -12765,7 +12765,7 @@ async function computeDetectiveNote(
     // Too many shorts (no base)
     const shortShare = totalRuns ? (shortRuns.length / totalRuns) * 100 : 0;
     if (shortRuns.length >= 3 && shortShare >= 45) {
-      findings.push(`Viele kurze Läufe (<30min): ${shortRuns.length}/${totalRuns} (${shortShare.toFixed(0)}%).`);
+      findings.push(`Viele kurze Läufe (<25min): ${shortRuns.length}/${totalRuns} (${shortShare.toFixed(0)}%).`);
       actions.push("Mind. 2 Einheiten/Woche auf 35–50min verlängern (ruhig).");
     }
   }
