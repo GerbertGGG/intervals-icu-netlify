@@ -265,6 +265,15 @@ console.log('guardrails ok');
   assert.equal(continuousByToken.keyType, 'steady');
   assert.equal(continuousByToken.keySubtype, 'continuous');
 
+  const continuousByCommonTypo = __test.normalizeKeyTypeMeta('steady_continious', {
+    activity: {
+      name: "3x8' steady",
+      description: "3x8' steady mit 2' Trabpause",
+    },
+  });
+  assert.equal(continuousByCommonTypo.keyType, 'steady');
+  assert.equal(continuousByCommonTypo.keySubtype, 'continuous');
+
   const intervalsByRecovery = __test.inferSteadySubtype({
     name: "steady blocks",
     intervals: [
