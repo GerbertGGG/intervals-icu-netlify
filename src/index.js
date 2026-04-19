@@ -1105,7 +1105,7 @@ const LONGRUN_PREPLAN = {
   stepDays: 14,
   maxStepPct: 0.10,
   spikeGuardLookbackDays: 14,
-  startMin: 45,
+  startMin: 50,
   targetMinByDistance: {
     "5k": 60,
     "10k": 60,
@@ -10280,6 +10280,11 @@ function buildNextRunRecommendation({
   preferredKeyTypes,
   block,
   keyDecision,
+  plannedSessionType,
+  plannedSessionLabel,
+  focusPrimary,
+  focusSecondary,
+  longRunTargetMin,
 }) {
   const resolvedBlock = String(block || "BASE").toUpperCase();
   const normalizedAllowed = Array.isArray(allowedKeyTypes) ? allowedKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
@@ -10303,6 +10308,22 @@ function buildNextRunRecommendation({
     || keySuggestionText.includes("nächster key:")
   );
   const canPlaceKeyNow = keyDecision?.allowKey === true;
+  const plannedType = String(plannedSessionType || "").toUpperCase();
+  const secondaryFocusText = String(focusSecondary || "").toLowerCase();
+  const longrunFocusActive = plannedType === "LONGRUN"
+    || String(focusPrimary || "").toLowerCase() === "longrun"
+    || secondaryFocusText.includes("longrun");
+  const minLongrunTarget = Math.max(50, Math.round(Number(longRunTargetMin) || 0));
+  const normalizeLongrunLabel = (label, fallbackMin) => {
+    const fallback = `Langer Lauf ~${Math.max(50, fallbackMin || 0)}′`;
+    const text = String(label || "").trim();
+    if (!text) return fallback;
+    const match = text.match(/(\d+)\s*′/);
+    if (!match) return text;
+    const minutes = Number(match[1]);
+    if (!Number.isFinite(minutes) || minutes >= 50) return text;
+    return text.replace(/(\d+)\s*′/, `${Math.max(50, fallbackMin || 50)}′`);
+  };
   const fallbackSessionByType = {
     strides: "Strides konkret: 4–6×8–10″ (Sekunden) Hill Sprints, volle 2–3′ Pause.",
     steady: "Steady konkret: 20–30′ steady im mittleren GA-Bereich.",
@@ -10334,6 +10355,10 @@ function buildNextRunRecommendation({
     next = "30–45 min locker (kein Key) – Intensität deckeln";
   } else if (keyDecision?.blockedByFatigue) {
     next = "30–45 min locker oder frei (Regeneration priorisieren)";
+  }
+  if (!canPlaceKeyNow && longrunFocusActive && !keyDecision?.blockedByLongrunSpacing && !keyDecision?.blockedByFatigue) {
+    const label = normalizeLongrunLabel(plannedSessionLabel, minLongrunTarget);
+    return `Longrun wie im Wochenplan: ${label}.`;
   }
   if (keyDecision?.blockedByKeySpacing) {
     next = "Heute kein Key (Key-Spacer): 30–60 min locker oder Rest.";
@@ -10874,6 +10899,11 @@ function buildComments(
     plannedType: keyRules?.plannedPrimaryType,
     weeksToEvent,
   });
+  const todayPlanEntry = Array.isArray(weekPreview?.days)
+    ? weekPreview.days.find((entry) => entry?.isToday === true || entry?.date === todayIso)
+    : null;
+  const focusPrimary = String(contextCtx?.__weeklyFocusMeta?.focus || "").toLowerCase() || null;
+  const focusSecondary = mapGapToCoachLanguage(distanceDiagnostics?.secondaryGap).label || null;
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
   const nextRunText = buildNextRunRecommendation({
     runFloorState,
@@ -10895,6 +10925,11 @@ function buildComments(
     preferredKeyTypes: keyRules?.preferredKeyTypes,
     block: blockState?.block,
     keyDecision,
+    plannedSessionType: todayPlanEntry?.sessionType || null,
+    plannedSessionLabel: todayPlanEntry?.label || null,
+    focusPrimary,
+    focusSecondary,
+    longRunTargetMin: longRunSummary?.plan?.plannedMin ?? null,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
