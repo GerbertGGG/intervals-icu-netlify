@@ -190,9 +190,9 @@ export default {
       }
     }
 
-    if (url.pathname === "/test-strength-mail") {
+    if (url.pathname === "/test-strength-mail" || url.pathname === "/test-weekly-email") {
       try {
-        const dryRun = parseBooleanParam(url.searchParams, "dry");
+        const dryRun = parseBooleanParam(url.searchParams, "dry") || parseBooleanParam(url.searchParams, "dry_run");
         const blockRaw = String(url.searchParams.get("block") || "BASE").toUpperCase();
         const allowedBlocks = new Set(["BASE", "BUILD", "RACE", "RESET"]);
         const block = allowedBlocks.has(blockRaw) ? blockRaw : "BASE";
@@ -207,7 +207,7 @@ export default {
         );
         return json({
           ok: true,
-          endpoint: "/test-strength-mail",
+          endpoint: url.pathname,
           dryRun,
           block,
           strengthCountThisWeek,
@@ -9156,10 +9156,18 @@ Fehler: ${String(e?.message ?? e)}`;
     patches[day] = patchToWrite;
   }
 
+  let weeklyStrengthMail = null;
   if (write && isMondayIso(oldest)) {
-    sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek).catch((err) => {
-      console.warn("sendWeeklyStrengthMail failed:", String(err?.message ?? err));
-    });
+    const mailResult = await sendWeeklyStrengthMail(env, previousBlockState, strengthCountThisWeek);
+    weeklyStrengthMail = {
+      attempted: true,
+      day: oldest,
+      strengthCountThisWeek,
+      ...mailResult,
+    };
+    if (!mailResult?.ok) {
+      console.warn("weekly strength mail not sent:", JSON.stringify(weeklyStrengthMail));
+    }
   }
 
   return {
@@ -9174,6 +9182,7 @@ Fehler: ${String(e?.message ?? e)}`;
     requestedDays: requestedDaysList.length,
     truncatedDays: Math.max(0, requestedDaysList.length - daysList.length),
     daysWritten,
+    weeklyStrengthMail: debug ? weeklyStrengthMail : undefined,
     patches: debug ? patches : undefined,
     debug: debug ? {
       ...ctx.debugOut,
