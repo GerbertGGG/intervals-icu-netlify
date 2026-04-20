@@ -2986,6 +2986,8 @@ function inferLongrunReason(activity) {
 
 function findLastTrueLongrunActivity(ctx, dayIso) {
   const activities = Array.isArray(ctx?.activitiesAll) ? ctx.activitiesAll : [];
+  const lookbackDays = Math.max(1, Number(LONGRUN_PREPLAN.spikeGuardLookbackDays) || 14);
+  const lookbackStartIso = isIsoDate(dayIso) ? addDaysIso(dayIso, -(lookbackDays - 1)) : null;
   let best = null;
   for (const activity of activities) {
     if (!isRun(activity)) continue;
@@ -3008,12 +3010,21 @@ function findLastTrueLongrunActivity(ctx, dayIso) {
   }
 
   if (!best) {
+    const hasLongrunInWindow = activities.some((activity) => {
+      if (!isRun(activity)) return false;
+      const dateIso = String(activity?.start_date_local || activity?.start_date || "").slice(0, 10);
+      if (!isIsoDate(dateIso)) return false;
+      if (isIsoDate(dayIso) && dateIso > dayIso) return false;
+      if (isIsoDate(lookbackStartIso) && dateIso < lookbackStartIso) return false;
+      const durationSec = Number(activity?.moving_time ?? activity?.elapsed_time ?? 0) || 0;
+      return durationSec >= LONGRUN_MIN_SECONDS;
+    });
     return {
       found: false,
       activityId: null,
       date: null,
       durationMin: null,
-      reason: null,
+      reason: hasLongrunInWindow ? "kein_longrun_gefunden" : "kein_longrun_14t",
     };
   }
   return {
@@ -10267,7 +10278,7 @@ function evaluateDayBasedKeyDecision({
     lastLongrunActivityId: lastLongrun?.found === true ? (lastLongrun?.activityId ?? null) : null,
     lastLongrunDate: lastLongrun?.found === true ? (lastLongrun?.date ?? null) : null,
     lastLongrunDurationMin: lastLongrun?.found === true ? (lastLongrun?.durationMin ?? null) : null,
-    lastLongrunReason: lastLongrun?.found === true ? (lastLongrun?.reason ?? null) : null,
+    lastLongrunReason: lastLongrun?.reason ?? (lastLongrun?.found === true ? null : "kein_longrun_gefunden"),
     finalDecision: reason === "key_allowed" ? "KEY" : "LOW",
     reason,
     allowKey: reason === "key_allowed",
@@ -11293,10 +11304,14 @@ function buildComments(
       : ["• Keine harten Restriktionen aktiv."];
   }
 
+  const keyAllowedNowLabel = keyDecision?.keyAllowedNow
+    ? (fatigue?.override === true ? "ja (Fatigue-Override → heute kein Key)" : "ja")
+    : "nein";
+
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
-    `Key-Entscheid: keyAllowedNow=${keyDecision?.keyAllowedNow ? "ja" : "nein"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
+    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
   ];
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;
@@ -11347,7 +11362,7 @@ function buildComments(
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
   diagnoseLines.push(`Key-Debug: blockedByKeySpacing=${keyDecision?.blockedByKeySpacing ? "ja" : "nein"}, blockedByLongrunSpacing=${keyDecision?.blockedByLongrunSpacing ? "ja" : "nein"}, spacingOk=${keyDecision?.spacingOk ? "ja" : "nein"}, reason=${keyDecision?.reason || "key_not_allowed"}.`);
   const longrunDebugReason = keyDecision?.lastLongrunReason
-    ?? (longRunDoneMin === 0 ? `kein Longrun in ${LONGRUN_PREPLAN.spikeGuardLookbackDays} Tagen` : "n/a");
+    ?? (keyDecision?.lastLongrunFound ? "longrun_reason_unbekannt" : "kein_longrun_gefunden");
   diagnoseLines.push(`Longrun-Debug: found=${keyDecision?.lastLongrunFound ? "ja" : "nein"}, id=${keyDecision?.lastLongrunActivityId ?? "n/a"}, date=${keyDecision?.lastLongrunDate ?? "n/a"}, durationMin=${keyDecision?.lastLongrunDurationMin ?? "n/a"}, reason=${longrunDebugReason}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
