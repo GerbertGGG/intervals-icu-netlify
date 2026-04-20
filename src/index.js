@@ -1786,7 +1786,7 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
     if (!env?.RESEND_API_KEY) return { ok: false, skipped: "missing_resend_api_key" };
     const normalizedStrengthCount = Math.max(0, Math.floor(Number(strengthCountThisWeek) || 0));
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
-    const sessionCount = Math.max(1, Number(strengthPlan?.sessionsPerWeek) || 1);
+    const sessionCount = Math.max(3, Number(strengthPlan?.sessionsPerWeek) || 1);
     const sessions = Array.from({ length: sessionCount }, (_, idx) =>
       getStrengthSessionForDay(blockState, normalizedStrengthCount + idx)
     ).filter(Boolean);
