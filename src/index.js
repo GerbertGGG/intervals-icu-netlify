@@ -10725,6 +10725,16 @@ function buildBikeReplacementGuidanceLine({
   return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; 10 Lauf-TSS ≈ ${bikeForTenRunTss} Bike-TSS${replaceCapText}.`;
 }
 
+function buildWellnessRecommendation({ readinessAmpel, warningCount, hasHardRedFlag }) {
+  if (hasHardRedFlag || readinessAmpel === "🔴") {
+    return "Die Erholungsmarker sind deutlich angespannt und die Woche war fordernd.\n👉 Heute keine Intervalle – Fokus auf Ruhe und Regeneration.";
+  }
+  if (readinessAmpel === "🟠" || warningCount > 0) {
+    return "Die Erholungsmarker sind gemischt und die Woche wirkt spürbar belastet.\n👉 Heute nur sehr lockere Belastung, Intervalle besser verschieben.";
+  }
+  return "Die Erholungsmarker sind stabil und die Woche hat sich noch nicht übermäßig angespannt.\n👉 Heute sind kurze Intervalle möglich, aber streng kontrolliert.";
+}
+
 // ================= COMMENT =================
 function formatPhaseOverlayLine(phase, overlay) {
   const phaseLabel = String(phase || "BASE").toUpperCase();
@@ -11459,6 +11469,15 @@ function buildComments(
     ...rulesCapsLines,
     ...coachConsequencesLines,
   ]);
+
+  const wellnessRecommendation = buildWellnessRecommendation({
+    readinessAmpel,
+    warningCount,
+    hasHardRedFlag,
+  });
+  lines.push("");
+  lines.push("💬 WELLNESS KOMMENTAR");
+  lines.push(wellnessRecommendation);
 
   return lines.join("\n");
 }
