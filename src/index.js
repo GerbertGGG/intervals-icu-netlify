@@ -10973,6 +10973,7 @@ function buildComments(
   const longRunTargetMin = longRunSafetyCapMin > 0
     ? Math.min(longRunTargetPhaseCapMin, longRunSafetyCapMin)
     : longRunTargetPhaseCapMin;
+  const longRunBlockTargetMin = Math.max(LONGRUN_PREPLAN.startMin, longRunTargetPhaseCapMin);
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
   const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
     ? longRunSafetyCapMin
@@ -11283,7 +11284,9 @@ function buildComments(
           ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
           : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
-    `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunTargetMin}′`,
+    longRunTargetMin < longRunBlockTargetMin
+      ? `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunBlockTargetMin}′ (nächster sicherer Schritt ${longRunTargetMin}′)`
+      : `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunBlockTargetMin}′`,
     bikeWeeklyRule.summaryLine,
     bikeReplacementGuidanceLine,
     `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
