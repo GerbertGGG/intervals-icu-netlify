@@ -11,6 +11,7 @@ import { __test } from "../src/index.js";
   };
   const lastLongrun = __test.findLastTrueLongrunActivity(ctx, "2026-04-17");
   assert.equal(lastLongrun.found, false);
+  assert.equal(lastLongrun.reason, "kein_longrun_gefunden");
 
   const decision = __test.evaluateDayBasedKeyDecision({
     dayIso: "2026-04-17",
@@ -21,6 +22,20 @@ import { __test } from "../src/index.js";
   assert.equal(decision.daysSinceLastLongrun, null);
   assert.equal(decision.blockedByLongrunSpacing, false);
   assert.equal(decision.lastLongrunFound, false);
+  assert.equal(decision.lastLongrunReason, "kein_longrun_gefunden");
+}
+
+// 1b) Kein Lauf >= LONGRUN_MIN_SECONDS im 14T-Fenster -> expliziter 14T-Grund
+{
+  const ctx = {
+    activitiesAll: [
+      { id: "easy-1", type: "Run", start_date_local: "2026-04-15T07:00:00Z", moving_time: 45 * 60, tags: [] },
+      { id: "easy-2", type: "Run", start_date_local: "2026-04-16T07:00:00Z", moving_time: 50 * 60, tags: [] },
+    ],
+  };
+  const lastLongrun = __test.findLastTrueLongrunActivity(ctx, "2026-04-17");
+  assert.equal(lastLongrun.found, false);
+  assert.equal(lastLongrun.reason, "kein_longrun_14t");
 }
 
 // 2) Echter Longrun gestern -> Spacer aktiv
