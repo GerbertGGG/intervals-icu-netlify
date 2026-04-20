@@ -10971,10 +10971,12 @@ function buildComments(
   const longestRun30dMin = Math.round(longRun30d?.minutes ?? 0);
   const prePlanLongRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
-  const longRunStepCapRawMin = Math.max(
-    LONGRUN_PREPLAN.startMin,
-    Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct)),
-  );
+  const longRunStepCapRawMin = longRunDoneMin > 0
+    ? Math.max(
+      LONGRUN_PREPLAN.startMin,
+      Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct)),
+    )
+    : LONGRUN_PREPLAN.startMin;
   const longRunSpikeCapMin = longestRun30dMin > 0
     ? Math.max(
       LONGRUN_PREPLAN.startMin,
@@ -10997,9 +10999,10 @@ function buildComments(
     : longRunTargetPhaseCapMin;
   const longRunBlockTargetMin = Math.max(LONGRUN_PREPLAN.startMin, longRunTargetPhaseCapMin);
   const longRunGapMin = longRunDoneMin - longRunTargetMin;
-  const blockLongRunNextWeekTargetMin = longRunDoneMin > 0
-    ? longRunSafetyCapMin
-    : LONGRUN_PREPLAN.startMin;
+  const blockLongRunNextWeekTargetMin = Math.max(
+    LONGRUN_PREPLAN.startMin,
+    longRunSafetyCapMin > 0 ? longRunSafetyCapMin : LONGRUN_PREPLAN.startMin,
+  );
 
   const runMetrics = [];
   if (!perRunInfo?.length) {
@@ -11231,7 +11234,11 @@ function buildComments(
       "Nächsten Reiz gezielter setzen.",
     ],
     longrun: [
-      longRunDoneMin < longRunTargetMin ? `Longrun zuletzt kürzer (${longRunDoneMin}′/${longRunTargetMin}′)` : null,
+      longRunDoneMin === 0
+        ? `Kein Longrun in den letzten ${LONGRUN_PREPLAN.spikeGuardLookbackDays} Tagen (Mindestziel: ${LONGRUN_PREPLAN.startMin}′)`
+        : longRunDoneMin < longRunTargetMin
+          ? `Longrun zuletzt kürzer (${longRunDoneMin}′ / Mindestziel ${LONGRUN_PREPLAN.startMin}′)`
+          : null,
       Number(distanceDiagnostics?.snapshot?.longrunFrequency35d ?? 0) < 2 ? "Longrun-Frequenz zu niedrig." : null,
       "Längerer aerober Reiz nicht regelmäßig genug.",
     ],
@@ -11339,7 +11346,9 @@ function buildComments(
   diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
   diagnoseLines.push(`Key-Debug: blockedByKeySpacing=${keyDecision?.blockedByKeySpacing ? "ja" : "nein"}, blockedByLongrunSpacing=${keyDecision?.blockedByLongrunSpacing ? "ja" : "nein"}, spacingOk=${keyDecision?.spacingOk ? "ja" : "nein"}, reason=${keyDecision?.reason || "key_not_allowed"}.`);
-  diagnoseLines.push(`Longrun-Debug: found=${keyDecision?.lastLongrunFound ? "ja" : "nein"}, id=${keyDecision?.lastLongrunActivityId ?? "n/a"}, date=${keyDecision?.lastLongrunDate ?? "n/a"}, durationMin=${keyDecision?.lastLongrunDurationMin ?? "n/a"}, reason=${keyDecision?.lastLongrunReason ?? "n/a"}.`);
+  const longrunDebugReason = keyDecision?.lastLongrunReason
+    ?? (longRunDoneMin === 0 ? `kein Longrun in ${LONGRUN_PREPLAN.spikeGuardLookbackDays} Tagen` : "n/a");
+  diagnoseLines.push(`Longrun-Debug: found=${keyDecision?.lastLongrunFound ? "ja" : "nein"}, id=${keyDecision?.lastLongrunActivityId ?? "n/a"}, date=${keyDecision?.lastLongrunDate ?? "n/a"}, durationMin=${keyDecision?.lastLongrunDurationMin ?? "n/a"}, reason=${longrunDebugReason}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
