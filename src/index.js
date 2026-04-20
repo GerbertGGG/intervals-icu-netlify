@@ -10971,8 +10971,16 @@ function buildComments(
   const longestRun30dMin = Math.round(longRun30d?.minutes ?? 0);
   const prePlanLongRunTargetMin = Math.round(longRunPlan?.plannedMin ?? LONGRUN_PREPLAN.startMin);
   const phaseLongRunMaxMin = Number(PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[eventDistance || "10k"]?.longrun ?? 0);
-  const longRunStepCapRawMin = Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct));
-  const longRunSpikeCapMin = longestRun30dMin > 0 ? Math.round(longestRun30dMin * (1 + LONGRUN_PREPLAN.maxStepPct)) : 0;
+  const longRunStepCapRawMin = Math.max(
+    LONGRUN_PREPLAN.startMin,
+    Math.round(longRunDoneMin * (1 + LONGRUN_PREPLAN.maxStepPct)),
+  );
+  const longRunSpikeCapMin = longestRun30dMin > 0
+    ? Math.max(
+      LONGRUN_PREPLAN.startMin,
+      Math.round(longestRun30dMin * (1 + LONGRUN_PREPLAN.maxStepPct)),
+    )
+    : 0;
   const longRunStepCapMin = phaseLongRunMaxMin > 0
     ? Math.min(longRunStepCapRawMin, phaseLongRunMaxMin)
     : longRunStepCapRawMin;
