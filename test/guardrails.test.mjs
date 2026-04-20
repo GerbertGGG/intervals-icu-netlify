@@ -60,7 +60,7 @@ import { __test } from '../src/index.js';
   assert.equal(compliance.keySpacingOk, true);
   assert.equal(compliance.plannedKeyType, 'steady');
   assert.equal(compliance.keyAllowedNow, true);
-  assert.match(String(compliance.explicitSession || ''), /35–45′ locker \+ 10–15′ steady|2×8–10′ steady/);
+  assert.match(String(compliance.explicitSession || ''), /35–45′ locker \+ 10–15′ steady|2×8–10′ steady|60–75′ GA1 locker/);
 }
 
 // 2c) Steady-Keys gelten nicht als Intervall-Keytype
