@@ -7010,6 +7010,7 @@ function buildWeekPreview(
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
     const longRunContext = {
       longRunStepCapMin: runFloorState?.longRunStepCapMin ?? null,
+      longRunNextStepMin: runFloorState?.longRunNextStepMin ?? null,
       longRunTargetMin: runFloorState?.longRunTargetMin ?? longRunTargetMin ?? null,
     };
     const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
@@ -7216,8 +7217,11 @@ function buildWeekPreview(
           if (canPlanLongrun && isLongrunPref) {
             sessionType = "LONGRUN";
             intensity = "MED";
-            const capMin = longRunContext?.longRunStepCapMin ?? longRunContext?.longRunTargetMin ?? null;
-            const label = Number.isFinite(capMin) && capMin > 0
+            const capMin = longRunContext?.longRunStepCapMin
+              ?? longRunContext?.longRunNextStepMin
+              ?? longRunContext?.longRunTargetMin
+              ?? null;
+            const label = (Number.isFinite(capMin) && capMin > 0)
               ? `Langer Lauf ~${Math.round(capMin)}′`
               : "Langer Lauf";
             sessionLabel = label;
@@ -10527,6 +10531,8 @@ function buildNextRunRecommendation({
   plannedSessionLabel,
   focusPrimary,
   focusSecondary,
+  longRunStepCapMin,
+  longRunNextStepMin,
   longRunTargetMin,
 }) {
   const resolvedBlock = String(block || "BASE").toUpperCase();
@@ -10556,16 +10562,21 @@ function buildNextRunRecommendation({
   const longrunFocusActive = plannedType === "LONGRUN"
     || String(focusPrimary || "").toLowerCase() === "longrun"
     || secondaryFocusText.includes("longrun");
-  const minLongrunTarget = Math.max(50, Math.round(Number(longRunTargetMin) || 0));
-  const normalizeLongrunLabel = (label, fallbackMin) => {
-    const fallback = `Langer Lauf ~${Math.max(50, fallbackMin || 0)}′`;
+  const resolveLongrunLabel = (context, label) => {
+    const capMin = context?.longRunStepCapMin
+      ?? context?.longRunNextStepMin
+      ?? context?.longRunTargetMin
+      ?? null;
+    const fallback = (Number.isFinite(capMin) && capMin > 0)
+      ? `Langer Lauf ~${Math.round(capMin)}′`
+      : "Langer Lauf";
     const text = String(label || "").trim();
     if (!text) return fallback;
     const match = text.match(/(\d+)\s*′/);
-    if (!match) return text;
+    if (!match || !(Number.isFinite(capMin) && capMin > 0)) return text;
     const minutes = Number(match[1]);
-    if (!Number.isFinite(minutes) || minutes >= 50) return text;
-    return text.replace(/(\d+)\s*′/, `${Math.max(50, fallbackMin || 50)}′`);
+    if (!Number.isFinite(minutes)) return fallback;
+    return text.replace(/(\d+)\s*′/, `${Math.round(capMin)}′`);
   };
   const fallbackSessionByType = {
     strides: "Strides konkret: 4–6×8–10″ (Sekunden) Hill Sprints, volle 2–3′ Pause.",
@@ -10600,7 +10611,11 @@ function buildNextRunRecommendation({
     next = "30–45 min locker oder frei (Regeneration priorisieren)";
   }
   if (!canPlaceKeyNow && longrunFocusActive && !keyDecision?.blockedByLongrunSpacing && !keyDecision?.blockedByFatigue) {
-    const label = normalizeLongrunLabel(plannedSessionLabel, minLongrunTarget);
+    const label = resolveLongrunLabel({
+      longRunStepCapMin,
+      longRunNextStepMin,
+      longRunTargetMin,
+    }, plannedSessionLabel);
     return `Longrun wie im Wochenplan: ${label}.`;
   }
   if (keyDecision?.blockedByKeySpacing) {
@@ -11169,9 +11184,11 @@ function buildComments(
     block: blockState?.block,
     keyDecision,
     plannedSessionType: todayPlanEntry?.sessionType || null,
-    plannedSessionLabel: todayPlanEntry?.label || null,
+    plannedSessionLabel: todayPlanEntry?.sessionLabel || todayPlanEntry?.label || null,
     focusPrimary,
     focusSecondary,
+    longRunStepCapMin: runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null,
+    longRunNextStepMin: runFloorState?.longRunNextStepMin ?? null,
     longRunTargetMin: longRunSummary?.plan?.plannedMin ?? null,
   });
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
