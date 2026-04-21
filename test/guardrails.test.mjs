@@ -704,11 +704,11 @@ console.log('guardrails ok');
       aerobicOkPrev: true,
       hrDriftDelta: 0.2,
       fatigue: { override: false },
-      recentHolidayDaysForBuild: 3,
+      last14HolidayDays: 5,
     },
   });
   assert.equal(out.block, 'BASE');
-  assert.equal(out.reasons.some((line) => /Holiday in letzten 14 Tagen/.test(String(line))), true);
+  assert.equal(out.reasons.some((line) => /Urlaubstage in letzten 14 Tagen/.test(String(line))), true);
 }
 
 // 25) BASE->BUILD Guard: ohne Holiday und mit normalem RunFloor ist BUILD erlaubt
@@ -727,9 +727,110 @@ console.log('guardrails ok');
       aerobicOkPrev: true,
       hrDriftDelta: 0.2,
       fatigue: { override: false },
-      recentHolidayDaysForBuild: 0,
+      last14HolidayDays: 4,
     },
   });
   assert.equal(out.block, 'BUILD');
-  assert.equal(out.reasons.some((line) => /Guard ok/.test(String(line))), true);
+  assert.equal(out.reasons.some((line) => /BASE Exit/.test(String(line))), true);
+}
+
+// 26) Distanzspezifische RESET-Dauer gilt exakt (HM: 3 Wochen)
+{
+  const out = __test.determineBlockState({
+    today: '2026-04-16',
+    eventDate: '2026-06-20',
+    eventDistance: 'hm',
+    previousState: { block: 'RESET', wave: 0, startDate: '2026-04-01' },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 70,
+      runFloorEwma10Prev: 70,
+      aerobicOk: false,
+      aerobicOkPrev: false,
+      hrDriftDelta: 1.5,
+      fatigue: { override: true },
+    },
+  });
+  assert.equal(out.block, 'RESET');
+}
+
+// 27) RACE->RESET erst nach 3 Tagen Post-Race-Puffer
+{
+  const stillRace = __test.determineBlockState({
+    today: '2026-05-12',
+    eventDate: '2026-05-10',
+    eventDistance: '10k',
+    previousState: { block: 'RACE', startDate: '2026-04-15' },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 95,
+      runFloorEwma10Prev: 95,
+      aerobicOk: true,
+      aerobicOkPrev: true,
+      hrDriftDelta: 0.2,
+      fatigue: { override: false },
+    },
+  });
+  assert.equal(stillRace.block, 'RACE');
+
+  const resetAfterBuffer = __test.determineBlockState({
+    today: '2026-05-14',
+    eventDate: '2026-05-10',
+    eventDistance: '10k',
+    previousState: { block: 'RACE', startDate: '2026-04-15' },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 95,
+      runFloorEwma10Prev: 95,
+      aerobicOk: true,
+      aerobicOkPrev: true,
+      hrDriftDelta: 0.2,
+      fatigue: { override: false },
+    },
+  });
+  assert.equal(resetAfterBuffer.block, 'RESET');
+  assert.equal(resetAfterBuffer.reasons.some((line) => /3 Tage post-Race Puffer/.test(String(line))), true);
+}
+
+// 28) BUILD Wave-1 Reset verlangt >=4 Keys und Type-Qualität
+{
+  const blockedByCount = __test.determineBlockState({
+    today: '2026-04-13',
+    eventDate: '2026-08-30',
+    eventDistance: '10k',
+    previousState: { block: 'BUILD', wave: 1, startDate: '2026-03-10' },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 95,
+      runFloorEwma10Prev: 93,
+      aerobicOk: true,
+      aerobicOkPrev: true,
+      hrDriftDelta: 0.2,
+      fatigue: { override: false },
+      keyStats14: { count: 3, typeOk: true },
+      keyCompliance: { freqOk: true, typeOk: true },
+      efDeltaPct: 3.0,
+    },
+  });
+  assert.equal(blockedByCount.block, 'BUILD');
+
+  const blockedByType = __test.determineBlockState({
+    today: '2026-04-13',
+    eventDate: '2026-08-30',
+    eventDistance: '10k',
+    previousState: { block: 'BUILD', wave: 1, startDate: '2026-03-10' },
+    historyMetrics: {
+      runFloorTarget: 100,
+      runFloorEwma10: 95,
+      runFloorEwma10Prev: 93,
+      aerobicOk: true,
+      aerobicOkPrev: true,
+      hrDriftDelta: 0.2,
+      fatigue: { override: false },
+      keyStats14: { count: 4, typeOk: false },
+      keyCompliance: { freqOk: true, typeOk: true },
+      efDeltaPct: 3.0,
+    },
+  });
+  assert.equal(blockedByType.block, 'BUILD');
 }

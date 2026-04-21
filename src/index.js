@@ -936,17 +936,17 @@ const BLOCK_CONFIG = {
   thresholds: {
     runFloorPct: 0.9,
     hrDriftMax: 1.0,
-    plateauEfDeltaPct: 1.0,
+    plateauEfDeltaPct: 2.0,
     plateauMotorDelta: 3,
     keyGrace: 0.25,
   },
 };
 
 const BLOCK_LENGTHS_WEEKS_BY_DISTANCE = {
-  "5k": { base: 10, build: 8, race: 6, taper: 1 },
-  "10k": { base: 10, build: 8, race: 6, taper: 1 },
-  hm: { base: 12, build: 8, race: 8, taper: 2 },
-  m: { base: 16, build: 10, race: 8, taper: 2 },
+  "5k": { base: 10, build: 8, race: 6, taper: 1, reset: 2 },
+  "10k": { base: 10, build: 8, race: 6, taper: 1, reset: 2 },
+  hm: { base: 12, build: 8, race: 8, taper: 2, reset: 3 },
+  m: { base: 16, build: 10, race: 8, taper: 2, reset: 4 },
 };
 
 function getBlockLengthsWeeks(eventDistance) {
@@ -975,9 +975,14 @@ function getBlockDurationForDistance(block, eventDistance) {
     BASE: lengths.base,
     BUILD: lengths.build,
     RACE: (lengths.race || 0) + (lengths.taper || 0),
+    RESET: lengths.reset,
   };
   const weeks = weekByBlock[block];
-  if (!Number.isFinite(weeks) || weeks <= 0) return BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
+  if (!Number.isFinite(weeks) || weeks <= 0) {
+    const fallback = BLOCK_CONFIG.durations[block] || { minDays: 7, maxDays: 56 };
+    const days = Math.max(7, Math.round((fallback.minDays || 7)));
+    return { minDays: days, maxDays: days };
+  }
   const days = Math.max(7, Math.round(weeks * 7));
   return { minDays: days, maxDays: days };
 }
@@ -6096,8 +6101,13 @@ function determineBlockState({
   }
 
   if (block === "BASE") {
+    const recentHolidayDays = historyMetrics?.last14HolidayDays ?? 0;
+    const holidayBlocksBuild = recentHolidayDays >= 5 && weeksToEvent > raceStartWeeks + 4;
+    if (holidayBlocksBuild) {
+      reasons.push(`BASE bleibt: ${recentHolidayDays} Urlaubstage in letzten 14 Tagen → Readaptation abwarten`);
+    }
     const efBlocksEarlyBuild = efReadyForBuild === false && weeksToEvent > raceStartWeeks + 4;
-    if (runFloorReady && aerobicReady && driftReady && fatigueOk && !efBlocksEarlyBuild) {
+    if (runFloorReady && aerobicReady && driftReady && fatigueOk && !efBlocksEarlyBuild && !holidayBlocksBuild) {
       reasons.push("BASE Exit: Floors stabil + Drift ok + keine Overload-Signale");
       if (efAllowsEarlyBuild && timeInBlockDays < blockLimits.minDays) {
         reasons.push("EF-Trend ermöglicht frühen BUILD-Start");
@@ -6114,15 +6124,16 @@ function determineBlockState({
     }
   } else if (block === "BUILD") {
     const keyCompliance = historyMetrics?.keyCompliance;
-    const plateauEf = Math.abs(historyMetrics?.efDeltaPct ?? 0) <= BLOCK_CONFIG.thresholds.plateauEfDeltaPct;
+    const efAdaptationConfirmed = (historyMetrics?.efDeltaPct ?? 0) >= BLOCK_CONFIG.thresholds.plateauEfDeltaPct;
     const plateauMotor =
       historyMetrics?.motorDelta == null || Math.abs(historyMetrics.motorDelta) <= BLOCK_CONFIG.thresholds.plateauMotorDelta;
 
-    const buildReady = keyCompliance?.freqOk && keyCompliance?.typeOk && (plateauEf || plateauMotor);
+    const buildReady = keyCompliance?.freqOk && keyCompliance?.typeOk && (efAdaptationConfirmed || plateauMotor);
     const eventForcesRace = weeksToEvent <= raceStartWeeks;
 
     if (wave === 1 && weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) {
-      const keysOk = (historyMetrics?.keyStats14?.count ?? 0) >= 3;
+      const keysOk = (historyMetrics?.keyStats14?.count ?? 0) >= 4 &&
+        (historyMetrics?.keyStats14?.typeOk !== false);
       if (keysOk) {
         reasons.push("BUILD I abgeschlossen → RESET (Wave 1)");
         block = "RESET";
@@ -6139,10 +6150,10 @@ function determineBlockState({
     } else {
       if (!keyCompliance?.freqOk) reasons.push("BUILD bleibt: Key-Frequenz zu niedrig/hoch");
       if (!keyCompliance?.typeOk) reasons.push("BUILD bleibt: Key-Typen passen nicht");
-      if (!(plateauEf || plateauMotor)) reasons.push("BUILD bleibt: Leistungsmarker steigen noch");
+      if (!(efAdaptationConfirmed || plateauMotor)) reasons.push("BUILD bleibt: Leistungsmarker steigen noch");
     }
   } else if (block === "RESET") {
-   if (fatigueOk || timeInBlockDays >= BLOCK_CONFIG.durations.RESET.maxDays) {
+   if (fatigueOk || timeInBlockDays >= blockLimits.maxDays) {
       reasons.push("RESET erfüllt → BASE II");
       block = "BASE";
       wave = 2;
@@ -6152,8 +6163,8 @@ function determineBlockState({
       reasons.push("RESET bleibt: Ermüdungssignale noch aktiv");
     }
   } else if (block === "RACE") {
-    if (weeksToEvent <= 0) {
-      reasons.push("Event erreicht → RESET");
+    if (weeksToEvent <= -(3 / 7)) {
+      reasons.push("3 Tage post-Race Puffer → RESET");
       block = "RESET";
       startDate = todayISO;
       timeInBlockDays = 0;
@@ -8486,11 +8497,21 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     blockState.eventDistance = eventDistance || blockState.eventDistance;
 
     if (modeInfo?.lifeEventEffect?.active && previousBlockState?.block) {
-      blockState.block = previousBlockState.block;
-      blockState.wave = previousBlockState.wave || blockState.wave;
-      blockState.startDate = previousBlockState.startDate || blockState.startDate;
-      blockState.timeInBlockDays = previousBlockState.timeInBlockDays ?? blockState.timeInBlockDays;
-      blockState.reasons = [...(blockState.reasons || []), `LifeEvent ${modeInfo.lifeEventEffect.category}: Blockwechsel eingefroren`];
+      const freezeForceRaceWeeks = getForceRaceWeeks(normalizeEventDistance(blockState.eventDistance) || "10k");
+      const frozenBlock = blockState.block;
+      const isForcedRaceEntry = frozenBlock === "RACE"
+        && Number.isFinite(blockState.weeksToEvent)
+        && blockState.weeksToEvent <= freezeForceRaceWeeks;
+
+      if (!isForcedRaceEntry) {
+        blockState.block = previousBlockState.block;
+        blockState.wave = previousBlockState.wave || blockState.wave;
+        blockState.startDate = previousBlockState.startDate || blockState.startDate;
+        blockState.timeInBlockDays = previousBlockState.timeInBlockDays ?? blockState.timeInBlockDays;
+        blockState.reasons = [...(blockState.reasons || []), `LifeEvent ${modeInfo.lifeEventEffect.category}: Blockwechsel eingefroren`];
+      } else {
+        blockState.reasons = [...(blockState.reasons || []), `LifeEvent ${modeInfo.lifeEventEffect.category}: Freeze überbrückt — Taper-Fenster aktiv`];
+      }
     }
 
     const phase = mapBlockToPhase(blockState.block);
