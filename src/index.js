@@ -1014,6 +1014,19 @@ const MONOTONY_7D_LIMIT = 2.0;     // mean/sd daily load
 const STRAIN_7D_LIMIT = 1200;      // monotony * weekly load (scale depends on your load units)
 const ACWR_HIGH_LIMIT = 1.5;       // acute:chronic workload ratio
 const RUN_DISTANCE_14D_LIMIT = 1.3; // +30% vs previous 14d
+const BIKE_TO_RUN_TSS_FACTOR_DEFAULT = 0.6; // 1 Bike-TSS ≈ 0.6 Run-TSS (praktikabler Base-Ersatz für easy/frei)
+const BIKE_CREDIT_CAP_FRACTION_DEFAULT = 0.25; // max. 25% des RunFloor-Ziels pro Woche als Bike-Credit
+const BIKE_TO_RUN_TSS_FACTOR_MIN = 0.5;
+const BIKE_TO_RUN_TSS_FACTOR_MAX = 0.7;
+const FATIGUE_GUARD_THRESHOLDS = {
+  hardReadiness: 35,
+  downscaleReadiness: 50,
+  acwrHard: 1.55,
+  acwrDownscale: 1.45,
+  fatigueScoreHardBlock: 7,
+  fatigueScoreDownscale: 4,
+  minRecoveryHoursHardBlock: 18,
+};
 
 const RUNTIME_CONFIG_DEFAULTS = {
   enableFatigueOverride: ENABLE_FATIGUE_OVERRIDE_DEFAULT,
@@ -1436,6 +1449,22 @@ function bucketAllLoadsByDay(acts) {
   return m;
 }
 
+function computeSafeRampMeta(lastPeriod, prevPeriod, { baselineFloor = 60, epsilon = 1 } = {}) {
+  const current = Number(lastPeriod) || 0;
+  const previous = Number(prevPeriod) || 0;
+  const safeBaseline = Math.max(epsilon, baselineFloor, previous);
+  const rampRatio = (current - safeBaseline) / safeBaseline;
+  const rampPct = previous > 0 ? (current - previous) / previous : rampRatio;
+  const lowBaseline = previous < baselineFloor;
+  const baselineInfo = {
+    baselineFloor,
+    previous,
+    usedBaseline: safeBaseline,
+    lowBaseline,
+  };
+  return { rampPct, rampRatio, baselineInfo };
+}
+
 async function computeFatigue7d(ctx, dayIso, options = {}) {
   const end = new Date(dayIso + "T00:00:00Z");
   const runtimeConfig = ctx?.runtimeConfig || RUNTIME_CONFIG_DEFAULTS;
@@ -1493,7 +1522,10 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const monotony = sd > 0 ? mean / sd : mean > 0 ? 99 : 0;
   const strain = monotony * (sum(last7Vals) || 0);
 
-  const rampPct = prev7 > 0 ? (last7 - prev7) / prev7 : last7 > 0 ? 999 : 0;
+  const { rampPct, rampRatio, baselineInfo } = computeSafeRampMeta(last7, prev7, {
+    baselineFloor: Math.max(20, Math.round((last7 + prev7) * 0.15)),
+    epsilon: 1,
+  });
 
   // chronic (28d) load and ACWR
   let last28 = 0;
@@ -1506,7 +1538,13 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
   const acwr = chronicLoad > 0 ? acuteLoad / chronicLoad : null;
 
   const reasons = [];
-  if (rampPct > thresholds.rampPct) reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+  if (rampPct > thresholds.rampPct) {
+    if (baselineInfo.lowBaseline) {
+      reasons.push(`Ramp erhöht (sehr niedrige Vergleichsbasis; aktuell ${Math.round(last7)} vs vorher ${Math.round(prev7)})`);
+    } else {
+      reasons.push(`Ramp: ${(rampPct * 100).toFixed(0)}% vs vorherige 7 Tage`);
+    }
+  }
   if (acwr != null && acwr > thresholds.acwrHigh) reasons.push(`ACWR: ${acwr.toFixed(2)} (> ${thresholds.acwrHigh})`);
   const last14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start14Iso, endIsoExclusive);
   const prev14HolidayDays = countHolidayDaysInWindow(ctx?.lifeEventsAll, start28To14Iso, start14Iso);
@@ -1530,6 +1568,9 @@ async function computeFatigue7d(ctx, dayIso, options = {}) {
     override,
     reasons: override ? reasons : [],
     rampPct,
+    rampRatio,
+    rampBaselineLow: baselineInfo.lowBaseline,
+    rampBaselineUsed: baselineInfo.usedBaseline,
     monotony,
     strain,
     acwr,
@@ -5604,6 +5645,42 @@ function adaptExpectedKeysForOverlay(expectedKeysPerWeek, context = {}) {
   return baseExpected;
 }
 
+function evaluateFatigueGuard(context = {}) {
+  const fatigue = context?.fatigue || null;
+  const readiness = Number(context?.distanceDiagnostics?.readiness);
+  const acwr = Number(fatigue?.acwr);
+  const rampPct = Number(fatigue?.rampPct);
+  const rampSevere = Number.isFinite(rampPct) && rampPct >= 0.8 && fatigue?.rampBaselineLow !== true;
+  const hoursSinceLastKey = Number(context?.keySpacing?.hoursSinceLastKey);
+  const recoveryShort = Number.isFinite(hoursSinceLastKey) && hoursSinceLastKey < FATIGUE_GUARD_THRESHOLDS.minRecoveryHoursHardBlock;
+  const fatigueFlags = Array.isArray(fatigue?.reasons) ? fatigue.reasons.length : 0;
+
+  let fatigueScore = 0;
+  if (Number.isFinite(readiness) && readiness < FATIGUE_GUARD_THRESHOLDS.downscaleReadiness) fatigueScore += 2;
+  if (Number.isFinite(readiness) && readiness < FATIGUE_GUARD_THRESHOLDS.hardReadiness) fatigueScore += 2;
+  if (Number.isFinite(acwr) && acwr > FATIGUE_GUARD_THRESHOLDS.acwrDownscale) fatigueScore += 2;
+  if (Number.isFinite(acwr) && acwr > FATIGUE_GUARD_THRESHOLDS.acwrHard) fatigueScore += 2;
+  if (rampSevere) fatigueScore += 2;
+  if (recoveryShort) fatigueScore += 2;
+  fatigueScore += Math.min(3, fatigueFlags);
+
+  const hardBlock =
+    (Number.isFinite(readiness) && readiness < FATIGUE_GUARD_THRESHOLDS.hardReadiness)
+    || ((Number.isFinite(acwr) && acwr > FATIGUE_GUARD_THRESHOLDS.acwrHard) && rampSevere)
+    || fatigueScore >= FATIGUE_GUARD_THRESHOLDS.fatigueScoreHardBlock;
+  const downscale =
+    !hardBlock
+    && (
+      fatigueScore >= FATIGUE_GUARD_THRESHOLDS.fatigueScoreDownscale
+      || (Number.isFinite(acwr) && acwr > FATIGUE_GUARD_THRESHOLDS.acwrDownscale)
+      || (Number.isFinite(readiness) && readiness < FATIGUE_GUARD_THRESHOLDS.downscaleReadiness)
+    );
+
+  const level = hardBlock ? "hard_block" : downscale ? "downscale" : "none";
+  const keyMode = hardBlock ? "blocked" : downscale ? "light" : "normal";
+  return { level, keyMode, fatigueScore, rampSevere, recoveryShort };
+}
+
 function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const expectedBase = keyRules.expectedKeysPerWeek;
   const expected = adaptExpectedKeysForOverlay(expectedBase, context);
@@ -5672,12 +5749,17 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
   const hardSafetyStop =
     context.overlayMode === "LIFE_EVENT_STOP" ||
     context?.lifeEvent?.allowKeys === false;
+  const fatigueGuard = evaluateFatigueGuard(context);
 
   let suggestion = "";
-  let keyAllowedNow = keySpacingNowOk && !hardSafetyStop;
+  let keyAllowedNow = keySpacingNowOk && !hardSafetyStop && fatigueGuard.level !== "hard_block";
 
   if (hardSafetyStop) {
     suggestion = "Key pausiert (Safety-Stop aktiv).";
+  } else if (fatigueGuard.level === "hard_block") {
+    suggestion = "Ermüdung kritisch: heute kein Key.";
+  } else if (fatigueGuard.level === "downscale") {
+    suggestion = "Ermüdung erhöht: heute nur leichter Qualitätsreiz (steady/kurze kontrollierte Schwelle/Progression locker).";
   } else if (!keySpacingNowOk && nextKeyEarliest) {
     suggestion = `Nächster Key frühestens ${nextKeyEarliest} (≥${minGapHours}h Abstand). Bis dahin locker/GA.${activeLeverText ? ` Hebel vorgemerkt: ${activeLeverText}.` : ""}`;
   } else if (longrunDominant) {
@@ -5772,6 +5854,9 @@ function evaluateKeyCompliance(keyRules, keyStats7, keyStats14, context = {}) {
     keyMinGapHours: minGapHours,
     intensityDistribution,
     keyAllowedNow,
+    fatigueGuard: fatigueGuard.level,
+    keyMode: fatigueGuard.keyMode,
+    fatigueScore: fatigueGuard.fatigueScore,
     plannedKeyType,
     explicitSession,
     activeLever,
@@ -7008,6 +7093,9 @@ function buildWeekPreview(
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
+    const longrunMissingWindow = Number(distanceDiagnostics?.snapshot?.longrunMin ?? 0) <= 0;
+    const longrunPriority = longrunMissingWindow || Number(distanceDiagnostics?.scores?.longrun ?? 100) < 55 ? "high" : "normal";
+    const fatigueGuard = String(keyCompliance?.fatigueGuard || "none");
     const longRunContext = {
       longRunStepCapMin: runFloorState?.longRunStepCapMin ?? null,
       longRunNextStepMin: runFloorState?.longRunNextStepMin ?? null,
@@ -7201,9 +7289,11 @@ function buildWeekPreview(
 
         if (keyEligible) {
           sessionType = "KEY";
-          intensity = "HIGH";
+          intensity = keyCompliance?.keyMode === "light" ? "MED" : "HIGH";
           keyType = keyCompliance?.plannedKeyType || null;
-          sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`;
+          sessionLabel = keyCompliance?.keyMode === "light"
+            ? "Leichter Qualitätsreiz: steady / kurze kontrollierte Schwelle"
+            : (shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`);
           plannedKeyDates.push(date);
           if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
             note = "Key aus dieser Woche nachholen";
@@ -7213,19 +7303,24 @@ function buildWeekPreview(
             ? Math.min(...plannedKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
             : 99;
           const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
-          const isLongrunPref = weekday === 7 || weekday === 6;
+          const isLongrunPref = longrunPriority === "high" ? weekday >= 4 : (weekday === 7 || weekday === 6);
           if (canPlanLongrun && isLongrunPref) {
             sessionType = "LONGRUN";
             intensity = "MED";
-            const capMin = longRunContext?.longRunStepCapMin
+            let capMin = longRunContext?.longRunStepCapMin
               ?? longRunContext?.longRunNextStepMin
               ?? longRunContext?.longRunTargetMin
               ?? null;
+            if (fatigueGuard === "hard_block" && Number.isFinite(capMin)) capMin = Math.max(35, Math.round(capMin * 0.8));
+            if (fatigueGuard === "downscale" && Number.isFinite(capMin)) capMin = Math.max(40, Math.round(capMin * 0.9));
             const label = (Number.isFinite(capMin) && capMin > 0)
               ? `Langer Lauf ~${Math.round(capMin)}′`
               : "Langer Lauf";
             sessionLabel = label;
             longrunPlanned = true;
+            note = longrunPriority === "high"
+              ? "Longrun-Priorität hoch: nächster geeigneter Lauftag reserviert"
+              : note;
           } else {
             const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
             const clashesWithKeyOrLong = sessionType === "KEY" || sessionType === "LONGRUN";
@@ -7272,7 +7367,7 @@ function buildWeekPreview(
       });
     }
 
-    if (fatigue?.override === true) {
+    if (String(keyCompliance?.fatigueGuard || "none") === "hard_block") {
       let displacedKey = false;
       for (let i = 0; i < Math.min(days.length, 3); i += 1) {
         const entry = days[i];
@@ -7282,7 +7377,7 @@ function buildWeekPreview(
         entry.intensity = "LOW";
         entry.keyType = null;
         entry.sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
-        entry.note = entry.note ? `${entry.note} · Key verschoben: Fatigue-Override aktiv` : "Key verschoben: Fatigue-Override aktiv";
+        entry.note = entry.note ? `${entry.note} · Key verschoben: Ermüdung kritisch` : "Key verschoben: Ermüdung kritisch";
       }
       if (displacedKey) {
         const existingKeyIdx = days.findIndex((entry) => entry?.status === "PLANNED" && entry?.sessionType === "KEY");
@@ -7292,8 +7387,8 @@ function buildWeekPreview(
           days[existingKeyIdx].keyType = null;
           days[existingKeyIdx].sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
           days[existingKeyIdx].note = days[existingKeyIdx].note
-            ? `${days[existingKeyIdx].note} · Key verschoben: Fatigue-Override aktiv`
-            : "Key verschoben: Fatigue-Override aktiv";
+            ? `${days[existingKeyIdx].note} · Key verschoben: Ermüdung kritisch`
+            : "Key verschoben: Ermüdung kritisch";
         }
         for (let i = 2; i < days.length; i += 1) {
           const candidate = days[i];
@@ -7306,8 +7401,8 @@ function buildWeekPreview(
           candidate.keyType = keyCompliance?.plannedKeyType || null;
           candidate.sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${candidate.keyType || "steady"}`;
           candidate.note = candidate.note
-            ? `${candidate.note} · Key verschoben: Fatigue-Override aktiv`
-            : "Key verschoben: Fatigue-Override aktiv";
+            ? `${candidate.note} · Key verschoben: Ermüdung kritisch`
+            : "Key verschoben: Ermüdung kritisch";
           break;
         }
       }
@@ -10473,20 +10568,21 @@ function evaluateDayBasedKeyDecision({
   lastKeyIso,
   lastLongrun,
   fatigueOverride,
+  fatigueGuard = "none",
 } = {}) {
   const lastLongrunIso = lastLongrun?.found === true ? lastLongrun?.date : null;
   const daysSinceLastKey = isIsoDate(lastKeyIso) && isIsoDate(dayIso) ? diffDays(lastKeyIso, dayIso) : null;
   const daysSinceLastLongrun = isIsoDate(lastLongrunIso) && isIsoDate(dayIso) ? diffDays(lastLongrunIso, dayIso) : null;
   const blockedByKeySpacing = Number.isFinite(daysSinceLastKey) && daysSinceLastKey < 3;
   const blockedByLongrunSpacing = lastLongrun?.found === true && Number.isFinite(daysSinceLastLongrun) && daysSinceLastLongrun < 2;
-  const blockedByFatigue = fatigueOverride === true;
+  const blockedByFatigue = fatigueGuard === "hard_block" || fatigueOverride === true;
   const spacingOk = !blockedByKeySpacing && !blockedByLongrunSpacing;
 
   let reason = "key_allowed";
   if (keyAllowedNow !== true) reason = "key_not_allowed";
   else if (blockedByKeySpacing) reason = "blocked_by_key_spacing";
   else if (blockedByLongrunSpacing) reason = "blocked_by_longrun_spacing";
-  else if (blockedByFatigue) reason = "fatigue_override";
+  else if (blockedByFatigue) reason = "fatigue_guard_hard_block";
 
   return {
     keyAllowedNow: keyAllowedNow === true,
@@ -10495,6 +10591,7 @@ function evaluateDayBasedKeyDecision({
     blockedByKeySpacing,
     blockedByLongrunSpacing,
     blockedByFatigue,
+    fatigueGuard,
     spacingOk,
     lastLongrunFound: lastLongrun?.found === true,
     lastLongrunActivityId: lastLongrun?.found === true ? (lastLongrun?.activityId ?? null) : null,
@@ -10520,6 +10617,7 @@ function buildNextRunRecommendation({
   keyMinGapHours,
   hoursSinceLastKey,
   keySuggestion,
+  keyMode,
   explicitSession,
   plannedKeyType,
   keyRulesPlannedPrimaryType,
@@ -10587,6 +10685,9 @@ function buildNextRunRecommendation({
   };
   const concreteKeySession = conciseExplicitSession || fallbackSessionByType[resolvedKeyType] || fallbackSessionByType.steady;
 
+  if (canPlaceKeyNow && keyMode === "light") {
+    return "Leichter Qualitätsreiz heute: steady oder kurze kontrollierte Schwelle (reduzierter Umfang).";
+  }
   if (canPlaceKeyNow) {
     return `Key heute: ${concreteKeySession}`;
   }
@@ -10594,7 +10695,7 @@ function buildNextRunRecommendation({
   if (overlay === "LIFE_EVENT_STOP") {
     next = "Pause / nur Regeneration (LifeEvent)";
   } else if (overlay === "LIFE_EVENT_HOLIDAY") {
-    next = "20–45 min locker (Holiday-Modus)";
+    next = "20–45 min locker (Holiday-Modus, Urlaub aktiv, Trainingsziele pausiert)";
   } else if (overlay === "POST_RACE_RAMP") {
     next = "25–40 min locker / Technik / frei";
   } else if (overlay === "TAPER") {
@@ -10607,7 +10708,7 @@ function buildNextRunRecommendation({
     next = "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
-  } else if (keyDecision?.blockedByFatigue) {
+  } else if (keyDecision?.blockedByFatigue || keyMode === "blocked") {
     next = "30–45 min locker oder frei (Regeneration priorisieren)";
   }
   if (!canPlaceKeyNow && longrunFocusActive && !keyDecision?.blockedByLongrunSpacing && !keyDecision?.blockedByFatigue) {
@@ -10888,6 +10989,24 @@ function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
   return `Bike-Crosstraining: ${allowed ? "erlaubt" : "nicht erlaubt"} (Faktor ${factor.toFixed(2)} = ${factorPct}% RunFloor-Anrechnung).`;
 }
 
+function computeBikeCreditPlan({
+  runFloorNow = 0,
+  runFloorTarget = 0,
+  bikeToRunTssFactor = BIKE_TO_RUN_TSS_FACTOR_DEFAULT,
+  bikeCreditCapFraction = BIKE_CREDIT_CAP_FRACTION_DEFAULT,
+} = {}) {
+  // Historisch wurde hier bikeSubFactor als Ersatzquote wiederverwendet (z.B. 0.19),
+  // was aus der RunFloor-Mischlogik stammt und als Bike→Run-Ersatz fachlich zu niedrig/unpraktisch war.
+  const safeFactor = clamp(Number.isFinite(bikeToRunTssFactor) ? bikeToRunTssFactor : BIKE_TO_RUN_TSS_FACTOR_DEFAULT, BIKE_TO_RUN_TSS_FACTOR_MIN, BIKE_TO_RUN_TSS_FACTOR_MAX);
+  const safeTarget = Math.max(0, Number(runFloorTarget) || 0);
+  const safeDone = Math.max(0, Number(runFloorNow) || 0);
+  const runGapTSS = Math.max(0, safeTarget - safeDone);
+  const capRunTss = safeTarget * Math.max(0, Math.min(1, Number(bikeCreditCapFraction) || BIKE_CREDIT_CAP_FRACTION_DEFAULT));
+  const maxBikeCreditRunTSS = Math.min(runGapTSS, capRunTss);
+  const requiredBikeTSSForMaxCredit = safeFactor > 0 ? maxBikeCreditRunTSS / safeFactor : 0;
+  return { runGapTSS, maxBikeCreditRunTSS, requiredBikeTSSForMaxCredit, bikeToRunTssFactor: safeFactor };
+}
+
 function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMAL", dayIso = null, postRaceRampUntilISO = null, lastEventDate = null }) {
   let postRaceWindowActive = false;
   try {
@@ -10920,8 +11039,8 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
   const gaAllowed = bikeAllowed && (Number.isFinite(weeksToEvent) ? weeksToEvent >= 10 : false);
   const keyAllowed = false;
   const longrunAllowed = false;
-  const maxReplaceableWeeklySharePct = bikeAllowed ? Math.round(factor * 100) : 0;
-  const practicalHint = bikeAllowed ? "praktisch meist 0–1 lockere Einheiten/Woche" : null;
+  const maxReplaceableWeeklySharePct = bikeAllowed ? Math.round(BIKE_CREDIT_CAP_FRACTION_DEFAULT * 100) : 0;
+  const practicalHint = bikeAllowed ? "praxisnah meist 0–1, maximal 2 lockere Bike-Einheiten/Woche" : null;
 
   return {
     bikeAllowed,
@@ -10932,10 +11051,10 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
     maxReplaceableWeeklySharePct,
     practicalHint,
     summaryLine: bikeAllowed
-      ? `Bike-Wochenregel: Rad erlaubt; Anrechnung bis zu ${maxReplaceableWeeklySharePct}% des RunFloor-Ziels; easy/frei ersetzbar${gaAllowed ? ", GA optional" : ""}; Key/Longrun nicht ersetzbar.`
+      ? `Bike-Wochenregel: Rad als Ergänzung erlaubt; anrechenbar bis ${maxReplaceableWeeklySharePct}% des RunFloor-Ziels/Woche; easy/frei ersetzbar${gaAllowed ? ", GA optional" : ""}; Key/Longrun bleiben echte Läufe.`
       : "Bike-Wochenregel: Kein Ersatzlauf per Rad (nur ergänzendes Crosstraining).",
     recommendationLine: bikeAllowed
-      ? `Rad statt lockerem Lauf aktuell möglich, solange die zulässige RunFloor-Anrechnung durch Bike (${maxReplaceableWeeklySharePct}% des Ziels) nicht überschritten wird; Laufspezifik bleibt über echte Läufe, Key und Longrun abgesichert.${practicalHint ? ` (${practicalHint})` : ""}`
+      ? `Rad statt lockerem Lauf ist als Ergänzung möglich, aber nur begrenzt anrechenbar (${maxReplaceableWeeklySharePct}% des RunFloor-Ziels/Woche). Bike ersetzt keine Laufspezifik: Key und Longrun bleiben echte Läufe.${practicalHint ? ` (${practicalHint})` : ""}`
       : "Rad statt Lauf: aktuell nein (Faktor 0,00).",
   };
 }
@@ -10947,26 +11066,28 @@ function buildBikeReplacementGuidanceLine({
   maxReplaceableWeeklySharePct = null,
   overlayMode = "NORMAL",
 }) {
-  const factor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  const floorFactor = Number.isFinite(bikeSubFactor) ? clamp(bikeSubFactor, 0, 1) : 0;
+  const factor = floorFactor > 0 ? BIKE_TO_RUN_TSS_FACTOR_DEFAULT : 0;
   if (!(factor > 0)) return "Bike→Lauf-TSS Ersatz: aktuell nicht möglich (Faktor 0,00).";
 
-  const pct = Math.round(factor * 100);
-  const bikeForTenRunTss = Math.round((10 / factor) * 10) / 10;
-  const replaceCapText = Number.isFinite(maxReplaceableWeeklySharePct)
-    ? ` (Wochenlimit: bis ${Math.max(0, Math.round(maxReplaceableWeeklySharePct))}% des RunFloor-Ziels)`
-    : "";
+  const creditPlan = computeBikeCreditPlan({
+    runFloorNow: Number.isFinite(runFloorGap) ? (Number(runTarget) + Number(runFloorGap)) : runTarget,
+    runFloorTarget: runTarget,
+    bikeToRunTssFactor: factor,
+    bikeCreditCapFraction: (Number(maxReplaceableWeeklySharePct) || Math.round(BIKE_CREDIT_CAP_FRACTION_DEFAULT * 100)) / 100,
+  });
+  const capRun = Math.round(creditPlan.maxBikeCreditRunTSS);
+  const bikeReq = Math.round(creditPlan.requiredBikeTSSForMaxCredit);
 
   if (overlayMode === "POST_RACE_RAMP") {
-    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; rechnerisch 10 Lauf-TSS ≈ ${bikeForTenRunTss} Bike-TSS${replaceCapText}. Hinweis: Post-Race nur ergänzend nutzen, nicht als Pflicht-Laufersatz.`;
+    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${factor.toFixed(2)} Lauf-TSS. Post-Race nur ergänzend nutzen, kein Pflicht-Laufersatz.`;
   }
 
-  if (Number.isFinite(runFloorGap) && runFloorGap < 0 && Number.isFinite(runTarget) && runTarget > 0) {
-    const neededRunTss = Math.abs(runFloorGap);
-    const bikeTssEquivalent = Math.round((neededRunTss / factor) * 10) / 10;
-    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; offenes Gap ${Math.round(neededRunTss)} Lauf-TSS ≈ ${bikeTssEquivalent} Bike-TSS${replaceCapText}.`;
+  if (capRun > 0) {
+    return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${factor.toFixed(2)} Lauf-TSS | Rad-Anrechnung diese Woche: bis zu ${capRun} Lauf-TSS | dafür ca. ${bikeReq} Bike-TSS anrechenbar | Key und Longrun bleiben echte Läufe.`;
   }
 
-  return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${pct}% Lauf-TSS; 10 Lauf-TSS ≈ ${bikeForTenRunTss} Bike-TSS${replaceCapText}.`;
+  return `Bike→Lauf-TSS Ersatz: 1 Bike-TSS ≈ ${factor.toFixed(2)} Lauf-TSS | aktuell kein offenes RunFloor-Gap für zusätzliche Anrechnung.`;
 }
 
 // ================= COMMENT =================
@@ -11093,6 +11214,7 @@ function buildComments(
     lastKeyIso: keySpacing?.lastKeyIso ?? null,
     lastLongrun,
     fatigueOverride: fatigue?.override === true,
+    fatigueGuard: keyCompliance?.fatigueGuard || "none",
   });
 
   const keyBlocked = keyCompliance?.keyAllowedNow === false;
@@ -11176,6 +11298,7 @@ function buildComments(
     keyMinGapHours: keyCompliance?.keyMinGapHours ?? keySpacing?.minGapHours ?? KEY_MIN_GAP_DAYS_DEFAULT * 24,
     hoursSinceLastKey: keyCompliance?.hoursSinceLastKey ?? keySpacing?.hoursSinceLastKey ?? null,
     keySuggestion: keyCompliance?.suggestion,
+    keyMode: keyCompliance?.keyMode || "normal",
     explicitSession: explicitSessionText,
     plannedKeyType: keyCompliance?.plannedKeyType,
     keyRulesPlannedPrimaryType: keyRules?.plannedPrimaryType,
@@ -11377,9 +11500,7 @@ function buildComments(
   const keyCheckMetrics = [
     `Keys (7 Tage): ${keyUsageText}`,
     `Next Allowed: ${formatNextAllowed(todayIso, nextAllowed)}`,
-    fatigue?.override
-      ? `Fatigue-Override: aktiv ⚠️ (${(fatigue.reasons || []).slice(0, 2).join(" | ")}${(fatigue.reasons || []).length > 2 ? " …" : ""})`
-      : "Fatigue-Override: aus",
+    `fatigue_guard=${keyCompliance?.fatigueGuard || "none"} | key_mode=${keyCompliance?.keyMode || "normal"}${Number.isFinite(keyCompliance?.fatigueScore) ? ` | fatigue_score=${Math.round(keyCompliance.fatigueScore)}` : ""}`,
     `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ (Runfloor ≥${strengthPolicyResolved.minRunfloor}′ | Ziel ${strengthPolicyResolved.target}′ | Max ${strengthPolicyResolved.max}′)`,
     `Kraft-Score: ${strengthPolicyResolved.score}/3 | Confidence Δ ${strengthPolicyResolved.confidenceDelta >= 0 ? "+" : ""}${strengthPolicyResolved.confidenceDelta}`,
   ];
@@ -11466,7 +11587,12 @@ function buildComments(
   const fatigueReasonSnippet = Array.isArray(fatigue?.reasons) && fatigue.reasons.length
     ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
     : "";
-  const fatigueWhyLine = fatigue?.override ? `Rhythmus aktuell unruhig${fatigueReasonSnippet}.` : null;
+  const fatigueGuard = keyCompliance?.fatigueGuard || "none";
+  const fatigueWhyLine = fatigueGuard === "hard_block"
+    ? `Ermüdung kritisch: heute kein Key${fatigueReasonSnippet}.`
+    : fatigueGuard === "downscale"
+      ? `Ermüdung erhöht: heute nur leichter Qualitätsreiz${fatigueReasonSnippet}.`
+      : "Ermüdung kontrollierbar: Key regulär möglich.";
   const includeStrengthInWhy = overlayMode !== "POST_RACE_RAMP";
   const gapReasonMap = {
     base: [
@@ -11539,14 +11665,12 @@ function buildComments(
       : ["• Keine harten Restriktionen aktiv."];
   }
 
-  const keyAllowedNowLabel = keyDecision?.keyAllowedNow
-    ? (fatigue?.override === true ? "ja (Fatigue-Override → heute kein Key)" : "ja")
-    : "nein";
+  const keyAllowedNowLabel = keyDecision?.keyAllowedNow ? "ja" : "nein";
 
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
-    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
+    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | fatigue_guard=${fatigueGuard} | key_mode=${keyCompliance?.keyMode || "normal"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
   ];
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;
@@ -11563,9 +11687,10 @@ function buildComments(
           ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
           : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
         : `RunFloor: ${runFloorCurrent} / n/a`,
-    longRunTargetMin < longRunBlockTargetMin
-      ? `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunBlockTargetMin}′ (nächster sicherer Schritt ${longRunTargetMin}′)`
-      : `Longrun 14T: ${longRunDoneMin}′ → Blockziel ${longRunBlockTargetMin}′`,
+    `Longrun 14T: ${longRunDoneMin}′`,
+    `Nächster sicherer Schritt: ${longRunTargetMin}′`,
+    `Kurzfristiger Zielkorridor: ${Math.max(35, longRunTargetMin - 5)}–${longRunTargetMin + 7}′`,
+    `Blockziel BASE: ${longRunBlockTargetMin}′ (Fernziel im BASE-Block, nicht Wochenziel)`,
     bikeWeeklyRule.summaryLine,
     bikeReplacementGuidanceLine,
     `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
@@ -11592,6 +11717,7 @@ function buildComments(
     if (recommendationLines.length >= 4) break;
   }
 
+  const longrunPriority = keyDecision?.lastLongrunReason === "kein_longrun_14t" ? "high" : "normal";
   const diagnoseLines = [];
   diagnoseLines.push(`Readiness: ${distanceDiagnostics?.readiness ?? "n/a"}/100`);
   diagnoseLines.push(`Hauptlimit: ${buildLimiterSentence(distanceDiagnostics?.primaryGap, distanceDiagnostics?.secondaryGap)}`);
@@ -11599,6 +11725,7 @@ function buildComments(
   const longrunDebugReason = keyDecision?.lastLongrunReason
     ?? (keyDecision?.lastLongrunFound ? "longrun_reason_unbekannt" : "kein_longrun_gefunden");
   diagnoseLines.push(`Longrun-Debug: found=${keyDecision?.lastLongrunFound ? "ja" : "nein"}, id=${keyDecision?.lastLongrunActivityId ?? "n/a"}, date=${keyDecision?.lastLongrunDate ?? "n/a"}, durationMin=${keyDecision?.lastLongrunDurationMin ?? "n/a"}, reason=${longrunDebugReason}.`);
+  diagnoseLines.push(`Debug: fatigue_guard=${fatigueGuard}, longrun_priority=${longrunPriority}, key_mode=${keyCompliance?.keyMode || "normal"}, bike_credit_cap_run_tss=${Math.round((runTarget > 0 ? runTarget : 0) * BIKE_CREDIT_CAP_FRACTION_DEFAULT)}, bike_to_run_tss_factor=${BIKE_TO_RUN_TSS_FACTOR_DEFAULT.toFixed(2)}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
@@ -11608,6 +11735,7 @@ function buildComments(
 
   const focusRenderLines = [];
   if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
+  if (longrunPriority === "high") focusRenderLines.push("Longrun-Priorität: hoch — an einem der nächsten geeigneten Lauftage einplanen.");
   if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
   if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
 
