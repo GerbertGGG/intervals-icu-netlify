@@ -10575,14 +10575,16 @@ function evaluateDayBasedKeyDecision({
   const daysSinceLastLongrun = isIsoDate(lastLongrunIso) && isIsoDate(dayIso) ? diffDays(lastLongrunIso, dayIso) : null;
   const blockedByKeySpacing = Number.isFinite(daysSinceLastKey) && daysSinceLastKey < 3;
   const blockedByLongrunSpacing = lastLongrun?.found === true && Number.isFinite(daysSinceLastLongrun) && daysSinceLastLongrun < 2;
-  const blockedByFatigue = fatigueGuard === "hard_block" || fatigueOverride === true;
+  const blockedByFatigue = fatigueGuard === "hard_block";
   const spacingOk = !blockedByKeySpacing && !blockedByLongrunSpacing;
 
   let reason = "key_allowed";
   if (keyAllowedNow !== true) reason = "key_not_allowed";
   else if (blockedByKeySpacing) reason = "blocked_by_key_spacing";
   else if (blockedByLongrunSpacing) reason = "blocked_by_longrun_spacing";
-  else if (blockedByFatigue) reason = "fatigue_guard_hard_block";
+  else if (fatigueGuard === "hard_block") reason = "fatigue_guard_hard_block";
+  else if (fatigueGuard === "downscale") reason = "fatigue_guard_downscale";
+  else if (fatigueGuard === "none") reason = "key_allowed";
 
   return {
     keyAllowedNow: keyAllowedNow === true,
@@ -10590,7 +10592,7 @@ function evaluateDayBasedKeyDecision({
     daysSinceLastLongrun,
     blockedByKeySpacing,
     blockedByLongrunSpacing,
-    blockedByFatigue,
+    blockedByFatigue: blockedByFatigue || fatigueOverride === true,
     fatigueGuard,
     spacingOk,
     lastLongrunFound: lastLongrun?.found === true,
@@ -10705,11 +10707,15 @@ function buildNextRunRecommendation({
   } else if (overlay === "DELOAD") {
     next = "30–45 min locker / Technik (Deload)";
   } else if (hasSpecific && !specificOk) {
-    next = "35–50 min locker/steady (Volumenaufbau)";
+    next = keyMode === "light"
+      ? "40–55 min locker mit 10–15′ kontrolliert steady (leichter Qualitätsreiz, reduziert)."
+      : "35–50 min locker/steady (Volumenaufbau)";
   } else if (policy?.useAerobicFloor && intensitySignal === "ok" && !aerobicOk) {
     next = "30–45 min locker (kein Key) – Intensität deckeln";
   } else if (keyDecision?.blockedByFatigue || keyMode === "blocked") {
     next = "30–45 min locker oder frei (Regeneration priorisieren)";
+  } else if (keyMode === "light") {
+    next = "40–55 min locker + kurzer kontrollierter Qualitätsanteil (z. B. 2×6–8′ steady/progressiv).";
   }
   if (!canPlaceKeyNow && longrunFocusActive && !keyDecision?.blockedByLongrunSpacing && !keyDecision?.blockedByFatigue) {
     const label = resolveLongrunLabel({
@@ -10795,11 +10801,14 @@ function buildResolvedNextKeyLine(resolvedDecision) {
   return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
-function resolveBottomLine({ candidate, todayDecision, dayMode = "LOW" }) {
+function resolveBottomLine({ candidate, todayDecision, dayMode = "LOW", keyMode = null }) {
   const text = String(candidate || "").trim();
-  const fallback = dayMode === "KEY"
-    ? "Heute den geplanten KEY-Reiz sauber und kontrolliert umsetzen."
-    : "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
+  const resolvedKeyMode = keyMode || (dayMode === "KEY" ? "normal" : "blocked");
+  const fallback = resolvedKeyMode === "blocked"
+    ? "Heute ruhig halten und den nächsten Qualitätsreiz sauber vorbereiten."
+    : resolvedKeyMode === "light"
+      ? "Heute einen kontrollierten leichten Qualitätsreiz setzen, ohne hart zu gehen."
+      : "Heute den regulären Qualitätsreiz sauber und kontrolliert umsetzen.";
   if (!text) return fallback;
   const lower = text.toLowerCase();
   const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
@@ -11735,7 +11744,7 @@ function buildComments(
 
   const focusRenderLines = [];
   if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
-  if (longrunPriority === "high") focusRenderLines.push("Longrun-Priorität: hoch — an einem der nächsten geeigneten Lauftage einplanen.");
+  if (longrunPriority === "high") focusRenderLines.push("Longrun-Priorität: hoch — Longrun vor dem nächsten regulären Key setzen und den nächsten geeigneten Lauftag dafür reservieren.");
   if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
   if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
 
@@ -11793,6 +11802,7 @@ function buildComments(
     candidate: capLines(decisionCompact.bottomLine, 1)[0],
     todayDecision: resolvedDecision.todayDecision,
     dayMode,
+    keyMode: keyCompliance?.keyMode || "normal",
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 

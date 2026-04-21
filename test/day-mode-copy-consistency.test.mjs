@@ -17,7 +17,7 @@ import { __test } from "../src/index.js";
     todayDecision: "Key heute: 3×8′ @ Schwelle.",
     dayMode: keyMode,
   });
-  assert.match(bottom, /KEY-Reiz/i);
+  assert.match(bottom, /regulären Qualitätsreiz/i);
   assert.doesNotMatch(bottom, /nächsten Qualitätsreiz/i);
 }
 
@@ -34,6 +34,42 @@ import { __test } from "../src/index.js";
     dayMode: lowMode,
   });
   assert.match(bottom, /nächsten Qualitätsreiz/i);
+}
+
+{
+  const decision = __test.evaluateDayBasedKeyDecision({
+    dayIso: "2026-04-21",
+    keyAllowedNow: true,
+    lastKeyIso: "2026-04-16",
+    lastLongrun: { found: false, reason: "kein_longrun_14t" },
+    fatigueOverride: true,
+    fatigueGuard: "downscale",
+  });
+  assert.equal(decision.reason, "fatigue_guard_downscale");
+  assert.equal(decision.finalDecision, "LOW");
+}
+
+{
+  const next = __test.buildNextRunRecommendation({
+    hasSpecific: true,
+    specificOk: false,
+    keySpacingOk: true,
+    keyMode: "light",
+    keyDecision: { allowKey: false, blockedByFatigue: false },
+  });
+  assert.match(next, /kontrolliert steady|Qualitätsanteil/i);
+  assert.doesNotMatch(next, /^35–50 min locker\/steady/i);
+}
+
+{
+  const bottom = __test.resolveBottomLine({
+    candidate: "",
+    todayDecision: "40–55 min locker mit 10–15′ kontrolliert steady.",
+    dayMode: "LOW",
+    keyMode: "light",
+  });
+  assert.match(bottom, /leichten Qualitätsreiz/i);
+  assert.doesNotMatch(bottom, /nächsten Qualitätsreiz sauber vorbereiten/i);
 }
 
 {
