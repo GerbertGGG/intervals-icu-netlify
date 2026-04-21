@@ -834,3 +834,36 @@ console.log('guardrails ok');
   });
   assert.equal(blockedByType.block, 'BUILD');
 }
+
+// 29) BASE-Progression liefert durationMin-Sessiontext für HM steady
+{
+  const session = __test.getCurrentProgressionStepSession('BASE', 'hm', 'steady', 0);
+  assert.equal(session, "50′ locker");
+}
+
+// 30) Fatigue-Override verschiebt KEY in Wochenvorschau mindestens auf Tag+3
+{
+  const week = __test.buildWeekPreview({ activitiesAll: [] }, '2026-01-05', {
+    blockState: { block: 'BASE', weeksToEvent: 10, eventDistance: '10k' },
+    keyCompliance: {
+      keyAllowedNow: true,
+      plannedKeyType: 'steady',
+      explicitSession: "steady konkret: 45′ locker",
+      maxKeysPerWeek: 1,
+    },
+    runFloorState: { overlayMode: 'NORMAL' },
+    fatigue: { override: true },
+  });
+  const keyDays = week.days.filter((d) => d.sessionType === 'KEY');
+  assert.equal(keyDays.length, 1);
+  const dayOffset = Math.round((new Date(`${keyDays[0].date}T00:00:00Z`).getTime() - new Date('2026-01-05T00:00:00Z').getTime()) / 86400000);
+  assert.equal(dayOffset >= 2, true);
+  const earlyKey = week.days.find((d) => {
+    if (!(d.status === 'PLANNED' && d.sessionType === 'KEY')) return false;
+    const offset = Math.round((new Date(`${d.date}T00:00:00Z`).getTime() - new Date('2026-01-05T00:00:00Z').getTime()) / 86400000);
+    return offset < 2;
+  });
+  assert.equal(Boolean(earlyKey), false);
+  const shiftedNoteExists = week.days.some((d) => /Key verschoben: Fatigue-Override aktiv/.test(String(d.note || '')));
+  assert.equal(shiftedNoteExists, true);
+}
