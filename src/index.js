@@ -4483,8 +4483,15 @@ function applyVolumeFactorToStep(step, factor = 1) {
   return scaled;
 }
 
+function resolveProgressionTemplateKeyType(block, keyType) {
+  const normalized = normalizeKeyType(keyType);
+  if (String(block || "").toUpperCase() === "BASE" && normalized === "ga") return "steady";
+  return normalized;
+}
+
 function pickProgressionStep({ block, dist, keyType, overlayMode, weeksToEvent, ctx, dayIso, blockStartIso, fatigue, lifeEventEffect }) {
-  const steps = PROGRESSION_TEMPLATES?.[block]?.[dist]?.[keyType];
+  const templateKeyType = resolveProgressionTemplateKeyType(block, keyType);
+  const steps = PROGRESSION_TEMPLATES?.[block]?.[dist]?.[templateKeyType] || PROGRESSION_TEMPLATES?.[block]?.[dist]?.[keyType];
   if (!Array.isArray(steps) || !steps.length) return { step: null, stepIndex: null, steps: null };
 
   const sessionsDone = getSessionsDoneInBlock(ctx, {
@@ -4526,7 +4533,13 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
   const weeksToEvent = Number.isFinite(context.weeksToEvent) ? context.weeksToEvent : null;
   const phaseConfig = PHASE_MAX_MINUTES?.[block]?.[dist] || null;
   const primaryType = resolvePrimaryKeyType(keyRules, block);
-  const rawMaxMinutes = phaseConfig?.[primaryType] ?? null;
+  const progressionKeyType = resolveProgressionTemplateKeyType(block, primaryType) || primaryType;
+  const rawMaxMinutes =
+    phaseConfig?.[primaryType]
+    ?? phaseConfig?.[progressionKeyType]
+    ?? (progressionKeyType === "steady" ? phaseConfig?.ga : null)
+    ?? (primaryType === "ga" ? phaseConfig?.steady : null)
+    ?? null;
   if (!Number.isFinite(rawMaxMinutes) || rawMaxMinutes <= 0) {
     return {
       available: false,
@@ -4545,7 +4558,7 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
   const { step, stepIndex, sessionsDone, volumeFactor } = pickProgressionStep({
     block,
     dist,
-    keyType: primaryType,
+    keyType: progressionKeyType,
     overlayMode,
     weeksToEvent,
     ctx: context.ctx,
@@ -4573,6 +4586,8 @@ function computeProgressionTarget(context = {}, keyRules = {}, overlayMode = "NO
       const reps = Number(step.reps) || 1;
       targetMinutes = Math.max(1, (reps * Number(step.work_sec)) / 60);
     }
+  } else if (step && Number.isFinite(step.durationMin) && Number(step.durationMin) > 0) {
+    targetMinutes = Number(step.durationMin);
   }
 
   if (targetMinutes != null) targetMinutes = Math.min(maxMinutes, Math.round(targetMinutes));
@@ -5066,7 +5081,8 @@ function buildExplicitKeySessionRecommendation(context = {}, keyRules = {}, prog
 }
 
 function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
-  const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
+  const templateKeyType = resolveProgressionTemplateKeyType(block, keyType) || keyType;
+  const steps = PROGRESSION_TEMPLATES?.[block]?.[distance]?.[templateKeyType] || PROGRESSION_TEMPLATES?.[block]?.[distance]?.[keyType];
   if (!Array.isArray(steps) || !steps.length) return null;
 
   const idx = Math.max(0, Math.min(steps.length - 1, Number(stepIndex) || 0));
@@ -6992,7 +7008,10 @@ function buildWeekPreview(
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
-    const longRunStepCapMin = Number(runFloorState?.longRunStepCapMin ?? runFloorState?.longRunTargetMin ?? longRunTargetMin);
+    const longRunContext = {
+      longRunStepCapMin: runFloorState?.longRunStepCapMin ?? null,
+      longRunTargetMin: runFloorState?.longRunTargetMin ?? longRunTargetMin ?? null,
+    };
     const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
     const getPrefRank = (iso, preference) => {
@@ -7197,11 +7216,11 @@ function buildWeekPreview(
           if (canPlanLongrun && isLongrunPref) {
             sessionType = "LONGRUN";
             intensity = "MED";
-            const longrunCap = longRunStepCapMin;
-            const longrunLabel = Number.isFinite(longrunCap) && longrunCap > 0
-              ? `Langer Lauf ~${Math.round(longrunCap)}′`
+            const capMin = longRunContext?.longRunStepCapMin ?? longRunContext?.longRunTargetMin ?? null;
+            const label = Number.isFinite(capMin) && capMin > 0
+              ? `Langer Lauf ~${Math.round(capMin)}′`
               : "Langer Lauf";
-            sessionLabel = longrunLabel;
+            sessionLabel = label;
             longrunPlanned = true;
           } else {
             const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
@@ -8983,7 +9002,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       keyCompliance,
       runFloorState: {
         ...runFloorState,
-        longRunStepCapMin: keyCompliance?.longRunStepCapMin ?? runFloorState?.longRunStepCapMin ?? null,
+        longRunStepCapMin: runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null,
       },
       distanceDiagnostics,
       fatigue: historyMetrics?.fatigue || fatigue || null,
