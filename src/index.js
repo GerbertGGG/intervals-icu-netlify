@@ -3927,6 +3927,81 @@ function getRacepaceDistanceTarget(distance) {
 }
 
 const PROGRESSION_TEMPLATES = {
+  BASE: {
+    "5k": {
+      steady: [
+        { durationMin: 35 },
+        { durationMin: 40 },
+        { durationMin: 45 },
+        { durationMin: 35, deload_step: true },
+        { durationMin: 50 },
+        { durationMin: 55 },
+        { durationMin: 60 },
+        { durationMin: 40, deload_step: true },
+      ],
+      strides: [
+        { durationMin: 35, strideReps: 4 },
+        { durationMin: 40, strideReps: 5 },
+        { durationMin: 45, strideReps: 6 },
+        { durationMin: 35, strideReps: 4, deload_step: true },
+      ],
+    },
+    "10k": {
+      steady: [
+        { durationMin: 45 },
+        { durationMin: 50 },
+        { durationMin: 55 },
+        { durationMin: 40, deload_step: true },
+        { durationMin: 60 },
+        { durationMin: 65 },
+        { durationMin: 70 },
+        { durationMin: 45, deload_step: true },
+      ],
+      strides: [
+        { durationMin: 40, strideReps: 4 },
+        { durationMin: 45, strideReps: 5 },
+        { durationMin: 50, strideReps: 6 },
+        { durationMin: 40, strideReps: 4, deload_step: true },
+      ],
+    },
+    hm: {
+      steady: [
+        { durationMin: 50 },
+        { durationMin: 60 },
+        { durationMin: 70 },
+        { durationMin: 45, deload_step: true },
+        { durationMin: 75 },
+        { durationMin: 80 },
+        { durationMin: 90 },
+        { durationMin: 55, deload_step: true },
+      ],
+      strides: [
+        { durationMin: 45, strideReps: 4 },
+        { durationMin: 50, strideReps: 5 },
+        { durationMin: 55, strideReps: 6 },
+        { durationMin: 45, strideReps: 4, deload_step: true },
+      ],
+    },
+    m: {
+      steady: [
+        { durationMin: 60 },
+        { durationMin: 70 },
+        { durationMin: 80 },
+        { durationMin: 55, deload_step: true },
+        { durationMin: 90 },
+        { durationMin: 100 },
+        { durationMin: 110 },
+        { durationMin: 65, deload_step: true },
+      ],
+      strides: [
+        { durationMin: 55, strideReps: 4 },
+        { durationMin: 60, strideReps: 5 },
+        { durationMin: 65, strideReps: 6 },
+        { durationMin: 50, strideReps: 4, deload_step: true },
+      ],
+    },
+  },
+
   BUILD: {
     "5k": {
       vo2_touch: [
@@ -4737,6 +4812,16 @@ function selectThresholdSessionTemplate(format, distance, fallback = null) {
 function buildProgressionSuggestion(progression) {
   if (!progression?.available) return progression?.note || "Progression aktuell nicht verfügbar.";
 
+  if (progression.primaryType === "steady" && progression?.step?.durationMin) {
+    const min = progression.step.durationMin;
+    return `steady: ${min}′ GA1 locker, gleichmäßiges Tempo, keine Tempospitzen.`;
+  }
+  if (progression.primaryType === "strides" && progression?.step?.durationMin) {
+    const min = progression.step.durationMin;
+    const reps = progression.step.strideReps ?? 4;
+    return `strides: ${min}′ locker mit ${reps}×80–100m Strides am Ende (locker auslaufen zwischen Strides).`;
+  }
+
   if (progression?.primaryType === "racepace") {
     const kmNow = Number(progression?.targetKm);
     const note = progression?.note ? ` ${progression.note}` : "";
@@ -4988,6 +5073,15 @@ function getCurrentProgressionStepSession(block, distance, keyType, stepIndex) {
   const currentStep = steps[idx];
   if (!currentStep) return null;
 
+  if (Number.isFinite(currentStep.durationMin)) {
+    const durationMin = Math.round(Number(currentStep.durationMin));
+    if (keyType === "strides") {
+      const strideReps = Number.isFinite(currentStep.strideReps) ? Math.round(Number(currentStep.strideReps)) : 4;
+      return `${durationMin}′ locker + ${strideReps}×80–100m Strides`;
+    }
+    return `${durationMin}′ locker`;
+  }
+
   const reps = Number(currentStep.reps) || 0;
   if (!reps) return null;
 
@@ -5036,6 +5130,15 @@ function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDe
   if (!Array.isArray(steps) || !steps.length) return null;
 
   const formatted = steps.map((step, idx) => {
+    if (Number.isFinite(step.durationMin)) {
+      const durationMin = Math.round(Number(step.durationMin));
+      const strideSuffix = Number.isFinite(step.strideReps)
+        ? ` + ${Math.round(Number(step.strideReps))}×80–100m Strides`
+        : "";
+      const deload = step.deload_step ? " Deload" : "";
+      return `W${idx + 1}${deload} ${durationMin}′${strideSuffix}`;
+    }
+
     const reps = Number(step.reps) || 0;
     const hasKm = Number.isFinite(step.work_km);
     if (hasKm) {
@@ -5074,7 +5177,7 @@ function getProgressionTemplate(block, distance, keyType, weekIndexInBlock, isDe
   return `${formatKeyType(keyType)} (${distance}) Progression: ${formatted.join(", ")}.${deloadHint}`;
 }
 
-function getKeyRules(block, eventDistance, weeksToEvent) {
+function getKeyRules(block, eventDistance, weeksToEvent, context = {}) {
   const dist = eventDistance || "10k";
   if (block === "RESET") {
     return {
@@ -5087,22 +5190,41 @@ function getKeyRules(block, eventDistance, weeksToEvent) {
   }
 
   if (block === "BASE") {
+    const runFloorRatio = (context?.runFloorNow ?? 0) / (context?.runFloorTarget ?? 1);
     if (dist === "5k" || dist === "10k") {
+      let allowedKeyTypes = ["steady", "strides", "vo2_touch"];
+      let preferredKeyTypes = ["steady", "vo2_touch"];
+      const reasons = [];
+      if (runFloorRatio < 0.6 && allowedKeyTypes.includes("strides")) {
+        allowedKeyTypes = allowedKeyTypes.filter((t) => t !== "strides");
+        preferredKeyTypes = preferredKeyTypes.filter((t) => t !== "strides");
+        reasons.push("strides suppressed: RunFloor < 60% des Ziels");
+      }
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "strides", "vo2_touch"],
-        preferredKeyTypes: ["steady", "vo2_touch"],
+        allowedKeyTypes,
+        preferredKeyTypes,
         bannedKeyTypes: ["schwelle", "racepace"],
+        reasons,
       };
     }
     if (dist === "m" || dist === "hm") {
+      let allowedKeyTypes = ["steady", "strides"];
+      let preferredKeyTypes = ["steady", "strides"];
+      const reasons = [];
+      if (runFloorRatio < 0.6 && allowedKeyTypes.includes("strides")) {
+        allowedKeyTypes = allowedKeyTypes.filter((t) => t !== "strides");
+        preferredKeyTypes = preferredKeyTypes.filter((t) => t !== "strides");
+        reasons.push("strides suppressed: RunFloor < 60% des Ziels");
+      }
       return {
         expectedKeysPerWeek: 1,
         maxKeysPerWeek: 2,
-        allowedKeyTypes: ["steady", "strides"],
-        preferredKeyTypes: ["steady", "strides"],
+        allowedKeyTypes,
+        preferredKeyTypes,
         bannedKeyTypes: ["schwelle", "racepace", "vo2_touch"],
+        reasons,
       };
     }
     return {
@@ -6740,6 +6862,7 @@ function buildWeekPreview(
     keyCompliance,
     runFloorState,
     distanceDiagnostics,
+    fatigue,
   } = {}
 ) {
   try {
@@ -6869,6 +6992,7 @@ function buildWeekPreview(
     const strengthPlan = getStrengthPhasePlan(blockState?.block);
     const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
     const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
+    const longRunStepCapMin = Number(runFloorState?.longRunStepCapMin ?? runFloorState?.longRunTargetMin ?? longRunTargetMin);
     const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
     const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
     const getPrefRank = (iso, preference) => {
@@ -7073,7 +7197,11 @@ function buildWeekPreview(
           if (canPlanLongrun && isLongrunPref) {
             sessionType = "LONGRUN";
             intensity = "MED";
-            sessionLabel = `Langer Lauf ~${longRunTargetMin}′`;
+            const longrunCap = longRunStepCapMin;
+            const longrunLabel = Number.isFinite(longrunCap) && longrunCap > 0
+              ? `Langer Lauf ~${Math.round(longrunCap)}′`
+              : "Langer Lauf";
+            sessionLabel = longrunLabel;
             longrunPlanned = true;
           } else {
             const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
@@ -7119,6 +7247,47 @@ function buildWeekPreview(
         status: "PLANNED",
         note,
       });
+    }
+
+    if (fatigue?.override === true) {
+      let displacedKey = false;
+      for (let i = 0; i < Math.min(days.length, 3); i += 1) {
+        const entry = days[i];
+        if (entry?.status !== "PLANNED" || entry?.sessionType !== "KEY") continue;
+        displacedKey = true;
+        entry.sessionType = "LOW";
+        entry.intensity = "LOW";
+        entry.keyType = null;
+        entry.sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
+        entry.note = entry.note ? `${entry.note} · Key verschoben: Fatigue-Override aktiv` : "Key verschoben: Fatigue-Override aktiv";
+      }
+      if (displacedKey) {
+        const existingKeyIdx = days.findIndex((entry) => entry?.status === "PLANNED" && entry?.sessionType === "KEY");
+        if (existingKeyIdx >= 0) {
+          days[existingKeyIdx].sessionType = "LOW";
+          days[existingKeyIdx].intensity = "LOW";
+          days[existingKeyIdx].keyType = null;
+          days[existingKeyIdx].sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
+          days[existingKeyIdx].note = days[existingKeyIdx].note
+            ? `${days[existingKeyIdx].note} · Key verschoben: Fatigue-Override aktiv`
+            : "Key verschoben: Fatigue-Override aktiv";
+        }
+        for (let i = 2; i < days.length; i += 1) {
+          const candidate = days[i];
+          if (candidate?.status !== "PLANNED") continue;
+          const overlayMode = getOverlayForDate(candidate.date, todayIso, runFloorState, blockState);
+          if (overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_STOP" || overlayMode === "POST_RACE_RAMP_REST") continue;
+          if (candidate.sessionType === "LONGRUN" || candidate.sessionType === "RACE") continue;
+          candidate.sessionType = "KEY";
+          candidate.intensity = "HIGH";
+          candidate.keyType = keyCompliance?.plannedKeyType || null;
+          candidate.sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${candidate.keyType || "steady"}`;
+          candidate.note = candidate.note
+            ? `${candidate.note} · Key verschoben: Fatigue-Override aktiv`
+            : "Key verschoben: Fatigue-Override aktiv";
+          break;
+        }
+      }
     }
 
     const countPlannedRuns = (entries) => entries.filter((entry) =>
@@ -8420,7 +8589,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const baseBlock =
       previousBlockState?.block ||
       (weeksToEvent != null && weeksToEvent <= getRaceStartWeeks(eventDistance) ? "BUILD" : "BASE");
-    const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent);
+    const baseRunFloorTarget =
+      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
+        ? previousBlockState.floorTarget
+        : MIN_STIMULUS_7D_RUN_EVENT;
+    const keyRulesPre = getKeyRules(baseBlock, eventDistance, weeksToEvent, {
+      runFloorNow: runFloorEwma10 ?? 0,
+      runFloorTarget: baseRunFloorTarget,
+    });
     const longrunSpecificityPre = evaluateLongrunSpecificity(ctx, day, longRunSummary, {
       eventDistance,
       block: baseBlock,
@@ -8433,11 +8609,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       lastKeyType,
       longrunSpecificity: longrunSpecificityPre,
     });
-
-    const baseRunFloorTarget =
-      Number.isFinite(previousBlockState?.floorTarget) && previousBlockState.floorTarget > 0
-        ? previousBlockState.floorTarget
-        : MIN_STIMULUS_7D_RUN_EVENT;
 
     const historyMetrics = {
       runFloorEwma10: runFloorEwma10 ?? 0,
@@ -8597,7 +8768,10 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     }
     historyMetrics.fatigueCap = fatigue;
 
-    const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent);
+    const keyRulesBase = getKeyRules(blockState.block, eventDistance, blockState.weeksToEvent, {
+      runFloorNow: runFloorEwma10 ?? 0,
+      runFloorTarget: runFloorState?.effectiveFloorTarget ?? runFloorState?.floorTarget ?? baseRunFloorTarget,
+    });
     const keyRules = {
       ...keyRulesBase,
       maxKeysPerWeek: keyRulesBase.maxKeysPerWeek,
@@ -8807,8 +8981,12 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     const weekPreview = buildWeekPreview(ctx, day, {
       blockState,
       keyCompliance,
-      runFloorState,
+      runFloorState: {
+        ...runFloorState,
+        longRunStepCapMin: keyCompliance?.longRunStepCapMin ?? runFloorState?.longRunStepCapMin ?? null,
+      },
       distanceDiagnostics,
+      fatigue: historyMetrics?.fatigue || fatigue || null,
     });
     if (day === oldest) {
       strengthCountThisWeek = Math.max(0, Math.floor(Number(weekPreview?.thisWeekActuals?.strengthCount || 0)));
@@ -15102,6 +15280,7 @@ const __internalTestHooks = Object.freeze({
   buildRecommendationsAndBottomLine,
   buildComments,
   buildNextRunRecommendation,
+  getCurrentProgressionStepSession,
   inferKeyTypeFromExplicitSession,
   evaluateDayBasedKeyDecision,
   findLastTrueLongrunActivity,
