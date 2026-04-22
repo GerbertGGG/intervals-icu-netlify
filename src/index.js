@@ -10152,12 +10152,12 @@ function buildLimiterSentence(primaryGap, secondaryGap) {
   return `${primary.label} limitiert aktuell am stärksten, gefolgt von ${secondary.label}.`;
 }
 
-function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
+function buildWhyNarrative(reasons = [], { dayMode = "LOW", hasConcreteKeySession = dayMode === "KEY" } = {}) {
   const cleaned = (Array.isArray(reasons) ? reasons : [])
     .map((r) => normalizeWhyReason(String(r || "").trim().replace(/^•\s*/, "")))
     .filter(Boolean)
     .slice(0, 3);
-  if (dayMode === "KEY") {
+  if (dayMode === "KEY" && hasConcreteKeySession) {
     const neutralized = cleaned
       .map((reason) => reason.replace(/\.?$/u, ""))
       .map((reason) => reason.replace(/^weil\s+/iu, ""))
@@ -10167,6 +10167,9 @@ function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
       : "";
     return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind. Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
   }
+  if (dayMode === "KEY" && !hasConcreteKeySession) {
+    return "Key-Modus aktiv, aber kein spezifischer Reiz gesetzt (BASE: Strides empfohlen).";
+  }
   if (!cleaned.length) return "Heute kontrolliert, weil keine harten Restriktionen aktiv sind und die Progression stabil fortgeführt werden kann.";
   if (cleaned.length === 1) return `Heute kontrolliert, weil ${cleaned[0]}.`;
   if (cleaned.length === 2) {
@@ -10175,11 +10178,12 @@ function buildWhyNarrative(reasons = [], { dayMode = "LOW" } = {}) {
   return `Heute kontrolliert, weil ${cleaned[0]} und zusätzlich ${cleaned[1]} sowie ${cleaned[2]}. So bleibt die Belastung steuerbar und der nächste Qualitätsreiz wird besser gesetzt.`;
 }
 
-function prependKeyRecommendationContext(lines = [], { dayMode = "LOW" } = {}) {
+function prependKeyRecommendationContext(lines = [], { dayMode = "LOW", hasConcreteKeySession = dayMode === "KEY" } = {}) {
   const normalized = (Array.isArray(lines) ? lines : [])
     .map((line) => String(line || "").trim())
     .filter(Boolean);
   if (dayMode !== "KEY") return normalized;
+  if (!hasConcreteKeySession) return ["Key-Modus aktiv, aber kein spezifischer Reiz gesetzt (BASE: Strides empfohlen).", ...normalized];
   const intro = "Heute: kurzer KEY-Reiz; insgesamt bleibt Volumen Priorität.";
   if (normalized.length && normalized[0].toLowerCase().startsWith("heute: kurzer key-reiz")) return normalized;
   return [intro, ...normalized];
@@ -10635,6 +10639,7 @@ function buildNextRunRecommendation({
   longRunNextStepMin,
   longRunTargetMin,
 }) {
+  const canPlaceKeyNow = keyDecision?.allowKey === true;
   const resolvedBlock = String(block || "BASE").toUpperCase();
   const normalizedAllowed = Array.isArray(allowedKeyTypes) ? allowedKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
   const normalizedPreferred = Array.isArray(preferredKeyTypes) ? preferredKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
@@ -10644,8 +10649,12 @@ function buildNextRunRecommendation({
     ? plannedCandidate
     : preferredAllowed || normalizedAllowed[0] || "steady";
 
-  if (resolvedBlock === "BASE" && !["steady", "strides"].includes(resolvedKeyType)) {
-    resolvedKeyType = normalizedAllowed.includes("strides") ? "strides" : "steady";
+  if (resolvedBlock === "BASE") {
+    if (canPlaceKeyNow && resolvedKeyType === "steady" && normalizedAllowed.includes("strides")) {
+      resolvedKeyType = "strides";
+    } else if (!["steady", "strides"].includes(resolvedKeyType)) {
+      resolvedKeyType = normalizedAllowed.includes("strides") ? "strides" : "steady";
+    }
   }
 
   let next = "45–60 min locker/GA";
@@ -10656,7 +10665,6 @@ function buildNextRunRecommendation({
     keySuggestionText.includes("optional/erlaubt")
     || keySuggestionText.includes("nächster key:")
   );
-  const canPlaceKeyNow = keyDecision?.allowKey === true;
   const plannedType = String(plannedSessionType || "").toUpperCase();
   const secondaryFocusText = String(focusSecondary || "").toLowerCase();
   const longrunFocusActive = plannedType === "LONGRUN"
@@ -10680,12 +10688,18 @@ function buildNextRunRecommendation({
   };
   const fallbackSessionByType = {
     strides: "Strides konkret: 4–6×8–10″ (Sekunden) Hill Sprints, volle 2–3′ Pause.",
-    steady: "Steady konkret: 20–30′ steady im mittleren GA-Bereich.",
+    steady: "Steady konkret: 2–3×8–10′ steady, 2–3′ locker Trabpause.",
     schwelle: "Schwelle konkret: 3×8′ @ Schwelle, 2′ locker Trabpause.",
     vo2_touch: "VO2_touch konkret: 5×2′ zügig, 2′ locker dazwischen.",
     racepace: "Racepace konkret: 4–5×1 km @ Wettkampftempo, 2′ locker.",
   };
-  const concreteKeySession = conciseExplicitSession || fallbackSessionByType[resolvedKeyType] || fallbackSessionByType.steady;
+  const explicitSessionLooksLikeKey = isConcreteKeySessionText(conciseExplicitSession);
+  const safeBaseFallback = fallbackSessionByType.strides;
+  const concreteKeySession = explicitSessionLooksLikeKey
+    ? conciseExplicitSession
+    : fallbackSessionByType[resolvedKeyType]
+      || (resolvedBlock === "BASE" ? safeBaseFallback : fallbackSessionByType.steady)
+      || fallbackSessionByType.steady;
 
   if (canPlaceKeyNow && keyMode === "light") {
     return "Leichter Qualitätsreiz heute: steady oder kurze kontrollierte Schwelle (reduzierter Umfang).";
@@ -10882,6 +10896,30 @@ function isEasyTodayDecision(text) {
   const hasEasy = easySignals.some((signal) => normalized.includes(signal));
   const hasHard = hardSignals.some((signal) => normalized.includes(signal));
   return hasEasy && !hasHard;
+}
+
+function hasIntervalOrPaceCue(text) {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized) return false;
+  if (/\b\d{1,2}\s*[x×]\s*\d+/.test(normalized)) return true;
+  if (/@\s*(schwelle|tempo|race|10k|5k|hm|marathon|wettkampf)/i.test(normalized)) return true;
+  return /\b(interval(le|s)?|reps?|bl(ö|oe)cke?|sets?|pause(n)?|trabpause|strides?|hill sprints?|schwelle|vo2|racepace|tempo|fartlek|key)\b/i.test(normalized);
+}
+
+function isLikelyGaEasySessionText(text) {
+  const normalized = String(text || "").toLowerCase();
+  if (!normalized) return false;
+  const easySignals = ["locker", "ga", "easy", "kontrolliert", "regeneration", "ruhig"];
+  const hasEasySignal = easySignals.some((signal) => normalized.includes(signal));
+  if (!hasEasySignal) return false;
+  return !hasIntervalOrPaceCue(normalized);
+}
+
+function isConcreteKeySessionText(text) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return false;
+  if (isLikelyGaEasySessionText(normalized)) return false;
+  return hasIntervalOrPaceCue(normalized) || /\bkonkret\s*:/i.test(normalized);
 }
 
 function buildRecommendationsAndBottomLine(state) {
@@ -11294,7 +11332,7 @@ function buildComments(
   const focusPrimary = String(contextCtx?.__weeklyFocusMeta?.focus || "").toLowerCase() || null;
   const focusSecondary = mapGapToCoachLanguage(distanceDiagnostics?.secondaryGap).label || null;
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
-  const nextRunText = buildNextRunRecommendation({
+  const nextRunRecommendationArgs = {
     runFloorState,
     policy,
     specificOk,
@@ -11322,7 +11360,8 @@ function buildComments(
     longRunStepCapMin: runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null,
     longRunNextStepMin: runFloorState?.longRunNextStepMin ?? null,
     longRunTargetMin: longRunSummary?.plan?.plannedMin ?? null,
-  });
+  };
+  let nextRunText = buildNextRunRecommendation(nextRunRecommendationArgs);
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
   const bikeAllowanceLine = buildBikeAllowanceLine({ bikeSubFactor, overlayMode });
   const bikeWeeklyRule = buildBikeWeeklyRule({
@@ -11525,6 +11564,15 @@ function buildComments(
   );
   const dayMode = resolveDayModeFromKeyDecision(keyDecision);
   const keyAllowedNow = dayMode === "KEY";
+  if (dayMode === "KEY" && isLikelyGaEasySessionText(nextRunText) && !hasIntervalOrPaceCue(nextRunText)) {
+    console.warn("KEY/HEUTE mismatch detected: overriding GA-like today decision with concrete key session.", {
+      day: todayIso,
+      nextRunText,
+      keyAllowedNow: keyDecision?.allowKey === true,
+      block: String(blockState?.block || "").toUpperCase(),
+    });
+    nextRunText = buildNextRunRecommendation(nextRunRecommendationArgs);
+  }
   const pendingLever = keyCompliance?.pendingLever || keyCompliance?.activeLever || null;
   const pendingLeverPlan = !keyAllowedNow && pendingLever?.domain
     ? formatPendingLeverPlan({
@@ -11539,6 +11587,7 @@ function buildComments(
   const normalizedVerbosity = REPORT_VERBOSITY_VALUES.has(verbosity) ? verbosity : "coach";
   const taperPriorityWeek = overlayMode === "TAPER" && Number.isFinite(blockState?.weeksToEvent) && blockState.weeksToEvent <= 1;
   const todayDecision = nextRunText.replace(/ Optional:.*$/i, "").replace(/\.$/, "");
+  const hasConcreteKeySession = dayMode === "KEY" && isConcreteKeySessionText(todayDecision);
   const resolvedDecision = buildResolvedDecision({
     todayDecision,
     spacingBlocked,
@@ -11667,7 +11716,7 @@ function buildComments(
 
   let whyLines;
   try {
-    whyLines = [buildWhyNarrative(shortReasons, { dayMode })];
+    whyLines = [buildWhyNarrative(shortReasons, { dayMode, hasConcreteKeySession })];
   } catch {
     whyLines = shortReasons.length
       ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
@@ -11759,7 +11808,10 @@ function buildComments(
   if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
     recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
   }
-  const recommendationRenderLinesFinal = prependKeyRecommendationContext(recommendationRenderLines, { dayMode }).slice(0, 5);
+  const recommendationRenderLinesFinal = prependKeyRecommendationContext(
+    recommendationRenderLines,
+    { dayMode, hasConcreteKeySession }
+  ).slice(0, 5);
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
   addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
   addDecisionBlock("WARUM", whyLines);

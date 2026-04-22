@@ -83,6 +83,22 @@ import { __test } from "../src/index.js";
 }
 
 {
+  const next = __test.buildNextRunRecommendation({
+    keyDecision: { allowKey: true },
+    keyAllowedNow: true,
+    keySpacingOk: true,
+    block: "BASE",
+    explicitSession: null,
+    allowedKeyTypes: ["steady", "strides"],
+    preferredKeyTypes: ["steady"],
+    plannedKeyType: "steady",
+  });
+  assert.match(next, /^Key heute:/i);
+  assert.doesNotMatch(next, /\bga\b|locker|kontrolliert/i);
+  assert.match(next, /strides|x|×|@|interval|hill sprint/i);
+}
+
+{
   const keyRecommendations = __test.prependKeyRecommendationContext(
     ["Volumen über die Woche graduell steigern.", "Longrun stabil halten."],
     { dayMode: "KEY" }
