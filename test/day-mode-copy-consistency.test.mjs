@@ -5,9 +5,14 @@ import { __test } from "../src/index.js";
   const keyMode = __test.resolveDayModeFromKeyDecision({ allowKey: true });
   assert.equal(keyMode, "KEY");
 
-  const why = __test.buildWhyNarrative(["Volumen stabil", "Key-Abstand erfüllt"], { dayMode: keyMode });
+  const why = __test.buildWhyNarrative(["Volumen stabil", "Key-Abstand erfüllt"], {
+    dayMode: keyMode,
+    fatigueOverride: true,
+    fatigueReasons: ["Ramp: 203% vs vorherige 7 Tage"],
+  });
   assert.match(why, /^Heute KEY,/);
   assert.match(why, /Key freigegeben/i);
+  assert.match(why, /Fatigue-Signal aktiv \(Ramp: 203% vs vorherige 7 Tage\), aber Key-Freigabe bleibt bestehen/i);
   assert.match(why, /kurzer, konservativer Reiz/i);
   assert.match(why, /ergänzt die aktuelle Spezifik/i);
   assert.doesNotMatch(why, /Volumen noch nicht stabil/i);
@@ -25,8 +30,13 @@ import { __test } from "../src/index.js";
   const lowMode = __test.resolveDayModeFromKeyDecision({ allowKey: false });
   assert.equal(lowMode, "LOW");
 
-  const why = __test.buildWhyNarrative(["Volumen noch nicht stabil"], { dayMode: lowMode });
+  const why = __test.buildWhyNarrative(["Volumen noch nicht stabil"], {
+    dayMode: lowMode,
+    fatigueOverride: true,
+    fatigueReasons: ["Ramp: 203% vs vorherige 7 Tage"],
+  });
   assert.match(why, /^Heute kontrolliert,/);
+  assert.doesNotMatch(why, /Fatigue-Signal aktiv/i);
 
   const bottom = __test.resolveBottomLine({
     candidate: "",
@@ -34,6 +44,20 @@ import { __test } from "../src/index.js";
     dayMode: lowMode,
   });
   assert.match(bottom, /nächsten Qualitätsreiz/i);
+}
+
+{
+  const keyDay = __test.buildRecommendationsAndBottomLine({
+    dayMode: "KEY",
+    keyAllowedNow: true,
+    todayAction: "Key heute: 3×8′ @ Schwelle.",
+    fatigue: { override: true, reasons: ["Ramp: 203% vs vorherige 7 Tage"] },
+  });
+  assert.match(
+    keyDay.recommendations.join(" "),
+    /Fatigue-Override aktiv → Umfang nach dem Key niedrig halten, kein zweiter harter Reiz heute\./i
+  );
+  assert.doesNotMatch(keyDay.recommendations.join(" "), /Evidenz: Fatigue-Override aktiv/i);
 }
 
 {
