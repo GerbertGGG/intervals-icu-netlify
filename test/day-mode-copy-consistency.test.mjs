@@ -124,6 +124,22 @@ import { __test } from "../src/index.js";
 }
 
 {
+  const next = __test.buildNextRunRecommendation({
+    runFloorState: { overlayMode: "NORMAL" },
+    fatigueOverride: true,
+    keyDecision: { allowKey: true },
+    keyAllowedNow: true,
+    keySpacingOk: true,
+    block: "BASE",
+    explicitSession: null,
+    allowedKeyTypes: ["steady", "strides"],
+    preferredKeyTypes: ["steady"],
+    plannedKeyType: "steady",
+  });
+  assert.match(next, /~40–50′/);
+}
+
+{
   const keyRecommendations = __test.prependKeyRecommendationContext(
     ["Volumen über die Woche graduell steigern.", "Longrun stabil halten."],
     { dayMode: "KEY" }

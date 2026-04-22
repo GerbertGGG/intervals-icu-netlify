@@ -10640,6 +10640,7 @@ function evaluateDayBasedKeyDecision({
 
 function buildNextRunRecommendation({
   runFloorState,
+  fatigueOverride,
   policy,
   specificOk,
   hasSpecific,
@@ -10690,7 +10691,7 @@ function buildNextRunRecommendation({
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
   const keyTotalDuration = resolveKeySessionTotalDuration({
-    fatigueOverride: runFloorState?.fatigue?.override === true,
+    fatigueOverride: fatigueOverride === true,
     overlayMode: overlay,
   });
   const keySuggestedNow = keyAllowedNow && (
@@ -11376,6 +11377,7 @@ function buildComments(
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
   const nextRunRecommendationArgs = {
     runFloorState,
+    fatigueOverride: fatigue?.override === true,
     policy,
     specificOk,
     hasSpecific: Number.isFinite(specificValue),
