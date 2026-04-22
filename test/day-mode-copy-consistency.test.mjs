@@ -13,7 +13,7 @@ import { __test } from "../src/index.js";
   assert.match(why, /^Heute KEY,/);
   assert.match(why, /Key freigegeben/i);
   assert.match(why, /Fatigue-Signal aktiv \(Ramp: 203% vs vorherige 7 Tage\), aber Key-Freigabe bleibt bestehen/i);
-  assert.match(why, /konservativer Reiz gewählt \(~40–50′ gesamt\), Umfang danach niedrig halten/i);
+  assert.match(why, /konservativer Reiz gewählt \(ca\. 40–50′ gesamt\), Umfang danach niedrig halten/i);
   assert.match(why, /ergänzt die aktuelle Spezifik/i);
   assert.doesNotMatch(why, /Volumen noch nicht stabil/i);
 
@@ -59,6 +59,17 @@ import { __test } from "../src/index.js";
 }
 
 {
+  const variants = [
+    __test.resolveKeySessionTotalDuration({ overlayMode: "NORMAL", fatigueOverride: false }),
+    __test.resolveKeySessionTotalDuration({ overlayMode: "NORMAL", fatigueOverride: true }),
+    __test.resolveKeySessionTotalDuration({ overlayMode: "TAPER", fatigueOverride: false }),
+  ];
+  for (const label of variants) {
+    assert.equal(label.includes("~"), false);
+  }
+}
+
+{
   const keyDay = __test.buildRecommendationsAndBottomLine({
     dayMode: "KEY",
     keyAllowedNow: true,
@@ -69,11 +80,11 @@ import { __test } from "../src/index.js";
   });
   assert.match(
     keyDay.recommendations.join(" "),
-    /Fatigue-Override aktiv → nach ~40–50′ Gesamtlauf Umfang niedrig halten, kein zweiter harter Reiz heute\./i
+    /Fatigue-Override aktiv → nach ca. 40–50′ Gesamtlauf Umfang niedrig halten, kein zweiter harter Reiz heute\./i
   );
   assert.equal(
     keyDay.bottomLine[0],
-    "Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ~40–50′ halten, danach erholen.",
+    "Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ca. 40–50′ halten, danach erholen.",
   );
   assert.doesNotMatch(keyDay.bottomLine.join(" "), /regulären/i);
   assert.doesNotMatch(keyDay.recommendations.join(" "), /Evidenz: Fatigue-Override aktiv/i);
@@ -137,7 +148,7 @@ import { __test } from "../src/index.js";
     plannedKeyType: "steady",
   });
   assert.match(next, /^Key heute:/i);
-  assert.match(next, /Gesamtlauf: ~50–65′ inkl\. WU\/CD\./i);
+  assert.match(next, /Gesamtlauf: ca. 50–65′ inkl\. WU\/CD\./i);
   assert.doesNotMatch(next, /\bga\b|locker|kontrolliert/i);
   assert.match(next, /strides|x|×|@|interval|hill sprint/i);
 }
@@ -155,7 +166,7 @@ import { __test } from "../src/index.js";
     preferredKeyTypes: ["steady"],
     plannedKeyType: "steady",
   });
-  assert.match(next, /~40–50′/);
+  assert.match(next, /ca\. 40–50′/);
 }
 
 {

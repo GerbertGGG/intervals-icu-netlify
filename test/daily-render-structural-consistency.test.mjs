@@ -5,8 +5,8 @@ import { __test } from "../src/index.js";
 {
   const resolved = __test.buildResolvedSessionDecision({
     todaySessionType: "LONGRUN",
-    todayDecisionCandidate: "Longrun wie im Wochenplan: Langer Lauf ~45′.",
-    plannedSessionLabel: "Langer Lauf ~45′",
+    todayDecisionCandidate: "Longrun wie im Wochenplan: Langer Lauf ca. 45′.",
+    plannedSessionLabel: "Langer Lauf ca. 45′",
     longrunProgressionTargetMin: 50,
   });
 
@@ -20,7 +20,7 @@ import { __test } from "../src/index.js";
     "⸻",
     "",
     "🗓 WOCHENPLAN",
-    `→ Fr: Langer Lauf ~${resolved.longrunTargetMin}′`,
+    `→ Fr: Langer Lauf ca. ${resolved.longrunTargetMin}′`,
     "⸻",
     "",
     "🧾 BOTTOM LINE",
@@ -34,7 +34,7 @@ import { __test } from "../src/index.js";
 {
   const resolved = __test.buildResolvedSessionDecision({
     todaySessionType: "GA",
-    todayDecisionCandidate: "Longrun wie im Wochenplan: Langer Lauf ~45′.",
+    todayDecisionCandidate: "Longrun wie im Wochenplan: Langer Lauf ca. 45′.",
     plannedSessionLabel: "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)",
     longrunProgressionTargetMin: 50,
   });

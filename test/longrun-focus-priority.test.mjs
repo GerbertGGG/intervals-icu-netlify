@@ -11,11 +11,11 @@ import { __test } from "../src/index.js";
     keyDecision: { allowKey: false, blockedByKeySpacing: true, blockedByLongrunSpacing: false },
     nextAllowed: "2026-04-20",
     plannedSessionType: "LONGRUN",
-    plannedSessionLabel: "Langer Lauf ~45′",
+    plannedSessionLabel: "Langer Lauf ca. 45′",
     longRunTargetMin: 47,
   });
 
-  assert.equal(next, "Longrun wie im Wochenplan: Langer Lauf ~47′.");
+  assert.equal(next, "Longrun wie im Wochenplan: Langer Lauf ca. 47′.");
   assert.equal(/Key-Spacer|Heute kein Key/i.test(next), false);
 }
 
