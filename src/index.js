@@ -11646,6 +11646,11 @@ function buildComments(
     ? ` (${fatigue.reasons.slice(0, 2).join(" | ")}${fatigue.reasons.length > 2 ? " …" : ""})`
     : "";
   const fatigueGuard = keyCompliance?.fatigueGuard || "none";
+  // For rendered STATUS/DIAGNOSE labels, fatigue.override + reasons are authoritative:
+  // they reflect the active override state even if other fields drift out of sync.
+  const fatigueGuardLabel = fatigue?.override === true
+    ? (fatigue.reasons?.[0] ?? "active")
+    : "none";
   const fatigueWhyLine = fatigueGuard === "hard_block"
     ? `Ermüdung kritisch: heute kein Key${fatigueReasonSnippet}.`
     : fatigueGuard === "downscale"
@@ -11728,7 +11733,7 @@ function buildComments(
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
-    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | fatigue_guard=${fatigueGuard} | key_mode=${keyCompliance?.keyMode || "normal"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
+    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | fatigue_guard=${fatigueGuardLabel} | key_mode=${keyCompliance?.keyMode || "normal"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
   ];
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;
@@ -11783,7 +11788,7 @@ function buildComments(
   const longrunDebugReason = keyDecision?.lastLongrunReason
     ?? (keyDecision?.lastLongrunFound ? "longrun_reason_unbekannt" : "kein_longrun_gefunden");
   diagnoseLines.push(`Longrun-Debug: found=${keyDecision?.lastLongrunFound ? "ja" : "nein"}, id=${keyDecision?.lastLongrunActivityId ?? "n/a"}, date=${keyDecision?.lastLongrunDate ?? "n/a"}, durationMin=${keyDecision?.lastLongrunDurationMin ?? "n/a"}, reason=${longrunDebugReason}.`);
-  diagnoseLines.push(`Debug: fatigue_guard=${fatigueGuard}, longrun_priority=${longrunPriority}, key_mode=${keyCompliance?.keyMode || "normal"}, bike_credit_cap_run_tss=${Math.round((runTarget > 0 ? runTarget : 0) * BIKE_CREDIT_CAP_FRACTION_DEFAULT)}, bike_to_run_tss_factor=${BIKE_TO_RUN_TSS_FACTOR_DEFAULT.toFixed(2)}.`);
+  diagnoseLines.push(`Debug: fatigue_guard=${fatigueGuardLabel}, longrun_priority=${longrunPriority}, key_mode=${keyCompliance?.keyMode || "normal"}, bike_credit_cap_run_tss=${Math.round((runTarget > 0 ? runTarget : 0) * BIKE_CREDIT_CAP_FRACTION_DEFAULT)}, bike_to_run_tss_factor=${BIKE_TO_RUN_TSS_FACTOR_DEFAULT.toFixed(2)}.`);
   diagnoseLines.push(`Stärken: ${(distanceDiagnostics?.strengths || []).slice(0, 2).join(", ") || "n/a"}.`);
 
   addUniqueTopicLine(renderedTopics, "today", resolvedDecision.todayDecision);
@@ -11793,7 +11798,14 @@ function buildComments(
 
   const focusRenderLines = [];
   if (focusLabel) focusRenderLines.push(`Fokus: ${focusLabel}.`);
-  if (longrunPriority === "high") focusRenderLines.push("Longrun-Priorität: hoch — Longrun vor dem nächsten regulären Key setzen und den nächsten geeigneten Lauftag dafür reservieren.");
+  if (longrunPriority === "high") {
+    // dayMode determines whether today is already KEY; wording must not imply KEY is still ahead.
+    focusRenderLines.push(
+      dayMode === "KEY"
+        ? `Longrun-Priorität: hoch — nächsten geeigneten Lauftag nach heute für Longrun reservieren (nächster Schritt: ${longRunTargetMin}′).`
+        : "Longrun-Priorität: hoch — Longrun vor dem nächsten regulären Key setzen und den nächsten geeigneten Lauftag dafür reservieren."
+    );
+  }
   if (renderedTopics.has("lever_plan") && pendingLeverPlanLine) focusRenderLines.push(pendingLeverPlanLine);
   if (!focusRenderLines.length) focusRenderLines.push(focusLines[0] || "Wochenstruktur stabilisieren.");
 
