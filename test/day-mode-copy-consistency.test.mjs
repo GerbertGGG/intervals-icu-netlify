@@ -22,7 +22,7 @@ import { __test } from "../src/index.js";
     todayDecision: "Key heute: 3×8′ @ Schwelle.",
     dayMode: keyMode,
   });
-  assert.match(bottom, /regulären Qualitätsreiz/i);
+  assert.match(bottom, /KEY-Reiz sauber und kontrolliert/i);
   assert.doesNotMatch(bottom, /nächsten Qualitätsreiz/i);
 }
 
@@ -43,7 +43,41 @@ import { __test } from "../src/index.js";
     todayDecision: "30–45 min locker.",
     dayMode: lowMode,
   });
-  assert.match(bottom, /nächsten Qualitätsreiz/i);
+  assert.match(bottom, /dosiert arbeiten und den nächsten Qualitätsreiz/i);
+}
+
+
+{
+  const bottom = __test.resolveBottomLine({
+    candidate: "",
+    todayDecision: "Key heute: reduziert.",
+    dayMode: "KEY",
+    fatigueOverride: true,
+    overlayMode: "NORMAL",
+  });
+  assert.equal(
+    bottom,
+    "Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ~40–50′ halten, danach erholen."
+  );
+}
+
+{
+  const bottom = __test.resolveBottomLine({
+    candidate: "",
+    todayDecision: "Key heute: normal.",
+    dayMode: "KEY",
+    fatigueOverride: false,
+  });
+  assert.equal(bottom, "Heute den KEY-Reiz sauber und kontrolliert umsetzen.");
+}
+
+{
+  const bottom = __test.resolveBottomLine({
+    candidate: "",
+    todayDecision: "Locker heute.",
+    dayMode: "LOW",
+  });
+  assert.equal(bottom, "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.");
 }
 
 {
