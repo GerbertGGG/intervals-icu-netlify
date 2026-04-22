@@ -10152,7 +10152,15 @@ function buildLimiterSentence(primaryGap, secondaryGap) {
   return `${primary.label} limitiert aktuell am stärksten, gefolgt von ${secondary.label}.`;
 }
 
-function buildWhyNarrative(reasons = [], { dayMode = "LOW", hasConcreteKeySession = dayMode === "KEY" } = {}) {
+function buildWhyNarrative(
+  reasons = [],
+  {
+    dayMode = "LOW",
+    hasConcreteKeySession = dayMode === "KEY",
+    fatigueOverride = false,
+    fatigueReasons = [],
+  } = {}
+) {
   const cleaned = (Array.isArray(reasons) ? reasons : [])
     .map((r) => normalizeWhyReason(String(r || "").trim().replace(/^•\s*/, "")))
     .filter(Boolean)
@@ -10165,7 +10173,13 @@ function buildWhyNarrative(reasons = [], { dayMode = "LOW", hasConcreteKeySessio
     const supportHint = neutralized.length
       ? ` Reizabdeckung aktuell: ${neutralized.slice(0, 2).join(" | ")}.`
       : "";
-    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind. Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
+    const fatigueReason = Array.isArray(fatigueReasons) && fatigueReasons.length
+      ? fatigueReasons[0]
+      : "Signal erhöht";
+    const fatigueClarifier = fatigueOverride === true
+      ? ` Fatigue-Signal aktiv (${fatigueReason}), aber Key-Freigabe bleibt bestehen — konservativer Reiz gewählt, Umfang kontrolliert halten.`
+      : "";
+    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind.${fatigueClarifier} Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
   }
   if (dayMode === "KEY" && !hasConcreteKeySession) {
     return "Key-Modus aktiv, aber kein spezifischer Reiz gesetzt (BASE: Strides empfohlen).";
@@ -10939,6 +10953,7 @@ function buildRecommendationsAndBottomLine(state) {
   const blockLongRunNextWeekTargetMin = Number(state?.blockLongRunNextWeekTargetMin ?? 0);
   const longRunDiagnosisTargetMin = Number(state?.longRunDiagnosisTargetMin ?? 0);
   const fatigue = state?.fatigue || null;
+  const dayMode = String(state?.dayMode || "LOW").toUpperCase() === "KEY" ? "KEY" : "LOW";
   const distanceDiagnostics = state?.distanceDiagnostics || null;
   const gapRecommendations = state?.gapRecommendations || null;
 
@@ -10991,7 +11006,11 @@ function buildRecommendationsAndBottomLine(state) {
   }
 
   if (fatigue?.override && Array.isArray(fatigue?.reasons) && fatigue.reasons.length) {
-    insight.push(`Fatigue-Override aktiv: ${fatigue.reasons.slice(0, 2).join(" | ")}.`);
+    if (dayMode === "KEY") {
+      rec.push("Fatigue-Override aktiv → Umfang nach dem Key niedrig halten, kein zweiter harter Reiz heute.");
+    } else {
+      insight.push(`Fatigue-Override aktiv: ${fatigue.reasons.slice(0, 2).join(" | ")}.`);
+    }
   }
   if (Number.isFinite(fatigue?.runDist14dRatio)) {
     insight.push(`Belastungs-Ratio 14T: ${fatigue.runDist14dRatio.toFixed(2)} (Guard <= ${RUN_DISTANCE_14D_LIMIT.toFixed(2)}).`);
@@ -11621,6 +11640,7 @@ function buildComments(
     longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
     fatigue,
+    dayMode,
     distanceDiagnostics,
     gapRecommendations,
     taperPriorityWeek,
@@ -11648,8 +11668,11 @@ function buildComments(
   const fatigueGuard = keyCompliance?.fatigueGuard || "none";
   // For rendered STATUS/DIAGNOSE labels, fatigue.override + reasons are authoritative:
   // they reflect the active override state even if other fields drift out of sync.
+  const fatigueGuardReason = fatigue.reasons?.[0] ?? "active";
   const fatigueGuardLabel = fatigue?.override === true
-    ? (fatigue.reasons?.[0] ?? "active")
+    ? keyAllowedNow
+      ? `${fatigueGuardReason} (override aktiv, Key trotzdem erlaubt)`
+      : `${fatigueGuardReason} (Key blockiert)`
     : "none";
   const fatigueWhyLine = fatigueGuard === "hard_block"
     ? `Ermüdung kritisch: heute kein Key${fatigueReasonSnippet}.`
@@ -11721,7 +11744,12 @@ function buildComments(
 
   let whyLines;
   try {
-    whyLines = [buildWhyNarrative(shortReasons, { dayMode, hasConcreteKeySession })];
+    whyLines = [buildWhyNarrative(shortReasons, {
+      dayMode,
+      hasConcreteKeySession,
+      fatigueOverride: fatigue?.override === true,
+      fatigueReasons: fatigue?.reasons,
+    })];
   } catch {
     whyLines = shortReasons.length
       ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
