@@ -13,7 +13,7 @@ import { __test } from "../src/index.js";
   assert.match(why, /^Heute KEY,/);
   assert.match(why, /Key freigegeben/i);
   assert.match(why, /Fatigue-Signal aktiv \(Ramp: 203% vs vorherige 7 Tage\), aber Key-Freigabe bleibt bestehen/i);
-  assert.match(why, /kurzer, konservativer Reiz/i);
+  assert.match(why, /konservativer Reiz gewählt \(~40–50′ gesamt\), Umfang danach niedrig halten/i);
   assert.match(why, /ergänzt die aktuelle Spezifik/i);
   assert.doesNotMatch(why, /Volumen noch nicht stabil/i);
 
@@ -55,7 +55,7 @@ import { __test } from "../src/index.js";
   });
   assert.match(
     keyDay.recommendations.join(" "),
-    /Fatigue-Override aktiv → Umfang nach dem Key niedrig halten, kein zweiter harter Reiz heute\./i
+    /Fatigue-Override aktiv → nach ~40–50′ Gesamtlauf Umfang niedrig halten, kein zweiter harter Reiz heute\./i
   );
   assert.doesNotMatch(keyDay.recommendations.join(" "), /Evidenz: Fatigue-Override aktiv/i);
 }
@@ -118,6 +118,7 @@ import { __test } from "../src/index.js";
     plannedKeyType: "steady",
   });
   assert.match(next, /^Key heute:/i);
+  assert.match(next, /Gesamtlauf: ~50–65′ inkl\. WU\/CD\./i);
   assert.doesNotMatch(next, /\bga\b|locker|kontrolliert/i);
   assert.match(next, /strides|x|×|@|interval|hill sprint/i);
 }
