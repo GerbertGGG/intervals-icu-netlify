@@ -358,7 +358,7 @@ console.log('guardrails ok');
   const bottom = (out.bottomLine || []).join(' | ');
   assert.equal(/Key heute:/.test(bottom), false);
   assert.equal(/Heute: Nächster Key frühestens ab 2026-04-04/.test(bottom), true);
-  assert.equal(/Longrun priorisieren: nächster langer Lauf bis ~50′\./.test(bottom), true);
+  assert.equal(/Longrun priorisieren: nächster langer Lauf bis ca. 50′\./.test(bottom), true);
 }
 
 // 13c) HEUTE priorisiert Longrun-Planung statt Key-Abstands-Text, wenn heute Longrun im Wochenplan steht
@@ -373,9 +373,9 @@ console.log('guardrails ok');
     keySuggestion: 'Nächster Key: steady',
     explicitSession: "2x10' steady",
     plannedSessionType: 'LONGRUN',
-    plannedSessionLabel: 'Langer Lauf ~45′',
+    plannedSessionLabel: 'Langer Lauf ca. 45′',
   });
-  assert.equal(/Longrun wie im Wochenplan: Langer Lauf ~45′\./.test(next), true);
+  assert.equal(/Longrun wie im Wochenplan: Langer Lauf ca. 45′\./.test(next), true);
   assert.equal(/Nächster Key frühestens/.test(next), false);
 }
 
@@ -425,7 +425,7 @@ console.log('guardrails ok');
     vdotMed: 50,
     efMed: null,
   });
-  assert.match(block, /Zieltempo: ~/);
+  assert.match(block, /Zieltempo: ca. /);
   assert.match(block, /Gesamtzeit über 5 km/);
 
   const noLine = __test.buildRaceDayPrepBlock({
@@ -434,7 +434,7 @@ console.log('guardrails ok');
     vdotMed: 90,
     efMed: null,
   });
-  assert.equal(/Zieltempo: ~/.test(noLine), false);
+  assert.equal(/Zieltempo: ca. /.test(noLine), false);
 
   const efFallback = __test.buildRaceDayPrepBlock({
     eventInDays: 1,
@@ -442,7 +442,7 @@ console.log('guardrails ok');
     vdotMed: null,
     efMed: 0.05,
   });
-  assert.match(efFallback, /Zieltempo: ~/);
+  assert.match(efFallback, /Zieltempo: ca. /);
 
   const noToday = __test.buildRaceDayPrepBlock({
     eventInDays: 0,

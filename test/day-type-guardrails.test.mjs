@@ -22,7 +22,7 @@ import { __test } from "../src/index.js";
     keySuggestion: "Nächster Key frühestens 2026-04-04",
     explicitSession: null,
     plannedSessionType: "LONGRUN",
-    plannedSessionLabel: "Langer Lauf ~45′",
+    plannedSessionLabel: "Langer Lauf ca. 45′",
   });
   assert.match(todayLine, /Longrun wie im Wochenplan/i);
   assert.doesNotMatch(todayLine, /Key wie im Wochenplan|2×8–10′ steady/i);

@@ -7314,7 +7314,7 @@ function buildWeekPreview(
             if (fatigueGuard === "hard_block" && Number.isFinite(capMin)) capMin = Math.max(35, Math.round(capMin * 0.8));
             if (fatigueGuard === "downscale" && Number.isFinite(capMin)) capMin = Math.max(40, Math.round(capMin * 0.9));
             const label = (Number.isFinite(capMin) && capMin > 0)
-              ? `Langer Lauf ~${Math.round(capMin)}′`
+              ? `Langer Lauf ca. ${Math.round(capMin)}′`
               : "Langer Lauf";
             sessionLabel = label;
             longrunPlanned = true;
@@ -7450,7 +7450,7 @@ function buildWeekPreview(
 
     const text = days
       .map((entry) => {
-        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "~ " : "";
+        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "≈ " : "";
         const todayPrefix = entry.isToday ? "→ " : "";
         const keyStar = entry.sessionType === "KEY" ? " ★" : "";
         const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
@@ -10156,9 +10156,9 @@ function resolveKeySessionTotalDuration({
   fatigueOverride = false,
   overlayMode = "NORMAL",
 } = {}) {
-  if (String(overlayMode || "").toUpperCase() === "TAPER") return "~35–45′";
-  if (fatigueOverride === true) return "~40–50′";
-  return "~50–65′";
+  if (String(overlayMode || "").toUpperCase() === "TAPER") return "ca. 35–45′";
+  if (fatigueOverride === true) return "ca. 40–50′";
+  return "ca. 50–65′";
 }
 
 function buildWhyNarrative(
@@ -10335,7 +10335,7 @@ function buildRacePaceGuidance(vdotMed, efMed) {
   const totalSec = predicted5kSec % 60;
   const paceLabel = formatPacePerKm(displayPaceSec);
   if (!paceLabel) return null;
-  return `Zieltempo: ~${paceLabel.replace(" min/km", "")} min/km (ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit über 5 km)`;
+  return `Zieltempo: ca. ${paceLabel.replace(" min/km", "")} min/km (ca. ${totalMin}:${String(totalSec).padStart(2, "0")} Gesamtzeit über 5 km)`;
 }
 
 function buildRaceDayPrepBlock({ eventInDays, eventDistance, vdotMed, efMed }) {
@@ -10709,7 +10709,7 @@ function buildNextRunRecommendation({
       ?? context?.longRunTargetMin
       ?? null;
     const fallback = (Number.isFinite(capMin) && capMin > 0)
-      ? `Langer Lauf ~${Math.round(capMin)}′`
+      ? `Langer Lauf ca. ${Math.round(capMin)}′`
       : "Langer Lauf";
     const text = String(label || "").trim();
     if (!text) return fallback;
@@ -11090,7 +11090,7 @@ function buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance }) {
   const runSharePct = Math.round(computeRunShareTarget(weeksToEvent, eventDistance) * 100);
   const bikeSharePct = Math.max(0, 100 - runSharePct);
   const weeksText = Number.isFinite(weeksToEvent) ? `${Math.round(weeksToEvent)} Wochen` : "n/a";
-  return `Übergang aktiv: Zielmix Lauf/Rad ~${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
+  return `Übergang aktiv: Zielmix Lauf/Rad ca. ${runSharePct}/${bikeSharePct} (aktuell ${weeksText} bis Event). Rad zählt ${pct}% zum RunFloor.`;
 }
 
 function buildBikeAllowanceLine({ bikeSubFactor, overlayMode = "NORMAL" }) {
@@ -11250,6 +11250,7 @@ function buildComments(
   { debug = false, verbosity = "coach" } = {}
 ) {
   const lines = [];
+  const sanitizeIntervalsNoteText = (value) => String(value || "").replace(/~/g, "≈");
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
   const formatSignedPct1 = (value) =>
     Number.isFinite(value)
@@ -11277,9 +11278,9 @@ function buildComments(
       "FOKUS": "📌",
       "ZIELZEIT-PROGNOSE": "🎯",
     };
-    lines.push(`${titleEmojis[title] || "✅"} ${title}`);
+    lines.push(sanitizeIntervalsNoteText(`${titleEmojis[title] || "✅"} ${title}`));
     for (const metric of metrics) {
-      if (metric) lines.push(metric);
+      if (metric) lines.push(sanitizeIntervalsNoteText(metric));
     }
     lines.push("⸻");
     lines.push("");
@@ -11952,7 +11953,7 @@ function buildComments(
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
   if (normalizedVerbosity !== "debug") {
-    return lines.join("\n");
+    return sanitizeIntervalsNoteText(lines.join("\n"));
   }
 
   const diagnoseKernelLines = [
@@ -12010,7 +12011,7 @@ function buildComments(
     ...coachConsequencesLines,
   ]);
 
-  return lines.join("\n");
+  return sanitizeIntervalsNoteText(lines.join("\n"));
 }
 
 function formatNextAllowed(dayIso, nextAllowedIso) {
@@ -15605,6 +15606,7 @@ const __internalTestHooks = Object.freeze({
   findLastTrueLongrunActivity,
   resolveRunFloorDecisionText,
   resolveBottomLine,
+  resolveKeySessionTotalDuration,
   resolveDayModeFromKeyDecision,
   buildWhyNarrative,
   prependKeyRecommendationContext,
