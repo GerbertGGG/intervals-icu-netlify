@@ -27,6 +27,18 @@ import { __test } from "../src/index.js";
 }
 
 {
+  const sanitized = __test.resolveBottomLine({
+    candidate: "Heute den regulären KEY-Reiz sauber umsetzen.",
+    todayDecision: "Key heute: 3×8′ @ Schwelle.",
+    dayMode: "KEY",
+    fatigueOverride: true,
+    overlayMode: "NORMAL",
+  });
+  assert.doesNotMatch(sanitized, /regulären/i);
+  assert.match(sanitized, /konservativen KEY-Reiz/i);
+}
+
+{
   const lowMode = __test.resolveDayModeFromKeyDecision({ allowKey: false });
   assert.equal(lowMode, "LOW");
 
@@ -51,12 +63,19 @@ import { __test } from "../src/index.js";
     dayMode: "KEY",
     keyAllowedNow: true,
     todayAction: "Key heute: 3×8′ @ Schwelle.",
+    overlayMode: "NORMAL",
+    fatigueOverride: true,
     fatigue: { override: true, reasons: ["Ramp: 203% vs vorherige 7 Tage"] },
   });
   assert.match(
     keyDay.recommendations.join(" "),
     /Fatigue-Override aktiv → nach ~40–50′ Gesamtlauf Umfang niedrig halten, kein zweiter harter Reiz heute\./i
   );
+  assert.equal(
+    keyDay.bottomLine[0],
+    "Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ~40–50′ halten, danach erholen.",
+  );
+  assert.doesNotMatch(keyDay.bottomLine.join(" "), /regulären/i);
   assert.doesNotMatch(keyDay.recommendations.join(" "), /Evidenz: Fatigue-Override aktiv/i);
 }
 

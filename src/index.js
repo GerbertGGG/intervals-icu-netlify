@@ -10849,7 +10849,14 @@ function buildResolvedNextKeyLine(resolvedDecision) {
   return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
-function resolveBottomLine({ candidate, todayDecision, dayMode = "LOW", keyMode = null }) {
+function resolveBottomLine({
+  candidate,
+  todayDecision,
+  dayMode = "LOW",
+  keyMode = null,
+  fatigueOverride = false,
+  overlayMode = "NORMAL",
+}) {
   const text = String(candidate || "").trim();
   const resolvedKeyMode = keyMode || (dayMode === "KEY" ? "normal" : "blocked");
   const fallback = resolvedKeyMode === "blocked"
@@ -10857,12 +10864,21 @@ function resolveBottomLine({ candidate, todayDecision, dayMode = "LOW", keyMode 
     : resolvedKeyMode === "light"
       ? "Heute einen kontrollierten leichten Qualitätsreiz setzen, ohne hart zu gehen."
       : "Heute den regulären Qualitätsreiz sauber und kontrolliert umsetzen.";
-  if (!text) return fallback;
-  const lower = text.toLowerCase();
-  const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
-  if (introducesPrimaryTopic) return fallback;
-  if (text === String(todayDecision || "").trim()) return fallback;
-  return text;
+  let resolvedText = fallback;
+  if (text) {
+    const lower = text.toLowerCase();
+    const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
+    if (!introducesPrimaryTopic && text !== String(todayDecision || "").trim()) {
+      resolvedText = text;
+    }
+  }
+  // Sanitize: "regulären" must never appear on a conservative key day
+  if (fatigueOverride === true && dayMode === "KEY") {
+    return resolvedText
+      .replace(/regulären\s+/gi, "konservativen ")
+      .replace(/geplanten\s+/gi, "konservativen ");
+  }
+  return resolvedText;
 }
 
 function limitText(text, maxLen = 140) {
@@ -10979,8 +10995,16 @@ function buildRecommendationsAndBottomLine(state) {
 
   const todayAction = String(state?.todayAction || "35–50′ locker/steady").replace(/\.$/, "");
   const easyDecision = isEasyTodayDecision(todayAction);
-  bottom.push(`Heute: ${todayAction}.`);
-  if (!easyDecision && state?.keyAllowedNow && explicitSessionShort) {
+  const fatigueOverride = state?.fatigueOverride === true || fatigue?.override === true;
+  const durationHint = resolveKeySessionTotalDuration({ fatigueOverride, overlayMode: state?.overlayMode });
+  let bottomLine = `Heute: ${todayAction}.`;
+  if (dayMode === "KEY" && fatigueOverride === true) {
+    bottomLine = `Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ${durationHint} halten, danach erholen.`;
+  } else if (dayMode === "KEY") {
+    bottomLine = "Heute den KEY-Reiz sauber und kontrolliert umsetzen.";
+  }
+  bottom.push(bottomLine);
+  if (!easyDecision && state?.keyAllowedNow && explicitSessionShort && dayMode !== "KEY") {
     // Nur bei einem expliziten Key-Tag als Tagesentscheidung in die Bottom-Line aufnehmen.
     bottom.push(`Key (wenn frisch): ${explicitSessionShort}.`);
   }
@@ -11665,6 +11689,7 @@ function buildComments(
     longRunSpikeWindowDays: Number(longRun30d?.windowDays ?? LONGRUN_PREPLAN.spikeGuardLookbackDays),
     blockLongRunNextWeekTargetMin,
     fatigue,
+    fatigueOverride: fatigue?.override === true,
     dayMode,
     distanceDiagnostics,
     gapRecommendations,
@@ -11921,6 +11946,8 @@ function buildComments(
     todayDecision: resolvedDecision.todayDecision,
     dayMode,
     keyMode: keyCompliance?.keyMode || "normal",
+    fatigueOverride: fatigue?.override === true,
+    overlayMode,
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
