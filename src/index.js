@@ -10849,14 +10849,29 @@ function buildResolvedNextKeyLine(resolvedDecision) {
   return `Mindestabstand bis zum nächsten Key: ${resolvedDecision.remainingWaitHours}h.`;
 }
 
-function resolveBottomLine({ candidate, todayDecision, dayMode = "LOW", keyMode = null }) {
+function resolveBottomLine({
+  candidate,
+  todayDecision,
+  dayMode = "LOW",
+  keyMode = null,
+  fatigueOverride = false,
+  overlayMode = "NORMAL",
+}) {
   const text = String(candidate || "").trim();
   const resolvedKeyMode = keyMode || (dayMode === "KEY" ? "normal" : "blocked");
+  const conservativeKeyDuration = resolveKeySessionTotalDuration({
+    fatigueOverride,
+    overlayMode,
+  });
   const fallback = resolvedKeyMode === "blocked"
-    ? "Heute ruhig halten und den nächsten Qualitätsreiz sauber vorbereiten."
+    ? "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten."
     : resolvedKeyMode === "light"
       ? "Heute einen kontrollierten leichten Qualitätsreiz setzen, ohne hart zu gehen."
-      : "Heute den regulären Qualitätsreiz sauber und kontrolliert umsetzen.";
+      : dayMode === "KEY" && fatigueOverride === true
+        ? `Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ${conservativeKeyDuration} halten, danach erholen.`
+        : dayMode === "KEY"
+          ? "Heute den KEY-Reiz sauber und kontrolliert umsetzen."
+          : "Heute dosiert arbeiten und den nächsten Qualitätsreiz sauber vorbereiten.";
   if (!text) return fallback;
   const lower = text.toLowerCase();
   const introducesPrimaryTopic = ["nächster key", "readiness", "hauptlimit", "heute:"].some((token) => lower.includes(token));
@@ -11921,6 +11936,8 @@ function buildComments(
     todayDecision: resolvedDecision.todayDecision,
     dayMode,
     keyMode: keyCompliance?.keyMode || "normal",
+    fatigueOverride: fatigue?.override === true,
+    overlayMode,
   });
   addDecisionBlock("BOTTOM LINE", [bottomLine]);
 
