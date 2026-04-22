@@ -10152,6 +10152,15 @@ function buildLimiterSentence(primaryGap, secondaryGap) {
   return `${primary.label} limitiert aktuell am stärksten, gefolgt von ${secondary.label}.`;
 }
 
+function resolveKeySessionTotalDuration({
+  fatigueOverride = false,
+  overlayMode = "NORMAL",
+} = {}) {
+  if (String(overlayMode || "").toUpperCase() === "TAPER") return "~35–45′";
+  if (fatigueOverride === true) return "~40–50′";
+  return "~50–65′";
+}
+
 function buildWhyNarrative(
   reasons = [],
   {
@@ -10159,6 +10168,7 @@ function buildWhyNarrative(
     hasConcreteKeySession = dayMode === "KEY",
     fatigueOverride = false,
     fatigueReasons = [],
+    overlayMode = "NORMAL",
   } = {}
 ) {
   const cleaned = (Array.isArray(reasons) ? reasons : [])
@@ -10176,8 +10186,12 @@ function buildWhyNarrative(
     const fatigueReason = Array.isArray(fatigueReasons) && fatigueReasons.length
       ? fatigueReasons[0]
       : "Signal erhöht";
+    const keyTotalDuration = resolveKeySessionTotalDuration({
+      fatigueOverride,
+      overlayMode,
+    });
     const fatigueClarifier = fatigueOverride === true
-      ? ` Fatigue-Signal aktiv (${fatigueReason}), aber Key-Freigabe bleibt bestehen — konservativer Reiz gewählt, Umfang kontrolliert halten.`
+      ? ` Fatigue-Signal aktiv (${fatigueReason}), aber Key-Freigabe bleibt bestehen — konservativer Reiz gewählt (${keyTotalDuration} gesamt), Umfang danach niedrig halten.`
       : "";
     return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind.${fatigueClarifier} Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
   }
@@ -10675,6 +10689,10 @@ function buildNextRunRecommendation({
   const overlay = runFloorState?.overlayMode ?? "NORMAL";
   const keySuggestionText = String(keySuggestion || "").toLowerCase();
   const conciseExplicitSession = shortExplicitSession(explicitSession);
+  const keyTotalDuration = resolveKeySessionTotalDuration({
+    fatigueOverride: runFloorState?.fatigue?.override === true,
+    overlayMode: overlay,
+  });
   const keySuggestedNow = keyAllowedNow && (
     keySuggestionText.includes("optional/erlaubt")
     || keySuggestionText.includes("nächster key:")
@@ -10714,12 +10732,13 @@ function buildNextRunRecommendation({
     : fallbackSessionByType[resolvedKeyType]
       || (resolvedBlock === "BASE" ? safeBaseFallback : fallbackSessionByType.steady)
       || fallbackSessionByType.steady;
+  const concreteKeySessionWithDuration = `${concreteKeySession} — Gesamtlauf: ${keyTotalDuration} inkl. WU/CD.`;
 
   if (canPlaceKeyNow && keyMode === "light") {
     return "Leichter Qualitätsreiz heute: steady oder kurze kontrollierte Schwelle (reduzierter Umfang).";
   }
   if (canPlaceKeyNow) {
-    return `Key heute: ${concreteKeySession}`;
+    return `Key heute: ${concreteKeySessionWithDuration}`;
   }
 
   if (overlay === "LIFE_EVENT_STOP") {
@@ -11007,7 +11026,11 @@ function buildRecommendationsAndBottomLine(state) {
 
   if (fatigue?.override && Array.isArray(fatigue?.reasons) && fatigue.reasons.length) {
     if (dayMode === "KEY") {
-      rec.push("Fatigue-Override aktiv → Umfang nach dem Key niedrig halten, kein zweiter harter Reiz heute.");
+      const keyTotalDuration = resolveKeySessionTotalDuration({
+        fatigueOverride: fatigue.override === true,
+        overlayMode: state?.overlayMode,
+      });
+      rec.push(`Fatigue-Override aktiv → nach ${keyTotalDuration} Gesamtlauf Umfang niedrig halten, kein zweiter harter Reiz heute.`);
     } else {
       insight.push(`Fatigue-Override aktiv: ${fatigue.reasons.slice(0, 2).join(" | ")}.`);
     }
@@ -11749,6 +11772,7 @@ function buildComments(
       hasConcreteKeySession,
       fatigueOverride: fatigue?.override === true,
       fatigueReasons: fatigue?.reasons,
+      overlayMode: runFloorState?.overlayMode ?? "NORMAL",
     })];
   } catch {
     whyLines = shortReasons.length
