@@ -606,6 +606,7 @@ function isEveningBerlinRun(event) {
 // ================= CONFIG =================
 // ================= GUARDRAILS (NEW) =================
 const KEY_MIN_GAP_DAYS_DEFAULT = 3;
+const STRENGTH_PRE_KEY_WARN_HOURS = 36;
 const KRAFT_MIN_RUNFLOOR = 30;
 const KRAFT_TARGET = 60;
 const KRAFT_MAX = 75;
@@ -10166,6 +10167,8 @@ function buildWhyNarrative(
   {
     dayMode = "LOW",
     hasConcreteKeySession = dayMode === "KEY",
+    strengthWithinPreKeyHours = false,
+    hoursSinceStrength = null,
     fatigueOverride = false,
     fatigueReasons = [],
     overlayMode = "NORMAL",
@@ -10190,10 +10193,13 @@ function buildWhyNarrative(
       fatigueOverride,
       overlayMode,
     });
+    const strengthProximityLine = strengthWithinPreKeyHours === true && Number.isFinite(hoursSinceStrength)
+      ? ` Krafttraining vor ca. ${Math.round(hoursSinceStrength)}h — Beine eventuell vorermüdet, Reiz an unterer Grenze halten.`
+      : "";
     const fatigueClarifier = fatigueOverride === true
       ? ` Fatigue-Signal aktiv (${fatigueReason}), aber Key-Freigabe bleibt bestehen — konservativer Reiz gewählt (${keyTotalDuration} gesamt), Umfang danach niedrig halten.`
       : "";
-    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind.${fatigueClarifier} Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
+    return `Heute KEY, weil Key freigegeben ist und keine Spacer aktiv sind.${strengthProximityLine}${fatigueClarifier} Im aktuellen Block wird bewusst ein kurzer, konservativer Reiz gesetzt. Der Reiz ergänzt die aktuelle Spezifik, ohne den Tag unnötig zu überladen.${supportHint}`;
   }
   if (dayMode === "KEY" && !hasConcreteKeySession) {
     return "Key-Modus aktiv, aber kein spezifischer Reiz gesetzt (BASE: Strides empfohlen).";
@@ -10667,8 +10673,11 @@ function buildNextRunRecommendation({
   longRunStepCapMin,
   longRunNextStepMin,
   longRunTargetMin,
+  strengthWithinPreKeyHours = false,
+  forceConservativeReps = false,
 }) {
   const canPlaceKeyNow = keyDecision?.allowKey === true;
+  const conservativeKeySession = forceConservativeReps === true || (canPlaceKeyNow && strengthWithinPreKeyHours === true);
   const resolvedBlock = String(block || "BASE").toUpperCase();
   const normalizedAllowed = Array.isArray(allowedKeyTypes) ? allowedKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
   const normalizedPreferred = Array.isArray(preferredKeyTypes) ? preferredKeyTypes.map((type) => normalizeKeyType(type)).filter(Boolean) : [];
@@ -10721,15 +10730,20 @@ function buildNextRunRecommendation({
   };
   const fallbackSessionByType = {
     strides: "Strides konkret: 4–6×8–10″ (Sekunden) Hill Sprints, volle 2–3′ Pause.",
-    steady: "Steady konkret: 2–3×8–10′ steady, 2–3′ locker Trabpause.",
+    steady: conservativeKeySession
+      ? "Steady (Kraft gestern): 2×8′ steady, 2′ locker Trabpause — untere Grenze wegen Vorermüdung."
+      : "Steady konkret: 2–3×8–10′ steady, 2–3′ locker Trabpause.",
     schwelle: "Schwelle konkret: 3×8′ @ Schwelle, 2′ locker Trabpause.",
     vo2_touch: "VO2_touch konkret: 5×2′ zügig, 2′ locker dazwischen.",
     racepace: "Racepace konkret: 4–5×1 km @ Wettkampftempo, 2′ locker.",
   };
   const explicitSessionLooksLikeKey = isConcreteKeySessionText(conciseExplicitSession);
+  const explicitSessionWithConservativeNote = conservativeKeySession && explicitSessionLooksLikeKey
+    ? `${conciseExplicitSession} (Kraft <36h — konservativ angehen).`
+    : conciseExplicitSession;
   const safeBaseFallback = fallbackSessionByType.strides;
   const concreteKeySession = explicitSessionLooksLikeKey
-    ? conciseExplicitSession
+    ? explicitSessionWithConservativeNote
     : fallbackSessionByType[resolvedKeyType]
       || (resolvedBlock === "BASE" ? safeBaseFallback : fallbackSessionByType.steady)
       || fallbackSessionByType.steady;
@@ -11318,6 +11332,19 @@ function buildComments(
   const phaseOverlayLine = formatPhaseOverlayLine(runPhaseLabel, overlayMode);
   const strengthPolicyResolved = strengthPolicy || robustness?.strengthPolicy || evaluateStrengthPolicy(robustness?.strengthMinutes7d || 0);
   const strengthPlan = getStrengthPhasePlan(blockState?.block);
+  const lastStrengthIso = (() => {
+    const acts = Array.isArray(contextCtx?.activitiesAll) ? contextCtx.activitiesAll : [];
+    const strengthActs = acts.filter((a) => detectStrength(a).matched);
+    if (!strengthActs.length) return null;
+    strengthActs.sort((a, b) =>
+      String(b.start_date_local || b.start_date || "")
+        .localeCompare(String(a.start_date_local || a.start_date || ""))
+    );
+    return String(strengthActs[0].start_date_local || strengthActs[0].start_date || "").slice(0, 10);
+  })();
+  const hoursSinceStrength = lastStrengthIso
+    ? diffDays(lastStrengthIso, todayIso) * 24
+    : null;
 
   const eventDate = String(modeInfo?.nextEvent?.start_date_local || modeInfo?.nextEvent?.start_date || "").slice(0, 10);
   const lastLongrun = Array.isArray(contextCtx?.activitiesAll)
@@ -11429,6 +11456,14 @@ function buildComments(
     longRunStepCapMin: runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null,
     longRunNextStepMin: runFloorState?.longRunNextStepMin ?? null,
     longRunTargetMin: longRunSummary?.plan?.plannedMin ?? null,
+    strengthWithinPreKeyHours: keyDecision?.allowKey === true
+      && Number.isFinite(hoursSinceStrength)
+      && hoursSinceStrength <= STRENGTH_PRE_KEY_WARN_HOURS
+      && hoursSinceStrength >= 0,
+    forceConservativeReps: keyDecision?.allowKey === true
+      && Number.isFinite(hoursSinceStrength)
+      && hoursSinceStrength <= STRENGTH_PRE_KEY_WARN_HOURS
+      && hoursSinceStrength >= 0,
   };
   let nextRunText = buildNextRunRecommendation(nextRunRecommendationArgs);
   const transitionLine = buildTransitionLine({ bikeSubFactor, weeksToEvent, eventDistance });
@@ -11633,6 +11668,10 @@ function buildComments(
   );
   const dayMode = resolveDayModeFromKeyDecision(keyDecision);
   const keyAllowedNow = dayMode === "KEY";
+  const strengthWithinPreKeyHours = dayMode === "KEY"
+    && Number.isFinite(hoursSinceStrength)
+    && hoursSinceStrength <= STRENGTH_PRE_KEY_WARN_HOURS
+    && hoursSinceStrength >= 0;
   if (dayMode === "KEY" && isLikelyGaEasySessionText(nextRunText) && !hasIntervalOrPaceCue(nextRunText)) {
     console.warn("KEY/HEUTE mismatch detected: overriding GA-like today decision with concrete key session.", {
       day: todayIso,
@@ -11798,6 +11837,8 @@ function buildComments(
     whyLines = [buildWhyNarrative(shortReasons, {
       dayMode,
       hasConcreteKeySession,
+      strengthWithinPreKeyHours,
+      hoursSinceStrength,
       fatigueOverride: fatigue?.override === true,
       fatigueReasons: fatigue?.reasons,
       overlayMode: runFloorState?.overlayMode ?? "NORMAL",
@@ -11809,11 +11850,14 @@ function buildComments(
   }
 
   const keyAllowedNowLabel = keyDecision?.keyAllowedNow ? "ja" : "nein";
+  const strengthPreKeyLabel = strengthWithinPreKeyHours
+    ? `${Math.round(hoursSinceStrength)}h`
+    : "none";
 
   const statusLines = [
     `Readiness (overall): ${resolvedDecision.readinessScore ?? "n/a"}/100`,
     `Hauptlimit: ${resolvedDecision.mainLimiter}`,
-    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | fatigue_guard=${fatigueGuardLabel} | key_mode=${keyCompliance?.keyMode || "normal"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
+    `Key-Entscheid: keyAllowedNow=${keyAllowedNowLabel} | fatigue_guard=${fatigueGuardLabel} | strength_pre_key=${strengthPreKeyLabel} | key_mode=${keyCompliance?.keyMode || "normal"} | Key-Tage seit letztem=${keyDecision?.daysSinceLastKey ?? "n/a"} | Longrun-Tage seit letztem=${keyDecision?.daysSinceLastLongrun ?? "n/a"} | heute ${keyDecision?.finalDecision || "LOW"}`,
   ];
 
   const intensityWindowLabel = `${intensityLookbackDays}T`;

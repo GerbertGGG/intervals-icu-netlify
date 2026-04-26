@@ -170,6 +170,51 @@ import { __test } from "../src/index.js";
 }
 
 {
+  const next = __test.buildNextRunRecommendation({
+    keyDecision: { allowKey: true },
+    keyAllowedNow: true,
+    keySpacingOk: true,
+    block: "BUILD",
+    explicitSession: null,
+    allowedKeyTypes: ["steady"],
+    preferredKeyTypes: ["steady"],
+    plannedKeyType: "steady",
+    strengthWithinPreKeyHours: true,
+    forceConservativeReps: true,
+  });
+  assert.match(next, /untere Grenze wegen Vorermüdung/i);
+}
+
+{
+  const next = __test.buildNextRunRecommendation({
+    keyDecision: { allowKey: true },
+    keyAllowedNow: true,
+    keySpacingOk: true,
+    block: "BUILD",
+    explicitSession: null,
+    allowedKeyTypes: ["steady"],
+    preferredKeyTypes: ["steady"],
+    plannedKeyType: "steady",
+    strengthWithinPreKeyHours: false,
+    forceConservativeReps: false,
+  });
+  assert.doesNotMatch(next, /untere Grenze wegen Vorermüdung/i);
+}
+
+{
+  const why = __test.buildWhyNarrative(["Volumen stabil"], {
+    dayMode: "KEY",
+    hasConcreteKeySession: true,
+    strengthWithinPreKeyHours: true,
+    hoursSinceStrength: 22,
+    fatigueOverride: true,
+    fatigueReasons: ["Ramp hoch"],
+  });
+  assert.match(why, /vorermüdet/i);
+  assert.equal(why.indexOf("vorermüdet") < why.indexOf("Fatigue-Signal aktiv"), true);
+}
+
+{
   const keyRecommendations = __test.prependKeyRecommendationContext(
     ["Volumen über die Woche graduell steigern.", "Longrun stabil halten."],
     { dayMode: "KEY" }
