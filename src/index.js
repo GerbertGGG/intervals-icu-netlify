@@ -1732,14 +1732,21 @@ function getStrengthSessionForDay(blockState, strengthCountThisWeek = 0) {
     const sessionIndex = normalizedCount % sessions.length;
     const session = sessions[sessionIndex] || sessions[0];
     const timeInBlockDays = Math.max(0, Math.floor(Number(blockState?.timeInBlockDays) || 0));
-    const cycleWeek = Math.max(0, Math.floor(timeInBlockDays / 7) % 4);
-    const progressionWeek = Array.isArray(session?.progression) ? session.progression[cycleWeek] : null;
+    const weekInBlock = Math.max(1, Math.floor(timeInBlockDays / 7) + 1);
+    const cycleWeek = weekInBlock - 1;
+    const progression = Array.isArray(session?.progression) ? session.progression : [];
+    const isRunDeloadActive = blockState?.deloadActive === true;
+    const progressiveSteps = progression.length > 1 ? progression.slice(0, -1) : progression;
+    const progressionIndex = Math.min(Math.max(0, weekInBlock - 1), Math.max(0, progressiveSteps.length - 1));
+    const progressionWeek = isRunDeloadActive
+      ? progression[progression.length - 1]
+      : progressiveSteps[progressionIndex];
     const fallbackExercises = Array.isArray(session?.exercises) ? session.exercises : [];
     const exercises = Array.isArray(progressionWeek) && progressionWeek.length ? progressionWeek : fallbackExercises;
     const mobility = Array.isArray(session?.mobility) && session.mobility.length
       ? session.mobility
       : STRENGTH_MOBILITY_DEFAULT;
-    const isDeload = cycleWeek === 3;
+    const isDeload = isRunDeloadActive;
     return {
       name: session?.name || "Einheit A",
       exercises,
@@ -1768,7 +1775,7 @@ function formatStrengthBlock(session) {
     const safeMobility = Array.isArray(session.mobility) ? session.mobility : STRENGTH_MOBILITY_DEFAULT;
     const headerSuffix = session.isDeload ? " — Deload-Woche, weniger Volumen" : "";
     const lines = [
-      `💪 KRAFT HEUTE — ${session.name} (KW ${Number(session.cycleWeek) + 1}/4)${headerSuffix}`,
+      `💪 KRAFT HEUTE — ${session.name} (Woche ${Number(session.cycleWeek) + 1})${headerSuffix}`,
       `Dauer: ca. ${safeDuration[0]}–${safeDuration[1]} Min`,
       "",
     ];
@@ -1816,7 +1823,7 @@ function buildStrengthMailHtml(sessions, blockState) {
     <div style="max-width:600px;margin:0 auto;padding:20px;">
       <div style="background:#111827;border:1px solid #374151;border-radius:12px;padding:18px;">
         <h2 style="margin:0 0 8px 0;color:#f9fafb;">💪 Kraftplan — ${escapeHtml(block)}</h2>
-        <p style="margin:0 0 16px 0;color:#d1d5db;">Phase: ${escapeHtml(block)} · Zykluswoche ${cycleWeek}/4</p>
+        <p style="margin:0 0 16px 0;color:#d1d5db;">Phase: ${escapeHtml(block)} · Woche ${cycleWeek}</p>
         ${safeSessions.map((session, idx) => renderSession(`Einheit ${String.fromCharCode(65 + idx)}`, session)).join("")}
         <p style="margin:12px 0 0 0;color:#9ca3af;font-size:13px;">Einheiten in intervals.icu als Kraft/Stabi loggen, damit dein Score grün bleibt.</p>
       </div>
@@ -1848,7 +1855,7 @@ async function sendWeeklyStrengthMail(env, blockState, strengthCountThisWeek, op
     const payload = {
       from: `Training <${fromAddress}>`,
       to: toAddress,
-      subject: `💪 Kraftplan KW ${cycleWeekDisplay}/4 — ${String(blockState?.block || "BASE")}`,
+      subject: `💪 Kraftplan Woche ${cycleWeekDisplay} — ${String(blockState?.block || "BASE")}`,
       html: buildStrengthMailHtml(sessions, blockState),
     };
     if (!payload.html) return { ok: false, skipped: "empty_html", to: toAddress };
@@ -7333,7 +7340,7 @@ function buildWeekPreview(
             if (strengthNeed && !clashesWithKeyOrLong && isStrengthPref) {
               const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
               const strengthSession = getStrengthSessionForDay(blockState, plannedStrengthTotal);
-              const cycleLabel = strengthSession ? ` (KW ${Number(strengthSession.cycleWeek) + 1}/4)` : "";
+              const cycleLabel = strengthSession ? ` (Woche ${Number(strengthSession.cycleWeek) + 1})` : "";
               sessionType = "STRENGTH";
               intensity = "LOW";
               sessionLabel = strengthSession
