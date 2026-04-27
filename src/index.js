@@ -6963,516 +6963,6 @@ function addLeverKvDebug(debugOut, day, payload) {
   debugOut.__leverKv[day] = payload;
 }
 
-function buildWeekPreview(
-  ctx,
-  todayIso,
-  {
-    blockState,
-    keyCompliance,
-    runFloorState,
-    distanceDiagnostics,
-    fatigue,
-  } = {}
-) {
-  try {
-    const dayLabels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-    const isoWeekdayBerlin = (iso) => {
-      const date = parseISODateSafe(iso);
-      if (!date) return 1;
-      const weekday = new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Europe/Berlin",
-        weekday: "short",
-      }).format(date);
-      const map = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
-      return map[weekday] || 1;
-    };
-    const addDaysIso = (iso, days) => {
-      const base = parseISODateSafe(iso);
-      if (!base) return iso;
-      return isoDate(new Date(base.getTime() + days * 86400000));
-    };
-    const shortSentence = (text) => {
-      const raw = String(text || "").trim();
-      if (!raw) return "";
-      const split = raw.split(/(?<=[.!?])\s+/);
-      return (split[0] || raw).trim();
-    };
-    const parseRunTargetRange = (text) => {
-      const raw = String(text || "");
-      const range = raw.match(/(\d+)\s*[–-]\s*(\d+)\s*Läufe?n?\/?Woche/i);
-      if (range) return { min: Number(range[1]), max: Number(range[2]) };
-      const single = raw.match(/(\d+)\s*Läufe?n?\/?Woche/i);
-      if (single) {
-        const val = Number(single[1]);
-        return { min: val, max: val };
-      }
-      return null;
-    };
-    const classifySessionType = (activities) => {
-      if (!Array.isArray(activities) || !activities.length) return "GA";
-      const hasKey = activities.some((a) => hasKeyTag(a) || !!getKeyType(a));
-      if (hasKey) return "KEY";
-      const longRun = activities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= LONGRUN_MIN_SECONDS);
-      if (longRun) return "LONGRUN";
-      const strength = activities.some((a) => isStrength(a));
-      if (strength) return "STRENGTH";
-      const ga = activities.some((a) => isRun(a) && Number(a?.moving_time ?? a?.elapsed_time ?? 0) >= GA_MIN_SECONDS);
-      if (ga) return "GA";
-      return "RECOVERY";
-    };
-    const sessionMetaFromType = (type) => {
-      if (type === "KEY") return { sessionLabel: "Key absolviert", intensity: "HIGH" };
-      if (type === "LONGRUN") return { sessionLabel: "Langer Lauf absolviert", intensity: "MED" };
-      if (type === "STRENGTH") return { sessionLabel: "Kraft/Stabi absolviert", intensity: "LOW" };
-      if (type === "REST") return { sessionLabel: "Pause", intensity: "NONE" };
-      if (type === "RECOVERY") return { sessionLabel: "Recovery", intensity: "LOW" };
-      return { sessionLabel: "GA absolviert", intensity: "LOW" };
-    };
-    const getOverlayForDate = (date, baseTodayIso, floorState, currentBlockState) => {
-      const baseOverlay = String(floorState?.overlayMode || "NORMAL");
-      const eventDateISO = currentBlockState?.eventDateISO || null;
-      if (!eventDateISO) return baseOverlay;
-
-      if (date === eventDateISO) return "RACE_DAY";
-
-      if (date > eventDateISO) {
-        const daysSinceEvent = diffDays(eventDateISO, date);
-        if (daysSinceEvent <= 3) return "POST_RACE_RAMP_REST";
-        if (daysSinceEvent <= 10) return "POST_RACE_RAMP_EASY";
-        return "NORMAL";
-      }
-
-      if (date < baseTodayIso) return baseOverlay;
-
-      const daysToEvent = diffDays(date, eventDateISO);
-      const taperStartDays = currentBlockState?.eventDistance === "m"
-        ? 14
-        : currentBlockState?.eventDistance === "hm"
-          ? 14
-          : 7;
-      if (daysToEvent >= 0 && daysToEvent <= taperStartDays) return "TAPER";
-
-      return baseOverlay;
-    };
-
-    const todayWeekday = isoWeekdayBerlin(todayIso);
-    const weekStart = addDaysIso(todayIso, -(todayWeekday - 1));
-    const yesterdayIso = addDaysIso(todayIso, -1);
-    const byDayAll = new Map();
-    for (const a of ctx?.activitiesAll || []) {
-      const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-      if (!d) continue;
-      if (!byDayAll.has(d)) byDayAll.set(d, []);
-      byDayAll.get(d).push(a);
-    }
-
-    const thisWeekDays = listIsoDaysInclusive(weekStart, yesterdayIso);
-    let keyDone = false;
-    const keyDates = [];
-    const keyTypes = [];
-    let longrundDone = false;
-    let longrundMinutes = 0;
-    let strengthCount = 0;
-    let restDaysTaken = 0;
-    for (const d of thisWeekDays) {
-      const dayActivities = byDayAll.get(d) || [];
-      if (!dayActivities.length) restDaysTaken += 1;
-      for (const a of dayActivities) {
-        const durationSec = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
-        if (hasKeyTag(a) || !!getKeyType(a)) {
-          keyDone = true;
-          keyDates.push(d);
-          const t = getKeyType(a);
-          if (t) keyTypes.push(t);
-        }
-        if (isRun(a) && durationSec >= LONGRUN_MIN_SECONDS) {
-          longrundDone = true;
-          longrundMinutes = Math.max(longrundMinutes, Math.round(durationSec / 60));
-        }
-        if (isStrength(a)) strengthCount += 1;
-      }
-    }
-    const thisWeekActuals = { keyDone, keyDates, keyTypes, longrundDone, longrundMinutes, strengthCount, restDaysTaken };
-
-    const days = [];
-    const plannedKeyDates = [];
-    let plannedStrengthCount = 0;
-    let longrunPlanned = false;
-    const strengthPlan = getStrengthPhasePlan(blockState?.block);
-    const strengthTarget = Math.max(0, Number(strengthPlan?.sessionsPerWeek ?? 0));
-    const longRunTargetMin = Math.round(computeLongRunTargetMinutes(blockState?.weeksToEvent, blockState?.eventDistance)?.plannedMin || 0);
-    const longrunMissingWindow = Number(distanceDiagnostics?.snapshot?.longrunMin ?? 0) <= 0;
-    const longrunPriority = longrunMissingWindow || Number(distanceDiagnostics?.scores?.longrun ?? 100) < 55 ? "high" : "normal";
-    const fatigueGuard = String(keyCompliance?.fatigueGuard || "none");
-    const longRunContext = {
-      longRunStepCapMin: runFloorState?.longRunStepCapMin ?? null,
-      longRunNextStepMin: runFloorState?.longRunNextStepMin ?? null,
-      longRunTargetMin: runFloorState?.longRunTargetMin ?? longRunTargetMin ?? null,
-    };
-    const eventDateIso = blockState?.eventDate || ctx?.eventDate || null;
-    const eventDistance = normalizeEventDistance(blockState?.eventDistance || ctx?.eventDistance) || null;
-    const getPrefRank = (iso, preference) => {
-      const wd = isoWeekdayBerlin(iso);
-      return preference.indexOf(wd);
-    };
-    const keyPref = [3, 4, 2, 5, 1, 6, 7];
-    const strengthPref = [2, 4, 1, 5, 3, 6, 7];
-    const lastRunDaysAgo = (() => {
-      for (let i = 0; i <= 3; i += 1) {
-        const checkIso = isoDate(new Date(
-          new Date(`${todayIso}T00:00:00Z`).getTime() - i * 86400000
-        ));
-        const hasRun = (ctx?.activitiesAll || []).some((a) => {
-          const d = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-          return d === checkIso && isRun(a);
-        });
-        if (hasRun) return i;
-      }
-      return 99;
-    })();
-    const shouldDelayTaperKey = lastRunDaysAgo >= 2;
-    const fallbackRunTargetRange = (() => {
-      const fromSuggestion = parseRunTargetRange(keyCompliance?.suggestion);
-      if (fromSuggestion) return fromSuggestion;
-      const goal = Number(distanceDiagnostics?.snapshot?.runGoal);
-      if (Number.isFinite(goal) && goal > 0) return { min: Math.max(2, Math.round(goal)), max: Math.max(2, Math.round(goal)) };
-      if (runFloorState?.stabilityOK === false || String(runFloorState?.floorLevel || "").toUpperCase() === "RED") {
-        return { min: 2, max: 3 };
-      }
-      return { min: 3, max: 4 };
-    })();
-    const frequencyAwareKeyCap = fallbackRunTargetRange.max <= 3 && !thisWeekActuals.longrundDone ? 1 : null;
-
-    for (let i = 0; i < 7; i += 1) {
-      const date = addDaysIso(todayIso, i);
-      const weekday = isoWeekdayBerlin(date);
-      const dayActivities = byDayAll.get(date) || [];
-      const isToday = i === 0;
-      const overlayMode = getOverlayForDate(date, todayIso, runFloorState, blockState);
-      let note = null;
-
-      if (date === blockState?.eventDateISO) {
-        const distanceSuffix = blockState?.eventDistance ? ` (${blockState.eventDistance})` : "";
-        days.push({
-          date,
-          dayLabel: dayLabels[weekday - 1],
-          isToday,
-          sessionType: "RACE",
-          sessionLabel: `🏁 Wettkampf${distanceSuffix}`,
-          keyType: null,
-          intensity: "HIGH",
-          overlayActive: false,
-          status: dayActivities.length ? "DONE" : (date < todayIso ? "MISSED" : "PLANNED"),
-          note: "Renntag — alles andere pausiert",
-        });
-        continue;
-      }
-
-      if (dayActivities.length) {
-        const sessionType = classifySessionType(dayActivities);
-        const doneMeta = sessionMetaFromType(sessionType);
-        if (sessionType === "KEY") plannedKeyDates.push(date);
-        if (sessionType === "STRENGTH") plannedStrengthCount += 1;
-        if (sessionType === "LONGRUN") longrunPlanned = true;
-        days.push({
-          date,
-          dayLabel: dayLabels[weekday - 1],
-          isToday,
-          sessionType,
-          sessionLabel: doneMeta.sessionLabel,
-          keyType: sessionType === "KEY" ? (getKeyType(dayActivities[0]) || keyCompliance?.plannedKeyType || null) : null,
-          intensity: doneMeta.intensity,
-          overlayActive: overlayMode !== "NORMAL",
-          status: "DONE",
-          note,
-        });
-        continue;
-      }
-
-      if (date < todayIso) {
-        days.push({
-          date,
-          dayLabel: dayLabels[weekday - 1],
-          isToday,
-          sessionType: "REST",
-          sessionLabel: "Key nicht absolviert",
-          keyType: null,
-          intensity: "NONE",
-          overlayActive: overlayMode !== "NORMAL",
-          status: "MISSED",
-          note,
-        });
-        continue;
-      }
-
-      let sessionType = "LOW";
-      let sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
-      let intensity = "LOW";
-      let keyType = null;
-
-      if (overlayMode === "TAPER") {
-        sessionType = "RECOVERY";
-        sessionLabel = "Lockerer Lauf oder Pause (Taper)";
-        const daysToEvent = eventDateIso ? diffDays(date, eventDateIso) : null;
-        const keyExistsInPlan = days.some((entry) => entry.sessionType === "KEY");
-        // Mindestabstand Key → Rennen nach Distanz (Trainingslehre):
-        // 5k:  Key noch 1 Tag vorher ok (neuromuskuläre Schärfe wichtiger als Ruhe)
-        // 10k: Key noch 2 Tage vorher ok
-        // HM:  Key mindestens 3 Tage vorher
-        // m:   Key mindestens 4 Tage vorher (default)
-        const minDaysBeforeRace =
-          eventDistance === "5k" ? 1
-            : eventDistance === "10k" ? 2
-              : eventDistance === "hm" ? 3 : 4;
-
-        // Bevorzugte Tage für den Taper-Key (daysToEvent-Werte):
-        // Bei Verzögerung (shouldDelayTaperKey) einen Tag näher ans Rennen schieben,
-        // damit der Key nicht ganz wegfällt wenn heute GA für Wiedereinstieg gebraucht wird.
-        const effectivePreferredTaperDays =
-          eventDistance === "5k"
-            ? (shouldDelayTaperKey ? [2, 3] : [3, 2])
-            : eventDistance === "10k"
-              ? (shouldDelayTaperKey ? [3, 2] : [4, 3])
-              : (shouldDelayTaperKey ? [4] : [5, 4]); // HM/Marathon unverändert
-
-        const isDelayedTaperEntryToday = isToday && shouldDelayTaperKey;
-        const hasPreferredTaperKeyDayAhead = Boolean(
-          eventDateIso
-          && i <= 6
-          && listIsoDaysInclusive(date, addDaysIso(todayIso, 6)).some((iso) => {
-            const dte = diffDays(iso, eventDateIso);
-            return effectivePreferredTaperDays.includes(dte);
-          })
-        );
-        const isPreferredTaperKeyDay = effectivePreferredTaperDays.includes(daysToEvent);
-        const canPlaceTaperKeyToday = keyCompliance?.keyAllowedNow === true
-          && daysToEvent != null
-          && daysToEvent > minDaysBeforeRace
-          && !isDelayedTaperEntryToday
-          && !keyExistsInPlan
-          && (isPreferredTaperKeyDay || !hasPreferredTaperKeyDayAhead);
-
-        if (isDelayedTaperEntryToday) {
-          const layoffDays = lastRunDaysAgo === 99 ? "3+" : String(lastRunDaysAgo);
-          sessionType = "GA";
-          intensity = "LOW";
-          sessionLabel = `GA locker — erst wieder reinkommen (kein Lauf seit ${layoffDays} Tagen)`;
-          note = `${layoffDays} Tage ohne Lauf — erst lockerer GA vor Key`;
-        }
-
-        if (canPlaceTaperKeyToday) {
-          const taperLabel = eventDistance === "5k" || eventDistance === "10k"
-            ? "4–6×200m @ Renntempo oder 3×1km locker-flott"
-            : (keyCompliance?.plannedKeyType || "kurze Reize");
-          sessionType = "KEY";
-          intensity = "HIGH";
-          keyType = keyCompliance?.plannedKeyType || null;
-          sessionLabel = `Aktivierungs-Key (Taper): ${taperLabel}`;
-          note = "Kurz und scharf — neuromuskuläre Aktivierung, kein Volumen";
-          plannedKeyDates.push(date);
-        }
-      } else if (overlayMode === "LIFE_EVENT_STOP") {
-        sessionType = "REST";
-        sessionLabel = "Pause (Krankheit/Verletzung)";
-        intensity = "NONE";
-      } else if (overlayMode === "POST_RACE_RAMP_REST") {
-        sessionType = "REST";
-        sessionLabel = "Pause (Post-Race Erholung)";
-        intensity = "NONE";
-      } else if (overlayMode === "POST_RACE_RAMP_EASY") {
-        sessionType = "GA";
-        sessionLabel = "GA locker (Ramp-up)";
-      } else {
-        const keyBudget = Math.max(1, Number(keyCompliance?.maxKeysPerWeek ?? 1));
-        const keyBudgetByFrequency = frequencyAwareKeyCap != null ? Math.min(keyBudget, frequencyAwareKeyCap) : keyBudget;
-        const canAddKeyByCount = thisWeekActuals.keyDates.length + plannedKeyDates.length < keyBudgetByFrequency;
-        const lastKnownKeyDate = [...thisWeekActuals.keyDates, ...plannedKeyDates].sort().at(-1) || null;
-        const spacingOk = !lastKnownKeyDate || diffDays(lastKnownKeyDate, date) >= 3;
-        const bestKeyRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
-          .map((d) => getPrefRank(d, keyPref))
-          .filter((rank) => rank >= 0)
-          .sort((a, b) => a - b)[0];
-        const isPreferredKeySlot = getPrefRank(date, keyPref) === bestKeyRankLeft;
-        const keyEligible = keyCompliance?.keyAllowedNow === true && canAddKeyByCount && spacingOk && isPreferredKeySlot;
-
-        if (keyEligible) {
-          sessionType = "KEY";
-          intensity = keyCompliance?.keyMode === "light" ? "MED" : "HIGH";
-          keyType = keyCompliance?.plannedKeyType || null;
-          sessionLabel = keyCompliance?.keyMode === "light"
-            ? "Leichter Qualitätsreiz: steady / kurze kontrollierte Schwelle"
-            : (shortSentence(keyCompliance?.explicitSession) || `Key: ${keyType || "steady"}`);
-          plannedKeyDates.push(date);
-          if (!thisWeekActuals.keyDone && thisWeekActuals.keyDates.length === 0 && thisWeekDays.length > 0) {
-            note = "Key aus dieser Woche nachholen";
-          }
-        } else {
-          const nearestKeyDistance = plannedKeyDates.length
-            ? Math.min(...plannedKeyDates.map((kDate) => Math.abs(diffDays(kDate, date))))
-            : 99;
-          const canPlanLongrun = !thisWeekActuals.longrundDone && !longrunPlanned && nearestKeyDistance >= 2;
-          const isLongrunPref = longrunPriority === "high" ? weekday >= 4 : (weekday === 7 || weekday === 6);
-          if (canPlanLongrun && isLongrunPref) {
-            sessionType = "LONGRUN";
-            intensity = "MED";
-            let capMin = longRunContext?.longRunStepCapMin
-              ?? longRunContext?.longRunNextStepMin
-              ?? longRunContext?.longRunTargetMin
-              ?? null;
-            if (fatigueGuard === "hard_block" && Number.isFinite(capMin)) capMin = Math.max(35, Math.round(capMin * 0.8));
-            if (fatigueGuard === "downscale" && Number.isFinite(capMin)) capMin = Math.max(40, Math.round(capMin * 0.9));
-            const label = (Number.isFinite(capMin) && capMin > 0)
-              ? `Langer Lauf ca. ${Math.round(capMin)}′`
-              : "Langer Lauf";
-            sessionLabel = label;
-            longrunPlanned = true;
-            note = longrunPriority === "high"
-              ? "Longrun-Priorität hoch: nächster geeigneter Lauftag reserviert"
-              : note;
-          } else {
-            const strengthNeed = thisWeekActuals.strengthCount + plannedStrengthCount < strengthTarget;
-            const clashesWithKeyOrLong = sessionType === "KEY" || sessionType === "LONGRUN";
-            const bestStrengthRankLeft = listIsoDaysInclusive(date, addDaysIso(todayIso, 6))
-              .map((d) => getPrefRank(d, strengthPref))
-              .filter((rank) => rank >= 0)
-              .sort((a, b) => a - b)[0];
-            const isStrengthPref = getPrefRank(date, strengthPref) === bestStrengthRankLeft;
-            if (strengthNeed && !clashesWithKeyOrLong && isStrengthPref) {
-              const plannedStrengthTotal = thisWeekActuals.strengthCount + plannedStrengthCount;
-              const strengthSession = getStrengthSessionForDay(blockState, plannedStrengthTotal);
-              const cycleLabel = strengthSession ? ` (Woche ${Number(strengthSession.cycleWeek) + 1})` : "";
-              sessionType = "STRENGTH";
-              intensity = "LOW";
-              sessionLabel = strengthSession
-                ? `💪 Kraft – ${strengthSession.name}${cycleLabel}`
-                : `💪 Kraft – Einheit A${cycleLabel}`;
-              note = "Kann nach GA-Lauf gemacht werden";
-              plannedStrengthCount += 1;
-            }
-          }
-        }
-      }
-
-      const prevIntensities = days.slice(-2).map((d) => d.intensity);
-      if (prevIntensities.length === 2 && prevIntensities.every((x) => x === "HIGH")) {
-        sessionType = "REST";
-        intensity = "NONE";
-        sessionLabel = "Pause oder Mobilität";
-        keyType = null;
-      }
-
-      days.push({
-        date,
-        dayLabel: dayLabels[weekday - 1],
-        isToday,
-        sessionType,
-        sessionLabel,
-        keyType,
-        intensity,
-        overlayActive: overlayMode !== "NORMAL",
-        status: "PLANNED",
-        note,
-      });
-    }
-
-    if (String(keyCompliance?.fatigueGuard || "none") === "hard_block") {
-      let displacedKey = false;
-      for (let i = 0; i < Math.min(days.length, 3); i += 1) {
-        const entry = days[i];
-        if (entry?.status !== "PLANNED" || entry?.sessionType !== "KEY") continue;
-        displacedKey = true;
-        entry.sessionType = "LOW";
-        entry.intensity = "LOW";
-        entry.keyType = null;
-        entry.sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
-        entry.note = entry.note ? `${entry.note} · Key verschoben: Ermüdung kritisch` : "Key verschoben: Ermüdung kritisch";
-      }
-      if (displacedKey) {
-        const existingKeyIdx = days.findIndex((entry) => entry?.status === "PLANNED" && entry?.sessionType === "KEY");
-        if (existingKeyIdx >= 0) {
-          days[existingKeyIdx].sessionType = "LOW";
-          days[existingKeyIdx].intensity = "LOW";
-          days[existingKeyIdx].keyType = null;
-          days[existingKeyIdx].sessionLabel = "easy / frei (30–60′ locker oder Ruhetag nach Gefühl)";
-          days[existingKeyIdx].note = days[existingKeyIdx].note
-            ? `${days[existingKeyIdx].note} · Key verschoben: Ermüdung kritisch`
-            : "Key verschoben: Ermüdung kritisch";
-        }
-        for (let i = 2; i < days.length; i += 1) {
-          const candidate = days[i];
-          if (candidate?.status !== "PLANNED") continue;
-          const overlayMode = getOverlayForDate(candidate.date, todayIso, runFloorState, blockState);
-          if (overlayMode === "TAPER" || overlayMode === "LIFE_EVENT_STOP" || overlayMode === "POST_RACE_RAMP_REST") continue;
-          if (candidate.sessionType === "LONGRUN" || candidate.sessionType === "RACE") continue;
-          candidate.sessionType = "KEY";
-          candidate.intensity = "HIGH";
-          candidate.keyType = keyCompliance?.plannedKeyType || null;
-          candidate.sessionLabel = shortSentence(keyCompliance?.explicitSession) || `Key: ${candidate.keyType || "steady"}`;
-          candidate.note = candidate.note
-            ? `${candidate.note} · Key verschoben: Ermüdung kritisch`
-            : "Key verschoben: Ermüdung kritisch";
-          break;
-        }
-      }
-    }
-
-    const countPlannedRuns = (entries) => entries.filter((entry) =>
-      entry.status === "PLANNED"
-      && ["GA", "KEY", "LONGRUN"].includes(entry.sessionType)
-    ).length;
-    let plannedRuns = countPlannedRuns(days);
-    if (plannedRuns > fallbackRunTargetRange.max) {
-      const optionalLowIndices = [];
-      const nonCoreGaIndices = [];
-      for (let idx = 0; idx < days.length; idx += 1) {
-        const entry = days[idx];
-        if (entry.status !== "PLANNED") continue;
-        if (entry.sessionType === "LOW") optionalLowIndices.push(idx);
-        else if (entry.sessionType === "GA") nonCoreGaIndices.push(idx);
-      }
-      for (const idx of optionalLowIndices) {
-        if (plannedRuns <= fallbackRunTargetRange.max) break;
-        days[idx].sessionType = "REST";
-        days[idx].sessionLabel = "frei / optionaler Rest";
-        days[idx].intensity = "NONE";
-        days[idx].note = days[idx].note
-          ? `${days[idx].note} · reduziert auf Ziel-Frequenz`
-          : "Reduziert auf Ziel-Frequenz";
-        plannedRuns = countPlannedRuns(days);
-      }
-      for (const idx of nonCoreGaIndices) {
-        if (plannedRuns <= fallbackRunTargetRange.max) break;
-        days[idx].sessionType = "REST";
-        days[idx].sessionLabel = "frei / optionaler Rest";
-        days[idx].intensity = "NONE";
-        days[idx].note = days[idx].note
-          ? `${days[idx].note} · GA zugunsten Ziel-Frequenz gestrichen`
-          : "GA zugunsten Ziel-Frequenz gestrichen";
-        plannedRuns = countPlannedRuns(days);
-      }
-    }
-
-    if (days.length) {
-      days[0].note = days[0].note ? `${days[0].note} · Vorschau — passt sich täglich an` : "Vorschau — passt sich täglich an";
-    }
-
-    const text = days
-      .map((entry) => {
-        const statusPrefix = entry.status === "DONE" ? "✓ " : entry.status === "MISSED" ? "≈ " : "";
-        const todayPrefix = entry.isToday ? "→ " : "";
-        const keyStar = entry.sessionType === "KEY" ? " ★" : "";
-        const missedLabel = entry.status === "MISSED" ? "Key nicht absolviert" : entry.sessionLabel;
-        return `${todayPrefix}${entry.dayLabel}: ${statusPrefix}${missedLabel}${keyStar}`;
-      })
-      .join("\n");
-
-    return { days, text, thisWeekActuals };
-  } catch {
-    return { days: [], text: "(Wochenplan nicht verfügbar)", thisWeekActuals: null };
-  }
-}
-
-
 function isoDate(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -7577,38 +7067,27 @@ function isRaceActivity(activity) {
   return /\b(race|wettkampf|competition)\b/.test(title);
 }
 
-function resolveRaceActivityForPlannedRaceDay(runs, weekPreview, dayIso) {
-  try {
-    const safeRuns = Array.isArray(runs) ? runs.filter((activity) => isRun(activity)) : [];
-    if (!safeRuns.length) return null;
+function isoWeekdayBerlin(iso) {
+  const date = parseISODateSafe(iso);
+  if (!date) return 1;
+  const weekday = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Berlin",
+    weekday: "short",
+  }).format(date);
+  const map = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
+  return map[weekday] || 1;
+}
 
-    // Primärer Pfad bleibt race:-Tag/Heuristik.
-    const taggedRace = safeRuns.find((activity) => isRaceActivity(activity));
-    if (taggedRace) return taggedRace;
-
-    // Fallback: Wenn der Wochenplan den Tag als RACE markiert und ein Lauf existiert,
-    // gilt dieser Lauf als Rennen (auch ohne race:-Tag).
-    const todayPlanEntry = Array.isArray(weekPreview?.days)
-      ? weekPreview.days.find((entry) => entry?.isToday === true || entry?.date === dayIso)
-      : null;
-    const isPlannedRaceDay = todayPlanEntry?.sessionType === "RACE";
-    if (!isPlannedRaceDay) return null;
-
-    return (
-      safeRuns
-        .slice()
-        .sort((a, b) => {
-          const distA = Number(a?.distance ?? 0);
-          const distB = Number(b?.distance ?? 0);
-          if (distA !== distB) return distB - distA;
-          const timeA = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
-          const timeB = Number(b?.moving_time ?? b?.elapsed_time ?? 0);
-          return timeB - timeA;
-        })[0] || safeRuns[0]
-    );
-  } catch {
-    return null;
+function countStrengthSessionsWeekToYesterday(ctx, todayIso) {
+  const todayWeekday = isoWeekdayBerlin(todayIso);
+  const weekStart = addDaysIso(todayIso, -(todayWeekday - 1));
+  const yesterdayIso = addDaysIso(todayIso, -1);
+  if (!isIsoDate(weekStart) || !isIsoDate(yesterdayIso) || yesterdayIso < weekStart) return 0;
+  let count = 0;
+  for (const iso of listIsoDaysInclusive(weekStart, yesterdayIso)) {
+    count += Array.isArray(ctx?.byDayStrength?.get?.(iso)) ? ctx.byDayStrength.get(iso).length : 0;
   }
+  return Math.max(0, Math.floor(count));
 }
 
 function inferRaceDistanceLabel(distanceM) {
@@ -9103,49 +8582,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
     }
 
-    // Spike-Guard-Cap für Wochenvorschau vorab berechnen,
-    // damit buildWeekPreview das korrekte Longrun-Ziel im sessionLabel anzeigt.
-    const _longRunDoneMinForPreview = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
-    const _longestRun30dMinForPreview = Math.round(longRunSummary?.longestRun30d?.minutes ?? 0);
-    const _phaseLongRunMaxMinForPreview = Number(
-      PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[
-        normalizeEventDistance(eventDistance || blockState?.eventDistance) || "10k"
-      ]?.longrun ?? 0
-    );
-    const _longRunStepCapRawForPreview = _longRunDoneMinForPreview > 0
-      ? Math.max(
-          LONGRUN_PREPLAN.startMin,
-          Math.round(_longRunDoneMinForPreview * (1 + LONGRUN_PREPLAN.maxStepPct))
-        )
-      : LONGRUN_PREPLAN.startMin;
-    const _longRunSpikeCapForPreview = _longestRun30dMinForPreview > 0
-      ? Math.max(
-          LONGRUN_PREPLAN.startMin,
-          Math.round(_longestRun30dMinForPreview * (1 + LONGRUN_PREPLAN.maxStepPct))
-        )
-      : 0;
-    const _longRunStepCapForPreview = _phaseLongRunMaxMinForPreview > 0
-      ? Math.min(_longRunStepCapRawForPreview, _phaseLongRunMaxMinForPreview)
-      : _longRunStepCapRawForPreview;
-    const _longRunSafetyCapForPreview = _longRunSpikeCapForPreview > 0
-      ? Math.min(_longRunStepCapForPreview, _longRunSpikeCapForPreview)
-      : _longRunStepCapForPreview;
-
     // Daily report text (used for calendar NOTE instead of wellness comments)
-    const weekPreview = buildWeekPreview(ctx, day, {
-      blockState,
-      keyCompliance,
-      runFloorState: {
-        ...runFloorState,
-        longRunStepCapMin: _longRunSafetyCapForPreview > 0
-          ? _longRunSafetyCapForPreview
-          : (runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null),
-      },
-      distanceDiagnostics,
-      fatigue: historyMetrics?.fatigue || fatigue || null,
-    });
     if (day === oldest) {
-      strengthCountThisWeek = Math.max(0, Math.floor(Number(weekPreview?.thisWeekActuals?.strengthCount || 0)));
+      strengthCountThisWeek = countStrengthSessionsWeekToYesterday(ctx, day);
     }
     ctx.__weeklyFocusMeta = null;
     let racePrediction = null;
@@ -9216,7 +8655,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       eventDistance,
       fitnessProfile,
       hrrcTrend,
-      weekPreview,
       racePrediction,
       contextCtx: ctx,
     }, { debug, verbosity: reportVerbosity });
@@ -9264,14 +8702,9 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       ? String(dailyReportTextRaw || "").replace("🧠 DIAGNOSE", `${insertBlock}🧠 DIAGNOSE`)
       : [dailyReportTextRaw || "", "", insertBlock].join("\n");
     let dailyReportText = normalizeDailyReportText(day, dailyReportWithWeekPlan);
-    try {
-      const raceResolvedFromPlan = resolveRaceActivityForPlannedRaceDay(runs, weekPreview, day);
-      if (raceResolvedFromPlan) raceActivityToday = raceResolvedFromPlan;
-    } catch {
-      // no-op: fallback bleibt Tag-basierte Erkennung
-    }
-    const todayPlanEntry = (weekPreview?.days || []).find((entry) => entry?.isToday);
-    const isRaceDayToday = todayPlanEntry?.sessionType === "RACE" && todayPlanEntry?.isToday === true;
+    const isRaceDayToday = Boolean(
+      isIsoDate(String(blockState?.eventDateISO || "")) && String(blockState?.eventDateISO) === day
+    );
     if (isRaceDayToday && !raceActivityToday) {
       let efMedRace = null;
       let vdotMedRace = null;
@@ -9396,8 +8829,6 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     if (debug) {
       notesPreview[day] = dailyReportText || "";
-      ctx.debugOut.__weekPreview ??= {};
-      ctx.debugOut.__weekPreview[day] = weekPreview?.days || [];
       ctx.debugOut.__weeklyReview ??= {};
       ctx.debugOut.__weeklyReview[day] = isMondayIso(day) ? (weeklyReview || null) : null;
       ctx.debugOut.__weeklyFocus ??= {};
@@ -10822,7 +10253,7 @@ function buildNextRunRecommendation({
       longRunNextStepMin,
       longRunTargetMin,
     }, plannedSessionLabel);
-    return `Longrun wie im Wochenplan: ${label}.`;
+    return `Longrun heute: ${label}.`;
   }
   if (keyDecision?.blockedByKeySpacing) {
     next = "Heute kein Key (Key-Spacer): 30–60 min locker oder Rest.";
@@ -11299,7 +10730,6 @@ function buildComments(
     eventDistance,
     fitnessProfile,
     hrrcTrend,
-    weekPreview,
     racePrediction,
     contextCtx,
   },
@@ -11466,9 +10896,6 @@ function buildComments(
     plannedType: keyRules?.plannedPrimaryType,
     weeksToEvent,
   });
-  const todayPlanEntry = Array.isArray(weekPreview?.days)
-    ? weekPreview.days.find((entry) => entry?.isToday === true || entry?.date === todayIso)
-    : null;
   const focusPrimary = String(contextCtx?.__weeklyFocusMeta?.focus || "").toLowerCase() || null;
   const focusSecondary = mapGapToCoachLanguage(distanceDiagnostics?.secondaryGap).label || null;
   const explicitSessionText = keyCompliance?.explicitSession || explicitSessionFromSuggestion(keyCompliance?.suggestion);
@@ -11494,8 +10921,8 @@ function buildComments(
     preferredKeyTypes: keyRules?.preferredKeyTypes,
     block: blockState?.block,
     keyDecision,
-    plannedSessionType: todayPlanEntry?.sessionType || null,
-    plannedSessionLabel: todayPlanEntry?.sessionLabel || todayPlanEntry?.label || null,
+    plannedSessionType: null,
+    plannedSessionLabel: null,
     focusPrimary,
     focusSecondary,
     longRunStepCapMin: runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null,
@@ -15697,7 +15124,6 @@ const __internalTestHooks = Object.freeze({
   adaptExpectedKeysForOverlay,
   evaluateKeyCompliance,
   formatPhaseOverlayLine,
-  buildWeekPreview,
   buildWeeklyFocus,
   applyStrengthPolicyOverlay,
   applyManualBlockStartOverride,
