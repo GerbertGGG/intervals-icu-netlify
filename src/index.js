@@ -9103,13 +9103,43 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       }
     }
 
+    // Spike-Guard-Cap für Wochenvorschau vorab berechnen,
+    // damit buildWeekPreview das korrekte Longrun-Ziel im sessionLabel anzeigt.
+    const _longRunDoneMinForPreview = Math.round(longRunSummary?.longRun14d?.minutes ?? 0);
+    const _longestRun30dMinForPreview = Math.round(longRunSummary?.longestRun30d?.minutes ?? 0);
+    const _phaseLongRunMaxMinForPreview = Number(
+      PHASE_MAX_MINUTES?.[blockState?.block || "BASE"]?.[
+        normalizeEventDistance(eventDistance || blockState?.eventDistance) || "10k"
+      ]?.longrun ?? 0
+    );
+    const _longRunStepCapRawForPreview = _longRunDoneMinForPreview > 0
+      ? Math.max(
+          LONGRUN_PREPLAN.startMin,
+          Math.round(_longRunDoneMinForPreview * (1 + LONGRUN_PREPLAN.maxStepPct))
+        )
+      : LONGRUN_PREPLAN.startMin;
+    const _longRunSpikeCapForPreview = _longestRun30dMinForPreview > 0
+      ? Math.max(
+          LONGRUN_PREPLAN.startMin,
+          Math.round(_longestRun30dMinForPreview * (1 + LONGRUN_PREPLAN.maxStepPct))
+        )
+      : 0;
+    const _longRunStepCapForPreview = _phaseLongRunMaxMinForPreview > 0
+      ? Math.min(_longRunStepCapRawForPreview, _phaseLongRunMaxMinForPreview)
+      : _longRunStepCapRawForPreview;
+    const _longRunSafetyCapForPreview = _longRunSpikeCapForPreview > 0
+      ? Math.min(_longRunStepCapForPreview, _longRunSpikeCapForPreview)
+      : _longRunStepCapForPreview;
+
     // Daily report text (used for calendar NOTE instead of wellness comments)
     const weekPreview = buildWeekPreview(ctx, day, {
       blockState,
       keyCompliance,
       runFloorState: {
         ...runFloorState,
-        longRunStepCapMin: runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null,
+        longRunStepCapMin: _longRunSafetyCapForPreview > 0
+          ? _longRunSafetyCapForPreview
+          : (runFloorState?.longRunStepCapMin ?? keyCompliance?.longRunStepCapMin ?? null),
       },
       distanceDiagnostics,
       fatigue: historyMetrics?.fatigue || fatigue || null,
