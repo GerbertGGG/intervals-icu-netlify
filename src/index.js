@@ -11023,6 +11023,11 @@ function buildRecommendationsAndBottomLine(state) {
     bottomLine = `Heute den konservativen KEY-Reiz sauber umsetzen — Umfang bei ${durationHint} halten, danach erholen.`;
   } else if (dayMode === "KEY") {
     bottomLine = "Heute den KEY-Reiz sauber und kontrolliert umsetzen.";
+  } else {
+    const nextStepHint = longRunTargetMin > 0
+      ? `nächsten Lauftag für Longrun (${Math.round(longRunTargetMin)}′) reservieren.`
+      : "morgen wieder progressiv aufbauen.";
+    bottomLine = `Heute erholen oder locker laufen — ${nextStepHint}`;
   }
   bottom.push(bottomLine);
   if (!easyDecision && state?.keyAllowedNow && explicitSessionShort && dayMode !== "KEY") {
@@ -11186,7 +11191,7 @@ function buildBikeWeeklyRule({ bikeSubFactor, weeksToEvent, overlayMode = "NORMA
     maxReplaceableWeeklySharePct,
     practicalHint,
     summaryLine: bikeAllowed
-      ? `Bike-Wochenregel: Rad als Ergänzung erlaubt; anrechenbar bis ${maxReplaceableWeeklySharePct}% des RunFloor-Ziels/Woche; easy/frei ersetzbar${gaAllowed ? ", GA optional" : ""}; Key/Longrun bleiben echte Läufe.`
+      ? `Bike-Wochenregel: Rad als Ergänzung erlaubt; anrechenbar bis ${maxReplaceableWeeklySharePct}% des RunFloor-Ziels/Woche; easy/frei ersetzbar${gaAllowed ? ", GA optional" : ""}; Key und Longrun bleiben echte Laeufe.`
       : "Bike-Wochenregel: Kein Ersatzlauf per Rad (nur ergänzendes Crosstraining).",
     recommendationLine: bikeAllowed
       ? `Rad statt lockerem Lauf ist als Ergänzung möglich, aber nur begrenzt anrechenbar (${maxReplaceableWeeklySharePct}% des RunFloor-Ziels/Woche). Bike ersetzt keine Laufspezifik: Key und Longrun bleiben echte Läufe.${practicalHint ? ` (${practicalHint})` : ""}`
@@ -11271,7 +11276,10 @@ function buildComments(
   { debug = false, verbosity = "coach" } = {}
 ) {
   const lines = [];
-  const sanitizeIntervalsNoteText = (value) => String(value || "").replace(/~/g, "≈");
+  const sanitizeIntervalsNoteText = (value) =>
+    String(value || "")
+      .replace(/~/g, "≈")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
   const formatPct1 = (value) => (Number.isFinite(value) ? `${value.toFixed(1).replace('.', ',')} %` : "n/a");
   const formatSignedPct1 = (value) =>
     Number.isFinite(value)
@@ -11788,15 +11796,22 @@ function buildComments(
       keyCompliance?.freqOk === false ? "Passender Reiz fehlt oder ist noch zu selten." : null,
       "Nächsten Reiz gezielter setzen.",
     ],
-    longrun: [
-      longRunDoneMin === 0
+    longrun: (() => {
+      const specific1 = longRunDoneMin === 0
         ? `Kein Longrun in den letzten ${LONGRUN_PREPLAN.spikeGuardLookbackDays} Tagen (Mindestziel: ${LONGRUN_PREPLAN.startMin}′)`
         : longRunDoneMin < longRunTargetMin
           ? `Longrun zuletzt kürzer (${longRunDoneMin}′ / Mindestziel ${LONGRUN_PREPLAN.startMin}′)`
-          : null,
-      Number(distanceDiagnostics?.snapshot?.longrunFrequency35d ?? 0) < 2 ? "Longrun-Frequenz zu niedrig." : null,
-      "Längerer aerober Reiz nicht regelmäßig genug.",
-    ],
+          : null;
+      const specific2 = Number(distanceDiagnostics?.snapshot?.longrunFrequency35d ?? 0) < 2
+        ? "Longrun-Frequenz zu niedrig."
+        : null;
+      const hasSpecific = specific1 != null || specific2 != null;
+      return [
+        specific1,
+        specific2,
+        hasSpecific ? "Längerer aerober Reiz nicht regelmäßig genug." : null,
+      ];
+    })(),
     robustness: [
       includeStrengthInWhy && Number(strengthPolicyResolved.minutes7d || 0) < Number(strengthPolicyResolved.target || 0)
         ? `Krafttraining unter Soll (${strengthPolicyResolved.minutes7d}′/${strengthPolicyResolved.target}′)`
@@ -11948,7 +11963,14 @@ function buildComments(
         : "Belastung heute kontrolliert halten und nächste Woche wieder progressiv aufbauen."
     );
   }
-  if (bikeWeeklyRule?.recommendationLine && !recommendationRenderLines.some((line) => line.includes("Rad statt Lauf:"))) {
+  const bikeAlreadyInTrainingState = trainingStateLines.some(
+    (l) => typeof l === "string" && /rad/i.test(l)
+  );
+  if (
+    bikeWeeklyRule?.recommendationLine &&
+    !bikeAlreadyInTrainingState &&
+    !recommendationRenderLines.some((line) => /rad/i.test(line))
+  ) {
     recommendationRenderLines.push(bikeWeeklyRule.recommendationLine);
   }
   const recommendationRenderLinesFinal = prependKeyRecommendationContext(
@@ -11962,7 +11984,9 @@ function buildComments(
   addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
   addDecisionBlock("TRAININGSSTAND", trainingStateLines);
   addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLinesFinal);
-  addDecisionBlock("DIAGNOSE", diagnoseLines);
+  if (normalizedVerbosity !== "coach") {
+    addDecisionBlock("DIAGNOSE", diagnoseLines);
+  }
 
   if (String(blockState?.block || "").toUpperCase() === "RACE") {
     if (racePrediction?.available) {
