@@ -10885,6 +10885,7 @@ function buildComments(
       "KEY-CHECK": "🔑",
       "DIAGNOSE": "🧠",
       "EMPFEHLUNGEN": "🧭",
+      "STREAK": "🛡️",
       "TRAININGSSTAND": "📊",
       "HEUTE-ENTSCHEIDUNG": "🎯",
       "BOTTOM LINE": "🧾",
@@ -11512,12 +11513,10 @@ function buildComments(
     if (parts.length === 0) return `Level-Aufstieg verfügbar → ${nextStreakLevelLabel} (${nextStreakLevelMinutes}′)`;
     return `Nächstes Level ${nextStreakLevelLabel} (${nextStreakLevelMinutes}′): noch ${parts.join(" + ")}`;
   })();
-  trainingStateLines.splice(
-    trainingStateLines.indexOf(intensityLine),
-    0,
+  const streakLines = [
     `Streak ${streakStatusEmoji}: ${streakCurrent} Tage | Best: ${streakLongest} | Level: ${streakLevelLabel} (≥${streakLevelMinutes}′/Tag)`,
-    streakLevelUpLine
-  );
+    streakLevelUpLine,
+  ];
 
   const recommendationLines = [];
   for (const rec of recommendationMetricsBlock) {
@@ -11599,6 +11598,7 @@ function buildComments(
   addDecisionBlock("STATUS", statusLines);
   addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
   addDecisionBlock("TRAININGSSTAND", trainingStateLines);
+  addDecisionBlock("STREAK", streakLines);
   addDecisionBlock("EMPFEHLUNGEN", recommendationRenderLinesFinal);
   if (normalizedVerbosity !== "coach") {
     addDecisionBlock("DIAGNOSE", diagnoseLines);
@@ -13274,6 +13274,7 @@ function mergeTodayRunSection(existingText, freshText) {
     "STATUS",
     "FOKUS",
     "TRAININGSSTAND",
+    "STREAK",
     "EMPFEHLUNGEN",
     "DIAGNOSE",
     "BOTTOM LINE",
