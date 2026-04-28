@@ -26,6 +26,32 @@ import {
   parseReportVerbosity,
 } from "./http-helpers.js";
 import { diffDays, isIsoDate, isoDate, isoDateBerlin } from "./date-utils.js";
+import {
+  formatEventDistance,
+  getLifeEventCategoryLabel,
+  getLifeEventEffect,
+  inferRaceDistanceLabel,
+  isARaceCategory,
+  isARaceEvent,
+  isLifeEventActiveOnDay,
+  isLifeEventCategory,
+  normalizeEventCategory,
+  parseLifeEventBoundary,
+} from "./event-utils.js";
+import {
+  avg,
+  bucketLoadsByDay,
+  clamp,
+  countBy,
+  isMondayIso,
+  median,
+  pearsonCorrelation,
+  round,
+  safeRound,
+  std,
+  sum,
+  uniq,
+} from "./stats-utils.js";
 
 const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
 
@@ -2068,130 +2094,6 @@ function mapBlockToPhase(block) {
   if (block === "RACE") return "PEAK";
   if (block === "RESET") return "RECOVER";
   return "BASE";
-}
-
-function normalizeEventCategory(category) {
-  return String(category ?? "").toUpperCase().trim();
-}
-
-function isARaceCategory(category) {
-  const cat = normalizeEventCategory(category);
-  if (!cat) return false;
-
-  const compact = cat.replace(/[^A-Z0-9]/g, "");
-
-  // Intervals kann je nach Quelle unterschiedliche Schreibweisen liefern.
-  // Bewusst NUR A-Rennen (kein B/C) für weeksToEvent-Planung.
-  return (
-    cat === "RACE_A" ||
-    cat === "A_RACE" ||
-    cat === "A-RACE" ||
-    cat === "RACE A" ||
-    cat === "A" ||
-    compact === "RACEA" ||
-    compact === "ARACE"
-  );
-}
-
-function isARaceEvent(event) {
-  if (!event || typeof event !== "object") return false;
-  if (isARaceCategory(event?.category)) return true;
-
-  // Fallback: manche Quellen liefern "A" nicht in category,
-  // sondern in separaten Prioritätsfeldern.
-  const priorityFields = [
-    event?.priority,
-    event?.racePriority,
-    event?.race_priority,
-    event?.raceCategory,
-    event?.race_category,
-    event?.importance,
-    event?.targetLevel,
-    event?.goalPriority,
-  ];
-  const hasAPriority = priorityFields
-    .map((v) => normalizeEventCategory(v))
-    .some((v) => v === "A" || v === "RACE_A" || v === "A_RACE" || v === "A-RACE");
-  if (!hasAPriority) return false;
-
-  const raceSignals = [event?.type, event?.eventType, event?.event_type, event?.discipline]
-    .map((v) => normalizeEventCategory(v))
-    .some((v) => v === "RACE" || v.includes("RACE"));
-  return raceSignals;
-}
-
-function isLifeEventCategory(category) {
-  const cat = normalizeEventCategory(category);
-  return cat === "SICK" || cat === "INJURED" || cat === "HOLIDAY";
-}
-
-function isLifeEventActiveOnDay(event, dayIso) {
-  const startIso = String(event?.start_date_local || event?.start_date || "").slice(0, 10);
-  if (!isIsoDate(startIso) || !isIsoDate(dayIso)) return false;
-
-  const endIsoRaw = String(event?.end_date_local || event?.end_date || "").slice(0, 10);
-  if (!isIsoDate(endIsoRaw)) return dayIso === startIso;
-  return dayIso >= startIso && dayIso < endIsoRaw;
-}
-
-function getLifeEventEffect(activeLifeEvent) {
-  const category = normalizeEventCategory(activeLifeEvent?.category);
-
-  if (category === "SICK" || category === "INJURED") {
-    return {
-      active: true,
-      category,
-      runFloorFactor: 0,
-      allowKeys: false,
-      freezeProgression: true,
-      freezeFloorIncrease: true,
-      ignoreRunFloorGap: true,
-      overlayMode: "LIFE_EVENT_STOP",
-      reason: `${category}: kompletter Freeze`,
-      event: activeLifeEvent,
-    };
-  }
-
-  if (category === "HOLIDAY") {
-    return {
-      active: true,
-      category,
-      runFloorFactor: 0.6,
-      allowKeys: false,
-      freezeProgression: true,
-      freezeFloorIncrease: true,
-      ignoreRunFloorGap: true,
-      overlayMode: "LIFE_EVENT_HOLIDAY",
-      reason: "HOLIDAY: RunFloor reduziert + Keys/Progression pausiert",
-      event: activeLifeEvent,
-    };
-  }
-
-  return {
-    active: false,
-    category: null,
-    runFloorFactor: 1,
-    allowKeys: null,
-    freezeProgression: false,
-    freezeFloorIncrease: false,
-    ignoreRunFloorGap: false,
-    overlayMode: null,
-    reason: null,
-    event: null,
-  };
-}
-
-function getLifeEventCategoryLabel(category) {
-  const cat = normalizeEventCategory(category);
-  if (cat === "SICK") return "krank";
-  if (cat === "INJURED") return "verletzt";
-  if (cat === "HOLIDAY") return "Urlaub";
-  return cat || "unbekannt";
-}
-
-function parseLifeEventBoundary(event, field) {
-  const value = String(event?.[field] || "").slice(0, 10);
-  return isIsoDate(value) ? value : null;
 }
 
 function computeHolidayWindowFactor({ todayISO, lifeEventEffect, previousState, recentHolidayEvent }) {
@@ -7033,6 +6935,18 @@ function parseISODateSafe(iso) {
   if (date.getUTCFullYear() !== y || date.getUTCMonth() + 1 !== m || date.getUTCDate() !== d) return null;
   return date;
 }
+
+function getIsoWeekInfo(dayIso) {
+  const date = parseISODateSafe(dayIso);
+  if (!date) return null;
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const weekYear = d.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+  return { year: weekYear, week, weekId: `${weekYear}-${String(week).padStart(2, "0")}` };
+}
+
 function weeksBetween(dateAISO, dateBISO) {
   const a = parseISODateSafe(dateAISO);
   const b = parseISODateSafe(dateBISO);
@@ -7122,16 +7036,6 @@ function countStrengthSessionsWeekToYesterday(ctx, todayIso) {
     count += Array.isArray(ctx?.byDayStrength?.get?.(iso)) ? ctx.byDayStrength.get(iso).length : 0;
   }
   return Math.max(0, Math.floor(count));
-}
-
-function inferRaceDistanceLabel(distanceM) {
-  const d = Number(distanceM);
-  if (!Number.isFinite(d) || d <= 0) return "10k";
-  if (Math.abs(d - 5000) <= 600) return "5k";
-  if (Math.abs(d - 10000) <= 900) return "10k";
-  if (Math.abs(d - 21097) <= 1500) return "HM";
-  if (Math.abs(d - 42195) <= 2500) return "M";
-  return d < 7500 ? "5k" : d < 15500 ? "10k" : d < 32000 ? "HM" : "M";
 }
 
 function estimateVdotFromRacePerformance(distanceM, totalTimeSec) {
@@ -7461,85 +7365,6 @@ function authHeader(env) {
   return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
 
-function clamp(x, lo, hi) {
-  return Math.max(lo, Math.min(hi, x));
-}
-function round(x, n) {
-  const p = 10 ** n;
-  return Math.round(x * p) / p;
-}
-function avg(arr) {
-  const v = arr.filter((x) => x != null && Number.isFinite(x));
-  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
-}
-function median(arr) {
-  const v = arr.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b);
-  if (!v.length) return null;
-  const m = Math.floor(v.length / 2);
-  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
-}
-function pearsonCorrelation(pairs) {
-  const clean = (pairs || []).filter((p) => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]));
-  if (clean.length < 2) return null;
-  const xs = clean.map((p) => p[0]);
-  const ys = clean.map((p) => p[1]);
-  const mx = avg(xs);
-  const my = avg(ys);
-  if (!Number.isFinite(mx) || !Number.isFinite(my)) return null;
-  let num = 0;
-  let denX = 0;
-  let denY = 0;
-  for (let i = 0; i < clean.length; i++) {
-    const dx = xs[i] - mx;
-    const dy = ys[i] - my;
-    num += dx * dy;
-    denX += dx * dx;
-    denY += dy * dy;
-  }
-  if (!(denX > 0) || !(denY > 0)) return null;
-  return num / Math.sqrt(denX * denY);
-}
-function sum(arr) {
-  let s = 0;
-  for (const x of arr) s += Number(x) || 0;
-  return s;
-}
-function std(arr) {
-  const v = arr.filter((x) => x != null && Number.isFinite(x));
-  if (v.length < 2) return null;
-  const m = v.reduce((a, b) => a + b, 0) / v.length;
-  const vv = v.reduce((a, b) => a + (b - m) * (b - m), 0) / v.length;
-  return Math.sqrt(vv);
-}
-function uniq(arr) {
-  const out = [];
-  const seen = new Set();
-  for (const x of arr) {
-    const k = String(x);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(x);
-  }
-  return out;
-}
-function countBy(arr) {
-  const m = {};
-  for (const x of arr) {
-    const k = String(x);
-    m[k] = (m[k] || 0) + 1;
-  }
-  return m;
-}
-function isMondayIso(dayIso) {
-  const d = new Date(dayIso + "T00:00:00Z");
-  return d.getUTCDay() === 1;
-}
-
-function safeRound(value) {
-  const n = Number(value);
-  return Number.isFinite(n) ? Math.round(n) : 0;
-}
-
 function extractWeeklyMemoryData(memory = {}) {
   const runs = memory?.runs || {};
   const strength = memory?.strength || {};
@@ -7753,25 +7578,6 @@ function buildWeeklyFocus(ctx, todayIso, blockState, keyCompliance, runFloorStat
   }
 }
 
-function getIsoWeekInfo(dayIso) {
-  const date = parseISODateSafe(dayIso);
-  if (!date) return null;
-  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const weekYear = d.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
-  const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
-  return { year: weekYear, week, weekId: `${weekYear}-${String(week).padStart(2, "0")}` };
-}
-function bucketLoadsByDay(runs) {
-  const m = {};
-  for (const r of runs) {
-    const d = r.date;
-    if (!d) continue;
-    m[d] = (m[d] || 0) + (Number(r.load) || 0);
-  }
-  return m;
-}
 // ====== src/index.js (PART 2/4) ======
 
 function pickRunMetricsPatch(patch) {
@@ -9136,15 +8942,6 @@ function pickRepresentativeGARun(perRunInfo) {
     return 0;
   });
   return ga[0] || null;
-}
-
-function formatEventDistance(dist) {
-  if (!dist) return "n/a";
-  if (dist === "5k") return "5 km";
-  if (dist === "10k") return "10 km";
-  if (dist === "hm") return "HM";
-  if (dist === "m") return "Marathon";
-  return String(dist);
 }
 
 function formatKeyType(type, subtype = null) {
