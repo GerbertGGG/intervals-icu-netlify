@@ -11441,20 +11441,30 @@ function buildComments(
   renderedTopics.lines = [];
 
   let whyLines;
-  try {
-    whyLines = [buildWhyNarrative(shortReasons, {
-      dayMode,
-      hasConcreteKeySession,
-      strengthWithinPreKeyHours,
-      hoursSinceStrength,
-      fatigueOverride: fatigue?.override === true,
-      fatigueReasons: fatigue?.reasons,
-      overlayMode: runFloorState?.overlayMode ?? "NORMAL",
-    })];
-  } catch {
-    whyLines = shortReasons.length
-      ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
-      : ["• Keine harten Restriktionen aktiv."];
+  if (overlayMode === "LIFE_EVENT_STOP") {
+    const lifeEventCategory = normalizeEventCategory(lifeEvent?.category);
+    const lifeEventLabel = lifeEventCategory === "INJURED"
+      ? "Verletzung"
+      : "Krankheit";
+    whyLines = [
+      `Heute Pause wegen ${lifeEventLabel}. Training pausiert — Erholung hat Vorrang. Reize und Progression werden nach der Erholungsphase wieder aufgenommen.`,
+    ];
+  } else {
+    try {
+      whyLines = [buildWhyNarrative(shortReasons, {
+        dayMode,
+        hasConcreteKeySession,
+        strengthWithinPreKeyHours,
+        hoursSinceStrength,
+        fatigueOverride: fatigue?.override === true,
+        fatigueReasons: fatigue?.reasons,
+        overlayMode: runFloorState?.overlayMode ?? "NORMAL",
+      })];
+    } catch {
+      whyLines = shortReasons.length
+        ? shortReasons.map((reason) => `• ${reason}`).slice(0, 4)
+        : ["• Keine harten Restriktionen aktiv."];
+    }
   }
 
   const keyAllowedNowLabel = keyDecision?.keyAllowedNow ? "ja" : "nein";
@@ -11481,7 +11491,9 @@ function buildComments(
         ? runFloorState?.stabilityOK === false
           ? `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel}), Stabilität noch nicht bestätigt`
           : `RunFloor im Zielkorridor (${runFloorCurrent} / ${runTarget}${runTargetOverlayLabel})`
-        : `RunFloor: ${runFloorCurrent} / n/a`,
+        : overlayMode === "LIFE_EVENT_STOP" && runBaseTarget > 0
+          ? `RunFloor: ${runFloorCurrent} / ${runBaseTarget} (pausiert — Erholung aktiv)`
+          : `RunFloor: ${runFloorCurrent} / n/a`,
     `Longrun 14T: ${longRunDoneMin}′`,
     `Nächster sicherer Schritt: ${longRunTargetMin}′`,
     `Kurzfristiger Zielkorridor: ${Math.max(35, longRunTargetMin - 5)}–${longRunTargetMin + 7}′`,
@@ -11579,7 +11591,10 @@ function buildComments(
     { dayMode, hasConcreteKeySession }
   ).slice(0, 5);
   addDecisionBlock("HEUTIGER LAUF", todayRunMetricsBlock);
-  addDecisionBlock("HEUTE", [resolvedDecision.todayDecision]);
+  const heuteLine = overlayMode === "LIFE_EVENT_STOP"
+    ? "Pause — Körper erholen lassen. Kein Training heute."
+    : resolvedDecision.todayDecision;
+  addDecisionBlock("HEUTE", [heuteLine]);
   addDecisionBlock("WARUM", whyLines);
   addDecisionBlock("STATUS", statusLines);
   addDecisionBlock("FOKUS", focusRenderLines.slice(0, 3));
