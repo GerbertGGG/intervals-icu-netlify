@@ -8595,7 +8595,7 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     streakState = newStreak;
 
-    if (shouldWrite) {
+    if (write) {
       await writeStreakState(env, streakState);
     }
 
