@@ -37,15 +37,21 @@ import {
   isWeeklyMailTestPath,
   withWorkerErrorBoundary,
 } from "./request-handlers.js";
-import chunk1 from "./index-chunks/chunk1.js";
-import chunk2 from "./index-chunks/chunk2.js";
-import chunk3 from "./index-chunks/chunk3.js";
-import chunk4 from "./index-chunks/chunk4.js";
-import chunk5 from "./index-chunks/chunk5.js";
-import chunk6 from "./index-chunks/chunk6.js";
-import chunk7 from "./index-chunks/chunk7.js";
+import runtimeConfigAndHelpers from "./index-runtime/runtime-config-and-helpers.js";
+import runtimeBlockLogicCore from "./index-runtime/runtime-block-logic-core.js";
+import runtimeBlockLogicPolicies from "./index-runtime/runtime-block-logic-policies.js";
+import runtimeSyncEngine from "./index-runtime/runtime-sync-engine.js";
+import runtimeCommentaryAndAnalysis from "./index-runtime/runtime-commentary-and-analysis.js";
+import runtimeIntegrationsAndHooks from "./index-runtime/runtime-integrations-and-hooks.js";
 
-const source = [chunk1, chunk2, chunk3, chunk4, chunk5, chunk6, chunk7].join("");
+const source = [
+  runtimeConfigAndHelpers,
+  runtimeBlockLogicCore,
+  runtimeBlockLogicPolicies,
+  runtimeSyncEngine,
+  runtimeCommentaryAndAnalysis,
+  runtimeIntegrationsAndHooks,
+].join("");
 
 const runtime = new Function(
   "clampInt",
@@ -86,7 +92,7 @@ const runtime = new Function(
 return { defaultExport: __default_export__, __test, __internalTestHooksForRepoTestsOnly };`
 );
 
-const exportsFromChunks = runtime(
+const exportsFromRuntime = runtime(
   clampInt,
   json,
   diffDays,
@@ -123,6 +129,6 @@ const exportsFromChunks = runtime(
   withWorkerErrorBoundary
 );
 
-export default exportsFromChunks.defaultExport;
-export const __test = exportsFromChunks.__test;
-export const __internalTestHooksForRepoTestsOnly = exportsFromChunks.__internalTestHooksForRepoTestsOnly;
+export default exportsFromRuntime.defaultExport;
+export const __test = exportsFromRuntime.__test;
+export const __internalTestHooksForRepoTestsOnly = exportsFromRuntime.__internalTestHooksForRepoTestsOnly;
