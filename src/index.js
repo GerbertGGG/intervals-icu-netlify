@@ -329,6 +329,7 @@ const WATCHFACE_ERROR_HEADERS = {
 };
 
 const STEP_SYNC_KV_PREFIX = "syncstep:state:";
+const STREAK_KV_PREFIX = "streak:state:";
 const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
 const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
@@ -380,6 +381,21 @@ async function readStepSyncState(env) {
 async function writeStepSyncState(env, state) {
   if (!hasKv(env)) return;
   await writeKvJson(env, makeStepSyncStateKey(env), state);
+}
+
+function makeStreakKvKey(env) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  return `${STREAK_KV_PREFIX}${athleteId}`;
+}
+
+async function readStreakState(env) {
+  if (!hasKv(env)) return null;
+  return readKvJson(env, makeStreakKvKey(env));
+}
+
+async function writeStreakState(env, state) {
+  if (!hasKv(env)) return;
+  await writeKvJson(env, makeStreakKvKey(env), state);
 }
 
 function makeScheduledRunStateKey(env) {
@@ -610,6 +626,15 @@ const STRENGTH_PRE_KEY_WARN_HOURS = 36;
 const KRAFT_MIN_RUNFLOOR = 30;
 const KRAFT_TARGET = 60;
 const KRAFT_MAX = 75;
+// Streak-Level: [{ minMinutes, runFloorThreshold, label }]
+// Aufstieg wenn currentStreak >= 14 UND runFloorEwma10 >= runFloorThreshold
+const STREAK_LEVELS = [
+  { minMinutes: 15, runFloorThreshold: 0, label: "Starter" },
+  { minMinutes: 20, runFloorThreshold: 100, label: "Aufbau" },
+  { minMinutes: 25, runFloorThreshold: 120, label: "Solide" },
+  { minMinutes: 30, runFloorThreshold: 135, label: "Stark" },
+];
+const STREAK_LEVEL_UP_STREAK_DAYS = 14; // Mindest-Streak für Level-Aufstieg
 const STRENGTH_MIN_7D = KRAFT_TARGET;
 const STRENGTH_MOBILITY_DEFAULT = [
   "60s Hüftbeuger pro Seite",
@@ -7873,6 +7898,14 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
     );
   }
   let previousBlockState = null;
+  let streakState = await readStreakState(env) ?? {
+    currentStreak: 0,
+    longestStreak: 0,
+    lastActivityDate: null,
+    protectedDays: 0,
+    levelIdx: 0,
+    levelUpAvailableDate: null,
+  };
 
   for (const day of daysList) {
     // NEW: mode + policy for this day (based on next event)
@@ -8507,6 +8540,80 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
 
     historyMetrics.keyCompliance = keyCompliance;
     historyMetrics.distanceDiagnostics = distanceDiagnostics;
+    // --- STREAK UPDATE ---
+    const streakDayActivities = (ctx?.activitiesAll || []).filter((a) => {
+      const d = String(a?.start_date_local ?? a?.start_date ?? "").slice(0, 10);
+      return d === day;
+    });
+
+    const lifeEventEffect = modeInfo?.lifeEventEffect;
+    const streakLifeEventActive = lifeEventEffect?.active === true
+      && ["SICK", "INJURED", "HOLIDAY"].includes(
+        String(lifeEventEffect?.category ?? "").toUpperCase()
+      );
+
+    const { levelIdx: resolvedLevelIdx, level: streakLevel } = resolveStreakLevel(
+      historyMetrics?.runFloorEwma10 ?? 0,
+      streakState.currentStreak,
+      streakState.levelIdx
+    );
+
+    const streakMinutes = computeStreakMinutesForDay(streakDayActivities);
+    const streakFulfilled = streakMinutes >= streakLevel.minMinutes;
+
+    let newStreak = streakState;
+
+    if (streakLifeEventActive) {
+      newStreak = {
+        ...streakState,
+        protectedDays: (streakState.protectedDays ?? 0) + 1,
+        levelIdx: resolvedLevelIdx,
+      };
+    } else if (streakFulfilled) {
+      const newCurrent = (streakState.lastActivityDate != null
+        && diffDays(streakState.lastActivityDate, day) <= 1 + (streakState.protectedDays ?? 0))
+        ? streakState.currentStreak + 1
+        : 1;
+      newStreak = {
+        currentStreak: newCurrent,
+        longestStreak: Math.max(newCurrent, streakState.longestStreak ?? 0),
+        lastActivityDate: day,
+        protectedDays: 0,
+        levelIdx: resolvedLevelIdx,
+        levelUpAvailableDate: null,
+      };
+    } else {
+      newStreak = {
+        currentStreak: 0,
+        longestStreak: streakState.longestStreak ?? 0,
+        lastActivityDate: streakState.lastActivityDate,
+        protectedDays: 0,
+        levelIdx: resolvedLevelIdx,
+        levelUpAvailableDate: null,
+      };
+    }
+
+    streakState = newStreak;
+
+    if (shouldWrite) {
+      await writeStreakState(env, streakState);
+    }
+
+    const streakTodayFulfilled = streakFulfilled;
+    const streakTodayProtected = streakLifeEventActive;
+    const streakCurrentAfterToday = streakState.currentStreak;
+    const streakLongest = streakState.longestStreak;
+    const streakLevelMinutes = streakLevel.minMinutes;
+    const streakLevelLabel = streakLevel.label;
+    const streakLevelIdx = resolvedLevelIdx;
+    const nextStreakLevel = STREAK_LEVELS[streakLevelIdx + 1] ?? null;
+    const daysToLevelUp = nextStreakLevel
+      ? Math.max(0, STREAK_LEVEL_UP_STREAK_DAYS - streakCurrentAfterToday)
+      : null;
+    const runFloorToLevelUp = nextStreakLevel
+      ? Math.max(0, nextStreakLevel.runFloorThreshold - (historyMetrics?.runFloorEwma10 ?? 0))
+      : null;
+    // --- END STREAK UPDATE ---
     const blockLabelForWellness = runFloorState.overlayMode === "TAPER" ? "TAPER" : blockState.block;
     patch[FIELD_BLOCK] = blockLabelForWellness;
 
@@ -8656,6 +8763,17 @@ async function syncRange(env, oldest, newest, write, debug, warmupSkipSec, runti
       fitnessProfile,
       hrrcTrend,
       racePrediction,
+      streakCurrent: streakCurrentAfterToday,
+      streakLongest,
+      streakLevelMinutes,
+      streakLevelLabel,
+      streakLevelIdx,
+      streakTodayFulfilled,
+      streakTodayProtected,
+      daysToLevelUp,
+      runFloorToLevelUp,
+      nextStreakLevelMinutes: nextStreakLevel?.minMinutes ?? null,
+      nextStreakLevelLabel: nextStreakLevel?.label ?? null,
       contextCtx: ctx,
     }, { debug, verbosity: reportVerbosity });
     const weeklyReview = isMondayIso(day)
@@ -10731,6 +10849,17 @@ function buildComments(
     fitnessProfile,
     hrrcTrend,
     racePrediction,
+    streakCurrent = 0,
+    streakLongest = 0,
+    streakLevelMinutes = 15,
+    streakLevelLabel = "Starter",
+    streakLevelIdx = 0,
+    streakTodayFulfilled = false,
+    streakTodayProtected = false,
+    daysToLevelUp = null,
+    runFloorToLevelUp = null,
+    nextStreakLevelMinutes = null,
+    nextStreakLevelLabel = null,
     contextCtx,
   },
   { debug = false, verbosity = "coach" } = {}
@@ -11362,6 +11491,21 @@ function buildComments(
     `Kraft 7T: ${strengthPolicyResolved.minutes7d}′ / Ziel ${strengthPolicyResolved.target}′`,
     intensityLine,
   ];
+  const streakStatusEmoji = streakTodayProtected ? "🛡️" : streakTodayFulfilled ? "✅" : "⭕";
+  const streakLevelUpLine = (() => {
+    if (nextStreakLevelMinutes == null) return "Level MAX erreicht.";
+    const parts = [];
+    if (daysToLevelUp > 0) parts.push(`${daysToLevelUp} Streak-Tage`);
+    if (runFloorToLevelUp > 0) parts.push(`RunFloor +${Math.round(runFloorToLevelUp)}`);
+    if (parts.length === 0) return `Level-Aufstieg verfügbar → ${nextStreakLevelLabel} (${nextStreakLevelMinutes}′)`;
+    return `Nächstes Level ${nextStreakLevelLabel} (${nextStreakLevelMinutes}′): noch ${parts.join(" + ")}`;
+  })();
+  trainingStateLines.splice(
+    trainingStateLines.indexOf(intensityLine),
+    0,
+    `Streak ${streakStatusEmoji}: ${streakCurrent} Tage | Best: ${streakLongest} | Level: ${streakLevelLabel} (≥${streakLevelMinutes}′/Tag)`,
+    streakLevelUpLine
+  );
 
   const recommendationLines = [];
   for (const rec of recommendationMetricsBlock) {
@@ -14386,7 +14530,26 @@ async function buildWatchfacePayload(env, endIso) {
     }
   }
 
-  const runLoad = days.map((d) => Math.round(runLoadByDay[d] || 0));
+  // Streak-State für Watchface lesen
+  const watchfaceStreakState = await readStreakState(env);
+
+  // Für jeden Tag prüfen ob Streak erfüllt war (alle Aktivitäten zählen)
+  const streakByDay = {};
+  for (const d of days) {
+    const dayActs = acts.filter((a) =>
+      String(a?.start_date_local ?? a?.start_date ?? "").slice(0, 10) === d
+    );
+    const mins = computeStreakMinutesForDay(dayActs);
+    const levelMinutes = STREAK_LEVELS[watchfaceStreakState?.levelIdx ?? 0]?.minMinutes ?? 15;
+    streakByDay[d] = mins >= levelMinutes;
+  }
+
+  const runLoad = days.map((d) => {
+    const load = Math.round(runLoadByDay[d] || 0);
+    // Wenn kein echter Lauf-Load aber Streak erfüllt: 1 einsetzen
+    if (load === 0 && streakByDay[d]) return 1;
+    return load;
+  });
   const strengthMin = days.map((d) => Math.round(strengthMinByDay[d] || 0));
 
   const strengthWindowDays = days.slice(-WATCHFACE_STRENGTH_WINDOW_DAYS);
@@ -14442,6 +14605,44 @@ function isBike(a) {
     t.includes("rad") ||
     t.includes("velo")
   );
+}
+
+/**
+ * Gibt die längste einzelne Trainingseinheit des Tages in Minuten zurück.
+ * Zählt: Laufen, Kraft, Rad, Mobilität — alles mit moving_time.
+ *
+ * Wichtig: Kumulieren ist nicht erlaubt. Eine einzelne Einheit muss
+ * das Level-Minimum erreichen — drei 5-Minuten-Einheiten zählen nicht.
+ */
+function computeStreakMinutesForDay(activities) {
+  let maxMin = 0;
+  for (const a of activities || []) {
+    const sec = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    const min = sec / 60;
+    if (min > maxMin) maxMin = min;
+  }
+  return maxMin;
+}
+
+/**
+ * Gibt das aktuelle Level-Objekt zurück basierend auf runFloorEwma10
+ * und currentStreak.
+ */
+function resolveStreakLevel(runFloorEwma10, currentStreak, persistedLevelIdx) {
+  // Rückstieg nie — persistedLevelIdx ist das Minimum
+  let levelIdx = persistedLevelIdx ?? 0;
+
+  // Aufstieg prüfen: nächstes Level erreichbar?
+  const nextIdx = levelIdx + 1;
+  if (
+    nextIdx < STREAK_LEVELS.length &&
+    currentStreak >= STREAK_LEVEL_UP_STREAK_DAYS &&
+    runFloorEwma10 >= STREAK_LEVELS[nextIdx].runFloorThreshold
+  ) {
+    levelIdx = nextIdx;
+  }
+
+  return { levelIdx, level: STREAK_LEVELS[levelIdx] };
 }
 function normalizeKeyToken(raw) {
   return String(raw || "")
