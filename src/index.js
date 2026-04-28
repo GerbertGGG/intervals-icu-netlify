@@ -15,6 +15,18 @@
 // Optional:
 //   &warmup_skip=600
 
+import {
+  WATCHFACE_ERROR_HEADERS,
+  WATCHFACE_JSON_HEADERS,
+  WATCHFACE_PREFLIGHT_HEADERS,
+  clampInt,
+  getSearchParamAny,
+  json,
+  parseBooleanParam,
+  parseReportVerbosity,
+} from "./http-helpers.js";
+import { diffDays, isIsoDate, isoDate, isoDateBerlin } from "./date-utils.js";
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -310,59 +322,10 @@ export default {
   },
 };
 
-const WATCHFACE_PREFLIGHT_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, OPTIONS",
-  "access-control-allow-headers": "content-type",
-  "access-control-max-age": "86400",
-};
-
-const WATCHFACE_JSON_HEADERS = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store",
-  "access-control-allow-origin": "*",
-};
-
-const WATCHFACE_ERROR_HEADERS = {
-  "content-type": "application/json; charset=utf-8",
-  "access-control-allow-origin": "*",
-};
-
 const STEP_SYNC_KV_PREFIX = "syncstep:state:";
 const STREAK_KV_PREFIX = "streak:state:";
 const SCHEDULED_RUN_STATE_KV_PREFIX = "scheduled:runs:state:";
 const STEP_SYNC_ADVANCE_DAYS = 7;
-const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
-
-function parseBooleanParam(searchParams, key) {
-  return (searchParams.get(key) || "").toLowerCase() === "true";
-}
-
-function parseReportVerbosity(searchParams, { debug = false } = {}) {
-  const raw = String(searchParams.get("verbosity") || "").trim().toLowerCase();
-  if (REPORT_VERBOSITY_VALUES.has(raw)) return raw;
-  return "coach";
-}
-
-function getSearchParamAny(searchParams, keys) {
-  for (const key of keys) {
-    const direct = searchParams.get(key);
-    if (direct) return direct;
-  }
-
-  const lowerMap = new Map();
-  for (const [key, value] of searchParams.entries()) {
-    if (!value) continue;
-    const normalizedKey = String(key || "").toLowerCase();
-    if (!lowerMap.has(normalizedKey)) lowerMap.set(normalizedKey, value);
-  }
-
-  for (const key of keys) {
-    const value = lowerMap.get(String(key).toLowerCase());
-    if (value) return value;
-  }
-  return "";
-}
 
 function addDaysIso(dayIso, days) {
   return isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + Number(days) * 86400000));
@@ -6988,18 +6951,6 @@ function addLeverKvDebug(debugOut, day, payload) {
   debugOut.__leverKv[day] = payload;
 }
 
-function isoDate(d) {
-  return d.toISOString().slice(0, 10);
-}
-function isoDateBerlin(d = new Date()) {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Berlin",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return formatter.format(d);
-}
 function parseISODateSafe(iso) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
   const [y, m, d] = String(iso).split("-").map((v) => Number(v));
@@ -7008,9 +6959,6 @@ function parseISODateSafe(iso) {
   if (Number.isNaN(date.getTime())) return null;
   if (date.getUTCFullYear() !== y || date.getUTCMonth() + 1 !== m || date.getUTCDate() !== d) return null;
   return date;
-}
-function isIsoDate(s) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(s));
 }
 function weeksBetween(dateAISO, dateBISO) {
   const a = parseISODateSafe(dateAISO);
@@ -7033,11 +6981,6 @@ function clampStartDate(startISO, todayISO, maxAgeDays = 180) {
   if (ageDays > maxAgeDays) return null;
   return isoDate(start);
 }
-function diffDays(a, b) {
-  const da = new Date(a + "T00:00:00Z").getTime();
-  const db = new Date(b + "T00:00:00Z").getTime();
-  return Math.round((db - da) / 86400000);
-}
 function listIsoDaysInclusive(oldest, newest) {
   const out = [];
   const start = new Date(oldest + "T00:00:00Z").getTime();
@@ -7045,13 +6988,6 @@ function listIsoDaysInclusive(oldest, newest) {
   for (let t = start; t <= end; t += 86400000) out.push(isoDate(new Date(t)));
   return out;
 }
-function json(o, status = 200) {
-  return new Response(JSON.stringify(o, null, 2), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8" },
-  });
-}
-
 function hasKv(env) {
   return Boolean(env?.KV && typeof env.KV.get === "function" && typeof env.KV.put === "function");
 }
@@ -7452,10 +7388,6 @@ function authHeader(env) {
   return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
 
-function clampInt(x, min, max) {
-  const n = Number(x);
-  return Number.isFinite(n) ? Math.max(min, Math.min(max, Math.floor(n))) : min;
-}
 function clamp(x, lo, hi) {
   return Math.max(lo, Math.min(hi, x));
 }
