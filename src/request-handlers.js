@@ -1,4 +1,5 @@
 import {
+  REPORT_VERBOSITY_VALUES,
   WATCHFACE_ERROR_HEADERS,
   WATCHFACE_JSON_HEADERS,
   WATCHFACE_PREFLIGHT_HEADERS,
@@ -9,8 +10,6 @@ import {
   parseReportVerbosity,
 } from "./http-helpers.js";
 import { diffDays, isIsoDate, isoDate, isoDateBerlin } from "./date-utils.js";
-
-const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
 
 export function isWatchfacePath(pathname) {
   return pathname === "/watchface" || pathname === "/watchface/";

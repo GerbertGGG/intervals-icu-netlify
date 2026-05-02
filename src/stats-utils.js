@@ -51,7 +51,7 @@ export function std(arr) {
   const v = arr.filter((x) => x != null && Number.isFinite(x));
   if (v.length < 2) return null;
   const m = v.reduce((a, b) => a + b, 0) / v.length;
-  const vv = v.reduce((a, b) => a + (b - m) * (b - m), 0) / v.length;
+  const vv = v.reduce((a, b) => a + (b - m) * (b - m), 0) / (v.length - 1);
   return Math.sqrt(vv);
 }
 
