@@ -25,7 +25,7 @@ export function parseBooleanParam(searchParams, key) {
 export function parseReportVerbosity(searchParams, { debug = false } = {}) {
   const raw = String(searchParams.get("verbosity") || "").trim().toLowerCase();
   if (REPORT_VERBOSITY_VALUES.has(raw)) return raw;
-  return "coach";
+  return debug ? "debug" : "coach";
 }
 
 export function getSearchParamAny(searchParams, keys) {
