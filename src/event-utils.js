@@ -131,9 +131,10 @@ export function inferRaceDistanceLabel(distanceM) {
 
 export function formatEventDistance(dist) {
   if (!dist) return "n/a";
-  if (dist === "5k") return "5 km";
-  if (dist === "10k") return "10 km";
-  if (dist === "hm") return "HM";
-  if (dist === "m") return "Marathon";
+  const s = String(dist).toLowerCase();
+  if (s === "5k") return "5 km";
+  if (s === "10k") return "10 km";
+  if (s === "hm") return "HM";
+  if (s === "m") return "Marathon";
   return String(dist);
 }

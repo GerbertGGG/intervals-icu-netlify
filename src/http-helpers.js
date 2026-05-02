@@ -16,7 +16,7 @@ export const WATCHFACE_ERROR_HEADERS = {
   "access-control-allow-origin": "*",
 };
 
-const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
+export const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
 
 export function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
