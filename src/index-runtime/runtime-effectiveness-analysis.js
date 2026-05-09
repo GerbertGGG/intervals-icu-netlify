@@ -353,21 +353,23 @@ async function generateEffectivenessNarrativeAI(env, data) {
     if (!contextParts.length) return null;
 
     const systemPrompt =
-      "Du bist ein erfahrener Lauftrainer. Analysiere die Trainingsdaten des Athleten und schreibe 3-4 direkte, prägnante Sätze auf Deutsch: " +
-      "(1) Was bei diesem Athleten klar wirkt, (2) worauf er am besten anspricht, (3) eine konkrete Empfehlung für die nächsten Wochen. " +
-      'Schreibe direkt ("Du...", keine Einleitung, kein "Als Trainer..."). Keine Fachbegriff-Erklärungen.';
+      "Du bist ein persoenlicher Lauftrainer, der diesen Athleten seit Monaten begleitet. " +
+      "Die Daten zeigen Kausaleffekte: Was du 3 Wochen frueher trainiert hast, wirkt sich jetzt auf deine Leistung aus. " +
+      "Schreibe 3-4 direkte Saetze auf Deutsch: (1) Was bei DIESEM Athleten konkret wirkt (nicht generisch), " +
+      "(2) worauf er ganz persoenlich am besten anspricht, (3) eine klare Empfehlung fuer die naechsten Wochen. " +
+      'Sprich ihn direkt an ("Du..."). Keine Einleitung, kein "Als Trainer...", keine Fachbegriff-Erklaerungen.';
 
     const userPrompt =
-      "Trainingsdaten des Athleten (" + weekCount + " Wochen analysiert):\\n" +
+      "Trainingsdaten dieses Athleten (" + weekCount + " Wochen analysiert):\\n" +
       contextParts.join("\\n") +
-      "\\n\\nKurze, direkte Trainer-Analyse:";
+      "\\n\\nDirekte, persoenliche Trainer-Analyse (3-4 Saetze, Du-Form):";
 
     const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct", {
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 250,
+      max_tokens: 300,
     });
 
     const text = result?.response || result?.text || null;
