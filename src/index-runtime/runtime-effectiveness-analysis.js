@@ -417,17 +417,45 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
 
 // ─── Sync-engine helpers ──────────────────────────────────────────────────────
 
-// Called once per sync cycle. Returns { laggedEffects, sweetSpot } or null.
-// Stored on ctx.effectivenessCtx so policy functions can read it.
+const EFFECTIVENESS_CACHE_KV_KEY_PREFIX = "eff-ctx-v1-";
+const EFFECTIVENESS_CACHE_TTL_MS = 23 * 60 * 60 * 1000; // 23h — refresh once/day
+
+// Computes the effectiveness context from stored WeekDocs.
+async function computeEffectivenessContext(env) {
+  const weeks = await loadAllWeekDocsForEffectiveness(env);
+  if (!weeks || weeks.length < EFFECTIVENESS_MIN_WEEKS) return null;
+  return {
+    laggedEffects: computeLaggedKeyTypeEffect(weeks),
+    sweetSpot: computeLoadSweetSpot(weeks),
+    weekCount: weeks.length,
+  };
+}
+
+// Called once per sync cycle. Returns { laggedEffects, sweetSpot, weekCount } or null.
+// Result is cached in KV for 23h — normally only recomputed once per day.
+// Cache is invalidated after /backfill-weekdocs runs.
 async function loadEffectivenessContextForSync(env) {
   try {
-    const weeks = await loadAllWeekDocsForEffectiveness(env);
-    if (!weeks || weeks.length < EFFECTIVENESS_MIN_WEEKS) return null;
-    return {
-      laggedEffects: computeLaggedKeyTypeEffect(weeks),
-      sweetSpot: computeLoadSweetSpot(weeks),
-      weekCount: weeks.length,
-    };
+    if (!hasKv(env)) return await computeEffectivenessContext(env);
+
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const cacheKey = EFFECTIVENESS_CACHE_KV_KEY_PREFIX + uid;
+
+    const cached = await readKvJson(env, cacheKey);
+    if (
+      cached?.computed_at &&
+      Number.isFinite(Number(cached.computed_at)) &&
+      Date.now() - Number(cached.computed_at) < EFFECTIVENESS_CACHE_TTL_MS &&
+      cached.data
+    ) {
+      return cached.data;
+    }
+
+    const data = await computeEffectivenessContext(env);
+    if (data) {
+      writeKvJson(env, cacheKey, { computed_at: Date.now(), data }).catch(() => {});
+    }
+    return data;
   } catch (_err) {
     return null;
   }
