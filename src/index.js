@@ -53,8 +53,8 @@ const source = [
   runtimeBlockLogicCore,
   runtimeBlockLogicPolicies,
   runtimeSyncEngine,
-  runtimeCommentaryAndAnalysis,
   runtimeEffectivenessAnalysis,
+  runtimeCommentaryAndAnalysis,
   runtimeIntegrationsAndHooks,
 ].join("");
 

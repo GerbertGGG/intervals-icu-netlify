@@ -415,4 +415,61 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
   }
 }
 
+// ─── Sync-engine helpers ──────────────────────────────────────────────────────
+
+// Called once per sync cycle. Returns { laggedEffects, sweetSpot } or null.
+// Stored on ctx.effectivenessCtx so policy functions can read it.
+async function loadEffectivenessContextForSync(env) {
+  try {
+    const weeks = await loadAllWeekDocsForEffectiveness(env);
+    if (!weeks || weeks.length < EFFECTIVENESS_MIN_WEEKS) return null;
+    return {
+      laggedEffects: computeLaggedKeyTypeEffect(weeks),
+      sweetSpot: computeLoadSweetSpot(weeks),
+      weekCount: weeks.length,
+    };
+  } catch (_err) {
+    return null;
+  }
+}
+
+// Given the currently planned key type and the allowed key rules, returns
+// an alternative key type if effectiveness data shows it performs meaningfully
+// better for this specific athlete (lagged EF effect ≥ 1.0%, min 3 samples).
+// Returns null if no compelling alternative exists.
+// Conservative by design: never overrides to banned types, never overrides
+// when the current type already has a strong positive signal (≥ 1.5%).
+function pickEffectivenessPreferredKeyType(currentType, keyRules, effectivenessCtx) {
+  const laggedEffects = effectivenessCtx?.laggedEffects;
+  if (!laggedEffects || !currentType) return null;
+
+  const MIN_IMPROVEMENT = 1.0;
+  const MIN_SAMPLES = 3;
+  const STRONG_CURRENT_THRESHOLD = 1.5;
+
+  const currentEffect = laggedEffects[currentType]?.laggedEfDiff ?? 0;
+  if (currentEffect >= STRONG_CURRENT_THRESHOLD) return null; // already good
+
+  const banned = new Set(keyRules?.bannedKeyTypes || []);
+  const allowed = keyRules?.allowedKeyTypes || [];
+
+  let bestAlt = null;
+  let bestDiff = -Infinity;
+
+  for (const altType of allowed) {
+    if (altType === currentType) continue;
+    if (banned.has(altType)) continue;
+    const altData = laggedEffects[altType];
+    if (!altData) continue;
+    if (altData.nWith < MIN_SAMPLES) continue;
+    const improvement = altData.laggedEfDiff - currentEffect;
+    if (improvement >= MIN_IMPROVEMENT && altData.laggedEfDiff > bestDiff) {
+      bestDiff = altData.laggedEfDiff;
+      bestAlt = altType;
+    }
+  }
+
+  return bestAlt;
+}
+
 `;
