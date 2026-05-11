@@ -175,7 +175,7 @@ function computeLoadSweetSpot(weeks) {
 // Formats the effectiveness section text for the Monday report.
 function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
   const lines = [];
-  lines.push("Trainings-Effektivität (" + weekCount + "W):");
+  lines.push("📈 Trainings-Effektivität (" + weekCount + "W):");
 
   // 1. Lagged key-type effects
   const effectEntries = Object.entries(laggedEffects || {});
@@ -273,6 +273,7 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
     }
 
     if (peaks.troughs.length > 0) {
+      lines.push("");
       lines.push("Schwache Phasen (EF-Tiefs):");
       for (const trough of peaks.troughs.slice(0, 1)) {
         if (!trough.preceding) continue;
@@ -403,11 +404,12 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
 
     const lines = rep.text.split("\\n");
     lines.push("");
+    lines.push("────────────────────");
     lines.push(sectionText);
 
     if (aiNarrative) {
       lines.push("");
-      lines.push("Trainer-Einschätzung:");
+      lines.push("💬 Trainer-Einschätzung:");
       lines.push(aiNarrative);
     }
 
