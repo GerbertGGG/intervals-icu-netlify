@@ -175,7 +175,7 @@ function computeLoadSweetSpot(weeks) {
 // Formats the effectiveness section text for the Monday report.
 function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
   const lines = [];
-  lines.push("📈 Trainings-Effektivität (" + weekCount + "W):");
+  lines.push("📈 TRAININGS-EFFEKTIVITÄT (" + weekCount + "W)");
 
   // 1. Lagged key-type effects
   const effectEntries = Object.entries(laggedEffects || {});
