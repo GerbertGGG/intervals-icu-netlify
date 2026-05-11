@@ -194,7 +194,7 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
       for (const [keyType, d] of positive) {
         const diff = d.laggedEfDiff > 0 ? "+" + d.laggedEfDiff.toFixed(1) : d.laggedEfDiff.toFixed(1);
         lines.push(
-          "  + " + keyType + ": EF " + diff + "% besser nach solchen Wochen" +
+          "- ✓ " + keyType + ": EF " + diff + "% besser nach solchen Wochen" +
           " (n=" + d.nWith + " mit / " + d.nWithout + " ohne)"
         );
       }
@@ -205,7 +205,7 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
       lines.push("Vorsicht – eher gegenteilig:");
       for (const [keyType, d] of negative) {
         lines.push(
-          "  - " + keyType + ": EF " + d.laggedEfDiff.toFixed(1) + "% schlechter nach solchen Wochen" +
+          "- ✗ " + keyType + ": EF " + d.laggedEfDiff.toFixed(1) + "% schlechter nach solchen Wochen" +
           " (n=" + d.nWith + " / " + d.nWithout + ")"
         );
       }
@@ -235,7 +235,7 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
       const bestDelta = best.medEfDelta > 0 ? "+" + best.medEfDelta.toFixed(1) : best.medEfDelta.toFixed(1);
       lines.push("Load-Sweet-Spot: ~" + best.label + " /Woche → beste EF-Reaktion (" + bestDelta + "%)");
       lines.push(
-        "  " +
+        "- " +
           zones
             .map(
               (z) =>
@@ -264,7 +264,7 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
       const easyPct =
         p.avgEasyShare != null ? Math.round(p.avgEasyShare * 100) + "% easy" : "";
       lines.push(
-        "  " + peak.weekId +
+        "- " + peak.weekId +
           ": vorher " + p.weeks + "W – Load ~" + (p.avgLoad ?? "?") +
           "/W, " + easyPct +
           ", Keys " + (p.avgKeysPerWeek != null ? p.avgKeysPerWeek.toFixed(1) : "?") + "/W" +
