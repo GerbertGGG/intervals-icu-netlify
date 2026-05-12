@@ -295,15 +295,53 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
   return lines.join("\\n");
 }
 
+// Fetches HRV, sleep and resting-HR data for the last N days from intervals.icu.
+// Returns a lightweight summary or null if data is unavailable / insufficient.
+async function fetchWellnessTrend(env, days) {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const now = new Date();
+    const newest = isoDate(now);
+    const oldest = isoDate(new Date(now.getTime() - days * 86400000));
+    const url = BASE_URL + "/athlete/" + uid + "/wellness?oldest=" + oldest + "&newest=" + newest;
+    const resp = await fetch(url, { headers: { Authorization: authHeader(env) } });
+    if (!resp.ok) return null;
+    const list = await resp.json();
+    if (!Array.isArray(list) || list.length === 0) return null;
+
+    const hrvVals = list.map((w) => Number(w.hrv)).filter((v) => v > 0 && Number.isFinite(v));
+    const sleepVals = list.map((w) => Number(w.sleepSecs)).filter((v) => v > 0 && Number.isFinite(v));
+
+    const avgHrv = hrvVals.length >= 3 ? round(hrvVals.reduce((a, b) => a + b, 0) / hrvVals.length, 0) : null;
+    const avgSleepH = sleepVals.length >= 3 ? round(sleepVals.reduce((a, b) => a + b, 0) / sleepVals.length / 3600, 1) : null;
+
+    let hrvTrend = "stabil";
+    if (hrvVals.length >= 6) {
+      const half = Math.floor(hrvVals.length / 2);
+      const recentAvg = hrvVals.slice(0, half).reduce((a, b) => a + b, 0) / half;
+      const olderAvg = hrvVals.slice(half).reduce((a, b) => a + b, 0) / (hrvVals.length - half);
+      if (recentAvg > olderAvg * 1.05) hrvTrend = "steigend";
+      else if (recentAvg < olderAvg * 0.95) hrvTrend = "fallend";
+    }
+
+    const lowHrvDays = avgHrv != null ? hrvVals.filter((v) => v < avgHrv * 0.85).length : 0;
+    return { avgHrv, avgSleepH, hrvTrend, lowHrvDays };
+  } catch (_e) {
+    return null;
+  }
+}
+
 // Calls Cloudflare AI to generate a 3-4 sentence coaching narrative in German.
 // Falls back gracefully if AI binding unavailable or call fails.
 async function generateEffectivenessNarrativeAI(env, data) {
   if (!env?.AI) return null;
 
   try {
-    const { laggedEffects, sweetSpot, peaks, weekCount } = data;
+    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights } = data;
     const contextParts = [];
 
+    // ── 1. Kausal-Signale (Lagged Key-Type Effects) ───────────────────────────
     const effectEntries = Object.entries(laggedEffects || {});
     const positive = effectEntries
       .filter(([, d]) => d.laggedEfDiff >= 0.4)
@@ -316,6 +354,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
     if (positive.length) contextParts.push("Positiv wirkende Key-Typen (Verzögerungseffekt ~3W): " + positive.join(", "));
     if (negative.length) contextParts.push("Weniger wirksame Key-Typen: " + negative.join(", "));
 
+    // ── 2. Load-Sweet-Spot ────────────────────────────────────────────────────
     if (sweetSpot) {
       const zones = [
         sweetSpot.low.medEfDelta != null
@@ -331,6 +370,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (zones.length) contextParts.push("Load-Response: " + zones.join(", "));
     }
 
+    // ── 3. Performance-Peaks ──────────────────────────────────────────────────
     if (peaks && peaks.peaks.length > 0) {
       const peakInfo = peaks.peaks
         .filter((p) => p.preceding)
@@ -351,13 +391,72 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (peakInfo) contextParts.push("Beste Leistungsphasen: " + peakInfo);
     }
 
+    // ── 4. EF-Basistrend (aus Athletenprofil) ────────────────────────────────
+    const efHistory = Array.isArray(athleteProfile?.efStats?.baseline42dHistory)
+      ? athleteProfile.efStats.baseline42dHistory.slice(0, 5)
+      : [];
+    if (efHistory.length >= 2) {
+      const efFirst = efHistory[efHistory.length - 1].value;
+      const efLast = efHistory[0].value;
+      const efDir = efLast > efFirst + 0.0005 ? "steigend" : efLast < efFirst - 0.0005 ? "fallend" : "stabil";
+      const efStr = efHistory.map((e) => e.date + ": " + e.value.toFixed(4)).join(", ");
+      contextParts.push("EF-Basistrend (42d, letzte " + efHistory.length + " Wochen): " + efStr + " → Trend: " + efDir);
+    }
+
+    // ── 5. Letzte 4 Wochen im Detail ─────────────────────────────────────────
+    const recentWeeks = Array.isArray(athleteProfile?.weekHistory) ? athleteProfile.weekHistory.slice(0, 4) : [];
+    if (recentWeeks.length >= 2) {
+      const weekLines = recentWeeks.map((w) => {
+        const motorStr = Number.isFinite(w.motorAvg) ? ", Motor " + w.motorAvg : "";
+        return w.weekIso + ": " + (w.block || "?") + ", Last " + (w.totalLoad ?? "?") + ", " + (w.runCount ?? "?") + " Läufe, Key: " + (w.hasKey ? "ja" : "nein") + motorStr;
+      });
+      contextParts.push("Letzte Wochen (aktuell zuerst):\\n" + weekLines.join("\\n"));
+    }
+
+    // ── 6. 4-Wochen-Fortschritt ───────────────────────────────────────────────
+    if (fourWeekInsights?.progressCategory) {
+      const efDelta = Number.isFinite(fourWeekInsights.efDelta)
+        ? "EF " + (fourWeekInsights.efDelta >= 0 ? "+" : "") + (fourWeekInsights.efDelta * 1000).toFixed(1) + "‰"
+        : null;
+      const vdotDelta = Number.isFinite(fourWeekInsights.vdotDelta)
+        ? "VDOT " + (fourWeekInsights.vdotDelta >= 0 ? "+" : "") + fourWeekInsights.vdotDelta.toFixed(2)
+        : null;
+      const parts = [efDelta, vdotDelta].filter(Boolean);
+      contextParts.push(
+        "4-Wochen-Fortschritt: " + fourWeekInsights.progressCategory +
+        (parts.length ? " (" + parts.join(", ") + ")" : "")
+      );
+    }
+
+    // ── 7. Wellness-Trend (HRV + Schlaf, letzte 2 Wochen) ────────────────────
+    const wellness = await fetchWellnessTrend(env, 14);
+    if (wellness) {
+      const wParts = [];
+      if (wellness.avgHrv != null) wParts.push("HRV ∅ " + wellness.avgHrv + " ms (" + wellness.hrvTrend + ")");
+      if (wellness.avgSleepH != null) wParts.push("Schlaf ∅ " + wellness.avgSleepH + "h");
+      if (wellness.lowHrvDays > 0) wParts.push(wellness.lowHrvDays + " Tag(e) mit niedriger HRV");
+      if (wParts.length) contextParts.push("Wellness letzte 2 Wochen: " + wParts.join(", "));
+    }
+
     if (!contextParts.length) return null;
 
+    // ── System-Prompt: persönliche Athleten-Identität einbauen ───────────────
+    const profileWeeks = Array.isArray(athleteProfile?.weekHistory) ? athleteProfile.weekHistory.length : null;
+    const avgLoad = athleteProfile?.loadStats?.avgWeeklyLoad;
+    const keyPct = athleteProfile?.consistency?.keyComplianceLast8Weeks;
+    const identityParts = [];
+    if (profileWeeks) identityParts.push("seit " + profileWeeks + " Wochen begleitet");
+    if (avgLoad != null) identityParts.push("Avg-Last " + avgLoad);
+    if (keyPct != null) identityParts.push("Key-Compliance " + Math.round(keyPct * 100) + "%");
+    const identityStr = identityParts.length ? " (" + identityParts.join(", ") + ")" : "";
+
     const systemPrompt =
-      "Du bist ein persoenlicher Lauftrainer, der diesen Athleten seit Monaten begleitet. " +
-      "Die Daten zeigen Kausaleffekte: Was du 3 Wochen frueher trainiert hast, wirkt sich jetzt auf deine Leistung aus. " +
-      "Schreibe 3-4 direkte Saetze auf Deutsch: (1) Was bei DIESEM Athleten konkret wirkt (nicht generisch), " +
-      "(2) worauf er ganz persoenlich am besten anspricht, (3) eine klare Empfehlung fuer die naechsten Wochen. " +
+      "Du bist ein persoenlicher Lauftrainer" + identityStr + ". " +
+      "Die Daten zeigen Kausaleffekte: Was der Athlet 3 Wochen frueher trainiert hat, wirkt sich jetzt auf die Leistung aus. " +
+      "Schreibe 3-4 direkte Saetze auf Deutsch: " +
+      "(1) Was bei DIESEM Athleten konkret wirkt — nenne spezifische Key-Typen oder Load-Zonen, " +
+      "(2) worauf er persoenlich am besten anspricht (beziehe EF-Trend und Wellness ein falls auffaellig), " +
+      "(3) eine klare, konkrete Empfehlung fuer die naechsten Wochen basierend auf allen Daten. " +
       'Sprich ihn direkt an ("Du..."). Keine Einleitung, kein "Als Trainer...", keine Fachbegriff-Erklaerungen.';
 
     const userPrompt =
@@ -395,11 +494,14 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
 
     const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length);
 
+    const athleteProfile = await readAthleteProfile(env).catch(() => null);
     const aiNarrative = await generateEffectivenessNarrativeAI(env, {
       laggedEffects,
       sweetSpot,
       peaks,
       weekCount: weeks.length,
+      athleteProfile,
+      fourWeekInsights: rep?.fourWeekInsights || null,
     });
 
     const lines = rep.text.split("\\n");
