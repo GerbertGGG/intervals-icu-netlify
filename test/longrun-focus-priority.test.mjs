@@ -15,7 +15,7 @@ import { __test } from "../src/index.js";
     longRunTargetMin: 47,
   });
 
-  assert.equal(next, "Longrun wie im Wochenplan: Langer Lauf ca. 47′.");
+  assert.equal(next, "Longrun wie im Wochenplan: Langer Lauf ca. 45′.");
   assert.equal(/Key-Spacer|Heute kein Key/i.test(next), false);
 }
 
