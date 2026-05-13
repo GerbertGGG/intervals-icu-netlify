@@ -649,25 +649,29 @@ async function generateEffectivenessNarrativeAI(env, data) {
     const identityStr = identityParts.length ? " (" + identityParts.join(", ") + ")" : "";
 
     const systemPrompt =
-      "Du bist ein persoenlicher Lauftrainer" + identityStr + ". " +
-      "Die Daten zeigen Kausaleffekte: Was der Athlet 3 Wochen frueher trainiert hat, wirkt sich jetzt auf die Leistung aus. " +
-      "Schreibe 3-4 direkte Saetze auf Deutsch: " +
-      "(1) Was bei DIESEM Athleten konkret wirkt — nenne spezifische Key-Typen oder Load-Zonen, " +
-      "(2) worauf er persoenlich am besten anspricht (beziehe EF-Trend und Wellness ein falls auffaellig), " +
-      "(3) eine klare, konkrete Empfehlung fuer die naechsten Wochen basierend auf allen Daten. " +
-      'Sprich ihn direkt an ("Du..."). Keine Einleitung, kein "Als Trainer...", keine Fachbegriff-Erklaerungen.';
+      "Du bist ein persoenlicher Trainer fuer Laufen und Radfahren" + identityStr + ". " +
+      "Du hast echte Leistungsdaten: FTP, Pace-Bestzeiten, Energieprofil (aerob/anaerob), Kausaleffekte, Wellness und Trainingshistorie. " +
+      "Antworte auf Deutsch in genau diesem Format:\\n" +
+      "EINSCHAETZUNG: 1-2 Saetze — was bei diesem Athleten wirkt, welches Energieprofil dominiert, wie der Trend ist.\\n" +
+      "NAECHSTE WOCHE:\\n" +
+      "- [Wochentag]: [Einheit mit konkreten Zahlen aus den Daten — Watt aus FTP, Pace aus Lauf-Bestzeiten, Dauer, Sets/Reps]\\n" +
+      "- [Wochentag]: [...]\\n" +
+      "- [Wochentag]: [...]\\n" +
+      "WARNUNG (nur wenn HRV niedrig, Readiness <55 oder Wellness-Auffaelligkeit): 1 Satz.\\n" +
+      "Regeln: Nutze tatsaechliche Watt/Pace-Zahlen aus den Kontext-Daten. Keine Theorie, keine Erklaerungen, Du-Form. " +
+      "Passe Intensitaeten dem Energieprofil an: aerob-dominant = mehr Schwelle/VO2max-Reize; anaerob-Staerke = mehr Grundlagenvolumen.";
 
     const userPrompt =
-      "Trainingsdaten dieses Athleten (" + weekCount + " Wochen analysiert):\\n" +
+      "Athletendaten (" + weekCount + " Wochen analysiert):\\n" +
       contextParts.join("\\n") +
-      "\\n\\nDirekte, persoenliche Trainer-Analyse (3-4 Saetze, Du-Form):";
+      "\\n\\nErstelle jetzt: EINSCHAETZUNG, NAECHSTE WOCHE (3 Einheiten mit Watt/Pace-Zahlen), WARNUNG falls noetig.";
 
     const result = await env.AI.run("@cf/meta/llama-3.3-70b-instruct", {
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      max_tokens: 300,
+      max_tokens: 500,
     });
 
     const text = result?.response || result?.text || null;
