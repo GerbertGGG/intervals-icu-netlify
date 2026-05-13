@@ -295,6 +295,96 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
   return lines.join("\\n");
 }
 
+// Formats total seconds for a distance into min:sec/km pace string.
+function fmtPacePerKm(totalSecs, distM) {
+  const spk = totalSecs / (distM / 1000);
+  const min = Math.floor(spk / 60);
+  const sec = Math.round(spk % 60);
+  return min + ":" + String(sec).padStart(2, "0") + "/km";
+}
+
+// Fetches best run pace at 1k/5k/10k/HM for two 8-week windows and compares them.
+// Returns { current, prev, deltas } keyed by distance (meters), or null on failure.
+async function fetchRunPaceBenchmarks(env) {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const now = new Date();
+    const nowIso = isoDate(now);
+    const w8  = isoDate(new Date(now.getTime() -  56 * 86400000));
+    const w16 = isoDate(new Date(now.getTime() - 112 * 86400000));
+    const dists = "1000,5000,10000,21097";
+    const base  = BASE_URL + "/athlete/" + uid + "/activity-pace-curves?type=Run&distances=" + dists;
+    const [curr, prev] = await Promise.all([
+      fetch(base + "&oldest=" + w8  + "&newest=" + nowIso, { headers: { Authorization: authHeader(env) } })
+        .then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+      fetch(base + "&oldest=" + w16 + "&newest=" + w8,    { headers: { Authorization: authHeader(env) } })
+        .then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+    ]);
+    if (!curr) return null;
+    var parsePace = function(data, dist) {
+      if (!data) return null;
+      if (Array.isArray(data)) {
+        var entry = data.find(function(d) { return Math.abs(Number(d.distance || d.dist || 0) - dist) < 100; });
+        if (entry) { var s = Number(entry.secs || entry.time || entry.value); return Number.isFinite(s) && s > 0 ? s : null; }
+      }
+      if (data && typeof data === "object") { var v = data[String(dist)]; return v != null ? Number(v) || null : null; }
+      return null;
+    };
+    var keyDists = [1000, 5000, 10000, 21097];
+    var result = { current: {}, prev: {}, deltas: {} };
+    for (var i = 0; i < keyDists.length; i++) {
+      var d = keyDists[i];
+      var cP = parsePace(curr, d), pP = parsePace(prev, d);
+      if (cP != null) result.current[d] = cP;
+      if (pP != null) result.prev[d]    = pP;
+      if (cP != null && pP != null && pP > 0) result.deltas[d] = round((cP - pP) / pP * 100, 1);
+    }
+    return Object.keys(result.current).length > 0 ? result : null;
+  } catch (_e) { return null; }
+}
+
+// Fetches best bike power at 5-min/20-min/60-min for two 8-week windows and compares.
+// Returns { current, prev, deltas } keyed by duration (seconds), or null on failure.
+async function fetchBikePowerBenchmarks(env) {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const now = new Date();
+    const nowIso = isoDate(now);
+    const w8  = isoDate(new Date(now.getTime() -  56 * 86400000));
+    const w16 = isoDate(new Date(now.getTime() - 112 * 86400000));
+    const secsParam = "300,1200,3600";
+    const base = BASE_URL + "/athlete/" + uid + "/activity-power-curves?type=Ride&secs=" + secsParam;
+    const [curr, prev] = await Promise.all([
+      fetch(base + "&oldest=" + w8  + "&newest=" + nowIso, { headers: { Authorization: authHeader(env) } })
+        .then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+      fetch(base + "&oldest=" + w16 + "&newest=" + w8,    { headers: { Authorization: authHeader(env) } })
+        .then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; }),
+    ]);
+    if (!curr) return null;
+    var parsePow = function(data, sec) {
+      if (!data) return null;
+      if (Array.isArray(data)) {
+        var entry = data.find(function(d) { return Math.abs(Number(d.secs || d.duration || 0) - sec) < 10; });
+        if (entry) { var w = Number(entry.watts || entry.power || entry.value); return Number.isFinite(w) && w > 0 ? w : null; }
+      }
+      if (data && typeof data === "object") { var v = data[String(sec)]; return v != null ? Number(v) || null : null; }
+      return null;
+    };
+    var keyDurs = [300, 1200, 3600];
+    var result = { current: {}, prev: {}, deltas: {} };
+    for (var i = 0; i < keyDurs.length; i++) {
+      var s = keyDurs[i];
+      var cW = parsePow(curr, s), pW = parsePow(prev, s);
+      if (cW != null) result.current[s] = Math.round(cW);
+      if (pW != null) result.prev[s]    = Math.round(pW);
+      if (cW != null && pW != null && pW > 0) result.deltas[s] = round((cW - pW) / pW * 100, 1);
+    }
+    return Object.keys(result.current).length > 0 ? result : null;
+  } catch (_e) { return null; }
+}
+
 // Fetches HRV, sleep and resting-HR data for the last N days from intervals.icu.
 // Returns a lightweight summary or null if data is unavailable / insufficient.
 async function fetchWellnessTrend(env, days) {
@@ -338,7 +428,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
   if (!env?.AI) return null;
 
   try {
-    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights } = data;
+    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower } = data;
     const contextParts = [];
 
     // ── 1. Kausal-Signale (Lagged Key-Type Effects) ───────────────────────────
@@ -438,6 +528,31 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (wParts.length) contextParts.push("Wellness letzte 2 Wochen: " + wParts.join(", "));
     }
 
+    // ── 8. Pace/Power-Entwicklung (letzte 8W vs. vorherige 8W) ───────────────
+    const _distNames = { 1000: "1km", 5000: "5km", 10000: "10km", 21097: "HM" };
+    const _durNames = { 300: "5min", 1200: "20min", 3600: "60min" };
+    if (runPace && Object.keys(runPace.current).length > 0) {
+      const runParts = [1000, 5000, 10000, 21097]
+        .filter((d) => runPace.current[d] != null)
+        .map((d) => {
+          const pace = fmtPacePerKm(runPace.current[d], d);
+          const delta = runPace.deltas[d];
+          const dStr = delta != null ? " (" + (delta <= 0 ? "+" : "") + (-delta).toFixed(1) + "%)" : "";
+          return _distNames[d] + " " + pace + dStr;
+        });
+      if (runParts.length) contextParts.push("Lauf-Bestzeiten (letzte 8W): " + runParts.join(", "));
+    }
+    if (bikePower && Object.keys(bikePower.current).length > 0) {
+      const bikeParts = [300, 1200, 3600]
+        .filter((s) => bikePower.current[s] != null)
+        .map((s) => {
+          const delta = bikePower.deltas[s];
+          const dStr = delta != null ? " (" + (delta >= 0 ? "+" : "") + delta.toFixed(1) + "%)" : "";
+          return _durNames[s] + " " + bikePower.current[s] + "W" + dStr;
+        });
+      if (bikeParts.length) contextParts.push("Bike-Power (letzte 8W): " + bikeParts.join(", "));
+    }
+
     if (!contextParts.length) return null;
 
     // ── System-Prompt: persönliche Athleten-Identität einbauen ───────────────
@@ -494,7 +609,38 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
 
     const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length);
 
-    const athleteProfile = await readAthleteProfile(env).catch(() => null);
+    const [athleteProfile, runPace, bikePower] = await Promise.all([
+      readAthleteProfile(env).catch(() => null),
+      fetchRunPaceBenchmarks(env),
+      fetchBikePowerBenchmarks(env),
+    ]);
+
+    // Build pace/power section for the report
+    const pacePowerLines = [];
+    const distLabels = { 1000: "1km", 5000: "5km", 10000: "10km", 21097: "HM" };
+    const durLabels  = { 300: "5min", 1200: "20min", 3600: "60min" };
+    if (runPace && Object.keys(runPace.current).length > 0) {
+      const runParts = [1000, 5000, 10000, 21097]
+        .filter((d) => runPace.current[d] != null)
+        .map((d) => {
+          const pace = fmtPacePerKm(runPace.current[d], d);
+          const delta = runPace.deltas[d];
+          const dStr = delta != null ? " (" + (delta <= 0 ? "+" : "") + (-delta).toFixed(1) + "%)" : "";
+          return distLabels[d] + " " + pace + dStr;
+        });
+      if (runParts.length) pacePowerLines.push("🏃 Laufen: " + runParts.join(", "));
+    }
+    if (bikePower && Object.keys(bikePower.current).length > 0) {
+      const bikeParts = [300, 1200, 3600]
+        .filter((s) => bikePower.current[s] != null)
+        .map((s) => {
+          const delta = bikePower.deltas[s];
+          const dStr = delta != null ? " (" + (delta >= 0 ? "+" : "") + delta.toFixed(1) + "%)" : "";
+          return durLabels[s] + " " + bikePower.current[s] + "W" + dStr;
+        });
+      if (bikeParts.length) pacePowerLines.push("🚴 Bike: " + bikeParts.join(", "));
+    }
+
     const aiNarrative = await generateEffectivenessNarrativeAI(env, {
       laggedEffects,
       sweetSpot,
@@ -502,12 +648,20 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       weekCount: weeks.length,
       athleteProfile,
       fourWeekInsights: rep?.fourWeekInsights || null,
+      runPace,
+      bikePower,
     });
 
     const lines = rep.text.split("\\n");
     lines.push("");
     lines.push("────────────────────");
     lines.push(sectionText);
+
+    if (pacePowerLines.length > 0) {
+      lines.push("");
+      lines.push("📊 PACE/POWER (8W-Vergleich):");
+      pacePowerLines.forEach((l) => lines.push(l));
+    }
 
     if (aiNarrative) {
       lines.push("");
