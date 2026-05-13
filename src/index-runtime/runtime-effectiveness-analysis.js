@@ -400,8 +400,8 @@ function computeAerobicProfile(runPace, bikePower) {
     if (ftp != null) result.bikeFtp = ftp;
     if (p5 != null && ftp != null && ftp > 0) {
       result.bikeAnaeroRatio = round(p5 / ftp, 2);
-      // W' in kJ: anaerobic work capacity above FTP during 5-min effort
-      result.bikeWprimeKj = Math.round((p5 - ftp) * 300 / 1000);
+      // W' in kJ: only valid when 5-min power exceeds FTP
+      if (p5 > ftp) result.bikeWprimeKj = Math.round((p5 - ftp) * 300 / 1000);
     }
     if (p20 != null && p60 != null && p20 > 0) {
       result.bikeAerobicEfficiency = round(p60 / p20, 2);
@@ -480,9 +480,10 @@ async function fetchWellnessTrend(env, days) {
 
     let hrvTrend = "stabil";
     if (hrvVals.length >= 6) {
+      // API returns oldest→newest, so slice(half) is the more recent half
       const half = Math.floor(hrvVals.length / 2);
-      const recentAvg = hrvVals.slice(0, half).reduce((a, b) => a + b, 0) / half;
-      const olderAvg = hrvVals.slice(half).reduce((a, b) => a + b, 0) / (hrvVals.length - half);
+      const olderAvg = hrvVals.slice(0, half).reduce((a, b) => a + b, 0) / half;
+      const recentAvg = hrvVals.slice(half).reduce((a, b) => a + b, 0) / (hrvVals.length - half);
       if (recentAvg > olderAvg * 1.05) hrvTrend = "steigend";
       else if (recentAvg < olderAvg * 0.95) hrvTrend = "fallend";
     }
