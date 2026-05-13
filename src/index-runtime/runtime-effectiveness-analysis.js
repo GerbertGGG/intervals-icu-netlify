@@ -385,6 +385,78 @@ async function fetchBikePowerBenchmarks(env) {
   } catch (_e) { return null; }
 }
 
+// Derives aerobic/anaerobic energy profile from pace and power curve data.
+// Returns classification + key metrics, or null if insufficient data.
+function computeAerobicProfile(runPace, bikePower) {
+  const result = {};
+
+  // ── Bike metrics ─────────────────────────────────────────────────────────────
+  if (bikePower && bikePower.current) {
+    const p5  = bikePower.current[300];
+    const p20 = bikePower.current[1200];
+    const p60 = bikePower.current[3600];
+    // FTP: 60min power preferred, fallback to 95% of 20min
+    const ftp = p60 != null ? p60 : (p20 != null ? Math.round(p20 * 0.95) : null);
+    if (ftp != null) result.bikeFtp = ftp;
+    if (p5 != null && ftp != null && ftp > 0) {
+      result.bikeAnaeroRatio = round(p5 / ftp, 2);
+      // W' in kJ: anaerobic work capacity above FTP during 5-min effort
+      result.bikeWprimeKj = Math.round((p5 - ftp) * 300 / 1000);
+    }
+    if (p20 != null && p60 != null && p20 > 0) {
+      result.bikeAerobicEfficiency = round(p60 / p20, 2);
+    }
+  }
+
+  // ── Run metrics ──────────────────────────────────────────────────────────────
+  if (runPace && runPace.current) {
+    const s1k  = runPace.current[1000];
+    const s5k  = runPace.current[5000];
+    const s10k = runPace.current[10000];
+    const sHm  = runPace.current[21097];
+    // Pace per km for each distance (sec/km)
+    const p1k  = s1k  != null ? s1k          : null;
+    const p5k  = s5k  != null ? s5k  / 5     : null;
+    const p10k = s10k != null ? s10k / 10    : null;
+    const pHm  = sHm  != null ? sHm  / 21.097: null;
+    // Speed reserve: % pace drop from 1km to 5km — higher = more anaerobic capacity
+    if (p1k != null && p5k != null && p1k > 0) {
+      result.runSpeedReservePct = round((p5k - p1k) / p1k * 100, 1);
+    }
+    // Aerobic index: HM_pace / 1km_pace — closer to 1.0 = more aerobic
+    if (p1k != null && pHm != null && p1k > 0) {
+      result.runAerobicIndex = round(pHm / p1k, 3);
+    }
+    // Pace decay 5k→10k
+    if (p5k != null && p10k != null && p5k > 0) {
+      result.runPaceDecay5to10Pct = round((p10k - p5k) / p5k * 100, 1);
+    }
+  }
+
+  // ── Overall classification ───────────────────────────────────────────────────
+  let score = 0, n = 0;
+  // Bike anaerobic ratio: <1.35 aerobic, >1.65 anaerobic
+  if (result.bikeAnaeroRatio != null) {
+    if      (result.bikeAnaeroRatio < 1.35) { score += 2; n++; }
+    else if (result.bikeAnaeroRatio < 1.5)  { score += 1; n++; }
+    else if (result.bikeAnaeroRatio > 1.65) { score -= 1; n++; }
+    else n++;
+  }
+  // Run speed reserve: <15% aerobic, >28% anaerobic
+  if (result.runSpeedReservePct != null) {
+    if      (result.runSpeedReservePct < 15) { score += 2; n++; }
+    else if (result.runSpeedReservePct < 22) { score += 1; n++; }
+    else if (result.runSpeedReservePct > 28) { score -= 1; n++; }
+    else n++;
+  }
+  if (n > 0) {
+    const avg = score / n;
+    result.profile = avg >= 1.2 ? "aerob-dominant" : avg <= -0.3 ? "anaerob-stärke" : "ausgeglichen";
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 // Fetches HRV, sleep and resting-HR data for the last N days from intervals.icu.
 // Returns a lightweight summary or null if data is unavailable / insufficient.
 async function fetchWellnessTrend(env, days) {
@@ -428,7 +500,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
   if (!env?.AI) return null;
 
   try {
-    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower } = data;
+    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower, aerobicProfile } = data;
     const contextParts = [];
 
     // ── 1. Kausal-Signale (Lagged Key-Type Effects) ───────────────────────────
@@ -553,6 +625,17 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (bikeParts.length) contextParts.push("Bike-Power (letzte 8W): " + bikeParts.join(", "));
     }
 
+    // ── 9. Aerob/Anaerob-Energieprofil ───────────────────────────────────────
+    if (aerobicProfile && aerobicProfile.profile) {
+      const apParts = ["Klassifikation: " + aerobicProfile.profile];
+      if (aerobicProfile.bikeFtp != null) apParts.push("FTP ~" + aerobicProfile.bikeFtp + "W");
+      if (aerobicProfile.bikeAnaeroRatio != null) apParts.push("Anaerob-Ratio " + aerobicProfile.bikeAnaeroRatio + " (1.0=reiner Ausdauerer, >1.6=stark anaerob)");
+      if (aerobicProfile.bikeWprimeKj != null) apParts.push("W' ~" + aerobicProfile.bikeWprimeKj + "kJ");
+      if (aerobicProfile.runSpeedReservePct != null) apParts.push("Lauf Speed-Reserve " + aerobicProfile.runSpeedReservePct + "% (<15%=aerob, >28%=anaerob)");
+      if (aerobicProfile.runAerobicIndex != null) apParts.push("Aerob-Index " + aerobicProfile.runAerobicIndex);
+      contextParts.push("Energieprofil: " + apParts.join(", "));
+    }
+
     if (!contextParts.length) return null;
 
     // ── System-Prompt: persönliche Athleten-Identität einbauen ───────────────
@@ -641,6 +724,17 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       if (bikeParts.length) pacePowerLines.push("🚴 Bike: " + bikeParts.join(", "));
     }
 
+    const aerobicProfile = computeAerobicProfile(runPace, bikePower);
+    if (aerobicProfile && aerobicProfile.profile) {
+      const profileParts = [];
+      if (aerobicProfile.bikeFtp != null) profileParts.push("FTP ~" + aerobicProfile.bikeFtp + "W");
+      if (aerobicProfile.bikeAnaeroRatio != null) profileParts.push("Anaerob-Ratio " + aerobicProfile.bikeAnaeroRatio);
+      if (aerobicProfile.bikeWprimeKj != null) profileParts.push("W' ~" + aerobicProfile.bikeWprimeKj + "kJ");
+      if (aerobicProfile.runSpeedReservePct != null) profileParts.push("Speed-Reserve " + aerobicProfile.runSpeedReservePct + "%");
+      if (aerobicProfile.runAerobicIndex != null) profileParts.push("Aerob-Index " + aerobicProfile.runAerobicIndex);
+      pacePowerLines.push("⚡ Energieprofil: " + aerobicProfile.profile + (profileParts.length ? " (" + profileParts.join(", ") + ")" : ""));
+    }
+
     const aiNarrative = await generateEffectivenessNarrativeAI(env, {
       laggedEffects,
       sweetSpot,
@@ -650,6 +744,7 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       fourWeekInsights: rep?.fourWeekInsights || null,
       runPace,
       bikePower,
+      aerobicProfile,
     });
 
     const lines = rep.text.split("\\n");
