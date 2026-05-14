@@ -449,6 +449,20 @@ function computeAerobicProfile(runPace, bikePower) {
     else if (result.runSpeedReservePct > 28) { score -= 1; n++; }
     else n++;
   }
+  // Bike aerobic efficiency (p60/p20): >0.92 strong aerobic base, <0.85 aerobic weakness
+  if (result.bikeAerobicEfficiency != null) {
+    if      (result.bikeAerobicEfficiency > 0.92) { score += 2; n++; }
+    else if (result.bikeAerobicEfficiency > 0.88) { score += 1; n++; }
+    else if (result.bikeAerobicEfficiency < 0.85) { score -= 1; n++; }
+    else n++;
+  }
+  // Run pace decay 5k→10k: <8% aerobic strong, >15% aerobic deficiency
+  if (result.runPaceDecay5to10Pct != null) {
+    if      (result.runPaceDecay5to10Pct < 8)  { score += 2; n++; }
+    else if (result.runPaceDecay5to10Pct < 12) { score += 1; n++; }
+    else if (result.runPaceDecay5to10Pct > 15) { score -= 1; n++; }
+    else n++;
+  }
   if (n > 0) {
     const avg = score / n;
     result.profile = avg >= 1.2 ? "aerob-dominant" : avg <= -0.3 ? "anaerob-stärke" : "ausgeglichen";
@@ -634,6 +648,8 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (aerobicProfile.bikeWprimeKj != null) apParts.push("W' ~" + aerobicProfile.bikeWprimeKj + "kJ");
       if (aerobicProfile.runSpeedReservePct != null) apParts.push("Lauf Speed-Reserve " + aerobicProfile.runSpeedReservePct + "% (<15%=aerob, >28%=anaerob)");
       if (aerobicProfile.runAerobicIndex != null) apParts.push("Aerob-Index " + aerobicProfile.runAerobicIndex);
+      if (aerobicProfile.bikeAerobicEfficiency != null) apParts.push("Power-Nachhaltigkeit 60/20min " + aerobicProfile.bikeAerobicEfficiency + " (>0.92=starke Ausdauerbasis, <0.85=aerobe Schwäche → mehr Zone2)");
+      if (aerobicProfile.runPaceDecay5to10Pct != null) apParts.push("Pace-Abfall 5→10km " + aerobicProfile.runPaceDecay5to10Pct + "% (<8%=starke aerobe Basis, >15%=aerobe Schwäche → mehr Grundlagenvolumen)");
       contextParts.push("Energieprofil: " + apParts.join(", "));
     }
 
@@ -737,6 +753,8 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       if (aerobicProfile.bikeWprimeKj != null) profileParts.push("W' ~" + aerobicProfile.bikeWprimeKj + "kJ");
       if (aerobicProfile.runSpeedReservePct != null) profileParts.push("Speed-Reserve " + aerobicProfile.runSpeedReservePct + "%");
       if (aerobicProfile.runAerobicIndex != null) profileParts.push("Aerob-Index " + aerobicProfile.runAerobicIndex);
+      if (aerobicProfile.bikeAerobicEfficiency != null) profileParts.push("Power-Nachhaltigkeit " + aerobicProfile.bikeAerobicEfficiency);
+      if (aerobicProfile.runPaceDecay5to10Pct != null) profileParts.push("Pace-Abfall 5→10k " + aerobicProfile.runPaceDecay5to10Pct + "%");
       pacePowerLines.push("⚡ Energieprofil: " + aerobicProfile.profile + (profileParts.length ? " (" + profileParts.join(", ") + ")" : ""));
     }
 
