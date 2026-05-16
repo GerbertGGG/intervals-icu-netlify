@@ -806,8 +806,9 @@ async function generateEffectivenessNarrativeAI(env, data) {
       "- [Wochentag]: [...]\\n" +
       "WARNUNG (nur wenn HRV niedrig, Readiness <55 oder Wellness-Auffaelligkeit): 1 Satz.\\n" +
       "Regeln: Nutze tatsaechliche Watt/Pace-Zahlen aus den Kontext-Daten. Keine Theorie, keine Erklaerungen, Du-Form. " +
-      "Passe Intensitaeten dem Energieprofil an: aerob-dominant = mehr Schwelle/VO2max-Reize; anaerob-Staerke = mehr Grundlagenvolumen. " +
-      "easy_share Zielkorridore (Anteil leichter Einheiten/Woche): aerob-dominant ≥75%, ausgeglichen ≥70%, anaerob-Staerke ≥65%. " +
+      "Passe Intensitaeten dem Energieprofil an: aerob-dominant = mehr kurze VO2max-Intervalle (Zone 3), weniger Schwelle (Schwelle nur als Erhalt); anaerob-Staerke = mehr Grundlagenvolumen, kaum Intensitaet. " +
+      "Bevorzugte Einheitentypen je Profil: aerob-dominant → vo2_touch und strides bevorzugen; anaerob-Staerke → steady und longrun bevorzugen, keine harten Keys. " +
+      "easy_share Zielkorridore (Anteil leichter Einheiten/Woche): aerob-dominant ≥75%, ausgeglichen ≥70%, anaerob-Staerke ≥80%. " +
       "Falls easy_share der letzten Wochen deutlich darunter liegt: explizit mehr lockere Einheiten in NAECHSTE WOCHE einplanen und begruenden.";
 
     const userPrompt =
