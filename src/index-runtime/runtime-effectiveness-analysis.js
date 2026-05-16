@@ -50,7 +50,7 @@ function computeLaggedKeyTypeEffect(weeks) {
       // Collect lagged EF deltas (weeks i+2 to i+LAG, skip immediate next week)
       let laggedEfSum = 0;
       let lagCount = 0;
-      const lagStart = Math.min(i + 2, i + 1); // at least i+1
+      const lagStart = i + 2;
       for (let j = lagStart; j <= i + EFFECTIVENESS_LAG_WEEKS && j < chron.length; j++) {
         const lagWeek = chron[j];
         if (Number.isFinite(lagWeek?.output?.ef_delta_pct)) {
@@ -172,6 +172,23 @@ function computeLoadSweetSpot(weeks) {
   };
 }
 
+// Foster's Training Monotony Index: mean(weekly_load) / sd(weekly_load) over last 8 weeks.
+// > 2.0 signals dangerously uniform load — adaptation suffers and injury risk rises.
+function computeTrainingMonotony(weeks) {
+  const usable = (weeks || [])
+    .filter((w) => Number.isFinite(w?.input?.load_total) && w.input.load_total > 0)
+    .sort((a, b) => String(b.weekId).localeCompare(String(a.weekId)))
+    .slice(0, 8);
+  if (usable.length < 4) return null;
+  const loads = usable.map((w) => w.input.load_total);
+  const mean = loads.reduce((a, b) => a + b, 0) / loads.length;
+  if (mean < 1) return null;
+  const variance = loads.reduce((sum, l) => sum + (l - mean) ** 2, 0) / loads.length;
+  const stdDev = Math.sqrt(variance);
+  if (stdDev < 1) return { monotony: 9.9, mean: round(mean, 0), stdDev: 0, n: usable.length };
+  return { monotony: round(mean / stdDev, 2), mean: round(mean, 0), stdDev: round(stdDev, 0), n: usable.length };
+}
+
 // Correlates weekly execution quality (avg_execution_score in WeekDoc input)
 // with EF improvement ~3 weeks later. Also derives an 8-week quality trend.
 // Returns { highQualityEfDelta, lowQualityEfDelta, diff, trend8w, avgScore8w, n } or null.
@@ -225,7 +242,7 @@ function computeExecutionQualityInsights(weeks) {
 }
 
 // Formats the effectiveness section text for the Monday report.
-function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount, execQuality) {
+function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount, execQuality, monotony) {
   const lines = [];
   lines.push("📈 TRAININGS-EFFEKTIVITÄT (" + weekCount + "W)");
 
@@ -359,6 +376,19 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount, exec
       );
     } else if (execQuality.diff != null) {
       lines.push("- Kein klarer Ausführungsqualitäts-Effekt auf EF (Diff " + execQuality.diff.toFixed(1) + "%).");
+    }
+  }
+
+  // 5. Training Monotony
+  if (monotony && monotony.monotony != null) {
+    const level = monotony.monotony > 2.0 ? "⚠️ HOCH" : monotony.monotony > 1.5 ? "erhöht" : "gut";
+    lines.push("");
+    lines.push(
+      "Trainingsmonotonie (8W): " + monotony.monotony.toFixed(1) + " → " + level +
+      " (∅ " + monotony.mean + " Load/W, SD=" + monotony.stdDev + ", n=" + monotony.n + ")"
+    );
+    if (monotony.monotony > 2.0) {
+      lines.push("- Zu gleichförmige Belastung: mehr Variation im Wochen-Load einbauen (Ruhewochen, Spitzenwochen).");
     }
   }
 
@@ -573,7 +603,11 @@ async function fetchWellnessTrend(env, days) {
     }
 
     const lowHrvDays = avgHrv != null ? hrvVals.filter((v) => v < avgHrv * 0.85).length : 0;
-    return { avgHrv, avgSleepH, hrvTrend, lowHrvDays };
+    const feelVals = list.map((w) => Number(w.feel)).filter((v) => v >= 1 && v <= 5 && Number.isFinite(v));
+    const avgFeel = feelVals.length >= 3 ? round(feelVals.reduce((a, b) => a + b, 0) / feelVals.length, 1) : null;
+    const sleepScoreVals = list.map((w) => Number(w.sleepScore ?? w.sleepQuality ?? 0)).filter((v) => v > 0 && Number.isFinite(v));
+    const avgSleepScore = sleepScoreVals.length >= 3 ? Math.round(sleepScoreVals.reduce((a, b) => a + b, 0) / sleepScoreVals.length) : null;
+    return { avgHrv, avgSleepH, avgSleepScore, avgFeel, hrvTrend, lowHrvDays };
   } catch (_e) {
     return null;
   }
@@ -585,7 +619,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
   if (!env?.AI) return null;
 
   try {
-    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower, aerobicProfile, execQuality } = data;
+    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower, aerobicProfile, execQuality, monotony, recentEasyShares } = data;
     const contextParts = [];
 
     // ── 1. Kausal-Signale (Lagged Key-Type Effects) ───────────────────────────
@@ -655,9 +689,14 @@ async function generateEffectivenessNarrativeAI(env, data) {
     if (recentWeeks.length >= 2) {
       const weekLines = recentWeeks.map((w) => {
         const motorStr = Number.isFinite(w.motorAvg) ? ", Motor " + w.motorAvg : "";
-        return w.weekIso + ": " + (w.block || "?") + ", Last " + (w.totalLoad ?? "?") + ", " + (w.runCount ?? "?") + " Läufe, Key: " + (w.hasKey ? "ja" : "nein") + motorStr;
+        const kmStr = Number.isFinite(w.weekRunKm) ? ", " + w.weekRunKm + "km" : "";
+        return w.weekIso + ": " + (w.block || "?") + ", Last " + (w.totalLoad ?? "?") + ", " + (w.runCount ?? "?") + " Läufe" + kmStr + ", Key: " + (w.hasKey ? "ja" : "nein") + motorStr;
       });
       contextParts.push("Letzte Wochen (aktuell zuerst):\\n" + weekLines.join("\\n"));
+    }
+
+    if (recentEasyShares && recentEasyShares.length > 0) {
+      contextParts.push("Einfach-Anteil (easy_share) letzte Wochen: " + recentEasyShares.join(", "));
     }
 
     // ── 6. 4-Wochen-Fortschritt ───────────────────────────────────────────────
@@ -694,9 +733,16 @@ async function generateEffectivenessNarrativeAI(env, data) {
     if (wellness) {
       const wParts = [];
       if (wellness.avgHrv != null) wParts.push("HRV ∅ " + wellness.avgHrv + " ms (" + wellness.hrvTrend + ")");
-      if (wellness.avgSleepH != null) wParts.push("Schlaf ∅ " + wellness.avgSleepH + "h");
+      if (wellness.avgSleepScore != null) wParts.push("Schlaf-Score ∅ " + wellness.avgSleepScore);
+      else if (wellness.avgSleepH != null) wParts.push("Schlaf ∅ " + wellness.avgSleepH + "h");
+      if (wellness.avgFeel != null) wParts.push("Befinden ∅ " + wellness.avgFeel + "/5");
       if (wellness.lowHrvDays > 0) wParts.push(wellness.lowHrvDays + " Tag(e) mit niedriger HRV");
       if (wParts.length) contextParts.push("Wellness letzte 2 Wochen: " + wParts.join(", "));
+    }
+
+    if (monotony && monotony.monotony != null) {
+      const mLevel = monotony.monotony > 2.0 ? "hoch (zu gleichförmig)" : monotony.monotony > 1.5 ? "erhöht" : "gut";
+      contextParts.push("Trainingsmonotonie (8W): " + monotony.monotony.toFixed(1) + " (" + mLevel + ", ∅ Load " + monotony.mean + ", SD " + monotony.stdDev + ")");
     }
 
     // ── 9. Pace/Power-Entwicklung (letzte 8W vs. vorherige 8W) ───────────────
@@ -760,7 +806,9 @@ async function generateEffectivenessNarrativeAI(env, data) {
       "- [Wochentag]: [...]\\n" +
       "WARNUNG (nur wenn HRV niedrig, Readiness <55 oder Wellness-Auffaelligkeit): 1 Satz.\\n" +
       "Regeln: Nutze tatsaechliche Watt/Pace-Zahlen aus den Kontext-Daten. Keine Theorie, keine Erklaerungen, Du-Form. " +
-      "Passe Intensitaeten dem Energieprofil an: aerob-dominant = mehr Schwelle/VO2max-Reize; anaerob-Staerke = mehr Grundlagenvolumen.";
+      "Passe Intensitaeten dem Energieprofil an: aerob-dominant = mehr Schwelle/VO2max-Reize; anaerob-Staerke = mehr Grundlagenvolumen. " +
+      "easy_share Zielkorridore (Anteil leichter Einheiten/Woche): aerob-dominant ≥75%, ausgeglichen ≥70%, anaerob-Staerke ≥65%. " +
+      "Falls easy_share der letzten Wochen deutlich darunter liegt: explizit mehr lockere Einheiten in NAECHSTE WOCHE einplanen und begruenden.";
 
     const userPrompt =
       "Athletendaten (" + weekCount + " Wochen analysiert):\\n" +
@@ -795,8 +843,14 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
     const peaks = findPerformancePeaksAndTroughs(weeks);
     const sweetSpot = computeLoadSweetSpot(weeks);
     const execQuality = computeExecutionQualityInsights(weeks);
+    const monotony = computeTrainingMonotony(weeks);
 
-    const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length, execQuality);
+    const chronDesc = [...weeks].sort((a, b) => String(b.weekId).localeCompare(String(a.weekId)));
+    const recentEasyShares = chronDesc.slice(0, 4)
+      .filter((w) => Number.isFinite(w?.input?.easy_share))
+      .map((w) => Math.round(w.input.easy_share * 100) + "% (" + w.weekId + ")");
+
+    const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length, execQuality, monotony);
 
     const [athleteProfile, runPace, bikePower] = await Promise.all([
       readAthleteProfile(env).catch(() => null),
@@ -854,6 +908,8 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       bikePower,
       aerobicProfile,
       execQuality,
+      monotony,
+      recentEasyShares,
     });
 
     const lines = rep.text.split("\\n");
