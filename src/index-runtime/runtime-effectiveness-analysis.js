@@ -172,8 +172,60 @@ function computeLoadSweetSpot(weeks) {
   };
 }
 
+// Correlates weekly execution quality (avg_execution_score in WeekDoc input)
+// with EF improvement ~3 weeks later. Also derives an 8-week quality trend.
+// Returns { highQualityEfDelta, lowQualityEfDelta, diff, trend8w, avgScore8w, n } or null.
+function computeExecutionQualityInsights(weeks) {
+  const HIGH_THRESH = 0.67;
+  const chron = [...(weeks || [])]
+    .filter((w) => w?.weekId && hasAnyPatternOutputData(w) && Number.isFinite(w?.input?.avg_execution_score))
+    .sort((a, b) => String(a.weekId).localeCompare(String(b.weekId)));
+
+  if (chron.length < 4) return null;
+
+  const highQuality = [];
+  const lowQuality = [];
+
+  for (let i = 0; i < chron.length; i++) {
+    const score = chron[i].input.avg_execution_score;
+    let laggedEfSum = 0, lagCount = 0;
+    for (let j = i + 1; j <= i + EFFECTIVENESS_LAG_WEEKS && j < chron.length; j++) {
+      if (Number.isFinite(chron[j]?.output?.ef_delta_pct)) {
+        laggedEfSum += chron[j].output.ef_delta_pct;
+        lagCount++;
+      }
+    }
+    if (lagCount === 0) continue;
+    const avgLag = laggedEfSum / lagCount;
+    if (score >= HIGH_THRESH) highQuality.push(avgLag);
+    else lowQuality.push(avgLag);
+  }
+
+  const recent8 = chron.slice(-8);
+  const scores = recent8.map((w) => w.input.avg_execution_score).filter(Number.isFinite);
+  let trend8w = "stabil";
+  if (scores.length >= 4) {
+    const half = Math.floor(scores.length / 2);
+    const olderAvg = scores.slice(0, half).reduce((a, b) => a + b, 0) / half;
+    const recentAvg = scores.slice(half).reduce((a, b) => a + b, 0) / (scores.length - half);
+    if (recentAvg > olderAvg + 0.05) trend8w = "steigend";
+    else if (recentAvg < olderAvg - 0.05) trend8w = "fallend";
+  }
+  const avgScore8w = scores.length
+    ? round(scores.reduce((a, b) => a + b, 0) / scores.length, 2)
+    : null;
+
+  const result = { n: chron.length, trend8w, avgScore8w };
+  if (highQuality.length >= 2) result.highQualityEfDelta = round(median(highQuality), 2);
+  if (lowQuality.length >= 2) result.lowQualityEfDelta = round(median(lowQuality), 2);
+  if (result.highQualityEfDelta != null && result.lowQualityEfDelta != null) {
+    result.diff = round(result.highQualityEfDelta - result.lowQualityEfDelta, 2);
+  }
+  return result;
+}
+
 // Formats the effectiveness section text for the Monday report.
-function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
+function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount, execQuality) {
   const lines = [];
   lines.push("📈 TRAININGS-EFFEKTIVITÄT (" + weekCount + "W)");
 
@@ -289,6 +341,24 @@ function buildEffectivenessText(laggedEffects, peaks, sweetSpot, weekCount) {
             " (" + keyStr + ")"
         );
       }
+    }
+  }
+
+  // 4. Execution quality insights
+  if (execQuality && execQuality.avgScore8w != null) {
+    lines.push("");
+    const scorePct = Math.round(execQuality.avgScore8w * 100);
+    const trendEmoji = execQuality.trend8w === "steigend" ? "↑" : execQuality.trend8w === "fallend" ? "↓" : "→";
+    lines.push("Ausführungsqualität (letzte 8W): " + scorePct + "% " + trendEmoji + " " + execQuality.trend8w + " (n=" + execQuality.n + ")");
+    if (execQuality.diff != null && Math.abs(execQuality.diff) >= 0.3) {
+      const sign = execQuality.diff > 0 ? "+" : "";
+      lines.push(
+        "- Hohe Qualität (≥67%): EF " + (execQuality.highQualityEfDelta > 0 ? "+" : "") + execQuality.highQualityEfDelta.toFixed(1) + "% " +
+        "vs. niedrige Qualität: EF " + (execQuality.lowQualityEfDelta > 0 ? "+" : "") + execQuality.lowQualityEfDelta.toFixed(1) + "% " +
+        "→ Differenz " + sign + execQuality.diff.toFixed(1) + "%"
+      );
+    } else if (execQuality.diff != null) {
+      lines.push("- Kein klarer Ausführungsqualitäts-Effekt auf EF (Diff " + execQuality.diff.toFixed(1) + "%).");
     }
   }
 
@@ -515,7 +585,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
   if (!env?.AI) return null;
 
   try {
-    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower, aerobicProfile } = data;
+    const { laggedEffects, sweetSpot, peaks, weekCount, athleteProfile, fourWeekInsights, runPace, bikePower, aerobicProfile, execQuality } = data;
     const contextParts = [];
 
     // ── 1. Kausal-Signale (Lagged Key-Type Effects) ───────────────────────────
@@ -605,7 +675,21 @@ async function generateEffectivenessNarrativeAI(env, data) {
       );
     }
 
-    // ── 7. Wellness-Trend (HRV + Schlaf, letzte 2 Wochen) ────────────────────
+    // ── 7. Ausführungsqualität der Key-Sessions ───────────────────────────────
+    if (execQuality && execQuality.avgScore8w != null) {
+      const qPct = Math.round(execQuality.avgScore8w * 100);
+      const qParts = ["∅ " + qPct + "% (" + execQuality.trend8w + ", n=" + execQuality.n + " Wochen)"];
+      if (execQuality.diff != null) {
+        qParts.push(
+          "hohe Qualität→ EF " + (execQuality.highQualityEfDelta >= 0 ? "+" : "") + execQuality.highQualityEfDelta.toFixed(1) + "% vs. " +
+          "niedrig→ EF " + (execQuality.lowQualityEfDelta >= 0 ? "+" : "") + execQuality.lowQualityEfDelta.toFixed(1) + "% " +
+          "(Diff " + (execQuality.diff >= 0 ? "+" : "") + execQuality.diff.toFixed(1) + "%)"
+        );
+      }
+      contextParts.push("Ausführungsqualität Key-Sessions: " + qParts.join(", "));
+    }
+
+    // ── 8. Wellness-Trend (HRV + Schlaf, letzte 2 Wochen) ────────────────────
     const wellness = await fetchWellnessTrend(env, 14);
     if (wellness) {
       const wParts = [];
@@ -615,7 +699,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (wParts.length) contextParts.push("Wellness letzte 2 Wochen: " + wParts.join(", "));
     }
 
-    // ── 8. Pace/Power-Entwicklung (letzte 8W vs. vorherige 8W) ───────────────
+    // ── 9. Pace/Power-Entwicklung (letzte 8W vs. vorherige 8W) ───────────────
     const _distNames = { 1000: "1km", 5000: "5km", 10000: "10km", 21097: "HM" };
     const _durNames = { 300: "5min", 1200: "20min", 3600: "60min" };
     if (runPace && Object.keys(runPace.current).length > 0) {
@@ -640,7 +724,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (bikeParts.length) contextParts.push("Bike-Power (letzte 8W): " + bikeParts.join(", "));
     }
 
-    // ── 9. Aerob/Anaerob-Energieprofil ───────────────────────────────────────
+    // ── 10. Aerob/Anaerob-Energieprofil ──────────────────────────────────────
     if (aerobicProfile && aerobicProfile.profile) {
       const apParts = ["Klassifikation: " + aerobicProfile.profile];
       if (aerobicProfile.bikeFtp != null) apParts.push("FTP ~" + aerobicProfile.bikeFtp + "W");
@@ -710,8 +794,9 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
     const laggedEffects = computeLaggedKeyTypeEffect(weeks);
     const peaks = findPerformancePeaksAndTroughs(weeks);
     const sweetSpot = computeLoadSweetSpot(weeks);
+    const execQuality = computeExecutionQualityInsights(weeks);
 
-    const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length);
+    const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length, execQuality);
 
     const [athleteProfile, runPace, bikePower] = await Promise.all([
       readAthleteProfile(env).catch(() => null),
@@ -768,6 +853,7 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       runPace,
       bikePower,
       aerobicProfile,
+      execQuality,
     });
 
     const lines = rep.text.split("\\n");
@@ -787,7 +873,7 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       lines.push(aiNarrative);
     }
 
-    return { ...rep, text: lines.join("\\n"), effectivenessData: { laggedEffects, peaks, sweetSpot } };
+    return { ...rep, text: lines.join("\\n"), effectivenessData: { laggedEffects, peaks, sweetSpot, execQuality } };
   } catch (_err) {
     return rep;
   }
