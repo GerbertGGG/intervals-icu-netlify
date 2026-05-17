@@ -75,8 +75,8 @@ function evaluate({
   });
   assert.equal(out.floorLevel, "YELLOW");
   assert.equal(out.floorRaiseMode, "SOFT");
-  assert.equal(out.floorRaiseStep, 5);
-  assert.equal(out.floorTarget, 75);
+  assert.equal(out.floorRaiseStep, 6); // round(70 * 0.08) = round(5.6) = 6
+  assert.equal(out.floorTarget, 76);
 }
 
 // 4) BLOCK bei RED
@@ -184,7 +184,7 @@ function evaluate({
   assert.equal(withDeloadCompletion.floorRaiseMode, "FULL");
 }
 
-// 10) Cap auf 10% bei FULL
+// 10) FULL = immer 10% (kleiner Floor: round(30*0.10)=3)
 {
   const out = evaluate({
     phase: "BUILD",
@@ -196,11 +196,11 @@ function evaluate({
     },
   });
   assert.equal(out.floorRaiseMode, "FULL");
-  assert.equal(out.floorRaiseStep, 3); // 10% cap von 30
+  assert.equal(out.floorRaiseStep, 3); // round(30 * 0.10) = 3
   assert.equal(out.floorTarget, 33);
 }
 
-// 11) Cap auf 5% bei SOFT
+// 11) SOFT = immer 8% (kleiner Floor: round(30*0.08)=2)
 {
   const out = evaluate({
     phase: "BUILD",
@@ -212,8 +212,23 @@ function evaluate({
     },
   });
   assert.equal(out.floorRaiseMode, "SOFT");
-  assert.equal(out.floorRaiseStep, 2); // 8% cap von 30 → round(2.4)=2
+  assert.equal(out.floorRaiseStep, 2); // round(30 * 0.08) = round(2.4) = 2
   assert.equal(out.floorTarget, 32);
+}
+
+// 13) BLOCK wenn SOFT-Raise < 7 Tage nach letzter Erhöhung
+{
+  const out = evaluate({
+    phase: "BUILD",
+    floorTarget: 100,
+    previousState: {
+      floorTarget: 100,
+      lastFloorIncreaseDate: "2026-03-20", // nur 4 Tage vor todayISO
+      lastDeloadCompletedISO: null,
+    },
+  });
+  assert.equal(out.floorRaiseMode, "BLOCK");
+  assert.equal(out.floorRaised, false);
 }
 
 // 12) lastFloorIncreaseDate wird nur bei echter Erhöhung gesetzt
