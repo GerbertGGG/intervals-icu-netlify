@@ -41,8 +41,8 @@ function evaluate({
   });
   assert.equal(out.floorRaiseMode, "FULL");
   assert.equal(out.floorRaised, true);
-  assert.equal(out.floorRaiseStep, 6);
-  assert.equal(out.floorTarget, 86);
+  assert.equal(out.floorRaiseStep, 8);
+  assert.equal(out.floorTarget, 88);
 }
 
 // 2) FULL Raise in BUILD bei sauberem NORMAL-Fall
@@ -57,8 +57,8 @@ function evaluate({
     },
   });
   assert.equal(out.floorRaiseMode, "FULL");
-  assert.equal(out.floorRaiseStep, 10);
-  assert.equal(out.floorTarget, 130);
+  assert.equal(out.floorRaiseStep, 12);
+  assert.equal(out.floorTarget, 132);
 }
 
 // 3) SOFT Raise trotz nicht perfektem, aber stabilem Zustand (YELLOW)
@@ -75,8 +75,8 @@ function evaluate({
   });
   assert.equal(out.floorLevel, "YELLOW");
   assert.equal(out.floorRaiseMode, "SOFT");
-  assert.equal(out.floorRaiseStep, 3);
-  assert.equal(out.floorTarget, 73);
+  assert.equal(out.floorRaiseStep, 5);
+  assert.equal(out.floorTarget, 75);
 }
 
 // 4) BLOCK bei RED
@@ -155,8 +155,8 @@ function evaluate({
     },
   });
   assert.equal(out.floorRaiseMode, "SOFT");
-  assert.equal(out.floorRaiseStep, 5);
-  assert.equal(out.floorTarget, 105);
+  assert.equal(out.floorRaiseStep, 8);
+  assert.equal(out.floorTarget, 108);
 }
 
 // 9) FULL nur mit deloadCompletedSinceLastRaise
@@ -212,7 +212,7 @@ function evaluate({
     },
   });
   assert.equal(out.floorRaiseMode, "SOFT");
-  assert.equal(out.floorRaiseStep, 2); // 5% cap von 30
+  assert.equal(out.floorRaiseStep, 2); // 8% cap von 30 → round(2.4)=2
   assert.equal(out.floorTarget, 32);
 }
 
