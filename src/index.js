@@ -46,6 +46,7 @@ import runtimeBlockLogicPolicies from "./index-runtime/runtime-block-logic-polic
 import runtimeSyncEngine from "./index-runtime/runtime-sync-engine.js";
 import runtimeCommentaryAndAnalysis from "./index-runtime/runtime-commentary-and-analysis.js";
 import runtimeEffectivenessAnalysis from "./index-runtime/runtime-effectiveness-analysis.js";
+import runtimeRecoveryLearning from "./index-runtime/runtime-recovery-learning.js";
 import runtimeIntegrationsAndHooks from "./index-runtime/runtime-integrations-and-hooks.js";
 
 const source = [
@@ -54,6 +55,7 @@ const source = [
   runtimeBlockLogicPolicies,
   runtimeSyncEngine,
   runtimeEffectivenessAnalysis,
+  runtimeRecoveryLearning,
   runtimeCommentaryAndAnalysis,
   runtimeIntegrationsAndHooks,
 ].join("");
