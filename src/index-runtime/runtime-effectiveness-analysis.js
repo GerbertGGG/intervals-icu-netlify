@@ -607,7 +607,7 @@ async function fetchWellnessTrend(env, days) {
     const avgFeel = feelVals.length >= 3 ? round(feelVals.reduce((a, b) => a + b, 0) / feelVals.length, 1) : null;
     const sleepScoreVals = list.map((w) => Number(w.sleepScore ?? w.sleepQuality ?? 0)).filter((v) => v > 0 && Number.isFinite(v));
     const avgSleepScore = sleepScoreVals.length >= 3 ? Math.round(sleepScoreVals.reduce((a, b) => a + b, 0) / sleepScoreVals.length) : null;
-    return { avgHrv, avgSleepH, avgSleepScore, avgFeel, hrvTrend, lowHrvDays };
+    const vo2maxVals = list.map((w) => Number(w.vo2max)).filter((v) => v > 0 && Number.isFinite(v));\n    const avgVo2max = vo2maxVals.length >= 3 ? Math.round(vo2maxVals.reduce((a, b) => a + b, 0) / vo2maxVals.length) : null;\n    let vo2maxTrend = null;\n    if (vo2maxVals.length >= 6) {\n      const half = Math.floor(vo2maxVals.length / 2);\n      const olderAvg = vo2maxVals.slice(0, half).reduce((a, b) => a + b, 0) / half;\n      const recentAvg = vo2maxVals.slice(half).reduce((a, b) => a + b, 0) / (vo2maxVals.length - half);\n      if (recentAvg > olderAvg + 0.5) vo2maxTrend = "steigend";\n      else if (recentAvg < olderAvg - 0.5) vo2maxTrend = "fallend";\n      else vo2maxTrend = "stabil";\n    }\n    return { avgHrv, avgSleepH, avgSleepScore, avgFeel, hrvTrend, lowHrvDays, avgVo2max, vo2maxTrend };
   } catch (_e) {
     return null;
   }
@@ -736,7 +736,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
       if (wellness.avgSleepScore != null) wParts.push("Schlaf-Score ∅ " + wellness.avgSleepScore);
       else if (wellness.avgSleepH != null) wParts.push("Schlaf ∅ " + wellness.avgSleepH + "h");
       if (wellness.avgFeel != null) wParts.push("Befinden ∅ " + wellness.avgFeel + "/5");
-      if (wellness.lowHrvDays > 0) wParts.push(wellness.lowHrvDays + " Tag(e) mit niedriger HRV");
+      if (wellness.lowHrvDays > 0) wParts.push(wellness.lowHrvDays + " Tag(e) mit niedriger HRV");\n      if (wellness.avgVo2max != null) {\n        const vo2Str = "VO2max ∅ " + wellness.avgVo2max + (wellness.vo2maxTrend ? " (" + wellness.vo2maxTrend + ")" : "");\n        wParts.push(vo2Str);\n      }
       if (wParts.length) contextParts.push("Wellness letzte 2 Wochen: " + wParts.join(", "));
     }
 
