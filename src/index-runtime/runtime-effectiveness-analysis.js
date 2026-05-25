@@ -403,6 +403,24 @@ function fmtPacePerKm(totalSecs, distM) {
   return min + ":" + String(sec).padStart(2, "0") + "/km";
 }
 
+// Derives easy/GA run pace (secs/km) from best race paces using standard multipliers.
+// Priority: 5km ×1.30, 10km ×1.20, HM ×1.12. Returns null if no data available.
+function computeEasyRunPaceSecsPerKm(runPace) {
+  if (!runPace || !runPace.current) return null;
+  const configs = [
+    { dist: 5000, factor: 1.30 },
+    { dist: 10000, factor: 1.20 },
+    { dist: 21097, factor: 1.12 },
+  ];
+  for (const { dist, factor } of configs) {
+    const totalSecs = runPace.current[dist];
+    if (totalSecs != null) {
+      return (totalSecs / (dist / 1000)) * factor;
+    }
+  }
+  return null;
+}
+
 // Fetches best run pace at 1k/5k/10k/HM for two 8-week windows and compares them.
 // Returns { current, prev, deltas } keyed by distance (meters), or null on failure.
 async function fetchRunPaceBenchmarks(env) {
@@ -758,6 +776,10 @@ async function generateEffectivenessNarrativeAI(env, data) {
           return _distNames[d] + " " + pace + dStr;
         });
       if (runParts.length) contextParts.push("Lauf-Bestzeiten (letzte 8W): " + runParts.join(", "));
+      const easyPaceSecs = computeEasyRunPaceSecsPerKm(runPace);
+      if (easyPaceSecs != null) {
+        contextParts.push("Easy-Lauftempo (GA/locker): " + fmtPacePerKm(easyPaceSecs, 1000) + " (abgeleitet aus Bestzeit)");
+      }
     }
     if (bikePower && Object.keys(bikePower.current).length > 0) {
       const bikeParts = [300, 1200, 3600]
@@ -805,7 +827,7 @@ async function generateEffectivenessNarrativeAI(env, data) {
       "- [Wochentag]: [...]\\n" +
       "- [Wochentag]: [...]\\n" +
       "WARNUNG (nur wenn HRV niedrig, Readiness <55 oder Wellness-Auffaelligkeit): 1 Satz.\\n" +
-      "Regeln: Nutze tatsaechliche Watt/Pace-Zahlen aus den Kontext-Daten. Keine Theorie, keine Erklaerungen, Du-Form. " +
+      "Regeln: Nutze tatsaechliche Watt/Pace-Zahlen aus den Kontext-Daten. Fuer lockere/easy Einheiten nutze das 'Easy-Lauftempo (GA/locker)' aus den Daten. Keine Theorie, keine Erklaerungen, Du-Form. " +
       "Passe Intensitaeten dem Energieprofil an: aerob-dominant = mehr kurze VO2max-Intervalle (Zone 3), weniger Schwelle (Schwelle nur als Erhalt); anaerob-Staerke = mehr Grundlagenvolumen, kaum Intensitaet. " +
       "Bevorzugte Einheitentypen je Profil: aerob-dominant → vo2_touch und strides bevorzugen; anaerob-Staerke → steady und longrun bevorzugen, keine harten Keys. " +
       "easy_share Zielkorridore (Anteil leichter Einheiten/Woche): aerob-dominant ≥75%, ausgeglichen ≥70%, anaerob-Staerke ≥80%. " +
@@ -873,6 +895,10 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
           return distLabels[d] + " " + pace + dStr;
         });
       if (runParts.length) pacePowerLines.push("🏃 Laufen: " + runParts.join(", "));
+      const easyPaceSecs = computeEasyRunPaceSecsPerKm(runPace);
+      if (easyPaceSecs != null) {
+        pacePowerLines.push("🚶 Easy-Tempo (GA): " + fmtPacePerKm(easyPaceSecs, 1000));
+      }
     }
     if (bikePower && Object.keys(bikePower.current).length > 0) {
       const bikeParts = [300, 1200, 3600]
