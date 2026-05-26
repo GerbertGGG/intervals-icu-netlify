@@ -117,15 +117,16 @@ function findLastARaceForVdot(activities) {
 }
 
 // ─── Compute VDOT from all races in activities (best of last 180 days) ────────
-function computeRaceVdot(activities) {
+function computeRaceVdot(activities, todayIso = null) {
   if (!Array.isArray(activities)) return null;
-  const cutoff = isoDate(new Date(Date.now() - 180 * 86400000));
+  const anchor = todayIso || isoDate(new Date());
+  const cutoff = isoDate(new Date(new Date(anchor).getTime() - 180 * 86400000));
   let best = null;
   for (const a of activities) {
     if (!isRun(a)) continue;
     if (!isRaceActivity(a)) continue;
     const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-    if (day < cutoff) continue;
+    if (day < cutoff || day > anchor) continue;
     const dist = Number(a?.distance ?? a?.icu_distance ?? 0);
     const time = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
     if (dist < 800 || time < 60) continue;
@@ -196,7 +197,7 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
   const { write = false, todayIso = null, isMondaySync = false } = options;
 
   // 1) Race-based VDOT from activities (free – data already loaded)
-  const raceResult = computeRaceVdot(activities);
+  const raceResult = computeRaceVdot(activities, todayIso);
 
   // 2) Training-based VDOT from cached pace benchmarks
   let trainVdot = null;
