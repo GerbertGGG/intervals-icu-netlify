@@ -217,18 +217,26 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
   const daysSincePrev = (Date.now() - prevUpdated) / 86400000;
 
   // 4) Determine current VDOT
+  // Zones always reflect *current* fitness = min(race, training).
+  // Peak race VDOT is stored separately for reference display.
   let currentVdot = null;
   let source = null;
+  const peakVdot = raceResult?.vdot ?? null;
 
-  if (raceResult?.vdot != null && (trainVdot == null || raceResult.vdot >= trainVdot - 2)) {
-    currentVdot = raceResult.vdot;
-    source = "race";
-  } else if (trainVdot != null && (raceResult?.vdot == null || trainVdot > raceResult.vdot - 2)) {
-    currentVdot = trainVdot;
-    source = "training";
+  if (raceResult?.vdot != null && trainVdot != null) {
+    if (trainVdot < raceResult.vdot) {
+      currentVdot = trainVdot;
+      source = "training";
+    } else {
+      currentVdot = raceResult.vdot;
+      source = "race";
+    }
   } else if (raceResult?.vdot != null) {
     currentVdot = raceResult.vdot;
     source = "race";
+  } else if (trainVdot != null) {
+    currentVdot = trainVdot;
+    source = "training";
   }
 
   // 5) Decay protection: training-source VDOT decays ≤ 0.3/day without race confirmation
@@ -247,6 +255,7 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
         vdot: prevVdot,
         source: prevState?.source || "cached",
         zones,
+        peakVdot: prevState?.peakVdot || null,
         raceDate: prevState?.raceDate || null,
         raceName: prevState?.raceName || null,
         distKm: prevState?.distKm || null,
@@ -265,6 +274,7 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
     vdot: currentVdot,
     source,
     zones,
+    peakVdot: peakVdot != null ? Math.round(peakVdot * 10) / 10 : (prevState?.peakVdot || null),
     raceDate: raceResult?.raceDate || prevState?.raceDate || null,
     raceName: raceResult?.raceName || prevState?.raceName || null,
     distKm: raceResult?.distKm || prevState?.distKm || null,
@@ -286,10 +296,10 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
 // ─── Report text block ────────────────────────────────────────────────────────
 function buildRealVdotBlock(vdotResult) {
   if (!vdotResult?.vdot || !vdotResult?.zones) return "";
-  const { vdot, source, zones, raceDate, raceName, distKm, timeFmt, trainVdot } = vdotResult;
+  const { vdot, source, zones, peakVdot, raceDate, raceName, distKm, timeFmt, trainVdot } = vdotResult;
 
   const lines = [];
-  const srcLabel = source === "race" ? "Rennergebnis" : source === "training" ? "Training (Pace-Bestzeit)" : "Gespeichert";
+  const srcLabel = source === "race" ? "Rennergebnis" : source === "training" ? "Training (aktuell)" : "Gespeichert";
   lines.push(\`VDOT \${vdot.toFixed(1)}  (\${srcLabel})\`);
 
   if (source === "race" && raceDate && (raceName || distKm)) {
@@ -300,7 +310,11 @@ function buildRealVdotBlock(vdotResult) {
       .filter(Boolean).join(" – ");
     if (detail) lines.push(\`Basis: \${detail} (\${raceDate})\`);
   }
-  if (trainVdot != null && source !== "training") {
+  if (source === "training" && peakVdot != null && peakVdot > vdot) {
+    const raceRef = raceDate ? \` (\${raceDate})\` : "";
+    lines.push(\`Peak-VDOT: \${peakVdot.toFixed(1)} (Rennen\${raceRef}) — Zonen auf Trainingsniveau\`);
+  }
+  if (trainVdot != null && source === "race") {
     lines.push(\`Training-VDOT: \${trainVdot.toFixed(1)}\`);
   }
 
