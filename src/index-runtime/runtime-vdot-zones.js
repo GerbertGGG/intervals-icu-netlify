@@ -161,6 +161,56 @@ function computeVdotFromPaceBenchmarks(runPace) {
   return best;
 }
 
+// ─── Training VDOT from HR + Pace (Daniels zone calibration) ─────────────────
+// %VO2max ≈ 1.154 × %HRmax − 0.15  (derived from Daniels E/M/T zone anchors)
+// Requires average_heartrate and distance/moving_time per activity.
+function _estimateMaxHrFromActivities(activities) {
+  let highest = 0;
+  for (const a of (activities || [])) {
+    const hr = Number(a?.max_heartrate || a?.max_hr || 0);
+    if (hr > highest) highest = hr;
+  }
+  return highest > 100 ? Math.round(highest * 1.05) : null;
+}
+
+function _vdotFromTrainingActivity(activity, maxHr) {
+  const dist = Number(activity?.distance ?? activity?.icu_distance ?? 0);
+  const time = Number(activity?.moving_time ?? activity?.elapsed_time ?? 0);
+  const avgHr = Number(activity?.average_heartrate ?? activity?.avg_hr ?? 0);
+  if (dist < 2000 || time < 600 || avgHr <= 0 || maxHr <= 100) return null;
+  const hrPct = avgHr / maxHr;
+  if (hrPct < 0.50 || hrPct > 0.96) return null;
+  const pctVo2max = 1.154 * hrPct - 0.15;
+  if (pctVo2max <= 0.30 || pctVo2max >= 1.00) return null;
+  const v = (dist / time) * 60; // m/min
+  const vo2 = -4.60 + 0.182258 * v + 0.000104 * v * v;
+  if (vo2 <= 0) return null;
+  const vdot = vo2 / pctVo2max;
+  if (!Number.isFinite(vdot) || vdot < 20 || vdot > 90) return null;
+  return Math.round(vdot * 10) / 10;
+}
+
+function computeTrainingVdotFromActivities(activities, todayIso, maxHr) {
+  if (!Array.isArray(activities) || !(maxHr > 100)) return null;
+  const anchor = todayIso || isoDate(new Date());
+  const cutoff = isoDate(new Date(new Date(anchor).getTime() - 28 * 86400000));
+  const estimates = [];
+  for (const a of activities) {
+    if (!isRun(a) || isRaceActivity(a)) continue;
+    const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+    if (day < cutoff || day > anchor) continue;
+    const v = _vdotFromTrainingActivity(a, maxHr);
+    if (v != null) estimates.push(v);
+  }
+  if (!estimates.length) return null;
+  estimates.sort((a, b) => a - b);
+  const mid = Math.floor(estimates.length / 2);
+  const median = estimates.length % 2 === 0
+    ? (estimates[mid - 1] + estimates[mid]) / 2
+    : estimates[mid];
+  return Math.round(median * 10) / 10;
+}
+
 // ─── KV persistence ───────────────────────────────────────────────────────────
 async function loadRealVdotState(env) {
   if (!hasKv(env)) return null;
@@ -199,16 +249,22 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 1) Race-based VDOT from activities (free – data already loaded)
   const raceResult = computeRaceVdot(activities, todayIso);
 
-  // 2) Training-based VDOT from cached pace benchmarks
+  // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
   let trainVdot = null;
-  try {
-    let bench = await loadCachedPaceBench(env);
-    if (!bench && (isMondaySync || write)) {
-      bench = await fetchRunPaceBenchmarks(env).catch(() => null);
-      if (bench && write) saveCachedPaceBench(env, bench).catch(() => {});
-    }
-    if (bench) trainVdot = computeVdotFromPaceBenchmarks(bench);
-  } catch {}
+  const maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || _estimateMaxHrFromActivities(activities) || null;
+  if (maxHr) {
+    trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
+  }
+  if (trainVdot == null) {
+    try {
+      let bench = await loadCachedPaceBench(env);
+      if (!bench && (isMondaySync || write)) {
+        bench = await fetchRunPaceBenchmarks(env).catch(() => null);
+        if (bench && write) saveCachedPaceBench(env, bench).catch(() => {});
+      }
+      if (bench) trainVdot = computeVdotFromPaceBenchmarks(bench);
+    } catch {}
+  }
 
   // 3) Load previous state for decay protection
   const prevState = await loadRealVdotState(env).catch(() => null);
@@ -312,7 +368,7 @@ function buildRealVdotBlock(vdotResult) {
   }
   if (source === "training" && peakVdot != null && peakVdot > vdot) {
     const raceRef = raceDate ? \` (\${raceDate})\` : "";
-    lines.push(\`Peak-VDOT: \${peakVdot.toFixed(1)} (Rennen\${raceRef}) — Zonen auf Trainingsniveau\`);
+    lines.push(\`Peak-VDOT: \${peakVdot.toFixed(1)} (Rennen\${raceRef}) — Zonen spiegeln aktuelles Training\`);
   }
   if (trainVdot != null && source === "race") {
     lines.push(\`Training-VDOT: \${trainVdot.toFixed(1)}\`);
