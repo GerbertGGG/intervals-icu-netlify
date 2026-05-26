@@ -218,7 +218,9 @@ function _vdotFromTrainingActivity(activity, maxHr) {
   const avgHr = Number(activity?.average_heartrate ?? activity?.avg_hr ?? 0);
   if (dist < 2000 || time < 600 || avgHr <= 0 || maxHr <= 100) return null;
   const hrPct = avgHr / maxHr;
-  if (hrPct < 0.50 || hrPct > 0.96) return null;
+  // Only use E-zone runs (60–80% HRmax) for reliable VO2max estimation.
+  // Threshold/harder efforts have cardiovascular drift that distorts the HR→VO2 relationship.
+  if (hrPct < 0.55 || hrPct > 0.80) return null;
   const pctVo2max = 1.154 * hrPct - 0.15;
   if (pctVo2max <= 0.30 || pctVo2max >= 1.00) return null;
   const v = (dist / time) * 60; // m/min
