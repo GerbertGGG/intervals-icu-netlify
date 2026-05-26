@@ -52,9 +52,9 @@ import runtimeVdotZones from "./index-runtime/runtime-vdot-zones.js";
 
 const source = [
   runtimeConfigAndHelpers,
+  runtimeVdotZones,
   runtimeBlockLogicCore,
   runtimeBlockLogicPolicies,
-  runtimeVdotZones,
   runtimeSyncEngine,
   runtimeEffectivenessAnalysis,
   runtimeRecoveryLearning,
