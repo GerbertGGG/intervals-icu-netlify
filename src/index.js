@@ -48,11 +48,13 @@ import runtimeCommentaryAndAnalysis from "./index-runtime/runtime-commentary-and
 import runtimeEffectivenessAnalysis from "./index-runtime/runtime-effectiveness-analysis.js";
 import runtimeRecoveryLearning from "./index-runtime/runtime-recovery-learning.js";
 import runtimeIntegrationsAndHooks from "./index-runtime/runtime-integrations-and-hooks.js";
+import runtimeVdotZones from "./index-runtime/runtime-vdot-zones.js";
 
 const source = [
   runtimeConfigAndHelpers,
   runtimeBlockLogicCore,
   runtimeBlockLogicPolicies,
+  runtimeVdotZones,
   runtimeSyncEngine,
   runtimeEffectivenessAnalysis,
   runtimeRecoveryLearning,
