@@ -7,13 +7,52 @@ export default `
 
 const REAL_VDOT_KV_PREFIX = "vdot:real:";
 const PACE_BENCH_KV_PREFIX = "vdot:pacebench:";
+const MAX_HR_KV_PREFIX = "vdot:maxhr:";
 const PACE_BENCH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const MAX_HR_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function realVdotKvKey(env) {
   return \`\${REAL_VDOT_KV_PREFIX}\${mustEnv(env, "ATHLETE_ID")}\`;
 }
 function paceBenchKvKey(env) {
   return \`\${PACE_BENCH_KV_PREFIX}\${mustEnv(env, "ATHLETE_ID")}\`;
+}
+function maxHrKvKey(env) {
+  return \`\${MAX_HR_KV_PREFIX}\${mustEnv(env, "ATHLETE_ID")}\`;
+}
+
+async function loadCachedMaxHr(env) {
+  if (!hasKv(env)) return null;
+  try {
+    const cached = await readKvJson(env, maxHrKvKey(env));
+    if (!cached?.ts || !cached?.maxHr) return null;
+    if (Date.now() - cached.ts > MAX_HR_MAX_AGE_MS) return null;
+    return Number(cached.maxHr) || null;
+  } catch { return null; }
+}
+
+async function saveCachedMaxHr(env, maxHr) {
+  if (!hasKv(env)) return;
+  try { await writeKvJson(env, maxHrKvKey(env), { ts: Date.now(), maxHr }); }
+  catch {}
+}
+
+async function fetchAndCacheMaxHr(env) {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const resp = await fetch(BASE_URL + "/athlete/" + uid, {
+      headers: { Authorization: authHeader(env) },
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const maxHr = Number(data?.max_hr || data?.maxHr || data?.hrMax || 0);
+    if (maxHr > 100) {
+      saveCachedMaxHr(env, maxHr).catch(() => {});
+      return maxHr;
+    }
+    return null;
+  } catch { return null; }
 }
 
 // ─── Jack Daniels VDOT formula ────────────────────────────────────────────────
@@ -251,7 +290,13 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
 
   // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
   let trainVdot = null;
-  const maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || _estimateMaxHrFromActivities(activities) || null;
+  // Resolve max HR: env var → API (cached 24h) → estimate from activities
+  let maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || null;
+  if (!maxHr) {
+    maxHr = await loadCachedMaxHr(env).catch(() => null);
+    if (!maxHr && write) maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
+    if (!maxHr) maxHr = _estimateMaxHrFromActivities(activities) || null;
+  }
   if (maxHr) {
     trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
   }
