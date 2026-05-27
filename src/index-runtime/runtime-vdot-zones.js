@@ -338,6 +338,23 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
   }
   dbg.trainVdot = trainVdot;
 
+  // 2b) VDOT from today's specific run (for wellness field)
+  let todayRunVdot = null;
+  if (maxHr && todayIso) {
+    const todayEstimates = (activities || [])
+      .filter(a => isRun(a) && !isRaceActivity(a) && String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso)
+      .map(a => _vdotFromTrainingActivity(a, maxHr))
+      .filter(v => v != null);
+    if (todayEstimates.length) {
+      todayEstimates.sort((a, b) => a - b);
+      const mid = Math.floor(todayEstimates.length / 2);
+      todayRunVdot = Math.round((todayEstimates.length % 2 === 0
+        ? (todayEstimates[mid - 1] + todayEstimates[mid]) / 2
+        : todayEstimates[mid]) * 10) / 10;
+    }
+  }
+  dbg.todayRunVdot = todayRunVdot;
+
   // 3) Load previous state for decay protection
   const prevState = await loadRealVdotState(env).catch(() => null);
   const prevVdot = Number(prevState?.vdot ?? 0);
@@ -412,6 +429,7 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
     distKm: raceResult?.distKm || prevState?.distKm || null,
     timeFmt: raceResult?.timeFmt || prevState?.timeFmt || null,
     trainVdot,
+    todayRunVdot,
     fromCache: false,
     _debug: dbg,
   };
@@ -430,11 +448,14 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
 // ─── Report text block ────────────────────────────────────────────────────────
 function buildRealVdotBlock(vdotResult) {
   if (!vdotResult?.vdot || !vdotResult?.zones) return "";
-  const { vdot, source, zones, peakVdot, raceDate, raceName, distKm, timeFmt, trainVdot } = vdotResult;
+  const { vdot, source, zones, peakVdot, raceDate, raceName, distKm, timeFmt, trainVdot, todayRunVdot } = vdotResult;
 
   const lines = [];
-  const srcLabel = source === "race" ? "Rennergebnis" : source === "training" ? "Training (aktuell)" : "Gespeichert";
+  const srcLabel = source === "race" ? "Rennergebnis" : source === "training" ? "Training (28T Median)" : "Gespeichert";
   lines.push(\`VDOT \${vdot.toFixed(1)}  (\${srcLabel})\`);
+  if (todayRunVdot != null && source === "training") {
+    lines.push(\`Heutiger Lauf: \${todayRunVdot.toFixed(1)}\`);
+  }
 
   if (source === "race" && raceDate && (raceName || distKm)) {
     const nameStr = raceName ? raceName : "";
