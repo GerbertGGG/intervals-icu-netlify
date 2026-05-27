@@ -286,31 +286,45 @@ async function saveCachedPaceBench(env, data) {
 // or null if nothing available.
 async function computeAndPersistRealVdot(env, activities, options = {}) {
   const { write = false, todayIso = null, isMondaySync = false } = options;
+  const dbg = { activitiesTotal: (activities || []).length, maxHr: null, maxHrSource: null, raceVdot: null, trainVdot: null, prevVdot: 0, currentVdot: null, returnPath: null, trainingWindow: null };
 
   // 1) Race-based VDOT from activities (free – data already loaded)
   const raceResult = computeRaceVdot(activities, todayIso);
+  dbg.raceVdot = raceResult?.vdot ?? null;
 
   // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
   let trainVdot = null;
   // Resolve max HR: env var → API (cached 24h) → estimate from activities
+  let maxHrSource = null;
   let maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || null;
-  if (!maxHr) {
+  if (maxHr) {
+    maxHrSource = "env";
+  } else {
     maxHr = await loadCachedMaxHr(env).catch(() => null);
-    if (!maxHr && write) maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
-    if (!maxHr) maxHr = _estimateMaxHrFromActivities(activities) || null;
-    // Last resort: when max_heartrate is absent from all activities, derive from average_heartrate.
-    // Max HR is typically ~20% above average HR of the hardest aerobic session.
-    if (!maxHr) {
-      let highestAvg = 0;
-      for (const a of (activities || [])) {
-        const hr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0);
-        if (hr > highestAvg) highestAvg = hr;
+    if (maxHr) {
+      maxHrSource = "kv";
+    } else {
+      if (write) { maxHr = await fetchAndCacheMaxHr(env).catch(() => null); if (maxHr) maxHrSource = "api"; }
+      if (!maxHr) { maxHr = _estimateMaxHrFromActivities(activities) || null; if (maxHr) maxHrSource = "max_heartrate_est"; }
+      if (!maxHr) {
+        let highestAvg = 0;
+        for (const a of (activities || [])) {
+          const hr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0);
+          if (hr > highestAvg) highestAvg = hr;
+        }
+        if (highestAvg > 80) { maxHr = Math.round(highestAvg * 1.20); maxHrSource = "avg_hr_est"; }
       }
-      if (highestAvg > 80) maxHr = Math.round(highestAvg * 1.20);
     }
   }
+  dbg.maxHr = maxHr;
+  dbg.maxHrSource = maxHrSource;
   if (maxHr) {
     trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
+    const _anchor = todayIso || isoDate(new Date());
+    const _cutoff = isoDate(new Date(new Date(_anchor).getTime() - 28 * 86400000));
+    const _windowRuns = (activities || []).filter(a => isRun(a) && !isRaceActivity(a) && String(a?.start_date_local || a?.start_date || "").slice(0, 10) >= _cutoff);
+    const _estimates = _windowRuns.map(a => _vdotFromTrainingActivity(a, maxHr)).filter(v => v != null);
+    dbg.trainingWindow = { cutoff: _cutoff, count: _windowRuns.length, qualifyingCount: _estimates.length, estimates: _estimates };
   }
   if (trainVdot == null) {
     try {
@@ -322,12 +336,14 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
       if (bench) trainVdot = computeVdotFromPaceBenchmarks(bench);
     } catch {}
   }
+  dbg.trainVdot = trainVdot;
 
   // 3) Load previous state for decay protection
   const prevState = await loadRealVdotState(env).catch(() => null);
   const prevVdot = Number(prevState?.vdot ?? 0);
   const prevUpdated = prevState?.updatedAt ? new Date(prevState.updatedAt).getTime() : 0;
   const daysSincePrev = (Date.now() - prevUpdated) / 86400000;
+  dbg.prevVdot = prevVdot;
 
   // 4) Determine current VDOT
   // Zones always reflect *current* fitness = min(race, training).
@@ -357,11 +373,13 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
   if (prevVdot > 0 && currentVdot != null && prevVdot - currentVdot > 8) {
     currentVdot = prevVdot - 8;
   }
+  dbg.currentVdot = currentVdot;
 
   // 6) If no new data, return persisted value
   if (currentVdot == null) {
     if (prevVdot > 0) {
       const zones = computeVdotZones(prevVdot);
+      dbg.returnPath = "cached";
       return {
         vdot: prevVdot,
         source: prevState?.source || "cached",
@@ -373,14 +391,17 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
         timeFmt: prevState?.timeFmt || null,
         trainVdot: trainVdot || prevState?.trainVdot || null,
         fromCache: true,
+        _debug: dbg,
       };
     }
-    return null;
+    dbg.returnPath = "null";
+    return { vdot: null, _debug: dbg };
   }
 
   currentVdot = Math.round(currentVdot * 10) / 10;
   const zones = computeVdotZones(currentVdot);
 
+  dbg.returnPath = "new";
   const result = {
     vdot: currentVdot,
     source,
@@ -392,11 +413,13 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
     timeFmt: raceResult?.timeFmt || prevState?.timeFmt || null,
     trainVdot,
     fromCache: false,
+    _debug: dbg,
   };
 
   if (write) {
+    const { _debug: _ignored, ...resultToSave } = result;
     await saveRealVdotState(env, {
-      ...result,
+      ...resultToSave,
       updatedAt: new Date().toISOString(),
     }).catch(() => {});
   }
