@@ -51,8 +51,8 @@ import runtimeIntegrationsAndHooks from "./index-runtime/runtime-integrations-an
 import runtimeVdotZones from "./index-runtime/runtime-vdot-zones.js";
 
 const source = [
-  runtimeConfigAndHelpers,
   runtimeVdotZones,
+  runtimeConfigAndHelpers,
   runtimeBlockLogicCore,
   runtimeBlockLogicPolicies,
   runtimeSyncEngine,
