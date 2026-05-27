@@ -298,6 +298,16 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
     maxHr = await loadCachedMaxHr(env).catch(() => null);
     if (!maxHr && write) maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
     if (!maxHr) maxHr = _estimateMaxHrFromActivities(activities) || null;
+    // Last resort: when max_heartrate is absent from all activities, derive from average_heartrate.
+    // Max HR is typically ~20% above average HR of the hardest aerobic session.
+    if (!maxHr) {
+      let highestAvg = 0;
+      for (const a of (activities || [])) {
+        const hr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0);
+        if (hr > highestAvg) highestAvg = hr;
+      }
+      if (highestAvg > 80) maxHr = Math.round(highestAvg * 1.20);
+    }
   }
   if (maxHr) {
     trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
