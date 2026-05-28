@@ -252,6 +252,42 @@ function computeTrainingVdotFromActivities(activities, todayIso, maxHr) {
   return Math.round(median * 10) / 10;
 }
 
+// ─── Race time prediction from VDOT (binary search) ──────────────────────────
+// Finds the race time (secs) for a given VDOT and distance via bisection.
+// VDOT is a decreasing function of time → faster time = higher VDOT.
+function computeRaceTimeFromVdot(vdot, distMeters) {
+  const dist = Number(distMeters);
+  const target = Number(vdot);
+  if (!Number.isFinite(dist) || dist < 400 || !Number.isFinite(target) || target < 20 || target > 90) return null;
+  let lo = 60, hi = 86400;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    const v = computeVdotFromRaceTime(dist, mid);
+    if (v == null) { hi = mid; continue; }
+    if (v > target) lo = mid;  // too fast → need slower time
+    else hi = mid;              // too slow → need faster time
+  }
+  const result = Math.round((lo + hi) / 2);
+  return Number.isFinite(result) && result > 60 ? result : null;
+}
+
+function buildVdotRacePrognoses(vdot) {
+  const v = Number(vdot);
+  if (!Number.isFinite(v) || v < 20 || v > 90) return [];
+  const races = [
+    { label: "5k      ", dist: 5000 },
+    { label: "10k     ", dist: 10000 },
+    { label: "HM      ", dist: 21097 },
+    { label: "Marathon", dist: 42195 },
+  ];
+  const lines = [];
+  for (const { label, dist } of races) {
+    const secs = computeRaceTimeFromVdot(v, dist);
+    if (secs != null) lines.push(\`  \${label}: \${_fmtTime(secs)}\`);
+  }
+  return lines;
+}
+
 // ─── KV persistence ───────────────────────────────────────────────────────────
 async function loadRealVdotState(env) {
   if (!hasKv(env)) return null;
@@ -390,7 +426,14 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
   if (prevVdot > 0 && currentVdot != null && prevVdot - currentVdot > 8) {
     currentVdot = prevVdot - 8;
   }
+
+  // 5b) Optional correction factor: VDOT_CORRECTION_FACTOR env (e.g. 1.05 = overperformer +5%)
+  const corrFactor = Number(env?.VDOT_CORRECTION_FACTOR) || 1.0;
+  if (corrFactor !== 1.0 && corrFactor > 0.5 && corrFactor < 2.0 && currentVdot != null) {
+    currentVdot = Math.min(90, Math.max(20, Math.round(currentVdot * corrFactor * 10) / 10));
+  }
   dbg.currentVdot = currentVdot;
+  dbg.corrFactor = corrFactor !== 1.0 ? corrFactor : null;
 
   // 6) If no new data, return persisted value
   if (currentVdot == null) {
@@ -430,6 +473,7 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
     timeFmt: raceResult?.timeFmt || prevState?.timeFmt || null,
     trainVdot,
     todayRunVdot,
+    corrFactor: corrFactor !== 1.0 ? corrFactor : undefined,
     fromCache: false,
     _debug: dbg,
   };
@@ -448,11 +492,14 @@ async function computeAndPersistRealVdot(env, activities, options = {}) {
 // ─── Report text block ────────────────────────────────────────────────────────
 function buildRealVdotBlock(vdotResult) {
   if (!vdotResult?.vdot || !vdotResult?.zones) return "";
-  const { vdot, source, zones, peakVdot, raceDate, raceName, distKm, timeFmt, trainVdot, todayRunVdot } = vdotResult;
+  const { vdot, source, zones, peakVdot, raceDate, raceName, distKm, timeFmt, trainVdot, todayRunVdot, corrFactor } = vdotResult;
 
   const lines = [];
   const srcLabel = source === "race" ? "Rennergebnis" : source === "training" ? "Training (28T Median)" : "Gespeichert";
-  lines.push(\`VDOT \${vdot.toFixed(1)}  (\${srcLabel})\`);
+  const corrLabel = (corrFactor != null && corrFactor !== 1.0)
+    ? \`  · Korrekturfaktor \${corrFactor > 1 ? "+" : ""}\${((corrFactor - 1) * 100).toFixed(0)}%\`
+    : "";
+  lines.push(\`VDOT \${vdot.toFixed(1)}\${corrLabel}  (\${srcLabel})\`);
   if (todayRunVdot != null && source === "training") {
     lines.push(\`Heutiger Lauf: \${todayRunVdot.toFixed(1)}\`);
   }
@@ -482,6 +529,13 @@ function buildRealVdotBlock(vdotResult) {
     const slow = _fmtPace(z.slowSecPerKm);
     const paceStr = fast === slow ? fast : \`\${fast} – \${slow}\`;
     lines.push(\`  \${z.label}: \${paceStr} /km\`);
+  }
+
+  const progLines = buildVdotRacePrognoses(vdot);
+  if (progLines.length) {
+    lines.push("");
+    lines.push("Rennen-Prognosen:");
+    for (const l of progLines) lines.push(l);
   }
 
   return lines.join("\\n");
