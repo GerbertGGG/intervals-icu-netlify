@@ -875,10 +875,11 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
 
     const sectionText = buildEffectivenessText(laggedEffects, peaks, sweetSpot, weeks.length, execQuality, monotony);
 
-    const [athleteProfile, runPace, bikePower] = await Promise.all([
+    const [athleteProfile, runPace, bikePower, vdotState] = await Promise.all([
       readAthleteProfile(env).catch(() => null),
       fetchRunPaceBenchmarks(env),
       fetchBikePowerBenchmarks(env),
+      loadRealVdotState(env).catch(() => null),
     ]);
 
     // Build pace/power section for the report
@@ -948,6 +949,13 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       lines.push("");
       lines.push("📊 PACE/POWER (8W-Vergleich):");
       pacePowerLines.forEach((l) => lines.push(l));
+    }
+
+    const vdotBlock = buildRealVdotBlock(vdotState);
+    if (vdotBlock) {
+      lines.push("");
+      lines.push("🎯 DANIELS-ZONEN:");
+      vdotBlock.split("\\n").forEach((l) => lines.push(l));
     }
 
     if (aiNarrative) {
