@@ -237,7 +237,7 @@ function computeTrainingVdotFromActivities(activities, todayIso, maxHr) {
   const cutoff = isoDate(new Date(new Date(anchor).getTime() - 28 * 86400000));
   const estimates = [];
   for (const a of activities) {
-    if (!isRun(a) || isRaceActivity(a)) continue;
+    if (!isRun(a) || isRaceActivity(a) || isTreadmill(a)) continue;
     const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (day < cutoff || day > anchor) continue;
     const v = _vdotFromTrainingActivity(a, maxHr);
