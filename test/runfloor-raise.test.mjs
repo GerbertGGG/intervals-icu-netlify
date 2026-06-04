@@ -61,22 +61,47 @@ function evaluate({
   assert.equal(out.floorTarget, 132);
 }
 
-// 3) SOFT Raise trotz nicht perfektem, aber stabilem Zustand (YELLOW)
+// 3) SOFT Raise bei GREEN mit Ruhetagen – Ruhetage (load=0) sollen Stabilität nicht blockieren
 {
+  // 4 Läufe/Woche à 18 TSS, 3 Ruhetage/Woche → avg7 = 72/7 ≈ 10.3 → GREEN
+  // gapThreshold = 10 * 0.25 = 2.5 → Ruhetage (0) zählen NICHT als Lücke (d > 0 Bedingung)
+  const loadsWithRestDays = [
+    18, 0, 18, 0, 18, 18, 0, // Woche 1
+    18, 0, 18, 0, 18, 18, 0, // Woche 2
+    18, 0, 18, 0, 18, 18, 0, // Woche 3 (letzte 7 Tage: avg = 72/7 ≈ 10.3)
+  ];
   const out = evaluate({
     phase: "BASE",
-    floorTarget: 70, // floorDaily=10
+    floorTarget: 70, // floorDaily = 10
     previousState: {
       floorTarget: 70,
       lastFloorIncreaseDate: "2026-03-10",
       lastDeloadCompletedISO: null,
     },
-    dailyRunLoads: Array(21).fill(9.4), // BASE soft-dip yellow (>= 9.3)
+    dailyRunLoads: loadsWithRestDays,
   });
-  assert.equal(out.floorLevel, "YELLOW");
+  assert.equal(out.floorLevel, "GREEN");
+  assert.equal(out.stabilityOK, true); // Ruhetage zählen nicht als Gap
   assert.equal(out.floorRaiseMode, "SOFT");
   assert.equal(out.floorRaiseStep, 6); // round(70 * 0.08) = round(5.6) = 6
   assert.equal(out.floorTarget, 76);
+}
+
+// 3b) BLOCK bei YELLOW – kein Raise wenn avg7 unter floorDaily
+{
+  const out = evaluate({
+    phase: "BASE",
+    floorTarget: 70,
+    previousState: {
+      floorTarget: 70,
+      lastFloorIncreaseDate: "2026-03-10",
+      lastDeloadCompletedISO: null,
+    },
+    dailyRunLoads: Array(21).fill(9.4), // BASE soft-dip YELLOW (>= 9.3, < 10)
+  });
+  assert.equal(out.floorLevel, "YELLOW");
+  assert.equal(out.floorRaiseMode, "BLOCK"); // kein Raise bei YELLOW
+  assert.equal(out.floorRaised, false);
 }
 
 // 4) BLOCK bei RED
