@@ -45,7 +45,9 @@ import runtimeBlockLogicCore from "./index-runtime/runtime-block-logic-core.js";
 import runtimeBlockLogicPolicies from "./index-runtime/runtime-block-logic-policies.js";
 import runtimeSyncEngine from "./index-runtime/runtime-sync-engine.js";
 import runtimeCommentaryAndAnalysis from "./index-runtime/runtime-commentary-and-analysis.js";
-import runtimeEffectivenessAnalysis from "./index-runtime/runtime-effectiveness-analysis.js";
+import runtimeEffectivenessStats from "./index-runtime/runtime-effectiveness-stats.js";
+import runtimePacePower from "./index-runtime/runtime-pace-power.js";
+import runtimeEffectivenessReport from "./index-runtime/runtime-effectiveness-report.js";
 import runtimeRecoveryLearning from "./index-runtime/runtime-recovery-learning.js";
 import runtimeIntegrationsAndHooks from "./index-runtime/runtime-integrations-and-hooks.js";
 import runtimeVdotZones from "./index-runtime/runtime-vdot-zones.js";
@@ -56,7 +58,9 @@ const source = [
   runtimeBlockLogicCore,
   runtimeBlockLogicPolicies,
   runtimeSyncEngine,
-  runtimeEffectivenessAnalysis,
+  runtimeEffectivenessStats,
+  runtimePacePower,
+  runtimeEffectivenessReport,
   runtimeRecoveryLearning,
   runtimeCommentaryAndAnalysis,
   runtimeIntegrationsAndHooks,
