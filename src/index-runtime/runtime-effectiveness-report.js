@@ -505,6 +505,7 @@ async function computeEffectivenessContext(env) {
     laggedEffects: computeLaggedKeyTypeEffect(weeks),
     sweetSpot: computeLoadSweetSpot(weeks),
     weekCount: weeks.length,
+    monotony: computeTrainingMonotony(weeks),
   };
 }
 
