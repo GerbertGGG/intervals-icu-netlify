@@ -486,7 +486,7 @@ async function computeAndAppendEffectivenessInsights(env, rep) {
       lines.push(aiNarrative);
     }
 
-    return { ...rep, text: lines.join("\\n"), effectivenessData: { laggedEffects, peaks, sweetSpot, execQuality } };
+    return { ...rep, text: lines.join("\\n") };
   } catch (_err) {
     return rep;
   }
