@@ -1,5 +1,6 @@
 import { clampInt, getSearchParamAny, json, parseBooleanParam } from "./http-helpers.js";
 import { diffDays, isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
+import { buildWeeklyProgressReport } from "./weekly-progress.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -81,6 +82,41 @@ export async function handleBackfillProfileRequest(url, env, ctx, deps) {
   );
 
   return json({ ok: true, scheduled: true, chunkOldest: oldest, chunkNewest, finalNewest, hasMore });
+}
+
+export async function handleWeeklyProgressRequest(url, env, ctx, deps) {
+  const { buildWeeklyProgressReport: buildReport } = deps;
+  const write = parseBooleanParam(url.searchParams, "write");
+  const debug = parseBooleanParam(url.searchParams, "debug");
+  const dateParam = url.searchParams.get("date");
+  const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
+
+  if (debug) {
+    try {
+      const result = await buildReport(env, todayIso, { write });
+      return json(result);
+    } catch (e) {
+      return json(
+        {
+          ok: false,
+          error: "Worker exception",
+          message: String(e?.message ?? e),
+          stack: String(e?.stack ?? ""),
+          todayIso,
+          write,
+        },
+        500
+      );
+    }
+  }
+
+  ctx?.waitUntil?.(
+    buildReport(env, todayIso, { write }).catch((e) => {
+      console.error("weekly progress job failed", e);
+    })
+  );
+
+  return json({ ok: true, todayIso, write });
 }
 
 function parseSyncRequest(searchParams) {

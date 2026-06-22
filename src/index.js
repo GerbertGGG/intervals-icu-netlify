@@ -1,6 +1,7 @@
-import { isoDate } from "./date-utils.js";
-import { handleSyncRequest, handleBackfillProfileRequest, withWorkerErrorBoundary } from "./request-handlers.js";
+import { isoDate, isMondayIso } from "./date-utils.js";
+import { handleSyncRequest, handleBackfillProfileRequest, handleWeeklyProgressRequest, withWorkerErrorBoundary } from "./request-handlers.js";
 import { syncRange } from "./sync.js";
+import { buildWeeklyProgressReport } from "./weekly-progress.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -39,6 +40,10 @@ export default {
       return withWorkerErrorBoundary(() => handleBackfillProfileRequest(url, env, ctx, { syncRange }));
     }
 
+    if (url.pathname === "/weekly-progress") {
+      return withWorkerErrorBoundary(() => handleWeeklyProgressRequest(url, env, ctx, { buildWeeklyProgressReport }));
+    }
+
     return new Response("Not found", { status: 404 });
   },
 
@@ -59,5 +64,13 @@ export default {
         console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
       }),
     );
+
+    if (isFirstRunOfDay && isMondayIso(today)) {
+      ctx.waitUntil(
+        buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
+          console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+        }),
+      );
+    }
   },
 };
