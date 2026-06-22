@@ -1,0 +1,85 @@
+import { isoDate, isMondayIso, daysBetween, listIsoDaysInclusive, clampStartDate } from "./date-utils.js";
+import { isARaceEvent } from "./event-utils.js";
+import { fetchIntervalsActivities, fetchIntervalsEvents, putWellnessDay } from "./intervals-client.js";
+import {
+  determineBlockState,
+  resolveBlockEvent,
+  readLatestBlockStateKv,
+  writeLatestBlockStateKv,
+  applyManualBlockStartOverride,
+} from "./block-phase.js";
+import { computeAndPersistRealVdot } from "./vdot.js";
+
+const FIELD_VDOT = "VDOT";
+const FIELD_BLOCK = "Block";
+const EVENT_LOOKAHEAD_DAYS = 365;
+const EVENT_LOOKBACK_DAYS = 40;
+const ACTIVITIES_LOOKBACK_DAYS = 180;
+
+async function fetchRaces(env, oldest, newest) {
+  const start = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - EVENT_LOOKBACK_DAYS * 86400000));
+  const end = isoDate(new Date(new Date(newest + "T00:00:00Z").getTime() + EVENT_LOOKAHEAD_DAYS * 86400000));
+  const events = await fetchIntervalsEvents(env, start, end);
+  const list = Array.isArray(events) ? events : Array.isArray(events?.events) ? events.events : [];
+  return list.filter((e) => isARaceEvent(e));
+}
+
+export async function syncRange(env, oldest, newest, write, debug, syncOptions = {}) {
+  const { raceStartOverrideIso = null, blockStartOverrideIso = null } = syncOptions;
+  const days = listIsoDaysInclusive(oldest, newest);
+  const activitiesOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - ACTIVITIES_LOOKBACK_DAYS * 86400000));
+  const activities = await fetchIntervalsActivities(env, activitiesOldest, newest);
+  const races = await fetchRaces(env, oldest, newest);
+
+  const results = [];
+  let previousBlockState = null;
+
+  for (const day of days) {
+    if (!previousBlockState) {
+      const prevDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 86400000));
+      previousBlockState = (await readLatestBlockStateKv(env, prevDay)) || (await readLatestBlockStateKv(env, day));
+    }
+
+    const { eventDate, eventDistance } = resolveBlockEvent(races, day);
+
+    let blockState = determineBlockState({ today: day, eventDate, eventDistance, previousState: previousBlockState });
+
+    if (raceStartOverrideIso && blockState.block === "RACE") {
+      const overrideStart = clampStartDate(raceStartOverrideIso, day, 3650);
+      if (overrideStart) {
+        blockState = { ...blockState, startDate: overrideStart, timeInBlockDays: Math.max(0, daysBetween(overrideStart, day)) };
+      }
+    }
+    if (blockStartOverrideIso) {
+      blockState = applyManualBlockStartOverride(blockState, blockStartOverrideIso, day);
+    }
+
+    const vdotResult = await computeAndPersistRealVdot(env, activities, { write, todayIso: day, isMondaySync: isMondayIso(day) });
+
+    const patch = { [FIELD_BLOCK]: blockState.block };
+    if (vdotResult?.vdot != null) {
+      patch[FIELD_VDOT] = Math.round((vdotResult.todayRunVdot ?? vdotResult.vdot) * 10) / 10;
+    }
+
+    if (write) {
+      await putWellnessDay(env, day, patch);
+      await writeLatestBlockStateKv(env, day, { block: blockState.block, wave: blockState.wave, startDate: blockState.startDate || day });
+    }
+
+    previousBlockState = { block: blockState.block, wave: blockState.wave, startDate: blockState.startDate || day };
+
+    results.push({
+      day,
+      block: blockState.block,
+      wave: blockState.wave,
+      weeksToEvent: blockState.weeksToEvent,
+      nextSuggestedBlock: blockState.nextSuggestedBlock,
+      reasons: debug ? blockState.reasons : undefined,
+      vdot: vdotResult?.vdot ?? null,
+      vdotSource: vdotResult?.source ?? null,
+      patch,
+    });
+  }
+
+  return { ok: true, oldest, newest, write, days: results };
+}
