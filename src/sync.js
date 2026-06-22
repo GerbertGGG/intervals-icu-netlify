@@ -34,7 +34,9 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
   const results = [];
   let previousBlockState = null;
 
-  for (const day of days) {
+  for (let i = 0; i < days.length; i++) {
+    const day = days[i];
+    const isLastDay = i === days.length - 1;
     if (!previousBlockState) {
       const prevDay = isoDate(new Date(new Date(day + "T00:00:00Z").getTime() - 86400000));
       previousBlockState = (await readLatestBlockStateKv(env, prevDay)) || (await readLatestBlockStateKv(env, day));
@@ -54,7 +56,15 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       blockState = applyManualBlockStartOverride(blockState, blockStartOverrideIso, day);
     }
 
-    const vdotResult = await computeAndPersistRealVdot(env, activities, { write, todayIso: day, isMondaySync: isMondayIso(day) });
+    // Only the last day's state needs to land in KV: it's a "latest known state" cache
+    // that seeds the next, separate sync invocation. Writing it on every day of a
+    // multi-day range hits Cloudflare KV's per-key write rate limit (429) during backfills.
+    const vdotResult = await computeAndPersistRealVdot(env, activities, {
+      write,
+      todayIso: day,
+      isMondaySync: isMondayIso(day),
+      persistLatest: write && isLastDay,
+    });
 
     const patch = { [FIELD_BLOCK]: blockState.block };
     if (vdotResult?.vdot != null) {
@@ -63,6 +73,8 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
 
     if (write) {
       await putWellnessDay(env, day, patch);
+    }
+    if (write && isLastDay) {
       await writeLatestBlockStateKv(env, day, { block: blockState.block, wave: blockState.wave, startDate: blockState.startDate || day });
     }
 
