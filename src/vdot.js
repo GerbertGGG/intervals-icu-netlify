@@ -111,20 +111,25 @@ function medianOf(values) {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-function computeTrainingVdotFromActivities(activities, todayIso, maxHr) {
+// Median training VDOT estimate from non-race runs within [fromIso, toIso] (inclusive).
+export function estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr) {
   if (!Array.isArray(activities) || !(maxHr > 100)) return null;
-  const anchor = todayIso || isoDate(new Date());
-  const cutoff = isoDate(new Date(new Date(anchor).getTime() - 28 * 86400000));
   const estimates = [];
   for (const a of activities) {
     if (!isRun(a) || isRaceActivity(a) || isTreadmill(a)) continue;
     const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-    if (day < cutoff || day > anchor) continue;
+    if (day < fromIso || day > toIso) continue;
     const v = _vdotFromTrainingActivity(a, maxHr);
     if (v != null) estimates.push(v);
   }
   const m = medianOf(estimates);
   return m != null ? Math.round(m * 10) / 10 : null;
+}
+
+function computeTrainingVdotFromActivities(activities, todayIso, maxHr) {
+  const anchor = todayIso || isoDate(new Date());
+  const cutoff = isoDate(new Date(new Date(anchor).getTime() - 28 * 86400000));
+  return estimateTrainingVdotForWindow(activities, cutoff, anchor, maxHr);
 }
 
 async function loadRealVdotState(env) {
@@ -162,6 +167,29 @@ async function saveCachedPaceBench(env, data) {
   } catch {}
 }
 
+// Resolves max HR via (in order): env override, KV cache, live API fetch (write-mode
+// only), highest observed max_heartrate, or a heuristic from the highest average HR.
+export async function resolveMaxHr(env, activities, { write = false } = {}) {
+  let maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || null;
+  if (maxHr) return maxHr;
+
+  maxHr = await loadCachedMaxHr(env).catch(() => null);
+  if (maxHr) return maxHr;
+
+  if (write) maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
+  if (maxHr) return maxHr;
+
+  maxHr = _estimateMaxHrFromActivities(activities) || null;
+  if (maxHr) return maxHr;
+
+  let highestAvg = 0;
+  for (const a of activities || []) {
+    const hr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0);
+    if (hr > highestAvg) highestAvg = hr;
+  }
+  return highestAvg > 80 ? Math.round(highestAvg * 1.2) : null;
+}
+
 // ─── Main: compute & persist real VDOT ───────────────────────────────────────
 // Returns { vdot, source, todayRunVdot } or { vdot: null } if nothing available.
 export async function computeAndPersistRealVdot(env, activities, options = {}) {
@@ -172,22 +200,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
 
   // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
   let trainVdot = null;
-  let maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || null;
-  if (!maxHr) {
-    maxHr = await loadCachedMaxHr(env).catch(() => null);
-    if (!maxHr) {
-      if (write) maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
-      if (!maxHr) maxHr = _estimateMaxHrFromActivities(activities) || null;
-      if (!maxHr) {
-        let highestAvg = 0;
-        for (const a of activities || []) {
-          const hr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0);
-          if (hr > highestAvg) highestAvg = hr;
-        }
-        if (highestAvg > 80) maxHr = Math.round(highestAvg * 1.2);
-      }
-    }
-  }
+  const maxHr = await resolveMaxHr(env, activities, { write });
   if (maxHr) {
     trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
   }

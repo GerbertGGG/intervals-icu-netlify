@@ -73,6 +73,82 @@ export async function putWellnessDay(env, day, patch) {
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
 
+// Returns null if the athlete has no wellness row for that day (e.g. 404) instead
+// of throwing, since that's an expected/normal state, not a failure.
+export async function fetchIntervalsWellnessDay(env, day) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `wellness GET ${day}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function createIntervalsEvent(env, eventObj) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/events`;
+  const r = await fetchWithRetry(
+    url,
+    {
+      method: "POST",
+      headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
+      body: JSON.stringify(eventObj),
+    },
+    "events POST",
+  );
+  if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+export async function updateIntervalsEvent(env, eventId, eventObj) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/events/${encodeURIComponent(String(eventId))}`;
+  const r = await fetchWithRetry(
+    url,
+    {
+      method: "PUT",
+      headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
+      body: JSON.stringify(eventObj),
+    },
+    `events PUT ${eventId}`,
+  );
+  if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
+function toNoteDescription(text) {
+  return String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .join("<br />\n");
+}
+
+// Creates or updates a NOTE calendar event, matched by external_id within that day.
+// No-ops if the existing note already has the same description (avoids needless PUTs).
+export async function upsertIntervalsNote(env, { dayIso, externalId, name, description, color = "blue" }) {
+  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
+  const list = Array.isArray(events) ? events : Array.isArray(events?.events) ? events.events : [];
+  const existing = list.find((e) => String(e?.external_id || "") === externalId) || null;
+
+  const body = {
+    category: "NOTE",
+    start_date_local: `${dayIso}T00:00:00`,
+    name,
+    description: toNoteDescription(description),
+    color,
+    external_id: externalId,
+  };
+
+  if (existing?.id) {
+    if (String(existing?.description || "") === body.description) return { id: existing.id, updated: false };
+    await updateIntervalsEvent(env, existing.id, body);
+    return { id: existing.id, updated: true };
+  }
+
+  const created = await createIntervalsEvent(env, body);
+  return { id: created?.id ?? null, updated: true, created: true };
+}
+
 const MAX_HR_KV_PREFIX = "vdot:maxhr:";
 const MAX_HR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 

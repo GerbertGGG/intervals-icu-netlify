@@ -9,7 +9,8 @@ erzeugt tägliche und montägliche NOTE-Events und liefert ein kompaktes Watchfa
 Hauptfunktionen:
 - `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
-- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin), prüft nur den heutigen Tag und aktualisiert nur den NOTE-Abschnitt „HEUTIGER LAUF“ (Rest bleibt vom 07:00-Basislauf); geschrieben wird nur, wenn seit dem letzten Crawl eine Änderung in den heutigen Lauf-IDs erkannt wurde
+- `/weekly-progress`: vergleicht jeden Montag die letzte vollständige Woche mit der Vorwoche (VDOT/CTL/ATL/TSB/Load) und schreibt eine NOTE mit Urteil (besser/schlechter/stabil) + Trainingsempfehlung
+- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin), prüft nur den heutigen Tag und aktualisiert nur den NOTE-Abschnitt „HEUTIGER LAUF“ (Rest bleibt vom 07:00-Basislauf); geschrieben wird nur, wenn seit dem letzten Crawl eine Änderung in den heutigen Lauf-IDs erkannt wurde; montags zusätzlich automatischer Wochenvergleich (siehe 15)
 
 Pro verarbeitetem Tag:
 - Wellness-Kommentar wird geleert (`comments = ""`)
@@ -121,6 +122,15 @@ Beispiele:
 - Schneller Health-Check:
   - `curl -i https://intervals-icu-netlify.<ACCOUNT_SUBDOMAIN>.workers.dev/`
   - Erwartung: HTTP 200 und Body `ok`
+
+4.6 Weekly Progress (Wochenvergleich)
+- `GET /weekly-progress`
+- Parameter:
+  - `write=true|false` (Default `false`): `true` schreibt die NOTE „Wochenvergleich“ und persistiert einen Verlaufseintrag in KV
+  - `debug=true|false` (Default `false`): `true` liefert synchron das volle JSON (`curr`, `prev`, `comparison`, `verdict`, `reportText`); `false` läuft asynchron via `waitUntil` und antwortet sofort
+  - `date=YYYY-MM-DD` (optional, Default heute): Anker-Tag, von dem aus rückwärts die letzte vollständige Mo–So-Woche bestimmt wird
+- Details zur Logik siehe Abschnitt 15.
+
 5) SCHEDULED TRIGGER
 --------------------
 `scheduled()` verarbeitet:
@@ -397,5 +407,53 @@ Motor     = Trendscore aus EF/Drift-Entwicklung
 Monotony  = mean(load) / std(load) über Tageslasten
 Strain    = monotony * weekly load
 ACWR      = acute/chronic workload ratio
+
+15) WOCHENVERGLEICH (WEEKLY PROGRESS)
+--------------------------------------
+Endpoint `/weekly-progress` (siehe 4.6) vergleicht die letzte vollständig
+abgeschlossene Woche (Mo–So) mit der Vorwoche und liefert ein Urteil
+(„besser/schlechter/stabil geworden") inkl. Begründung und Trainingsempfehlung.
+
+Automatischer Trigger:
+- läuft innerhalb des `scheduled()`-Basislaufs um 07:00 Berlin, aber nur montags
+  (`isMondayIso(today)`), zusätzlich zum normalen Tages-Sync
+- intern mit `write=true` (NOTE + KV-Historie werden geschrieben)
+
+Datengrundlage pro Woche:
+- Aktivitäten (Load, Bewegungszeit, Distanz, Einheiten/Läufe) aus `/activities`
+- Wellness (CTL/ATL/Ramp Rate) zum Wochenende; falls am exakten Wochenende kein
+  Wellness-Eintrag existiert, Fallback bis zu 3 Tage zurück
+- VDOT: Median aus HR-kalibrierten Trainingsläufen der Woche (kein Rennen, kein
+  Laufband); HR-Kalibrierung nutzt `%VO2max ≈ 1.154 × %HRmax − 0.15`
+- maxHR-Auflösung (Reihenfolge): Env-Override -> KV-Cache -> Live-API-Fetch
+  (nur bei `write=true`) -> höchste beobachtete `max_heartrate` -> Heuristik aus
+  höchster `average_heartrate`
+
+Urteilslogik (`BESSER` / `SCHLECHTER` / `STABIL` / `UNKLAR`):
+- VDOT-Delta und CTL-Delta sind die beiden gleichgewichteten Signale
+  (Schwellen: VDOT `>= +-0.3`, CTL `>= +-1`)
+- `UNKLAR`, wenn für beide kein Wert verfügbar ist (z. B. zu wenige auswertbare Läufe)
+- TSB und Ramp Rate fließen nicht ins Urteil selbst, sondern als
+  Ermüdungsrisiko-Modulator in die Empfehlung
+
+Empfehlung (`buildRecommendation`):
+- abhängig von Urteil + Ermüdungslage (TSB < -20 oder Ramp Rate > 8/Woche = hohe Ermüdung)
+- Beispiele: Entlastung trotz BESSER bei hoher Ermüdung; klare Reduktion (Umfang
+  ca. -20–30%) bei SCHLECHTER + hoher Ermüdung; moderate Steigerung bei BESSER
+  ohne Ermüdungsrisiko
+
+NOTE „Wochenvergleich“:
+- `category: NOTE`
+- `name: Wochenvergleich`
+- `external_id: weekly-progress-<Wochenstart-ISO>`
+- `start_date_local: YYYY-MM-DDT00:00:00` (Anker-Tag)
+- `color`: grün (BESSER) / rot (SCHLECHTER) / orange (STABIL/UNKLAR)
+- `description`: Kennzahlen-Block (VDOT/CTL/ATL/TSB/Ramp Rate/Umfang/Load/Einheiten),
+  Begründung, Empfehlung, ggf. aktueller Trainingsblock
+
+KV-Historie:
+- Key: `weeklyprogress:history:<ATHLETE_ID>`
+- bis zu 12 Wochen, sortiert nach Wochenstart; erneuter Lauf für dieselbe Woche
+  ersetzt den bestehenden Eintrag (idempotent)
 
 ENDE
