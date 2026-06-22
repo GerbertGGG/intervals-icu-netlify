@@ -165,7 +165,7 @@ async function saveCachedPaceBench(env, data) {
 // ─── Main: compute & persist real VDOT ───────────────────────────────────────
 // Returns { vdot, source, todayRunVdot } or { vdot: null } if nothing available.
 export async function computeAndPersistRealVdot(env, activities, options = {}) {
-  const { write = false, todayIso = null, isMondaySync = false } = options;
+  const { write = false, todayIso = null, isMondaySync = false, persistLatest = write } = options;
 
   // 1) Race-based VDOT from activities (free – data already loaded)
   const raceResult = computeRaceVdot(activities, todayIso);
@@ -253,7 +253,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
 
   const result = { vdot: currentVdot, source, todayRunVdot };
 
-  if (write) {
+  if (persistLatest) {
     await saveRealVdotState(env, { ...result, updatedAt: new Date().toISOString() }).catch(() => {});
   }
 
