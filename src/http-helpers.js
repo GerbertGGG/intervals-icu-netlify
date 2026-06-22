@@ -1,31 +1,5 @@
-export const WATCHFACE_PREFLIGHT_HEADERS = {
-  "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, OPTIONS",
-  "access-control-allow-headers": "content-type",
-  "access-control-max-age": "86400",
-};
-
-export const WATCHFACE_JSON_HEADERS = {
-  "content-type": "application/json; charset=utf-8",
-  "cache-control": "no-store",
-  "access-control-allow-origin": "*",
-};
-
-export const WATCHFACE_ERROR_HEADERS = {
-  "content-type": "application/json; charset=utf-8",
-  "access-control-allow-origin": "*",
-};
-
-export const REPORT_VERBOSITY_VALUES = new Set(["coach", "diagnose", "debug"]);
-
 export function parseBooleanParam(searchParams, key) {
   return (searchParams.get(key) || "").toLowerCase() === "true";
-}
-
-export function parseReportVerbosity(searchParams, { debug = false } = {}) {
-  const raw = String(searchParams.get("verbosity") || "").trim().toLowerCase();
-  if (REPORT_VERBOSITY_VALUES.has(raw)) return raw;
-  return debug ? "debug" : "coach";
 }
 
 export function getSearchParamAny(searchParams, keys) {

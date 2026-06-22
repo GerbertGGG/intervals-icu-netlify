@@ -1,153 +1,63 @@
-import {
-  clampInt,
-  json,
-} from "./http-helpers.js";
-import { diffDays, isIsoDate, isoDate, isoDateBerlin } from "./date-utils.js";
-import {
-  formatEventDistance,
-  getLifeEventCategoryLabel,
-  getLifeEventEffect,
-  getTriathlonDistanceTargets,
-  inferRaceDistanceLabel,
-  inferTriathlonDistanceLabel,
-  isARaceCategory,
-  isARaceEvent,
-  isLifeEventActiveOnDay,
-  isLifeEventCategory,
-  isTriathlonEvent,
-  normalizeEventCategory,
-  parseLifeEventBoundary,
-} from "./event-utils.js";
-import {
-  avg,
-  bucketLoadsByDay,
-  clamp,
-  countBy,
-  isMondayIso,
-  median,
-  pearsonCorrelation,
-  round,
-  safeRound,
-  std,
-  sum,
-  uniq,
-} from "./stats-utils.js";
-import {
-  handleSyncRequest,
-  handleWatchfaceRequest,
-  handleWeeklyMailTestRequest,
-  isWatchfacePath,
-  isWeeklyMailTestPath,
-  withWorkerErrorBoundary,
-} from "./request-handlers.js";
-import runtimeConfigAndHelpers from "./index-runtime/runtime-config-and-helpers.js";
-import runtimeBlockLogicCore from "./index-runtime/runtime-block-logic-core.js";
-import runtimeBlockLogicPolicies from "./index-runtime/runtime-block-logic-policies.js";
-import runtimeSyncEngine from "./index-runtime/runtime-sync-engine.js";
-import runtimeCommentaryAndAnalysis from "./index-runtime/runtime-commentary-and-analysis.js";
-import runtimeEffectivenessStats from "./index-runtime/runtime-effectiveness-stats.js";
-import runtimePacePower from "./index-runtime/runtime-pace-power.js";
-import runtimeEffectivenessReport from "./index-runtime/runtime-effectiveness-report.js";
-import runtimeRecoveryLearning from "./index-runtime/runtime-recovery-learning.js";
-import runtimeIntegrationsAndHooks from "./index-runtime/runtime-integrations-and-hooks.js";
-import runtimeVdotZones from "./index-runtime/runtime-vdot-zones.js";
+import { isoDate } from "./date-utils.js";
+import { handleSyncRequest, handleBackfillProfileRequest, withWorkerErrorBoundary } from "./request-handlers.js";
+import { syncRange } from "./sync.js";
 
-const source = [
-  runtimeVdotZones,
-  runtimeConfigAndHelpers,
-  runtimeBlockLogicCore,
-  runtimeBlockLogicPolicies,
-  runtimeSyncEngine,
-  runtimeEffectivenessStats,
-  runtimePacePower,
-  runtimeEffectivenessReport,
-  runtimeRecoveryLearning,
-  runtimeCommentaryAndAnalysis,
-  runtimeIntegrationsAndHooks,
-].join("");
+function getBerlinHourFromScheduledEvent(event) {
+  const t = Number(event?.scheduledTime);
+  if (!Number.isFinite(t)) return null;
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" }).format(new Date(t)),
+  );
+  return Number.isFinite(hour) ? hour : null;
+}
 
-const runtime = new Function(
-  "clampInt",
-  "json",
-  "diffDays",
-  "isIsoDate",
-  "isoDate",
-  "isoDateBerlin",
-  "formatEventDistance",
-  "getLifeEventCategoryLabel",
-  "getLifeEventEffect",
-  "getTriathlonDistanceTargets",
-  "inferRaceDistanceLabel",
-  "inferTriathlonDistanceLabel",
-  "isARaceCategory",
-  "isARaceEvent",
-  "isLifeEventActiveOnDay",
-  "isLifeEventCategory",
-  "isTriathlonEvent",
-  "normalizeEventCategory",
-  "parseLifeEventBoundary",
-  "avg",
-  "bucketLoadsByDay",
-  "clamp",
-  "countBy",
-  "isMondayIso",
-  "median",
-  "pearsonCorrelation",
-  "round",
-  "safeRound",
-  "std",
-  "sum",
-  "uniq",
-  "handleSyncRequest",
-  "handleWatchfaceRequest",
-  "handleWeeklyMailTestRequest",
-  "isWatchfacePath",
-  "isWeeklyMailTestPath",
-  "withWorkerErrorBoundary",
-  `${source}
-return { defaultExport: __default_export__, __test, __internalTestHooksForRepoTestsOnly };`
-);
+function getBerlinMinuteFromScheduledEvent(event) {
+  const t = Number(event?.scheduledTime);
+  if (!Number.isFinite(t)) return null;
+  const minute = Number(
+    new Intl.DateTimeFormat("en-GB", { minute: "2-digit", hour12: false, timeZone: "Europe/Berlin" }).format(new Date(t)),
+  );
+  return Number.isFinite(minute) ? minute : null;
+}
 
-const exportsFromRuntime = runtime(
-  clampInt,
-  json,
-  diffDays,
-  isIsoDate,
-  isoDate,
-  isoDateBerlin,
-  formatEventDistance,
-  getLifeEventCategoryLabel,
-  getLifeEventEffect,
-  getTriathlonDistanceTargets,
-  inferRaceDistanceLabel,
-  inferTriathlonDistanceLabel,
-  isARaceCategory,
-  isARaceEvent,
-  isLifeEventActiveOnDay,
-  isLifeEventCategory,
-  isTriathlonEvent,
-  normalizeEventCategory,
-  parseLifeEventBoundary,
-  avg,
-  bucketLoadsByDay,
-  clamp,
-  countBy,
-  isMondayIso,
-  median,
-  pearsonCorrelation,
-  round,
-  safeRound,
-  std,
-  sum,
-  uniq,
-  handleSyncRequest,
-  handleWatchfaceRequest,
-  handleWeeklyMailTestRequest,
-  isWatchfacePath,
-  isWeeklyMailTestPath,
-  withWorkerErrorBoundary
-);
+function isScheduledWindowBerlin(event) {
+  const hour = getBerlinHourFromScheduledEvent(event);
+  return Number.isFinite(hour) && hour >= 7 && hour <= 21;
+}
 
-export default exportsFromRuntime.defaultExport;
-export const __test = exportsFromRuntime.__test;
-export const __internalTestHooksForRepoTestsOnly = exportsFromRuntime.__internalTestHooksForRepoTestsOnly;
+export default {
+  async fetch(req, env, ctx) {
+    const url = new URL(req.url);
+
+    if (url.pathname === "/") return new Response("ok");
+
+    if (url.pathname === "/sync") {
+      return handleSyncRequest(url, env, ctx, { syncRange });
+    }
+
+    if (url.pathname === "/backfill-profile") {
+      return withWorkerErrorBoundary(() => handleBackfillProfileRequest(url, env, { syncRange }));
+    }
+
+    return new Response("Not found", { status: 404 });
+  },
+
+  async scheduled(event, env, ctx) {
+    // Cron fires every 30 min, but we only sync/write 07:00–21:00 Berlin time.
+    if (!isScheduledWindowBerlin(event)) return;
+
+    const today = isoDate(new Date());
+    const berlinHour = getBerlinHourFromScheduledEvent(event);
+    const berlinMinute = getBerlinMinuteFromScheduledEvent(event);
+    // The window starts at 07:00 and the cron never fires between 21:00 and 07:00,
+    // so the first run of the day also re-syncs yesterday to catch late-evening runs.
+    const isFirstRunOfDay = berlinHour === 7 && berlinMinute !== null && berlinMinute < 30;
+    const oldest = isFirstRunOfDay ? isoDate(new Date(Date.now() - 86400000)) : today;
+
+    ctx.waitUntil(
+      syncRange(env, oldest, today, true, false, {}).catch((e) => {
+        console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+      }),
+    );
+  },
+};

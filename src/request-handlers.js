@@ -1,23 +1,5 @@
-import {
-  REPORT_VERBOSITY_VALUES,
-  WATCHFACE_ERROR_HEADERS,
-  WATCHFACE_JSON_HEADERS,
-  WATCHFACE_PREFLIGHT_HEADERS,
-  clampInt,
-  getSearchParamAny,
-  json,
-  parseBooleanParam,
-  parseReportVerbosity,
-} from "./http-helpers.js";
-import { diffDays, isIsoDate, isoDate, isoDateBerlin } from "./date-utils.js";
-
-export function isWatchfacePath(pathname) {
-  return pathname === "/watchface" || pathname === "/watchface/";
-}
-
-export function isWeeklyMailTestPath(pathname) {
-  return pathname === "/test-strength-mail" || pathname === "/test-weekly-email";
-}
+import { clampInt, getSearchParamAny, json, parseBooleanParam } from "./http-helpers.js";
+import { diffDays, isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -35,143 +17,57 @@ export async function withWorkerErrorBoundary(fn) {
   }
 }
 
-export async function handleWatchfaceRequest(req, url, env, deps) {
-  const { buildWatchfacePayload } = deps;
-  if (req.method === "OPTIONS") {
-    return new Response("", {
-      status: 204,
-      headers: WATCHFACE_PREFLIGHT_HEADERS,
-    });
-  }
-
-  const date = url.searchParams.get("date");
-  const endIso = date && isIsoDate(date) ? date : isoDateBerlin(new Date());
-
-  try {
-    const payload = await buildWatchfacePayload(env, endIso);
-    return new Response(JSON.stringify(payload), {
-      headers: WATCHFACE_JSON_HEADERS,
-    });
-  } catch (e) {
-    return new Response(
-      JSON.stringify({
-        ok: false,
-        error: "watchface_failed",
-        message: String(e?.message ?? e),
-        endIso,
-      }),
-      {
-        status: 500,
-        headers: WATCHFACE_ERROR_HEADERS,
-      }
-    );
-  }
-}
-
 export async function handleSyncRequest(url, env, ctx, deps) {
   const { syncRange } = deps;
   const syncRequest = parseSyncRequest(url.searchParams);
   if (!syncRequest.ok) return syncRequest.response;
 
-  const {
-    write,
-    debug,
-    reportVerbosity,
-    oldest,
-    newest,
-    warmupSkipSec,
-    raceStartOverrideIso,
-    blockStartOverrideIso,
-    blockStartOverrideDerivedFromOldest,
-    manualFocus,
-  } = syncRequest;
-
-  const syncOptions = {
-    raceStartOverrideIso,
-    blockStartOverrideIso,
-    blockStartOverrideDerivedFromOldest,
-    reportVerbosity,
-    manualFocus,
-  };
+  const { write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso } = syncRequest;
+  const syncOptions = { raceStartOverrideIso, blockStartOverrideIso };
 
   if (debug) {
-    return runSyncDebugMode(env, {
-      oldest,
-      newest,
-      write,
-      warmupSkipSec,
-      syncOptions,
-      raceStartOverrideIso,
-      blockStartOverrideIso,
-      blockStartOverrideDerivedFromOldest,
-      manualFocus,
-      syncRange,
-    });
+    return runSyncDebugMode(env, { oldest, newest, write, syncOptions, syncRange });
   }
 
   ctx?.waitUntil?.(
     (async () => {
-      await syncRange(env, oldest, newest, write, false, warmupSkipSec, syncOptions);
+      await syncRange(env, oldest, newest, write, false, syncOptions);
     })().catch((e) => {
-      console.error("sync/model job failed", e);
+      console.error("sync job failed", e);
     })
   );
 
-  return json({
-    ok: true,
-    oldest,
-    newest,
-    write,
-    warmupSkipSec,
-    raceStartOverrideIso,
-    blockStartOverrideIso,
-    blockStartOverrideDerivedFromOldest,
-    reportVerbosity,
-    manualFocus,
-  });
+  return json({ ok: true, oldest, newest, write, raceStartOverrideIso, blockStartOverrideIso });
 }
 
-export async function handleWeeklyMailTestRequest(url, env, deps) {
-  const { sendWeeklyStrengthMail } = deps;
-  const dryRun = parseBooleanParam(url.searchParams, "dry") || parseBooleanParam(url.searchParams, "dry_run");
-  const blockRaw = String(url.searchParams.get("block") || "BASE").toUpperCase();
-  const allowedBlocks = new Set(["BASE", "BUILD", "RACE", "RESET"]);
-  const block = allowedBlocks.has(blockRaw) ? blockRaw : "BASE";
-  const strengthCountThisWeek = clampInt(url.searchParams.get("strength_count") ?? "0", 0, 20);
-  const toOverride = String(url.searchParams.get("to") || "").trim() || null;
+export async function handleBackfillProfileRequest(url, env, deps) {
+  const { syncRange } = deps;
+  const weeks = clampInt(url.searchParams.get("weeks") ?? "12", 1, 52);
+  const newest = isoDate(new Date());
+  const oldest = isoDate(new Date(Date.now() - weeks * 7 * 86400000));
+  const chunkDays = 14;
+  const allDays = listIsoDaysInclusive(oldest, newest);
 
-  const result = await sendWeeklyStrengthMail(
-    env,
-    { block },
-    strengthCountThisWeek,
-    { dryRun, toOverride }
-  );
-  return json({
-    ok: true,
-    endpoint: url.pathname,
-    dryRun,
-    block,
-    strengthCountThisWeek,
-    ...(toOverride ? { toOverride } : {}),
-    mail: result,
-  });
+  const chunks = [];
+  for (let i = 0; i < allDays.length; i += chunkDays) {
+    const chunkOldest = allDays[i];
+    const chunkNewest = allDays[Math.min(i + chunkDays - 1, allDays.length - 1)];
+    const result = await syncRange(env, chunkOldest, chunkNewest, true, false, {});
+    chunks.push({ oldest: chunkOldest, newest: chunkNewest, days: result.days.length });
+  }
+
+  return json({ ok: true, weeks, oldest, newest, chunks });
 }
 
 function parseSyncRequest(searchParams) {
   const write = parseBooleanParam(searchParams, "write");
   const debug = parseBooleanParam(searchParams, "debug");
-  const reportVerbosity = parseReportVerbosity(searchParams, { debug });
 
   const date = searchParams.get("date");
   const from = searchParams.get("from");
   const to = searchParams.get("to");
   const days = clampInt(searchParams.get("days") ?? "14", 1, 31);
-  const manualFocusRaw = searchParams.get("focus") ?? null;
-  const manualFocus = ["kraft", "longrun", "frequenz", "erholung", "spezifik"].includes(manualFocusRaw)
-    ? manualFocusRaw
-    : null;
 
-  const warmupSkipSec = clampInt(searchParams.get("warmup_skip") ?? "600", 0, 1800);
   const raceStartParamRaw = getSearchParamAny(searchParams, [
     "race_start",
     "race_start_override",
@@ -187,8 +83,7 @@ function parseSyncRequest(searchParams) {
     "blockstart",
     "blockStart",
   ]);
-  let blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
-  let blockStartOverrideDerivedFromOldest = false;
+  const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
   let oldest;
   let newest;
@@ -212,7 +107,6 @@ function parseSyncRequest(searchParams) {
   if (diffDays(oldest, newest) > 31) {
     return { ok: false, response: json({ ok: false, error: "Max range is 31 days" }, 400) };
   }
-
   if (raceStartParamRaw && !raceStartOverrideIso) {
     return { ok: false, response: json({ ok: false, error: "Invalid race_start format (YYYY-MM-DD)" }, 400) };
   }
@@ -220,42 +114,13 @@ function parseSyncRequest(searchParams) {
     return { ok: false, response: json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400) };
   }
 
-  if (!write && debug && !blockStartOverrideIso) {
-    blockStartOverrideIso = oldest;
-    blockStartOverrideDerivedFromOldest = true;
-  }
-
-  return {
-    ok: true,
-    write,
-    debug,
-    reportVerbosity: REPORT_VERBOSITY_VALUES.has(reportVerbosity) ? reportVerbosity : "coach",
-    oldest,
-    newest,
-    warmupSkipSec,
-    raceStartOverrideIso,
-    blockStartOverrideIso,
-    blockStartOverrideDerivedFromOldest,
-    manualFocus,
-  };
+  return { ok: true, write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso };
 }
 
 async function runSyncDebugMode(env, options) {
-  const {
-    oldest,
-    newest,
-    write,
-    warmupSkipSec,
-    syncOptions,
-    raceStartOverrideIso,
-    blockStartOverrideIso,
-    blockStartOverrideDerivedFromOldest,
-    manualFocus,
-    syncRange,
-  } = options;
-
+  const { oldest, newest, write, syncOptions, syncRange } = options;
   try {
-    const result = await syncRange(env, oldest, newest, write, true, warmupSkipSec, syncOptions);
+    const result = await syncRange(env, oldest, newest, write, true, syncOptions);
     return json(result);
   } catch (e) {
     return json(
@@ -267,11 +132,6 @@ async function runSyncDebugMode(env, options) {
         oldest,
         newest,
         write,
-        warmupSkipSec,
-        raceStartOverrideIso,
-        blockStartOverrideIso,
-        blockStartOverrideDerivedFromOldest,
-        manualFocus,
       },
       500
     );
