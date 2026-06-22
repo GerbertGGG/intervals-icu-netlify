@@ -40,23 +40,47 @@ export async function handleSyncRequest(url, env, ctx, deps) {
   return json({ ok: true, oldest, newest, write, raceStartOverrideIso, blockStartOverrideIso });
 }
 
-export async function handleBackfillProfileRequest(url, env, deps) {
+// Cloudflare caps fetch() calls per Worker invocation ("subrequests"). A wide
+// weeks=N backfill needs more wellness PUTs than fit in one invocation, so each
+// call here only processes one safe slice, then schedules the next slice via a
+// self-fetch (a fresh invocation gets its own fresh subrequest budget) instead
+// of looping over the whole range synchronously.
+export async function handleBackfillProfileRequest(url, env, ctx, deps) {
   const { syncRange } = deps;
-  const weeks = clampInt(url.searchParams.get("weeks") ?? "12", 1, 52);
-  const newest = isoDate(new Date());
-  const oldest = isoDate(new Date(Date.now() - weeks * 7 * 86400000));
   const chunkDays = 14;
-  const allDays = listIsoDaysInclusive(oldest, newest);
 
-  const chunks = [];
-  for (let i = 0; i < allDays.length; i += chunkDays) {
-    const chunkOldest = allDays[i];
-    const chunkNewest = allDays[Math.min(i + chunkDays - 1, allDays.length - 1)];
-    const result = await syncRange(env, chunkOldest, chunkNewest, true, false, {});
-    chunks.push({ oldest: chunkOldest, newest: chunkNewest, days: result.days.length });
+  const continueOldest = url.searchParams.get("continue_oldest");
+  const continueNewest = url.searchParams.get("continue_newest");
+
+  let oldest;
+  let finalNewest;
+  if (continueOldest && continueNewest && isIsoDate(continueOldest) && isIsoDate(continueNewest)) {
+    oldest = continueOldest;
+    finalNewest = continueNewest;
+  } else {
+    const weeks = clampInt(url.searchParams.get("weeks") ?? "12", 1, 52);
+    finalNewest = isoDate(new Date());
+    oldest = isoDate(new Date(Date.now() - weeks * 7 * 86400000));
   }
 
-  return json({ ok: true, weeks, oldest, newest, chunks });
+  const remainingDays = listIsoDaysInclusive(oldest, finalNewest);
+  const chunkNewest = remainingDays[Math.min(chunkDays - 1, remainingDays.length - 1)];
+  const hasMore = chunkNewest < finalNewest;
+
+  ctx.waitUntil(
+    (async () => {
+      await syncRange(env, oldest, chunkNewest, true, false, {});
+      if (hasMore) {
+        const nextOldest = isoDate(new Date(new Date(chunkNewest + "T00:00:00Z").getTime() + 86400000));
+        const continueUrl = new URL(`${url.origin}${url.pathname}`);
+        continueUrl.searchParams.set("continue_oldest", nextOldest);
+        continueUrl.searchParams.set("continue_newest", finalNewest);
+        await fetch(continueUrl.toString()).catch((e) => console.error("backfill continuation failed", String(e?.message ?? e)));
+      }
+    })().catch((e) => console.error("backfill chunk failed", { oldest, chunkNewest, error: String(e?.message ?? e) })),
+  );
+
+  return json({ ok: true, scheduled: true, chunkOldest: oldest, chunkNewest, finalNewest, hasMore });
 }
 
 function parseSyncRequest(searchParams) {

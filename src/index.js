@@ -36,7 +36,7 @@ export default {
     }
 
     if (url.pathname === "/backfill-profile") {
-      return withWorkerErrorBoundary(() => handleBackfillProfileRequest(url, env, { syncRange }));
+      return withWorkerErrorBoundary(() => handleBackfillProfileRequest(url, env, ctx, { syncRange }));
     }
 
     return new Response("Not found", { status: 404 });
