@@ -2,7 +2,7 @@ import { isoDate, parseISODateSafe } from "./date-utils.js";
 import { isRun } from "./activity-utils.js";
 import { hasKv, readKvJson, writeKvJson, mustEnv } from "./kv.js";
 import { fetchIntervalsActivities, fetchIntervalsWellnessDay, upsertIntervalsNote } from "./intervals-client.js";
-import { resolveMaxHr, estimateTrainingVdotForWindow } from "./vdot.js";
+import { resolveMaxHr, estimateTrainingVdotForWindow, getCurrentRealVdot, paceTargetsFromVdot } from "./vdot.js";
 import { readLatestBlockStateKv } from "./block-phase.js";
 
 const HISTORY_KV_PREFIX = "weeklyprogress:history:";
@@ -229,7 +229,7 @@ const VERDICT_COLORS = {
   UNKLAR: "orange",
 };
 
-function buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictResult, blockState }) {
+function buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictResult, blockState, realVdot, paceTargets }) {
   const lines = [];
   lines.push(`📊 Wochenvergleich – ${VERDICT_LABELS[verdictResult.verdict]}`);
   lines.push(`Woche ${week.start} – ${week.end} vs. Vorwoche ${prevWeek.start} – ${prevWeek.end}`);
@@ -245,7 +245,17 @@ function buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictRes
   );
   lines.push(`- Load: ${prev.loadSum} → ${curr.loadSum} (${fmtSigned(cmp.pctLoad, 0)}%)`);
   lines.push(`- Einheiten: ${prev.sessionCount} → ${curr.sessionCount} (davon Läufe: ${curr.runSessionCount})`);
+  if (Number.isFinite(realVdot)) {
+    lines.push(`- Aktueller VDOT: ${fmt(realVdot)}`);
+  }
   lines.push("");
+  if (paceTargets) {
+    lines.push("PACEVORGABEN");
+    for (const t of paceTargets) {
+      lines.push(`- ${t.label}: ${t.pace || "–"}`);
+    }
+    lines.push("");
+  }
   lines.push("BEGRÜNDUNG");
   for (const r of verdictResult.reasons) lines.push(`- ${r}`);
   lines.push("");
@@ -286,8 +296,10 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const cmp = compareSnapshots(curr, prev);
   const verdictResult = buildVerdict(cmp, curr);
   const blockState = await readLatestBlockStateKv(env, todayIso).catch(() => null);
+  const realVdot = await getCurrentRealVdot(env).catch(() => null);
+  const paceTargets = paceTargetsFromVdot(realVdot ?? curr.vdot);
 
-  const reportText = buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictResult, blockState });
+  const reportText = buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictResult, blockState, realVdot, paceTargets });
 
   let note = null;
   if (write) {
@@ -321,5 +333,5 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
     await saveHistory(env, history);
   }
 
-  return { ok: true, todayIso, week, prevWeek, curr, prev, comparison: cmp, verdict: verdictResult, reportText, note };
+  return { ok: true, todayIso, week, prevWeek, curr, prev, comparison: cmp, verdict: verdictResult, realVdot, paceTargets, reportText, note };
 }
