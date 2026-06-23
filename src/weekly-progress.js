@@ -2,7 +2,14 @@ import { isoDate, parseISODateSafe } from "./date-utils.js";
 import { isRun } from "./activity-utils.js";
 import { hasKv, readKvJson, writeKvJson, mustEnv } from "./kv.js";
 import { fetchIntervalsActivities, fetchIntervalsWellnessDay, upsertIntervalsNote } from "./intervals-client.js";
-import { resolveMaxHr, estimateTrainingVdotForWindow, getCurrentRealVdot, paceTargetsFromVdot } from "./vdot.js";
+import {
+  resolveMaxHr,
+  estimateTrainingVdotForWindow,
+  getCurrentRealVdot,
+  paceTargetsFromVdot,
+  predictRaceTimesFromVdot,
+  getRaceCorrectionFactor,
+} from "./vdot.js";
 import { readLatestBlockStateKv } from "./block-phase.js";
 
 const HISTORY_KV_PREFIX = "weeklyprogress:history:";
@@ -128,6 +135,15 @@ function compareSnapshots(curr, prev) {
 const fmt = (v, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "–");
 const fmtSigned = (v, digits = 1) => (Number.isFinite(v) ? (v > 0 ? `+${v.toFixed(digits)}` : v.toFixed(digits)) : "–");
 
+function fmtTimeDeltaSeconds(deltaSecs) {
+  if (!Number.isFinite(deltaSecs) || deltaSecs === 0) return "±0s";
+  const sign = deltaSecs > 0 ? "+" : "-";
+  const abs = Math.abs(Math.round(deltaSecs));
+  const m = Math.floor(abs / 60);
+  const s = abs % 60;
+  return m > 0 ? `${sign}${m}:${String(s).padStart(2, "0")}` : `${sign}${s}s`;
+}
+
 // Rule-based verdict: VDOT trend is the primary "did performance improve" signal
 // (it's literally derived from pace+HR), CTL trend is the secondary "is training
 // building fitness" signal. Both are weighted equally since either can lead.
@@ -229,7 +245,21 @@ const VERDICT_COLORS = {
   UNKLAR: "orange",
 };
 
-function buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictResult, blockState, realVdot, paceTargets }) {
+function buildReportText({
+  todayIso,
+  week,
+  prevWeek,
+  curr,
+  prev,
+  cmp,
+  verdictResult,
+  blockState,
+  realVdot,
+  paceTargets,
+  currRaceTimes,
+  prevRaceTimes,
+  correctionFactor,
+}) {
   const lines = [];
   lines.push(`📊 Wochenvergleich – ${VERDICT_LABELS[verdictResult.verdict]}`);
   lines.push(`Woche ${week.start} – ${week.end} vs. Vorwoche ${prevWeek.start} – ${prevWeek.end}`);
@@ -248,11 +278,24 @@ function buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictRes
   if (Number.isFinite(realVdot)) {
     lines.push(`- Aktueller VDOT: ${fmt(realVdot)}`);
   }
+  if (Number.isFinite(correctionFactor) && correctionFactor !== 1) {
+    lines.push(`- Wettkampf-Korrekturfaktor: ${correctionFactor.toFixed(3)} (aus bisherigen Rennergebnissen)`);
+  }
   lines.push("");
   if (paceTargets) {
     lines.push("PACEVORGABEN");
     for (const t of paceTargets) {
       lines.push(`- ${t.label}: ${t.pace || "–"}`);
+    }
+    lines.push("");
+  }
+  if (currRaceTimes && prevRaceTimes) {
+    lines.push("PROGNOSE WETTKAMPFZEITEN (geschätzt aus VDOT)");
+    for (let i = 0; i < currRaceTimes.length; i++) {
+      const c = currRaceTimes[i];
+      const p = prevRaceTimes[i];
+      const dSecs = Number.isFinite(c.seconds) && Number.isFinite(p.seconds) ? c.seconds - p.seconds : null;
+      lines.push(`- ${c.label}: ${p.time || "–"} → ${c.time || "–"} (${dSecs != null ? fmtTimeDeltaSeconds(dSecs) : "–"})`);
     }
     lines.push("");
   }
@@ -297,9 +340,26 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const verdictResult = buildVerdict(cmp, curr);
   const blockState = await readLatestBlockStateKv(env, todayIso).catch(() => null);
   const realVdot = await getCurrentRealVdot(env).catch(() => null);
+  const correctionFactor = await getRaceCorrectionFactor(env).catch(() => 1);
   const paceTargets = paceTargetsFromVdot(realVdot ?? curr.vdot);
+  const currRaceTimes = predictRaceTimesFromVdot(realVdot ?? curr.vdot);
+  const prevRaceTimes = predictRaceTimesFromVdot(prev.vdot);
 
-  const reportText = buildReportText({ todayIso, week, prevWeek, curr, prev, cmp, verdictResult, blockState, realVdot, paceTargets });
+  const reportText = buildReportText({
+    todayIso,
+    week,
+    prevWeek,
+    curr,
+    prev,
+    cmp,
+    verdictResult,
+    blockState,
+    realVdot,
+    paceTargets,
+    currRaceTimes,
+    prevRaceTimes,
+    correctionFactor,
+  });
 
   let note = null;
   if (write) {
@@ -333,5 +393,21 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
     await saveHistory(env, history);
   }
 
-  return { ok: true, todayIso, week, prevWeek, curr, prev, comparison: cmp, verdict: verdictResult, realVdot, paceTargets, reportText, note };
+  return {
+    ok: true,
+    todayIso,
+    week,
+    prevWeek,
+    curr,
+    prev,
+    comparison: cmp,
+    verdict: verdictResult,
+    realVdot,
+    correctionFactor,
+    paceTargets,
+    currRaceTimes,
+    prevRaceTimes,
+    reportText,
+    note,
+  };
 }
