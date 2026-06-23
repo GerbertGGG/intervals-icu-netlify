@@ -144,6 +144,54 @@ async function loadRealVdotState(env) {
   }
 }
 
+// Reads the persisted "real" VDOT (latest known overall fitness, not a per-window
+// estimate) so callers like the weekly report can show it without recomputing.
+export async function getCurrentRealVdot(env) {
+  const state = await loadRealVdotState(env).catch(() => null);
+  const vdot = Number(state?.vdot);
+  return Number.isFinite(vdot) && vdot > 0 ? vdot : null;
+}
+
+// Inverts the VDOT VO2 formula to get velocity (m/min) for a given VO2 (ml/kg/min).
+function velocityFromVo2(vo2) {
+  const a = 0.000104;
+  const b = 0.182258;
+  const c = -(4.6 + vo2);
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const v = (-b + Math.sqrt(disc)) / (2 * a);
+  return v > 0 ? v : null;
+}
+
+function formatPacePerKm(velocityMPerMin) {
+  if (!Number.isFinite(velocityMPerMin) || velocityMPerMin <= 0) return null;
+  const secPerKm = Math.round(60000 / velocityMPerMin);
+  const min = Math.floor(secPerKm / 60);
+  const sec = secPerKm % 60;
+  return `${min}:${String(sec).padStart(2, "0")}/km`;
+}
+
+// Jack Daniels training pace zones, derived as the velocity at a fixed %VDOT
+// (VDOT approximates VO2max, so vo2_target = pct * vdot).
+const PACE_ZONES = [
+  { key: "easy", label: "Easy (E)", pct: 0.7 },
+  { key: "marathon", label: "Marathon (M)", pct: 0.84 },
+  { key: "threshold", label: "Threshold (T)", pct: 0.88 },
+  { key: "interval", label: "Interval (I)", pct: 0.975 },
+  { key: "repetition", label: "Repetition (R)", pct: 1.05 },
+];
+
+// Returns [{ key, label, pace }] pace targets per km for the given VDOT, or null.
+export function paceTargetsFromVdot(vdot) {
+  const v = Number(vdot);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return PACE_ZONES.map((zone) => ({
+    key: zone.key,
+    label: zone.label,
+    pace: formatPacePerKm(velocityFromVo2(zone.pct * v)),
+  }));
+}
+
 async function saveRealVdotState(env, state) {
   if (!hasKv(env)) return;
   try {
