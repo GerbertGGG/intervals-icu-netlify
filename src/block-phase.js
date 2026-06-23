@@ -90,7 +90,7 @@ export function getBlockDurationForDistance(block, eventDistance) {
 export function getNextBlock(block, wave, weeksToEvent) {
   if (block === "BASE") return "BUILD";
   if (block === "BUILD") {
-    if (wave === 1 && weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) return "RESET";
+    if (weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) return "RESET";
     return "RACE";
   }
   if (block === "RESET") {
