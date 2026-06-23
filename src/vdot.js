@@ -5,13 +5,22 @@ import { loadCachedMaxHr, fetchAndCacheMaxHr, fetchRunPaceBenchmarks } from "./i
 
 const REAL_VDOT_KV_PREFIX = "vdot:real:";
 const PACE_BENCH_KV_PREFIX = "vdot:pacebench:";
+const CORRECTION_KV_PREFIX = "vdot:correction:";
 const PACE_BENCH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const CORRECTION_MIN_FACTOR = 0.9;
+const CORRECTION_MAX_FACTOR = 1.1;
 
 function realVdotKvKey(env) {
   return `${REAL_VDOT_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;
 }
 function paceBenchKvKey(env) {
   return `${PACE_BENCH_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;
+}
+function correctionKvKey(env) {
+  return `${CORRECTION_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;
+}
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v));
 }
 
 function isTreadmill(a) {
@@ -61,6 +70,65 @@ function computeRaceVdot(activities, todayIso = null) {
     }
   }
   return best;
+}
+
+async function loadCorrectionState(env) {
+  if (!hasKv(env)) return null;
+  try {
+    return await readKvJson(env, correctionKvKey(env));
+  } catch {
+    return null;
+  }
+}
+
+async function saveCorrectionState(env, state) {
+  if (!hasKv(env)) return;
+  try {
+    await writeKvJson(env, correctionKvKey(env), state);
+  } catch {}
+}
+
+// Reads the persisted race-derived correction factor (1 = no correction). Applied as a
+// multiplier on training-based VDOT estimates to account for individual deviations
+// (pacing, race-day form) that the generic HR/pace formula can't see.
+export async function getRaceCorrectionFactor(env) {
+  const state = await loadCorrectionState(env).catch(() => null);
+  return Number.isFinite(state?.factor) ? state.factor : 1;
+}
+
+// When a new race appears, compares its VDOT against the training VDOT predicted from
+// the 14 days right before the race (i.e. "what we expected") and blends the resulting
+// ratio (clamped to ±10%) into the persisted correction factor via a 50/50 EMA, so a
+// single fluke race can't whiplash future estimates. Each race is only processed once
+// (tracked via lastRaceDate) so repeated syncs don't reinforce the same data point.
+async function updateRaceCorrectionFactor(env, activities, raceResult, maxHr) {
+  if (!raceResult?.vdot || !raceResult?.raceDate) return null;
+  const state = await loadCorrectionState(env).catch(() => null);
+  if (state?.lastRaceDate === raceResult.raceDate) return state;
+
+  const fromIso = isoDate(new Date(new Date(raceResult.raceDate).getTime() - 14 * 86400000));
+  const toIso = isoDate(new Date(new Date(raceResult.raceDate).getTime() - 86400000));
+  const predictedVdot = maxHr ? estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr) : null;
+
+  const prevFactor = Number.isFinite(state?.factor) ? state.factor : 1;
+  if (!predictedVdot) {
+    // No usable pre-race training data to compare against; mark the race as seen so we
+    // don't keep retrying it, but leave the factor untouched.
+    const newState = { factor: prevFactor, lastRaceDate: raceResult.raceDate, raceCount: state?.raceCount ?? 0 };
+    await saveCorrectionState(env, newState).catch(() => {});
+    return newState;
+  }
+
+  const rawFactor = clamp(raceResult.vdot / predictedVdot, CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR);
+  const blended = clamp(prevFactor * 0.5 + rawFactor * 0.5, CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR);
+  const newState = {
+    factor: Math.round(blended * 1000) / 1000,
+    lastRawFactor: Math.round(rawFactor * 1000) / 1000,
+    lastRaceDate: raceResult.raceDate,
+    raceCount: (state?.raceCount ?? 0) + 1,
+  };
+  await saveCorrectionState(env, newState).catch(() => {});
+  return newState;
 }
 
 function computeVdotFromPaceBenchmarks(runPace) {
@@ -192,6 +260,50 @@ export function paceTargetsFromVdot(vdot) {
   }));
 }
 
+const RACE_DISTANCES = [
+  { key: "5k", meters: 5000, label: "5 km" },
+  { key: "10k", meters: 10000, label: "10 km" },
+  { key: "hm", meters: 21097, label: "Halbmarathon" },
+  { key: "m", meters: 42195, label: "Marathon" },
+];
+
+function secondsToRaceTimeString(totalSeconds) {
+  if (!Number.isFinite(totalSeconds)) return null;
+  const s = Math.round(totalSeconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+// %VO2max depends on race duration, so predicting a race time from VDOT needs a
+// fixed-point iteration: guess t -> get %VO2max(t) -> get required velocity -> get a
+// better t = distance/velocity, repeat until it converges (a handful of iterations).
+function predictRaceTimeSeconds(vdot, distanceMeters) {
+  const v = Number(vdot);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  let t = (distanceMeters / 1000) * 4; // initial guess: ~4 min/km
+  for (let i = 0; i < 12; i++) {
+    const pctVo2max = 0.8 + 0.1894393 * Math.exp(-0.012778 * t) + 0.2989558 * Math.exp(-0.1932605 * t);
+    const vo2 = v * pctVo2max;
+    const velocity = velocityFromVo2(vo2);
+    if (!velocity) return null;
+    t = distanceMeters / velocity;
+  }
+  return Number.isFinite(t) ? Math.round(t * 60) : null;
+}
+
+// Returns [{ key, label, meters, seconds, time }] predicted race times for the
+// standard distances (5k/10k/HM/M) at the given VDOT, or null.
+export function predictRaceTimesFromVdot(vdot) {
+  const v = Number(vdot);
+  if (!Number.isFinite(v) || v <= 0) return null;
+  return RACE_DISTANCES.map((d) => {
+    const secs = predictRaceTimeSeconds(v, d.meters);
+    return { key: d.key, label: d.label, meters: d.meters, seconds: secs, time: secondsToRaceTimeString(secs) };
+  });
+}
+
 async function saveRealVdotState(env, state) {
   if (!hasKv(env)) return;
   try {
@@ -249,9 +361,20 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 1) Race-based VDOT from activities (free – data already loaded)
   const raceResult = computeRaceVdot(activities, todayIso);
 
+  // 1b) Race-derived correction factor for training-based estimates (see
+  // updateRaceCorrectionFactor for rationale). Only advanced on writes so read-only
+  // calls don't process the same race twice from concurrent requests.
+  const maxHr = await resolveMaxHr(env, activities, { write });
+  let correctionFactor = 1;
+  if (write && raceResult) {
+    const correctionState = await updateRaceCorrectionFactor(env, activities, raceResult, maxHr);
+    correctionFactor = correctionState?.factor ?? 1;
+  } else {
+    correctionFactor = await getRaceCorrectionFactor(env);
+  }
+
   // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
   let trainVdot = null;
-  const maxHr = await resolveMaxHr(env, activities, { write });
   if (maxHr) {
     trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
   }
@@ -264,6 +387,9 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
       }
       if (bench) trainVdot = computeVdotFromPaceBenchmarks(bench);
     } catch {}
+  }
+  if (trainVdot != null && correctionFactor !== 1) {
+    trainVdot = Math.round(trainVdot * correctionFactor * 10) / 10;
   }
 
   // 2b) VDOT from today's specific run (for wellness field). Interval sessions are
@@ -282,7 +408,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
       .map((a) => _vdotFromTrainingActivity(a, maxHr))
       .filter((v) => v != null);
     const m = medianOf(todayEstimates);
-    todayRunVdot = m != null ? Math.round(m * 10) / 10 : null;
+    todayRunVdot = m != null ? Math.round(m * correctionFactor * 10) / 10 : null;
   }
 
   // 3) Load previous state for decay protection
@@ -323,7 +449,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
 
   currentVdot = Math.round(currentVdot * 10) / 10;
 
-  const result = { vdot: currentVdot, source, todayRunVdot };
+  const result = { vdot: currentVdot, source, todayRunVdot, correctionFactor };
 
   if (persistLatest) {
     await saveRealVdotState(env, { ...result, updatedAt: new Date().toISOString() }).catch(() => {});
