@@ -33,3 +33,17 @@ export function isRaceActivity(activity) {
   const title = String(activity?.name || activity?.title || "").toLowerCase();
   return /\b(race|wettkampf|competition)\b/.test(title);
 }
+
+// Marks interval/repeat sessions (e.g. "#intervalle", "#intervals", "interval:vo2") so
+// VDOT estimation can exclude them: averaging pace/HR over the whole activity dilutes
+// both with recovery jog/walk segments and skews the estimate (see vdot.js).
+export function isIntervalActivity(activity) {
+  const tags = Array.isArray(activity?.tags) ? activity.tags : [];
+  return tags.some((tag) =>
+    String(tag || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^#/, "")
+      .startsWith("interval"),
+  );
+}

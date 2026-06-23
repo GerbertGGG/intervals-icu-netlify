@@ -424,7 +424,14 @@ Datengrundlage pro Woche:
 - Wellness (CTL/ATL/Ramp Rate) zum Wochenende; falls am exakten Wochenende kein
   Wellness-Eintrag existiert, Fallback bis zu 3 Tage zurück
 - VDOT: Median aus HR-kalibrierten Trainingsläufen der Woche (kein Rennen, kein
-  Laufband); HR-Kalibrierung nutzt `%VO2max ≈ 1.154 × %HRmax − 0.15`
+  Laufband, keine als Intervall getaggte Einheit); HR-Kalibrierung nutzt
+  `%VO2max ≈ 1.154 × %HRmax − 0.15`
+- Intervall-Tag: Aktivitäten mit einem Tag, das (ohne führendes `#`, case-insensitive)
+  mit `interval` beginnt (z. B. `#intervalle`, `#intervals`, `interval:vo2`), werden aus
+  der VDOT-Schätzung ausgeschlossen – Pausen/Trabstrecken würden die Pace-/HF-Mittelwerte
+  über die ganze Aktivität sonst künstlich nach unten verzerren. Betroffene Tage fallen
+  im Wellnessfeld `VDOT` auf den geglätteten aktuellen Wert zurück, statt eine verzerrte
+  Tagesschätzung zu schreiben.
 - maxHR-Auflösung (Reihenfolge): Env-Override -> KV-Cache -> Live-API-Fetch
   (nur bei `write=true`) -> höchste beobachtete `max_heartrate` -> Heuristik aus
   höchster `average_heartrate`
