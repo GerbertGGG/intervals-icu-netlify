@@ -11,7 +11,7 @@ import {
 import { computeAndPersistRealVdot } from "./vdot.js";
 
 const FIELD_VDOT = "VDOT";
-const FIELD_VDOT_AVG = "VDOT_Avg";
+const FIELD_VDOT_AVG = "VDOTAvg";
 const FIELD_BLOCK = "Block";
 const EVENT_LOOKAHEAD_DAYS = 365;
 const EVENT_LOOKBACK_DAYS = 40;
