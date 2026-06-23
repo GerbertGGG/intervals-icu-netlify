@@ -7,6 +7,7 @@ import {
   readLatestBlockStateKv,
   writeLatestBlockStateKv,
   applyManualBlockStartOverride,
+  applyManualBlockOverride,
 } from "./block-phase.js";
 import { computeAndPersistRealVdot } from "./vdot.js";
 
@@ -26,7 +27,7 @@ async function fetchRaces(env, oldest, newest) {
 }
 
 export async function syncRange(env, oldest, newest, write, debug, syncOptions = {}) {
-  const { raceStartOverrideIso = null, blockStartOverrideIso = null } = syncOptions;
+  const { raceStartOverrideIso = null, blockStartOverrideIso = null, blockOverride = null } = syncOptions;
   const days = listIsoDaysInclusive(oldest, newest);
   const activitiesOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - ACTIVITIES_LOOKBACK_DAYS * 86400000));
   const activities = await fetchIntervalsActivities(env, activitiesOldest, newest);
@@ -55,6 +56,9 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
     }
     if (blockStartOverrideIso) {
       blockState = applyManualBlockStartOverride(blockState, blockStartOverrideIso, day);
+    }
+    if (blockOverride) {
+      blockState = applyManualBlockOverride(blockState, blockOverride, day);
     }
 
     // Only the last day's state needs to land in KV: it's a "latest known state" cache

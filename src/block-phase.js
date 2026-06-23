@@ -352,6 +352,22 @@ export function applyManualBlockStartOverride(blockState, overrideIso, dayIso) {
   };
 }
 
+const VALID_BLOCKS = new Set(["BASE", "BUILD", "RACE", "RESET"]);
+
+export function applyManualBlockOverride(blockState, overrideBlock, dayIso) {
+  if (!blockState || !overrideBlock || !isIsoDate(dayIso)) return blockState;
+  const block = String(overrideBlock).toUpperCase();
+  if (!VALID_BLOCKS.has(block)) return blockState;
+  const startDate = blockState.startDate || dayIso;
+  return {
+    ...blockState,
+    block,
+    timeInBlockDays: Math.max(0, daysBetween(startDate, dayIso)),
+    nextSuggestedBlock: getNextBlock(block, blockState.wave, blockState.weeksToEvent),
+    reasons: [...(blockState.reasons || []), `Manueller Block-Override aktiv (${block})`],
+  };
+}
+
 function getBlockStateKvKey(env) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   return `${BLOCK_STATE_KV_PREFIX}${athleteId}`;
