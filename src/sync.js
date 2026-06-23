@@ -11,6 +11,7 @@ import {
 import { computeAndPersistRealVdot } from "./vdot.js";
 
 const FIELD_VDOT = "VDOT";
+const FIELD_VDOT_AVG = "VDOT_Avg";
 const FIELD_BLOCK = "Block";
 const EVENT_LOOKAHEAD_DAYS = 365;
 const EVENT_LOOKBACK_DAYS = 40;
@@ -69,6 +70,7 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
     const patch = { [FIELD_BLOCK]: blockState.block };
     if (vdotResult?.vdot != null) {
       patch[FIELD_VDOT] = Math.round((vdotResult.todayRunVdot ?? vdotResult.vdot) * 10) / 10;
+      patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
     }
 
     if (write) {
