@@ -87,17 +87,10 @@ export function getBlockDurationForDistance(block, eventDistance) {
   return { minDays: days, maxDays: days };
 }
 
-export function getNextBlock(block, wave, weeksToEvent) {
+export function getNextBlock(block, wave, weeksToEvent, raceStartWeeks = BLOCK_CONFIG.cutoffs.raceStartWeeks) {
   if (block === "BASE") return "BUILD";
-  if (block === "BUILD") {
-    if (weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) return "RESET";
-    return "RACE";
-  }
-  if (block === "RESET") {
-    if (weeksToEvent > BLOCK_CONFIG.cutoffs.wave2StartWeeks) return "BASE";
-    return "BUILD";
-  }
-  return weeksToEvent < 0 ? "RESET" : "RACE";
+  if (block === "BUILD") return weeksToEvent > raceStartWeeks ? "BASE" : "RACE";
+  return "BASE";
 }
 
 export function computeWeeksToEvent(todayISO, eventDateISO, reasons) {
@@ -120,7 +113,7 @@ export function computeWeeksToEvent(todayISO, eventDateISO, reasons) {
 
 // Resolves the relevant event date/distance for block logic: the next upcoming
 // A-race, or — if none lies ahead — the most recent past one, so that the
-// "Event vorbei" (RESET/BASE-Reentry) branches in determineBlockState stay reachable.
+// "Event vorbei" (BASE-Reentry) branch in determineBlockState stays reachable.
 export function resolveBlockEvent(races, todayIso) {
   const normDay = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
   const sorted = (races || [])
@@ -139,7 +132,7 @@ export function resolveBlockEvent(races, todayIso) {
   return { eventDate: null, eventDistance: null };
 }
 
-// Simplified block/phase state machine: BASE -> BUILD -> RACE -> RESET.
+// Simplified block/phase state machine: BASE -> BUILD -> RACE -> BASE.
 // Block durations are fixed per distance (minDays === maxDays in
 // getBlockDurationForDistance), so once a block's minimum duration is
 // reached the switch to nextSuggestedBlock always fires immediately —
@@ -211,26 +204,12 @@ export function determineBlockState({ today, eventDate, eventDistance, previousS
       startDate: raceStartDate,
       timeInBlockDays: keepRaceStart ? Math.max(0, daysBetween(raceStartDate, todayISO)) : 0,
       eventDistance: eventDistanceNorm,
-      nextSuggestedBlock: "RESET",
+      nextSuggestedBlock: "BASE",
       reasons: [...reasons, "Event sehr nah (≤4 Wochen) → RACE"],
     };
   }
 
   if (weeksToEvent < 0) {
-    if (Math.abs(weeksToEvent) <= BLOCK_CONFIG.cutoffs.postEventResetWeeks) {
-      return {
-        block: "RESET",
-        wave: 0,
-        weeksToEvent,
-        todayISO,
-        eventDateISO,
-        startDate: todayISO,
-        timeInBlockDays: 0,
-        eventDistance: eventDistanceNorm,
-        nextSuggestedBlock: "BASE",
-        reasons: ["Event vorbei → RESET"],
-      };
-    }
     return {
       block: "BASE",
       wave: 0,
@@ -285,7 +264,7 @@ export function determineBlockState({ today, eventDate, eventDistance, previousS
   let timeInBlockDays = daysBetween(startDate, todayISO);
   if (!Number.isFinite(timeInBlockDays) || timeInBlockDays < 0) timeInBlockDays = 0;
   const blockLimits = getBlockDurationForDistance(block, eventDistanceNorm);
-  const nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent);
+  const nextSuggestedBlock = getNextBlock(block, wave, weeksToEvent, raceStartWeeks);
 
   if (weeksToEvent <= raceStartWeeks && weeksToEvent >= 0 && block !== "RACE") {
     reasons.push(`Event ≤${raceStartWeeks} Wochen → sofort RACE (Taper-Puffer)`);
@@ -301,7 +280,7 @@ export function determineBlockState({ today, eventDate, eventDistance, previousS
       startDate,
       timeInBlockDays,
       eventDistance: eventDistanceNorm,
-      nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
+      nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent, raceStartWeeks),
       reasons,
     };
   }
@@ -335,7 +314,7 @@ export function determineBlockState({ today, eventDate, eventDistance, previousS
     startDate,
     timeInBlockDays,
     eventDistance: eventDistanceNorm,
-    nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent),
+    nextSuggestedBlock: getNextBlock(block, wave, weeksToEvent, raceStartWeeks),
     reasons,
   };
 }
