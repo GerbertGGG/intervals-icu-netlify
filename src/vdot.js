@@ -1,5 +1,5 @@
 import { isoDate } from "./date-utils.js";
-import { isRun, isRaceActivity } from "./activity-utils.js";
+import { isRun, isRaceActivity, isIntervalActivity } from "./activity-utils.js";
 import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { loadCachedMaxHr, fetchAndCacheMaxHr, fetchRunPaceBenchmarks } from "./intervals-client.js";
 
@@ -111,12 +111,15 @@ function medianOf(values) {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-// Median training VDOT estimate from non-race runs within [fromIso, toIso] (inclusive).
+// Median training VDOT estimate from non-race, non-interval runs within [fromIso, toIso]
+// (inclusive). Interval sessions (tagged "#intervalle"/"interval:*") are excluded because
+// their built-in recovery jogs/walks dilute the whole-activity average pace and HR that
+// _vdotFromTrainingActivity relies on, producing an artificially low VDOT.
 export function estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr) {
   if (!Array.isArray(activities) || !(maxHr > 100)) return null;
   const estimates = [];
   for (const a of activities) {
-    if (!isRun(a) || isRaceActivity(a) || isTreadmill(a)) continue;
+    if (!isRun(a) || isRaceActivity(a) || isTreadmill(a) || isIntervalActivity(a)) continue;
     const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (day < fromIso || day > toIso) continue;
     const v = _vdotFromTrainingActivity(a, maxHr);
@@ -215,11 +218,19 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
     } catch {}
   }
 
-  // 2b) VDOT from today's specific run (for wellness field)
+  // 2b) VDOT from today's specific run (for wellness field). Interval sessions are
+  // excluded (see estimateTrainingVdotForWindow) so a tagged interval day falls back
+  // to the rolling currentVdot below instead of writing a Pausen-distorted number.
   let todayRunVdot = null;
   if (maxHr && todayIso) {
     const todayEstimates = (activities || [])
-      .filter((a) => isRun(a) && !isRaceActivity(a) && String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso)
+      .filter(
+        (a) =>
+          isRun(a) &&
+          !isRaceActivity(a) &&
+          !isIntervalActivity(a) &&
+          String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso,
+      )
       .map((a) => _vdotFromTrainingActivity(a, maxHr))
       .filter((v) => v != null);
     const m = medianOf(todayEstimates);
