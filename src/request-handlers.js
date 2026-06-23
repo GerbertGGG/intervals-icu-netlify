@@ -23,8 +23,8 @@ export async function handleSyncRequest(url, env, ctx, deps) {
   const syncRequest = parseSyncRequest(url.searchParams);
   if (!syncRequest.ok) return syncRequest.response;
 
-  const { write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso } = syncRequest;
-  const syncOptions = { raceStartOverrideIso, blockStartOverrideIso };
+  const { write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride } = syncRequest;
+  const syncOptions = { raceStartOverrideIso, blockStartOverrideIso, blockOverride };
 
   if (debug) {
     return runSyncDebugMode(env, { oldest, newest, write, syncOptions, syncRange });
@@ -38,7 +38,7 @@ export async function handleSyncRequest(url, env, ctx, deps) {
     })
   );
 
-  return json({ ok: true, oldest, newest, write, raceStartOverrideIso, blockStartOverrideIso });
+  return json({ ok: true, oldest, newest, write, raceStartOverrideIso, blockStartOverrideIso, blockOverride });
 }
 
 // Cloudflare caps fetch() calls per Worker invocation ("subrequests"). A wide
@@ -145,6 +145,10 @@ function parseSyncRequest(searchParams) {
   ]);
   const blockStartOverrideIso = blockStartParamRaw && isIsoDate(blockStartParamRaw) ? blockStartParamRaw : null;
 
+  const blockOverrideRaw = getSearchParamAny(searchParams, ["block_override", "block", "force_block"]);
+  const VALID_BLOCKS = ["BASE", "BUILD", "RACE", "RESET"];
+  const blockOverride = blockOverrideRaw && VALID_BLOCKS.includes(blockOverrideRaw.toUpperCase()) ? blockOverrideRaw.toUpperCase() : null;
+
   let oldest;
   let newest;
   if (date) {
@@ -173,8 +177,11 @@ function parseSyncRequest(searchParams) {
   if (blockStartParamRaw && !blockStartOverrideIso) {
     return { ok: false, response: json({ ok: false, error: "Invalid block_start format (YYYY-MM-DD)" }, 400) };
   }
+  if (blockOverrideRaw && !blockOverride) {
+    return { ok: false, response: json({ ok: false, error: "Invalid block_override (BASE|BUILD|RACE|RESET)" }, 400) };
+  }
 
-  return { ok: true, write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso };
+  return { ok: true, write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride };
 }
 
 async function runSyncDebugMode(env, options) {
