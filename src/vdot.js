@@ -1,5 +1,5 @@
 import { isoDate } from "./date-utils.js";
-import { isRun, isRaceActivity, isIntervalActivity } from "./activity-utils.js";
+import { isRun, isRaceActivity, isIntervalActivity, isVdotExcluded } from "./activity-utils.js";
 import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { loadCachedMaxHr, fetchAndCacheMaxHr, fetchRunPaceBenchmarks } from "./intervals-client.js";
 
@@ -59,6 +59,7 @@ function computeRaceVdot(activities, todayIso = null) {
   for (const a of activities) {
     if (!isRun(a)) continue;
     if (!isRaceActivity(a)) continue;
+    if (isVdotExcluded(a)) continue;
     const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (day < cutoff || day > anchor) continue;
     const dist = Number(a?.distance ?? a?.icu_distance ?? 0);
@@ -182,12 +183,13 @@ function medianOf(values) {
 // Median training VDOT estimate from non-race, non-interval runs within [fromIso, toIso]
 // (inclusive). Interval sessions (tagged "#intervalle"/"interval:*") are excluded because
 // their built-in recovery jogs/walks dilute the whole-activity average pace and HR that
-// _vdotFromTrainingActivity relies on, producing an artificially low VDOT.
+// _vdotFromTrainingActivity relies on, producing an artificially low VDOT. Activities
+// manually tagged "#novdot" are excluded too (see isVdotExcluded).
 export function estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr) {
   if (!Array.isArray(activities) || !(maxHr > 100)) return null;
   const estimates = [];
   for (const a of activities) {
-    if (!isRun(a) || isRaceActivity(a) || isTreadmill(a) || isIntervalActivity(a)) continue;
+    if (!isRun(a) || isRaceActivity(a) || isTreadmill(a) || isIntervalActivity(a) || isVdotExcluded(a)) continue;
     const day = String(a?.start_date_local || a?.start_date || "").slice(0, 10);
     if (day < fromIso || day > toIso) continue;
     const v = _vdotFromTrainingActivity(a, maxHr);
@@ -392,9 +394,10 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
     trainVdot = Math.round(trainVdot * correctionFactor * 10) / 10;
   }
 
-  // 2b) VDOT from today's specific run (for wellness field). Interval sessions are
-  // excluded (see estimateTrainingVdotForWindow) so a tagged interval day falls back
-  // to the rolling currentVdot below instead of writing a Pausen-distorted number.
+  // 2b) VDOT from today's specific run (for wellness field). Interval sessions and
+  // activities manually tagged "#novdot" are excluded (see estimateTrainingVdotForWindow /
+  // isVdotExcluded) so a tagged day falls back to the rolling currentVdot below instead of
+  // writing a distorted or unwanted number.
   let todayRunVdot = null;
   if (maxHr && todayIso) {
     const todayEstimates = (activities || [])
@@ -403,6 +406,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
           isRun(a) &&
           !isRaceActivity(a) &&
           !isIntervalActivity(a) &&
+          !isVdotExcluded(a) &&
           String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso,
       )
       .map((a) => _vdotFromTrainingActivity(a, maxHr))

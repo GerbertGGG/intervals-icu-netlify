@@ -177,6 +177,22 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 
     - Meldung „Datenqualität begrenzt“ ist erwartbar,
     - nächster Hebel: Workouttext mit Zielpace + konsistente Rep-Struktur.
 
+6.5 VDOT-Ausschluss per Tag (`#novdot`)
+- Eine Aktivität mit dem Tag `#novdot` (auch ohne `#`, Groß-/Kleinschreibung egal) wird aus
+  jeder VDOT-Berechnung ausgeschlossen: Rennerkennung (`computeRaceVdot`), rollierende
+  Trainingsschätzung (`estimateTrainingVdotForWindow`, betrifft auch `/weekly-progress`)
+  und die Tageswert-Schätzung fürs Wellnessfeld `VDOT`.
+- Anwendungsfall: Läufe, die die Fitness-Schätzung nicht verzerren sollen (z. B. Krankheit,
+  Kinderwagen, Laufband-Test, untypische Bedingungen).
+- Tags werden bei jedem Sync live von Intervals.icu gelesen. Wird das Tag nachträglich auf
+  eine vergangene Aktivität gesetzt, reicht ein erneuter `/sync` (oder `/weekly-progress`)
+  für den betroffenen Tag/Zeitraum, damit der Ausschluss rückwirkend greift – z. B.
+  `/sync?date=<gestriges-Datum>&write=true`, wenn das Tag heute für das gestrige Training
+  nachgetragen wurde.
+- Betroffene Tage fallen im Wellnessfeld `VDOT` auf den geglätteten aktuellen Wert
+  (`VDOTAvg`) zurück, statt eine ausgeschlossene Tagesschätzung zu schreiben (gleiches
+  Verhalten wie bei `interval`-getaggten Tagen, siehe 15).
+
 7) KENNZAHLEN
 -------------
 7.1 EF (Efficiency Factor)
@@ -434,6 +450,8 @@ Datengrundlage pro Woche:
   über die ganze Aktivität sonst künstlich nach unten verzerren. Betroffene Tage fallen
   im Wellnessfeld `VDOT` auf den geglätteten aktuellen Wert zurück, statt eine verzerrte
   Tagesschätzung zu schreiben.
+- `#novdot`-Tag: manueller, genereller Ausschluss einzelner Aktivitäten aus jeder
+  VDOT-Berechnung (Details siehe 6.5).
 - maxHR-Auflösung (Reihenfolge): Env-Override -> KV-Cache -> Live-API-Fetch
   (nur bei `write=true`) -> höchste beobachtete `max_heartrate` -> Heuristik aus
   höchster `average_heartrate`
