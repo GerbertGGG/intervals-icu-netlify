@@ -10,7 +10,7 @@ Hauptfunktionen:
 - `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
 - `/weekly-progress`: vergleicht jeden Montag die letzte vollständige Woche mit der Vorwoche (VDOT/CTL/ATL/TSB/Load) und schreibt eine NOTE mit Urteil (besser/schlechter/stabil) + Trainingsempfehlung
-- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin), prüft nur den heutigen Tag und aktualisiert nur den NOTE-Abschnitt „HEUTIGER LAUF“ (Rest bleibt vom 07:00-Basislauf); geschrieben wird nur, wenn seit dem letzten Crawl eine Änderung in den heutigen Lauf-IDs erkannt wurde; montags zusätzlich automatischer Wochenvergleich (siehe 15)
+- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin) und synct dabei bei jedem Tick die letzten 2 Tage + heute (siehe 5); montags zusätzlich automatischer Wochenvergleich (siehe 15)
 
 Pro verarbeitetem Tag:
 - Wellness-Kommentar wird geleert (`comments = ""`)
@@ -134,11 +134,14 @@ Beispiele:
 
 5) SCHEDULED TRIGGER
 --------------------
-`scheduled()` verarbeitet:
-- nur `heute` (`oldest = newest = heute`)
-- um 07:00 Berlin als Basislauf immer ein vollständiges Tages-Update
-- danach im 30-Minuten-Raster nur bei geänderter Lauf-ID-Signatur erneut schreiben
+`scheduled()` verarbeitet bei jedem Tick im Fenster 07:00–21:00 Berlin:
+- die letzten 2 Tage + heute (`oldest = heute - 2 Tage`, `newest = heute`)
+- dadurch wird ein `#novdot`-Tag (siehe 6.5), das nachträglich auf gestern oder vorgestern
+  gesetzt wird, spätestens beim nächsten 30-Minuten-Tick automatisch übernommen – ohne
+  manuellen `/sync`-Aufruf
 - intern mit `write=true`, `debug=false`, `warmup_skip=600`
+- montags zusätzlich beim ersten Tick des Tages (07:00–07:29 Berlin) automatischer
+  Wochenvergleich (siehe 15)
 
 Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 30 Minuten im UTC-Fenster 05:00–20:59).
 
@@ -184,11 +187,12 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 
   und die Tageswert-Schätzung fürs Wellnessfeld `VDOT`.
 - Anwendungsfall: Läufe, die die Fitness-Schätzung nicht verzerren sollen (z. B. Krankheit,
   Kinderwagen, Laufband-Test, untypische Bedingungen).
-- Tags werden bei jedem Sync live von Intervals.icu gelesen. Wird das Tag nachträglich auf
-  eine vergangene Aktivität gesetzt, reicht ein erneuter `/sync` (oder `/weekly-progress`)
-  für den betroffenen Tag/Zeitraum, damit der Ausschluss rückwirkend greift – z. B.
-  `/sync?date=<gestriges-Datum>&write=true`, wenn das Tag heute für das gestrige Training
-  nachgetragen wurde.
+- Tags werden bei jedem Sync live von Intervals.icu gelesen. Der automatische `scheduled()`-
+  Trigger synct dafür bei jedem Tick die letzten 2 Tage + heute (siehe 5), d. h. ein Tag,
+  das heute nachträglich für gestern oder vorgestern gesetzt wird, greift spätestens beim
+  nächsten 30-Minuten-Tick automatisch. Für ältere Tage (>2 Tage zurück) oder eine sofortige
+  Übernahme reicht ein manueller `/sync` (oder `/weekly-progress`) für den betroffenen
+  Tag/Zeitraum, z. B. `/sync?date=<betroffenes-Datum>&write=true`.
 - Betroffene Tage fallen im Wellnessfeld `VDOT` auf den geglätteten aktuellen Wert
   (`VDOTAvg`) zurück, statt eine ausgeschlossene Tagesschätzung zu schreiben (gleiches
   Verhalten wie bei `interval`-getaggten Tagen, siehe 15).
