@@ -54,10 +54,11 @@ export default {
     const today = isoDate(new Date());
     const berlinHour = getBerlinHourFromScheduledEvent(event);
     const berlinMinute = getBerlinMinuteFromScheduledEvent(event);
-    // The window starts at 07:00 and the cron never fires between 21:00 and 07:00,
-    // so the first run of the day also re-syncs yesterday to catch late-evening runs.
     const isFirstRunOfDay = berlinHour === 7 && berlinMinute !== null && berlinMinute < 30;
-    const oldest = isFirstRunOfDay ? isoDate(new Date(Date.now() - 86400000)) : today;
+    // Re-sync the last 2 days on every tick (not just the first run of the day), so a
+    // "#novdot" tag added retroactively to yesterday's or the day-before's training is
+    // picked up within the next 30-minute cycle instead of only at tomorrow's 07:00 run.
+    const oldest = isoDate(new Date(Date.now() - 2 * 86400000));
 
     ctx.waitUntil(
       syncRange(env, oldest, today, true, false, {}).catch((e) => {
