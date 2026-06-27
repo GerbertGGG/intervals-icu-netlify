@@ -47,3 +47,19 @@ export function isIntervalActivity(activity) {
       .startsWith("interval"),
   );
 }
+
+// Manual opt-out tag (e.g. "#novdot") to fully exclude an activity from every VDOT
+// computation (race detection, training estimate, today's-run field) – e.g. a sick run,
+// a stroller/pram run, or a treadmill test that shouldn't influence fitness estimates.
+// Tags are read live from Intervals.icu on each sync, so tagging a past activity
+// retroactively and re-syncing that day picks it up immediately.
+export function isVdotExcluded(activity) {
+  const tags = Array.isArray(activity?.tags) ? activity.tags : [];
+  return tags.some(
+    (tag) =>
+      String(tag || "")
+        .trim()
+        .toLowerCase()
+        .replace(/^#/, "") === "novdot",
+  );
+}
