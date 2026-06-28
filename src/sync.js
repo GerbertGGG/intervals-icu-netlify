@@ -73,7 +73,9 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
 
     const patch = { [FIELD_BLOCK]: blockState.block };
     if (vdotResult?.vdot != null) {
-      patch[FIELD_VDOT] = Math.round((vdotResult.todayRunVdot ?? vdotResult.vdot) * 10) / 10;
+      if (vdotResult.todayRunVdot != null) {
+        patch[FIELD_VDOT] = Math.round(vdotResult.todayRunVdot * 10) / 10;
+      }
       patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
     }
 
