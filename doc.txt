@@ -15,7 +15,7 @@ Hauptfunktionen:
 Pro verarbeitetem Tag:
 - Wellness-Kommentar wird geleert (`comments = ""`)
 - numerische Felder werden gesetzt, wenn Daten vorhanden sind:
-  - `VDOT`, `EF`, `Drift`, `Motor`, `Block`
+  - `VDOT` (nur an Tagen mit auswertbarem Training), `VDOTAvg`, `EF`, `Drift`, `Motor`, `Block`
 - tägliches NOTE-Event `Daily-Report` wird geschrieben/aktualisiert
 - montags zusätzlich `Montags-Report` (Detective-Note)
 
@@ -193,9 +193,9 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 
   nächsten 30-Minuten-Tick automatisch. Für ältere Tage (>2 Tage zurück) oder eine sofortige
   Übernahme reicht ein manueller `/sync` (oder `/weekly-progress`) für den betroffenen
   Tag/Zeitraum, z. B. `/sync?date=<betroffenes-Datum>&write=true`.
-- Betroffene Tage fallen im Wellnessfeld `VDOT` auf den geglätteten aktuellen Wert
-  (`VDOTAvg`) zurück, statt eine ausgeschlossene Tagesschätzung zu schreiben (gleiches
-  Verhalten wie bei `interval`-getaggten Tagen, siehe 15).
+- Betroffene Tage bleiben im Wellnessfeld `VDOT` leer (es wird nicht geschrieben), nur
+  `VDOTAvg` wird weiter mit dem geglätteten aktuellen Wert befüllt (gleiches Verhalten
+  wie bei `interval`-getaggten Tagen und an trainingsfreien Tagen, siehe 15).
 
 7) KENNZAHLEN
 -------------
