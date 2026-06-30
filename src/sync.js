@@ -10,6 +10,7 @@ import {
   applyManualBlockOverride,
 } from "./block-phase.js";
 import { computeAndPersistRealVdot } from "./vdot.js";
+import { readGoalRace } from "./goal-race.js";
 
 const FIELD_VDOT = "VDOT";
 const FIELD_VDOT_AVG = "VDOTAvg";
@@ -30,8 +31,11 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
   const { raceStartOverrideIso = null, blockStartOverrideIso = null, blockOverride = null } = syncOptions;
   const days = listIsoDaysInclusive(oldest, newest);
   const activitiesOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - ACTIVITIES_LOOKBACK_DAYS * 86400000));
-  const activities = await fetchIntervalsActivities(env, activitiesOldest, newest);
-  const races = await fetchRaces(env, oldest, newest);
+  const [activities, races, goalRace] = await Promise.all([
+    fetchIntervalsActivities(env, activitiesOldest, newest),
+    fetchRaces(env, oldest, newest),
+    readGoalRace(env).catch(() => null),
+  ]);
 
   const results = [];
   let previousBlockState = null;
@@ -44,7 +48,11 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       previousBlockState = (await readLatestBlockStateKv(env, prevDay)) || (await readLatestBlockStateKv(env, day));
     }
 
-    const { eventDate, eventDistance } = resolveBlockEvent(races, day);
+    let { eventDate, eventDistance } = resolveBlockEvent(races, day);
+    if (!eventDate && goalRace?.date) {
+      eventDate = goalRace.date;
+      eventDistance = goalRace.distance;
+    }
 
     let blockState = determineBlockState({ today: day, eventDate, eventDistance, previousState: previousBlockState });
 
