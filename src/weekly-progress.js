@@ -147,7 +147,7 @@ function fmtTimeDeltaSeconds(deltaSecs) {
 // Rule-based verdict: VDOT trend is the primary "did performance improve" signal
 // (it's literally derived from pace+HR), CTL trend is the secondary "is training
 // building fitness" signal. Both are weighted equally since either can lead.
-function buildVerdict(cmp, curr) {
+function buildVerdict(cmp, curr, prev) {
   let score = 0;
   let signals = 0;
   if (cmp.dVdot != null) {
@@ -168,43 +168,99 @@ function buildVerdict(cmp, curr) {
   else verdict = "STABIL";
 
   const reasons = [];
+
+  // VDOT – primary performance signal
   if (cmp.dVdot != null) {
     reasons.push(
       cmp.dVdot >= 0.3
-        ? `VDOT ${fmtSigned(cmp.dVdot)} – Lauf-Performance-Signal steigt.`
+        ? `VDOT ${fmtSigned(cmp.dVdot)} – deine Laufeffizienz zieht an. Das Training wirkt.`
         : cmp.dVdot <= -0.3
-          ? `VDOT ${fmtSigned(cmp.dVdot)} – Lauf-Performance-Signal sinkt.`
-          : `VDOT ${fmtSigned(cmp.dVdot)} – praktisch unverändert.`,
+          ? `VDOT ${fmtSigned(cmp.dVdot)} – deine Laufleistung ist diese Woche gesunken.`
+          : `VDOT ${fmtSigned(cmp.dVdot)} – deine Laufleistung hält sich stabil.`,
     );
   } else {
-    reasons.push("VDOT: zu wenige auswertbare Läufe in einer der beiden Wochen für einen Vergleich.");
+    reasons.push("VDOT: Zu wenige auswertbare Läufe für einen Vergleich – nächste Woche mehr Laufdata sammeln.");
   }
 
+  // CTL – fitness buildup
   if (cmp.dCtl != null) {
     reasons.push(
       cmp.dCtl >= 1
-        ? `Fitness/CTL ${fmtSigned(cmp.dCtl)} – Trainingsbelastung baut sinnvoll auf.`
+        ? `Fitness (CTL) ${fmtSigned(cmp.dCtl)} – du baust Grundlagenausdauer auf. Gut so.`
         : cmp.dCtl <= -1
-          ? `Fitness/CTL ${fmtSigned(cmp.dCtl)} – Trainingsumfang/-belastung geht zurück.`
-          : `Fitness/CTL ${fmtSigned(cmp.dCtl)} – Belastung stabil.`,
+          ? `Fitness (CTL) ${fmtSigned(cmp.dCtl)} – deine Trainingsbasis geht leicht zurück.`
+          : `Fitness (CTL) ${fmtSigned(cmp.dCtl)} – Fitness hält sich stabil, kein Aufbau, kein Verlust.`,
     );
   }
 
-  if (Number.isFinite(curr.tsb)) {
-    const tsbLabel = curr.tsb < -20 ? "stark negativ – hohe Ermüdung" : curr.tsb < -5 ? "moderat negativ – produktive Ermüdung" : curr.tsb <= 10 ? "ausgeglichen" : "deutlich positiv – frisch/wenig Reiz";
-    reasons.push(`Form/TSB: ${fmt(curr.tsb)} (${tsbLabel}).`);
+  // ATL – fatigue trend
+  if (cmp.dAtl != null) {
+    if (cmp.dAtl > 5) {
+      reasons.push(`Ermüdung (ATL) ${fmtSigned(cmp.dAtl)} – du hast diese Woche deutlich mehr Reize gesetzt. Behalte die Erholung im Blick.`);
+    } else if (cmp.dAtl < -5) {
+      reasons.push(`Ermüdung (ATL) ${fmtSigned(cmp.dAtl)} – deine Müdigkeit sinkt, du wirst frischer. Guter Zeitpunkt für einen neuen Reiz.`);
+    }
   }
 
+  // TSB – current form level
+  if (Number.isFinite(curr.tsb)) {
+    const tsbLabel =
+      curr.tsb < -20
+        ? "stark negativ – du bist gerade ziemlich müde"
+        : curr.tsb < -5
+          ? "moderat negativ – produktive Ermüdung, typisch unter Aufbau"
+          : curr.tsb <= 10
+            ? "ausgeglichen – gutes Gleichgewicht aus Reiz und Erholung"
+            : "deutlich positiv – du bist frisch, aber setz auch Reize";
+    reasons.push(`Form (TSB): ${fmt(curr.tsb)} – ${tsbLabel}.`);
+  }
+
+  // TSB trend – is form improving or declining?
+  if (cmp.dTsb != null) {
+    if (cmp.dTsb >= 5) {
+      reasons.push(`Form-Trend (TSB ${fmtSigned(cmp.dTsb)}) – du wirst von Woche zu Woche frischer.`);
+    } else if (cmp.dTsb <= -5) {
+      reasons.push(`Form-Trend (TSB ${fmtSigned(cmp.dTsb)}) – deine Frische sinkt, du akkumulierst gerade Müdigkeit.`);
+    }
+  }
+
+  // Ramp rate – injury risk signal
   if (Number.isFinite(curr.rampRate)) {
     reasons.push(
       curr.rampRate > 8
-        ? `Ramp Rate ${fmt(curr.rampRate)}/Woche – Belastung steigt sehr schnell (Verletzungsrisiko erhöht).`
-        : `Ramp Rate ${fmt(curr.rampRate)}/Woche – im üblichen Rahmen.`,
+        ? `Ramp Rate ${fmt(curr.rampRate)}/Woche – du steigerst die Belastung sehr schnell. Achtung: erhöhtes Verletzungsrisiko.`
+        : `Ramp Rate ${fmt(curr.rampRate)}/Woche – Belastungssteigerung im grünen Bereich.`,
     );
   }
 
+  // Load change
   if (cmp.pctLoad != null) {
-    reasons.push(`Wochenbelastung (Load) ${fmtSigned(cmp.pctLoad, 0)}% gegenüber Vorwoche.`);
+    reasons.push(`Gesamtbelastung ${fmtSigned(cmp.pctLoad, 0)}% gegenüber Vorwoche.`);
+  }
+
+  // Session count shift
+  if (cmp.dSessionCount != null && cmp.dSessionCount !== 0) {
+    reasons.push(
+      cmp.dSessionCount > 0
+        ? `${fmtSigned(cmp.dSessionCount, 0)} Einheit(en) mehr als letzte Woche – mehr Trainingsimpulse.`
+        : `${fmtSigned(cmp.dSessionCount, 0)} Einheit(en) weniger als letzte Woche – weniger Reize gesetzt.`,
+    );
+  }
+
+  // Load per session – intensity per unit
+  if (prev && curr.sessionCount > 0 && prev.sessionCount > 0) {
+    const loadPerCurr = curr.loadSum / curr.sessionCount;
+    const loadPerPrev = prev.loadSum / prev.sessionCount;
+    if (loadPerPrev > 0) {
+      const loadPerPct = ((loadPerCurr - loadPerPrev) / loadPerPrev) * 100;
+      if (Math.abs(loadPerPct) >= 15) {
+        reasons.push(
+          loadPerPct > 0
+            ? `Belastung pro Einheit ${Math.round(loadPerPct)}% höher als Vorwoche – du trainierst intensiver.`
+            : `Belastung pro Einheit ${Math.round(loadPerPct)}% niedriger – lockerere Woche im Schnitt.`,
+        );
+      }
+    }
   }
 
   return { verdict, score, reasons };
@@ -216,19 +272,20 @@ function buildRecommendation(verdict, curr) {
   const highFatigue = (Number.isFinite(tsb) && tsb < -20) || (Number.isFinite(ramp) && ramp > 8);
 
   if (verdict === "UNKLAR") {
-    return "Zu wenig Daten für eine belastbare Einordnung (z. B. wenige Läufe oder fehlende Wellness-Werte). Nächste Woche erneut prüfen.";
+    return "Zu wenig Daten für eine belastbare Einordnung – z. B. wenige Läufe oder fehlende Wellness-Werte. Sorge nächste Woche für mehr Trainingsdaten und trag deine Wellness-Werte ein.";
   }
   if (verdict === "BESSER") {
     return highFatigue
-      ? "Performance steigt, aber Ermüdung ist hoch. Nächste Woche bewusst etwas entlasten (Umfang/Intensität leicht senken), um die Form zu sichern, statt sie zu verspielen."
-      : "Guter Trend – Belastung kann nächste Woche moderat weiter steigen (z. B. +5–10% Umfang oder ein zusätzlicher Reiz).";
+      ? "Du entwickelst dich gut, aber dein Körper zeigt Ermüdungssignale. Nächste Woche bewusst etwas Gas rausnehmen – Umfang oder Intensität leicht senken. So sicherst du den Fortschritt, statt ihn zu riskieren."
+      : "Du bist auf einem guten Weg – weiter so. Du kannst nächste Woche moderat drauflegen: +5–10% Umfang oder eine zusätzliche Qualitätseinheit.";
   }
   if (verdict === "SCHLECHTER") {
     return highFatigue
-      ? "Performance sinkt bei hoher Ermüdung – klares Überlastungssignal. Diese Woche bewusst entlasten (Umfang ca. -20–30%, keine intensiven Einheiten), Schlaf/Erholung priorisieren."
-      : "Performance sinkt trotz moderater Ermüdung – möglicherweise zu wenig Reiz oder Konsistenz. Umfang/Intensität wieder leicht anheben und auf gleichmäßigere Belastung über die Woche achten.";
+      ? "Deine Performance sinkt bei gleichzeitig hoher Ermüdung – ein klares Signal, dass du gerade zu viel verlangst. Reduziere Umfang und Intensität diese Woche deutlich (~-20 bis -30%), und priorisiere Schlaf und aktive Erholung."
+      : "Deine Leistung sinkt trotz moderater Ermüdung – wahrscheinlich fehlt der nötige Reiz oder die Konsistenz. Hebe Umfang und Intensität wieder leicht an und verteile die Belastung gleichmäßiger über die Woche.";
   }
-  return "Form hält sich im Gleichgewicht. Ein gezielter zusätzlicher Reiz (z. B. ein Tempo- oder Schwellenlauf) könnte den nächsten Fortschritt bringen.";
+  // STABIL
+  return "Deine Form hält sich im Gleichgewicht. Um den nächsten Schritt zu machen, braucht es einen gezielten Impuls – z. B. ein Tempolauf, eine Schwelleneinheit oder etwas mehr Gesamtumfang nächste Woche.";
 }
 
 const VERDICT_LABELS = {
@@ -264,7 +321,7 @@ function buildReportText({
   lines.push(`📊 Wochenvergleich – ${VERDICT_LABELS[verdictResult.verdict]}`);
   lines.push(`Woche ${week.start} – ${week.end} vs. Vorwoche ${prevWeek.start} – ${prevWeek.end}`);
   lines.push("");
-  lines.push("KENNZAHLEN");
+  lines.push("DEINE WOCHE IM ÜBERBLICK");
   lines.push(`- VDOT: ${fmt(prev.vdot)} → ${fmt(curr.vdot)} (${fmtSigned(cmp.dVdot)})`);
   lines.push(`- Fitness (CTL): ${fmt(prev.ctl)} → ${fmt(curr.ctl)} (${fmtSigned(cmp.dCtl)})`);
   lines.push(`- Ermüdung (ATL): ${fmt(prev.atl)} → ${fmt(curr.atl)} (${fmtSigned(cmp.dAtl)})`);
@@ -290,7 +347,7 @@ function buildReportText({
     lines.push("");
   }
   if (currRaceTimes && prevRaceTimes) {
-    lines.push("PROGNOSE WETTKAMPFZEITEN (geschätzt aus VDOT)");
+    lines.push("WETTKAMPFPROGNOSE (aus aktuellem VDOT)");
     for (let i = 0; i < currRaceTimes.length; i++) {
       const c = currRaceTimes[i];
       const p = prevRaceTimes[i];
@@ -299,10 +356,10 @@ function buildReportText({
     }
     lines.push("");
   }
-  lines.push("BEGRÜNDUNG");
+  lines.push("WAS STECKT DAHINTER");
   for (const r of verdictResult.reasons) lines.push(`- ${r}`);
   lines.push("");
-  lines.push("EMPFEHLUNG");
+  lines.push("DEIN FAHRPLAN FÜR NÄCHSTE WOCHE");
   lines.push(buildRecommendation(verdictResult.verdict, curr));
   if (blockState?.block) {
     lines.push("");
@@ -337,7 +394,7 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const prev = await buildWeekSnapshot(env, activities, prevWeek, maxHr);
 
   const cmp = compareSnapshots(curr, prev);
-  const verdictResult = buildVerdict(cmp, curr);
+  const verdictResult = buildVerdict(cmp, curr, prev);
   const blockState = await readLatestBlockStateKv(env, todayIso).catch(() => null);
   const realVdot = await getCurrentRealVdot(env).catch(() => null);
   const correctionFactor = await getRaceCorrectionFactor(env).catch(() => 1);
