@@ -11,6 +11,7 @@ import {
   getRaceCorrectionFactor,
 } from "./vdot.js";
 import { readLatestBlockStateKv } from "./block-phase.js";
+import { readGoalRace, computeGoalRaceInfo } from "./goal-race.js";
 
 const HISTORY_KV_PREFIX = "weeklyprogress:history:";
 const MAX_HISTORY_ENTRIES = 12;
@@ -302,6 +303,33 @@ const VERDICT_COLORS = {
   UNKLAR: "orange",
 };
 
+function buildGoalRaceSection(goalInfo) {
+  if (!goalInfo) return null;
+  const { distanceLabel, weeksToRace, daysToRace, isPast, schedule, recommendedBlock, prediction } = goalInfo;
+  if (isPast) return null;
+  const lines = [];
+  lines.push("ZIELRENNEN");
+  lines.push(`- ${distanceLabel} am ${goalInfo.goal.date} (${weeksToRace} Wochen / ${daysToRace} Tage)`);
+  if (prediction) {
+    if (prediction.targetTime) {
+      const gapStr =
+        prediction.gapSecs != null
+          ? prediction.faster
+            ? `${prediction.gapFormatted} schneller als Ziel ✅`
+            : `${prediction.gapFormatted} langsamer als Ziel`
+          : "";
+      lines.push(`- Zielzeit: ${prediction.targetTime} | Aktuelle Prognose: ${prediction.predictedTime ?? "–"} (${gapStr})`);
+    } else {
+      lines.push(`- Aktuelle Prognose: ${prediction.predictedTime ?? "–"}`);
+    }
+  }
+  if (recommendedBlock) {
+    lines.push(`- Empfohlener Block jetzt: ${recommendedBlock}`);
+  }
+  lines.push(`- Trainingsplan: BASE ab ${schedule.planStart} → BUILD ab ${schedule.buildStart} → RACE/Taper ab ${schedule.raceStart}`);
+  return lines.join("\n");
+}
+
 function buildReportText({
   todayIso,
   week,
@@ -316,6 +344,7 @@ function buildReportText({
   currRaceTimes,
   prevRaceTimes,
   correctionFactor,
+  goalInfo,
 }) {
   const lines = [];
   lines.push(`📊 Wochenvergleich – ${VERDICT_LABELS[verdictResult.verdict]}`);
@@ -365,6 +394,11 @@ function buildReportText({
     lines.push("");
     lines.push(`Block: ${blockState.block}${blockState.startDate ? ` (seit ${blockState.startDate})` : ""}`);
   }
+  const goalSection = buildGoalRaceSection(goalInfo);
+  if (goalSection) {
+    lines.push("");
+    lines.push(goalSection);
+  }
   return lines.join("\n");
 }
 
@@ -397,6 +431,8 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const verdictResult = buildVerdict(cmp, curr, prev);
   const blockState = await readLatestBlockStateKv(env, todayIso).catch(() => null);
   const realVdot = await getCurrentRealVdot(env).catch(() => null);
+  const goalRace = await readGoalRace(env).catch(() => null);
+  const goalInfo = computeGoalRaceInfo(goalRace, todayIso, realVdot ?? curr.vdot);
   const correctionFactor = await getRaceCorrectionFactor(env).catch(() => 1);
   const paceTargets = paceTargetsFromVdot(realVdot ?? curr.vdot);
   const currRaceTimes = predictRaceTimesFromVdot(realVdot ?? curr.vdot);
@@ -416,6 +452,7 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
     currRaceTimes,
     prevRaceTimes,
     correctionFactor,
+    goalInfo,
   });
 
   let note = null;
@@ -464,6 +501,7 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
     paceTargets,
     currRaceTimes,
     prevRaceTimes,
+    goalInfo,
     reportText,
     note,
   };

@@ -1,7 +1,8 @@
 import { isoDate, isMondayIso } from "./date-utils.js";
-import { handleSyncRequest, handleBackfillProfileRequest, handleWeeklyProgressRequest, withWorkerErrorBoundary } from "./request-handlers.js";
+import { handleSyncRequest, handleBackfillProfileRequest, handleWeeklyProgressRequest, handleGoalRequest, handleStatusRequest, withWorkerErrorBoundary } from "./request-handlers.js";
 import { syncRange } from "./sync.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
+import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -44,6 +45,14 @@ export default {
       return withWorkerErrorBoundary(() => handleWeeklyProgressRequest(url, env, ctx, { buildWeeklyProgressReport }));
     }
 
+    if (url.pathname === "/goal") {
+      return withWorkerErrorBoundary(() => handleGoalRequest(req, url, env, ctx));
+    }
+
+    if (url.pathname === "/status") {
+      return withWorkerErrorBoundary(() => handleStatusRequest(url, env, ctx));
+    }
+
     return new Response("Not found", { status: 404 });
   },
 
@@ -61,9 +70,12 @@ export default {
     const oldest = isoDate(new Date(Date.now() - 2 * 86400000));
 
     ctx.waitUntil(
-      syncRange(env, oldest, today, true, false, {}).catch((e) => {
-        console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-      }),
+      syncRange(env, oldest, today, true, false, {})
+        .then(() => recordSyncSuccess(env))
+        .catch((e) => {
+          console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+          return recordSyncError(env, e?.message ?? String(e));
+        }),
     );
 
     if (isFirstRunOfDay && isMondayIso(today)) {

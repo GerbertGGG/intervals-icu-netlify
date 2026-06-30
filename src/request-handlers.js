@@ -1,6 +1,9 @@
 import { clampInt, getSearchParamAny, json, parseBooleanParam } from "./http-helpers.js";
 import { diffDays, isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
+import { readGoalRace, writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo } from "./goal-race.js";
+import { readSyncStatus } from "./sync-status.js";
+import { getCurrentRealVdot } from "./vdot.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -182,6 +185,57 @@ function parseSyncRequest(searchParams) {
   }
 
   return { ok: true, write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride };
+}
+
+export async function handleGoalRequest(req, url, env) {
+  const method = req.method.toUpperCase();
+
+  if (method === "DELETE") {
+    await deleteGoalRace(env);
+    return json({ ok: true, deleted: true });
+  }
+
+  if (method === "PUT" || method === "POST") {
+    let body;
+    try {
+      body = await req.json();
+    } catch {
+      return json({ ok: false, error: "Ungültiges JSON" }, 400);
+    }
+    const { date, distance, targetTime } = body || {};
+    const payload = buildGoalRacePayload({ date, distance, targetTime });
+    if (!payload.ok) return json({ ok: false, error: payload.error }, 400);
+    await writeGoalRace(env, payload.goal);
+    const todayIso = isoDate(new Date());
+    const currentVdot = await getCurrentRealVdot(env).catch(() => null);
+    const info = computeGoalRaceInfo(payload.goal, todayIso, currentVdot);
+    return json({ ok: true, goal: payload.goal, info });
+  }
+
+  // GET
+  const goal = await readGoalRace(env);
+  if (!goal) return json({ ok: true, goal: null });
+  const todayIso = isoDate(new Date());
+  const currentVdot = await getCurrentRealVdot(env).catch(() => null);
+  const info = computeGoalRaceInfo(goal, todayIso, currentVdot);
+  return json({ ok: true, goal, info });
+}
+
+export async function handleStatusRequest(url, env) {
+  const syncStatus = await readSyncStatus(env);
+  const now = new Date().toISOString();
+  const minutesSinceLastSync =
+    syncStatus?.lastSuccessAt
+      ? Math.round((Date.now() - new Date(syncStatus.lastSuccessAt).getTime()) / 60000)
+      : null;
+  const healthy = minutesSinceLastSync != null && minutesSinceLastSync < 90;
+  return json({
+    ok: true,
+    now,
+    healthy,
+    minutesSinceLastSync,
+    syncStatus: syncStatus ?? null,
+  });
 }
 
 async function runSyncDebugMode(env, options) {
