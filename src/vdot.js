@@ -185,7 +185,13 @@ function medianOf(values) {
 // their built-in recovery jogs/walks dilute the whole-activity average pace and HR that
 // _vdotFromTrainingActivity relies on, producing an artificially low VDOT. Activities
 // manually tagged "#novdot" are excluded too (see isVdotExcluded).
-export function estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr) {
+// Requires at least `minCount` qualifying runs: a median of a single run is just that
+// run, so one noisy data point (short recovery jog, GPS drift, atypical HR/pace ratio)
+// could otherwise swing the whole-window estimate on its own, e.g. in a short 7-day
+// window where most runs got excluded. Callers already treat a null result as "not
+// enough data" (weekly report falls back to "–", computeAndPersistRealVdot falls back
+// to pace benchmarks or the last persisted value), so returning null here is safe.
+export function estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr, minCount = 2) {
   if (!Array.isArray(activities) || !(maxHr > 100)) return null;
   const estimates = [];
   for (const a of activities) {
@@ -195,6 +201,7 @@ export function estimateTrainingVdotForWindow(activities, fromIso, toIso, maxHr)
     const v = _vdotFromTrainingActivity(a, maxHr);
     if (v != null) estimates.push(v);
   }
+  if (estimates.length < minCount) return null;
   const m = medianOf(estimates);
   return m != null ? Math.round(m * 10) / 10 : null;
 }

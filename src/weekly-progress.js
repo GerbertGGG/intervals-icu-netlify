@@ -342,7 +342,7 @@ function buildReportText({
   lines.push(`Woche ${week.start} – ${week.end} vs. Vorwoche ${prevWeek.start} – ${prevWeek.end}`);
   lines.push("");
   lines.push("DEINE WOCHE IM ÜBERBLICK");
-  lines.push(`- VDOT: ${fmt(prev.vdot)} → ${fmt(curr.vdot)} (${fmtSigned(cmp.dVdot)})`);
+  lines.push(`- VDOT (Wochenfenster): ${fmt(prev.vdot)} → ${fmt(curr.vdot)} (${fmtSigned(cmp.dVdot)})`);
   lines.push(`- Fitness (CTL): ${fmt(prev.ctl)} → ${fmt(curr.ctl)} (${fmtSigned(cmp.dCtl)})`);
   lines.push(`- Ermüdung (ATL): ${fmt(prev.atl)} → ${fmt(curr.atl)} (${fmtSigned(cmp.dAtl)})`);
   lines.push(`- Form (TSB): ${fmt(curr.tsb)}`);
@@ -353,7 +353,7 @@ function buildReportText({
   lines.push(`- Load: ${prev.loadSum} → ${curr.loadSum} (${fmtSigned(cmp.pctLoad, 0)}%)`);
   lines.push(`- Einheiten: ${prev.sessionCount} → ${curr.sessionCount} (davon Läufe: ${curr.runSessionCount})`);
   if (Number.isFinite(realVdot)) {
-    lines.push(`- Aktueller VDOT: ${fmt(realVdot)}`);
+    lines.push(`- Aktueller VDOT (28-Tage-Fenster, geglättet): ${fmt(realVdot)}`);
   }
   if (Number.isFinite(correctionFactor) && correctionFactor !== 1) {
     lines.push(`- Wettkampf-Korrekturfaktor: ${correctionFactor.toFixed(3)} (aus bisherigen Rennergebnissen)`);
