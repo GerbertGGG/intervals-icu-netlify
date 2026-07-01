@@ -4,6 +4,7 @@ import { syncRange } from "./sync.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
 import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
+import { writeDailyRecoveryNote } from "./recovery-note.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -69,6 +70,12 @@ export default {
     const berlinHour = getBerlinHourFromScheduledEvent(event);
     const berlinMinute = getBerlinMinuteFromScheduledEvent(event);
     const isFirstRunOfDay = berlinHour === 7 && berlinMinute !== null && berlinMinute < 30;
+    // First tick of the 21:00 Berlin hour, same "first tick" pattern as isFirstRunOfDay
+    // above. No separate wrangler.toml cron entry needed for this: the existing
+    // */30 5-20 * * * (UTC) trigger already lands on a tick at Berlin 21:00 in both CET
+    // (UTC 20:00) and CEST (UTC 19:00), so reusing it avoids a second, DST-fragile
+    // fixed-UTC cron and a risk of double-firing this job.
+    const isFirstEveningRunOfDay = berlinHour === 21 && berlinMinute !== null && berlinMinute < 30;
     // Re-sync the last 2 days on every tick (not just the first run of the day), so a
     // "#novdot" tag added retroactively to yesterday's or the day-before's training is
     // picked up within the next 30-minute cycle instead of only at tomorrow's 07:00 run.
@@ -87,6 +94,14 @@ export default {
       ctx.waitUntil(
         buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
           console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+        }),
+      );
+    }
+
+    if (isFirstEveningRunOfDay) {
+      ctx.waitUntil(
+        writeDailyRecoveryNote(env, today).catch((e) => {
+          console.error("daily recovery note failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
         }),
       );
     }

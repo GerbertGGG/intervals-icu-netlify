@@ -182,6 +182,152 @@ function computeTrend(points) {
   };
 }
 
+// --- Red-flag thresholds for assessRecoveryStatus (adjust freely) ---
+const LOAD_SPIKE_INCREASE_THRESHOLD = 0.8; // last week vs. previous week distance increase (80%)
+const RESTING_HR_SLOPE_THRESHOLD = 0.15; // bpm/day rise over the analysis window
+const SLEEP_DEBT_MIN_NIGHTS = 3; // minimum nights of data in the last 7 to judge sleep debt
+const SLEEP_DEBT_AVG_HOURS_THRESHOLD = 6.5;
+const SLEEP_DEBT_SHORT_NIGHT_HOURS = 5;
+const SLEEP_DEBT_SHORT_NIGHT_COUNT = 2;
+const HRV_DROP_DELTA_ABS_THRESHOLD = -3; // trends.hrv.deltaAbs
+const HRV_DROP_SINGLE_DAY_PCT = 0.3; // single day >30% below the 28-day average
+const ACUTE_OVERLOAD_RATIO_THRESHOLD = 1.3; // ATL/CTL
+
+// Ordered so the array key order also fixes the canonical order flags are reported
+// in (summary/response), independent of the order the detectors below run in.
+const FLAG_INFO = {
+  sleep_debt: {
+    label: "Schlafdefizit",
+    category: "recovery",
+    recommendation: "Schlafdauer priorisieren (mind. 7h), bis sich Ruhepuls/HRV wieder normalisieren.",
+  },
+  resting_hr_rising: {
+    label: "steigender Ruhepuls",
+    category: "recovery",
+    recommendation: "Ruhepuls weiter beobachten und bei anhaltendem Trend 1-2 lockere Tage einplanen.",
+  },
+  hrv_drop: {
+    label: "gesunkene HRV",
+    category: "recovery",
+    recommendation: "Intensive Einheiten pausieren, bis sich die HRV wieder erholt.",
+  },
+  acute_overload: {
+    label: "akute Überlastung (ATL/CTL-Ratio erhöht)",
+    category: "load",
+    recommendation: "Trainingsbelastung kurzfristig reduzieren, damit sich akute und chronische Last wieder annähern.",
+  },
+  load_spike: {
+    label: "sprunghaft steigender Trainingsumfang",
+    category: "load",
+    recommendation: "Wochenumfang wieder schrittweise (max. +10-15%/Woche) statt sprunghaft steigern.",
+  },
+};
+
+function lastNDaysIso(newest, n) {
+  const list = [];
+  for (let i = n - 1; i >= 0; i--) list.push(addDays(newest, -i));
+  return list;
+}
+
+// "Jo-Jo": last week jumps back up right after the previous week itself was a decline.
+function detectLoadSpike(weeks) {
+  if (weeks.length < 3) return false;
+  const last = weeks[weeks.length - 1];
+  const prev = weeks[weeks.length - 2];
+  const beforePrev = weeks[weeks.length - 3];
+  if (!(prev.distanceKm > 0) || !(beforePrev.distanceKm > 0)) return false;
+  const increase = (last.distanceKm - prev.distanceKm) / prev.distanceKm;
+  const prevWasDecline = prev.distanceKm < beforePrev.distanceKm;
+  return increase > LOAD_SPIKE_INCREASE_THRESHOLD && prevWasDecline;
+}
+
+function detectRestingHrRising(trends) {
+  const slope = trends.restingHr?.slopePerDay;
+  return Number.isFinite(slope) && slope > RESTING_HR_SLOPE_THRESHOLD;
+}
+
+function detectSleepDebt(wellnessByDay, newest) {
+  const nights = lastNDaysIso(newest, 7)
+    .map((d) => wellnessByDay.get(d)?.sleepHours)
+    .filter((v) => Number.isFinite(v));
+  if (nights.length < SLEEP_DEBT_MIN_NIGHTS) return false;
+  const avg = nights.reduce((a, b) => a + b, 0) / nights.length;
+  const shortNights = nights.filter((h) => h < SLEEP_DEBT_SHORT_NIGHT_HOURS).length;
+  return avg < SLEEP_DEBT_AVG_HOURS_THRESHOLD || shortNights >= SLEEP_DEBT_SHORT_NIGHT_COUNT;
+}
+
+function detectHrvDrop(wellnessByDay, newest, days, trends) {
+  const deltaAbs = trends.hrv?.deltaAbs;
+  if (Number.isFinite(deltaAbs) && deltaAbs < HRV_DROP_DELTA_ABS_THRESHOLD) return true;
+
+  const windowHrv = lastNDaysIso(newest, days)
+    .map((d) => wellnessByDay.get(d)?.hrv)
+    .filter((v) => Number.isFinite(v));
+  if (windowHrv.length < MIN_WELLNESS_POINTS_FOR_TREND) return false;
+  const avg = windowHrv.reduce((a, b) => a + b, 0) / windowHrv.length;
+
+  const last7Hrv = lastNDaysIso(newest, 7)
+    .map((d) => wellnessByDay.get(d)?.hrv)
+    .filter((v) => Number.isFinite(v));
+  return last7Hrv.some((v) => v < avg * (1 - HRV_DROP_SINGLE_DAY_PCT));
+}
+
+function detectAcuteOverload(wellnessByDay, newest, days) {
+  const allDays = lastNDaysIso(newest, days);
+  for (let i = allDays.length - 1; i >= 0; i--) {
+    const w = wellnessByDay.get(allDays[i]);
+    if (Number.isFinite(w?.atl) && Number.isFinite(w?.ctl) && w.ctl > 0) {
+      return w.atl / w.ctl > ACUTE_OVERLOAD_RATIO_THRESHOLD;
+    }
+  }
+  return false;
+}
+
+function buildAssessmentText(flags) {
+  if (flags.length === 0) {
+    return {
+      summary: "Form und Erholung sehen unauffällig aus, keine Red Flags in den letzten Wochen.",
+      recommendation: "Aktuellen Trainingsplan wie geplant fortsetzen.",
+    };
+  }
+
+  const recoveryFlags = flags.filter((f) => FLAG_INFO[f].category === "recovery");
+  const loadFlags = flags.filter((f) => FLAG_INFO[f].category === "load");
+  const verb = flags.length === 1 ? "deutet" : "deuten";
+  let cause;
+  if (recoveryFlags.length > 0 && loadFlags.length === 0) {
+    cause = `${verb} auf unzureichende Erholung hin, nicht auf zu hohes Trainingsvolumen`;
+  } else if (loadFlags.length > 0 && recoveryFlags.length === 0) {
+    cause = `${verb} auf ein zu schnell gesteigertes bzw. zu hohes Trainingsvolumen hin`;
+  } else {
+    cause = `${verb} auf ein Zusammenspiel aus hoher Trainingslast und unzureichender Erholung hin`;
+  }
+
+  const summary = `${flags.map((f) => FLAG_INFO[f].label).join(" + ")} ${cause}.`;
+  const recommendation = [...new Set(flags.map((f) => FLAG_INFO[f].recommendation))].join(" ");
+  return { summary, recommendation };
+}
+
+// Turns the raw weeks/wellness/trends data into the red-flag checklist from the
+// manual analysis this endpoint (and the daily recovery note, see recovery-note.js)
+// are meant to replace. Two or more flags together are already treated as "rot" below,
+// so a flagged sleep_debt + resting_hr_rising combination hits that bar automatically
+// without needing a separate rule for it.
+export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days) {
+  const detected = [];
+  if (detectLoadSpike(weeks)) detected.push("load_spike");
+  if (detectRestingHrRising(trends)) detected.push("resting_hr_rising");
+  if (detectSleepDebt(wellnessByDay, newest)) detected.push("sleep_debt");
+  if (detectHrvDrop(wellnessByDay, newest, days, trends)) detected.push("hrv_drop");
+  if (detectAcuteOverload(wellnessByDay, newest, days)) detected.push("acute_overload");
+
+  const flags = Object.keys(FLAG_INFO).filter((f) => detected.includes(f));
+  const status = flags.length === 0 ? "grün" : flags.length === 1 ? "gelb" : "rot";
+  const { summary, recommendation } = buildAssessmentText(flags);
+
+  return { status, flags, summary, recommendation };
+}
+
 function wellnessTrends(wellnessByDay, oldest, days) {
   const restingHrPoints = [];
   const hrvPoints = [];
@@ -225,6 +371,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   const weeks = buckets.map((bucket) => buildWeekSummary(bucket, activities, maxHr));
 
   const trends = wellnessTrends(wellnessByDay, oldest, days);
+  const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
 
   const notes = [];
   if (!(maxHr > 0)) notes.push("Keine MaxHF ermittelbar – Ø-Pace pro HF-Zone konnte nicht berechnet werden.");
@@ -242,6 +389,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     maxHr: maxHr || null,
     weeks,
     trends,
+    assessment,
     runs,
     wellnessDaily,
     dataQuality: {
