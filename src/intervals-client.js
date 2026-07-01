@@ -50,6 +50,17 @@ export async function fetchIntervalsActivities(env, oldest, newest) {
   return r.json();
 }
 
+// Returns the wellness list for [oldest, newest] (one entry per day that has data),
+// as opposed to fetchIntervalsWellnessDay which targets a single day.
+export async function fetchIntervalsWellnessRange(env, oldest, newest) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/wellness?oldest=${oldest}&newest=${newest}`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, "wellness range");
+  if (!r.ok) throw new Error(`wellness range ${r.status}: ${await r.text()}`);
+  const data = await r.json();
+  return Array.isArray(data) ? data : Array.isArray(data?.wellness) ? data.wellness : [];
+}
+
 export async function fetchIntervalsEvents(env, oldest, newest) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;

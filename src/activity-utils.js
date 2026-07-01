@@ -1,3 +1,12 @@
+export function activityDay(a) {
+  return String(a?.start_date_local || a?.start_date || "").slice(0, 10);
+}
+
+export function activityLoad(a) {
+  const v = Number(a?.icu_training_load ?? a?.training_load ?? a?.load ?? 0);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}
+
 export function isRun(a) {
   const t = String(a?.type ?? "").toLowerCase();
   return (
