@@ -1,4 +1,5 @@
 import { mustEnv } from "./kv.js";
+import { buildRecentFormAnalysis } from "./form-analysis.js";
 
 const RESEND_API_URL = "https://api.resend.com/emails";
 const DEFAULT_FROM = "Intervals.icu Report <onboarding@resend.dev>";
@@ -37,4 +38,15 @@ export async function sendJsonReportEmail(env, { subject, introText, data }) {
   }
 
   return res.json();
+}
+
+// Shared by the Monday cron job and the manual /report-email debug route, so
+// both trigger paths build and mail the exact same recent-form snapshot.
+export async function sendRecentFormReportEmail(env, todayIso, { days = 28 } = {}) {
+  const data = await buildRecentFormAnalysis(env, todayIso, { days });
+  return sendJsonReportEmail(env, {
+    subject: `Trainingsdaten Woche ${todayIso}`,
+    introText: "Rohdaten der letzten 4 Wochen, zur manuellen Analyse.",
+    data,
+  });
 }
