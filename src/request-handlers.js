@@ -87,6 +87,19 @@ export async function handleBackfillProfileRequest(url, env, ctx, deps) {
   return json({ ok: true, scheduled: true, chunkOldest: oldest, chunkNewest, finalNewest, hasMore });
 }
 
+export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
+  const { buildRecentFormAnalysis } = deps;
+  const athleteIdParam = getSearchParamAny(url.searchParams, ["athlete_id", "athleteId"]);
+  const scopedEnv = athleteIdParam ? { ...env, ATHLETE_ID: athleteIdParam } : env;
+
+  const days = clampInt(url.searchParams.get("days") ?? "28", 7, 90);
+  const dateParam = url.searchParams.get("date");
+  const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
+
+  const result = await buildRecentFormAnalysis(scopedEnv, todayIso, { days });
+  return json(result);
+}
+
 export async function handleWeeklyProgressRequest(url, env, ctx, deps) {
   const { buildWeeklyProgressReport: buildReport } = deps;
   const write = parseBooleanParam(url.searchParams, "write");

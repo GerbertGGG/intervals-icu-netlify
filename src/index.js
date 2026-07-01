@@ -1,7 +1,8 @@
 import { isoDate, isMondayIso } from "./date-utils.js";
-import { handleSyncRequest, handleBackfillProfileRequest, handleWeeklyProgressRequest, handleGoalRequest, handleStatusRequest, withWorkerErrorBoundary } from "./request-handlers.js";
+import { handleSyncRequest, handleBackfillProfileRequest, handleWeeklyProgressRequest, handleGoalRequest, handleStatusRequest, handleRecentFormAnalysisRequest, withWorkerErrorBoundary } from "./request-handlers.js";
 import { syncRange } from "./sync.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
+import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
 
 function getBerlinHourFromScheduledEvent(event) {
@@ -51,6 +52,10 @@ export default {
 
     if (url.pathname === "/status") {
       return withWorkerErrorBoundary(() => handleStatusRequest(url, env, ctx));
+    }
+
+    if (url.pathname === "/api/analysis/recent-form") {
+      return withWorkerErrorBoundary(() => handleRecentFormAnalysisRequest(url, env, ctx, { buildRecentFormAnalysis }));
     }
 
     return new Response("Not found", { status: 404 });

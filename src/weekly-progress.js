@@ -1,5 +1,5 @@
 import { isoDate, parseISODateSafe } from "./date-utils.js";
-import { isRun } from "./activity-utils.js";
+import { isRun, activityDay, activityLoad } from "./activity-utils.js";
 import { hasKv, readKvJson, writeKvJson, mustEnv } from "./kv.js";
 import { fetchIntervalsActivities, fetchIntervalsWellnessDay, upsertIntervalsNote } from "./intervals-client.js";
 import {
@@ -42,15 +42,6 @@ export function previousWeek(week) {
   const end = addDays(week.start, -1);
   const start = addDays(end, -6);
   return { start, end };
-}
-
-function activityDay(a) {
-  return String(a?.start_date_local || a?.start_date || "").slice(0, 10);
-}
-
-function activityLoad(a) {
-  const v = Number(a?.icu_training_load ?? a?.training_load ?? a?.load ?? 0);
-  return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
 function sumActivitiesInWeek(activities, week) {
