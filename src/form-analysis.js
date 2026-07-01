@@ -182,7 +182,7 @@ function computeTrend(points) {
   };
 }
 
-// --- Red-flag thresholds for buildRecentFormAssessment (adjust freely) ---
+// --- Red-flag thresholds for assessRecoveryStatus (adjust freely) ---
 const LOAD_SPIKE_INCREASE_THRESHOLD = 0.8; // last week vs. previous week distance increase (80%)
 const RESTING_HR_SLOPE_THRESHOLD = 0.15; // bpm/day rise over the analysis window
 const SLEEP_DEBT_MIN_NIGHTS = 3; // minimum nights of data in the last 7 to judge sleep debt
@@ -309,10 +309,11 @@ function buildAssessmentText(flags) {
 }
 
 // Turns the raw weeks/wellness/trends data into the red-flag checklist from the
-// manual analysis this endpoint is meant to replace. Two or more flags together are
-// already treated as "rot" below, so a flagged sleep_debt + resting_hr_rising
-// combination hits that bar automatically without needing a separate rule for it.
-function buildRecentFormAssessment(weeks, wellnessByDay, trends, newest, days) {
+// manual analysis this endpoint (and the daily recovery note, see recovery-note.js)
+// are meant to replace. Two or more flags together are already treated as "rot" below,
+// so a flagged sleep_debt + resting_hr_rising combination hits that bar automatically
+// without needing a separate rule for it.
+export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days) {
   const detected = [];
   if (detectLoadSpike(weeks)) detected.push("load_spike");
   if (detectRestingHrRising(trends)) detected.push("resting_hr_rising");
@@ -370,7 +371,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   const weeks = buckets.map((bucket) => buildWeekSummary(bucket, activities, maxHr));
 
   const trends = wellnessTrends(wellnessByDay, oldest, days);
-  const assessment = buildRecentFormAssessment(weeks, wellnessByDay, trends, newest, days);
+  const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
 
   const notes = [];
   if (!(maxHr > 0)) notes.push("Keine MaxHF ermittelbar – Ø-Pace pro HF-Zone konnte nicht berechnet werden.");

@@ -94,6 +94,24 @@ export async function fetchIntervalsWellnessDay(env, day) {
   return r.json();
 }
 
+// Merges a single marked "line" into today's wellness `comments` field instead of
+// overwriting it outright. Any previous line containing the same marker is dropped
+// first (so re-running the same job the same day replaces its own line instead of
+// duplicating it), everything else already in `comments` (manual athlete notes, other
+// automations) is left untouched. Whether the wellness PUT itself is a partial update
+// or a full replace couldn't be confirmed against the intervals.icu API docs (blocked
+// by this environment's outbound network policy), so doing a GET first and sending the
+// full merged text back is the safe choice either way.
+export async function upsertWellnessComment(env, day, marker, line) {
+  const existing = await fetchIntervalsWellnessDay(env, day);
+  const keptLines = String(existing?.comments ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.includes(marker));
+  const comments = [...keptLines, line].join("\n");
+  await putWellnessDay(env, day, { comments });
+}
+
 export async function createIntervalsEvent(env, eventObj) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events`;
