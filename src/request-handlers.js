@@ -100,6 +100,16 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
   return json(result);
 }
 
+export async function handleReportEmailRequest(url, env, ctx, deps) {
+  const { sendRecentFormReportEmail } = deps;
+  const days = clampInt(url.searchParams.get("days") ?? "28", 7, 90);
+  const dateParam = url.searchParams.get("date");
+  const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
+
+  await sendRecentFormReportEmail(env, todayIso, { days });
+  return json({ ok: true, sent: true, todayIso, days });
+}
+
 export async function handleWeeklyProgressRequest(url, env, ctx, deps) {
   const { buildWeeklyProgressReport: buildReport } = deps;
   const write = parseBooleanParam(url.searchParams, "write");
