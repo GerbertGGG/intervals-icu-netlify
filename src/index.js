@@ -5,6 +5,7 @@ import { buildWeeklyProgressReport } from "./weekly-progress.js";
 import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
 import { writeDailyRecoveryNote } from "./recovery-note.js";
+import { sendJsonReportEmail } from "./email.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -94,6 +95,21 @@ export default {
       ctx.waitUntil(
         buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
           console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+        }),
+      );
+
+      // Independent of the weekly progress note above: mail the raw recent-form
+      // JSON for manual analysis. A failure here must never block the report.
+      ctx.waitUntil(
+        (async () => {
+          const data = await buildRecentFormAnalysis(env, today, { days: 28 });
+          await sendJsonReportEmail(env, {
+            subject: `Trainingsdaten Woche ${today}`,
+            introText: "Rohdaten der letzten 4 Wochen, zur manuellen Analyse.",
+            data,
+          });
+        })().catch((e) => {
+          console.error("recent-form report email failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
         }),
       );
     }
