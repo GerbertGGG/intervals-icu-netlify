@@ -6,6 +6,7 @@ import {
   fetchIntervalsActivityDetail,
   fetchIntervalsActivityIntervals,
   fetchIntervalsActivityMap,
+  fetchIntervalsEvents,
 } from "./intervals-client.js";
 import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime, getCurrentRealVdot } from "./vdot.js";
 import {
@@ -17,6 +18,7 @@ import {
 } from "./weather.js";
 import { resolveActiveGoalRace, computeGoalRaceInfo } from "./goal-race.js";
 import { readLongRunPlan, getTargetLongRunKmForWeek, longestRunKmInRunRecords } from "./long-run-plan.js";
+import { isARaceEvent } from "./event-utils.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -37,6 +39,7 @@ const MIN_TRAINING_DAYS_FOR_MONOTONY = 3;
 const MAX_ZONE_TIME_ACTIVITY_CALLS = 40;
 const MAX_INTERVAL_SPLIT_ACTIVITY_CALLS = 20;
 const MAX_WEATHER_ACTIVITY_CALLS = 40;
+const DEFAULT_PLAN_DAYS = 14;
 
 function addDays(dayIso, n) {
   return isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + n * 86400000));
@@ -103,6 +106,50 @@ function buildRaceRecord(a) {
     paceSecPerKm: secPerKm != null ? Math.round(secPerKm) : null,
     vdot: computeVdotFromRaceTime(distanceM, timeSecs),
   };
+}
+
+// ─── upcomingPlan ───────────────────────────────────────────────────────────────
+// Forward-looking counterpart to runs[]/races[] above: the athlete's own planned
+// workouts straight from the intervals.icu calendar (same /events endpoint
+// sync.js/goal-race.js already use for A-races). NOTE-category events are excluded
+// since those are auto-generated comments (recovery-note.js, formcheck ampel via
+// upsertIntervalsNote in intervals-client.js), not actual training plan entries.
+function eventDayIso(event) {
+  return String(event?.start_date_local || event?.start_date || "").slice(0, 10);
+}
+
+function isNoteEvent(event) {
+  return String(event?.category ?? "").toUpperCase().trim() === "NOTE";
+}
+
+function buildPlannedWorkoutRecord(event) {
+  const distanceM = Number(event?.distance ?? event?.distance_target ?? 0) || null;
+  const timeSecs = Number(event?.moving_time ?? event?.duration ?? 0) || null;
+  const loadTarget = Number(event?.icu_training_load ?? event?.load_target ?? 0) || null;
+  return {
+    date: eventDayIso(event),
+    name: event?.name || null,
+    type: event?.type || null,
+    category: event?.category || null,
+    description: event?.description || null,
+    plannedDistanceKm: distanceM != null ? Math.round((distanceM / 1000) * 100) / 100 : null,
+    plannedTimeMin: timeSecs != null ? Math.round(timeSecs / 60) : null,
+    plannedLoad: loadTarget && loadTarget > 0 ? loadTarget : null,
+    isRace: isARaceEvent(event),
+  };
+}
+
+async function buildUpcomingPlan(env, todayIso, planDays) {
+  const from = addDays(todayIso, 1);
+  const to = addDays(todayIso, planDays);
+  const raw = await fetchIntervalsEvents(env, from, to).catch(() => []);
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.events) ? raw.events : [];
+  const plan = list
+    .filter((e) => !isNoteEvent(e))
+    .map(buildPlannedWorkoutRecord)
+    .filter((r) => r.date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return { range: { from, to }, workouts: plan };
 }
 
 // ─── zoneTimes (Teil 2, opt-in) ────────────────────────────────────────────────
@@ -631,7 +678,13 @@ function wellnessTrends(wellnessByDay, oldest, days) {
 // issue) done by a human/LLM reading the response — this endpoint only aggregates and
 // exposes the raw numbers, it doesn't diagnose.
 export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
-  const { days = 28, includeZoneTimes = false, includeIntervalSplits = false, includeWeather = false } = options;
+  const {
+    days = 28,
+    includeZoneTimes = false,
+    includeIntervalSplits = false,
+    includeWeather = false,
+    planDays = DEFAULT_PLAN_DAYS,
+  } = options;
   const newest = todayIso;
   const oldest = addDays(newest, -(days - 1));
 
@@ -685,6 +738,8 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   const currentVdot = await getCurrentRealVdot(env).catch(() => null);
   const goalInfo = computeGoalRaceInfo(goalRace, newest, currentVdot ?? vdotHistory[vdotHistory.length - 1]?.vdot);
 
+  const upcomingPlan = await buildUpcomingPlan(env, newest, planDays);
+
   // Long-run target progression (see long-run-plan.js): the table itself is only
   // (re)built when raceDate/raceDistance change, not on every call here - this just
   // looks up the current week's already-persisted target. "Current week" here is the
@@ -723,6 +778,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     easyPaceHistory,
     wellnessDaily,
     goalInfo,
+    upcomingPlan,
     dataQuality: {
       runCount: runs.length,
       wellnessDayCount: wellnessDaily.length,

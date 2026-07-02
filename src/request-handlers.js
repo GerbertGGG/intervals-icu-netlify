@@ -102,12 +102,14 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
   // zoneTimes/intervalSplits above - see enrichRunsWithWeather in form-analysis.js
   // for the cost rationale (one extra fetch per run, capped at 40).
   const includeWeather = (url.searchParams.get("weather") || "").toLowerCase() !== "false";
+  const planDays = clampInt(url.searchParams.get("planDays") ?? "14", 1, 60);
 
   const result = await buildRecentFormAnalysis(scopedEnv, todayIso, {
     days,
     includeZoneTimes,
     includeIntervalSplits,
     includeWeather,
+    planDays,
   });
   return json(result);
 }
