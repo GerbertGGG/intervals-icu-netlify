@@ -413,7 +413,7 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
 
   const activitiesOldest = addDays(prevWeek.start, -MAX_HR_LOOKBACK_DAYS);
   const activities = await fetchIntervalsActivities(env, activitiesOldest, week.end);
-  const maxHr = await resolveMaxHr(env, activities, { write });
+  const maxHr = await resolveMaxHr(env, activities);
 
   const curr = await buildWeekSnapshot(env, activities, week, maxHr);
   const prev = await buildWeekSnapshot(env, activities, prevWeek, maxHr);

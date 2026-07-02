@@ -339,16 +339,22 @@ async function saveCachedPaceBench(env, data) {
   } catch {}
 }
 
-// Resolves max HR via (in order): env override, KV cache, live API fetch (write-mode
-// only), highest observed max_heartrate, or a heuristic from the highest average HR.
-export async function resolveMaxHr(env, activities, { write = false } = {}) {
+// Resolves max HR via (in order): env override, KV cache, live API fetch (a single
+// GET, cached for 24h - see loadCachedMaxHr/saveCachedMaxHr in intervals-client.js -
+// so this only hits the API once a day even for read-only callers), highest observed
+// max_heartrate, or a heuristic from the highest average HR. Used to only attempt
+// the live fetch in write mode, to avoid a per-request intervals.icu call, but the
+// 24h cache already bounds that cost, and skipping it meant read-only callers (e.g.
+// /api/analysis/recent-form) silently fell back to the cruder activity-based estimate
+// every time instead of the athlete's actual configured max HR.
+export async function resolveMaxHr(env, activities) {
   let maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || null;
   if (maxHr) return maxHr;
 
   maxHr = await loadCachedMaxHr(env).catch(() => null);
   if (maxHr) return maxHr;
 
-  if (write) maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
+  maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
   if (maxHr) return maxHr;
 
   maxHr = _estimateMaxHrFromActivities(activities) || null;
@@ -373,7 +379,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 1b) Race-derived correction factor for training-based estimates (see
   // updateRaceCorrectionFactor for rationale). Only advanced on writes so read-only
   // calls don't process the same race twice from concurrent requests.
-  const maxHr = await resolveMaxHr(env, activities, { write });
+  const maxHr = await resolveMaxHr(env, activities);
   let correctionFactor = 1;
   if (write && raceResult) {
     const correctionState = await updateRaceCorrectionFactor(env, activities, raceResult, maxHr);
