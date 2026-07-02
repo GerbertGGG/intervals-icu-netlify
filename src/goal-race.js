@@ -78,11 +78,26 @@ export async function fetchUpcomingARaceEvents(env, todayIso) {
 // The single entry point every goalInfo/long-run-plan consumer should use: prefers
 // the auto-derived A-race calendar event, falling back to a manually set /goal only
 // when no A-race event exists (e.g. the athlete hasn't added one to intervals.icu yet).
+//
+// When an auto-derived event *does* exist but has no time_target on intervals.icu
+// (source: "auto", targetTime: null - intervals.icu has no target-time field the
+// athlete filled in), a manually PUT /goal entry for the same race date is merged in
+// as a targetTime-only override: date/distance always stay the auto-detected ones,
+// only targetTime/targetTimeSecs are borrowed from KV. A manual entry for a
+// different date (e.g. left over from a previous race) is ignored rather than
+// misapplied to the current auto-detected race.
 export async function resolveActiveGoalRace(env, todayIso) {
   const races = await fetchUpcomingARaceEvents(env, todayIso).catch(() => []);
   const auto = deriveAutoGoalFromRaces(races, todayIso);
-  if (auto) return auto;
-  return readGoalRace(env).catch(() => null);
+  if (!auto) return readGoalRace(env).catch(() => null);
+
+  if (auto.targetTimeSecs == null) {
+    const override = await readGoalRace(env).catch(() => null);
+    if (override && override.date === auto.date && Number.isFinite(override.targetTimeSecs)) {
+      return { ...auto, targetTime: override.targetTime, targetTimeSecs: override.targetTimeSecs };
+    }
+  }
+  return auto;
 }
 
 function parseTargetTime(s) {

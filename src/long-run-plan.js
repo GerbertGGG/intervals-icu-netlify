@@ -159,7 +159,9 @@ export function buildLongRunProgressionWeeks({ todayIso, raceDate, distanceEnum,
 
   let finalPeakLongRunKm = peakLongRunKm;
   let timelineAmbitious = false;
-  const weeks = [];
+  // Baseline week (w=0) itself, so a lookup for "this week's target" still resolves
+  // during the very week the plan was (re)built, not just from next week onward.
+  const weeks = [{ weekStart: baselineMonday, targetKm: planBaselineLongRunKm }];
   let buildWeeksCount = 0;
 
   if (buildWeeks <= 0) {
@@ -242,9 +244,12 @@ export async function maybeRebuildLongRunPlanOnGoalChange(env, newGoal, todayIso
   return plan;
 }
 
-// Teil 4: current week's target from the persisted table (no recomputation).
-export function getTargetLongRunKmForWeek(plan, mondayIso) {
-  if (!plan || !Array.isArray(plan.weeks) || !mondayIso) return null;
-  const entry = plan.weeks.find((w) => w.weekStart === mondayIso);
+// Teil 4: target from the persisted table (no recomputation) for whichever
+// Mon-Sun plan week `dateIso` falls into - a range containment check rather than an
+// exact weekStart match, so this resolves correctly regardless of which day of the
+// week (or which window a caller frames "the current week" as) `dateIso` is.
+export function getTargetLongRunKmForWeek(plan, dateIso) {
+  if (!plan || !Array.isArray(plan.weeks) || !dateIso) return null;
+  const entry = plan.weeks.find((w) => dateIso >= w.weekStart && dateIso < addDays(w.weekStart, 7));
   return entry ? entry.targetKm : null;
 }
