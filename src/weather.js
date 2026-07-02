@@ -75,6 +75,24 @@ export async function writeCachedActivityWeather(env, activityId, weather) {
   return writeKvJson(env, activityWeatherKvKey(activityId), weather);
 }
 
+function activityGpsKvKey(activityId) {
+  return `${WEATHER_KV_PREFIX}gps:${activityId}`;
+}
+
+// A completed activity's GPS track never changes either, so once /map has been
+// fetched once, cache what it found (a start point, or its confirmed absence) so a
+// later retry - see enrichRunsWithWeather in form-analysis.js - can skip straight to
+// Open-Meteo instead of repeating the (already-successful) map fetch. Stored as
+// `{ none: true }` rather than a bare null so a cache hit is distinguishable from
+// "never looked up yet" (readKvJson also returns null for a missing key).
+export async function readCachedActivityGps(env, activityId) {
+  return readKvJson(env, activityGpsKvKey(activityId));
+}
+
+export async function writeCachedActivityGps(env, activityId, latLng) {
+  return writeKvJson(env, activityGpsKvKey(activityId), latLng ?? { none: true });
+}
+
 // Past weather never changes, so this is cached indefinitely (no TTL/max-age check,
 // unlike the maxHr cache in intervals-client.js) - a cache hit is always still valid.
 async function fetchOpenMeteoDay(lat, lng, dateIso) {
@@ -125,21 +143,29 @@ function activityStartHourIso(activity) {
   return /^\d{4}-\d{2}-\d{2}T\d{2}/.test(local) ? `${local.slice(0, 13)}:00` : null;
 }
 
-// Builds the weather record for one run: intervals.icu's own per-point weather
-// (temp + humidity together) when the map endpoint has it, otherwise an Open-Meteo
-// fallback keyed off the run's own GPS start point + date/hour, otherwise null
+// Resolves the weather record for one run: intervals.icu's own per-point weather
+// (temp + humidity together) when a freshly-fetched map endpoint has it, otherwise an
+// Open-Meteo fallback keyed off the run's GPS start point + date/hour, otherwise null
 // (never guessed - e.g. treadmill runs have no GPS at all).
-export async function buildRunWeather(env, activity, mapData) {
-  const startLatLng = extractStartLatLng(mapData);
-  if (!startLatLng) return null;
+//
+// Takes `mapData` (a fresh /map response) and/or `cachedLatLng` (a previously-found
+// start point, see readCachedActivityGps) rather than just one or the other: a run
+// whose GPS was already found but whose Open-Meteo call previously failed for budget
+// reasons (see enrichRunsWithWeather) should skip the now-redundant map fetch and go
+// straight to Open-Meteo, so the caller may pass cachedLatLng with no mapData at all.
+// Returns latLng alongside weather so the caller can cache the GPS point even when
+// the weather lookup itself didn't (yet) succeed.
+export async function resolveRunWeather(env, activity, { mapData = null, cachedLatLng = null } = {}) {
+  const startLatLng = cachedLatLng ?? extractStartLatLng(mapData);
+  if (!startLatLng) return { weather: null, latLng: null };
 
-  const native = averageNativeWeather(mapData);
-  if (native) return { ...native, source: "intervals.icu" };
+  const native = mapData ? averageNativeWeather(mapData) : null;
+  if (native) return { weather: { ...native, source: "intervals.icu" }, latLng: startLatLng };
 
   const dateIso = String(activity?.start_date_local || activity?.start_date || "").slice(0, 10);
-  if (!dateIso) return null;
+  if (!dateIso) return { weather: null, latLng: startLatLng };
   const dayData = await getOpenMeteoDay(env, startLatLng.lat, startLatLng.lng, dateIso).catch(() => null);
-  if (!dayData) return null;
+  if (!dayData) return { weather: null, latLng: startLatLng };
   const picked = pickOpenMeteoValues(dayData, activityStartHourIso(activity));
-  return picked ? { ...picked, source: "open-meteo" } : null;
+  return { weather: picked ? { ...picked, source: "open-meteo" } : null, latLng: startLatLng };
 }

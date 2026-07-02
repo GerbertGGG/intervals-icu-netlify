@@ -8,7 +8,13 @@ import {
   fetchIntervalsActivityMap,
 } from "./intervals-client.js";
 import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime } from "./vdot.js";
-import { buildRunWeather, readCachedActivityWeather, writeCachedActivityWeather } from "./weather.js";
+import {
+  resolveRunWeather,
+  readCachedActivityWeather,
+  writeCachedActivityWeather,
+  readCachedActivityGps,
+  writeCachedActivityGps,
+} from "./weather.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -261,6 +267,12 @@ async function enrichRunsWithIntervalSplits(env, runRecords, cap) {
 // invocation's subrequest budget allows - rather than trying to fit everything in
 // one call, already-resolved runs become free on every later call, so the history
 // backfills itself over a few requests instead of needing to fit in one.
+//
+// The run's GPS start point is cached separately (readCachedActivityGps/
+// writeCachedActivityGps), since a run whose GPS was found but whose Open-Meteo call
+// was starved of budget last time would otherwise repeat the already-successful map
+// fetch on every retry - skipping straight to the (cheaper, single) Open-Meteo call
+// once GPS is known roughly doubles how many runs a wide history can backfill per call.
 async function enrichRunsWithWeather(env, runRecords, cap) {
   const targets = runRecords.slice(-cap);
   await Promise.all(
@@ -274,14 +286,30 @@ async function enrichRunsWithWeather(env, runRecords, cap) {
         record.weather = null;
         return;
       }
-      const cached = await readCachedActivityWeather(env, id).catch(() => null);
-      if (cached) {
-        record.weather = cached;
+      const cachedWeather = await readCachedActivityWeather(env, id).catch(() => null);
+      if (cachedWeather) {
+        record.weather = cachedWeather;
         return;
       }
-      const mapData = await fetchIntervalsActivityMap(env, id).catch(() => null);
-      const weather = mapData ? await buildRunWeather(env, activity, mapData).catch(() => null) : null;
+
+      const cachedGps = await readCachedActivityGps(env, id).catch(() => null);
+      if (cachedGps?.none) {
+        record.weather = null;
+        return;
+      }
+
+      let mapData = null;
+      if (!cachedGps) mapData = await fetchIntervalsActivityMap(env, id).catch(() => null);
+
+      const { weather, latLng } = await resolveRunWeather(env, activity, {
+        mapData,
+        cachedLatLng: cachedGps ?? null,
+      }).catch(() => ({ weather: null, latLng: cachedGps ?? null }));
       record.weather = weather;
+      // Only cache the GPS finding off a fresh map fetch (mapData !== null) - a
+      // cache miss combined with a still-null mapData means the fetch itself failed
+      // (e.g. hit the subrequest ceiling), not a confirmed absence of GPS.
+      if (!cachedGps && mapData !== null) await writeCachedActivityGps(env, id, latLng).catch(() => {});
       if (weather) await writeCachedActivityWeather(env, id, weather).catch(() => {});
     }),
   );
