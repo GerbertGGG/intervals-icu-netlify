@@ -7,7 +7,7 @@ import {
   fetchIntervalsActivityIntervals,
   fetchIntervalsActivityMap,
 } from "./intervals-client.js";
-import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime } from "./vdot.js";
+import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime, getCurrentRealVdot } from "./vdot.js";
 import {
   resolveRunWeather,
   readCachedActivityWeather,
@@ -15,6 +15,7 @@ import {
   readCachedActivityGps,
   writeCachedActivityGps,
 } from "./weather.js";
+import { readGoalRace, computeGoalRaceInfo } from "./goal-race.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -675,6 +676,14 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   const trends = wellnessTrends(wellnessByDay, oldest, days);
   const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
 
+  // Next competition (Zieldistanz/-datum/-zeit, aktuelle Trainingsphase, Wochen bis zum
+  // Ziel) mirrors the goal race set via the /goal endpoint (see goal-race.js) - reused
+  // here rather than recomputed so this stays in sync with that endpoint and the weekly
+  // progress report, which both already expose the same computeGoalRaceInfo() shape.
+  const goalRace = await readGoalRace(env).catch(() => null);
+  const currentVdot = await getCurrentRealVdot(env).catch(() => null);
+  const goalInfo = computeGoalRaceInfo(goalRace, newest, currentVdot ?? vdotHistory[vdotHistory.length - 1]?.vdot);
+
   const notes = [];
   if (!(maxHr > 0)) notes.push("Keine MaxHF ermittelbar – Ø-Pace pro HF-Zone konnte nicht berechnet werden.");
   if (wellnessDaily.length < days / 2) {
@@ -697,6 +706,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     vdotHistory,
     easyPaceHistory,
     wellnessDaily,
+    goalInfo,
     dataQuality: {
       runCount: runs.length,
       wellnessDayCount: wellnessDaily.length,
