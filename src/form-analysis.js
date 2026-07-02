@@ -5,8 +5,10 @@ import {
   fetchIntervalsWellnessRange,
   fetchIntervalsActivityDetail,
   fetchIntervalsActivityIntervals,
+  fetchIntervalsActivityMap,
 } from "./intervals-client.js";
 import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime } from "./vdot.js";
+import { buildRunWeather } from "./weather.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -26,6 +28,7 @@ const MIN_TRAINING_DAYS_FOR_MONOTONY = 3;
 // per-invocation subrequest budget even when a caller does opt in.
 const MAX_ZONE_TIME_ACTIVITY_CALLS = 40;
 const MAX_INTERVAL_SPLIT_ACTIVITY_CALLS = 20;
+const MAX_WEATHER_ACTIVITY_CALLS = 40;
 
 function addDays(dayIso, n) {
   return isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + n * 86400000));
@@ -240,6 +243,35 @@ async function enrichRunsWithIntervalSplits(env, runRecords, cap) {
   );
   for (const { record } of runRecords) {
     if (record.isInterval && !("intervalSplits" in record)) record.intervalSplits = null;
+  }
+}
+
+// ─── weather (opt-in) ──────────────────────────────────────────────────────────
+// Per-run weather, so a downstream reader can tell "unusual HR-zone spread from
+// heat" apart from "unusual HR-zone spread from bad pacing". See weather.js for the
+// intervals.icu-native vs. Open-Meteo-fallback logic; treadmill runs are skipped
+// without a request since they never have GPS. Same opt-in + cap contract as
+// zoneTimes/intervalSplits above (one extra fetch per run, plus a possible
+// Open-Meteo call), so the default daily/weekly callers keep their current cost.
+async function enrichRunsWithWeather(env, runRecords, cap) {
+  const targets = runRecords.slice(-cap);
+  await Promise.all(
+    targets.map(async ({ activity, record }) => {
+      if (record.isTreadmill) {
+        record.weather = null;
+        return;
+      }
+      const id = activity?.id ?? activity?.icu_activity_id;
+      if (id == null) {
+        record.weather = null;
+        return;
+      }
+      const mapData = await fetchIntervalsActivityMap(env, id).catch(() => null);
+      record.weather = mapData ? await buildRunWeather(env, activity, mapData).catch(() => null) : null;
+    }),
+  );
+  for (const { record } of runRecords) {
+    if (!("weather" in record)) record.weather = null;
   }
 }
 
@@ -554,7 +586,7 @@ function wellnessTrends(wellnessByDay, oldest, days) {
 // issue) done by a human/LLM reading the response — this endpoint only aggregates and
 // exposes the raw numbers, it doesn't diagnose.
 export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
-  const { days = 28, includeZoneTimes = false, includeIntervalSplits = false } = options;
+  const { days = 28, includeZoneTimes = false, includeIntervalSplits = false, includeWeather = false } = options;
   const newest = todayIso;
   const oldest = addDays(newest, -(days - 1));
 
@@ -572,6 +604,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
 
   if (includeZoneTimes) await enrichRunsWithZoneTimes(env, runRecords, MAX_ZONE_TIME_ACTIVITY_CALLS);
   if (includeIntervalSplits) await enrichRunsWithIntervalSplits(env, runRecords, MAX_INTERVAL_SPLIT_ACTIVITY_CALLS);
+  if (includeWeather) await enrichRunsWithWeather(env, runRecords, MAX_WEATHER_ACTIVITY_CALLS);
   const runs = runRecords.map((r) => r.record);
 
   const races = activities
