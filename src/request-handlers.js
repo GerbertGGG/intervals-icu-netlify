@@ -97,8 +97,14 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
   const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
   const includeZoneTimes = parseBooleanParam(url.searchParams, "zoneTimes");
   const includeIntervalSplits = parseBooleanParam(url.searchParams, "intervalSplits");
+  const includeWeather = parseBooleanParam(url.searchParams, "weather");
 
-  const result = await buildRecentFormAnalysis(scopedEnv, todayIso, { days, includeZoneTimes, includeIntervalSplits });
+  const result = await buildRecentFormAnalysis(scopedEnv, todayIso, {
+    days,
+    includeZoneTimes,
+    includeIntervalSplits,
+    includeWeather,
+  });
   return json(result);
 }
 

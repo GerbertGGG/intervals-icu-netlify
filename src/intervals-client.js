@@ -81,6 +81,19 @@ export async function fetchIntervalsActivityIntervals(env, activityId) {
   return r.json().catch(() => null);
 }
 
+// GPS track (latlngs) + per-point weather (temp/feels_like/humidity/... over time),
+// confirmed against the intervals.icu OpenAPI spec (MapData / ActivityWeather /
+// Time schemas): the bulk /activities list has no lat/lng field at all, and its
+// average_weather_temp/has_weather fields have no humidity counterpart, so this is
+// the only endpoint that can answer "was this run's HR-zone spread heat, not
+// pacing". Same best-effort, non-throwing contract as fetchIntervalsActivityDetail.
+export async function fetchIntervalsActivityMap(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/map?weather=true`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity map ${activityId}`);
+  if (!r.ok) return null;
+  return r.json().catch(() => null);
+}
+
 export async function fetchIntervalsEvents(env, oldest, newest) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
