@@ -1,7 +1,7 @@
 import { clampInt, getSearchParamAny, json, parseBooleanParam } from "./http-helpers.js";
 import { diffDays, isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
-import { writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo, resolveActiveGoalRace } from "./goal-race.js";
+import { writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo, resolveActiveGoalRace, fetchUpcomingARaceEvents } from "./goal-race.js";
 import { readSyncStatus } from "./sync-status.js";
 import { getCurrentRealVdot } from "./vdot.js";
 import { maybeRebuildLongRunPlanOnGoalChange, readLongRunPlan } from "./long-run-plan.js";
@@ -257,12 +257,17 @@ export async function handleGoalRequest(req, url, env) {
 
   // GET
   const todayIso = isoDate(new Date());
+  const debug = parseBooleanParam(url.searchParams, "debug");
   const goal = await resolveActiveGoalRace(env, todayIso);
-  if (!goal) return json({ ok: true, goal: null });
+  const longRunPlan = await readLongRunPlan(env).catch(() => null);
+  // ?debug=true dumps the raw upcoming A-race calendar events as fetched from
+  // intervals.icu, so a mismatch between the auto-detected goal (or lack thereof)
+  // and what's actually on the calendar can be diagnosed without live API access.
+  const debugRaces = debug ? await fetchUpcomingARaceEvents(env, todayIso).catch((e) => ({ error: String(e?.message ?? e) })) : undefined;
+  if (!goal) return json({ ok: true, goal: null, longRunPlan, debugRaces });
   const currentVdot = await getCurrentRealVdot(env).catch(() => null);
   const info = computeGoalRaceInfo(goal, todayIso, currentVdot);
-  const longRunPlan = await readLongRunPlan(env).catch(() => null);
-  return json({ ok: true, goal, info, longRunPlan });
+  return json({ ok: true, goal, info, longRunPlan, debugRaces });
 }
 
 export async function handleStatusRequest(url, env) {

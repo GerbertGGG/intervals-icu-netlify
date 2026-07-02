@@ -70,7 +70,7 @@ export function deriveAutoGoalFromRaces(races, todayIso) {
   };
 }
 
-async function fetchUpcomingARaceEvents(env, todayIso) {
+export async function fetchUpcomingARaceEvents(env, todayIso) {
   const newest = isoDate(new Date(new Date(todayIso + "T00:00:00Z").getTime() + GOAL_EVENT_LOOKAHEAD_DAYS * 86400000));
   const events = await fetchIntervalsEvents(env, todayIso, newest);
   const list = Array.isArray(events) ? events : Array.isArray(events?.events) ? events.events : [];
