@@ -56,6 +56,25 @@ function weatherKvKey(lat, lng, dateIso) {
   return `${WEATHER_KV_PREFIX}${roundCoord(lat)}:${roundCoord(lng)}:${dateIso}`;
 }
 
+function activityWeatherKvKey(activityId) {
+  return `${WEATHER_KV_PREFIX}activity:${activityId}`;
+}
+
+// A resolved run's weather never changes once found, so it's cached indefinitely,
+// keyed by activity id rather than lat/lng/date - this is what lets a wide `days=`
+// call spread its cost across repeated requests instead of needing every run's
+// map + Open-Meteo fetch to fit in one Worker invocation's subrequest budget.
+// Only ever called with a non-null weather record (see enrichRunsWithWeather in
+// form-analysis.js) - a null result might just be a transient/budget failure, so
+// that's deliberately left uncached to retry on the next call.
+export async function readCachedActivityWeather(env, activityId) {
+  return readKvJson(env, activityWeatherKvKey(activityId));
+}
+
+export async function writeCachedActivityWeather(env, activityId, weather) {
+  return writeKvJson(env, activityWeatherKvKey(activityId), weather);
+}
+
 // Past weather never changes, so this is cached indefinitely (no TTL/max-age check,
 // unlike the maxHr cache in intervals-client.js) - a cache hit is always still valid.
 async function fetchOpenMeteoDay(lat, lng, dateIso) {

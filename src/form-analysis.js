@@ -8,7 +8,7 @@ import {
   fetchIntervalsActivityMap,
 } from "./intervals-client.js";
 import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime } from "./vdot.js";
-import { buildRunWeather } from "./weather.js";
+import { buildRunWeather, readCachedActivityWeather, writeCachedActivityWeather } from "./weather.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -253,6 +253,14 @@ async function enrichRunsWithIntervalSplits(env, runRecords, cap) {
 // without a request since they never have GPS. Same opt-in + cap contract as
 // zoneTimes/intervalSplits above (one extra fetch per run, plus a possible
 // Open-Meteo call), so the default daily/weekly callers keep their current cost.
+//
+// Each run's resolved weather is cached in KV by activity id (see
+// readCachedActivityWeather/writeCachedActivityWeather in weather.js) since it never
+// changes once found. This matters because a wide days= request combined with
+// zoneTimes/intervalSplits can add up to more fetch() calls than a single Worker
+// invocation's subrequest budget allows - rather than trying to fit everything in
+// one call, already-resolved runs become free on every later call, so the history
+// backfills itself over a few requests instead of needing to fit in one.
 async function enrichRunsWithWeather(env, runRecords, cap) {
   const targets = runRecords.slice(-cap);
   await Promise.all(
@@ -266,8 +274,15 @@ async function enrichRunsWithWeather(env, runRecords, cap) {
         record.weather = null;
         return;
       }
+      const cached = await readCachedActivityWeather(env, id).catch(() => null);
+      if (cached) {
+        record.weather = cached;
+        return;
+      }
       const mapData = await fetchIntervalsActivityMap(env, id).catch(() => null);
-      record.weather = mapData ? await buildRunWeather(env, activity, mapData).catch(() => null) : null;
+      const weather = mapData ? await buildRunWeather(env, activity, mapData).catch(() => null) : null;
+      record.weather = weather;
+      if (weather) await writeCachedActivityWeather(env, id, weather).catch(() => {});
     }),
   );
   for (const { record } of runRecords) {
