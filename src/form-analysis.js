@@ -1,4 +1,4 @@
-import { isoDate } from "./date-utils.js";
+import { isoDate, mondayOnOrBefore } from "./date-utils.js";
 import { isRun, isRaceActivity, isTreadmill, isIntervalActivity, isVdotExcluded, activityDay, activityLoad } from "./activity-utils.js";
 import {
   fetchIntervalsActivities,
@@ -16,6 +16,7 @@ import {
   writeCachedActivityGps,
 } from "./weather.js";
 import { readGoalRace, computeGoalRaceInfo } from "./goal-race.js";
+import { readLongRunPlan, getTargetLongRunKmForWeek, longestRunKmInRunRecords } from "./long-run-plan.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -683,6 +684,18 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   const goalRace = await readGoalRace(env).catch(() => null);
   const currentVdot = await getCurrentRealVdot(env).catch(() => null);
   const goalInfo = computeGoalRaceInfo(goalRace, newest, currentVdot ?? vdotHistory[vdotHistory.length - 1]?.vdot);
+
+  // Long-run target progression (see long-run-plan.js): the table itself is only
+  // (re)built when raceDate/raceDistance change, not on every call here - this just
+  // looks up the current week's already-persisted target.
+  if (goalInfo) {
+    const longRunPlan = await readLongRunPlan(env).catch(() => null);
+    const currentWeekMonday = mondayOnOrBefore(newest);
+    goalInfo.peakLongRunKm = longRunPlan?.peakLongRunKm ?? null;
+    goalInfo.timelineAmbitious = longRunPlan?.timelineAmbitious ?? false;
+    goalInfo.targetLongRunKm = getTargetLongRunKmForWeek(longRunPlan, currentWeekMonday);
+    goalInfo.actualLongRunKm = longestRunKmInRunRecords(runs, currentWeekMonday, newest);
+  }
 
   const notes = [];
   if (!(maxHr > 0)) notes.push("Keine MaxHF ermittelbar – Ø-Pace pro HF-Zone konnte nicht berechnet werden.");
