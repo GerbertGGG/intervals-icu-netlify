@@ -97,7 +97,10 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
   const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
   const includeZoneTimes = parseBooleanParam(url.searchParams, "zoneTimes");
   const includeIntervalSplits = parseBooleanParam(url.searchParams, "intervalSplits");
-  const includeWeather = parseBooleanParam(url.searchParams, "weather");
+  // Weather defaults on for this endpoint (opt-out via ?weather=false), unlike
+  // zoneTimes/intervalSplits above - see enrichRunsWithWeather in form-analysis.js
+  // for the cost rationale (one extra fetch per run, capped at 40).
+  const includeWeather = (url.searchParams.get("weather") || "").toLowerCase() !== "false";
 
   const result = await buildRecentFormAnalysis(scopedEnv, todayIso, {
     days,
