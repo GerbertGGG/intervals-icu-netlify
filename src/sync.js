@@ -10,7 +10,8 @@ import {
   applyManualBlockOverride,
 } from "./block-phase.js";
 import { computeAndPersistRealVdot } from "./vdot.js";
-import { readGoalRace } from "./goal-race.js";
+import { readGoalRace, deriveAutoGoalFromRaces } from "./goal-race.js";
+import { maybeRebuildLongRunPlanOnGoalChange } from "./long-run-plan.js";
 
 const FIELD_VDOT = "VDOT";
 const FIELD_VDOT_AVG = "VDOTAvg";
@@ -36,6 +37,20 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
     fetchRaces(env, oldest, newest),
     readGoalRace(env).catch(() => null),
   ]);
+
+  // Keeps the long-run target progression (see long-run-plan.js) in sync with the
+  // athlete's own intervals.icu calendar automatically, without requiring a manual
+  // PUT /goal call: every regular sync already fetches the A-race events above, so
+  // this just feeds them into the same rebuild-on-change logic the manual endpoint
+  // uses. No-ops unless raceDate/raceDistance actually changed since the last sync.
+  if (write) {
+    const activeGoal = deriveAutoGoalFromRaces(races, newest) ?? goalRace;
+    if (activeGoal) {
+      await maybeRebuildLongRunPlanOnGoalChange(env, activeGoal, newest).catch((e) => {
+        console.error("long run plan auto rebuild failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+      });
+    }
+  }
 
   const results = [];
   let previousBlockState = null;

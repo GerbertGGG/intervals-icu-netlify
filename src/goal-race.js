@@ -1,7 +1,9 @@
 import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { isIsoDate, daysBetween, weeksBetween, isoDate } from "./date-utils.js";
-import { normalizeEventDistance, getBlockLengthsWeeks } from "./block-phase.js";
+import { normalizeEventDistance, getBlockLengthsWeeks, getEventDistanceFromEvent } from "./block-phase.js";
 import { predictRaceTimesFromVdot } from "./vdot.js";
+import { fetchIntervalsEvents } from "./intervals-client.js";
+import { isARaceEvent } from "./event-utils.js";
 
 const GOAL_RACE_KV_PREFIX = "goal:race:";
 
@@ -25,6 +27,64 @@ export async function writeGoalRace(env, goal) {
 export async function deleteGoalRace(env) {
   if (!hasKv(env)) return;
   await env.KV.delete(goalRaceKvKey(env));
+}
+
+const GOAL_EVENT_LOOKAHEAD_DAYS = 365;
+
+function eventDay(event) {
+  return String(event?.start_date_local || event?.start_date || "").slice(0, 10);
+}
+
+// intervals.icu Events don't have a confirmed dedicated "target/goal time" field in
+// the OpenAPI spec available in this environment (unreachable at implementation
+// time) - moving_time is the best-effort candidate, mirroring the same fallback-chain
+// pattern already used elsewhere in this codebase (see form-analysis.js) for fields
+// whose exact naming can't be confirmed against the live API.
+function extractEventTargetTimeSecs(event) {
+  const secs = Number(event?.moving_time ?? event?.icu_target_time ?? event?.target_time_secs ?? NaN);
+  return Number.isFinite(secs) && secs > 0 ? secs : null;
+}
+
+// Auto-derives the goal race straight from the athlete's own intervals.icu calendar:
+// the nearest upcoming event marked as an A-race (same isARaceEvent detection the
+// block-phase state machine already relies on in sync.js). Marking a race "A" in
+// intervals.icu is then enough on its own - no manual PUT /goal call needed.
+export function deriveAutoGoalFromRaces(races, todayIso) {
+  const upcoming = (races || [])
+    .map((e) => ({ e, day: eventDay(e) }))
+    .filter((x) => isIsoDate(x.day) && x.day >= todayIso)
+    .sort((a, b) => a.day.localeCompare(b.day));
+  if (!upcoming.length) return null;
+
+  const event = upcoming[0].e;
+  const distance = getEventDistanceFromEvent(event);
+  if (!distance) return null;
+
+  const targetTimeSecs = extractEventTargetTimeSecs(event);
+  return {
+    date: upcoming[0].day,
+    distance,
+    targetTime: targetTimeSecs ? formatTime(targetTimeSecs) : null,
+    targetTimeSecs,
+    source: "auto",
+  };
+}
+
+async function fetchUpcomingARaceEvents(env, todayIso) {
+  const newest = isoDate(new Date(new Date(todayIso + "T00:00:00Z").getTime() + GOAL_EVENT_LOOKAHEAD_DAYS * 86400000));
+  const events = await fetchIntervalsEvents(env, todayIso, newest);
+  const list = Array.isArray(events) ? events : Array.isArray(events?.events) ? events.events : [];
+  return list.filter((e) => isARaceEvent(e));
+}
+
+// The single entry point every goalInfo/long-run-plan consumer should use: prefers
+// the auto-derived A-race calendar event, falling back to a manually set /goal only
+// when no A-race event exists (e.g. the athlete hasn't added one to intervals.icu yet).
+export async function resolveActiveGoalRace(env, todayIso) {
+  const races = await fetchUpcomingARaceEvents(env, todayIso).catch(() => []);
+  const auto = deriveAutoGoalFromRaces(races, todayIso);
+  if (auto) return auto;
+  return readGoalRace(env).catch(() => null);
 }
 
 function parseTargetTime(s) {

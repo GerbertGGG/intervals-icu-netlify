@@ -11,7 +11,7 @@ import {
   getRaceCorrectionFactor,
 } from "./vdot.js";
 import { readLatestBlockStateKv } from "./block-phase.js";
-import { readGoalRace, computeGoalRaceInfo } from "./goal-race.js";
+import { resolveActiveGoalRace, computeGoalRaceInfo } from "./goal-race.js";
 import { readLongRunPlan, getTargetLongRunKmForWeek, longestRunKmInActivities } from "./long-run-plan.js";
 
 const HISTORY_KV_PREFIX = "weeklyprogress:history:";
@@ -432,7 +432,7 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const verdictResult = buildVerdict(cmp, curr, prev);
   const blockState = await readLatestBlockStateKv(env, todayIso).catch(() => null);
   const realVdot = await getCurrentRealVdot(env).catch(() => null);
-  const goalRace = await readGoalRace(env).catch(() => null);
+  const goalRace = await resolveActiveGoalRace(env, todayIso).catch(() => null);
   const goalInfo = computeGoalRaceInfo(goalRace, todayIso, realVdot ?? curr.vdot);
   if (goalInfo) {
     const longRunPlan = await readLongRunPlan(env).catch(() => null);
