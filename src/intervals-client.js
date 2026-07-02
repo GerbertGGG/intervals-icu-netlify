@@ -219,14 +219,19 @@ export async function saveCachedMaxHr(env, maxHr) {
   } catch {}
 }
 
+// max_hr lives per-sport on intervals.icu (GET /athlete/{id} itself has no max_hr
+// field at all - confirmed against the OpenAPI spec), so this reads the Run entry
+// from the sport-settings list rather than the plain athlete profile.
 export async function fetchAndCacheMaxHr(env) {
   try {
     if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
     const uid = mustEnv(env, "ATHLETE_ID");
-    const resp = await fetch(`${BASE_URL}/athlete/${uid}`, { headers: { Authorization: authHeader(env) } });
+    const resp = await fetch(`${BASE_URL}/athlete/${uid}/sport-settings`, { headers: { Authorization: authHeader(env) } });
     if (!resp.ok) return null;
     const data = await resp.json();
-    const maxHr = Number(data?.max_hr || data?.maxHr || data?.hrMax || 0);
+    const settingsList = Array.isArray(data) ? data : [];
+    const runSettings = settingsList.find((s) => Array.isArray(s?.types) && s.types.includes("Run")) ?? settingsList[0];
+    const maxHr = Number(runSettings?.max_hr || 0);
     if (maxHr > 100) {
       saveCachedMaxHr(env, maxHr).catch(() => {});
       return maxHr;

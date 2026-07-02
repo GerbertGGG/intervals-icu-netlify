@@ -635,10 +635,10 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
 
   const activities = await fetchIntervalsActivities(env, oldest, newest);
   const wellnessRaw = await fetchIntervalsWellnessRange(env, oldest, newest);
-  // write: false — this is a read-only analysis endpoint, so it relies on the cached/
-  // estimated max HR (see resolveMaxHr) instead of triggering a live intervals.icu
-  // profile fetch + KV write on every request.
-  const maxHr = await resolveMaxHr(env, activities, { write: false });
+  // resolveMaxHr does its own live-fetch + 24h KV cache internally, so this stays
+  // accurate (the athlete's actual configured max HR, not just a heuristic) without
+  // this read-only endpoint needing to opt into anything.
+  const maxHr = await resolveMaxHr(env, activities);
 
   const runRecords = activities
     .filter(isRun)
