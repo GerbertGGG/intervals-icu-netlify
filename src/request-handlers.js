@@ -1,10 +1,10 @@
 import { clampInt, getSearchParamAny, json, parseBooleanParam } from "./http-helpers.js";
 import { diffDays, isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
-import { readGoalRace, writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo } from "./goal-race.js";
+import { writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo, resolveActiveGoalRace } from "./goal-race.js";
 import { readSyncStatus } from "./sync-status.js";
 import { getCurrentRealVdot } from "./vdot.js";
-import { maybeRebuildLongRunPlanOnGoalChange } from "./long-run-plan.js";
+import { maybeRebuildLongRunPlanOnGoalChange, readLongRunPlan } from "./long-run-plan.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -240,10 +240,13 @@ export async function handleGoalRequest(req, url, env) {
     const { date, distance, targetTime } = body || {};
     const payload = buildGoalRacePayload({ date, distance, targetTime });
     if (!payload.ok) return json({ ok: false, error: payload.error }, 400);
-    const previousGoal = await readGoalRace(env).catch(() => null);
+    // Manual fallback only - kept for athletes without an "A" race on their
+    // intervals.icu calendar. If one exists, resolveActiveGoalRace (used everywhere
+    // else) prefers it over this on the very next sync, so this never fights the
+    // automatic detection.
     await writeGoalRace(env, payload.goal);
     const todayIso = isoDate(new Date());
-    const longRunPlan = await maybeRebuildLongRunPlanOnGoalChange(env, previousGoal, payload.goal, todayIso).catch((e) => {
+    const longRunPlan = await maybeRebuildLongRunPlanOnGoalChange(env, payload.goal, todayIso).catch((e) => {
       console.error("long run plan rebuild failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
       return null;
     });
@@ -253,12 +256,13 @@ export async function handleGoalRequest(req, url, env) {
   }
 
   // GET
-  const goal = await readGoalRace(env);
-  if (!goal) return json({ ok: true, goal: null });
   const todayIso = isoDate(new Date());
+  const goal = await resolveActiveGoalRace(env, todayIso);
+  if (!goal) return json({ ok: true, goal: null });
   const currentVdot = await getCurrentRealVdot(env).catch(() => null);
   const info = computeGoalRaceInfo(goal, todayIso, currentVdot);
-  return json({ ok: true, goal, info });
+  const longRunPlan = await readLongRunPlan(env).catch(() => null);
+  return json({ ok: true, goal, info, longRunPlan });
 }
 
 export async function handleStatusRequest(url, env) {

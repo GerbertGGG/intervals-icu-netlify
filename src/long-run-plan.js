@@ -197,15 +197,19 @@ export function buildLongRunProgressionWeeks({ todayIso, raceDate, distanceEnum,
 }
 
 // Teil 2/3 orchestration: rebuilds and persists the long-run plan iff raceDate/
-// raceDistance were newly set or actually changed vs. the previously stored goal -
-// never on every call, so the target table stays stable relative to actual training.
-export async function maybeRebuildLongRunPlanOnGoalChange(env, previousGoal, newGoal, todayIso) {
+// raceDistance were newly set or actually changed vs. the previously *persisted plan*
+// - never on every call, so the target table stays stable relative to actual training.
+// Comparing against the persisted plan itself (rather than requiring the caller to
+// track "the previous goal") means this works identically whether it's triggered by a
+// manual PUT /goal or by the automatic per-sync A-race detection in sync.js.
+export async function maybeRebuildLongRunPlanOnGoalChange(env, newGoal, todayIso) {
   const distanceEnum = newGoal?.distance;
   const raceDate = newGoal?.date;
   if (!distanceEnum || !isIsoDate(raceDate)) return null;
 
-  const changed = !previousGoal || previousGoal.date !== raceDate || previousGoal.distance !== distanceEnum;
-  if (!changed) return null;
+  const existingPlan = await readLongRunPlan(env).catch(() => null);
+  const changed = !existingPlan || existingPlan.raceDate !== raceDate || existingPlan.raceDistanceEnum !== distanceEnum;
+  if (!changed) return existingPlan;
 
   const raceDistanceKm = raceDistanceEnumToKm(distanceEnum);
   if (raceDistanceKm == null) return null;

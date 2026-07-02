@@ -15,7 +15,7 @@ import {
   readCachedActivityGps,
   writeCachedActivityGps,
 } from "./weather.js";
-import { readGoalRace, computeGoalRaceInfo } from "./goal-race.js";
+import { resolveActiveGoalRace, computeGoalRaceInfo } from "./goal-race.js";
 import { readLongRunPlan, getTargetLongRunKmForWeek, longestRunKmInRunRecords } from "./long-run-plan.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
@@ -681,7 +681,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   // Ziel) mirrors the goal race set via the /goal endpoint (see goal-race.js) - reused
   // here rather than recomputed so this stays in sync with that endpoint and the weekly
   // progress report, which both already expose the same computeGoalRaceInfo() shape.
-  const goalRace = await readGoalRace(env).catch(() => null);
+  const goalRace = await resolveActiveGoalRace(env, newest).catch(() => null);
   const currentVdot = await getCurrentRealVdot(env).catch(() => null);
   const goalInfo = computeGoalRaceInfo(goalRace, newest, currentVdot ?? vdotHistory[vdotHistory.length - 1]?.vdot);
 
