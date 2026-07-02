@@ -142,6 +142,8 @@ Beispiele:
 - intern mit `write=true`, `debug=false`, `warmup_skip=600`
 - montags zusätzlich beim ersten Tick des Tages (07:00–07:29 Berlin) automatischer
   Wochenvergleich (siehe 15)
+- täglich zusätzlich beim ersten Tick der 21-Uhr-Stunde (21:00–21:29 Berlin)
+  automatischer Formcheck (Ampel-Note, siehe 16)
 
 Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 30 Minuten im UTC-Fenster 05:00–20:59).
 
@@ -506,5 +508,31 @@ KV-Historie:
 - Key: `weeklyprogress:history:<ATHLETE_ID>`
 - bis zu 12 Wochen, sortiert nach Wochenstart; erneuter Lauf für dieselbe Woche
   ersetzt den bestehenden Eintrag (idempotent)
+
+16) TÄGLICHER FORMCHECK (AMPEL)
+--------------------------------
+Endpoint `GET /api/analysis/recent-form` liefert eine strukturierte 28-Tage-Analyse
+(Aktivitäten + Wellness, siehe `buildRecentFormAnalysis` in `src/form-analysis.js`) und
+darin ein automatisches Red-Flag-Assessment `assessment: { status, flags, summary,
+recommendation }`:
+- Erkannte Flags: `load_spike` (Wochen-Jo-Jo, >80% Umfangsanstieg nach vorherigem
+  Rückgang), `resting_hr_rising` (Ruhepuls-Trend >0.15 bpm/Tag), `sleep_debt` (Ø <6.5h
+  oder ≥2 Nächte <5h in den letzten 7 Tagen), `hrv_drop` (Trend `deltaAbs < -3` oder
+  Tageswert >30% unter Fenster-Durchschnitt), `acute_overload` (ATL/CTL-Ratio >1.3)
+- Status: 0 Flags → `grün`, 1 Flag → `gelb`, 2+ Flags → `rot`
+
+Automatischer Trigger:
+- läuft täglich beim ersten Tick der 21-Uhr-Stunde Berlin (siehe 5), unabhängig vom
+  Montags-Wochenvergleich
+- `writeDailyRecoveryNote()` (`src/recovery-note.js`) ruft `buildRecentFormAnalysis()`
+  intern auf (kein Self-Fetch) und schreibt das Ergebnis als eigene NOTE
+
+NOTE „Formcheck“:
+- `category: NOTE`
+- `name: Formcheck <Status-Emoji>` (🟢/🟡/🔴)
+- `external_id: formcheck-YYYY-MM-DD` (Tages-Anker, idempotent bei mehrfachem Lauf)
+- `start_date_local: YYYY-MM-DDT00:00:00`
+- `color`: grün / orange (gelb) / rot
+- `description`: Summary + Empfehlung aus dem Assessment
 
 ENDE
