@@ -1,4 +1,4 @@
-import { isoDate, mondayOnOrBefore } from "./date-utils.js";
+import { isoDate } from "./date-utils.js";
 import { isRun, isRaceActivity, isTreadmill, isIntervalActivity, isVdotExcluded, activityDay, activityLoad } from "./activity-utils.js";
 import {
   fetchIntervalsActivities,
@@ -687,14 +687,17 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
 
   // Long-run target progression (see long-run-plan.js): the table itself is only
   // (re)built when raceDate/raceDistance change, not on every call here - this just
-  // looks up the current week's already-persisted target.
+  // looks up the current week's already-persisted target. "Current week" here is the
+  // same trailing 7-day window as the last entry of weeks[]/vdotHistory above (rather
+  // than a Mon-Sun calendar week), so actualLongRunKm stays consistent with what the
+  // rest of this response already calls "this week".
   if (goalInfo) {
     const longRunPlan = await readLongRunPlan(env).catch(() => null);
-    const currentWeekMonday = mondayOnOrBefore(newest);
+    const currentWeekBucket = weeks[weeks.length - 1];
     goalInfo.peakLongRunKm = longRunPlan?.peakLongRunKm ?? null;
     goalInfo.timelineAmbitious = longRunPlan?.timelineAmbitious ?? false;
-    goalInfo.targetLongRunKm = getTargetLongRunKmForWeek(longRunPlan, currentWeekMonday);
-    goalInfo.actualLongRunKm = longestRunKmInRunRecords(runs, currentWeekMonday, newest);
+    goalInfo.targetLongRunKm = getTargetLongRunKmForWeek(longRunPlan, newest);
+    goalInfo.actualLongRunKm = longestRunKmInRunRecords(runs, currentWeekBucket.weekStart, currentWeekBucket.weekEnd);
   }
 
   const notes = [];
