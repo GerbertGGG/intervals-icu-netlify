@@ -35,13 +35,11 @@ function eventDay(event) {
   return String(event?.start_date_local || event?.start_date || "").slice(0, 10);
 }
 
-// intervals.icu Events don't have a confirmed dedicated "target/goal time" field in
-// the OpenAPI spec available in this environment (unreachable at implementation
-// time) - moving_time is the best-effort candidate, mirroring the same fallback-chain
-// pattern already used elsewhere in this codebase (see form-analysis.js) for fields
-// whose exact naming can't be confirmed against the live API.
+// Confirmed against a live event payload (see GET /goal?debug=true): intervals.icu
+// pairs distance/load with a "_target" variant for the athlete's planned goal, and
+// time_target is the equivalent for a race's goal finishing time, in seconds.
 function extractEventTargetTimeSecs(event) {
-  const secs = Number(event?.moving_time ?? event?.icu_target_time ?? event?.target_time_secs ?? NaN);
+  const secs = Number(event?.time_target ?? event?.moving_time ?? NaN);
   return Number.isFinite(secs) && secs > 0 ? secs : null;
 }
 
