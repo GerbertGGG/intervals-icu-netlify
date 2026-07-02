@@ -521,6 +521,41 @@ recommendation }`:
   Tageswert >30% unter Fenster-Durchschnitt), `acute_overload` (ATL/CTL-Ratio >1.3)
 - Status: 0 Flags → `grün`, 1 Flag → `gelb`, 2+ Flags → `rot`
 
+16.1 Parameter
+- `days=<7..90>` (optional, Default `28`, clamp 7..90): Analyse-Zeitraum, z. B.
+  `?days=84` für eine 12-Wochen-Progressionsanalyse statt des wöchentlichen Checks.
+- `zoneTimes=true` (optional, Default `false`): lädt zusätzlich pro Lauf die Zeit pro
+  HF-Zone (`GET /activity/{id}`, ein Zusatz-Call pro Lauf, gecappt auf die letzten 40
+  Läufe im Zeitraum). Ohne diesen Parameter bleiben `runs[].zoneTimeMin` und
+  `weeks[].zoneTimeMinWeek` unverändert (Feld existiert nicht), d. h. der Standard-
+  Wochen-Check (Montags-Report, täglicher Formcheck) bleibt unverändert schnell.
+- `intervalSplits=true` (optional, Default `false`): lädt für Läufe mit `isInterval:
+  true` zusätzlich die Rep-Struktur (`GET /activity/{id}/intervals`, ein Zusatz-Call pro
+  Intervall-Lauf, gecappt auf die letzten 20). Ohne diesen Parameter existiert
+  `runs[].intervalSplits` nicht.
+- Hinweis: Die genauen Feldnamen für Zone-Zeiten und Interval-Splits sind auf
+  intervals.icu-Seite nicht vollständig dokumentiert (Fallback-Feldketten, gleiches
+  Muster wie bei `hrDrift`/`perceivedExertion`). Beide internen Aufrufer
+  (`recovery-note.js`, `email.js`) übergeben diese Parameter nicht, sind also von der
+  Zusatzlast nicht betroffen.
+
+16.2 Zusätzliche Felder in der Response
+- `races[]`: Aktivitäten mit `isRace: true` im Zeitraum als Fitness-Ankerpunkte
+  (`date`, `name`, `distanceKm`, `timeSec`, `pace`, `paceSecPerKm`, `vdot`).
+- `vdotHistory[]`: ein Eintrag pro Wochen-Bucket (`date` = Wochenende, `vdot`), aus
+  Renn-VDOT der Woche (falls vorhanden) und/oder `estimateTrainingVdotForWindow` fürs
+  7-Tage-Fenster der Woche (jeweils der konservativere/kleinere Wert, analog
+  `computeAndPersistRealVdot`); `null`, wenn für die Woche nichts auswertbar ist.
+- `easyPaceHistory[]`: kompakte Zeitreihe `{ weekStart, paceSecPerKm }`, identisch zu
+  `weeks[].easyZonePaceSecPerKm`, nur als eigenes Array für einfachere Trendanalyse.
+- `runs[].zoneTimeMin` (nur bei `zoneTimes=true`): `{ z1..z5 }` in Minuten pro Lauf
+  (Zonen >5 werden in Z5 gefaltet).
+- `weeks[].zoneTimeMinWeek` (nur bei `zoneTimes=true`): Summe von `zoneTimeMin` aller
+  Läufe der Woche, für den Easy- (Z1-Z2) vs. hart- (Z4-Z5) Anteil (polarisiertes
+  Training).
+- `runs[].intervalSplits` (nur bei `intervalSplits=true`, nur für `isInterval: true`
+  Läufe): `[{ repNumber, distanceM, paceSecPerKm, avgHr, restSec }]`.
+
 Automatischer Trigger:
 - läuft täglich beim ersten Tick der 21-Uhr-Stunde Berlin (siehe 5), unabhängig vom
   Montags-Wochenvergleich

@@ -33,7 +33,7 @@ function isTreadmill(a) {
 // VO2 = -4.60 + 0.182258·v + 0.000104·v²
 // %VO2max = 0.8 + 0.1894393·e^(-0.012778·t) + 0.2989558·e^(-0.1932605·t)
 // VDOT = VO2 / %VO2max
-function computeVdotFromRaceTime(distanceMeters, timeSecs) {
+export function computeVdotFromRaceTime(distanceMeters, timeSecs) {
   const dist = Number(distanceMeters);
   const secs = Number(timeSecs);
   if (!Number.isFinite(dist) || dist < 400) return null;

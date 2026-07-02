@@ -61,6 +61,26 @@ export async function fetchIntervalsWellnessRange(env, oldest, newest) {
   return Array.isArray(data) ? data : Array.isArray(data?.wellness) ? data.wellness : [];
 }
 
+// Single-activity detail (icu_zone_times etc. aren't in the bulk /activities list
+// response). Best-effort: returns null on any failure instead of throwing, since this
+// only enriches runs[] and a missing/rate-limited detail for one activity shouldn't
+// fail the whole recent-form analysis.
+export async function fetchIntervalsActivityDetail(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity detail ${activityId}`);
+  if (!r.ok) return null;
+  return r.json().catch(() => null);
+}
+
+// Auto-detected repeat/interval structure for a single activity. Same best-effort,
+// non-throwing contract as fetchIntervalsActivityDetail.
+export async function fetchIntervalsActivityIntervals(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/intervals`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity intervals ${activityId}`);
+  if (!r.ok) return null;
+  return r.json().catch(() => null);
+}
+
 export async function fetchIntervalsEvents(env, oldest, newest) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;

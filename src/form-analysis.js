@@ -1,7 +1,12 @@
 import { isoDate } from "./date-utils.js";
 import { isRun, isRaceActivity, isTreadmill, isIntervalActivity, isVdotExcluded, activityDay, activityLoad } from "./activity-utils.js";
-import { fetchIntervalsActivities, fetchIntervalsWellnessRange } from "./intervals-client.js";
-import { resolveMaxHr } from "./vdot.js";
+import {
+  fetchIntervalsActivities,
+  fetchIntervalsWellnessRange,
+  fetchIntervalsActivityDetail,
+  fetchIntervalsActivityIntervals,
+} from "./intervals-client.js";
+import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime } from "./vdot.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -11,6 +16,16 @@ const EASY_HR_PCT_MIN = 0.6;
 const EASY_HR_PCT_MAX = 0.78;
 const MIN_WELLNESS_POINTS_FOR_TREND = 4;
 const MIN_TRAINING_DAYS_FOR_MONOTONY = 3;
+
+// zoneTimes/intervalSplits (see below) each need one extra fetch() per activity, on
+// top of the single /activities + /wellness calls the rest of this endpoint uses. Both
+// are opt-in (query params `zoneTimes`/`intervalSplits`, default off) so the default
+// weekly check (and the daily/monthly internal callers, recovery-note.js and email.js,
+// which never pass these options) keeps its current cost. These caps are a second,
+// independent safety net against a wide `days=` range blowing up the Worker's
+// per-invocation subrequest budget even when a caller does opt in.
+const MAX_ZONE_TIME_ACTIVITY_CALLS = 40;
+const MAX_INTERVAL_SPLIT_ACTIVITY_CALLS = 20;
 
 function addDays(dayIso, n) {
   return isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + n * 86400000));
@@ -60,6 +75,194 @@ function buildRunRecord(a) {
     excludedFromVdot: isVdotExcluded(a),
     tags: Array.isArray(a?.tags) ? a.tags : [],
   };
+}
+
+// Fitness anchor points: races found in the analysis window, as a separate compact
+// list rather than making callers filter runs[] for isRace themselves.
+function buildRaceRecord(a) {
+  const distanceM = Number(a?.distance ?? a?.icu_distance ?? 0) || 0;
+  const timeSecs = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+  const secPerKm = paceSecPerKm(distanceM, timeSecs);
+  return {
+    date: activityDay(a),
+    name: a?.name || a?.title || null,
+    distanceKm: Math.round((distanceM / 1000) * 100) / 100,
+    timeSec: timeSecs || null,
+    pace: formatPace(secPerKm),
+    paceSecPerKm: secPerKm != null ? Math.round(secPerKm) : null,
+    vdot: computeVdotFromRaceTime(distanceM, timeSecs),
+  };
+}
+
+// ─── zoneTimes (Teil 2, opt-in) ────────────────────────────────────────────────
+// The bulk /activities list response doesn't include a per-zone time breakdown, so
+// this needs a GET /activity/{id} per run. The exact response field for zone times
+// isn't confirmed against the live intervals.icu API docs (unreachable from this
+// environment at implementation time), hence the fallback chain, mirroring the same
+// best-effort pattern already used above for hrDrift/perceivedExertion. Any zone
+// beyond Z5 (some accounts configure up to 7) is folded into Z5, since this endpoint
+// only needs the Z1-Z2 (easy) vs. Z4-Z5 (hard) split for a polarization check.
+function extractRawZoneTimes(detail) {
+  return (
+    detail?.icu_zone_times ??
+    detail?.icu_hr_zone_times ??
+    detail?.zone_times ??
+    detail?.icu_hr_zones?.secs ??
+    null
+  );
+}
+
+function zoneIndexFromLabel(label) {
+  const m = String(label ?? "").match(/(\d+)/);
+  return m ? Number(m[1]) - 1 : null;
+}
+
+function normalizeZoneTimesToMinutes(raw) {
+  if (!raw) return null;
+  const secsByIndex = [];
+  if (Array.isArray(raw)) {
+    if (raw.length && typeof raw[0] === "object" && raw[0] !== null) {
+      raw.forEach((entry, i) => {
+        const idx = zoneIndexFromLabel(entry?.id ?? entry?.zone ?? entry?.name) ?? i;
+        const secs = Number(entry?.secs ?? entry?.seconds ?? entry?.time ?? 0) || 0;
+        secsByIndex[idx] = (secsByIndex[idx] || 0) + secs;
+      });
+    } else {
+      raw.forEach((v, i) => {
+        secsByIndex[i] = Number(v) || 0;
+      });
+    }
+  } else if (typeof raw === "object") {
+    for (const [key, value] of Object.entries(raw)) {
+      const idx = zoneIndexFromLabel(key);
+      if (idx == null) continue;
+      secsByIndex[idx] = (secsByIndex[idx] || 0) + (Number(value) || 0);
+    }
+  }
+  if (!secsByIndex.length) return null;
+
+  const zoneSecs = [0, 0, 0, 0, 0];
+  secsByIndex.forEach((secs, idx) => {
+    zoneSecs[Math.min(idx, 4)] += secs || 0;
+  });
+  const toMin = (s) => Math.round((s / 60) * 10) / 10;
+  return { z1: toMin(zoneSecs[0]), z2: toMin(zoneSecs[1]), z3: toMin(zoneSecs[2]), z4: toMin(zoneSecs[3]), z5: toMin(zoneSecs[4]) };
+}
+
+function sumZoneTimeMin(zoneTimeMinList) {
+  const present = zoneTimeMinList.filter(Boolean);
+  if (!present.length) return null;
+  const sum = { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 };
+  for (const z of present) {
+    sum.z1 += z.z1 || 0;
+    sum.z2 += z.z2 || 0;
+    sum.z3 += z.z3 || 0;
+    sum.z4 += z.z4 || 0;
+    sum.z5 += z.z5 || 0;
+  }
+  const round1 = (v) => Math.round(v * 10) / 10;
+  return { z1: round1(sum.z1), z2: round1(sum.z2), z3: round1(sum.z3), z4: round1(sum.z4), z5: round1(sum.z5) };
+}
+
+// Fetches zone times for the most recent `cap` runs in range (opt-in, see
+// MAX_ZONE_TIME_ACTIVITY_CALLS above) and attaches `zoneTimeMin` to each run record
+// in place. All runs get the key (null if not fetched/unavailable) so the shape is
+// consistent whenever zoneTimes=true was requested.
+async function enrichRunsWithZoneTimes(env, runRecords, cap) {
+  const targets = runRecords.slice(-cap);
+  await Promise.all(
+    targets.map(async ({ activity, record }) => {
+      const id = activity?.id ?? activity?.icu_activity_id;
+      if (id == null) return;
+      const detail = await fetchIntervalsActivityDetail(env, id).catch(() => null);
+      record.zoneTimeMin = normalizeZoneTimesToMinutes(extractRawZoneTimes(detail));
+    }),
+  );
+  for (const { record } of runRecords) {
+    if (!("zoneTimeMin" in record)) record.zoneTimeMin = null;
+  }
+}
+
+// ─── intervalSplits (Teil 3, opt-in) ───────────────────────────────────────────
+// Same doc-access caveat as zoneTimes above: field names for the auto-detected
+// interval/repeat structure are a best-effort guess, not confirmed against the live
+// API. Work segments become reps; a recovery segment immediately following a work
+// segment becomes that rep's restSec.
+function isWorkSegment(seg) {
+  const t = String(seg?.type ?? seg?.icu_interval_type ?? "").toLowerCase();
+  return !t || t.includes("work") || t.includes("interval") || t.includes("active");
+}
+
+function isRestSegment(seg) {
+  const t = String(seg?.type ?? seg?.icu_interval_type ?? "").toLowerCase();
+  return t.includes("rest") || t.includes("recover");
+}
+
+function normalizeIntervalSplits(raw) {
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.icu_intervals) ? raw.icu_intervals : Array.isArray(raw?.intervals) ? raw.intervals : null;
+  if (!list || !list.length) return null;
+
+  const splits = [];
+  let repNumber = 0;
+  for (let i = 0; i < list.length; i++) {
+    const seg = list[i];
+    if (!isWorkSegment(seg)) continue;
+    repNumber += 1;
+    const distanceM = Number(seg?.distance ?? seg?.icu_distance ?? 0) || null;
+    const timeSecs = Number(seg?.moving_time ?? seg?.elapsed_time ?? 0) || 0;
+    const secPerKm = paceSecPerKm(distanceM, timeSecs);
+    const avgHr = Number(seg?.average_heartrate ?? seg?.avg_hr ?? 0) || null;
+    const next = list[i + 1];
+    const restSec = next && isRestSegment(next) ? Math.round(Number(next?.moving_time ?? next?.elapsed_time ?? 0) || 0) || null : null;
+    splits.push({
+      repNumber,
+      distanceM: distanceM != null ? Math.round(distanceM) : null,
+      paceSecPerKm: secPerKm != null ? Math.round(secPerKm) : null,
+      avgHr,
+      restSec,
+    });
+  }
+  return splits.length ? splits : null;
+}
+
+// Fetches interval splits for isInterval runs only (opt-in, capped at
+// MAX_INTERVAL_SPLIT_ACTIVITY_CALLS most recent). `intervalSplits` is only attached to
+// interval runs (per spec), not to every run, to avoid a wall of null keys.
+async function enrichRunsWithIntervalSplits(env, runRecords, cap) {
+  const targets = runRecords.filter(({ record }) => record.isInterval).slice(-cap);
+  await Promise.all(
+    targets.map(async ({ activity, record }) => {
+      const id = activity?.id ?? activity?.icu_activity_id;
+      if (id == null) return;
+      const raw = await fetchIntervalsActivityIntervals(env, id).catch(() => null);
+      record.intervalSplits = normalizeIntervalSplits(raw);
+    }),
+  );
+  for (const { record } of runRecords) {
+    if (record.isInterval && !("intervalSplits" in record)) record.intervalSplits = null;
+  }
+}
+
+// ─── vdotHistory / easyPaceHistory (Teil 4) ────────────────────────────────────
+// Weekly VDOT anchor: the better (lower, i.e. more conservative) of a race that week
+// and the training-estimated VDOT for that week's 7-day window, same "min of the two"
+// rule computeAndPersistRealVdot uses for the persisted current VDOT (src/vdot.js) -
+// just re-applied per week instead of on a single rolling window.
+function buildWeekVdot(bucket, activities, maxHr) {
+  let raceVdot = null;
+  for (const a of activities) {
+    if (!isRun(a) || !isRaceActivity(a) || isVdotExcluded(a)) continue;
+    const day = activityDay(a);
+    if (day < bucket.start || day > bucket.end) continue;
+    const dist = Number(a?.distance ?? a?.icu_distance ?? 0);
+    const time = Number(a?.moving_time ?? a?.elapsed_time ?? 0);
+    if (dist < 800 || time < 60) continue;
+    const v = computeVdotFromRaceTime(dist, time);
+    if (v != null && (raceVdot == null || v > raceVdot)) raceVdot = v;
+  }
+  const trainVdot = maxHr ? estimateTrainingVdotForWindow(activities, bucket.start, bucket.end, maxHr) : null;
+  if (raceVdot != null && trainVdot != null) return Math.min(trainVdot, raceVdot);
+  return raceVdot ?? trainVdot ?? null;
 }
 
 // Field names for wellness metrics are best-effort per the intervals.icu API; entries
@@ -351,7 +554,7 @@ function wellnessTrends(wellnessByDay, oldest, days) {
 // issue) done by a human/LLM reading the response — this endpoint only aggregates and
 // exposes the raw numbers, it doesn't diagnose.
 export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
-  const { days = 28 } = options;
+  const { days = 28, includeZoneTimes = false, includeIntervalSplits = false } = options;
   const newest = todayIso;
   const oldest = addDays(newest, -(days - 1));
 
@@ -362,13 +565,36 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   // profile fetch + KV write on every request.
   const maxHr = await resolveMaxHr(env, activities, { write: false });
 
-  const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const runRecords = activities
+    .filter(isRun)
+    .map((activity) => ({ activity, record: buildRunRecord(activity) }))
+    .sort((a, b) => String(a.record.date).localeCompare(String(b.record.date)));
+
+  if (includeZoneTimes) await enrichRunsWithZoneTimes(env, runRecords, MAX_ZONE_TIME_ACTIVITY_CALLS);
+  if (includeIntervalSplits) await enrichRunsWithIntervalSplits(env, runRecords, MAX_INTERVAL_SPLIT_ACTIVITY_CALLS);
+  const runs = runRecords.map((r) => r.record);
+
+  const races = activities
+    .filter((a) => isRun(a) && isRaceActivity(a))
+    .map(buildRaceRecord)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   const wellnessDaily = wellnessRaw.map(buildWellnessRecord).filter((w) => w.date);
   const wellnessByDay = new Map(wellnessDaily.map((w) => [w.date, w]));
 
   const buckets = buildWeekBuckets(newest, days);
   const weeks = buckets.map((bucket) => buildWeekSummary(bucket, activities, maxHr));
+
+  if (includeZoneTimes) {
+    for (let i = 0; i < weeks.length; i++) {
+      const bucket = buckets[i];
+      const zoneTimesInWeek = runs.filter((r) => r.date >= bucket.start && r.date <= bucket.end).map((r) => r.zoneTimeMin);
+      weeks[i].zoneTimeMinWeek = sumZoneTimeMin(zoneTimesInWeek);
+    }
+  }
+
+  const vdotHistory = buckets.map((bucket) => ({ date: bucket.end, vdot: buildWeekVdot(bucket, activities, maxHr) }));
+  const easyPaceHistory = weeks.map((w) => ({ weekStart: w.weekStart, paceSecPerKm: w.easyZonePaceSecPerKm }));
 
   const trends = wellnessTrends(wellnessByDay, oldest, days);
   const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
@@ -391,6 +617,9 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     trends,
     assessment,
     runs,
+    races,
+    vdotHistory,
+    easyPaceHistory,
     wellnessDaily,
     dataQuality: {
       runCount: runs.length,
