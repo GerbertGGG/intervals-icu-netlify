@@ -68,3 +68,12 @@ export function isMondayIso(dayIso) {
   const d = new Date(dayIso + "T00:00:00Z");
   return d.getUTCDay() === 1;
 }
+
+// Monday of the ISO week containing dayIso (dayIso itself if it's already a Monday).
+export function mondayOnOrBefore(dayIso) {
+  const d = parseISODateSafe(dayIso);
+  if (!d) return null;
+  const dow = d.getUTCDay(); // 0=Sun..6=Sat
+  const diffDaysToMonday = dow === 0 ? 6 : dow - 1;
+  return isoDate(new Date(d.getTime() - diffDaysToMonday * 86400000));
+}

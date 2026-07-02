@@ -4,6 +4,7 @@ import { buildWeeklyProgressReport } from "./weekly-progress.js";
 import { readGoalRace, writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo } from "./goal-race.js";
 import { readSyncStatus } from "./sync-status.js";
 import { getCurrentRealVdot } from "./vdot.js";
+import { maybeRebuildLongRunPlanOnGoalChange } from "./long-run-plan.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -239,11 +240,16 @@ export async function handleGoalRequest(req, url, env) {
     const { date, distance, targetTime } = body || {};
     const payload = buildGoalRacePayload({ date, distance, targetTime });
     if (!payload.ok) return json({ ok: false, error: payload.error }, 400);
+    const previousGoal = await readGoalRace(env).catch(() => null);
     await writeGoalRace(env, payload.goal);
     const todayIso = isoDate(new Date());
+    const longRunPlan = await maybeRebuildLongRunPlanOnGoalChange(env, previousGoal, payload.goal, todayIso).catch((e) => {
+      console.error("long run plan rebuild failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+      return null;
+    });
     const currentVdot = await getCurrentRealVdot(env).catch(() => null);
     const info = computeGoalRaceInfo(payload.goal, todayIso, currentVdot);
-    return json({ ok: true, goal: payload.goal, info });
+    return json({ ok: true, goal: payload.goal, info, longRunPlan });
   }
 
   // GET

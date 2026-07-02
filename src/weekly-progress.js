@@ -12,6 +12,7 @@ import {
 } from "./vdot.js";
 import { readLatestBlockStateKv } from "./block-phase.js";
 import { readGoalRace, computeGoalRaceInfo } from "./goal-race.js";
+import { readLongRunPlan, getTargetLongRunKmForWeek, longestRunKmInActivities } from "./long-run-plan.js";
 
 const HISTORY_KV_PREFIX = "weeklyprogress:history:";
 const MAX_HISTORY_ENTRIES = 12;
@@ -296,7 +297,8 @@ const VERDICT_COLORS = {
 
 function buildGoalRaceSection(goalInfo) {
   if (!goalInfo) return null;
-  const { distanceLabel, weeksToRace, daysToRace, isPast, schedule, recommendedBlock, prediction } = goalInfo;
+  const { distanceLabel, weeksToRace, daysToRace, isPast, schedule, recommendedBlock, prediction, targetLongRunKm, actualLongRunKm } =
+    goalInfo;
   if (isPast) return null;
   const lines = [];
   lines.push("ZIELRENNEN");
@@ -316,6 +318,9 @@ function buildGoalRaceSection(goalInfo) {
   }
   if (recommendedBlock) {
     lines.push(`- Empfohlener Block jetzt: ${recommendedBlock}`);
+  }
+  if (targetLongRunKm != null || actualLongRunKm != null) {
+    lines.push(`- Long Run: ${actualLongRunKm != null ? actualLongRunKm : "–"} km (Ziel: ${targetLongRunKm != null ? targetLongRunKm : "–"} km)`);
   }
   lines.push(`- Trainingsplan: BASE ab ${schedule.planStart} → BUILD ab ${schedule.buildStart} → RACE/Taper ab ${schedule.raceStart}`);
   return lines.join("\n");
@@ -381,6 +386,11 @@ function buildReportText({
   lines.push("");
   lines.push("DEIN FAHRPLAN FÜR NÄCHSTE WOCHE");
   lines.push(buildRecommendation(verdictResult.verdict, curr));
+  if (goalInfo?.timelineAmbitious) {
+    lines.push(
+      "Zeitplan für Long-Run-Aufbau ist ambitioniert - Zielzeit ggf. überdenken oder Steigerung bewusst aggressiver angehen (erhöhtes Verletzungsrisiko).",
+    );
+  }
   if (blockState?.block) {
     lines.push("");
     lines.push(`Block: ${blockState.block}${blockState.startDate ? ` (seit ${blockState.startDate})` : ""}`);
@@ -424,6 +434,13 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const realVdot = await getCurrentRealVdot(env).catch(() => null);
   const goalRace = await readGoalRace(env).catch(() => null);
   const goalInfo = computeGoalRaceInfo(goalRace, todayIso, realVdot ?? curr.vdot);
+  if (goalInfo) {
+    const longRunPlan = await readLongRunPlan(env).catch(() => null);
+    goalInfo.peakLongRunKm = longRunPlan?.peakLongRunKm ?? null;
+    goalInfo.timelineAmbitious = longRunPlan?.timelineAmbitious ?? false;
+    goalInfo.targetLongRunKm = getTargetLongRunKmForWeek(longRunPlan, week.start);
+    goalInfo.actualLongRunKm = longestRunKmInActivities(activities, week.start, week.end);
+  }
   const correctionFactor = await getRaceCorrectionFactor(env).catch(() => 1);
   const paceTargets = paceTargetsFromVdot(realVdot ?? curr.vdot);
   const currRaceTimes = predictRaceTimesFromVdot(realVdot ?? curr.vdot);
