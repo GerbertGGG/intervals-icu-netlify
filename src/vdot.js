@@ -412,6 +412,16 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // isVdotExcluded) so a tagged day falls back to the rolling currentVdot below instead of
   // writing a distorted or unwanted number.
   let todayRunVdot = null;
+  // Whether a #novdot-tagged run happened today with no other qualifying run to fall back
+  // on. Callers use this to actively clear the day's VDOT wellness field instead of leaving
+  // a stale value from a previous sync in place, which would otherwise look like a fresh
+  // (and possibly misleading) result for today's excluded run.
+  let todayVdotExcluded = false;
+  if (todayIso) {
+    todayVdotExcluded = (activities || []).some(
+      (a) => isRun(a) && isVdotExcluded(a) && String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso,
+    );
+  }
   if (maxHr && todayIso) {
     const todayEstimates = (activities || [])
       .filter(
@@ -427,6 +437,7 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
     const m = medianOf(todayEstimates);
     todayRunVdot = m != null ? Math.round(m * correctionFactor * 10) / 10 : null;
   }
+  if (todayRunVdot != null) todayVdotExcluded = false;
 
   // 3) Load previous state for decay protection
   const prevState = await loadRealVdotState(env).catch(() => null);
@@ -459,14 +470,14 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 6) If no new data, return persisted value
   if (currentVdot == null) {
     if (prevVdot > 0) {
-      return { vdot: prevVdot, source: prevState?.source || "cached", todayRunVdot: null };
+      return { vdot: prevVdot, source: prevState?.source || "cached", todayRunVdot: null, todayVdotExcluded };
     }
-    return { vdot: null, source: null, todayRunVdot: null };
+    return { vdot: null, source: null, todayRunVdot: null, todayVdotExcluded };
   }
 
   currentVdot = Math.round(currentVdot * 10) / 10;
 
-  const result = { vdot: currentVdot, source, todayRunVdot, correctionFactor };
+  const result = { vdot: currentVdot, source, todayRunVdot, todayVdotExcluded, correctionFactor };
 
   if (persistLatest) {
     await saveRealVdotState(env, { ...result, updatedAt: new Date().toISOString() }).catch(() => {});
