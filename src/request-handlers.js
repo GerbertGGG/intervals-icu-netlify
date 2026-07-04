@@ -27,8 +27,8 @@ export async function handleSyncRequest(url, env, ctx, deps) {
   const syncRequest = parseSyncRequest(url.searchParams);
   if (!syncRequest.ok) return syncRequest.response;
 
-  const { write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride } = syncRequest;
-  const syncOptions = { raceStartOverrideIso, blockStartOverrideIso, blockOverride };
+  const { write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride, includeYazio } = syncRequest;
+  const syncOptions = { raceStartOverrideIso, blockStartOverrideIso, blockOverride, includeYazio };
 
   if (debug) {
     return runSyncDebugMode(env, { oldest, newest, write, syncOptions, syncRange });
@@ -189,6 +189,11 @@ function parseSyncRequest(searchParams) {
   const VALID_BLOCKS = ["BASE", "BUILD", "RACE", "RESET"];
   const blockOverride = blockOverrideRaw && VALID_BLOCKS.includes(blockOverrideRaw.toUpperCase()) ? blockOverrideRaw.toUpperCase() : null;
 
+  // Yazio is normally only fetched by the nightly cron (see index.js), not on every
+  // manual/scheduled /sync call - this lets a manual debug call opt in to test it
+  // without waiting for that nightly run.
+  const includeYazio = parseBooleanParam(searchParams, "yazio");
+
   let oldest;
   let newest;
   if (date) {
@@ -221,7 +226,7 @@ function parseSyncRequest(searchParams) {
     return { ok: false, response: json({ ok: false, error: "Invalid block_override (BASE|BUILD|RACE|RESET)" }, 400) };
   }
 
-  return { ok: true, write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride };
+  return { ok: true, write, debug, oldest, newest, raceStartOverrideIso, blockStartOverrideIso, blockOverride, includeYazio };
 }
 
 export async function handleGoalRequest(req, url, env) {

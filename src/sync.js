@@ -36,7 +36,7 @@ async function fetchRaces(env, oldest, newest) {
 }
 
 export async function syncRange(env, oldest, newest, write, debug, syncOptions = {}) {
-  const { raceStartOverrideIso = null, blockStartOverrideIso = null, blockOverride = null } = syncOptions;
+  const { raceStartOverrideIso = null, blockStartOverrideIso = null, blockOverride = null, includeYazio = false } = syncOptions;
   const days = listIsoDaysInclusive(oldest, newest);
   const activitiesOldest = isoDate(new Date(new Date(oldest + "T00:00:00Z").getTime() - ACTIVITIES_LOOKBACK_DAYS * 86400000));
   const [activities, races, goalRace] = await Promise.all([
@@ -114,9 +114,12 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
     }
 
-    // Best-effort: Yazio has no official API, so a login/rate-limit failure there
-    // must never break the rest of the (intervals.icu) sync for this day.
-    if (hasYazioCredentials(env)) {
+    // Yazio is only queried once per day (see the nightly-only cron in index.js), not
+    // on every 30-min daytime tick: by ~23:58 the day's diary is effectively final, so
+    // one fetch gets the same result at a fraction of the (unofficial, rate-limit-prone)
+    // API load. Best-effort either way: a login/rate-limit failure there must never
+    // break the rest of the (intervals.icu) sync for this day.
+    if (includeYazio && hasYazioCredentials(env)) {
       try {
         const nutrition = await fetchYazioDailyNutrition(env, day);
         if (nutrition) {
