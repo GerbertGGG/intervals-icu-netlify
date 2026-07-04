@@ -142,8 +142,8 @@ Beispiele:
 - intern mit `write=true`, `debug=false`, `warmup_skip=600`
 - montags zusätzlich beim ersten Tick des Tages (07:00–07:29 Berlin) automatischer
   Wochenvergleich (siehe 15)
-- täglich zusätzlich beim ersten Tick der 21-Uhr-Stunde (21:00–21:29 Berlin)
-  automatischer Formcheck (Ampel-Note, siehe 16)
+- täglich zusätzlich beim ersten Tick des Tages (07:00–07:29 Berlin) automatischer
+  Formcheck (Ampel-Note, siehe 16)
 
 Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 30 Minuten im UTC-Fenster 05:00–20:59).
 
@@ -557,8 +557,8 @@ recommendation }`:
   Läufe): `[{ repNumber, distanceM, paceSecPerKm, avgHr, restSec }]`.
 
 Automatischer Trigger:
-- läuft täglich beim ersten Tick der 21-Uhr-Stunde Berlin (siehe 5), unabhängig vom
-  Montags-Wochenvergleich
+- läuft täglich beim ersten Tick des Tages (07:00–07:29 Berlin, siehe 5), im selben
+  Slot wie der Montags-Wochenvergleich, aber unabhängig davon
 - `writeDailyRecoveryNote()` (`src/recovery-note.js`) ruft `buildRecentFormAnalysis()`
   intern auf (kein Self-Fetch) und schreibt das Ergebnis als eigene NOTE
 
