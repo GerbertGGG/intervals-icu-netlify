@@ -1,5 +1,6 @@
 import { isoDate, isMondayIso, daysBetween, listIsoDaysInclusive, clampStartDate } from "./date-utils.js";
 import { isARaceEvent } from "./event-utils.js";
+import { activityDay } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, putWellnessDay } from "./intervals-client.js";
 import {
   determineBlockState,
@@ -12,10 +13,16 @@ import {
 import { computeAndPersistRealVdot } from "./vdot.js";
 import { readGoalRace, deriveAutoGoalFromRaces } from "./goal-race.js";
 import { maybeRebuildLongRunPlanOnGoalChange } from "./long-run-plan.js";
+import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 const FIELD_VDOT = "VDOT";
 const FIELD_VDOT_AVG = "VDOTAvg";
 const FIELD_BLOCK = "Block";
+const FIELD_CALORIES = "Calories";
+const FIELD_PROTEIN = "Protein";
+const FIELD_CARBS = "Carbs";
+const FIELD_FAT = "Fat";
+const FIELD_CALORIE_GOAL = "CalorieGoal";
 const EVENT_LOOKAHEAD_DAYS = 365;
 const EVENT_LOOKBACK_DAYS = 40;
 const ACTIVITIES_LOOKBACK_DAYS = 180;
@@ -105,6 +112,38 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
         patch[FIELD_VDOT] = null;
       }
       patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
+    }
+
+    // Best-effort: Yazio has no official API, so a login/rate-limit failure there
+    // must never break the rest of the (intervals.icu) sync for this day.
+    if (hasYazioCredentials(env)) {
+      try {
+        const nutrition = await fetchYazioDailyNutrition(env, day);
+        if (nutrition) {
+          patch[FIELD_CALORIES] = Math.round(nutrition.energyKcal);
+          patch[FIELD_PROTEIN] = Math.round(nutrition.proteinG * 10) / 10;
+          patch[FIELD_CARBS] = Math.round(nutrition.carbG * 10) / 10;
+          patch[FIELD_FAT] = Math.round(nutrition.fatG * 10) / 10;
+        }
+      } catch (e) {
+        console.warn("yazio nutrition sync failed", { day, error: String(e?.message ?? e) });
+      }
+
+      // Available calories for the day = Yazio's own diet goal (a deliberate deficit,
+      // since Yazio is configured for weight loss) plus whatever was actually burned
+      // training today. The diet goal itself is the floor: a rest day never adds
+      // exercise calories back, so the budget never drops below the diet goal.
+      try {
+        const goalKcal = await fetchYazioDailyGoalKcal(env, day);
+        if (goalKcal != null) {
+          const trainingKcal = activities
+            .filter((a) => activityDay(a) === day)
+            .reduce((sum, a) => sum + (Number(a?.calories) || 0), 0);
+          patch[FIELD_CALORIE_GOAL] = Math.round(goalKcal + trainingKcal);
+        }
+      } catch (e) {
+        console.warn("yazio calorie goal sync failed", { day, error: String(e?.message ?? e) });
+      }
     }
 
     if (write) {

@@ -392,6 +392,11 @@ function buildWeekVdot(bucket, activities, maxHr) {
 
 // Field names for wellness metrics are best-effort per the intervals.icu API; entries
 // simply come back null if the user doesn't maintain that field.
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function buildWellnessRecord(w) {
   const restingHr = Number(w?.restingHR ?? w?.restingHr ?? w?.resting_hr ?? NaN);
   const hrv = Number(w?.hrv ?? w?.hrvSDNN ?? NaN);
@@ -405,6 +410,14 @@ function buildWellnessRecord(w) {
     sleepScore: Number.isFinite(sleepScore) ? sleepScore : null,
     ctl: Number.isFinite(Number(w?.ctl)) ? Number(w.ctl) : null,
     atl: Number.isFinite(Number(w?.atl)) ? Number(w.atl) : null,
+    // Written by the Yazio best-effort sync in sync.js (Calories/Protein/Carbs/Fat/
+    // CalorieGoal custom wellness fields); read back here rather than re-fetching
+    // Yazio directly, so this endpoint doesn't add its own Yazio API load.
+    calories: numOrNull(w?.Calories),
+    protein: numOrNull(w?.Protein),
+    carbs: numOrNull(w?.Carbs),
+    fat: numOrNull(w?.Fat),
+    calorieGoal: numOrNull(w?.CalorieGoal),
   };
 }
 

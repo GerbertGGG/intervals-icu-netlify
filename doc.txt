@@ -28,9 +28,17 @@ Environment / Secrets:
 - `INTERVALS_API_KEY` (Secret)
 - `ATHLETE_ID` (required env var)
 - `KV` (KV Namespace Binding für Detective-Historie und Step-Sync-Status)
+- `YAZIO_USERNAME`, `YAZIO_PASSWORD` (Secrets, optional): Yazio-Login-Daten für den
+  Ernährungs-Sync (Kalorien/Protein/Kohlenhydrate/Fett). Fehlen sie, wird der
+  Yazio-Teil des Syncs übersprungen (kein Fehler). Yazio hat keine offizielle
+  öffentliche API - genutzt wird die inoffizielle/reverse-engineered API der
+  App (siehe `src/yazio-client.js`); sie kann sich jederzeit ohne Vorwarnung
+  ändern.
 
 Auth:
 - Authorization Header: `Basic ` + base64(`API_KEY:<INTERVALS_API_KEY>`)
+- Yazio: OAuth2 Password-Grant (Login mit `YAZIO_USERNAME`/`YAZIO_PASSWORD`),
+  Access-/Refresh-Token werden in KV zwischengespeichert (`yazio:token`)
 
 3) INTERVALS.ICU SETUP
 ----------------------
@@ -42,6 +50,14 @@ In Intervals.icu müssen diese Codes als Numeric Fields existieren:
 - `Motor`
 - `EF`
 - `Block`
+- `Calories`, `Protein`, `Carbs`, `Fat` (nur nötig, wenn `YAZIO_USERNAME`/
+  `YAZIO_PASSWORD` gesetzt sind; Tagessummen aus dem Yazio-Ernährungstagebuch)
+- `CalorieGoal` (nur mit Yazio-Secrets): verfügbare Kalorien für den Tag =
+  Yazio-Diätziel (Minimum/Floor, da Yazio auf Abnehmen eingestellt ist) +
+  tatsächlich verbrannte Trainings-kcal des Tages (Summe des `calories`-Felds
+  aller Intervals.icu-Aktivitäten an diesem Tag). An einem Ruhetag entspricht
+  `CalorieGoal` also exakt dem Yazio-Ziel, an einem Trainingstag kommt der
+  Kalorienverbrauch on top.
 
 4) ENDPOINTS
 ------------
