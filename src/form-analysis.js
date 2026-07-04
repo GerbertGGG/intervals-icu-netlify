@@ -73,6 +73,7 @@ function buildRunRecord(a) {
   return {
     date: activityDay(a),
     name: a?.name || a?.title || null,
+    description: a?.description || null,
     distanceKm: Math.round((distanceM / 1000) * 100) / 100,
     movingTimeMin: Math.round(timeSecs / 60),
     avgHr,
