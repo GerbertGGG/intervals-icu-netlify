@@ -52,6 +52,12 @@ In Intervals.icu müssen diese Codes als Numeric Fields existieren:
 - `Block`
 - `Calories`, `Protein`, `Carbs`, `Fat` (nur nötig, wenn `YAZIO_USERNAME`/
   `YAZIO_PASSWORD` gesetzt sind; Tagessummen aus dem Yazio-Ernährungstagebuch)
+- `CalorieGoal` (nur mit Yazio-Secrets): verfügbare Kalorien für den Tag =
+  Yazio-Diätziel (Minimum/Floor, da Yazio auf Abnehmen eingestellt ist) +
+  tatsächlich verbrannte Trainings-kcal des Tages (Summe des `calories`-Felds
+  aller Intervals.icu-Aktivitäten an diesem Tag). An einem Ruhetag entspricht
+  `CalorieGoal` also exakt dem Yazio-Ziel, an einem Trainingstag kommt der
+  Kalorienverbrauch on top.
 
 4) ENDPOINTS
 ------------

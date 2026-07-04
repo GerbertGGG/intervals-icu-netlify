@@ -82,6 +82,14 @@ async function fetchConsumedItems(env, dateIso) {
   return Array.isArray(data) ? data : [];
 }
 
+// The athlete's own diet goal from the Yazio app (e.g. a deficit for weight loss).
+// Used as the floor for CalorieGoal - see fetchYazioDailyNutrition's caller in sync.js.
+export async function fetchYazioDailyGoalKcal(env, dateIso) {
+  const summary = await yazioGet(env, `/user/widgets/daily-summary?date=${dateIso}`);
+  const goal = Number(summary?.goals?.["energy.energy"]);
+  return Number.isFinite(goal) && goal > 0 ? goal : null;
+}
+
 // Product nutrients (kcal/protein/fat/carb per gram) are static reference data, so
 // they're cached in KV indefinitely rather than re-fetched on every sync.
 async function fetchProductNutrientsPerGram(env, productId) {
