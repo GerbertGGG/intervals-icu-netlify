@@ -98,6 +98,11 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
     if (vdotResult?.vdot != null) {
       if (vdotResult.todayRunVdot != null) {
         patch[FIELD_VDOT] = Math.round(vdotResult.todayRunVdot * 10) / 10;
+      } else if (vdotResult.todayVdotExcluded) {
+        // A #novdot-tagged run happened today with nothing else to fall back on: clear the
+        // field instead of leaving a previous sync's stale value in place (which would read
+        // as if it were computed from today's excluded run).
+        patch[FIELD_VDOT] = null;
       }
       patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
     }

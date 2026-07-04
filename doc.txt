@@ -195,9 +195,12 @@ Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 
   nächsten 30-Minuten-Tick automatisch. Für ältere Tage (>2 Tage zurück) oder eine sofortige
   Übernahme reicht ein manueller `/sync` (oder `/weekly-progress`) für den betroffenen
   Tag/Zeitraum, z. B. `/sync?date=<betroffenes-Datum>&write=true`.
-- Betroffene Tage bleiben im Wellnessfeld `VDOT` leer (es wird nicht geschrieben), nur
-  `VDOTAvg` wird weiter mit dem geglätteten aktuellen Wert befüllt (gleiches Verhalten
-  wie bei `interval`-getaggten Tagen und an trainingsfreien Tagen, siehe 15).
+- Betroffene Tage werden im Wellnessfeld `VDOT` aktiv geleert (explizites `null` im PUT),
+  damit dort nicht der stehengebliebene Wert eines früheren Syncs wie ein frisches (und
+  ggf. irreführendes) Ergebnis für den ausgeschlossenen Lauf aussieht. `VDOTAvg` wird
+  weiter mit dem geglätteten aktuellen Wert befüllt. An `interval`-getaggten Tagen und
+  trainingsfreien Tagen ohne qualifizierenden Lauf bleibt `VDOT` dagegen unverändert
+  (nicht geschrieben) – nur der manuelle `#novdot`-Ausschluss räumt das Feld aktiv auf.
 
 6.6 Zwei unterschiedliche VDOT-Werte im Wochenvergleich-Report
 - Der Report zeigt bewusst zwei verschiedene VDOT-Größen, die sich unterscheiden können:
