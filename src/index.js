@@ -30,6 +30,19 @@ function isScheduledWindowBerlin(event) {
   return Number.isFinite(hour) && hour >= 7 && hour <= 21;
 }
 
+// Yazio's diary for the day is effectively final by ~23:58, so it's fetched exactly
+// once here instead of on every 30-min daytime tick (see the `includeYazio` gate in
+// sync.js) - far less load on Yazio's unofficial/rate-limit-prone API for the same
+// end-of-day totals. wrangler.toml's second cron entry ("58 21-22 * * *") fires at
+// :58 past both UTC 21 and 22 to cover the CEST/CET boundary; only the firing that
+// actually lands on 23:58 Berlin time runs the job below, so DST transitions don't
+// need a seasonal cron-line swap.
+function isNightlyYazioWindowBerlin(event) {
+  const hour = getBerlinHourFromScheduledEvent(event);
+  const minute = getBerlinMinuteFromScheduledEvent(event);
+  return hour === 23 && Number.isFinite(minute) && minute >= 55;
+}
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -68,6 +81,16 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    if (isNightlyYazioWindowBerlin(event)) {
+      const today = isoDate(new Date());
+      ctx.waitUntil(
+        syncRange(env, today, today, true, false, { includeYazio: true }).catch((e) => {
+          console.error("nightly yazio sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+        }),
+      );
+      return;
+    }
+
     // Cron fires every 30 min, but we only sync/write 07:00–21:00 Berlin time.
     if (!isScheduledWindowBerlin(event)) return;
 

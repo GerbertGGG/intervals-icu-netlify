@@ -11,6 +11,8 @@ Hauptfunktionen:
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
 - `/weekly-progress`: vergleicht jeden Montag die letzte vollständige Woche mit der Vorwoche (VDOT/CTL/ATL/TSB/Load) und schreibt eine NOTE mit Urteil (besser/schlechter/stabil) + Trainingsempfehlung
 - `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin) und synct dabei bei jedem Tick die letzten 2 Tage + heute (siehe 5); montags zusätzlich automatischer Wochenvergleich (siehe 15)
+- Yazio-Ernährungssync läuft separat, nur einmal täglich um 23:58 (Berlin), nicht im
+  07:00-21:00-Takt (siehe 5a) - schont die inoffizielle Yazio-API
 
 Pro verarbeitetem Tag:
 - Wellness-Kommentar wird geleert (`comments = ""`)
@@ -162,6 +164,22 @@ Beispiele:
   Formcheck (Ampel-Note, siehe 16)
 
 Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 30 Minuten im UTC-Fenster 05:00–20:59).
+
+5a) YAZIO-ERNÄHRUNGSSYNC (separater Trigger)
+---------------------------------------------
+Läuft NICHT im 07:00-21:00-Takt oben, sondern über einen eigenen zweiten Cron-Eintrag
+in `wrangler.toml` ("58 21-22 * * *"), der einmal täglich kurz vor Mitternacht Berlin
+feuert:
+- `isNightlyYazioWindowBerlin()` (index.js) filtert daraus den Tick heraus, der
+  tatsächlich auf 23:58 Berlin fällt (Sommer- vs. Winterzeit -> UTC 21:58 bzw. 22:58);
+  der jeweils andere Tick landet auf einer anderen Berlin-Uhrzeit und wird ignoriert
+- ruft `syncRange(..., { includeYazio: true })` nur für den heutigen Tag auf
+- Grund für den separaten, seltenen Trigger: Yazios Tagebuch ist um 23:58 praktisch
+  abgeschlossen, ein Abruf reicht für korrekte Tageswerte - und schont die
+  inoffizielle/rate-limit-anfällige Yazio-API gegenüber einem Abruf bei jedem
+  30-Minuten-Tick
+- manuell/zum Testen: `/sync?debug=true&write=false&yazio=true&date=YYYY-MM-DD`
+  erzwingt den Yazio-Abruf unabhängig vom nächtlichen Trigger
 
 6) KLASSIFIKATIONEN
 -------------------
