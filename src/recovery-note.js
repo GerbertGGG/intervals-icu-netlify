@@ -8,9 +8,15 @@ const STATUS_COLOR = { "grün": "green", "gelb": "orange", rot: "red" };
 
 function buildRecoveryNoteText(assessment) {
   const emoji = STATUS_EMOJI[assessment.status] ?? "⚪";
+  const parts = [assessment.summary];
+  if (assessment.details?.length) {
+    parts.push(`Werte:\n${assessment.details.map((d) => `- ${d}`).join("\n")}`);
+  }
+  if (assessment.goalText) parts.push(assessment.goalText);
+  parts.push(`Empfehlung: ${assessment.recommendation}`);
   return {
     name: `Formcheck ${emoji}`,
-    description: `${assessment.summary}\n\nEmpfehlung: ${assessment.recommendation}`,
+    description: parts.join("\n\n"),
   };
 }
 
