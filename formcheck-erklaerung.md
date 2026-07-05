@@ -74,13 +74,48 @@ Severity qualifiziert: `severity > 0.7` → „deutlich“, `severity < 0.3` →
 „leicht“, dazwischen kein Zusatz. Empfehlungstexte pro Flag stehen fix in
 `FLAG_INFO`.
 
+Jeder Detektor liefert zusätzlich ein `detail` – den tatsächlichen Messwert
+gegen den Schwellwert, z.B. `Ruhepuls-Trend +0.22 bpm/Tag (Ziel: ≤ 0.15
+bpm/Tag)` oder `ATL/CTL 1.42 (Ziel: ≤ 1.3)`. `buildAssessmentText` sammelt
+diese Details der ausgelösten Flags in `details` (ein Eintrag pro Flag,
+`null`/leer wenn kein Flag ausgelöst ist).
+
+`assessRecoveryStatus` ergänzt außerdem `goalText`: solange der Status nicht
+grün ist, ein Satz mit dem aktuellen `combinedScore` und der Grün-Schwelle
+(`STATUS_GREEN_MAX_SCORE`), z.B. „Ziel für Grün: kombinierter Score < 0.30
+(aktuell 0.54).“ – `null` sobald bereits grün.
+
 ## 5. Veröffentlichung (`src/recovery-note.js`)
 
 `writeDailyRecoveryNote` ruft `buildRecentFormAnalysis` auf, baut daraus Titel
-`Formcheck 🟢/🟡/🔴` + Beschreibungstext (`summary`/`recommendation`, unverändert
-Strings) und schreibt das per `upsertIntervalsNote` als eigenes Kalender-Event
-(`externalId: formcheck-<Datum>`, Farbe grün/orange/rot) – separat vom
-wöchentlichen „Wochenvergleich“.
+`Formcheck 🟢/🟡/🔴` + Beschreibungstext und schreibt das per
+`upsertIntervalsNote` als eigenes Kalender-Event (`externalId:
+formcheck-<Datum>`, Farbe grün/orange/rot) – separat vom wöchentlichen
+„Wochenvergleich“. Der Beschreibungstext besteht aus bis zu vier Blöcken
+(`buildRecoveryNoteText`):
+
+1. `summary` (Fließtext, welche Flags und warum)
+2. `Werte:` – Bullet-Liste aus `details` (nur wenn mind. ein Flag ausgelöst ist)
+3. `goalText` (nur wenn Status nicht grün ist)
+4. `Empfehlung: …` (`recommendation`)
+
+Beispiel bei getriggertem `sleep_debt` (severity 0.2) und `acute_overload`
+(severity 0.8):
+
+```
+leicht Schlafdefizit + deutlich akute Überlastung (ATL/CTL-Ratio erhöht) deuten
+auf ein Zusammenspiel aus hoher Trainingslast und unzureichender Erholung hin.
+
+Werte:
+- Schlafdefizit: Ø 6.1h/Nacht (Ziel: ≥ 6.5h)
+- akute Überlastung (ATL/CTL-Ratio erhöht): ATL/CTL 1.42 (Ziel: ≤ 1.3)
+
+Ziel für Grün: kombinierter Score < 0.30 (aktuell 0.54).
+
+Empfehlung: Schlafdauer priorisieren (mind. 7h), bis sich Ruhepuls/HRV wieder
+normalisieren. Trainingsbelastung kurzfristig reduzieren, damit sich akute und
+chronische Last wieder annähern.
+```
 
 ## Kurzfassung
 

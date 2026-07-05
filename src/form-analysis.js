@@ -623,44 +623,59 @@ function lastNDaysIso(newest, n) {
 
 // "Jo-Jo": last week jumps back up right after the previous week itself was a decline.
 function detectLoadSpike(weeks) {
-  if (weeks.length < 3) return { triggered: false, severity: 0 };
+  if (weeks.length < 3) return { triggered: false, severity: 0, detail: null };
   const last = weeks[weeks.length - 1];
   const prev = weeks[weeks.length - 2];
   const beforePrev = weeks[weeks.length - 3];
-  if (!(prev.distanceKm > 0) || !(beforePrev.distanceKm > 0)) return { triggered: false, severity: 0 };
+  if (!(prev.distanceKm > 0) || !(beforePrev.distanceKm > 0)) return { triggered: false, severity: 0, detail: null };
   const increase = (last.distanceKm - prev.distanceKm) / prev.distanceKm;
   const prevWasDecline = prev.distanceKm < beforePrev.distanceKm;
   const triggered = increase > LOAD_SPIKE_INCREASE_THRESHOLD && prevWasDecline;
-  return { triggered, severity: triggered ? severity(increase, LOAD_SPIKE_INCREASE_THRESHOLD, LOAD_SPIKE_INCREASE_CAP) : 0 };
+  return {
+    triggered,
+    severity: triggered ? severity(increase, LOAD_SPIKE_INCREASE_THRESHOLD, LOAD_SPIKE_INCREASE_CAP) : 0,
+    detail: triggered
+      ? `Wochenumfang +${Math.round(increase * 100)}% ggü. Vorwoche (Ziel: ≤ ${Math.round(LOAD_SPIKE_INCREASE_THRESHOLD * 100)}%, nach vorheriger Rückgangswoche)`
+      : null,
+  };
 }
 
 // Simpler counterpart to detectLoadSpike: catches a direct load jump even without a
 // prior decline (no jo-jo precondition), so a straight ramp-up doesn't slip through.
 function detectLoadSpikeImmediate(weeks) {
-  if (weeks.length < 4) return { triggered: false, severity: 0 };
+  if (weeks.length < 4) return { triggered: false, severity: 0, detail: null };
   const last4 = weeks.slice(-4);
   const lastWeek = last4[last4.length - 1];
   const avg4 = last4.reduce((sum, w) => sum + w.distanceKm, 0) / last4.length;
-  if (!(avg4 > 0)) return { triggered: false, severity: 0 };
+  if (!(avg4 > 0)) return { triggered: false, severity: 0, detail: null };
   const ratio = lastWeek.distanceKm / avg4;
   const triggered = ratio > LOAD_SPIKE_IMMEDIATE_RATIO_THRESHOLD;
   return {
     triggered,
     severity: triggered ? severity(ratio, LOAD_SPIKE_IMMEDIATE_RATIO_THRESHOLD, LOAD_SPIKE_IMMEDIATE_RATIO_CAP) : 0,
+    detail: triggered
+      ? `Wochenumfang ${ratio.toFixed(2)}x der letzten 4-Wochen-Ø (Ziel: ≤ ${LOAD_SPIKE_IMMEDIATE_RATIO_THRESHOLD}x)`
+      : null,
   };
 }
 
 function detectRestingHrRising(trends) {
   const slope = trends.restingHr?.slopePerDay;
   const triggered = Number.isFinite(slope) && slope > RESTING_HR_SLOPE_THRESHOLD;
-  return { triggered, severity: triggered ? severity(slope, RESTING_HR_SLOPE_THRESHOLD, RESTING_HR_SLOPE_CAP) : 0 };
+  return {
+    triggered,
+    severity: triggered ? severity(slope, RESTING_HR_SLOPE_THRESHOLD, RESTING_HR_SLOPE_CAP) : 0,
+    detail: triggered
+      ? `Ruhepuls-Trend +${slope.toFixed(2)} bpm/Tag (Ziel: ≤ ${RESTING_HR_SLOPE_THRESHOLD} bpm/Tag)`
+      : null,
+  };
 }
 
 function detectSleepDebt(wellnessByDay, newest) {
   const nights = lastNDaysIso(newest, 7)
     .map((d) => wellnessByDay.get(d)?.sleepHours)
     .filter((v) => Number.isFinite(v));
-  if (nights.length < SLEEP_DEBT_MIN_NIGHTS) return { triggered: false, severity: 0 };
+  if (nights.length < SLEEP_DEBT_MIN_NIGHTS) return { triggered: false, severity: 0, detail: null };
   const avg = nights.reduce((a, b) => a + b, 0) / nights.length;
   const shortNights = nights.filter((h) => h < SLEEP_DEBT_SHORT_NIGHT_HOURS).length;
 
@@ -672,7 +687,19 @@ function detectSleepDebt(wellnessByDay, newest) {
     ? severity(shortNights, SLEEP_DEBT_SHORT_NIGHT_COUNT, SLEEP_DEBT_SHORT_NIGHT_COUNT_CAP)
     : 0;
 
-  return { triggered: triggeredAvg || triggeredShort, severity: Math.max(severityAvg, severityShort) };
+  const details = [];
+  if (triggeredAvg) details.push(`Ø ${avg.toFixed(1)}h/Nacht (Ziel: ≥ ${SLEEP_DEBT_AVG_HOURS_THRESHOLD}h)`);
+  if (triggeredShort) {
+    details.push(
+      `${shortNights}x <${SLEEP_DEBT_SHORT_NIGHT_HOURS}h in den letzten 7 Nächten (Ziel: ≤ ${SLEEP_DEBT_SHORT_NIGHT_COUNT - 1}x)`,
+    );
+  }
+
+  return {
+    triggered: triggeredAvg || triggeredShort,
+    severity: Math.max(severityAvg, severityShort),
+    detail: details.length ? details.join("; ") : null,
+  };
 }
 
 // Trend-Delta criterion (2. Hälfte vs. 1. Hälfte des Analysezeitraums) unverändert;
@@ -689,18 +716,31 @@ function detectHrvDrop(wellnessByDay, newest, days, trends) {
 
   let triggeredRolling = false;
   let severityRolling = 0;
+  let rollingRatio = null;
   if (windowHrv.length >= MIN_WELLNESS_POINTS_FOR_TREND) {
     const avg = windowHrv.reduce((a, b) => a + b, 0) / windowHrv.length;
     const rolling = windowHrv.slice(-HRV_DROP_ROLLING_DAYS);
     if (rolling.length === HRV_DROP_ROLLING_DAYS && avg > 0) {
       const rollingAvg = rolling.reduce((a, b) => a + b, 0) / rolling.length;
-      const ratio = rollingAvg / avg;
-      triggeredRolling = ratio < HRV_DROP_RATIO_THRESHOLD;
-      severityRolling = triggeredRolling ? severityBelow(ratio, HRV_DROP_RATIO_THRESHOLD, HRV_DROP_RATIO_CAP) : 0;
+      rollingRatio = rollingAvg / avg;
+      triggeredRolling = rollingRatio < HRV_DROP_RATIO_THRESHOLD;
+      severityRolling = triggeredRolling ? severityBelow(rollingRatio, HRV_DROP_RATIO_THRESHOLD, HRV_DROP_RATIO_CAP) : 0;
     }
   }
 
-  return { triggered: triggeredTrend || triggeredRolling, severity: Math.max(severityTrend, severityRolling) };
+  const details = [];
+  if (triggeredTrend) {
+    details.push(`Trend ${deltaAbs.toFixed(1)} (Ziel: ≥ ${HRV_DROP_DELTA_ABS_THRESHOLD})`);
+  }
+  if (triggeredRolling) {
+    details.push(`${HRV_DROP_ROLLING_DAYS}-Tage-Ø ${(rollingRatio * 100).toFixed(0)}% des 28-Tage-Ø (Ziel: ≥ ${Math.round(HRV_DROP_RATIO_THRESHOLD * 100)}%)`);
+  }
+
+  return {
+    triggered: triggeredTrend || triggeredRolling,
+    severity: Math.max(severityTrend, severityRolling),
+    detail: details.length ? details.join("; ") : null,
+  };
 }
 
 function detectAcuteOverload(wellnessByDay, newest, days) {
@@ -710,10 +750,14 @@ function detectAcuteOverload(wellnessByDay, newest, days) {
     if (Number.isFinite(w?.atl) && Number.isFinite(w?.ctl) && w.ctl > 0) {
       const ratio = w.atl / w.ctl;
       const triggered = ratio > ACUTE_OVERLOAD_RATIO_THRESHOLD;
-      return { triggered, severity: triggered ? severity(ratio, ACUTE_OVERLOAD_RATIO_THRESHOLD, ACUTE_OVERLOAD_RATIO_CAP) : 0 };
+      return {
+        triggered,
+        severity: triggered ? severity(ratio, ACUTE_OVERLOAD_RATIO_THRESHOLD, ACUTE_OVERLOAD_RATIO_CAP) : 0,
+        detail: triggered ? `ATL/CTL ${ratio.toFixed(2)} (Ziel: ≤ ${ACUTE_OVERLOAD_RATIO_THRESHOLD})` : null,
+      };
     }
   }
-  return { triggered: false, severity: 0 };
+  return { triggered: false, severity: 0, detail: null };
 }
 
 function severityQualifier(sev) {
@@ -727,6 +771,7 @@ function buildAssessmentText(triggeredFlagKeys, flags) {
     return {
       summary: "Form und Erholung sehen unauffällig aus, keine Red Flags in den letzten Wochen.",
       recommendation: "Aktuellen Trainingsplan wie geplant fortsetzen.",
+      details: [],
     };
   }
 
@@ -746,7 +791,10 @@ function buildAssessmentText(triggeredFlagKeys, flags) {
     .map((f) => `${severityQualifier(flags[f].severity)}${FLAG_INFO[f].label}`)
     .join(" + ")} ${cause}.`;
   const recommendation = [...new Set(triggeredFlagKeys.map((f) => FLAG_INFO[f].recommendation))].join(" ");
-  return { summary, recommendation };
+  const details = triggeredFlagKeys
+    .map((f) => (flags[f].detail ? `${FLAG_INFO[f].label}: ${flags[f].detail}` : null))
+    .filter(Boolean);
+  return { summary, recommendation, details };
 }
 
 // Turns the raw weeks/wellness/trends data into the red-flag checklist from the
@@ -777,9 +825,16 @@ export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days)
   const status = combinedScore < STATUS_GREEN_MAX_SCORE ? "grün" : combinedScore < STATUS_YELLOW_MAX_SCORE ? "gelb" : "rot";
 
   const triggeredFlagKeys = Object.keys(FLAG_INFO).filter((f) => flags[f].triggered);
-  const { summary, recommendation } = buildAssessmentText(triggeredFlagKeys, flags);
+  const { summary, recommendation, details } = buildAssessmentText(triggeredFlagKeys, flags);
 
-  return { status, flags, recoveryScore, loadScore, combinedScore, summary, recommendation };
+  // Athlete-facing explanation of what it'd take to turn the Ampel green again - null
+  // once already green, since there's nothing left to close then.
+  const goalText =
+    status === "grün"
+      ? null
+      : `Ziel für Grün: kombinierter Score < ${STATUS_GREEN_MAX_SCORE.toFixed(2)} (aktuell ${combinedScore.toFixed(2)}).`;
+
+  return { status, flags, recoveryScore, loadScore, combinedScore, summary, recommendation, details, goalText };
 }
 
 function wellnessTrends(wellnessByDay, oldest, days) {
