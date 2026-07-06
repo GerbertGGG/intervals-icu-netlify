@@ -117,7 +117,14 @@ export async function fetchYazioDailyNutrition(env, dateIso) {
   const uniqueProductIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
   const nutrientsByProduct = new Map();
   for (const productId of uniqueProductIds) {
-    nutrientsByProduct.set(productId, await fetchProductNutrientsPerGram(env, productId));
+    // One bad/unavailable product (404 on a custom recipe, transient rate-limit, ...)
+    // must not blow up the whole day's totals - skip it and keep summing the rest,
+    // same as items that already have no product_id at all (see loop below).
+    try {
+      nutrientsByProduct.set(productId, await fetchProductNutrientsPerGram(env, productId));
+    } catch (e) {
+      console.warn("yazio product lookup failed, skipping item", { productId, error: String(e?.message ?? e) });
+    }
   }
 
   const totals = { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0 };
