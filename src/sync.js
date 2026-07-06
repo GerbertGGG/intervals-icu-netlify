@@ -129,7 +129,7 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
           patch[FIELD_CARBS] = Math.round(nutrition.carbG * 10) / 10;
           patch[FIELD_FAT] = Math.round(nutrition.fatG * 10) / 10;
           if (debug) {
-            yazioDebug = { itemCount: nutrition.itemCount, failedProductIds: nutrition.failedProductIds, rawShape: nutrition.rawShape };
+            yazioDebug = { itemCount: nutrition.itemCount, skippedItems: nutrition.skippedItems, rawShape: nutrition.rawShape };
           }
         }
       } catch (e) {
