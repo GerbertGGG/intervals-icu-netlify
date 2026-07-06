@@ -119,6 +119,7 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
     // one fetch gets the same result at a fraction of the (unofficial, rate-limit-prone)
     // API load. Best-effort either way: a login/rate-limit failure there must never
     // break the rest of the (intervals.icu) sync for this day.
+    let yazioDebug;
     if (includeYazio && hasYazioCredentials(env)) {
       try {
         const nutrition = await fetchYazioDailyNutrition(env, day);
@@ -127,9 +128,13 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
           patch[FIELD_PROTEIN] = Math.round(nutrition.proteinG * 10) / 10;
           patch[FIELD_CARBS] = Math.round(nutrition.carbG * 10) / 10;
           patch[FIELD_FAT] = Math.round(nutrition.fatG * 10) / 10;
+          if (debug) {
+            yazioDebug = { itemCount: nutrition.itemCount, failedProductIds: nutrition.failedProductIds };
+          }
         }
       } catch (e) {
         console.warn("yazio nutrition sync failed", { day, error: String(e?.message ?? e) });
+        if (debug) yazioDebug = { error: String(e?.message ?? e) };
       }
 
       // Available calories for the day = Yazio's own diet goal (a deliberate deficit,
@@ -168,6 +173,7 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       vdot: vdotResult?.vdot ?? null,
       vdotSource: vdotResult?.source ?? null,
       patch,
+      yazioDebug,
     });
   }
 

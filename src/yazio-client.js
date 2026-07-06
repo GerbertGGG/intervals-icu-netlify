@@ -112,10 +112,11 @@ async function fetchProductNutrientsPerGram(env, productId) {
 // in grams from /user/consumed-items, so total = amount * per-gram nutrient value.
 export async function fetchYazioDailyNutrition(env, dateIso) {
   const items = await fetchConsumedItems(env, dateIso);
-  if (items.length === 0) return { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0 };
+  if (items.length === 0) return { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: 0, failedProductIds: [] };
 
   const uniqueProductIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
   const nutrientsByProduct = new Map();
+  const failedProductIds = [];
   for (const productId of uniqueProductIds) {
     // One bad/unavailable product (404 on a custom recipe, transient rate-limit, ...)
     // must not blow up the whole day's totals - skip it and keep summing the rest,
@@ -123,11 +124,12 @@ export async function fetchYazioDailyNutrition(env, dateIso) {
     try {
       nutrientsByProduct.set(productId, await fetchProductNutrientsPerGram(env, productId));
     } catch (e) {
+      failedProductIds.push(productId);
       console.warn("yazio product lookup failed, skipping item", { productId, error: String(e?.message ?? e) });
     }
   }
 
-  const totals = { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0 };
+  const totals = { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: items.length, failedProductIds };
   for (const item of items) {
     const nutrients = nutrientsByProduct.get(item.product_id);
     const amount = Number(item?.amount || 0);
