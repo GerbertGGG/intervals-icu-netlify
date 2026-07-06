@@ -79,7 +79,17 @@ async function yazioGet(env, path) {
 
 async function fetchConsumedItems(env, dateIso) {
   const data = await yazioGet(env, `/user/consumed-items?date=${dateIso}`);
-  return Array.isArray(data) ? data : [];
+  const items = Array.isArray(data) ? data : [];
+  return { items, raw: data };
+}
+
+// Debug-only description of what the API actually returned, so an unexpectedly
+// empty diary (e.g. wrong response shape, wrong date semantics) can be told apart
+// from a genuinely empty one without guessing.
+function describeRawShape(raw) {
+  if (Array.isArray(raw)) return `array(length=${raw.length})`;
+  if (raw && typeof raw === "object") return `object(keys=${Object.keys(raw).join(",")})`;
+  return typeof raw;
 }
 
 // The athlete's own diet goal from the Yazio app (e.g. a deficit for weight loss).
@@ -111,8 +121,10 @@ async function fetchProductNutrientsPerGram(env, productId) {
 // Sums the day's diary entries into total calories/macros. Amounts already come back
 // in grams from /user/consumed-items, so total = amount * per-gram nutrient value.
 export async function fetchYazioDailyNutrition(env, dateIso) {
-  const items = await fetchConsumedItems(env, dateIso);
-  if (items.length === 0) return { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: 0, failedProductIds: [] };
+  const { items, raw } = await fetchConsumedItems(env, dateIso);
+  if (items.length === 0) {
+    return { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: 0, failedProductIds: [], rawShape: describeRawShape(raw) };
+  }
 
   const uniqueProductIds = [...new Set(items.map((i) => i.product_id).filter(Boolean))];
   const nutrientsByProduct = new Map();
