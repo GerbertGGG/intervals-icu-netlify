@@ -85,11 +85,20 @@ async function fetchConsumedItems(env, dateIso) {
 
 // Debug-only description of what the API actually returned, so an unexpectedly
 // empty diary (e.g. wrong response shape, wrong date semantics) can be told apart
-// from a genuinely empty one without guessing.
+// from a genuinely empty one without guessing. Includes one sample item per
+// category (if the response turns out to be the {products, recipe_portions,
+// simple_products} shape) so the real field names can be inspected directly
+// instead of relying on possibly-stale third-party API docs.
 function describeRawShape(raw) {
-  if (Array.isArray(raw)) return `array(length=${raw.length})`;
-  if (raw && typeof raw === "object") return `object(keys=${Object.keys(raw).join(",")})`;
-  return typeof raw;
+  if (Array.isArray(raw)) return { shape: `array(length=${raw.length})` };
+  if (raw && typeof raw === "object") {
+    const samples = {};
+    for (const key of Object.keys(raw)) {
+      if (Array.isArray(raw[key]) && raw[key].length > 0) samples[key] = raw[key][0];
+    }
+    return { shape: `object(keys=${Object.keys(raw).join(",")})`, samples };
+  }
+  return { shape: typeof raw };
 }
 
 // The athlete's own diet goal from the Yazio app (e.g. a deficit for weight loss).
