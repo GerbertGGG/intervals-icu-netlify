@@ -124,7 +124,7 @@ function buildRideRecord(a) {
   const maxHrActivity = Number(a?.max_heartrate ?? a?.max_hr ?? 0) || null;
   const avgWatts = Number(a?.icu_average_watts ?? a?.average_watts ?? a?.avg_watts ?? 0) || null;
   const normalizedWatts = Number(a?.icu_weighted_avg_watts ?? a?.weighted_average_watts ?? a?.normalized_power ?? 0) || null;
-  const maxWatts = Number(a?.max_watts ?? a?.icu_max_watts ?? 0) || null;
+  const maxWatts = Number(a?.icu_max_watts ?? a?.max_watts ?? 0) || null;
   const rpe = Number(a?.perceived_exertion ?? a?.icu_rpe ?? NaN);
   const feel = Number(a?.feel ?? NaN);
   return {

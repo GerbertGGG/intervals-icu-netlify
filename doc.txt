@@ -608,7 +608,8 @@ recommendation }`:
   alles über `isRun` gefiltert wurde). Pro Eintrag: `date`, `name`, `description`,
   `distanceKm`, `movingTimeMin`, `avgHr`, `maxHr`, `avgWatts`, `normalizedWatts`,
   `maxWatts`, `hasPowerMeter`, `load`, `perceivedExertion`, `feel`, `isRace`, `tags`.
-  Ohne Leistungsmesser bleiben die Watt-Felder `null`, HF/Dauer/RPE sind trotzdem da.
+  Ohne Leistungsmesser (oder falls intervals.icu für die Aktivität keinen Wert
+  berechnet hat) bleiben die Watt-Felder `null`, HF/Dauer/RPE sind trotzdem da.
 - `weeks[].rideDistanceKm`/`rideMovingTimeMin`/`rideSessionCount`: Rad-Umfang der
   Woche, separat von den lauf-spezifischen `distanceKm`/`movingTimeMin` (die weiterhin
   nur Läufe zählen, ebenso `load_spike`/`load_spike_immediate` im Assessment - ein
