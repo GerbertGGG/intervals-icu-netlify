@@ -5,6 +5,7 @@ import {
   isRaceActivity,
   isTreadmill,
   isIntervalActivity,
+  hasIntervalTextSignal,
   intervalDetectionSource,
   isVdotExcluded,
   activityDay,
@@ -96,10 +97,15 @@ function buildRunRecord(a) {
     perceivedExertion: Number.isFinite(rpe) ? rpe : null,
     feel: Number.isFinite(feel) ? feel : null,
     isRace: isRaceActivity(a),
-    isInterval: isIntervalActivity(a),
-    // How isInterval was decided: "tag" (#interval*), "text" (rep-count notation in
-    // name/description) or null (no signal). enrichRunsWithIntervalSplits below
-    // upgrades this to "structure" once the actual rep data confirms it.
+    // Broader than isVdotExcluded/isIntervalActivity's VDOT-facing tag check on
+    // purpose: also true from the text heuristic (see hasIntervalTextSignal), so
+    // this JSON field stays a *superset* signal purely for the reader's benefit -
+    // it never feeds back into isIntervalActivity or VDOT estimation elsewhere.
+    isInterval: isIntervalActivity(a) || hasIntervalTextSignal(a),
+    // How isInterval above was decided: "tag" (#interval*, also excludes from VDOT),
+    // "text" (rep-count notation in name/description, JSON-only signal) or null (no
+    // signal). enrichRunsWithIntervalSplits below upgrades this to "structure" once
+    // the actual rep data confirms it.
     intervalDetection: intervalDetectionSource(a),
     isTreadmill: isTreadmill(a),
     excludedFromVdot: isVdotExcluded(a),
@@ -515,6 +521,17 @@ function buildWeekSummary(bucket, activities, maxHr) {
   const movingTimeMin =
     runsInWeek.reduce((sum, a) => sum + (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0), 0) / 60;
 
+  // Rides are intentionally kept out of distanceKm/movingTimeMin/easyZonePace above
+  // (running-specific pace metrics) and out of load_spike/load_spike_immediate below
+  // (a run-km ramp-rate check doesn't translate to bike-km) - but reported here
+  // separately so a heavy bike week is still visible in weeks[] instead of only
+  // showing up in the top-level rides[] array. dailyLoads/monotony/strain above
+  // already count ride load same as run load (activityLoad is sport-agnostic).
+  const ridesInWeek = activities.filter((a) => isBike(a) && activityDay(a) >= bucket.start && activityDay(a) <= bucket.end);
+  const rideDistanceKm = ridesInWeek.reduce((sum, a) => sum + (Number(a?.distance ?? a?.icu_distance ?? 0) || 0), 0) / 1000;
+  const rideMovingTimeMin =
+    ridesInWeek.reduce((sum, a) => sum + (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0), 0) / 60;
+
   const easyRuns = runsInWeek.filter(
     (a) => !isRaceActivity(a) && !isTreadmill(a) && !isIntervalActivity(a) && !isVdotExcluded(a),
   );
@@ -540,6 +557,9 @@ function buildWeekSummary(bucket, activities, maxHr) {
     distanceKm: Math.round(distanceKm * 10) / 10,
     movingTimeMin: Math.round(movingTimeMin),
     runSessionCount: runsInWeek.length,
+    rideDistanceKm: Math.round(rideDistanceKm * 10) / 10,
+    rideMovingTimeMin: Math.round(rideMovingTimeMin),
+    rideSessionCount: ridesInWeek.length,
     easyZonePace: formatPace(easyZonePaceSecPerKm),
     easyZonePaceSecPerKm: easyZonePaceSecPerKm != null ? Math.round(easyZonePaceSecPerKm) : null,
     easyZoneSampleKm: Math.round((easyDistanceM / 1000) * 10) / 10,

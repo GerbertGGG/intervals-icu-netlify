@@ -592,16 +592,29 @@ recommendation }`:
   Training).
 - `runs[].intervalSplits` (nur bei `intervalSplits=true`, nur für `isInterval: true`
   Läufe): `[{ repNumber, distanceM, paceSecPerKm, avgHr, restSec }]`.
-- `runs[].intervalDetection`: wie `isInterval` erkannt wurde – `"tag"` (Tag beginnt mit
-  `interval`), `"text"` (Rep-Zahl-Notation wie `5x1000`/`4×1 km`/`3x10'` in Name oder
-  Beschreibung, kostenlos/immer aktiv, kein zusätzlicher Call), `"structure"` (nur bei
-  `intervalSplits=true`: die echte Rep-Struktur hatte >=2 Work-Segmente, stärkstes
-  Signal, überschreibt tag/text), oder `null` (kein Signal gefunden).
+- `runs[].intervalDetection`: wie `runs[].isInterval` erkannt wurde – `"tag"` (Tag
+  beginnt mit `interval`; das ist auch das einzige Signal, das VDOT-Schätzung/
+  Wochenvergleich beeinflusst, siehe 6.5/15), `"text"` (Rep-Zahl-Notation wie
+  `5x1000`/`4×1 km`/`3x10'` oder das Wort "interval(l)" in Name/Beschreibung,
+  kostenlos/immer aktiv, kein zusätzlicher Call, **rein informativ für dieses JSON**
+  und beeinflusst nirgendwo sonst VDOT/easyZonePace), `"structure"` (nur bei
+  `intervalSplits=true`, und nur für Läufe, die schon per Tag/Text als Kandidat
+  erkannt wurden: die echte Rep-Struktur hatte >=2 Work-Segmente, stärkstes Signal,
+  überschreibt tag/text – kann aber keinen neuen Intervall-Lauf entdecken, den
+  Tag/Text übersehen haben, da nur Kandidaten überhaupt abgefragt werden), oder
+  `null` (kein Signal gefunden). `runs[].isInterval` selbst ist bewusst das Oder aus
+  tag+text (breiter als die interne, VDOT-relevante Tag-Erkennung).
 - `rides[]`: Rad-/Smarttrainer-Aktivitäten im Zeitraum (bislang komplett fehlend, da
   alles über `isRun` gefiltert wurde). Pro Eintrag: `date`, `name`, `description`,
   `distanceKm`, `movingTimeMin`, `avgHr`, `maxHr`, `avgWatts`, `normalizedWatts`,
   `maxWatts`, `hasPowerMeter`, `load`, `perceivedExertion`, `feel`, `isRace`, `tags`.
   Ohne Leistungsmesser bleiben die Watt-Felder `null`, HF/Dauer/RPE sind trotzdem da.
+- `weeks[].rideDistanceKm`/`rideMovingTimeMin`/`rideSessionCount`: Rad-Umfang der
+  Woche, separat von den lauf-spezifischen `distanceKm`/`movingTimeMin` (die weiterhin
+  nur Läufe zählen, ebenso `load_spike`/`load_spike_immediate` im Assessment - ein
+  Ramp-Rate-Check über Lauf-km ist auf Rad-km nicht 1:1 übertragbar). `loadSum`/
+  `monotony`/`strain` zählen Rad-Load dagegen schon immer mit (sportartunabhängiges
+  `activityLoad`), damit eine reine Rad-Woche nicht in `weeks[]` unsichtbar bleibt.
 - `athleteProfile`: Sport-Settings von intervals.icu (`GET /athlete/{id}/sport-
   settings`, 24h-KV-Cache), `null` falls nicht ladbar. Felder: `maxHrRun`, `lthrRun`
   (Schwellenpuls), `hrZonesRun` (`[{ zone, name, upperBpm }]`), `maxHrRide`, `ftpRide`,
