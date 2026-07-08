@@ -592,6 +592,32 @@ recommendation }`:
   Training).
 - `runs[].intervalSplits` (nur bei `intervalSplits=true`, nur für `isInterval: true`
   Läufe): `[{ repNumber, distanceM, paceSecPerKm, avgHr, restSec }]`.
+- `runs[].intervalDetection`: wie `isInterval` erkannt wurde – `"tag"` (Tag beginnt mit
+  `interval`), `"text"` (Rep-Zahl-Notation wie `5x1000`/`4×1 km`/`3x10'` in Name oder
+  Beschreibung, kostenlos/immer aktiv, kein zusätzlicher Call), `"structure"` (nur bei
+  `intervalSplits=true`: die echte Rep-Struktur hatte >=2 Work-Segmente, stärkstes
+  Signal, überschreibt tag/text), oder `null` (kein Signal gefunden).
+- `rides[]`: Rad-/Smarttrainer-Aktivitäten im Zeitraum (bislang komplett fehlend, da
+  alles über `isRun` gefiltert wurde). Pro Eintrag: `date`, `name`, `description`,
+  `distanceKm`, `movingTimeMin`, `avgHr`, `maxHr`, `avgWatts`, `normalizedWatts`,
+  `maxWatts`, `hasPowerMeter`, `load`, `perceivedExertion`, `feel`, `isRace`, `tags`.
+  Ohne Leistungsmesser bleiben die Watt-Felder `null`, HF/Dauer/RPE sind trotzdem da.
+- `athleteProfile`: Sport-Settings von intervals.icu (`GET /athlete/{id}/sport-
+  settings`, 24h-KV-Cache), `null` falls nicht ladbar. Felder: `maxHrRun`, `lthrRun`
+  (Schwellenpuls), `hrZonesRun` (`[{ zone, name, upperBpm }]`), `maxHrRide`, `ftpRide`,
+  `powerZonesRide` (`[{ zone, name, upperPctFtp, upperWatts }]`). Feldnamen sind wie bei
+  `zoneTimes`/`intervalSplits` Best-Effort-Ketten, da die live API-Doku beim
+  Implementieren nicht erreichbar war – einzelne Felder können `null` bleiben, wenn
+  intervals.icu dafür nichts konfiguriert hat. Echte Laktattest-Werte (mmol/L) liefert
+  die API nicht; LTHR ist der nächstliegende Ersatzwert.
+- `easyZoneDefinition`: macht die `easyZonePace`-Berechnung in `weeks[]` transparent
+  statt einer stillen Konstante – `{ method: "pct_of_max_hr", minPct, maxPct, minBpm,
+  maxBpm, configuredHrZonesRun, configuredLthrRun }`. Die Berechnung selbst bleibt die
+  feste 60-78%-MaxHF-Heuristik; `configuredHrZonesRun`/`configuredLthrRun` zeigen
+  daneben die tatsächlich bei intervals.icu hinterlegten Zonen, damit ersichtlich ist,
+  ob die Heuristik zur echten Zone 1-2 des Athleten passt.
+- `wellnessCompleteness`: `{ totalDays, restingHrDays, hrvDays, sleepDays }` – Anzahl
+  Tage mit Wert pro Feld, feiner als die aggregierte `dataQuality.notes`-Warnung.
 
 Automatischer Trigger:
 - läuft täglich beim ersten Tick des Tages (07:00–07:29 Berlin, siehe 5), im selben
