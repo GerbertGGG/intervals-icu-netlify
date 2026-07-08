@@ -1,5 +1,17 @@
 import { isoDate } from "./date-utils.js";
-import { isRun, isRaceActivity, isTreadmill, isIntervalActivity, isVdotExcluded, activityDay, activityLoad } from "./activity-utils.js";
+import {
+  isRun,
+  isBike,
+  isRaceActivity,
+  isTreadmill,
+  isIntervalActivity,
+  hasIntervalTextSignal,
+  intervalDetectionSource,
+  isVdotExcluded,
+  activityDay,
+  activityLoad,
+} from "./activity-utils.js";
+import { resolveAthleteProfile } from "./athlete-profile.js";
 import {
   fetchIntervalsActivities,
   fetchIntervalsWellnessRange,
@@ -85,9 +97,52 @@ function buildRunRecord(a) {
     perceivedExertion: Number.isFinite(rpe) ? rpe : null,
     feel: Number.isFinite(feel) ? feel : null,
     isRace: isRaceActivity(a),
-    isInterval: isIntervalActivity(a),
+    // Broader than isVdotExcluded/isIntervalActivity's VDOT-facing tag check on
+    // purpose: also true from the text heuristic (see hasIntervalTextSignal), so
+    // this JSON field stays a *superset* signal purely for the reader's benefit -
+    // it never feeds back into isIntervalActivity or VDOT estimation elsewhere.
+    isInterval: isIntervalActivity(a) || hasIntervalTextSignal(a),
+    // How isInterval above was decided: "tag" (#interval*, also excludes from VDOT),
+    // "text" (rep-count notation in name/description, JSON-only signal) or null (no
+    // signal). enrichRunsWithIntervalSplits below upgrades this to "structure" once
+    // the actual rep data confirms it.
+    intervalDetection: intervalDetectionSource(a),
     isTreadmill: isTreadmill(a),
     excludedFromVdot: isVdotExcluded(a),
+    tags: Array.isArray(a?.tags) ? a.tags : [],
+  };
+}
+
+// Bike/Smarttrainer counterpart to buildRunRecord: distance/pace don't apply the same
+// way, so this exposes power (when a power meter is present) alongside HR/duration/
+// RPE - if there's no power meter, avgWatts/normalizedWatts/maxWatts simply stay null
+// and HR + duration + RPE are still there for a rough intensity read.
+function buildRideRecord(a) {
+  const distanceM = Number(a?.distance ?? a?.icu_distance ?? 0) || 0;
+  const timeSecs = Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0;
+  const avgHr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0) || null;
+  const maxHrActivity = Number(a?.max_heartrate ?? a?.max_hr ?? 0) || null;
+  const avgWatts = Number(a?.icu_average_watts ?? a?.average_watts ?? a?.avg_watts ?? 0) || null;
+  const normalizedWatts = Number(a?.icu_weighted_avg_watts ?? a?.weighted_average_watts ?? a?.normalized_power ?? 0) || null;
+  const maxWatts = Number(a?.icu_max_watts ?? a?.max_watts ?? 0) || null;
+  const rpe = Number(a?.perceived_exertion ?? a?.icu_rpe ?? NaN);
+  const feel = Number(a?.feel ?? NaN);
+  return {
+    date: activityDay(a),
+    name: a?.name || a?.title || null,
+    description: a?.description || null,
+    distanceKm: Math.round((distanceM / 1000) * 100) / 100,
+    movingTimeMin: Math.round(timeSecs / 60),
+    avgHr,
+    maxHr: maxHrActivity,
+    avgWatts,
+    normalizedWatts,
+    maxWatts,
+    hasPowerMeter: avgWatts != null || normalizedWatts != null,
+    load: activityLoad(a) || null,
+    perceivedExertion: Number.isFinite(rpe) ? rpe : null,
+    feel: Number.isFinite(feel) ? feel : null,
+    isRace: isRaceActivity(a),
     tags: Array.isArray(a?.tags) ? a.tags : [],
   };
 }
@@ -295,6 +350,10 @@ async function enrichRunsWithIntervalSplits(env, runRecords, cap) {
       if (id == null) return;
       const raw = await fetchIntervalsActivityIntervals(env, id).catch(() => null);
       record.intervalSplits = normalizeIntervalSplits(raw);
+      // Strongest signal: real rep data (>=2 work segments) confirms this is an
+      // actual interval session, regardless of which weaker signal (tag/text) first
+      // flagged it as a candidate to fetch.
+      if (record.intervalSplits && record.intervalSplits.length >= 2) record.intervalDetection = "structure";
     }),
   );
   for (const { record } of runRecords) {
@@ -462,6 +521,17 @@ function buildWeekSummary(bucket, activities, maxHr) {
   const movingTimeMin =
     runsInWeek.reduce((sum, a) => sum + (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0), 0) / 60;
 
+  // Rides are intentionally kept out of distanceKm/movingTimeMin/easyZonePace above
+  // (running-specific pace metrics) and out of load_spike/load_spike_immediate below
+  // (a run-km ramp-rate check doesn't translate to bike-km) - but reported here
+  // separately so a heavy bike week is still visible in weeks[] instead of only
+  // showing up in the top-level rides[] array. dailyLoads/monotony/strain above
+  // already count ride load same as run load (activityLoad is sport-agnostic).
+  const ridesInWeek = activities.filter((a) => isBike(a) && activityDay(a) >= bucket.start && activityDay(a) <= bucket.end);
+  const rideDistanceKm = ridesInWeek.reduce((sum, a) => sum + (Number(a?.distance ?? a?.icu_distance ?? 0) || 0), 0) / 1000;
+  const rideMovingTimeMin =
+    ridesInWeek.reduce((sum, a) => sum + (Number(a?.moving_time ?? a?.elapsed_time ?? 0) || 0), 0) / 60;
+
   const easyRuns = runsInWeek.filter(
     (a) => !isRaceActivity(a) && !isTreadmill(a) && !isIntervalActivity(a) && !isVdotExcluded(a),
   );
@@ -487,6 +557,9 @@ function buildWeekSummary(bucket, activities, maxHr) {
     distanceKm: Math.round(distanceKm * 10) / 10,
     movingTimeMin: Math.round(movingTimeMin),
     runSessionCount: runsInWeek.length,
+    rideDistanceKm: Math.round(rideDistanceKm * 10) / 10,
+    rideMovingTimeMin: Math.round(rideMovingTimeMin),
+    rideSessionCount: ridesInWeek.length,
     easyZonePace: formatPace(easyZonePaceSecPerKm),
     easyZonePaceSecPerKm: easyZonePaceSecPerKm != null ? Math.round(easyZonePaceSecPerKm) : null,
     easyZoneSampleKm: Math.round((easyDistanceM / 1000) * 10) / 10,
@@ -892,6 +965,18 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     .map(buildRaceRecord)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
+  // Bike/Smarttrainer sessions, previously dropped entirely by the runs-only isRun
+  // filter above. No extra fetch needed - these come from the same /activities call.
+  const rides = activities
+    .filter(isBike)
+    .map(buildRideRecord)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  // Athlete's configured sport-settings (MaxHF/LTHR/HF-Zonen/FTP/Power-Zonen), best-
+  // effort - null fields (or a null profile) just mean intervals.icu has nothing
+  // configured there, surfaced via dataQuality.notes below rather than failing.
+  const athleteProfile = await resolveAthleteProfile(env).catch(() => null);
+
   const wellnessDaily = wellnessRaw.map(buildWellnessRecord).filter((w) => w.date);
   const wellnessByDay = new Map(wellnessDaily.map((w) => [w.date, w]));
 
@@ -908,6 +993,21 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
 
   const vdotHistory = buckets.map((bucket) => ({ date: bucket.end, vdot: buildWeekVdot(bucket, activities, maxHr) }));
   const easyPaceHistory = weeks.map((w) => ({ weekStart: w.weekStart, paceSecPerKm: w.easyZonePaceSecPerKm }));
+
+  // Makes weeks[].easyZonePace's method transparent instead of a silent hard-coded
+  // heuristic (see EASY_HR_PCT_MIN/MAX above): also surfaces the athlete's own
+  // configured HR zones (if any) alongside it, so a reader can judge whether the
+  // fixed 60-78%-of-MaxHF band roughly matches the athlete's real Z1-Z2, or should be
+  // taken with a grain of salt for this athlete.
+  const easyZoneDefinition = {
+    method: "pct_of_max_hr",
+    minPct: EASY_HR_PCT_MIN,
+    maxPct: EASY_HR_PCT_MAX,
+    minBpm: maxHr > 0 ? Math.round(maxHr * EASY_HR_PCT_MIN) : null,
+    maxBpm: maxHr > 0 ? Math.round(maxHr * EASY_HR_PCT_MAX) : null,
+    configuredHrZonesRun: athleteProfile?.hrZonesRun ?? null,
+    configuredLthrRun: athleteProfile?.lthrRun ?? null,
+  };
 
   const trends = wellnessTrends(wellnessByDay, oldest, days);
   const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
@@ -937,6 +1037,16 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     goalInfo.actualLongRunKm = longestRunKmInRunRecords(runs, currentWeekBucket.weekStart, currentWeekBucket.weekEnd);
   }
 
+  // Per-field completeness rather than just the aggregate wellnessDayCount note below
+  // - "28 Tage, aber nur 10x HRV" reads very differently from "28 Tage, aber nur 10x
+  // Schlaf", and the aggregate count alone can't tell those apart.
+  const wellnessCompleteness = {
+    totalDays: days,
+    restingHrDays: wellnessDaily.filter((w) => Number.isFinite(w.restingHr)).length,
+    hrvDays: wellnessDaily.filter((w) => Number.isFinite(w.hrv)).length,
+    sleepDays: wellnessDaily.filter((w) => Number.isFinite(w.sleepHours)).length,
+  };
+
   const notes = [];
   if (!(maxHr > 0)) notes.push("Keine MaxHF ermittelbar – Ø-Pace pro HF-Zone konnte nicht berechnet werden.");
   if (wellnessDaily.length < days / 2) {
@@ -945,26 +1055,46 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   if (weeks.every((w) => w.monotony == null)) {
     notes.push("Zu wenige Trainingstage pro Woche für eine Trainingsmonotonie-Berechnung.");
   }
+  if (!athleteProfile) {
+    notes.push("Sport-Settings (MaxHF/LTHR/HF-Zonen/FTP) konnten nicht von intervals.icu geladen werden.");
+  } else {
+    if (!athleteProfile.hrZonesRun) {
+      notes.push("Keine HF-Zonengrenzen in den Run-Sport-Settings hinterlegt – easyZone-Berechnung nutzt weiterhin die feste 60-78%-MaxHF-Heuristik statt echter Zonen.");
+    }
+    if (!athleteProfile.lthrRun) {
+      notes.push("Kein Schwellenpuls (LTHR) in den Run-Sport-Settings hinterlegt.");
+    }
+    if (rides.length > 0 && !athleteProfile.ftpRide) {
+      notes.push("Kein FTP in den Ride-Sport-Settings hinterlegt – Rad-Intensität lässt sich nur über HF/RPE einschätzen, nicht über Leistung.");
+    }
+  }
+  notes.push("Laktattest-Ergebnisse (mmol/L) werden von der intervals.icu-API nicht bereitgestellt – LTHR aus den Sport-Settings (falls hinterlegt) ist der nächstliegende Ersatzwert.");
 
   return {
     ok: true,
     athleteId: env?.ATHLETE_ID ?? null,
     range: { oldest, newest, days },
     maxHr: maxHr || null,
+    athleteProfile,
     weeks,
     trends,
     assessment,
     runs,
     races,
+    rides,
     vdotHistory,
     easyPaceHistory,
+    easyZoneDefinition,
     wellnessDaily,
+    wellnessCompleteness,
     goalInfo,
     upcomingPlan,
     dataQuality: {
       runCount: runs.length,
+      rideCount: rides.length,
       wellnessDayCount: wellnessDaily.length,
       hasMaxHr: maxHr > 0,
+      hasAthleteProfile: !!athleteProfile,
       notes,
     },
   };

@@ -23,8 +23,19 @@ export function isTreadmill(a) {
   return t === "virtualrun" || t.includes("treadmill");
 }
 
+// Bike/Smarttrainer classification (doc.txt 6.1): type contains ride/bike/cycling/
+// rad/velo. VirtualRide (smart trainer) counts as a ride like an outdoor ride.
+export function isBike(a) {
+  const t = String(a?.type ?? "").toLowerCase();
+  return t.includes("ride") || t.includes("bike") || t.includes("cycling") || t.includes("rad") || t.includes("velo");
+}
+
+// Sport-agnostic on purpose: every current caller already gates by isRun(...)
+// itself (form-analysis.js, vdot.js) where a run-only race matters, so dropping the
+// isRun requirement here doesn't change any existing result - it just lets ride
+// records (buildRideRecord in form-analysis.js) reuse the same race signal.
 export function isRaceActivity(activity) {
-  if (!activity || !isRun(activity)) return false;
+  if (!activity) return false;
   const tags = Array.isArray(activity?.tags) ? activity.tags : [];
   if (
     tags.some((tag) =>
@@ -46,6 +57,11 @@ export function isRaceActivity(activity) {
 // Marks interval/repeat sessions (e.g. "#intervalle", "#intervals", "interval:vo2") so
 // VDOT estimation can exclude them: averaging pace/HR over the whole activity dilutes
 // both with recovery jog/walk segments and skews the estimate (see vdot.js).
+// Intentionally tag-only, unchanged from before - vdot.js's live VDOT estimate and
+// weekly-progress report depend on isIntervalActivity staying precise, so the broader
+// text-based signal below is kept as a *separate* function that only form-analysis.js
+// consumes for its own isInterval/intervalDetection JSON fields, rather than folded in
+// here where it would risk false positives silently degrading VDOT quality.
 export function isIntervalActivity(activity) {
   const tags = Array.isArray(activity?.tags) ? activity.tags : [];
   return tags.some((tag) =>
@@ -55,6 +71,29 @@ export function isIntervalActivity(activity) {
       .replace(/^#/, "")
       .startsWith("interval"),
   );
+}
+
+// Auto-detected repeat/interval structure via a common rep-count notation ("5x1000",
+// "4×1 km", "3x10'") or the word itself in name/description - a manual tag is easy to
+// forget on an actual interval session. Best-effort text heuristic (no extra API
+// cost, can false-positive on unrelated numeric/verbal text) - used only by
+// form-analysis.js's recent-form JSON, never by isIntervalActivity above.
+const INTERVAL_TEXT_PATTERN = /\b\d+\s*[x×]\s*\d+/i;
+
+export function hasIntervalTextSignal(activity) {
+  const text = `${activity?.name ?? ""} ${activity?.description ?? ""}`.toLowerCase();
+  return /\bintervall?\b/.test(text) || INTERVAL_TEXT_PATTERN.test(text);
+}
+
+// Exposes which signal marked a run as an interval session for the recent-form JSON:
+// "tag" (isIntervalActivity, also the one that affects VDOT), "text" (heuristic-only,
+// see hasIntervalTextSignal - never affects VDOT), or null. form-analysis.js's
+// enrichRunsWithIntervalSplits upgrades this further to "structure" once real rep
+// data (opt-in) confirms it.
+export function intervalDetectionSource(activity) {
+  if (isIntervalActivity(activity)) return "tag";
+  if (hasIntervalTextSignal(activity)) return "text";
+  return null;
 }
 
 // Manual opt-out tag (e.g. "#novdot") to fully exclude an activity from every VDOT
