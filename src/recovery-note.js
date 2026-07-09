@@ -2,6 +2,11 @@ import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { upsertIntervalsNote } from "./intervals-client.js";
 
 const RECOVERY_NOTE_DAYS = 28; // matches buildRecentFormAnalysis's own default window
+// hrDrift needs one extra fetch (GET .../streams) per qualifying run - this cap keeps
+// that to the last handful of easy/long runs (enough for the 14-day aerobic-decoupling
+// window assessRecoveryStatus looks at) since writeDailyRecoveryNote itself only runs
+// once/day (see index.js's isFirstRunOfDay guard), not on every 30-min scheduled tick.
+const RECOVERY_NOTE_HR_DRIFT_CAP = 8;
 
 const STATUS_EMOJI = { "grün": "🟢", "gelb": "🟡", rot: "🔴" };
 const STATUS_COLOR = { "grün": "green", "gelb": "orange", rot: "red" };
@@ -28,7 +33,11 @@ function buildRecoveryNoteText(assessment) {
 // as the weekly "Wochenvergleich" note) instead of the wellness comments field, so the
 // Ampel shows up as its own color-coded tile on the calendar.
 export async function writeDailyRecoveryNote(env, todayIso) {
-  const { assessment } = await buildRecentFormAnalysis(env, todayIso, { days: RECOVERY_NOTE_DAYS });
+  const { assessment } = await buildRecentFormAnalysis(env, todayIso, {
+    days: RECOVERY_NOTE_DAYS,
+    includeHrDrift: true,
+    hrDriftCap: RECOVERY_NOTE_HR_DRIFT_CAP,
+  });
   const { name, description } = buildRecoveryNoteText(assessment);
   await upsertIntervalsNote(env, {
     dayIso: todayIso,

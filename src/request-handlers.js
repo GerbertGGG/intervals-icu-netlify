@@ -103,6 +103,7 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
   // for the cost rationale (one extra fetch per run, capped at 40).
   const includeWeather = (url.searchParams.get("weather") || "").toLowerCase() !== "false";
   const includeTimeAtHr = parseBooleanParam(url.searchParams, "timeAtHr");
+  const includeHrDrift = parseBooleanParam(url.searchParams, "hrDrift");
   const planDays = clampInt(url.searchParams.get("planDays") ?? "14", 1, 60);
 
   const result = await buildRecentFormAnalysis(scopedEnv, todayIso, {
@@ -111,6 +112,7 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
     includeIntervalSplits,
     includeWeather,
     includeTimeAtHr,
+    includeHrDrift,
     planDays,
   });
   return json(result);

@@ -19,6 +19,7 @@ import {
   fetchIntervalsActivityIntervals,
   fetchIntervalsActivityMap,
   fetchIntervalsActivityTimeAtHr,
+  fetchIntervalsActivityStreams,
   fetchIntervalsSportSettingsById,
   fetchIntervalsActivityPaceCurves,
   fetchIntervalsActivityHrCurves,
@@ -56,6 +57,11 @@ const MAX_ZONE_TIME_ACTIVITY_CALLS = 40;
 const MAX_INTERVAL_SPLIT_ACTIVITY_CALLS = 20;
 const MAX_WEATHER_ACTIVITY_CALLS = 40;
 const MAX_TIME_AT_HR_ACTIVITY_CALLS = 40;
+// hrDrift needs one extra fetch (GET .../streams) per run, same opt-in contract as
+// zoneTimes/intervalSplits/timeAtHr above. recovery-note.js's daily automated
+// formcheck opts in too (see writeDailyRecoveryNote), but passes a much smaller
+// hrDriftCap since it runs once/day unconditionally rather than only on request.
+const MAX_HR_DRIFT_ACTIVITY_CALLS = 40;
 const DEFAULT_PLAN_DAYS = 14;
 
 function addDays(dayIso, n) {
@@ -431,6 +437,88 @@ async function enrichRunsWithTimeAtHr(env, runRecords, cap, hrZonesRun) {
   }
 }
 
+// ─── hrDrift (opt-in) ──────────────────────────────────────────────────────────
+// Real aerobic-decoupling (Pa:HR) number computed from the run's raw streams,
+// replacing the best-effort `a?.decoupling` guess in buildRunRecord above (that
+// field is never actually populated by the bulk /activities list). Method per
+// doc.txt 7.3: skip the first `HR_DRIFT_WARMUP_SKIP_SECS`, drop samples below the
+// HR/speed floor (stopped/walking), split what's left in half by time, and compare
+// efficiency factor (speed/HR) between the two halves. A *negative* drift (EF
+// improved in the second half) is discarded to null rather than reported as
+// "negative decoupling" - it just means this run wasn't a case of aerobic drift.
+const HR_DRIFT_WARMUP_SKIP_SECS = 600;
+const HR_DRIFT_MIN_HR_BPM = 40;
+const HR_DRIFT_MIN_SPEED_MS = 1.8;
+// Below this, a first-half/second-half split is too short to mean anything (GPS
+// noise, a handful of samples right after the warmup cutoff, etc.).
+const HR_DRIFT_MIN_QUALIFYING_SECS = 1200;
+
+function extractStreamSeries(raw, type) {
+  if (Array.isArray(raw)) {
+    const entry = raw.find((s) => String(s?.type ?? "") === type);
+    return Array.isArray(entry?.data) ? entry.data : null;
+  }
+  const data = raw?.[type]?.data ?? raw?.[type];
+  return Array.isArray(data) ? data : null;
+}
+
+// EF = speed/HR per doc.txt 7.1; the "first half vs. second half" split (not a
+// fixed time boundary) keeps this correct even when a run has some already-
+// filtered-out samples in the middle (a paused GPS stretch, a dropped HR reading).
+function computeHrDriftFromStreams(raw) {
+  const time = extractStreamSeries(raw, "time");
+  const hr = extractStreamSeries(raw, "heartrate");
+  const speed = extractStreamSeries(raw, "velocity_smooth") ?? extractStreamSeries(raw, "velocity");
+  if (!time?.length || !hr?.length || !speed?.length) return null;
+
+  const startTime = Number(time[0]) || 0;
+  const n = Math.min(time.length, hr.length, speed.length);
+  const qualifying = [];
+  for (let i = 0; i < n; i++) {
+    const t = Number(time[i]);
+    const h = Number(hr[i]);
+    const s = Number(speed[i]);
+    if (!Number.isFinite(t) || t - startTime < HR_DRIFT_WARMUP_SKIP_SECS) continue;
+    if (!(h >= HR_DRIFT_MIN_HR_BPM) || !(s >= HR_DRIFT_MIN_SPEED_MS)) continue;
+    qualifying.push({ t, h, s });
+  }
+  if (!qualifying.length) return null;
+  const span = qualifying[qualifying.length - 1].t - qualifying[0].t;
+  if (span < HR_DRIFT_MIN_QUALIFYING_SECS) return null;
+
+  const mid = Math.floor(qualifying.length / 2);
+  const firstHalf = qualifying.slice(0, mid);
+  const secondHalf = qualifying.slice(mid);
+  if (!firstHalf.length || !secondHalf.length) return null;
+
+  const avg = (list, key) => list.reduce((sum, p) => sum + p[key], 0) / list.length;
+  const ef1 = avg(firstHalf, "s") / avg(firstHalf, "h");
+  const ef2 = avg(secondHalf, "s") / avg(secondHalf, "h");
+  if (!(ef1 > 0) || !(ef2 > 0)) return null;
+
+  const driftPct = ((ef1 - ef2) / ef1) * 100;
+  return driftPct > 0 ? Math.round(driftPct * 10) / 10 : null;
+}
+
+// Fetches streams and computes real hrDrift for the most recent `cap` *eligible*
+// runs (opt-in, see MAX_HR_DRIFT_ACTIVITY_CALLS above). Interval/race runs are
+// skipped without a fetch - a deliberately alternating-effort or all-out session
+// makes the first-half/second-half split meaningless - so they keep the
+// buildRunRecord placeholder value (effectively always null) instead of a
+// misleading computed one.
+async function enrichRunsWithHrDrift(env, runRecords, cap) {
+  const targets = runRecords.filter(({ record }) => !record.isInterval && !record.isRace).slice(-cap);
+  await Promise.all(
+    targets.map(async ({ activity, record }, i) => {
+      if (i > 0) await sleep(Math.min(i, 20) * 40);
+      const id = activity?.id ?? activity?.icu_activity_id;
+      if (id == null) return;
+      const raw = await fetchIntervalsActivityStreams(env, id, "time,heartrate,velocity_smooth").catch(() => null);
+      record.hrDrift = computeHrDriftFromStreams(raw);
+    }),
+  );
+}
+
 // ─── weather (opt-in) ──────────────────────────────────────────────────────────
 // Per-run weather, so a downstream reader can tell "unusual HR-zone spread from
 // heat" apart from "unusual HR-zone spread from bad pacing". See weather.js for the
@@ -697,6 +785,13 @@ const HRV_DROP_RATIO_THRESHOLD = 0.7; // rolling avg / 28-day avg
 const HRV_DROP_RATIO_CAP = 0.5;
 const ACUTE_OVERLOAD_RATIO_THRESHOLD = 1.3; // ATL/CTL
 const ACUTE_OVERLOAD_RATIO_CAP = 1.8;
+// Only meaningful when the hrDrift=true opt-in was requested (see enrichRunsWithHrDrift
+// above) - without it, runs[].hrDrift stays null for every run and this flag simply
+// never triggers, same as e.g. resting_hr_rising with no wellness data.
+const AEROBIC_DECOUPLING_WINDOW_DAYS = 14; // how far back to look for hrDrift values
+const AEROBIC_DECOUPLING_MIN_RUNS = 2; // minimum qualifying runs with a computed drift
+const AEROBIC_DECOUPLING_PCT_THRESHOLD = 10; // avg. aerobic decoupling, common GA-run guideline
+const AEROBIC_DECOUPLING_PCT_CAP = 20;
 
 // Category-score weights/thresholds for assessRecoveryStatus's combinedScore.
 const RECOVERY_SCORE_WEIGHT = 0.6;
@@ -740,6 +835,11 @@ const FLAG_INFO = {
     label: "gesunkene HRV",
     category: "recovery",
     recommendation: "Intensive Einheiten pausieren, bis sich die HRV wieder erholt.",
+  },
+  aerobic_decoupling_high: {
+    label: "erhöhte aerobe Dekopplung (HF-Drift)",
+    category: "recovery",
+    recommendation: "Lockere Läufe bewusst langsamer angehen und auf ausreichend Flüssigkeit/Hitzeanpassung achten, bis die Dekopplung wieder sinkt.",
   },
   acute_overload: {
     label: "akute Überlastung (ATL/CTL-Ratio erhöht)",
@@ -903,6 +1003,29 @@ function detectAcuteOverload(wellnessByDay, newest, days) {
   return { triggered: false, severity: 0, detail: null };
 }
 
+// Averages runs[].hrDrift (real per-run aerobic decoupling, see enrichRunsWithHrDrift
+// above) over a trailing window rather than looking at a single run, so one hot/humid
+// or unusually hilly outing doesn't flip the flag on its own. Silently never triggers
+// when hrDrift wasn't requested (every run's hrDrift is then null, so `values` stays
+// empty) - same "opt-in data simply yields nothing" contract as the other detectors
+// have for missing wellness fields.
+function detectAerobicDecouplingHigh(runs, newest) {
+  const windowStart = addDays(newest, -(AEROBIC_DECOUPLING_WINDOW_DAYS - 1));
+  const values = (runs ?? [])
+    .filter((r) => r.date >= windowStart && r.date <= newest && Number.isFinite(r.hrDrift))
+    .map((r) => r.hrDrift);
+  if (values.length < AEROBIC_DECOUPLING_MIN_RUNS) return { triggered: false, severity: 0, detail: null };
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  const triggered = avg > AEROBIC_DECOUPLING_PCT_THRESHOLD;
+  return {
+    triggered,
+    severity: triggered ? severity(avg, AEROBIC_DECOUPLING_PCT_THRESHOLD, AEROBIC_DECOUPLING_PCT_CAP) : 0,
+    detail: triggered
+      ? `Ø aerobe Dekopplung ${avg.toFixed(1)}% über die letzten ${values.length} Läufe (Ziel: ≤ ${AEROBIC_DECOUPLING_PCT_THRESHOLD}%)`
+      : null,
+  };
+}
+
 function severityQualifier(sev) {
   if (sev > SEVERITY_LABEL_HIGH) return "deutlich ";
   if (sev < SEVERITY_LABEL_LOW) return "leicht ";
@@ -948,17 +1071,23 @@ function buildAssessmentText(triggeredFlagKeys, flags) {
 // and shouldn't inflate the combined score just for co-occurring. combinedScore adds
 // a small bonus when both categories are meaningfully elevated at once (recovery
 // deficit + high load together is worse than either alone).
-export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days) {
+export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days, runs = []) {
   const flags = {
     sleep_debt: detectSleepDebt(wellnessByDay, newest),
     resting_hr_rising: detectRestingHrRising(trends),
     hrv_drop: detectHrvDrop(wellnessByDay, newest, days, trends),
+    aerobic_decoupling_high: detectAerobicDecouplingHigh(runs, newest),
     acute_overload: detectAcuteOverload(wellnessByDay, newest, days),
     load_spike: detectLoadSpike(weeks),
     load_spike_immediate: detectLoadSpikeImmediate(weeks),
   };
 
-  const recoveryScore = Math.max(flags.sleep_debt.severity, flags.resting_hr_rising.severity, flags.hrv_drop.severity);
+  const recoveryScore = Math.max(
+    flags.sleep_debt.severity,
+    flags.resting_hr_rising.severity,
+    flags.hrv_drop.severity,
+    flags.aerobic_decoupling_high.severity,
+  );
   const loadScore = Math.max(flags.acute_overload.severity, flags.load_spike.severity, flags.load_spike_immediate.severity);
   const correlationBonus =
     recoveryScore > CORRELATION_BONUS_SCORE_THRESHOLD && loadScore > CORRELATION_BONUS_SCORE_THRESHOLD
@@ -1009,6 +1138,8 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     includeIntervalSplits = false,
     includeWeather = false,
     includeTimeAtHr = false,
+    includeHrDrift = false,
+    hrDriftCap = MAX_HR_DRIFT_ACTIVITY_CALLS,
     planDays = DEFAULT_PLAN_DAYS,
   } = options;
   const newest = todayIso;
@@ -1047,6 +1178,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   if (includeIntervalSplits) await enrichRunsWithIntervalSplits(env, runRecords, MAX_INTERVAL_SPLIT_ACTIVITY_CALLS);
   if (includeWeather) await enrichRunsWithWeather(env, runRecords, MAX_WEATHER_ACTIVITY_CALLS);
   if (includeTimeAtHr) await enrichRunsWithTimeAtHr(env, runRecords, MAX_TIME_AT_HR_ACTIVITY_CALLS, athleteProfile?.hrZonesRun ?? null);
+  if (includeHrDrift) await enrichRunsWithHrDrift(env, runRecords, hrDriftCap);
   const runs = runRecords.map((r) => r.record);
 
   const races = activities
@@ -1094,7 +1226,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   };
 
   const trends = wellnessTrends(wellnessByDay, oldest, days);
-  const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
+  const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days, runs);
 
   // Next competition (Zieldistanz/-datum/-zeit, aktuelle Trainingsphase, Wochen bis zum
   // Ziel) mirrors the goal race set via the /goal endpoint (see goal-race.js) - reused

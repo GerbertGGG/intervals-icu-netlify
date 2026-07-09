@@ -301,6 +301,18 @@ export async function fetchIntervalsActivityTimeAtHr(env, activityId) {
   return r.json().catch(() => null);
 }
 
+// Raw activity streams (time/heartrate/velocity_smooth/distance/...) for a single
+// activity, used by form-analysis.js's hrDrift enrichment to compute a real
+// aerobic-decoupling number (the bulk /activities list has no per-second data at
+// all). Same best-effort, non-throwing contract as fetchIntervalsActivityDetail -
+// a run with no matching stream types simply has nothing here.
+export async function fetchIntervalsActivityStreams(env, activityId, types) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/streams?types=${encodeURIComponent(types)}`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity streams ${activityId}`);
+  if (!r.ok) return null;
+  return r.json().catch(() => null);
+}
+
 // Full sport settings (HR/power zones, LTHR, FTP, ...) for a single sport, via
 // GET /athlete/{athleteId}/sport-settings/{id} where id is a type name (Run, Ride)
 // as documented - a different endpoint than fetchIntervalsSportSettings's list

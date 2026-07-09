@@ -14,7 +14,7 @@ geladen und zu Wochen-Buckets sowie Trend-Zeitreihen aggregiert.
 
 ## 2. Die eigentliche Ampel-Logik (`assessRecoveryStatus`, `src/form-analysis.js`)
 
-Es werden **6 unabhängige Red-Flag-Detektoren** geprüft. Jeder liefert nicht mehr
+Es werden **7 unabhängige Red-Flag-Detektoren** geprüft. Jeder liefert nicht mehr
 nur ja/nein, sondern `{ triggered, severity }` – `severity` ist ein auf 0-1
 normierter Wert (0 an der Schwelle, 1 am jeweiligen Cap), berechnet über die
 Helper `severity(value, threshold, cap)` (höher = schlechter) bzw.
@@ -27,6 +27,7 @@ Helper `severity(value, threshold, cap)` (höher = schlechter) bzw.
 | **resting_hr_rising** (`detectRestingHrRising`) | recovery | Steigung (least-squares) des Ruhepuls-Trends über die 28 Tage | Steigung > **0,15 bpm/Tag** | 0,4 bpm/Tag |
 | **sleep_debt** (`detectSleepDebt`) | recovery | Schlaf der letzten 7 Nächte (mind. 3 Nächte mit Daten nötig) | Ø < **6,5 h** ODER ≥2 Nächte < **5 h** | Ø 4,5 h bzw. 4 kurze Nächte |
 | **hrv_drop** (`detectHrvDrop`) | recovery | (a) Trend-Delta (2. Hälfte vs. 1. Hälfte der 28 Tage) ODER (b) 3-Tage-Rolling-Average der letzten HRV-Werte vs. 28-Tage-Durchschnitt (ersetzt das frühere, rauschanfällige Einzeltag-Kriterium) | Trend-Delta < **−3** ODER Rolling-Ratio < **0,7** | Trend-Delta −8 bzw. Ratio 0,5 |
+| **aerobic_decoupling_high** (`detectAerobicDecouplingHigh`) | recovery | Ø echte HF-Drift (`runs[].hrDrift`, EF 1. vs. 2. Hälfte je Lauf, siehe `enrichRunsWithHrDrift`) über qualifizierende (nicht Interval/Race) Läufe der letzten 14 Tage (braucht ≥2 Läufe mit Wert – nur vorhanden, wenn `hrDrift=true` angefragt wurde) | Ø > **10 %** | 20 % |
 | **acute_overload** (`detectAcuteOverload`) | load | ATL/CTL-Verhältnis am jüngsten Tag mit vorhandenen Werten | Ratio > **1,3** | Ratio 1,8 |
 
 Bei Flags mit zwei unabhängigen Kriterien (sleep_debt, hrv_drop) gilt
@@ -43,7 +44,7 @@ Summe) der Severities gebildet – bewusst, damit z.B. sleep_debt, resting_hr_ri
 und hrv_drop, die oft dieselbe Ursache haben, sich nicht gegenseitig hochpuschen:
 
 ```
-recoveryScore = max(severity[sleep_debt], severity[resting_hr_rising], severity[hrv_drop])
+recoveryScore = max(severity[sleep_debt], severity[resting_hr_rising], severity[hrv_drop], severity[aerobic_decoupling_high])
 loadScore     = max(severity[acute_overload], severity[load_spike], severity[load_spike_immediate])
 combinedScore = recoveryScore * 0.6 + loadScore * 0.6
                 + (recoveryScore > 0.3 UND loadScore > 0.3 ? 0.3 Bonus : 0)
@@ -67,8 +68,8 @@ entsprechend hohe Kombination aus beiden Scores.
 
 Nur die tatsächlich **ausgelösten** Flags (`triggered === true`) fließen in den
 Text ein. Sie werden nach Kategorie unterschieden (`recovery`: sleep_debt,
-resting_hr_rising, hrv_drop / `load`: acute_overload, load_spike,
-load_spike_immediate) und daraus ein Satz gebaut, ob es eher an Erholung, an
+resting_hr_rising, hrv_drop, aerobic_decoupling_high / `load`: acute_overload,
+load_spike, load_spike_immediate) und daraus ein Satz gebaut, ob es eher an Erholung, an
 Trainingsumfang oder an beidem liegt. Zusätzlich wird jedes Flag-Label je nach
 Severity qualifiziert: `severity > 0.7` → „deutlich“, `severity < 0.3` →
 „leicht“, dazwischen kein Zusatz. Empfehlungstexte pro Flag stehen fix in
@@ -87,7 +88,9 @@ grün ist, ein Satz mit dem aktuellen `combinedScore` und der Grün-Schwelle
 
 ## 5. Veröffentlichung (`src/recovery-note.js`)
 
-`writeDailyRecoveryNote` ruft `buildRecentFormAnalysis` auf, baut daraus Titel
+`writeDailyRecoveryNote` ruft `buildRecentFormAnalysis` auf (mit `hrDrift=true`,
+gecappt auf 8 Läufe, damit `aerobic_decoupling_high` oben echte Werte bekommt),
+baut daraus Titel
 `Formcheck 🟢/🟡/🔴` + Beschreibungstext und schreibt das per
 `upsertIntervalsNote` als eigenes Kalender-Event (`externalId:
 formcheck-<Datum>`, Farbe grün/orange/rot) – separat vom wöchentlichen
@@ -120,8 +123,9 @@ chronische Last wieder annähern.
 ## Kurzfassung
 
 Kein reines Zählen von Ja/Nein-Flags mehr, sondern ein gewichtetes
-Severity-Scoring (0-1 pro Detektor) über 6 Red-Flag-Checks auf Ruhepuls, HRV,
-Schlaf, Trainingslast-Sprüngen (Jo-Jo und direkt) und ATL/CTL-Verhältnis. Der
+Severity-Scoring (0-1 pro Detektor) über 7 Red-Flag-Checks auf Ruhepuls, HRV,
+Schlaf, aerobe Dekopplung (HF-Drift), Trainingslast-Sprüngen (Jo-Jo und direkt)
+und ATL/CTL-Verhältnis. Der
 Maximalwert je Kategorie (recovery/load) bestimmt zusammen mit einem kleinen
 Korrelations-Bonus die Ampelfarbe – ein einzelnes, knapp über der Schwelle
 liegendes Symptom schlägt dadurch nicht mehr automatisch rot an.
