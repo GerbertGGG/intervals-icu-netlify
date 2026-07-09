@@ -570,9 +570,13 @@ recommendation }`:
   true` zusätzlich die Rep-Struktur (`GET /activity/{id}/intervals`, ein Zusatz-Call pro
   Intervall-Lauf, gecappt auf die letzten 20). Ohne diesen Parameter existiert
   `runs[].intervalSplits` nicht.
+- `timeAtHr=true` (optional, Default `false`): lädt zusätzlich pro Lauf das rohe
+  Time-at-HR-Histogramm (`GET /activity/{id}/time-at-hr`, ein Zusatz-Call pro Lauf,
+  gecappt auf die letzten 40, leicht gestaffelt statt gleichzeitig gefeuert). Ohne
+  diesen Parameter existiert `runs[].timeAtHr` nicht.
 - Hinweis: Die genauen Feldnamen für Zone-Zeiten und Interval-Splits sind auf
   intervals.icu-Seite nicht vollständig dokumentiert (Fallback-Feldketten, gleiches
-  Muster wie bei `hrDrift`/`perceivedExertion`). Beide internen Aufrufer
+  Muster wie bei `hrDrift`/`perceivedExertion`). Alle drei internen Aufrufer
   (`recovery-note.js`, `email.js`) übergeben diese Parameter nicht, sind also von der
   Zusatzlast nicht betroffen.
 
@@ -591,7 +595,14 @@ recommendation }`:
   Läufe der Woche, für den Easy- (Z1-Z2) vs. hart- (Z4-Z5) Anteil (polarisiertes
   Training).
 - `runs[].intervalSplits` (nur bei `intervalSplits=true`, nur für `isInterval: true`
-  Läufe): `[{ repNumber, distanceM, paceSecPerKm, avgHr, restSec }]`.
+  Läufe): `[{ repNumber, distanceM, durationSec, paceSecPerKm, avgHr, avgWatts,
+  restSec }]`. `avgWatts` ist `null` ohne Leistungsmesser.
+- `runs[].timeAtHr` (nur bei `timeAtHr=true`): `[{ zone, name, upperBpm, minutes }]` –
+  das rohe Bpm-Histogramm von `GET /activity/{id}/time-at-hr` (`Plot`-Schema, `secs[]`
+  pro Bpm ab `min_bpm`) gebucketed in die konfigurierten Run-HF-Zonen
+  (`athleteProfile.hrZonesRun`, siehe unten). Ohne konfigurierte Zonen wird stattdessen
+  in 5 gleich breite Bins über `[min_bpm, max_bpm]` gebucketed. `null`, wenn
+  intervals.icu für den Lauf kein HF-Histogramm hat.
 - `runs[].intervalDetection`: wie `runs[].isInterval` erkannt wurde – `"tag"` (Tag
   beginnt mit `interval`; das ist auch das einzige Signal, das VDOT-Schätzung/
   Wochenvergleich beeinflusst, siehe 6.5/15), `"text"` (Rep-Zahl-Notation wie
@@ -624,6 +635,21 @@ recommendation }`:
   Implementieren nicht erreichbar war – einzelne Felder können `null` bleiben, wenn
   intervals.icu dafür nichts konfiguriert hat. Echte Laktattest-Werte (mmol/L) liefert
   die API nicht; LTHR ist der nächstliegende Ersatzwert.
+- `sportSettings`: `{ run, ride }`, die rohen Sport-Settings-Objekte von
+  `GET /athlete/{athleteId}/sport-settings/{id}` (id = `"Run"`/`"Ride"`), unverändert
+  von intervals.icu übernommen (u. a. `hr_zones`, `lthr`, `max_hr`, `ftp`,
+  `power_zones`). Wird einmal pro Aufruf geladen (nicht pro Woche/Tag). Anders als
+  `athleteProfile` oben (das dieselbe Art Daten aus der `/sport-settings`-Liste
+  extrahiert und in normalisierte Felder umrechnet) ist das hier der unbearbeitete
+  API-Rohwert je Sportart, für Konsumenten, die die Original-Feldnamen brauchen.
+  `null` je Sportart, falls intervals.icu dafür keine Settings hat oder der Call
+  fehlschlägt.
+- `paceCurves`/`hrCurves`: Bestleistungen über verschiedene Distanzen (`GET
+  /athlete/{id}/activity-pace-curves`) bzw. Zeitfenster (`GET /athlete/{id}/activity-
+  hr-curves`) für `type=Run` im selben `[oldest, newest]`-Zeitraum wie der restliche
+  Export – roh von intervals.icu übernommen, als saubererer Fitnesstrend über den
+  Zeitraum (Bestleistung statt Tagesmittel). `null`, falls intervals.icu die Curve
+  nicht liefert oder der Call fehlschlägt.
 - `easyZoneDefinition`: macht die `easyZonePace`-Berechnung in `weeks[]` transparent
   statt einer stillen Konstante – `{ method: "pct_of_max_hr", minPct, maxPct, minBpm,
   maxBpm, configuredHrZonesRun, configuredLthrRun }`. Die Berechnung selbst bleibt die
