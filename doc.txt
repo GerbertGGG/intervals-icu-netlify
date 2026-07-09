@@ -555,7 +555,10 @@ recommendation }`:
 - Erkannte Flags: `load_spike` (Wochen-Jo-Jo, >80% Umfangsanstieg nach vorherigem
   Rückgang), `resting_hr_rising` (Ruhepuls-Trend >0.15 bpm/Tag), `sleep_debt` (Ø <6.5h
   oder ≥2 Nächte <5h in den letzten 7 Tagen), `hrv_drop` (Trend `deltaAbs < -3` oder
-  Tageswert >30% unter Fenster-Durchschnitt), `acute_overload` (ATL/CTL-Ratio >1.3)
+  Tageswert >30% unter Fenster-Durchschnitt), `acute_overload` (ATL/CTL-Ratio >1.3),
+  `aerobic_decoupling_high` (Ø echte HF-Drift/aerobe Dekopplung >10% über mind. 2
+  qualifizierende Läufe der letzten 14 Tage – siehe `hrDrift`-Parameter unten; ohne
+  diesen Parameter bleibt `runs[].hrDrift` `null` und die Flag löst nie aus)
 - Status: 0 Flags → `grün`, 1 Flag → `gelb`, 2+ Flags → `rot`
 
 16.1 Parameter
@@ -574,10 +577,23 @@ recommendation }`:
   Time-at-HR-Histogramm (`GET /activity/{id}/time-at-hr`, ein Zusatz-Call pro Lauf,
   gecappt auf die letzten 40, leicht gestaffelt statt gleichzeitig gefeuert). Ohne
   diesen Parameter existiert `runs[].timeAtHr` nicht.
+- `hrDrift=true` (optional, Default `false`): berechnet aus den rohen Streams
+  (`GET /activity/{id}/streams?types=time,heartrate,velocity_smooth`, ein Zusatz-Call
+  pro Lauf) die echte aerobe Dekopplung je Lauf und ersetzt damit den bisherigen,
+  praktisch immer leeren Platzhalter (`a?.decoupling` aus der Bulk-/activities-Liste).
+  Berechnung je Lauf (siehe 7.3): erste 600s (Warmup) übersprungen, gefiltert auf
+  `HR >= 40`/`Speed >= 1.8 m/s`, Rest in zwei Hälften geteilt, `EF = Speed/HR` je
+  Hälfte verglichen (`% = ((EF1-EF2)/EF1)*100`); negative Werte (EF verbessert sich)
+  → `null`. Läuft nur für Läufe ohne `isInterval`/`isRace` (ein alternierender oder
+  All-out-Lauf macht den Hälften-Vergleich bedeutungslos), gecappt auf die letzten 40
+  qualifizierenden Läufe im Zeitraum. Ohne diesen Parameter bleibt `runs[].hrDrift`
+  beim (praktisch immer `null`) Platzhalter aus der Aktivitätenliste.
 - Hinweis: Die genauen Feldnamen für Zone-Zeiten und Interval-Splits sind auf
   intervals.icu-Seite nicht vollständig dokumentiert (Fallback-Feldketten, gleiches
-  Muster wie bei `hrDrift`/`perceivedExertion`). Alle drei internen Aufrufer
-  (`recovery-note.js`, `email.js`) übergeben diese Parameter nicht, sind also von der
+  Muster wie bei `perceivedExertion`). `recovery-note.js` (täglicher Formcheck, gecappt
+  auf 8 Läufe) und `email.js` (Montags-Report) übergeben `hrDrift=true`, damit die
+  echte Dekopplung ins automatische Ampel-Assessment einfließt; `zoneTimes`,
+  `intervalSplits` und `timeAtHr` übergibt keiner der beiden, sind also von deren
   Zusatzlast nicht betroffen.
 
 16.2 Zusätzliche Felder in der Response
@@ -603,6 +619,9 @@ recommendation }`:
   (`athleteProfile.hrZonesRun`, siehe unten). Ohne konfigurierte Zonen wird stattdessen
   in 5 gleich breite Bins über `[min_bpm, max_bpm]` gebucketed. `null`, wenn
   intervals.icu für den Lauf kein HF-Histogramm hat.
+- `runs[].hrDrift` (echte Berechnung nur bei `hrDrift=true`, siehe oben): aerobe
+  Dekopplung in %, oder `null` (Interval-/Race-Lauf, zu kurz, keine/unvollständige
+  Streams, oder negative Dekopplung).
 - `runs[].intervalDetection`: wie `runs[].isInterval` erkannt wurde – `"tag"` (Tag
   beginnt mit `interval`; das ist auch das einzige Signal, das VDOT-Schätzung/
   Wochenvergleich beeinflusst, siehe 6.5/15), `"text"` (Rep-Zahl-Notation wie

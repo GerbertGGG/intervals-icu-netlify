@@ -43,7 +43,12 @@ export async function sendJsonReportEmail(env, { subject, introText, data }) {
 // Shared by the Monday cron job and the manual /report-email debug route, so
 // both trigger paths build and mail the exact same recent-form snapshot.
 export async function sendRecentFormReportEmail(env, todayIso, { days = 28 } = {}) {
-  const data = await buildRecentFormAnalysis(env, todayIso, { days, includeWeather: true, includeIntervalSplits: true });
+  const data = await buildRecentFormAnalysis(env, todayIso, {
+    days,
+    includeWeather: true,
+    includeIntervalSplits: true,
+    includeHrDrift: true,
+  });
   return sendJsonReportEmail(env, {
     subject: `Trainingsdaten Woche ${todayIso}`,
     introText: "Rohdaten der letzten 4 Wochen, zur manuellen Analyse.",
