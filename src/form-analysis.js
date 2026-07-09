@@ -18,6 +18,10 @@ import {
   fetchIntervalsActivityDetail,
   fetchIntervalsActivityIntervals,
   fetchIntervalsActivityMap,
+  fetchIntervalsActivityTimeAtHr,
+  fetchIntervalsSportSettingsById,
+  fetchIntervalsActivityPaceCurves,
+  fetchIntervalsActivityHrCurves,
   fetchIntervalsEvents,
 } from "./intervals-client.js";
 import { resolveMaxHr, estimateTrainingVdotForWindow, computeVdotFromRaceTime, getCurrentRealVdot } from "./vdot.js";
@@ -51,10 +55,15 @@ const MIN_TRAINING_DAYS_FOR_MONOTONY = 3;
 const MAX_ZONE_TIME_ACTIVITY_CALLS = 40;
 const MAX_INTERVAL_SPLIT_ACTIVITY_CALLS = 20;
 const MAX_WEATHER_ACTIVITY_CALLS = 40;
+const MAX_TIME_AT_HR_ACTIVITY_CALLS = 40;
 const DEFAULT_PLAN_DAYS = 14;
 
 function addDays(dayIso, n) {
   return isoDate(new Date(new Date(dayIso + "T00:00:00Z").getTime() + n * 86400000));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function paceSecPerKm(distanceM, timeSecs) {
@@ -326,13 +335,16 @@ function normalizeIntervalSplits(raw) {
     const timeSecs = Number(seg?.moving_time ?? seg?.elapsed_time ?? 0) || 0;
     const secPerKm = paceSecPerKm(distanceM, timeSecs);
     const avgHr = Number(seg?.average_heartrate ?? seg?.avg_hr ?? 0) || null;
+    const avgWatts = Number(seg?.average_watts ?? seg?.icu_average_watts ?? seg?.avg_watts ?? 0) || null;
     const next = list[i + 1];
     const restSec = next && isRestSegment(next) ? Math.round(Number(next?.moving_time ?? next?.elapsed_time ?? 0) || 0) || null : null;
     splits.push({
       repNumber,
       distanceM: distanceM != null ? Math.round(distanceM) : null,
+      durationSec: timeSecs || null,
       paceSecPerKm: secPerKm != null ? Math.round(secPerKm) : null,
       avgHr,
+      avgWatts,
       restSec,
     });
   }
@@ -358,6 +370,64 @@ async function enrichRunsWithIntervalSplits(env, runRecords, cap) {
   );
   for (const { record } of runRecords) {
     if (record.isInterval && !("intervalSplits" in record)) record.intervalSplits = null;
+  }
+}
+
+// ─── timeAtHr (Teil 5, opt-in) ─────────────────────────────────────────────────
+// Raw per-run time-at-heart-rate histogram (GET /activity/{id}/time-at-hr, `Plot`
+// schema: secs[] indexed by bpm starting at min_bpm) bucketed into the athlete's
+// configured HR zones (athleteProfile.hrZonesRun) so this reads as a z1..z5
+// training-distribution split (aerob vs. hart) rather than a raw per-bpm
+// histogram. Falls back to five equal-width bins across [min_bpm,max_bpm] when
+// the athlete has no configured HR zones. Same opt-in + cap contract as
+// zoneTimes/intervalSplits above (one extra fetch per run).
+function normalizeTimeAtHr(raw, hrZonesRun) {
+  const secs = Array.isArray(raw?.secs) ? raw.secs : null;
+  const minBpm = Number(raw?.min_bpm);
+  if (!secs || !secs.length || !Number.isFinite(minBpm)) return null;
+
+  const configuredBounds = Array.isArray(hrZonesRun)
+    ? hrZonesRun.map((z) => Number(z?.upperBpm)).filter((v) => Number.isFinite(v))
+    : [];
+  const maxBpm = minBpm + secs.length - 1;
+  const bounds = configuredBounds.length
+    ? configuredBounds
+    : [1, 2, 3, 4, 5].map((i) => Math.round(minBpm + ((maxBpm - minBpm) * i) / 5));
+
+  const zoneSecs = new Array(bounds.length).fill(0);
+  secs.forEach((s, i) => {
+    const bpm = minBpm + i;
+    let zoneIdx = bounds.findIndex((upper) => bpm <= upper);
+    if (zoneIdx === -1) zoneIdx = bounds.length - 1;
+    zoneSecs[zoneIdx] += Number(s) || 0;
+  });
+
+  return zoneSecs.map((zSecs, i) => ({
+    zone: i + 1,
+    name: (Array.isArray(hrZonesRun) && hrZonesRun[i]?.name) || `Z${i + 1}`,
+    upperBpm: bounds[i],
+    minutes: Math.round((zSecs / 60) * 10) / 10,
+  }));
+}
+
+// Fetches the time-at-HR histogram for the most recent `cap` runs in range
+// (opt-in, see MAX_TIME_AT_HR_ACTIVITY_CALLS above), staggered slightly (rather
+// than firing all `cap` requests in the same tick) to be gentle on intervals.icu
+// rate limits on top of the zoneTimes/intervalSplits/weather calls this endpoint
+// can already make per run.
+async function enrichRunsWithTimeAtHr(env, runRecords, cap, hrZonesRun) {
+  const targets = runRecords.slice(-cap);
+  await Promise.all(
+    targets.map(async ({ activity, record }, i) => {
+      if (i > 0) await sleep(Math.min(i, 20) * 40);
+      const id = activity?.id ?? activity?.icu_activity_id;
+      if (id == null) return;
+      const raw = await fetchIntervalsActivityTimeAtHr(env, id).catch(() => null);
+      record.timeAtHr = normalizeTimeAtHr(raw, hrZonesRun);
+    }),
+  );
+  for (const { record } of runRecords) {
+    if (!("timeAtHr" in record)) record.timeAtHr = null;
   }
 }
 
@@ -938,6 +1008,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     includeZoneTimes = false,
     includeIntervalSplits = false,
     includeWeather = false,
+    includeTimeAtHr = false,
     planDays = DEFAULT_PLAN_DAYS,
   } = options;
   const newest = todayIso;
@@ -950,6 +1021,23 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   // this read-only endpoint needing to opt into anything.
   const maxHr = await resolveMaxHr(env, activities);
 
+  // Athlete's configured sport-settings (MaxHF/LTHR/HF-Zonen/FTP/Power-Zonen), best-
+  // effort - null fields (or a null profile) just mean intervals.icu has nothing
+  // configured there, surfaced via dataQuality.notes below rather than failing.
+  // Resolved before the runRecords enrichment below since enrichRunsWithTimeAtHr
+  // needs athleteProfile.hrZonesRun to bucket each run's raw HR histogram into
+  // zones. sportSettingsRun/Ride (raw, undigested) and the pace/HR curves are
+  // fetched alongside it, once per call (not per week/day) as requested - each is
+  // independent and best-effort so one failing call never drops the others.
+  const [athleteProfile, sportSettingsRun, sportSettingsRide, paceCurves, hrCurves] = await Promise.all([
+    resolveAthleteProfile(env).catch(() => null),
+    fetchIntervalsSportSettingsById(env, "Run").catch(() => null),
+    fetchIntervalsSportSettingsById(env, "Ride").catch(() => null),
+    fetchIntervalsActivityPaceCurves(env, oldest, newest, "Run").catch(() => null),
+    fetchIntervalsActivityHrCurves(env, oldest, newest, "Run").catch(() => null),
+  ]);
+  const sportSettings = { run: sportSettingsRun, ride: sportSettingsRide };
+
   const runRecords = activities
     .filter(isRun)
     .map((activity) => ({ activity, record: buildRunRecord(activity) }))
@@ -958,6 +1046,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   if (includeZoneTimes) await enrichRunsWithZoneTimes(env, runRecords, MAX_ZONE_TIME_ACTIVITY_CALLS);
   if (includeIntervalSplits) await enrichRunsWithIntervalSplits(env, runRecords, MAX_INTERVAL_SPLIT_ACTIVITY_CALLS);
   if (includeWeather) await enrichRunsWithWeather(env, runRecords, MAX_WEATHER_ACTIVITY_CALLS);
+  if (includeTimeAtHr) await enrichRunsWithTimeAtHr(env, runRecords, MAX_TIME_AT_HR_ACTIVITY_CALLS, athleteProfile?.hrZonesRun ?? null);
   const runs = runRecords.map((r) => r.record);
 
   const races = activities
@@ -971,11 +1060,6 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     .filter(isBike)
     .map(buildRideRecord)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-
-  // Athlete's configured sport-settings (MaxHF/LTHR/HF-Zonen/FTP/Power-Zonen), best-
-  // effort - null fields (or a null profile) just mean intervals.icu has nothing
-  // configured there, surfaced via dataQuality.notes below rather than failing.
-  const athleteProfile = await resolveAthleteProfile(env).catch(() => null);
 
   const wellnessDaily = wellnessRaw.map(buildWellnessRecord).filter((w) => w.date);
   const wellnessByDay = new Map(wellnessDaily.map((w) => [w.date, w]));
@@ -1069,6 +1153,12 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     }
   }
   notes.push("Laktattest-Ergebnisse (mmol/L) werden von der intervals.icu-API nicht bereitgestellt – LTHR aus den Sport-Settings (falls hinterlegt) ist der nächstliegende Ersatzwert.");
+  if (!sportSettings.run && !sportSettings.ride) {
+    notes.push("Sport-Settings (Run/Ride) konnten nicht per sport-settings/{id} geladen werden.");
+  }
+  if (!paceCurves && !hrCurves) {
+    notes.push("Pace-/HR-Curves konnten nicht von intervals.icu geladen werden.");
+  }
 
   return {
     ok: true,
@@ -1076,6 +1166,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     range: { oldest, newest, days },
     maxHr: maxHr || null,
     athleteProfile,
+    sportSettings,
     weeks,
     trends,
     assessment,
@@ -1085,6 +1176,8 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     vdotHistory,
     easyPaceHistory,
     easyZoneDefinition,
+    paceCurves,
+    hrCurves,
     wellnessDaily,
     wellnessCompleteness,
     goalInfo,

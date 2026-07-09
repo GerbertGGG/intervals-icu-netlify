@@ -291,6 +291,69 @@ export async function fetchIntervalsSportSettings(env) {
   }
 }
 
+// Time-at-heart-rate histogram for a single activity (`Plot` schema: secs[]
+// indexed by bpm from min_bpm to max_bpm). Same best-effort, non-throwing contract
+// as fetchIntervalsActivityDetail - a run with no HR data simply has nothing here.
+export async function fetchIntervalsActivityTimeAtHr(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/time-at-hr`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `time-at-hr ${activityId}`);
+  if (!r.ok) return null;
+  return r.json().catch(() => null);
+}
+
+// Full sport settings (HR/power zones, LTHR, FTP, ...) for a single sport, via
+// GET /athlete/{athleteId}/sport-settings/{id} where id is a type name (Run, Ride)
+// as documented - a different endpoint than fetchIntervalsSportSettings's list
+// variant above, called out explicitly since the report needs Run and Ride
+// individually rather than the whole list. Best-effort, same non-throwing contract
+// as fetchIntervalsSportSettings.
+export async function fetchIntervalsSportSettingsById(env, sportId) {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const resp = await fetch(`${BASE_URL}/athlete/${uid}/sport-settings/${encodeURIComponent(sportId)}`, {
+      headers: { Authorization: authHeader(env) },
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+// Best pace over a range of distances for activities in [oldest, newest] -
+// athlete-wide fitness curve over the export window, not a single run's splits
+// (contrast with fetchRunPaceBenchmarks above, which is a fixed 56-day/fixed-
+// distances lookup used elsewhere for VDOT). Best-effort, same non-throwing
+// contract as fetchIntervalsSportSettings.
+export async function fetchIntervalsActivityPaceCurves(env, oldest, newest, type = "Run") {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const url = `${BASE_URL}/athlete/${uid}/activity-pace-curves?oldest=${oldest}&newest=${newest}&type=${encodeURIComponent(type)}`;
+    const resp = await fetch(url, { headers: { Authorization: authHeader(env) } });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
+// Best HR over a range of durations for activities in [oldest, newest], counterpart
+// to fetchIntervalsActivityPaceCurves above.
+export async function fetchIntervalsActivityHrCurves(env, oldest, newest, type = "Run") {
+  try {
+    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
+    const uid = mustEnv(env, "ATHLETE_ID");
+    const url = `${BASE_URL}/athlete/${uid}/activity-hr-curves?oldest=${oldest}&newest=${newest}&type=${encodeURIComponent(type)}`;
+    const resp = await fetch(url, { headers: { Authorization: authHeader(env) } });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchRunPaceBenchmarks(env) {
   try {
     if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
