@@ -5,6 +5,7 @@ import { writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInf
 import { readSyncStatus } from "./sync-status.js";
 import { getCurrentRealVdot } from "./vdot.js";
 import { maybeRebuildLongRunPlanOnGoalChange, readLongRunPlan } from "./long-run-plan.js";
+import { mustEnv } from "./kv.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -116,8 +117,16 @@ export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
   return json(result);
 }
 
+// Unauthenticated: anyone who knows the workers.dev URL could otherwise trigger
+// this email on demand. Guarded by a shared secret (REPORT_EMAIL_SECRET, set via
+// `wrangler secret put`), passed as ?secret=.
 export async function handleReportEmailRequest(url, env, ctx, deps) {
   const { sendRecentFormReportEmail } = deps;
+  const expectedSecret = mustEnv(env, "REPORT_EMAIL_SECRET");
+  if (url.searchParams.get("secret") !== expectedSecret) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
   const days = clampInt(url.searchParams.get("days") ?? "28", 7, 90);
   const dateParam = url.searchParams.get("date");
   const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
