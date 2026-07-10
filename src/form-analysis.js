@@ -697,6 +697,9 @@ const HRV_DROP_RATIO_THRESHOLD = 0.7; // rolling avg / 28-day avg
 const HRV_DROP_RATIO_CAP = 0.5;
 const ACUTE_OVERLOAD_RATIO_THRESHOLD = 1.3; // ATL/CTL
 const ACUTE_OVERLOAD_RATIO_CAP = 1.8;
+const HIGH_MONOTONY_THRESHOLD = 2.0; // monotony7d = mean/stdev of daily TRIMP over the last 7 days
+const HIGH_MONOTONY_CTL_RATIO_THRESHOLD = 0.9; // trimpSum7d / (ctl * 7) - same style as ACUTE_OVERLOAD_RATIO_*
+const HIGH_MONOTONY_CTL_RATIO_CAP = 1.3;
 
 // Category-score weights/thresholds for assessRecoveryStatus's combinedScore.
 const RECOVERY_SCORE_WEIGHT = 0.6;
@@ -755,6 +758,11 @@ const FLAG_INFO = {
     label: "plötzlicher Belastungssprung",
     category: "load",
     recommendation: "Wochenumfang wieder schrittweise (max. +10-15%/Woche) statt sprunghaft steigern.",
+  },
+  high_monotony: {
+    label: "gleichmäßig hohe Belastung ohne Erholungstage (Monotonie)",
+    category: "load",
+    recommendation: "Bewusst 1-2 lockere Tage oder einen Ruhetag einbauen, um Abwechslung in die Belastung zu bringen.",
   },
 };
 
@@ -903,6 +911,49 @@ function detectAcuteOverload(wellnessByDay, newest, days) {
   return { triggered: false, severity: 0, detail: null };
 }
 
+// Last valid CTL in the analysis window, same backward-scan pattern as
+// detectAcuteOverload above (the most recent day the athlete actually logged wellness).
+function latestCtl(wellnessByDay, newest, days) {
+  const allDays = lastNDaysIso(newest, days);
+  for (let i = allDays.length - 1; i >= 0; i--) {
+    const w = wellnessByDay.get(allDays[i]);
+    if (Number.isFinite(w?.ctl) && w.ctl > 0) return w.ctl;
+  }
+  return null;
+}
+
+// Rolling 7-calendar-day counterpart to buildWeekSummary's per-bucket dailyLoads -
+// independent of the weekly bucket boundaries, so it always reflects "the last 7 days"
+// rather than whichever week bucket `newest` happens to fall into.
+function computeRolling7dLoad(activities, newest) {
+  const days7 = lastNDaysIso(newest, 7);
+  const dailyLoads = days7.map((day) =>
+    activities.filter((a) => activityDay(a) === day).reduce((sum, a) => sum + activityLoad(a), 0),
+  );
+  const { monotony } = computeMonotonyStrain(dailyLoads);
+  const trimpSum7d = Math.round(dailyLoads.reduce((a, b) => a + b, 0));
+  return { monotony7d: monotony, trimpSum7d };
+}
+
+// High-monotony red flag: distinct from acute_overload/load_spike* above (those catch a
+// *jump* in load), this catches sustained *sameness* - training at/above the athlete's
+// own chronic load level (CTL) every day with no variance/rest day, the classic Foster
+// monotony-risk pattern that a pure ATL/CTL ratio can miss (see conversation for why
+// this needed its own flag instead of boosting the same score the spike flags already
+// cover). ctl*7 is the athlete's own adapted weekly baseline, not an invented constant.
+function detectHighMonotony(monotony7d, trimpSum7d, ctl) {
+  if (monotony7d == null || !(ctl > 0)) return { triggered: false, severity: 0, detail: null };
+  const ratio = trimpSum7d / (ctl * 7);
+  const triggered = monotony7d > HIGH_MONOTONY_THRESHOLD && ratio > HIGH_MONOTONY_CTL_RATIO_THRESHOLD;
+  return {
+    triggered,
+    severity: triggered ? severity(ratio, HIGH_MONOTONY_CTL_RATIO_THRESHOLD, HIGH_MONOTONY_CTL_RATIO_CAP) : 0,
+    detail: triggered
+      ? `Monotonie ${monotony7d.toFixed(2)} (Ziel: ≤ ${HIGH_MONOTONY_THRESHOLD}) bei ${trimpSum7d} TRIMP/7 Tage – ${Math.round(ratio * 100)}% des CTL-Wochenwerts (Ziel: ≤ ${Math.round(HIGH_MONOTONY_CTL_RATIO_THRESHOLD * 100)}%)`
+      : null,
+  };
+}
+
 // ─── recoveryContext: Erholungsmarker-Kontext, unabhängig von den Load-Flags ───
 // Klassifiziert restingHr-/hrv-/sleepHours-Trends grob in drei Stufen, damit ein
 // reiner Belastungssprung (load_spike/load_spike_immediate/acute_overload) nicht
@@ -933,6 +984,23 @@ function severityQualifier(sev) {
   if (sev > SEVERITY_LABEL_HIGH) return "deutlich ";
   if (sev < SEVERITY_LABEL_LOW) return "leicht ";
   return "";
+}
+
+// Generic counterpart to the old load-spike-only recoveryNote text: combines whichever
+// load finding(s) triggered into one sentence instead of two concatenated ones, and
+// picks the closing advice based on which finding is present (monotony without a spike
+// gets a "plan a rest day" nudge rather than the spike's "don't necessarily cut back yet").
+function buildLoadRecoveryNote(spikeFlagTriggered, monotonyFlagTriggered) {
+  const findings = [];
+  if (spikeFlagTriggered) findings.push("Belastungssprung");
+  if (monotonyFlagTriggered) findings.push("gleichmäßig hohe Belastung ohne Erholungstage");
+  const findingText = findings.join(" und ");
+  const capitalized = findingText.charAt(0).toUpperCase() + findingText.slice(1);
+  const advice =
+    monotonyFlagTriggered && !spikeFlagTriggered
+      ? "Abwechslung/Ruhetag einplanen, kein akutes Warnsignal"
+      : "beobachten, nicht zwingend sofort reduzieren";
+  return `${capitalized} erkannt, aber Erholungswerte (Ruhepuls/HRV/Schlaf) unauffällig – ${advice}.`;
 }
 
 function buildAssessmentText(triggeredFlagKeys, flags) {
@@ -979,7 +1047,9 @@ function buildAssessmentText(triggeredFlagKeys, flags) {
 // they only explain a triggered load flag when the recovery markers themselves look
 // fine, so "gelb" doesn't read as "you can't handle this training load" when it
 // really just means "the load curve is steep".
-export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days) {
+export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days, activities) {
+  const { monotony7d, trimpSum7d } = computeRolling7dLoad(activities, newest);
+  const ctlLatest = latestCtl(wellnessByDay, newest, days);
   const flags = {
     sleep_debt: detectSleepDebt(wellnessByDay, newest),
     resting_hr_rising: detectRestingHrRising(trends),
@@ -987,10 +1057,16 @@ export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days)
     acute_overload: detectAcuteOverload(wellnessByDay, newest, days),
     load_spike: detectLoadSpike(weeks),
     load_spike_immediate: detectLoadSpikeImmediate(weeks),
+    high_monotony: detectHighMonotony(monotony7d, trimpSum7d, ctlLatest),
   };
 
   const recoveryScore = Math.max(flags.sleep_debt.severity, flags.resting_hr_rising.severity, flags.hrv_drop.severity);
-  const loadScore = Math.max(flags.acute_overload.severity, flags.load_spike.severity, flags.load_spike_immediate.severity);
+  const loadScore = Math.max(
+    flags.acute_overload.severity,
+    flags.load_spike.severity,
+    flags.load_spike_immediate.severity,
+    flags.high_monotony.severity,
+  );
   const correlationBonus =
     recoveryScore > CORRELATION_BONUS_SCORE_THRESHOLD && loadScore > CORRELATION_BONUS_SCORE_THRESHOLD
       ? CORRELATION_BONUS
@@ -1009,13 +1085,18 @@ export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days)
       : `Ziel für Grün: kombinierter Score < ${STATUS_GREEN_MAX_SCORE.toFixed(2)} (aktuell ${combinedScore.toFixed(2)}).`;
 
   const recoveryContext = classifyRecoveryContext(trends);
-  const loadFlagTriggered = flags.acute_overload.triggered || flags.load_spike.triggered || flags.load_spike_immediate.triggered;
+  // Spike-type flags (a jump in load) vs. the monotony flag (sustained sameness, no
+  // jump) read as different findings in recoveryNote below, even though both are
+  // "load" category and both feed loadScore identically above.
+  const spikeFlagTriggered = flags.acute_overload.triggered || flags.load_spike.triggered || flags.load_spike_immediate.triggered;
+  const monotonyFlagTriggered = flags.high_monotony.triggered;
+  const loadFlagTriggered = spikeFlagTriggered || monotonyFlagTriggered;
   // Only explains a triggered load flag when recovery markers look unauffällig - when
   // recoveryContext is "auffällig" (e.g. HRV fällt UND RHR steigt), the existing,
   // more urgent recommendation/summary above already covers that and stays as-is.
   const recoveryNote =
     loadFlagTriggered && recoveryContext === "unauffällig"
-      ? "Belastungssprung erkannt, aber Erholungswerte (Ruhepuls/HRV/Schlaf) unauffällig – beobachten, nicht zwingend sofort reduzieren."
+      ? buildLoadRecoveryNote(spikeFlagTriggered, monotonyFlagTriggered)
       : null;
 
   return {
@@ -1030,6 +1111,8 @@ export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days)
     recommendation,
     details,
     goalText,
+    monotony7d,
+    trimpSum7d,
   };
 }
 
@@ -1147,7 +1230,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   };
 
   const trends = wellnessTrends(wellnessByDay, oldest, days);
-  const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days);
+  const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days, activities);
 
   // Next competition (Zieldistanz/-datum/-zeit, aktuelle Trainingsphase, Wochen bis zum
   // Ziel) mirrors the goal race set via the /goal endpoint (see goal-race.js) - reused
