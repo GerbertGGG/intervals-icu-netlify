@@ -903,6 +903,32 @@ function detectAcuteOverload(wellnessByDay, newest, days) {
   return { triggered: false, severity: 0, detail: null };
 }
 
+// ─── recoveryContext: Erholungsmarker-Kontext, unabhängig von den Load-Flags ───
+// Klassifiziert restingHr-/hrv-/sleepHours-Trends grob in drei Stufen, damit ein
+// reiner Belastungssprung (load_spike/load_spike_immediate/acute_overload) nicht
+// automatisch als "ich vertrage das Training nicht" missverstanden wird, wenn die
+// Erholungsmarker selbst unauffällig sind. Rein additive Einordnung neben
+// recoveryScore/loadScore/combinedScore/status - siehe recoveryNote unten, wo das
+// tatsächlich in eine Erklärung übersetzt wird. Kein Marker vorhanden (zu wenig
+// Wellness-Datenpunkte) -> "gemischt" statt "unauffällig", da dann nichts über den
+// tatsächlichen Erholungszustand ausgesagt werden kann.
+const RESTING_HR_TREND_STABLE_TOLERANCE = 0.5; // bpm Differenz 2. vs. 1. Hälfte, noch "stabil"
+const HRV_TREND_STABLE_TOLERANCE = 1; // trends.hrv.deltaAbs, noch "stabil"
+const SLEEP_TREND_STABLE_TOLERANCE = 0.2; // Stunden, noch "stabil"
+
+function classifyRecoveryContext(trends) {
+  const markers = [];
+  if (trends?.restingHr) markers.push(trends.restingHr.deltaAbs <= RESTING_HR_TREND_STABLE_TOLERANCE);
+  if (trends?.hrv) markers.push(trends.hrv.deltaAbs >= -HRV_TREND_STABLE_TOLERANCE);
+  if (trends?.sleepHours) markers.push(trends.sleepHours.deltaAbs >= -SLEEP_TREND_STABLE_TOLERANCE);
+
+  if (markers.length === 0) return "gemischt";
+  const badCount = markers.filter((ok) => !ok).length;
+  if (badCount === 0) return "unauffällig";
+  if (badCount >= 2) return "auffällig";
+  return "gemischt";
+}
+
 function severityQualifier(sev) {
   if (sev > SEVERITY_LABEL_HIGH) return "deutlich ";
   if (sev < SEVERITY_LABEL_LOW) return "leicht ";
@@ -947,7 +973,12 @@ function buildAssessmentText(triggeredFlagKeys, flags) {
 // since e.g. sleep_debt/resting_hr_rising/hrv_drop often share one underlying cause
 // and shouldn't inflate the combined score just for co-occurring. combinedScore adds
 // a small bonus when both categories are meaningfully elevated at once (recovery
-// deficit + high load together is worse than either alone).
+// deficit + high load together is worse than either alone). recoveryContext/
+// recoveryNote are a separate, additive layer on top - they don't feed back into
+// recoveryScore/loadScore/combinedScore/status (thresholds stay as calibrated),
+// they only explain a triggered load flag when the recovery markers themselves look
+// fine, so "gelb" doesn't read as "you can't handle this training load" when it
+// really just means "the load curve is steep".
 export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days) {
   const flags = {
     sleep_debt: detectSleepDebt(wellnessByDay, newest),
@@ -977,7 +1008,29 @@ export function assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days)
       ? null
       : `Ziel für Grün: kombinierter Score < ${STATUS_GREEN_MAX_SCORE.toFixed(2)} (aktuell ${combinedScore.toFixed(2)}).`;
 
-  return { status, flags, recoveryScore, loadScore, combinedScore, summary, recommendation, details, goalText };
+  const recoveryContext = classifyRecoveryContext(trends);
+  const loadFlagTriggered = flags.acute_overload.triggered || flags.load_spike.triggered || flags.load_spike_immediate.triggered;
+  // Only explains a triggered load flag when recovery markers look unauffällig - when
+  // recoveryContext is "auffällig" (e.g. HRV fällt UND RHR steigt), the existing,
+  // more urgent recommendation/summary above already covers that and stays as-is.
+  const recoveryNote =
+    loadFlagTriggered && recoveryContext === "unauffällig"
+      ? "Belastungssprung erkannt, aber Erholungswerte (Ruhepuls/HRV/Schlaf) unauffällig – beobachten, nicht zwingend sofort reduzieren."
+      : null;
+
+  return {
+    status,
+    flags,
+    recoveryScore,
+    loadScore,
+    combinedScore,
+    recoveryContext,
+    recoveryNote,
+    summary,
+    recommendation,
+    details,
+    goalText,
+  };
 }
 
 function wellnessTrends(wellnessByDay, oldest, days) {
