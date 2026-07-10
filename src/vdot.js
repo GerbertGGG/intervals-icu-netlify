@@ -369,7 +369,11 @@ export async function resolveMaxHr(env, activities) {
 }
 
 // ─── Main: compute & persist real VDOT ───────────────────────────────────────
-// Returns { vdot, source, todayRunVdot } or { vdot: null } if nothing available.
+// Returns { vdot, source, todayRunVdot, correctionFactor, trainVdot, raceVdot } or
+// { vdot: null } if nothing available. trainVdot/raceVdot are the two candidates
+// `source` picks between (min(race, training) = current fitness) - surfaced so a
+// worker/Runalyze VDOT mismatch can be diagnosed via /sync?debug=true instead of
+// guessing which of the three sources (source, correctionFactor cap, HR% filter) caused it.
 export async function computeAndPersistRealVdot(env, activities, options = {}) {
   const { write = false, todayIso = null, isMondaySync = false, persistLatest = write } = options;
 
@@ -470,14 +474,30 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 6) If no new data, return persisted value
   if (currentVdot == null) {
     if (prevVdot > 0) {
-      return { vdot: prevVdot, source: prevState?.source || "cached", todayRunVdot: null, todayVdotExcluded };
+      return {
+        vdot: prevVdot,
+        source: prevState?.source || "cached",
+        todayRunVdot: null,
+        todayVdotExcluded,
+        correctionFactor,
+        trainVdot,
+        raceVdot: raceResult?.vdot ?? null,
+      };
     }
-    return { vdot: null, source: null, todayRunVdot: null, todayVdotExcluded };
+    return { vdot: null, source: null, todayRunVdot: null, todayVdotExcluded, correctionFactor, trainVdot, raceVdot: raceResult?.vdot ?? null };
   }
 
   currentVdot = Math.round(currentVdot * 10) / 10;
 
-  const result = { vdot: currentVdot, source, todayRunVdot, todayVdotExcluded, correctionFactor };
+  const result = {
+    vdot: currentVdot,
+    source,
+    todayRunVdot,
+    todayVdotExcluded,
+    correctionFactor,
+    trainVdot,
+    raceVdot: raceResult?.vdot ?? null,
+  };
 
   if (persistLatest) {
     await saveRealVdotState(env, { ...result, updatedAt: new Date().toISOString() }).catch(() => {});
