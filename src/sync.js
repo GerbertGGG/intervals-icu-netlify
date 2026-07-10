@@ -172,6 +172,7 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       reasons: debug ? blockState.reasons : undefined,
       vdot: vdotResult?.vdot ?? null,
       vdotSource: vdotResult?.source ?? null,
+      vdotDebug: debug ? vdotResult?.vdotDebug : undefined,
       patch,
       yazioDebug,
     });
