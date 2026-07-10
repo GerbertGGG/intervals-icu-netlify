@@ -156,21 +156,47 @@ function _estimateMaxHrFromActivities(activities) {
   return highest > 100 ? Math.round(highest * 1.05) : null;
 }
 
-function _vdotFromTrainingActivity(activity, maxHr) {
+// Same checks/thresholds as _vdotFromTrainingActivity below, but returns the full detail
+// (raw inputs, intermediate hrPct/pctVo2max, and - when rejected - why) instead of just the
+// final number. Kept separate so the debug-only caller (computeAndPersistRealVdot's
+// todayActivityRaw) can inspect why a run was filtered without changing what
+// _vdotFromTrainingActivity itself returns to its existing callers.
+function _vdotFromTrainingActivityDetail(activity, maxHr) {
   const dist = Number(activity?.distance ?? activity?.icu_distance ?? 0);
   const time = Number(activity?.moving_time ?? activity?.elapsed_time ?? 0);
   const avgHr = Number(activity?.average_heartrate ?? activity?.avg_hr ?? 0);
-  if (dist < 2000 || time < 600 || avgHr <= 0 || maxHr <= 100) return null;
+  const base = { distance: dist, movingTime: time, avgHr };
+
+  if (dist < 2000) return { ...base, hrPct: null, pctVo2max: null, vdot: null, reason: "filtered_min_distance" };
+  if (time < 600) return { ...base, hrPct: null, pctVo2max: null, vdot: null, reason: "filtered_min_time" };
+  if (avgHr <= 0 || maxHr <= 100) {
+    return { ...base, hrPct: null, pctVo2max: null, vdot: null, reason: "filtered_no_hr_data" };
+  }
+
   const hrPct = avgHr / maxHr;
-  if (hrPct < 0.55 || hrPct > 0.87) return null;
+  if (hrPct < 0.55 || hrPct > 0.87) {
+    return { ...base, hrPct, pctVo2max: null, vdot: null, reason: "filtered_hr_pct_out_of_range" };
+  }
+
   const pctVo2max = 1.154 * hrPct - 0.15;
-  if (pctVo2max <= 0.3 || pctVo2max >= 1.0) return null;
+  if (pctVo2max <= 0.3 || pctVo2max >= 1.0) {
+    return { ...base, hrPct, pctVo2max, vdot: null, reason: "filtered_pct_vo2max_out_of_range" };
+  }
+
   const v = (dist / time) * 60;
   const vo2 = -4.6 + 0.182258 * v + 0.000104 * v * v;
-  if (vo2 <= 0) return null;
+  if (vo2 <= 0) return { ...base, hrPct, pctVo2max, vdot: null, reason: "filtered_invalid_vo2" };
+
   const vdot = vo2 / pctVo2max;
-  if (!Number.isFinite(vdot) || vdot < 20 || vdot > 90) return null;
-  return Math.round(vdot * 10) / 10;
+  if (!Number.isFinite(vdot) || vdot < 20 || vdot > 90) {
+    return { ...base, hrPct, pctVo2max, vdot: null, reason: "filtered_vdot_out_of_range" };
+  }
+
+  return { ...base, hrPct, pctVo2max, vdot: Math.round(vdot * 10) / 10, reason: null };
+}
+
+function _vdotFromTrainingActivity(activity, maxHr) {
+  return _vdotFromTrainingActivityDetail(activity, maxHr).vdot;
 }
 
 function medianOf(values) {
@@ -368,6 +394,33 @@ export async function resolveMaxHr(env, activities) {
   return highestAvg > 80 ? Math.round(highestAvg * 1.2) : null;
 }
 
+// Debug-only twin of resolveMaxHr() above: same fallback chain, same order, but also
+// reports which stage produced the value. Kept as a separate function (rather than
+// changing resolveMaxHr's return shape) so its existing callers (form-analysis.js,
+// weekly-progress.js) don't need to change; only computeAndPersistRealVdot, which needs
+// the source for its debug output, calls this one.
+async function resolveMaxHrWithSource(env, activities) {
+  let maxHr = Number(env?.MAX_HR || env?.ATHLETE_MAX_HR) || null;
+  if (maxHr) return { value: maxHr, source: "env" };
+
+  maxHr = await loadCachedMaxHr(env).catch(() => null);
+  if (maxHr) return { value: maxHr, source: "kv_cache" };
+
+  maxHr = await fetchAndCacheMaxHr(env).catch(() => null);
+  if (maxHr) return { value: maxHr, source: "live_fetch" };
+
+  maxHr = _estimateMaxHrFromActivities(activities) || null;
+  if (maxHr) return { value: maxHr, source: "activity_estimate" };
+
+  let highestAvg = 0;
+  for (const a of activities || []) {
+    const hr = Number(a?.average_heartrate ?? a?.avg_hr ?? 0);
+    if (hr > highestAvg) highestAvg = hr;
+  }
+  const heuristic = highestAvg > 80 ? Math.round(highestAvg * 1.2) : null;
+  return { value: heuristic, source: heuristic != null ? "avg_hr_heuristic" : null };
+}
+
 // ─── Main: compute & persist real VDOT ───────────────────────────────────────
 // Returns { vdot, source, todayRunVdot } or { vdot: null } if nothing available.
 export async function computeAndPersistRealVdot(env, activities, options = {}) {
@@ -379,7 +432,8 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 1b) Race-derived correction factor for training-based estimates (see
   // updateRaceCorrectionFactor for rationale). Only advanced on writes so read-only
   // calls don't process the same race twice from concurrent requests.
-  const maxHr = await resolveMaxHr(env, activities);
+  const maxHrResult = await resolveMaxHrWithSource(env, activities);
+  const maxHr = maxHrResult.value;
   let correctionFactor = 1;
   if (write && raceResult) {
     const correctionState = await updateRaceCorrectionFactor(env, activities, raceResult, maxHr);
@@ -422,18 +476,33 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
       (a) => isRun(a) && isVdotExcluded(a) && String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso,
     );
   }
+  // Debug-only: full detail (raw HR/distance/time, intermediate hrPct/pctVo2max, and -
+  // for runs a threshold rejected - the reason) for the same today's runs that actually
+  // feed todayRunVdot below, so a VDOT discrepancy can be traced back to its inputs
+  // without guessing. Purely additive - the vdot values driving todayRunVdot are
+  // unchanged from before (still _vdotFromTrainingActivityDetail's .vdot, same result
+  // _vdotFromTrainingActivity itself would have returned).
+  let todayActivityRaw = [];
   if (maxHr && todayIso) {
-    const todayEstimates = (activities || [])
-      .filter(
-        (a) =>
-          isRun(a) &&
-          !isRaceActivity(a) &&
-          !isIntervalActivity(a) &&
-          !isVdotExcluded(a) &&
-          String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso,
-      )
-      .map((a) => _vdotFromTrainingActivity(a, maxHr))
-      .filter((v) => v != null);
+    const todayRuns = (activities || []).filter(
+      (a) =>
+        isRun(a) &&
+        !isRaceActivity(a) &&
+        !isIntervalActivity(a) &&
+        !isVdotExcluded(a) &&
+        String(a?.start_date_local || a?.start_date || "").slice(0, 10) === todayIso,
+    );
+    const todayDetails = todayRuns.map((a) => _vdotFromTrainingActivityDetail(a, maxHr));
+    todayActivityRaw = todayDetails.map((d) => ({
+      avgHr: d.avgHr,
+      distance: d.distance,
+      movingTime: d.movingTime,
+      hrPct: d.hrPct,
+      pctVo2max: d.pctVo2max,
+      vdot: d.vdot,
+      reason: d.reason,
+    }));
+    const todayEstimates = todayDetails.map((d) => d.vdot).filter((v) => v != null);
     const m = medianOf(todayEstimates);
     todayRunVdot = m != null ? Math.round(m * correctionFactor * 10) / 10 : null;
   }
@@ -477,11 +546,23 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
 
   currentVdot = Math.round(currentVdot * 10) / 10;
 
-  const result = { vdot: currentVdot, source, todayRunVdot, todayVdotExcluded, correctionFactor };
+  const persisted = { vdot: currentVdot, source, todayRunVdot, todayVdotExcluded, correctionFactor };
 
   if (persistLatest) {
-    await saveRealVdotState(env, { ...result, updatedAt: new Date().toISOString() }).catch(() => {});
+    await saveRealVdotState(env, { ...persisted, updatedAt: new Date().toISOString() }).catch(() => {});
   }
 
-  return result;
+  // vdotDebug is intentionally not part of `persisted` - it's per-sync-run diagnostic
+  // detail (e.g. today's raw activity inputs), not state that should carry over into the
+  // next sync's KV-cached "current fitness" value.
+  const vdotDebug = {
+    correctionFactor,
+    trainVdot,
+    raceVdot: raceResult?.vdot ?? null,
+    resolvedMaxHr: maxHrResult.value,
+    resolvedMaxHrSource: maxHrResult.source,
+    todayActivityRaw,
+  };
+
+  return { ...persisted, vdotDebug };
 }
