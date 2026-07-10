@@ -1,4 +1,4 @@
-import { isoDate } from "./date-utils.js";
+import { isoDate, daysBetween } from "./date-utils.js";
 import { isRun, isRaceActivity, isIntervalActivity, isVdotExcluded } from "./activity-utils.js";
 import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { loadCachedMaxHr, fetchAndCacheMaxHr, fetchRunPaceBenchmarks } from "./intervals-client.js";
@@ -9,6 +9,27 @@ const CORRECTION_KV_PREFIX = "vdot:correction:";
 const PACE_BENCH_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CORRECTION_MIN_FACTOR = 0.9;
 const CORRECTION_MAX_FACTOR = 1.1;
+// A race-derived correction factor speaks to the athlete's HR/pace relationship "as of
+// that race day". With only ~2 races/year, an unbounded factor would otherwise keep
+// steering training-based estimates for months after it stopped being representative
+// (fitness, season/heat, HR drift all move on). Past CORRECTION_DECAY_START_DAYS it's
+// pulled linearly back toward 1 (no correction), fully neutral by CORRECTION_DECAY_END_DAYS.
+const CORRECTION_DECAY_START_DAYS = 90;
+const CORRECTION_DECAY_END_DAYS = 180;
+// Flags a race whose rawFactor (already clamped to CORRECTION_MIN/MAX_FACTOR) sits this
+// far from 1 - i.e. close to the clamp - as possibly unrepresentative (bad weather,
+// pacing, illness), for visibility only; the race is still processed normally.
+const CORRECTION_WARNING_THRESHOLD = 0.05;
+
+// Pulls a persisted correction factor linearly toward 1 the longer it's been since the
+// race it was derived from. Returns the factor unchanged before the decay window starts.
+function applyCorrectionDecay(factor, daysSinceLastRace) {
+  if (!Number.isFinite(factor)) return 1;
+  if (!Number.isFinite(daysSinceLastRace) || daysSinceLastRace <= CORRECTION_DECAY_START_DAYS) return factor;
+  if (daysSinceLastRace >= CORRECTION_DECAY_END_DAYS) return 1;
+  const progress = (daysSinceLastRace - CORRECTION_DECAY_START_DAYS) / (CORRECTION_DECAY_END_DAYS - CORRECTION_DECAY_START_DAYS);
+  return factor + (1 - factor) * progress;
+}
 
 function realVdotKvKey(env) {
   return `${REAL_VDOT_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;
@@ -89,12 +110,18 @@ async function saveCorrectionState(env, state) {
   } catch {}
 }
 
-// Reads the persisted race-derived correction factor (1 = no correction). Applied as a
-// multiplier on training-based VDOT estimates to account for individual deviations
-// (pacing, race-day form) that the generic HR/pace formula can't see.
-export async function getRaceCorrectionFactor(env) {
+// Reads the persisted race-derived correction factor (1 = no correction), decayed toward 1
+// the longer it's been since lastRaceDate (see applyCorrectionDecay). The persisted
+// state.factor itself is never modified here - only the value returned to callers.
+// asOfIso anchors the decay to the day being processed (so backfills of past days decay
+// relative to that day, not wall-clock "now"); defaults to today for live reads.
+export async function getRaceCorrectionFactor(env, asOfIso = null) {
   const state = await loadCorrectionState(env).catch(() => null);
-  return Number.isFinite(state?.factor) ? state.factor : 1;
+  const factor = Number.isFinite(state?.factor) ? state.factor : 1;
+  if (!state?.lastRaceDate) return factor;
+  const anchor = asOfIso || isoDate(new Date());
+  const daysSinceLastRace = daysBetween(state.lastRaceDate, anchor);
+  return applyCorrectionDecay(factor, daysSinceLastRace);
 }
 
 // When a new race appears, compares its VDOT against the training VDOT predicted from
@@ -115,18 +142,31 @@ async function updateRaceCorrectionFactor(env, activities, raceResult, maxHr) {
   if (!predictedVdot) {
     // No usable pre-race training data to compare against; mark the race as seen so we
     // don't keep retrying it, but leave the factor untouched.
-    const newState = { factor: prevFactor, lastRaceDate: raceResult.raceDate, raceCount: state?.raceCount ?? 0 };
+    const newState = {
+      factor: prevFactor,
+      lastRaceDate: raceResult.raceDate,
+      raceCount: state?.raceCount ?? 0,
+      raceCorrectionWarning: null,
+    };
     await saveCorrectionState(env, newState).catch(() => {});
     return newState;
   }
 
   const rawFactor = clamp(raceResult.vdot / predictedVdot, CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR);
   const blended = clamp(prevFactor * 0.5 + rawFactor * 0.5, CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR);
+  // Visibility only: a rawFactor already this close to the ±10% clamp suggests the race
+  // may not have been representative (weather, pacing, illness). Whether to treat it as an
+  // outlier stays a manual call - this never rejects or reweights the race automatically.
+  const raceCorrectionWarning =
+    Math.abs(rawFactor - 1) > CORRECTION_WARNING_THRESHOLD
+      ? { largeDeviation: true, predictedVdot, raceVdot: raceResult.vdot, rawFactor: Math.round(rawFactor * 1000) / 1000 }
+      : null;
   const newState = {
     factor: Math.round(blended * 1000) / 1000,
     lastRawFactor: Math.round(rawFactor * 1000) / 1000,
     lastRaceDate: raceResult.raceDate,
     raceCount: (state?.raceCount ?? 0) + 1,
+    raceCorrectionWarning,
   };
   await saveCorrectionState(env, newState).catch(() => {});
   return newState;
@@ -380,13 +420,20 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // updateRaceCorrectionFactor for rationale). Only advanced on writes so read-only
   // calls don't process the same race twice from concurrent requests.
   const maxHr = await resolveMaxHr(env, activities);
-  let correctionFactor = 1;
+  const correctionAnchor = todayIso || isoDate(new Date());
+  let correctionState = null;
   if (write && raceResult) {
-    const correctionState = await updateRaceCorrectionFactor(env, activities, raceResult, maxHr);
-    correctionFactor = correctionState?.factor ?? 1;
+    correctionState = await updateRaceCorrectionFactor(env, activities, raceResult, maxHr);
   } else {
-    correctionFactor = await getRaceCorrectionFactor(env);
+    correctionState = await loadCorrectionState(env).catch(() => null);
   }
+  const rawCorrectionFactor = Number.isFinite(correctionState?.factor) ? correctionState.factor : 1;
+  const daysSinceLastRace = correctionState?.lastRaceDate ? daysBetween(correctionState.lastRaceDate, correctionAnchor) : null;
+  // correctionFactor is the decayed, applied value (see applyCorrectionDecay) - on the race
+  // day itself daysSinceLastRace is 0, so it equals rawCorrectionFactor unchanged.
+  const correctionFactor = correctionState?.lastRaceDate
+    ? applyCorrectionDecay(rawCorrectionFactor, daysSinceLastRace)
+    : rawCorrectionFactor;
 
   // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
   let trainVdot = null;
@@ -477,7 +524,14 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
 
   currentVdot = Math.round(currentVdot * 10) / 10;
 
-  const result = { vdot: currentVdot, source, todayRunVdot, todayVdotExcluded, correctionFactor };
+  const vdotDebug = {
+    rawCorrectionFactor,
+    appliedCorrectionFactor: correctionFactor,
+    daysSinceLastRace,
+    raceCorrectionWarning: correctionState?.raceCorrectionWarning ?? null,
+  };
+
+  const result = { vdot: currentVdot, source, todayRunVdot, todayVdotExcluded, correctionFactor, vdotDebug };
 
   if (persistLatest) {
     await saveRealVdotState(env, { ...result, updatedAt: new Date().toISOString() }).catch(() => {});
