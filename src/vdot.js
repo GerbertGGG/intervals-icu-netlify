@@ -20,6 +20,12 @@ const CORRECTION_DECAY_END_DAYS = 180;
 // far from 1 - i.e. close to the clamp - as possibly unrepresentative (bad weather,
 // pacing, illness), for visibility only; the race is still processed normally.
 const CORRECTION_WARNING_THRESHOLD = 0.05;
+// Pace benchmarks come from ordinary training runs (no race-day pacing, possibly a lucky
+// segment inside an interval session), so they're a weaker signal than an actual race.
+// Each update only nudges the persisted driftFactor by this much (vs. the race path's
+// 50/50 blend), which is what makes it safe to run continuously instead of just at the
+// ~2 races/year the race-based factor sees.
+const PACE_BENCH_DRIFT_BLEND_WEIGHT = 0.05;
 
 // Pulls a persisted correction factor linearly toward 1 the longer it's been since the
 // race it was derived from. Returns the factor unchanged before the decay window starts.
@@ -110,18 +116,30 @@ async function saveCorrectionState(env, state) {
   } catch {}
 }
 
-// Reads the persisted race-derived correction factor (1 = no correction), decayed toward 1
-// the longer it's been since lastRaceDate (see applyCorrectionDecay). The persisted
-// state.factor itself is never modified here - only the value returned to callers.
-// asOfIso anchors the decay to the day being processed (so backfills of past days decay
+// Combines the race-derived factor (state.factor, decayed toward 1 via applyCorrectionDecay
+// the longer it's been since state.lastRaceDate) with the pace-benchmark drift factor
+// (state.driftFactor) into a single correction factor. Both inputs are already clamped to
+// [CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR] individually when persisted; the product is
+// re-clamped to the same range so the two can't compound into a larger overall deviation
+// than either path is allowed on its own.
+function combineCorrectionFactors(state, anchorIso) {
+  const rawRaceFactor = Number.isFinite(state?.factor) ? state.factor : 1;
+  const daysSinceLastRace = state?.lastRaceDate ? daysBetween(state.lastRaceDate, anchorIso) : null;
+  const raceFactor = state?.lastRaceDate ? applyCorrectionDecay(rawRaceFactor, daysSinceLastRace) : rawRaceFactor;
+  const driftFactor = Number.isFinite(state?.driftFactor) ? state.driftFactor : 1;
+  const combined = clamp(raceFactor * driftFactor, CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR);
+  return { raceFactor, driftFactor, combined, daysSinceLastRace };
+}
+
+// Reads the persisted correction factor (1 = no correction) as the product of the race-
+// derived factor and the pace-benchmark drift factor (see combineCorrectionFactors). The
+// persisted state itself is never modified here - only the value returned to callers.
+// asOfIso anchors the race decay to the day being processed (so backfills of past days decay
 // relative to that day, not wall-clock "now"); defaults to today for live reads.
 export async function getRaceCorrectionFactor(env, asOfIso = null) {
   const state = await loadCorrectionState(env).catch(() => null);
-  const factor = Number.isFinite(state?.factor) ? state.factor : 1;
-  if (!state?.lastRaceDate) return factor;
   const anchor = asOfIso || isoDate(new Date());
-  const daysSinceLastRace = daysBetween(state.lastRaceDate, anchor);
-  return applyCorrectionDecay(factor, daysSinceLastRace);
+  return combineCorrectionFactors(state, anchor).combined;
 }
 
 // When a new race appears, compares its VDOT against the training VDOT predicted from
@@ -143,6 +161,7 @@ async function updateRaceCorrectionFactor(env, activities, raceResult, maxHr) {
     // No usable pre-race training data to compare against; mark the race as seen so we
     // don't keep retrying it, but leave the factor untouched.
     const newState = {
+      ...state,
       factor: prevFactor,
       lastRaceDate: raceResult.raceDate,
       raceCount: state?.raceCount ?? 0,
@@ -162,6 +181,7 @@ async function updateRaceCorrectionFactor(env, activities, raceResult, maxHr) {
       ? { largeDeviation: true, predictedVdot, raceVdot: raceResult.vdot, rawFactor: Math.round(rawFactor * 1000) / 1000 }
       : null;
   const newState = {
+    ...state,
     factor: Math.round(blended * 1000) / 1000,
     lastRawFactor: Math.round(rawFactor * 1000) / 1000,
     lastRaceDate: raceResult.raceDate,
@@ -170,6 +190,39 @@ async function updateRaceCorrectionFactor(env, activities, raceResult, maxHr) {
   };
   await saveCorrectionState(env, newState).catch(() => {});
   return newState;
+}
+
+// Analog to updateRaceCorrectionFactor, but a separate, weakly-weighted path (see
+// PACE_BENCH_DRIFT_BLEND_WEIGHT) that runs continuously instead of only ~2x/year. Only
+// blends when both paceBenchVdot and an HR-based hrTrainVdot are available, and only once
+// per distinct pace-bench snapshot (tracked via state.driftBenchTs, the fetch timestamp
+// from loadCachedPaceBench) - otherwise the same cached benchmark, still within its 7-day
+// cache window, would get reprocessed on every sync tick instead of roughly once a week.
+async function updatePaceBenchmarkDrift(env, bench, benchTs, hrTrainVdot) {
+  const paceBenchVdot = bench ? computeVdotFromPaceBenchmarks(bench) : null;
+  if (paceBenchVdot == null || !Number.isFinite(hrTrainVdot) || !benchTs) {
+    return { paceBenchVdot, state: null };
+  }
+
+  const state = await loadCorrectionState(env).catch(() => null);
+  if (state?.driftBenchTs === benchTs) return { paceBenchVdot, state };
+
+  const prevDriftFactor = Number.isFinite(state?.driftFactor) ? state.driftFactor : 1;
+  const rawDriftFactor = clamp(paceBenchVdot / hrTrainVdot, CORRECTION_MIN_FACTOR, CORRECTION_MAX_FACTOR);
+  const blended = clamp(
+    prevDriftFactor * (1 - PACE_BENCH_DRIFT_BLEND_WEIGHT) + rawDriftFactor * PACE_BENCH_DRIFT_BLEND_WEIGHT,
+    CORRECTION_MIN_FACTOR,
+    CORRECTION_MAX_FACTOR,
+  );
+  const newState = {
+    ...state,
+    driftFactor: Math.round(blended * 1000) / 1000,
+    lastDriftRawFactor: Math.round(rawDriftFactor * 1000) / 1000,
+    driftUpdateCount: (state?.driftUpdateCount ?? 0) + 1,
+    driftBenchTs: benchTs,
+  };
+  await saveCorrectionState(env, newState).catch(() => {});
+  return { paceBenchVdot, state: newState };
 }
 
 function computeVdotFromPaceBenchmarks(runPace) {
@@ -403,13 +456,15 @@ async function saveRealVdotState(env, state) {
   } catch {}
 }
 
+// Returns { data, ts } (ts = when this snapshot was fetched, used by updatePaceBenchmarkDrift
+// to dedupe against reprocessing the same snapshot), or null if there's no fresh cache entry.
 async function loadCachedPaceBench(env) {
   if (!hasKv(env)) return null;
   try {
     const cached = await readKvJson(env, paceBenchKvKey(env));
     if (!cached?.ts) return null;
     if (Date.now() - cached.ts > PACE_BENCH_MAX_AGE_MS) return null;
-    return cached.data || null;
+    return { data: cached.data || null, ts: cached.ts };
   } catch {
     return null;
   }
@@ -469,11 +524,34 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   // 1) Race-based VDOT from activities (free – data already loaded)
   const raceResult = computeRaceVdot(activities, todayIso);
 
-  // 1b) Race-derived correction factor for training-based estimates (see
-  // updateRaceCorrectionFactor for rationale). Only advanced on writes so read-only
-  // calls don't process the same race twice from concurrent requests.
+  // 1b) Resolve max HR and the HR-based training VDOT (pre-correction, pre-pace-bench-
+  // fallback) - used both as the primary trainVdot below and as the comparison basis for
+  // the pace-benchmark drift factor (updatePaceBenchmarkDrift).
   const maxHrDetail = await resolveMaxHrDetailed(env, activities);
   const maxHr = maxHrDetail.value;
+  const hrTrainVdot = maxHr ? computeTrainingVdotFromActivities(activities, todayIso, maxHr) : null;
+
+  // 1c) Pace benchmarks (intervals.icu's own best-segment-time bests). Fetched regularly -
+  // not just as a trainVdot fallback - so the drift path below has a continuous signal, but
+  // still bounded by the 7-day cache and only hits the API on a Monday sync or a write.
+  let bench = null;
+  let benchTs = null;
+  try {
+    const cached = await loadCachedPaceBench(env);
+    bench = cached?.data ?? null;
+    benchTs = cached?.ts ?? null;
+    if (!bench && (isMondaySync || write)) {
+      const fetched = await fetchRunPaceBenchmarks(env).catch(() => null);
+      if (fetched) {
+        bench = fetched;
+        benchTs = Date.now();
+        if (write) saveCachedPaceBench(env, fetched).catch(() => {});
+      }
+    }
+  } catch {}
+
+  // 1d) Race-derived correction factor (see updateRaceCorrectionFactor). Only advanced on
+  // writes so read-only calls don't process the same race twice from concurrent requests.
   const correctionAnchor = todayIso || isoDate(new Date());
   let correctionState = null;
   if (write && raceResult) {
@@ -481,28 +559,26 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   } else {
     correctionState = await loadCorrectionState(env).catch(() => null);
   }
-  const rawCorrectionFactor = Number.isFinite(correctionState?.factor) ? correctionState.factor : 1;
-  const daysSinceLastRace = correctionState?.lastRaceDate ? daysBetween(correctionState.lastRaceDate, correctionAnchor) : null;
-  // correctionFactor is the decayed, applied value (see applyCorrectionDecay) - on the race
-  // day itself daysSinceLastRace is 0, so it equals rawCorrectionFactor unchanged.
-  const correctionFactor = correctionState?.lastRaceDate
-    ? applyCorrectionDecay(rawCorrectionFactor, daysSinceLastRace)
-    : rawCorrectionFactor;
 
-  // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks (fallback)
-  let trainVdot = null;
-  if (maxHr) {
-    trainVdot = computeTrainingVdotFromActivities(activities, todayIso, maxHr);
+  // 1e) Pace-benchmark drift factor (see updatePaceBenchmarkDrift) - a separate, weakly-
+  // weighted correction path layered on top of (not merged into) the race-blend logic above.
+  let paceBenchVdot = bench ? computeVdotFromPaceBenchmarks(bench) : null;
+  if (write) {
+    const driftResult = await updatePaceBenchmarkDrift(env, bench, benchTs, hrTrainVdot);
+    if (driftResult.state) correctionState = driftResult.state;
+    if (driftResult.paceBenchVdot != null) paceBenchVdot = driftResult.paceBenchVdot;
   }
-  if (trainVdot == null) {
-    try {
-      let bench = await loadCachedPaceBench(env);
-      if (!bench && (isMondaySync || write)) {
-        bench = await fetchRunPaceBenchmarks(env).catch(() => null);
-        if (bench && write) saveCachedPaceBench(env, bench).catch(() => {});
-      }
-      if (bench) trainVdot = computeVdotFromPaceBenchmarks(bench);
-    } catch {}
+
+  const { raceFactor, driftFactor, combined: correctionFactor, daysSinceLastRace } = combineCorrectionFactors(
+    correctionState,
+    correctionAnchor,
+  );
+
+  // 2) Training-based VDOT: HR-adjusted from recent runs (primary) + pace benchmarks
+  // (fallback only, when no HR-based estimate is available)
+  let trainVdot = hrTrainVdot;
+  if (trainVdot == null && paceBenchVdot != null) {
+    trainVdot = paceBenchVdot;
   }
   if (trainVdot != null && correctionFactor !== 1) {
     trainVdot = Math.round(trainVdot * correctionFactor * 10) / 10;
@@ -597,8 +673,11 @@ export async function computeAndPersistRealVdot(env, activities, options = {}) {
   currentVdot = Math.round(currentVdot * 10) / 10;
 
   const vdotDebug = {
-    rawCorrectionFactor,
+    rawCorrectionFactor: Number.isFinite(correctionState?.factor) ? correctionState.factor : 1,
     appliedCorrectionFactor: correctionFactor,
+    raceFactor,
+    driftFactor,
+    paceBenchVdot,
     daysSinceLastRace,
     raceCorrectionWarning: correctionState?.raceCorrectionWarning ?? null,
     resolvedMaxHr: maxHr,
