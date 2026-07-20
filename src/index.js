@@ -5,6 +5,7 @@ import { buildWeeklyProgressReport } from "./weekly-progress.js";
 import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
 import { recordEmailSuccess, recordEmailError } from "./email-status.js";
+import { hasSucceededToday, recordSucceededToday } from "./daily-job-status.js";
 import { writeDailyRecoveryNote } from "./recovery-note.js";
 import { sendRecentFormReportEmail } from "./email.js";
 
@@ -96,9 +97,6 @@ export default {
     if (!isScheduledWindowBerlin(event)) return;
 
     const today = isoDate(new Date());
-    const berlinHour = getBerlinHourFromScheduledEvent(event);
-    const berlinMinute = getBerlinMinuteFromScheduledEvent(event);
-    const isFirstRunOfDay = berlinHour === 7 && berlinMinute !== null && berlinMinute < 30;
     // Re-sync the last 2 days on every tick (not just the first run of the day), so a
     // "#novdot" tag added retroactively to yesterday's or the day-before's training is
     // picked up within the next 30-minute cycle instead of only at tomorrow's 07:00 run.
@@ -113,18 +111,27 @@ export default {
         }),
     );
 
-    if (isFirstRunOfDay && isMondayIso(today)) {
+    // These three run once per day (weekly progress + report email only on Mondays),
+    // preferably on the 07:00 Berlin tick, but retry on later ticks up to 21:00 if that
+    // first tick was missed or the job errored - hasSucceededToday only flips true once
+    // the job actually completes, so a transient failure gets another shot 30 min later
+    // instead of silently waiting until the same time next day/week.
+    if (isMondayIso(today) && !(await hasSucceededToday(env, "weeklyProgress", today))) {
       ctx.waitUntil(
-        buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
-          console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
+        buildWeeklyProgressReport(env, today, { write: true })
+          .then(() => recordSucceededToday(env, "weeklyProgress", today))
+          .catch((e) => {
+            console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+          }),
       );
+    }
 
-      // Independent of the weekly progress note above: mail the raw recent-form
-      // JSON for manual analysis. A failure here must never block the report.
+    // Independent of the weekly progress note above: mail the raw recent-form
+    // JSON for manual analysis. A failure here must never block the report.
+    if (isMondayIso(today) && !(await hasSucceededToday(env, "reportEmail", today))) {
       ctx.waitUntil(
         sendRecentFormReportEmail(env, today)
-          .then(() => recordEmailSuccess(env))
+          .then(() => Promise.all([recordEmailSuccess(env), recordSucceededToday(env, "reportEmail", today)]))
           .catch((e) => {
             console.error("recent-form report email failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
             return recordEmailError(env, e?.message ?? String(e));
@@ -132,11 +139,13 @@ export default {
       );
     }
 
-    if (isFirstRunOfDay) {
+    if (!(await hasSucceededToday(env, "dailyFormcheck", today))) {
       ctx.waitUntil(
-        writeDailyRecoveryNote(env, today).catch((e) => {
-          console.error("daily recovery note failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
+        writeDailyRecoveryNote(env, today)
+          .then(() => recordSucceededToday(env, "dailyFormcheck", today))
+          .catch((e) => {
+            console.error("daily recovery note failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+          }),
       );
     }
   },
