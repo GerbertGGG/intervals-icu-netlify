@@ -3,6 +3,7 @@ import { diffDays, isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
 import { writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInfo, resolveActiveGoalRace, fetchUpcomingARaceEvents } from "./goal-race.js";
 import { readSyncStatus } from "./sync-status.js";
+import { readEmailStatus } from "./email-status.js";
 import { getCurrentRealVdot } from "./vdot.js";
 import { maybeRebuildLongRunPlanOnGoalChange, readLongRunPlan } from "./long-run-plan.js";
 import { mustEnv } from "./kv.js";
@@ -290,6 +291,7 @@ export async function handleGoalRequest(req, url, env) {
 
 export async function handleStatusRequest(url, env) {
   const syncStatus = await readSyncStatus(env);
+  const emailStatus = await readEmailStatus(env);
   const now = new Date().toISOString();
   const minutesSinceLastSync =
     syncStatus?.lastSuccessAt
@@ -302,6 +304,7 @@ export async function handleStatusRequest(url, env) {
     healthy,
     minutesSinceLastSync,
     syncStatus: syncStatus ?? null,
+    emailStatus: emailStatus ?? null,
   });
 }
 

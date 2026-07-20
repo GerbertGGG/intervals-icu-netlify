@@ -4,6 +4,7 @@ import { syncRange } from "./sync.js";
 import { buildWeeklyProgressReport } from "./weekly-progress.js";
 import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
+import { recordEmailSuccess, recordEmailError } from "./email-status.js";
 import { writeDailyRecoveryNote } from "./recovery-note.js";
 import { sendRecentFormReportEmail } from "./email.js";
 
@@ -122,9 +123,12 @@ export default {
       // Independent of the weekly progress note above: mail the raw recent-form
       // JSON for manual analysis. A failure here must never block the report.
       ctx.waitUntil(
-        sendRecentFormReportEmail(env, today).catch((e) => {
-          console.error("recent-form report email failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
+        sendRecentFormReportEmail(env, today)
+          .then(() => recordEmailSuccess(env))
+          .catch((e) => {
+            console.error("recent-form report email failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+            return recordEmailError(env, e?.message ?? String(e));
+          }),
       );
     }
 
