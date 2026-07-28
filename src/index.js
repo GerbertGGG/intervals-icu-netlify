@@ -6,6 +6,8 @@ import { buildRecentFormAnalysis } from "./form-analysis.js";
 import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
 import { writeDailyRecoveryNote } from "./recovery-note.js";
 import { sendRecentFormReportEmail } from "./email.js";
+import { handleAuthorizeRequest, handleTokenRequest, handleAuthServerMetadata, handleProtectedResourceMetadata } from "./mcp-oauth.js";
+import { handleMcpRequest } from "./mcp-server.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -75,6 +77,28 @@ export default {
 
     if (url.pathname === "/report-email") {
       return withWorkerErrorBoundary(() => handleReportEmailRequest(url, env, ctx, { sendRecentFormReportEmail }));
+    }
+
+    // MCP custom connector (see src/mcp-oauth.js, src/mcp-server.js): lets a Claude
+    // chat read planned workouts / activities / wellness straight from Intervals.icu.
+    if (url.pathname === "/.well-known/oauth-authorization-server") {
+      return handleAuthServerMetadata(url);
+    }
+
+    if (url.pathname === "/.well-known/oauth-protected-resource") {
+      return handleProtectedResourceMetadata(url);
+    }
+
+    if (url.pathname === "/authorize") {
+      return withWorkerErrorBoundary(() => handleAuthorizeRequest(req, url, env));
+    }
+
+    if (url.pathname === "/token") {
+      return withWorkerErrorBoundary(() => handleTokenRequest(req, env));
+    }
+
+    if (url.pathname === "/mcp") {
+      return withWorkerErrorBoundary(() => handleMcpRequest(req, url, env));
     }
 
     return new Response("Not found", { status: 404 });
