@@ -1,11 +1,18 @@
 // MCP (Model Context Protocol) endpoint: exposes read-only Intervals.icu data
-// (planned workouts, past activities, wellness) as tools so a Claude chat can be
-// added as a custom connector against this Worker, reusing the existing
-// intervals-client.js fetchers instead of a second Intervals.icu integration.
+// (planned workouts, past activities, wellness) and the Yazio nutrition diary as
+// tools so a Claude chat can be added as a custom connector against this Worker,
+// reusing the existing intervals-client.js / yazio-client.js fetchers instead of
+// second integrations.
 import { json } from "./http-helpers.js";
-import { isIsoDate, isoDate } from "./date-utils.js";
+import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 import { isValidAccessToken } from "./mcp-oauth.js";
 import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessRange } from "./intervals-client.js";
+import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
+
+// get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
+// no range endpoint), sequentially to stay gentle on Yazio's rate limiting - so the
+// range is capped to keep a single MCP call within the Worker's execution time.
+const MAX_NUTRITION_DAYS = 31;
 
 const PROTOCOL_VERSION = "2025-06-18";
 
@@ -43,6 +50,17 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "get_nutrition",
+    description: "Ernährungstagebuch aus Yazio (Kalorien, Protein, Fett, Kohlenhydrate, Kalorienziel) für einen Datumsbereich, Tag für Tag.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        oldest: { type: "string", description: "Startdatum ISO YYYY-MM-DD, Standard: heute - 14 Tage." },
+        newest: { type: "string", description: `Enddatum ISO YYYY-MM-DD, Standard: heute. Bereich max. ${MAX_NUTRITION_DAYS} Tage.` },
+      },
+    },
+  },
 ];
 
 function resolveRange(args, { pastDefaultDays, futureDefaultDays }) {
@@ -63,6 +81,26 @@ async function callTool(env, name, args) {
   if (name === "get_wellness") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 14, futureDefaultDays: 0 });
     return fetchIntervalsWellnessRange(env, oldest, newest);
+  }
+  if (name === "get_nutrition") {
+    if (!hasYazioCredentials(env)) throw new Error("Yazio ist nicht konfiguriert (YAZIO_USERNAME/YAZIO_PASSWORD fehlen).");
+    const { oldest, newest } = resolveRange(args, { pastDefaultDays: 14, futureDefaultDays: 0 });
+    const days = listIsoDaysInclusive(oldest, newest);
+    if (days.length > MAX_NUTRITION_DAYS) throw new Error(`Zeitraum zu groß: max. ${MAX_NUTRITION_DAYS} Tage.`);
+
+    const results = [];
+    for (const day of days) {
+      const [nutrition, goalKcal] = await Promise.all([fetchYazioDailyNutrition(env, day), fetchYazioDailyGoalKcal(env, day)]);
+      results.push({
+        date: day,
+        energyKcal: Math.round(nutrition.energyKcal),
+        proteinG: Math.round(nutrition.proteinG),
+        fatG: Math.round(nutrition.fatG),
+        carbG: Math.round(nutrition.carbG),
+        goalKcal,
+      });
+    }
+    return results;
   }
   throw new Error(`Unknown tool: ${name}`);
 }

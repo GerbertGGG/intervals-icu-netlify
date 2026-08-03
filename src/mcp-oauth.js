@@ -51,7 +51,7 @@ function renderAuthorizeForm({ redirectUri, state, codeChallenge, error }) {
 <html><head><meta charset="utf-8"><title>Intervals.icu MCP - Anmelden</title></head>
 <body style="font-family: sans-serif; max-width: 420px; margin: 60px auto;">
   <h2>Zugriff bestätigen</h2>
-  <p>Ein Client möchte auf deine Intervals.icu-Trainingsdaten zugreifen (geplante Workouts, Aktivitäten, Wellness).</p>
+  <p>Ein Client möchte auf deine Intervals.icu-Trainingsdaten (geplante Workouts, Aktivitäten, Wellness) und dein Yazio-Ernährungstagebuch zugreifen.</p>
   ${error ? `<p style="color:red;">${escapeHtml(error)}</p>` : ""}
   <form method="POST" action="/authorize">
     <input type="hidden" name="response_type" value="code">

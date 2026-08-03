@@ -80,7 +80,8 @@ export default {
     }
 
     // MCP custom connector (see src/mcp-oauth.js, src/mcp-server.js): lets a Claude
-    // chat read planned workouts / activities / wellness straight from Intervals.icu.
+    // chat read planned workouts / activities / wellness from Intervals.icu and the
+    // nutrition diary from Yazio.
     if (url.pathname === "/.well-known/oauth-authorization-server") {
       return handleAuthServerMetadata(url);
     }
