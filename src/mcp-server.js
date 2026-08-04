@@ -52,7 +52,8 @@ const TOOLS = [
   },
   {
     name: "get_nutrition",
-    description: "Ernährungstagebuch aus Yazio (Kalorien, Protein, Fett, Kohlenhydrate, Kalorienziel) für einen Datumsbereich, Tag für Tag.",
+    description:
+      "Ernährungstagebuch aus Yazio für einen Datumsbereich, Tag für Tag: Tagessummen (Kalorien, Protein, Fett, Kohlenhydrate, Kalorienziel) sowie die einzelnen gegessenen Gerichte/Lebensmittel mit Name, Mahlzeit und Nährwerten.",
     inputSchema: {
       type: "object",
       properties: {
@@ -98,6 +99,15 @@ async function callTool(env, name, args) {
         fatG: Math.round(nutrition.fatG),
         carbG: Math.round(nutrition.carbG),
         goalKcal,
+        items: nutrition.items.map((i) => ({
+          name: i.name,
+          daytime: i.daytime,
+          amountG: i.amountG ?? null,
+          energyKcal: Math.round(i.energyKcal),
+          proteinG: Math.round(i.proteinG * 10) / 10,
+          fatG: Math.round(i.fatG * 10) / 10,
+          carbG: Math.round(i.carbG * 10) / 10,
+        })),
       });
     }
     return results;

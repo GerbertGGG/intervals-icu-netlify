@@ -117,58 +117,76 @@ export async function fetchYazioDailyGoalKcal(env, dateIso) {
   return Number.isFinite(goal) && goal > 0 ? goal : null;
 }
 
-// Product nutrients (kcal/protein/fat/carb per gram) are static reference data, so
-// they're cached in KV indefinitely rather than re-fetched on every sync.
-async function fetchProductNutrientsPerGram(env, productId) {
+// Product nutrients (kcal/protein/fat/carb per gram) plus display name are static
+// reference data, so they're cached in KV indefinitely rather than re-fetched on
+// every sync.
+async function fetchProductInfo(env, productId) {
   const kvKey = `${PRODUCT_KV_PREFIX}${productId}`;
   const cached = hasKv(env) ? await readKvJson(env, kvKey) : null;
   if (cached) return cached;
 
   const product = await yazioGet(env, `/products/${encodeURIComponent(productId)}`);
-  const nutrients = {
+  const info = {
+    name: product?.name || product?.title || null,
     energyKcalPerG: Number(product?.nutrients?.["energy.energy"] || 0),
     proteinPerG: Number(product?.nutrients?.["nutrient.protein"] || 0),
     fatPerG: Number(product?.nutrients?.["nutrient.fat"] || 0),
     carbPerG: Number(product?.nutrients?.["nutrient.carb"] || 0),
   };
-  await writeKvJson(env, kvKey, nutrients);
-  return nutrients;
+  await writeKvJson(env, kvKey, info);
+  return info;
 }
 
-// Sums the day's diary entries into total calories/macros. Two item shapes exist
-// (see fetchConsumedItems): "product" entries carry a product_id + amount in grams
-// and need a per-gram nutrient lookup; "simple_product" (AI-logged quick-adds) and
+// name/daytime field names for simple_product and recipe_portion entries are a
+// best-effort guess (not confirmed against a real sample the way the
+// {products, recipe_portions, simple_products} split itself was - see
+// describeRawShape/rawShape) - fall back to a generic label rather than crash if
+// an account's response shapes those fields differently.
+function dishNameFromInlineItem(item) {
+  return item.name || item.title || item?.recipe?.name || item?.product?.name || "Unbenannter Eintrag";
+}
+
+// Sums the day's diary entries into total calories/macros, and builds a per-item
+// dish list alongside the totals so a caller (e.g. the MCP get_nutrition tool) can
+// show what was actually eaten, not just the daily sum. Two item shapes exist (see
+// fetchConsumedItems): "product" entries carry a product_id + amount in grams and
+// need a per-gram nutrient lookup; "simple_product" (AI-logged quick-adds) and
 // (assumed, no confirmed sample yet) recipe portions carry their own absolute
 // nutrients for that entry directly, no lookup or multiplication needed.
 export async function fetchYazioDailyNutrition(env, dateIso) {
   const { items, raw } = await fetchConsumedItems(env, dateIso);
   if (items.length === 0) {
-    return { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: 0, skippedItems: [], rawShape: describeRawShape(raw) };
+    return { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: 0, skippedItems: [], rawShape: describeRawShape(raw), items: [] };
   }
 
   const productItems = items.filter((i) => !i.nutrients && i.product_id);
   const uniqueProductIds = [...new Set(productItems.map((i) => i.product_id))];
-  const nutrientsByProduct = new Map();
+  const infoByProduct = new Map();
   const skippedItems = [];
   for (const productId of uniqueProductIds) {
     // One bad/unavailable product (404 on a custom recipe, transient rate-limit, ...)
     // must not blow up the whole day's totals - skip it and keep summing the rest.
     try {
-      nutrientsByProduct.set(productId, await fetchProductNutrientsPerGram(env, productId));
+      infoByProduct.set(productId, await fetchProductInfo(env, productId));
     } catch (e) {
       skippedItems.push({ productId, reason: String(e?.message ?? e) });
       console.warn("yazio product lookup failed, skipping item", { productId, error: String(e?.message ?? e) });
     }
   }
 
-  const totals = { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: items.length, skippedItems };
+  const totals = { energyKcal: 0, proteinG: 0, fatG: 0, carbG: 0, itemCount: items.length, skippedItems, items: [] };
   for (const item of items) {
     if (item.nutrients) {
       // simple_product / recipe_portion: nutrients are already the entry's total, not per-gram.
-      totals.energyKcal += Number(item.nutrients["energy.energy"]) || 0;
-      totals.proteinG += Number(item.nutrients["nutrient.protein"]) || 0;
-      totals.fatG += Number(item.nutrients["nutrient.fat"]) || 0;
-      totals.carbG += Number(item.nutrients["nutrient.carb"]) || 0;
+      const energyKcal = Number(item.nutrients["energy.energy"]) || 0;
+      const proteinG = Number(item.nutrients["nutrient.protein"]) || 0;
+      const fatG = Number(item.nutrients["nutrient.fat"]) || 0;
+      const carbG = Number(item.nutrients["nutrient.carb"]) || 0;
+      totals.energyKcal += energyKcal;
+      totals.proteinG += proteinG;
+      totals.fatG += fatG;
+      totals.carbG += carbG;
+      totals.items.push({ name: dishNameFromInlineItem(item), daytime: item.daytime || null, energyKcal, proteinG, fatG, carbG });
       continue;
     }
     if (!item.product_id) {
@@ -178,16 +196,29 @@ export async function fetchYazioDailyNutrition(env, dateIso) {
       skippedItems.push({ id: item.id, type: item.type, reason: "unrecognized item shape (no nutrients, no product_id)" });
       continue;
     }
-    const nutrients = nutrientsByProduct.get(item.product_id);
+    const info = infoByProduct.get(item.product_id);
     const amount = Number(item?.amount || 0);
-    if (!nutrients || !amount) {
+    if (!info || !amount) {
       skippedItems.push({ id: item.id, type: item.type, reason: "no product_id match or zero amount" });
       continue;
     }
-    totals.energyKcal += amount * nutrients.energyKcalPerG;
-    totals.proteinG += amount * nutrients.proteinPerG;
-    totals.fatG += amount * nutrients.fatPerG;
-    totals.carbG += amount * nutrients.carbPerG;
+    const energyKcal = amount * info.energyKcalPerG;
+    const proteinG = amount * info.proteinPerG;
+    const fatG = amount * info.fatPerG;
+    const carbG = amount * info.carbPerG;
+    totals.energyKcal += energyKcal;
+    totals.proteinG += proteinG;
+    totals.fatG += fatG;
+    totals.carbG += carbG;
+    totals.items.push({
+      name: info.name || `Produkt ${item.product_id}`,
+      daytime: item.daytime || null,
+      amountG: amount,
+      energyKcal,
+      proteinG,
+      fatG,
+      carbG,
+    });
   }
   return totals;
 }
