@@ -131,7 +131,10 @@ export async function handleReportEmailRequest(url, env, ctx, deps) {
   const dateParam = url.searchParams.get("date");
   const todayIso = dateParam && isIsoDate(dateParam) ? dateParam : isoDate(new Date());
 
-  await sendRecentFormReportEmail(env, todayIso, { days });
+  const result = await sendRecentFormReportEmail(env, todayIso, { days });
+  if (result?.skipped) {
+    return json({ ok: true, sent: false, skipped: true, reason: result.reason, todayIso, days });
+  }
   return json({ ok: true, sent: true, todayIso, days });
 }
 

@@ -11,6 +11,15 @@ function escapeHtml(s) {
     .replaceAll(">", "&gt;");
 }
 
+// Feature flag: set REPORT_EMAIL_ENABLED=false (Worker var/secret) to switch off
+// the report email dispatch (both the Monday cron job and the manual
+// /report-email route) without touching code. Unset/anything else = enabled.
+export function isReportEmailEnabled(env) {
+  const raw = env?.REPORT_EMAIL_ENABLED;
+  if (raw === undefined || raw === null || raw === "") return true;
+  return String(raw).toLowerCase() !== "false";
+}
+
 // Sends a raw-data report email via the Resend REST API (no SDK needed, works
 // from a Workers fetch() call). Intentionally has no fallback/retry: the caller
 // wraps this in its own try/catch so a failure here never blocks the rest of
@@ -50,6 +59,10 @@ export async function sendJsonReportEmail(env, { subject, introText, data, attac
 // Shared by the Monday cron job and the manual /report-email debug route, so
 // both trigger paths build and mail the exact same recent-form snapshot.
 export async function sendRecentFormReportEmail(env, todayIso, { days = 28 } = {}) {
+  if (!isReportEmailEnabled(env)) {
+    return { skipped: true, reason: "REPORT_EMAIL_ENABLED=false" };
+  }
+
   const data = await buildRecentFormAnalysis(env, todayIso, { days, includeWeather: true, includeIntervalSplits: true });
   return sendJsonReportEmail(env, {
     subject: `Trainingsdaten Woche ${todayIso}`,

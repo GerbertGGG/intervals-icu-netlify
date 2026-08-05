@@ -36,6 +36,14 @@ Environment / Secrets:
   öffentliche API - genutzt wird die inoffizielle/reverse-engineered API der
   App (siehe `src/yazio-client.js`); sie kann sich jederzeit ohne Vorwarnung
   ändern.
+- `RESEND_API_KEY`, `REPORT_EMAIL_TO` (Secrets), `RESEND_FROM_EMAIL` (optional
+  Env-Var): für den wöchentlichen Trainingsdaten-Report per E-Mail (Rohdaten-
+  JSON als Anhang, siehe `src/email.js`), montags automatisch per Cron sowie
+  manuell über `GET /report-email?secret=...` (Secret: `REPORT_EMAIL_SECRET`).
+- `REPORT_EMAIL_ENABLED` (optionale Env-Var, Default aktiviert): auf `false`
+  setzen, um den Report-E-Mail-Versand komplett abzuschalten (Cron *und*
+  manuelle Route) - ohne Code-Änderung, ohne Löschen der übrigen Report-
+  E-Mail-Secrets.
 
 Auth:
 - Authorization Header: `Basic ` + base64(`API_KEY:<INTERVALS_API_KEY>`)
