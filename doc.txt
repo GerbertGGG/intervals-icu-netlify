@@ -10,7 +10,7 @@ Hauptfunktionen:
 - `/sync`: berechnet pro Tag Kennzahlen und schreibt (optional) Wellness + NOTE-Events
 - `/watchface`: liefert 7-Tage-Load/Kraft-Minuten als JSON (CORS offen, no-store)
 - `/weekly-progress`: vergleicht jeden Montag die letzte vollständige Woche mit der Vorwoche (VDOT/CTL/ATL/TSB/Load) und schreibt eine NOTE mit Urteil (besser/schlechter/stabil) + Trainingsempfehlung
-- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin) und synct dabei bei jedem Tick die letzten 2 Tage + heute (siehe 5); montags zusätzlich automatischer Wochenvergleich (siehe 15)
+- `scheduled()`: triggert alle 30 Minuten im Fenster 07:00–21:00 (Berlin) und synct dabei bei jedem Tick die letzten 2 Tage + heute (siehe 5); montags zusätzlich automatischer Wochenvergleich (siehe 15). Formcheck-Note, Wochenvergleich und Report-Mail laufen jeweils einmal pro Tag/Woche, bevorzugt beim ersten Tick (07:00–07:29), holen einen verpassten/fehlgeschlagenen ersten Tick aber automatisch bei einem späteren Tick desselben Tages nach (siehe 5, 15, 16)
 - Yazio-Ernährungssync läuft separat, nur einmal täglich um 23:58 (Berlin), nicht im
   07:00-21:00-Takt (siehe 5a) - schont die inoffizielle Yazio-API
 
@@ -166,10 +166,16 @@ Beispiele:
   gesetzt wird, spätestens beim nächsten 30-Minuten-Tick automatisch übernommen – ohne
   manuellen `/sync`-Aufruf
 - intern mit `write=true`, `debug=false`, `warmup_skip=600`
-- montags zusätzlich beim ersten Tick des Tages (07:00–07:29 Berlin) automatischer
-  Wochenvergleich (siehe 15)
-- täglich zusätzlich beim ersten Tick des Tages (07:00–07:29 Berlin) automatischer
-  Formcheck (Ampel-Note, siehe 16)
+- montags zusätzlich, bevorzugt beim ersten Tick des Tages (07:00–07:29 Berlin),
+  automatischer Wochenvergleich (siehe 15)
+- täglich zusätzlich, bevorzugt beim ersten Tick des Tages (07:00–07:29 Berlin),
+  automatischer Formcheck (Ampel-Note, siehe 16)
+- Wochenvergleich, Report-Mail und Formcheck sind jeweils als "einmal
+  erfolgreich pro Tag/Woche"-Jobs implementiert (KV-Flag `dailyjob:status:*`,
+  siehe `src/daily-job-status.js`): schlägt der 07:00-Tick fehl oder fällt aus,
+  wird der jeweilige Job automatisch bei einem der folgenden 30-Minuten-Ticks
+  (bis 21:00 Berlin) nachgeholt, statt erst am nächsten Tag/Montag erneut zu
+  laufen. Das KV-Flag wird nur bei Erfolg gesetzt.
 
 Hinweis: Die tatsächlichen Cron-Zeiten stehen in `wrangler.toml` (aktuell alle 30 Minuten im UTC-Fenster 05:00–20:59).
 
@@ -497,8 +503,9 @@ abgeschlossene Woche (Mo–So) mit der Vorwoche und liefert ein Urteil
 („besser/schlechter/stabil geworden") inkl. Begründung und Trainingsempfehlung.
 
 Automatischer Trigger:
-- läuft innerhalb des `scheduled()`-Basislaufs um 07:00 Berlin, aber nur montags
-  (`isMondayIso(today)`), zusätzlich zum normalen Tages-Sync
+- läuft innerhalb des `scheduled()`-Basislaufs, bevorzugt um 07:00 Berlin, aber nur
+  montags (`isMondayIso(today)`), zusätzlich zum normalen Tages-Sync; bei Ausfall des
+  07:00-Ticks Nachhol-Lauf auf einem späteren Tick desselben Montags (siehe 5)
 - intern mit `write=true` (NOTE + KV-Historie werden geschrieben)
 
 Datengrundlage pro Woche:
@@ -668,8 +675,9 @@ recommendation }`:
   Tage mit Wert pro Feld, feiner als die aggregierte `dataQuality.notes`-Warnung.
 
 Automatischer Trigger:
-- läuft täglich beim ersten Tick des Tages (07:00–07:29 Berlin, siehe 5), im selben
-  Slot wie der Montags-Wochenvergleich, aber unabhängig davon
+- läuft täglich, bevorzugt beim ersten Tick des Tages (07:00–07:29 Berlin, siehe 5), im
+  selben Slot wie der Montags-Wochenvergleich, aber unabhängig davon; bei Ausfall des
+  07:00-Ticks Nachhol-Lauf auf einem späteren Tick desselben Tages
 - `writeDailyRecoveryNote()` (`src/recovery-note.js`) ruft `buildRecentFormAnalysis()`
   intern auf (kein Self-Fetch) und schreibt das Ergebnis als eigene NOTE
 
