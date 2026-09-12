@@ -8,6 +8,7 @@ import { writeDailyRecoveryNote } from "./recovery-note.js";
 import { sendRecentFormReportEmail } from "./email.js";
 import { handleAuthorizeRequest, handleTokenRequest, handleAuthServerMetadata, handleProtectedResourceMetadata } from "./mcp-oauth.js";
 import { handleMcpRequest } from "./mcp-server.js";
+import { isIntervalsEnabled } from "./kv.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -128,21 +129,27 @@ export default {
     // picked up within the next 30-minute cycle instead of only at tomorrow's 07:00 run.
     const oldest = isoDate(new Date(Date.now() - 2 * 86400000));
 
-    ctx.waitUntil(
-      syncRange(env, oldest, today, true, false, {})
-        .then(() => recordSyncSuccess(env))
-        .catch((e) => {
-          console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-          return recordSyncError(env, e?.message ?? String(e));
-        }),
-    );
+    // Intervals.icu-Sync (und die davon abhängigen Auswertungen unten) ist über
+    // INTERVALS_ENABLED bewusst deaktiviert - siehe isIntervalsEnabled in kv.js.
+    if (isIntervalsEnabled(env)) {
+      ctx.waitUntil(
+        syncRange(env, oldest, today, true, false, {})
+          .then(() => recordSyncSuccess(env))
+          .catch((e) => {
+            console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+            return recordSyncError(env, e?.message ?? String(e));
+          }),
+      );
+    }
 
     if (isFirstRunOfDay && isMondayIso(today)) {
-      ctx.waitUntil(
-        buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
-          console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
-      );
+      if (isIntervalsEnabled(env)) {
+        ctx.waitUntil(
+          buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
+            console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
+          }),
+        );
+      }
 
       // Independent of the weekly progress note above: mail the raw recent-form
       // JSON for manual analysis. A failure here must never block the report.
@@ -153,7 +160,7 @@ export default {
       );
     }
 
-    if (isFirstRunOfDay) {
+    if (isFirstRunOfDay && isIntervalsEnabled(env)) {
       ctx.waitUntil(
         writeDailyRecoveryNote(env, today).catch((e) => {
           console.error("daily recovery note failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });

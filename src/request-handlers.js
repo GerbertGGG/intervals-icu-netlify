@@ -5,7 +5,7 @@ import { writeGoalRace, deleteGoalRace, buildGoalRacePayload, computeGoalRaceInf
 import { readSyncStatus } from "./sync-status.js";
 import { getCurrentRealVdot } from "./vdot.js";
 import { maybeRebuildLongRunPlanOnGoalChange, readLongRunPlan } from "./long-run-plan.js";
-import { mustEnv } from "./kv.js";
+import { mustEnv, isIntervalsEnabled } from "./kv.js";
 
 export async function withWorkerErrorBoundary(fn) {
   try {
@@ -24,6 +24,10 @@ export async function withWorkerErrorBoundary(fn) {
 }
 
 export async function handleSyncRequest(url, env, ctx, deps) {
+  if (!isIntervalsEnabled(env)) {
+    return json({ ok: true, skipped: true, reason: "INTERVALS_ENABLED=false" });
+  }
+
   const { syncRange } = deps;
   const syncRequest = parseSyncRequest(url.searchParams);
   if (!syncRequest.ok) return syncRequest.response;
@@ -52,6 +56,10 @@ export async function handleSyncRequest(url, env, ctx, deps) {
 // self-fetch (a fresh invocation gets its own fresh subrequest budget) instead
 // of looping over the whole range synchronously.
 export async function handleBackfillProfileRequest(url, env, ctx, deps) {
+  if (!isIntervalsEnabled(env)) {
+    return json({ ok: true, skipped: true, reason: "INTERVALS_ENABLED=false" });
+  }
+
   const { syncRange } = deps;
   const chunkDays = 14;
 
@@ -90,6 +98,10 @@ export async function handleBackfillProfileRequest(url, env, ctx, deps) {
 }
 
 export async function handleRecentFormAnalysisRequest(url, env, ctx, deps) {
+  if (!isIntervalsEnabled(env)) {
+    return json({ ok: true, skipped: true, reason: "INTERVALS_ENABLED=false" });
+  }
+
   const { buildRecentFormAnalysis } = deps;
   const athleteIdParam = getSearchParamAny(url.searchParams, ["athlete_id", "athleteId"]);
   const scopedEnv = athleteIdParam ? { ...env, ATHLETE_ID: athleteIdParam } : env;
@@ -139,6 +151,10 @@ export async function handleReportEmailRequest(url, env, ctx, deps) {
 }
 
 export async function handleWeeklyProgressRequest(url, env, ctx, deps) {
+  if (!isIntervalsEnabled(env)) {
+    return json({ ok: true, skipped: true, reason: "INTERVALS_ENABLED=false" });
+  }
+
   const { buildWeeklyProgressReport: buildReport } = deps;
   const write = parseBooleanParam(url.searchParams, "write");
   const debug = parseBooleanParam(url.searchParams, "debug");
