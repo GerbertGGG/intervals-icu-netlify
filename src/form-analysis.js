@@ -546,7 +546,88 @@ function buildWellnessRecord(w) {
     protein: numOrNull(w?.Protein),
     carbs: numOrNull(w?.Carbs),
     fat: numOrNull(w?.Fat),
+    weight: numOrNull(w?.weight),
     calorieGoal: numOrNull(w?.CalorieGoal),
+  };
+}
+
+function avgOrNull(values, digits = 0) {
+  const nums = values.filter((v) => Number.isFinite(v));
+  if (!nums.length) return null;
+  const f = 10 ** digits;
+  return Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * f) / f;
+}
+
+// Nutrition view built purely from the Yazio-derived wellness fields (no extra API
+// calls): per-week averages, energy balance vs. the day's calorie budget, and
+// carbs/protein on training vs. rest days. Only days with logged calories count -
+// an unlogged day would otherwise read as a 0 kcal day and wreck the averages.
+export function buildNutritionSummary(wellnessDaily, weeks, activities) {
+  const logged = wellnessDaily.filter((w) => Number.isFinite(w.calories) && w.calories > 0);
+  if (!logged.length) return null;
+
+  const trainingDays = new Set(
+    activities.filter((a) => (Number(a?.moving_time) || 0) >= 1200).map((a) => activityDay(a)),
+  );
+  const balance = (w) => (Number.isFinite(w.calorieGoal) ? w.calories - w.calorieGoal : NaN);
+  const summarize = (list) => ({
+    days: list.length,
+    calories: avgOrNull(list.map((w) => w.calories)),
+    proteinG: avgOrNull(list.map((w) => w.protein), 1),
+    carbsG: avgOrNull(list.map((w) => w.carbs), 1),
+    fatG: avgOrNull(list.map((w) => w.fat), 1),
+    balanceKcal: avgOrNull(list.map(balance)),
+  });
+
+  const weekly = weeks.map((wk) => {
+    const inWeek = logged.filter((w) => w.date >= wk.weekStart && w.date <= wk.weekEnd);
+    return { weekStart: wk.weekStart, weekEnd: wk.weekEnd, ...summarize(inWeek) };
+  });
+  const trainingDayList = logged.filter((w) => trainingDays.has(w.date));
+  const restDayList = logged.filter((w) => !trainingDays.has(w.date));
+
+  const flags = [];
+  const overall = summarize(logged);
+  // Guideline ranges for endurance athletes: ~1.4-2.0 g protein/kg, 5-8 g carbs/kg on
+  // training days. Only evaluated when a body weight is logged in intervals.icu.
+  const weights = wellnessDaily.map((w) => w.weight).filter((v) => Number.isFinite(v) && v > 0);
+  const weightKg = weights.length ? weights[weights.length - 1] : null;
+  let perKg = null;
+  if (weightKg) {
+    perKg = {
+      weightKg,
+      proteinGPerKg: overall.proteinG != null ? Math.round((overall.proteinG / weightKg) * 100) / 100 : null,
+      carbsGPerKgTrainingDays:
+        trainingDayList.length ? Math.round((avgOrNull(trainingDayList.map((w) => w.carbs), 1) / weightKg) * 100) / 100 : null,
+    };
+    if (perKg.proteinGPerKg != null && perKg.proteinGPerKg < 1.4) {
+      flags.push({ key: "protein_low", text: `Protein im Schnitt ${perKg.proteinGPerKg} g/kg (Richtwert Ausdauersport ≥1,4 g/kg).` });
+    }
+    if (perKg.carbsGPerKgTrainingDays != null && perKg.carbsGPerKgTrainingDays < 4) {
+      flags.push({ key: "carbs_low_training", text: `Kohlenhydrate an Trainingstagen nur ${perKg.carbsGPerKgTrainingDays} g/kg (Richtwert 5–8 g/kg).` });
+    }
+  }
+  const lastWeeks = weekly.filter((w) => w.balanceKcal != null).slice(-1)[0];
+  if (lastWeeks && lastWeeks.balanceKcal > 150) {
+    flags.push({ key: "over_budget", text: `Letzte Woche Ø ${lastWeeks.balanceKcal} kcal über dem Kalorienbudget.` });
+  }
+  if (lastWeeks && lastWeeks.balanceKcal < -600) {
+    flags.push({ key: "big_deficit", text: `Letzte Woche Ø ${Math.abs(lastWeeks.balanceKcal)} kcal unter dem Budget – Regeneration/Unterversorgung im Blick behalten.` });
+  }
+  const trainSum = summarize(trainingDayList);
+  const restSum = summarize(restDayList);
+  if (trainSum.carbsG != null && restSum.carbsG != null && trainSum.carbsG - restSum.carbsG < 20) {
+    flags.push({ key: "no_carb_periodization", text: "Kohlenhydrate an Trainingstagen kaum höher als an Ruhetagen." });
+  }
+
+  return {
+    loggedDays: logged.length,
+    overall,
+    weekly,
+    trainingDays: trainSum,
+    restDays: restSum,
+    perKg,
+    flags,
   };
 }
 
@@ -1229,6 +1310,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     configuredLthrRun: athleteProfile?.lthrRun ?? null,
   };
 
+  const nutrition = buildNutritionSummary(wellnessDaily, weeks, activities);
   const trends = wellnessTrends(wellnessByDay, oldest, days);
   const assessment = assessRecoveryStatus(weeks, wellnessByDay, trends, newest, days, activities);
 
@@ -1315,6 +1397,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     paceCurves,
     hrCurves,
     wellnessDaily,
+    nutrition,
     wellnessCompleteness,
     goalInfo,
     upcomingPlan,
