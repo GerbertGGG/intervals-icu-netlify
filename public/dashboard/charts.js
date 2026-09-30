@@ -360,6 +360,32 @@
     mount(host, s);
   }
 
+  /* ---------- Cockpit: Mini-Verlauf (Lücken bleiben Lücken) und Fortschrittsbalken ---------- */
+  function spark(host, days, vals, o) {
+    const W = 220, H = 56, L = 6, R = 6, T = 8, B = 8;
+    const s = svg(W, H, o.label);
+    const pts = days.map((d, i) => [i, vals[d]]).filter(([, v]) => v != null);
+    if (!pts.length) { s.append(el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, "keine Daten")); return mount(host, s); }
+    const lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1])), pad = (hi - lo || Math.abs(hi) * 0.1 || 1) * 0.15;
+    const x = (i) => L + (W - L - R) * (i / Math.max(1, days.length - 1)), y = (v) => T + (H - T - B) * (1 - (v - (lo - pad)) / (hi - lo + 2 * pad));
+    s.append(el("line", { x1: L, x2: W - R, y1: H - B + 2, y2: H - B + 2, class: "axis" }));
+    let run = [];
+    const flush = () => { if (run.length > 1) s.append(el("polyline", { points: run.map(([i, v]) => `${x(i)},${y(v)}`).join(" "), fill: "none", stroke: "var(--accent)", "stroke-width": 2, "stroke-linejoin": "round" })); run = []; };
+    days.forEach((d, i) => { if (vals[d] == null) flush(); else run.push([i, vals[d]]); });
+    flush();
+    for (const [i, v] of pts) s.append(title(el("circle", { cx: x(i), cy: y(v), r: i === pts[pts.length - 1][0] ? 4 : 2.5, fill: "var(--accent)" }), `${U.fmtDate(days[i])}: ${U.fmt(v, o.dec ?? 0)} ${o.unit}`));
+    mount(host, s);
+  }
+  function meter(host, o) {
+    const W = 220, H = 30, L = 4, R = 4, Y = 10, BH = 12;
+    const s = svg(W, H, o.label);
+    const max = o.max, x = (v) => L + (W - L - R) * Math.min(1, Math.max(0, v / max));
+    s.append(el("rect", { x: L, y: Y, width: W - L - R, height: BH, rx: 6, fill: "var(--line)" }));
+    if (o.value != null) s.append(title(el("rect", { x: L, y: Y, width: Math.max(2, x(o.value) - L), height: BH, rx: 6, fill: o.cls ? ZONE[o.cls] : "var(--accent)" }), `${U.fmt(o.value)} ${o.unit ?? ""}`));
+    if (o.goal != null) s.append(el("line", { x1: x(o.goal), x2: x(o.goal), y1: Y - 5, y2: Y + BH + 5, stroke: "var(--text)", "stroke-width": 2 }));
+    mount(host, s);
+  }
+
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter };
 })();

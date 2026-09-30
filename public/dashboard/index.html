@@ -28,7 +28,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1.1rem; margin: 32px 0 12px; }
@@ -55,6 +55,24 @@ svg { width: 100%; height: auto; display: block; }
 svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 svg .axis { stroke: var(--line); }
 svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
+.cockpit-group { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+.cockpit-group:first-child { margin-top: 0; }
+.cockpit { display: grid; gap: 10px; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.cockpit .tile { grid-column: span 1; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tile h3 { font-size: .75rem; font-weight: 600; color: var(--muted); margin: 0; }
+.tile .val { font-size: 1.5rem; font-weight: 650; line-height: 1.15; }
+.tile .val small { font-size: .8rem; font-weight: 500; color: var(--muted); }
+.tile .sub { font-size: .8rem; color: var(--muted); }
+.cockpit .tile.span2 { grid-column: span 2; }
+.cockpit .tile.span3 { grid-column: span 3; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 900px) { .cockpit { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cockpit .tile.span2, .cockpit .tile.span3 { grid-column: 1 / -1; } }
+@media (max-width: 480px) { .cockpit { grid-template-columns: 1fr; } }
+.dots { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: .8rem; }
+.dots span { display: inline-flex; align-items: center; gap: 4px; }
+.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
+.dots i.ok { background: var(--ok); } .dots i.warn { background: var(--warn); } .dots i.bad { background: var(--bad); }
 .ready-grid { margin-top: 10px; }
 .rrow { display: grid; grid-template-columns: 96px 230px auto; gap: 8px; align-items: center; padding: 2px 0; }
 .rrow .lbl { font-size: .9rem; }
@@ -83,9 +101,13 @@ button, input { font: inherit; }
   </header>
   <div id="sources"></div>
 
-  <h2>1 · Heute</h2>
-  <div id="ready"></div>
-  <div id="today" class="grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))"></div>
+  <div id="cockpit"></div>
+
+  <h2>1 · Heute im Detail</h2>
+  <div class="grid wide" style="align-items:start">
+    <div id="ready"></div>
+    <div id="today"></div>
+  </div>
 
   <h2>2 · Trainingsverlauf</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
