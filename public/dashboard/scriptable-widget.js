@@ -390,8 +390,10 @@ function buildWidget(res) {
   const wc = card(w, W, 6), IW2 = W - 22, wp = d.weekPlan || { total: null, byDate: {} };
   const days = d.week.days.map((x) => ({ ...x, isRace: x.date === g.date, planned: wp.byDate[x.date] ?? null }));
   const raceDay = days.find((x) => x.isRace);
-  // Geplant ohne Renntag; der Renntag wird separat angehaengt
-  const plannedTotal = wp.total != null ? wp.total - (raceDay && raceDay.planned ? raceDay.planned : 0) : d.week.goal;
+  // Plan steht nur fuer heute und kuenftige Tage in den Daten; die Wochensumme (wp.total) enthaelt aber auch vergangene
+  // Tage und passt dann nicht zu den sichtbaren Tageswerten. Deshalb Summe der sichtbaren Tage, ohne Renntag.
+  const hasDayPlan = days.some((x) => x.planned != null);
+  const plannedTotal = hasDayPlan ? days.filter((x) => !x.isRace && x.planned != null).reduce((a, x) => a + x.planned, 0) : wp.total != null ? wp.total : d.week.goal;
   const wl = wc.addStack(); wl.centerAlignContent();
   text(wl, ph.reduced ? `WOCHE \u00b7 ${ph.label.toUpperCase()}` : "WOCHE \u00b7 TSS", 10, { bold: true, color: COL.muted });
   wl.addSpacer();
@@ -409,7 +411,7 @@ function buildWidget(res) {
   const sums = wc.addStack(); sums.centerAlignContent();
   text(sums, `erledigt ${fmt(d.week.total)}`, 13, { bold: true });
   sums.addSpacer(8);
-  text(sums, `geplant ${plannedTotal != null ? fmt(plannedTotal) : "\u2013"}${raceDay ? " + Rennen" : ""}`, 13, { bold: true, color: COL.muted });
+  text(sums, `${hasDayPlan ? "noch geplant" : "geplant"} ${plannedTotal != null ? fmt(plannedTotal) : "\u2013"}${raceDay ? " + Rennen" : ""}`, 13, { bold: true, color: COL.muted });
   sums.addSpacer(4);
   text(sums, "TSS", 10, { color: COL.muted });
   wc.addSpacer(3);
@@ -420,7 +422,7 @@ function buildWidget(res) {
     const c = lab.addStack(); c.layoutVertically(); c.size = new Size(IW2 / 7, 0);
     const row = (str, size, opts) => { const r = c.addStack(); r.addSpacer(); text(r, str, size, opts); r.addSpacer(); };
     row(x.isRace ? "Ziel" : n, 9, { bold: isToday || x.isRace, color: x.isRace ? COL.race : isToday ? COL.text : COL.muted });
-    row(x.load == null || (x.isRace && !x.load) ? " " : fmt(x.load), 10, { bold: true, color: x.load == null ? COL.muted : COL.text });
+    row(x.load == null || (x.isRace && !x.load) ? " " : !x.load && x.date < d.today && x.planned == null ? "\u2013" : fmt(x.load), 10, { bold: true, color: x.load == null ? COL.muted : COL.text });
     row(x.isRace ? " " : x.load == null && x.planned == null ? " " : x.planned != null ? `/${fmt(x.planned)}` : " ", 9, { color: COL.muted });
   });
   // Wochenvolumen je Disziplin: gelaufen/gefahren/geschwommen gegen Plan (Plan nur, wenn im Kalender Distanzen stehen)
