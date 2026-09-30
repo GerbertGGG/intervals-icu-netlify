@@ -58,7 +58,7 @@ export function buildWidget(d, env = {}) {
   };
 }
 
-// Zweite Widget-Ansicht ("detail"): Form, Zielkorridor, VDOT/Paces, Schwellen, Wellness-Verlauf sowie
+// Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces, Schwellen sowie
 // Ernaehrung und Heisshunger der letzten Tage. Wieder ohne Freitexte.
 export function buildWidgetDetail(d) {
   const from28 = addDays(d.today, -27);
@@ -67,12 +67,6 @@ export function buildWidgetDetail(d) {
     const date = addDays(from28, i);
     const w = byDate[date];
     return { date, ctl: w?.ctl ?? null, atl: w?.atl ?? null };
-  });
-  const days14 = Array.from({ length: 14 }, (_, i) => addDays(d.today, -13 + i));
-  const metrics = [["mood", "Stimmung"], ["motivation", "Motivation"], ["fatigue", "Ermüdung"], ["soreness", "Muskelkater"], ["sleepQuality", "Schlaf"]];
-  const wellnessRows = metrics.map(([key, label]) => {
-    const values = days14.map((day) => byDate[day]?.[key] ?? null);
-    return { label, values, max: Math.max(2, ...d.wellness.map((w) => w[key] ?? 0)) };
   });
   const last7 = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
   const nutrition = last7.map((date) => ({ date, calories: byDate[date]?.calories ?? null, goal: byDate[date]?.calorieGoal ?? null }));
@@ -89,7 +83,6 @@ export function buildWidgetDetail(d) {
     hm: r ? { goalSec: d.goal.targetTimeSecs, estimates: r.hmEstimates } : null,
     vdot: r ? { value: r.vdot, paces: r.paces, fetchedAt: r.fetchedAt } : null,
     thresholds: d.thresholds,
-    wellness: { days: days14, rows: wellnessRows },
     nutrition: { days: nutrition, hasData: nutrition.some((x) => x.calories != null) },
     cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
     sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),

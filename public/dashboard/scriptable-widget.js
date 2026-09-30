@@ -6,8 +6,8 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse "Gross", Skript auswaehlen.
-//     Zweites Widget mit Details (Form, Zielkorridor, Paces, Schwellen, Wellness): dasselbe Skript
-//     nochmal als grosses Widget anlegen und im Feld "Parameter" das Wort  detail  eintragen.
+//     Zweites, halb so grosses Widget mit weiteren Daten (Form, Halbmarathon-Zeiten vs. Ziel, VDOT und
+//     Paces, Schwellen, Ernaehrung, Heisshunger): dasselbe Skript nochmal anlegen, Groesse "Mittel".
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
 //
 // Es zeigt: Bereitschaft heute, Countdown, Frische (TSB), ACWR, heutige Einheit, Wochenbelastung
@@ -15,8 +15,8 @@
 
 const KEY_URL = "training-dashboard-url";
 const KEY_TOKEN = "training-dashboard-token";
-// Widget-Parameter "detail" (im Widget unter "Parameter" eintragen) zeigt die zweite Ansicht
-let VIEW = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase() === "detail" ? "detail" : "main";
+// Groesse bestimmt die Ansicht: Gross = Hauptansicht, Mittel = Details (Form, Zeiten vs. Ziel, Paces ...)
+let VIEW = (typeof config !== "undefined" && config.runsInWidget && config.widgetFamily === "medium") ? "detail" : "main";
 const cacheFile = () => (VIEW === "detail" ? "training-widget-detail-cache.json" : "training-widget-cache.json");
 const SPORTS = [["run", "Laufen", "#3b6ea8"], ["bike", "Rad", "#8a6bb8"], ["swim", "Schwimmen", "#3a9db0"], ["strength", "Kraft", "#b08a3a"], ["other", "Sonst.", "#9aa5b4"]];
 
@@ -360,130 +360,71 @@ function formImage(w, h, form, zones, raceDay) {
   return dc.getImage();
 }
 
-// Zeitachse mit Ziel und den Halbmarathon-Zeiten aus Runalyze und den Daniels-Rechnungen
-function corridorImage(w, h, goalSec, estimates) {
-  const dc = newCtx(w, h);
-  const all = [goalSec, ...estimates.map((e) => e.seconds)];
-  const lo = Math.floor((Math.min(...all) - 180) / 300) * 300, hi = Math.ceil((Math.max(...all) + 180) / 300) * 300;
-  const L = 24, R = 24, x = (v) => L + ((v - lo) / (hi - lo)) * (w - L - R), ay = 22;
-  const fast = new Path();
-  fast.addRect(new Rect(L, ay - 9, x(goalSec) - L, 18));
-  dc.addPath(fast);
-  dc.setFillColor(new Color(ZONE_RGB.ok, 0.16));
-  dc.fillPath();
-  dc.setFillColor(new Color("#8a94a3", 0.5));
-  dc.fillRect(new Rect(L, ay - 0.75, w - L - R, 1.5));
-  dc.setFont(Font.systemFont(8));
-  dc.setTextColor(new Color("#8a94a3"));
-  dc.setTextAlignedCenter();
-  for (let t = lo; t <= hi; t += 300) dc.drawTextInRect(`${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}`, new Rect(x(t) - 14, ay + 9, 28, 10));
-  dc.setFillColor(new Color("#5b8fd0"));
-  dc.fillRect(new Rect(x(goalSec) - 1, ay - 12, 2, 24));
-  [...estimates].sort((a, b) => a.seconds - b.seconds).forEach((e, i) => {
-    const cx = x(e.seconds);
-    dc.setFillColor(new Color("#8a94a3", e.kind === "prognosis" ? 0.25 : 1));
-    dc.fillEllipse(new Rect(cx - 4, ay - 4, 8, 8));
-    if (e.kind === "prognosis") { dc.setStrokeColor(new Color("#8a94a3")); dc.setLineWidth(1.5); dc.strokeEllipse(new Rect(cx - 4, ay - 4, 8, 8)); }
-    const short = e.kind === "prognosis" ? "Runalyze" : e.key === "vdot" ? "VDOT" : e.label.replace("aus ", "").replace("-Bestzeit", "");
-    dc.setTextColor(new Color("#a5aebb"));
-    dc.drawTextInRect(`${short} ${fmtTime(e.seconds)}`, new Rect(cx - 36, i % 2 === 0 ? 0 : 33, 72, 10));
-  });
-  return dc.getImage();
-}
-
-// Kleine Heatmap der letzten 14 Tage: fehlende Tage sind nur eine Kontur, nie "gut"
-function heatImage(w, h, rows) {
-  const dc = newCtx(w, h), L = 58, n = rows[0].values.length, rh = h / rows.length, cw = (w - L) / n;
-  dc.setFont(Font.systemFont(8));
-  dc.setTextColor(new Color("#8a94a3"));
-  rows.forEach((r, i) => {
-    dc.setTextAlignedRight();
-    dc.drawTextInRect(r.label, new Rect(0, i * rh + 1, L - 5, rh));
-    r.values.forEach((v, j) => {
-      const p = new Path();
-      p.addRoundedRect(new Rect(L + j * cw + 0.75, i * rh + 1, cw - 1.5, rh - 2.5), 2, 2);
-      dc.addPath(p);
-      if (v == null) { dc.setStrokeColor(new Color("#8a94a3", 0.4)); dc.setLineWidth(0.8); dc.strokePath(); return; }
-      dc.setFillColor(new Color("#5b8fd0", 0.16 + 0.84 * ((v - 1) / Math.max(1, r.max - 1))));
-      dc.fillPath();
-    });
-  });
-  return dc.getImage();
-}
-
-function buildDetail(res) {
+// Mittleres Widget (halb so gross): Form links, Halbmarathon-Zeiten gegen das Ziel rechts,
+// darunter VDOT/Paces, Schwellen sowie Ernaehrung und Heisshunger.
+function buildMedium(res) {
   const d = res.data;
-  const W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26), IW = W - 22;
+  const W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26);
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
-  w.setPadding(10, 13, 8, 13);
+  w.setPadding(8, 13, 6, 13);
   w.url = `${baseUrl()}/dashboard/`;
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
 
-  // Form
-  const L = d.load, fc = card(w, W, 7);
-  const fh = fc.addStack(); fh.centerAlignContent();
-  text(fh, "FORM \u00b7 28 TAGE", 10, { bold: true, color: COL.muted });
-  fh.addSpacer();
-  text(fh, `CTL ${fmt(L.ctl, 1)}`, 10, { bold: true, color: COL.accent });
-  fh.addSpacer(6);
-  text(fh, `ATL ${fmt(L.atl, 1)}`, 10, { bold: true, color: COL.muted });
-  fh.addSpacer(6);
-  text(fh, `TSB ${fmt(L.tsb, 1)}`, 10, { bold: true, color: colorFor(L.tsbCls) });
-  fc.addSpacer(3);
-  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(IW, 66, d.form, d.tsbZones)); im.imageSize = new Size(IW, 66); }
-  else text(fc, "Keine CTL/ATL-Werte im Zeitraum", 10, { color: COL.muted });
-  w.addSpacer(5);
-
-  // Zielkorridor
-  const cc = card(w, W, 7);
-  const ch = cc.addStack(); ch.centerAlignContent();
-  text(ch, "HALBMARATHON \u00b7 ZEITEN VS. ZIEL", 10, { bold: true, color: COL.muted });
-  ch.addSpacer();
-  text(ch, `Ziel ${fmtTime(d.goal.targetTimeSecs)}`, 10, { bold: true, color: COL.accent });
-  cc.addSpacer(3);
-  if (d.hm && d.hm.estimates.length) {
-    const im = cc.addImage(corridorImage(IW, 44, d.hm.goalSec, d.hm.estimates)); im.imageSize = new Size(IW, 44);
-    text(cc, "Rechnungen nach Daniels, keine Vorhersage; Runalyze-Prognose = leerer Punkt", 8, { color: COL.muted });
-  } else text(cc, "Noch kein Runalyze-Snapshot eingespielt", 10, { color: COL.muted });
-  w.addSpacer(5);
-
-  // VDOT/Paces und Schwellen
   const row = w.addStack(); row.spacing = 7;
-  const CW = Math.floor((W - 7) / 2);
-  const vc = card(row, CW, 7);
-  text(vc, d.vdot && d.vdot.value != null ? `VDOT ${fmt(d.vdot.value, 1)}` : "VDOT fehlt", 12, { bold: true });
-  if (d.vdot && d.vdot.paces) {
-    const pz = Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")]));
-    text(vc, `Easy ${pz.easy} \u00b7 Marathon ${pz.marathon}`, 9, { color: COL.muted });
-    text(vc, `Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(d.goal.targetTimeSecs / 21.0975)}`, 9, { color: COL.muted });
-  } else text(vc, "Paces fehlen (kein Snapshot)", 9, { color: COL.muted });
-  const T = d.thresholds, tc = card(row, CW, 7);
-  text(tc, "SCHWELLEN", 10, { bold: true, color: COL.muted });
-  text(tc, `Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : "fehlt"} \u00b7 FTP ${T.bike.ftp ? T.bike.ftp + " W" : "fehlt"}`, 9, { color: COL.text });
-  text(tc, `Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : "fehlt"}`, 9, { color: COL.text });
+  const LW = Math.floor((W - 7) * 0.52), RW = W - 7 - LW;
+
+  // Links: Form der letzten 28 Tage
+  const L = d.load, fc = card(row, LW, 7);
+  text(fc, "FORM \u00b7 28 TAGE", 10, { bold: true, color: COL.muted });
+  fc.addSpacer(2);
+  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 52, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 52); }
+  else text(fc, "Keine CTL/ATL-Werte", 10, { color: COL.muted });
+  fc.addSpacer(2);
+  const nums = fc.addStack(); nums.centerAlignContent();
+  text(nums, `CTL ${fmt(L.ctl, 1)}`, 10, { bold: true, color: COL.accent });
+  nums.addSpacer(5);
+  text(nums, `ATL ${fmt(L.atl, 1)}`, 10, { bold: true, color: COL.muted });
+  nums.addSpacer();
+  text(nums, `TSB ${fmt(L.tsb, 1)}`, 10, { bold: true, color: colorFor(L.tsbCls) });
+
+  // Rechts: Halbmarathon-Zeiten gegen das Ziel
+  const rc = card(row, RW, 7), goal = d.goal.targetTimeSecs;
+  const rh = rc.addStack(); rh.centerAlignContent();
+  text(rh, "HALBMARATHON", 10, { bold: true, color: COL.muted });
+  rh.addSpacer();
+  text(rh, `${d.goal.daysToGo > 0 ? d.goal.daysToGo + " Tg" : ""}`, 10, { bold: true, color: COL.muted });
+  rc.addSpacer(2);
+  const line = (label, secs, bold, tone) => {
+    const r = rc.addStack(); r.centerAlignContent();
+    text(r, label, 10, { bold, color: bold ? COL.text : COL.muted });
+    r.addSpacer();
+    text(r, fmtTime(secs), 11, { bold: true, color: tone || COL.text });
+    if (secs !== goal) { const diff = secs - goal; r.addSpacer(4); text(r, `${diff > 0 ? "+" : "\u2212"}${fmtTime(Math.abs(diff)).replace(/^0:/, "")}`, 9, { color: diff <= 0 ? COL.ok : COL.muted }); }
+  };
+  line("Ziel", goal, true, COL.accent);
+  if (d.hm && d.hm.estimates.length) {
+    // Platz fuer drei Zeilen: Runalyze-Prognose, VDOT-Rechnung und die schnellste Bestzeit-Rechnung
+    const est = d.hm.estimates, best = est.filter((e) => e.key.startsWith("best-")).sort((a, b) => a.seconds - b.seconds)[0];
+    const pick = [est.find((e) => e.kind === "prognosis"), est.find((e) => e.key === "vdot"), best].filter(Boolean).sort((a, b) => a.seconds - b.seconds);
+    for (const e of pick) {
+      const name = e.kind === "prognosis" ? "Runalyze" : e.key === "vdot" ? "VDOT" : e.label.replace("aus ", "").replace("-Bestzeit", "");
+      line(name, e.seconds, false);
+    }
+    text(rc, "Rechnung nach Daniels, keine Vorhersage", 8, { color: COL.muted, lines: 1 });
+  } else text(rc, "Noch kein Runalyze-Snapshot eingespielt", 9, { color: COL.muted, lines: 2 });
   w.addSpacer(5);
 
-  // Wellness der letzten 14 Tage
-  const wc = card(w, W, 7);
-  const wh = wc.addStack(); wh.centerAlignContent();
-  text(wh, "WELLNESS \u00b7 14 TAGE", 10, { bold: true, color: COL.muted });
-  wh.addSpacer();
-  text(wh, "dunkler = schlechter, Kontur = fehlt", 8, { color: COL.muted });
-  wc.addSpacer(3);
-  const hm = wc.addImage(heatImage(IW, 48, d.wellness.rows)); hm.imageSize = new Size(IW, 48);
-
-  w.addSpacer();
-
-  // Fuss: Ernaehrung und Heisshunger
-  const f = w.addStack(); f.centerAlignContent(); f.size = new Size(W, 0);
+  // Unten: VDOT und Paces, Schwellen, Ernaehrung, Heisshunger
+  const bc = card(w, W, 6), T = d.thresholds;
+  const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
+  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / 21.0975)}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
+  text(bc, `Schwellen: Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : "fehlt"} \u00b7 FTP ${T.bike.ftp ? T.bike.ftp + " W" : "fehlt"} \u00b7 Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : "fehlt"}`, 9, { color: COL.text });
   const last = [...d.nutrition.days].reverse().find((x) => x.calories != null);
   const nut = d.nutrition.hasData && last ? `Kalorien ${fmt(last.calories)}${last.goal ? " / " + fmt(last.goal) : ""} kcal (${dateShort(last.date)})` : "Ern\u00e4hrung: noch keine Daten";
   const cr = d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner";
-  text(f, `${nut} \u00b7 ${cr}`, 9, { color: COL.muted });
-  f.addSpacer();
   const time = new Date(d.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  text(f, res.stale ? `${time} \u00b7 veraltet` : time, 9, { color: res.stale ? COL.warn : COL.muted, align: "right" });
+  text(bc, `${nut} \u00b7 ${cr} \u00b7 ${res.stale ? "veraltet" : time}`, 9, { color: res.stale ? COL.warn : COL.muted });
   return w;
 }
 
@@ -502,7 +443,7 @@ async function main() {
     const menu = new Alert();
     menu.title = "Trainings-Widget";
     menu.addAction("Vorschau (gro\u00df)");
-    menu.addAction("Vorschau Details (zweites Widget)");
+    menu.addAction("Vorschau mittel (zweites Widget)");
     menu.addAction("Zugangsdaten setzen / zur\u00fccksetzen");
     menu.addCancelAction("Schlie\u00dfen");
     const choice = await menu.presentAlert();
@@ -514,9 +455,9 @@ async function main() {
     return;
   }
   let widget;
-  try { const res = await loadData(); widget = VIEW === "detail" ? buildDetail(res) : buildWidget(res); }
+  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : buildWidget(res); }
   catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
-  if (inWidget) Script.setWidget(widget); else await widget.presentLarge();
+  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail") await widget.presentMedium(); else await widget.presentLarge();
 }
 await main();
 Script.complete();

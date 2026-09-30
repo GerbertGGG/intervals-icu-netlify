@@ -124,14 +124,13 @@ assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { he
 const det = buildWidgetDetail(d);
 assert.equal(det.form.length, 28);
 assert.equal(det.form.at(-1).date, today);
-assert.equal(det.wellness.days.length, 14);
-assert.equal(det.wellness.rows.length, 5);
-assert.ok(det.wellness.rows.every((r) => r.values.length === 14));
 assert.equal(det.nutrition.days.length, 7);
 assert.equal(det.nutrition.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal zaehlt als keine Daten
 assert.ok(det.cravings.count >= 1);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(JSON.stringify(det)), false); // keine Freitexte
-assert.ok(JSON.stringify(det).length < 8000);
+assert.ok(JSON.stringify(det).length < 5000);
+assert.equal(det.hm, null); // ohne Runalyze-Snapshot keine Zeiten, nichts erfunden
+assert.equal(det.vdot, null);
 const detRes = await handleWidgetRequest(new Request("https://x/api/widget?view=detail", { headers: { authorization: "Bearer geheim" } }), env);
 assert.equal(detRes.status, 200);
 assert.ok("form" in (await detRes.json()));
@@ -159,6 +158,9 @@ assert.equal((await put(snap, "geheim", "GET")).status, 405);
 assert.equal((await put({ fetchedAt: "x" })).status, 400);
 assert.equal((await put(snap)).status, 200);
 const d2 = await buildDashboard(env, today);
+const det2 = buildWidgetDetail(d2);
+assert.ok(det2.hm.estimates.length >= 3);
+assert.equal(det2.vdot.paces.length, 5);
 const hm = d2.runalyze.rows.find((r) => r.label === "Halbmarathon");
 assert.equal(hm.bestSeconds, null); assert.equal(hm.prognosisSeconds, 8000);
 assert.equal(d2.runalyze.rows[0].bestSeconds, 1537);
