@@ -146,6 +146,8 @@ assert.ok(sm.food.hasData && sm.food.latest.calories > 1000 && sm.food.latest.go
 const smEmpty = buildWidgetSmall({ ...d, wellness: d.wellness.map((w) => ({ ...w, calories: null, carbs: null, calorieGoal: null })) });
 assert.equal(smEmpty.food.hasData, false); // ohne Yazio-Daten kein Wert, nichts erfunden
 assert.equal(smEmpty.food.latest, null);
+assert.ok(sm.cravings.count >= 1);
+assert.equal(smEmpty.cravings.count, sm.cravings.count); // Heisshunger unabhaengig von Yazio
 assert.ok(JSON.stringify(sm).length < 3000);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(JSON.stringify(sm)), false);
 const smRes = await handleWidgetRequest(new Request("https://x/api/widget?view=small", { headers: { authorization: "Bearer geheim" } }), env);

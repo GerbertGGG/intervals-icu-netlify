@@ -108,6 +108,8 @@ export function buildWidgetSmall(d) {
     return { date, calories: w?.calories ?? null, goal: w?.calorieGoal ?? null, carbs: w?.carbs ?? null, protein: w?.protein ?? null, fat: w?.fat ?? null };
   });
   const latest = [...foodDays].reverse().find((x) => x.calories != null) ?? null;
+  const recentCravings = d.cravings.filter((c) => c.date >= days[0]);
+  const strongest = recentCravings.filter((c) => c.strength != null).sort((a, b) => b.strength - a.strength)[0];
   return {
     generatedAt: d.generatedAt,
     today: d.today,
@@ -119,6 +121,7 @@ export function buildWidgetSmall(d) {
       medianRestingHR: medianOf(past14.map((w) => w.restingHR)),
     },
     food: { days: foodDays, latest, hasData: latest != null },
+    cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
     sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
   };
 }
