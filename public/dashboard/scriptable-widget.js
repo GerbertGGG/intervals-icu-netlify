@@ -67,29 +67,40 @@ async function askConfig() {
 /* ---------- Daten laden (mit Cache f\u00fcr Offline) ---------- */
 function cachePath() { const fm = FileManager.local(); return { fm, path: fm.joinPath(fm.documentsDirectory(), cacheFile()) }; }
 
-async function fetchJson(base, view) {
-  const req = new Request(`${base}/api/widget${view ? "?view=" + view : ""}`);
+async function fetchJson(base, path) {
+  const req = new Request(`${base}${path}`);
   req.headers = { Authorization: `Bearer ${Keychain.get(KEY_TOKEN)}` };
   req.timeoutInterval = 25;
   const body = await req.loadString();
   const status = req.response ? req.response.statusCode : 0;
   if (status === 401) throw new Error("Token wurde abgelehnt");
   if (status === 503) throw new Error("Worker: DASHBOARD_TOKEN nicht gesetzt");
-  if (status === 404) throw new Error(`404 bei ${base}/api/widget \u2013 falsche Adresse oder Deploy noch nicht durch`);
+  if (status === 404) throw new Error(`404 bei ${base}${path} \u2013 falsche Adresse oder Deploy noch nicht durch`);
   if (status !== 200) throw new Error(`Worker antwortet mit ${status}`);
   return JSON.parse(body);
 }
+const widgetPath = (view) => `/api/widget${view ? "?view=" + view : ""}`;
 
-// Gross: Hauptdaten plus Schlaf/Ernaehrung (data.small). Klein/Mittel (Schlaf, Ernaehrung): diese Daten plus das
-// Rennziel (data.goal), damit die Phase ueberall aus demselben Renndatum kommt. Die Zusatzabfrage darf scheitern.
+// Geplante TSS der laufenden Woche (gesamt und je Tag) aus dem Dashboard-Kalender. Nur heute und kuenftige Tage
+// haben einen Plan in den Daten; fuer vergangene Tage ist er dort nicht mehr enthalten.
+async function fetchWeekPlan(base, week) {
+  const dash = await fetchJson(base, "/api/dashboard");
+  const wk = dash.weeks[dash.weeks.length - 1];
+  const dates = week.days.map((x) => x.date), byDate = {};
+  for (const e of dash.planned || []) if (dates.includes(e.date) && e.load != null) byDate[e.date] = (byDate[e.date] || 0) + e.load;
+  return { total: wk && wk.plannedLoad != null ? wk.plannedLoad : null, byDate };
+}
+
+// Gross: Hauptdaten plus Wochenplan (data.weekPlan). Klein/Mittel (Schlaf, Ernaehrung): diese Daten plus das
+// Rennziel (data.goal), damit die Phase ueberall aus demselben Renndatum kommt. Zusatzabfragen duerfen scheitern.
 async function loadData() {
   const base = baseUrl();
   const { fm, path } = cachePath();
   try {
     const view = endpointView();
-    const data = await fetchJson(base, view);
-    if (view === "") data.small = await fetchJson(base, "small").catch(() => null);
-    else if (view === "small") data.goal = (await fetchJson(base, "").catch(() => null))?.goal ?? null;
+    const data = await fetchJson(base, widgetPath(view));
+    if (view === "") data.weekPlan = await fetchWeekPlan(base, data.week).catch(() => null);
+    else if (view === "small") data.goal = (await fetchJson(base, widgetPath("")).catch(() => null))?.goal ?? null;
     fm.writeString(path, JSON.stringify(data));
     return { data, stale: false, error: null };
   } catch (e) {
@@ -209,23 +220,23 @@ function ringImage(size, cls) {
   return dc.getImage();
 }
 
-// Saeulen je Wochentag (Mo-So, nur die Saeulen; Beschriftung als Text darunter). Tage nach heute bleiben leer.
+// Saeulen je Wochentag (Mo-So): erledigt als Saeule, geplant als helle Kontur dahinter. Zahlen stehen als Text darunter.
 function dayBarsImage(w, h, days, todayIso) {
   const dc = newCtx(w, h);
-  const max = Math.max(1, ...days.map((x) => x.load ?? 0)), slot = w / 7, bw = slot * 0.56, top = 11, base = h - 1;
-  dc.setFont(Font.systemFont(9));
-  dc.setTextAlignedCenter();
+  const max = Math.max(1, ...days.map((x) => Math.max(x.load ?? 0, x.planned ?? 0))), slot = w / 7, bw = slot * 0.56, top = 2, base = h - 1;
+  const bar = (cx, v, hex, alpha) => {
+    const bh = v ? Math.max(3, (v / max) * (base - top)) : 1.5, p = new Path();
+    p.addRoundedRect(new Rect(cx - bw / 2, base - bh, bw, bh), 2.5, 2.5);
+    dc.addPath(p);
+    dc.setFillColor(new Color(hex, alpha));
+    dc.fillPath();
+  };
   days.forEach((x, i) => {
     const cx = i * slot + slot / 2;
     if (x.isRace) { dc.setFillColor(new Color("#fb923c", 0.18)); const q = new Path(); q.addRoundedRect(new Rect(i * slot + 1, 0, slot - 2, h), 4, 4); dc.addPath(q); dc.fillPath(); }
-    if (x.load == null) { dc.setFillColor(new Color(x.isRace ? "#fb923c" : "#8a94a3", x.isRace ? 0.9 : 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); return; }
-    const bh = x.load ? Math.max(3, (x.load / max) * (base - top)) : 1.5;
-    const p = new Path();
-    p.addRoundedRect(new Rect(cx - bw / 2, base - bh, bw, bh), 2.5, 2.5);
-    dc.addPath(p);
-    dc.setFillColor(x.isRace ? new Color("#fb923c") : x.load ? new Color(x.date === todayIso ? "#7db0f5" : "#4f7fbf") : new Color("#8a94a3", 0.35));
-    dc.fillPath();
-    if (x.load) { dc.setTextColor(new Color("#8a94a3")); dc.drawTextInRect(String(Math.round(x.load)), new Rect(i * slot, base - bh - 11, slot, 10)); }
+    if (x.planned) bar(cx, x.planned, "#8a94a3", 0.35);
+    if (x.load == null) { if (!x.planned) { dc.setFillColor(new Color(x.isRace ? "#fb923c" : "#8a94a3", x.isRace ? 0.9 : 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); } return; }
+    bar(cx, x.load, x.isRace ? "#fb923c" : x.date === todayIso ? "#7db0f5" : "#4f7fbf", x.load ? 1 : 0.35);
   });
   return dc.getImage();
 }
@@ -254,14 +265,13 @@ function goalBarImage(w, h, week, goal) {
 }
 
 /* ---------- Widget ---------- */
-const TSB_TEXT = { ok: "frisch", warn: "belastet", bad: "stark ermüdet", none: "keine Daten" };
+const TSB_TEXT = { ok: "frisch", warn: "belastet", bad: "stark erm\u00fcdet", none: "keine Daten" };
 const ACWR_TEXT = { ok: "im Korridor", warn: "zu niedrig", bad: "zu hoch", none: "keine Daten" };
-const BOTTOM_H = 104; // Hoehe der beiden kleinen Kacheln (Schlaf, Ernaehrung) im grossen Widget
 
 function buildWidget(res) {
   const d = res.data;
   const large = config.widgetFamily === "large" || !config.runsInWidget;
-  const W = widgetInnerWidth(); // Innenbreite des großen Widgets
+  const W = widgetInnerWidth(); // Innenbreite des gro\u00dfen Widgets
   const g = d.goal, ph = racePhase(g.daysToGo);
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
@@ -274,8 +284,8 @@ function buildWidget(res) {
   head.centerAlignContent();
   head.size = new Size(W, 0);
   const left = head.addStack(); left.layoutVertically();
-  text(left, `${g.name.toUpperCase()} · ${weekdayOf(g.date)} ${dateShort(g.date)}`, 10, { bold: true, color: COL.muted });
-  text(left, `Ziel ${fmtTime(g.targetTimeSecs)} · ${fmtPace(g.targetTimeSecs / raceKm(g.name))}/km`, 10, { color: COL.muted });
+  text(left, `${g.name.toUpperCase()} \u00b7 ${weekdayOf(g.date)} ${dateShort(g.date)}`, 10, { bold: true, color: COL.muted });
+  text(left, `Ziel ${fmtTime(g.targetTimeSecs)} \u00b7 ${fmtPace(g.targetTimeSecs / raceKm(g.name))}/km`, 10, { color: COL.muted });
   head.addSpacer();
   text(head, g.daysToGo > 0 ? `noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}` : g.daysToGo === 0 ? "Heute!" : "vorbei", 22, { bold: true });
   w.addSpacer(4);
@@ -300,7 +310,7 @@ function buildWidget(res) {
     ring.backgroundImage = ringImage(26, scaleCls(it.v));
     ring.centerAlignContent();
     ring.addSpacer();
-    text(ring, it.v == null ? "–" : it.v, 12, { bold: true, align: "center" });
+    text(ring, it.v == null ? "\u2013" : it.v, 12, { bold: true, align: "center" });
     ring.addSpacer();
     text(col, it.label.replace("Muskelkater", "Muskeln").replace("Motivation", "Motiv."), 9, { color: COL.muted, align: "center" });
     if (i < r.items.length - 1) rings.addSpacer();
@@ -331,10 +341,10 @@ function buildWidget(res) {
   const pc = card(w, W, 6);
   const p = d.plan.today[0];
   if (p) {
-    const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`].filter(Boolean).join(" · ");
-    const title = /^\s*(halb)?marathon\s*$/i.test(p.name || "") ? `Vorbereitung ${g.name}` : p.name || "Einheit";
+    const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`].filter(Boolean).join(" \u00b7 ");
+    const title = /marathon/i.test(p.name || "") && !/halb/i.test(p.name || "") ? `Vorbereitung ${g.name}` : p.name || "Einheit";
     const rel = g.daysToGo === 0 ? "heute" : `in ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "en"}`;
-    const purpose = p.purpose && g.daysToGo >= 0 ? p.purpose.replace(/\b(am|zum|fürs|für das) Wochenende\b/gi, (m, a) => (a.toLowerCase() === "am" ? `am Renntag (${rel})` : `${a} Rennen (${rel})`)) : p.purpose;
+    const purpose = p.purpose && g.daysToGo >= 0 ? p.purpose.replace(/\b(am|zum|f\u00fcrs|f\u00fcr das) Wochenende\b/gi, (m, a) => (a.toLowerCase() === "am" ? `am Renntag (${rel})` : `${a} Rennen (${rel})`)) : p.purpose;
     const line = pc.addStack(); line.centerAlignContent();
     text(line, title, 13, { bold: true });
     line.addSpacer();
@@ -342,54 +352,44 @@ function buildWidget(res) {
     text(pc, purpose || "Kein Zweck im Plan hinterlegt.", 10, { color: COL.muted, lines: 2 });
   } else {
     text(pc, "Heute keine Einheit geplant", 13, { bold: true });
-    if (d.plan.next) text(pc, `Nächste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted });
+    if (d.plan.next) text(pc, `N\u00e4chste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted });
   }
   w.addSpacer(4);
 
-  // Woche: in Taper und Carb-Loading Badge statt Wochenziel und ohne Kraft-Zeile; Renntag markiert
-  const wc = card(w, W, 6), IW2 = W - 22;
-  const days = d.week.days.map((x) => ({ ...x, isRace: x.date === g.date }));
+  // Woche: TSS je Tag und fuer die Woche, erledigt und geplant. Taper/Carb-Loading: Badge, keine Kraft-Zeile.
+  const wc = card(w, W, 6), IW2 = W - 22, wp = d.weekPlan || { total: null, byDate: {} };
+  const days = d.week.days.map((x) => ({ ...x, isRace: x.date === g.date, planned: wp.byDate[x.date] ?? null }));
+  const plannedTotal = wp.total != null ? wp.total : d.week.goal;
   const wl = wc.addStack(); wl.centerAlignContent();
-  const goal = d.week.goal, total = d.week.total;
-  text(wl, ph.reduced ? `WOCHE · ${ph.label.toUpperCase()}` : "WOCHE · TSS", 10, { bold: true, color: COL.muted });
-  wl.addSpacer(6);
+  text(wl, ph.reduced ? `WOCHE \u00b7 ${ph.label.toUpperCase()}` : "WOCHE \u00b7 TSS", 10, { bold: true, color: COL.muted });
+  wl.addSpacer();
   if (ph.reduced) {
-    wl.addSpacer();
     const badge = wl.addStack();
     badge.backgroundColor = new Color(ZONE_RGB.ok, 0.2);
     badge.cornerRadius = 7;
     badge.setPadding(1, 7, 1, 7);
     text(badge, "bewusst reduziert", 10, { bold: true, color: COL.ok });
   } else {
-    text(wl, goal ? `${fmt(total)} / ${fmt(goal)}` : fmt(total), 12, { bold: true, color: goal && total >= goal ? COL.ok : COL.text });
-    if (goal) { wl.addSpacer(4); text(wl, `${Math.round((100 * total) / goal)} %`, 10, { color: COL.muted }); }
-    wl.addSpacer();
     const sc = d.week.strengthCount;
-    text(wl, `Kraft ${sc}× (Ziel 2–3)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
+    text(wl, `Kraft ${sc}\u00d7 (Ziel 2\u20133)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
   }
-  wc.addSpacer(2);
-  const bars = wc.addImage(dayBarsImage(IW2, 26, days, d.today)); bars.imageSize = new Size(IW2, 26);
+  const sums = wc.addStack(); sums.centerAlignContent();
+  text(sums, `erledigt ${fmt(d.week.total)}`, 13, { bold: true });
+  sums.addSpacer(8);
+  text(sums, `geplant ${plannedTotal != null ? fmt(plannedTotal) : "\u2013"}`, 13, { bold: true, color: COL.muted });
+  sums.addSpacer(4);
+  text(sums, "TSS", 10, { color: COL.muted });
+  wc.addSpacer(3);
+  const bars = wc.addImage(dayBarsImage(IW2, 32, days, d.today)); bars.imageSize = new Size(IW2, 32);
   const lab = wc.addStack(); lab.size = new Size(IW2, 0);
   ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => {
-    const c = lab.addStack(); c.size = new Size(IW2 / 7, 0);
-    const isToday = days[i].date === d.today, isRace = days[i].isRace;
-    c.addSpacer(); text(c, isRace ? `${n} Rennen` : n, 9, { bold: isToday || isRace, color: isRace ? COL.race : isToday ? COL.text : COL.muted }); c.addSpacer();
+    const x = days[i], isToday = x.date === d.today;
+    const c = lab.addStack(); c.layoutVertically(); c.size = new Size(IW2 / 7, 0);
+    const row = (str, size, opts) => { const r = c.addStack(); r.addSpacer(); text(r, str, size, opts); r.addSpacer(); };
+    row(x.isRace ? "Rennen" : n, 9, { bold: isToday || x.isRace, color: x.isRace ? COL.race : isToday ? COL.text : COL.muted });
+    row(x.load == null ? " " : fmt(x.load), 10, { bold: true, color: x.load == null ? COL.muted : COL.text });
+    row(x.planned != null ? `/${fmt(x.planned)}` : " ", 9, { color: COL.muted });
   });
-  if (!ph.reduced) { wc.addSpacer(2); const gb = wc.addImage(goalBarImage(IW2, 4, d.week, goal)); gb.imageSize = new Size(IW2, 4); }
-  w.addSpacer(4);
-
-  // Unten: zwei kleine Kacheln, Schlaf und Erholung links, Ernaehrung rechts
-  if (d.small) {
-    const small = { ...d.small, goal: g };
-    const brow = w.addStack(); brow.spacing = 7;
-    const cs = card(brow, CW, 6), cf = card(brow, CW, 6);
-    cs.size = new Size(CW, BOTTOM_H);
-    cf.size = new Size(CW, BOTTOM_H);
-    fillSleep(cs, small, IW, true);
-    fillFood(cf, small, IW, false, true);
-  } else {
-    text(w, "Schlaf und Ernährung: nicht abrufbar", 10, { color: COL.muted });
-  }
   w.addSpacer();
   footer(w, res, d, W);
   return w;
@@ -397,11 +397,11 @@ function buildWidget(res) {
 
 function footer(w, res, d, W) {
   const f = w.addStack(); f.centerAlignContent(); f.size = new Size(W, 0);
-  if (d.hip.recent > 0) text(f, `⚠︎ Hüfte/Leiste/Knie erwähnt (${d.hip.recent}× in 14 Tagen)`, 10, { bold: true, color: COL.bad });
+  if (d.hip.recent > 0) text(f, `\u26a0\ufe0e H\u00fcfte/Leiste/Knie erw\u00e4hnt (${d.hip.recent}\u00d7 in 14 Tagen)`, 10, { bold: true, color: COL.bad });
   else if (d.sourcesFailed.length) text(f, `Quelle fehlt: ${d.sourcesFailed.join(", ")}`, 9, { color: COL.bad });
   f.addSpacer();
   const time = new Date(d.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  text(f, res.stale ? `Stand ${time} · veraltet, keine Verbindung` : `Stand ${time}`, 9, { color: res.stale ? COL.warn : COL.muted, align: "right" });
+  text(f, res.stale ? `Stand ${time} \u00b7 veraltet, keine Verbindung` : `Stand ${time}`, 9, { color: res.stale ? COL.warn : COL.muted, align: "right" });
 }
 
 /* ---------- Zweite Ansicht: Details (Widget-Parameter "detail") ---------- */
@@ -515,8 +515,17 @@ const DAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const dayShort = (iso) => DAY_SHORT[new Date(iso + "T12:00:00").getDay()];
 
 // Saeulen der letzten 7 Tage; fehlende Tage sind nur ein kurzer Strich, nie ein Wert. Optional Ziel-Marken.
+const DAY_LABEL_H = 15;
 function smallBarsImage(w, h, values, todayIso, dates, goals) {
-  const dc = newCtx(w, h), slot = w / values.length, bw = slot * 0.6;
+  h -= DAY_LABEL_H; // Platz fuer die Wochentags-Kuerzel darunter
+  const dc = newCtx(w, h + DAY_LABEL_H), slot = w / values.length, bw = slot * 0.6;
+  dc.setFont(Font.systemFont(11));
+  dc.setTextAlignedCenter();
+  dates.forEach((dt, i) => {
+    dc.setTextColor(dt === todayIso ? new Color("#e6eaf0") : new Color("#9aa5b4"));
+    dc.setFont(dt === todayIso ? Font.boldSystemFont(11) : Font.systemFont(11));
+    dc.drawTextInRect(dayShort(dt), new Rect(i * slot, h + 2, slot, DAY_LABEL_H - 2));
+  });
   const max = Math.max(1, ...values.filter((v) => v != null), ...(goals || []).filter((v) => v != null));
   values.forEach((v, i) => {
     const cx = i * slot + slot / 2;
@@ -529,15 +538,6 @@ function smallBarsImage(w, h, values, todayIso, dates, goals) {
     if (goals && goals[i] != null) { dc.setFillColor(new Color("#ffffff", 0.85)); dc.fillRect(new Rect(cx - bw / 2 - 1, h - (goals[i] / max) * (h - 3) - 1, bw + 2, 1.5)); }
   });
   return dc.getImage();
-}
-
-// Wochentags-Kuerzel (zwei Buchstaben, 10 pt), heutiger Tag hervorgehoben
-function dayLabels(parent, dates, todayIso, width) {
-  const lab = parent.addStack(); lab.size = new Size(width, 0);
-  dates.forEach((dt) => {
-    const c = lab.addStack(); c.size = new Size(width / dates.length, 0);
-    c.addSpacer(); text(c, dayShort(dt), 10, { bold: dt === todayIso, color: dt === todayIso ? COL.text : COL.muted }); c.addSpacer();
-  });
 }
 
 function smallWidget() {
@@ -558,15 +558,14 @@ function fillSleep(w, d, IW, compact) {
   text(w, last ? `${fmt(last.hours, 1)} h` : "fehlt", compact ? 22 : 28, { bold: true, color: last ? COL.text : COL.muted });
   if (!compact) text(w, last ? (isToday ? "Schlaf heute" : `Schlaf am ${dateShort(last.date)}`) : "keine Schlafdauer in 7 Tagen", 9, { color: COL.muted });
   const t = s.days[s.days.length - 1];
-  const cmp = (v, med) => (v == null || med == null ? "" : ` (Ø ${fmt(med)})`);
+  const cmp = (v, med) => (v == null || med == null ? "" : ` (\u00d8 ${fmt(med)})`);
   text(w, `HRV ${t.hrv != null ? fmt(t.hrv) : "fehlt"}${cmp(t.hrv, s.medianHrv)}`, compact ? 9 : 10, { bold: true });
   text(w, `Ruhepuls ${t.restingHR != null ? fmt(t.restingHR) : "fehlt"}${cmp(t.restingHR, s.medianRestingHR)}`, compact ? 9 : 10, { bold: true });
   w.addSpacer(compact ? 3 : 4);
-  const bh = compact ? 20 : 30;
+  const bh = (compact ? 20 : 30) + DAY_LABEL_H;
   const im = w.addImage(smallBarsImage(IW, bh, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date)));
   im.imageSize = new Size(IW, bh);
-  dayLabels(w, s.days.map((x) => x.date), d.today, IW);
-  if (!compact) { w.addSpacer(); text(w, "Ruhepuls = Tageswert, Ø = letzte 14 Tage", 7, { color: COL.muted }); }
+  if (!compact) { w.addSpacer(); text(w, "Ruhepuls = Tageswert, \u00d8 = letzte 14 Tage", 7, { color: COL.muted }); }
 }
 
 function progressBar(w, IW, ratio, hex) {
@@ -589,9 +588,9 @@ function fillFood(w, d, IW, roomy, compact) {
   const td = f.days[f.days.length - 1] || {};
   const has = [td.calories, td.protein, td.carbs].some((x) => x != null);
   const carb = ph.name === "carbload";
-  const craving = d.cravings ? (d.cravings.count ? `Heißhunger 7 Tage: ${d.cravings.count}×${d.cravings.strongest ? `, stärkster ${d.cravings.strongest.strength}` : ""}` : "Heißhunger 7 Tage: keiner") : null;
+  const craving = d.cravings ? (d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner") : null;
   const head = w.addStack(); head.centerAlignContent();
-  text(head, "ERNÄHRUNG", 9, { bold: true, color: COL.muted });
+  text(head, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
   if (ph.label) { head.addSpacer(); text(head, ph.label, 8, { bold: true, color: COL.race }); }
   if (!compact) w.addSpacer(2);
   const main = carb ? { v: td.carbs, goal: t.carbsG } : { v: td.protein, goal: t.proteinG };
@@ -600,7 +599,7 @@ function fillFood(w, d, IW, roomy, compact) {
   line.addSpacer(5);
   const side = line.addStack(); side.layoutVertically();
   if (carb) {
-    text(side, `KH · ${has && main.v != null ? "Ziel " + fmt(main.goal) : "Tagesziel"}`, 8, { color: COL.muted });
+    text(side, `KH \u00b7 ${has && main.v != null ? "Ziel " + fmt(main.goal) : "Tagesziel"}`, 8, { color: COL.muted });
     text(side, `Protein ${fmt(has && td.protein != null ? td.protein : t.proteinG)} g`, 9, { color: COL.muted });
   } else {
     text(side, "Protein", 9, { color: COL.muted });
