@@ -1,9 +1,10 @@
 import { json } from "./http-helpers.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
-import { activityDay, activityLoad, isRun, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
-import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsWellnessRange } from "./intervals-client.js";
+import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
+import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { mustEnv } from "./kv.js";
+import { paceTargetsFromVdot } from "./vdot.js";
 import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
@@ -102,16 +103,37 @@ function buildRunRecord(a) {
   };
 }
 
+export const SPORTS = ["run", "bike", "swim", "strength", "other"];
+
+export function sportOf(a) {
+  const t = String(a?.type ?? "").toLowerCase();
+  if (t.includes("swim")) return "swim";
+  if (isBike(a)) return "bike";
+  if (isRun(a)) return "run";
+  if (t.includes("weight") || t.includes("strength") || t.includes("kraft")) return "strength";
+  return "other";
+}
+
+function emptySports() {
+  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null }]));
+}
+
 function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
   const weeks = new Map();
   for (let d = firstMonday; d <= todayIso; d = addDays(d, 7)) {
-    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, complete: addDays(d, 6) < todayIso });
+    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, bySport: emptySports(), complete: addDays(d, 6) < todayIso });
   }
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
     if (!w) continue;
-    w.load += activityLoad(a);
+    const load = activityLoad(a);
+    const sp = w.bySport[sportOf(a)];
+    sp.count += 1;
+    sp.load += load;
+    sp.minutes += (num(a?.moving_time) ?? 0) / 60;
+    sp.km += (num(a?.distance) ?? 0) / 1000;
+    w.load += load;
     if (isRun(a)) {
       w.km += (num(a?.distance) ?? 0) / 1000;
       w.runs += 1;
@@ -124,15 +146,71 @@ function buildWeeks(todayIso, activities, events) {
     const km = num(e?.distance_target ?? e?.distance);
     const load = num(e?.icu_training_load ?? e?.load_target);
     if (km != null) w.plannedKm = (w.plannedKm ?? 0) + km / 1000;
-    if (load != null) w.plannedLoad = (w.plannedLoad ?? 0) + load;
+    if (load != null) {
+      w.plannedLoad = (w.plannedLoad ?? 0) + load;
+      const sp = w.bySport[sportOf(e)];
+      sp.plannedLoad = (sp.plannedLoad ?? 0) + load;
+    }
   }
+  const r1 = (v) => Math.round(v * 10) / 10;
   return [...weeks.values()].map((w) => ({
     ...w,
-    km: Math.round(w.km * 10) / 10,
+    km: r1(w.km),
     load: Math.round(w.load),
-    plannedKm: w.plannedKm != null ? Math.round(w.plannedKm * 10) / 10 : null,
+    plannedKm: w.plannedKm != null ? r1(w.plannedKm) : null,
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
+    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null }])),
   }));
+}
+
+// Rad und Schwimmen (Triathlon): Einheitenliste und FTP-Verlauf. Kein Puls: Die Pulsregel gilt
+// hier vorsorglich mit, es gehen nur Leistung, Pace, RPE und Feel raus.
+function buildTriSessions(activities) {
+  return activities
+    .filter((a) => ["bike", "swim"].includes(sportOf(a)))
+    .map((a) => {
+      const sport = sportOf(a);
+      const distanceM = num(a?.distance) ?? 0;
+      const secs = num(a?.moving_time) ?? 0;
+      return {
+        date: activityDay(a),
+        sport,
+        name: a?.name ?? null,
+        description: a?.description ?? null,
+        distanceKm: Math.round((distanceM / 1000) * 100) / 100,
+        movingTimeMin: Math.round(secs / 60),
+        load: activityLoad(a) || null,
+        avgWatts: sport === "bike" ? num(a?.icu_average_watts) : null,
+        normWatts: sport === "bike" ? num(a?.icu_weighted_avg_watts) : null,
+        intensity: sport === "bike" ? num(a?.icu_intensity) : null,
+        pace100m: sport === "swim" && distanceM > 0 && secs > 0 ? Math.round(secs / (distanceM / 100)) : null,
+        rpe: num(a?.icu_rpe),
+        feel: num(a?.feel),
+      };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 12);
+}
+
+function findSettings(list, names) {
+  return Array.isArray(list) ? list.find((s) => Array.isArray(s?.types) && names.some((n) => s.types.includes(n))) ?? null : null;
+}
+
+function buildThresholds(settingsList, activities) {
+  const ride = findSettings(settingsList, ["Ride", "VirtualRide"]);
+  const swim = findSettings(settingsList, ["Swim", "OpenWaterSwim"]);
+  const swimMs = num(swim?.threshold_pace);
+  const trend = activities
+    .filter((a) => sportOf(a) === "bike" && num(a?.icu_ftp) != null)
+    .map((a) => ({ date: activityDay(a), ftp: num(a.icu_ftp) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    ftp: num(ride?.ftp),
+    indoorFtp: num(ride?.indoor_ftp),
+    ftpTrend: trend,
+    // threshold_pace ist bei Intervals.icu in m/s hinterlegt (Feldname ungeprüft, sonst null).
+    swimThresholdPace100m: swimMs && swimMs > 0 ? Math.round(100 / swimMs) : null,
+  };
 }
 
 function buildPlanned(events, todayIso) {
@@ -195,7 +273,11 @@ function buildRunalyze(snapshot) {
       prognosisSeconds: prog?.seconds ?? null,
     };
   });
-  return { fetchedAt: snapshot.fetchedAt, rows };
+  // Runalyze liefert nur das VDOT (effektive VO2max), keine Trainingspaces: Die Paces werden
+  // hier nach Daniels aus diesem VDOT berechnet (dieselbe Formel wie in vdot.js).
+  const vdot = snapshot.vdot ?? null;
+  const paces = vdot != null ? paceTargetsFromVdot(vdot) : null;
+  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows };
 }
 
 async function settle(label, fn) {
@@ -212,11 +294,16 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, goalR, snapshot] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
     settle("goal", () => resolveActiveGoalRace(env, todayIso)),
+    settle("sportSettings", async () => {
+      const list = await fetchIntervalsSportSettings(env);
+      if (!list) throw new Error("sport-settings nicht abrufbar");
+      return list;
+    }),
     readRunalyzeSnapshot(env),
   ]);
 
@@ -237,12 +324,14 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       intervalsWellness: wellnessR.ok ? { ok: true } : { ok: false, error: wellnessR.error },
       intervalsActivities: activitiesR.ok ? { ok: true } : { ok: false, error: activitiesR.error },
       intervalsEvents: eventsR.ok ? { ok: true } : { ok: false, error: eventsR.error },
+      intervalsSportSettings: settingsR.ok ? { ok: true } : { ok: false, error: settingsR.error },
     },
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
     runs: runs.slice(0, 20),
     fitness: buildFitness(runs),
+    triathlon: { thresholds: buildThresholds(settingsR.ok ? settingsR.value : null, activities), sessions: buildTriSessions(activities) },
     runalyze: buildRunalyze(snapshot),
     planned: buildPlanned(events, todayIso),
   };
