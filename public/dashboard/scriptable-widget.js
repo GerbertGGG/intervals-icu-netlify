@@ -32,7 +32,7 @@ const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
 const COL = {
   bg: dyn("#f2f4f7", "#0f1318"), card: dyn("#ffffff", "#1a2029"), text: dyn("#1c2430", "#e6eaf0"), muted: dyn("#5d6877", "#9aa5b4"),
   ok: dyn("#1f7a4d", "#6fd4a0"), warn: dyn("#9a6400", "#f0c060"), bad: dyn("#b3261e", "#f2a29c"), none: dyn("#5d6877", "#9aa5b4"),
-  accent: dyn("#3b6ea8", "#6da2dc"),
+  accent: dyn("#3b6ea8", "#6da2dc"), race: dyn("#c2410c", "#fb923c"),
 };
 // Groesse des Widgets in Punkten nach Bildschirmbreite (Apple-Sollwerte fuer Mittel/Gross); Innenbreite = ohne Rand
 const WIDGET_SIZES = [[430, 364, 170], [428, 364, 170], [414, 360, 169], [393, 338, 158], [390, 338, 158], [375, 321, 148]];
@@ -67,20 +67,29 @@ async function askConfig() {
 /* ---------- Daten laden (mit Cache f\u00fcr Offline) ---------- */
 function cachePath() { const fm = FileManager.local(); return { fm, path: fm.joinPath(fm.documentsDirectory(), cacheFile()) }; }
 
+async function fetchJson(base, view) {
+  const req = new Request(`${base}/api/widget${view ? "?view=" + view : ""}`);
+  req.headers = { Authorization: `Bearer ${Keychain.get(KEY_TOKEN)}` };
+  req.timeoutInterval = 25;
+  const body = await req.loadString();
+  const status = req.response ? req.response.statusCode : 0;
+  if (status === 401) throw new Error("Token wurde abgelehnt");
+  if (status === 503) throw new Error("Worker: DASHBOARD_TOKEN nicht gesetzt");
+  if (status === 404) throw new Error(`404 bei ${base}/api/widget \u2013 falsche Adresse oder Deploy noch nicht durch`);
+  if (status !== 200) throw new Error(`Worker antwortet mit ${status}`);
+  return JSON.parse(body);
+}
+
+// Gross: Hauptdaten plus Schlaf/Ernaehrung (data.small). Klein/Mittel (Schlaf, Ernaehrung): diese Daten plus das
+// Rennziel (data.goal), damit die Phase ueberall aus demselben Renndatum kommt. Die Zusatzabfrage darf scheitern.
 async function loadData() {
   const base = baseUrl();
   const { fm, path } = cachePath();
   try {
-    const req = new Request(`${base}/api/widget${endpointView() ? "?view=" + endpointView() : ""}`);
-    req.headers = { Authorization: `Bearer ${Keychain.get(KEY_TOKEN)}` };
-    req.timeoutInterval = 25;
-    const body = await req.loadString();
-    const status = req.response ? req.response.statusCode : 0;
-    if (status === 401) throw new Error("Token wurde abgelehnt");
-    if (status === 503) throw new Error("Worker: DASHBOARD_TOKEN nicht gesetzt");
-    if (status === 404) throw new Error(`404 bei ${base}/api/widget \u2013 falsche Adresse oder Deploy noch nicht durch`);
-    if (status !== 200) throw new Error(`Worker antwortet mit ${status}`);
-    const data = JSON.parse(body);
+    const view = endpointView();
+    const data = await fetchJson(base, view);
+    if (view === "") data.small = await fetchJson(base, "small").catch(() => null);
+    else if (view === "small") data.goal = (await fetchJson(base, "").catch(() => null))?.goal ?? null;
     fm.writeString(path, JSON.stringify(data));
     return { data, stale: false, error: null };
   } catch (e) {
@@ -95,6 +104,35 @@ const fmtTime = (s) => { const h = Math.floor(s / 3600), m = Math.floor((s % 360
 const fmtPace = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 const dateShort = (iso) => { const [, m, d] = iso.split("-"); return `${d}.${m}.`; };
 const colorFor = (cls) => COL[cls] || COL.none;
+const WEEKDAYS = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
+const weekdayOf = (iso) => WEEKDAYS[new Date(iso + "T12:00:00").getDay()];
+
+/* ---------- Rennphase (zentral, eine Funktion) ---------- */
+// Schwellen in Tagen bis zum Rennen (Renntag = 0, danach negativ)
+const PHASE_DAYS = { taperFrom: 7, carbloadFrom: 2, recoveryDays: 3 };
+const REDUCED_PHASES = ["taper", "carbload"]; // bewusst reduzierte Trainingswoche
+// TODO: Platzhalter, noch nicht festgelegt - bitte durch die echten Tagesziele ersetzen.
+const NUTRITION_TARGETS = {
+  normal: { proteinG: 130, kcal: 2400 },                // TODO Protein/Kalorien
+  taper: { proteinG: 130, kcal: 2400 },                 // TODO wie normal
+  carbload: { carbsG: 600, proteinG: 100, kcal: 3200 }, // TODO Carb-Loading (g Kohlenhydrate/Tag)
+  recovery: { proteinG: 140, kcal: 2400, carbsG: 350 }, // TODO Protein/Kalorien/Kohlenhydrate
+};
+const PHASE_LABEL = { taper: "Taper", carbload: "Carb-Loading", recovery: "Regeneration" };
+// Renndistanz aus dem Namen des Ziels (Renndatum und Zielzeit kommen aus den Daten selbst)
+const raceKm = (name) => (/halb/i.test(name) ? 21.0975 : /marathon/i.test(name) ? 42.195 : /10\s*k/i.test(name) ? 10 : /5\s*k/i.test(name) ? 5 : 21.0975);
+function racePhase(daysToGo) {
+  let name = "normal";
+  if (daysToGo != null) {
+    if (daysToGo > PHASE_DAYS.taperFrom) name = "normal";
+    else if (daysToGo > PHASE_DAYS.carbloadFrom) name = "taper";
+    else if (daysToGo >= 0) name = "carbload";
+    else if (daysToGo >= -PHASE_DAYS.recoveryDays) name = "recovery";
+  }
+  return { name, reduced: REDUCED_PHASES.includes(name), targets: NUTRITION_TARGETS[name], label: PHASE_LABEL[name] || null };
+}
+// Bereitschaftskreise: Skala ab 1 = bestmoeglich, niedrig ist gut. Farbe allein aus dem Wert.
+const scaleCls = (v) => (v == null ? "none" : (v - 1) / (Math.max(4, v) - 1) <= 0.34 ? "ok" : (v - 1) / (Math.max(4, v) - 1) <= 0.67 ? "warn" : "bad");
 
 /* ---------- Bausteine ---------- */
 function text(parent, str, size, { bold = false, color = COL.text, lines = 1, align = "left", opacity = 1 } = {}) {
@@ -128,8 +166,9 @@ function newCtx(w, h) {
 }
 
 // Skala mit Ampelzonen (abgerundete Segmente) und Marker mit Rand
-function gaugeImage(w, min, max, zones, value) {
-  const h = 16, dc = newCtx(w, h);
+const GAUGE_H = 16, GAUGE_TICK_H = 10;
+function gaugeImage(w, min, max, zones, value, ticks = [], tickDigits = 0) {
+  const h = GAUGE_H + (ticks.length ? GAUGE_TICK_H : 0), dc = newCtx(w, h);
   const x = (v) => ((Math.min(max, Math.max(min, v)) - min) / (max - min)) * w;
   for (const z of zones) {
     const a = x(z.from) + 1, b = x(z.to) - 1;
@@ -147,6 +186,14 @@ function gaugeImage(w, min, max, zones, value) {
     dc.setStrokeColor(new Color("#0f1318"));
     dc.setLineWidth(2);
     dc.strokeEllipse(new Rect(cx - 6, 2, 12, 12));
+  }
+  // Grenzwerte an den Segmentuebergaengen
+  dc.setFont(Font.systemFont(8));
+  dc.setTextColor(new Color("#8a94a3"));
+  dc.setTextAlignedCenter();
+  for (const t of ticks) {
+    const cx = Math.min(w - 14, Math.max(14, x(t)));
+    dc.drawTextInRect(fmt(t, tickDigits), new Rect(cx - 14, GAUGE_H - 1, 28, GAUGE_TICK_H));
   }
   return dc.getImage();
 }
@@ -170,12 +217,13 @@ function dayBarsImage(w, h, days, todayIso) {
   dc.setTextAlignedCenter();
   days.forEach((x, i) => {
     const cx = i * slot + slot / 2;
-    if (x.load == null) { dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); return; }
+    if (x.isRace) { dc.setFillColor(new Color("#fb923c", 0.18)); const q = new Path(); q.addRoundedRect(new Rect(i * slot + 1, 0, slot - 2, h), 4, 4); dc.addPath(q); dc.fillPath(); }
+    if (x.load == null) { dc.setFillColor(new Color(x.isRace ? "#fb923c" : "#8a94a3", x.isRace ? 0.9 : 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); return; }
     const bh = x.load ? Math.max(3, (x.load / max) * (base - top)) : 1.5;
     const p = new Path();
     p.addRoundedRect(new Rect(cx - bw / 2, base - bh, bw, bh), 2.5, 2.5);
     dc.addPath(p);
-    dc.setFillColor(x.load ? new Color(x.date === todayIso ? "#7db0f5" : "#4f7fbf") : new Color("#8a94a3", 0.35));
+    dc.setFillColor(x.isRace ? new Color("#fb923c") : x.load ? new Color(x.date === todayIso ? "#7db0f5" : "#4f7fbf") : new Color("#8a94a3", 0.35));
     dc.fillPath();
     if (x.load) { dc.setTextColor(new Color("#8a94a3")); dc.drawTextInRect(String(Math.round(x.load)), new Rect(i * slot, base - bh - 11, slot, 10)); }
   });
@@ -206,124 +254,142 @@ function goalBarImage(w, h, week, goal) {
 }
 
 /* ---------- Widget ---------- */
-const TSB_TEXT = { ok: "frisch", warn: "belastet", bad: "stark erm\u00fcdet", none: "keine Daten" };
+const TSB_TEXT = { ok: "frisch", warn: "belastet", bad: "stark ermüdet", none: "keine Daten" };
 const ACWR_TEXT = { ok: "im Korridor", warn: "zu niedrig", bad: "zu hoch", none: "keine Daten" };
+const BOTTOM_H = 104; // Hoehe der beiden kleinen Kacheln (Schlaf, Ernaehrung) im grossen Widget
 
 function buildWidget(res) {
   const d = res.data;
   const large = config.widgetFamily === "large" || !config.runsInWidget;
-  const W = widgetInnerWidth(); // Innenbreite des gro\u00dfen Widgets
+  const W = widgetInnerWidth(); // Innenbreite des großen Widgets
+  const g = d.goal, ph = racePhase(g.daysToGo);
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
-  w.setPadding(10, 13, 8, 13);
+  w.setPadding(8, 13, 6, 13);
   w.url = `${baseUrl()}/dashboard/`;
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
 
-  // Kopf: Rennen und Countdown
-  const g = d.goal;
+  // Kopf: Rennen (dynamisch aus dem Renndatum), Ziel und Countdown
   const head = w.addStack();
   head.centerAlignContent();
   head.size = new Size(W, 0);
   const left = head.addStack(); left.layoutVertically();
-  text(left, `${g.name.toUpperCase()} \u00b7 ${dateShort(g.date)}`, 10, { bold: true, color: COL.muted });
-  text(left, `Ziel ${fmtTime(g.targetTimeSecs)} \u00b7 ${fmtPace(g.targetTimeSecs / 21.0975)}/km`, 10, { color: COL.muted });
-  if (d.hm && d.hm.estimates.length) {
-    const rz = d.hm.estimates.find((e) => e.kind === "prognosis"), calc = d.hm.estimates.find((e) => e.key === "vdot");
-    const bits = [rz && `Runalyze ${fmtTime(rz.seconds)}`, calc && `Rechnung ${fmtTime(calc.seconds)}`].filter(Boolean);
-    if (bits.length) text(left, bits.join(" \u00b7 "), 10, { color: COL.muted });
-  }
+  text(left, `${g.name.toUpperCase()} · ${weekdayOf(g.date)} ${dateShort(g.date)}`, 10, { bold: true, color: COL.muted });
+  text(left, `Ziel ${fmtTime(g.targetTimeSecs)} · ${fmtPace(g.targetTimeSecs / raceKm(g.name))}/km`, 10, { color: COL.muted });
   head.addSpacer();
-  text(head, g.daysToGo > 0 ? `noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}` : g.daysToGo === 0 ? "Heute!" : "vorbei", 23, { bold: true });
-  w.addSpacer(5);
+  text(head, g.daysToGo > 0 ? `noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}` : g.daysToGo === 0 ? "Heute!" : "vorbei", 22, { bold: true });
+  w.addSpacer(4);
 
-  // Bereitschaft
+  // Bereitschaft: alle Kreise nach demselben Ampelschema, Farbe aus dem Wert
   const r = d.readiness, v = r.verdict;
-  const rc = card(w, W);
+  const rc = card(w, W, 6);
   const top = rc.addStack(); top.centerAlignContent();
   const pill = top.addStack();
   pill.backgroundColor = new Color(ZONE_RGB[v.cls] || ZONE_RGB.none, 0.2);
   pill.cornerRadius = 9;
-  pill.setPadding(2, 9, 2, 9);
-  text(pill, v.text, 15, { bold: true, color: colorFor(v.cls) });
+  pill.setPadding(1, 9, 1, 9);
+  text(pill, v.text, 14, { bold: true, color: colorFor(v.cls) });
   top.addSpacer();
   text(top, r.sleepHours != null ? `${fmt(r.sleepHours, 1)} h Schlaf` : "Schlafdauer fehlt", 11, { color: COL.muted });
-  rc.addSpacer(4);
+  rc.addSpacer(3);
   const rings = rc.addStack();
   for (const [i, it] of r.items.entries()) {
     const col = rings.addStack(); col.layoutVertically(); col.centerAlignContent();
     const ring = col.addStack();
-    ring.size = new Size(30, 30);
-    ring.backgroundImage = ringImage(30, it.cls);
+    ring.size = new Size(26, 26);
+    ring.backgroundImage = ringImage(26, scaleCls(it.v));
     ring.centerAlignContent();
     ring.addSpacer();
-    text(ring, it.v == null ? "\u2013" : it.v, 13, { bold: true, align: "center" });
+    text(ring, it.v == null ? "–" : it.v, 12, { bold: true, align: "center" });
     ring.addSpacer();
     text(col, it.label.replace("Muskelkater", "Muskeln").replace("Motivation", "Motiv."), 9, { color: COL.muted, align: "center" });
     if (i < r.items.length - 1) rings.addSpacer();
   }
   if (v.cls === "none") text(rc, v.sub, 10, { color: COL.muted });
-  w.addSpacer(5);
+  w.addSpacer(4);
 
-  // Frische und ACWR
+  // Frische und ACWR, Grenzwerte unter den Skalen
   const L = d.load, T = d.thresholds;
   const row = w.addStack(); row.spacing = 7;
   const CW = Math.floor((W - 7) / 2), IW = CW - 22;
   const gcol = (title, valueTxt, cls, statusTxt, img) => {
-    const c = card(row, CW, 7);
+    const c = card(row, CW, 6);
     text(c, title, 10, { bold: true, color: COL.muted });
     const line = c.addStack(); line.centerAlignContent();
     text(line, valueTxt, 17, { bold: true, color: colorFor(cls) });
     line.addSpacer();
     text(line, statusTxt, 10, { color: colorFor(cls) });
-    c.addSpacer(2);
-    const im = c.addImage(img); im.imageSize = new Size(IW, 16);
+    const im = c.addImage(img); im.imageSize = new Size(IW, GAUGE_H + GAUGE_TICK_H);
   };
-  gcol("FRISCHE (TSB)", L.tsb == null ? "fehlt" : fmt(L.tsb, 1), L.tsbCls, TSB_TEXT[L.tsbCls], gaugeImage(IW, -40, 30, [{ from: -40, to: T.tsb.warn, cls: "bad" }, { from: T.tsb.warn, to: T.tsb.ok, cls: "warn" }, { from: T.tsb.ok, to: 30, cls: "ok" }], L.tsb));
-  gcol("ACWR (ATL/CTL)", L.acwr == null ? "fehlt" : fmt(L.acwr, 2), L.acwrCls, ACWR_TEXT[L.acwrCls], gaugeImage(IW, 0.4, 1.8, [{ from: 0.4, to: T.acwr.lo, cls: "warn" }, { from: T.acwr.lo, to: T.acwr.hi, cls: "ok" }, { from: T.acwr.hi, to: 1.8, cls: "bad" }], L.acwr));
-  w.addSpacer(5);
+  gcol("FRISCHE (TSB)", L.tsb == null ? "fehlt" : fmt(L.tsb, 1), L.tsbCls, TSB_TEXT[L.tsbCls], gaugeImage(IW, -40, 30, [{ from: -40, to: T.tsb.warn, cls: "bad" }, { from: T.tsb.warn, to: T.tsb.ok, cls: "warn" }, { from: T.tsb.ok, to: 30, cls: "ok" }], L.tsb, [T.tsb.warn, T.tsb.ok], 0));
+  gcol("ACWR (ATL/CTL)", L.acwr == null ? "fehlt" : fmt(L.acwr, 2), L.acwrCls, ACWR_TEXT[L.acwrCls], gaugeImage(IW, 0.4, 1.8, [{ from: 0.4, to: T.acwr.lo, cls: "warn" }, { from: T.acwr.lo, to: T.acwr.hi, cls: "ok" }, { from: T.acwr.hi, to: 1.8, cls: "bad" }], L.acwr, [T.acwr.lo, T.acwr.hi], 1));
+  w.addSpacer(4);
 
   if (!large) { footer(w, res, d, W); return w; }
 
-  // Heutige Einheit
-  const pc = card(w, W, 7);
+  // Heutige Einheit: Titel aus der Renndistanz, Beschreibung bis zu zwei Zeilen, Bezug zum Renntag statt "Wochenende"
+  const pc = card(w, W, 6);
   const p = d.plan.today[0];
   if (p) {
-    const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`].filter(Boolean).join(" \u00b7 ");
+    const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`].filter(Boolean).join(" · ");
+    const title = /^\s*(halb)?marathon\s*$/i.test(p.name || "") ? `Vorbereitung ${g.name}` : p.name || "Einheit";
+    const rel = g.daysToGo === 0 ? "heute" : `in ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "en"}`;
+    const purpose = p.purpose && g.daysToGo >= 0 ? p.purpose.replace(/\b(am|zum|fürs|für das) Wochenende\b/gi, (m, a) => (a.toLowerCase() === "am" ? `am Renntag (${rel})` : `${a} Rennen (${rel})`)) : p.purpose;
     const line = pc.addStack(); line.centerAlignContent();
-    text(line, p.name || "Einheit", 13, { bold: true });
+    text(line, title, 13, { bold: true });
     line.addSpacer();
     if (meta) text(line, meta, 11, { color: COL.muted });
-    text(pc, p.purpose || "Kein Zweck im Plan hinterlegt.", 10, { color: COL.muted, lines: 1 });
+    text(pc, purpose || "Kein Zweck im Plan hinterlegt.", 10, { color: COL.muted, lines: 2 });
   } else {
     text(pc, "Heute keine Einheit geplant", 13, { bold: true });
-    if (d.plan.next) text(pc, `N\u00e4chste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted });
+    if (d.plan.next) text(pc, `Nächste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted });
   }
-  w.addSpacer(5);
+  w.addSpacer(4);
 
-  // Woche: TSS je Tag, Fortschritt zum Wochenziel, Kraft
-  const wc = card(w, W, 7), IW2 = W - 22;
+  // Woche: in Taper und Carb-Loading Badge statt Wochenziel und ohne Kraft-Zeile; Renntag markiert
+  const wc = card(w, W, 6), IW2 = W - 22;
+  const days = d.week.days.map((x) => ({ ...x, isRace: x.date === g.date }));
   const wl = wc.addStack(); wl.centerAlignContent();
   const goal = d.week.goal, total = d.week.total;
-  text(wl, "WOCHE \u00b7 TSS", 10, { bold: true, color: COL.muted });
+  text(wl, ph.reduced ? `WOCHE · ${ph.label.toUpperCase()}` : "WOCHE · TSS", 10, { bold: true, color: COL.muted });
   wl.addSpacer(6);
-  text(wl, goal ? `${fmt(total)} / ${fmt(goal)}` : fmt(total), 12, { bold: true, color: goal && total >= goal ? COL.ok : COL.text });
-  if (goal) { wl.addSpacer(4); text(wl, `${Math.round((100 * total) / goal)} %`, 10, { color: COL.muted }); }
-  wl.addSpacer();
-  const sc = d.week.strengthCount;
-  text(wl, `Kraft ${sc}\u00d7 (Ziel 2\u20133)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
-  const sub = [goal ? `Ziel ${fmt(goal)} ${d.week.goalSource === "plan" ? "laut Plan" : "eingestellt"}` : "Kein Wochenziel im Plan hinterlegt", d.week.lastTotal != null ? `Vorwoche ${fmt(d.week.lastTotal)}` : null].filter(Boolean).join(" \u00b7 ");
-  text(wc, sub, 9, { color: COL.muted });
+  if (ph.reduced) {
+    wl.addSpacer();
+    const badge = wl.addStack();
+    badge.backgroundColor = new Color(ZONE_RGB.ok, 0.2);
+    badge.cornerRadius = 7;
+    badge.setPadding(1, 7, 1, 7);
+    text(badge, "bewusst reduziert", 10, { bold: true, color: COL.ok });
+  } else {
+    text(wl, goal ? `${fmt(total)} / ${fmt(goal)}` : fmt(total), 12, { bold: true, color: goal && total >= goal ? COL.ok : COL.text });
+    if (goal) { wl.addSpacer(4); text(wl, `${Math.round((100 * total) / goal)} %`, 10, { color: COL.muted }); }
+    wl.addSpacer();
+    const sc = d.week.strengthCount;
+    text(wl, `Kraft ${sc}× (Ziel 2–3)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
+  }
   wc.addSpacer(2);
-  const bars = wc.addImage(dayBarsImage(IW2, 30, d.week.days, d.today)); bars.imageSize = new Size(IW2, 30);
+  const bars = wc.addImage(dayBarsImage(IW2, 26, days, d.today)); bars.imageSize = new Size(IW2, 26);
   const lab = wc.addStack(); lab.size = new Size(IW2, 0);
   ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => {
     const c = lab.addStack(); c.size = new Size(IW2 / 7, 0);
-    const isToday = d.week.days[i].date === d.today;
-    c.addSpacer(); text(c, n, 9, { bold: isToday, color: isToday ? COL.text : COL.muted }); c.addSpacer();
+    const isToday = days[i].date === d.today, isRace = days[i].isRace;
+    c.addSpacer(); text(c, isRace ? `${n} Rennen` : n, 9, { bold: isToday || isRace, color: isRace ? COL.race : isToday ? COL.text : COL.muted }); c.addSpacer();
   });
-  wc.addSpacer(3);
-  const gb = wc.addImage(goalBarImage(IW2, 5, d.week, goal)); gb.imageSize = new Size(IW2, 5);
+  if (!ph.reduced) { wc.addSpacer(2); const gb = wc.addImage(goalBarImage(IW2, 4, d.week, goal)); gb.imageSize = new Size(IW2, 4); }
+  w.addSpacer(4);
 
+  // Unten: zwei kleine Kacheln, Schlaf und Erholung links, Ernaehrung rechts
+  if (d.small) {
+    const small = { ...d.small, goal: g };
+    const brow = w.addStack(); brow.spacing = 7;
+    const cs = card(brow, CW, 6), cf = card(brow, CW, 6);
+    cs.size = new Size(CW, BOTTOM_H);
+    cf.size = new Size(CW, BOTTOM_H);
+    fillSleep(cs, small, IW, true);
+    fillFood(cf, small, IW, false, true);
+  } else {
+    text(w, "Schlaf und Ernährung: nicht abrufbar", 10, { color: COL.muted });
+  }
   w.addSpacer();
   footer(w, res, d, W);
   return w;
@@ -331,11 +397,11 @@ function buildWidget(res) {
 
 function footer(w, res, d, W) {
   const f = w.addStack(); f.centerAlignContent(); f.size = new Size(W, 0);
-  if (d.hip.recent > 0) text(f, `\u26a0\ufe0e H\u00fcfte/Leiste/Knie erw\u00e4hnt (${d.hip.recent}\u00d7 in 14 Tagen)`, 10, { bold: true, color: COL.bad });
+  if (d.hip.recent > 0) text(f, `⚠︎ Hüfte/Leiste/Knie erwähnt (${d.hip.recent}× in 14 Tagen)`, 10, { bold: true, color: COL.bad });
   else if (d.sourcesFailed.length) text(f, `Quelle fehlt: ${d.sourcesFailed.join(", ")}`, 9, { color: COL.bad });
   f.addSpacer();
   const time = new Date(d.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-  text(f, res.stale ? `Stand ${time} \u00b7 veraltet, keine Verbindung` : `Stand ${time}`, 9, { color: res.stale ? COL.warn : COL.muted, align: "right" });
+  text(f, res.stale ? `Stand ${time} · veraltet, keine Verbindung` : `Stand ${time}`, 9, { color: res.stale ? COL.warn : COL.muted, align: "right" });
 }
 
 /* ---------- Zweite Ansicht: Details (Widget-Parameter "detail") ---------- */
@@ -434,7 +500,7 @@ function buildMedium(res) {
   // Unten: VDOT und Paces, Schwellen, Ernaehrung, Heisshunger
   const bc = card(w, W, 6), T = d.thresholds;
   const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
-  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / 21.0975)}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
+  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / raceKm(d.goal.name))}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
   text(bc, `Schwellen: Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : "fehlt"} \u00b7 FTP ${T.bike.ftp ? T.bike.ftp + " W" : "fehlt"} \u00b7 Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : "fehlt"}`, 9, { color: COL.text });
   const last = [...d.nutrition.days].reverse().find((x) => x.calories != null);
   const nut = d.nutrition.hasData && last ? `Kalorien ${fmt(last.calories)}${last.goal ? " / " + fmt(last.goal) : ""} kcal (${dateShort(last.date)})` : "Ern\u00e4hrung: noch keine Daten";
@@ -444,9 +510,9 @@ function buildMedium(res) {
   return w;
 }
 
-/* ---------- Schlaf und Erholung, Ernaehrung (klein, und zusammen als mittleres Widget) ---------- */
-const DAY_INITIAL = ["S", "M", "D", "M", "D", "F", "S"];
-const dayLetter = (iso) => DAY_INITIAL[new Date(iso + "T12:00:00").getDay()];
+/* ---------- Schlaf und Erholung, Ernaehrung (klein, mittel und unten im grossen Widget) ---------- */
+const DAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+const dayShort = (iso) => DAY_SHORT[new Date(iso + "T12:00:00").getDay()];
 
 // Saeulen der letzten 7 Tage; fehlende Tage sind nur ein kurzer Strich, nie ein Wert. Optional Ziel-Marken.
 function smallBarsImage(w, h, values, todayIso, dates, goals) {
@@ -465,11 +531,12 @@ function smallBarsImage(w, h, values, todayIso, dates, goals) {
   return dc.getImage();
 }
 
+// Wochentags-Kuerzel (zwei Buchstaben, 10 pt), heutiger Tag hervorgehoben
 function dayLabels(parent, dates, todayIso, width) {
   const lab = parent.addStack(); lab.size = new Size(width, 0);
   dates.forEach((dt) => {
     const c = lab.addStack(); c.size = new Size(width / dates.length, 0);
-    c.addSpacer(); text(c, dayLetter(dt), 8, { bold: dt === todayIso, color: dt === todayIso ? COL.text : COL.muted }); c.addSpacer();
+    c.addSpacer(); text(c, dayShort(dt), 10, { bold: dt === todayIso, color: dt === todayIso ? COL.text : COL.muted }); c.addSpacer();
   });
 }
 
@@ -482,56 +549,71 @@ function smallWidget() {
   return w;
 }
 
-// Inhalt "Schlaf und Erholung" in einen beliebigen Container (Widget oder Karte)
-function fillSleep(w, d, IW) {
+// Inhalt "Schlaf und Erholung" in einen beliebigen Container (Widget oder Karte); compact = im grossen Widget
+function fillSleep(w, d, IW, compact) {
   const s = d.sleep;
-  text(w, "SCHLAF & ERHOLUNG", 9, { bold: true, color: COL.muted });
-  w.addSpacer(2);
+  text(w, "SCHLAF UND ERHOLUNG", 9, { bold: true, color: COL.muted });
+  if (!compact) w.addSpacer(2);
   const last = s.latest, isToday = last && last.date === d.today;
-  text(w, last ? `${fmt(last.hours, 1)} h` : "fehlt", 28, { bold: true, color: last ? COL.text : COL.muted });
-  text(w, last ? (isToday ? "Schlaf heute" : `Schlaf am ${dateShort(last.date)}`) : "keine Schlafdauer in 7 Tagen", 9, { color: COL.muted });
-  w.addSpacer(3);
+  text(w, last ? `${fmt(last.hours, 1)} h` : "fehlt", compact ? 22 : 28, { bold: true, color: last ? COL.text : COL.muted });
+  if (!compact) text(w, last ? (isToday ? "Schlaf heute" : `Schlaf am ${dateShort(last.date)}`) : "keine Schlafdauer in 7 Tagen", 9, { color: COL.muted });
   const t = s.days[s.days.length - 1];
-  const cmp = (v, med) => (v == null || med == null ? "" : ` (\u00d8 ${fmt(med)})`);
-  text(w, `HRV ${t.hrv != null ? fmt(t.hrv) : "fehlt"}${cmp(t.hrv, s.medianHrv)}`, 10, { bold: true });
-  text(w, `Ruhepuls ${t.restingHR != null ? fmt(t.restingHR) : "fehlt"}${cmp(t.restingHR, s.medianRestingHR)}`, 10, { bold: true });
-  w.addSpacer(4);
-  const im = w.addImage(smallBarsImage(IW, 30, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date)));
-  im.imageSize = new Size(IW, 30);
+  const cmp = (v, med) => (v == null || med == null ? "" : ` (Ø ${fmt(med)})`);
+  text(w, `HRV ${t.hrv != null ? fmt(t.hrv) : "fehlt"}${cmp(t.hrv, s.medianHrv)}`, compact ? 9 : 10, { bold: true });
+  text(w, `Ruhepuls ${t.restingHR != null ? fmt(t.restingHR) : "fehlt"}${cmp(t.restingHR, s.medianRestingHR)}`, compact ? 9 : 10, { bold: true });
+  w.addSpacer(compact ? 3 : 4);
+  const bh = compact ? 20 : 30;
+  const im = w.addImage(smallBarsImage(IW, bh, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date)));
+  im.imageSize = new Size(IW, bh);
   dayLabels(w, s.days.map((x) => x.date), d.today, IW);
-  w.addSpacer();
-  text(w, "Ruhepuls = Tageswert, \u00d8 = letzte 14 Tage", 7, { color: COL.muted });
+  if (!compact) { w.addSpacer(); text(w, "Ruhepuls = Tageswert, Ø = letzte 14 Tage", 7, { color: COL.muted }); }
 }
 
-// Inhalt "Ernaehrung": Kalorien gegen Tagesziel des letzten Tages mit Daten; ohne Daten ein klarer Leerzustand
-function fillFood(w, d, IW, roomy) {
-  const f = d.food;
-  const craving = d.cravings ? (d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner") : null;
-  text(w, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
-  w.addSpacer(2);
-  if (!f.hasData) {
-    text(w, "Noch keine Daten", 16, { bold: true });
-    text(w, "Sobald Yazio synchronisiert, erscheinen hier Kalorien und Kohlenhydrate.", 9, { color: COL.muted, lines: 4 });
-    w.addSpacer(4);
-    const im0 = w.addImage(smallBarsImage(IW, 30, f.days.map(() => null), d.today, f.days.map((x) => x.date)));
-    im0.imageSize = new Size(IW, 30);
-    dayLabels(w, f.days.map((x) => x.date), d.today, IW);
-    if (craving) { w.addSpacer(); text(w, craving, 9, { bold: true, color: COL.text }); }
-    return;
+function progressBar(w, IW, ratio, hex) {
+  const dc = newCtx(IW, 6), track = new Path();
+  track.addRoundedRect(new Rect(0, 0, IW, 6), 3, 3);
+  dc.addPath(track); dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillPath();
+  if (ratio > 0) {
+    const bar = new Path();
+    bar.addRoundedRect(new Rect(0, 0, Math.max(6, Math.min(1, ratio) * IW), 6), 3, 3);
+    dc.addPath(bar); dc.setFillColor(new Color(hex)); dc.fillPath();
   }
-  const l = f.latest;
-  text(w, `${fmt(l.calories)}`, 26, { bold: true });
-  text(w, `${l.goal ? `von ${fmt(l.goal)} kcal` : "kcal"} \u00b7 ${l.date === d.today ? "heute" : dateShort(l.date)}`, 9, { color: COL.muted });
+  const im = w.addImage(dc.getImage()); im.imageSize = new Size(IW, 6);
+}
+
+// Inhalt "Ernaehrung", nach Rennphase: normal/taper Protein gross und darunter Kalorien, recovery zusaetzlich
+// Kohlenhydrate, carbload Kohlenhydrate gross und Protein klein daneben. Ohne heutige Yazio-Werte steht das
+// Tagesziel der Phase mit leerem Balken da.
+function fillFood(w, d, IW, roomy, compact) {
+  const f = d.food, ph = racePhase(d.goal ? d.goal.daysToGo : null), t = ph.targets;
+  const td = f.days[f.days.length - 1] || {};
+  const has = [td.calories, td.protein, td.carbs].some((x) => x != null);
+  const carb = ph.name === "carbload";
+  const craving = d.cravings ? (d.cravings.count ? `Heißhunger 7 Tage: ${d.cravings.count}×${d.cravings.strongest ? `, stärkster ${d.cravings.strongest.strength}` : ""}` : "Heißhunger 7 Tage: keiner") : null;
+  const head = w.addStack(); head.centerAlignContent();
+  text(head, "ERNÄHRUNG", 9, { bold: true, color: COL.muted });
+  if (ph.label) { head.addSpacer(); text(head, ph.label, 8, { bold: true, color: COL.race }); }
+  if (!compact) w.addSpacer(2);
+  const main = carb ? { v: td.carbs, goal: t.carbsG } : { v: td.protein, goal: t.proteinG };
+  const line = w.addStack(); line.bottomAlignContent();
+  text(line, `${fmt(has && main.v != null ? main.v : main.goal)} g`, compact ? 22 : 26, { bold: true, color: has && main.v != null ? COL.text : COL.muted });
+  line.addSpacer(5);
+  const side = line.addStack(); side.layoutVertically();
+  if (carb) {
+    text(side, `KH · ${has && main.v != null ? "Ziel " + fmt(main.goal) : "Tagesziel"}`, 8, { color: COL.muted });
+    text(side, `Protein ${fmt(has && td.protein != null ? td.protein : t.proteinG)} g`, 9, { color: COL.muted });
+  } else {
+    text(side, "Protein", 9, { color: COL.muted });
+    text(side, has && main.v != null ? `Ziel ${fmt(main.goal)}` : "Tagesziel", 8, { color: COL.muted });
+  }
+  w.addSpacer(2);
+  text(w, has && td.calories != null ? `${fmt(td.calories)} / ${fmt(t.kcal)} kcal` : `${fmt(t.kcal)} kcal Ziel`, 10, { bold: true });
+  if (ph.name === "recovery") text(w, has && td.carbs != null ? `KH ${fmt(td.carbs)} / ${fmt(t.carbsG)} g` : `KH ${fmt(t.carbsG)} g Ziel`, 9, { color: COL.muted });
   w.addSpacer(3);
-  const macros = [l.carbs != null && `KH ${fmt(l.carbs)} g`, l.protein != null && `Eiwei\u00df ${fmt(l.protein)} g`, l.fat != null && `Fett ${fmt(l.fat)} g`].filter(Boolean);
-  text(w, macros.length ? macros.join(" \u00b7 ") : "Makros fehlen", 9, { color: COL.text, lines: 2 });
-  w.addSpacer(4);
-  const im = w.addImage(smallBarsImage(IW, 30, f.days.map((x) => x.calories), d.today, f.days.map((x) => x.date), f.days.map((x) => x.goal)));
-  im.imageSize = new Size(IW, 30);
-  dayLabels(w, f.days.map((x) => x.date), d.today, IW);
-  w.addSpacer();
-  if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
-  text(w, "Wei\u00dfe Marke = Tagesziel", 7, { color: COL.muted });
+  progressBar(w, IW, has && main.v != null && main.goal ? main.v / main.goal : 0, carb ? "#fb923c" : "#4f7fbf");
+  if (compact) w.addSpacer(2); else w.addSpacer();
+  if (!has) text(w, "Yazio noch nicht synchron", 8, { bold: true, color: COL.warn });
+  else if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
 }
 
 function buildSleep(res) { const w = smallWidget(); fillSleep(w, res.data, 134); return w; }
