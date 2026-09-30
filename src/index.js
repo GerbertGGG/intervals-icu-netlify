@@ -12,6 +12,7 @@ import { isIntervalsEnabled } from "./kv.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
+import { handleWidgetRequest } from "./widget.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -87,6 +88,11 @@ export default {
     // Runalyze-Snapshot (Prognose + Rennen) aus einer Sitzung mit Runalyze-MCP, siehe src/runalyze-snapshot.js.
     if (url.pathname === "/api/runalyze") {
       return withWorkerErrorBoundary(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
+    }
+
+    // Kompakte Daten für das iOS-Widget (Scriptable), siehe src/widget.js.
+    if (url.pathname === "/api/widget") {
+      return withWorkerErrorBoundary(() => handleWidgetRequest(req, env));
     }
 
     // Studien-Check der Woche aus dem Coaching-Bericht, siehe src/studie-snapshot.js.

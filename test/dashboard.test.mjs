@@ -2,6 +2,8 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
+import { buildWidget, handleWidgetRequest } from "../src/widget.js";
+import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
@@ -94,6 +96,22 @@ const { isAuthorized: isAuth } = await import("../src/dashboard.js");
 const putS = (body, tok = "geheim") => handleStudieRequest(new Request("https://x/api/studie", { method: "PUT", headers: { authorization: "Bearer " + tok }, body: JSON.stringify(body) }), env, isAuth);
 assert.equal((await putS({}, "falsch")).status, 401);
 assert.equal((await putS({ fetchedAt: "2026-09-27T10:00:00Z", text: "Kurzer Abschnitt", source: "Autor 2024" })).status, 200);
+// Zusammenfassung und Widget
+assert.equal(d.summary.load.tsbCls, "ok");
+assert.equal(d.summary.readiness.verdict.cls, "ok");
+assert.equal(d.summary.readiness.items.length, 5);
+const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
+assert.equal(noToday.verdict.cls, "none"); // ohne heutigen Eintrag keine Einschätzung
+const wdg = buildWidget(d);
+const wjson = JSON.stringify(wdg);
+assert.ok(wjson.length < 5000, "Widget-Payload klein");
+assert.equal(wdg.readiness.verdict.text, d.summary.readiness.verdict.text);
+assert.equal(wdg.goal.daysToGo, 3);
+assert.equal(wdg.plan.today[0].purpose, "Zweck: Beine lockern");
+assert.equal(wdg.hip.recent, 1);
+assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
+assert.equal((await handleWidgetRequest(new Request("https://x/api/widget"), env)).status, 401);
+assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { headers: { authorization: "Bearer geheim" } }), env)).status, 200);
 // Lücken bleiben null, 0 wird nicht zu "gut"
 assert.equal(d.wellness.find((w) => w.motivation === 0), undefined);
 assert.ok(d.wellness.every((w) => w.soreness === null));
