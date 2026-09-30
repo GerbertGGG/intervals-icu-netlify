@@ -89,11 +89,45 @@ export function buildWidgetDetail(d) {
   };
 }
 
+// Kleine Widgets ("small"): Schlaf und Erholung sowie Ernaehrung, je die letzten 7 Tage.
+// Fehlende Werte bleiben null (Luecke), 0 kcal zaehlt als keine Daten (siehe buildWellness).
+const medianOf = (a) => {
+  const v = a.filter((x) => x != null).sort((x, y) => x - y);
+  if (!v.length) return null;
+  const m = v.length >> 1;
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+};
+
+export function buildWidgetSmall(d) {
+  const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
+  const days = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
+  const past14 = d.wellness.filter((w) => w.date >= addDays(d.today, -13));
+  const sleepDays = days.map((date) => ({ date, hours: byDate[date]?.sleepHours ?? null, hrv: byDate[date]?.hrv ?? null, restingHR: byDate[date]?.restingHR ?? null }));
+  const foodDays = days.map((date) => {
+    const w = byDate[date];
+    return { date, calories: w?.calories ?? null, goal: w?.calorieGoal ?? null, carbs: w?.carbs ?? null, protein: w?.protein ?? null, fat: w?.fat ?? null };
+  });
+  const latest = [...foodDays].reverse().find((x) => x.calories != null) ?? null;
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    sleep: {
+      days: sleepDays,
+      latest: [...sleepDays].reverse().find((x) => x.hours != null) ?? null,
+      medianHours: medianOf(past14.map((w) => w.sleepHours)),
+      medianHrv: medianOf(past14.map((w) => w.hrv)),
+      medianRestingHR: medianOf(past14.map((w) => w.restingHR)),
+    },
+    food: { days: foodDays, latest, hasData: latest != null },
+    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+  };
+}
+
 export async function handleWidgetRequest(req, env) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
   const dashboard = await buildDashboard(env);
   const view = new URL(req.url).searchParams.get("view");
-  return json(view === "detail" ? buildWidgetDetail(dashboard) : buildWidget(dashboard, env), 200, headers);
+  return json(view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard) : buildWidget(dashboard, env), 200, headers);
 }

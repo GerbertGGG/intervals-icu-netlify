@@ -6,6 +6,8 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse "Gross", Skript auswaehlen.
+//     Kleine Widgets (Groesse "Klein"): Schlaf und Erholung (Standard) sowie Ernaehrung, dafuer im Widget
+//     unter "Parameter" das Wort  ernaehrung  eintragen.
 //     Zweites, halb so grosses Widget mit weiteren Daten (Form, Halbmarathon-Zeiten vs. Ziel, VDOT und
 //     Paces, Schwellen, Ernaehrung, Heisshunger): dasselbe Skript nochmal anlegen, Groesse "Mittel".
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
@@ -16,8 +18,14 @@
 const KEY_URL = "training-dashboard-url";
 const KEY_TOKEN = "training-dashboard-token";
 // Groesse bestimmt die Ansicht: Gross = Hauptansicht, Mittel = Details (Form, Zeiten vs. Ziel, Paces ...)
-let VIEW = (typeof config !== "undefined" && config.runsInWidget && config.widgetFamily === "medium") ? "detail" : "main";
-const cacheFile = () => (VIEW === "detail" ? "training-widget-detail-cache.json" : "training-widget-cache.json");
+// Ansicht nach Widget-Groesse: Gross = Hauptansicht, Mittel = Details, Klein = Schlaf oder Ernaehrung
+// (Klein: im Widget unter "Parameter"  ernaehrung  eintragen, sonst Schlaf).
+const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
+let VIEW = (typeof config !== "undefined" && config.runsInWidget)
+  ? (config.widgetFamily === "medium" ? "detail" : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : "sleep") : "main")
+  : "main";
+const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "sleep" || VIEW === "food" ? "small" : "");
+const cacheFile = () => `training-widget${endpointView() ? "-" + endpointView() : ""}-cache.json`;
 const SPORTS = [["run", "Laufen", "#3b6ea8"], ["bike", "Rad", "#8a6bb8"], ["swim", "Schwimmen", "#3a9db0"], ["strength", "Kraft", "#b08a3a"], ["other", "Sonst.", "#9aa5b4"]];
 
 const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
@@ -55,7 +63,7 @@ async function loadData() {
   const base = baseUrl();
   const { fm, path } = cachePath();
   try {
-    const req = new Request(`${base}/api/widget${VIEW === "detail" ? "?view=detail" : ""}`);
+    const req = new Request(`${base}/api/widget${endpointView() ? "?view=" + endpointView() : ""}`);
     req.headers = { Authorization: `Bearer ${Keychain.get(KEY_TOKEN)}` };
     req.timeoutInterval = 25;
     const body = await req.loadString();
@@ -428,6 +436,94 @@ function buildMedium(res) {
   return w;
 }
 
+/* ---------- Kleine Widgets: Schlaf und Erholung, Ernaehrung ---------- */
+const DAY_INITIAL = ["S", "M", "D", "M", "D", "F", "S"];
+const dayLetter = (iso) => DAY_INITIAL[new Date(iso + "T12:00:00").getDay()];
+
+// Saeulen der letzten 7 Tage; fehlende Tage sind nur ein kurzer Strich, nie ein Wert. Optional Ziel-Marken.
+function smallBarsImage(w, h, values, todayIso, dates, goals) {
+  const dc = newCtx(w, h), slot = w / values.length, bw = slot * 0.6;
+  const max = Math.max(1, ...values.filter((v) => v != null), ...(goals || []).filter((v) => v != null));
+  values.forEach((v, i) => {
+    const cx = i * slot + slot / 2;
+    if (v == null) { dc.setFillColor(new Color("#8a94a3", 0.3)); dc.fillRect(new Rect(cx - bw / 2, h - 2, bw, 1.5)); return; }
+    const bh = Math.max(2, (v / max) * (h - 3)), p = new Path();
+    p.addRoundedRect(new Rect(cx - bw / 2, h - bh, bw, bh), 2.5, 2.5);
+    dc.addPath(p);
+    dc.setFillColor(new Color(dates[i] === todayIso ? "#7db0f5" : "#4f7fbf"));
+    dc.fillPath();
+    if (goals && goals[i] != null) { dc.setFillColor(new Color("#ffffff", 0.85)); dc.fillRect(new Rect(cx - bw / 2 - 1, h - (goals[i] / max) * (h - 3) - 1, bw + 2, 1.5)); }
+  });
+  return dc.getImage();
+}
+
+function dayLabels(parent, dates, todayIso, width) {
+  const lab = parent.addStack(); lab.size = new Size(width, 0);
+  dates.forEach((dt) => {
+    const c = lab.addStack(); c.size = new Size(width / dates.length, 0);
+    c.addSpacer(); text(c, dayLetter(dt), 8, { bold: dt === todayIso, color: dt === todayIso ? COL.text : COL.muted }); c.addSpacer();
+  });
+}
+
+function smallWidget(res) {
+  const w = new ListWidget();
+  w.backgroundColor = COL.bg;
+  w.setPadding(10, 11, 8, 11);
+  w.url = `${baseUrl()}/dashboard/`;
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  return w;
+}
+
+function buildSleep(res) {
+  const d = res.data, s = d.sleep, IW = 134, w = smallWidget(res);
+  text(w, "SCHLAF & ERHOLUNG", 9, { bold: true, color: COL.muted });
+  w.addSpacer(2);
+  const last = s.latest, isToday = last && last.date === d.today;
+  text(w, last ? `${fmt(last.hours, 1)} h` : "fehlt", 28, { bold: true, color: last ? COL.text : COL.muted });
+  text(w, last ? (isToday ? "Schlaf heute" : `Schlaf am ${dateShort(last.date)}`) : "keine Schlafdauer in 7 Tagen", 9, { color: COL.muted });
+  w.addSpacer(3);
+  const t = d.sleep.days[d.sleep.days.length - 1];
+  const hrv = t.hrv, rhr = t.restingHR;
+  const cmp = (v, med) => (v == null || med == null ? "" : ` (\u00d8 ${fmt(med)})`);
+  text(w, `HRV ${hrv != null ? fmt(hrv) : "fehlt"}${cmp(hrv, s.medianHrv)}`, 10, { bold: true });
+  text(w, `Ruhepuls ${rhr != null ? fmt(rhr) : "fehlt"}${cmp(rhr, s.medianRestingHR)}`, 10, { bold: true });
+  w.addSpacer(4);
+  const im = w.addImage(smallBarsImage(IW, 30, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date)));
+  im.imageSize = new Size(IW, 30);
+  dayLabels(w, s.days.map((x) => x.date), d.today, IW);
+  w.addSpacer();
+  text(w, "Ruhepuls = Tageswert, \u00d8 = letzte 14 Tage", 7, { color: COL.muted });
+  return w;
+}
+
+function buildFood(res) {
+  const d = res.data, f = d.food, IW = 134, w = smallWidget(res);
+  text(w, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
+  w.addSpacer(2);
+  if (!f.hasData) {
+    text(w, "Noch keine Daten", 16, { bold: true });
+    text(w, "Sobald Yazio synchronisiert, erscheinen hier Kalorien und Kohlenhydrate.", 9, { color: COL.muted, lines: 4 });
+    w.addSpacer(4);
+    const im0 = w.addImage(smallBarsImage(IW, 30, f.days.map(() => null), d.today, f.days.map((x) => x.date)));
+    im0.imageSize = new Size(IW, 30);
+    dayLabels(w, f.days.map((x) => x.date), d.today, IW);
+    return w;
+  }
+  const l = f.latest;
+  text(w, `${fmt(l.calories)}`, 26, { bold: true });
+  text(w, `${l.goal ? `von ${fmt(l.goal)} kcal` : "kcal"} \u00b7 ${l.date === d.today ? "heute" : dateShort(l.date)}`, 9, { color: COL.muted });
+  w.addSpacer(3);
+  const macros = [l.carbs != null && `KH ${fmt(l.carbs)} g`, l.protein != null && `Eiwei\u00df ${fmt(l.protein)} g`, l.fat != null && `Fett ${fmt(l.fat)} g`].filter(Boolean);
+  text(w, macros.length ? macros.join(" \u00b7 ") : "Makros fehlen", 9, { color: COL.text, lines: 2 });
+  w.addSpacer(4);
+  const im = w.addImage(smallBarsImage(IW, 30, f.days.map((x) => x.calories), d.today, f.days.map((x) => x.date), f.days.map((x) => x.goal)));
+  im.imageSize = new Size(IW, 30);
+  dayLabels(w, f.days.map((x) => x.date), d.today, IW);
+  w.addSpacer();
+  text(w, "Wei\u00dfe Marke = Tagesziel", 7, { color: COL.muted });
+  return w;
+}
+
 function messageWidget(msg) {
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
@@ -444,20 +540,24 @@ async function main() {
     menu.title = "Trainings-Widget";
     menu.addAction("Vorschau (gro\u00df)");
     menu.addAction("Vorschau mittel (zweites Widget)");
+    menu.addAction("Vorschau klein: Schlaf");
+    menu.addAction("Vorschau klein: Ern\u00e4hrung");
     menu.addAction("Zugangsdaten setzen / zur\u00fccksetzen");
     menu.addCancelAction("Schlie\u00dfen");
     const choice = await menu.presentAlert();
     if (choice === -1) return;
     if (choice === 1) VIEW = "detail";
-    if (choice === 2 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 2) return; }
+    if (choice === 2) VIEW = "sleep";
+    if (choice === 3) VIEW = "food";
+    if (choice === 4 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 4) return; }
   } else if (!Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) {
     Script.setWidget(messageWidget("Bitte das Skript einmal in Scriptable \u00f6ffnen und die Zugangsdaten eingeben."));
     return;
   }
   let widget;
-  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : buildWidget(res); }
+  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFood(res) : buildWidget(res); }
   catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
-  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail") await widget.presentMedium(); else await widget.presentLarge();
+  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food") await widget.presentSmall(); else await widget.presentLarge();
 }
 await main();
 Script.complete();

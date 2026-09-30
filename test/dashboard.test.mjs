@@ -2,7 +2,7 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { buildWidget, buildWidgetDetail, handleWidgetRequest } from "../src/widget.js";
+import { buildWidget, buildWidgetDetail, buildWidgetSmall, handleWidgetRequest } from "../src/widget.js";
 import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
@@ -134,6 +134,23 @@ assert.equal(det.vdot, null);
 const detRes = await handleWidgetRequest(new Request("https://x/api/widget?view=detail", { headers: { authorization: "Bearer geheim" } }), env);
 assert.equal(detRes.status, 200);
 assert.ok("form" in (await detRes.json()));
+// Kleine Widgets: Schlaf und Ernaehrung
+const sm = buildWidgetSmall(d);
+assert.equal(sm.sleep.days.length, 7);
+assert.equal(sm.sleep.days.at(-1).date, today);
+assert.equal(sm.sleep.days.at(-1).hours, 7.5);
+assert.equal(sm.sleep.medianHrv, 48);
+assert.equal(sm.food.days.length, 7);
+assert.equal(sm.food.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal = keine Daten
+assert.ok(sm.food.hasData && sm.food.latest.calories > 1000 && sm.food.latest.goal === 2100);
+const smEmpty = buildWidgetSmall({ ...d, wellness: d.wellness.map((w) => ({ ...w, calories: null, carbs: null, calorieGoal: null })) });
+assert.equal(smEmpty.food.hasData, false); // ohne Yazio-Daten kein Wert, nichts erfunden
+assert.equal(smEmpty.food.latest, null);
+assert.ok(JSON.stringify(sm).length < 3000);
+assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(JSON.stringify(sm)), false);
+const smRes = await handleWidgetRequest(new Request("https://x/api/widget?view=small", { headers: { authorization: "Bearer geheim" } }), env);
+assert.equal(smRes.status, 200);
+assert.ok("sleep" in (await smRes.json()));
 // Lücken bleiben null, 0 wird nicht zu "gut"
 assert.equal(d.wellness.find((w) => w.motivation === 0), undefined);
 assert.ok(d.wellness.every((w) => w.soreness === null));
