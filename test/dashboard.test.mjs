@@ -116,6 +116,8 @@ assert.equal(wdg.week.goal, null); // ohne Plan-Load und ohne Konfiguration kein
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goal, 250);
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goalSource, "config");
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "kaputt" }).week.goal, null);
+assert.equal(wdg.week.strengthMinutes, 0); // kein Krafttraining in den Testdaten
+assert.equal("strengthCount" in wdg.week, false);
 assert.equal(wdg.week.days.length, 7);
 assert.equal(wdg.week.days[0].date, wdg.week.weekStart);
 assert.equal(wdg.week.days.filter((x) => x.load == null).length, 6 - Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(wdg.week.weekStart + "T00:00:00Z")) / 86400000)); // Zukunft = null
