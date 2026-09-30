@@ -174,7 +174,7 @@
 
   /* ---------- Kalender-Heatmap (Tag x Woche) ---------- */
   function calendar(host, daily, today) {
-    const CW = 46, CH = 46, L = 66, T = 22, cols = 7;
+    const CW = 76, CH = 46, L = 66, T = 22, cols = 7;
     const first = daily[0].date, dow = (d) => (new Date(d + "T12:00:00").getDay() + 6) % 7;
     const start = U.addDays(first, -dow(first));
     const weeks = Math.ceil((U.dayDiff(start, today) + 1) / 7);
