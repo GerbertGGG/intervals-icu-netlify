@@ -78,7 +78,8 @@ button, input { font: inherit; }
   <div id="sources"></div>
 
   <h2>1 · Heute</h2>
-  <div id="today" class="grid"></div>
+  <div id="ready"></div>
+  <div id="today" class="grid" style="margin-top:12px"></div>
 
   <h2>2 · Trainingsverlauf</h2>
   <div class="grid">
@@ -88,10 +89,9 @@ button, input { font: inherit; }
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
   </div>
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
-  <div class="card" style="margin-top:12px"><h3>Letzte Einheiten</h3><ul class="runs" id="runs"></ul></div>
 
   <h2>2b · Wochenbericht nach Sportart</h2>
-  <div class="grid">
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr))">
     <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
     <div class="card" id="week-report"></div>
   </div>
@@ -99,22 +99,14 @@ button, input { font: inherit; }
 
   <h2>3 · Fitness</h2>
   <div class="grid">
-    <div class="card"><h3>Pace bei Grundlagen- und Long-Slow-Läufen</h3><div id="chart-pace"></div>
-      <div class="muted">Schneller (oben) bei gleichem Puls = bessere Form.</div></div>
-    <div class="card"><h3>Ø Puls dieser Läufe</h3><div id="chart-hr"></div>
-      <div class="muted">Pace nur vergleichen, wenn der Puls ähnlich war. Intervall- und Tempoläufe fehlen absichtlich.</div></div>
+    <div class="card"><h3>VDOT und Ziel-Pace</h3><div id="vdot"></div></div>
     <div class="card"><h3>Decoupling bei langen Läufen</h3><div id="chart-dec"></div>
       <div class="muted">Orientierung: unter etwa 5 % gilt die Grundlagenausdauer als stabil. Höher = Puls driftet gegen Pace.</div></div>
   </div>
   <div class="card" style="margin-top:12px"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records"></div></div>
-  <div class="card" style="margin-top:12px"><h3>VDOT und Trainingspaces</h3><div id="vdot"></div></div>
 
-  <h2>3b · Rad und Schwimmen</h2>
-  <div class="grid">
-    <div class="card"><h3>FTP (Rad)</h3><div id="ftp"></div></div>
-    <div class="card"><h3>Schwimm-Schwelle</h3><div id="swim-css"></div></div>
-  </div>
-  <div class="card" style="margin-top:12px"><h3>Letzte Rad- und Schwimmeinheiten</h3><ul class="runs" id="tri-sessions"></ul></div>
+  <h2>3b · Schwellen</h2>
+  <div class="grid" id="thresholds"></div>
 
   <h2>4 · Wellness</h2>
   <div class="muted" id="wellness-note"></div>
@@ -244,7 +236,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
 
-  renderToday(d); renderHistory(d); renderSport(d); renderFitness(d); renderTri(d); renderWellness(d);
+  renderReady(d); renderToday(d); renderHistory(d); renderSport(d); renderFitness(d); renderThresholds(d); renderWellness(d);
 }
 
 function tsbStatus(tsb) {
@@ -290,20 +282,11 @@ function renderToday(d) {
       ${withLoad ? `<div class="muted">Werte vom ${fmtDate(withLoad.date)}</div>` : `<div class="muted">Keine CTL/ATL-Werte in den letzten 8 Wochen.</div>`}</div>`;
 }
 
-function kindLabel(k) { return { intensity: "Intervall/Tempo", base: "Grundlage", long: "Long Slow", unknown: "Art unklar" }[k]; }
-
 function renderHistory(d) {
   barChart($("chart-km"), d.weeks, "km", "plannedKm", "km");
   barChart($("chart-load"), d.weeks, "load", "plannedLoad", "Load");
   const noPlan = d.weeks.every((w) => w.plannedKm == null && w.plannedLoad == null);
   $("plan-note").textContent = noPlan ? "Für diesen Zeitraum liegen keine geplanten Workouts mit Distanz/Load vor – ein Plan-Marker wird deshalb nicht gezeigt." : "Plan-Marker nur, wenn geplante Workouts Distanz bzw. Load enthalten. Laufumfang zählt nur Läufe, Belastung alle Sportarten.";
-  $("runs").innerHTML = d.runs.length ? d.runs.map((r) => {
-    const hr = r.avgHr != null ? `<span>Ø Puls ${fmt(r.avgHr)} bpm</span>` : "";
-    const dec = r.decoupling != null ? `<span>Decoupling ${fmt(r.decoupling, 1)} %</span>` : "";
-    return `<li><div class="head"><div><b>${esc(r.name || "Lauf")}</b><span class="tag">${kindLabel(r.kind)}</span></div><span class="muted">${weekday(r.date)} ${fmtDate(r.date)}</span></div>
-      <div class="tags"><span>${fmt(r.distanceKm, 1)} km</span><span>${r.pace ? r.pace + " min/km" : "Pace –"}</span><span>RPE ${r.rpe != null ? fmt(r.rpe) : "–"}</span><span>Feel ${r.feel != null ? fmt(r.feel) : "–"}</span>${hr}${dec}</div>
-      ${r.description ? `<div class="desc">${esc(r.description)}</div>` : ""}</li>`;
-  }).join("") : `<li class="muted">${d.sources.intervalsActivities.ok ? "Keine Läufe in den letzten 8 Wochen." : "Aktivitäten nicht abrufbar."}</li>`;
 }
 
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
@@ -359,38 +342,58 @@ function renderSport(d) {
   $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + table(cur, done, "Laufende Woche");
 }
 
-function renderTri(d) {
-  const t = d.triathlon;
-  const st = d.sources.intervalsSportSettings;
-  if (!st.ok) { $("ftp").innerHTML = '<div class="muted">Sport-Einstellungen nicht abrufbar.</div>'; $("swim-css").innerHTML = '<div class="muted">Sport-Einstellungen nicht abrufbar.</div>'; }
-  else {
-    const th = t.thresholds;
-    $("ftp").innerHTML = th.ftp != null
-      ? `<div class="big">${fmt(th.ftp)} W</div>${th.indoorFtp != null ? `<div class="muted">Indoor-FTP ${fmt(th.indoorFtp)} W</div>` : ""}<div id="ftp-trend"></div>`
-      : '<div class="muted">Kein FTP in den Intervals.icu-Einstellungen hinterlegt.</div>';
-    if (th.ftp != null) {
-      const tr = th.ftpTrend;
-      if (tr.length >= 2) {
-        const days = dayRange(tr[0].date, tr[tr.length - 1].date);
-        const vals = tr.map((p) => p.ftp);
-        lineChart($("ftp-trend"), days, null, { values: Object.fromEntries(tr.map((p) => [p.date, p.ftp])), min: Math.floor(Math.min(...vals) - 5), max: Math.ceil(Math.max(...vals) + 5), unit: "W", label: "FTP-Verlauf" });
-      } else $("ftp-trend").innerHTML = '<div class="muted">Zu wenige Radeinheiten mit FTP-Angabe für einen Verlauf.</div>';
-    }
-    $("swim-css").innerHTML = th.swimThresholdPace100m != null
-      ? `<div class="big">${paceLabel(th.swimThresholdPace100m)}</div><div class="muted">min pro 100 m (Schwellen-Pace laut Intervals.icu)</div>`
-      : '<div class="muted">Keine Schwimm-Schwellenpace in den Intervals.icu-Einstellungen hinterlegt.</div>';
-  }
-  $("tri-sessions").innerHTML = d.sources.intervalsActivities.ok
-    ? (t.sessions.length ? t.sessions.map((x) => {
-      const bike = x.sport === "bike";
-      const metrics = bike
-        ? [x.avgWatts != null && `Ø ${fmt(x.avgWatts)} W`, x.normWatts != null && `NP ${fmt(x.normWatts)} W`]
-        : [x.pace100m != null && `${paceLabel(x.pace100m)} min/100 m`];
-      return `<li><div class="head"><div><b>${esc(x.name || (bike ? "Rad" : "Schwimmen"))}</b><span class="tag">${bike ? "Rad" : "Schwimmen"}</span></div><span class="muted">${weekday(x.date)} ${fmtDate(x.date)}</span></div>
-        <div class="tags"><span>${fmt(x.distanceKm, 1)} km</span><span>${x.movingTimeMin} min</span>${metrics.filter(Boolean).map((m) => `<span>${m}</span>`).join("")}<span>TSS ${x.load != null ? fmt(x.load) : "–"}</span><span>RPE ${x.rpe != null ? fmt(x.rpe) : "–"}</span><span>Feel ${x.feel != null ? fmt(x.feel) : "–"}</span></div>
-        ${x.description ? `<div class="desc">${esc(x.description)}</div>` : ""}</li>`;
-    }).join("") : '<li class="muted">Keine Rad- oder Schwimmeinheiten in den letzten 8 Wochen.</li>')
-    : '<li class="muted">Aktivitäten nicht abrufbar.</li>';
+// Bereitschaft (Wellness heute): Vergleich der heutigen Einträge mit dem eigenen Median der
+// letzten 8 Wochen. Die Skala läuft ab 1 (bestmöglich); ein Schritt schlechter als üblich = Achtung,
+// zwei oder mehr = deutlich. Grenzen sind eigene Standardwerte, keine medizinische Vorgabe.
+const READY_METRICS = [
+  { key: "sleepQuality", label: "Schlaf" }, { key: "fatigue", label: "Ermüdung" }, { key: "soreness", label: "Muskelkater" },
+  { key: "mood", label: "Stimmung" }, { key: "motivation", label: "Motivation" },
+];
+function median(a) { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
+function renderReady(d) {
+  const host = $("ready");
+  if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="card"><h3>Bereit für Training?</h3><div class="muted">Wellness nicht abrufbar.</div></div>'; return; }
+  const today = d.wellness.find((w) => w.date === d.today);
+  const hasScales = today && READY_METRICS.some((m) => today[m.key] != null);
+  const past = d.wellness.filter((w) => w.date < d.today);
+  const items = READY_METRICS.map((m) => {
+    const v = today ? today[m.key] : null;
+    const base = past.map((w) => w[m.key]).filter((x) => x != null);
+    if (v == null) return { ...m, v: null, cls: "none", text: "fehlt" };
+    if (base.length < 5) return { ...m, v, cls: "none", text: "kein Vergleich" };
+    const delta = v - median(base);
+    return { ...m, v, cls: delta >= 2 ? "bad" : delta >= 1 ? "warn" : "ok", text: delta >= 2 ? "deutlich schlechter" : delta >= 1 ? "etwas schlechter" : "wie üblich" };
+  });
+  const bad = items.filter((i) => i.cls === "bad").length, warn = items.filter((i) => i.cls === "warn").length;
+  const withTsb = [...d.wellness].reverse().find((w) => w.ctl != null && w.atl != null);
+  const tsb = withTsb ? withTsb.ctl - withTsb.atl : null;
+  let verdict;
+  if (!hasScales) verdict = { cls: "none", text: "Heute noch nichts eingetragen", sub: "Ohne Eintrag gebe ich keine Einschätzung ab." };
+  else if (bad >= 1 || warn >= 3) verdict = { cls: "bad", text: "Eher ruhig angehen", sub: "Mehrere Werte liegen schlechter als üblich." };
+  else if (warn >= 1 || (tsb != null && tsb < TSB_BANDS.ok)) verdict = { cls: "warn", text: "Mit Vorsicht", sub: "Einzelne Werte oder die Belastung sind auffällig." };
+  else verdict = { cls: "ok", text: "Bereit", sub: "Die Werte liegen im üblichen Bereich." };
+  const sleep = today && today.sleepHours != null ? `${fmt(today.sleepHours, 1)} h Schlaf` : "Schlafdauer nicht erfasst";
+  const hrv = today && today.hrv != null ? ` · HRV ${fmt(today.hrv)}` : "";
+  const rhr = today && today.restingHR != null ? ` · Ruhepuls ${fmt(today.restingHR)} bpm (Tageswert)` : "";
+  host.innerHTML = `<div class="card"><h3>Bereit für Training?</h3>
+    <div><span class="badge ${verdict.cls}" style="font-size:1.05rem">${verdict.text}</span> <span class="muted">${verdict.sub}</span></div>
+    <div style="margin-top:8px">${esc(sleep)}${hrv}${rhr}</div>
+    <div class="grid" style="margin-top:10px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">${items.map((i) => `<div class="row"><span>${i.label}</span><span><b>${i.v != null ? i.v : "–"}</b> <span class="badge ${i.cls}">${i.text}</span></span></div>`).join("")}</div>
+    <div class="muted" style="margin-top:6px">Skala 1 = bestmöglich. Vergleich mit deinem Median der letzten 8 Wochen (mind. 5 Einträge). Lücken zählen nie als „gut". Grenzen sind Standardwerte.</div></div>`;
+}
+
+// Schwellen je Sportart aus den Intervals.icu-Einstellungen; Fehlendes wird als „nicht hinterlegt" gezeigt.
+function renderThresholds(d) {
+  const host = $("thresholds");
+  if (!d.sources.intervalsSportSettings.ok) { host.innerHTML = '<div class="card muted">Sport-Einstellungen nicht abrufbar.</div>'; return; }
+  const t = d.thresholds;
+  const val = (v, fn) => v != null ? `<b>${fn(v)}</b>` : '<span class="muted">nicht hinterlegt</span>';
+  const card = (title, rows) => `<div class="card"><h3>${title}</h3>${rows.map(([l, v]) => `<div class="row"><span>${l}</span><span>${v}</span></div>`).join("")}</div>`;
+  host.innerHTML =
+    card("Laufen", [["Schwellenpace", val(t.run.thresholdPaceSecPerKm, (v) => paceLabel(v) + " min/km")], ["Schwellenpuls (LTHR)", val(t.run.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.run.maxHr, (v) => fmt(v) + " bpm")]]) +
+    card("Rad", [["FTP", val(t.bike.ftp, (v) => fmt(v) + " W")], ["FTP indoor", val(t.bike.indoorFtp, (v) => fmt(v) + " W")], ["Schwellenpuls (LTHR)", val(t.bike.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.bike.maxHr, (v) => fmt(v) + " bpm")]]) +
+    card("Schwimmen", [["Schwellenpace", val(t.swim.thresholdPaceSecPer100m, (v) => paceLabel(v) + " min/100 m")]]);
 }
 
 function paceLabel(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
@@ -399,24 +402,33 @@ function dayRange(from, to) {
   for (let t = new Date(from + "T00:00:00Z"); t.toISOString().slice(0, 10) <= to; t = new Date(t.getTime() + 86400000)) out.push(t.toISOString().slice(0, 10));
   return out;
 }
-function fitnessChart(host, runs, field, o) {
-  if (!runs.length) { host.innerHTML = '<div class="muted">Keine passenden Läufe im Zeitraum.</div>'; return; }
-  const days = dayRange(runs[0].date, runs[runs.length - 1].date);
-  if (days.length < 2) days.unshift(new Date(new Date(days[0] + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10));
-  const values = Object.fromEntries(runs.map((r) => [r.date, r[field]]));
-  const v = runs.map((r) => r[field]);
-  const lo = Math.floor(Math.min(...v) - o.pad), hi = Math.ceil(Math.max(...v) + o.pad);
-  lineChart(host, days, null, { values, min: lo, max: hi, invert: o.invert, unit: o.unit, label: o.label, dec: o.dec || 0, tickLabel: o.tickLabel });
+// Decoupling je langem Lauf als Säulen (wenige Werte, keine verbindende Linie) mit 5-%-Orientierung.
+function decouplingChart(host, runs) {
+  if (!runs.length) { host.innerHTML = '<div class="muted">Keine langen Läufe mit Decoupling-Wert im Zeitraum.</div>'; return; }
+  const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42, REF = 5;
+  const max = niceMax(Math.max(REF * 1.2, ...runs.map((r) => Math.abs(r.decoupling))));
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Decoupling je langem Lauf" });
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i;
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v, max < 10 ? 1 : 0)));
+  }
+  svg.append(svgEl("text", { x: 4, y: 11 }, "Decoupling in %"));
+  svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(REF), y2: y(REF), stroke: "var(--warn)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), svgEl("text", { x: W - R, y: y(REF) - 4, "text-anchor": "end" }, "5 % Orientierung"));
+  const slot = (W - L - R) / runs.length, bw = Math.min(slot * 0.55, 46);
+  runs.forEach((r, i) => {
+    const x = L + slot * i + (slot - bw) / 2, v = Math.max(0, r.decoupling);
+    const bar = svgEl("rect", { x, y: y(v), width: bw, height: Math.max(0, y(0) - y(v)), fill: "var(--accent)" });
+    bar.append(svgEl("title", {}, `${fmtDate(r.date)}: ${fmt(r.decoupling, 1)} % (${fmt(r.distanceKm, 1)} km)`));
+    svg.append(bar, svgEl("text", { x: x + bw / 2, y: y(v) - 4, "text-anchor": "middle" }, fmt(r.decoupling, 1)), svgEl("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, fmtDate(r.date)));
+  });
+  svg.append(svgEl("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Datum des langen Laufs"));
+  host.replaceChildren(svg);
 }
 
 function renderFitness(d) {
-  if (!d.sources.intervalsActivities.ok) {
-    for (const id of ["chart-pace", "chart-hr", "chart-dec"]) $(id).innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>';
-  } else {
-    fitnessChart($("chart-pace"), d.fitness.baseRuns, "paceSecPerKm", { unit: "min/km", label: "Pace", invert: true, pad: 10, tickLabel: paceLabel });
-    fitnessChart($("chart-hr"), d.fitness.baseRuns, "avgHr", { unit: "bpm", label: "Ø Puls", pad: 3 });
-    fitnessChart($("chart-dec"), d.fitness.longRuns, "decoupling", { unit: "%", label: "Decoupling", pad: 1, dec: 1 });
-  }
+  if (!d.sources.intervalsActivities.ok) $("chart-dec").innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>';
+  else decouplingChart($("chart-dec"), d.fitness.longRuns);
   const r = d.runalyze;
   renderVdot(d);
   if (!r) { $("records").innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – Bestzeiten und Prognose fehlen.</div>'; return; }
@@ -438,11 +450,25 @@ function renderVdot(d) {
   const r = d.runalyze;
   if (!r || r.vdot == null) { $("vdot").innerHTML = '<div class="muted">Kein VDOT im Runalyze-Snapshot – Paces fehlen.</div>'; return; }
   const goalPace = d.goal.targetTimeSecs / 21.0975;
-  const goalRow = `<tr><td><b>Ziel Halbmarathon</b></td><td><b>${paceLabel(goalPace)}</b> min/km</td><td class="muted">für unter ${fmtTime(d.goal.targetTimeSecs)}</td></tr>`;
-  const rows = r.paces.map((p) => `<tr><td>${esc(p.label)}</td><td>${esc(p.pace.replace("/km", ""))} min/km</td><td></td></tr>`).join("");
-  $("vdot").innerHTML = `<div class="big">${fmt(r.vdot, 1)}</div><div class="muted">VDOT (effektive VO2max laut Runalyze), Stand ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}</div>
-    <table style="margin-top:8px"><thead><tr><th>Zone</th><th>Pace</th><th></th></tr></thead><tbody>${rows}${goalRow}</tbody></table>
-    <div class="muted" style="margin-top:6px">Runalyze liefert nur das VDOT. Die Paces sind daraus nach Daniels berechnet, nicht von Runalyze vorgegeben.</div>`;
+  const toSec = (p) => { const [m, s] = p.replace("/km", "").split(":").map(Number); return m * 60 + s; };
+  const zones = r.paces.map((p) => ({ label: p.label.replace(/ \(.\)$/, ""), sec: toSec(p.pace) })).sort((a, b) => a.sec - b.sec);
+  const lo = Math.floor((Math.min(goalPace, zones[0].sec) - 15) / 15) * 15, hi = Math.ceil((Math.max(goalPace, zones[zones.length - 1].sec) + 15) / 15) * 15;
+  const W = 480, H = 150, L = 20, R = 20, AY = 70;
+  const x = (s) => L + (W - L - R) * ((s - lo) / (hi - lo));
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Trainingspaces und Ziel-Pace" });
+  svg.append(svgEl("line", { x1: L, x2: W - R, y1: AY, y2: AY, class: "axis", "stroke-width": 2 }));
+  for (let s = Math.ceil(lo / 30) * 30; s <= hi; s += 30) svg.append(svgEl("line", { x1: x(s), x2: x(s), y1: AY - 4, y2: AY + 4, class: "axis" }), svgEl("text", { x: x(s), y: AY + 18, "text-anchor": "middle" }, paceLabel(s)));
+  zones.forEach((z, i) => {
+    const up = i % 2 === 0 ? 24 : 48;
+    svg.append(svgEl("line", { x1: x(z.sec), x2: x(z.sec), y1: AY - up + 4, y2: AY, stroke: "var(--muted)" }), svgEl("circle", { cx: x(z.sec), cy: AY, r: 4, fill: "var(--muted)" }), svgEl("text", { x: x(z.sec), y: AY - up, "text-anchor": "middle" }, `${z.label} ${paceLabel(z.sec)}`));
+  });
+  svg.append(svgEl("path", { d: `M${x(goalPace)},${AY + 6} l-6,10 h12 z`, fill: "var(--accent)" }), svgEl("text", { x: x(goalPace), y: AY + 42, "text-anchor": "middle", style: "fill:var(--text);font-weight:700;font-size:12px" }, `Ziel ${paceLabel(goalPace)}`));
+  svg.append(svgEl("text", { x: W / 2, y: H - 4, "text-anchor": "middle" }, "Pace in min/km (links schneller)"));
+  const stale = (Date.now() - Date.parse(r.fetchedAt)) / 86400000 > 7;
+  $("vdot").innerHTML = `<div class="big">${fmt(r.vdot, 1)}</div><div class="muted">VDOT (effektive VO2max laut Runalyze), Stand ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}</div><div id="vdot-chart" style="margin-top:6px"></div>
+    ${stale ? '<div class="notice">Der Runalyze-Snapshot ist älter als 7 Tage – VDOT und Prognose können veraltet sein.</div>' : ""}
+    <div class="muted">Ziel-Pace = Halbmarathon unter ${fmtTime(d.goal.targetTimeSecs)}. Runalyze liefert nur das VDOT, die Zonen-Paces sind daraus nach Daniels berechnet.</div>`;
+  $("vdot-chart").append(svg);
 }
 
 const WELLNESS = [

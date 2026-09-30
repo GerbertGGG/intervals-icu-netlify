@@ -77,7 +77,7 @@ export function classifyRun(a) {
   return "unknown";
 }
 
-function buildRunRecord(a) {
+export function buildRunRecord(a) {
   const distanceM = num(a?.distance) ?? 0;
   const timeSecs = num(a?.moving_time) ?? 0;
   const pace = distanceM > 0 && timeSecs > 0 ? timeSecs / (distanceM / 1000) : null;
@@ -165,51 +165,22 @@ function buildWeeks(todayIso, activities, events) {
 
 // Rad und Schwimmen (Triathlon): Einheitenliste und FTP-Verlauf. Kein Puls: Die Pulsregel gilt
 // hier vorsorglich mit, es gehen nur Leistung, Pace, RPE und Feel raus.
-function buildTriSessions(activities) {
-  return activities
-    .filter((a) => ["bike", "swim"].includes(sportOf(a)))
-    .map((a) => {
-      const sport = sportOf(a);
-      const distanceM = num(a?.distance) ?? 0;
-      const secs = num(a?.moving_time) ?? 0;
-      return {
-        date: activityDay(a),
-        sport,
-        name: a?.name ?? null,
-        description: a?.description ?? null,
-        distanceKm: Math.round((distanceM / 1000) * 100) / 100,
-        movingTimeMin: Math.round(secs / 60),
-        load: activityLoad(a) || null,
-        avgWatts: sport === "bike" ? num(a?.icu_average_watts) : null,
-        normWatts: sport === "bike" ? num(a?.icu_weighted_avg_watts) : null,
-        intensity: sport === "bike" ? num(a?.icu_intensity) : null,
-        pace100m: sport === "swim" && distanceM > 0 && secs > 0 ? Math.round(secs / (distanceM / 100)) : null,
-        rpe: num(a?.icu_rpe),
-        feel: num(a?.feel),
-      };
-    })
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 12);
-}
-
 function findSettings(list, names) {
   return Array.isArray(list) ? list.find((s) => Array.isArray(s?.types) && names.some((n) => s.types.includes(n))) ?? null : null;
 }
 
-function buildThresholds(settingsList, activities) {
+// Schwellen je Sportart aus den Intervals.icu-Sport-Einstellungen. threshold_pace ist dort in
+// m/s hinterlegt (Feldname ungeprüft, sonst null); Laufen wird in s/km, Schwimmen in s/100 m
+// umgerechnet. Alles Fehlende bleibt null.
+function buildThresholds(settingsList) {
+  const run = findSettings(settingsList, ["Run"]);
   const ride = findSettings(settingsList, ["Ride", "VirtualRide"]);
   const swim = findSettings(settingsList, ["Swim", "OpenWaterSwim"]);
-  const swimMs = num(swim?.threshold_pace);
-  const trend = activities
-    .filter((a) => sportOf(a) === "bike" && num(a?.icu_ftp) != null)
-    .map((a) => ({ date: activityDay(a), ftp: num(a.icu_ftp) }))
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const secPer = (ms, meters) => (ms && ms > 0 ? Math.round(meters / ms) : null);
   return {
-    ftp: num(ride?.ftp),
-    indoorFtp: num(ride?.indoor_ftp),
-    ftpTrend: trend,
-    // threshold_pace ist bei Intervals.icu in m/s hinterlegt (Feldname ungeprüft, sonst null).
-    swimThresholdPace100m: swimMs && swimMs > 0 ? Math.round(100 / swimMs) : null,
+    run: { thresholdPaceSecPerKm: secPer(num(run?.threshold_pace), 1000), lthr: num(run?.lthr), maxHr: num(run?.max_hr) },
+    bike: { ftp: num(ride?.ftp), indoorFtp: num(ride?.indoor_ftp), lthr: num(ride?.lthr), maxHr: num(ride?.max_hr) },
+    swim: { thresholdPaceSecPer100m: secPer(num(swim?.threshold_pace), 100) },
   };
 }
 
@@ -237,6 +208,8 @@ function buildWellness(list) {
       atl: num(w?.atl),
       rampRate: num(w?.rampRate),
       restingHR: scaleValue(w?.restingHR),
+      sleepHours: num(w?.sleepSecs) != null && num(w.sleepSecs) > 0 ? Math.round((num(w.sleepSecs) / 3600) * 10) / 10 : null,
+      hrv: num(w?.hrv) != null && num(w.hrv) > 0 ? num(w.hrv) : null,
       sleepQuality: scaleValue(w?.sleepQuality),
       soreness: scaleValue(w?.soreness),
       fatigue: scaleValue(w?.fatigue),
@@ -252,10 +225,8 @@ function buildWellness(list) {
 function buildFitness(runs) {
   const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
   return {
-    baseRuns: asc.filter((r) => (r.kind === "base" || r.kind === "long") && r.avgHr != null && r.paceSecPerKm != null)
-      .map((r) => ({ date: r.date, name: r.name, kind: r.kind, avgHr: r.avgHr, paceSecPerKm: r.paceSecPerKm, pace: r.pace })),
     longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)
-      .map((r) => ({ date: r.date, name: r.name, distanceKm: r.distanceKm, decoupling: r.decoupling })),
+      .map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
 }
 
@@ -329,9 +300,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
-    runs: runs.slice(0, 20),
     fitness: buildFitness(runs),
-    triathlon: { thresholds: buildThresholds(settingsR.ok ? settingsR.value : null, activities), sessions: buildTriSessions(activities) },
+    thresholds: buildThresholds(settingsR.ok ? settingsR.value : null),
     runalyze: buildRunalyze(snapshot),
     planned: buildPlanned(events, todayIso),
   };
