@@ -175,9 +175,13 @@ function card(parent, width, pad = 8, radius = 12) {
 
 function newCtx(w, h) {
   const dc = new DrawContext();
+  w = Math.max(1, Math.round(w) || 1); h = Math.max(1, Math.round(h) || 1);
   dc.size = new Size(w, h);
   dc.opaque = false;
   dc.respectScreenScale = true;
+  // Ein Kontext ohne jede Zeichnung liefert in Scriptable kein Bild, sondern null: fast unsichtbare Flaeche vorab
+  dc.setFillColor(new Color("#000000", 0.004));
+  dc.fillRect(new Rect(0, 0, w, h));
   return dc;
 }
 
@@ -892,7 +896,7 @@ async function main() {
   }
   let widget;
   try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "training" ? buildTraining(res) : VIEW === "sleepfood" ? buildSleepFood(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFoodCard(res) : VIEW === "fitness" ? buildFitness(res) : VIEW === "ready" ? buildReady(res) : buildWidget(res); }
-  catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
+  catch (e) { widget = messageWidget(`Keine Daten (${VIEW}${e.line ? `, Zeile ${e.line}` : ""}): ${String(e.message || e)}`); }
   if (inWidget) Script.setWidget(widget); else if (VIEW === "detail" || VIEW === "training" || VIEW === "sleepfood") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food" || VIEW === "fitness" || VIEW === "ready") await widget.presentSmall(); else await widget.presentLarge();
 }
 await main();
