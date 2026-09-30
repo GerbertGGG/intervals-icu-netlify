@@ -242,11 +242,14 @@ function hrvState(hrv, med) {
   return q < 0.85 ? { arrow: " ↓", cls: "bad" } : q < 0.95 ? { arrow: " ↓", cls: "warn" } : q > 1.05 ? { arrow: " ↑", cls: "ok" } : { arrow: " →", cls: "ok" };
 }
 const restCls = (v, med) => (v == null || med == null ? "none" : v - med >= 6 ? "bad" : v - med >= 3 ? "warn" : "ok");
-// Gefuehlsskala absolut einordnen: 1 = bestmoeglich, it.max = schlechtester bisher eingetragener Wert (mindestens 2)
+// Gefuehl nur so einstufen wie das Dashboard: gegen den eigenen ueblichen Bereich (Skala 1 = bestmoeglich).
+// Ohne genug Vergleichswerte (cls "none") gibt es kein Urteil, der Wert allein sagt nichts.
 function feelWord(it) {
   if (!it || it.v == null) return { txt: "fehlt", cls: "none" };
-  const frac = (it.v - 1) / Math.max(1, (it.max || 4) - 1);
-  return frac <= 0.34 ? { txt: "gut", cls: "ok" } : frac <= 0.67 ? { txt: "mittel", cls: "warn" } : { txt: "schlecht", cls: "bad" };
+  if (it.cls === "ok") return { txt: "gut", cls: "ok" };
+  if (it.cls === "warn") return { txt: "mittel", cls: "warn" };
+  if (it.cls === "bad") return { txt: "schlecht", cls: "bad" };
+  return { txt: "kein Vergleich", cls: "none" };
 }
 const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motivation"]];
 
