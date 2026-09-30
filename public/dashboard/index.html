@@ -9,18 +9,21 @@
 :root {
   --bg: #f6f7f9; --card: #ffffff; --text: #1c2430; --muted: #5d6877; --line: #d9dee5;
   --accent: #3b6ea8; --plan: #9aa5b4;
+  --s-run: #3b6ea8; --s-bike: #8a6bb8; --s-swim: #3a9db0; --s-strength: #b08a3a; --s-other: #9aa5b4;
   --ok: #1f7a4d; --ok-bg: #e2f3ea; --warn: #9a6400; --warn-bg: #fdf0d2; --bad: #b3261e; --bad-bg: #fbe4e2;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #12161c; --card: #1a2029; --text: #e6eaf0; --muted: #9aa5b4; --line: #2c3541;
     --accent: #6da2dc; --plan: #6b7686;
+    --s-run: #6da2dc; --s-bike: #b59ae0; --s-swim: #6cc4d4; --s-strength: #d9b46a; --s-other: #6b7686;
     --ok: #6fd4a0; --ok-bg: #16352a; --warn: #f0c060; --warn-bg: #3a2f12; --bad: #f2a29c; --bad-bg: #3d1b19;
   }
 }
 :root[data-theme="dark"] {
   --bg: #12161c; --card: #1a2029; --text: #e6eaf0; --muted: #9aa5b4; --line: #2c3541;
   --accent: #6da2dc; --plan: #6b7686;
+  --s-run: #6da2dc; --s-bike: #b59ae0; --s-swim: #6cc4d4; --s-strength: #d9b46a; --s-other: #6b7686;
   --ok: #6fd4a0; --ok-bg: #16352a; --warn: #f0c060; --warn-bg: #3a2f12; --bad: #f2a29c; --bad-bg: #3d1b19;
 }
 * { box-sizing: border-box; }
@@ -56,6 +59,8 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 table { width: 100%; border-collapse: collapse; font-size: .95rem; }
 th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); }
 th { font-size: .8rem; color: var(--muted); border-top: 0; }
+#week-report { grid-column: 1 / -1; overflow-x: auto; }
+td { white-space: nowrap; }
 button, input { font: inherit; }
 #login { max-width: 420px; margin: 20vh auto; }
 #login input { width: 100%; padding: 8px; margin: 8px 0; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
@@ -85,6 +90,13 @@ button, input { font: inherit; }
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
   <div class="card" style="margin-top:12px"><h3>Letzte Einheiten</h3><ul class="runs" id="runs"></ul></div>
 
+  <h2>2b · Wochenbericht nach Sportart</h2>
+  <div class="grid">
+    <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
+    <div class="card" id="week-report"></div>
+  </div>
+  <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
+
   <h2>3 · Fitness</h2>
   <div class="grid">
     <div class="card"><h3>Pace bei Grundlagen- und Long-Slow-Läufen</h3><div id="chart-pace"></div>
@@ -96,6 +108,13 @@ button, input { font: inherit; }
   </div>
   <div class="card" style="margin-top:12px"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records"></div></div>
   <div class="card" style="margin-top:12px"><h3>VDOT und Trainingspaces</h3><div id="vdot"></div></div>
+
+  <h2>3b · Rad und Schwimmen</h2>
+  <div class="grid">
+    <div class="card"><h3>FTP (Rad)</h3><div id="ftp"></div></div>
+    <div class="card"><h3>Schwimm-Schwelle</h3><div id="swim-css"></div></div>
+  </div>
+  <div class="card" style="margin-top:12px"><h3>Letzte Rad- und Schwimmeinheiten</h3><ul class="runs" id="tri-sessions"></ul></div>
 
   <h2>4 · Wellness</h2>
   <div class="muted" id="wellness-note"></div>
@@ -225,7 +244,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
 
-  renderToday(d); renderHistory(d); renderFitness(d); renderWellness(d);
+  renderToday(d); renderHistory(d); renderSport(d); renderFitness(d); renderTri(d); renderWellness(d);
 }
 
 function tsbStatus(tsb) {
@@ -285,6 +304,93 @@ function renderHistory(d) {
       <div class="tags"><span>${fmt(r.distanceKm, 1)} km</span><span>${r.pace ? r.pace + " min/km" : "Pace –"}</span><span>RPE ${r.rpe != null ? fmt(r.rpe) : "–"}</span><span>Feel ${r.feel != null ? fmt(r.feel) : "–"}</span>${hr}${dec}</div>
       ${r.description ? `<div class="desc">${esc(r.description)}</div>` : ""}</li>`;
   }).join("") : `<li class="muted">${d.sources.intervalsActivities.ok ? "Keine Läufe in den letzten 8 Wochen." : "Aktivitäten nicht abrufbar."}</li>`;
+}
+
+const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
+const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
+
+function stackedChart(host, weeks) {
+  const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42;
+  const totals = weeks.map((w) => SPORT_ORDER.reduce((a, k) => a + w.bySport[k].load, 0));
+  const max = niceMax(Math.max(1, ...totals));
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "TSS pro Woche und Sportart" });
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i;
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v, max < 10 ? 1 : 0)));
+  }
+  svg.append(svgEl("text", { x: 4, y: 11 }, "TSS"));
+  const slot = (W - L - R) / weeks.length, bw = slot * 0.55;
+  weeks.forEach((w, i) => {
+    const x = L + slot * i + (slot - bw) / 2;
+    let acc = 0;
+    for (const k of SPORT_ORDER) {
+      const v = w.bySport[k].load;
+      if (!v) continue;
+      const r = svgEl("rect", { x, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v)), fill: `var(--s-${k})`, opacity: w.complete ? 1 : 0.6 });
+      r.append(svgEl("title", {}, `Woche ab ${fmtDate(w.weekStart)} · ${SPORT_LABEL[k]}: ${fmt(v)} TSS`));
+      svg.append(r); acc += v;
+    }
+    svg.append(svgEl("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, fmtDate(w.weekStart)));
+  });
+  svg.append(svgEl("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Woche ab (Montag) · helle Säule = laufende Woche"));
+  host.replaceChildren(svg);
+}
+
+function renderSport(d) {
+  if (!d.sources.intervalsActivities.ok) { $("chart-sport").innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; $("week-report").innerHTML = ""; return; }
+  stackedChart($("chart-sport"), d.weeks);
+  const used = SPORT_ORDER.filter((k) => d.weeks.some((w) => w.bySport[k].load > 0));
+  $("sport-legend").innerHTML = used.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span>`).join("");
+  const cur = d.weeks[d.weeks.length - 1];
+  const done = [...d.weeks].reverse().find((w) => w.complete);
+  const prev = done ? d.weeks[d.weeks.indexOf(done) - 1] : null;
+  const rows = (w, ref) => SPORT_ORDER.filter((k) => w.bySport[k].count > 0 || (ref && ref.bySport[k].count > 0) || w.bySport[k].plannedLoad != null)
+    .map((k) => {
+      const b = w.bySport[k], r = ref ? ref.bySport[k] : null;
+      return `<tr><td>${SPORT_LABEL[k]}</td><td>${b.count}</td><td>${fmt(b.minutes / 60, 1)} h</td><td>${b.km ? fmt(b.km, 1) + " km" : "–"}</td><td><b>${fmt(b.load)}</b></td><td class="muted">${r ? fmt(r.load) : "–"}</td><td class="muted">${b.plannedLoad != null ? fmt(b.plannedLoad) : "–"}</td></tr>`;
+    }).join("");
+  const table = (w, ref, title) => {
+    if (!w) return "";
+    const total = SPORT_ORDER.reduce((a, k) => a + w.bySport[k].load, 0);
+    const body = rows(w, ref);
+    return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>Distanz</th><th>TSS</th><th>Vorwoche</th><th>Plan</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td></td><td></td><td><b>${fmt(total)}</b></td><td class="muted">${ref ? fmt(SPORT_ORDER.reduce((a, k) => a + ref.bySport[k].load, 0)) : "–"}</td><td class="muted">${w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
+  };
+  $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + table(cur, done, "Laufende Woche");
+}
+
+function renderTri(d) {
+  const t = d.triathlon;
+  const st = d.sources.intervalsSportSettings;
+  if (!st.ok) { $("ftp").innerHTML = '<div class="muted">Sport-Einstellungen nicht abrufbar.</div>'; $("swim-css").innerHTML = '<div class="muted">Sport-Einstellungen nicht abrufbar.</div>'; }
+  else {
+    const th = t.thresholds;
+    $("ftp").innerHTML = th.ftp != null
+      ? `<div class="big">${fmt(th.ftp)} W</div>${th.indoorFtp != null ? `<div class="muted">Indoor-FTP ${fmt(th.indoorFtp)} W</div>` : ""}<div id="ftp-trend"></div>`
+      : '<div class="muted">Kein FTP in den Intervals.icu-Einstellungen hinterlegt.</div>';
+    if (th.ftp != null) {
+      const tr = th.ftpTrend;
+      if (tr.length >= 2) {
+        const days = dayRange(tr[0].date, tr[tr.length - 1].date);
+        const vals = tr.map((p) => p.ftp);
+        lineChart($("ftp-trend"), days, null, { values: Object.fromEntries(tr.map((p) => [p.date, p.ftp])), min: Math.floor(Math.min(...vals) - 5), max: Math.ceil(Math.max(...vals) + 5), unit: "W", label: "FTP-Verlauf" });
+      } else $("ftp-trend").innerHTML = '<div class="muted">Zu wenige Radeinheiten mit FTP-Angabe für einen Verlauf.</div>';
+    }
+    $("swim-css").innerHTML = th.swimThresholdPace100m != null
+      ? `<div class="big">${paceLabel(th.swimThresholdPace100m)}</div><div class="muted">min pro 100 m (Schwellen-Pace laut Intervals.icu)</div>`
+      : '<div class="muted">Keine Schwimm-Schwellenpace in den Intervals.icu-Einstellungen hinterlegt.</div>';
+  }
+  $("tri-sessions").innerHTML = d.sources.intervalsActivities.ok
+    ? (t.sessions.length ? t.sessions.map((x) => {
+      const bike = x.sport === "bike";
+      const metrics = bike
+        ? [x.avgWatts != null && `Ø ${fmt(x.avgWatts)} W`, x.normWatts != null && `NP ${fmt(x.normWatts)} W`]
+        : [x.pace100m != null && `${paceLabel(x.pace100m)} min/100 m`];
+      return `<li><div class="head"><div><b>${esc(x.name || (bike ? "Rad" : "Schwimmen"))}</b><span class="tag">${bike ? "Rad" : "Schwimmen"}</span></div><span class="muted">${weekday(x.date)} ${fmtDate(x.date)}</span></div>
+        <div class="tags"><span>${fmt(x.distanceKm, 1)} km</span><span>${x.movingTimeMin} min</span>${metrics.filter(Boolean).map((m) => `<span>${m}</span>`).join("")}<span>TSS ${x.load != null ? fmt(x.load) : "–"}</span><span>RPE ${x.rpe != null ? fmt(x.rpe) : "–"}</span><span>Feel ${x.feel != null ? fmt(x.feel) : "–"}</span></div>
+        ${x.description ? `<div class="desc">${esc(x.description)}</div>` : ""}</li>`;
+    }).join("") : '<li class="muted">Keine Rad- oder Schwimmeinheiten in den letzten 8 Wochen.</li>')
+    : '<li class="muted">Aktivitäten nicht abrufbar.</li>';
 }
 
 function paceLabel(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }

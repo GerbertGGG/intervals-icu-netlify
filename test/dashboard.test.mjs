@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
-import { buildDashboard, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
+import { sportOf, buildDashboard, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
 
 const today = "2026-09-30";
 const day = (n) => new Date(Date.parse(today + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -18,13 +18,15 @@ const activities = [
   act(3, { name: "Bobingen - Kurzer Grundlagenlauf", distance: 6030, moving_time: 2383 }),
   act(5, { name: "Bobingen - Long Slow Run", distance: 16200, moving_time: 6771, description: "locker" }),
   act(7, { name: "Lauf ohne Angabe", distance: 5000, moving_time: 1800 }),
-  act(9, { name: "Radfahren", type: "Ride", distance: 30000, moving_time: 3600 }),
+  act(9, { name: "Radfahren", type: "Ride", distance: 30000, moving_time: 3600, icu_training_load: 80, icu_ftp: 210, icu_weighted_avg_watts: 190, icu_average_watts: 170 }),
+  act(2, { name: "Schwimmen", type: "Swim", distance: 1500, moving_time: 2700, icu_training_load: 40 }),
+  act(11, { name: "Rad locker", type: "VirtualRide", distance: 40000, moving_time: 5400, icu_training_load: 60, icu_ftp: 215 }),
   act(12, { name: "Intervalle 5x1000", distance: 9000, moving_time: 3200, tags: ["intervals"] }),
 ];
 const events = [{ category: "WORKOUT", start_date_local: day(0) + "T00:00:00", name: "Locker 30'", description: "Zweck: Beine lockern", moving_time: 1800 }];
 globalThis.fetch = async (url) => {
   const u = String(url);
-  const body = u.includes("/wellness") ? wellness : u.includes("/activities") ? activities : u.includes("/events") ? events : null;
+  const body = u.includes("/sport-settings") ? [{ types: ["Ride", "VirtualRide"], ftp: 220 }, { types: ["Swim"], threshold_pace: 0.8 }] : u.includes("/wellness") ? wellness : u.includes("/activities") ? activities : u.includes("/events") ? events : null;
   return new Response(JSON.stringify(body), { status: body ? 200 : 404 });
 };
 const kv = new Map();
@@ -40,8 +42,22 @@ for (const r of d.runs) {
 assert.equal(classifyRun(activities[0]), "intensity");
 assert.equal(classifyRun(activities[1]), "base");
 assert.equal(classifyRun(activities[2]), "long");
-assert.equal(classifyRun(activities[5]), "intensity");
-assert.equal(d.runs.length, 5); // Rad nicht dabei
+assert.equal(classifyRun(activities.find((a) => a.name === "Intervalle 5x1000")), "intensity");
+assert.equal(d.runs.length, 5); // Rad und Schwimmen nicht dabei
+assert.equal(sportOf({ type: "Swim" }), "swim");
+assert.equal(sportOf({ type: "OpenWaterSwim" }), "swim");
+assert.equal(sportOf({ type: "VirtualRide" }), "bike");
+assert.equal(sportOf({ type: "WeightTraining" }), "strength");
+assert.equal(sportOf({ type: "TrailRun" }), "run");
+assert.equal(d.triathlon.thresholds.ftp, 220);
+assert.equal(d.triathlon.thresholds.swimThresholdPace100m, 125);
+assert.deepEqual(d.triathlon.thresholds.ftpTrend.map((p) => p.ftp), [215, 210]);
+assert.equal(d.triathlon.sessions.length, 3);
+assert.ok(d.triathlon.sessions.every((x) => !("avgHr" in x)));
+const sumLoad = d.weeks.reduce((a, w) => a + w.load, 0);
+const sumSport = d.weeks.reduce((a, w) => a + Object.values(w.bySport).reduce((b, v) => b + v.load, 0), 0);
+assert.equal(sumLoad, sumSport);
+assert.ok(d.weeks.some((w) => w.bySport.swim.load === 40));
 // Lücken bleiben null, 0 wird nicht zu "gut"
 assert.equal(d.wellness.find((w) => w.motivation === 0), undefined);
 assert.ok(d.wellness.every((w) => w.soreness === null));
