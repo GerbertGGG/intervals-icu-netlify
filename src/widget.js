@@ -27,6 +27,13 @@ export function weeklyGoal(week, env) {
   return Number.isFinite(cfg) && cfg > 0 ? { goal: Math.round(cfg), source: "config" } : { goal: null, source: null };
 }
 
+const medianOf = (a) => {
+  const v = a.filter((x) => x != null).sort((x, y) => x - y);
+  if (!v.length) return null;
+  const m = v.length >> 1;
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+};
+
 export function buildWidget(d, env = {}) {
   const week = d.weeks[d.weeks.length - 1];
   // Tageslast der laufenden Woche (Mo bis So); Tage nach heute sind null, nicht 0.
@@ -43,10 +50,18 @@ export function buildWidget(d, env = {}) {
   const key = d.planned.find((p) => p.date > d.today && isKeySession(p));
   const recentHip = d.hipFlags.filter((f) => f.date >= new Date(Date.parse(d.today + "T00:00:00Z") - 14 * 86400000).toISOString().slice(0, 10));
   const r = d.summary.readiness;
+  // Verlaeufe fuer die Mini-Kurven: Frische (TSB) 14 Tage, HRV 7 Tage samt Mittel der letzten 14 Tage. Luecken bleiben null.
+  const wByDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
+  const lastDays = (n) => Array.from({ length: n }, (_, i) => addDays(d.today, -(n - 1) + i));
+  const tsb14 = lastDays(14).map((date) => { const w = wByDate[date]; return w?.ctl != null && w?.atl != null ? Math.round((w.ctl - w.atl) * 10) / 10 : null; });
+  const hrv7 = lastDays(7).map((date) => wByDate[date]?.hrv ?? null);
+  const weekEnd = addDays(week.weekStart, 6);
+  const plannedSessions = d.planned.filter((p) => p.date >= d.today && p.date <= weekEnd).length;
   return {
     generatedAt: d.generatedAt,
     today: d.today,
     goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
+    trend: { tsb14, hrv7, hrvMedian: medianOf(d.wellness.filter((w) => w.date >= addDays(d.today, -13)).map((w) => w.hrv)) },
     readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, cls: i.cls })) },
     load: d.summary.load,
     thresholds: d.summary.thresholds,
@@ -64,6 +79,7 @@ export function buildWidget(d, env = {}) {
       goal: weeklyGoal(week, env).goal,
       goalSource: weeklyGoal(week, env).source,
       strengthMinutes: week.bySport.strength.minutes,
+      plannedSessions,
     },
     hip: { recent: recentHip.length, latestDate: d.hipFlags[0]?.date ?? null },
     hm: d.runalyze ? { goalSec: d.goal.targetTimeSecs, estimates: d.runalyze.hmEstimates, vdot: d.runalyze.vdot } : null,
@@ -144,12 +160,17 @@ export function buildWidgetTraining(d, env = {}) {
 
 // Kleine Widgets ("small"): Schlaf und Erholung sowie Ernaehrung, je die letzten 7 Tage.
 // Fehlende Werte bleiben null (Luecke), 0 kcal zaehlt als keine Daten (siehe buildWellness).
-const medianOf = (a) => {
-  const v = a.filter((x) => x != null).sort((x, y) => x - y);
-  if (!v.length) return null;
-  const m = v.length >> 1;
-  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
-};
+// Fitness (CTL) der letzten 6 Wochen: ein Punkt je Woche (heute, -7, ... -42 Tage), fehlende Wochen null.
+// Veraenderung = heute gegen vor 6 Wochen; ohne beide Werte keine Veraenderung.
+function buildFitness(d, byDate) {
+  const weekly = Array.from({ length: 7 }, (_, i) => {
+    const w = byDate[addDays(d.today, -42 + i * 7)];
+    return w?.ctl != null ? Math.round(w.ctl * 10) / 10 : null;
+  });
+  const now = [...d.wellness].reverse().find((w) => w.ctl != null)?.ctl ?? null;
+  weekly[6] = now != null ? Math.round(now * 10) / 10 : weekly[6];
+  return { ctl: weekly[6], delta: weekly[0] != null && weekly[6] != null ? Math.round(weekly[6] - weekly[0]) : null, weekly };
+}
 
 export function buildWidgetSmall(d, goals = null) {
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
@@ -174,6 +195,7 @@ export function buildWidgetSmall(d, goals = null) {
       medianRestingHR: medianOf(past14.map((w) => w.restingHR)),
     },
     food: { days: foodDays, latest, hasData: latest != null, goals },
+    fitness: buildFitness(d, byDate),
     cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
     sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
   };
