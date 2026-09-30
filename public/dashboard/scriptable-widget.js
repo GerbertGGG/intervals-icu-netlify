@@ -856,7 +856,8 @@ function messageWidget(msg) {
 
 /* ---------- Start ---------- */
 async function main() {
-  const inWidget = config.runsInWidget;
+  // Widget und Siri/Kurzbefehle koennen keine Dialoge zeigen: dort direkt die Ansicht bauen, ohne Menue
+  const inWidget = config.runsInWidget || config.runsWithSiri;
   if (!inWidget) {
     const menu = new Alert();
     menu.title = "Trainings-Widget";
