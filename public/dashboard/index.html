@@ -33,12 +33,17 @@ header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; j
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1.1rem; margin: 32px 0 12px; }
 h3 { font-size: .95rem; margin: 0 0 4px; }
+a { color: var(--accent); }
 .muted { color: var(--muted); font-size: .85rem; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.grid.wide { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card.full { grid-column: 1 / -1; }
+.stack > * + * { margin-top: 12px; }
 .big { font-size: 2rem; font-weight: 650; line-height: 1.1; }
 .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
-.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .85rem; font-weight: 600; }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .85rem; font-weight: 600; white-space: nowrap; }
+.big-badge { font-size: 1.05rem; }
 .ok { background: var(--ok-bg); color: var(--ok); }
 .warn { background: var(--warn-bg); color: var(--warn); }
 .bad { background: var(--bad-bg); color: var(--bad); }
@@ -50,22 +55,23 @@ svg { width: 100%; height: auto; display: block; }
 svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 svg .axis { stroke: var(--line); }
 svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
-.runs { list-style: none; margin: 0; padding: 0; }
-.runs li { padding: 12px 0; border-top: 1px solid var(--line); }
+.ready-grid { margin-top: 10px; }
+.rrow { display: grid; grid-template-columns: 96px 230px auto; gap: 8px; align-items: center; padding: 2px 0; }
+.rrow .lbl { font-size: .9rem; }
+.rrow .strip { width: 230px; max-width: 100%; }
+@media (max-width: 520px) { .rrow { grid-template-columns: 80px 1fr; } .rrow .badge { grid-column: 2; justify-self: start; } .rrow .strip { width: 100%; } }
+.runs { list-style: none; margin: 8px 0 0; padding: 0; }
+.runs li { padding: 6px 0; border-top: 1px solid var(--line); font-size: .9rem; }
 .runs li:first-child { border-top: 0; }
-.runs .head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-.tags span { margin-right: 12px; font-size: .9rem; }
-.tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; margin-left: 6px; }
 table { width: 100%; border-collapse: collapse; font-size: .95rem; }
-th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); }
+th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); white-space: nowrap; }
 th { font-size: .8rem; color: var(--muted); border-top: 0; }
-#week-report { grid-column: 1 / -1; overflow-x: auto; }
-td { white-space: nowrap; }
+.scroll { overflow-x: auto; }
 button, input { font: inherit; }
 #login { max-width: 420px; margin: 20vh auto; }
 #login input { width: 100%; padding: 8px; margin: 8px 0; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 #login button { padding: 8px 16px; border-radius: 6px; border: 0; background: var(--accent); color: #fff; cursor: pointer; }
-.legend { display: flex; gap: 14px; font-size: .8rem; color: var(--muted); margin-top: 4px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); margin-top: 4px; }
 .legend i { display: inline-block; width: 12px; height: 10px; margin-right: 4px; vertical-align: middle; }
 </style>
 </head>
@@ -79,38 +85,67 @@ button, input { font: inherit; }
 
   <h2>1 · Heute</h2>
   <div id="ready"></div>
-  <div id="today" class="grid" style="margin-top:12px"></div>
+  <div id="today" class="grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))"></div>
 
   <h2>2 · Trainingsverlauf</h2>
-  <div class="grid">
+  <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
+    <div class="muted">CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Der Renntag steht nur, wenn er in den nächsten 4 Wochen liegt.</div></div>
+  <div class="grid" style="margin-top:12px">
     <div class="card"><h3>Laufumfang pro Woche</h3><div id="chart-km"></div>
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
     <div class="card"><h3>Belastung pro Woche (alle Sportarten)</h3><div id="chart-load"></div>
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
   </div>
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
+  <div class="card" style="margin-top:12px"><h3>Belastung je Tag</h3><div id="calendar" style="max-width:420px"></div></div>
 
   <h2>2b · Wochenbericht nach Sportart</h2>
-  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(360px,1fr))">
+  <div class="grid wide">
     <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
-    <div class="card" id="week-report"></div>
+    <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
+    <div class="card full scroll" id="week-report"></div>
   </div>
   <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
 
   <h2>3 · Fitness</h2>
-  <div class="grid">
+  <div class="grid wide">
     <div class="card"><h3>VDOT und Ziel-Pace</h3><div id="vdot"></div></div>
     <div class="card"><h3>Decoupling bei langen Läufen</h3><div id="chart-dec"></div>
       <div class="muted">Orientierung: unter etwa 5 % gilt die Grundlagenausdauer als stabil. Höher = Puls driftet gegen Pace.</div></div>
+    <div class="card"><h3>Halbmarathon: Wo liegen die Zeiten gegenüber dem Ziel?</h3><div id="corridor"></div></div>
+    <div class="card"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records-chart"></div></div>
   </div>
-  <div class="card" style="margin-top:12px"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records"></div></div>
+  <div id="records-note" style="margin-top:6px"></div>
 
   <h2>3b · Schwellen</h2>
   <div class="grid" id="thresholds"></div>
 
   <h2>4 · Wellness</h2>
-  <div class="muted" id="wellness-note"></div>
-  <div class="grid" id="wellness" style="margin-top:8px"></div>
+  <div class="card"><h3>Stimmung, Motivation, Ermüdung, Muskelkater, Schlaf</h3><div id="wellness-heat"></div>
+    <div class="legend"><span><i style="background:var(--accent);opacity:.14"></i>1 (bestmöglich)</span><span><i style="background:var(--accent)"></i>höchster eingetragener Wert (schlechter)</span><span><i style="background:repeating-linear-gradient(45deg,var(--muted) 0 1px,transparent 1px 5px)"></i>nicht eingetragen</span></div>
+    <div class="muted" style="margin-top:6px">Skalen: 1 = bestmöglich. Die Beschriftungen der Stufen liefert die API nicht; je Zeile reicht die Skala bis zum höchsten tatsächlich eingetragenen Wert. Schraffiert = nichts eingetragen, nie „gut". Neutrale Farbe statt Ampel, weil die Bedeutung der Stufen nicht aus den Daten lesbar ist.</div></div>
+  <div class="grid" style="margin-top:12px">
+    <div class="card"><h3>Ruhepuls</h3><div id="rhr"></div>
+      <div class="muted">Ohne Nachttracking ist das ein Tageswert (Messmoment und Tagesform schwanken), kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div></div>
+    <div class="card"><h3>Schlafdauer</h3><div id="sleep"></div><div class="muted">Lücken = nicht erfasst.</div></div>
+    <div class="card"><h3>HRV</h3><div id="hrv"></div><div class="muted">Lücken = nicht erfasst.</div></div>
+  </div>
+
+  <h2>5 · Ernährung und Heißhunger</h2>
+  <div id="nutrition"></div>
+  <div class="grid wide" style="margin-top:12px">
+    <div class="card"><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div></div>
+    <div class="card"><h3>Letzte Einträge</h3><div id="cravings-list"></div></div>
+  </div>
+
+  <h2>6 · Kraft und Hüfte</h2>
+  <div class="grid wide">
+    <div class="card"><h3>Krafteinheiten pro Woche</h3><div id="strength"></div></div>
+    <div class="card"><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
+  </div>
+
+  <h2>7 · Studien-Check der Woche</h2>
+  <div class="card" id="studie"></div>
 </main>
 
 <div id="login" class="card" hidden>
@@ -120,397 +155,7 @@ button, input { font: inherit; }
   <button id="go">Öffnen</button>
 </div>
 
-<script>
-"use strict";
-const $ = (id) => document.getElementById(id);
-const NS = "http://www.w3.org/2000/svg";
-const TSB_BANDS = { ok: -10, warn: -25 }; // Standardwerte, keine persönlich kalibrierten Grenzen
-const ACWR = { lo: 0.8, hi: 1.3 };
-
-function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-function fmt(n, d = 0) { return n == null ? "–" : Number(n).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d }); }
-function fmtDate(iso) { const [y, m, d] = iso.split("-"); return `${d}.${m}.`; }
-function weekday(iso) { return new Date(iso + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short" }); }
-function fmtTime(secs) { const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`; }
-
-/* ---------- Laden ---------- */
-async function load() {
-  const url = new URL(location.href);
-  const fromUrl = url.searchParams.get("token");
-  if (fromUrl) {
-    try { localStorage.setItem("dashboard-token", fromUrl); } catch {}
-    url.searchParams.delete("token");
-    history.replaceState(null, "", url.pathname + url.search);
-  }
-  let token = null;
-  try { token = localStorage.getItem("dashboard-token"); } catch {}
-  if (!token) return showLogin();
-  let r;
-  try { r = await fetch("/api/dashboard", { headers: { Authorization: "Bearer " + token }, cache: "no-store" }); }
-  catch (e) { return showLogin("Worker nicht erreichbar: " + e.message); }
-  if (r.status === 401 || r.status === 503) {
-    try { localStorage.removeItem("dashboard-token"); } catch {}
-    return showLogin(r.status === 503 ? "Auf dem Worker ist noch kein DASHBOARD_TOKEN gesetzt." : "Token wurde abgelehnt.");
-  }
-  if (!r.ok) return showLogin("Fehler vom Worker (" + r.status + ").");
-  render(await r.json());
-}
-function showLogin(msg) {
-  $("app").hidden = true; $("login").hidden = false;
-  if (msg) $("login-msg").textContent = msg;
-  const go = () => { try { localStorage.setItem("dashboard-token", $("token").value.trim()); } catch {} location.reload(); };
-  $("go").onclick = go; $("token").onkeydown = (e) => { if (e.key === "Enter") go(); };
-}
-
-/* ---------- Diagramme (inline SVG) ---------- */
-function svgEl(tag, attrs = {}, text) {
-  const el = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  if (text != null) el.textContent = text;
-  return el;
-}
-function niceMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); for (const m of [1, 2, 4, 6, 8, 10]) if (m * p >= v) return m * p; return 10 * p; }
-
-function barChart(host, weeks, key, planKey, unit) {
-  const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42;
-  const vals = weeks.flatMap((w) => [w[key], w[planKey]]).filter((v) => v != null);
-  const max = niceMax(Math.max(1, ...vals));
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${unit} pro Woche` });
-  const y = (v) => T + (H - T - B) * (1 - v / max);
-  for (let i = 0; i <= 4; i++) {
-    const v = (max / 4) * i;
-    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v, max < 10 ? 1 : 0)));
-  }
-  svg.append(svgEl("text", { x: 4, y: 11 }, unit));
-  const slot = (W - L - R) / weeks.length, bw = slot * 0.55;
-  weeks.forEach((w, i) => {
-    const x = L + slot * i + (slot - bw) / 2;
-    const bar = svgEl("rect", { x, y: y(w[key]), width: bw, height: Math.max(0, y(0) - y(w[key])), fill: "var(--accent)", opacity: w.complete ? 1 : 0.55 });
-    bar.append(svgEl("title", {}, `Woche ab ${fmtDate(w.weekStart)}: ${fmt(w[key], max < 10 ? 1 : 0)} ${unit}${w[planKey] != null ? ` (Plan ${fmt(w[planKey])})` : ""}${w.complete ? "" : " – laufende Woche"}`));
-    svg.append(bar);
-    if (w[planKey] != null) svg.append(svgEl("line", { x1: x - 3, x2: x + bw + 3, y1: y(w[planKey]), y2: y(w[planKey]), stroke: "var(--plan)", "stroke-width": 3 }));
-    svg.append(svgEl("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, fmtDate(w.weekStart)));
-  });
-  svg.append(svgEl("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Woche ab (Montag) · helle Säule = laufende Woche"));
-  host.replaceChildren(svg);
-}
-
-// Verlaufsdiagramm mit echten Lücken: fehlende Werte unterbrechen die Linie.
-function lineChart(host, days, key, o) {
-  const W = 320, H = 200, L = 34, R = 10, T = 24, B = 40;
-  const first = new Date(days[0] + "T00:00:00Z").getTime();
-  const span = Math.max(1, (new Date(days[days.length - 1] + "T00:00:00Z").getTime() - first) / 86400000);
-  const x = (d) => L + (W - L - R) * ((new Date(d + "T00:00:00Z").getTime() - first) / 86400000 / span);
-  const { min, max, invert } = o;
-  const y = (v) => { const t = (v - min) / (max - min || 1); return T + (H - T - B) * (invert ? t : 1 - t); };
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label });
-  const ticks = o.ticks || [min, (min + max) / 2, max];
-  for (const t of ticks) svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), class: "grid-l" }), svgEl("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, o.tickLabel ? o.tickLabel(t) : fmt(t)));
-  svg.append(svgEl("text", { x: 4, y: 11 }, o.unit));
-  const series = days.map((d) => ({ d, v: o.values[d] }));
-  let path = "", pen = false;
-  for (const p of series) {
-    if (p.v == null) { pen = false; continue; }
-    path += `${pen ? "L" : "M"}${x(p.d).toFixed(1)},${y(p.v).toFixed(1)}`; pen = true;
-  }
-  svg.append(svgEl("path", { d: path, fill: "none", stroke: "var(--accent)", "stroke-width": 2 }));
-  for (const p of series) if (p.v != null) {
-    const c = svgEl("circle", { cx: x(p.d), cy: y(p.v), r: 3, fill: "var(--accent)" });
-    c.append(svgEl("title", {}, `${fmtDate(p.d)}: ${fmt(p.v, o.dec || 0)} ${o.unit}`));
-    svg.append(c);
-  }
-  const step = Math.max(1, Math.round(span / 4));
-  for (let i = 0; i <= span; i += step) {
-    const d = new Date(first + i * 86400000).toISOString().slice(0, 10);
-    svg.append(svgEl("text", { x: x(d), y: H - 22, "text-anchor": "middle" }, fmtDate(d)));
-  }
-  svg.append(svgEl("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Datum"));
-  host.replaceChildren(svg);
-}
-
-/* ---------- Rendering ---------- */
-function render(d) {
-  $("login").hidden = true; $("app").hidden = false;
-  $("stamp").textContent = "Stand " + new Date(d.generatedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
-
-  const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
-  $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
-
-  renderReady(d); renderToday(d); renderHistory(d); renderSport(d); renderFitness(d); renderThresholds(d); renderWellness(d);
-}
-
-function tsbStatus(tsb) {
-  if (tsb == null) return { cls: "none", text: "keine Daten" };
-  if (tsb >= TSB_BANDS.ok) return { cls: "ok", text: "frisch" };
-  if (tsb >= TSB_BANDS.warn) return { cls: "warn", text: "belastet" };
-  return { cls: "bad", text: "stark ermüdet" };
-}
-function acwrStatus(v) {
-  if (v == null) return { cls: "none", text: "keine Daten" };
-  if (v < ACWR.lo) return { cls: "warn", text: "unter Zielkorridor" };
-  if (v <= ACWR.hi) return { cls: "ok", text: "im Zielkorridor" };
-  return { cls: "bad", text: "über Zielkorridor" };
-}
-
-function renderToday(d) {
-  const withLoad = [...d.wellness].reverse().find((w) => w.ctl != null && w.atl != null);
-  const ctl = withLoad?.ctl, atl = withLoad?.atl;
-  const tsb = withLoad ? ctl - atl : null;
-  const acwr = withLoad && ctl > 0 ? atl / ctl : null;
-  const ts = tsbStatus(tsb), as = acwrStatus(acwr);
-  const plan = d.planned.filter((p) => p.date === d.today);
-  const next = d.planned.find((p) => p.date > d.today);
-  const g = d.goal;
-  const planHtml = plan.length
-    ? plan.map((p) => `<div><b>${esc(p.name || "Einheit")}</b>${[p.durationMin && p.durationMin + " min", p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).length ? `<div class="muted">${[p.durationMin && p.durationMin + " min", p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ")}</div>` : ""}${p.description ? `<div class="desc">${esc(p.description)}</div>` : `<div class="muted">Kein Zweck/Beschreibung im Plan hinterlegt.</div>`}</div>`).join("<hr>")
-    : `<div class="muted">Heute ist keine Einheit geplant.</div>${next ? `<div class="muted">Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}</div>` : ""}`;
-  $("today").innerHTML = `
-    <div class="card"><h3>Geplante Einheit</h3>${d.sources.intervalsEvents.ok ? planHtml : '<div class="muted">Plan nicht abrufbar.</div>'}</div>
-    <div class="card"><h3>${esc(g.name)}</h3>
-      <div class="big">${g.daysToGo > 0 ? `noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div>
-      <div class="muted">${weekday(g.date)}, ${g.date.split("-").reverse().join(".")} · Ziel unter ${fmtTime(g.targetTimeSecs)} (Pace ${Math.floor(g.targetTimeSecs / 21.0975 / 60)}:${String(Math.round((g.targetTimeSecs / 21.0975) % 60)).padStart(2, "0")} min/km)</div>
-      <div class="muted">${g.source === "config" ? "Datum/Ziel aus der Konfiguration (kein A-Rennen im Kalender gefunden)." : "Aus dem Intervals.icu-Kalender."}</div></div>
-    <div class="card"><h3>Frische (TSB = CTL − ATL)</h3>
-      <div class="big">${fmt(tsb, 1)}</div>
-      <span class="badge ${ts.cls}">${ts.text}</span>
-      <div class="muted" style="margin-top:6px">Ampel: ≥ ${TSB_BANDS.ok} frisch · bis ${TSB_BANDS.warn} belastet · darunter stark ermüdet (Standardwerte). Vor dem Rennen sind positive Werte normal.</div></div>
-    <div class="card"><h3>Belastung</h3>
-      <div class="row"><span>CTL (Fitness)</span><b>${fmt(ctl, 1)}</b></div>
-      <div class="row"><span>ATL (Ermüdung)</span><b>${fmt(atl, 1)}</b></div>
-      <div class="row"><span>ACWR (ATL/CTL)</span><b>${fmt(acwr, 2)}</b></div>
-      <span class="badge ${as.cls}">${as.text}</span> <span class="muted">Ziel ${fmt(ACWR.lo, 1)}–${fmt(ACWR.hi, 1)}</span>
-      ${withLoad ? `<div class="muted">Werte vom ${fmtDate(withLoad.date)}</div>` : `<div class="muted">Keine CTL/ATL-Werte in den letzten 8 Wochen.</div>`}</div>`;
-}
-
-function renderHistory(d) {
-  barChart($("chart-km"), d.weeks, "km", "plannedKm", "km");
-  barChart($("chart-load"), d.weeks, "load", "plannedLoad", "Load");
-  const noPlan = d.weeks.every((w) => w.plannedKm == null && w.plannedLoad == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum liegen keine geplanten Workouts mit Distanz/Load vor – ein Plan-Marker wird deshalb nicht gezeigt." : "Plan-Marker nur, wenn geplante Workouts Distanz bzw. Load enthalten. Laufumfang zählt nur Läufe, Belastung alle Sportarten.";
-}
-
-const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
-const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
-
-function stackedChart(host, weeks) {
-  const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42;
-  const totals = weeks.map((w) => SPORT_ORDER.reduce((a, k) => a + w.bySport[k].load, 0));
-  const max = niceMax(Math.max(1, ...totals));
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "TSS pro Woche und Sportart" });
-  const y = (v) => T + (H - T - B) * (1 - v / max);
-  for (let i = 0; i <= 4; i++) {
-    const v = (max / 4) * i;
-    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v, max < 10 ? 1 : 0)));
-  }
-  svg.append(svgEl("text", { x: 4, y: 11 }, "TSS"));
-  const slot = (W - L - R) / weeks.length, bw = slot * 0.55;
-  weeks.forEach((w, i) => {
-    const x = L + slot * i + (slot - bw) / 2;
-    let acc = 0;
-    for (const k of SPORT_ORDER) {
-      const v = w.bySport[k].load;
-      if (!v) continue;
-      const r = svgEl("rect", { x, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v)), fill: `var(--s-${k})`, opacity: w.complete ? 1 : 0.6 });
-      r.append(svgEl("title", {}, `Woche ab ${fmtDate(w.weekStart)} · ${SPORT_LABEL[k]}: ${fmt(v)} TSS`));
-      svg.append(r); acc += v;
-    }
-    svg.append(svgEl("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, fmtDate(w.weekStart)));
-  });
-  svg.append(svgEl("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Woche ab (Montag) · helle Säule = laufende Woche"));
-  host.replaceChildren(svg);
-}
-
-function renderSport(d) {
-  if (!d.sources.intervalsActivities.ok) { $("chart-sport").innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; $("week-report").innerHTML = ""; return; }
-  stackedChart($("chart-sport"), d.weeks);
-  const used = SPORT_ORDER.filter((k) => d.weeks.some((w) => w.bySport[k].load > 0));
-  $("sport-legend").innerHTML = used.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span>`).join("");
-  const cur = d.weeks[d.weeks.length - 1];
-  const done = [...d.weeks].reverse().find((w) => w.complete);
-  const prev = done ? d.weeks[d.weeks.indexOf(done) - 1] : null;
-  const rows = (w, ref) => SPORT_ORDER.filter((k) => w.bySport[k].count > 0 || (ref && ref.bySport[k].count > 0) || w.bySport[k].plannedLoad != null)
-    .map((k) => {
-      const b = w.bySport[k], r = ref ? ref.bySport[k] : null;
-      return `<tr><td>${SPORT_LABEL[k]}</td><td>${b.count}</td><td>${fmt(b.minutes / 60, 1)} h</td><td>${b.km ? fmt(b.km, 1) + " km" : "–"}</td><td><b>${fmt(b.load)}</b></td><td class="muted">${r ? fmt(r.load) : "–"}</td><td class="muted">${b.plannedLoad != null ? fmt(b.plannedLoad) : "–"}</td></tr>`;
-    }).join("");
-  const table = (w, ref, title) => {
-    if (!w) return "";
-    const total = SPORT_ORDER.reduce((a, k) => a + w.bySport[k].load, 0);
-    const body = rows(w, ref);
-    return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>Distanz</th><th>TSS</th><th>Vorwoche</th><th>Plan</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td></td><td></td><td><b>${fmt(total)}</b></td><td class="muted">${ref ? fmt(SPORT_ORDER.reduce((a, k) => a + ref.bySport[k].load, 0)) : "–"}</td><td class="muted">${w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
-  };
-  $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + table(cur, done, "Laufende Woche");
-}
-
-// Bereitschaft (Wellness heute): Vergleich der heutigen Einträge mit dem eigenen Median der
-// letzten 8 Wochen. Die Skala läuft ab 1 (bestmöglich); ein Schritt schlechter als üblich = Achtung,
-// zwei oder mehr = deutlich. Grenzen sind eigene Standardwerte, keine medizinische Vorgabe.
-const READY_METRICS = [
-  { key: "sleepQuality", label: "Schlaf" }, { key: "fatigue", label: "Ermüdung" }, { key: "soreness", label: "Muskelkater" },
-  { key: "mood", label: "Stimmung" }, { key: "motivation", label: "Motivation" },
-];
-function median(a) { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
-
-function renderReady(d) {
-  const host = $("ready");
-  if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="card"><h3>Bereit für Training?</h3><div class="muted">Wellness nicht abrufbar.</div></div>'; return; }
-  const today = d.wellness.find((w) => w.date === d.today);
-  const hasScales = today && READY_METRICS.some((m) => today[m.key] != null);
-  const past = d.wellness.filter((w) => w.date < d.today);
-  const items = READY_METRICS.map((m) => {
-    const v = today ? today[m.key] : null;
-    const base = past.map((w) => w[m.key]).filter((x) => x != null);
-    if (v == null) return { ...m, v: null, cls: "none", text: "fehlt" };
-    if (base.length < 5) return { ...m, v, cls: "none", text: "kein Vergleich" };
-    const delta = v - median(base);
-    return { ...m, v, cls: delta >= 2 ? "bad" : delta >= 1 ? "warn" : "ok", text: delta >= 2 ? "deutlich schlechter" : delta >= 1 ? "etwas schlechter" : "wie üblich" };
-  });
-  const bad = items.filter((i) => i.cls === "bad").length, warn = items.filter((i) => i.cls === "warn").length;
-  const withTsb = [...d.wellness].reverse().find((w) => w.ctl != null && w.atl != null);
-  const tsb = withTsb ? withTsb.ctl - withTsb.atl : null;
-  let verdict;
-  if (!hasScales) verdict = { cls: "none", text: "Heute noch nichts eingetragen", sub: "Ohne Eintrag gebe ich keine Einschätzung ab." };
-  else if (bad >= 1 || warn >= 3) verdict = { cls: "bad", text: "Eher ruhig angehen", sub: "Mehrere Werte liegen schlechter als üblich." };
-  else if (warn >= 1 || (tsb != null && tsb < TSB_BANDS.ok)) verdict = { cls: "warn", text: "Mit Vorsicht", sub: "Einzelne Werte oder die Belastung sind auffällig." };
-  else verdict = { cls: "ok", text: "Bereit", sub: "Die Werte liegen im üblichen Bereich." };
-  const sleep = today && today.sleepHours != null ? `${fmt(today.sleepHours, 1)} h Schlaf` : "Schlafdauer nicht erfasst";
-  const hrv = today && today.hrv != null ? ` · HRV ${fmt(today.hrv)}` : "";
-  const rhr = today && today.restingHR != null ? ` · Ruhepuls ${fmt(today.restingHR)} bpm (Tageswert)` : "";
-  host.innerHTML = `<div class="card"><h3>Bereit für Training?</h3>
-    <div><span class="badge ${verdict.cls}" style="font-size:1.05rem">${verdict.text}</span> <span class="muted">${verdict.sub}</span></div>
-    <div style="margin-top:8px">${esc(sleep)}${hrv}${rhr}</div>
-    <div class="grid" style="margin-top:10px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">${items.map((i) => `<div class="row"><span>${i.label}</span><span><b>${i.v != null ? i.v : "–"}</b> <span class="badge ${i.cls}">${i.text}</span></span></div>`).join("")}</div>
-    <div class="muted" style="margin-top:6px">Skala 1 = bestmöglich. Vergleich mit deinem Median der letzten 8 Wochen (mind. 5 Einträge). Lücken zählen nie als „gut". Grenzen sind Standardwerte.</div></div>`;
-}
-
-// Schwellen je Sportart aus den Intervals.icu-Einstellungen; Fehlendes wird als „nicht hinterlegt" gezeigt.
-function renderThresholds(d) {
-  const host = $("thresholds");
-  if (!d.sources.intervalsSportSettings.ok) { host.innerHTML = '<div class="card muted">Sport-Einstellungen nicht abrufbar.</div>'; return; }
-  const t = d.thresholds;
-  const val = (v, fn) => v != null ? `<b>${fn(v)}</b>` : '<span class="muted">nicht hinterlegt</span>';
-  const card = (title, rows) => `<div class="card"><h3>${title}</h3>${rows.map(([l, v]) => `<div class="row"><span>${l}</span><span>${v}</span></div>`).join("")}</div>`;
-  host.innerHTML =
-    card("Laufen", [["Schwellenpace", val(t.run.thresholdPaceSecPerKm, (v) => paceLabel(v) + " min/km")], ["Schwellenpuls (LTHR)", val(t.run.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.run.maxHr, (v) => fmt(v) + " bpm")]]) +
-    card("Rad", [["FTP", val(t.bike.ftp, (v) => fmt(v) + " W")], ["FTP indoor", val(t.bike.indoorFtp, (v) => fmt(v) + " W")], ["Schwellenpuls (LTHR)", val(t.bike.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.bike.maxHr, (v) => fmt(v) + " bpm")]]) +
-    card("Schwimmen", [["Schwellenpace", val(t.swim.thresholdPaceSecPer100m, (v) => paceLabel(v) + " min/100 m")]]);
-}
-
-function paceLabel(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
-function dayRange(from, to) {
-  const out = [];
-  for (let t = new Date(from + "T00:00:00Z"); t.toISOString().slice(0, 10) <= to; t = new Date(t.getTime() + 86400000)) out.push(t.toISOString().slice(0, 10));
-  return out;
-}
-// Decoupling je langem Lauf als Säulen (wenige Werte, keine verbindende Linie) mit 5-%-Orientierung.
-function decouplingChart(host, runs) {
-  if (!runs.length) { host.innerHTML = '<div class="muted">Keine langen Läufe mit Decoupling-Wert im Zeitraum.</div>'; return; }
-  const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42, REF = 5;
-  const max = niceMax(Math.max(REF * 1.2, ...runs.map((r) => Math.abs(r.decoupling))));
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Decoupling je langem Lauf" });
-  const y = (v) => T + (H - T - B) * (1 - v / max);
-  for (let i = 0; i <= 4; i++) {
-    const v = (max / 4) * i;
-    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), svgEl("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v, max < 10 ? 1 : 0)));
-  }
-  svg.append(svgEl("text", { x: 4, y: 11 }, "Decoupling in %"));
-  svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(REF), y2: y(REF), stroke: "var(--warn)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), svgEl("text", { x: W - R, y: y(REF) - 4, "text-anchor": "end" }, "5 % Orientierung"));
-  const slot = (W - L - R) / runs.length, bw = Math.min(slot * 0.55, 46);
-  runs.forEach((r, i) => {
-    const x = L + slot * i + (slot - bw) / 2, v = Math.max(0, r.decoupling);
-    const bar = svgEl("rect", { x, y: y(v), width: bw, height: Math.max(0, y(0) - y(v)), fill: "var(--accent)" });
-    bar.append(svgEl("title", {}, `${fmtDate(r.date)}: ${fmt(r.decoupling, 1)} % (${fmt(r.distanceKm, 1)} km)`));
-    svg.append(bar, svgEl("text", { x: x + bw / 2, y: y(v) - 4, "text-anchor": "middle" }, fmt(r.decoupling, 1)), svgEl("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, fmtDate(r.date)));
-  });
-  svg.append(svgEl("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Datum des langen Laufs"));
-  host.replaceChildren(svg);
-}
-
-function renderFitness(d) {
-  if (!d.sources.intervalsActivities.ok) $("chart-dec").innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>';
-  else decouplingChart($("chart-dec"), d.fitness.longRuns);
-  const r = d.runalyze;
-  renderVdot(d);
-  if (!r) { $("records").innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – Bestzeiten und Prognose fehlen.</div>'; return; }
-  const goal = d.goal.targetTimeSecs;
-  const row = (x) => {
-    const diff = x.bestSeconds != null && x.prognosisSeconds != null ? x.prognosisSeconds - x.bestSeconds : null;
-    const isHm = x.label === "Halbmarathon";
-    return `<tr><td>${x.label}</td>
-      <td>${x.bestSeconds != null ? `<b>${fmtTime(x.bestSeconds)}</b> <span class="muted">${fmtDate(x.bestDate)}${x.bestDate.slice(0, 4)}${Math.abs(x.bestDistanceKm - x.distanceKm) > 0.005 ? `, gemessen ${fmt(x.bestDistanceKm, 2)} km` : ""}</span>` : '<span class="muted">keine</span>'}</td>
-      <td>${x.prognosisSeconds != null ? fmtTime(x.prognosisSeconds) : '<span class="muted">fehlt</span>'}</td>
-      <td>${isHm ? `Ziel ${fmtTime(goal)}` : diff != null ? (diff > 0 ? "+" : "−") + fmtTime(Math.abs(diff)) : ""}</td></tr>`;
-  };
-  $("records").innerHTML = `<table><thead><tr><th>Distanz</th><th>Bestzeit</th><th>Prognose</th><th>Vergleich</th></tr></thead><tbody>${r.rows.map(row).join("")}</tbody></table>
-    <div class="notice">Die Halbmarathon-Prognose ist eine reine Extrapolation aus dem Modell von Runalyze, kein Ergebnis eines Halbmarathon-Trainings oder -Rennens. Ohne Halbmarathon-Bestzeit gibt es dafür keinen Vergleichswert.</div>
-    <div class="muted">Runalyze-Stand: ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}. „Vergleich" bei 5 und 10 km = Prognose minus Bestzeit.</div>`;
-}
-
-function renderVdot(d) {
-  const r = d.runalyze;
-  if (!r || r.vdot == null) { $("vdot").innerHTML = '<div class="muted">Kein VDOT im Runalyze-Snapshot – Paces fehlen.</div>'; return; }
-  const goalPace = d.goal.targetTimeSecs / 21.0975;
-  const toSec = (p) => { const [m, s] = p.replace("/km", "").split(":").map(Number); return m * 60 + s; };
-  const zones = r.paces.map((p) => ({ label: p.label.replace(/ \(.\)$/, ""), sec: toSec(p.pace) })).sort((a, b) => a.sec - b.sec);
-  const lo = Math.floor((Math.min(goalPace, zones[0].sec) - 15) / 15) * 15, hi = Math.ceil((Math.max(goalPace, zones[zones.length - 1].sec) + 15) / 15) * 15;
-  const W = 480, H = 150, L = 20, R = 20, AY = 70;
-  const x = (s) => L + (W - L - R) * ((s - lo) / (hi - lo));
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Trainingspaces und Ziel-Pace" });
-  svg.append(svgEl("line", { x1: L, x2: W - R, y1: AY, y2: AY, class: "axis", "stroke-width": 2 }));
-  for (let s = Math.ceil(lo / 30) * 30; s <= hi; s += 30) svg.append(svgEl("line", { x1: x(s), x2: x(s), y1: AY - 4, y2: AY + 4, class: "axis" }), svgEl("text", { x: x(s), y: AY + 18, "text-anchor": "middle" }, paceLabel(s)));
-  zones.forEach((z, i) => {
-    const up = i % 2 === 0 ? 24 : 48;
-    svg.append(svgEl("line", { x1: x(z.sec), x2: x(z.sec), y1: AY - up + 4, y2: AY, stroke: "var(--muted)" }), svgEl("circle", { cx: x(z.sec), cy: AY, r: 4, fill: "var(--muted)" }), svgEl("text", { x: x(z.sec), y: AY - up, "text-anchor": "middle" }, `${z.label} ${paceLabel(z.sec)}`));
-  });
-  svg.append(svgEl("path", { d: `M${x(goalPace)},${AY + 6} l-6,10 h12 z`, fill: "var(--accent)" }), svgEl("text", { x: x(goalPace), y: AY + 42, "text-anchor": "middle", style: "fill:var(--text);font-weight:700;font-size:12px" }, `Ziel ${paceLabel(goalPace)}`));
-  svg.append(svgEl("text", { x: W / 2, y: H - 4, "text-anchor": "middle" }, "Pace in min/km (links schneller)"));
-  const stale = (Date.now() - Date.parse(r.fetchedAt)) / 86400000 > 7;
-  $("vdot").innerHTML = `<div class="big">${fmt(r.vdot, 1)}</div><div class="muted">VDOT (effektive VO2max laut Runalyze), Stand ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}</div><div id="vdot-chart" style="margin-top:6px"></div>
-    ${stale ? '<div class="notice">Der Runalyze-Snapshot ist älter als 7 Tage – VDOT und Prognose können veraltet sein.</div>' : ""}
-    <div class="muted">Ziel-Pace = Halbmarathon unter ${fmtTime(d.goal.targetTimeSecs)}. Runalyze liefert nur das VDOT, die Zonen-Paces sind daraus nach Daniels berechnet.</div>`;
-  $("vdot-chart").append(svg);
-}
-
-const WELLNESS = [
-  { key: "mood", label: "Stimmung" }, { key: "motivation", label: "Motivation" }, { key: "fatigue", label: "Ermüdung" },
-  { key: "soreness", label: "Muskelkater" }, { key: "sleepQuality", label: "Schlafqualität" },
-];
-
-function renderWellness(d) {
-  const host = $("wellness");
-  if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="muted">Wellness nicht abrufbar.</div>'; return; }
-  const first = d.wellness.length ? d.wellness[0].date : d.today;
-  const days = [];
-  for (let t = new Date(first + "T00:00:00Z"); t.toISOString().slice(0, 10) <= d.today; t = new Date(t.getTime() + 86400000)) days.push(t.toISOString().slice(0, 10));
-  if (days.length < 2) days.unshift(new Date(new Date(d.today + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10));
-  $("wellness-note").textContent = "Skalen: 1 = bestmöglich (oben im Diagramm), höhere Werte = schlechter. Die Beschriftungen der Stufen liefert die API nicht; die Achse reicht deshalb bis zum höchsten tatsächlich eingetragenen Wert. Lücken = nichts eingetragen.";
-  host.innerHTML = "";
-  for (const m of WELLNESS) {
-    const values = Object.fromEntries(d.wellness.map((w) => [w.date, w[m.key]]));
-    const present = Object.values(values).filter((v) => v != null);
-    const card = document.createElement("div"); card.className = "card";
-    card.innerHTML = `<h3>${m.label}</h3><div class="chart"></div>`;
-    host.append(card);
-    if (!present.length) { card.querySelector(".chart").innerHTML = '<div class="muted">Keine Einträge im Zeitraum.</div>'; continue; }
-    const max = Math.max(2, ...present);
-    lineChart(card.querySelector(".chart"), days, null, { values, min: 1, max, invert: true, unit: "Skala", label: m.label, ticks: Array.from({ length: max }, (_, i) => i + 1), tickLabel: (t) => t });
-    const n = present.length; const span = days.length;
-    card.insertAdjacentHTML("beforeend", `<div class="muted">${n} von ${span} Tagen erfasst</div>`);
-  }
-  const rhrVals = Object.fromEntries(d.wellness.map((w) => [w.date, w.restingHR]));
-  const rhr = Object.values(rhrVals).filter((v) => v != null);
-  const card = document.createElement("div"); card.className = "card";
-  card.innerHTML = `<h3>Ruhepuls</h3><div class="chart"></div>`;
-  host.append(card);
-  if (!rhr.length) card.querySelector(".chart").innerHTML = '<div class="muted">Keine Einträge im Zeitraum.</div>';
-  else {
-    const lo = Math.floor(Math.min(...rhr) - 2), hi = Math.ceil(Math.max(...rhr) + 2);
-    lineChart(card.querySelector(".chart"), days, null, { values: rhrVals, min: lo, max: hi, unit: "bpm", label: "Ruhepuls" });
-  }
-  card.insertAdjacentHTML("beforeend", `<div class="muted">Hinweis: Ohne Nachttracking ist das ein Tageswert (Messmoment und Tagesform schwanken), kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div>`);
-}
-
-load();
-</script>
+<script src="charts.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

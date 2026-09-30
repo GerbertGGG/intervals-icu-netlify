@@ -2,6 +2,8 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
+import { parseCravings, findHipFlags } from "../src/dashboard-parse.js";
+import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
 import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
 
@@ -10,7 +12,7 @@ const day = (n) => new Date(Date.parse(today + "T00:00:00Z") + n * 86400000).toI
 const wellness = [];
 for (let i = 55; i >= 0; i--) {
   if (i % 5 === 2) continue; // Lücken
-  wellness.push({ id: day(-i), ctl: 30 + (55 - i) * 0.1, atl: 28 + Math.sin(i) * 6, mood: 1 + (i % 3), motivation: i % 7 === 0 ? 0 : 2, fatigue: 1 + (i % 4), soreness: null, sleepQuality: 2, sleepSecs: 27000, hrv: 48, restingHR: 52 + (i % 4), comments: "HH 16:30" });
+  wellness.push({ id: day(-i), ctl: 30 + (55 - i) * 0.1, atl: 28 + Math.sin(i) * 6, mood: 1 + (i % 3), motivation: i % 7 === 0 ? 0 : 2, fatigue: 1 + (i % 4), soreness: null, sleepQuality: 2, sleepSecs: 27000, hrv: 48, restingHR: 52 + (i % 4), comments: i % 6 === 0 ? `HH ${15 + (i % 7)}:30, Stärke ${1 + (i % 5)}, Schokolade, davor 12:00 Salat, Auslöser Müdigkeit` : i === 4 ? "Linke Hüfte zwickt, kein Knieschmerz" : null, ...(i < 14 && i % 3 !== 0 ? { Calories: 1800 + i * 20, Carbs: 200 + i, Protein: 110, Fat: 60, CalorieGoal: 2100 } : {}), ...(i === 1 ? { Calories: 0 } : {}) });
 }
 const act = (n, o) => ({ id: n, start_date_local: day(-n) + "T10:00:00", type: "Run", icu_training_load: 50, average_heartrate: 140, decoupling: 3.1, icu_rpe: 5, feel: 2, ...o });
 const activities = [
@@ -68,6 +70,30 @@ const sumLoad = d.weeks.reduce((a, w) => a + w.load, 0);
 const sumSport = d.weeks.reduce((a, w) => a + Object.values(w.bySport).reduce((b, v) => b + v.load, 0), 0);
 assert.equal(sumLoad, sumSport);
 assert.ok(d.weeks.some((w) => w.bySport.swim.load === 40));
+// Heißhunger, Hüfte, Yazio
+assert.ok(d.cravings.length >= 5 && d.cravings.every((c) => /^\d\d:30$/.test(c.time) && c.strength >= 1 && c.strength <= 5 && c.trigger === "Müdigkeit"));
+assert.equal(d.hipFlags.length, 1);
+assert.equal(d.hipFlags[0].term, "Hüfte");
+assert.equal(d.wellness.find((w) => w.date === day(-1)).calories, null); // 0 zählt als keine Daten, nie als 0 kcal
+assert.ok(d.wellness.some((w) => w.calories > 1000 && w.calorieGoal === 2100));
+assert.ok(d.wellness.every((w) => !("comments" in w)));
+assert.equal(d.daily.length, 56);
+assert.equal(d.daily.at(-1).date, today);
+assert.equal(d.daily.reduce((a, x) => a + x.load, 0), d.weeks.reduce((a, w) => a + w.load, 0));
+assert.equal(d.studie, null);
+// Parser
+assert.equal(parseCravings("d", "Gut geschlafen. hh 21.15 stärke 3 Chips auslöser: Stress; HH 10h00, Stärke 2, Kekse").length, 2);
+assert.equal(parseCravings("d", "HH abends sehr stark")[0].time, null);
+assert.equal(findHipFlags("Kniebeugen ok, ohne Hüftschmerz").length, 0);
+assert.equal(findHipFlags("Linke Hüfte zwickt, Leiste leicht").length, 2);
+// Studien-Check
+assert.ok(validateStudie({ fetchedAt: "2026-09-27T10:00:00Z", text: "x" }).error); // ohne Quelle nicht
+assert.ok(validateStudie({ fetchedAt: "2026-09-27T10:00:00Z", text: "x", source: "Autor 2024", sourceUrl: "http://x.de" }).error);
+assert.ok(validateStudie({ fetchedAt: "2026-09-27T10:00:00Z", text: "x", source: "Autor 2024", sourceUrl: "https://x.de/a" }).value);
+const { isAuthorized: isAuth } = await import("../src/dashboard.js");
+const putS = (body, tok = "geheim") => handleStudieRequest(new Request("https://x/api/studie", { method: "PUT", headers: { authorization: "Bearer " + tok }, body: JSON.stringify(body) }), env, isAuth);
+assert.equal((await putS({}, "falsch")).status, 401);
+assert.equal((await putS({ fetchedAt: "2026-09-27T10:00:00Z", text: "Kurzer Abschnitt", source: "Autor 2024" })).status, 200);
 // Lücken bleiben null, 0 wird nicht zu "gut"
 assert.equal(d.wellness.find((w) => w.motivation === 0), undefined);
 assert.ok(d.wellness.every((w) => w.soreness === null));

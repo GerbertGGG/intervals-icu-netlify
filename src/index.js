@@ -11,6 +11,7 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { isIntervalsEnabled } from "./kv.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
+import { handleStudieRequest } from "./studie-snapshot.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -86,6 +87,11 @@ export default {
     // Runalyze-Snapshot (Prognose + Rennen) aus einer Sitzung mit Runalyze-MCP, siehe src/runalyze-snapshot.js.
     if (url.pathname === "/api/runalyze") {
       return withWorkerErrorBoundary(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
+    }
+
+    // Studien-Check der Woche aus dem Coaching-Bericht, siehe src/studie-snapshot.js.
+    if (url.pathname === "/api/studie") {
+      return withWorkerErrorBoundary(() => handleStudieRequest(req, env, isAuthorized));
     }
 
     if (url.pathname === "/report-email") {
