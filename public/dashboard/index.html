@@ -57,17 +57,17 @@ svg .axis { stroke: var(--line); }
 svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .cockpit-group { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
 .cockpit-group:first-child { margin-top: 0; }
-.cockpit { display: grid; gap: 10px; grid-template-columns: repeat(6, minmax(0, 1fr)); }
-.cockpit .tile { grid-column: span 1; }
+.cockpit { display: grid; gap: 10px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.cockpit .tile { grid-column: span 2; }
 .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .tile h3 { font-size: .75rem; font-weight: 600; color: var(--muted); margin: 0; }
 .tile .val { font-size: 1.5rem; font-weight: 650; line-height: 1.15; }
 .tile .val small { font-size: .8rem; font-weight: 500; color: var(--muted); }
 .tile .sub { font-size: .8rem; color: var(--muted); }
-.cockpit .tile.span2 { grid-column: span 2; }
-.cockpit .tile.span3 { grid-column: span 3; }
+.cockpit .tile.span2 { grid-column: span 4; }
+.cockpit .tile.span3 { grid-column: span 6; }
 .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-@media (max-width: 900px) { .cockpit { grid-template-columns: repeat(2, minmax(0, 1fr)); } .cockpit .tile.span2, .cockpit .tile.span3 { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .cockpit { grid-template-columns: repeat(4, minmax(0, 1fr)); } .cockpit .tile { grid-column: span 2; } .cockpit .tile.span2, .cockpit .tile.span3 { grid-column: 1 / -1; } }
 @media (max-width: 480px) { .cockpit { grid-template-columns: 1fr; } }
 .dots { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: .8rem; }
 .dots span { display: inline-flex; align-items: center; gap: 4px; }
