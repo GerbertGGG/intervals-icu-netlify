@@ -623,26 +623,27 @@ function progressBar(w, IW, ratio, hex) {
 function fillFood(w, d, IW, roomy, compact) {
   const f = d.food, ph = racePhase(d.goal ? d.goal.daysToGo : null), t = ph.targets;
   const td = f.days[f.days.length - 1] || {};
-  const has = [td.calories, td.protein, td.carbs].some((x) => x != null);
+  const has = [td.calories, td.protein, td.carbs, td.fat].some((x) => x != null);
   const carb = ph.name === "carbload";
   const craving = d.cravings ? (d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner") : null;
   const head = w.addStack(); head.centerAlignContent();
   text(head, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
   if (ph.label) { head.addSpacer(); text(head, ph.label, 8, { bold: true, color: COL.race }); }
   if (!compact) w.addSpacer(2);
-  // Drei Balken: Kohlenhydrate, Protein, Energie. Ein Ziel gibt es nur, wenn die Phase eines festlegt (Kohlenhydrate
-  // sonst nur als Wert, ohne Balken). Ohne heutige Yazio-Werte steht das Tagesziel mit leerem Balken da.
+  // Vier Balken: Protein, Kohlenhydrate, Fett, Energie. Ein Ziel gibt es nur, wenn Yazio oder die Phase eines liefert
+  // (sonst nur der Wert, ohne Balken). Ohne heutige Yazio-Werte steht das Tagesziel mit leerem Balken da.
   // Ziele kommen aus Yazio (f.goals; Energie zusaetzlich als Tagesbudget td.goal inkl. Training). Nur beim
   // Carb-Loading gelten die Werte der Phase; fehlt Yazio, stehen die Phasen-Werte (Platzhalter) da.
   const yg = f.goals || {}, phaseWins = ph.name === "carbload";
   const pick = (yazio, phaseVal) => (phaseWins ? phaseVal ?? yazio : yazio ?? phaseVal);
   const macros = [
-    { label: "Kohlenhydrate", v: td.carbs, goal: pick(yg.carbsG, t.carbsG), unit: "g", hex: carb ? "#fb923c" : "#f0a24a" },
     { label: "Protein", v: td.protein, goal: pick(yg.proteinG, t.proteinG), unit: "g", hex: "#6da2dc" },
+    { label: "Kohlenhydrate", v: td.carbs, goal: pick(yg.carbsG, t.carbsG), unit: "g", hex: carb ? "#fb923c" : "#f0a24a" },
+    { label: "Fett", v: td.fat, goal: pick(yg.fatG, t.fatG), unit: "g", hex: "#e8cf6a" },
     { label: "Energie", v: td.calories, goal: phaseWins ? t.kcal : td.goal ?? yg.kcal ?? t.kcal, unit: "kcal", hex: "#8fa0b8" },
   ];
   macros.forEach((m, i) => {
-    w.addSpacer(i === 0 ? (compact ? 3 : 6) : compact ? 4 : 7);
+    w.addSpacer(i === 0 ? (compact ? 2 : 4) : compact ? 3 : 5);
     const have = has && m.v != null, row = w.addStack(); row.centerAlignContent();
     text(row, m.label, 9, { color: COL.muted });
     row.addSpacer();
