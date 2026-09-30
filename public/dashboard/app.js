@@ -90,51 +90,49 @@ function renderCockpit(d) {
 
   // Training
   const todayTile = plan.length
-    ? tile("Heute geplant", `<div class="val" style="font-size:1.1rem">${esc(plan[0].name || "Einheit")}${plan.length > 1 ? ` <small>+${plan.length - 1}</small>` : ""}</div><div class="sub">${meta(plan[0]) || "&nbsp;"}</div>${plan[0].description ? `<div class="sub clamp">${esc(plan[0].description)}</div>` : ""}`, "span2")
-    : tile("Heute geplant", `<div class="val" style="font-size:1.1rem">Ruhetag</div><div class="sub">${next ? `Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}` : "keine Einheit geplant"}</div>`, "span2");
-  const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)</div>`, "span2");
-  const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span2");
-  const acwrTile = tile("Belastung (ACWR)", `<div id="ck-acwr"></div><div><span class="badge ${acwrCls}">${acwrText}</span> <span class="sub">Ziel ${fmt(ACWR.lo, 1)}–${fmt(ACWR.hi, 1)}</span></div>`, "span2");
+    ? tile("Heute geplant", `<div class="val" style="font-size:1.1rem">${esc(plan[0].name || "Einheit")}${plan.length > 1 ? ` <small>+${plan.length - 1}</small>` : ""}</div><div class="sub">${meta(plan[0]) || "&nbsp;"}</div>${plan[0].description ? `<div class="sub clamp">${esc(plan[0].description)}</div>` : ""}`, "span15")
+    : tile("Heute geplant", `<div class="val" style="font-size:1.1rem">Ruhetag</div><div class="sub">${next ? `Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}` : "keine Einheit geplant"}</div>`, "span15");
+  const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)</div>`, "span15");
+  const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15");
+  const acwrTile = tile("Belastung (ACWR)", `<div id="ck-acwr"></div><div><span class="badge ${acwrCls}">${acwrText}</span> <span class="sub">Ziel ${fmt(ACWR.lo, 1)}–${fmt(ACWR.hi, 1)}</span></div>`, "span15");
   const wkParts = cur ? SPORT_ORDER.filter((k) => cur.bySport[k].load > 0 || cur.bySport[k].count > 0) : [];
   const wkHours = cur ? SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0) / 60 : 0;
   const weekTile = tile("Diese Woche (alle Sportarten)", cur
     ? `<div class="val">${fmt(cur.load)} <small>Load${cur.plannedLoad != null ? ` von ${fmt(cur.plannedLoad)}` : ""}</small></div><div id="ck-wload"></div><div class="dots">${wkParts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}</div><div class="sub">${fmt(wkHours, 1)} h${cur.km ? ` · Laufen ${fmt(cur.km, 1)} km` : ""}</div>`
-    : '<div class="sub">keine Daten</div>', "span2");
-  const recentHip = d.hipFlags.filter((f) => f.date >= addDays(d.today, -14));
-  const hipTile = tile("Hüfte / Leiste / Knie", recentHip.length
-    ? `<div><span class="badge bad">${recentHip.length} Hinweis${recentHip.length === 1 ? "" : "e"}</span></div><div class="sub">in den letzten 14 Tagen – Details unter „Kraft und Hüfte"</div>`
-    : `<div><span class="badge ok">keine Hinweise</span></div><div class="sub">in den letzten 14 Tagen</div>`, "span2");
-
+    : '<div class="sub">keine Daten</div>', "span4");
   // Wellness
   const R = S.readiness;
   const readyTile = wellOk ? tile("Bereit für Training?", `<div><span class="badge ${R.verdict.cls} big-badge">${R.verdict.text}</span> <span class="sub">${esc(R.verdict.sub)}</span></div><div class="dots">${R.items.map((i) => `<span title="${esc(i.text)}"><i class="${i.cls}"></i>${esc(i.label)}</span>`).join("")}</div>`, "span3") : tile("Bereit für Training?", '<div class="sub">Wellness nicht abrufbar.</div>', "span3");
   const sparkTile = (t, key, unit, dec) => { const l = last(key); return tile(t, `<div class="val">${l ? fmt(l.v, dec) : "–"} <small>${unit}${l && l.date !== d.today ? ` · ${fmtDate(l.date)}` : ""}</small></div><div id="ck-${key}"></div><div class="sub">letzte 14 Tage</div>`); };
 
   // Ernährung
-  const kcal = map("calories"), carbs = map("carbs"), goal = map("calorieGoal");
-  const nDay = [...days7].reverse().find((x) => kcal[x] != null);
-  const nutTile = nDay
-    ? tile(`Kalorien${nDay !== d.today ? " · " + fmtDate(nDay) : ""}`, `<div class="val">${fmt(kcal[nDay])} <small>kcal${goal[nDay] ? ` von ${fmt(goal[nDay])}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">Tagesziel als schwarze Marke</div>`, "span2")
-    : tile("Kalorien", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span2");
-  const cr = d.cravings.filter((c) => c.date >= addDays(d.today, -6));
-  const crTile = tile("Heißhunger (7 Tage)", `<div class="val">${cr.length} <small>Einträge</small></div><div class="sub">${cr.length ? `stärkster: ${Math.max(...cr.map((c) => c.strength ?? 0))}` : "keine erfasst"}</div>`, "span2");
-  const carbTile = tile("Kohlenhydrate", nDay ? `<div class="val">${fmt(carbs[nDay])} <small>g${nDay !== d.today ? " · " + fmtDate(nDay) : ""}</small></div><div id="ck-carbs"></div><div class="sub">letzte 14 Tage</div>` : '<div class="sub">keine Daten</div>', "span2");
+  const kcal = map("calories"), goal = map("calorieGoal"), carbs = map("carbs"), prot = map("protein"), fat = map("fat");
+  const nDay = [...days7].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
+  const dayNote = nDay && nDay !== d.today ? " · " + fmtDate(nDay) : "";
+  const nutTile = nDay && kcal[nDay] != null
+    ? tile(`Kalorien${dayNote}`, `<div class="val">${fmt(kcal[nDay])} <small>kcal${goal[nDay] ? ` von ${fmt(goal[nDay])}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">Tagesziel als schwarze Marke</div>`, "span3")
+    : tile("Kalorien", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
+  const macros = [["Eiweiß", prot[nDay], 4, "s-swim"], ["Kohlenhydrate", carbs[nDay], 4, "s-run"], ["Fett", fat[nDay], 9, "s-strength"]];
+  const macroKcal = macros.reduce((n, m) => n + (m[1] ?? 0) * m[2], 0);
+  const macroTile = tile(`Makros${dayNote}`, nDay && macroKcal > 0
+    ? `<div class="val">${prot[nDay] != null ? fmt(prot[nDay]) : "–"} <small>g Eiweiß</small></div><div id="ck-macros"></div><div class="dots">${macros.map((m) => `<span><i style="background:var(--${m[3]})"></i>${m[0]}${m[1] != null ? ` ${fmt(m[1])} g (${fmt((m[1] * m[2] / macroKcal) * 100)} %)` : ""}</span>`).join("")}</div>`
+    : '<div class="sub">keine Daten</div>', "span3");
 
   $("cockpit").innerHTML = `
     <div class="cockpit-group">Training</div>
-    <div class="cockpit">${todayTile}${raceTile}${weekTile}${tsbTile}${acwrTile}${hipTile}</div>
+    <div class="cockpit">${todayTile}${raceTile}${tsbTile}${acwrTile}${weekTile}</div>
     <div class="cockpit-group">Wellness</div>
     <div class="cockpit">${readyTile}${sparkTile("Schlaf", "sleepHours", "h", 1)}${sparkTile("HRV", "hrv", "ms", 0)}${sparkTile("Ruhepuls", "restingHR", "bpm", 0)}</div>
     <div class="cockpit-group">Ernährung</div>
-    <div class="cockpit">${nutTile}${carbTile}${crTile}</div>`;
+    <div class="cockpit">${nutTile}${macroTile}</div>`;
 
   if (g.daysToGo >= 0) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
   C.gauge($("ck-tsb"), { label: "TSB", min: -40, max: 30, value: tsb, ticks: [-40, -25, -10, 0, 15, 30], zones: [{ from: -40, to: TSB_BANDS.warn, cls: "bad" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: TSB_BANDS.ok, to: 30, cls: "ok" }] });
   C.gauge($("ck-acwr"), { label: "ACWR", min: 0.4, max: 1.8, value: acwr, dec: 2, ticks: [0.4, 0.8, 1.0, 1.3, 1.8], tickLabel: (t) => fmt(t, 1), zones: [{ from: 0.4, to: ACWR.lo, cls: "warn" }, { from: ACWR.lo, to: ACWR.hi, cls: "ok" }, { from: ACWR.hi, to: 1.8, cls: "bad" }] });
   if (cur) C.meter($("ck-wload"), { label: "Wochenbelastung nach Sportart", segments: SPORT_ORDER.map((k) => ({ value: cur.bySport[k].load, color: `var(--s-${k})`, tip: `${SPORT_LABEL[k]}: ${fmt(cur.bySport[k].load)} Load` })), goal: cur.plannedLoad, max: Math.max(1, cur.load, cur.plannedLoad ?? 0) * 1.15 });
   for (const [key, unit, label, dec] of [["sleepHours", "h", "Schlaf", 1], ["hrv", "ms", "HRV", 0], ["restingHR", "bpm", "Ruhepuls", 0]]) C.spark($(`ck-${key}`), days7, map(key), { unit, label, dec });
-  if (nDay) C.spark($("ck-carbs"), days7, carbs, { unit: "g", label: "Kohlenhydrate", dec: 0 });
-  if (nDay) C.meter($("ck-kcal"), { label: "Kalorien", value: kcal[nDay], goal: goal[nDay], max: Math.max(kcal[nDay], goal[nDay] ?? 0) * 1.15, unit: "kcal" });
+  if (nDay && macroKcal > 0) C.meter($("ck-macros"), { label: "Makroverteilung", segments: macros.map((m) => ({ value: (m[1] ?? 0) * m[2], color: `var(--${m[3]})`, tip: `${m[0]}: ${fmt(m[1])} g` })), max: macroKcal });
+  if (nDay && kcal[nDay] != null) C.meter($("ck-kcal"), { label: "Kalorien", value: kcal[nDay], goal: goal[nDay], max: Math.max(kcal[nDay], goal[nDay] ?? 0) * 1.15, unit: "kcal" });
 }
 
 /* ---------- 2 · Trainingsverlauf ---------- */

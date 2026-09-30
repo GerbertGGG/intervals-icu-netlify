@@ -377,16 +377,18 @@
     mount(host, s);
   }
   function meter(host, o) {
-    const W = 220, H = 30, L = 4, R = 4, Y = 10, BH = 12;
-    const s = svg(W, H, o.label);
-    const max = o.max, x = (v) => L + (W - L - R) * Math.min(1, Math.max(0, v / max));
-    s.append(el("rect", { x: L, y: Y, width: W - L - R, height: BH, rx: 6, fill: "var(--line)" }));
-    if (o.segments) {
-      let acc = 0;
-      for (const g of o.segments) { if (!(g.value > 0)) continue; s.append(title(el("rect", { x: x(acc), y: Y, width: Math.max(2, x(acc + g.value) - x(acc)), height: BH, fill: g.color }), g.tip)); acc += g.value; }
-    } else if (o.value != null) s.append(title(el("rect", { x: L, y: Y, width: Math.max(2, x(o.value) - L), height: BH, rx: 6, fill: o.cls ? ZONE[o.cls] : "var(--accent)" }), `${U.fmt(o.value)} ${o.unit ?? ""}`));
-    if (o.goal != null) s.append(el("line", { x1: x(o.goal), x2: x(o.goal), y1: Y - 5, y2: Y + BH + 5, stroke: "var(--text)", "stroke-width": 2 }));
-    mount(host, s);
+    const pct = (v) => Math.min(100, Math.max(0, (v / o.max) * 100));
+    const bar = document.createElement("div");
+    bar.setAttribute("role", "img"); bar.setAttribute("aria-label", o.label);
+    bar.style.cssText = "position:relative;height:12px;border-radius:6px;background:var(--line);margin:8px 0;overflow:visible;display:flex";
+    const segs = o.segments ?? (o.value != null ? [{ value: o.value, color: o.cls ? ZONE[o.cls] : "var(--accent)", tip: `${U.fmt(o.value)} ${o.unit ?? ""}` }] : []);
+    segs.filter((g) => g.value > 0).forEach((g, i, arr) => {
+      const s = document.createElement("div");
+      s.style.cssText = `width:${pct(g.value)}%;min-width:2px;background:${g.color};${i === 0 ? "border-radius:6px 0 0 6px;" : ""}${i === arr.length - 1 ? "border-radius:0 6px 6px 0;" : ""}${arr.length === 1 ? "border-radius:6px;" : ""}`;
+      s.title = g.tip; bar.append(s);
+    });
+    if (o.goal != null) { const m = document.createElement("div"); m.style.cssText = `position:absolute;left:${pct(o.goal)}%;top:-4px;bottom:-4px;width:2px;background:var(--text)`; bar.append(m); }
+    host.replaceChildren(bar);
   }
 
   window.U = U;
