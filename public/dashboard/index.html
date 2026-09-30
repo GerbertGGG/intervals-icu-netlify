@@ -95,6 +95,7 @@ button, input { font: inherit; }
       <div class="muted">Orientierung: unter etwa 5 % gilt die Grundlagenausdauer als stabil. Höher = Puls driftet gegen Pace.</div></div>
   </div>
   <div class="card" style="margin-top:12px"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records"></div></div>
+  <div class="card" style="margin-top:12px"><h3>VDOT und Trainingspaces</h3><div id="vdot"></div></div>
 
   <h2>4 · Wellness</h2>
   <div class="muted" id="wellness-note"></div>
@@ -311,6 +312,7 @@ function renderFitness(d) {
     fitnessChart($("chart-dec"), d.fitness.longRuns, "decoupling", { unit: "%", label: "Decoupling", pad: 1, dec: 1 });
   }
   const r = d.runalyze;
+  renderVdot(d);
   if (!r) { $("records").innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – Bestzeiten und Prognose fehlen.</div>'; return; }
   const goal = d.goal.targetTimeSecs;
   const row = (x) => {
@@ -324,6 +326,17 @@ function renderFitness(d) {
   $("records").innerHTML = `<table><thead><tr><th>Distanz</th><th>Bestzeit</th><th>Prognose</th><th>Vergleich</th></tr></thead><tbody>${r.rows.map(row).join("")}</tbody></table>
     <div class="notice">Die Halbmarathon-Prognose ist eine reine Extrapolation aus dem Modell von Runalyze, kein Ergebnis eines Halbmarathon-Trainings oder -Rennens. Ohne Halbmarathon-Bestzeit gibt es dafür keinen Vergleichswert.</div>
     <div class="muted">Runalyze-Stand: ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}. „Vergleich" bei 5 und 10 km = Prognose minus Bestzeit.</div>`;
+}
+
+function renderVdot(d) {
+  const r = d.runalyze;
+  if (!r || r.vdot == null) { $("vdot").innerHTML = '<div class="muted">Kein VDOT im Runalyze-Snapshot – Paces fehlen.</div>'; return; }
+  const goalPace = d.goal.targetTimeSecs / 21.0975;
+  const goalRow = `<tr><td><b>Ziel Halbmarathon</b></td><td><b>${paceLabel(goalPace)}</b> min/km</td><td class="muted">für unter ${fmtTime(d.goal.targetTimeSecs)}</td></tr>`;
+  const rows = r.paces.map((p) => `<tr><td>${esc(p.label)}</td><td>${esc(p.pace.replace("/km", ""))} min/km</td><td></td></tr>`).join("");
+  $("vdot").innerHTML = `<div class="big">${fmt(r.vdot, 1)}</div><div class="muted">VDOT (effektive VO2max laut Runalyze), Stand ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}</div>
+    <table style="margin-top:8px"><thead><tr><th>Zone</th><th>Pace</th><th></th></tr></thead><tbody>${rows}${goalRow}</tbody></table>
+    <div class="muted" style="margin-top:6px">Runalyze liefert nur das VDOT. Die Paces sind daraus nach Daniels berechnet, nicht von Runalyze vorgegeben.</div>`;
 }
 
 const WELLNESS = [

@@ -4,6 +4,7 @@ import { activityDay, activityLoad, isRun, isIntervalActivity, hasIntervalTextSi
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { mustEnv } from "./kv.js";
+import { paceTargetsFromVdot } from "./vdot.js";
 import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
@@ -195,7 +196,11 @@ function buildRunalyze(snapshot) {
       prognosisSeconds: prog?.seconds ?? null,
     };
   });
-  return { fetchedAt: snapshot.fetchedAt, rows };
+  // Runalyze liefert nur das VDOT (effektive VO2max), keine Trainingspaces: Die Paces werden
+  // hier nach Daniels aus diesem VDOT berechnet (dieselbe Formel wie in vdot.js).
+  const vdot = snapshot.vdot ?? null;
+  const paces = vdot != null ? paceTargetsFromVdot(vdot) : null;
+  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows };
 }
 
 async function settle(label, fn) {

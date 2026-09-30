@@ -53,7 +53,7 @@ assert.ok(d.fitness.baseRuns.every((r) => r.kind === "base" || r.kind === "long"
 assert.equal(d.fitness.longRuns.length, 1);
 assert.equal(d.runalyze, null); // ohne Snapshot: fehlt, keine Platzhalter
 // Runalyze-Snapshot (synthetische Werte, nur Test)
-const snap = { fetchedAt: "2026-09-30T05:00:00Z", prognosis: [{ distanceKm: 5, seconds: 1600 }, { distanceKm: 21.1, seconds: 8000 }],
+const snap = { fetchedAt: "2026-09-30T05:00:00Z", vdot: 34.67, prognosis: [{ distanceKm: 5, seconds: 1600 }, { distanceKm: 21.1, seconds: 8000 }],
   races: [{ date: "2026-03-22", officialDistanceKm: 5.03, officialTimeSec: 1570 }, { date: "2022-03-20", officialDistanceKm: 5.02, officialTimeSec: 1537 }, { date: "2025-10-03", officialDistanceKm: 10, officialTimeSec: 3431 }] };
 assert.equal(bestForDistance(validateSnapshot(snap).value.races, 5).officialTimeSec, 1537);
 assert.ok(validateSnapshot({ fetchedAt: "kaputt" }).error);
@@ -69,6 +69,9 @@ const d2 = await buildDashboard(env, today);
 const hm = d2.runalyze.rows.find((r) => r.label === "Halbmarathon");
 assert.equal(hm.bestSeconds, null); assert.equal(hm.prognosisSeconds, 8000);
 assert.equal(d2.runalyze.rows[0].bestSeconds, 1537);
+assert.equal(d2.runalyze.vdot, 34.67);
+assert.equal(d2.runalyze.paces.find((p) => p.key === "threshold").pace, "5:43/km");
+assert.ok(validateSnapshot({ fetchedAt: snap.fetchedAt, vdot: 500 }).error);
 writeFileSync(new URL("./fixture-dashboard.json", import.meta.url), JSON.stringify(d2));
 // Auth
 const noTok = await handleDashboardRequest(new Request("https://x/api/dashboard"), env);

@@ -7,6 +7,7 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //
 // Body: {
 //   fetchedAt: ISO-Zeitstempel,
+//   vdot: number,                                          // effectiveVO2max aus get_calculations (optional)
 //   prognosis: [{ distanceKm, seconds }],                  // aus get_prognosis
 //   races: [{ date, name, distanceKm, officialDistanceKm, officialTimeSec }]  // aus get_historical_races
 // }
@@ -33,8 +34,10 @@ export function validateSnapshot(body) {
       officialTimeSec: finitePositive(r?.officialTimeSec),
     }))
     .filter((r) => r.date && r.officialDistanceKm && r.officialTimeSec);
-  if (!prognosis.length && !races.length) return { error: "weder prognosis noch races enthalten" };
-  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), prognosis, races } };
+  const vdot = finitePositive(body?.vdot);
+  if (vdot != null && (vdot < 15 || vdot > 90)) return { error: "vdot außerhalb 15–90" };
+  if (!prognosis.length && !races.length && vdot == null) return { error: "weder prognosis, races noch vdot enthalten" };
+  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), vdot, prognosis, races } };
 }
 
 // Bestzeit je Distanz = schnellstes Rennen, dessen offizielle Distanz höchstens 5 % abweicht.
