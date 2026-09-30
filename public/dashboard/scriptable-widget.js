@@ -253,7 +253,12 @@ const signed = (n, d = 0) => (n == null ? "–" : `${n > 0 ? "+" : n < 0 ? "−"
 // Mini-Kurve ueber die Breite: Lücken (null) bleiben offen, optional Referenzlinie (gestrichelt oder fest) und Punkt am Ende.
 function sparkImage(w, h, values, hex, { ref = null, dashed = false, dot = false } = {}) {
   const dc = newCtx(w, h), pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
-  if (pts.length < 2) return dc.getImage();
+  if (pts.length < 2) {
+    // Zu wenig Werte: nur eine blasse Grundlinie (ein leerer DrawContext liefert in Scriptable kein Bild, sondern null)
+    dc.setFillColor(new Color("#8a94a3", 0.3));
+    dc.fillRect(new Rect(0, h - 3, w, 1.5));
+    return dc.getImage();
+  }
   const all = pts.map(([, v]) => v).concat(ref != null ? [ref] : []);
   const lo = Math.min(...all), hi = Math.max(...all), span = hi - lo || 1, pad = 4;
   const X = (i) => pad + (i / (values.length - 1)) * (w - 2 * pad), Y = (v) => h - pad - ((v - lo) / span) * (h - 2 * pad);
