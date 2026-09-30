@@ -294,22 +294,23 @@
     mount(host, s);
   }
 
-  /* ---------- Krafteinheiten je Woche mit Zielband 2–3 ---------- */
+  /* ---------- Krafttraining je Woche in Minuten mit Zielmarke 60 min ---------- */
   function strength(host, weeks) {
-    const W = 480, H = 200, L = 40, R = 8, T = 22, B = 40, max = Math.max(4, ...weeks.map((w) => w.count));
-    const s = svg(W, H, "Krafteinheiten pro Woche");
-    const y = (v) => T + (H - T - B) * (1 - v / (max + 0.5));
-    s.append(title(el("rect", { x: L, y: y(3.5), width: W - L - R, height: y(1.5) - y(3.5), fill: "var(--ok)", "fill-opacity": 0.12 }), "Ziel: 2 bis 3 Einheiten pro Woche"), el("text", { x: W - R, y: y(3.5) + 12, "text-anchor": "end", style: "fill:var(--ok)" }, "Ziel 2–3"));
-    for (let v = 0; v <= max; v++) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, v));
-    s.append(el("text", { x: 4, y: 12 }, "Einheiten"));
-    const slot = (W - L - R) / weeks.length;
+    const GOAL = 60, W = 480, H = 200, L = 40, R = 8, T = 22, B = 40;
+    const max = Math.max(90, Math.ceil(Math.max(...weeks.map((w) => w.minutes)) / 30) * 30);
+    const s = svg(W, H, "Krafttraining pro Woche in Minuten");
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    for (let v = 0; v <= max; v += 30) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, v));
+    s.append(el("text", { x: 4, y: 12 }, "Minuten"));
+    const slot = (W - L - R) / weeks.length, bw = slot * 0.6;
     weeks.forEach((w, i) => {
-      const cx = L + slot * i + slot / 2;
-      for (let k = 1; k <= w.count; k++) s.append(title(el("circle", { cx, cy: y(k), r: 8, fill: "var(--s-strength)", opacity: w.partial ? 0.55 : 1 }), `Woche ab ${U.fmtDate(w.weekStart)}: ${w.count} Krafteinheit(en)${w.partial ? " – laufende Woche" : ""}`));
-      if (!w.count) s.append(el("text", { x: cx, y: y(0) - 6, "text-anchor": "middle" }, "0"));
+      const cx = L + slot * i + slot / 2, m = Math.round(w.minutes);
+      if (m > 0) s.append(title(el("rect", { x: cx - bw / 2, y: y(m), width: bw, height: y(0) - y(m), rx: 3, fill: "var(--s-strength)", opacity: w.partial ? 0.55 : 1 }), `Woche ab ${U.fmtDate(w.weekStart)}: ${m} min Krafttraining${w.partial ? " – laufende Woche" : ""}`));
+      s.append(el("text", { x: cx, y: (m > 0 ? y(m) : y(0)) - 6, "text-anchor": "middle" }, m));
       s.append(el("text", { x: cx, y: H - 22, "text-anchor": "middle" }, w.label));
     });
-    s.append(el("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Woche ab (Montag) · helle Punkte = laufende Woche"));
+    s.append(title(el("line", { x1: L, x2: W - R, y1: y(GOAL), y2: y(GOAL), stroke: "var(--ok)", "stroke-width": 1.5, "stroke-dasharray": "5 4" }), "Ziel: 60 Minuten pro Woche"), el("text", { x: W - R, y: y(GOAL) - 4, "text-anchor": "end", style: "fill:var(--ok)" }, "Ziel 1 h"));
+    s.append(el("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Woche ab (Montag) · helle Balken = laufende Woche"));
     mount(host, s);
   }
 

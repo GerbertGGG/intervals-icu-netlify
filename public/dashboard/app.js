@@ -285,7 +285,7 @@ function renderNutrition(d) {
 /* ---------- 6 · Kraft und Hüfte ---------- */
 function renderStrength(d) {
   if (!d.sources.intervalsActivities.ok) $("strength").innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>';
-  else C.strength($("strength"), d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), count: w.bySport.strength.count, partial: !w.complete })));
+  else C.strength($("strength"), d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), minutes: w.bySport.strength.minutes, partial: !w.complete })));
   const recent = d.hipFlags.filter((f) => f.date >= addDays(d.today, -14));
   const list = (arr) => `<ul class="runs">${arr.slice(0, 5).map((f) => `<li><b>${fmtDate(f.date)}</b> · ${esc(f.source)}: „…${esc(f.snippet)}…"</li>`).join("")}</ul>`;
   if (recent.length) $("hip").innerHTML = `<div class="notice bad"><b>Hinweis auf Hüfte, Leiste oder Knie in den letzten 14 Tagen (${recent.length}×)</b> – Hüft-OP vor 2 Jahren, im Zweifel Belastung anpassen oder abklären.</div>${list(recent)}`;

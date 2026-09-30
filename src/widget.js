@@ -63,7 +63,7 @@ export function buildWidget(d, env = {}) {
       lastTotal: total(lastWeek),
       goal: weeklyGoal(week, env).goal,
       goalSource: weeklyGoal(week, env).source,
-      strengthCount: week.bySport.strength.count,
+      strengthMinutes: week.bySport.strength.minutes,
     },
     hip: { recent: recentHip.length, latestDate: d.hipFlags[0]?.date ?? null },
     hm: d.runalyze ? { goalSec: d.goal.targetTimeSecs, estimates: d.runalyze.hmEstimates, vdot: d.runalyze.vdot } : null,

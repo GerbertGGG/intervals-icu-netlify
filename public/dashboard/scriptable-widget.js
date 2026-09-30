@@ -392,8 +392,9 @@ function buildWidget(res) {
     badge.setPadding(1, 7, 1, 7);
     text(badge, "bewusst reduziert", 10, { bold: true, color: COL.ok });
   } else {
-    const sc = d.week.strengthCount;
-    text(wl, `Kraft ${sc}\u00d7 (Ziel 2\u20133)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
+    // Ziel: 1 Stunde Krafttraining pro Woche
+    const sm = d.week.strengthMinutes, done60 = sm != null && sm >= 60;
+    text(wl, `Kraft ${sm != null ? fmt(Math.round(sm)) : "\u2013"} / 60 min`, 10, { bold: done60, color: done60 ? COL.ok : COL.muted });
   }
   const sums = wc.addStack(); sums.centerAlignContent();
   text(sums, `erledigt ${fmt(d.week.total)}`, 13, { bold: true });
