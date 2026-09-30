@@ -26,3 +26,8 @@ preview_id = "95402760eee9445fa98df09aad54cdfc"
 # Statische Dashboard-Seite unter /dashboard/ (kein Build-Schritt). Daten kommen von /api/dashboard.
 [assets]
 directory = "./public"
+
+# Optionale Worker-Variablen fürs Widget (im Dashboard unter Settings > Variables setzen, nicht hier):
+#   WEEKLY_TSS_GOAL   Wochenziel der TSS, falls im Intervals-Kalender keine Workouts mit Load stehen
+#   TRI_SPLIT_TARGET  Soll der Zeitverteilung Schwimmen,Rad,Lauf in Prozent, z. B. "20,45,35"
+#                     (Widget-Parameter "training"); ohne Wert zeigt das Widget kein Soll
