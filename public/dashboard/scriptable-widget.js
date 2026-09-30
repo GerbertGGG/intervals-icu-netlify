@@ -8,8 +8,8 @@
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse "Gross", Skript auswaehlen.
 //     Kleine Widgets (Groesse "Klein"): Schlaf und Erholung (Standard) sowie Ernaehrung, dafuer im Widget
 //     unter "Parameter" das Wort  ernaehrung  eintragen.
-//     Zweites, halb so grosses Widget mit weiteren Daten (Form, Halbmarathon-Zeiten vs. Ziel, VDOT und
-//     Paces, Schwellen, Ernaehrung, Heisshunger): dasselbe Skript nochmal anlegen, Groesse "Mittel".
+//     Mittleres Widget (Groesse "Mittel"): Schlaf und Erholung links, Ernaehrung rechts. Mit dem Parameter
+//     form  zeigt es stattdessen Form, Halbmarathon-Zeiten vs. Ziel, VDOT und Paces, Schwellen.
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
 //
 // Es zeigt: Bereitschaft heute, Countdown, Frische (TSB), ACWR, heutige Einheit, Wochenbelastung
@@ -22,9 +22,9 @@ const KEY_TOKEN = "training-dashboard-token";
 // (Klein: im Widget unter "Parameter"  ernaehrung  eintragen, sonst Schlaf).
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
 let VIEW = (typeof config !== "undefined" && config.runsInWidget)
-  ? (config.widgetFamily === "medium" ? "detail" : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : "sleep") : "main")
+  ? (config.widgetFamily === "medium" ? (/^(form|zeit|hm|detail)/.test(WIDGET_PARAM) ? "detail" : "sleepfood") : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : "sleep") : "main")
   : "main";
-const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "sleep" || VIEW === "food" ? "small" : "");
+const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "sleep" || VIEW === "food" || VIEW === "sleepfood" ? "small" : "");
 const cacheFile = () => `training-widget${endpointView() ? "-" + endpointView() : ""}-cache.json`;
 const SPORTS = [["run", "Laufen", "#3b6ea8"], ["bike", "Rad", "#8a6bb8"], ["swim", "Schwimmen", "#3a9db0"], ["strength", "Kraft", "#b08a3a"], ["other", "Sonst.", "#9aa5b4"]];
 
@@ -436,7 +436,7 @@ function buildMedium(res) {
   return w;
 }
 
-/* ---------- Kleine Widgets: Schlaf und Erholung, Ernaehrung ---------- */
+/* ---------- Schlaf und Erholung, Ernaehrung (klein, und zusammen als mittleres Widget) ---------- */
 const DAY_INITIAL = ["S", "M", "D", "M", "D", "F", "S"];
 const dayLetter = (iso) => DAY_INITIAL[new Date(iso + "T12:00:00").getDay()];
 
@@ -465,7 +465,7 @@ function dayLabels(parent, dates, todayIso, width) {
   });
 }
 
-function smallWidget(res) {
+function smallWidget() {
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
   w.setPadding(10, 11, 8, 11);
@@ -474,30 +474,30 @@ function smallWidget(res) {
   return w;
 }
 
-function buildSleep(res) {
-  const d = res.data, s = d.sleep, IW = 134, w = smallWidget(res);
+// Inhalt "Schlaf und Erholung" in einen beliebigen Container (Widget oder Karte)
+function fillSleep(w, d, IW) {
+  const s = d.sleep;
   text(w, "SCHLAF & ERHOLUNG", 9, { bold: true, color: COL.muted });
   w.addSpacer(2);
   const last = s.latest, isToday = last && last.date === d.today;
   text(w, last ? `${fmt(last.hours, 1)} h` : "fehlt", 28, { bold: true, color: last ? COL.text : COL.muted });
   text(w, last ? (isToday ? "Schlaf heute" : `Schlaf am ${dateShort(last.date)}`) : "keine Schlafdauer in 7 Tagen", 9, { color: COL.muted });
   w.addSpacer(3);
-  const t = d.sleep.days[d.sleep.days.length - 1];
-  const hrv = t.hrv, rhr = t.restingHR;
+  const t = s.days[s.days.length - 1];
   const cmp = (v, med) => (v == null || med == null ? "" : ` (\u00d8 ${fmt(med)})`);
-  text(w, `HRV ${hrv != null ? fmt(hrv) : "fehlt"}${cmp(hrv, s.medianHrv)}`, 10, { bold: true });
-  text(w, `Ruhepuls ${rhr != null ? fmt(rhr) : "fehlt"}${cmp(rhr, s.medianRestingHR)}`, 10, { bold: true });
+  text(w, `HRV ${t.hrv != null ? fmt(t.hrv) : "fehlt"}${cmp(t.hrv, s.medianHrv)}`, 10, { bold: true });
+  text(w, `Ruhepuls ${t.restingHR != null ? fmt(t.restingHR) : "fehlt"}${cmp(t.restingHR, s.medianRestingHR)}`, 10, { bold: true });
   w.addSpacer(4);
   const im = w.addImage(smallBarsImage(IW, 30, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date)));
   im.imageSize = new Size(IW, 30);
   dayLabels(w, s.days.map((x) => x.date), d.today, IW);
   w.addSpacer();
   text(w, "Ruhepuls = Tageswert, \u00d8 = letzte 14 Tage", 7, { color: COL.muted });
-  return w;
 }
 
-function buildFood(res) {
-  const d = res.data, f = d.food, IW = 134, w = smallWidget(res);
+// Inhalt "Ernaehrung": Kalorien gegen Tagesziel des letzten Tages mit Daten; ohne Daten ein klarer Leerzustand
+function fillFood(w, d, IW) {
+  const f = d.food;
   text(w, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
   w.addSpacer(2);
   if (!f.hasData) {
@@ -507,7 +507,7 @@ function buildFood(res) {
     const im0 = w.addImage(smallBarsImage(IW, 30, f.days.map(() => null), d.today, f.days.map((x) => x.date)));
     im0.imageSize = new Size(IW, 30);
     dayLabels(w, f.days.map((x) => x.date), d.today, IW);
-    return w;
+    return;
   }
   const l = f.latest;
   text(w, `${fmt(l.calories)}`, 26, { bold: true });
@@ -521,6 +521,27 @@ function buildFood(res) {
   dayLabels(w, f.days.map((x) => x.date), d.today, IW);
   w.addSpacer();
   text(w, "Wei\u00dfe Marke = Tagesziel", 7, { color: COL.muted });
+}
+
+function buildSleep(res) { const w = smallWidget(); fillSleep(w, res.data, 134); return w; }
+function buildFood(res) { const w = smallWidget(); fillFood(w, res.data, 134); return w; }
+
+// Mittleres Widget: Schlaf und Erholung links, Ernaehrung rechts
+function buildSleepFood(res) {
+  const d = res.data, W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26);
+  const w = new ListWidget();
+  w.backgroundColor = COL.bg;
+  w.setPadding(9, 13, 8, 13);
+  w.url = `${baseUrl()}/dashboard/`;
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  const row = w.addStack(); row.spacing = 7;
+  const CW = Math.floor((W - 7) / 2), IW = CW - 24;
+  fillSleep(card(row, CW, 8), d, IW);
+  fillFood(card(row, CW, 8), d, IW);
+  if (res.stale || d.sourcesFailed.length) {
+    w.addSpacer(3);
+    text(w, res.stale ? "veraltet, keine Verbindung" : `Quelle fehlt: ${d.sourcesFailed.join(", ")}`, 8, { color: res.stale ? COL.warn : COL.bad });
+  }
   return w;
 }
 
@@ -539,7 +560,8 @@ async function main() {
     const menu = new Alert();
     menu.title = "Trainings-Widget";
     menu.addAction("Vorschau (gro\u00df)");
-    menu.addAction("Vorschau mittel (zweites Widget)");
+    menu.addAction("Vorschau mittel: Form und Halbmarathon-Zeiten");
+    menu.addAction("Vorschau mittel: Schlaf und Ern\u00e4hrung");
     menu.addAction("Vorschau klein: Schlaf");
     menu.addAction("Vorschau klein: Ern\u00e4hrung");
     menu.addAction("Zugangsdaten setzen / zur\u00fccksetzen");
@@ -547,17 +569,18 @@ async function main() {
     const choice = await menu.presentAlert();
     if (choice === -1) return;
     if (choice === 1) VIEW = "detail";
-    if (choice === 2) VIEW = "sleep";
-    if (choice === 3) VIEW = "food";
-    if (choice === 4 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 4) return; }
+    if (choice === 2) VIEW = "sleepfood";
+    if (choice === 3) VIEW = "sleep";
+    if (choice === 4) VIEW = "food";
+    if (choice === 5 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 5) return; }
   } else if (!Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) {
     Script.setWidget(messageWidget("Bitte das Skript einmal in Scriptable \u00f6ffnen und die Zugangsdaten eingeben."));
     return;
   }
   let widget;
-  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFood(res) : buildWidget(res); }
+  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "sleepfood" ? buildSleepFood(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFood(res) : buildWidget(res); }
   catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
-  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food") await widget.presentSmall(); else await widget.presentLarge();
+  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail" || VIEW === "sleepfood") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food") await widget.presentSmall(); else await widget.presentLarge();
 }
 await main();
 Script.complete();
