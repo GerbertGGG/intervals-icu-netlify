@@ -112,6 +112,9 @@ assert.equal(wdg.readiness.verdict.text, d.summary.readiness.verdict.text);
 assert.equal(wdg.goal.daysToGo, 3);
 assert.equal(wdg.plan.today[0].purpose, "Zweck: Beine lockern");
 assert.equal(wdg.hip.recent, 1);
+assert.equal(wdg.trend.tsb14.length, 14); // Mini-Kurven im grossen Widget
+assert.equal(wdg.trend.hrv7.length, 7);
+assert.ok(Number.isInteger(wdg.week.plannedSessions));
 assert.equal(wdg.week.goal, null); // ohne Plan-Load und ohne Konfiguration kein Ziel, nichts erfunden
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goal, 250);
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goalSource, "config");
@@ -182,6 +185,8 @@ assert.equal(smEmpty.food.hasData, false); // ohne Yazio-Daten kein Wert, nichts
 assert.equal(smEmpty.food.latest, null);
 assert.equal(sm.food.goals, null); // ohne Yazio-Zugang keine Ziele, nichts erfunden
 assert.deepEqual(buildWidgetSmall(d, { kcal: 2100, proteinG: 120, carbsG: 250, fatG: 70 }).food.goals.proteinG, 120);
+assert.equal(sm.fitness.weekly.length, 7); // Fitness (CTL): ein Punkt je Woche
+assert.equal(sm.fitness.ctl, sm.fitness.weekly[6]);
 assert.ok(sm.cravings.count >= 1);
 assert.equal(smEmpty.cravings.count, sm.cravings.count); // Heisshunger unabhaengig von Yazio
 assert.ok(JSON.stringify(sm).length < 3000);
