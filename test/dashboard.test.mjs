@@ -2,7 +2,7 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { buildWidget, buildWidgetDetail, buildWidgetSmall, handleWidgetRequest } from "../src/widget.js";
+import { buildWidget, buildWidgetDetail, buildWidgetSmall, buildWidgetTraining, handleWidgetRequest } from "../src/widget.js";
 import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
@@ -27,7 +27,10 @@ const activities = [
   act(11, { name: "Rad locker", type: "VirtualRide", distance: 40000, moving_time: 5400, icu_training_load: 60, icu_ftp: 215 }),
   act(12, { name: "Intervalle 5x1000", distance: 9000, moving_time: 3200, tags: ["intervals"] }),
 ];
-const events = [{ category: "WORKOUT", start_date_local: day(0) + "T00:00:00", name: "Locker 30'", description: "Zweck: Beine lockern", moving_time: 1800 }];
+const events = [
+  { category: "WORKOUT", start_date_local: day(0) + "T00:00:00", name: "Locker 30'", description: "Zweck: Beine lockern", moving_time: 1800 },
+  { category: "WORKOUT", start_date_local: day(1) + "T00:00:00", name: "CSS-Intervalle", description: "10x100 auf CSS", tags: ["#key"], type: "Swim", moving_time: 3000, distance_target: 2000 },
+];
 globalThis.fetch = async (url) => {
   const u = String(url);
   const body = u.includes("/sport-settings") ? [{ types: ["Run"], threshold_pace: 2.94, lthr: 165, max_hr: 185 }, { types: ["Ride", "VirtualRide"], ftp: 220 }, { types: ["Swim"], threshold_pace: 0.8 }] : u.includes("/wellness") ? wellness : u.includes("/activities") ? activities : u.includes("/events") ? events : null;
@@ -118,6 +121,35 @@ assert.equal(wdg.week.days[0].date, wdg.week.weekStart);
 assert.equal(wdg.week.days.filter((x) => x.load == null).length, 6 - Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(wdg.week.weekStart + "T00:00:00Z")) / 86400000)); // Zukunft = null
 assert.equal(wdg.week.days.reduce((a, x) => a + (x.load ?? 0), 0), wdg.week.total);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
+// Schlüsseleinheit per #key, Sportart je Tag und Wochenvolumen je Disziplin
+assert.equal(wdg.plan.key.name, "CSS-Intervalle");
+assert.equal(wdg.plan.key.sport, "swim");
+assert.equal(wdg.plan.key.date, day(1));
+assert.equal(wdg.plan.today[0].key, false);
+assert.equal(/#key/i.test(wjson), false); // das Kennzeichen selbst geht nicht raus
+assert.equal(buildWidget({ ...d, planned: d.planned.filter((p) => !p.tags.includes("#key")) }).plan.key, null); // ohne #key keine Schlüsseleinheit
+assert.equal(buildWidget({ ...d, planned: d.planned.map((p) => ({ ...p, tags: p.tags.map((t) => t.replace("#", "")) })) }).plan.key.name, "CSS-Intervalle"); // Tag auch ohne #
+assert.equal(wdg.week.bySport.swim.km, 1.5);
+assert.equal(wdg.week.bySport.swim.plannedKm, 2);
+assert.equal(wdg.week.bySport.run.plannedKm, null); // nichts geplant = null, nie 0
+assert.equal(wdg.week.days.find((x) => x.date === day(-2)).sports.swim, 40);
+assert.deepEqual(wdg.week.days.find((x) => x.date === day(1)).sports, {}); // Zukunft ohne Werte
+// Training-Ansicht (mittleres Widget)
+const trn = buildWidgetTraining(d, env);
+assert.deepEqual(Object.keys(trn.sports), ["swim", "bike", "run"]);
+assert.equal(trn.sports.swim.daysSince, 2);
+assert.equal(trn.sports.run.daysSince, 1);
+assert.equal("avgLoad" in trn.sports.run, false); // TSS/CTL nur sportartuebergreifend
+assert.equal(trn.sports.swim.weekMinutes, 45);
+assert.ok(trn.split.share && Math.abs(Object.values(trn.split.share).reduce((a, x) => a + x, 0) - 100) <= 2);
+assert.equal(trn.split.target, null); // ohne TRI_SPLIT_TARGET kein Soll, nichts erfunden
+assert.deepEqual(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "20,45,35" }).split.target, { swim: 20, bike: 45, run: 35 });
+assert.equal(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "kaputt" }).split.target, null);
+assert.ok(JSON.stringify(trn).length < 2500);
+assert.equal(/Bobingen|Schokolade|CSS/.test(JSON.stringify(trn)), false);
+const trnRes = await handleWidgetRequest(new Request("https://x/api/widget?view=training", { headers: { authorization: "Bearer geheim" } }), env);
+assert.equal(trnRes.status, 200);
+assert.ok("split" in (await trnRes.json()));
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget"), env)).status, 401);
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { headers: { authorization: "Bearer geheim" } }), env)).status, 200);
 // Detail-Ansicht des Widgets

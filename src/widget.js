@@ -10,6 +10,12 @@ const firstLine = (s, max = 110) => {
   return line && line.length > max ? line.slice(0, max - 1) + "…" : line;
 };
 
+// Schlüsseleinheiten kennzeichnet der Athlet im Intervals-Kalender selbst mit dem Stichwort (Tag) #key am Workout.
+// Zusätzlich gilt ein #key im Namen oder in der Beschreibung.
+const KEY_RE = /#key\b/i;
+const isKeySession = (p) => (p?.tags ?? []).some((t) => /^#?key$/i.test(String(t).trim())) || KEY_RE.test(`${p?.name ?? ""}\n${p?.description ?? ""}`);
+const stripKey = (s) => (s == null ? null : String(s).replace(/[ \t]*#key\b/gi, "").trim() || null);
+
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 // Wochenziel der TSS: Summe der geplanten Workouts der Woche aus dem Intervals-Kalender. Fehlt sie dort,
@@ -24,14 +30,16 @@ export function buildWidget(d, env = {}) {
   const week = d.weeks[d.weeks.length - 1];
   // Tageslast der laufenden Woche (Mo bis So); Tage nach heute sind null, nicht 0.
   const loadByDate = Object.fromEntries(d.daily.map((x) => [x.date, x.load]));
+  const sportsByDate = Object.fromEntries(d.daily.map((x) => [x.date, x.sports]));
   const days = Array.from({ length: 7 }, (_, i) => {
     const date = addDays(week.weekStart, i);
-    return { date, load: date > d.today ? null : loadByDate[date] ?? 0 };
+    return { date, load: date > d.today ? null : loadByDate[date] ?? 0, sports: date > d.today ? {} : sportsByDate[date] ?? {} };
   });
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
   const total = (w) => (w ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null);
-  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: p.name, durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(p.description) }));
+  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(stripKey(p.description)) }));
   const next = d.planned.find((p) => p.date > d.today);
+  const key = d.planned.find((p) => p.date > d.today && isKeySession(p));
   const recentHip = d.hipFlags.filter((f) => f.date >= new Date(Date.parse(d.today + "T00:00:00Z") - 14 * 86400000).toISOString().slice(0, 10));
   const r = d.summary.readiness;
   return {
@@ -41,11 +49,15 @@ export function buildWidget(d, env = {}) {
     readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, cls: i.cls })) },
     load: d.summary.load,
     thresholds: d.summary.thresholds,
-    plan: { today: todayPlan, next: next ? { date: next.date, name: next.name } : null },
+    plan: {
+      today: todayPlan,
+      next: next ? { date: next.date, name: next.name } : null,
+      key: key ? { date: key.date, name: stripKey(key.name), sport: key.sport, durationMin: key.durationMin, distanceKm: key.distanceKm } : null,
+    },
     week: {
       weekStart: week.weekStart,
       days,
-      bySport: Object.fromEntries(Object.entries(week.bySport).map(([k, v]) => [k, { count: v.count, minutes: v.minutes, load: v.load }])),
+      bySport: Object.fromEntries(Object.entries(week.bySport).map(([k, v]) => [k, { count: v.count, minutes: v.minutes, load: v.load, km: v.km, plannedKm: v.plannedKm }])),
       total: total(week),
       lastTotal: total(lastWeek),
       goal: weeklyGoal(week, env).goal,
@@ -85,6 +97,46 @@ export function buildWidgetDetail(d) {
     thresholds: d.thresholds,
     nutrition: { days: nutrition, hasData: nutrition.some((x) => x.calories != null) },
     cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
+    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+  };
+}
+
+// Dritte Ansicht ("training", mittleres Widget): je Disziplin (Schwimmen, Rad, Lauf) Wochenvolumen gegen Plan,
+// Wochenzeit und Tage seit der letzten Einheit, dazu die Verteilung der letzten 4 Wochen nach Trainingszeit.
+// CTL, TSB und TSS bleiben sportartuebergreifend (Hauptansicht), hier gibt es bewusst keine Last je Sportart.
+// Ein Soll fuer die Verteilung gibt es nur, wenn TRI_SPLIT_TARGET gesetzt ist (Schwimmen,Rad,Lauf in Prozent,
+// z. B. "20,45,35"); sonst bleibt es leer, nichts wird erfunden.
+const TRI = ["swim", "bike", "run"];
+
+function splitTarget(env) {
+  const v = String(env?.TRI_SPLIT_TARGET ?? "").split(",").map((x) => Number(x.trim()));
+  if (v.length !== 3 || !v.every((x) => Number.isFinite(x) && x > 0)) return null;
+  const sum = v.reduce((a, x) => a + x, 0);
+  return Object.fromEntries(TRI.map((k, i) => [k, Math.round((v[i] / sum) * 100)]));
+}
+
+export function buildWidgetTraining(d, env = {}) {
+  const done = d.weeks.filter((w) => w.complete);
+  const cur = d.weeks[d.weeks.length - 1];
+  const recent = done.slice(-4);
+  const dayDiff = (iso) => Math.round((Date.parse(d.today + "T00:00:00Z") - Date.parse(iso + "T00:00:00Z")) / 86400000);
+  const lastDay = (k) => [...d.daily].reverse().find((x) => x.sports?.[k])?.date ?? null;
+  const sports = Object.fromEntries(TRI.map((k) => {
+    const last = lastDay(k);
+    return [k, {
+      weekKm: cur.bySport[k].km,
+      plannedKm: cur.bySport[k].plannedKm,
+      weekMinutes: cur.bySport[k].minutes,
+      daysSince: last ? dayDiff(last) : null,
+    }];
+  }));
+  const tot = Object.fromEntries(TRI.map((k) => [k, recent.reduce((a, w) => a + w.bySport[k].minutes, 0)]));
+  const sum = TRI.reduce((a, k) => a + tot[k], 0);
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    sports,
+    split: { share: sum > 0 ? Object.fromEntries(TRI.map((k) => [k, Math.round((tot[k] / sum) * 100)])) : null, target: splitTarget(env), weeks: recent.length },
     sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
   };
 }
@@ -132,5 +184,6 @@ export async function handleWidgetRequest(req, env) {
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
   const dashboard = await buildDashboard(env);
   const view = new URL(req.url).searchParams.get("view");
-  return json(view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard) : buildWidget(dashboard, env), 200, headers);
+  const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard) : view === "training" ? buildWidgetTraining(dashboard, env) : buildWidget(dashboard, env);
+  return json(body, 200, headers);
 }
