@@ -1,10 +1,8 @@
 "use strict";
 /* Trainings-Dashboard: Laden der Daten vom Worker und Aufbau der Bereiche. Diagramme: charts.js. */
 const $ = (id) => document.getElementById(id);
-const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange, median, quantile } = U;
+const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange } = U;
 
-const TSB_BANDS = { ok: -10, warn: -25 }; // Standardwerte, keine persönlich kalibrierten Grenzen
-const ACWR = { lo: 0.8, hi: 1.3 };
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
 const HISTORY_DAYS = 56;
@@ -50,39 +48,14 @@ function render(d) {
 }
 
 /* ---------- 1 · Heute ---------- */
-const READY_METRICS = [
-  { key: "sleepQuality", label: "Schlaf" }, { key: "fatigue", label: "Ermüdung" }, { key: "soreness", label: "Muskelkater" },
-  { key: "mood", label: "Stimmung" }, { key: "motivation", label: "Motivation" },
-];
-const latestLoad = (d) => [...d.wellness].reverse().find((w) => w.ctl != null && w.atl != null) ?? null;
-
-// Bereitschaft: heutiger Eintrag gegen den eigenen üblichen Bereich der letzten 8 Wochen. Skala ab 1 =
-// bestmöglich; ein Schritt schlechter als der Median = Achtung, zwei oder mehr = deutlich. Eigene Standardwerte.
+// Die Einschätzungen (Bereitschaft, TSB, ACWR) rechnet der Worker (dashboard-summary.js), damit Seite
+// und Widget dasselbe zeigen. Hier wird nur dargestellt.
 function renderReady(d) {
   const host = $("ready");
   if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="card"><h3>Bereit für Training?</h3><div class="muted">Wellness nicht abrufbar.</div></div>'; return; }
-  const today = d.wellness.find((w) => w.date === d.today);
-  const hasScales = today && READY_METRICS.some((m) => today[m.key] != null);
-  const past = d.wellness.filter((w) => w.date < d.today);
-  const items = READY_METRICS.map((m) => {
-    const v = today ? today[m.key] : null;
-    const base = past.map((w) => w[m.key]).filter((x) => x != null);
-    const max = Math.max(2, ...d.wellness.map((w) => w[m.key] ?? 0));
-    const band = base.length >= 5 ? [quantile(base, 0.25), quantile(base, 0.75)] : null;
-    if (v == null) return { ...m, v: null, max, band, cls: "none", text: "fehlt" };
-    if (!band) return { ...m, v, max, band, cls: "none", text: "kein Vergleich" };
-    const delta = v - median(base);
-    return { ...m, v, max, band, cls: delta >= 2 ? "bad" : delta >= 1 ? "warn" : "ok", text: delta >= 2 ? "deutlich schlechter" : delta >= 1 ? "etwas schlechter" : "wie üblich" };
-  });
-  const nBad = items.filter((i) => i.cls === "bad").length, nWarn = items.filter((i) => i.cls === "warn").length;
-  const w = latestLoad(d), tsb = w ? w.ctl - w.atl : null;
-  let verdict;
-  if (!hasScales) verdict = { cls: "none", text: "Heute noch nichts eingetragen", sub: "Ohne Eintrag gebe ich keine Einschätzung ab." };
-  else if (nBad >= 1 || nWarn >= 3) verdict = { cls: "bad", text: "Eher ruhig angehen", sub: "Mehrere Werte liegen schlechter als üblich." };
-  else if (nWarn >= 1 || (tsb != null && tsb < TSB_BANDS.ok)) verdict = { cls: "warn", text: "Mit Vorsicht", sub: "Einzelne Werte oder die Belastung sind auffällig." };
-  else verdict = { cls: "ok", text: "Bereit", sub: "Die Werte liegen im üblichen Bereich." };
-  const sleep = today && today.sleepHours != null ? `${fmt(today.sleepHours, 1)} h Schlaf` : "Schlafdauer nicht erfasst";
-  const extra = [today?.hrv != null && `HRV ${fmt(today.hrv)}`, today?.restingHR != null && `Ruhepuls ${fmt(today.restingHR)} bpm (Tageswert)`].filter(Boolean);
+  const R = d.summary.readiness, items = R.items, verdict = R.verdict;
+  const sleep = R.sleepHours != null ? `${fmt(R.sleepHours, 1)} h Schlaf` : "Schlafdauer nicht erfasst";
+  const extra = [R.hrv != null && `HRV ${fmt(R.hrv)}`, R.restingHR != null && `Ruhepuls ${fmt(R.restingHR)} bpm (Tageswert)`].filter(Boolean);
   host.innerHTML = `<div class="card"><h3>Bereit für Training?</h3>
     <div><span class="badge ${verdict.cls} big-badge">${verdict.text}</span> <span class="muted">${verdict.sub}</span></div>
     <div style="margin-top:8px">${esc([sleep, ...extra].join(" · "))}</div>
@@ -92,11 +65,9 @@ function renderReady(d) {
 }
 
 function renderToday(d) {
-  const w = latestLoad(d);
-  const ctl = w?.ctl, atl = w?.atl, tsb = w ? ctl - atl : null, acwr = w && ctl > 0 ? atl / ctl : null;
-  const tsbCls = tsb == null ? "none" : tsb >= TSB_BANDS.ok ? "ok" : tsb >= TSB_BANDS.warn ? "warn" : "bad";
+  const w = d.summary.load, { ctl, atl, tsb, acwr, tsbCls, acwrCls } = w;
+  const TSB_BANDS = d.summary.thresholds.tsb, ACWR = d.summary.thresholds.acwr;
   const tsbText = { ok: "frisch", warn: "belastet", bad: "stark ermüdet", none: "keine Daten" }[tsbCls];
-  const acwrCls = acwr == null ? "none" : acwr < ACWR.lo ? "warn" : acwr <= ACWR.hi ? "ok" : "bad";
   const acwrText = { ok: "im Zielkorridor", warn: "unter Zielkorridor", bad: "über Zielkorridor", none: "keine Daten" }[acwrCls];
   const plan = d.planned.filter((p) => p.date === d.today), next = d.planned.find((p) => p.date > d.today), g = d.goal;
   const meta = (p) => [p.durationMin && p.durationMin + " min", p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
@@ -131,6 +102,7 @@ function renderHistory(d) {
   $("plan-note").textContent = noPlan ? "Für diesen Zeitraum liegen keine geplanten Workouts mit Distanz/Load vor – ein Plan-Marker wird deshalb nicht gezeigt." : "Plan-Marker nur, wenn geplante Workouts Distanz bzw. Load enthalten. Laufumfang zählt nur Läufe, Belastung alle Sportarten.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
+  const TSB_BANDS = d.summary.thresholds.tsb;
   const ctl = {}, atl = {};
   for (const w of d.wellness) { ctl[w.date] = w.ctl; atl[w.date] = w.atl; }
   const first = addDays(d.today, -(HISTORY_DAYS - 1));
