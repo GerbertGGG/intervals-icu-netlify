@@ -29,7 +29,7 @@ let VIEW = (typeof config !== "undefined" && config.runsInWidget)
   : "main";
 const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "training" ? "training" : VIEW === "sleep" || VIEW === "food" || VIEW === "sleepfood" ? "small" : "");
 const cacheFile = () => `training-widget${endpointView() ? "-" + endpointView() : ""}-cache.json`;
-const SPORTS = [["run", "Laufen", "#3b6ea8"], ["bike", "Rad", "#8a6bb8"], ["swim", "Schwimmen", "#3a9db0"], ["strength", "Kraft", "#b08a3a"], ["other", "Sonst.", "#9aa5b4"]];
+const SPORTS = [["run", "Laufen", "#5b8fd6"], ["bike", "Rad", "#a283d8"], ["swim", "Schwimmen", "#3fb6cc"], ["strength", "Kraft", "#d0a03c"], ["other", "Sonst.", "#9aa5b4"]];
 
 const sportHex = (k) => (SPORTS.find(([s]) => s === k) || [])[2] || "#9aa5b4";
 
@@ -190,7 +190,7 @@ function gaugeImage(w, min, max, zones, value, ticks = [], tickDigits = 0) {
     const p = new Path();
     p.addRoundedRect(new Rect(a, 4, Math.max(2, b - a), 8), 4, 4);
     dc.addPath(p);
-    dc.setFillColor(new Color(ZONE_RGB[z.cls], 0.55));
+    dc.setFillColor(new Color(ZONE_RGB[z.cls], 0.92));
     dc.fillPath();
   }
   if (value != null) {
@@ -363,7 +363,8 @@ function buildWidget(res) {
     const tg = line.addStack(); tg.size = new Size(28, 0);
     text(tg, tag, 9, { bold: true, color: COL.muted });
     const dot = line.addText("\u25cf"); dot.font = Font.systemFont(8); dot.textColor = new Color(sportHex(x.sport));
-    text(line, `${isKey ? "Schl\u00fcssel: " : ""}${x.name || "Einheit"}`, 13, { bold: true });
+    const title = /marathon/i.test(x.name || "") && !/halb/i.test(x.name || "") ? `Vorbereitung ${g.name}` : x.name || "Einheit";
+    text(line, `${isKey ? "Schl\u00fcssel: " : ""}${title}`, 13, { bold: true });
     line.addSpacer();
     const meta = [x.durationMin && `${x.durationMin} min`, x.distanceKm && `${fmt(x.distanceKm, 1)} km`].filter(Boolean).join(" \u00b7 ");
     if (meta) text(line, meta, 11, { color: COL.muted });
@@ -629,23 +630,22 @@ function fillFood(w, d, IW, roomy, compact) {
   text(head, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
   if (ph.label) { head.addSpacer(); text(head, ph.label, 8, { bold: true, color: COL.race }); }
   if (!compact) w.addSpacer(2);
-  const main = carb ? { v: td.carbs, goal: t.carbsG } : { v: td.protein, goal: t.proteinG };
-  const line = w.addStack(); line.bottomAlignContent();
-  text(line, `${fmt(has && main.v != null ? main.v : main.goal)} g`, compact ? 22 : 26, { bold: true, color: has && main.v != null ? COL.text : COL.muted });
-  line.addSpacer(5);
-  const side = line.addStack(); side.layoutVertically();
-  if (carb) {
-    text(side, `KH \u00b7 ${has && main.v != null ? "Ziel " + fmt(main.goal) : "Tagesziel"}`, 8, { color: COL.muted });
-    text(side, `Protein ${fmt(has && td.protein != null ? td.protein : t.proteinG)} g`, 9, { color: COL.muted });
-  } else {
-    text(side, "Protein", 9, { color: COL.muted });
-    text(side, has && main.v != null ? `Ziel ${fmt(main.goal)}` : "Tagesziel", 8, { color: COL.muted });
-  }
-  w.addSpacer(2);
-  text(w, has && td.calories != null ? `${fmt(td.calories)} / ${fmt(t.kcal)} kcal` : `${fmt(t.kcal)} kcal Ziel`, 10, { bold: true });
-  if (ph.name === "recovery") text(w, has && td.carbs != null ? `KH ${fmt(td.carbs)} / ${fmt(t.carbsG)} g` : `KH ${fmt(t.carbsG)} g Ziel`, 9, { color: COL.muted });
-  w.addSpacer(3);
-  progressBar(w, IW, has && main.v != null && main.goal ? main.v / main.goal : 0, carb ? "#fb923c" : "#4f7fbf");
+  // Drei Balken: Kohlenhydrate, Protein, Energie. Ein Ziel gibt es nur, wenn die Phase eines festlegt (Kohlenhydrate
+  // sonst nur als Wert, ohne Balken). Ohne heutige Yazio-Werte steht das Tagesziel mit leerem Balken da.
+  const macros = [
+    { label: "Kohlenhydrate", v: td.carbs, goal: t.carbsG, unit: "g", hex: carb ? "#fb923c" : "#f0a24a" },
+    { label: "Protein", v: td.protein, goal: t.proteinG, unit: "g", hex: "#6da2dc" },
+    { label: "Energie", v: td.calories, goal: t.kcal, unit: "kcal", hex: "#8fa0b8" },
+  ];
+  macros.forEach((m, i) => {
+    w.addSpacer(i === 0 ? (compact ? 3 : 6) : compact ? 4 : 7);
+    const have = has && m.v != null, row = w.addStack(); row.centerAlignContent();
+    text(row, m.label, 9, { color: COL.muted });
+    row.addSpacer();
+    const shown = have ? `${fmt(m.v)}${m.goal ? ` / ${fmt(m.goal)}` : ""} ${m.unit}` : m.goal ? `Ziel ${fmt(m.goal)} ${m.unit}` : "\u2013";
+    text(row, shown, 11, { bold: true, color: have ? COL.text : COL.muted });
+    if (m.goal) { w.addSpacer(2); progressBar(w, IW, have ? m.v / m.goal : 0, m.hex); }
+  });
   if (compact) w.addSpacer(2); else w.addSpacer();
   if (!has) text(w, "Yazio noch nicht synchron", 8, { bold: true, color: COL.warn });
   else if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
