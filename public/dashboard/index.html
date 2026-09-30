@@ -78,8 +78,8 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .dots span { display: inline-flex; align-items: center; gap: 4px; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
 .dots i.ok { background: var(--ok); } .dots i.warn { background: var(--warn); } .dots i.bad { background: var(--bad); }
-.split { display: grid; gap: 12px; grid-template-columns: minmax(0, 380px) minmax(0, 560px); align-items: stretch; }
-@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+.split { display: grid; gap: 12px; grid-template-columns: minmax(0, 460px) minmax(0, 480px); align-items: stretch; }
+@media (max-width: 1000px) { .split { grid-template-columns: minmax(0, 1fr); } .split > .card { max-width: 520px; } .split > .stack { max-width: 520px; } }
 .ready-grid { margin-top: 10px; }
 .rrow { display: grid; grid-template-columns: 96px 230px auto; gap: 8px; align-items: center; padding: 2px 0; }
 .rrow .lbl { font-size: .9rem; }
