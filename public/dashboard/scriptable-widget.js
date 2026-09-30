@@ -143,7 +143,6 @@ function racePhase(daysToGo) {
   return { name, reduced: REDUCED_PHASES.includes(name), targets: NUTRITION_TARGETS[name], label: PHASE_LABEL[name] || null };
 }
 // Bereitschaftskreise: Skala ab 1 = bestmoeglich, niedrig ist gut. Farbe allein aus dem Wert.
-const scaleCls = (v) => (v == null ? "none" : (v - 1) / (Math.max(4, v) - 1) <= 0.34 ? "ok" : (v - 1) / (Math.max(4, v) - 1) <= 0.67 ? "warn" : "bad");
 
 /* ---------- Bausteine ---------- */
 function text(parent, str, size, { bold = false, color = COL.text, lines = 1, align = "left", opacity = 1 } = {}) {
@@ -307,7 +306,7 @@ function buildWidget(res) {
     const col = rings.addStack(); col.layoutVertically(); col.centerAlignContent();
     const ring = col.addStack();
     ring.size = new Size(26, 26);
-    ring.backgroundImage = ringImage(26, scaleCls(it.v));
+    ring.backgroundImage = ringImage(26, it.cls);
     ring.centerAlignContent();
     ring.addSpacer();
     text(ring, it.v == null ? "\u2013" : it.v, 12, { bold: true, align: "center" });
