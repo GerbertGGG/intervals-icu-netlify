@@ -9,7 +9,8 @@ import { sendRecentFormReportEmail } from "./email.js";
 import { handleAuthorizeRequest, handleTokenRequest, handleAuthServerMetadata, handleProtectedResourceMetadata } from "./mcp-oauth.js";
 import { handleMcpRequest } from "./mcp-server.js";
 import { isIntervalsEnabled } from "./kv.js";
-import { handleDashboardRequest } from "./dashboard.js";
+import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
+import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -80,6 +81,11 @@ export default {
     // Read-only Daten für public/dashboard (Token-geschützt, siehe src/dashboard.js).
     if (url.pathname === "/api/dashboard") {
       return withWorkerErrorBoundary(() => handleDashboardRequest(req, env));
+    }
+
+    // Runalyze-Snapshot (Prognose + Rennen) aus einer Sitzung mit Runalyze-MCP, siehe src/runalyze-snapshot.js.
+    if (url.pathname === "/api/runalyze") {
+      return withWorkerErrorBoundary(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
     }
 
     if (url.pathname === "/report-email") {

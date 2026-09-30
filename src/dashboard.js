@@ -4,6 +4,7 @@ import { activityDay, activityLoad, isRun, isIntervalActivity, hasIntervalTextSi
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { mustEnv } from "./kv.js";
+import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
 // Die API-Schlüssel bleiben im Worker; der Browser bekommt nur diese aufbereitete JSON.
@@ -24,7 +25,7 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-function isAuthorized(req, env) {
+export function isAuthorized(req, env) {
   const expected = env?.DASHBOARD_TOKEN;
   if (!expected) return false;
   const header = req.headers.get("authorization") || "";
@@ -169,6 +170,34 @@ function buildWellness(list) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
+function buildFitness(runs) {
+  const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
+  return {
+    baseRuns: asc.filter((r) => (r.kind === "base" || r.kind === "long") && r.avgHr != null && r.paceSecPerKm != null)
+      .map((r) => ({ date: r.date, name: r.name, kind: r.kind, avgHr: r.avgHr, paceSecPerKm: r.paceSecPerKm, pace: r.pace })),
+    longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)
+      .map((r) => ({ date: r.date, name: r.name, distanceKm: r.distanceKm, decoupling: r.decoupling })),
+  };
+}
+
+function buildRunalyze(snapshot) {
+  if (!snapshot) return null;
+  const rows = [{ label: "5 km", km: 5 }, { label: "10 km", km: 10 }, { label: "Halbmarathon", km: 21.0975 }].map(({ label, km }) => {
+    const best = bestForDistance(snapshot.races, km);
+    const prog = snapshot.prognosis.find((p) => Math.abs(p.distanceKm - km) / km <= 0.01);
+    return {
+      label,
+      distanceKm: km,
+      bestSeconds: best?.officialTimeSec ?? null,
+      bestDate: best?.date ?? null,
+      bestDistanceKm: best?.officialDistanceKm ?? null,
+      prognosisSeconds: prog?.seconds ?? null,
+    };
+  });
+  return { fetchedAt: snapshot.fetchedAt, rows };
+}
+
 async function settle(label, fn) {
   try {
     return { label, ok: true, value: await fn() };
@@ -183,11 +212,12 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, goalR] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, goalR, snapshot] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
     settle("goal", () => resolveActiveGoalRace(env, todayIso)),
+    readRunalyzeSnapshot(env),
   ]);
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
@@ -212,6 +242,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
     runs: runs.slice(0, 20),
+    fitness: buildFitness(runs),
+    runalyze: buildRunalyze(snapshot),
     planned: buildPlanned(events, todayIso),
   };
 }

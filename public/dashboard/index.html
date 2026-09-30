@@ -53,6 +53,9 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .runs .head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .tags span { margin-right: 12px; font-size: .9rem; }
 .tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; margin-left: 6px; }
+table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); }
+th { font-size: .8rem; color: var(--muted); border-top: 0; }
 button, input { font: inherit; }
 #login { max-width: 420px; margin: 20vh auto; }
 #login input { width: 100%; padding: 8px; margin: 8px 0; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
@@ -82,6 +85,17 @@ button, input { font: inherit; }
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
   <div class="card" style="margin-top:12px"><h3>Letzte Einheiten</h3><ul class="runs" id="runs"></ul></div>
 
+  <h2>3 · Fitness</h2>
+  <div class="grid">
+    <div class="card"><h3>Pace bei Grundlagen- und Long-Slow-Läufen</h3><div id="chart-pace"></div>
+      <div class="muted">Schneller (oben) bei gleichem Puls = bessere Form.</div></div>
+    <div class="card"><h3>Ø Puls dieser Läufe</h3><div id="chart-hr"></div>
+      <div class="muted">Pace nur vergleichen, wenn der Puls ähnlich war. Intervall- und Tempoläufe fehlen absichtlich.</div></div>
+    <div class="card"><h3>Decoupling bei langen Läufen</h3><div id="chart-dec"></div>
+      <div class="muted">Orientierung: unter etwa 5 % gilt die Grundlagenausdauer als stabil. Höher = Puls driftet gegen Pace.</div></div>
+  </div>
+  <div class="card" style="margin-top:12px"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records"></div></div>
+
   <h2>4 · Wellness</h2>
   <div class="muted" id="wellness-note"></div>
   <div class="grid" id="wellness" style="margin-top:8px"></div>
@@ -105,7 +119,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&am
 function fmt(n, d = 0) { return n == null ? "–" : Number(n).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d }); }
 function fmtDate(iso) { const [y, m, d] = iso.split("-"); return `${d}.${m}.`; }
 function weekday(iso) { return new Date(iso + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short" }); }
-function fmtTime(secs) { const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60; return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`; }
+function fmtTime(secs) { const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`; }
 
 /* ---------- Laden ---------- */
 async function load() {
@@ -210,7 +224,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
 
-  renderToday(d); renderHistory(d); renderWellness(d);
+  renderToday(d); renderHistory(d); renderFitness(d); renderWellness(d);
 }
 
 function tsbStatus(tsb) {
@@ -270,6 +284,46 @@ function renderHistory(d) {
       <div class="tags"><span>${fmt(r.distanceKm, 1)} km</span><span>${r.pace ? r.pace + " min/km" : "Pace –"}</span><span>RPE ${r.rpe != null ? fmt(r.rpe) : "–"}</span><span>Feel ${r.feel != null ? fmt(r.feel) : "–"}</span>${hr}${dec}</div>
       ${r.description ? `<div class="desc">${esc(r.description)}</div>` : ""}</li>`;
   }).join("") : `<li class="muted">${d.sources.intervalsActivities.ok ? "Keine Läufe in den letzten 8 Wochen." : "Aktivitäten nicht abrufbar."}</li>`;
+}
+
+function paceLabel(sec) { return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`; }
+function dayRange(from, to) {
+  const out = [];
+  for (let t = new Date(from + "T00:00:00Z"); t.toISOString().slice(0, 10) <= to; t = new Date(t.getTime() + 86400000)) out.push(t.toISOString().slice(0, 10));
+  return out;
+}
+function fitnessChart(host, runs, field, o) {
+  if (!runs.length) { host.innerHTML = '<div class="muted">Keine passenden Läufe im Zeitraum.</div>'; return; }
+  const days = dayRange(runs[0].date, runs[runs.length - 1].date);
+  if (days.length < 2) days.unshift(new Date(new Date(days[0] + "T00:00:00Z").getTime() - 86400000).toISOString().slice(0, 10));
+  const values = Object.fromEntries(runs.map((r) => [r.date, r[field]]));
+  const v = runs.map((r) => r[field]);
+  const lo = Math.floor(Math.min(...v) - o.pad), hi = Math.ceil(Math.max(...v) + o.pad);
+  lineChart(host, days, null, { values, min: lo, max: hi, invert: o.invert, unit: o.unit, label: o.label, dec: o.dec || 0, tickLabel: o.tickLabel });
+}
+
+function renderFitness(d) {
+  if (!d.sources.intervalsActivities.ok) {
+    for (const id of ["chart-pace", "chart-hr", "chart-dec"]) $(id).innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>';
+  } else {
+    fitnessChart($("chart-pace"), d.fitness.baseRuns, "paceSecPerKm", { unit: "min/km", label: "Pace", invert: true, pad: 10, tickLabel: paceLabel });
+    fitnessChart($("chart-hr"), d.fitness.baseRuns, "avgHr", { unit: "bpm", label: "Ø Puls", pad: 3 });
+    fitnessChart($("chart-dec"), d.fitness.longRuns, "decoupling", { unit: "%", label: "Decoupling", pad: 1, dec: 1 });
+  }
+  const r = d.runalyze;
+  if (!r) { $("records").innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – Bestzeiten und Prognose fehlen.</div>'; return; }
+  const goal = d.goal.targetTimeSecs;
+  const row = (x) => {
+    const diff = x.bestSeconds != null && x.prognosisSeconds != null ? x.prognosisSeconds - x.bestSeconds : null;
+    const isHm = x.label === "Halbmarathon";
+    return `<tr><td>${x.label}</td>
+      <td>${x.bestSeconds != null ? `<b>${fmtTime(x.bestSeconds)}</b> <span class="muted">${fmtDate(x.bestDate)}${x.bestDate.slice(0, 4)}${Math.abs(x.bestDistanceKm - x.distanceKm) > 0.005 ? `, gemessen ${fmt(x.bestDistanceKm, 2)} km` : ""}</span>` : '<span class="muted">keine</span>'}</td>
+      <td>${x.prognosisSeconds != null ? fmtTime(x.prognosisSeconds) : '<span class="muted">fehlt</span>'}</td>
+      <td>${isHm ? `Ziel ${fmtTime(goal)}` : diff != null ? (diff > 0 ? "+" : "−") + fmtTime(Math.abs(diff)) : ""}</td></tr>`;
+  };
+  $("records").innerHTML = `<table><thead><tr><th>Distanz</th><th>Bestzeit</th><th>Prognose</th><th>Vergleich</th></tr></thead><tbody>${r.rows.map(row).join("")}</tbody></table>
+    <div class="notice">Die Halbmarathon-Prognose ist eine reine Extrapolation aus dem Modell von Runalyze, kein Ergebnis eines Halbmarathon-Trainings oder -Rennens. Ohne Halbmarathon-Bestzeit gibt es dafür keinen Vergleichswert.</div>
+    <div class="muted">Runalyze-Stand: ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}. „Vergleich" bei 5 und 10 km = Prognose minus Bestzeit.</div>`;
 }
 
 const WELLNESS = [
