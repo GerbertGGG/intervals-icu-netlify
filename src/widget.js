@@ -58,9 +58,42 @@ export function buildWidget(d, env = {}) {
   };
 }
 
+// Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces, Schwellen sowie
+// Ernaehrung und Heisshunger der letzten Tage. Wieder ohne Freitexte.
+export function buildWidgetDetail(d) {
+  const from28 = addDays(d.today, -27);
+  const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
+  const form = Array.from({ length: 28 }, (_, i) => {
+    const date = addDays(from28, i);
+    const w = byDate[date];
+    return { date, ctl: w?.ctl ?? null, atl: w?.atl ?? null };
+  });
+  const last7 = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
+  const nutrition = last7.map((date) => ({ date, calories: byDate[date]?.calories ?? null, goal: byDate[date]?.calorieGoal ?? null }));
+  const recentCravings = d.cravings.filter((c) => c.date >= last7[0]);
+  const strongest = recentCravings.filter((c) => c.strength != null).sort((a, b) => b.strength - a.strength)[0];
+  const r = d.runalyze;
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
+    load: d.summary.load,
+    tsbZones: d.summary.thresholds.tsb,
+    form,
+    hm: r ? { goalSec: d.goal.targetTimeSecs, estimates: r.hmEstimates } : null,
+    vdot: r ? { value: r.vdot, paces: r.paces, fetchedAt: r.fetchedAt } : null,
+    thresholds: d.thresholds,
+    nutrition: { days: nutrition, hasData: nutrition.some((x) => x.calories != null) },
+    cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
+    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+  };
+}
+
 export async function handleWidgetRequest(req, env) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
-  return json(buildWidget(await buildDashboard(env), env), 200, headers);
+  const dashboard = await buildDashboard(env);
+  const view = new URL(req.url).searchParams.get("view");
+  return json(view === "detail" ? buildWidgetDetail(dashboard) : buildWidget(dashboard, env), 200, headers);
 }

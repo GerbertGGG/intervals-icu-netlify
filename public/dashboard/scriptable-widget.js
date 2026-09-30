@@ -6,6 +6,8 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse "Gross", Skript auswaehlen.
+//     Zweites, halb so grosses Widget mit weiteren Daten (Form, Halbmarathon-Zeiten vs. Ziel, VDOT und
+//     Paces, Schwellen, Ernaehrung, Heisshunger): dasselbe Skript nochmal anlegen, Groesse "Mittel".
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
 //
 // Es zeigt: Bereitschaft heute, Countdown, Frische (TSB), ACWR, heutige Einheit, Wochenbelastung
@@ -13,7 +15,9 @@
 
 const KEY_URL = "training-dashboard-url";
 const KEY_TOKEN = "training-dashboard-token";
-const CACHE_FILE = "training-widget-cache.json";
+// Groesse bestimmt die Ansicht: Gross = Hauptansicht, Mittel = Details (Form, Zeiten vs. Ziel, Paces ...)
+let VIEW = (typeof config !== "undefined" && config.runsInWidget && config.widgetFamily === "medium") ? "detail" : "main";
+const cacheFile = () => (VIEW === "detail" ? "training-widget-detail-cache.json" : "training-widget-cache.json");
 const SPORTS = [["run", "Laufen", "#3b6ea8"], ["bike", "Rad", "#8a6bb8"], ["swim", "Schwimmen", "#3a9db0"], ["strength", "Kraft", "#b08a3a"], ["other", "Sonst.", "#9aa5b4"]];
 
 const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
@@ -45,13 +49,13 @@ async function askConfig() {
 }
 
 /* ---------- Daten laden (mit Cache f\u00fcr Offline) ---------- */
-function cachePath() { const fm = FileManager.local(); return { fm, path: fm.joinPath(fm.documentsDirectory(), CACHE_FILE) }; }
+function cachePath() { const fm = FileManager.local(); return { fm, path: fm.joinPath(fm.documentsDirectory(), cacheFile()) }; }
 
 async function loadData() {
   const base = baseUrl();
   const { fm, path } = cachePath();
   try {
-    const req = new Request(`${base}/api/widget`);
+    const req = new Request(`${base}/api/widget${VIEW === "detail" ? "?view=detail" : ""}`);
     req.headers = { Authorization: `Bearer ${Keychain.get(KEY_TOKEN)}` };
     req.timeoutInterval = 25;
     const body = await req.loadString();
@@ -318,6 +322,112 @@ function footer(w, res, d, W) {
   text(f, res.stale ? `Stand ${time} \u00b7 veraltet, keine Verbindung` : `Stand ${time}`, 9, { color: res.stale ? COL.warn : COL.muted, align: "right" });
 }
 
+/* ---------- Zweite Ansicht: Details (Widget-Parameter "detail") ---------- */
+function formImage(w, h, form, zones, raceDay) {
+  const dc = newCtx(w, h);
+  const n = form.length, x = (i) => (i / (n - 1)) * w;
+  const splitY = Math.round(h * 0.64);                         // oben CTL/ATL, unten TSB
+  const vals = form.flatMap((f) => [f.ctl, f.atl]).filter((v) => v != null);
+  const max = Math.max(10, ...vals), yTop = (v) => splitY - 4 - (v / max) * (splitY - 10);
+  const line = (key, hex) => {
+    const p = new Path();
+    let pen = false;
+    form.forEach((f, i) => {
+      if (f[key] == null) { pen = false; return; }
+      const pt = new Point(x(i), yTop(f[key]));
+      if (!pen) { p.move(pt); pen = true; } else p.addLine(pt);
+    });
+    dc.addPath(p);
+    dc.setStrokeColor(new Color(hex));
+    dc.setLineWidth(2);
+    dc.strokePath();
+  };
+  line("atl", "#8a94a3");
+  line("ctl", "#5b8fd0");
+  const tsbs = form.map((f) => (f.ctl != null && f.atl != null ? f.ctl - f.atl : null));
+  const tv = tsbs.filter((v) => v != null);
+  const lo = Math.min(-15, ...tv), hi = Math.max(15, ...tv), bandTop = splitY + 6, bandH = h - bandTop - 1;
+  const yz = (v) => bandTop + (1 - (v - lo) / (hi - lo)) * bandH;
+  dc.setFillColor(new Color("#8a94a3", 0.35));
+  dc.fillRect(new Rect(0, yz(0), w, 1));
+  const bw = Math.max(2, (w / n) * 0.7);
+  tsbs.forEach((v, i) => {
+    if (v == null) return;
+    const cls = v >= zones.ok ? "ok" : v >= zones.warn ? "warn" : "bad";
+    dc.setFillColor(new Color(ZONE_RGB[cls], 0.85));
+    dc.fillRect(new Rect(x(i) - bw / 2, Math.min(yz(v), yz(0)), bw, Math.max(1, Math.abs(yz(v) - yz(0)))));
+  });
+  return dc.getImage();
+}
+
+// Mittleres Widget (halb so gross): Form links, Halbmarathon-Zeiten gegen das Ziel rechts,
+// darunter VDOT/Paces, Schwellen sowie Ernaehrung und Heisshunger.
+function buildMedium(res) {
+  const d = res.data;
+  const W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26);
+  const w = new ListWidget();
+  w.backgroundColor = COL.bg;
+  w.setPadding(8, 13, 6, 13);
+  w.url = `${baseUrl()}/dashboard/`;
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+
+  const row = w.addStack(); row.spacing = 7;
+  const LW = Math.floor((W - 7) * 0.52), RW = W - 7 - LW;
+
+  // Links: Form der letzten 28 Tage
+  const L = d.load, fc = card(row, LW, 7);
+  text(fc, "FORM \u00b7 28 TAGE", 10, { bold: true, color: COL.muted });
+  fc.addSpacer(2);
+  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 52, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 52); }
+  else text(fc, "Keine CTL/ATL-Werte", 10, { color: COL.muted });
+  fc.addSpacer(2);
+  const nums = fc.addStack(); nums.centerAlignContent();
+  text(nums, `CTL ${fmt(L.ctl, 1)}`, 10, { bold: true, color: COL.accent });
+  nums.addSpacer(5);
+  text(nums, `ATL ${fmt(L.atl, 1)}`, 10, { bold: true, color: COL.muted });
+  nums.addSpacer();
+  text(nums, `TSB ${fmt(L.tsb, 1)}`, 10, { bold: true, color: colorFor(L.tsbCls) });
+
+  // Rechts: Halbmarathon-Zeiten gegen das Ziel
+  const rc = card(row, RW, 7), goal = d.goal.targetTimeSecs;
+  const rh = rc.addStack(); rh.centerAlignContent();
+  text(rh, "HALBMARATHON", 10, { bold: true, color: COL.muted });
+  rh.addSpacer();
+  text(rh, `${d.goal.daysToGo > 0 ? d.goal.daysToGo + " Tg" : ""}`, 10, { bold: true, color: COL.muted });
+  rc.addSpacer(2);
+  const line = (label, secs, bold, tone) => {
+    const r = rc.addStack(); r.centerAlignContent();
+    text(r, label, 10, { bold, color: bold ? COL.text : COL.muted });
+    r.addSpacer();
+    text(r, fmtTime(secs), 11, { bold: true, color: tone || COL.text });
+    if (secs !== goal) { const diff = secs - goal; r.addSpacer(4); text(r, `${diff > 0 ? "+" : "\u2212"}${fmtTime(Math.abs(diff)).replace(/^0:/, "")}`, 9, { color: diff <= 0 ? COL.ok : COL.muted }); }
+  };
+  line("Ziel", goal, true, COL.accent);
+  if (d.hm && d.hm.estimates.length) {
+    // Platz fuer drei Zeilen: Runalyze-Prognose, VDOT-Rechnung und die schnellste Bestzeit-Rechnung
+    const est = d.hm.estimates, best = est.filter((e) => e.key.startsWith("best-")).sort((a, b) => a.seconds - b.seconds)[0];
+    const pick = [est.find((e) => e.kind === "prognosis"), est.find((e) => e.key === "vdot"), best].filter(Boolean).sort((a, b) => a.seconds - b.seconds);
+    for (const e of pick) {
+      const name = e.kind === "prognosis" ? "Runalyze" : e.key === "vdot" ? "VDOT" : e.label.replace("aus ", "").replace("-Bestzeit", "");
+      line(name, e.seconds, false);
+    }
+    text(rc, "Rechnung nach Daniels, keine Vorhersage", 8, { color: COL.muted, lines: 1 });
+  } else text(rc, "Noch kein Runalyze-Snapshot eingespielt", 9, { color: COL.muted, lines: 2 });
+  w.addSpacer(5);
+
+  // Unten: VDOT und Paces, Schwellen, Ernaehrung, Heisshunger
+  const bc = card(w, W, 6), T = d.thresholds;
+  const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
+  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / 21.0975)}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
+  text(bc, `Schwellen: Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : "fehlt"} \u00b7 FTP ${T.bike.ftp ? T.bike.ftp + " W" : "fehlt"} \u00b7 Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : "fehlt"}`, 9, { color: COL.text });
+  const last = [...d.nutrition.days].reverse().find((x) => x.calories != null);
+  const nut = d.nutrition.hasData && last ? `Kalorien ${fmt(last.calories)}${last.goal ? " / " + fmt(last.goal) : ""} kcal (${dateShort(last.date)})` : "Ern\u00e4hrung: noch keine Daten";
+  const cr = d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner";
+  const time = new Date(d.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  text(bc, `${nut} \u00b7 ${cr} \u00b7 ${res.stale ? "veraltet" : time}`, 9, { color: res.stale ? COL.warn : COL.muted });
+  return w;
+}
+
 function messageWidget(msg) {
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
@@ -333,19 +443,21 @@ async function main() {
     const menu = new Alert();
     menu.title = "Trainings-Widget";
     menu.addAction("Vorschau (gro\u00df)");
+    menu.addAction("Vorschau mittel (zweites Widget)");
     menu.addAction("Zugangsdaten setzen / zur\u00fccksetzen");
     menu.addCancelAction("Schlie\u00dfen");
     const choice = await menu.presentAlert();
     if (choice === -1) return;
-    if (choice === 1 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 1) return; }
+    if (choice === 1) VIEW = "detail";
+    if (choice === 2 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 2) return; }
   } else if (!Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) {
     Script.setWidget(messageWidget("Bitte das Skript einmal in Scriptable \u00f6ffnen und die Zugangsdaten eingeben."));
     return;
   }
   let widget;
-  try { widget = buildWidget(await loadData()); }
+  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : buildWidget(res); }
   catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
-  if (inWidget) Script.setWidget(widget); else await widget.presentLarge();
+  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail") await widget.presentMedium(); else await widget.presentLarge();
 }
 await main();
 Script.complete();
