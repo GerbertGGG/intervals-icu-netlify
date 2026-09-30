@@ -34,6 +34,14 @@ const COL = {
   ok: dyn("#1f7a4d", "#6fd4a0"), warn: dyn("#9a6400", "#f0c060"), bad: dyn("#b3261e", "#f2a29c"), none: dyn("#5d6877", "#9aa5b4"),
   accent: dyn("#3b6ea8", "#6da2dc"),
 };
+// Groesse des Widgets in Punkten nach Bildschirmbreite (Apple-Sollwerte fuer Mittel/Gross); Innenbreite = ohne Rand
+const WIDGET_SIZES = [[430, 364, 170], [428, 364, 170], [414, 360, 169], [393, 338, 158], [390, 338, 158], [375, 321, 148]];
+function widgetSize() {
+  const sw = Math.min(Device.screenSize().width, Device.screenSize().height);
+  const hit = WIDGET_SIZES.find(([w]) => sw >= w) || WIDGET_SIZES[WIDGET_SIZES.length - 1];
+  return { w: hit[1], h: hit[2] };
+}
+const widgetInnerWidth = () => widgetSize().w - 26;
 const ZONE_RGB = { ok: "#2f9d64", warn: "#d99a1a", bad: "#d0453b", none: "#8a94a3" };
 const baseUrl = () => (Keychain.get(KEY_URL).match(/^https:\/\/[^\/\s?#]+/) || [Keychain.get(KEY_URL)])[0];
 
@@ -204,7 +212,7 @@ const ACWR_TEXT = { ok: "im Korridor", warn: "zu niedrig", bad: "zu hoch", none:
 function buildWidget(res) {
   const d = res.data;
   const large = config.widgetFamily === "large" || !config.runsInWidget;
-  const W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26); // Innenbreite des gro\u00dfen Widgets
+  const W = widgetInnerWidth(); // Innenbreite des gro\u00dfen Widgets
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
   w.setPadding(10, 13, 8, 13);
@@ -372,7 +380,7 @@ function formImage(w, h, form, zones, raceDay) {
 // darunter VDOT/Paces, Schwellen sowie Ernaehrung und Heisshunger.
 function buildMedium(res) {
   const d = res.data;
-  const W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26);
+  const W = widgetInnerWidth();
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
   w.setPadding(8, 13, 6, 13);
@@ -496,8 +504,9 @@ function fillSleep(w, d, IW) {
 }
 
 // Inhalt "Ernaehrung": Kalorien gegen Tagesziel des letzten Tages mit Daten; ohne Daten ein klarer Leerzustand
-function fillFood(w, d, IW) {
+function fillFood(w, d, IW, roomy) {
   const f = d.food;
+  const craving = d.cravings ? (d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner") : null;
   text(w, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
   w.addSpacer(2);
   if (!f.hasData) {
@@ -507,6 +516,7 @@ function fillFood(w, d, IW) {
     const im0 = w.addImage(smallBarsImage(IW, 30, f.days.map(() => null), d.today, f.days.map((x) => x.date)));
     im0.imageSize = new Size(IW, 30);
     dayLabels(w, f.days.map((x) => x.date), d.today, IW);
+    if (craving) { w.addSpacer(); text(w, craving, 9, { bold: true, color: COL.text }); }
     return;
   }
   const l = f.latest;
@@ -520,6 +530,7 @@ function fillFood(w, d, IW) {
   im.imageSize = new Size(IW, 30);
   dayLabels(w, f.days.map((x) => x.date), d.today, IW);
   w.addSpacer();
+  if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
   text(w, "Wei\u00dfe Marke = Tagesziel", 7, { color: COL.muted });
 }
 
@@ -528,7 +539,7 @@ function buildFood(res) { const w = smallWidget(); fillFood(w, res.data, 134); r
 
 // Mittleres Widget: Schlaf und Erholung links, Ernaehrung rechts
 function buildSleepFood(res) {
-  const d = res.data, W = Math.floor(Math.min(Device.screenSize().width - 28, 364) - 26);
+  const d = res.data, W = widgetInnerWidth();
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
   w.setPadding(9, 13, 8, 13);
@@ -536,8 +547,12 @@ function buildSleepFood(res) {
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
   const row = w.addStack(); row.spacing = 7;
   const CW = Math.floor((W - 7) / 2), IW = CW - 24;
-  fillSleep(card(row, CW, 8), d, IW);
-  fillFood(card(row, CW, 8), d, IW);
+  const CH = widgetSize().h - 9 - 8 - (res.stale || d.sourcesFailed.length ? 12 : 0);
+  const cs = card(row, CW, 8), cf = card(row, CW, 8);
+  cs.size = new Size(CW, CH);
+  cf.size = new Size(CW, CH);
+  fillSleep(cs, d, IW);
+  fillFood(cf, d, IW, true);
   if (res.stale || d.sourcesFailed.length) {
     w.addSpacer(3);
     text(w, res.stale ? "veraltet, keine Verbindung" : `Quelle fehlt: ${d.sourcesFailed.join(", ")}`, 8, { color: res.stale ? COL.warn : COL.bad });
