@@ -3,7 +3,6 @@ import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
-import { raceDistance } from "./race-phase.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
@@ -353,7 +352,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
   const goal = goalFromCalendar
-    ? { date: goalFromCalendar.date, name: raceDistance(goalFromCalendar)?.label ?? CONFIGURED_GOAL.name, distanceKm: raceDistance(goalFromCalendar)?.km ?? CONFIGURED_GOAL.distanceKm, targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, source: "intervals" }
+    ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, source: "intervals" }
     : { ...CONFIGURED_GOAL, source: "config" };
 
   return {

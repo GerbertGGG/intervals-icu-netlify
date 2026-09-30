@@ -32,7 +32,7 @@ const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
 const COL = {
   bg: dyn("#f2f4f7", "#0f1318"), card: dyn("#ffffff", "#1a2029"), text: dyn("#1c2430", "#e6eaf0"), muted: dyn("#5d6877", "#9aa5b4"),
   ok: dyn("#1f7a4d", "#6fd4a0"), warn: dyn("#9a6400", "#f0c060"), bad: dyn("#b3261e", "#f2a29c"), none: dyn("#5d6877", "#9aa5b4"),
-  accent: dyn("#3b6ea8", "#6da2dc"), race: dyn("#c2410c", "#fb923c"),
+  accent: dyn("#3b6ea8", "#6da2dc"),
 };
 // Groesse des Widgets in Punkten nach Bildschirmbreite (Apple-Sollwerte fuer Mittel/Gross); Innenbreite = ohne Rand
 const WIDGET_SIZES = [[430, 364, 170], [428, 364, 170], [414, 360, 169], [393, 338, 158], [390, 338, 158], [375, 321, 148]];
@@ -93,8 +93,6 @@ async function loadData() {
 const fmt = (n, d = 0) => (n == null || !Number.isFinite(Number(n)) ? "\u2013" : Number(n).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d }));
 const fmtTime = (s) => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = Math.round(s % 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`; };
 const fmtPace = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
-const WEEKDAYS = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
-const weekdayOf = (iso) => WEEKDAYS[new Date(iso + "T12:00:00").getDay()];
 const dateShort = (iso) => { const [, m, d] = iso.split("-"); return `${d}.${m}.`; };
 const colorFor = (cls) => COL[cls] || COL.none;
 
@@ -130,10 +128,8 @@ function newCtx(w, h) {
 }
 
 // Skala mit Ampelzonen (abgerundete Segmente) und Marker mit Rand
-// ticks: Grenzwerte an den Segmentuebergaengen, als Zahl unter der Skala
-const GAUGE_H = 16, GAUGE_TICK_H = 10;
-function gaugeImage(w, min, max, zones, value, ticks = [], tickDigits = 0) {
-  const h = GAUGE_H + (ticks.length ? GAUGE_TICK_H : 0), dc = newCtx(w, h);
+function gaugeImage(w, min, max, zones, value) {
+  const h = 16, dc = newCtx(w, h);
   const x = (v) => ((Math.min(max, Math.max(min, v)) - min) / (max - min)) * w;
   for (const z of zones) {
     const a = x(z.from) + 1, b = x(z.to) - 1;
@@ -151,15 +147,6 @@ function gaugeImage(w, min, max, zones, value, ticks = [], tickDigits = 0) {
     dc.setStrokeColor(new Color("#0f1318"));
     dc.setLineWidth(2);
     dc.strokeEllipse(new Rect(cx - 6, 2, 12, 12));
-  }
-  if (ticks.length) {
-    dc.setFont(Font.systemFont(8));
-    dc.setTextColor(new Color("#8a94a3"));
-    dc.setTextAlignedCenter();
-    for (const t of ticks) {
-      const cx = Math.min(w - 14, Math.max(14, x(t)));
-      dc.drawTextInRect(fmt(t, tickDigits), new Rect(cx - 14, GAUGE_H - 1, 28, GAUGE_TICK_H));
-    }
   }
   return dc.getImage();
 }
@@ -183,13 +170,12 @@ function dayBarsImage(w, h, days, todayIso) {
   dc.setTextAlignedCenter();
   days.forEach((x, i) => {
     const cx = i * slot + slot / 2;
-    if (x.isRace) { const q = new Path(); q.addRoundedRect(new Rect(i * slot + 1, 0, slot - 2, h), 4, 4); dc.addPath(q); dc.setFillColor(new Color("#fb923c", 0.18)); dc.fillPath(); }
-    if (x.load == null) { dc.setFillColor(new Color(x.isRace ? "#fb923c" : "#8a94a3", x.isRace ? 0.9 : 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); return; }
+    if (x.load == null) { dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); return; }
     const bh = x.load ? Math.max(3, (x.load / max) * (base - top)) : 1.5;
     const p = new Path();
     p.addRoundedRect(new Rect(cx - bw / 2, base - bh, bw, bh), 2.5, 2.5);
     dc.addPath(p);
-    dc.setFillColor(x.isRace ? new Color("#fb923c") : x.load ? new Color(x.date === todayIso ? "#7db0f5" : "#4f7fbf") : new Color("#8a94a3", 0.35));
+    dc.setFillColor(x.load ? new Color(x.date === todayIso ? "#7db0f5" : "#4f7fbf") : new Color("#8a94a3", 0.35));
     dc.fillPath();
     if (x.load) { dc.setTextColor(new Color("#8a94a3")); dc.drawTextInRect(String(Math.round(x.load)), new Rect(i * slot, base - bh - 11, slot, 10)); }
   });
@@ -239,8 +225,8 @@ function buildWidget(res) {
   head.centerAlignContent();
   head.size = new Size(W, 0);
   const left = head.addStack(); left.layoutVertically();
-  text(left, `${(g.label || g.name).toUpperCase()} \u00b7 ${weekdayOf(g.date)} ${dateShort(g.date)}`, 10, { bold: true, color: COL.muted });
-  text(left, `Ziel ${fmtTime(g.targetTimeSecs)} \u00b7 ${fmtPace(g.targetTimeSecs / (g.distanceKm || 21.0975))}/km`, 10, { color: COL.muted });
+  text(left, `${g.name.toUpperCase()} \u00b7 ${dateShort(g.date)}`, 10, { bold: true, color: COL.muted });
+  text(left, `Ziel ${fmtTime(g.targetTimeSecs)} \u00b7 ${fmtPace(g.targetTimeSecs / 21.0975)}/km`, 10, { color: COL.muted });
   if (d.hm && d.hm.estimates.length) {
     const rz = d.hm.estimates.find((e) => e.kind === "prognosis"), calc = d.hm.estimates.find((e) => e.key === "vdot");
     const bits = [rz && `Runalyze ${fmtTime(rz.seconds)}`, calc && `Rechnung ${fmtTime(calc.seconds)}`].filter(Boolean);
@@ -282,7 +268,7 @@ function buildWidget(res) {
   const L = d.load, T = d.thresholds;
   const row = w.addStack(); row.spacing = 7;
   const CW = Math.floor((W - 7) / 2), IW = CW - 22;
-  const gcol = (title, valueTxt, cls, statusTxt, img, h) => {
+  const gcol = (title, valueTxt, cls, statusTxt, img) => {
     const c = card(row, CW, 7);
     text(c, title, 10, { bold: true, color: COL.muted });
     const line = c.addStack(); line.centerAlignContent();
@@ -290,10 +276,10 @@ function buildWidget(res) {
     line.addSpacer();
     text(line, statusTxt, 10, { color: colorFor(cls) });
     c.addSpacer(2);
-    const im = c.addImage(img); im.imageSize = new Size(IW, h);
+    const im = c.addImage(img); im.imageSize = new Size(IW, 16);
   };
-  gcol("FRISCHE (TSB)", L.tsb == null ? "fehlt" : fmt(L.tsb, 1), L.tsbCls, TSB_TEXT[L.tsbCls], gaugeImage(IW, -40, 30, [{ from: -40, to: T.tsb.warn, cls: "bad" }, { from: T.tsb.warn, to: T.tsb.ok, cls: "warn" }, { from: T.tsb.ok, to: 30, cls: "ok" }], L.tsb, [T.tsb.warn, T.tsb.ok], 0), GAUGE_H + GAUGE_TICK_H);
-  gcol("ACWR (ATL/CTL)", L.acwr == null ? "fehlt" : fmt(L.acwr, 2), L.acwrCls, ACWR_TEXT[L.acwrCls], gaugeImage(IW, 0.4, 1.8, [{ from: 0.4, to: T.acwr.lo, cls: "warn" }, { from: T.acwr.lo, to: T.acwr.hi, cls: "ok" }, { from: T.acwr.hi, to: 1.8, cls: "bad" }], L.acwr, [T.acwr.lo, T.acwr.hi], 1), GAUGE_H + GAUGE_TICK_H);
+  gcol("FRISCHE (TSB)", L.tsb == null ? "fehlt" : fmt(L.tsb, 1), L.tsbCls, TSB_TEXT[L.tsbCls], gaugeImage(IW, -40, 30, [{ from: -40, to: T.tsb.warn, cls: "bad" }, { from: T.tsb.warn, to: T.tsb.ok, cls: "warn" }, { from: T.tsb.ok, to: 30, cls: "ok" }], L.tsb));
+  gcol("ACWR (ATL/CTL)", L.acwr == null ? "fehlt" : fmt(L.acwr, 2), L.acwrCls, ACWR_TEXT[L.acwrCls], gaugeImage(IW, 0.4, 1.8, [{ from: 0.4, to: T.acwr.lo, cls: "warn" }, { from: T.acwr.lo, to: T.acwr.hi, cls: "ok" }, { from: T.acwr.hi, to: 1.8, cls: "bad" }], L.acwr));
   w.addSpacer(5);
 
   if (!large) { footer(w, res, d, W); return w; }
@@ -307,7 +293,7 @@ function buildWidget(res) {
     text(line, p.name || "Einheit", 13, { bold: true });
     line.addSpacer();
     if (meta) text(line, meta, 11, { color: COL.muted });
-    text(pc, p.purpose || "Kein Zweck im Plan hinterlegt.", 10, { color: COL.muted, lines: 2 });
+    text(pc, p.purpose || "Kein Zweck im Plan hinterlegt.", 10, { color: COL.muted, lines: 1 });
   } else {
     text(pc, "Heute keine Einheit geplant", 13, { bold: true });
     if (d.plan.next) text(pc, `N\u00e4chste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted });
@@ -320,33 +306,20 @@ function buildWidget(res) {
   const goal = d.week.goal, total = d.week.total;
   text(wl, "WOCHE \u00b7 TSS", 10, { bold: true, color: COL.muted });
   wl.addSpacer(6);
-  // Taper und Carb-Loading: weniger Belastung ist Absicht, also kein Ziel-Fortschritt und keine Kraft-Zeile
-  const reduced = !!(d.phase && d.phase.reducedLoad);
-  if (reduced) {
-    const badge = wl.addStack();
-    badge.backgroundColor = new Color(ZONE_RGB.ok, 0.2);
-    badge.cornerRadius = 7;
-    badge.setPadding(1, 7, 1, 7);
-    text(badge, "bewusst reduziert", 10, { bold: true, color: COL.ok });
-    wl.addSpacer(6);
-    text(wl, `${fmt(total)} TSS`, 12, { bold: true });
-    wl.addSpacer();
-  } else {
-    text(wl, goal ? `${fmt(total)} / ${fmt(goal)}` : fmt(total), 12, { bold: true, color: goal && total >= goal ? COL.ok : COL.text });
-    if (goal) { wl.addSpacer(4); text(wl, `${Math.round((100 * total) / goal)} %`, 10, { color: COL.muted }); }
-    wl.addSpacer();
-    const sc = d.week.strengthCount;
-    text(wl, `Kraft ${sc}\u00d7 (Ziel 2\u20133)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
-  }
-  const sub = [reduced ? null : goal ? `Ziel ${fmt(goal)} ${d.week.goalSource === "plan" ? "laut Plan" : "eingestellt"}` : "Kein Wochenziel im Plan hinterlegt", d.week.lastTotal != null ? `Vorwoche ${fmt(d.week.lastTotal)}` : null].filter(Boolean).join(" \u00b7 ");
+  text(wl, goal ? `${fmt(total)} / ${fmt(goal)}` : fmt(total), 12, { bold: true, color: goal && total >= goal ? COL.ok : COL.text });
+  if (goal) { wl.addSpacer(4); text(wl, `${Math.round((100 * total) / goal)} %`, 10, { color: COL.muted }); }
+  wl.addSpacer();
+  const sc = d.week.strengthCount;
+  text(wl, `Kraft ${sc}\u00d7 (Ziel 2\u20133)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
+  const sub = [goal ? `Ziel ${fmt(goal)} ${d.week.goalSource === "plan" ? "laut Plan" : "eingestellt"}` : "Kein Wochenziel im Plan hinterlegt", d.week.lastTotal != null ? `Vorwoche ${fmt(d.week.lastTotal)}` : null].filter(Boolean).join(" \u00b7 ");
   text(wc, sub, 9, { color: COL.muted });
   wc.addSpacer(2);
   const bars = wc.addImage(dayBarsImage(IW2, 30, d.week.days, d.today)); bars.imageSize = new Size(IW2, 30);
   const lab = wc.addStack(); lab.size = new Size(IW2, 0);
   ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => {
     const c = lab.addStack(); c.size = new Size(IW2 / 7, 0);
-    const isToday = d.week.days[i].date === d.today, isRace = d.week.days[i].isRace;
-    c.addSpacer(); text(c, isRace ? "Rennen" : n, 9, { bold: isToday || isRace, color: isRace ? COL.race : isToday ? COL.text : COL.muted }); c.addSpacer();
+    const isToday = d.week.days[i].date === d.today;
+    c.addSpacer(); text(c, n, 9, { bold: isToday, color: isToday ? COL.text : COL.muted }); c.addSpacer();
   });
   wc.addSpacer(3);
   const gb = wc.addImage(goalBarImage(IW2, 5, d.week, goal)); gb.imageSize = new Size(IW2, 5);
@@ -461,7 +434,7 @@ function buildMedium(res) {
   // Unten: VDOT und Paces, Schwellen, Ernaehrung, Heisshunger
   const bc = card(w, W, 6), T = d.thresholds;
   const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
-  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / (d.goal.distanceKm || 21.0975))}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
+  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / 21.0975)}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
   text(bc, `Schwellen: Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : "fehlt"} \u00b7 FTP ${T.bike.ftp ? T.bike.ftp + " W" : "fehlt"} \u00b7 Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : "fehlt"}`, 9, { color: COL.text });
   const last = [...d.nutrition.days].reverse().find((x) => x.calories != null);
   const nut = d.nutrition.hasData && last ? `Kalorien ${fmt(last.calories)}${last.goal ? " / " + fmt(last.goal) : ""} kcal (${dateShort(last.date)})` : "Ern\u00e4hrung: noch keine Daten";
@@ -472,6 +445,34 @@ function buildMedium(res) {
 }
 
 /* ---------- Schlaf und Erholung, Ernaehrung (klein, und zusammen als mittleres Widget) ---------- */
+const DAY_INITIAL = ["S", "M", "D", "M", "D", "F", "S"];
+const dayLetter = (iso) => DAY_INITIAL[new Date(iso + "T12:00:00").getDay()];
+
+// Saeulen der letzten 7 Tage; fehlende Tage sind nur ein kurzer Strich, nie ein Wert. Optional Ziel-Marken.
+function smallBarsImage(w, h, values, todayIso, dates, goals) {
+  const dc = newCtx(w, h), slot = w / values.length, bw = slot * 0.6;
+  const max = Math.max(1, ...values.filter((v) => v != null), ...(goals || []).filter((v) => v != null));
+  values.forEach((v, i) => {
+    const cx = i * slot + slot / 2;
+    if (v == null) { dc.setFillColor(new Color("#8a94a3", 0.3)); dc.fillRect(new Rect(cx - bw / 2, h - 2, bw, 1.5)); return; }
+    const bh = Math.max(2, (v / max) * (h - 3)), p = new Path();
+    p.addRoundedRect(new Rect(cx - bw / 2, h - bh, bw, bh), 2.5, 2.5);
+    dc.addPath(p);
+    dc.setFillColor(new Color(dates[i] === todayIso ? "#7db0f5" : "#4f7fbf"));
+    dc.fillPath();
+    if (goals && goals[i] != null) { dc.setFillColor(new Color("#ffffff", 0.85)); dc.fillRect(new Rect(cx - bw / 2 - 1, h - (goals[i] / max) * (h - 3) - 1, bw + 2, 1.5)); }
+  });
+  return dc.getImage();
+}
+
+function dayLabels(parent, dates, todayIso, width) {
+  const lab = parent.addStack(); lab.size = new Size(width, 0);
+  dates.forEach((dt) => {
+    const c = lab.addStack(); c.size = new Size(width / dates.length, 0);
+    c.addSpacer(); text(c, dayLetter(dt), 8, { bold: dt === todayIso, color: dt === todayIso ? COL.text : COL.muted }); c.addSpacer();
+  });
+}
+
 function smallWidget() {
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
@@ -479,22 +480,6 @@ function smallWidget() {
   w.url = `${baseUrl()}/dashboard/`;
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
   return w;
-}
-
-// Letzte 7 Tage als Spalten: Wochentag (gross, kein Einzelbuchstabe) ueber den Schlafstunden, heute hinterlegt.
-// Fehlende Tage stehen als Strich, nie als 0.
-const DAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
-function sleepWeek(parent, days, todayIso, width) {
-  const row = parent.addStack(); row.size = new Size(width, 0);
-  const cw = width / days.length;
-  days.forEach((x) => {
-    const isToday = x.date === todayIso;
-    const c = row.addStack(); c.layoutVertically(); c.size = new Size(cw, 0); c.centerAlignContent();
-    if (isToday) { c.backgroundColor = new Color("#7db0f5", 0.22); c.cornerRadius = 6; }
-    c.setPadding(3, 0, 3, 0);
-    const a = c.addStack(); a.addSpacer(); text(a, DAY_SHORT[new Date(x.date + "T12:00:00").getDay()], 11, { bold: isToday, color: isToday ? COL.text : COL.muted }); a.addSpacer();
-    const b = c.addStack(); b.addSpacer(); text(b, x.hours == null ? "\u2013" : fmt(x.hours, 1), 10, { bold: isToday, color: x.hours == null ? COL.muted : COL.text }); b.addSpacer();
-  });
 }
 
 // Inhalt "Schlaf und Erholung" in einen beliebigen Container (Widget oder Karte)
@@ -511,49 +496,42 @@ function fillSleep(w, d, IW) {
   text(w, `HRV ${t.hrv != null ? fmt(t.hrv) : "fehlt"}${cmp(t.hrv, s.medianHrv)}`, 10, { bold: true });
   text(w, `Ruhepuls ${t.restingHR != null ? fmt(t.restingHR) : "fehlt"}${cmp(t.restingHR, s.medianRestingHR)}`, 10, { bold: true });
   w.addSpacer(4);
-  sleepWeek(w, s.days, d.today, IW);
+  const im = w.addImage(smallBarsImage(IW, 30, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date)));
+  im.imageSize = new Size(IW, 30);
+  dayLabels(w, s.days.map((x) => x.date), d.today, IW);
   w.addSpacer();
   text(w, "Ruhepuls = Tageswert, \u00d8 = letzte 14 Tage", 7, { color: COL.muted });
 }
 
-// Inhalt "Ernaehrung", nach Rennphase: normal/taper Protein gross und darunter Kalorien, recovery zusaetzlich
-// Kohlenhydrate, carbload Kohlenhydrate gross und Protein klein daneben. Die Ziele kommen aus dem Worker.
-// Ohne heutige Yazio-Werte steht das Tagesziel der Phase mit leerem Balken da.
-function progressBar(w, IW, ratio, hex) {
-  const dc = newCtx(IW, 6), track = new Path();
-  track.addRoundedRect(new Rect(0, 0, IW, 6), 3, 3);
-  dc.addPath(track); dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillPath();
-  if (ratio > 0) {
-    const bar = new Path();
-    bar.addRoundedRect(new Rect(0, 0, Math.max(6, Math.min(1, ratio) * IW), 6), 3, 3);
-    dc.addPath(bar); dc.setFillColor(new Color(hex)); dc.fillPath();
-  }
-  const im = w.addImage(dc.getImage()); im.imageSize = new Size(IW, 6);
-}
-const PHASE_LABEL = { taper: "Taper", carbload: "Carb-Loading", recovery: "Regeneration" };
-
+// Inhalt "Ernaehrung": Kalorien gegen Tagesziel des letzten Tages mit Daten; ohne Daten ein klarer Leerzustand
 function fillFood(w, d, IW, roomy) {
-  const f = d.food, t = f.targets || {}, td = f.today || {}, has = f.todayHasData;
-  const carb = f.phase === "carbload";
+  const f = d.food;
   const craving = d.cravings ? (d.cravings.count ? `Hei\u00dfhunger 7 Tage: ${d.cravings.count}\u00d7${d.cravings.strongest ? `, st\u00e4rkster ${d.cravings.strongest.strength}` : ""}` : "Hei\u00dfhunger 7 Tage: keiner") : null;
-  const head = w.addStack(); head.centerAlignContent();
-  text(head, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
-  if (PHASE_LABEL[f.phase]) { head.addSpacer(); text(head, PHASE_LABEL[f.phase], 8, { bold: true, color: COL.race }); }
+  text(w, "ERN\u00c4HRUNG", 9, { bold: true, color: COL.muted });
   w.addSpacer(2);
-  const main = carb ? { v: td.carbs, goal: t.carbsG, unit: "g Kohlenhydrate" } : { v: td.protein, goal: t.proteinG, unit: "g Protein" };
-  const big = has ? fmt(main.v) : fmt(main.goal);
-  const line = w.addStack(); line.bottomAlignContent();
-  text(line, `${big} g`, 26, { bold: true, color: has ? COL.text : COL.muted });
-  if (carb) { line.addSpacer(6); text(line, `${has && td.protein != null ? fmt(td.protein) : fmt(t.proteinG)} g Protein`, 9, { color: COL.muted }); }
-  text(w, has ? `${carb ? "Kohlenhydrate" : "Protein"} heute \u00b7 Ziel ${fmt(main.goal)} g` : `${carb ? "Kohlenhydrate" : "Protein"} \u00b7 Tagesziel`, 9, { color: COL.muted });
+  if (!f.hasData) {
+    text(w, "Noch keine Daten", 16, { bold: true });
+    text(w, "Sobald Yazio synchronisiert, erscheinen hier Kalorien und Kohlenhydrate.", 9, { color: COL.muted, lines: 4 });
+    w.addSpacer(4);
+    const im0 = w.addImage(smallBarsImage(IW, 30, f.days.map(() => null), d.today, f.days.map((x) => x.date)));
+    im0.imageSize = new Size(IW, 30);
+    dayLabels(w, f.days.map((x) => x.date), d.today, IW);
+    if (craving) { w.addSpacer(); text(w, craving, 9, { bold: true, color: COL.text }); }
+    return;
+  }
+  const l = f.latest;
+  text(w, `${fmt(l.calories)}`, 26, { bold: true });
+  text(w, `${l.goal ? `von ${fmt(l.goal)} kcal` : "kcal"} \u00b7 ${l.date === d.today ? "heute" : dateShort(l.date)}`, 9, { color: COL.muted });
   w.addSpacer(3);
-  text(w, has && td.calories != null ? `${fmt(td.calories)} / ${fmt(t.kcal)} kcal` : `${fmt(t.kcal)} kcal Ziel`, 10, { bold: true, lines: 1 });
-  if (f.phase === "recovery") text(w, has && td.carbs != null ? `KH ${fmt(td.carbs)} / ${fmt(t.carbsG)} g` : `KH ${fmt(t.carbsG)} g Ziel`, 9, { color: COL.muted });
+  const macros = [l.carbs != null && `KH ${fmt(l.carbs)} g`, l.protein != null && `Eiwei\u00df ${fmt(l.protein)} g`, l.fat != null && `Fett ${fmt(l.fat)} g`].filter(Boolean);
+  text(w, macros.length ? macros.join(" \u00b7 ") : "Makros fehlen", 9, { color: COL.text, lines: 2 });
   w.addSpacer(4);
-  progressBar(w, IW, has && main.v != null && main.goal ? main.v / main.goal : 0, carb ? "#fb923c" : "#4f7fbf");
+  const im = w.addImage(smallBarsImage(IW, 30, f.days.map((x) => x.calories), d.today, f.days.map((x) => x.date), f.days.map((x) => x.goal)));
+  im.imageSize = new Size(IW, 30);
+  dayLabels(w, f.days.map((x) => x.date), d.today, IW);
   w.addSpacer();
-  if (!has) text(w, "Yazio noch nicht synchron", 8, { bold: true, color: COL.warn });
-  else if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
+  if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
+  text(w, "Wei\u00dfe Marke = Tagesziel", 7, { color: COL.muted });
 }
 
 function buildSleep(res) { const w = smallWidget(); fillSleep(w, res.data, 134); return w; }

@@ -1,26 +1,13 @@
 import { json } from "./http-helpers.js";
 import { buildDashboard, isAuthorized } from "./dashboard.js";
-import { racePhase, raceDistance } from "./race-phase.js";
-import { scaleValueCls } from "./dashboard-summary.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
-// ohne Freitexte: Es gehen keine Kommentare oder Heißhunger-Einträge raus; nur der Plantext der heutigen Einheit.
+// ohne Freitexte: Es gehen keine Kommentare, Einheitsnamen oder Heißhunger-Einträge raus.
 
-// Beschreibung vollständig (nur Leerraum glätten, großzügiges Limit), "Wochenende" als Bezug zum Renntag.
-const fullText = (s, max = 240) => {
-  const t = String(s ?? "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean).join(" ") || null;
-  return t && t.length > max ? t.slice(0, max - 1) + "…" : t;
-};
-const raceRelative = (text, ph) => {
-  if (!text || ph.daysToGo < 0) return text;
-  const rel = ph.daysToGo === 0 ? "heute" : `in ${ph.daysToGo} Tag${ph.daysToGo === 1 ? "" : "en"}`;
-  return text.replace(/\b(am|zum|fürs|für das) Wochenende\b/gi, (_, p) => (p === "am" ? `am Renntag (${rel})` : `${p} Rennen (${rel})`));
-};
-
-const goalBlock = (d) => {
-  const dist = raceDistance({ distanceKm: d.goal.distanceKm });
-  return { name: d.goal.name, label: dist?.label ?? d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs, distanceKm: dist?.km ?? d.goal.distanceKm ?? null };
+const firstLine = (s, max = 110) => {
+  const line = String(s ?? "").split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? null;
+  return line && line.length > max ? line.slice(0, max - 1) + "…" : line;
 };
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -39,24 +26,19 @@ export function buildWidget(d, env = {}) {
   const loadByDate = Object.fromEntries(d.daily.map((x) => [x.date, x.load]));
   const days = Array.from({ length: 7 }, (_, i) => {
     const date = addDays(week.weekStart, i);
-    return { date, load: date > d.today ? null : loadByDate[date] ?? 0, isRace: date === d.goal.date };
+    return { date, load: date > d.today ? null : loadByDate[date] ?? 0 };
   });
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
   const total = (w) => (w ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null);
-  const ph = racePhase(d.today, d.goal.date);
-  const gb = goalBlock(d);
-  // "Marathon" als Titel ist Platzhalter aus dem Plan: Titel folgt der Renndistanz
-  const planTitle = (n) => (/^\s*(halb)?marathon\s*$/i.test(n ?? "") ? `Vorbereitung ${gb.label}` : n);
-  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: planTitle(p.name), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: raceRelative(fullText(p.description), ph) }));
+  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: p.name, durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(p.description) }));
   const next = d.planned.find((p) => p.date > d.today);
   const recentHip = d.hipFlags.filter((f) => f.date >= new Date(Date.parse(d.today + "T00:00:00Z") - 14 * 86400000).toISOString().slice(0, 10));
   const r = d.summary.readiness;
   return {
     generatedAt: d.generatedAt,
     today: d.today,
-    goal: gb,
-    phase: { name: ph.phase, reducedLoad: ph.reducedLoad },
-    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, cls: scaleValueCls(i.v, i.max) })) },
+    goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
+    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, cls: i.cls })) },
     load: d.summary.load,
     thresholds: d.summary.thresholds,
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name } : null },
@@ -94,7 +76,7 @@ export function buildWidgetDetail(d) {
   return {
     generatedAt: d.generatedAt,
     today: d.today,
-    goal: goalBlock(d),
+    goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
     load: d.summary.load,
     tsbZones: d.summary.thresholds.tsb,
     form,
@@ -126,9 +108,6 @@ export function buildWidgetSmall(d) {
     return { date, calories: w?.calories ?? null, goal: w?.calorieGoal ?? null, carbs: w?.carbs ?? null, protein: w?.protein ?? null, fat: w?.fat ?? null };
   });
   const latest = [...foodDays].reverse().find((x) => x.calories != null) ?? null;
-  // Ernährung richtet sich nach der Phase und dem heutigen Tag; ohne heutige Yazio-Werte gilt nur das Ziel.
-  const ph = racePhase(d.today, d.goal.date);
-  const todayFood = foodDays[foodDays.length - 1];
   const recentCravings = d.cravings.filter((c) => c.date >= days[0]);
   const strongest = recentCravings.filter((c) => c.strength != null).sort((a, b) => b.strength - a.strength)[0];
   return {
@@ -141,7 +120,7 @@ export function buildWidgetSmall(d) {
       medianHrv: medianOf(past14.map((w) => w.hrv)),
       medianRestingHR: medianOf(past14.map((w) => w.restingHR)),
     },
-    food: { days: foodDays, latest, hasData: latest != null, phase: ph.phase, targets: ph.targets, today: todayFood, todayHasData: [todayFood.calories, todayFood.protein, todayFood.carbs].some((x) => x != null) },
+    food: { days: foodDays, latest, hasData: latest != null },
     cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
     sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
   };

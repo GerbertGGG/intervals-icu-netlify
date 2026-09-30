@@ -208,23 +208,3 @@ assert.deepEqual(failed.wellness, []);
   assert.deepEqual(parseWorkoutSteps("", { steps: [{ duration: 600, pace: { value: 80, units: "%pace" } }, { reps: 2, steps: [{ duration: 60 }] }] }).map((x) => [x.secs, x.pct]), [[600, 80], [60, null], [60, null]]);
 }
 console.log("dashboard tests ok");
-
-// Rennphase (race-phase.js): Renntag 03.10.
-import { racePhase, phaseForDaysToGo } from "../src/race-phase.js";
-import { scaleValueCls } from "../src/dashboard-summary.js";
-const phaseAt = (today) => racePhase(today, "2026-10-03").phase;
-assert.equal(phaseAt("2026-09-25"), "normal");   // 8 Tage
-assert.equal(phaseAt("2026-09-26"), "taper");    // 7 Tage
-assert.equal(phaseAt("2026-09-30"), "taper");    // 3 Tage
-assert.equal(phaseAt("2026-10-01"), "carbload"); // 2 Tage
-assert.equal(phaseAt("2026-10-03"), "carbload"); // Renntag
-assert.equal(phaseAt("2026-10-04"), "recovery");
-assert.equal(phaseAt("2026-10-06"), "recovery");
-assert.equal(phaseAt("2026-10-07"), "normal");
-assert.equal(phaseForDaysToGo(null), "normal");
-assert.equal(racePhase("2026-10-02", "2026-10-03").reducedLoad, true);
-assert.equal(racePhase("2026-10-05", "2026-10-03").reducedLoad, false);
-// Bereitschaftskreise: niedrig ist gut
-assert.deepEqual([1, 2, 3, 4].map((v) => scaleValueCls(v, 4)), ["ok", "ok", "warn", "bad"]);
-assert.equal(scaleValueCls(null, 4), "none");
-console.log("race phase tests ok");

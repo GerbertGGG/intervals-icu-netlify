@@ -69,15 +69,6 @@ export function computeReadiness(wellness, todayIso, load) {
   return { verdict, items, sleepHours: today?.sleepHours ?? null, hrv: today?.hrv ?? null, restingHR: today?.restingHR ?? null };
 }
 
-// Farbe allein aus dem Wert: Skala ab 1 = bestmöglich, niedrig ist gut. Untere Drittel-Grenze grün,
-// mittleres gelb, oberes rot. Die Skala reicht mindestens bis 4 (Intervals-Standard).
-export const SCALE_MIN_MAX = 4;
-export function scaleValueCls(v, max) {
-  if (v == null) return "none";
-  const pos = (v - 1) / (Math.max(SCALE_MIN_MAX, max ?? 0) - 1);
-  return pos <= 1 / 3 + 0.01 ? "ok" : pos <= 2 / 3 + 0.01 ? "warn" : "bad";
-}
-
 export function buildSummary(wellness, todayIso) {
   const load = computeLoad(wellness);
   return { thresholds: THRESHOLDS, load, readiness: computeReadiness(wellness, todayIso, load) };
