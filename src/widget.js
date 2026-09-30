@@ -17,6 +17,9 @@ const KEY_RE = /#key\b/i;
 const isKeySession = (p) => (p?.tags ?? []).some((t) => /^#?key$/i.test(String(t).trim())) || KEY_RE.test(`${p?.name ?? ""}\n${p?.description ?? ""}`);
 const stripKey = (s) => (s == null ? null : String(s).replace(/[ \t]*#key\b/gi, "").trim() || null);
 
+// RPE steht im Plan als Freitext ("RPE 2-3"); nur dann gibt es einen Wert, sonst null.
+const rpeOf = (s) => { const m = String(s ?? "").match(/\bRPE\s*:?\s*(\d{1,2}(?:\s*[-–]\s*\d{1,2})?)/i); return m ? m[1].replace(/\s*[-–]\s*/, "–") : null; };
+
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 // Wochenziel der TSS: Summe der geplanten Workouts der Woche aus dem Intervals-Kalender. Fehlt sie dort,
@@ -45,7 +48,7 @@ export function buildWidget(d, env = {}) {
   });
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
   const total = (w) => (w ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null);
-  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(stripKey(p.description)) }));
+  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(stripKey(p.description), 160), rpe: rpeOf(p.description) }));
   const next = d.planned.find((p) => p.date > d.today);
   const key = d.planned.find((p) => p.date > d.today && isKeySession(p));
   const recentHip = d.hipFlags.filter((f) => f.date >= new Date(Date.parse(d.today + "T00:00:00Z") - 14 * 86400000).toISOString().slice(0, 10));
@@ -61,8 +64,8 @@ export function buildWidget(d, env = {}) {
     generatedAt: d.generatedAt,
     today: d.today,
     goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
-    trend: { tsb14, hrv7, hrvMedian: medianOf(d.wellness.filter((w) => w.date >= addDays(d.today, -13)).map((w) => w.hrv)) },
-    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, cls: i.cls })) },
+    trend: { tsb14, hrv7, hrvMedian: medianOf(d.wellness.filter((w) => w.date >= addDays(d.today, -13)).map((w) => w.hrv)), restingMedian: medianOf(d.wellness.filter((w) => w.date >= addDays(d.today, -13) && w.date < d.today).map((w) => w.restingHR)) },
+    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
     load: d.summary.load,
     thresholds: d.summary.thresholds,
     plan: {
