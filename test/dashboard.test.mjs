@@ -2,6 +2,7 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
+import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
 import { buildDashboard, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
 
 const today = "2026-09-30";
@@ -26,7 +27,8 @@ globalThis.fetch = async (url) => {
   const body = u.includes("/wellness") ? wellness : u.includes("/activities") ? activities : u.includes("/events") ? events : null;
   return new Response(JSON.stringify(body), { status: body ? 200 : 404 });
 };
-const env = { ATHLETE_ID: "i1", INTERVALS_API_KEY: "k", DASHBOARD_TOKEN: "geheim" };
+const kv = new Map();
+const env = { ATHLETE_ID: "i1", INTERVALS_API_KEY: "k", DASHBOARD_TOKEN: "geheim", KV: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => void kv.set(k, v) } };
 const d = await buildDashboard(env, today);
 writeFileSync(new URL("./fixture-dashboard.json", import.meta.url), JSON.stringify(d));
 
@@ -46,6 +48,28 @@ assert.ok(d.wellness.every((w) => w.soreness === null));
 assert.equal(d.goal.daysToGo, 3);
 assert.equal(d.goal.source, "config");
 assert.ok(d.weeks.at(-1).complete === false);
+// Fitness: Puls nur aus Grundlagen/Long
+assert.ok(d.fitness.baseRuns.every((r) => r.kind === "base" || r.kind === "long"));
+assert.equal(d.fitness.longRuns.length, 1);
+assert.equal(d.runalyze, null); // ohne Snapshot: fehlt, keine Platzhalter
+// Runalyze-Snapshot (synthetische Werte, nur Test)
+const snap = { fetchedAt: "2026-09-30T05:00:00Z", prognosis: [{ distanceKm: 5, seconds: 1600 }, { distanceKm: 21.1, seconds: 8000 }],
+  races: [{ date: "2026-03-22", officialDistanceKm: 5.03, officialTimeSec: 1570 }, { date: "2022-03-20", officialDistanceKm: 5.02, officialTimeSec: 1537 }, { date: "2025-10-03", officialDistanceKm: 10, officialTimeSec: 3431 }] };
+assert.equal(bestForDistance(validateSnapshot(snap).value.races, 5).officialTimeSec, 1537);
+assert.ok(validateSnapshot({ fetchedAt: "kaputt" }).error);
+assert.ok(validateSnapshot({ fetchedAt: snap.fetchedAt }).error);
+const { handleRunalyzeSnapshotRequest } = await import("../src/runalyze-snapshot.js");
+const { isAuthorized } = await import("../src/dashboard.js");
+const put = (body, tok = "geheim", method = "PUT") => handleRunalyzeSnapshotRequest(new Request("https://x/api/runalyze", { method, headers: { authorization: "Bearer " + tok }, body: method === "GET" ? undefined : JSON.stringify(body) }), env, isAuthorized);
+assert.equal((await put(snap, "falsch")).status, 401);
+assert.equal((await put(snap, "geheim", "GET")).status, 405);
+assert.equal((await put({ fetchedAt: "x" })).status, 400);
+assert.equal((await put(snap)).status, 200);
+const d2 = await buildDashboard(env, today);
+const hm = d2.runalyze.rows.find((r) => r.label === "Halbmarathon");
+assert.equal(hm.bestSeconds, null); assert.equal(hm.prognosisSeconds, 8000);
+assert.equal(d2.runalyze.rows[0].bestSeconds, 1537);
+writeFileSync(new URL("./fixture-dashboard.json", import.meta.url), JSON.stringify(d2));
 // Auth
 const noTok = await handleDashboardRequest(new Request("https://x/api/dashboard"), env);
 assert.equal(noTok.status, 401);
