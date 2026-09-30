@@ -2,7 +2,7 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { buildWidget, handleWidgetRequest } from "../src/widget.js";
+import { buildWidget, buildWidgetDetail, handleWidgetRequest } from "../src/widget.js";
 import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
@@ -120,6 +120,21 @@ assert.equal(wdg.week.days.reduce((a, x) => a + (x.load ?? 0), 0), wdg.week.tota
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget"), env)).status, 401);
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { headers: { authorization: "Bearer geheim" } }), env)).status, 200);
+// Detail-Ansicht des Widgets
+const det = buildWidgetDetail(d);
+assert.equal(det.form.length, 28);
+assert.equal(det.form.at(-1).date, today);
+assert.equal(det.wellness.days.length, 14);
+assert.equal(det.wellness.rows.length, 5);
+assert.ok(det.wellness.rows.every((r) => r.values.length === 14));
+assert.equal(det.nutrition.days.length, 7);
+assert.equal(det.nutrition.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal zaehlt als keine Daten
+assert.ok(det.cravings.count >= 1);
+assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(JSON.stringify(det)), false); // keine Freitexte
+assert.ok(JSON.stringify(det).length < 8000);
+const detRes = await handleWidgetRequest(new Request("https://x/api/widget?view=detail", { headers: { authorization: "Bearer geheim" } }), env);
+assert.equal(detRes.status, 200);
+assert.ok("form" in (await detRes.json()));
 // Lücken bleiben null, 0 wird nicht zu "gut"
 assert.equal(d.wellness.find((w) => w.motivation === 0), undefined);
 assert.ok(d.wellness.every((w) => w.soreness === null));
