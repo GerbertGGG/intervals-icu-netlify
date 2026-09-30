@@ -9,6 +9,7 @@ import { sendRecentFormReportEmail } from "./email.js";
 import { handleAuthorizeRequest, handleTokenRequest, handleAuthServerMetadata, handleProtectedResourceMetadata } from "./mcp-oauth.js";
 import { handleMcpRequest } from "./mcp-server.js";
 import { isIntervalsEnabled } from "./kv.js";
+import { handleDashboardRequest } from "./dashboard.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -74,6 +75,11 @@ export default {
 
     if (url.pathname === "/api/analysis/recent-form") {
       return withWorkerErrorBoundary(() => handleRecentFormAnalysisRequest(url, env, ctx, { buildRecentFormAnalysis }));
+    }
+
+    // Read-only Daten für public/dashboard (Token-geschützt, siehe src/dashboard.js).
+    if (url.pathname === "/api/dashboard") {
+      return withWorkerErrorBoundary(() => handleDashboardRequest(req, env));
     }
 
     if (url.pathname === "/report-email") {
