@@ -9,7 +9,10 @@
 //     Kleine Widgets (Groesse "Klein"): Schlaf und Erholung (Standard) sowie Ernaehrung, dafuer im Widget
 //     unter "Parameter" das Wort  ernaehrung  eintragen.
 //     Mittleres Widget (Groesse "Mittel"): Schlaf und Erholung links, Ernaehrung rechts. Mit dem Parameter
-//     form  zeigt es stattdessen Form, Halbmarathon-Zeiten vs. Ziel, VDOT und Paces, Schwellen.
+//     form  zeigt es stattdessen Form, Halbmarathon-Zeiten vs. Ziel, VDOT und Paces, Schwellen. Mit dem Parameter
+//     training  zeigt es je Disziplin (Schwimmen, Rad, Lauf) Wochenvolumen gegen Plan und die Verteilung der Zeit.
+// Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
+// CTL, TSB und TSS sind sportartuebergreifend.
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
 //
 // Es zeigt: Bereitschaft heute, Countdown, Frische (TSB), ACWR, heutige Einheit, Wochenbelastung
@@ -22,11 +25,13 @@ const KEY_TOKEN = "training-dashboard-token";
 // (Klein: im Widget unter "Parameter"  ernaehrung  eintragen, sonst Schlaf).
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
 let VIEW = (typeof config !== "undefined" && config.runsInWidget)
-  ? (config.widgetFamily === "medium" ? (/^(form|zeit|hm|detail)/.test(WIDGET_PARAM) ? "detail" : "sleepfood") : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : "sleep") : "main")
+  ? (config.widgetFamily === "medium" ? (/^(form|zeit|hm|detail)/.test(WIDGET_PARAM) ? "detail" : /^(train|tri)/.test(WIDGET_PARAM) ? "training" : "sleepfood") : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : "sleep") : "main")
   : "main";
-const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "sleep" || VIEW === "food" || VIEW === "sleepfood" ? "small" : "");
+const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "training" ? "training" : VIEW === "sleep" || VIEW === "food" || VIEW === "sleepfood" ? "small" : "");
 const cacheFile = () => `training-widget${endpointView() ? "-" + endpointView() : ""}-cache.json`;
 const SPORTS = [["run", "Laufen", "#3b6ea8"], ["bike", "Rad", "#8a6bb8"], ["swim", "Schwimmen", "#3a9db0"], ["strength", "Kraft", "#b08a3a"], ["other", "Sonst.", "#9aa5b4"]];
+
+const sportHex = (k) => (SPORTS.find(([s]) => s === k) || [])[2] || "#9aa5b4";
 
 const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
 const COL = {
@@ -235,7 +240,21 @@ function dayBarsImage(w, h, days, todayIso) {
     if (x.isRace) { dc.setFillColor(new Color("#fb923c", 0.18)); const q = new Path(); q.addRoundedRect(new Rect(i * slot + 1, 0, slot - 2, h), 4, 4); dc.addPath(q); dc.fillPath(); }
     if (x.planned) bar(cx, x.planned, "#8a94a3", 0.35);
     if (x.load == null) { if (!x.planned) { dc.setFillColor(new Color(x.isRace ? "#fb923c" : "#8a94a3", x.isRace ? 0.9 : 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); } return; }
-    bar(cx, x.load, x.isRace ? "#fb923c" : x.date === todayIso ? "#7db0f5" : "#4f7fbf", x.load ? 1 : 0.35);
+    // Erledigt nach Sportart gestapelt (Lauf unten); Renntag bleibt orange, heute bekommt einen hellen Rand
+    const sp = x.sports ? SPORTS.filter(([k]) => x.sports[k] > 0) : [];
+    if (!x.isRace && x.load && sp.length) {
+      const total = sp.reduce((a, [k]) => a + x.sports[k], 0), bh = Math.max(3, (x.load / max) * (base - top));
+      let y = base;
+      for (const [k, , hex] of sp) {
+        const sh = (x.sports[k] / total) * bh, p = new Path();
+        p.addRoundedRect(new Rect(cx - bw / 2, y - sh + 0.5, bw, Math.max(1.5, sh - 1)), 1.5, 1.5);
+        dc.addPath(p);
+        dc.setFillColor(new Color(hex));
+        dc.fillPath();
+        y -= sh;
+      }
+      if (x.date === todayIso) { dc.setStrokeColor(new Color("#ffffff", 0.9)); dc.setLineWidth(1); dc.strokeRect(new Rect(cx - bw / 2 - 0.5, base - bh - 0.5, bw + 1, bh + 1)); }
+    } else bar(cx, x.load, x.isRace ? "#fb923c" : x.date === todayIso ? "#7db0f5" : "#4f7fbf", x.load ? 1 : 0.35);
   });
   return dc.getImage();
 }
@@ -336,23 +355,26 @@ function buildWidget(res) {
 
   if (!large) { footer(w, res, d, W); return w; }
 
-  // Heutige Einheit: Titel aus der Renndistanz, Beschreibung bis zu zwei Zeilen, Bezug zum Renntag statt "Wochenende"
+  // Einheiten: heute und die naechste Schluesseleinheit (im Kalender mit #key gekennzeichnet), je mit Sportfarbe
   const pc = card(w, W, 6);
-  const p = d.plan.today[0];
-  if (p) {
-    const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`].filter(Boolean).join(" \u00b7 ");
-    const title = /marathon/i.test(p.name || "") && !/halb/i.test(p.name || "") ? `Vorbereitung ${g.name}` : p.name || "Einheit";
-    const rel = g.daysToGo === 0 ? "heute" : `in ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "en"}`;
-    const purpose = p.purpose && g.daysToGo >= 0 ? p.purpose.replace(/\b(am|zum|f\u00fcrs|f\u00fcr das) Wochenende\b/gi, (m, a) => (a.toLowerCase() === "am" ? `am Renntag (${rel})` : `${a} Rennen (${rel})`)) : p.purpose;
-    const line = pc.addStack(); line.centerAlignContent();
-    text(line, title, 13, { bold: true });
+  const p = d.plan.today[0], kp = d.plan.key;
+  const sessionLine = (tag, x, isKey) => {
+    const line = pc.addStack(); line.centerAlignContent(); line.spacing = 5;
+    const tg = line.addStack(); tg.size = new Size(28, 0);
+    text(tg, tag, 9, { bold: true, color: COL.muted });
+    const dot = line.addText("\u25cf"); dot.font = Font.systemFont(8); dot.textColor = new Color(sportHex(x.sport));
+    text(line, `${isKey ? "Schl\u00fcssel: " : ""}${x.name || "Einheit"}`, 13, { bold: true });
     line.addSpacer();
+    const meta = [x.durationMin && `${x.durationMin} min`, x.distanceKm && `${fmt(x.distanceKm, 1)} km`].filter(Boolean).join(" \u00b7 ");
     if (meta) text(line, meta, 11, { color: COL.muted });
-    text(pc, purpose || "Kein Zweck im Plan hinterlegt.", 10, { color: COL.muted, lines: 2 });
-  } else {
-    text(pc, "Heute keine Einheit geplant", 13, { bold: true });
-    if (d.plan.next) text(pc, `N\u00e4chste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted });
+  };
+  if (p) sessionLine("HEUTE", p, p.key);
+  else {
+    const line = pc.addStack(); line.centerAlignContent();
+    text(line, "Heute keine Einheit geplant", 13, { bold: true });
+    if (!kp && d.plan.next) { line.addSpacer(); text(line, `N\u00e4chste: ${dateShort(d.plan.next.date)} ${d.plan.next.name || "Einheit"}`, 10, { color: COL.muted }); }
   }
+  if (kp) { pc.addSpacer(4); sessionLine(weekdayOf(kp.date), kp, true); }
   w.addSpacer(4);
 
   // Woche: TSS je Tag und fuer die Woche, erledigt und geplant. Taper/Carb-Loading: Badge, keine Kraft-Zeile.
@@ -379,7 +401,7 @@ function buildWidget(res) {
   sums.addSpacer(4);
   text(sums, "TSS", 10, { color: COL.muted });
   wc.addSpacer(3);
-  const bars = wc.addImage(dayBarsImage(IW2, 32, days, d.today)); bars.imageSize = new Size(IW2, 32);
+  const bars = wc.addImage(dayBarsImage(IW2, 30, days, d.today)); bars.imageSize = new Size(IW2, 30);
   const lab = wc.addStack(); lab.size = new Size(IW2, 0);
   ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => {
     const x = days[i], isToday = x.date === d.today;
@@ -389,6 +411,21 @@ function buildWidget(res) {
     row(x.load == null ? " " : fmt(x.load), 10, { bold: true, color: x.load == null ? COL.muted : COL.text });
     row(x.planned != null ? `/${fmt(x.planned)}` : " ", 9, { color: COL.muted });
   });
+  // Wochenvolumen je Disziplin: gelaufen/gefahren/geschwommen gegen Plan (Plan nur, wenn im Kalender Distanzen stehen)
+  const bs = d.week.bySport || {};
+  const tri = [["swim", "S"], ["bike", "R"], ["run", "L"]].filter(([k]) => bs[k] && (bs[k].km > 0 || bs[k].plannedKm));
+  if (tri.length) {
+    wc.addSpacer(3);
+    const vr = wc.addStack(); vr.centerAlignContent();
+    tri.forEach(([k, l], i) => {
+      if (i) vr.addSpacer();
+      const dot = vr.addText("●"); dot.font = Font.systemFont(7); dot.textColor = new Color(sportHex(k));
+      vr.addSpacer(3);
+      const dec = (v) => fmt(v, v < 10 ? 1 : 0);
+      text(vr, `${l} ${dec(bs[k].km)}`, 10, { bold: true });
+      text(vr, bs[k].plannedKm ? ` / ${dec(bs[k].plannedKm)} km` : " km", 10, { color: COL.muted });
+    });
+  }
   w.addSpacer();
   footer(w, res, d, W);
   return w;
@@ -640,6 +677,76 @@ function buildSleepFood(res) {
   return w;
 }
 
+/* ---------- Mittleres Widget "training": Disziplinen ---------- */
+// Anteile der Sportarten an der Trainingszeit als ein Balken mit Prozentzahl im Segment; Soll als helle Striche
+function splitImage(w, h, share, target) {
+  const dc = newCtx(w, h), keys = ["swim", "bike", "run"], tot = keys.reduce((a, k) => a + share[k], 0) || 1;
+  let acc = 0;
+  dc.setFont(Font.boldSystemFont(8));
+  dc.setTextAlignedCenter();
+  for (const k of keys) {
+    const a = (acc / tot) * w, b = ((acc + share[k]) / tot) * w;
+    if (b - a > 1) {
+      const p = new Path(); p.addRoundedRect(new Rect(a + 0.5, 0, b - a - 1, h), 3, 3);
+      dc.addPath(p); dc.setFillColor(new Color(sportHex(k))); dc.fillPath();
+      if (b - a > 26) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, 2, b - a, h - 2)); }
+    }
+    acc += share[k];
+  }
+  if (target) {
+    dc.setFillColor(new Color("#ffffff", 0.95));
+    for (const at of [target.swim, target.swim + target.bike]) dc.fillRect(new Rect((at / 100) * w - 0.5, -1, 1.5, h + 2));
+  }
+  return dc.getImage();
+}
+
+function buildTraining(res) {
+  const d = res.data, W = widgetInnerWidth();
+  const w = new ListWidget();
+  w.backgroundColor = COL.bg;
+  w.setPadding(9, 13, 6, 13);
+  w.url = `${baseUrl()}/dashboard/`;
+  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  const head = w.addStack(); head.centerAlignContent(); head.size = new Size(W, 0);
+  text(head, "TRAINING · DISZIPLINEN", 10, { bold: true, color: COL.muted });
+  head.addSpacer();
+  text(head, res.stale ? "veraltet, keine Verbindung" : d.sourcesFailed.length ? `Quelle fehlt: ${d.sourcesFailed.join(", ")}` : "diese Woche", 9, { color: res.stale ? COL.warn : d.sourcesFailed.length ? COL.bad : COL.muted });
+  w.addSpacer(3);
+  const row = w.addStack(); row.spacing = 7;
+  const CW = Math.floor((W - 14) / 3), IW = CW - 20;
+  for (const [k, name] of [["swim", "SCHWIMMEN"], ["bike", "RAD"], ["run", "LAUF"]]) {
+    const s = d.sports[k], hex = sportHex(k);
+    const c = card(row, CW, 5);
+    const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 3;
+    const dot = nl.addText("●"); dot.font = Font.systemFont(7); dot.textColor = new Color(hex);
+    text(nl, name, 9, { bold: true, color: COL.muted });
+    nl.addSpacer();
+    const since = s.daysSince == null ? "–" : s.daysSince === 0 ? "heute" : `vor ${s.daysSince} T`;
+    text(nl, since, 8, { bold: s.daysSince != null && s.daysSince >= 7, color: s.daysSince != null && s.daysSince >= 7 ? COL.warn : COL.muted });
+    // Wochenvolumen: Kilometer gegen Plan (Plan nur, wenn im Kalender Distanzen stehen) und Trainingszeit
+    const dec = (v) => fmt(v, v < 10 ? 1 : 0);
+    const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
+    text(vl, `${dec(s.weekKm)}`, 20, { bold: true });
+    text(vl, s.plannedKm ? `/ ${dec(s.plannedKm)} km` : "km", 10, { color: COL.muted });
+    c.addSpacer(4);
+    progressBar(c, IW, s.plannedKm ? s.weekKm / s.plannedKm : 0, hex);
+    c.addSpacer(4);
+    const mins = Math.round(s.weekMinutes || 0);
+    text(c, mins ? `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, "0")} h Training` : "noch kein Training", 9, { color: COL.muted });
+  }
+  w.addSpacer(4);
+  const sc = card(w, W, 5), sp = d.split;
+  const sh = sc.addStack(); sh.centerAlignContent();
+  text(sh, `ZEITVERTEILUNG · ${sp.weeks} WOCHEN`, 9, { bold: true, color: COL.muted });
+  sh.addSpacer();
+  if (sp.target) text(sh, `Soll S ${sp.target.swim} · R ${sp.target.bike} · L ${sp.target.run} %`, 9, { color: COL.muted });
+  if (sp.share) {
+    sc.addSpacer(3);
+    const im = sc.addImage(splitImage(W - 22, 14, sp.share, sp.target)); im.imageSize = new Size(W - 22, 14);
+  } else text(sc, "Noch keine abgeschlossene Woche mit Training.", 9, { color: COL.muted });
+  return w;
+}
+
 function messageWidget(msg) {
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
@@ -656,6 +763,7 @@ async function main() {
     menu.title = "Trainings-Widget";
     menu.addAction("Vorschau (gro\u00df)");
     menu.addAction("Vorschau mittel: Form und Halbmarathon-Zeiten");
+    menu.addAction("Vorschau mittel: Training (Disziplinen)");
     menu.addAction("Vorschau mittel: Schlaf und Ern\u00e4hrung");
     menu.addAction("Vorschau klein: Schlaf");
     menu.addAction("Vorschau klein: Ern\u00e4hrung");
@@ -664,18 +772,19 @@ async function main() {
     const choice = await menu.presentAlert();
     if (choice === -1) return;
     if (choice === 1) VIEW = "detail";
-    if (choice === 2) VIEW = "sleepfood";
-    if (choice === 3) VIEW = "sleep";
-    if (choice === 4) VIEW = "food";
-    if (choice === 5 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 5) return; }
+    if (choice === 2) VIEW = "training";
+    if (choice === 3) VIEW = "sleepfood";
+    if (choice === 4) VIEW = "sleep";
+    if (choice === 5) VIEW = "food";
+    if (choice === 6 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 6) return; }
   } else if (!Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) {
     Script.setWidget(messageWidget("Bitte das Skript einmal in Scriptable \u00f6ffnen und die Zugangsdaten eingeben."));
     return;
   }
   let widget;
-  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "sleepfood" ? buildSleepFood(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFood(res) : buildWidget(res); }
+  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "training" ? buildTraining(res) : VIEW === "sleepfood" ? buildSleepFood(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFood(res) : buildWidget(res); }
   catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
-  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail" || VIEW === "sleepfood") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food") await widget.presentSmall(); else await widget.presentLarge();
+  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail" || VIEW === "training" || VIEW === "sleepfood") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food") await widget.presentSmall(); else await widget.presentLarge();
 }
 await main();
 Script.complete();

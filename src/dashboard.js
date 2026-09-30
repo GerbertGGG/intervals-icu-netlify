@@ -118,7 +118,7 @@ export function sportOf(a) {
 }
 
 function emptySports() {
-  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null }]));
+  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null }]));
 }
 
 function buildWeeks(todayIso, activities, events) {
@@ -148,7 +148,11 @@ function buildWeeks(todayIso, activities, events) {
     if (!w || String(e?.category ?? "").toUpperCase() !== "WORKOUT") continue;
     const km = num(e?.distance_target ?? e?.distance);
     const load = num(e?.icu_training_load ?? e?.load_target);
-    if (km != null) w.plannedKm = (w.plannedKm ?? 0) + km / 1000;
+    if (km != null) {
+      w.plannedKm = (w.plannedKm ?? 0) + km / 1000;
+      const spk = w.bySport[sportOf(e)];
+      spk.plannedKm = (spk.plannedKm ?? 0) + km / 1000;
+    }
     if (load != null) {
       w.plannedLoad = (w.plannedLoad ?? 0) + load;
       const sp = w.bySport[sportOf(e)];
@@ -162,7 +166,7 @@ function buildWeeks(todayIso, activities, events) {
     load: Math.round(w.load),
     plannedKm: w.plannedKm != null ? r1(w.plannedKm) : null,
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
-    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null }])),
+    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null }])),
   }));
 }
 
@@ -198,6 +202,8 @@ function buildPlanned(events, todayIso) {
       distanceKm: num(e?.distance_target ?? e?.distance) != null ? Math.round((num(e.distance_target ?? e.distance) / 1000) * 10) / 10 : null,
       load: num(e?.icu_training_load ?? e?.load_target),
       type: e?.type ?? null,
+      sport: sportOf(e),
+      tags: Array.isArray(e?.tags) ? e.tags.map(String) : [],
       steps: parseWorkoutSteps(e?.description, e?.workout_doc),
     }))
     .filter((e) => e.date >= todayIso)
