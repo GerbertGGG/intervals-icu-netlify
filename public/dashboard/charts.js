@@ -174,7 +174,7 @@
 
   /* ---------- Kalender-Heatmap (Tag x Woche) ---------- */
   function calendar(host, daily, today) {
-    const CW = 46, CH = 30, L = 66, T = 22, cols = 7;
+    const CW = 76, CH = 46, L = 66, T = 22, cols = 7;
     const first = daily[0].date, dow = (d) => (new Date(d + "T12:00:00").getDay() + 6) % 7;
     const start = U.addDays(first, -dow(first));
     const weeks = Math.ceil((U.dayDiff(start, today) + 1) / 7);
@@ -360,6 +360,56 @@
     mount(host, s);
   }
 
+  /* ---------- Cockpit: Mini-Verlauf (Lücken bleiben Lücken) und Fortschrittsbalken ---------- */
+  function spark(host, days, vals, o) {
+    const W = 220, H = 56, L = 6, R = 6, T = 8, B = 8;
+    const s = svg(W, H, o.label);
+    const pts = days.map((d, i) => [i, vals[d]]).filter(([, v]) => v != null);
+    if (!pts.length) { s.append(el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, "keine Daten")); return mount(host, s); }
+    const lo = Math.min(...pts.map((p) => p[1])), hi = Math.max(...pts.map((p) => p[1])), pad = (hi - lo || Math.abs(hi) * 0.1 || 1) * 0.15;
+    const x = (i) => L + (W - L - R) * (i / Math.max(1, days.length - 1)), y = (v) => T + (H - T - B) * (1 - (v - (lo - pad)) / (hi - lo + 2 * pad));
+    s.append(el("line", { x1: L, x2: W - R, y1: H - B + 2, y2: H - B + 2, class: "axis" }));
+    let run = [];
+    const flush = () => { if (run.length > 1) s.append(el("polyline", { points: run.map(([i, v]) => `${x(i)},${y(v)}`).join(" "), fill: "none", stroke: "var(--accent)", "stroke-width": 2, "stroke-linejoin": "round" })); run = []; };
+    days.forEach((d, i) => { if (vals[d] == null) flush(); else run.push([i, vals[d]]); });
+    flush();
+    for (const [i, v] of pts) s.append(title(el("circle", { cx: x(i), cy: y(v), r: i === pts[pts.length - 1][0] ? 4 : 2.5, fill: "var(--accent)" }), `${U.fmtDate(days[i])}: ${U.fmt(v, o.dec ?? 0)} ${o.unit}`));
+    mount(host, s);
+  }
+  function meter(host, o) {
+    const pct = (v) => Math.min(100, Math.max(0, (v / o.max) * 100));
+    const bar = document.createElement("div");
+    bar.setAttribute("role", "img"); bar.setAttribute("aria-label", o.label);
+    bar.style.cssText = "position:relative;height:12px;border-radius:6px;background:var(--line);margin:8px 0;overflow:visible;display:flex";
+    const segs = o.segments ?? (o.value != null ? [{ value: o.value, color: o.cls ? ZONE[o.cls] : "var(--accent)", tip: `${U.fmt(o.value)} ${o.unit ?? ""}` }] : []);
+    segs.filter((g) => g.value > 0).forEach((g, i, arr) => {
+      const s = document.createElement("div");
+      s.style.cssText = `width:${pct(g.value)}%;min-width:2px;background:${g.color};${i === 0 ? "border-radius:6px 0 0 6px;" : ""}${i === arr.length - 1 ? "border-radius:0 6px 6px 0;" : ""}${arr.length === 1 ? "border-radius:6px;" : ""}`;
+      s.title = g.tip; bar.append(s);
+    });
+    if (o.goal != null) { const m = document.createElement("div"); m.style.cssText = `position:absolute;left:${pct(o.goal)}%;top:-4px;bottom:-4px;width:2px;background:var(--text)`; bar.append(m); }
+    host.replaceChildren(bar);
+  }
+
+  /* ---------- Workout-Profil: Breite = Dauer, Höhe = Intensität (% der Schwelle) ---------- */
+  function workout(host, steps) {
+    const W = 480, H = 84, L = 2, R = 2, T = 4, B = 16;
+    const total = steps.reduce((n, b) => n + b.secs, 0);
+    const s = svg(W, H, "Aufbau der geplanten Einheit");
+    const lvl = (p) => (p == null ? "–" : p < 60 ? "locker" : p < 80 ? "Grundlage" : p < 95 ? "zügig" : p <= 105 ? "Schwelle" : "hart");
+    const col = (p) => (p == null ? "var(--plan)" : p < 60 ? "var(--plan)" : p < 80 ? "var(--s-swim)" : p < 95 ? "var(--accent)" : p <= 105 ? "var(--s-strength)" : "var(--s-bike)");
+    const x = (secs) => L + (W - L - R) * (secs / total);
+    let t = 0;
+    for (const b of steps) {
+      const h = Math.max(0.15, Math.min(1, ((b.pct ?? 70) - 40) / 90)) * (H - T - B);
+      const x0 = x(t), w = Math.max(1, x(t + b.secs) - x0 - 1);
+      s.append(title(el("rect", { x: x0, y: H - B - h, width: w, height: h, rx: 2, fill: col(b.pct) }), `${U.fmt(b.secs / 60, b.secs % 60 ? 1 : 0)} min${b.pct != null ? ` · ${U.fmt(b.pct)} % (${lvl(b.pct)})` : ""}`));
+      t += b.secs;
+    }
+    s.append(el("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, `${U.fmt(total / 60)} min`));
+    mount(host, s);
+  }
+
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();

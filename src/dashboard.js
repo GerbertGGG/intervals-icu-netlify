@@ -5,7 +5,7 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
-import { findHipFlags, parseCravings } from "./dashboard-parse.js";
+import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
@@ -198,6 +198,7 @@ function buildPlanned(events, todayIso) {
       distanceKm: num(e?.distance_target ?? e?.distance) != null ? Math.round((num(e.distance_target ?? e.distance) / 1000) * 10) / 10 : null,
       load: num(e?.icu_training_load ?? e?.load_target),
       type: e?.type ?? null,
+      steps: parseWorkoutSteps(e?.description, e?.workout_doc),
     }))
     .filter((e) => e.date >= todayIso)
     .sort((a, b) => a.date.localeCompare(b.date));

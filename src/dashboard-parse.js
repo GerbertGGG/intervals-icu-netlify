@@ -54,3 +54,82 @@ export function findHipFlags(text) {
   }
   return out;
 }
+
+// Zerlegt ein geplantes Workout in Blöcke [{ secs, pct }] für die Grafik (Breite = Dauer, Höhe = Intensität).
+// Bevorzugt das strukturierte workout_doc von Intervals.icu, sonst der Beschreibungstext im
+// Intervals-Workout-Format: "-15m 75% Pace", "3x" gefolgt von "-"-Zeilen bis zur Leerzeile.
+// Fließtext wird ignoriert. Distanz-Schritte (km) werden grob mit 6:00 min/km in Zeit umgerechnet.
+const ZONE_PCT = { 1: 55, 2: 70, 3: 85, 4: 98, 5: 110, 6: 125, 7: 150 };
+const MAX_BLOCKS = 200;
+
+function durationSecs(text) {
+  let secs = 0;
+  let found = false;
+  for (const m of text.matchAll(/(\d+(?:[.,]\d+)?)\s*(h|min|mtr|km|m|s)(?![a-z])/gi)) {
+    const v = Number(m[1].replace(",", "."));
+    const u = m[2].toLowerCase();
+    found = true;
+    if (u === "h") secs += v * 3600;
+    else if (u === "m" || u === "min") secs += v * 60;
+    else if (u === "s") secs += v;
+    else if (u === "km") secs += v * 360;
+    else if (u === "mtr") secs += (v / 1000) * 360;
+  }
+  return found ? secs : null;
+}
+
+function intensityPct(text) {
+  const range = text.match(/(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*%/);
+  if (range) {
+    const a = Number(range[1].replace(",", "."));
+    const b = range[2] != null ? Number(range[2].replace(",", ".")) : a;
+    return (a + b) / 2;
+  }
+  const z = text.match(/\bZ([1-7])\b/i);
+  return z ? ZONE_PCT[Number(z[1])] : null;
+}
+
+function flattenDoc(steps, out, depth = 0) {
+  for (const s of Array.isArray(steps) ? steps : []) {
+    if (out.length >= MAX_BLOCKS || depth > 3) return;
+    if (Array.isArray(s?.steps) && s.steps.length) {
+      const reps = Math.min(Math.max(Math.round(Number(s.reps) || 1), 1), 50);
+      for (let i = 0; i < reps; i++) flattenDoc(s.steps, out, depth + 1);
+    } else {
+      const secs = Number(s?.duration);
+      const t = s?.pace ?? s?.power ?? s?.hr ?? s?.target;
+      const value = t?.value != null ? Number(t.value) : t?.start != null && t?.end != null ? (Number(t.start) + Number(t.end)) / 2 : null;
+      const pct = value != null && String(t?.units ?? "").includes("%") ? value : null;
+      if (Number.isFinite(secs) && secs > 0) out.push({ secs: Math.round(secs), pct: Number.isFinite(pct) ? pct : null });
+    }
+  }
+}
+
+export function parseWorkoutSteps(description, workoutDoc) {
+  const fromDoc = [];
+  flattenDoc(workoutDoc?.steps, fromDoc);
+  if (fromDoc.length) return fromDoc;
+
+  const out = [];
+  const lines = String(description ?? "").split(/\r?\n/);
+  let group = null; // { reps, steps }
+  const flush = () => {
+    if (group) for (let i = 0; i < group.reps && out.length < MAX_BLOCKS; i++) out.push(...group.steps);
+    group = null;
+  };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flush(); continue; }
+    const rep = line.match(/^(\d{1,2})\s*x\b\s*(.*)$/i);
+    if (rep && !rep[2].startsWith("-")) { flush(); group = { reps: Math.min(Number(rep[1]), 50), steps: [] }; continue; }
+    const step = line.match(/^-\s*(.+)$/);
+    if (!step) continue;
+    const secs = durationSecs(step[1]);
+    if (!secs || secs <= 0) continue;
+    const block = { secs: Math.round(secs), pct: intensityPct(step[1]) };
+    if (group) group.steps.push(block);
+    else out.push(block);
+  }
+  flush();
+  return out.slice(0, MAX_BLOCKS);
+}

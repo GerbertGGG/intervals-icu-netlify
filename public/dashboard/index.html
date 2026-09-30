@@ -28,7 +28,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1.1rem; margin: 32px 0 12px; }
@@ -55,6 +55,31 @@ svg { width: 100%; height: auto; display: block; }
 svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 svg .axis { stroke: var(--line); }
 svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
+.cockpit-group { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+.cockpit-group:first-child { margin-top: 0; }
+.cockpit { display: grid; gap: 10px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.cockpit .tile { grid-column: span 2; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tile h3 { font-size: .75rem; font-weight: 600; color: var(--muted); margin: 0; }
+.tile .val { font-size: 1.5rem; font-weight: 650; line-height: 1.15; }
+.tile .val small { font-size: .8rem; font-weight: 500; color: var(--muted); }
+.tile .sub { font-size: .8rem; color: var(--muted); }
+.cockpit .tile.span2 { grid-column: span 4; }
+.cockpit .tile.span3 { grid-column: span 6; }
+.cockpit .tile.span15 { grid-column: span 3; }
+.cockpit .tile.span4 { grid-column: 1 / -1; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 900px) { .cockpit { grid-template-columns: repeat(4, minmax(0, 1fr)); } .cockpit .tile { grid-column: span 2; } .cockpit .tile.span2, .cockpit .tile.span3, .cockpit .tile.span15 { grid-column: 1 / -1; } }
+@media (max-width: 480px) { .cockpit { grid-template-columns: 1fr; } }
+.today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.today > div:first-child { flex: 1 1 260px; min-width: 0; }
+.wprofile { flex: 1 1 320px; max-width: 560px; }
+.dots { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: .8rem; }
+.dots span { display: inline-flex; align-items: center; gap: 4px; }
+.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
+.dots i.ok { background: var(--ok); } .dots i.warn { background: var(--warn); } .dots i.bad { background: var(--bad); }
+.split { display: grid; gap: 12px; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: stretch; }
+@media (max-width: 1000px) { .split { grid-template-columns: minmax(0, 1fr); } .split > .card { max-width: 520px; } .split > .stack { max-width: 520px; } }
 .ready-grid { margin-top: 10px; }
 .rrow { display: grid; grid-template-columns: 96px 230px auto; gap: 8px; align-items: center; padding: 2px 0; }
 .rrow .lbl { font-size: .9rem; }
@@ -83,9 +108,13 @@ button, input { font: inherit; }
   </header>
   <div id="sources"></div>
 
-  <h2>1 · Heute</h2>
-  <div id="ready"></div>
-  <div id="today" class="grid" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))"></div>
+  <div id="cockpit"></div>
+
+  <h2>1 · Heute im Detail</h2>
+  <div class="grid wide" style="align-items:start">
+    <div id="ready"></div>
+    <div id="today"></div>
+  </div>
 
   <h2>2 · Trainingsverlauf</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
@@ -97,14 +126,15 @@ button, input { font: inherit; }
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
   </div>
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
-  <div class="card" style="margin-top:12px"><h3>Belastung je Tag</h3><div id="calendar" style="max-width:420px"></div></div>
-
-  <h2>2b · Wochenbericht nach Sportart</h2>
-  <div class="grid wide">
-    <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
-    <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
-    <div class="card full scroll" id="week-report"></div>
+  <h2>2b · Belastung je Tag und Wochenbericht nach Sportart</h2>
+  <div class="split">
+    <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
+    <div class="stack">
+      <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
+      <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
+    </div>
   </div>
+  <div class="card scroll" id="week-report" style="margin-top:12px"></div>
   <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
 
   <h2>3 · Fitness</h2>
