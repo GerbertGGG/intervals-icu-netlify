@@ -10,8 +10,16 @@ const firstLine = (s, max = 110) => {
   return line && line.length > max ? line.slice(0, max - 1) + "…" : line;
 };
 
+const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+
 export function buildWidget(d) {
   const week = d.weeks[d.weeks.length - 1];
+  // Tageslast der laufenden Woche (Mo bis So); Tage nach heute sind null, nicht 0.
+  const loadByDate = Object.fromEntries(d.daily.map((x) => [x.date, x.load]));
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(week.weekStart, i);
+    return { date, load: date > d.today ? null : loadByDate[date] ?? 0 };
+  });
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
   const total = (w) => (w ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null);
   const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: p.name, durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(p.description) }));
@@ -28,6 +36,7 @@ export function buildWidget(d) {
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name } : null },
     week: {
       weekStart: week.weekStart,
+      days,
       bySport: Object.fromEntries(Object.entries(week.bySport).map(([k, v]) => [k, { count: v.count, minutes: v.minutes, load: v.load }])),
       total: total(week),
       lastTotal: total(lastWeek),

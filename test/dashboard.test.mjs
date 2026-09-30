@@ -109,6 +109,10 @@ assert.equal(wdg.readiness.verdict.text, d.summary.readiness.verdict.text);
 assert.equal(wdg.goal.daysToGo, 3);
 assert.equal(wdg.plan.today[0].purpose, "Zweck: Beine lockern");
 assert.equal(wdg.hip.recent, 1);
+assert.equal(wdg.week.days.length, 7);
+assert.equal(wdg.week.days[0].date, wdg.week.weekStart);
+assert.equal(wdg.week.days.filter((x) => x.load == null).length, 6 - Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(wdg.week.weekStart + "T00:00:00Z")) / 86400000)); // Zukunft = null
+assert.equal(wdg.week.days.reduce((a, x) => a + (x.load ?? 0), 0), wdg.week.total);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget"), env)).status, 401);
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { headers: { authorization: "Bearer geheim" } }), env)).status, 200);
