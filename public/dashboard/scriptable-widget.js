@@ -632,10 +632,14 @@ function fillFood(w, d, IW, roomy, compact) {
   if (!compact) w.addSpacer(2);
   // Drei Balken: Kohlenhydrate, Protein, Energie. Ein Ziel gibt es nur, wenn die Phase eines festlegt (Kohlenhydrate
   // sonst nur als Wert, ohne Balken). Ohne heutige Yazio-Werte steht das Tagesziel mit leerem Balken da.
+  // Ziele kommen aus Yazio (f.goals; Energie zusaetzlich als Tagesbudget td.goal inkl. Training). Nur beim
+  // Carb-Loading gelten die Werte der Phase; fehlt Yazio, stehen die Phasen-Werte (Platzhalter) da.
+  const yg = f.goals || {}, phaseWins = ph.name === "carbload";
+  const pick = (yazio, phaseVal) => (phaseWins ? phaseVal ?? yazio : yazio ?? phaseVal);
   const macros = [
-    { label: "Kohlenhydrate", v: td.carbs, goal: t.carbsG, unit: "g", hex: carb ? "#fb923c" : "#f0a24a" },
-    { label: "Protein", v: td.protein, goal: t.proteinG, unit: "g", hex: "#6da2dc" },
-    { label: "Energie", v: td.calories, goal: t.kcal, unit: "kcal", hex: "#8fa0b8" },
+    { label: "Kohlenhydrate", v: td.carbs, goal: pick(yg.carbsG, t.carbsG), unit: "g", hex: carb ? "#fb923c" : "#f0a24a" },
+    { label: "Protein", v: td.protein, goal: pick(yg.proteinG, t.proteinG), unit: "g", hex: "#6da2dc" },
+    { label: "Energie", v: td.calories, goal: phaseWins ? t.kcal : td.goal ?? yg.kcal ?? t.kcal, unit: "kcal", hex: "#8fa0b8" },
   ];
   macros.forEach((m, i) => {
     w.addSpacer(i === 0 ? (compact ? 3 : 6) : compact ? 4 : 7);

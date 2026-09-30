@@ -117,6 +117,26 @@ export async function fetchYazioDailyGoalKcal(env, dateIso) {
   return Number.isFinite(goal) && goal > 0 ? goal : null;
 }
 
+// Tagesziele aus der Yazio-App fuers Widget: Kalorien, Protein, Kohlenhydrate, Fett. Die Makro-Schluessel
+// ("nutrient.*") folgen den Produkt-Naehrwerten weiter unten, sind aber nicht gegen echte Daten geprueft;
+// was fehlt, bleibt null. Gecacht in KV (ein Eintrag, 6 h), damit nicht jede Widget-Aktualisierung Yazio abfragt.
+const GOALS_KV_KEY = "yazio:goals";
+const GOALS_MAX_AGE_MS = 6 * 3600 * 1000;
+
+export async function fetchYazioDailyGoals(env, dateIso) {
+  const cached = await readKvJson(env, GOALS_KV_KEY).catch(() => null);
+  if (cached?.date === dateIso && Date.now() - cached.fetchedAt < GOALS_MAX_AGE_MS) return cached.goals;
+  const summary = await yazioGet(env, `/user/widgets/daily-summary?date=${dateIso}`);
+  const g = summary?.goals ?? {};
+  const pos = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  };
+  const goals = { kcal: pos(g["energy.energy"]), proteinG: pos(g["nutrient.protein"]), carbsG: pos(g["nutrient.carb"]), fatG: pos(g["nutrient.fat"]) };
+  await writeKvJson(env, GOALS_KV_KEY, { date: dateIso, fetchedAt: Date.now(), goals });
+  return goals;
+}
+
 // Product nutrients (kcal/protein/fat/carb per gram) plus display name are static
 // reference data, so they're cached in KV indefinitely rather than re-fetched on
 // every sync.

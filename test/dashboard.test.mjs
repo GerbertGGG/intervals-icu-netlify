@@ -178,6 +178,8 @@ assert.ok(sm.food.hasData && sm.food.latest.calories > 1000 && sm.food.latest.go
 const smEmpty = buildWidgetSmall({ ...d, wellness: d.wellness.map((w) => ({ ...w, calories: null, carbs: null, calorieGoal: null })) });
 assert.equal(smEmpty.food.hasData, false); // ohne Yazio-Daten kein Wert, nichts erfunden
 assert.equal(smEmpty.food.latest, null);
+assert.equal(sm.food.goals, null); // ohne Yazio-Zugang keine Ziele, nichts erfunden
+assert.deepEqual(buildWidgetSmall(d, { kcal: 2100, proteinG: 120, carbsG: 250, fatG: 70 }).food.goals.proteinG, 120);
 assert.ok(sm.cravings.count >= 1);
 assert.equal(smEmpty.cravings.count, sm.cravings.count); // Heisshunger unabhaengig von Yazio
 assert.ok(JSON.stringify(sm).length < 3000);

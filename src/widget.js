@@ -1,5 +1,6 @@
 import { json } from "./http-helpers.js";
 import { buildDashboard, isAuthorized } from "./dashboard.js";
+import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
@@ -150,7 +151,7 @@ const medianOf = (a) => {
   return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 };
 
-export function buildWidgetSmall(d) {
+export function buildWidgetSmall(d, goals = null) {
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const days = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
   const past14 = d.wellness.filter((w) => w.date >= addDays(d.today, -13));
@@ -172,7 +173,7 @@ export function buildWidgetSmall(d) {
       medianHrv: medianOf(past14.map((w) => w.hrv)),
       medianRestingHR: medianOf(past14.map((w) => w.restingHR)),
     },
-    food: { days: foodDays, latest, hasData: latest != null },
+    food: { days: foodDays, latest, hasData: latest != null, goals },
     cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
     sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
   };
@@ -184,6 +185,8 @@ export async function handleWidgetRequest(req, env) {
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
   const dashboard = await buildDashboard(env);
   const view = new URL(req.url).searchParams.get("view");
-  const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard) : view === "training" ? buildWidgetTraining(dashboard, env) : buildWidget(dashboard, env);
+  // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
+  const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
+  const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }
