@@ -23,7 +23,6 @@ const COL = {
   accent: dyn("#3b6ea8", "#6da2dc"),
 };
 const ZONE_RGB = { ok: "#2f9d64", warn: "#d99a1a", bad: "#d0453b", none: "#8a94a3" };
-const dark = () => Device.isUsingDarkAppearance();
 const baseUrl = () => (Keychain.get(KEY_URL).match(/^https:\/\/[^\/\s?#]+/) || [Keychain.get(KEY_URL)])[0];
 
 /* ---------- Konfiguration ---------- */
@@ -76,7 +75,6 @@ const fmtTime = (s) => { const h = Math.floor(s / 3600), m = Math.floor((s % 360
 const fmtPace = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 const dateShort = (iso) => { const [, m, d] = iso.split("-"); return `${d}.${m}.`; };
 const colorFor = (cls) => COL[cls] || COL.none;
-const ink = () => (dark() ? new Color("#e6eaf0") : new Color("#1c2430"));
 
 /* ---------- Bausteine ---------- */
 function text(parent, str, size, { bold = false, color = COL.text, lines = 1, align = "left", opacity = 1 } = {}) {
@@ -118,72 +116,70 @@ function gaugeImage(w, min, max, zones, value) {
     const p = new Path();
     p.addRoundedRect(new Rect(a, 4, Math.max(2, b - a), 8), 4, 4);
     dc.addPath(p);
-    dc.setFillColor(new Color(ZONE_RGB[z.cls], dark() ? 0.55 : 0.5));
+    dc.setFillColor(new Color(ZONE_RGB[z.cls], 0.55));
     dc.fillPath();
   }
   if (value != null) {
     const cx = Math.min(w - 6, Math.max(6, x(value)));
-    dc.setFillColor(ink());
+    // Weisser Marker mit dunklem Rand: in Hell und Dunkel lesbar, ohne auf den Darstellungsmodus zu bauen
+    dc.setFillColor(new Color("#ffffff"));
     dc.fillEllipse(new Rect(cx - 6, 2, 12, 12));
-    dc.setStrokeColor(dark() ? new Color("#1a2029") : new Color("#ffffff"));
+    dc.setStrokeColor(new Color("#0f1318"));
     dc.setLineWidth(2);
     dc.strokeEllipse(new Rect(cx - 6, 2, 12, 12));
   }
   return dc.getImage();
 }
 
-// Ring mit Wert je Bereitschafts-Skala (1 = bestmoeglich); "-" wenn nicht eingetragen
-function ringImage(size, cls, value) {
+// Ring in Ampelfarbe; die Zahl kommt als Text darueber, damit sie in Hell und Dunkel lesbar ist
+function ringImage(size, cls) {
   const dc = newCtx(size, size), rgb = ZONE_RGB[cls] || ZONE_RGB.none;
   dc.setFillColor(new Color(rgb, cls === "none" ? 0.12 : 0.24));
   dc.fillEllipse(new Rect(2, 2, size - 4, size - 4));
   dc.setStrokeColor(new Color(rgb));
   dc.setLineWidth(3);
   dc.strokeEllipse(new Rect(2, 2, size - 4, size - 4));
-  dc.setFont(Font.boldSystemFont(size * 0.42));
-  dc.setTextColor(ink());
-  dc.setTextAlignedCenter();
-  dc.drawTextInRect(value == null ? "\u2013" : String(value), new Rect(0, size * 0.25, size, size * 0.55));
   return dc.getImage();
 }
 
-// Saeulen je Wochentag (Mo-So); Tage nach heute bleiben leer
+// Saeulen je Wochentag (Mo-So, nur die Saeulen; Beschriftung als Text darunter). Tage nach heute bleiben leer.
 function dayBarsImage(w, h, days, todayIso) {
-  const dc = newCtx(w, h), labels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-  const max = Math.max(1, ...days.map((x) => x.load ?? 0)), slot = w / 7, bw = slot * 0.56, top = 10, base = h - 12;
+  const dc = newCtx(w, h);
+  const max = Math.max(1, ...days.map((x) => x.load ?? 0)), slot = w / 7, bw = slot * 0.56, top = 11, base = h - 1;
   dc.setFont(Font.systemFont(9));
+  dc.setTextAlignedCenter();
   days.forEach((x, i) => {
-    const cx = i * slot + slot / 2, isToday = x.date === todayIso;
-    dc.setTextColor(isToday ? ink() : new Color("#8a94a3"));
-    dc.setTextAlignedCenter();
-    dc.drawTextInRect(labels[i], new Rect(i * slot, h - 11, slot, 11));
+    const cx = i * slot + slot / 2;
     if (x.load == null) { dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillRect(new Rect(cx - bw / 2, base - 1.5, bw, 1.5)); return; }
     const bh = x.load ? Math.max(3, (x.load / max) * (base - top)) : 1.5;
     const p = new Path();
     p.addRoundedRect(new Rect(cx - bw / 2, base - bh, bw, bh), 2.5, 2.5);
     dc.addPath(p);
-    dc.setFillColor(x.load ? (dark() ? new Color("#6da2dc") : new Color("#3b6ea8")) : new Color("#8a94a3", 0.35));
+    dc.setFillColor(x.load ? new Color(x.date === todayIso ? "#7db0f5" : "#4f7fbf") : new Color("#8a94a3", 0.35));
     dc.fillPath();
     if (x.load) { dc.setTextColor(new Color("#8a94a3")); dc.drawTextInRect(String(Math.round(x.load)), new Rect(i * slot, base - bh - 11, slot, 10)); }
   });
   return dc.getImage();
 }
 
-// Duenner Balken: Anteil der Sportarten an der Wochen-TSS
-function shareImage(w, h, week) {
+// Fortschritt zur Wochen-TSS: Segmente nach Sportart, skaliert auf das Ziel (Rest = noch offen).
+// Ohne Ziel fuellt der Anteil der Sportarten die ganze Breite.
+function goalBarImage(w, h, week, goal) {
   const dc = newCtx(w, h);
-  const total = SPORTS.reduce((a, [k]) => a + (week.bySport[k]?.load ?? 0), 0);
-  const clip = new Path();
-  clip.addRoundedRect(new Rect(0, 0, w, h), h / 2, h / 2);
-  dc.addPath(clip);
-  if (!total) { dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillPath(); return dc.getImage(); }
-  dc.setFillColor(new Color("#8a94a3", 0.25)); dc.fillPath();
+  const total = SPORTS.reduce((a, [k]) => a + (week.bySport[k] ? week.bySport[k].load : 0), 0);
+  const track = new Path();
+  track.addRoundedRect(new Rect(0, 0, w, h), h / 2, h / 2);
+  dc.addPath(track);
+  dc.setFillColor(new Color("#8a94a3", 0.25));
+  dc.fillPath();
+  const scale = goal ? goal : total;
   let acc = 0;
   for (const [k, , hex] of SPORTS) {
-    const v = week.bySport[k]?.load ?? 0;
-    if (!v) continue;
+    const v = week.bySport[k] ? week.bySport[k].load : 0;
+    if (!v || !scale) continue;
+    const a = Math.min(w, (acc / scale) * w), b = Math.min(w, ((acc + v) / scale) * w);
     dc.setFillColor(new Color(hex));
-    dc.fillRect(new Rect((acc / total) * w, 0, (v / total) * w, h));
+    dc.fillRect(new Rect(a, 0, Math.max(0, b - a), h));
     acc += v;
   }
   return dc.getImage();
@@ -235,7 +231,13 @@ function buildWidget(res) {
   const rings = rc.addStack();
   for (const [i, it] of r.items.entries()) {
     const col = rings.addStack(); col.layoutVertically(); col.centerAlignContent();
-    const im = col.addImage(ringImage(30, it.cls, it.v)); im.imageSize = new Size(30, 30);
+    const ring = col.addStack();
+    ring.size = new Size(30, 30);
+    ring.backgroundImage = ringImage(30, it.cls);
+    ring.centerAlignContent();
+    ring.addSpacer();
+    text(ring, it.v == null ? "\u2013" : it.v, 13, { bold: true, align: "center" });
+    ring.addSpacer();
     text(col, it.label.replace("Muskelkater", "Muskeln").replace("Motivation", "Motiv."), 9, { color: COL.muted, align: "center" });
     if (i < r.items.length - 1) rings.addSpacer();
   }
@@ -278,19 +280,29 @@ function buildWidget(res) {
   }
   w.addSpacer(5);
 
-  // Woche: TSS je Tag, Anteil je Sportart, Kraft
-  const wc = card(w, W, 7);
+  // Woche: TSS je Tag, Fortschritt zum Wochenziel, Kraft
+  const wc = card(w, W, 7), IW2 = W - 22;
   const wl = wc.addStack(); wl.centerAlignContent();
+  const goal = d.week.goal, total = d.week.total;
   text(wl, "WOCHE \u00b7 TSS", 10, { bold: true, color: COL.muted });
   wl.addSpacer(6);
-  text(wl, `${fmt(d.week.total)}${d.week.lastTotal != null ? ` (Vorwoche ${fmt(d.week.lastTotal)})` : ""}`, 11, { bold: true });
+  text(wl, goal ? `${fmt(total)} / ${fmt(goal)}` : fmt(total), 12, { bold: true, color: goal && total >= goal ? COL.ok : COL.text });
+  if (goal) { wl.addSpacer(4); text(wl, `${Math.round((100 * total) / goal)} %`, 10, { color: COL.muted }); }
   wl.addSpacer();
   const sc = d.week.strengthCount;
   text(wl, `Kraft ${sc}\u00d7 (Ziel 2\u20133)`, 10, { bold: sc >= 2, color: sc >= 2 ? COL.ok : COL.muted });
+  const sub = [goal ? `Ziel ${fmt(goal)} ${d.week.goalSource === "plan" ? "laut Plan" : "eingestellt"}` : "Kein Wochenziel im Plan hinterlegt", d.week.lastTotal != null ? `Vorwoche ${fmt(d.week.lastTotal)}` : null].filter(Boolean).join(" \u00b7 ");
+  text(wc, sub, 9, { color: COL.muted });
   wc.addSpacer(2);
-  const bars = wc.addImage(dayBarsImage(W - 22, 40, d.week.days, d.today)); bars.imageSize = new Size(W - 22, 40);
-  wc.addSpacer(2);
-  const share = wc.addImage(shareImage(W - 22, 5, d.week)); share.imageSize = new Size(W - 22, 5);
+  const bars = wc.addImage(dayBarsImage(IW2, 30, d.week.days, d.today)); bars.imageSize = new Size(IW2, 30);
+  const lab = wc.addStack(); lab.size = new Size(IW2, 0);
+  ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => {
+    const c = lab.addStack(); c.size = new Size(IW2 / 7, 0);
+    const isToday = d.week.days[i].date === d.today;
+    c.addSpacer(); text(c, n, 9, { bold: isToday, color: isToday ? COL.text : COL.muted }); c.addSpacer();
+  });
+  wc.addSpacer(3);
+  const gb = wc.addImage(goalBarImage(IW2, 5, d.week, goal)); gb.imageSize = new Size(IW2, 5);
 
   w.addSpacer();
   footer(w, res, d, W);
