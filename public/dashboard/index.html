@@ -78,6 +78,8 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .dots span { display: inline-flex; align-items: center; gap: 4px; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
 .dots i.ok { background: var(--ok); } .dots i.warn { background: var(--warn); } .dots i.bad { background: var(--bad); }
+.split { display: grid; gap: 12px; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); align-items: start; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
 .ready-grid { margin-top: 10px; }
 .rrow { display: grid; grid-template-columns: 96px 230px auto; gap: 8px; align-items: center; padding: 2px 0; }
 .rrow .lbl { font-size: .9rem; }
@@ -124,14 +126,15 @@ button, input { font: inherit; }
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
   </div>
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
-  <div class="card" style="margin-top:12px"><h3>Belastung je Tag</h3><div id="calendar" style="max-width:420px"></div></div>
-
-  <h2>2b · Wochenbericht nach Sportart</h2>
-  <div class="grid wide">
-    <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
-    <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
-    <div class="card full scroll" id="week-report"></div>
+  <h2>2b · Belastung je Tag und Wochenbericht nach Sportart</h2>
+  <div class="split">
+    <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
+    <div class="grid wide">
+      <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
+      <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
+    </div>
   </div>
+  <div class="card scroll" id="week-report" style="margin-top:12px"></div>
   <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
 
   <h2>3 · Fitness</h2>
