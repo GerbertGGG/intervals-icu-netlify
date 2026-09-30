@@ -33,9 +33,10 @@ async function askConfig() {
   a.addAction("Speichern");
   a.addCancelAction("Abbrechen");
   if ((await a.presentAlert()) === -1) return false;
-  const url = a.textFieldValue(0).trim().replace(/\/+$/, "");
+  // Nur Protokoll und Host zählen: Ein angehängter Pfad wie /dashboard/ würde /api/widget verfälschen.
+  const url = (a.textFieldValue(0).trim().match(/^https:\/\/[^\/\s?#]+/) || [""])[0];
   const token = a.textFieldValue(1).trim();
-  if (!/^https:\/\//.test(url) || !token) return false;
+  if (!url || !token) return false;
   Keychain.set(KEY_URL, url);
   Keychain.set(KEY_TOKEN, token);
   return true;
@@ -45,7 +46,7 @@ async function askConfig() {
 function cachePath() { const fm = FileManager.local(); return { fm, path: fm.joinPath(fm.documentsDirectory(), CACHE_FILE) }; }
 
 async function loadData() {
-  const base = Keychain.get(KEY_URL);
+  const base = (Keychain.get(KEY_URL).match(/^https:\/\/[^\/\s?#]+/) || [Keychain.get(KEY_URL)])[0];
   const { fm, path } = cachePath();
   try {
     const req = new Request(`${base}/api/widget`);
@@ -55,6 +56,7 @@ async function loadData() {
     const status = req.response ? req.response.statusCode : 0;
     if (status === 401) throw new Error("Token wurde abgelehnt");
     if (status === 503) throw new Error("Worker: DASHBOARD_TOKEN nicht gesetzt");
+    if (status === 404) throw new Error(`404 bei ${base}/api/widget – falsche Adresse oder Deploy noch nicht durch`);
     if (status !== 200) throw new Error(`Worker antwortet mit ${status}`);
     const data = JSON.parse(body);
     fm.writeString(path, JSON.stringify(data));
@@ -134,7 +136,7 @@ function buildWidget(res) {
   const w = new ListWidget();
   w.backgroundColor = COL.bg;
   w.setPadding(12, 14, 10, 14);
-  w.url = `${Keychain.get(KEY_URL)}/dashboard/`;
+  w.url = `${(Keychain.get(KEY_URL).match(/^https:\/\/[^\/\s?#]+/) || [Keychain.get(KEY_URL)])[0]}/dashboard/`;
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
 
   // Kopf: Rennen und Countdown
