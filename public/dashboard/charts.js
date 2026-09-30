@@ -381,7 +381,10 @@
     const s = svg(W, H, o.label);
     const max = o.max, x = (v) => L + (W - L - R) * Math.min(1, Math.max(0, v / max));
     s.append(el("rect", { x: L, y: Y, width: W - L - R, height: BH, rx: 6, fill: "var(--line)" }));
-    if (o.value != null) s.append(title(el("rect", { x: L, y: Y, width: Math.max(2, x(o.value) - L), height: BH, rx: 6, fill: o.cls ? ZONE[o.cls] : "var(--accent)" }), `${U.fmt(o.value)} ${o.unit ?? ""}`));
+    if (o.segments) {
+      let acc = 0;
+      for (const g of o.segments) { if (!(g.value > 0)) continue; s.append(title(el("rect", { x: x(acc), y: Y, width: Math.max(2, x(acc + g.value) - x(acc)), height: BH, fill: g.color }), g.tip)); acc += g.value; }
+    } else if (o.value != null) s.append(title(el("rect", { x: L, y: Y, width: Math.max(2, x(o.value) - L), height: BH, rx: 6, fill: o.cls ? ZONE[o.cls] : "var(--accent)" }), `${U.fmt(o.value)} ${o.unit ?? ""}`));
     if (o.goal != null) s.append(el("line", { x1: x(o.goal), x2: x(o.goal), y1: Y - 5, y2: Y + BH + 5, stroke: "var(--text)", "stroke-width": 2 }));
     mount(host, s);
   }
