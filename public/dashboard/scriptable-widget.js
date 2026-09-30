@@ -7,6 +7,7 @@
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse "Gross", Skript auswaehlen.
 //     Kleine Widgets (Groesse "Klein"): Fitness (CTL, Standard), Ernaehrung (Parameter  ernaehrung)
+//     Bereitschaft mit Ringen (Parameter  bereit)
 //     sowie Schlaf und Erholung (Parameter  schlaf).
 //     Mittleres Widget (Groesse "Mittel"): Schlaf und Erholung links, Ernaehrung rechts. Mit dem Parameter
 //     form  zeigt es stattdessen Form, Halbmarathon-Zeiten vs. Ziel, VDOT und Paces, Schwellen. Mit dem Parameter
@@ -25,7 +26,7 @@ const KEY_TOKEN = "training-dashboard-token";
 // (Klein: im Widget unter "Parameter"  ernaehrung  oder  schlaf  eintragen, sonst Fitness).
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
 let VIEW = (typeof config !== "undefined" && config.runsInWidget)
-  ? (config.widgetFamily === "medium" ? (/^(form|zeit|hm|detail)/.test(WIDGET_PARAM) ? "detail" : /^(train|tri)/.test(WIDGET_PARAM) ? "training" : "sleepfood") : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : /^(schlaf|sleep|erhol)/.test(WIDGET_PARAM) ? "sleep" : "fitness") : "main")
+  ? (config.widgetFamily === "medium" ? (/^(form|zeit|hm|detail)/.test(WIDGET_PARAM) ? "detail" : /^(train|tri)/.test(WIDGET_PARAM) ? "training" : "sleepfood") : config.widgetFamily === "small" ? (/^(ern|food|essen|kcal)/.test(WIDGET_PARAM) ? "food" : /^(schlaf|sleep|erhol)/.test(WIDGET_PARAM) ? "sleep" : /^(bereit|ready)/.test(WIDGET_PARAM) ? "ready" : "fitness") : "main")
   : "main";
 const endpointView = () => (VIEW === "detail" ? "detail" : VIEW === "training" ? "training" : VIEW === "sleep" || VIEW === "food" || VIEW === "fitness" || VIEW === "sleepfood" ? "small" : "");
 const cacheFile = () => `training-widget${endpointView() ? "-" + endpointView() : ""}-cache.json`;
@@ -651,11 +652,55 @@ function fillFood(w, d, IW, roomy, compact) {
   else if (roomy && craving) text(w, craving, 9, { bold: true, color: COL.text });
 }
 
+// Ring in Ampelfarbe; die Zahl kommt als Text darueber, damit sie in Hell und Dunkel lesbar ist
+function ringImage(size, cls) {
+  const dc = newCtx(size, size), rgb = ZONE_RGB[cls] || ZONE_RGB.none;
+  dc.setFillColor(new Color(rgb, cls === "none" ? 0.12 : 0.24));
+  dc.fillEllipse(new Rect(2, 2, size - 4, size - 4));
+  dc.setStrokeColor(new Color(rgb));
+  dc.setLineWidth(3);
+  dc.strokeEllipse(new Rect(2, 2, size - 4, size - 4));
+  return dc.getImage();
+}
+
 // Kleines Widget im Kartenlook (Karte = Widget-Flaeche)
 function cardWidget() {
   const w = smallWidget();
   w.backgroundColor = COL.card;
   w.setPadding(14, 14, 12, 14);
+  return w;
+}
+
+// Bereitschaft (klein): Urteil als Kapsel, Schlafdauer, die fuenf Skalen als Ringe (3 + 2). Daten wie im grossen Widget.
+function buildReady(res) {
+  const d = res.data, r = d.readiness, v = r.verdict, g = d.goal, IW = 134;
+  const w = cardWidget();
+  const head = w.addStack(); head.centerAlignContent();
+  chip(head, v.text, ZONE_RGB[v.cls] || ZONE_RGB.none, 16, colorFor(v.cls));
+  head.addSpacer();
+  if (g && g.daysToGo >= 0) text(head, g.daysToGo === 0 ? "heute" : `${g.daysToGo} T`, 12, { bold: true, color: COL.race });
+  w.addSpacer(2);
+  text(w, r.sleepHours != null ? `${fmt(r.sleepHours, 1)} h Schlaf` : "Schlafdauer fehlt", 11, { color: COL.muted });
+  w.addSpacer(6);
+  const short = { Muskelkater: "Muskeln", Motivation: "Motiv.", "Erm\u00fcdung": "Erm\u00fcdung" };
+  const ring = (parent, it, cw) => {
+    const col = parent.addStack(); col.layoutVertically(); col.size = new Size(cw, 0);
+    const c = col.addStack(); c.addSpacer();
+    const rg = c.addStack(); rg.size = new Size(26, 26); rg.backgroundImage = ringImage(26, it.cls); rg.centerAlignContent();
+    rg.addSpacer(); text(rg, it.v == null ? "\u2013" : it.v, 12, { bold: true, align: "center" }); rg.addSpacer();
+    c.addSpacer();
+    const l = col.addStack(); l.addSpacer(); text(l, short[it.label] || it.label, 8, { color: COL.muted, align: "center" }); l.addSpacer();
+  };
+  const rows = [r.items.slice(0, 3), r.items.slice(3)];
+  rows.forEach((items, ri) => {
+    if (ri) w.addSpacer(5);
+    const row = w.addStack(); row.size = new Size(IW, 0);
+    if (ri) row.addSpacer(IW / 6);
+    items.forEach((it) => ring(row, it, IW / 3));
+  });
+  if (v.cls === "none") { w.addSpacer(3); text(w, v.sub, 8, { color: COL.muted, lines: 2 }); }
+  w.addSpacer();
+  if (res.stale) text(w, "veraltet", 8, { color: COL.warn });
   return w;
 }
 
@@ -822,6 +867,7 @@ async function main() {
     menu.addAction("Vorschau klein: Schlaf");
     menu.addAction("Vorschau klein: Ern\u00e4hrung");
     menu.addAction("Vorschau klein: Fitness (CTL)");
+    menu.addAction("Vorschau klein: Bereitschaft");
     menu.addAction("Zugangsdaten setzen / zur\u00fccksetzen");
     menu.addCancelAction("Schlie\u00dfen");
     const choice = await menu.presentAlert();
@@ -832,15 +878,16 @@ async function main() {
     if (choice === 4) VIEW = "sleep";
     if (choice === 5) VIEW = "food";
     if (choice === 6) VIEW = "fitness";
-    if (choice === 7 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 7) return; }
+    if (choice === 7) VIEW = "ready";
+    if (choice === 8 || !Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) { if (!(await askConfig())) return; if (choice === 8) return; }
   } else if (!Keychain.contains(KEY_URL) || !Keychain.contains(KEY_TOKEN)) {
     Script.setWidget(messageWidget("Bitte das Skript einmal in Scriptable \u00f6ffnen und die Zugangsdaten eingeben."));
     return;
   }
   let widget;
-  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "training" ? buildTraining(res) : VIEW === "sleepfood" ? buildSleepFood(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFoodCard(res) : VIEW === "fitness" ? buildFitness(res) : buildWidget(res); }
+  try { const res = await loadData(); widget = VIEW === "detail" ? buildMedium(res) : VIEW === "training" ? buildTraining(res) : VIEW === "sleepfood" ? buildSleepFood(res) : VIEW === "sleep" ? buildSleep(res) : VIEW === "food" ? buildFoodCard(res) : VIEW === "fitness" ? buildFitness(res) : VIEW === "ready" ? buildReady(res) : buildWidget(res); }
   catch (e) { widget = messageWidget(`Keine Daten: ${String(e.message || e)}`); }
-  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail" || VIEW === "training" || VIEW === "sleepfood") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food" || VIEW === "fitness") await widget.presentSmall(); else await widget.presentLarge();
+  if (inWidget) Script.setWidget(widget); else if (VIEW === "detail" || VIEW === "training" || VIEW === "sleepfood") await widget.presentMedium(); else if (VIEW === "sleep" || VIEW === "food" || VIEW === "fitness" || VIEW === "ready") await widget.presentSmall(); else await widget.presentLarge();
 }
 await main();
 Script.complete();
