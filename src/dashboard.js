@@ -4,7 +4,9 @@ import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasInterv
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { mustEnv } from "./kv.js";
-import { paceTargetsFromVdot } from "./vdot.js";
+import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
+import { findHipFlags, parseCravings } from "./dashboard-parse.js";
+import { readStudie } from "./studie-snapshot.js";
 import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
@@ -200,6 +202,11 @@ function buildPlanned(events, todayIso) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+function positive(v) {
+  const n = num(v);
+  return n != null && n > 0 ? Math.round(n * 10) / 10 : null;
+}
+
 function buildWellness(list) {
   return list
     .map((w) => ({
@@ -215,10 +222,49 @@ function buildWellness(list) {
       fatigue: scaleValue(w?.fatigue),
       mood: scaleValue(w?.mood),
       motivation: scaleValue(w?.motivation),
-      comments: w?.comments ? String(w.comments) : null,
+      // Yazio-Werte stehen als Intervals-Zusatzfelder im Wellness-Eintrag (siehe sync.js). Der Sync
+      // schreibt bei leerem Tagebuch 0: Nichts zu essen gibt es nicht, also zählt <= 0 als "keine Daten".
+      calories: positive(w?.Calories),
+      carbs: positive(w?.Carbs),
+      protein: positive(w?.Protein),
+      fat: positive(w?.Fat),
+      calorieGoal: positive(w?.CalorieGoal),
     }))
     .filter((w) => /^\d{4}-\d{2}-\d{2}$/.test(w.date))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Tageswerte der Belastung für die Kalender-Heatmap (leere Tage = 0, keine Lücken).
+function buildDaily(todayIso, activities) {
+  const out = [];
+  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {} });
+  const byDate = new Map(out.map((x) => [x.date, x]));
+  for (const a of activities) {
+    const day = byDate.get(activityDay(a));
+    if (!day) continue;
+    const load = activityLoad(a);
+    day.load += load;
+    if (load) day.sports[sportOf(a)] = (day.sports[sportOf(a)] ?? 0) + load;
+  }
+  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: Object.fromEntries(Object.entries(x.sports).map(([k, v]) => [k, Math.round(v)])) }));
+}
+
+// Heißhunger-Einträge und Hüft-/Leisten-/Knie-Hinweise aus den Freitexten. Die Rohtexte bleiben im Worker.
+function buildInsights(rawWellness, activities) {
+  const cravings = [];
+  const hipFlags = [];
+  for (const w of rawWellness) {
+    const date = String(w?.id ?? w?.date ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !w?.comments) continue;
+    cravings.push(...parseCravings(date, w.comments));
+    for (const f of findHipFlags(w.comments)) hipFlags.push({ date, source: "Wellness-Kommentar", ...f });
+  }
+  for (const a of activities) {
+    for (const f of findHipFlags(`${a?.name ?? ""}. ${a?.description ?? ""}`)) hipFlags.push({ date: activityDay(a), source: "Einheit", ...f });
+  }
+  cravings.sort((a, b) => a.date.localeCompare(b.date) || (a.hour ?? 0) - (b.hour ?? 0));
+  hipFlags.sort((a, b) => b.date.localeCompare(a.date));
+  return { cravings, hipFlags };
 }
 
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
@@ -228,6 +274,24 @@ function buildFitness(runs) {
     longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)
       .map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
+}
+
+// Halbmarathon-Zeiten aus verschiedenen Quellen für den Zielkorridor. Alles außer der Runalyze-Prognose
+// ist eine Rechnung nach Daniels (VDOT-Modell), keine Vorhersage: Sie unterstellt Ausdauer wie über die
+// Ausgangsdistanz und ist bei kurzen Distanzen deshalb tendenziell zu optimistisch.
+function buildHmEstimates(snapshot, vdot, rows) {
+  const hmSeconds = (v) => predictRaceTimesFromVdot(v)?.find((x) => x.key === "hm")?.seconds ?? null;
+  const out = [];
+  const prog = rows.find((r) => r.label === "Halbmarathon")?.prognosisSeconds;
+  if (prog != null) out.push({ key: "runalyze", label: "Runalyze-Prognose", seconds: prog, kind: "prognosis" });
+  if (vdot != null && hmSeconds(vdot)) out.push({ key: "vdot", label: `aus VDOT ${Math.round(vdot * 10) / 10}`, seconds: hmSeconds(vdot), kind: "calc" });
+  for (const r of rows) {
+    if (r.label === "Halbmarathon" || r.bestSeconds == null) continue;
+    const v = computeVdotFromRaceTime(r.bestDistanceKm * 1000, r.bestSeconds);
+    const sec = v != null ? hmSeconds(v) : null;
+    if (sec) out.push({ key: `best-${r.distanceKm}`, label: `aus ${r.label}-Bestzeit`, seconds: sec, kind: "calc" });
+  }
+  return out;
 }
 
 function buildRunalyze(snapshot) {
@@ -248,7 +312,7 @@ function buildRunalyze(snapshot) {
   // hier nach Daniels aus diesem VDOT berechnet (dieselbe Formel wie in vdot.js).
   const vdot = snapshot.vdot ?? null;
   const paces = vdot != null ? paceTargetsFromVdot(vdot) : null;
-  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows };
+  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows) };
 }
 
 async function settle(label, fn) {
@@ -265,7 +329,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot, studie] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -276,6 +340,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       return list;
     }),
     readRunalyzeSnapshot(env),
+    readStudie(env),
   ]);
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
@@ -300,9 +365,12 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
+    daily: buildDaily(todayIso, activities),
+    ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs),
     thresholds: buildThresholds(settingsR.ok ? settingsR.value : null),
     runalyze: buildRunalyze(snapshot),
+    studie: studie ?? null,
     planned: buildPlanned(events, todayIso),
   };
 }
