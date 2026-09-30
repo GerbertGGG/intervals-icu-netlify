@@ -70,7 +70,9 @@ function renderToday(d) {
   const planHtml = plan.length
     ? plan.map((p) => `<div><b>${esc(p.name || "Einheit")}</b>${meta(p) ? `<div class="muted">${meta(p)}</div>` : ""}${p.description ? `<div class="desc">${esc(p.description)}</div>` : `<div class="muted">Kein Zweck/Beschreibung im Plan hinterlegt.</div>`}</div>`).join("<hr>")
     : `<div class="muted">Heute ist keine Einheit geplant.</div>${next ? `<div class="muted">Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}</div>` : ""}`;
-  $("today").innerHTML = `<div class="card"><h3>Geplante Einheit</h3>${d.sources.intervalsEvents.ok ? planHtml : '<div class="muted">Plan nicht abrufbar.</div>'}</div>`;
+  $("today").innerHTML = `<div class="card"><h3>Geplante Einheit</h3>${plan.some((p) => p.steps?.length) ? '<div id="detail-workout" style="margin:6px 0;max-width:480px"></div>' : ""}${d.sources.intervalsEvents.ok ? planHtml : '<div class="muted">Plan nicht abrufbar.</div>'}</div>`;
+  const withSteps = plan.find((p) => p.steps?.length);
+  if (withSteps) C.workout($("detail-workout"), withSteps.steps);
 }
 
 /* ---------- Cockpit: alles Wichtige auf einen Blick ---------- */
@@ -89,8 +91,9 @@ function renderCockpit(d) {
   const goalPace = g.targetTimeSecs / 21.0975;
 
   // Training
+  const shown = plan.find((p) => p.steps?.length) ?? plan[0];
   const todayTile = plan.length
-    ? tile("Heute geplant", `<div class="val" style="font-size:1.1rem">${esc(plan[0].name || "Einheit")}${plan.length > 1 ? ` <small>+${plan.length - 1}</small>` : ""}</div><div class="sub">${meta(plan[0]) || "&nbsp;"}</div>${plan[0].description ? `<div class="sub clamp">${esc(plan[0].description)}</div>` : ""}`, "span4")
+    ? tile("Heute geplant", `<div class="today"><div><div class="val" style="font-size:1.1rem">${esc(plan[0].name || "Einheit")}${plan.length > 1 ? ` <small>+${plan.length - 1}</small>` : ""}</div><div class="sub">${meta(plan[0]) || "&nbsp;"}</div>${plan[0].description ? `<div class="sub clamp">${esc(plan[0].description)}</div>` : ""}</div>${shown.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>`, "span4")
     : tile("Heute geplant", `<div class="val" style="font-size:1.1rem">Ruhetag</div><div class="sub">${next ? `Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}` : "keine Einheit geplant"}</div>`, "span4");
   const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)</div>`, "span15");
   const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15");
@@ -129,6 +132,7 @@ function renderCockpit(d) {
   if (g.daysToGo >= 0) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
   C.gauge($("ck-tsb"), { label: "TSB", min: -40, max: 30, value: tsb, ticks: [-40, -25, -10, 0, 15, 30], zones: [{ from: -40, to: TSB_BANDS.warn, cls: "bad" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: TSB_BANDS.ok, to: 30, cls: "ok" }] });
   C.gauge($("ck-acwr"), { label: "ACWR", min: 0.4, max: 1.8, value: acwr, dec: 2, ticks: [0.4, 0.8, 1.0, 1.3, 1.8], tickLabel: (t) => fmt(t, 1), zones: [{ from: 0.4, to: ACWR.lo, cls: "warn" }, { from: ACWR.lo, to: ACWR.hi, cls: "ok" }, { from: ACWR.hi, to: 1.8, cls: "bad" }] });
+  if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
   if (cur) C.meter($("ck-wload"), { label: "Wochenbelastung nach Sportart", segments: SPORT_ORDER.map((k) => ({ value: cur.bySport[k].load, color: `var(--s-${k})`, tip: `${SPORT_LABEL[k]}: ${fmt(cur.bySport[k].load)} Load` })), goal: cur.plannedLoad, max: Math.max(1, cur.load, cur.plannedLoad ?? 0) * 1.15 });
   for (const [key, unit, label, dec] of [["sleepHours", "h", "Schlaf", 1], ["hrv", "ms", "HRV", 0], ["restingHR", "bpm", "Ruhepuls", 0]]) C.spark($(`ck-${key}`), days7, map(key), { unit, label, dec });
   if (nDay && macroKcal > 0) C.meter($("ck-macros"), { label: "Makroverteilung", segments: macros.map((m) => ({ value: (m[1] ?? 0) * m[2], color: `var(--${m[3]})`, tip: `${m[0]}: ${fmt(m[1])} g` })), max: macroKcal });

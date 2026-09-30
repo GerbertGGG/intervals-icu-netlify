@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { buildWidget, buildWidgetDetail, buildWidgetSmall, handleWidgetRequest } from "../src/widget.js";
 import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
-import { parseCravings, findHipFlags } from "../src/dashboard-parse.js";
+import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
 import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
@@ -200,4 +200,11 @@ globalThis.fetch = async () => new Response("nope", { status: 500 });
 const failed = await buildDashboard(env, today);
 assert.equal(failed.sources.intervalsWellness.ok, false);
 assert.deepEqual(failed.wellness, []);
+{
+  const txt = "Diese Einheit soll vorbereiten.\nNach dem Einlaufen -kurz ABC.\n\n-15m 75% Pace\n\n3x\n-4m 95% Pace\n-2m 60% Pace\n\n-10m 55%";
+  const st = parseWorkoutSteps(txt, null);
+  assert.deepEqual(st.map((x) => [x.secs, x.pct]), [[900, 75], [240, 95], [120, 60], [240, 95], [120, 60], [240, 95], [120, 60], [600, 55]]);
+  assert.deepEqual(parseWorkoutSteps("nur Text", null), []);
+  assert.deepEqual(parseWorkoutSteps("", { steps: [{ duration: 600, pace: { value: 80, units: "%pace" } }, { reps: 2, steps: [{ duration: 60 }] }] }).map((x) => [x.secs, x.pct]), [[600, 80], [60, null], [60, null]]);
+}
 console.log("dashboard tests ok");

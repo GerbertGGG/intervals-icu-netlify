@@ -391,6 +391,25 @@
     host.replaceChildren(bar);
   }
 
+  /* ---------- Workout-Profil: Breite = Dauer, Höhe = Intensität (% der Schwelle) ---------- */
+  function workout(host, steps) {
+    const W = 480, H = 84, L = 2, R = 2, T = 4, B = 16;
+    const total = steps.reduce((n, b) => n + b.secs, 0);
+    const s = svg(W, H, "Aufbau der geplanten Einheit");
+    const lvl = (p) => (p == null ? "–" : p < 60 ? "locker" : p < 80 ? "Grundlage" : p < 95 ? "zügig" : p <= 105 ? "Schwelle" : "hart");
+    const col = (p) => (p == null ? "var(--plan)" : p < 60 ? "var(--plan)" : p < 80 ? "var(--s-swim)" : p < 95 ? "var(--accent)" : p <= 105 ? "var(--s-strength)" : "var(--s-bike)");
+    const x = (secs) => L + (W - L - R) * (secs / total);
+    let t = 0;
+    for (const b of steps) {
+      const h = Math.max(0.15, Math.min(1, ((b.pct ?? 70) - 40) / 90)) * (H - T - B);
+      const x0 = x(t), w = Math.max(1, x(t + b.secs) - x0 - 1);
+      s.append(title(el("rect", { x: x0, y: H - B - h, width: w, height: h, rx: 2, fill: col(b.pct) }), `${U.fmt(b.secs / 60, b.secs % 60 ? 1 : 0)} min${b.pct != null ? ` · ${U.fmt(b.pct)} % (${lvl(b.pct)})` : ""}`));
+      t += b.secs;
+    }
+    s.append(el("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, `${U.fmt(total / 60)} min`));
+    mount(host, s);
+  }
+
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();
