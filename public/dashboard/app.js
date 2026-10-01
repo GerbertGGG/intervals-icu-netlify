@@ -117,8 +117,17 @@ function renderCockpit(d) {
     : tile("Kalorien", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
   const macros = [["Eiweiß", prot[nDay], 4, "s-swim"], ["Kohlenhydrate", carbs[nDay], 4, "s-run"], ["Fett", fat[nDay], 9, "s-strength"]];
   const macroKcal = macros.reduce((n, m) => n + (m[1] ?? 0) * m[2], 0);
+  // Ziele direkt aus Yazio (Tagesziele ändern sich nicht pro Tag), ohne Ziel nur der Wert ohne Balken
+  const ng = d.nutritionGoals ?? {}, macroGoals = [ng.proteinG, ng.carbsG, ng.fatG];
+  const macroRow = (m, i) => {
+    const v = m[1], goal = macroGoals[i] ?? null, over = v != null && goal && v > goal * 1.1;
+    const pct = v != null && goal ? Math.min(100, (v / goal) * 100) : 0;
+    const rest = v != null && goal ? (over ? `+${fmt(v - goal)} drüber` : `noch ${fmt(Math.max(0, goal - v))}`) : "";
+    const share = v != null ? ` · ${fmt((v * m[2] / macroKcal) * 100)} % der kcal` : "";
+    return `<div class="mrow"><div class="mhead"><b>${m[0]}</b><span class="mval">${v != null ? fmt(v) : "–"}${goal ? ` <small>/ ${fmt(goal)} g</small>` : " <small>g</small>"}</span></div>${goal ? `<div class="mbar"><div style="width:${pct}%;background:${over ? "var(--bad)" : `var(--${m[3]})`}"></div></div>` : ""}<div class="sub">${[rest, share.slice(3)].filter(Boolean).join(" · ")}</div></div>`;
+  };
   const macroTile = tile(`Makros${dayNote}`, nDay && macroKcal > 0
-    ? `<div class="val">${prot[nDay] != null ? fmt(prot[nDay]) : "–"} <small>g Eiweiß</small></div><div id="ck-macros"></div><div class="dots">${macros.map((m) => `<span><i style="background:var(--${m[3]})"></i>${m[0]}${m[1] != null ? ` ${fmt(m[1])} g (${fmt((m[1] * m[2] / macroKcal) * 100)} %)` : ""}</span>`).join("")}</div>`
+    ? macros.map(macroRow).join("")
     : '<div class="sub">keine Daten</div>', "span3");
 
   $("cockpit").innerHTML = `
@@ -135,7 +144,6 @@ function renderCockpit(d) {
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
   if (cur) C.meter($("ck-wload"), { label: "Wochenbelastung nach Sportart", segments: SPORT_ORDER.map((k) => ({ value: cur.bySport[k].load, color: `var(--s-${k})`, tip: `${SPORT_LABEL[k]}: ${fmt(cur.bySport[k].load)} Load` })), goal: cur.plannedLoad, max: Math.max(1, cur.load, cur.plannedLoad ?? 0) * 1.15 });
   for (const [key, unit, label, dec] of [["sleepHours", "h", "Schlaf", 1], ["hrv", "ms", "HRV", 0], ["restingHR", "bpm", "Ruhepuls", 0]]) C.spark($(`ck-${key}`), days7, map(key), { unit, label, dec });
-  if (nDay && macroKcal > 0) C.meter($("ck-macros"), { label: "Makroverteilung", segments: macros.map((m) => ({ value: (m[1] ?? 0) * m[2], color: `var(--${m[3]})`, tip: `${m[0]}: ${fmt(m[1])} g` })), max: macroKcal });
   if (nDay && kcal[nDay] != null) C.meter($("ck-kcal"), { label: "Kalorien", value: kcal[nDay], goal: goal[nDay], max: Math.max(kcal[nDay], goal[nDay] ?? 0) * 1.15, unit: "kcal" });
 }
 

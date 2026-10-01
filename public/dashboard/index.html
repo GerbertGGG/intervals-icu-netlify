@@ -74,6 +74,12 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .today > div:first-child { flex: 1 1 260px; min-width: 0; }
 .wprofile { flex: 1 1 320px; max-width: 560px; }
+.mrow { display: flex; flex-direction: column; gap: 3px; }
+.mhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.mval { font-size: 1.3rem; font-weight: 650; line-height: 1.15; }
+.mval small { font-size: .8rem; font-weight: 500; color: var(--muted); }
+.mbar { height: 10px; border-radius: 5px; background: var(--line); overflow: hidden; }
+.mbar > div { height: 100%; }
 .dots { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: .8rem; }
 .dots span { display: inline-flex; align-items: center; gap: 4px; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
