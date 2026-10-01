@@ -130,27 +130,19 @@ const weekdayOf = (iso) => WEEKDAYS[new Date(iso + "T12:00:00").getDay()];
 
 /* ---------- Rennphase (zentral, eine Funktion) ---------- */
 // Schwellen in Tagen bis zum Rennen (Renntag = 0, danach negativ)
-const PHASE_DAYS = { taperFrom: 7, carbloadFrom: 2, recoveryDays: 3 };
-const REDUCED_PHASES = ["taper", "carbload"]; // bewusst reduzierte Trainingswoche
-// TODO: Platzhalter, noch nicht festgelegt - bitte durch die echten Tagesziele ersetzen (alle Werte je Tag).
-const NUTRITION_TARGETS = {
-  normal: { proteinG: 130, carbsG: 300, fatG: 74, kcal: 2400 },   // TODO Protein/Kohlenhydrate/Fett/Kalorien
-  taper: { proteinG: 130, carbsG: 300, fatG: 74, kcal: 2400 },    // TODO wie normal
-  carbload: { proteinG: 100, carbsG: 600, fatG: 70, kcal: 3200 }, // TODO Carb-Loading (g Kohlenhydrate/Tag), Fett/Protein
-  recovery: { proteinG: 140, carbsG: 350, fatG: 74, kcal: 2400 }, // TODO Protein/Kohlenhydrate/Fett/Kalorien
-};
-const PHASE_LABEL = { taper: "Taper", carbload: "Carb-Loading", recovery: "Regeneration" };
+const PHASE_DAYS = { taperFrom: 7, recoveryDays: 3 };
+const REDUCED_PHASES = ["taper"]; // bewusst reduzierte Trainingswoche
+const PHASE_LABEL = { taper: "Taper", recovery: "Regeneration" };
 // Renndistanz aus dem Namen des Ziels (Renndatum und Zielzeit kommen aus den Daten selbst)
 const raceKm = (name) => (/halb/i.test(name) ? 21.0975 : /marathon/i.test(name) ? 42.195 : /10\s*k/i.test(name) ? 10 : /5\s*k/i.test(name) ? 5 : 21.0975);
 function racePhase(daysToGo) {
   let name = "normal";
   if (daysToGo != null) {
     if (daysToGo > PHASE_DAYS.taperFrom) name = "normal";
-    else if (daysToGo > PHASE_DAYS.carbloadFrom) name = "taper";
-    else if (daysToGo >= 0) name = "carbload";
+    else if (daysToGo >= 0) name = "taper";
     else if (daysToGo >= -PHASE_DAYS.recoveryDays) name = "recovery";
   }
-  return { name, reduced: REDUCED_PHASES.includes(name), targets: NUTRITION_TARGETS[name], label: PHASE_LABEL[name] || null };
+  return { name, reduced: REDUCED_PHASES.includes(name), label: PHASE_LABEL[name] || null };
 }
 // Bereitschaftskreise: Skala ab 1 = bestmoeglich, niedrig ist gut. Farbe allein aus dem Wert.
 
@@ -272,7 +264,6 @@ function whyText(d, p, ph, v) {
   if (pu) return pu;
   if (d.goal && d.goal.daysToGo === 0) return "Renntag: gleichmäßig starten und das Tempo nicht überziehen.";
   if (ph.name === "recovery") return "Nach dem Rennen zählt Erholung. Nur locker bewegen, nichts erzwingen.";
-  if (ph.name === "carbload") return "Kurz und locker, dazu viele Kohlenhydrate. Die Speicher füllen sich, die Beine bleiben frisch.";
   if (ph.name === "taper") return "Der Umfang sinkt vor dem Rennen. Die Beine sollen frisch werden, nicht müde. Locker bleiben.";
   if (!p) return "Ruhetag: Erholung gehört zum Training. So kann der Reiz der letzten Tage wirken.";
   if (v.cls === "bad") return "Die Werte liegen schlechter als üblich. Die Einheit kürzen oder locker halten.";
@@ -664,24 +655,21 @@ function buildFitness(res) {
   return w;
 }
 
-// Ernaehrung (klein): normal/taper Protein, recovery Protein, carbload Kohlenhydrate gross; darunter Energie mit Balken
+// Ernaehrung (klein): Protein gross, darunter Energie mit Balken. Ziele immer aus Yazio.
 function buildFoodCard(res) {
-  const d = res.data, f = d.food, ph = racePhase(d.goal ? d.goal.daysToGo : null), t = ph.targets, IW = 134;
+  const d = res.data, f = d.food, IW = 134;
   const hasVals = (x) => x && [x.calories, x.protein, x.carbs, x.fat].some((v) => v != null);
   let td = f.days[f.days.length - 1] || {};
   const has = hasVals(td), prev = !has ? f.days.slice(0, -1).reverse().find(hasVals) : null;
   if (prev) td = prev;
-  const show = has || !!prev, yg = f.goals || {}, carb = ph.name === "carbload";
-  const pick = (yazio, phaseVal) => (carb ? phaseVal ?? yazio : yazio ?? phaseVal);
-  const big = carb ? { label: "Kohlenhydrate", v: td.carbs, goal: pick(yg.carbsG, t.carbsG) } : { label: "Protein", v: td.protein, goal: pick(yg.proteinG, t.proteinG) };
-  const kcalGoal = carb ? t.kcal : td.goal ?? yg.kcal ?? t.kcal;
+  const show = has || !!prev, yg = f.goals || {};
+  const big = { label: "Protein", v: td.protein, goal: yg.proteinG ?? null };
+  const kcalGoal = td.goal ?? yg.kcal ?? null;
   const w = cardWidget(), dim = !has;
   const head = w.addStack(); head.centerAlignContent();
   text(head, "Ern\u00e4hrung", 13, { color: COL.muted });
   head.addSpacer();
   if (prev) text(head, prev === f.days[f.days.length - 2] ? "gestern" : dateShort(prev.date), 11, { bold: true, color: COL.muted });
-  else if (ph.name === "taper" && d.goal && d.goal.daysToGo === PHASE_DAYS.carbloadFrom + 1) text(head, "Carbs ab morgen", 11, { bold: true, color: COL.race });
-  else if (ph.label) text(head, ph.label, 14, { bold: true, color: COL.race });
   w.addSpacer(1);
   text(w, show && big.v != null ? `${fmt(big.v)} g` : "\u2013", 36, { bold: true, color: dim ? COL.muted : COL.text });
   text(w, `${big.label}${big.goal ? ` \u00b7 Ziel ${fmt(big.goal)}` : ""}`, 13, { color: COL.muted });
@@ -720,7 +708,6 @@ function ringProgressImage(size, ratio, hex, alpha = 1) {
 
 function buildFoodMedium(res) {
   const d = res.data, f = d.food, W = widgetInnerWidth();
-  const g = d.goal, ph = racePhase(g ? g.daysToGo : null), t = ph.targets;
   const hasVals = (x) => x && [x.calories, x.protein, x.carbs, x.fat].some((v) => v != null);
   let td = f.days[f.days.length - 1] || {};
   const has = hasVals(td);
@@ -738,8 +725,6 @@ function buildFoodMedium(res) {
   const head = w.addStack(); head.centerAlignContent(); head.size = new Size(W, 0);
   text(head, stale ? "Ernährung gestern" : "Ernährung heute", 13, { color: COL.muted });
   head.addSpacer();
-  if (ph.name === "taper" && g && g.daysToGo === PHASE_DAYS.carbloadFrom + 1) chip(head, "Ab morgen mehr Kohlenhydrate", "#fb923c", 13, COL.race);
-  else if (ph.label && ph.name !== "taper") chip(head, ph.label, "#fb923c", 13, COL.race);
   w.addSpacer(6);
 
   if (!show) {
@@ -749,10 +734,9 @@ function buildFoodMedium(res) {
     m.addSpacer();
     w.addSpacer();
   } else {
-    // Ziele: Yazio, nur beim Carb-Loading gelten die Werte der Phase (siehe NUTRITION_TARGETS)
-    const yg = f.goals || {}, phaseWins = ph.name === "carbload";
-    const pick = (yazio, phaseVal) => (phaseWins ? phaseVal ?? yazio : yazio ?? phaseVal);
-    const kcalGoal = phaseWins ? t.kcal : td.goal ?? yg.kcal ?? t.kcal;
+    // Ziele immer aus Yazio, keine eigenen Platzhalter
+    const yg = f.goals || {};
+    const kcalGoal = td.goal ?? yg.kcal ?? null;
     const RS = 92, GAP = 14, RW = W - RS - GAP;
     const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = GAP;
     // Links: Kalorienring, Zahl und Ziel darin
@@ -764,9 +748,9 @@ function buildFoodMedium(res) {
     // Rechts: Protein, Kohlenhydrate, Fett als Balken (g / Ziel g); fehlende Werte als Text ohne Balken
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(RW, 0);
     const macros = [
-      { label: "Protein", v: td.protein, goal: pick(yg.proteinG, t.proteinG), hex: "#7ba3dc" },
-      { label: "Kohlenhydrate", v: td.carbs, goal: pick(yg.carbsG, t.carbsG), hex: "#7ba3dc" },
-      { label: "Fett", v: td.fat, goal: pick(yg.fatG, t.fatG), hex: "#7ba3dc" },
+      { label: "Protein", v: td.protein, goal: yg.proteinG ?? null, hex: "#7ba3dc" },
+      { label: "Kohlenhydrate", v: td.carbs, goal: yg.carbsG ?? null, hex: "#7ba3dc" },
+      { label: "Fett", v: td.fat, goal: yg.fatG ?? null, hex: "#7ba3dc" },
     ];
     macros.forEach((m, i) => {
       if (i) col.addSpacer(7);
