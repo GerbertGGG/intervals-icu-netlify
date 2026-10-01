@@ -2,11 +2,16 @@
 // (planned workouts, past activities, wellness) and the Yazio nutrition diary as
 // tools so a Claude chat can be added as a custom connector against this Worker,
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
-// second integrations.
+// second integrations. Die einzigen schreibenden Tools sind save_runalyze_snapshot und
+// save_studie: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 import { isValidAccessToken } from "./mcp-oauth.js";
 import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessRange } from "./intervals-client.js";
+import { hasKv, writeKvJson } from "./kv.js";
+import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
+import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -62,6 +67,48 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "save_runalyze_snapshot",
+    description:
+      "Schreibt den Runalyze-Snapshot (VDOT, Prognose, Rennen) fürs Dashboard. fetchedAt bei jedem Aufruf auf die aktuelle Zeit setzen. Nur Werte aus Runalyze übergeben, nichts erfinden.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+        vdot: { type: "number", description: "effectiveVO2max aus Runalyze get_calculations (optional)." },
+        prognosis: {
+          type: "array",
+          description: "Aus get_prognosis: distance -> distanceKm, prognosis_seconds -> seconds.",
+          items: { type: "object", properties: { distanceKm: { type: "number" }, seconds: { type: "number" } } },
+        },
+        races: {
+          type: "array",
+          description: "Aus get_historical_races: date, name, official_distance -> officialDistanceKm, official_time -> officialTimeSec.",
+          items: {
+            type: "object",
+            properties: { date: { type: "string" }, name: { type: "string" }, officialDistanceKm: { type: "number" }, officialTimeSec: { type: "number" } },
+          },
+        },
+      },
+      required: ["fetchedAt"],
+    },
+  },
+  {
+    name: "save_studie",
+    description: "Schreibt den Studien-Check der Woche fürs Dashboard (nur mit belastbarer Quelle).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+        text: { type: "string", description: "Text des Abschnitts, max. 6000 Zeichen." },
+        source: { type: "string", description: "Quelle (Autor/Journal/Jahr)." },
+        sourceUrl: { type: "string", description: "https-Link zur Quelle (optional)." },
+        week: { type: "string", description: "Datum YYYY-MM-DD (optional)." },
+        title: { type: "string", description: "Titel (optional)." },
+      },
+      required: ["fetchedAt", "text", "source"],
+    },
+  },
 ];
 
 function resolveRange(args, { pastDefaultDays, futureDefaultDays }) {
@@ -70,7 +117,17 @@ function resolveRange(args, { pastDefaultDays, futureDefaultDays }) {
   return { oldest, newest };
 }
 
+async function saveSnapshot(env, args, validate, kvKey) {
+  if (!hasKv(env)) throw new Error("KV nicht verfügbar");
+  const { value, error } = validate(args);
+  if (error) throw new Error(error);
+  await writeKvJson(env, kvKey, value);
+  return { ok: true, fetchedAt: value.fetchedAt };
+}
+
 async function callTool(env, name, args) {
+  if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
+  if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
   if (name === "get_planned_workouts") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 0, futureDefaultDays: 14 });
     return fetchIntervalsEvents(env, oldest, newest);
