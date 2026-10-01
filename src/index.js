@@ -12,6 +12,7 @@ import { isIntervalsEnabled } from "./kv.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
+import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { handleWidgetRequest } from "./widget.js";
 
 function getBerlinHourFromScheduledEvent(event) {
@@ -135,6 +136,9 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    // Runalyze-/Studien-Snapshots, die der Coaching-Task per GitHub-Branch liefert (siehe github-snapshot.js).
+    ctx.waitUntil(syncSnapshotsFromGithub(env));
+
     if (isYazioWindowBerlin(event)) {
       const yazioDay = isoDate(new Date());
       // Morning ticks (07:xx) also re-sync yesterday: entries added after the 23:58 run get picked up.
