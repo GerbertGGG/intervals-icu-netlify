@@ -4,19 +4,12 @@ main = "src/index.js"
 compatibility_date = "2025-11-11"
 workers_dev = true
 
-# Programm deaktiviert: Cron-Trigger bewusst leer, damit Cloudflare beim nächsten Deploy
-# alle bisherigen Scheduled-Trigger entfernt. Der Worker bleibt über HTTP erreichbar
-# (z. B. /sync manuell), aber scheduled() läuft nicht mehr automatisch.
-#
-# Vorheriger Zeitplan (zur Reaktivierung einfach wiederherstellen):
-# Alle 30 Minuten (05:00–20:59 UTC), damit 07:00 Berlin (Sommerzeit) sicher erfasst wird.
-# Das effektive Fenster bleibt durch die Berlin-Zeit-Prüfung im Worker auf 07:00–21:00 begrenzt.
+# Erster Eintrag: alle 15 Minuten (UTC 05:00-22:45, deckt 07:00-23:45 Berlin in Sommer- und
+# Winterzeit ab). Jeder Tick synct Yazio fuer heute (Ernaehrung ueber den Tag verfolgen);
+# der Intervals.icu-Sync laeuft weiter nur zu :00/:30 und nur 07:00-21:00 Berlin (index.js).
 # Zweiter Eintrag: Minute 58 in den UTC-Stunden 21 und 22, damit einer der beiden Ticks
-# unabhängig von Sommer-/Winterzeit auf 23:58 Berlin fällt (isNightlyYazioWindowBerlin in
-# index.js filtert den jeweils falschen Tick heraus). Dient ausschließlich dem einmaligen
-# täglichen Yazio-Ernährungs-Sync (siehe includeYazio in sync.js).
-# triggers = { crons = ["*/30 5-20 * * *", "58 21-22 * * *"] }
-triggers = { crons = [] }
+# unabhaengig von Sommer-/Winterzeit auf 23:58 Berlin faellt: letzter Yazio-Sync des Tages.
+triggers = { crons = ["*/15 5-22 * * *", "58 21-22 * * *"] }
 
 [[kv_namespaces]]
 binding = "KV"

@@ -114,11 +114,9 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
     }
 
-    // Yazio is only queried once per day (see the nightly-only cron in index.js), not
-    // on every 30-min daytime tick: by ~23:58 the day's diary is effectively final, so
-    // one fetch gets the same result at a fraction of the (unofficial, rate-limit-prone)
-    // API load. Best-effort either way: a login/rate-limit failure there must never
-    // break the rest of the (intervals.icu) sync for this day.
+    // Yazio is queried by the 15-min cron ticks for today only (see index.js), not as part
+    // of the 30-min multi-day Intervals sync. Best-effort: a login/rate-limit failure
+    // there must never break the rest of the (intervals.icu) sync for this day.
     let yazioDebug;
     if (includeYazio && hasYazioCredentials(env)) {
       try {
