@@ -263,14 +263,20 @@ function renderNutrition(d) {
   const kcal = map("calories"), any = days.some((x) => kcal[x] != null || map("carbs")[x] != null);
   if (!d.sources.intervalsWellness.ok) $("nutrition").innerHTML = '<div class="muted">Wellness nicht abrufbar.</div>';
   else if (!any) {
-    $("nutrition").innerHTML = '<div class="card" id="n-week" style="margin-bottom:12px"></div><div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird (Sync alle 15 Minuten). Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
+    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird (Sync alle 15 Minuten). Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
+    renderNutritionToday(d, map);
     renderNutritionWeek(d, map);
   } else {
     const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
-    $("nutrition").innerHTML = '<div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div></div>';
+    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div>';
+    renderNutritionToday(d, map);
     renderNutritionWeek(d, map);
+    const todayGoal = (v) => (v != null ? { [d.today]: v } : undefined);
+    const ng = d.nutritionGoals ?? {};
+    C.nutrition($("n-prot"), days, { values: map("protein"), goal: todayGoal(ng.proteinG), training, unit: "g", label: "Eiweiß je Tag", legend: "schwarze Marke = Ziel (nur heute) · Punkt = Trainingstag · schraffiert = keine Daten" });
+    C.nutrition($("n-fat"), days, { values: map("fat"), goal: todayGoal(ng.fatG), training, unit: "g", label: "Fett je Tag", legend: "schwarze Marke = Ziel (nur heute) · Punkt = Trainingstag · schraffiert = keine Daten" });
     C.nutrition($("n-kcal"), days, { values: kcal, goal: map("calorieGoal"), training, unit: "kcal", label: "Kalorien je Tag", legend: "schwarze Marke = Tagesziel · Punkt = Trainingstag · schraffiert = keine Daten" });
-    C.nutrition($("n-carbs"), days, { values: map("carbs"), training, unit: "g", label: "Kohlenhydrate je Tag", legend: "Punkt = Trainingstag · schraffiert = keine Daten" });
+    C.nutrition($("n-carbs"), days, { values: map("carbs"), goal: todayGoal(ng.carbsG), training, unit: "g", label: "Kohlenhydrate je Tag", legend: "schwarze Marke = Ziel (nur heute) · Punkt = Trainingstag · schraffiert = keine Daten" });
   }
 
   const all = d.cravings, usable = all.filter((c) => c.hour != null && c.strength != null), unreadable = all.length - usable.length;
@@ -283,6 +289,24 @@ function renderNutrition(d) {
   $("cravings-list").innerHTML = `<div class="muted">${all.length} Einträge in 8 Wochen${topTrig ? ` · häufigster Auslöser: ${esc(topTrig[0])} (${topTrig[1]}×)` : ""}${unreadable ? ` · ${unreadable} ohne lesbare Uhrzeit oder Stärke (nicht im Diagramm)` : ""}</div>
     <ul class="runs">${recent.map((c) => `<li><b>${fmtDate(c.date)} ${c.time ?? "–"}</b> · Stärke ${c.strength ?? "–"}${c.what ? " · " + esc(c.what) : ""}${c.before ? ` · davor ${esc(c.before)}` : ""}${c.trigger ? ` · Auslöser ${esc(c.trigger)}` : ""}</li>`).join("")}</ul>`;
   if (usable.length) C.cravings($("cravings-chart"), usable, maxS); else $("cravings-chart").innerHTML = '<div class="muted">Keine Einträge mit lesbarer Uhrzeit und Stärke.</div>';
+}
+
+/* Fortschritt heute: gegessen gegen Tagesziel. Kalorienziel = Yazio-Ziel plus Trainingsverbrauch (siehe sync.js),
+   Makro-Ziele direkt aus Yazio; ohne Ziel nur der Wert, kein Balken. */
+function renderNutritionToday(d, map) {
+  const t = d.today, g = d.nutritionGoals ?? {};
+  const rows = [
+    ["Kalorien", map("calories")[t], map("calorieGoal")[t] ?? g.kcal ?? null, "kcal", "var(--accent)"],
+    ["Eiweiß", map("protein")[t], g.proteinG ?? null, "g", "var(--s-swim)"],
+    ["Kohlenhydrate", map("carbs")[t], g.carbsG ?? null, "g", "var(--s-run)"],
+    ["Fett", map("fat")[t], g.fatG ?? null, "g", "var(--s-strength)"],
+  ];
+  const bar = ([label, v, goal, unit, color]) => {
+    const pct = v != null && goal ? Math.min(100, (v / goal) * 100) : 0;
+    const over = v != null && goal && v > goal * 1.1;
+    return `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;gap:8px"><b>${label}</b><span>${v != null ? fmt(v) : "–"}${goal ? ` von ${fmt(goal)}` : ""} ${unit}${v != null && goal ? ` · ${over ? "+" + fmt(v - goal) + " drüber" : "noch " + fmt(Math.max(0, goal - v))}` : ""}</span></div><div style="height:10px;border-radius:5px;background:var(--line);overflow:hidden"><div style="height:100%;width:${pct}%;background:${over ? "var(--bad)" : color}"></div></div></div>`;
+  };
+  $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3>${rows.map(bar).join("")}<div class="muted">Stand des letzten Syncs (alle 15 Minuten, Yazio).</div>`;
 }
 
 /* Übersicht der letzten 7 Tage: Tageswerte gegen Ziel plus Auffälligkeiten. Heute läuft noch und

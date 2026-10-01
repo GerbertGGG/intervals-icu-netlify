@@ -137,8 +137,10 @@ export default {
   async scheduled(event, env, ctx) {
     if (isYazioWindowBerlin(event)) {
       const yazioDay = isoDate(new Date());
+      // Morning ticks (07:xx) also re-sync yesterday: entries added after the 23:58 run get picked up.
+      const yazioFrom = getBerlinHourFromScheduledEvent(event) === 7 ? isoDate(new Date(Date.now() - 86400000)) : yazioDay;
       ctx.waitUntil(
-        syncRange(env, yazioDay, yazioDay, true, false, { includeYazio: true }).catch((e) => {
+        syncRange(env, yazioFrom, yazioDay, true, false, { includeYazio: true }).catch((e) => {
           console.error("yazio sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
         }),
       );

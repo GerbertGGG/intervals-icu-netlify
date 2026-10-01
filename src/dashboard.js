@@ -1,4 +1,5 @@
 import { json } from "./http-helpers.js";
+import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
@@ -388,5 +389,8 @@ export async function handleDashboardRequest(req, env) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
-  return json(await buildDashboard(env), 200, headers);
+  const dashboard = await buildDashboard(env);
+  // Tagesziele der Ernährung aus Yazio (best effort, in KV gecacht): fehlt der Zugang oder scheitert die Abfrage, bleibt es null.
+  const nutritionGoals = hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
+  return json({ ...dashboard, nutritionGoals }, 200, headers);
 }
