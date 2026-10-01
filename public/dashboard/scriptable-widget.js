@@ -725,6 +725,8 @@ function buildFoodMedium(res) {
   const head = w.addStack(); head.centerAlignContent(); head.size = new Size(W, 0);
   text(head, stale ? "Ernährung gestern" : "Ernährung heute", 13, { color: COL.muted });
   head.addSpacer();
+  // Abrufzeit: iOS aktualisiert Widgets nach eigenem Ermessen, so sieht man, wie alt die Anzeige ist
+  text(head, new Date(d.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }), 10, { color: COL.muted });
   w.addSpacer(6);
 
   if (!show) {
