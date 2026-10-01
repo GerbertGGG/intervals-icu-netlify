@@ -265,7 +265,8 @@ function renderNutrition(d) {
   else if (!any) $("nutrition").innerHTML = '<div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird. Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
   else {
     const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
-    $("nutrition").innerHTML = '<div class="grid"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div></div>';
+    $("nutrition").innerHTML = '<div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div></div>';
+    renderNutritionWeek(d, map);
     C.nutrition($("n-kcal"), days, { values: kcal, goal: map("calorieGoal"), training, unit: "kcal", label: "Kalorien je Tag", legend: "schwarze Marke = Tagesziel · Punkt = Trainingstag · schraffiert = keine Daten" });
     C.nutrition($("n-carbs"), days, { values: map("carbs"), training, unit: "g", label: "Kohlenhydrate je Tag", legend: "Punkt = Trainingstag · schraffiert = keine Daten" });
   }
@@ -280,6 +281,45 @@ function renderNutrition(d) {
   $("cravings-list").innerHTML = `<div class="muted">${all.length} Einträge in 8 Wochen${topTrig ? ` · häufigster Auslöser: ${esc(topTrig[0])} (${topTrig[1]}×)` : ""}${unreadable ? ` · ${unreadable} ohne lesbare Uhrzeit oder Stärke (nicht im Diagramm)` : ""}</div>
     <ul class="runs">${recent.map((c) => `<li><b>${fmtDate(c.date)} ${c.time ?? "–"}</b> · Stärke ${c.strength ?? "–"}${c.what ? " · " + esc(c.what) : ""}${c.before ? ` · davor ${esc(c.before)}` : ""}${c.trigger ? ` · Auslöser ${esc(c.trigger)}` : ""}</li>`).join("")}</ul>`;
   if (usable.length) C.cravings($("cravings-chart"), usable, maxS); else $("cravings-chart").innerHTML = '<div class="muted">Keine Einträge mit lesbarer Uhrzeit und Stärke.</div>';
+}
+
+/* Übersicht der letzten 7 Tage: Tageswerte gegen Ziel plus Auffälligkeiten. Heute läuft noch und
+   zählt nicht in Auffälligkeiten und Schnitt. Schwellen sind grobe Faustwerte, kein Ernährungsplan. */
+const NUT = { over: 1.1, under: 0.75, proteinShare: 0.2 };
+function renderNutritionWeek(d, map) {
+  const days = dayRange(addDays(d.today, -6), d.today);
+  const kcal = map("calories"), goal = map("calorieGoal"), prot = map("protein"), carbs = map("carbs"), fat = map("fat");
+  const cravByDay = {};
+  for (const c of d.cravings) (cravByDay[c.date] ??= []).push(c);
+  const findings = [];
+  const rows = days.map((x) => {
+    const k = kcal[x], g = goal[x], isToday = x === d.today;
+    const diff = k != null && g != null ? k - g : null;
+    const share = k ? ((prot[x] ?? 0) * 4) / k : null;
+    let cls = "", flag = "";
+    if (isToday) flag = k != null ? "läuft noch" : "";
+    else if (k == null) { flag = "kein Tagebuch"; cls = "warn"; findings.push(`${fmtDate(x)}: nichts eingetragen – ohne Tagebuch sind Schwankungen nicht sichtbar.`); }
+    else {
+      if (g != null && k > g * NUT.over) { flag = "über Ziel"; cls = "bad"; findings.push(`${fmtDate(x)}: ${fmt(k - g)} kcal über dem Ziel (${fmt(k)} von ${fmt(g)}).`); }
+      else if (g != null && k < g * NUT.under) { flag = "deutlich drunter"; cls = "warn"; findings.push(`${fmtDate(x)}: nur ${fmt(k)} von ${fmt(g)} kcal – starkes Defizit, das Heißhunger begünstigt${(cravByDay[addDays(x, 1)] ?? []).length ? " (am Folgetag gab es Heißhunger)" : ""}.`); }
+      else if (g != null) { flag = "im Rahmen"; cls = "ok"; }
+      if (share != null && share < NUT.proteinShare) findings.push(`${fmtDate(x)}: Eiweiß nur ${fmt(share * 100)} % der Kalorien (${fmt(prot[x] ?? 0)} g) – eher wenig.`);
+    }
+    const cr = cravByDay[x]?.length ?? 0;
+    return `<tr><td>${weekday(x)} ${fmtDate(x)}</td><td>${k != null ? fmt(k) : "–"}</td><td>${g != null ? fmt(g) : "–"}</td><td>${diff != null ? (diff > 0 ? "+" : "") + fmt(diff) : "–"}</td><td>${prot[x] != null ? fmt(prot[x]) : "–"}</td><td>${carbs[x] != null ? fmt(carbs[x]) : "–"}</td><td>${fat[x] != null ? fmt(fat[x]) : "–"}</td><td>${cr ? cr + "×" : ""}</td><td>${flag ? `<span class="badge ${cls}">${flag}</span>` : ""}</td></tr>`;
+  });
+  const done = days.filter((x) => x !== d.today && kcal[x] != null);
+  const avg = (m) => { const v = done.map((x) => m[x]).filter((v) => v != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const gDone = done.filter((x) => goal[x] != null);
+  const bal = gDone.length ? gDone.reduce((n, x) => n + kcal[x] - goal[x], 0) : null;
+  const lateCrav = days.flatMap((x) => cravByDay[x] ?? []).filter((c) => c.hour != null && c.hour >= 20).length;
+  const total = days.reduce((n, x) => n + (cravByDay[x]?.length ?? 0), 0);
+  if (total) findings.push(`Heißhunger: ${total}× in 7 Tagen${lateCrav ? `, davon ${lateCrav}× ab 20 Uhr` : ""}.`);
+  $("n-week").innerHTML = `<h3>Letzte 7 Tage</h3>
+    <div style="overflow-x:auto"><table><thead><tr><th>Tag</th><th>kcal</th><th>Ziel</th><th>Diff</th><th>Eiweiß g</th><th>KH g</th><th>Fett g</th><th>HH</th><th></th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
+    <div class="muted" style="margin-top:8px">${done.length ? `Schnitt abgeschlossener Tage (${done.length}): ${fmt(avg(kcal))} kcal, ${avg(prot) != null ? fmt(avg(prot)) : "–"} g Eiweiß${bal != null ? ` · Bilanz gegen Ziel ${bal > 0 ? "+" : ""}${fmt(bal)} kcal` : ""}` : "Noch kein abgeschlossener Tag mit Daten."} · Heute zählt noch nicht mit.</div>
+    ${findings.length ? `<div class="notice" style="margin-top:8px"><b>Was auffällt</b><ul class="runs">${findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>` : done.length ? '<div class="notice ok" style="margin-top:8px">Nichts Auffälliges in den abgeschlossenen Tagen.</div>' : ""}
+    <div class="muted" style="margin-top:6px">Faustwerte: über Ziel = mehr als ${Math.round((NUT.over - 1) * 100)} % drüber, deutlich drunter = unter ${Math.round(NUT.under * 100)} % des Ziels, wenig Eiweiß = unter ${NUT.proteinShare * 100} % der Kalorien. HH = Heißhunger-Einträge.</div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte ---------- */
