@@ -199,23 +199,38 @@
     mount(host, s);
   }
 
+  /* Beschriftungen als "Fähnchen" in Zeilen über der Achse: Text steht rechts neben seiner Hilfslinie (am rechten Rand links),
+     von rechts nach links vergeben, damit keine Hilfslinie durch einen fremden Text läuft */
+  function labelLanes(items, W, cw = 5.8) {
+    const placed = [];
+    for (const it of [...items].sort((a, b) => b.x - a.x)) {
+      const w = it.text.length * cw, end = it.x + w + 8 > W - 2;
+      const l = end ? it.x - w - 8 : it.x - 2, r = end ? it.x + 2 : it.x + w + 8;
+      const hit = placed.filter((p) => p.l < r && l < p.r);
+      placed.push({ ...it, anchor: end ? "end" : "start", tx: end ? it.x - 5 : it.x + 5, l, r, lane: hit.length ? Math.max(...hit.map((p) => p.lane)) + 1 : 0 });
+    }
+    return placed;
+  }
+
   /* ---------- Zielkorridor Halbmarathon ---------- */
   function corridor(host, o) {
-    const W = 480, H = 170, L = 30, R = 30, AY = 96;
+    const W = 340, L = 20, R = 20, LH = 15;
     const all = [o.goal, ...o.estimates.map((e) => e.seconds)];
     const lo = Math.floor((Math.min(...all) - 240) / 300) * 300, hi = Math.ceil((Math.max(...all) + 240) / 300) * 300;
     const x = (v) => L + (W - L - R) * ((v - lo) / (hi - lo));
+    const labels = labelLanes(o.estimates.map((e) => ({ x: x(e.seconds), text: `${e.label} ${U.fmtTime(e.seconds)}`, e })), W);
+    const AY = 28 + (Math.max(...labels.map((l) => l.lane)) + 1) * LH + 8, H = AY + 66;
     const s = svg(W, H, "Halbmarathon-Zeiten im Vergleich zum Ziel");
-    s.append(el("rect", { x: L, y: AY - 30, width: x(o.goal) - L, height: 60, fill: "var(--ok)", "fill-opacity": 0.1 }), el("text", { x: L + 4, y: AY + 44 }, "schneller als Ziel"));
+    s.append(el("rect", { x: L, y: AY - 10, width: Math.max(0, x(o.goal) - L), height: 20, fill: "var(--ok)", "fill-opacity": 0.12 }));
     s.append(el("line", { x1: L, x2: W - R, y1: AY, y2: AY, class: "axis", "stroke-width": 2 }));
     for (let t = lo; t <= hi; t += 300) s.append(el("line", { x1: x(t), x2: x(t), y1: AY - 4, y2: AY + 4, class: "axis" }), el("text", { x: x(t), y: AY + 18, "text-anchor": "middle" }, `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}`));
-    s.append(el("line", { x1: x(o.goal), x2: x(o.goal), y1: AY - 36, y2: AY + 30, stroke: "var(--accent)", "stroke-width": 2 }), el("text", { x: x(o.goal), y: AY + 60, "text-anchor": "middle", style: "fill:var(--accent);font-weight:700;font-size:12px" }, `Ziel ${U.fmtTime(o.goal)}`));
-    [...o.estimates].sort((a, b) => a.seconds - b.seconds).forEach((e, i) => {
-      const up = 22 + (i % 3) * 20;
-      s.append(el("line", { x1: x(e.seconds), x2: x(e.seconds), y1: AY - up + 4, y2: AY, stroke: "var(--muted)" }));
-      s.append(title(el("circle", { cx: x(e.seconds), cy: AY, r: 5, fill: e.kind === "prognosis" ? "var(--card)" : "var(--muted)", stroke: "var(--muted)", "stroke-width": 2 }), `${e.label}: ${U.fmtTime(e.seconds)}`));
-      s.append(el("text", { x: x(e.seconds), y: AY - up, "text-anchor": "middle" }, `${e.label} ${U.fmtTime(e.seconds)}`));
-    });
+    s.append(el("line", { x1: x(o.goal), x2: x(o.goal), y1: AY - 12, y2: AY + 30, stroke: "var(--accent)", "stroke-width": 2 }), el("text", { x: x(o.goal) + 6, y: AY + 46, style: "fill:var(--accent);font-weight:700;font-size:12px" }, `Ziel ${U.fmtTime(o.goal)}`), el("text", { x: x(o.goal) - 6, y: AY + 46, "text-anchor": "end", style: "fill:var(--ok)" }, "schneller ←"));
+    for (const l of labels) {
+      const e = l.e, ty = AY - 14 - l.lane * LH;
+      s.append(el("line", { x1: l.x, x2: l.x, y1: ty + 3, y2: AY, stroke: "var(--muted)" }));
+      s.append(title(el("circle", { cx: l.x, cy: AY, r: 5, fill: e.kind === "prognosis" ? "var(--card)" : "var(--muted)", stroke: "var(--muted)", "stroke-width": 2 }), `${e.label}: ${U.fmtTime(e.seconds)}`));
+      s.append(el("text", { x: l.tx, y: ty, "text-anchor": l.anchor, class: "halo" }, l.text));
+    }
     mount(host, s);
   }
 
@@ -243,14 +258,19 @@
 
   /* ---------- Pace-Skala (VDOT-Zonen und Ziel-Pace) ---------- */
   function paceRuler(host, zones, goalPace) {
-    const W = 480, H = 150, L = 20, R = 20, AY = 70;
+    const W = 340, L = 20, R = 20, LH = 15;
     const lo = Math.floor((Math.min(goalPace, zones[0].sec) - 15) / 15) * 15, hi = Math.ceil((Math.max(goalPace, zones[zones.length - 1].sec) + 15) / 15) * 15;
     const x = (v) => L + (W - L - R) * ((v - lo) / (hi - lo));
+    const labels = labelLanes(zones.map((z) => ({ x: x(z.sec), text: `${z.label} ${U.pace(z.sec)}` })), W);
+    const AY = 16 + (Math.max(...labels.map((l) => l.lane)) + 1) * LH + 8, H = AY + 78;
     const s = svg(W, H, "Trainingspaces und Ziel-Pace");
     s.append(el("line", { x1: L, x2: W - R, y1: AY, y2: AY, class: "axis", "stroke-width": 2 }));
     for (let v = Math.ceil(lo / 30) * 30; v <= hi; v += 30) s.append(el("line", { x1: x(v), x2: x(v), y1: AY - 4, y2: AY + 4, class: "axis" }), el("text", { x: x(v), y: AY + 18, "text-anchor": "middle" }, U.pace(v)));
-    zones.forEach((z, i) => { const up = i % 2 === 0 ? 24 : 48; s.append(el("line", { x1: x(z.sec), x2: x(z.sec), y1: AY - up + 4, y2: AY, stroke: "var(--muted)" }), el("circle", { cx: x(z.sec), cy: AY, r: 4, fill: "var(--muted)" }), el("text", { x: x(z.sec), y: AY - up, "text-anchor": "middle" }, `${z.label} ${U.pace(z.sec)}`)); });
-    s.append(el("path", { d: `M${x(goalPace)},${AY + 6} l-6,10 h12 z`, fill: "var(--accent)" }), el("text", { x: x(goalPace), y: AY + 42, "text-anchor": "middle", style: "fill:var(--text);font-weight:700;font-size:12px" }, `Ziel ${U.pace(goalPace)}`), el("text", { x: W / 2, y: H - 4, "text-anchor": "middle" }, "Pace in min/km (links schneller)"));
+    for (const l of labels) {
+      const ty = AY - 14 - l.lane * LH;
+      s.append(el("line", { x1: l.x, x2: l.x, y1: ty + 3, y2: AY, stroke: "var(--muted)" }), el("circle", { cx: l.x, cy: AY, r: 4, fill: "var(--muted)" }), el("text", { x: l.tx, y: ty, "text-anchor": l.anchor, class: "halo" }, l.text));
+    }
+    s.append(el("path", { d: `M${x(goalPace)},${AY + 24} l-6,10 h12 z`, fill: "var(--accent)" }), el("text", { x: x(goalPace), y: AY + 50, "text-anchor": "middle", style: "fill:var(--text);font-weight:700;font-size:12px" }, `Ziel ${U.pace(goalPace)}`), el("text", { x: W / 2, y: H - 4, "text-anchor": "middle" }, "Pace in min/km (links schneller)"));
     mount(host, s);
   }
 
