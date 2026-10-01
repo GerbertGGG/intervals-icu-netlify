@@ -262,8 +262,10 @@ function renderNutrition(d) {
   const map = (key) => Object.fromEntries(d.wellness.map((w) => [w.date, w[key]]));
   const kcal = map("calories"), any = days.some((x) => kcal[x] != null || map("carbs")[x] != null);
   if (!d.sources.intervalsWellness.ok) $("nutrition").innerHTML = '<div class="muted">Wellness nicht abrufbar.</div>';
-  else if (!any) $("nutrition").innerHTML = '<div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird. Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
-  else {
+  else if (!any) {
+    $("nutrition").innerHTML = '<div class="card" id="n-week" style="margin-bottom:12px"></div><div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird (Sync alle 15 Minuten). Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
+    renderNutritionWeek(d, map);
+  } else {
     const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
     $("nutrition").innerHTML = '<div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div></div>';
     renderNutritionWeek(d, map);
