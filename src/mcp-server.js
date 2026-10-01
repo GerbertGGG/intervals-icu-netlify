@@ -123,11 +123,12 @@ function rpcError(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-export async function handleMcpRequest(req, url, env) {
+async function handleMcpRequestInner(req, url, env, info) {
   if (req.method === "GET") return new Response("MCP endpoint requires POST", { status: 405 });
 
   const authMatch = (req.headers.get("Authorization") || "").match(/^Bearer\s+(.+)$/i);
   const token = authMatch ? authMatch[1] : null;
+  info.hasToken = Boolean(token);
   if (!(await isValidAccessToken(env, token))) {
     return json({ error: "unauthorized" }, 401, {
       "WWW-Authenticate": `Bearer resource_metadata="${url.origin}/.well-known/oauth-protected-resource"`,
@@ -142,6 +143,7 @@ export async function handleMcpRequest(req, url, env) {
   }
 
   const { id, method, params } = body || {};
+  info.rpcMethod = method;
 
   if (method === "initialize") {
     return json(
@@ -178,4 +180,18 @@ export async function handleMcpRequest(req, url, env) {
   }
 
   return json(rpcError(id, -32601, `Method not found: ${method}`));
+}
+
+// Diagnostic log line per MCP request (visible in Workers Logs): lets us see which
+// RPC method the client sent and which HTTP status the Worker answered with, since
+// the Cloudflare log list only shows "Ok" for the Worker outcome, not the status.
+export async function handleMcpRequest(req, url, env) {
+  const info = { httpMethod: req.method, hasToken: false, rpcMethod: null };
+  let res;
+  try {
+    res = await handleMcpRequestInner(req, url, env, info);
+    return res;
+  } finally {
+    console.log("mcp", JSON.stringify({ ...info, status: res?.status ?? "exception", protocol: req.headers.get("mcp-protocol-version"), ua: req.headers.get("user-agent") }));
+  }
 }
