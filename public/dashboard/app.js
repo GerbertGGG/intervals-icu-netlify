@@ -8,7 +8,7 @@ const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
 const HISTORY_DAYS = 56;
 const SLEEP_TARGET_H = 7.5; // Richtwert je Nacht, kein persönlich kalibrierter Wert
 const isTaper = (g) => g.daysToGo >= 0 && g.daysToGo <= 14;
-const hm = (secs) => fmtTime(Math.round(secs / 60) * 60).replace(/:00$/, ""); // h:mm, Minutengenau
+const hm = (secs) => (secs < 3600 ? fmtTime(secs) : fmtTime(Math.round(secs / 60) * 60).replace(/:00$/, "")); // ab 1 h als h:mm, darunter m:ss
 // Schlafkonto: die zwei letzten Nächte bis heute (Schlaf eines Tages = Nacht auf diesen Morgen). Fehlende Nacht zählt nie als gut.
 function sleepAccount(d) {
   const by = Object.fromEntries(d.wellness.map((w) => [w.date, w.sleepHours]));
@@ -177,8 +177,50 @@ function raceScenarios(d) {
   return { km, lo, hi, noLong, scenarios, goal: g.targetTimeSecs };
 }
 
+// Checkliste: Häkchen bleiben im Browser (localStorage), je Renntermin getrennt.
+function renderChecklist(d, items) {
+  const key = "rennplan-check-" + d.goal.date;
+  let done = {}; try { done = JSON.parse(localStorage.getItem(key) || "{}"); } catch {}
+  $("checklist").innerHTML = items.map((t, i) => `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0"><input type="checkbox" data-i="${i}"${done[i] ? " checked" : ""}> <span>${esc(t)}</span></label>`).join("");
+  $("checklist").onchange = (e) => { done[e.target.dataset.i] = e.target.checked; try { localStorage.setItem(key, JSON.stringify(done)); } catch {} };
+}
+
+/* Triathlon: Ziele je Disziplin (Eintrag hat Vorrang vor Vorschlag aus FTP/CSS), Marken je Disziplin, Verpflegung nach Faustwert.
+   Wechselzeiten sind nicht eingerechnet. */
+function renderTriRennplan(d, box) {
+  const g = d.goal, T = g.triathlon, tg = T.targets ?? {};
+  box.hidden = false;
+  const tag = (x) => (x?.source === "vorschlag" ? ' <small class="muted">(Vorschlag)</small>' : "");
+  const miss = '<span class="muted">fehlt</span>';
+  const sw = tg.swim, b = tg.bike, r = tg.run;
+  const rows = [
+    [`Schwimmen ${fmt(T.swimKm, 2)} km`, sw ? `<b>${hm(sw.timeSecs)}</b>${sw.timeSecs >= 3600 ? ` <small class="muted">${fmtTime(sw.timeSecs)}</small>` : ""}` : miss, sw ? `${paceLabel(sw.pacePer100m)} /100 m${tag(sw)}` : "CSS fehlt"],
+    [`Rad ${fmt(T.bikeKm)} km`, b?.timeSecs ? `<b>${hm(b.timeSecs)}</b> <small class="muted">${fmtTime(b.timeSecs)}</small>` : miss, b ? [b.watts ? (b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)} W` : `${fmt(b.watts)} W`) : "", b.speedKmh ? `${fmt(b.speedKmh, 1)} km/h` : ""].filter(Boolean).join(" · ") + tag(b) : "FTP fehlt"],
+    [`Laufen ${fmt(T.runKm, 1)} km`, r ? `<b>${hm(r.timeSecs)}</b> <small class="muted">${fmtTime(r.timeSecs)}</small>` : miss, r ? `${paceLabel(r.pacePerKm)} min/km` : "in der Beschreibung: „Lauf 1:55:00“"],
+  ];
+  const known = [sw?.timeSecs, b?.timeSecs, r?.timeSecs], all = known.every((x) => x != null), sum = known.reduce((a, x) => a + (x ?? 0), 0);
+  const total = g.totalTargetSecs;
+  $("staffel").innerHTML = `${total ? `<div class="big" style="font-size:1.4rem">${hm(total)}</div><div class="muted">Gesamtziel</div>` : '<div class="muted">Kein Gesamtziel hinterlegt.</div>'}
+    <div class="scroll"><table class="mini" style="margin-top:8px"><thead><tr><th></th><th>Zeit</th><th>Pace / Leistung</th></tr></thead><tbody>${rows.map((x) => `<tr><td><b>${x[0]}</b></td><td>${x[1]}</td><td>${x[2]}</td></tr>`).join("")}</tbody></table></div>
+    ${all && total ? `<div class="${sum + 120 > total ? "notice" : "muted"}" style="margin-top:8px">Summe der Disziplinen ${fmtTime(sum)} ${sum > total ? `liegt ${hm(sum - total)} über dem Gesamtziel` : `plus Wechselzeiten unter dem Gesamtziel`}.</div>` : !all ? '<div class="muted" style="margin-top:8px">Für eine Summe fehlen Zeitziele. In die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 3:00:00“, „Lauf 1:55:00“.</div>' : ""}
+    <div class="muted">Vorschläge sind Faustwerte aus FTP und Schwimmschwelle, kein Trainingsplan. Wechselzeiten sind nicht eingerechnet.</div>`;
+
+  const marks = (km, step, secs) => { const out = []; for (let m = step; m < km - 0.01; m += step) out.push(m); out.push(km); return out.map((m) => `<tr><td>${m === km ? fmt(m, m % 1 ? 1 : 0) : m} km</td><td>${secs ? fmtTime(Math.round(secs * (m / km))) : "–"}</td></tr>`).join(""); };
+  const part = (title, km, step, secs) => `<h3 style="margin-top:8px">${title}</h3><table class="mini"><tbody>${marks(km, step, secs)}</tbody></table>`;
+  const gelKm = []; if (b?.timeSecs) for (let t = 40 * 60; t < b.timeSecs - 10 * 60; t += 40 * 60) gelKm.push(fmt(T.bikeKm * (t / b.timeSecs), 0));
+  $("splits").innerHTML = `<div class="scroll"><h3>Schwimmen</h3><table class="mini"><tbody>${(() => { const m = T.swimKm * 1000, out = []; for (let x = 500; x < m - 1; x += 500) out.push(x); out.push(m); return out.map((x) => `<tr><td>${fmt(x)} m</td><td>${sw ? fmtTime(Math.round(sw.pacePer100m * x / 100)) : "–"}</td></tr>`).join(""); })()}</tbody></table>
+    ${b?.timeSecs ? part("Rad", T.bikeKm, T.bikeKm >= 60 ? 30 : 10, b.timeSecs) : '<h3 style="margin-top:8px">Rad</h3><div class="muted">Keine Zielzeit, daher keine Marken. Nach Leistung fahren; Zeit in die Beschreibung schreiben („Rad 3:00:00“).</div>'}${part("Laufen", T.runKm, T.runKm > 10 ? 5 : 2.5, r?.timeSecs)}</div>
+    <div style="margin-top:8px"><b>Verpflegung</b> <span class="muted">(Faustwerte)</span>
+    <div>Rad: ${gelKm.length ? `Kohlenhydrate etwa alle 40 min, bei km ${gelKm.join(", ")}.` : "Kohlenhydrate etwa alle 40 min."} Laufen: Gel/Getränk etwa alle 40 min, Wasser an den Stationen.</div>
+    <div class="muted">Richtwert Rad 60–90 g, Laufen 30–60 g Kohlenhydrate pro Stunde; nur Bewährtes aus dem Training verwenden.</div></div>`;
+
+  renderChecklist(d, ["Startunterlagen, Startzeit und Anreise geprüft", "Wetter und Wassertemperatur geprüft, Neoprenpflicht klären", "Rad gewartet, Reifendruck, Ersatzschlauch und Werkzeug", "Wechselzone: Material je Disziplin sortiert, Wechselplätze angeschaut", "Gels, Riegel und Getränke nach Plan eingepackt", "Leistungs- und Pace-Plan (Rad Watt, Lauf Splits) auf die Uhr", "Frühstück 2–3 h vor dem Start geplant", "Schlaf: zwei Nächte vor dem Rennen früh ins Bett"]);
+}
+
 function renderRennplan(d) {
-  const sc = raceScenarios(d), box = $("rennplan");
+  const box = $("rennplan");
+  if (d.goal.triathlon && d.goal.daysToGo >= 0) return renderTriRennplan(d, box);
+  const sc = raceScenarios(d);
   if (!sc) { box.hidden = true; return; }
   box.hidden = false;
   const note = { A: "nur bei perfektem Tag", B: "realistisch", C: "sicher" };
@@ -198,12 +240,7 @@ function renderRennplan(d) {
   $("splits").innerHTML = `<div class="scroll"><table class="mini"><thead><tr><th>Marke</th>${sc.scenarios.map((x) => `<th>${label(x)}</th>`).join("")}</tr></thead><tbody>${splitRows}</tbody></table></div>
     <div style="margin-top:8px"><b>Verpflegung</b> <span class="muted">(Faustwert nach ${label(ref)}-Pace)</span><div>${gelKm.length ? `Kohlenhydrate (Gel/Getränk) etwa alle 40 min: bei km ${gelKm.join(", ")}.` : "Rennen unter 50 min: keine Verpflegung nötig."} Dazu Wasser an den Verpflegungsstellen.</div><div class="muted">Richtwert 30–60 g Kohlenhydrate pro Stunde; nur Bewährtes aus dem Training verwenden.</div></div>`;
 
-  // Checkliste: Häkchen bleiben im Browser (localStorage), je Renntermin getrennt.
-  const key = "rennplan-check-" + d.goal.date;
-  let done = {}; try { done = JSON.parse(localStorage.getItem(key) || "{}"); } catch {}
-  const items = ["Startnummer, Startzeit und Anreise geprüft", "Wetter geprüft, Kleidung und Schuhe festgelegt", "Gels und Getränk nach Plan eingepackt", "Frühstück 2–3 h vor dem Start geplant", "Pace-Plan (Splits) aufs Handgelenk oder in die Uhr", "Schlaf: zwei Nächte vor dem Rennen früh ins Bett"];
-  $("checklist").innerHTML = items.map((t, i) => `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0"><input type="checkbox" data-i="${i}"${done[i] ? " checked" : ""}> <span>${esc(t)}</span></label>`).join("");
-  $("checklist").onchange = (e) => { done[e.target.dataset.i] = e.target.checked; try { localStorage.setItem(key, JSON.stringify(done)); } catch {} };
+  renderChecklist(d, ["Startnummer, Startzeit und Anreise geprüft", "Wetter geprüft, Kleidung und Schuhe festgelegt", "Gels und Getränk nach Plan eingepackt", "Frühstück 2–3 h vor dem Start geplant", "Pace-Plan (Splits) aufs Handgelenk oder in die Uhr", "Schlaf: zwei Nächte vor dem Rennen früh ins Bett"]);
 }
 
 /* ---------- 3 · Form: Longrun-Tracker ---------- */
