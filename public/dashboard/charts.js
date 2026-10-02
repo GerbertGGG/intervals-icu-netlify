@@ -114,27 +114,6 @@
     mount(host, s);
   }
 
-  /* ---------- Anteilsleisten je Woche ---------- */
-  function shares(host, weeks, sports, names) {
-    const W = 480, rowH = 20, L = 64, R = 8, H = weeks.length * rowH + 22;
-    const s = svg(W, H, "Anteil der Sportarten an der Wochenbelastung");
-    weeks.forEach((w, i) => {
-      const total = sports.reduce((a, k) => a + w.by[k], 0), y = 4 + i * rowH;
-      s.append(el("text", { x: L - 6, y: y + 12, "text-anchor": "end" }, w.label));
-      if (!total) { s.append(el("rect", { x: L, y, width: W - L - R, height: 14, fill: "url(#hatch)", stroke: "var(--line)" })); return; }
-      let acc = 0;
-      for (const k of sports) {
-        const v = w.by[k]; if (!v) continue;
-        const bw = ((W - L - R) * v) / total;
-        s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--s-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} TSS)`));
-        acc += v;
-      }
-    });
-    hatch(s);
-    s.append(el("text", { x: L, y: H - 6 }, "0 %"), el("text", { x: W - R, y: H - 6, "text-anchor": "end" }, "100 % der Wochen-TSS"));
-    mount(host, s);
-  }
-
   /* ---------- Formkurve: CTL/ATL und TSB bis zum Renntag ---------- */
   function form(host, o) {
     const W = 880, H = 300, L = 40, R = 74, T1 = 22, B1 = 158, T2 = 182, B2 = 268;
@@ -258,28 +237,6 @@
     for (const e of ends) { const ty = Math.max(e.py + 4, prev + 13); prev = ty; s.append(el("text", { x: W - R + 6, y: ty, style: `fill:${e.l.color};font-weight:700` }, e.l.label)); }
     const n = Math.min(rows.length, 5);
     for (let i = 0; i < n; i++) { const r = rows[n === 1 ? 0 : Math.round((i * (rows.length - 1)) / (n - 1))]; s.append(el("text", { x: x(r.date), y: H - 2, "text-anchor": i === n - 1 && n > 1 ? "end" : i === 0 && n > 1 ? "start" : "middle" }, U.fmtDate(r.date))); }
-    mount(host, s);
-  }
-
-  /* ---------- Bestzeiten und Prognosen als Pace je Distanz ---------- */
-  function records(host, rows, goalPaceSec) {
-    const W = 480, H = 250, L = 48, R = 16, T = 26, B = 40;
-    const paces = rows.flatMap((r) => [r.bestPace, r.progPace]).filter((v) => v != null).concat(goalPaceSec ?? []);
-    const lo = Math.floor((Math.min(...paces) - 15) / 15) * 15, hi = Math.ceil((Math.max(...paces) + 15) / 15) * 15;
-    const y = (v) => T + (H - T - B) * ((v - lo) / (hi - lo)); // schneller = oben
-    const s = svg(W, H, "Bestzeiten und Prognosen als Pace");
-    for (let v = Math.ceil(lo / 30) * 30; v <= hi; v += 30) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.pace(v)));
-    s.append(el("text", { x: 4, y: 12 }, "min/km (schneller = oben)"));
-    if (goalPaceSec) s.append(el("line", { x1: L, x2: W - R, y1: y(goalPaceSec), y2: y(goalPaceSec), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(goalPaceSec) - 5, "text-anchor": "end", style: "fill:var(--accent);font-weight:700" }, `Ziel-Pace ${U.pace(goalPaceSec)}`));
-    const slot = (W - L - R) / rows.length;
-    rows.forEach((r, i) => {
-      const cx = L + slot * i + slot / 2;
-      s.append(el("text", { x: cx, y: H - 20, "text-anchor": "middle", style: "fill:var(--text)" }, r.label));
-      if (r.bestPace != null) { s.append(title(el("circle", { cx: cx - 18, cy: y(r.bestPace), r: 7, fill: "var(--accent)" }), `Bestzeit ${U.fmtTime(r.bestSeconds)}`), el("text", { x: cx - 18, y: y(r.bestPace) + 20, "text-anchor": "middle", style: "fill:var(--text)" }, U.fmtTime(r.bestSeconds))); }
-      if (r.progPace != null) { s.append(title(el("circle", { cx: cx + 18, cy: y(r.progPace), r: 7, fill: "var(--card)", stroke: "var(--muted)", "stroke-width": 2.5 }), `Prognose ${U.fmtTime(r.progSeconds)}`), el("text", { x: cx + 18, y: y(r.progPace) - 12, "text-anchor": "middle" }, U.fmtTime(r.progSeconds))); }
-      if (r.bestPace == null && r.progPace == null) s.append(el("text", { x: cx, y: (T + H - B) / 2, "text-anchor": "middle" }, "keine Daten"));
-    });
-    s.append(el("circle", { cx: L + 8, cy: H - 6, r: 5, fill: "var(--accent)" }), el("text", { x: L + 18, y: H - 2 }, "Bestzeit"), el("circle", { cx: L + 88, cy: H - 6, r: 5, fill: "var(--card)", stroke: "var(--muted)", "stroke-width": 2 }), el("text", { x: L + 98, y: H - 2 }, "Runalyze-Prognose"));
     mount(host, s);
   }
 
@@ -447,5 +404,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
+  window.C = { gauge, strip, bars, stacked, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();
