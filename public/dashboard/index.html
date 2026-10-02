@@ -32,6 +32,11 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
 h1 { font-size: 1.3rem; margin: 0; }
 h2 { font-size: 1.1rem; margin: 32px 0 12px; }
+html { scroll-behavior: smooth; }
+h2, #cockpit { scroll-margin-top: 56px; }
+.jump { position: sticky; top: 0; z-index: 10; display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px 12px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.jump a { flex: none; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; font-size: .85rem; }
+.jump a:hover, .jump a:focus-visible { border-color: var(--accent); color: var(--accent); }
 h3 { font-size: .95rem; margin: 0 0 4px; }
 a { color: var(--accent); }
 .muted { color: var(--muted); font-size: .85rem; }
@@ -126,15 +131,19 @@ button, input { font: inherit; }
   </header>
   <div id="sources"></div>
 
+  <nav class="jump" aria-label="Sprungmarken">
+    <a href="#cockpit">Cockpit</a><a href="#heute">Heute</a><a href="#verlauf">Verlauf</a><a href="#fitness">Fitness</a><a href="#wellness">Wellness</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a><a href="#studie">Studie</a>
+  </nav>
+
   <div id="cockpit"></div>
 
-  <h2>1 · Heute im Detail</h2>
+  <h2 id="heute">1 · Heute im Detail</h2>
   <div class="grid wide" style="align-items:start">
     <div id="ready"></div>
     <div id="today"></div>
   </div>
 
-  <h2>2 · Trainingsverlauf</h2>
+  <h2 id="verlauf">2 · Trainingsverlauf</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
     <div class="muted">CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Der Renntag steht nur, wenn er in den nächsten 4 Wochen liegt.</div></div>
   <div class="grid" style="margin-top:12px">
@@ -144,7 +153,7 @@ button, input { font: inherit; }
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
   </div>
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
-  <h2>2b · Belastung je Tag und Wochenbericht nach Sportart</h2>
+  <h2 id="tage">2b · Belastung je Tag und Wochenbericht nach Sportart</h2>
   <div class="split">
     <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
     <div class="stack">
@@ -155,7 +164,7 @@ button, input { font: inherit; }
   <div class="card scroll" id="week-report" style="margin-top:12px"></div>
   <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
 
-  <h2>3 · Fitness</h2>
+  <h2 id="fitness">3 · Fitness</h2>
   <div class="grid wide">
     <div class="card"><h3>VDOT und Ziel-Pace</h3><div id="vdot"></div></div>
     <div class="card"><h3>Decoupling bei langen Läufen</h3><div id="chart-dec"></div>
@@ -166,10 +175,10 @@ button, input { font: inherit; }
   </div>
   <div id="records-note" style="margin-top:6px"></div>
 
-  <h2>3b · Schwellen</h2>
+  <h2 id="schwellen">3b · Schwellen</h2>
   <div class="grid" id="thresholds"></div>
 
-  <h2>4 · Wellness</h2>
+  <h2 id="wellness">4 · Wellness</h2>
   <div class="card"><h3>Stimmung, Motivation, Ermüdung, Muskelkater, Schlaf</h3><div id="wellness-heat"></div>
     <div class="legend"><span><i style="background:var(--accent);opacity:.14"></i>1 (bestmöglich)</span><span><i style="background:var(--accent)"></i>höchster eingetragener Wert (schlechter)</span><span><i style="background:repeating-linear-gradient(45deg,var(--muted) 0 1px,transparent 1px 5px)"></i>nicht eingetragen</span></div>
     <div class="muted" style="margin-top:6px">Skalen: 1 = bestmöglich. Die Beschriftungen der Stufen liefert die API nicht; je Zeile reicht die Skala bis zum höchsten tatsächlich eingetragenen Wert. Schraffiert = nichts eingetragen, nie „gut". Neutrale Farbe statt Ampel, weil die Bedeutung der Stufen nicht aus den Daten lesbar ist.</div></div>
@@ -180,20 +189,20 @@ button, input { font: inherit; }
     <div class="card"><h3>HRV</h3><div id="hrv"></div><div class="muted">Lücken = nicht erfasst.</div></div>
   </div>
 
-  <h2>5 · Ernährung und Heißhunger</h2>
+  <h2 id="ernaehrung">5 · Ernährung und Heißhunger</h2>
   <div id="nutrition"></div>
   <div class="grid wide" style="margin-top:12px">
     <div class="card"><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div></div>
     <div class="card"><h3>Letzte Einträge</h3><div id="cravings-list"></div></div>
   </div>
 
-  <h2>6 · Kraft und Hüfte</h2>
+  <h2 id="kraft">6 · Kraft und Hüfte</h2>
   <div class="grid wide">
     <div class="card"><h3>Krafttraining pro Woche (Ziel 1 h)</h3><div id="strength"></div></div>
     <div class="card"><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
   </div>
 
-  <h2>7 · Studien-Check der Woche</h2>
+  <h2 id="studie">7 · Studien-Check der Woche</h2>
   <div class="card" id="studie"></div>
 </main>
 
