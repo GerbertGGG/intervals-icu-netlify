@@ -110,12 +110,16 @@ function renderCockpit(d) {
 
   // Ernährung
   const kcal = map("calories"), goal = map("calorieGoal"), carbs = map("carbs"), prot = map("protein"), fat = map("fat");
-  const nDay = [...days7].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
-  const dayNote = nDay && nDay !== d.today ? " · " + fmtDate(nDay) : "";
-  const nutTile = nDay && kcal[nDay] != null
-    ? tile(`Kalorien${dayNote}`, `<div class="val">${fmt(kcal[nDay])} <small>kcal${goal[nDay] ? ` von ${fmt(goal[nDay])}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">Tagesziel als schwarze Marke</div>`, "span3")
+  // Heute immer anzeigen: vor dem ersten Yazio-Eintrag leer (0), nicht der Stand von gestern.
+  const lastData = [...days7].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
+  const nDay = d.today;
+  const hasToday = kcal[nDay] != null || carbs[nDay] != null || prot[nDay] != null;
+  const kcalToday = kcal[nDay] ?? 0, kcalGoal = goal[nDay] ?? d.nutritionGoals?.kcal ?? null;
+  const emptyNote = hasToday ? "" : `Heute noch nichts eingetragen${lastData ? ` (zuletzt ${fmtDate(lastData)}: ${fmt(kcal[lastData])} kcal)` : ""}`;
+  const nutTile = lastData || d.nutritionGoals
+    ? tile(`Kalorien · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">${emptyNote || "Tagesziel als schwarze Marke"}</div>`, "span3")
     : tile("Kalorien", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
-  const macros = [["Eiweiß", prot[nDay], 4, "s-swim"], ["Kohlenhydrate", carbs[nDay], 4, "s-run"], ["Fett", fat[nDay], 9, "s-strength"]];
+  const macros = [["Eiweiß", prot[nDay] ?? 0, 4, "s-swim"], ["Kohlenhydrate", carbs[nDay] ?? 0, 4, "s-run"], ["Fett", fat[nDay] ?? 0, 9, "s-strength"]];
   const macroKcal = macros.reduce((n, m) => n + (m[1] ?? 0) * m[2], 0);
   // Ziele direkt aus Yazio (Tagesziele ändern sich nicht pro Tag), ohne Ziel nur der Wert ohne Balken
   const ng = d.nutritionGoals ?? {}, macroGoals = [ng.proteinG, ng.carbsG, ng.fatG];
@@ -123,12 +127,10 @@ function renderCockpit(d) {
     const v = m[1], goal = macroGoals[i] ?? null, over = v != null && goal && v > goal * 1.1;
     const pct = v != null && goal ? Math.min(100, (v / goal) * 100) : 0;
     const rest = v != null && goal ? (over ? `+${fmt(v - goal)} drüber` : `noch ${fmt(Math.max(0, goal - v))}`) : "";
-    const share = v != null ? ` · ${fmt((v * m[2] / macroKcal) * 100)} % der kcal` : "";
+    const share = v != null && macroKcal > 0 ? ` · ${fmt((v * m[2] / macroKcal) * 100)} % der kcal` : "";
     return `<div class="mrow"><div class="mhead"><b>${m[0]}</b><span class="mval">${v != null ? fmt(v) : "–"}${goal ? ` <small>/ ${fmt(goal)} g</small>` : " <small>g</small>"}</span></div>${goal ? `<div class="mbar"><div style="width:${pct}%;background:${over ? "var(--bad)" : `var(--${m[3]})`}"></div></div>` : ""}<div class="sub">${[rest, share.slice(3)].filter(Boolean).join(" · ")}</div></div>`;
   };
-  const macroTile = tile(`Makros${dayNote}`, nDay && macroKcal > 0
-    ? macros.map(macroRow).join("")
-    : '<div class="sub">keine Daten</div>', "span3");
+  const macroTile = tile(`Makros · ${fmtDate(nDay)}`, lastData || d.nutritionGoals ? macros.map(macroRow).join("") : '<div class="sub">keine Daten</div>', "span3");
 
   $("cockpit").innerHTML = `
     <div class="cockpit-group">Training</div>
@@ -144,7 +146,7 @@ function renderCockpit(d) {
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
   if (cur) C.meter($("ck-wload"), { label: "Wochenbelastung nach Sportart", segments: SPORT_ORDER.map((k) => ({ value: cur.bySport[k].load, color: `var(--s-${k})`, tip: `${SPORT_LABEL[k]}: ${fmt(cur.bySport[k].load)} Load` })), goal: cur.plannedLoad, max: Math.max(1, cur.load, cur.plannedLoad ?? 0) * 1.15 });
   for (const [key, unit, label, dec] of [["sleepHours", "h", "Schlaf", 1], ["hrv", "ms", "HRV", 0], ["restingHR", "bpm", "Ruhepuls", 0]]) C.spark($(`ck-${key}`), days7, map(key), { unit, label, dec });
-  if (nDay && kcal[nDay] != null) C.meter($("ck-kcal"), { label: "Kalorien", value: kcal[nDay], goal: goal[nDay], max: Math.max(kcal[nDay], goal[nDay] ?? 0) * 1.15, unit: "kcal" });
+  if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
 /* ---------- 2 · Trainingsverlauf ---------- */

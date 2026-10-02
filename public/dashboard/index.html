@@ -75,6 +75,16 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .today > div:first-child { flex: 1 1 260px; min-width: 0; }
 .wprofile { flex: 1 1 320px; max-width: 560px; }
+.rrow, .prow { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.rrow.rhead { flex-direction: row; justify-content: space-between; color: var(--accent); font-size: 1.05rem; }
+.rtop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rtop small.ok { color: var(--ok); } .rtop small.bad { color: var(--muted); }
+.rbar { position: relative; height: 8px; border-radius: 4px; background: var(--line); }
+.rfill { height: 100%; border-radius: 4px; background: var(--muted); }
+.rfill.hollow { background: transparent; border: 2px solid var(--muted); box-sizing: border-box; }
+.rbar > i { position: absolute; top: -4px; width: 2px; height: 16px; background: var(--accent); }
+.prow { flex-direction: row; justify-content: space-between; align-items: baseline; }
+.prow.goal { color: var(--accent); font-size: 1.05rem; background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 6px 8px; border-radius: 6px; }
 .mrow { display: flex; flex-direction: column; gap: 3px; }
 .mhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .mval { font-size: 1.3rem; font-weight: 650; line-height: 1.15; }
