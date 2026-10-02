@@ -11,6 +11,7 @@ import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-pars
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
+import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./runalyze-history.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
 // Die API-Schlüssel bleiben im Worker; der Browser bekommt nur diese aufbereitete JSON.
@@ -304,7 +305,7 @@ function buildHmEstimates(snapshot, vdot, rows) {
   return out;
 }
 
-function buildRunalyze(snapshot) {
+function buildRunalyze(snapshot, history = []) {
   if (!snapshot) return null;
   const rows = [{ label: "5 km", km: 5 }, { label: "10 km", km: 10 }, { label: "Halbmarathon", km: 21.0975 }].map(({ label, km }) => {
     const best = bestForDistance(snapshot.races, km);
@@ -322,7 +323,7 @@ function buildRunalyze(snapshot) {
   // hier nach Daniels aus diesem VDOT berechnet (dieselbe Formel wie in vdot.js).
   const vdot = snapshot.vdot ?? null;
   const paces = vdot != null ? paceTargetsFromVdot(vdot) : null;
-  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows) };
+  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows), hmHistory: upsertHistory(history, historyEntryFromSnapshot(snapshot)) };
 }
 
 async function settle(label, fn) {
@@ -339,7 +340,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot, studie] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -350,6 +351,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       return list;
     }),
     readRunalyzeSnapshot(env),
+    readRunalyzeHistory(env),
     readStudie(env),
   ]);
 
@@ -385,7 +387,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs),
     thresholds,
-    runalyze: buildRunalyze(snapshot),
+    runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
     planned: buildPlanned(events, todayIso),
   };

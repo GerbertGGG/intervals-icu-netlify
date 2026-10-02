@@ -219,10 +219,34 @@
     const max = Math.max(ref, ...rows.map((e) => e.seconds)) * 1.04, min = Math.min(ref, ...rows.map((e) => e.seconds)) * 0.8;
     const pos = (v) => ((v - min) / (max - min)) * 100;
     const gap = (sec) => { if (!hasGoal) return ""; const d = Math.round(sec - o.goal); return d === 0 ? "genau Ziel" : `${U.fmtTime(Math.abs(d))} ${d < 0 ? "schneller" : "langsamer"}`; };
-    host.innerHTML = (hasGoal ? `<div class="rrow rhead"><span>Ziel</span><b>${U.fmtTime(o.goal)}</b></div>` : "") + rows.map((e) => {
+    host.innerHTML = (hasGoal ? `<div class="crow chead"><span>Ziel</span><b>${U.fmtTime(o.goal)}</b></div>` : "") + rows.map((e) => {
       const fast = e.seconds <= o.goal, hollow = e.kind === "prognosis";
-      return `<div class="rrow"><div class="rtop"><span>${U.esc(e.label)}</span><span><b>${U.fmtTime(e.seconds)}</b> <small class="${fast ? "ok" : "bad"}">${gap(e.seconds)}</small></span></div><div class="rbar"><div class="rfill${hollow ? " hollow" : ""}" style="width:${pos(e.seconds)}%"></div>${hasGoal ? `<i style="left:${pos(o.goal)}%"></i>` : ""}</div></div>`;
+      return `<div class="crow"><div class="ctop"><span>${U.esc(e.label)}</span><span><b>${U.fmtTime(e.seconds)}</b> <small class="${fast ? "ok" : "bad"}">${gap(e.seconds)}</small></span></div><div class="cbar"><div class="cfill${hollow ? " hollow" : ""}" style="width:${pos(e.seconds)}%"></div>${hasGoal ? `<i style="left:${pos(o.goal)}%"></i>` : ""}</div></div>`;
     }).join("") + `<div class="sub">Balken = Zeit${hasGoal ? ", Strich = Ziel" : ""}. Kürzerer Balken = schneller.</div>`;
+  }
+
+  /* ---------- Zeitverlauf: Prognose-Zeit je Tag, tiefer = schneller. Serien mit Luecken, optional Ziellinie ---------- */
+  function timeTrend(host, rows, o) {
+    const W = 480, H = 220, L = 52, R = 14, T = 24, B = 34;
+    const series = o.series.filter((sr) => rows.some((r) => r[sr.key] != null));
+    const vals = rows.flatMap((r) => series.map((sr) => r[sr.key])).filter((v) => v != null).concat(o.goal ?? []);
+    const step = 300, lo = Math.floor((Math.min(...vals) - 120) / step) * step, hi = Math.ceil((Math.max(...vals) + 120) / step) * step;
+    const t0 = Date.parse(rows[0].date), t1 = Date.parse(rows[rows.length - 1].date);
+    const x = (d) => L + (W - L - R) * (t1 === t0 ? 0.5 : (Date.parse(d) - t0) / (t1 - t0));
+    const y = (v) => T + (H - T - B) * ((v - lo) / (hi - lo)); // schneller = tiefer, die Linie "faellt" mit dem Training
+    const s = svg(W, H, o.label);
+    for (let v = lo; v <= hi; v += step) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.fmtTime(v)));
+    if (o.goal != null) s.append(el("line", { x1: L, x2: W - R, y1: y(o.goal), y2: y(o.goal), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(o.goal) - 5, "text-anchor": "end", style: "fill:var(--accent);font-weight:700" }, `Ziel ${U.fmtTime(o.goal)}`));
+    for (const sr of series) {
+      const pts = rows.filter((r) => r[sr.key] != null);
+      const d = pts.map((r, i) => `${i ? "L" : "M"}${x(r.date).toFixed(1)},${y(r[sr.key]).toFixed(1)}`).join("");
+      if (pts.length > 1) s.append(el("path", { d, fill: "none", stroke: sr.hollow ? "var(--muted)" : "var(--accent)", "stroke-width": 2, "stroke-dasharray": sr.hollow ? "4 3" : null }));
+      for (const r of pts) s.append(title(el("circle", { cx: x(r.date), cy: y(r[sr.key]), r: 4.5, fill: sr.hollow ? "var(--card)" : "var(--accent)", stroke: sr.hollow ? "var(--muted)" : "var(--accent)", "stroke-width": 2 }), `${U.fmtDate(r.date)}: ${sr.label} ${U.fmtTime(r[sr.key])}`));
+    }
+    const n = Math.min(rows.length, 5);
+    for (let i = 0; i < n; i++) { const r = rows[n === 1 ? 0 : Math.round((i * (rows.length - 1)) / (n - 1))]; s.append(el("text", { x: x(r.date), y: H - 16, "text-anchor": i === n - 1 && n > 1 ? "end" : i === 0 && n > 1 ? "start" : "middle" }, U.fmtDate(r.date))); }
+    series.forEach((sr, i) => s.append(el("circle", { cx: L + 8 + i * 130, cy: H - 4, r: 4, fill: sr.hollow ? "var(--card)" : "var(--accent)", stroke: sr.hollow ? "var(--muted)" : "var(--accent)", "stroke-width": 2 }), el("text", { x: L + 16 + i * 130, y: H }, sr.label)));
+    mount(host, s);
   }
 
   /* ---------- Bestzeiten und Prognosen als Pace je Distanz ---------- */
@@ -411,5 +435,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, timeTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();

@@ -203,7 +203,7 @@ function renderFitness(d) {
   else C.bars($("chart-dec"), d.fitness.longRuns.map((x) => ({ label: fmtDate(x.date), tip: `${fmtDate(x.date)} (${fmt(x.distanceKm, 1)} km)`, value: Math.max(0, x.decoupling) })), { unit: "Decoupling in %", label: "Decoupling je langem Lauf", valueLabels: true, dec: 1, ref: { value: 5, label: "5 % Orientierung" }, xLabel: "Datum des langen Laufs" });
 
   if (!r) {
-    for (const id of ["vdot", "corridor", "records-chart"]) $(id).innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT, Bestzeiten und Prognose fehlen.</div>';
+    for (const id of ["vdot", "corridor", "hm-trend", "records-chart"]) $(id).innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT, Bestzeiten und Prognose fehlen.</div>';
     $("records-note").innerHTML = "";
     return;
   }
@@ -227,11 +227,28 @@ function renderFitness(d) {
     C.corridor($("corridor-chart"), { goal, estimates: r.hmEstimates });
   }
 
+  // Verlauf: so schnell wäre ich heute, und wie sich das von Woche zu Woche ändert
+  renderHmTrend(r, d.goal);
+
   // Bestzeiten und Prognosen als Pace
   const rows = r.rows.map((x) => ({ label: x.label, bestSeconds: x.bestSeconds, bestPace: x.bestSeconds != null ? x.bestSeconds / x.bestDistanceKm : null, progSeconds: x.prognosisSeconds, progPace: x.prognosisSeconds != null ? x.prognosisSeconds / x.distanceKm : null }));
   C.records($("records-chart"), rows, goalPace);
   const odd = r.rows.filter((x) => x.bestSeconds != null && Math.abs(x.bestDistanceKm - x.distanceKm) > 0.005).map((x) => `${x.label}: ${fmtTime(x.bestSeconds)} (${x.bestDate.split("-").reverse().join(".")}, gemessen ${fmt(x.bestDistanceKm, 2)} km)`);
   $("records-note").innerHTML = `${odd.length ? `<div class="muted">Bestzeit-Distanzen weichen leicht ab: ${odd.map(esc).join("; ")}.</div>` : ""}<div class="notice">Die Halbmarathon-Prognose ist eine reine Extrapolation aus dem Modell von Runalyze, kein Ergebnis eines Halbmarathon-Trainings oder -Rennens. Ohne Halbmarathon-Bestzeit gibt es dafür keinen Vergleichswert.</div>`;
+}
+
+/* Halbmarathon-Zeit heute und im Verlauf (ein Eintrag je Runalyze-Snapshot). Fallende Linie = schneller.
+   Rechnung nach Daniels aus dem VDOT, keine Vorhersage. Ziel nur, wenn es sich auf den Halbmarathon bezieht. */
+function renderHmTrend(r, g) {
+  const rows = r.hmHistory ?? [], last = rows[rows.length - 1];
+  if (!last) { $("hm-trend").innerHTML = '<div class="muted">Noch kein Verlauf – er entsteht mit jedem Runalyze-Snapshot.</div>'; return; }
+  const now = last.hmVdotSecs ?? last.hmProgSecs, first = rows.find((x) => (x.hmVdotSecs ?? x.hmProgSecs) != null);
+  const base = first.hmVdotSecs ?? first.hmProgSecs, delta = now - base;
+  const goalOk = g.targetTimeSecs && Math.abs((g.runKm ?? 21.0975) - 21.0975) < 0.5 ? g.targetTimeSecs : null;
+  const gapNote = goalOk ? ` · ${fmtTime(Math.abs(now - goalOk))} ${now <= goalOk ? "schneller" : "langsamer"} als das Ziel` : "";
+  const trend = rows.length > 1 ? `<span class="${delta <= 0 ? "ok" : ""}" style="color:var(${delta <= 0 ? "--ok" : "--muted"})">${delta <= 0 ? "−" : "+"}${fmtTime(Math.abs(delta))} seit ${fmtDate(first.date)}</span>` : "Verlauf entsteht mit den nächsten Snapshots";
+  $("hm-trend").innerHTML = `<div class="big">${fmtTime(now)}</div><div class="muted">so schnell wäre dein Halbmarathon heute (aus dem VDOT)${gapNote}</div><div class="muted">${trend}</div><div id="hm-trend-chart" style="margin-top:6px"></div><div class="muted">Eine Zeile je Runalyze-Snapshot. Sinkt die Linie, wirst du schneller. Rechnung nach Daniels, keine Vorhersage.</div>`;
+  C.timeTrend($("hm-trend-chart"), rows, { goal: goalOk, label: "Halbmarathon-Zeit im Verlauf", series: [{ key: "hmVdotSecs", label: "aus VDOT" }, { key: "hmProgSecs", label: "Runalyze-Prognose", hollow: true }] });
 }
 
 /* ---------- 3b · Schwellen ---------- */

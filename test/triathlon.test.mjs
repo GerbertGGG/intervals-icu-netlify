@@ -38,3 +38,17 @@ assert.equal(t2.run.timeSecs, 6900);
 assert.equal(parseTriathlonEvent(ev("Mitteldistanz\nRad 215 W")).bikeTargetWatts, 215);
 assert.equal(buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz")), { bike: {}, swim: {} }).bike, null);
 console.log("targets ok");
+
+import { historyEntryFromSnapshot, upsertHistory } from "../src/runalyze-history.js";
+const snap = { fetchedAt: "2026-10-01T08:00:00Z", vdot: 34.7, prognosis: [{ distanceKm: 21.0975, seconds: 8061 }], races: [] };
+const he = historyEntryFromSnapshot(snap);
+assert.equal(he.date, "2026-10-01");
+assert.equal(he.hmProgSecs, 8061);
+assert.ok(he.hmVdotSecs > 6900 && he.hmVdotSecs < 8000);
+let hist = upsertHistory([], he);
+hist = upsertHistory(hist, { ...he, hmProgSecs: 8000 });
+hist = upsertHistory(hist, { ...he, date: "2026-09-24" });
+assert.deepEqual(hist.map((e) => e.date), ["2026-09-24", "2026-10-01"]);
+assert.equal(hist[1].hmProgSecs, 8000);
+assert.equal(historyEntryFromSnapshot({ fetchedAt: "2026-10-01T00:00:00Z", races: [] }), null);
+console.log("history ok");

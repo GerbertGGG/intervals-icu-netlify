@@ -75,14 +75,14 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .today > div:first-child { flex: 1 1 260px; min-width: 0; }
 .wprofile { flex: 1 1 320px; max-width: 560px; }
-.rrow, .prow { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--line); }
-.rrow.rhead { flex-direction: row; justify-content: space-between; color: var(--accent); font-size: 1.05rem; }
-.rtop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.rtop small.ok { color: var(--ok); } .rtop small.bad { color: var(--muted); }
-.rbar { position: relative; height: 8px; border-radius: 4px; background: var(--line); }
-.rfill { height: 100%; border-radius: 4px; background: var(--muted); }
-.rfill.hollow { background: transparent; border: 2px solid var(--muted); box-sizing: border-box; }
-.rbar > i { position: absolute; top: -4px; width: 2px; height: 16px; background: var(--accent); }
+.crow, .prow { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.crow.chead { flex-direction: row; justify-content: space-between; color: var(--accent); font-size: 1.05rem; }
+.ctop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ctop small.ok { color: var(--ok); } .ctop small.bad { color: var(--muted); }
+.cbar { position: relative; height: 8px; border-radius: 4px; background: var(--line); }
+.cfill { height: 100%; border-radius: 4px; background: var(--muted); }
+.cfill.hollow { background: transparent; border: 2px solid var(--muted); box-sizing: border-box; }
+.cbar > i { position: absolute; top: -4px; width: 2px; height: 16px; background: var(--accent); }
 .prow { flex-direction: row; justify-content: space-between; align-items: baseline; }
 .prow.goal { color: var(--accent); font-size: 1.05rem; background: color-mix(in srgb, var(--accent) 10%, transparent); padding: 6px 8px; border-radius: 6px; }
 .mrow { display: flex; flex-direction: column; gap: 3px; }
@@ -160,6 +160,7 @@ button, input { font: inherit; }
     <div class="card"><h3>Decoupling bei langen Läufen</h3><div id="chart-dec"></div>
       <div class="muted">Orientierung: unter etwa 5 % gilt die Grundlagenausdauer als stabil. Höher = Puls driftet gegen Pace.</div></div>
     <div class="card"><h3>Halbmarathon: Wo liegen die Zeiten gegenüber dem Ziel?</h3><div id="corridor"></div></div>
+    <div class="card"><h3>Halbmarathon-Zeit im Verlauf</h3><div id="hm-trend"></div></div>
     <div class="card"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records-chart"></div></div>
   </div>
   <div id="records-note" style="margin-top:6px"></div>
