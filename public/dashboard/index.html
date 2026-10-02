@@ -159,7 +159,10 @@ button, input { font: inherit; }
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
   <div class="split" style="margin-top:12px">
     <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
-    <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
+    <div class="stack">
+      <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
+      <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
+    </div>
   </div>
   <div class="card scroll" id="week-report" style="margin-top:12px"></div>
   <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>

@@ -287,6 +287,7 @@ function renderSport(d) {
   const used = SPORT_ORDER.filter((k) => d.weeks.some((w) => w.bySport[k].load > 0));
   const weeks = d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), partial: !w.complete, by: Object.fromEntries(SPORT_ORDER.map((k) => [k, w.bySport[k].load])) }));
   C.stacked($("chart-sport"), weeks, used, "TSS pro Woche und Sportart");
+  C.shares($("chart-share"), weeks, used, SPORT_LABEL);
   $("sport-legend").innerHTML = used.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span>`).join("");
   const cur = d.weeks[d.weeks.length - 1], done = [...d.weeks].reverse().find((w) => w.complete), prev = done ? d.weeks[d.weeks.indexOf(done) - 1] : null;
   const rows = (w, ref) => SPORT_ORDER.filter((k) => w.bySport[k].count > 0 || (ref && ref.bySport[k].count > 0) || w.bySport[k].plannedLoad != null).map((k) => {

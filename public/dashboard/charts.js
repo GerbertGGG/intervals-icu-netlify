@@ -114,6 +114,27 @@
     mount(host, s);
   }
 
+  /* ---------- Anteilsleisten je Woche ---------- */
+  function shares(host, weeks, sports, names) {
+    const W = 480, rowH = 20, L = 64, R = 8, H = weeks.length * rowH + 22;
+    const s = svg(W, H, "Anteil der Sportarten an der Wochenbelastung");
+    weeks.forEach((w, i) => {
+      const total = sports.reduce((a, k) => a + w.by[k], 0), y = 4 + i * rowH;
+      s.append(el("text", { x: L - 6, y: y + 12, "text-anchor": "end" }, w.label));
+      if (!total) { s.append(el("rect", { x: L, y, width: W - L - R, height: 14, fill: "url(#hatch)", stroke: "var(--line)" })); return; }
+      let acc = 0;
+      for (const k of sports) {
+        const v = w.by[k]; if (!v) continue;
+        const bw = ((W - L - R) * v) / total;
+        s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--s-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} TSS)`));
+        acc += v;
+      }
+    });
+    hatch(s);
+    s.append(el("text", { x: L, y: H - 6 }, "0 %"), el("text", { x: W - R, y: H - 6, "text-anchor": "end" }, "100 % der Wochen-TSS"));
+    mount(host, s);
+  }
+
   /* ---------- Formkurve: CTL/ATL und TSB bis zum Renntag ---------- */
   function form(host, o) {
     const W = 880, H = 300, L = 40, R = 74, T1 = 22, B1 = 158, T2 = 182, B2 = 268;
@@ -404,5 +425,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();
