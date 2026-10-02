@@ -1,6 +1,6 @@
 import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { isIsoDate, daysBetween, weeksBetween, isoDate } from "./date-utils.js";
-import { normalizeEventDistance, getBlockLengthsWeeks, getEventDistanceFromEvent } from "./block-phase.js";
+import { normalizeEventDistance, getBlockLengthsWeeks, getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
 import { predictRaceTimesFromVdot } from "./vdot.js";
 import { fetchIntervalsEvents } from "./intervals-client.js";
 import { isARaceEvent } from "./event-utils.js";
@@ -29,7 +29,7 @@ export async function deleteGoalRace(env) {
   await env.KV.delete(goalRaceKvKey(env));
 }
 
-const GOAL_EVENT_LOOKAHEAD_DAYS = 365;
+const GOAL_EVENT_LOOKAHEAD_DAYS = 400;
 
 function eventDay(event) {
   return String(event?.start_date_local || event?.start_date || "").slice(0, 10);
@@ -65,6 +65,8 @@ export function deriveAutoGoalFromRaces(races, todayIso) {
     targetTime: targetTimeSecs ? formatTime(targetTimeSecs) : null,
     targetTimeSecs,
     source: "auto",
+    // Triathlon: distance ist die Lauf-Distanz des Formats, targetTimeSecs die Gesamtzeit des Eintrags.
+    triathlon: parseTriathlonEvent(event),
   };
 }
 

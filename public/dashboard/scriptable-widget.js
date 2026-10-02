@@ -473,9 +473,9 @@ function buildMedium(res) {
     text(r, label, 10, { bold, color: bold ? COL.text : COL.muted });
     r.addSpacer();
     text(r, fmtTime(secs), 11, { bold: true, color: tone || COL.text });
-    if (secs !== goal) { const diff = secs - goal; r.addSpacer(4); text(r, `${diff > 0 ? "+" : "\u2212"}${fmtTime(Math.abs(diff)).replace(/^0:/, "")}`, 9, { color: diff <= 0 ? COL.ok : COL.muted }); }
+    if (goal && secs !== goal) { const diff = secs - goal; r.addSpacer(4); text(r, `${diff > 0 ? "+" : "\u2212"}${fmtTime(Math.abs(diff)).replace(/^0:/, "")}`, 9, { color: diff <= 0 ? COL.ok : COL.muted }); }
   };
-  line("Ziel", goal, true, COL.accent);
+  if (goal) line("Ziel", goal, true, COL.accent);
   if (d.hm && d.hm.estimates.length) {
     // Platz fuer drei Zeilen: Runalyze-Prognose, VDOT-Rechnung und die schnellste Bestzeit-Rechnung
     const est = d.hm.estimates, best = est.filter((e) => e.key.startsWith("best-")).sort((a, b) => a.seconds - b.seconds)[0];
@@ -491,7 +491,7 @@ function buildMedium(res) {
   // Unten: VDOT und Paces, Schwellen, Ernaehrung, Heisshunger
   const bc = card(w, W, 6), T = d.thresholds;
   const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
-  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} \u00b7 Ziel ${fmtPace(goal / raceKm(d.goal.name))}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
+  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} \u00b7 Easy ${pz.easy} \u00b7 Marathon ${pz.marathon} \u00b7 Schwelle ${pz.threshold} ${goal ? ` \u00b7 Ziel ${fmtPace(goal / (d.goal.runKm || raceKm(d.goal.name)))}` : ""}` : "VDOT und Paces: noch kein Runalyze-Snapshot", 9, { color: COL.text });
   text(bc, `Schwellen: Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : "fehlt"} \u00b7 FTP ${T.bike.ftp ? T.bike.ftp + " W" : "fehlt"} \u00b7 Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : "fehlt"}`, 9, { color: COL.text });
   const last = [...d.nutrition.days].reverse().find((x) => x.calories != null);
   const nut = d.nutrition.hasData && last ? `Kalorien ${fmt(last.calories)}${last.goal ? " / " + fmt(last.goal) : ""} kcal (${dateShort(last.date)})` : "Ern\u00e4hrung: noch keine Daten";

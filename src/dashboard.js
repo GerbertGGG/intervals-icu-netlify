@@ -4,12 +4,14 @@ import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
+import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
+import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./runalyze-history.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
 // Die API-Schlüssel bleiben im Worker; der Browser bekommt nur diese aufbereitete JSON.
@@ -303,7 +305,7 @@ function buildHmEstimates(snapshot, vdot, rows) {
   return out;
 }
 
-function buildRunalyze(snapshot) {
+function buildRunalyze(snapshot, history = []) {
   if (!snapshot) return null;
   const rows = [{ label: "5 km", km: 5 }, { label: "10 km", km: 10 }, { label: "Halbmarathon", km: 21.0975 }].map(({ label, km }) => {
     const best = bestForDistance(snapshot.races, km);
@@ -321,7 +323,7 @@ function buildRunalyze(snapshot) {
   // hier nach Daniels aus diesem VDOT berechnet (dieselbe Formel wie in vdot.js).
   const vdot = snapshot.vdot ?? null;
   const paces = vdot != null ? paceTargetsFromVdot(vdot) : null;
-  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows) };
+  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows), hmHistory: upsertHistory(history, historyEntryFromSnapshot(snapshot)) };
 }
 
 async function settle(label, fn) {
@@ -338,7 +340,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot, studie] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -349,6 +351,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       return list;
     }),
     readRunalyzeSnapshot(env),
+    readRunalyzeHistory(env),
     readStudie(env),
   ]);
 
@@ -358,9 +361,14 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
-  const goal = goalFromCalendar
-    ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, source: "intervals" }
-    : { ...CONFIGURED_GOAL, source: "config" };
+  const thresholds = buildThresholds(settingsR.ok ? settingsR.value : null);
+  const tri = goalFromCalendar?.triathlon ?? null;
+  // Triathlon: Gesamtzeit aus dem Eintrag, die Lauf-Ziele der Grafiken nur aus einer Lauf-Zeit in der Beschreibung ("Lauf 1:55:00").
+  const goal = tri
+    ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm, targets: buildTriathlonTargets(tri, thresholds, goalFromCalendar.targetTimeSecs ?? null) }, source: "intervals" }
+    : goalFromCalendar
+      ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, runKm: CONFIGURED_GOAL.distanceKm, source: "intervals" }
+      : { ...CONFIGURED_GOAL, runKm: CONFIGURED_GOAL.distanceKm, source: "config" };
 
   return {
     generatedAt: new Date().toISOString(),
@@ -378,8 +386,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs),
-    thresholds: buildThresholds(settingsR.ok ? settingsR.value : null),
-    runalyze: buildRunalyze(snapshot),
+    thresholds,
+    runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
     planned: buildPlanned(events, todayIso),
   };

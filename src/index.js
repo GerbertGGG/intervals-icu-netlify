@@ -13,6 +13,7 @@ import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
+import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest } from "./widget.js";
 
 function getBerlinHourFromScheduledEvent(event) {
@@ -137,7 +138,12 @@ export default {
 
   async scheduled(event, env, ctx) {
     // Runalyze-/Studien-Snapshots, die der Coaching-Task per GitHub-Branch liefert (siehe github-snapshot.js).
-    ctx.waitUntil(syncSnapshotsFromGithub(env));
+    // Danach den Tageseintrag im Halbmarathon-Zeitverlauf festhalten (siehe runalyze-history.js).
+    ctx.waitUntil(
+      syncSnapshotsFromGithub(env)
+        .then(() => recordRunalyzeHistory(env))
+        .catch((e) => console.error("runalyze history failed", String(e?.message ?? e))),
+    );
 
     if (isYazioWindowBerlin(event)) {
       const yazioDay = isoDate(new Date());

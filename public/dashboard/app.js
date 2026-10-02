@@ -88,14 +88,14 @@ function renderCockpit(d) {
   const days7 = dayRange(addDays(d.today, -13), d.today), map = (k) => Object.fromEntries(d.wellness.map((x) => [x.date, x[k]]));
   const last = (k) => { const m = map(k); for (let i = days7.length - 1; i >= 0; i--) if (m[days7[i]] != null) return { v: m[days7[i]], date: days7[i] }; return null; };
   const tile = (title, body, cls = "") => `<div class="tile ${cls}"><h3>${title}</h3>${body}</div>`;
-  const goalPace = g.targetTimeSecs / 21.0975;
+  const goalPace = g.targetTimeSecs ? g.targetTimeSecs / (g.runKm ?? 21.0975) : null;
 
   // Training
   const shown = plan.find((p) => p.steps?.length) ?? plan[0];
   const todayTile = plan.length
     ? tile("Heute geplant", `<div class="today"><div><div class="val" style="font-size:1.1rem">${esc(plan[0].name || "Einheit")}${plan.length > 1 ? ` <small>+${plan.length - 1}</small>` : ""}</div><div class="sub">${meta(plan[0]) || "&nbsp;"}</div>${plan[0].description ? `<div class="sub clamp">${esc(plan[0].description)}</div>` : ""}</div>${shown.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>`, "span4")
     : tile("Heute geplant", `<div class="val" style="font-size:1.1rem">Ruhetag</div><div class="sub">${next ? `Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}` : "keine Einheit geplant"}</div>`, "span4");
-  const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)</div>`, "span15");
+  const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · ${g.triathlon ? `Schwimmen ${fmt(g.triathlon.swimKm, 2)} km · Rad ${fmt(g.triathlon.bikeKm)} km · Lauf ${fmt(g.triathlon.runKm, 1)} km${g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : ""}${goalPace ? ` · Lauf-Ziel ${paceLabel(goalPace)} min/km` : ""}` : `Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)`}</div>`, "span15");
   const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15");
   const acwrTile = tile("Belastung (ACWR)", `<div id="ck-acwr"></div><div><span class="badge ${acwrCls}">${acwrText}</span> <span class="sub">Ziel ${fmt(ACWR.lo, 1)}–${fmt(ACWR.hi, 1)}</span></div>`, "span15");
   const wkParts = cur ? SPORT_ORDER.filter((k) => cur.bySport[k].load > 0 || cur.bySport[k].count > 0) : [];
@@ -110,12 +110,16 @@ function renderCockpit(d) {
 
   // Ernährung
   const kcal = map("calories"), goal = map("calorieGoal"), carbs = map("carbs"), prot = map("protein"), fat = map("fat");
-  const nDay = [...days7].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
-  const dayNote = nDay && nDay !== d.today ? " · " + fmtDate(nDay) : "";
-  const nutTile = nDay && kcal[nDay] != null
-    ? tile(`Kalorien${dayNote}`, `<div class="val">${fmt(kcal[nDay])} <small>kcal${goal[nDay] ? ` von ${fmt(goal[nDay])}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">Tagesziel als schwarze Marke</div>`, "span3")
+  // Heute immer anzeigen: vor dem ersten Yazio-Eintrag leer (0), nicht der Stand von gestern.
+  const lastData = [...days7].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
+  const nDay = d.today;
+  const hasToday = kcal[nDay] != null || carbs[nDay] != null || prot[nDay] != null;
+  const kcalToday = kcal[nDay] ?? 0, kcalGoal = goal[nDay] ?? d.nutritionGoals?.kcal ?? null;
+  const emptyNote = hasToday ? "" : `Heute noch nichts eingetragen${lastData ? ` (zuletzt ${fmtDate(lastData)}: ${fmt(kcal[lastData])} kcal)` : ""}`;
+  const nutTile = lastData || d.nutritionGoals
+    ? tile(`Kalorien · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">${emptyNote || "Tagesziel als schwarze Marke"}</div>`, "span3")
     : tile("Kalorien", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
-  const macros = [["Eiweiß", prot[nDay], 4, "s-swim"], ["Kohlenhydrate", carbs[nDay], 4, "s-run"], ["Fett", fat[nDay], 9, "s-strength"]];
+  const macros = [["Eiweiß", prot[nDay] ?? 0, 4, "s-swim"], ["Kohlenhydrate", carbs[nDay] ?? 0, 4, "s-run"], ["Fett", fat[nDay] ?? 0, 9, "s-strength"]];
   const macroKcal = macros.reduce((n, m) => n + (m[1] ?? 0) * m[2], 0);
   // Ziele direkt aus Yazio (Tagesziele ändern sich nicht pro Tag), ohne Ziel nur der Wert ohne Balken
   const ng = d.nutritionGoals ?? {}, macroGoals = [ng.proteinG, ng.carbsG, ng.fatG];
@@ -123,12 +127,10 @@ function renderCockpit(d) {
     const v = m[1], goal = macroGoals[i] ?? null, over = v != null && goal && v > goal * 1.1;
     const pct = v != null && goal ? Math.min(100, (v / goal) * 100) : 0;
     const rest = v != null && goal ? (over ? `+${fmt(v - goal)} drüber` : `noch ${fmt(Math.max(0, goal - v))}`) : "";
-    const share = v != null ? ` · ${fmt((v * m[2] / macroKcal) * 100)} % der kcal` : "";
+    const share = v != null && macroKcal > 0 ? ` · ${fmt((v * m[2] / macroKcal) * 100)} % der kcal` : "";
     return `<div class="mrow"><div class="mhead"><b>${m[0]}</b><span class="mval">${v != null ? fmt(v) : "–"}${goal ? ` <small>/ ${fmt(goal)} g</small>` : " <small>g</small>"}</span></div>${goal ? `<div class="mbar"><div style="width:${pct}%;background:${over ? "var(--bad)" : `var(--${m[3]})`}"></div></div>` : ""}<div class="sub">${[rest, share.slice(3)].filter(Boolean).join(" · ")}</div></div>`;
   };
-  const macroTile = tile(`Makros${dayNote}`, nDay && macroKcal > 0
-    ? macros.map(macroRow).join("")
-    : '<div class="sub">keine Daten</div>', "span3");
+  const macroTile = tile(`Makros · ${fmtDate(nDay)}`, lastData || d.nutritionGoals ? macros.map(macroRow).join("") : '<div class="sub">keine Daten</div>', "span3");
 
   $("cockpit").innerHTML = `
     <div class="cockpit-group">Training</div>
@@ -144,7 +146,7 @@ function renderCockpit(d) {
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
   if (cur) C.meter($("ck-wload"), { label: "Wochenbelastung nach Sportart", segments: SPORT_ORDER.map((k) => ({ value: cur.bySport[k].load, color: `var(--s-${k})`, tip: `${SPORT_LABEL[k]}: ${fmt(cur.bySport[k].load)} Load` })), goal: cur.plannedLoad, max: Math.max(1, cur.load, cur.plannedLoad ?? 0) * 1.15 });
   for (const [key, unit, label, dec] of [["sleepHours", "h", "Schlaf", 1], ["hrv", "ms", "HRV", 0], ["restingHR", "bpm", "Ruhepuls", 0]]) C.spark($(`ck-${key}`), days7, map(key), { unit, label, dec });
-  if (nDay && kcal[nDay] != null) C.meter($("ck-kcal"), { label: "Kalorien", value: kcal[nDay], goal: goal[nDay], max: Math.max(kcal[nDay], goal[nDay] ?? 0) * 1.15, unit: "kcal" });
+  if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
 /* ---------- 2 · Trainingsverlauf ---------- */
@@ -201,13 +203,13 @@ function renderFitness(d) {
   else C.bars($("chart-dec"), d.fitness.longRuns.map((x) => ({ label: fmtDate(x.date), tip: `${fmtDate(x.date)} (${fmt(x.distanceKm, 1)} km)`, value: Math.max(0, x.decoupling) })), { unit: "Decoupling in %", label: "Decoupling je langem Lauf", valueLabels: true, dec: 1, ref: { value: 5, label: "5 % Orientierung" }, xLabel: "Datum des langen Laufs" });
 
   if (!r) {
-    for (const id of ["vdot", "corridor", "records-chart"]) $(id).innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT, Bestzeiten und Prognose fehlen.</div>';
+    for (const id of ["vdot", "corridor", "hm-trend", "records-chart"]) $(id).innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT, Bestzeiten und Prognose fehlen.</div>';
     $("records-note").innerHTML = "";
     return;
   }
   const stale = (Date.now() - Date.parse(r.fetchedAt)) / 86400000 > 7;
   const staleHtml = stale ? '<div class="notice">Der Runalyze-Snapshot ist älter als 7 Tage – VDOT und Prognose können veraltet sein.</div>' : "";
-  const goal = d.goal.targetTimeSecs, goalPace = goal / 21.0975;
+  const goal = d.goal.targetTimeSecs, goalPace = goal ? goal / (d.goal.runKm ?? 21.0975) : null;
 
   // VDOT und Zonen-Paces
   if (r.vdot == null) $("vdot").innerHTML = '<div class="muted">Kein VDOT im Runalyze-Snapshot – Paces fehlen.</div>';
@@ -225,11 +227,28 @@ function renderFitness(d) {
     C.corridor($("corridor-chart"), { goal, estimates: r.hmEstimates });
   }
 
+  // Verlauf: so schnell wäre ich heute, und wie sich das von Woche zu Woche ändert
+  renderHmTrend(r, d.goal);
+
   // Bestzeiten und Prognosen als Pace
   const rows = r.rows.map((x) => ({ label: x.label, bestSeconds: x.bestSeconds, bestPace: x.bestSeconds != null ? x.bestSeconds / x.bestDistanceKm : null, progSeconds: x.prognosisSeconds, progPace: x.prognosisSeconds != null ? x.prognosisSeconds / x.distanceKm : null }));
   C.records($("records-chart"), rows, goalPace);
   const odd = r.rows.filter((x) => x.bestSeconds != null && Math.abs(x.bestDistanceKm - x.distanceKm) > 0.005).map((x) => `${x.label}: ${fmtTime(x.bestSeconds)} (${x.bestDate.split("-").reverse().join(".")}, gemessen ${fmt(x.bestDistanceKm, 2)} km)`);
   $("records-note").innerHTML = `${odd.length ? `<div class="muted">Bestzeit-Distanzen weichen leicht ab: ${odd.map(esc).join("; ")}.</div>` : ""}<div class="notice">Die Halbmarathon-Prognose ist eine reine Extrapolation aus dem Modell von Runalyze, kein Ergebnis eines Halbmarathon-Trainings oder -Rennens. Ohne Halbmarathon-Bestzeit gibt es dafür keinen Vergleichswert.</div>`;
+}
+
+/* Halbmarathon-Zeit heute und im Verlauf (ein Eintrag je Runalyze-Snapshot). Fallende Linie = schneller.
+   Rechnung nach Daniels aus dem VDOT, keine Vorhersage. Ziel nur, wenn es sich auf den Halbmarathon bezieht. */
+function renderHmTrend(r, g) {
+  const rows = r.hmHistory ?? [], last = rows[rows.length - 1];
+  if (!last) { $("hm-trend").innerHTML = '<div class="muted">Noch kein Verlauf – er entsteht mit jedem Runalyze-Snapshot.</div>'; return; }
+  const now = last.hmVdotSecs ?? last.hmProgSecs, first = rows.find((x) => (x.hmVdotSecs ?? x.hmProgSecs) != null);
+  const base = first.hmVdotSecs ?? first.hmProgSecs, delta = now - base;
+  const goalOk = g.targetTimeSecs && Math.abs((g.runKm ?? 21.0975) - 21.0975) < 0.5 ? g.targetTimeSecs : null;
+  const gapNote = goalOk ? ` · ${fmtTime(Math.abs(now - goalOk))} ${now <= goalOk ? "schneller" : "langsamer"} als das Ziel` : "";
+  const trend = rows.length > 1 ? `<span class="${delta <= 0 ? "ok" : ""}" style="color:var(${delta <= 0 ? "--ok" : "--muted"})">${delta <= 0 ? "−" : "+"}${fmtTime(Math.abs(delta))} seit ${fmtDate(first.date)}</span>` : "Verlauf entsteht mit den nächsten Snapshots";
+  $("hm-trend").innerHTML = `<div class="big">${fmtTime(now)}</div><div class="muted">so schnell wäre dein Halbmarathon heute (aus dem VDOT)${gapNote}</div><div class="muted">${trend}</div><div id="hm-trend-chart" style="margin-top:6px"></div><div class="muted">Eine Zeile je Runalyze-Snapshot. Sinkt die Linie, wirst du schneller. Rechnung nach Daniels, keine Vorhersage.</div>`;
+  C.timeTrend($("hm-trend-chart"), rows, { goal: goalOk, label: "Halbmarathon-Zeit im Verlauf", series: [{ key: "hmVdotSecs", label: "aus VDOT" }, { key: "hmProgSecs", label: "Runalyze-Prognose", hollow: true }] });
 }
 
 /* ---------- 3b · Schwellen ---------- */
@@ -241,7 +260,26 @@ function renderThresholds(d) {
   host.innerHTML =
     card("Laufen", [["Schwellenpace", val(t.run.thresholdPaceSecPerKm, (v) => paceLabel(v) + " min/km")], ["Schwellenpuls (LTHR)", val(t.run.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.run.maxHr, (v) => fmt(v) + " bpm")]]) +
     card("Rad", [["FTP", val(t.bike.ftp, (v) => fmt(v) + " W")], ["FTP indoor", val(t.bike.indoorFtp, (v) => fmt(v) + " W")], ["Schwellenpuls (LTHR)", val(t.bike.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.bike.maxHr, (v) => fmt(v) + " bpm")]]) +
-    card("Schwimmen", [["Schwellenpace", val(t.swim.thresholdPaceSecPer100m, (v) => paceLabel(v) + " min/100 m")]]);
+    card("Schwimmen", [["Schwellenpace", val(t.swim.thresholdPaceSecPer100m, (v) => paceLabel(v) + " min/100 m")]]) +
+    triathlonGoalCard(d.goal);
+}
+
+/* Ziele je Disziplin: Vorschläge aus FTP und Schwimmschwelle, Angaben in der Beschreibung des Rennens haben Vorrang. */
+function triathlonGoalCard(g) {
+  const tg = g.triathlon?.targets;
+  if (!tg) return "";
+  const tag = (x) => (x.source === "eintrag" ? "" : " <small>(Vorschlag)</small>");
+  const row = (l, v) => `<div class="row"><span>${l}</span><span>${v}</span></div>`;
+  const rows = [];
+  const sw = tg.swim;
+  rows.push(row(`Schwimmen ${fmt(g.triathlon.swimKm, 2)} km`, sw ? `<b>${paceLabel(sw.pacePer100m)} min/100 m</b> · ${fmtTime(sw.timeSecs)}${tag(sw)}` : '<span class="muted">Schwellenpace fehlt</span>'));
+  const b = tg.bike;
+  const bikeVal = !b ? '<span class="muted">FTP fehlt</span>'
+    : [b.watts ? `<b>${b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)}` : fmt(b.watts)} W</b>` : "", b.pctFtp ? `${fmt(b.pctFtp * 100)} % FTP` : "", b.timeSecs ? `${fmtTime(b.timeSecs)} (${fmt(b.speedKmh, 1)} km/h)` : ""].filter(Boolean).join(" · ") + tag(b);
+  rows.push(row(`Rad ${fmt(g.triathlon.bikeKm)} km`, bikeVal));
+  rows.push(row(`Laufen ${fmt(g.triathlon.runKm, 1)} km`, tg.run ? `<b>${paceLabel(tg.run.pacePerKm)} min/km</b> · ${fmtTime(tg.run.timeSecs)}` : '<span class="muted">in der Beschreibung ergänzen: „Lauf 1:55:00“</span>'));
+  if (tg.totalTargetSecs) rows.push(row("Gesamtziel", `<b>${fmtTime(tg.totalTargetSecs)}</b>`));
+  return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<div class="muted">Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></div>`;
 }
 
 /* ---------- 4 · Wellness ---------- */
