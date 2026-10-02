@@ -89,7 +89,7 @@ function baseWidget({ flat = true, padV = 12 } = {}) {
   w.backgroundColor = flat ? COL.card : COL.bg;
   w.setPadding(padV, PAD, padV - 2, PAD);
   w.url = `${baseUrl()}/dashboard/`;
-  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
   return w;
 }
 
