@@ -228,7 +228,7 @@ function renderFitness(d) {
   }
 
   // Verlauf: so schnell wäre ich heute, und wie sich das von Woche zu Woche ändert
-  renderHmTrend(r, d.goal);
+  renderHmTrend(r);
 
   // Bestzeiten und Prognosen als Pace
   const rows = r.rows.map((x) => ({ label: x.label, bestSeconds: x.bestSeconds, bestPace: x.bestSeconds != null ? x.bestSeconds / x.bestDistanceKm : null, progSeconds: x.prognosisSeconds, progPace: x.prognosisSeconds != null ? x.prognosisSeconds / x.distanceKm : null }));
@@ -237,18 +237,28 @@ function renderFitness(d) {
   $("records-note").innerHTML = `${odd.length ? `<div class="muted">Bestzeit-Distanzen weichen leicht ab: ${odd.map(esc).join("; ")}.</div>` : ""}<div class="notice">Die Halbmarathon-Prognose ist eine reine Extrapolation aus dem Modell von Runalyze, kein Ergebnis eines Halbmarathon-Trainings oder -Rennens. Ohne Halbmarathon-Bestzeit gibt es dafür keinen Vergleichswert.</div>`;
 }
 
-/* Halbmarathon-Zeit heute und im Verlauf (ein Eintrag je Runalyze-Snapshot). Fallende Linie = schneller.
-   Rechnung nach Daniels aus dem VDOT, keine Vorhersage. Ziel nur, wenn es sich auf den Halbmarathon bezieht. */
-function renderHmTrend(r, g) {
+/* Prognose-Entwicklung: wird die Prognose von Snapshot zu Snapshot schneller oder nicht? Ein Eintrag je Tag aus dem
+   Runalyze-Snapshot, verglichen mit dem ersten Eintrag und dem Stand vor einer Woche. Kein Ergebnis, nur die Prognose. */
+function renderHmTrend(r) {
   const rows = r.hmHistory ?? [], last = rows[rows.length - 1];
+  const SERIES = [
+    { key: "hmProgSecs", label: "HM", color: "var(--accent)", bold: true },
+    { key: "p10Secs", label: "10 km", color: "var(--muted)" },
+    { key: "p5Secs", label: "5 km", color: "var(--muted)", dash: "4 3" },
+  ];
   if (!last) { $("hm-trend").innerHTML = '<div class="muted">Noch kein Verlauf – er entsteht mit jedem Runalyze-Snapshot.</div>'; return; }
-  const now = last.hmVdotSecs ?? last.hmProgSecs, first = rows.find((x) => (x.hmVdotSecs ?? x.hmProgSecs) != null);
-  const base = first.hmVdotSecs ?? first.hmProgSecs, delta = now - base;
-  const goalOk = g.targetTimeSecs && Math.abs((g.runKm ?? 21.0975) - 21.0975) < 0.5 ? g.targetTimeSecs : null;
-  const gapNote = goalOk ? ` · ${fmtTime(Math.abs(now - goalOk))} ${now <= goalOk ? "schneller" : "langsamer"} als das Ziel` : "";
-  const trend = rows.length > 1 ? `<span class="${delta <= 0 ? "ok" : ""}" style="color:var(${delta <= 0 ? "--ok" : "--muted"})">${delta <= 0 ? "−" : "+"}${fmtTime(Math.abs(delta))} seit ${fmtDate(first.date)}</span>` : "Verlauf entsteht mit den nächsten Snapshots";
-  $("hm-trend").innerHTML = `<div class="big">${fmtTime(now)}</div><div class="muted">so schnell wäre dein Halbmarathon heute (aus dem VDOT)${gapNote}</div><div class="muted">${trend}</div><div id="hm-trend-chart" style="margin-top:6px"></div><div class="muted">Eine Zeile je Runalyze-Snapshot. Sinkt die Linie, wirst du schneller. Rechnung nach Daniels, keine Vorhersage.</div>`;
-  C.timeTrend($("hm-trend-chart"), rows, { goal: goalOk, label: "Halbmarathon-Zeit im Verlauf", series: [{ key: "hmVdotSecs", label: "aus VDOT" }, { key: "hmProgSecs", label: "Runalyze-Prognose", hollow: true }] });
+  const fmtD = (v) => v == null ? "–" : v === 0 ? "unverändert" : `<span style="color:var(${v < 0 ? "--ok" : "--muted"});font-weight:600">${v < 0 ? "−" : "+"}${fmtTime(Math.abs(v))}</span>`;
+  const weekAgo = [...rows].reverse().find((x) => (Date.parse(last.date) - Date.parse(x.date)) / 86400000 >= 7);
+  const tr = (label, key) => {
+    const have = rows.filter((x) => x[key] != null);
+    if (!have.length) return "";
+    const now = have[have.length - 1], first = have[0], wk = weekAgo && weekAgo[key] != null ? weekAgo : null;
+    return `<tr><td>${label}</td><td><b>${fmtTime(now[key])}</b></td><td>${have.length > 1 ? fmtD(now[key] - first[key]) : "–"}</td><td>${wk ? fmtD(now[key] - wk[key]) : "–"}</td></tr>`;
+  };
+  const table = `<table class="mini"><thead><tr><th></th><th>Prognose jetzt</th><th>seit ${fmtDate(rows[0].date)}</th><th>seit 7 Tagen</th></tr></thead><tbody>${tr("Halbmarathon", "hmProgSecs")}${tr("10 km", "p10Secs")}${tr("5 km", "p5Secs")}${tr("HM aus VDOT", "hmVdotSecs")}</tbody></table>`;
+  const first = rows.length === 1 ? '<div class="muted" style="margin:6px 0">Der Vergleich beginnt heute. Mit jedem neuen Runalyze-Snapshot siehst du hier, ob die Prognose schneller wird – früher gespeicherte Werte gibt es nicht.</div>' : "";
+  $("hm-trend").innerHTML = `${table}${first}<div id="hm-trend-chart" style="margin-top:8px"></div><div class="muted">Linien fallen = Prognose wird schneller. Die Prognose ist eine Rechnung von Runalyze aus deinen Läufen, kein Ergebnis.</div>`;
+  if (rows.length > 1) C.deltaTrend($("hm-trend-chart"), rows, { label: "Veränderung der Prognose", series: SERIES });
 }
 
 /* ---------- 3b · Schwellen ---------- */

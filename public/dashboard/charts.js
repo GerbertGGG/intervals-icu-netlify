@@ -225,27 +225,39 @@
     }).join("") + `<div class="sub">Balken = Zeit${hasGoal ? ", Strich = Ziel" : ""}. Kürzerer Balken = schneller.</div>`;
   }
 
-  /* ---------- Zeitverlauf: Prognose-Zeit je Tag, tiefer = schneller. Serien mit Luecken, optional Ziellinie ---------- */
-  function timeTrend(host, rows, o) {
-    const W = 480, H = 220, L = 52, R = 14, T = 24, B = 34;
-    const series = o.series.filter((sr) => rows.some((r) => r[sr.key] != null));
-    const vals = rows.flatMap((r) => series.map((sr) => r[sr.key])).filter((v) => v != null).concat(o.goal ?? []);
-    const step = 300, lo = Math.floor((Math.min(...vals) - 120) / step) * step, hi = Math.ceil((Math.max(...vals) + 120) / step) * step;
+  /* ---------- Veraenderung der Prognose gegenueber dem ersten Eintrag je Serie. Null-Linie = unveraendert,
+     tiefer = schneller. Eine Linie je Distanz, direkt am Linienende beschriftet. ---------- */
+  function deltaTrend(host, rows, o) {
+    const W = 480, H = 210, L = 52, R = 56, T = 22, B = 30;
+    const fmtD = (v) => (v === 0 ? "0:00" : `${v < 0 ? "−" : "+"}${U.fmtTime(Math.abs(v))}`);
+    const lines = o.series.map((sr) => {
+      const pts = rows.filter((r) => r[sr.key] != null);
+      if (!pts.length) return null;
+      return { ...sr, pts: pts.map((r) => ({ date: r.date, v: r[sr.key] - pts[0][sr.key], abs: r[sr.key] })) };
+    }).filter(Boolean);
+    const maxAbs = Math.max(30, ...lines.flatMap((l) => l.pts.map((p) => Math.abs(p.v))));
+    const lim = [30, 60, 120, 180, 300, 600, 900, 1800].find((n) => n >= maxAbs) ?? Math.ceil(maxAbs / 600) * 600;
     const t0 = Date.parse(rows[0].date), t1 = Date.parse(rows[rows.length - 1].date);
     const x = (d) => L + (W - L - R) * (t1 === t0 ? 0.5 : (Date.parse(d) - t0) / (t1 - t0));
-    const y = (v) => T + (H - T - B) * ((v - lo) / (hi - lo)); // schneller = tiefer, die Linie "faellt" mit dem Training
+    const y = (v) => T + (H - T - B) * (0.5 - v / (2 * lim));
     const s = svg(W, H, o.label);
-    for (let v = lo; v <= hi; v += step) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.fmtTime(v)));
-    if (o.goal != null) s.append(el("line", { x1: L, x2: W - R, y1: y(o.goal), y2: y(o.goal), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(o.goal) - 5, "text-anchor": "end", style: "fill:var(--accent);font-weight:700" }, `Ziel ${U.fmtTime(o.goal)}`));
-    for (const sr of series) {
-      const pts = rows.filter((r) => r[sr.key] != null);
-      const d = pts.map((r, i) => `${i ? "L" : "M"}${x(r.date).toFixed(1)},${y(r[sr.key]).toFixed(1)}`).join("");
-      if (pts.length > 1) s.append(el("path", { d, fill: "none", stroke: sr.hollow ? "var(--muted)" : "var(--accent)", "stroke-width": 2, "stroke-dasharray": sr.hollow ? "4 3" : null }));
-      for (const r of pts) s.append(title(el("circle", { cx: x(r.date), cy: y(r[sr.key]), r: 4.5, fill: sr.hollow ? "var(--card)" : "var(--accent)", stroke: sr.hollow ? "var(--muted)" : "var(--accent)", "stroke-width": 2 }), `${U.fmtDate(r.date)}: ${sr.label} ${U.fmtTime(r[sr.key])}`));
+    for (const v of [-lim, -lim / 2, lim / 2, lim]) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmtD(Math.round(v))));
+    s.append(el("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "axis", "stroke-width": 1.5 }), el("text", { x: L - 6, y: y(0) + 4, "text-anchor": "end", style: "font-weight:700" }, "0:00"));
+    s.append(el("text", { x: 4, y: 12 }, "Prognose gegenüber dem ersten Eintrag"));
+    s.append(el("text", { x: W - R, y: H - 16, "text-anchor": "end", style: "fill:var(--ok)" }, "↓ schneller"), el("text", { x: W - R, y: T - 8, "text-anchor": "end", style: "fill:var(--muted)" }, "↑ langsamer"));
+    const ends = [];
+    for (const l of lines) {
+      const col = l.color;
+      const d = l.pts.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+      if (l.pts.length > 1) s.append(el("path", { d, fill: "none", stroke: col, "stroke-width": l.bold ? 2.5 : 1.8, "stroke-dasharray": l.dash ?? null }));
+      for (const p of l.pts) s.append(title(el("circle", { cx: x(p.date), cy: y(p.v), r: l.bold ? 4.5 : 3.5, fill: col }), `${U.fmtDate(p.date)}: ${l.label} ${U.fmtTime(p.abs)} (${fmtD(p.v)})`));
+      ends.push({ l, py: y(l.pts[l.pts.length - 1].v) });
     }
+    ends.sort((a, b) => a.py - b.py);
+    let prev = -99;
+    for (const e of ends) { const ty = Math.max(e.py + 4, prev + 13); prev = ty; s.append(el("text", { x: W - R + 6, y: ty, style: `fill:${e.l.color};font-weight:700` }, e.l.label)); }
     const n = Math.min(rows.length, 5);
-    for (let i = 0; i < n; i++) { const r = rows[n === 1 ? 0 : Math.round((i * (rows.length - 1)) / (n - 1))]; s.append(el("text", { x: x(r.date), y: H - 16, "text-anchor": i === n - 1 && n > 1 ? "end" : i === 0 && n > 1 ? "start" : "middle" }, U.fmtDate(r.date))); }
-    series.forEach((sr, i) => s.append(el("circle", { cx: L + 8 + i * 130, cy: H - 4, r: 4, fill: sr.hollow ? "var(--card)" : "var(--accent)", stroke: sr.hollow ? "var(--muted)" : "var(--accent)", "stroke-width": 2 }), el("text", { x: L + 16 + i * 130, y: H }, sr.label)));
+    for (let i = 0; i < n; i++) { const r = rows[n === 1 ? 0 : Math.round((i * (rows.length - 1)) / (n - 1))]; s.append(el("text", { x: x(r.date), y: H - 2, "text-anchor": i === n - 1 && n > 1 ? "end" : i === 0 && n > 1 ? "start" : "middle" }, U.fmtDate(r.date))); }
     mount(host, s);
   }
 
@@ -435,5 +447,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, timeTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();
