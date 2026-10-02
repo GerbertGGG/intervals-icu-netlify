@@ -437,7 +437,7 @@ function renderNutrition(d) {
     $("nutrition").innerHTML = '<div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird. Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
   } else {
     const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
-    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid wide"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div>';
+    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid half"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div>';
     renderNutritionToday(d, map);
     renderNutritionWeek(d, map);
     const todayGoal = (v) => (v != null ? { [d.today]: v } : undefined);
@@ -520,9 +520,17 @@ function renderNutritionWeek(d, map) {
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
 function renderStrength(d) {
-  if (d.sources.intervalsActivities.ok && d.weeks.some((w) => w.bySport.strength.minutes > 0)) {
+  const has = d.sources.intervalsActivities.ok && d.weeks.some((w) => w.bySport.strength.minutes > 0);
+  if (has || d.hipFlags.length) $("kraft").hidden = false;
+  if (has) {
     $("strength-card").hidden = false;
-    C.strength($("strength"), d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), minutes: w.bySport.strength.minutes, partial: !w.complete })));
+    // Wochenzeilen statt Säulen: Balken gegen die Zielmarke (60 min), laufende Woche oben mit großer Zahl.
+    const GOAL = 60, weeks = [...d.weeks].reverse(), cur = weeks[0];
+    const max = Math.max(GOAL, ...weeks.map((w) => w.bySport.strength.minutes)) * 1.1;
+    const done = d.weeks.filter((w) => w.complete && w.bySport.strength.minutes >= GOAL).length, full = d.weeks.filter((w) => w.complete).length;
+    const row = (w) => { const m = w.bySport.strength.minutes, hit = m >= GOAL; return `<div style="display:grid;grid-template-columns:64px 1fr 56px;gap:8px;align-items:center;padding:3px 0;${w.complete ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.weekStart)}${w.complete ? "" : " ·&nbsp;jetzt"}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${(m / max) * 100}%;background:${hit ? "var(--ok)" : "var(--s-strength)"}"></div><i style="left:${(GOAL / max) * 100}%"></i></div><b style="text-align:right">${m ? fmt(m) + " min" : "–"}</b></div>`; };
+    $("strength").innerHTML = `<div class="big">${fmt(cur.bySport.strength.minutes)} <small class="muted" style="font-size:.9rem">min diese Woche von ${GOAL}</small></div>
+      <div class="muted" style="margin:2px 0 10px">Ziel erreicht in ${done} von ${full} abgeschlossenen Wochen · senkrechte Marke = ${GOAL} min</div>${weeks.map(row).join("")}`;
   }
   if (!d.hipFlags.length) return; // Eine Textsuche ohne Treffer ist keine Aussage
   $("hip-card").hidden = false;

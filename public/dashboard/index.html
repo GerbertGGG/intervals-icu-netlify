@@ -42,6 +42,7 @@ a { color: var(--accent); }
 .muted { color: var(--muted); font-size: .85rem; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .grid.wide { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
+.grid.half { grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); }
 .grid.fill { grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); align-items: start; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .card.full { grid-column: 1 / -1; }
@@ -133,7 +134,7 @@ button, input { font: inherit; }
   <div id="sources"></div>
 
   <nav class="jump" aria-label="Sprungmarken">
-    <a href="#cockpit">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung &amp; Kraft</a>
+    <a href="#cockpit">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
   </nav>
 
   <div id="cockpit"></div>
@@ -195,14 +196,21 @@ button, input { font: inherit; }
     <div class="card" id="weight-card" hidden><h3>Gewicht</h3><div id="weight"></div></div>
   </div>
 
-  <h2 id="ernaehrung">6 · Ernährung und Kraft</h2>
+  <h2 id="ernaehrung">6 · Ernährung</h2>
   <div id="nutrition"></div>
-  <div class="grid fill" style="margin-top:12px">
+  <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card" id="cravings-card" hidden><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div><div id="cravings-list"></div></div>
-    <div class="card" id="strength-card" hidden><h3>Krafttraining pro Woche (Ziel 1 h)</h3><div id="strength"></div></div>
-    <div class="card" id="hip-card" hidden><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
-    <div class="card" id="studie-card" hidden><h3>Studien-Check der Woche</h3><div id="studie"></div></div>
   </div>
+
+  <section id="kraft" hidden>
+    <h2>7 · Kraft</h2>
+    <div class="grid half" style="align-items:start">
+      <div class="card" id="strength-card" hidden><h3>Krafttraining (Ziel 1 h pro Woche)</h3><div id="strength"></div></div>
+      <div class="card" id="hip-card" hidden><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
+    </div>
+  </section>
+
+  <div class="card" id="studie-card" style="margin-top:24px" hidden><h3>Studien-Check der Woche</h3><div id="studie"></div></div>
 </main>
 
 <div id="login" class="card" hidden>
