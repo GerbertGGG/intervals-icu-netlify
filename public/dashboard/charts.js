@@ -261,28 +261,6 @@
     mount(host, s);
   }
 
-  /* ---------- Bestzeiten und Prognosen als Pace je Distanz ---------- */
-  function records(host, rows, goalPaceSec) {
-    const W = 480, H = 250, L = 48, R = 16, T = 26, B = 40;
-    const paces = rows.flatMap((r) => [r.bestPace, r.progPace]).filter((v) => v != null).concat(goalPaceSec ?? []);
-    const lo = Math.floor((Math.min(...paces) - 15) / 15) * 15, hi = Math.ceil((Math.max(...paces) + 15) / 15) * 15;
-    const y = (v) => T + (H - T - B) * ((v - lo) / (hi - lo)); // schneller = oben
-    const s = svg(W, H, "Bestzeiten und Prognosen als Pace");
-    for (let v = Math.ceil(lo / 30) * 30; v <= hi; v += 30) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.pace(v)));
-    s.append(el("text", { x: 4, y: 12 }, "min/km (schneller = oben)"));
-    if (goalPaceSec) s.append(el("line", { x1: L, x2: W - R, y1: y(goalPaceSec), y2: y(goalPaceSec), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(goalPaceSec) - 5, "text-anchor": "end", style: "fill:var(--accent);font-weight:700" }, `Ziel-Pace ${U.pace(goalPaceSec)}`));
-    const slot = (W - L - R) / rows.length;
-    rows.forEach((r, i) => {
-      const cx = L + slot * i + slot / 2;
-      s.append(el("text", { x: cx, y: H - 20, "text-anchor": "middle", style: "fill:var(--text)" }, r.label));
-      if (r.bestPace != null) { s.append(title(el("circle", { cx: cx - 18, cy: y(r.bestPace), r: 7, fill: "var(--accent)" }), `Bestzeit ${U.fmtTime(r.bestSeconds)}`), el("text", { x: cx - 18, y: y(r.bestPace) + 20, "text-anchor": "middle", style: "fill:var(--text)" }, U.fmtTime(r.bestSeconds))); }
-      if (r.progPace != null) { s.append(title(el("circle", { cx: cx + 18, cy: y(r.progPace), r: 7, fill: "var(--card)", stroke: "var(--muted)", "stroke-width": 2.5 }), `Prognose ${U.fmtTime(r.progSeconds)}`), el("text", { x: cx + 18, y: y(r.progPace) - 12, "text-anchor": "middle" }, U.fmtTime(r.progSeconds))); }
-      if (r.bestPace == null && r.progPace == null) s.append(el("text", { x: cx, y: (T + H - B) / 2, "text-anchor": "middle" }, "keine Daten"));
-    });
-    s.append(el("circle", { cx: L + 8, cy: H - 6, r: 5, fill: "var(--accent)" }), el("text", { x: L + 18, y: H - 2 }, "Bestzeit"), el("circle", { cx: L + 88, cy: H - 6, r: 5, fill: "var(--card)", stroke: "var(--muted)", "stroke-width": 2 }), el("text", { x: L + 98, y: H - 2 }, "Runalyze-Prognose"));
-    mount(host, s);
-  }
-
   /* ---------- Trainingspaces (VDOT-Zonen) als sortierte Liste, Ziel-Pace an passender Stelle ---------- */
   function paceRuler(host, zones, goalPace) {
     const items = [...zones.map((z) => ({ label: z.label, sec: z.sec })), ...(goalPace ? [{ label: "Ziel-Pace", sec: goalPace, goal: true }] : [])].sort((a, b) => a.sec - b.sec);
@@ -447,5 +425,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, records, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
 })();

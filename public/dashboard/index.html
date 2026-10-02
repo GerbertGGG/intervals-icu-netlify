@@ -42,6 +42,7 @@ a { color: var(--accent); }
 .muted { color: var(--muted); font-size: .85rem; }
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .grid.wide { grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); }
+.grid.fill { grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); align-items: start; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
 .card.full { grid-column: 1 / -1; }
 .stack > * + * { margin-top: 12px; }
@@ -80,7 +81,7 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .today > div:first-child { flex: 1 1 260px; min-width: 0; }
 .wprofile { flex: 1 1 320px; max-width: 560px; }
-.mini { width: 100%; border-collapse: collapse; font-size: .9rem; } .mini th { text-align: left; font-weight: 500; color: var(--muted); font-size: .78rem; padding: 2px 6px 4px 0; } .mini td { padding: 5px 6px 5px 0; border-top: 1px solid var(--line); }
+.mini { width: 100%; border-collapse: collapse; font-size: .9rem; } .mini td { white-space: normal; } .mini th { text-align: left; font-weight: 500; color: var(--muted); font-size: .78rem; padding: 2px 6px 4px 0; } .mini td { padding: 5px 6px 5px 0; border-top: 1px solid var(--line); }
 .crow, .prow { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .crow.chead { flex-direction: row; justify-content: space-between; color: var(--accent); font-size: 1.05rem; }
 .ctop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -132,18 +133,21 @@ button, input { font: inherit; }
   <div id="sources"></div>
 
   <nav class="jump" aria-label="Sprungmarken">
-    <a href="#cockpit">Cockpit</a><a href="#heute">Heute</a><a href="#verlauf">Verlauf</a><a href="#fitness">Fitness</a><a href="#wellness">Wellness</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a><a href="#studie">Studie</a>
+    <a href="#cockpit">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung &amp; Kraft</a>
   </nav>
 
   <div id="cockpit"></div>
 
-  <h2 id="heute">1 · Heute im Detail</h2>
-  <div class="grid wide" style="align-items:start">
-    <div id="ready"></div>
-    <div id="today"></div>
-  </div>
+  <section id="rennplan" hidden>
+    <h2>2 · Rennplan</h2>
+    <div class="grid wide" style="align-items:start">
+      <div class="card"><h3>Zielstaffel</h3><div id="staffel"></div></div>
+      <div class="card"><h3>Splits und Verpflegung</h3><div id="splits"></div></div>
+      <div class="card"><h3>Checkliste</h3><div id="checklist"></div></div>
+    </div>
+  </section>
 
-  <h2 id="verlauf">2 · Trainingsverlauf</h2>
+  <h2 id="form">3 · Form</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
     <div class="muted">CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Der Renntag steht nur, wenn er in den nächsten 4 Wochen liegt.</div></div>
   <div class="grid" style="margin-top:12px">
@@ -151,10 +155,10 @@ button, input { font: inherit; }
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
     <div class="card"><h3>Belastung pro Woche (alle Sportarten)</h3><div id="chart-load"></div>
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
+    <div class="card"><h3>Longrun-Tracker (8 Wochen)</h3><div id="longruns"></div></div>
   </div>
   <div class="muted" id="plan-note" style="margin-top:6px"></div>
-  <h2 id="tage">2b · Belastung je Tag und Wochenbericht nach Sportart</h2>
-  <div class="split">
+  <div class="split" style="margin-top:12px">
     <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
     <div class="stack">
       <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
@@ -164,46 +168,41 @@ button, input { font: inherit; }
   <div class="card scroll" id="week-report" style="margin-top:12px"></div>
   <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
 
-  <h2 id="fitness">3 · Fitness</h2>
+  <h2 id="leistung">4 · Leistung</h2>
   <div class="grid wide">
     <div class="card"><h3>VDOT und Ziel-Pace</h3><div id="vdot"></div></div>
+    <div class="card"><h3>Halbmarathon: Prognose gegenüber dem Ziel</h3><div id="corridor"></div></div>
     <div class="card"><h3>Decoupling bei langen Läufen</h3><div id="chart-dec"></div>
       <div class="muted">Orientierung: unter etwa 5 % gilt die Grundlagenausdauer als stabil. Höher = Puls driftet gegen Pace.</div></div>
-    <div class="card"><h3>Halbmarathon: Wo liegen die Zeiten gegenüber dem Ziel?</h3><div id="corridor"></div></div>
-    <div class="card"><h3>Prognose-Entwicklung</h3><div id="hm-trend"></div></div>
-    <div class="card"><h3>Bestzeiten und Runalyze-Prognose</h3><div id="records-chart"></div></div>
+    <div class="card" id="hm-trend-card" hidden><h3>Prognose-Entwicklung</h3><div id="hm-trend"></div></div>
   </div>
-  <div id="records-note" style="margin-top:6px"></div>
-
-  <h2 id="schwellen">3b · Schwellen</h2>
+  <h3 style="margin:16px 0 8px">Schwellen</h3>
   <div class="grid" id="thresholds"></div>
 
-  <h2 id="wellness">4 · Wellness</h2>
-  <div class="card"><h3>Stimmung, Motivation, Ermüdung, Muskelkater, Schlaf</h3><div id="wellness-heat"></div>
+  <h2 id="erholung">5 · Erholung</h2>
+  <div class="grid wide" style="align-items:start">
+    <div id="ready"></div>
+    <div class="card"><h3>Schlafkonto 2 Nächte</h3><div id="sleep-account"></div></div>
+  </div>
+  <div class="card" style="margin-top:12px"><h3>Ermüdung, Muskelkater, Schlafqualität</h3><div id="wellness-heat"></div>
     <div class="legend"><span><i style="background:var(--accent);opacity:.14"></i>1 (bestmöglich)</span><span><i style="background:var(--accent)"></i>höchster eingetragener Wert (schlechter)</span><span><i style="background:repeating-linear-gradient(45deg,var(--muted) 0 1px,transparent 1px 5px)"></i>nicht eingetragen</span></div>
-    <div class="muted" style="margin-top:6px">Skalen: 1 = bestmöglich. Die Beschriftungen der Stufen liefert die API nicht; je Zeile reicht die Skala bis zum höchsten tatsächlich eingetragenen Wert. Schraffiert = nichts eingetragen, nie „gut". Neutrale Farbe statt Ampel, weil die Bedeutung der Stufen nicht aus den Daten lesbar ist.</div></div>
+    <div class="muted" style="margin-top:6px">Skala 1 = bestmöglich; die Stufen-Beschriftungen liefert die API nicht, deshalb neutrale Farbe statt Ampel. Schraffiert = nichts eingetragen, nie „gut".</div></div>
   <div class="grid" style="margin-top:12px">
     <div class="card"><h3>Ruhepuls</h3><div id="rhr"></div>
-      <div class="muted">Ohne Nachttracking ist das ein Tageswert (Messmoment und Tagesform schwanken), kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div></div>
+      <div class="muted">Ohne Nachttracking ein Tageswert, kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div></div>
     <div class="card"><h3>Schlafdauer</h3><div id="sleep"></div><div class="muted">Lücken = nicht erfasst.</div></div>
     <div class="card"><h3>HRV</h3><div id="hrv"></div><div class="muted">Lücken = nicht erfasst.</div></div>
+    <div class="card" id="weight-card" hidden><h3>Gewicht</h3><div id="weight"></div></div>
   </div>
 
-  <h2 id="ernaehrung">5 · Ernährung und Heißhunger</h2>
+  <h2 id="ernaehrung">6 · Ernährung und Kraft</h2>
   <div id="nutrition"></div>
-  <div class="grid wide" style="margin-top:12px">
-    <div class="card"><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div></div>
-    <div class="card"><h3>Letzte Einträge</h3><div id="cravings-list"></div></div>
+  <div class="grid fill" style="margin-top:12px">
+    <div class="card" id="cravings-card" hidden><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div><div id="cravings-list"></div></div>
+    <div class="card" id="strength-card" hidden><h3>Krafttraining pro Woche (Ziel 1 h)</h3><div id="strength"></div></div>
+    <div class="card" id="hip-card" hidden><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
+    <div class="card" id="studie-card" hidden><h3>Studien-Check der Woche</h3><div id="studie"></div></div>
   </div>
-
-  <h2 id="kraft">6 · Kraft und Hüfte</h2>
-  <div class="grid wide">
-    <div class="card"><h3>Krafttraining pro Woche (Ziel 1 h)</h3><div id="strength"></div></div>
-    <div class="card"><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
-  </div>
-
-  <h2 id="studie">7 · Studien-Check der Woche</h2>
-  <div class="card" id="studie"></div>
 </main>
 
 <div id="login" class="card" hidden>

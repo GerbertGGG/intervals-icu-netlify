@@ -19,6 +19,7 @@ import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./
 
 const HISTORY_DAYS = 56;
 const PLAN_AHEAD_DAYS = 14;
+const LONGRUN_MIN_KM = 12;
 
 // Vom Nutzer vorgegeben (Halbmarathon Samstag 03.10.2026, Ziel < 2:00:00). Wird nur
 // verwendet, wenn in Intervals.icu kein A-Rennen im Kalender steht.
@@ -228,6 +229,7 @@ function buildWellness(list) {
       restingHR: scaleValue(w?.restingHR),
       sleepHours: num(w?.sleepSecs) != null && num(w.sleepSecs) > 0 ? Math.round((num(w.sleepSecs) / 3600) * 10) / 10 : null,
       hrv: num(w?.hrv) != null && num(w.hrv) > 0 ? num(w.hrv) : null,
+      weight: positive(w?.weight),
       sleepQuality: scaleValue(w?.sleepQuality),
       soreness: scaleValue(w?.soreness),
       fatigue: scaleValue(w?.fatigue),
@@ -281,7 +283,12 @@ function buildInsights(rawWellness, activities) {
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
 function buildFitness(runs) {
   const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
+  // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
+  // Nur Datum, Distanz und Pace gehen raus (keine Namen, kein Puls).
+  const long = runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
+  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm });
   return {
+    longRunTracker: { minKm: LONGRUN_MIN_KM, longest: long[0] ? pick(long[0]) : null, count16: runs.filter((r) => r.distanceKm >= 16).length, recent: long.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)).map(pick) },
     longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)
       .map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
