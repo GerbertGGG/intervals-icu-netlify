@@ -541,11 +541,11 @@ function renderStrength(d) {
     : `<div class="muted">Keine Treffer in den letzten 14 Tagen. Ältere Treffer in 8 Wochen: ${d.hipFlags.length}.</div>${list(d.hipFlags)}`;
 }
 
-/* ---------- Studien-Check: nur sichtbar, wenn einer übermittelt wurde ---------- */
+/* ---------- Studien-Check der Woche ---------- */
 function renderStudie(d) {
   const s = d.studie;
-  if (!s) return;
-  $("studie-card").hidden = false;
+  $("studie-card").hidden = false; // Der Abschnitt bleibt sichtbar: Er kommt sonntags mit dem Coaching-Bericht
+  if (!s) { $("studie").innerHTML = '<div class="muted">Noch kein Studien-Check diese Woche. Er kommt am Sonntag mit dem Coaching-Bericht.</div>'; return; }
   const link = s.sourceUrl ? ` · <a href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer">Quelle öffnen</a>` : "";
   $("studie").innerHTML = `${s.title ? `<h3>${esc(s.title)}</h3>` : ""}<div class="desc" style="color:var(--text)">${esc(s.text)}</div>
     <div class="muted" style="margin-top:8px">Quelle: ${esc(s.source)}${link}${s.week ? ` · Woche ${fmtDate(s.week)}` : ""} · übermittelt ${new Date(s.fetchedAt).toLocaleDateString("de-DE")}</div>`;
