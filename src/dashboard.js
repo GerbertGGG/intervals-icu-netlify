@@ -10,7 +10,7 @@ import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot 
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
-import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
+import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
 import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./runalyze-history.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
@@ -281,16 +281,32 @@ function buildInsights(rawWellness, activities) {
 }
 
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
-function buildFitness(runs) {
+function buildFitness(runs, snapshot, todayIso) {
   const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
+  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm, decoupling: r.decoupling });
   // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
-  // Nur Datum, Distanz und Pace gehen raus (keine Namen, kein Puls).
-  const long = runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
-  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm });
+  // Bevorzugt aus Runalyze: Dort setzt der Nutzer die Art ("Langer Lauf") selbst und Runalyze liefert das Decoupling.
+  // Ohne Runalyze-Läufe: Läufe ab LONGRUN_MIN_KM aus Intervals.icu (Decoupling dort oft leer). Nur Datum, Distanz, Pace, Decoupling gehen raus.
+  const since = addDays(todayIso, -(HISTORY_DAYS - 1));
+  const rz = (snapshot?.runs ?? []).filter((r) => r.date >= since && runKindFromType(r.type) === "long");
+  const rzRecords = rz.map((r) => {
+    const pace = r.durationSec ? r.durationSec / r.distanceKm : null;
+    return { date: r.date, distanceKm: Math.round(r.distanceKm * 10) / 10, paceSecPerKm: pace != null ? Math.round(pace) : null, pace: pace != null ? formatPace(pace) : null, decoupling: r.decouplingPct };
+  });
+  const source = rzRecords.length ? "runalyze" : "intervals";
+  const pool = source === "runalyze" ? rzRecords : runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).map(pick);
+  const byLength = [...pool].sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
   return {
-    longRunTracker: { minKm: LONGRUN_MIN_KM, longest: long[0] ? pick(long[0]) : null, count16: runs.filter((r) => r.distanceKm >= 16).length, recent: long.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)).map(pick) },
-    longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)
-      .map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
+    longRunTracker: {
+      source,
+      minKm: source === "runalyze" ? null : LONGRUN_MIN_KM,
+      longest: byLength[0] ?? null,
+      count16: pool.filter((r) => r.distanceKm >= 16).length,
+      recent: byLength.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)),
+    },
+    longRuns: source === "runalyze"
+      ? [...rzRecords].filter((r) => r.decoupling != null).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling }))
+      : asc.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
 }
 
@@ -392,7 +408,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
-    fitness: buildFitness(runs),
+    fitness: buildFitness(runs, snapshot, todayIso),
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,

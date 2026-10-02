@@ -248,13 +248,16 @@ function renderLongruns(d) {
   const host = $("longruns"), T = d.fitness.longRunTracker;
   if (!d.sources.intervalsActivities.ok) { host.innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; return; }
   if (!T) { host.innerHTML = ""; return; }
-  const goalPace = d.goal.targetTimeSecs ? d.goal.targetTimeSecs / (d.goal.runKm ?? 21.0975) : null;
   const need = (d.goal.runKm ?? 21.0975) >= 20;
   const warn = need && T.count16 === 0 ? `<div class="notice bad"><b>Kein Lauf ab 16 km in den letzten 8 Wochen.</b> Es gibt keinen Beleg, dass ${fmt(d.goal.runKm ?? 21.0975, 1)} km in Zielpace getragen werden. Der Aufbau davor sagt über die Langstreckentauglichkeit weniger als der längste Einzellauf.</div>` : "";
-  const list = T.recent.length ? `<table class="mini"><thead><tr><th>Datum</th><th>Distanz</th><th>Pace</th>${goalPace ? "<th>gegen Ziel-Pace</th>" : ""}</tr></thead><tbody>${T.recent.map((r) => `<tr><td>${fmtDate(r.date)}</td><td>${fmt(r.distanceKm, 1)} km</td><td>${r.pace ?? "–"}</td>${goalPace ? `<td class="muted">${r.paceSecPerKm != null ? (r.paceSecPerKm <= goalPace ? "schneller/gleich" : "+" + (r.paceSecPerKm - Math.round(goalPace)) + " s/km") : "–"}</td>` : ""}</tr>`).join("")}</tbody></table>` : `<div class="muted">Kein Lauf ab ${T.minKm} km in den letzten 8 Wochen.</div>`;
+  // Decoupling (Puls driftet gegen Pace) sagt mehr als die Pace: Long Runs laufen bewusst langsam. Wert nur bei Grundlagen-/Long-Läufen (Pulsregel im Worker).
+  const decCls = (v) => (v == null ? "none" : v < 5 ? "ok" : v < 8 ? "warn" : "bad");
+  const list = T.recent.length ? `<table class="mini"><thead><tr><th>Datum</th><th>Distanz</th><th>Pace</th><th>Decoupling</th></tr></thead><tbody>${T.recent.map((r) => `<tr><td>${fmtDate(r.date)}</td><td>${fmt(r.distanceKm, 1)} km</td><td>${r.pace ?? "–"}</td><td>${r.decoupling != null ? `<span class="badge ${decCls(r.decoupling)}">${fmt(r.decoupling, 1)} %</span>` : '<span class="muted">–</span>'}</td></tr>`).join("")}</tbody></table>` : `<div class="muted">${T.source === "runalyze" ? "Kein Lauf der Art „Langer Lauf“" : `Kein Lauf ab ${T.minKm} km`} in den letzten 8 Wochen.</div>`;
+  const decN = T.recent.filter((r) => r.decoupling != null).length;
+  const decNote = T.recent.length && !decN ? '<div class="notice" style="margin-top:8px">Kein Long Run mit Decoupling-Wert: Ohne ihn fehlt der Nachweis, dass die Ausdauer stabil bleibt.</div>' : "";
   host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small class="muted" style="font-size:.9rem">km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
-    <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · Läufe ab ${T.minKm} km:</div>${list}${warn}
-    <div class="muted" style="margin-top:6px">Racepace-Blöcke innerhalb von Läufen werden nicht erkannt. Wochenumfang im Taper ist gewollt niedrig, zählt hier nicht.</div>`;
+    <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · ${T.source === "runalyze" ? "Läufe der Art „Langer Lauf“ in Runalyze" : `Läufe ab ${T.minKm} km`}:</div>${list}${decNote}${warn}
+    <div class="muted" style="margin-top:6px">Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; aus Runalyze (Pace-Decoupling), wo vorhanden. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div>`;
 }
 
 /* ---------- 3 · Form: Verlauf ---------- */
@@ -434,7 +437,7 @@ function renderNutrition(d) {
     $("nutrition").innerHTML = '<div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird. Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
   } else {
     const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
-    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid wide"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div>';
+    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid half"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div>';
     renderNutritionToday(d, map);
     renderNutritionWeek(d, map);
     const todayGoal = (v) => (v != null ? { [d.today]: v } : undefined);
@@ -517,9 +520,17 @@ function renderNutritionWeek(d, map) {
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
 function renderStrength(d) {
-  if (d.sources.intervalsActivities.ok && d.weeks.some((w) => w.bySport.strength.minutes > 0)) {
+  const has = d.sources.intervalsActivities.ok && d.weeks.some((w) => w.bySport.strength.minutes > 0);
+  if (has || d.hipFlags.length) $("kraft").hidden = false;
+  if (has) {
     $("strength-card").hidden = false;
-    C.strength($("strength"), d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), minutes: w.bySport.strength.minutes, partial: !w.complete })));
+    // Wochenzeilen statt Säulen: Balken gegen die Zielmarke (60 min), laufende Woche oben mit großer Zahl.
+    const GOAL = 60, weeks = [...d.weeks].reverse(), cur = weeks[0];
+    const max = Math.max(GOAL, ...weeks.map((w) => w.bySport.strength.minutes)) * 1.1;
+    const done = d.weeks.filter((w) => w.complete && w.bySport.strength.minutes >= GOAL).length, full = d.weeks.filter((w) => w.complete).length;
+    const row = (w) => { const m = w.bySport.strength.minutes, hit = m >= GOAL; return `<div style="display:grid;grid-template-columns:64px 1fr 56px;gap:8px;align-items:center;padding:3px 0;${w.complete ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.weekStart)}${w.complete ? "" : " ·&nbsp;jetzt"}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${(m / max) * 100}%;background:${hit ? "var(--ok)" : "var(--s-strength)"}"></div><i style="left:${(GOAL / max) * 100}%"></i></div><b style="text-align:right">${m ? fmt(m) + " min" : "–"}</b></div>`; };
+    $("strength").innerHTML = `<div class="big">${fmt(cur.bySport.strength.minutes)} <small class="muted" style="font-size:.9rem">min diese Woche von ${GOAL}</small></div>
+      <div class="muted" style="margin:2px 0 10px">Ziel erreicht in ${done} von ${full} abgeschlossenen Wochen · senkrechte Marke = ${GOAL} min</div>${weeks.map(row).join("")}`;
   }
   if (!d.hipFlags.length) return; // Eine Textsuche ohne Treffer ist keine Aussage
   $("hip-card").hidden = false;
@@ -530,11 +541,11 @@ function renderStrength(d) {
     : `<div class="muted">Keine Treffer in den letzten 14 Tagen. Ältere Treffer in 8 Wochen: ${d.hipFlags.length}.</div>${list(d.hipFlags)}`;
 }
 
-/* ---------- Studien-Check: nur sichtbar, wenn einer übermittelt wurde ---------- */
+/* ---------- Studien-Check der Woche ---------- */
 function renderStudie(d) {
   const s = d.studie;
-  if (!s) return;
-  $("studie-card").hidden = false;
+  $("studie-card").hidden = false; // Der Abschnitt bleibt sichtbar: Er kommt sonntags mit dem Coaching-Bericht
+  if (!s) { $("studie").innerHTML = '<div class="muted">Noch kein Studien-Check diese Woche. Er kommt am Sonntag mit dem Coaching-Bericht.</div>'; return; }
   const link = s.sourceUrl ? ` · <a href="${esc(s.sourceUrl)}" target="_blank" rel="noopener noreferrer">Quelle öffnen</a>` : "";
   $("studie").innerHTML = `${s.title ? `<h3>${esc(s.title)}</h3>` : ""}<div class="desc" style="color:var(--text)">${esc(s.text)}</div>
     <div class="muted" style="margin-top:8px">Quelle: ${esc(s.source)}${link}${s.week ? ` · Woche ${fmtDate(s.week)}` : ""} · übermittelt ${new Date(s.fetchedAt).toLocaleDateString("de-DE")}</div>`;
