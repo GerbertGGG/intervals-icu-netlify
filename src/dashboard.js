@@ -2,10 +2,10 @@ import { json } from "./http-helpers.js";
 import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
-import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
+import { fetchIntervalsActivities, fetchIntervalsActivityStreams, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
-import { mustEnv } from "./kv.js";
+import { mustEnv, readKvJson, writeKvJson } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { readStudie } from "./studie-snapshot.js";
@@ -280,6 +280,36 @@ function buildInsights(rawWellness, activities) {
   return { cravings, hipFlags };
 }
 
+// Decoupling (Pa:HR) aus den Rohdaten: Effizienz = Geschwindigkeit / Puls, erste gegen zweite Hälfte der
+// bewegten Zeit. Positiv = Puls driftet gegen Pace. Intervals.icu liefert das Feld oft nicht (null).
+export function computeDecoupling(hr, speed) {
+  if (!Array.isArray(hr) || !Array.isArray(speed)) return null;
+  const n = Math.min(hr.length, speed.length), pts = [];
+  for (let i = 0; i < n; i++) if (hr[i] > 60 && speed[i] > 0.5) pts.push([hr[i], speed[i]]);
+  if (pts.length < 600) return null; // unter ca. 10 min bewegter Zeit nicht aussagekräftig
+  const eff = (a) => a.reduce((s, p) => s + p[1], 0) / a.reduce((s, p) => s + p[0], 0);
+  const half = pts.length >> 1, e1 = eff(pts.slice(0, half)), e2 = eff(pts.slice(half));
+  return Math.round(((e1 - e2) / e1) * 1000) / 10;
+}
+
+// Fehlendes Decoupling langer Grundlagen-/Long-Läufe selbst rechnen (Pulsregel: nur diese Arten) und je Aktivität
+// im KV merken, damit die Streams nur einmal geholt werden. Best effort: bei Fehlern bleibt der Wert null.
+async function fillDecoupling(env, runs) {
+  const todo = runs.filter((r) => r.id != null && r.decoupling == null && (r.kind === "long" || r.kind === "base") && r.distanceKm >= LONGRUN_MIN_KM).slice(0, 8);
+  await Promise.all(todo.map(async (r) => {
+    const key = `dashboard:decoupling:${r.id}`;
+    try {
+      const cached = await readKvJson(env, key);
+      if (cached && "value" in cached) { r.decoupling = cached.value; return; }
+      const st = await fetchIntervalsActivityStreams(env, r.id, ["heartrate", "velocity_smooth"]);
+      if (!st) return;
+      const value = computeDecoupling(st.heartrate, st.velocity_smooth);
+      r.decoupling = value;
+      await writeKvJson(env, key, { value });
+    } catch { /* bleibt null */ }
+  }));
+}
+
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
 function buildFitness(runs) {
   const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
@@ -366,6 +396,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
   const wellness = wellnessR.ok ? buildWellness(wellnessR.value) : [];
   const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
+  await fillDecoupling(env, runs);
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
   const thresholds = buildThresholds(settingsR.ok ? settingsR.value : null);

@@ -249,3 +249,15 @@ assert.deepEqual(failed.wellness, []);
   assert.deepEqual(parseWorkoutSteps("", { steps: [{ duration: 600, pace: { value: 80, units: "%pace" } }, { reps: 2, steps: [{ duration: 60 }] }] }).map((x) => [x.secs, x.pct]), [[600, 80], [60, null], [60, null]]);
 }
 console.log("dashboard tests ok");
+
+// Decoupling aus Rohdaten: gleiche Pace, Puls steigt in der zweiten Hälfte um ~5 % -> ca. 4,8 % Drift
+{
+  const { computeDecoupling } = await import("../src/dashboard.js");
+  const speed = Array(1200).fill(3);
+  const hr = [...Array(600).fill(140), ...Array(600).fill(147)];
+  assert.equal(computeDecoupling(hr, speed), 4.8);
+  assert.equal(computeDecoupling(Array(1200).fill(140), speed), 0);
+  assert.equal(computeDecoupling(hr.slice(0, 100), speed.slice(0, 100)), null); // zu kurz
+  assert.equal(computeDecoupling(null, speed), null);
+  console.log("decoupling ok");
+}
