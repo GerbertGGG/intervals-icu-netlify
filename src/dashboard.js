@@ -286,7 +286,7 @@ function buildFitness(runs) {
   // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
   // Nur Datum, Distanz und Pace gehen raus (keine Namen, kein Puls).
   const long = runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
-  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm });
+  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm, decoupling: r.decoupling });
   return {
     longRunTracker: { minKm: LONGRUN_MIN_KM, longest: long[0] ? pick(long[0]) : null, count16: runs.filter((r) => r.distanceKm >= 16).length, recent: long.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)).map(pick) },
     longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)

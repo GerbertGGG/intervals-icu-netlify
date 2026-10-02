@@ -248,13 +248,16 @@ function renderLongruns(d) {
   const host = $("longruns"), T = d.fitness.longRunTracker;
   if (!d.sources.intervalsActivities.ok) { host.innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; return; }
   if (!T) { host.innerHTML = ""; return; }
-  const goalPace = d.goal.targetTimeSecs ? d.goal.targetTimeSecs / (d.goal.runKm ?? 21.0975) : null;
   const need = (d.goal.runKm ?? 21.0975) >= 20;
   const warn = need && T.count16 === 0 ? `<div class="notice bad"><b>Kein Lauf ab 16 km in den letzten 8 Wochen.</b> Es gibt keinen Beleg, dass ${fmt(d.goal.runKm ?? 21.0975, 1)} km in Zielpace getragen werden. Der Aufbau davor sagt über die Langstreckentauglichkeit weniger als der längste Einzellauf.</div>` : "";
-  const list = T.recent.length ? `<table class="mini"><thead><tr><th>Datum</th><th>Distanz</th><th>Pace</th>${goalPace ? "<th>gegen Ziel-Pace</th>" : ""}</tr></thead><tbody>${T.recent.map((r) => `<tr><td>${fmtDate(r.date)}</td><td>${fmt(r.distanceKm, 1)} km</td><td>${r.pace ?? "–"}</td>${goalPace ? `<td class="muted">${r.paceSecPerKm != null ? (r.paceSecPerKm <= goalPace ? "schneller/gleich" : "+" + (r.paceSecPerKm - Math.round(goalPace)) + " s/km") : "–"}</td>` : ""}</tr>`).join("")}</tbody></table>` : `<div class="muted">Kein Lauf ab ${T.minKm} km in den letzten 8 Wochen.</div>`;
+  // Decoupling (Puls driftet gegen Pace) sagt mehr als die Pace: Long Runs laufen bewusst langsam. Wert nur bei Grundlagen-/Long-Läufen (Pulsregel im Worker).
+  const decCls = (v) => (v == null ? "none" : v < 5 ? "ok" : v < 8 ? "warn" : "bad");
+  const list = T.recent.length ? `<table class="mini"><thead><tr><th>Datum</th><th>Distanz</th><th>Pace</th><th>Decoupling</th></tr></thead><tbody>${T.recent.map((r) => `<tr><td>${fmtDate(r.date)}</td><td>${fmt(r.distanceKm, 1)} km</td><td>${r.pace ?? "–"}</td><td>${r.decoupling != null ? `<span class="badge ${decCls(r.decoupling)}">${fmt(r.decoupling, 1)} %</span>` : '<span class="muted">–</span>'}</td></tr>`).join("")}</tbody></table>` : `<div class="muted">Kein Lauf ab ${T.minKm} km in den letzten 8 Wochen.</div>`;
+  const decN = T.recent.filter((r) => r.decoupling != null).length;
+  const decNote = T.recent.length && !decN ? '<div class="notice" style="margin-top:8px">Kein Long Run mit Decoupling-Wert: Ohne ihn fehlt der Nachweis, dass die Ausdauer stabil bleibt.</div>' : "";
   host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small class="muted" style="font-size:.9rem">km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
-    <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · Läufe ab ${T.minKm} km:</div>${list}${warn}
-    <div class="muted" style="margin-top:6px">Racepace-Blöcke innerhalb von Läufen werden nicht erkannt. Wochenumfang im Taper ist gewollt niedrig, zählt hier nicht.</div>`;
+    <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · Läufe ab ${T.minKm} km:</div>${list}${decNote}${warn}
+    <div class="muted" style="margin-top:6px">Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; nur bei Grundlagen- und Long-Läufen verfügbar. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div>`;
 }
 
 /* ---------- 3 · Form: Verlauf ---------- */
