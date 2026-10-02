@@ -107,38 +107,60 @@ const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), tod
 assert.equal(noToday.verdict.cls, "none"); // ohne heutigen Eintrag keine Einschätzung
 const wdg = buildWidget(d);
 const wjson = JSON.stringify(wdg);
-assert.ok(wjson.length < 5000, "Widget-Payload klein");
+assert.ok(wjson.length < 3000, "Widget-Payload klein");
 assert.equal(wdg.readiness.verdict.text, d.summary.readiness.verdict.text);
 assert.equal(wdg.goal.daysToGo, 3);
+assert.equal(wdg.goal.phase, "taper"); // Rennphase kommt fertig vom Server
+assert.equal(wdg.goal.runKm, d.goal.runKm);
 assert.equal(wdg.plan.today[0].purpose, "Zweck: Beine lockern");
-assert.equal(wdg.hip.recent, 1);
-assert.equal(wdg.trend.tsb14.length, 14); // Mini-Kurven im grossen Widget
-assert.equal(wdg.trend.hrv7.length, 7);
-assert.ok(Number.isInteger(wdg.week.plannedSessions));
+for (const gone of ["hip", "trend", "load", "thresholds", "hm"]) assert.equal(gone in wdg, false, gone); // nichts, was das Widget nicht zeichnet
+assert.deepEqual(Object.keys(wdg.readiness.body), ["sleep", "hrv", "resting"]);
+assert.equal(wdg.readiness.body.sleep.cls, "ok");
+assert.equal(wdg.readiness.body.hrv.cls, "ok");
 assert.equal(wdg.week.goal, null); // ohne Plan-Load und ohne Konfiguration kein Ziel, nichts erfunden
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goal, 250);
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goalSource, "config");
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "kaputt" }).week.goal, null);
-assert.equal(wdg.week.strengthMinutes, 0); // kein Krafttraining in den Testdaten
-assert.equal("strengthCount" in wdg.week, false);
-assert.equal(wdg.week.days.length, 7);
-assert.equal(wdg.week.days[0].date, wdg.week.weekStart);
-assert.equal(wdg.week.days.filter((x) => x.load == null).length, 6 - Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(wdg.week.weekStart + "T00:00:00Z")) / 86400000)); // Zukunft = null
-assert.equal(wdg.week.days.reduce((a, x) => a + (x.load ?? 0), 0), wdg.week.total);
+assert.equal(wdg.week.total, Object.values(d.weeks.at(-1).bySport).reduce((a, s) => a + s.load, 0));
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
-// Schlüsseleinheit per #key, Sportart je Tag und Wochenvolumen je Disziplin
-assert.equal(wdg.plan.key.name, "CSS-Intervalle");
-assert.equal(wdg.plan.key.sport, "swim");
-assert.equal(wdg.plan.key.date, day(1));
-assert.equal(wdg.plan.today[0].key, false);
+// Naechste Tage fuer die Kacheln: nur Name/Sport/Dauer, keine Beschreibung
+assert.deepEqual(wdg.plan.upcoming.map((x) => [x.date, x.name, x.sport, x.key]), [[day(1), "CSS-Intervalle", "swim", true]]);
+assert.equal(/10x100|description/.test(wjson), false);
+assert.equal(buildWidget({ ...d, sources: { ...d.sources, intervalsEvents: { ok: false } } }).plan.upcoming, null); // ohne Kalender nicht "frei"
 assert.equal(/#key/i.test(wjson), false); // das Kennzeichen selbst geht nicht raus
-assert.equal(buildWidget({ ...d, planned: d.planned.filter((p) => !p.tags.includes("#key")) }).plan.key, null); // ohne #key keine Schlüsseleinheit
-assert.equal(buildWidget({ ...d, planned: d.planned.map((p) => ({ ...p, tags: p.tags.map((t) => t.replace("#", "")) })) }).plan.key.name, "CSS-Intervalle"); // Tag auch ohne #
-assert.equal(wdg.week.bySport.swim.km, 1.5);
-assert.equal(wdg.week.bySport.swim.plannedKm, 2);
-assert.equal(wdg.week.bySport.run.plannedKm, null); // nichts geplant = null, nie 0
-assert.equal(wdg.week.days.find((x) => x.date === day(-2)).sports.swim, 40);
-assert.deepEqual(wdg.week.days.find((x) => x.date === day(1)).sports, {}); // Zukunft ohne Werte
+assert.equal(buildWidget({ ...d, planned: d.planned.map((p) => ({ ...p, tags: p.tags.map((t) => t.replace("#", "")) })) }).plan.upcoming[0].key, true); // Tag auch ohne #
+assert.equal(wdg.plan.today[0].key, false);
+// Phase
+{ const { racePhase } = await import("../src/widget.js"); assert.deepEqual([null, 20, 8, 7, 0, -1, -3, -4].map(racePhase), ["normal", "normal", "normal", "taper", "taper", "recovery", "recovery", "normal"]); }
+// Wochenvolumen je Disziplin (Basis der Training-Ansicht)
+const cw = d.weeks.at(-1).bySport;
+assert.equal(cw.swim.km, 1.5);
+assert.equal(cw.swim.plannedKm, 2);
+assert.equal(cw.run.plannedKm, null); // nichts geplant = null, nie 0
+assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
+// Urteil beachtet die Koerperwerte: zwei auffaellige Werte (HRV, Schlaf) kippen ein sonst gruenes Urteil
+{
+  const bad = d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30, sleepHours: 5 } : w));
+  const rd = computeReadiness(bad, today, computeLoad(bad));
+  assert.equal(rd.body.hrv.cls, "bad");
+  assert.equal(rd.body.sleep.cls, "bad");
+  assert.equal(rd.verdict.cls, "bad");
+  const one = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30 } : w)), today, computeLoad(d.wellness));
+  assert.equal(one.verdict.cls, "warn"); // ein Koerperwert allein = Vorsicht
+  assert.equal(one.body.hrvMedian, 48); // Median ohne heute
+}
+// Cache: zweiter Abruf kommt aus KV, ?fresh=1 umgeht ihn
+{
+  kv.delete("widget:dashboard-cache");
+  const get = (q = "") => handleWidgetRequest(new Request("https://x/api/widget" + q, { headers: { authorization: "Bearer geheim" } }), env);
+  await get();
+  const first = JSON.parse(kv.get("widget:dashboard-cache")).at;
+  assert.ok(first > 0);
+  const f = globalThis.fetch; let n = 0; globalThis.fetch = async (...a) => (n++, f(...a));
+  await get(); assert.equal(n, 0); // aus dem Cache
+  await get("?fresh=1"); assert.ok(n > 0); // frisch geladen
+  globalThis.fetch = f;
+}
 // Training-Ansicht (mittleres Widget)
 const trn = buildWidgetTraining(d, env);
 assert.deepEqual(Object.keys(trn.sports), ["swim", "bike", "run"]);
@@ -161,9 +183,8 @@ assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { he
 const det = buildWidgetDetail(d);
 assert.equal(det.form.length, 28);
 assert.equal(det.form.at(-1).date, today);
-assert.equal(det.nutrition.days.length, 7);
-assert.equal(det.nutrition.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal zaehlt als keine Daten
-assert.ok(det.cravings.count >= 1);
+assert.equal("cravings" in det || "nutrition" in det, false); // Heisshunger und Ernaehrung verlassen den Worker hier nicht
+assert.equal(det.goal.runKm, d.goal.runKm);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(JSON.stringify(det)), false); // keine Freitexte
 assert.ok(JSON.stringify(det).length < 5000);
 assert.equal(det.hm, null); // ohne Runalyze-Snapshot keine Zeiten, nichts erfunden
@@ -177,6 +198,8 @@ assert.equal(sm.sleep.days.length, 7);
 assert.equal(sm.sleep.days.at(-1).date, today);
 assert.equal(sm.sleep.days.at(-1).hours, 7.5);
 assert.equal(sm.sleep.medianHrv, 48);
+assert.equal(sm.sleep.medianHrv, d.summary.readiness.body.hrvMedian); // dieselben Mediane wie die Bereitschaft
+assert.equal(sm.goal.daysToGo, 3); // Rennziel kommt mit, kein Zweitabruf noetig
 assert.equal(sm.food.days.length, 7);
 assert.equal(sm.food.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal = keine Daten
 assert.ok(sm.food.hasData && sm.food.latest.calories > 1000 && sm.food.latest.goal === 2100);
@@ -187,8 +210,8 @@ assert.equal(sm.food.goals, null); // ohne Yazio-Zugang keine Ziele, nichts erfu
 assert.deepEqual(buildWidgetSmall(d, { kcal: 2100, proteinG: 120, carbsG: 250, fatG: 70 }).food.goals.proteinG, 120);
 assert.equal(sm.fitness.weekly.length, 7); // Fitness (CTL): ein Punkt je Woche
 assert.equal(sm.fitness.ctl, sm.fitness.weekly[6]);
-assert.ok(sm.cravings.count >= 1);
-assert.equal(smEmpty.cravings.count, sm.cravings.count); // Heisshunger unabhaengig von Yazio
+assert.equal("cravings" in sm, false);
+assert.ok(sm.fitness.delta == null || sm.fitness.deltaWeeks >= 1);
 assert.ok(JSON.stringify(sm).length < 3000);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(JSON.stringify(sm)), false);
 const smRes = await handleWidgetRequest(new Request("https://x/api/widget?view=small", { headers: { authorization: "Bearer geheim" } }), env);

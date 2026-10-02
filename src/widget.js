@@ -1,10 +1,14 @@
 import { json } from "./http-helpers.js";
 import { buildDashboard, isAuthorized } from "./dashboard.js";
 import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
+import { readKvJson, writeKvJson } from "./kv.js";
+import { isoDateBerlin } from "./date-utils.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
-// ohne Freitexte: Es gehen keine Kommentare, Einheitsnamen oder Heißhunger-Einträge raus.
+// ohne Freitexte: Es gehen keine Kommentare, Beschreibungen oder Heißhunger-Einträge raus. Jede Ansicht
+// bringt alles mit, was sie zeichnet (ein Request je Widget), und liefert fertige Einschätzungen
+// (Rennphase, Körper-Ampeln), damit das Skript nur noch darstellt.
 
 const firstLine = (s, max = 110) => {
   const line = String(s ?? "").split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? null;
@@ -22,6 +26,16 @@ const rpeOf = (s) => { const m = String(s ?? "").match(/\bRPE\s*:?\s*(\d{1,2}(?:
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
+// Rennphase aus den Tagen bis zum Rennen (Renntag = 0, danach negativ): normal, taper (letzte 7 Tage), recovery (3 Tage danach)
+export const PHASE_DAYS = { taperFrom: 7, recoveryDays: 3 };
+export function racePhase(daysToGo) {
+  if (daysToGo == null || daysToGo > PHASE_DAYS.taperFrom) return "normal";
+  if (daysToGo >= 0) return "taper";
+  return daysToGo >= -PHASE_DAYS.recoveryDays ? "recovery" : "normal";
+}
+const goalOf = (d) => ({ name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs, runKm: d.goal.runKm ?? null, phase: racePhase(d.goal.daysToGo) });
+const failedOf = (d) => Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k);
+
 // Wochenziel der TSS: Summe der geplanten Workouts der Woche aus dem Intervals-Kalender. Fehlt sie dort,
 // zaehlt der optionale Wert WEEKLY_TSS_GOAL (Worker-Variable); sonst gibt es bewusst kein Ziel.
 export function weeklyGoal(week, env) {
@@ -30,68 +44,30 @@ export function weeklyGoal(week, env) {
   return Number.isFinite(cfg) && cfg > 0 ? { goal: Math.round(cfg), source: "config" } : { goal: null, source: null };
 }
 
-const medianOf = (a) => {
-  const v = a.filter((x) => x != null).sort((x, y) => x - y);
-  if (!v.length) return null;
-  const m = v.length >> 1;
-  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
-};
-
 export function buildWidget(d, env = {}) {
   const week = d.weeks[d.weeks.length - 1];
-  // Tageslast der laufenden Woche (Mo bis So); Tage nach heute sind null, nicht 0.
-  const loadByDate = Object.fromEntries(d.daily.map((x) => [x.date, x.load]));
-  const sportsByDate = Object.fromEntries(d.daily.map((x) => [x.date, x.sports]));
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const date = addDays(week.weekStart, i);
-    return { date, load: date > d.today ? null : loadByDate[date] ?? 0, sports: date > d.today ? {} : sportsByDate[date] ?? {} };
-  });
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
   const total = (w) => (w ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null);
   const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(stripKey(p.description), 160), rpe: rpeOf(p.description) }));
   const next = d.planned.find((p) => p.date > d.today);
-  const key = d.planned.find((p) => p.date > d.today && isKeySession(p));
-  const recentHip = d.hipFlags.filter((f) => f.date >= new Date(Date.parse(d.today + "T00:00:00Z") - 14 * 86400000).toISOString().slice(0, 10));
+  // Die naechsten drei Tage fuer die Kacheln; ohne Kalender (Quelle ausgefallen) null statt "frei"
+  const horizon = addDays(d.today, 3);
+  const upcoming = d.sources.intervalsEvents?.ok === false ? null : d.planned.filter((p) => p.date > d.today && p.date <= horizon).map((p) => ({ date: p.date, name: stripKey(p.name), sport: p.sport, durationMin: p.durationMin, key: isKeySession(p) }));
   const r = d.summary.readiness;
-  // Verlaeufe fuer die Mini-Kurven: Frische (TSB) 14 Tage, HRV 7 Tage samt Mittel der letzten 14 Tage. Luecken bleiben null.
-  const wByDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
-  const lastDays = (n) => Array.from({ length: n }, (_, i) => addDays(d.today, -(n - 1) + i));
-  const tsb14 = lastDays(14).map((date) => { const w = wByDate[date]; return w?.ctl != null && w?.atl != null ? Math.round((w.ctl - w.atl) * 10) / 10 : null; });
-  const hrv7 = lastDays(7).map((date) => wByDate[date]?.hrv ?? null);
-  const weekEnd = addDays(week.weekStart, 6);
-  const plannedSessions = d.planned.filter((p) => p.date >= d.today && p.date <= weekEnd).length;
+  const wk = weeklyGoal(week, env);
   return {
     generatedAt: d.generatedAt,
     today: d.today,
-    goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
-    trend: { tsb14, hrv7, hrvMedian: medianOf(d.wellness.filter((w) => w.date >= addDays(d.today, -13)).map((w) => w.hrv)), restingMedian: medianOf(d.wellness.filter((w) => w.date >= addDays(d.today, -13) && w.date < d.today).map((w) => w.restingHR)) },
-    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
-    load: d.summary.load,
-    thresholds: d.summary.thresholds,
-    plan: {
-      today: todayPlan,
-      next: next ? { date: next.date, name: next.name } : null,
-      key: key ? { date: key.date, name: stripKey(key.name), sport: key.sport, durationMin: key.durationMin, distanceKm: key.distanceKm } : null,
-    },
-    week: {
-      weekStart: week.weekStart,
-      days,
-      bySport: Object.fromEntries(Object.entries(week.bySport).map(([k, v]) => [k, { count: v.count, minutes: v.minutes, load: v.load, km: v.km, plannedKm: v.plannedKm }])),
-      total: total(week),
-      lastTotal: total(lastWeek),
-      goal: weeklyGoal(week, env).goal,
-      goalSource: weeklyGoal(week, env).source,
-      strengthMinutes: week.bySport.strength.minutes,
-      plannedSessions,
-    },
-    hip: { recent: recentHip.length, latestDate: d.hipFlags[0]?.date ?? null },
-    hm: d.runalyze ? { goalSec: d.goal.targetTimeSecs, estimates: d.runalyze.hmEstimates, vdot: d.runalyze.vdot } : null,
-    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+    goal: goalOf(d),
+    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
+    plan: { today: todayPlan, next: next ? { date: next.date, name: next.name } : null, upcoming },
+    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source },
+    sourcesFailed: failedOf(d),
   };
 }
 
-// Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces, Schwellen sowie
-// Ernaehrung und Heisshunger der letzten Tage. Wieder ohne Freitexte.
+// Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces und Schwellen.
+// Ernaehrung hat ein eigenes Widget (small), Heisshunger bleibt auf der Dashboard-Seite. Wieder ohne Freitexte.
 export function buildWidgetDetail(d) {
   const from28 = addDays(d.today, -27);
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
@@ -100,24 +76,18 @@ export function buildWidgetDetail(d) {
     const w = byDate[date];
     return { date, ctl: w?.ctl ?? null, atl: w?.atl ?? null };
   });
-  const last7 = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
-  const nutrition = last7.map((date) => ({ date, calories: byDate[date]?.calories ?? null, goal: byDate[date]?.calorieGoal ?? null }));
-  const recentCravings = d.cravings.filter((c) => c.date >= last7[0]);
-  const strongest = recentCravings.filter((c) => c.strength != null).sort((a, b) => b.strength - a.strength)[0];
   const r = d.runalyze;
   return {
     generatedAt: d.generatedAt,
     today: d.today,
-    goal: { name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs },
+    goal: goalOf(d),
     load: d.summary.load,
     tsbZones: d.summary.thresholds.tsb,
     form,
     hm: r ? { goalSec: d.goal.targetTimeSecs, estimates: r.hmEstimates } : null,
     vdot: r ? { value: r.vdot, paces: r.paces, fetchedAt: r.fetchedAt } : null,
     thresholds: d.thresholds,
-    nutrition: { days: nutrition, hasData: nutrition.some((x) => x.calories != null) },
-    cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
-    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+    sourcesFailed: failedOf(d),
   };
 }
 
@@ -157,14 +127,14 @@ export function buildWidgetTraining(d, env = {}) {
     today: d.today,
     sports,
     split: { share: sum > 0 ? Object.fromEntries(TRI.map((k) => [k, Math.round((tot[k] / sum) * 100)])) : null, target: splitTarget(env), weeks: recent.length },
-    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+    sourcesFailed: failedOf(d),
   };
 }
 
 // Kleine Widgets ("small"): Schlaf und Erholung sowie Ernaehrung, je die letzten 7 Tage.
 // Fehlende Werte bleiben null (Luecke), 0 kcal zaehlt als keine Daten (siehe buildWellness).
 // Fitness (CTL) der letzten 6 Wochen: ein Punkt je Woche (heute, -7, ... -42 Tage), fehlende Wochen null.
-// Veraenderung = heute gegen vor 6 Wochen; ohne beide Werte keine Veraenderung.
+// Veraenderung = heute gegen den aeltesten vorhandenen Wochenpunkt (deltaWeeks Wochen zurueck); ohne beide keine.
 function buildFitness(d, byDate) {
   const weekly = Array.from({ length: 7 }, (_, i) => {
     const w = byDate[addDays(d.today, -42 + i * 7)];
@@ -172,44 +142,62 @@ function buildFitness(d, byDate) {
   });
   const now = [...d.wellness].reverse().find((w) => w.ctl != null)?.ctl ?? null;
   weekly[6] = now != null ? Math.round(now * 10) / 10 : weekly[6];
-  return { ctl: weekly[6], delta: weekly[0] != null && weekly[6] != null ? Math.round(weekly[6] - weekly[0]) : null, weekly };
+  const from = weekly.slice(0, 6).findIndex((v) => v != null);
+  const ok = from >= 0 && weekly[6] != null;
+  return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly };
 }
 
 export function buildWidgetSmall(d, goals = null) {
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const days = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
-  const past14 = d.wellness.filter((w) => w.date >= addDays(d.today, -13));
+  const body = d.summary.readiness.body;
   const sleepDays = days.map((date) => ({ date, hours: byDate[date]?.sleepHours ?? null, hrv: byDate[date]?.hrv ?? null, restingHR: byDate[date]?.restingHR ?? null }));
   const foodDays = days.map((date) => {
     const w = byDate[date];
     return { date, calories: w?.calories ?? null, goal: w?.calorieGoal ?? null, carbs: w?.carbs ?? null, protein: w?.protein ?? null, fat: w?.fat ?? null };
   });
   const latest = [...foodDays].reverse().find((x) => x.calories != null) ?? null;
-  const recentCravings = d.cravings.filter((c) => c.date >= days[0]);
-  const strongest = recentCravings.filter((c) => c.strength != null).sort((a, b) => b.strength - a.strength)[0];
   return {
     generatedAt: d.generatedAt,
     today: d.today,
+    goal: goalOf(d),
     sleep: {
       days: sleepDays,
       latest: [...sleepDays].reverse().find((x) => x.hours != null) ?? null,
-      medianHours: medianOf(past14.map((w) => w.sleepHours)),
-      medianHrv: medianOf(past14.map((w) => w.hrv)),
-      medianRestingHR: medianOf(past14.map((w) => w.restingHR)),
+      // Mediane der 14 Tage vor heute, dieselben wie in der Bereitschaft (heute zaehlt nicht mit)
+      medianHours: body.sleepMedian,
+      medianHrv: body.hrvMedian,
+      medianRestingHR: body.restingMedian,
     },
     food: { days: foodDays, latest, hasData: latest != null, goals },
     fitness: buildFitness(d, byDate),
-    cravings: { count: recentCravings.length, strongest: strongest ? { strength: strongest.strength, time: strongest.time } : null },
-    sourcesFailed: Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k),
+    sourcesFailed: failedOf(d),
   };
+}
+
+// Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
+// wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
+const CACHE_KEY = "widget:dashboard-cache";
+export const CACHE_MS = 5 * 60 * 1000;
+async function dashboardCached(env, fresh) {
+  const today = isoDateBerlin();
+  if (!fresh) {
+    const c = await readKvJson(env, CACHE_KEY).catch(() => null);
+    if (c?.data && c.data.today === today && Date.now() - c.at < CACHE_MS) return c.data;
+  }
+  const data = await buildDashboard(env, today);
+  // Nur vollstaendige Staende cachen: Ein Ausfall soll nicht fuenf Minuten lang haengen bleiben
+  if (failedOf(data).length === 0) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
+  return data;
 }
 
 export async function handleWidgetRequest(req, env) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
-  const dashboard = await buildDashboard(env);
-  const view = new URL(req.url).searchParams.get("view");
+  const params = new URL(req.url).searchParams;
+  const dashboard = await dashboardCached(env, params.get("fresh") === "1");
+  const view = params.get("view");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : buildWidget(dashboard, env);
