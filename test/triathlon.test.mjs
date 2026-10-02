@@ -40,10 +40,12 @@ assert.equal(buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz")), { b
 console.log("targets ok");
 
 import { historyEntryFromSnapshot, upsertHistory } from "../src/runalyze-history.js";
-const snap = { fetchedAt: "2026-10-01T08:00:00Z", vdot: 34.7, prognosis: [{ distanceKm: 21.0975, seconds: 8061 }], races: [] };
+const snap = { fetchedAt: "2026-10-01T08:00:00Z", vdot: 34.7, prognosis: [{ distanceKm: 5, seconds: 1629 }, { distanceKm: 10, seconds: 3383 }, { distanceKm: 21.0975, seconds: 8061 }], races: [] };
 const he = historyEntryFromSnapshot(snap);
 assert.equal(he.date, "2026-10-01");
 assert.equal(he.hmProgSecs, 8061);
+assert.equal(he.p5Secs, 1629);
+assert.equal(he.p10Secs, 3383);
 assert.ok(he.hmVdotSecs > 6900 && he.hmVdotSecs < 8000);
 let hist = upsertHistory([], he);
 hist = upsertHistory(hist, { ...he, hmProgSecs: 8000 });

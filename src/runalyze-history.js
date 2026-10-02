@@ -14,9 +14,13 @@ export function historyEntryFromSnapshot(snapshot) {
   const date = String(snapshot.fetchedAt).slice(0, 10);
   const vdot = snapshot.vdot ?? null;
   const hmVdotSecs = vdot != null ? predictRaceTimesFromVdot(vdot)?.find((x) => x.key === "hm")?.seconds ?? null : null;
-  const hmProgSecs = (snapshot.prognosis ?? []).find((p) => Math.abs(p.distanceKm - HM_KM) / HM_KM <= 0.01)?.seconds ?? null;
-  if (vdot == null && hmProgSecs == null) return null;
-  return { date, vdot, hmVdotSecs: hmVdotSecs != null ? Math.round(hmVdotSecs) : null, hmProgSecs: hmProgSecs != null ? Math.round(hmProgSecs) : null };
+  const prog = (km) => {
+    const v = (snapshot.prognosis ?? []).find((p) => Math.abs(p.distanceKm - km) / km <= 0.01)?.seconds;
+    return v != null ? Math.round(v) : null;
+  };
+  const entry = { date, vdot, hmVdotSecs: hmVdotSecs != null ? Math.round(hmVdotSecs) : null, hmProgSecs: prog(HM_KM), p5Secs: prog(5), p10Secs: prog(10) };
+  if (vdot == null && entry.hmProgSecs == null && entry.p5Secs == null && entry.p10Secs == null) return null;
+  return entry;
 }
 
 export function upsertHistory(history, entry) {
