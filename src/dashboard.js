@@ -4,6 +4,7 @@ import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
+import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
@@ -358,10 +359,11 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
+  const thresholds = buildThresholds(settingsR.ok ? settingsR.value : null);
   const tri = goalFromCalendar?.triathlon ?? null;
   // Triathlon: Gesamtzeit aus dem Eintrag, die Lauf-Ziele der Grafiken nur aus einer Lauf-Zeit in der Beschreibung ("Lauf 1:55:00").
   const goal = tri
-    ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm }, source: "intervals" }
+    ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm, targets: buildTriathlonTargets(tri, thresholds, goalFromCalendar.targetTimeSecs ?? null) }, source: "intervals" }
     : goalFromCalendar
       ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, runKm: CONFIGURED_GOAL.distanceKm, source: "intervals" }
       : { ...CONFIGURED_GOAL, runKm: CONFIGURED_GOAL.distanceKm, source: "config" };
@@ -382,7 +384,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs),
-    thresholds: buildThresholds(settingsR.ok ? settingsR.value : null),
+    thresholds,
     runalyze: buildRunalyze(snapshot),
     studie: studie ?? null,
     planned: buildPlanned(events, todayIso),

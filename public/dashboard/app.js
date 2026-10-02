@@ -243,7 +243,26 @@ function renderThresholds(d) {
   host.innerHTML =
     card("Laufen", [["Schwellenpace", val(t.run.thresholdPaceSecPerKm, (v) => paceLabel(v) + " min/km")], ["Schwellenpuls (LTHR)", val(t.run.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.run.maxHr, (v) => fmt(v) + " bpm")]]) +
     card("Rad", [["FTP", val(t.bike.ftp, (v) => fmt(v) + " W")], ["FTP indoor", val(t.bike.indoorFtp, (v) => fmt(v) + " W")], ["Schwellenpuls (LTHR)", val(t.bike.lthr, (v) => fmt(v) + " bpm")], ["Maximalpuls", val(t.bike.maxHr, (v) => fmt(v) + " bpm")]]) +
-    card("Schwimmen", [["Schwellenpace", val(t.swim.thresholdPaceSecPer100m, (v) => paceLabel(v) + " min/100 m")]]);
+    card("Schwimmen", [["Schwellenpace", val(t.swim.thresholdPaceSecPer100m, (v) => paceLabel(v) + " min/100 m")]]) +
+    triathlonGoalCard(d.goal);
+}
+
+/* Ziele je Disziplin: Vorschläge aus FTP und Schwimmschwelle, Angaben in der Beschreibung des Rennens haben Vorrang. */
+function triathlonGoalCard(g) {
+  const tg = g.triathlon?.targets;
+  if (!tg) return "";
+  const tag = (x) => (x.source === "eintrag" ? "" : " <small>(Vorschlag)</small>");
+  const row = (l, v) => `<div class="row"><span>${l}</span><span>${v}</span></div>`;
+  const rows = [];
+  const sw = tg.swim;
+  rows.push(row(`Schwimmen ${fmt(g.triathlon.swimKm, 2)} km`, sw ? `<b>${paceLabel(sw.pacePer100m)} min/100 m</b> · ${fmtTime(sw.timeSecs)}${tag(sw)}` : '<span class="muted">Schwellenpace fehlt</span>'));
+  const b = tg.bike;
+  const bikeVal = !b ? '<span class="muted">FTP fehlt</span>'
+    : [b.watts ? `<b>${b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)}` : fmt(b.watts)} W</b>` : "", b.pctFtp ? `${fmt(b.pctFtp * 100)} % FTP` : "", b.timeSecs ? `${fmtTime(b.timeSecs)} (${fmt(b.speedKmh, 1)} km/h)` : ""].filter(Boolean).join(" · ") + tag(b);
+  rows.push(row(`Rad ${fmt(g.triathlon.bikeKm)} km`, bikeVal));
+  rows.push(row(`Laufen ${fmt(g.triathlon.runKm, 1)} km`, tg.run ? `<b>${paceLabel(tg.run.pacePerKm)} min/km</b> · ${fmtTime(tg.run.timeSecs)}` : '<span class="muted">in der Beschreibung ergänzen: „Lauf 1:55:00“</span>'));
+  if (tg.totalTargetSecs) rows.push(row("Gesamtziel", `<b>${fmtTime(tg.totalTargetSecs)}</b>`));
+  return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<div class="muted">Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></div>`;
 }
 
 /* ---------- 4 · Wellness ---------- */

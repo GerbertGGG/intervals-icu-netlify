@@ -23,3 +23,18 @@ assert.equal(goal.distance, "hm");
 assert.equal(goal.targetTimeSecs, 19800);
 assert.equal(goal.triathlon.label, "Mitteldistanz");
 console.log("triathlon ok");
+
+import { buildTriathlonTargets } from "../src/triathlon-targets.js";
+const th = { bike: { ftp: 250 }, swim: { thresholdPaceSecPer100m: 110 } };
+const t1 = buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz")), th, 19800);
+assert.equal(t1.bike.watts, 180);
+assert.equal(t1.bike.source, "vorschlag");
+assert.equal(Math.round(t1.swim.pacePer100m), 117);
+assert.equal(t1.run, null);
+const t2 = buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz\nSchwimmen 40:00\nRad 3:00:00\nLauf 1:55:00")), th);
+assert.equal(t2.swim.timeSecs, 2400);
+assert.equal(Math.round(t2.bike.speedKmh), 30);
+assert.equal(t2.run.timeSecs, 6900);
+assert.equal(parseTriathlonEvent(ev("Mitteldistanz\nRad 215 W")).bikeTargetWatts, 215);
+assert.equal(buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz")), { bike: {}, swim: {} }).bike, null);
+console.log("targets ok");

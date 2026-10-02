@@ -60,13 +60,15 @@ export function parseTriathlonEvent(event) {
   if (!/triathlon|\btri\b|ironman|70\.3/.test(head)) return null;
   const text = `${head} ${event?.description ?? ""}`.toLowerCase();
   const fmt = TRIATHLON_FORMATS.find((f) => f.re.test(text)) ?? TRIATHLON_FORMATS[1];
-  const m = String(event?.description ?? "").match(/\blauf(?:en)?\b\s*[:=]?\s*(\d{1,2}:\d{2}(?::\d{2})?)/i);
-  let runTargetSecs = null;
-  if (m) {
-    const p = m[1].split(":").map(Number);
-    runTargetSecs = p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
-  }
-  return { format: fmt.key, label: fmt.label, swimKm: fmt.swimKm, bikeKm: fmt.bikeKm, runKm: fmt.runKm, runDistance: fmt.run, runTargetSecs };
+  const desc = String(event?.description ?? "");
+  const toSecs = (t) => { const p = t.split(":").map(Number); return p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1]; };
+  const time = (word) => { const m = desc.match(new RegExp(`\\b(?:${word})\\b\\s*[:=]?\\s*(\\d{1,2}:\\d{2}(?::\\d{2})?)`, "i")); return m ? toSecs(m[1]) : null; };
+  const runTargetSecs = time("lauf(?:en)?|run");
+  const swimTargetSecs = time("schwimm(?:en)?|swim");
+  const bikeTargetSecs = time("rad|bike");
+  const w = desc.match(/\b(?:rad|bike)\b[^\n\d]*(?:\d{1,2}:\d{2}(?::\d{2})?)?[^\n\d]*(\d{2,3})\s*(?:w|watt)\b/i);
+  const bikeTargetWatts = w ? Number(w[1]) : null;
+  return { format: fmt.key, label: fmt.label, swimKm: fmt.swimKm, bikeKm: fmt.bikeKm, runKm: fmt.runKm, runDistance: fmt.run, runTargetSecs, swimTargetSecs, bikeTargetSecs, bikeTargetWatts };
 }
 
 export function getEventDistanceFromEvent(event) {
