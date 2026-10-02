@@ -2,15 +2,15 @@ import { json } from "./http-helpers.js";
 import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
-import { fetchIntervalsActivities, fetchIntervalsActivityStreams, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
+import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace } from "./goal-race.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
-import { mustEnv, readKvJson, writeKvJson } from "./kv.js";
+import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
-import { bestForDistance, readRunalyzeSnapshot } from "./runalyze-snapshot.js";
+import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
 import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./runalyze-history.js";
 
 // Read-only Endpunkt für das Trainings-Dashboard (public/dashboard/index.html).
@@ -280,47 +280,33 @@ function buildInsights(rawWellness, activities) {
   return { cravings, hipFlags };
 }
 
-// Decoupling (Pa:HR) aus den Rohdaten: Effizienz = Geschwindigkeit / Puls, erste gegen zweite Hälfte der
-// bewegten Zeit. Positiv = Puls driftet gegen Pace. Intervals.icu liefert das Feld oft nicht (null).
-export function computeDecoupling(hr, speed) {
-  if (!Array.isArray(hr) || !Array.isArray(speed)) return null;
-  const n = Math.min(hr.length, speed.length), pts = [];
-  for (let i = 0; i < n; i++) if (hr[i] > 60 && speed[i] > 0.5) pts.push([hr[i], speed[i]]);
-  if (pts.length < 600) return null; // unter ca. 10 min bewegter Zeit nicht aussagekräftig
-  const eff = (a) => a.reduce((s, p) => s + p[1], 0) / a.reduce((s, p) => s + p[0], 0);
-  const half = pts.length >> 1, e1 = eff(pts.slice(0, half)), e2 = eff(pts.slice(half));
-  return Math.round(((e1 - e2) / e1) * 1000) / 10;
-}
-
-// Fehlendes Decoupling langer Grundlagen-/Long-Läufe selbst rechnen (Pulsregel: nur diese Arten) und je Aktivität
-// im KV merken, damit die Streams nur einmal geholt werden. Best effort: bei Fehlern bleibt der Wert null.
-async function fillDecoupling(env, runs) {
-  const todo = runs.filter((r) => r.id != null && r.decoupling == null && (r.kind === "long" || r.kind === "base") && r.distanceKm >= LONGRUN_MIN_KM).slice(0, 8);
-  await Promise.all(todo.map(async (r) => {
-    const key = `dashboard:decoupling:${r.id}`;
-    try {
-      const cached = await readKvJson(env, key);
-      if (cached && "value" in cached) { r.decoupling = cached.value; return; }
-      const st = await fetchIntervalsActivityStreams(env, r.id, ["heartrate", "velocity_smooth"]);
-      if (!st) return;
-      const value = computeDecoupling(st.heartrate, st.velocity_smooth);
-      r.decoupling = value;
-      await writeKvJson(env, key, { value });
-    } catch { /* bleibt null */ }
-  }));
-}
-
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
-function buildFitness(runs) {
+function buildFitness(runs, snapshot, todayIso) {
   const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
-  // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
-  // Nur Datum, Distanz und Pace gehen raus (keine Namen, kein Puls).
-  const long = runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
   const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm, decoupling: r.decoupling });
+  // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
+  // Bevorzugt aus Runalyze: Dort setzt der Nutzer die Art ("Langer Lauf") selbst und Runalyze liefert das Decoupling.
+  // Ohne Runalyze-Läufe: Läufe ab LONGRUN_MIN_KM aus Intervals.icu (Decoupling dort oft leer). Nur Datum, Distanz, Pace, Decoupling gehen raus.
+  const since = addDays(todayIso, -(HISTORY_DAYS - 1));
+  const rz = (snapshot?.runs ?? []).filter((r) => r.date >= since && runKindFromType(r.type) === "long");
+  const rzRecords = rz.map((r) => {
+    const pace = r.durationSec ? r.durationSec / r.distanceKm : null;
+    return { date: r.date, distanceKm: Math.round(r.distanceKm * 10) / 10, paceSecPerKm: pace != null ? Math.round(pace) : null, pace: pace != null ? formatPace(pace) : null, decoupling: r.decouplingPct };
+  });
+  const source = rzRecords.length ? "runalyze" : "intervals";
+  const pool = source === "runalyze" ? rzRecords : runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).map(pick);
+  const byLength = [...pool].sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
   return {
-    longRunTracker: { minKm: LONGRUN_MIN_KM, longest: long[0] ? pick(long[0]) : null, count16: runs.filter((r) => r.distanceKm >= 16).length, recent: long.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)).map(pick) },
-    longRuns: asc.filter((r) => r.kind === "long" && r.decoupling != null)
-      .map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
+    longRunTracker: {
+      source,
+      minKm: source === "runalyze" ? null : LONGRUN_MIN_KM,
+      longest: byLength[0] ?? null,
+      count16: pool.filter((r) => r.distanceKm >= 16).length,
+      recent: byLength.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)),
+    },
+    longRuns: source === "runalyze"
+      ? [...rzRecords].filter((r) => r.decoupling != null).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling }))
+      : asc.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
 }
 
@@ -396,7 +382,6 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
   const wellness = wellnessR.ok ? buildWellness(wellnessR.value) : [];
   const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
-  await fillDecoupling(env, runs);
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
   const thresholds = buildThresholds(settingsR.ok ? settingsR.value : null);
@@ -423,7 +408,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
-    fitness: buildFitness(runs),
+    fitness: buildFitness(runs, snapshot, todayIso),
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,

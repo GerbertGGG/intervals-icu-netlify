@@ -70,7 +70,7 @@ const TOOLS = [
   {
     name: "save_runalyze_snapshot",
     description:
-      "Schreibt den Runalyze-Snapshot (VDOT, Prognose, Rennen) fürs Dashboard. fetchedAt bei jedem Aufruf auf die aktuelle Zeit setzen. Nur Werte aus Runalyze übergeben, nichts erfinden.",
+      "Schreibt den Runalyze-Snapshot (VDOT, Prognose, Rennen, Läufe mit Art und Decoupling) fürs Dashboard. fetchedAt bei jedem Aufruf auf die aktuelle Zeit setzen. Nur Werte aus Runalyze übergeben, nichts erfinden.",
     inputSchema: {
       type: "object",
       properties: {
@@ -88,6 +88,11 @@ const TOOLS = [
             type: "object",
             properties: { date: { type: "string" }, name: { type: "string" }, officialDistanceKm: { type: "number" }, officialTimeSec: { type: "number" } },
           },
+        },
+        runs: {
+          type: "array",
+          description: "Läufe der letzten 8 Wochen aus get_activities (date, distance -> distanceKm, duration -> durationSec, type = vom Nutzer gesetzte Art, z. B. Langer Lauf) plus aerobic_decoupling_pace aus get_activity_details -> decouplingPct (nur bei Langen Läufen holen, sonst weglassen).",
+          items: { type: "object", properties: { date: { type: "string" }, distanceKm: { type: "number" }, durationSec: { type: "number" }, type: { type: "string" }, decouplingPct: { type: "number" } } },
         },
       },
       required: ["fetchedAt"],

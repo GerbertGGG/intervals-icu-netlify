@@ -10,6 +10,8 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //   vdot: number,                                          // effectiveVO2max aus get_calculations (optional)
 //   prognosis: [{ distanceKm, seconds }],                  // aus get_prognosis
 //   races: [{ date, name, distanceKm, officialDistanceKm, officialTimeSec }]  // aus get_historical_races
+//   runs: [{ date, distanceKm, durationSec, type, decouplingPct }]  // Läufe der letzten 8 Wochen: type = Art in Runalyze
+//                                                                   // (get_activities), decouplingPct = aerobic_decoupling_pace (get_activity_details)
 // }
 
 export const RUNALYZE_KV_KEY = "dashboard:runalyze";
@@ -34,10 +36,32 @@ export function validateSnapshot(body) {
       officialTimeSec: finitePositive(r?.officialTimeSec),
     }))
     .filter((r) => r.date && r.officialDistanceKm && r.officialTimeSec);
+  // Läufe mit der in Runalyze gesetzten Art ("Langer Lauf", "Intervalltraining" ...) und dem Pace-Decoupling.
+  const runs = (Array.isArray(body.runs) ? body.runs : [])
+    .map((r) => {
+      const dec = Number(r?.decouplingPct);
+      return {
+        date: /^\d{4}-\d{2}-\d{2}$/.test(String(r?.date)) ? String(r.date) : null,
+        distanceKm: finitePositive(r?.distanceKm),
+        durationSec: finitePositive(r?.durationSec),
+        type: r?.type ? String(r.type).slice(0, 60) : null,
+        decouplingPct: r?.decouplingPct != null && r.decouplingPct !== "" && Number.isFinite(dec) && Math.abs(dec) < 100 ? dec : null,
+      };
+    })
+    .filter((r) => r.date && r.distanceKm)
+    .slice(0, 80);
   const vdot = finitePositive(body?.vdot);
   if (vdot != null && (vdot < 15 || vdot > 90)) return { error: "vdot außerhalb 15–90" };
   if (!prognosis.length && !races.length && vdot == null) return { error: "weder prognosis, races noch vdot enthalten" };
-  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), vdot, prognosis, races } };
+  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), vdot, prognosis, races, runs } };
+}
+
+// Art des Laufs aus der Runalyze-Bezeichnung, die der Nutzer selbst setzt: lang, Intensität (Intervall, Tempo, Schwelle) oder sonstiges.
+export function runKindFromType(type) {
+  const t = String(type ?? "");
+  if (/lang/i.test(t)) return "long";
+  if (/intervall|tempo|schwelle|wettkampf|race/i.test(t)) return "intensity";
+  return "other";
 }
 
 // Bestzeit je Distanz = schnellstes Rennen, dessen offizielle Distanz höchstens 5 % abweicht.
@@ -69,5 +93,5 @@ export async function handleRunalyzeSnapshotRequest(req, env, isAuthorized) {
   const { value, error } = validateSnapshot(body);
   if (error) return json({ ok: false, error }, 400, headers);
   await writeKvJson(env, RUNALYZE_KV_KEY, value);
-  return json({ ok: true, prognosis: value.prognosis.length, races: value.races.length }, 200, headers);
+  return json({ ok: true, prognosis: value.prognosis.length, races: value.races.length, runs: value.runs.length }, 200, headers);
 }

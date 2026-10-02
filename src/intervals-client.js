@@ -72,17 +72,6 @@ export async function fetchIntervalsActivityDetail(env, activityId) {
   return r.json().catch(() => null);
 }
 
-// Rohdaten-Streams (z. B. heartrate, velocity_smooth) einer Aktivität. Gleicher best-effort-Vertrag wie
-// fetchIntervalsActivityDetail: bei jedem Fehler null. Antwort: Liste aus { type, data } (oder Objekt je Typ).
-export async function fetchIntervalsActivityStreams(env, activityId, types) {
-  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/streams.json?types=${types.join(",")}`;
-  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity streams ${activityId}`);
-  if (!r.ok) return null;
-  const body = await r.json().catch(() => null);
-  if (Array.isArray(body)) return Object.fromEntries(body.filter((x) => x?.type && Array.isArray(x.data)).map((x) => [x.type, x.data]));
-  return body && typeof body === "object" ? body : null;
-}
-
 // Auto-detected repeat/interval structure for a single activity. Same best-effort,
 // non-throwing contract as fetchIntervalsActivityDetail.
 export async function fetchIntervalsActivityIntervals(env, activityId) {

@@ -250,14 +250,23 @@ assert.deepEqual(failed.wellness, []);
 }
 console.log("dashboard tests ok");
 
-// Decoupling aus Rohdaten: gleiche Pace, Puls steigt in der zweiten Hälfte um ~5 % -> ca. 4,8 % Drift
+// Runalyze-Läufe: Art "Langer Lauf" und Decoupling kommen aus dem Snapshot, Intervalle zählen nicht als lang
 {
-  const { computeDecoupling } = await import("../src/dashboard.js");
-  const speed = Array(1200).fill(3);
-  const hr = [...Array(600).fill(140), ...Array(600).fill(147)];
-  assert.equal(computeDecoupling(hr, speed), 4.8);
-  assert.equal(computeDecoupling(Array(1200).fill(140), speed), 0);
-  assert.equal(computeDecoupling(hr.slice(0, 100), speed.slice(0, 100)), null); // zu kurz
-  assert.equal(computeDecoupling(null, speed), null);
-  console.log("decoupling ok");
+  const snap = validateSnapshot({ fetchedAt: "2026-09-30T05:00:00Z", vdot: 40, runs: [
+    { date: day(-11), distanceKm: 15.57, durationSec: 6783, type: "Langer Lauf", decouplingPct: 8.4 },
+    { date: day(-18), distanceKm: 16.2, durationSec: 6771, type: "Langer Lauf", decouplingPct: 11.2 },
+    { date: day(-7), distanceKm: 11.25, durationSec: 4167, type: "Tempodauerlauf", decouplingPct: 2 },
+    { date: day(-3), distanceKm: 6, durationSec: 2383, type: "Easy run" },
+  ] });
+  assert.equal(snap.value.runs.length, 4);
+  kv.set("dashboard:runalyze", JSON.stringify(snap.value));
+  const d2 = await buildDashboard(env, today);
+  const T = d2.fitness.longRunTracker;
+  assert.equal(T.source, "runalyze");
+  assert.equal(T.recent.length, 2);
+  assert.equal(T.longest.distanceKm, 16.2);
+  assert.equal(T.count16, 1);
+  assert.deepEqual(d2.fitness.longRuns.map((r) => r.decoupling), [11.2, 8.4]);
+  assert.equal(T.recent[0].decoupling, 8.4); // neuester zuerst
+  console.log("runalyze runs ok");
 }
