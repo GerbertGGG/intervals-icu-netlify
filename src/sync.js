@@ -15,9 +15,6 @@ import { readGoalRace, deriveAutoGoalFromRaces } from "./goal-race.js";
 import { maybeRebuildLongRunPlanOnGoalChange } from "./long-run-plan.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
-const FIELD_VDOT = "VDOT";
-const FIELD_VDOT_AVG = "VDOTAvg";
-const FIELD_BLOCK = "Block";
 const FIELD_CALORIES = "Calories";
 const FIELD_PROTEIN = "Protein";
 const FIELD_CARBS = "Carbs";
@@ -101,18 +98,8 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       persistLatest: write && isLastDay,
     });
 
-    const patch = { [FIELD_BLOCK]: blockState.block };
-    if (vdotResult?.vdot != null) {
-      if (vdotResult.todayRunVdot != null) {
-        patch[FIELD_VDOT] = Math.round(vdotResult.todayRunVdot * 10) / 10;
-      } else if (vdotResult.todayVdotExcluded) {
-        // A #novdot-tagged run happened today with nothing else to fall back on: clear the
-        // field instead of leaving a previous sync's stale value in place (which would read
-        // as if it were computed from today's excluded run).
-        patch[FIELD_VDOT] = null;
-      }
-      patch[FIELD_VDOT_AVG] = Math.round(vdotResult.vdot * 10) / 10;
-    }
+    // Block/VDOT are no longer written to intervals.icu wellness; they stay internal (KV).
+    const patch = {};
 
     // Yazio is queried by the 15-min cron ticks for today only (see index.js), not as part
     // of the 30-min multi-day Intervals sync. Best-effort: a login/rate-limit failure
@@ -152,7 +139,7 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
       }
     }
 
-    if (write) {
+    if (write && Object.keys(patch).length > 0) {
       await putWellnessDay(env, day, patch);
     }
     if (write && isLastDay) {
