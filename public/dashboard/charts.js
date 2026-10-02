@@ -215,25 +215,26 @@
   /* ---------- Zielkorridor Halbmarathon: Zeilen statt Zahlenstrahl, Abstand zum Ziel als Text ---------- */
   function corridor(host, o) {
     const rows = [...o.estimates].sort((a, b) => a.seconds - b.seconds);
-    const max = Math.max(o.goal, ...rows.map((e) => e.seconds)) * 1.04, min = Math.min(o.goal, ...rows.map((e) => e.seconds)) * 0.8;
+    const hasGoal = o.goal != null, ref = hasGoal ? o.goal : rows[0].seconds;
+    const max = Math.max(ref, ...rows.map((e) => e.seconds)) * 1.04, min = Math.min(ref, ...rows.map((e) => e.seconds)) * 0.8;
     const pos = (v) => ((v - min) / (max - min)) * 100;
-    const gap = (sec) => { const d = Math.round(sec - o.goal); return d === 0 ? "genau Ziel" : `${U.fmtTime(Math.abs(d))} ${d < 0 ? "schneller" : "langsamer"}`; };
-    host.innerHTML = `<div class="rrow rhead"><span>Ziel</span><b>${U.fmtTime(o.goal)}</b></div>` + rows.map((e) => {
+    const gap = (sec) => { if (!hasGoal) return ""; const d = Math.round(sec - o.goal); return d === 0 ? "genau Ziel" : `${U.fmtTime(Math.abs(d))} ${d < 0 ? "schneller" : "langsamer"}`; };
+    host.innerHTML = (hasGoal ? `<div class="rrow rhead"><span>Ziel</span><b>${U.fmtTime(o.goal)}</b></div>` : "") + rows.map((e) => {
       const fast = e.seconds <= o.goal, hollow = e.kind === "prognosis";
-      return `<div class="rrow"><div class="rtop"><span>${U.esc(e.label)}</span><span><b>${U.fmtTime(e.seconds)}</b> <small class="${fast ? "ok" : "bad"}">${gap(e.seconds)}</small></span></div><div class="rbar"><div class="rfill${hollow ? " hollow" : ""}" style="width:${pos(e.seconds)}%"></div><i style="left:${pos(o.goal)}%"></i></div></div>`;
-    }).join("") + '<div class="sub">Balken = Zeit, Strich = Ziel. Kürzerer Balken = schneller.</div>';
+      return `<div class="rrow"><div class="rtop"><span>${U.esc(e.label)}</span><span><b>${U.fmtTime(e.seconds)}</b> <small class="${fast ? "ok" : "bad"}">${gap(e.seconds)}</small></span></div><div class="rbar"><div class="rfill${hollow ? " hollow" : ""}" style="width:${pos(e.seconds)}%"></div>${hasGoal ? `<i style="left:${pos(o.goal)}%"></i>` : ""}</div></div>`;
+    }).join("") + `<div class="sub">Balken = Zeit${hasGoal ? ", Strich = Ziel" : ""}. Kürzerer Balken = schneller.</div>`;
   }
 
   /* ---------- Bestzeiten und Prognosen als Pace je Distanz ---------- */
   function records(host, rows, goalPaceSec) {
     const W = 480, H = 250, L = 48, R = 16, T = 26, B = 40;
-    const paces = rows.flatMap((r) => [r.bestPace, r.progPace]).filter((v) => v != null).concat(goalPaceSec);
+    const paces = rows.flatMap((r) => [r.bestPace, r.progPace]).filter((v) => v != null).concat(goalPaceSec ?? []);
     const lo = Math.floor((Math.min(...paces) - 15) / 15) * 15, hi = Math.ceil((Math.max(...paces) + 15) / 15) * 15;
     const y = (v) => T + (H - T - B) * ((v - lo) / (hi - lo)); // schneller = oben
     const s = svg(W, H, "Bestzeiten und Prognosen als Pace");
     for (let v = Math.ceil(lo / 30) * 30; v <= hi; v += 30) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.pace(v)));
     s.append(el("text", { x: 4, y: 12 }, "min/km (schneller = oben)"));
-    s.append(el("line", { x1: L, x2: W - R, y1: y(goalPaceSec), y2: y(goalPaceSec), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(goalPaceSec) - 5, "text-anchor": "end", style: "fill:var(--accent);font-weight:700" }, `Ziel-Pace ${U.pace(goalPaceSec)}`));
+    if (goalPaceSec) s.append(el("line", { x1: L, x2: W - R, y1: y(goalPaceSec), y2: y(goalPaceSec), stroke: "var(--accent)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(goalPaceSec) - 5, "text-anchor": "end", style: "fill:var(--accent);font-weight:700" }, `Ziel-Pace ${U.pace(goalPaceSec)}`));
     const slot = (W - L - R) / rows.length;
     rows.forEach((r, i) => {
       const cx = L + slot * i + slot / 2;
@@ -248,7 +249,7 @@
 
   /* ---------- Trainingspaces (VDOT-Zonen) als sortierte Liste, Ziel-Pace an passender Stelle ---------- */
   function paceRuler(host, zones, goalPace) {
-    const items = [...zones.map((z) => ({ label: z.label, sec: z.sec })), { label: "Ziel-Pace", sec: goalPace, goal: true }].sort((a, b) => a.sec - b.sec);
+    const items = [...zones.map((z) => ({ label: z.label, sec: z.sec })), ...(goalPace ? [{ label: "Ziel-Pace", sec: goalPace, goal: true }] : [])].sort((a, b) => a.sec - b.sec);
     host.innerHTML = items.map((z) => `<div class="prow${z.goal ? " goal" : ""}"><span>${U.esc(z.label)}</span><b>${U.pace(z.sec)} <small>min/km</small></b></div>`).join("");
   }
 

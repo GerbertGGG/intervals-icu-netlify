@@ -44,8 +44,35 @@ export function normalizeEventDistance(value) {
   return null;
 }
 
+// Intervals.icu kennt keinen Triathlon als Rennart: Der Eintrag heisst z. B. "Triathlon", die
+// Variante steht in der Beschreibung ("Mitteldistanz"). Die Lauf-Distanz des Formats steuert die
+// Blocklaenge (Sprint ~5k, Olympisch ~10k, Mittel ~Halbmarathon, Lang ~Marathon).
+const TRIATHLON_FORMATS = [
+  { key: "sprint", label: "Sprint", re: /sprint/, swimKm: 0.75, bikeKm: 20, runKm: 5, run: "5k" },
+  { key: "olympic", label: "Olympische Distanz", re: /olymp|kurzdistanz|standard/, swimKm: 1.5, bikeKm: 40, runKm: 10, run: "10k" },
+  { key: "middle", label: "Mitteldistanz", re: /mittel|70\.3|half\s*iron|halb\s*iron/, swimKm: 1.9, bikeKm: 90, runKm: 21.0975, run: "hm" },
+  { key: "long", label: "Langdistanz", re: /lang|ironman|140\.6|full\s*iron/, swimKm: 3.8, bikeKm: 180, runKm: 42.195, run: "m" },
+];
+
+export function parseTriathlonEvent(event) {
+  if (!event) return null;
+  const head = `${event?.name ?? ""} ${event?.type ?? ""}`.toLowerCase();
+  if (!/triathlon|\btri\b|ironman|70\.3/.test(head)) return null;
+  const text = `${head} ${event?.description ?? ""}`.toLowerCase();
+  const fmt = TRIATHLON_FORMATS.find((f) => f.re.test(text)) ?? TRIATHLON_FORMATS[1];
+  const m = String(event?.description ?? "").match(/\blauf(?:en)?\b\s*[:=]?\s*(\d{1,2}:\d{2}(?::\d{2})?)/i);
+  let runTargetSecs = null;
+  if (m) {
+    const p = m[1].split(":").map(Number);
+    runTargetSecs = p.length === 3 ? p[0] * 3600 + p[1] * 60 + p[2] : p[0] * 60 + p[1];
+  }
+  return { format: fmt.key, label: fmt.label, swimKm: fmt.swimKm, bikeKm: fmt.bikeKm, runKm: fmt.runKm, runDistance: fmt.run, runTargetSecs };
+}
+
 export function getEventDistanceFromEvent(event) {
   if (!event) return null;
+  const tri = parseTriathlonEvent(event);
+  if (tri) return tri.runDistance;
   const raw = event?.distance ?? event?.distance_target ?? null;
   const fromField = normalizeEventDistance(raw);
   if (fromField) return fromField;

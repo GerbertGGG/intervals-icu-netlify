@@ -358,9 +358,13 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
-  const goal = goalFromCalendar
-    ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, source: "intervals" }
-    : { ...CONFIGURED_GOAL, source: "config" };
+  const tri = goalFromCalendar?.triathlon ?? null;
+  // Triathlon: Gesamtzeit aus dem Eintrag, die Lauf-Ziele der Grafiken nur aus einer Lauf-Zeit in der Beschreibung ("Lauf 1:55:00").
+  const goal = tri
+    ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm }, source: "intervals" }
+    : goalFromCalendar
+      ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, runKm: CONFIGURED_GOAL.distanceKm, source: "intervals" }
+      : { ...CONFIGURED_GOAL, runKm: CONFIGURED_GOAL.distanceKm, source: "config" };
 
   return {
     generatedAt: new Date().toISOString(),
