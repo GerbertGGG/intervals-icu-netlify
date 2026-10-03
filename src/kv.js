@@ -4,10 +4,9 @@ export function mustEnv(env, key) {
   return String(v);
 }
 
-// Feature flag: Intervals.icu-Sync (/sync, /backfill-profile) und die davon
-// abhängigen Auswertungen (Weekly Progress, Recovery Note, Formanalyse) sind
-// bewusst deaktiviert. Zum Reaktivieren: INTERVALS_ENABLED=true als Worker-
-// Var/Secret setzen. Unset/alles andere = deaktiviert.
+// Feature flag: Die manuelle Route /sync ist bewusst deaktiviert. Zum Aktivieren:
+// INTERVALS_ENABLED=true als Worker-Var/Secret setzen. Unset/alles andere = deaktiviert.
+// Der Cron-Sync der Yazio-Werte ist davon unabhängig.
 export function isIntervalsEnabled(env) {
   const raw = env?.INTERVALS_ENABLED;
   return String(raw ?? "").toLowerCase() === "true";
