@@ -106,6 +106,30 @@ export function buildWidgetDetail(d) {
   };
 }
 
+// Vierte Ansicht ("vdot", mittleres Widget): VDOT mit Verlauf und die Trainingsbereiche (Paces) daraus.
+// Runalyze liefert nur das VDOT; die Paces je Bereich rechnet der Worker nach Daniels (siehe vdot.js).
+// Verlauf = VDOT je Snapshot-Tag der letzten 12 Wochen (aus dem Runalyze-Verlauf), Veraenderung gegen den aeltesten Punkt.
+export function buildWidgetVdot(d) {
+  const r = d.runalyze;
+  if (!r || r.vdot == null) return { generatedAt: d.generatedAt, today: d.today, vdot: null, sourcesFailed: failedOf(d) };
+  const from = addDays(d.today, -83);
+  const hist = (r.hmHistory ?? []).filter((e) => e.vdot != null && e.date >= from).map((e) => ({ date: e.date, vdot: Math.round(e.vdot * 10) / 10 }));
+  const first = hist[0];
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    vdot: {
+      value: r.vdot,
+      fetchedAt: r.fetchedAt,
+      history: hist,
+      delta: first && first.date < d.today ? Math.round((r.vdot - first.vdot) * 10) / 10 : null,
+      deltaSince: first && first.date < d.today ? first.date : null,
+      paces: (r.paces ?? []).map((p) => ({ key: p.key, label: p.label, pace: p.pace, secPerKm: p.secPerKm })),
+    },
+    sourcesFailed: failedOf(d),
+  };
+}
+
 // Dritte Ansicht ("training", mittleres Widget): je Disziplin (Schwimmen, Rad, Lauf) Wochenvolumen gegen Plan,
 // Wochenzeit und Tage seit der letzten Einheit, dazu die Verteilung der letzten 4 Wochen nach Trainingszeit.
 // CTL, TSB und TSS bleiben sportartuebergreifend (Hauptansicht), hier gibt es bewusst keine Last je Sportart.
@@ -215,6 +239,6 @@ export async function handleWidgetRequest(req, env) {
   const view = params.get("view");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }

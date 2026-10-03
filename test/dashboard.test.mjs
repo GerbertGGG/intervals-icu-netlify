@@ -2,7 +2,7 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { buildWidget, buildWidgetDetail, buildWidgetSmall, buildWidgetTraining, handleWidgetRequest } from "../src/widget.js";
+import { buildWidget, buildWidgetDetail, buildWidgetVdot, buildWidgetSmall, buildWidgetTraining, handleWidgetRequest } from "../src/widget.js";
 import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
@@ -245,6 +245,14 @@ const d2 = await buildDashboard(env, today);
 const det2 = buildWidgetDetail(d2);
 assert.ok(det2.hm.estimates.length >= 3);
 assert.equal(det2.vdot.paces.length, 5);
+const vd = buildWidgetVdot(d2);
+assert.equal(vd.vdot.value, 34.67);
+assert.equal(vd.vdot.paces.length, 5);
+assert.equal(vd.vdot.paces.find((p) => p.key === "threshold").pace, "5:43/km");
+assert.equal(buildWidgetVdot(d).vdot, null); // ohne Snapshot nichts erfunden
+const vdRes = await handleWidgetRequest(new Request("https://x/api/widget?view=vdot", { headers: { authorization: "Bearer geheim" } }), env);
+assert.equal(vdRes.status, 200);
+assert.ok("vdot" in (await vdRes.json()));
 const hm = d2.runalyze.rows.find((r) => r.label === "Halbmarathon");
 assert.equal(hm.bestSeconds, null); assert.equal(hm.prognosisSeconds, 8000);
 assert.equal(d2.runalyze.rows[0].bestSeconds, 1537);
