@@ -405,7 +405,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
-    summary: buildSummary(wellness, todayIso),
+    summary: buildSummary(wellness, todayIso, activities.some((a) => activityDay(a) === todayIso)),
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs, snapshot, todayIso),

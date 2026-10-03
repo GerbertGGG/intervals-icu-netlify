@@ -105,6 +105,11 @@ assert.equal(d.summary.readiness.verdict.cls, "ok");
 assert.equal(d.summary.readiness.items.length, 5);
 const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
 assert.equal(noToday.verdict.cls, "none"); // ohne heutigen Eintrag keine Einschätzung
+// Ohne Aktivität heute: TSB/ACWR vom Vortag, nicht aus dem heutigen (Plan-)Eintrag
+const wl = [{ date: "2026-10-02", ctl: 40, atl: 50 }, { date: "2026-10-03", ctl: 38, atl: 30 }];
+assert.equal(computeLoad(wl, "2026-10-03", false).date, "2026-10-02");
+assert.equal(computeLoad(wl, "2026-10-03", false).tsb, -10);
+assert.equal(computeLoad(wl, "2026-10-03", true).date, "2026-10-03");
 const wdg = buildWidget(d);
 const wjson = JSON.stringify(wdg);
 assert.ok(wjson.length < 3000, "Widget-Payload klein");

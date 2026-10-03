@@ -26,8 +26,11 @@ function quantile(a, q) {
   return s[lo] + (s[hi] - s[lo]) * (p - lo);
 }
 
-export function computeLoad(wellness) {
-  const w = [...wellness].reverse().find((x) => x.ctl != null && x.atl != null) ?? null;
+// Ohne heutige Aktivität zählt der Stand von gestern: Der Wellness-Eintrag von heute enthält schon die
+// geplante Einheit (Intervals.icu rechnet CTL/ATL mit der Planung weiter), das wäre ein Wert aus der Zukunft.
+export function computeLoad(wellness, todayIso = null, hasActivityToday = true) {
+  const usable = todayIso && !hasActivityToday ? wellness.filter((x) => x.date < todayIso) : wellness;
+  const w = [...usable].reverse().find((x) => x.ctl != null && x.atl != null) ?? null;
   const tsb = w ? w.ctl - w.atl : null;
   const acwr = w && w.ctl > 0 ? w.atl / w.ctl : null;
   const { tsb: t, acwr: a } = THRESHOLDS;
@@ -97,7 +100,7 @@ export function computeReadiness(wellness, todayIso, load) {
   return { verdict, items, body, sleepHours: today?.sleepHours ?? null, hrv: today?.hrv ?? null, restingHR: today?.restingHR ?? null };
 }
 
-export function buildSummary(wellness, todayIso) {
-  const load = computeLoad(wellness);
+export function buildSummary(wellness, todayIso, hasActivityToday = true) {
+  const load = computeLoad(wellness, todayIso, hasActivityToday);
   return { thresholds: THRESHOLDS, load, readiness: computeReadiness(wellness, todayIso, load) };
 }
