@@ -71,6 +71,8 @@ export function computeBody(wellness, todayIso) {
 // Auffällig ist ein Wert nur, wenn er über dem üblichen Bereich (Quartile) liegt: ein Schritt schlechter als
 // der Median = Achtung, zwei oder mehr = deutlich. Ohne heutigen Eintrag gibt es bewusst keine Einschätzung,
 // fehlende Werte zählen nie als "gut". Das Urteil beachtet auch die Körperwerte (Schlaf, HRV, Ruhepuls).
+// Die Gefühlswerte (Muskelkater, Motivation, ...) trägt der Nutzer immer VOR dem Lauf ein: sie beschreiben den
+// Ausgangszustand, nicht die Reaktion auf die Einheit des Tages, und dürfen nicht als Lauffolge gelesen werden.
 export function computeReadiness(wellness, todayIso, load) {
   const today = wellness.find((w) => w.date === todayIso);
   const past = wellness.filter((w) => w.date < todayIso);
