@@ -105,11 +105,6 @@ assert.equal(d.summary.readiness.verdict.cls, "ok");
 assert.equal(d.summary.readiness.items.length, 5);
 const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
 assert.equal(noToday.verdict.cls, "none"); // ohne heutigen Eintrag keine Einschätzung
-// Ohne Aktivität heute: TSB/ACWR vom Vortag, nicht aus dem heutigen (Plan-)Eintrag
-const wl = [{ date: "2026-10-02", ctl: 40, atl: 50 }, { date: "2026-10-03", ctl: 38, atl: 30 }];
-assert.equal(computeLoad(wl, "2026-10-03", false).date, "2026-10-02");
-assert.equal(computeLoad(wl, "2026-10-03", false).tsb, -10);
-assert.equal(computeLoad(wl, "2026-10-03", true).date, "2026-10-03");
 const wdg = buildWidget(d);
 const wjson = JSON.stringify(wdg);
 assert.ok(wjson.length < 3000, "Widget-Payload klein");
@@ -298,3 +293,28 @@ console.log("dashboard tests ok");
   assert.equal(T.recent[0].decoupling, 8.4); // neuester zuerst
   console.log("runalyze runs ok");
 }
+
+// CTL/ATL heute: Basis gestern + absolvierter Load (nicht der Plan), Zukunftstage zählen nie
+{
+  const { withActualToday, todayActualLoad } = await import("../src/live-load.js");
+  const t = "2026-10-03";
+  const w = [
+    { date: "2026-10-02", ctl: 21.93, atl: 16.66 },
+    { date: t, ctl: 25.75, atl: 38.93 }, // Intervals: enthält Plan 184
+    { date: "2026-10-04", ctl: 30, atl: 50 },
+    { date: "2026-10-05", ctl: 31, atl: 49 },
+  ];
+  const out = withActualToday(w, [], t);
+  const l = computeLoad(out, t);
+  assert.equal(out.at(-1).date, t);
+  assert.ok(Math.abs(l.ctl - 21.42) < 0.01, String(l.ctl));
+  assert.ok(Math.abs(l.atl - 14.44) < 0.01, String(l.atl));
+  assert.ok(Math.abs(l.tsb - 7) < 0.1, String(l.tsb));
+  // Mit absolviertem Load 184 kommt Intervals' Wert heraus
+  const l2 = computeLoad(withActualToday(w, [{ start_date_local: t + "T08:00:00", icu_training_load: 184 }], t), t);
+  assert.ok(Math.abs(l2.ctl - 25.75) < 0.01 && Math.abs(l2.atl - 38.93) < 0.01, `${l2.ctl} ${l2.atl}`);
+  assert.equal(todayActualLoad([{ start_date_local: t + "T08:00:00", icu_training_load: 40 }, { start_date_local: t + "T18:00:00", icu_training_load: 10 }], t), 50);
+  // computeLoad nimmt auch ohne Vorberechnung nie Zukunftstage
+  assert.equal(computeLoad(w, t).date, t);
+}
+console.log("live-load ok");

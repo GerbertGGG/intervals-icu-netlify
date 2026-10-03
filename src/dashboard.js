@@ -10,6 +10,7 @@ import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot 
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
+import { withActualToday } from "./live-load.js";
 import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
 import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./runalyze-history.js";
 
@@ -380,7 +381,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
-  const wellness = wellnessR.ok ? buildWellness(wellnessR.value) : [];
+  const wellness = wellnessR.ok ? withActualToday(buildWellness(wellnessR.value), activities, todayIso) : [];
   const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
 
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
@@ -405,7 +406,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
-    summary: buildSummary(wellness, todayIso, activities.some((a) => activityDay(a) === todayIso)),
+    summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs, snapshot, todayIso),

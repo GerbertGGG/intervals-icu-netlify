@@ -140,7 +140,7 @@ function buildFitness(d, byDate) {
     const w = byDate[addDays(d.today, -42 + i * 7)];
     return w?.ctl != null ? Math.round(w.ctl * 10) / 10 : null;
   });
-  const now = [...d.wellness].reverse().find((w) => w.ctl != null)?.ctl ?? null;
+  const now = [...d.wellness].reverse().find((w) => w.date <= d.today && w.ctl != null)?.ctl ?? null;
   weekly[6] = now != null ? Math.round(now * 10) / 10 : weekly[6];
   const from = weekly.slice(0, 6).findIndex((v) => v != null);
   const ok = from >= 0 && weekly[6] != null;
