@@ -49,7 +49,7 @@ const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864000
 
 // Körperwerte (objektiv) gegen die eigenen Mediane der 14 Tage VOR heute (heute zählt nicht mit, damit ein
 // auffälliger Wert seinen eigenen Vergleichswert nicht verschiebt). Fehlende Werte = "none", nie "gut".
-export const BODY_LIMITS = { sleepHours: { ok: 7, warn: 6 }, hrv: { bad: 0.8, warn: 0.9, up: 1.05 }, restingHR: { warn: 3, bad: 6 } };
+export const BODY_LIMITS = { sleepHours: { ok: 7, warn: 6 }, hrv: { bad: 0.7, warn: 0.85, up: 1.05 }, restingHR: { warn: 3, bad: 6 } };
 
 export function computeBody(wellness, todayIso) {
   const today = wellness.find((w) => w.date === todayIso);
