@@ -1,6 +1,5 @@
 import { isoDate, isMondayIso, daysBetween, listIsoDaysInclusive, clampStartDate } from "./date-utils.js";
 import { isARaceEvent } from "./event-utils.js";
-import { activityDay } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, putWellnessDay } from "./intervals-client.js";
 import {
   determineBlockState,
@@ -122,18 +121,12 @@ export async function syncRange(env, oldest, newest, write, debug, syncOptions =
         if (debug) yazioDebug = { error: String(e?.message ?? e) };
       }
 
-      // Available calories for the day = Yazio's own diet goal (a deliberate deficit,
-      // since Yazio is configured for weight loss) plus whatever was actually burned
-      // training today. The diet goal itself is the floor: a rest day never adds
-      // exercise calories back, so the budget never drops below the diet goal.
+      // Available calories for the day = Yazio's own daily goal. Yazio already includes the
+      // calories burned in imported workouts (Garmin runs etc.) in that goal, so adding
+      // training calories here again would count them twice.
       try {
         const goalKcal = await fetchYazioDailyGoalKcal(env, day);
-        if (goalKcal != null) {
-          const trainingKcal = activities
-            .filter((a) => activityDay(a) === day)
-            .reduce((sum, a) => sum + (Number(a?.calories) || 0), 0);
-          patch[FIELD_CALORIE_GOAL] = Math.round(goalKcal + trainingKcal);
-        }
+        if (goalKcal != null) patch[FIELD_CALORIE_GOAL] = Math.round(goalKcal);
       } catch (e) {
         console.warn("yazio calorie goal sync failed", { day, error: String(e?.message ?? e) });
       }
