@@ -107,7 +107,7 @@ export function buildWidgetDetail(d) {
 }
 
 // Vierte Ansicht ("vdot", mittleres Widget): VDOT mit Verlauf und die Trainingsbereiche (Paces) daraus.
-// Runalyze liefert nur das VDOT; die Paces je Bereich rechnet der Worker nach Daniels (siehe vdot.js).
+// Runalyze liefert nur das VDOT; die Bereiche (Pace von-bis) rechnet der Worker wie die Runalyze-Lauftabellen (siehe vdot.js).
 // Verlauf = VDOT je Snapshot-Tag der letzten 12 Wochen (aus dem Runalyze-Verlauf), Veraenderung gegen den aeltesten Punkt.
 export function buildWidgetVdot(d) {
   const r = d.runalyze;
@@ -124,7 +124,7 @@ export function buildWidgetVdot(d) {
       history: hist,
       delta: first && first.date < d.today ? Math.round((r.vdot - first.vdot) * 10) / 10 : null,
       deltaSince: first && first.date < d.today ? first.date : null,
-      paces: (r.paces ?? []).map((p) => ({ key: p.key, label: p.label, pace: p.pace, secPerKm: p.secPerKm })),
+      paces: (r.paces ?? []).map((p) => ({ key: p.key, label: p.label, pct: p.pct, pace: p.pace, secPerKm: p.secPerKm, fastPace: p.fastPace, slowPace: p.slowPace })),
     },
     sourcesFailed: failedOf(d),
   };

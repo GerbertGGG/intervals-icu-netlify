@@ -367,7 +367,7 @@ function buildReportText({
   if (paceTargets) {
     lines.push("PACEVORGABEN");
     for (const t of paceTargets) {
-      lines.push(`- ${t.label}: ${t.pace || "–"}`);
+      lines.push(`- ${t.label}: ${t.fastPace && t.slowPace ? `${t.fastPace.replace("/km", "")}–${t.slowPace}` : "–"}`);
     }
     lines.push("");
   }

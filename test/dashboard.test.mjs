@@ -248,7 +248,8 @@ assert.equal(det2.vdot.paces.length, 5);
 const vd = buildWidgetVdot(d2);
 assert.equal(vd.vdot.value, 34.67);
 assert.equal(vd.vdot.paces.length, 5);
-assert.equal(vd.vdot.paces.find((p) => p.key === "threshold").pace, "5:43/km");
+const thr = vd.vdot.paces.find((p) => p.key === "threshold");
+assert.deepEqual([thr.pct, thr.fastPace, thr.slowPace], [[88, 92], "5:36/km", "5:51/km"]); // Bereich wie in den Runalyze-Lauftabellen
 assert.equal(buildWidgetVdot(d).vdot, null); // ohne Snapshot nichts erfunden
 const vdRes = await handleWidgetRequest(new Request("https://x/api/widget?view=vdot", { headers: { authorization: "Bearer geheim" } }), env);
 assert.equal(vdRes.status, 200);
@@ -257,7 +258,7 @@ const hm = d2.runalyze.rows.find((r) => r.label === "Halbmarathon");
 assert.equal(hm.bestSeconds, null); assert.equal(hm.prognosisSeconds, 8000);
 assert.equal(d2.runalyze.rows[0].bestSeconds, 1537);
 assert.equal(d2.runalyze.vdot, 34.67);
-assert.equal(d2.runalyze.paces.find((p) => p.key === "threshold").pace, "5:43/km");
+assert.equal(d2.runalyze.paces.find((p) => p.key === "threshold").pace, "5:44/km");
 assert.ok(validateSnapshot({ fetchedAt: snap.fetchedAt, vdot: 500 }).error);
 writeFileSync(new URL("./fixture-dashboard.json", import.meta.url), JSON.stringify(d2));
 // Auth
@@ -363,7 +364,7 @@ console.log("live-load ok");
 {
   const { paceTargetsFromVdot } = await import("../src/vdot.js");
   const z = Object.fromEntries(paceTargetsFromVdot(50).map((x) => [x.key, x]));
-  assert.equal(z.marathon.pace, "4:31/km");
+  assert.deepEqual([z.marathon.fastPace, z.marathon.slowPace], ["4:34/km", "5:07/km"]);
   const paces = { easy: z.easy.secPerKm, marathon: z.marathon.secPerKm, threshold: z.threshold.secPerKm, interval: z.interval.secPerKm, repetition: z.repetition.secPerKm };
   const easy = parseWorkoutSteps("- 10km 70% Pace", null, { paces, sport: "run" });
   const hard = parseWorkoutSteps("- 1km 105% Pace", null, { paces, sport: "run" });

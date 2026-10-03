@@ -376,46 +376,32 @@ function velocityFromVo2(vo2) {
   return v > 0 ? v : null;
 }
 
-function formatPacePerKm(velocityMPerMin) {
-  if (!Number.isFinite(velocityMPerMin) || velocityMPerMin <= 0) return null;
-  const secPerKm = Math.round(60000 / velocityMPerMin);
-  const min = Math.floor(secPerKm / 60);
-  const sec = secPerKm % 60;
-  return `${min}:${String(sec).padStart(2, "0")}/km`;
-}
-
-// Jack Daniels training pace zones, derived as the velocity at a fixed %VDOT
-// (VDOT approximates VO2max, so vo2_target = pct * vdot).
+// Trainingsbereiche wie in den Runalyze-Lauftabellen: Anteil der Geschwindigkeit bei vVO2max
+// (Geschwindigkeit, bei der die VO2 dem VDOT entspricht, grob die 11-Minuten-Pace). Je Bereich von-bis in Prozent;
+// schneller = hoeherer Prozentwert. Zwischen den Bereichen liegen bewusst Luecken, wie in der Tabelle.
 const PACE_ZONES = [
-  { key: "easy", label: "Easy (E)", pct: 0.7 },
-  // M-Pace: nicht als fester Anteil, sondern aus der Daniels-Rennvorhersage fuer 42,195 km (siehe unten)
-  { key: "marathon", label: "Marathon (M)", pct: 0.84, raceMeters: 42195 },
-  { key: "threshold", label: "Threshold (T)", pct: 0.88 },
-  { key: "interval", label: "Interval (I)", pct: 0.975 },
-  { key: "repetition", label: "Repetition (R)", pct: 1.05 },
+  { key: "easy", label: "Easy (E)", from: 59, to: 74 },
+  { key: "marathon", label: "Marathon (M)", from: 75, to: 84 },
+  { key: "threshold", label: "Threshold (T)", from: 88, to: 92 },
+  { key: "interval", label: "Interval (I)", from: 95, to: 100 },
+  { key: "repetition", label: "Repetition (R)", from: 105, to: 110 },
 ];
 
-// Pace einer Zone in s/km. Zonen mit raceMeters (Marathon) folgen der Rennvorhersage, die anderen dem %VDOT.
-function zoneSecPerKm(zone, v) {
-  if (zone.raceMeters) {
-    const t = predictRaceTimeSeconds(v, zone.raceMeters);
-    return t != null ? Math.round(t / (zone.raceMeters / 1000)) : null;
-  }
-  const vel = velocityFromVo2(zone.pct * v);
-  return vel ? Math.round(60000 / vel) : null;
-}
+const fmtSecPerKm = (sec) => (sec != null ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}/km` : null);
 
-function formatSecPerKm(secPerKm) {
-  return secPerKm != null ? `${Math.floor(secPerKm / 60)}:${String(secPerKm % 60).padStart(2, "0")}/km` : null;
-}
-
-// Returns [{ key, label, pace, secPerKm }] pace targets per km for the given VDOT, or null.
+// Returns [{ key, label, pct: [von, bis], pace, secPerKm, fastSecPerKm, slowSecPerKm, fastPace, slowPace }] je Bereich
+// fuer das VDOT, oder null. pace/secPerKm = Mitte des Bereichs (fuer Workout-Schritte), fast/slow = Grenzen.
 export function paceTargetsFromVdot(vdot) {
   const v = Number(vdot);
   if (!Number.isFinite(v) || v <= 0) return null;
+  const vel = velocityFromVo2(v);
+  if (!vel) return null;
+  const base = 60000 / vel; // s/km bei 100 % vVO2max
   return PACE_ZONES.map((zone) => {
-    const secPerKm = zoneSecPerKm(zone, v);
-    return { key: zone.key, label: zone.label, pace: formatSecPerKm(secPerKm), secPerKm };
+    const secPerKm = Math.round(base / ((zone.from + zone.to) / 200));
+    const fastSecPerKm = Math.round(base / (zone.to / 100));
+    const slowSecPerKm = Math.round(base / (zone.from / 100));
+    return { key: zone.key, label: zone.label, pct: [zone.from, zone.to], pace: fmtSecPerKm(secPerKm), secPerKm, fastSecPerKm, slowSecPerKm, fastPace: fmtSecPerKm(fastSecPerKm), slowPace: fmtSecPerKm(slowSecPerKm) };
   });
 }
 
