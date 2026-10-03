@@ -250,6 +250,7 @@ assert.equal(vd.vdot.value, 34.67);
 assert.equal(vd.vdot.paces.length, 5);
 const thr = vd.vdot.paces.find((p) => p.key === "threshold");
 assert.deepEqual([thr.pct, thr.fastPace, thr.slowPace], [[88, 92], "5:36/km", "5:51/km"]); // Bereich wie in den Runalyze-Lauftabellen
+assert.equal(vd.vdot.delta, null); // Verlauf kuerzer als 7 Tage: keine Veraenderung angeben
 assert.equal(buildWidgetVdot(d).vdot, null); // ohne Snapshot nichts erfunden
 const vdRes = await handleWidgetRequest(new Request("https://x/api/widget?view=vdot", { headers: { authorization: "Bearer geheim" } }), env);
 assert.equal(vdRes.status, 200);
