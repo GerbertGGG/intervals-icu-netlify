@@ -22,8 +22,6 @@ import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./
 
 const HISTORY_DAYS = 56;
 const PLAN_AHEAD_DAYS = 14;
-// Einheitliche Grenze fuer "langer Lauf" (Klassifizierung und Tracker)
-export const LONGRUN_MIN_KM = 14;
 
 // Vom Nutzer vorgegeben (Halbmarathon Samstag 03.10.2026, Ziel < 2:00:00). Wird nur
 // verwendet, wenn in Intervals.icu kein A-Rennen im Kalender steht.
@@ -78,12 +76,18 @@ function formatPace(secPerKm) {
 const TEMPO_PATTERN = /\b(tempo|tdl|schwelle|wettkampfspezifisch|fartlek)/i;
 const MIT_PATTERN = /\bMIT\b/;
 const RACE_PATTERN = /\b(wettkampf|rennen|race)\b/i;
-const LONG_PATTERN = /\b(long\s*slow|long\s*run|lsr|langer?\s+lauf)/i;
 const BASE_PATTERN = /\b(grundlagen|easy|ga1|ga 1|regeneration|recovery)/i;
 const RACE_DISTANCE_TOLERANCE = 0.15;
 
 // ctx.raceDays: Tage mit Renn-Eintrag im Intervals-Kalender, ctx.rzRuns: Laeufe aus dem Runalyze-Snapshot
 // (dort setzt der Nutzer die Art "Wettkampf" selbst). Beide werden ueber Datum und Distanz zugeordnet.
+// Lauf am selben Tag mit passender Distanz in Runalyze mit der angegebenen Art
+function isRunalyzeKind(a, ctx, kind) {
+  const km = (num(a?.distance) ?? 0) / 1000;
+  const day = activityDay(a);
+  return km > 0 && (ctx?.rzRuns ?? []).some((r) => r.date === day && runKindFromType(r.type) === kind && Math.abs(r.distanceKm - km) / km <= RACE_DISTANCE_TOLERANCE);
+}
+
 function isRaceRun(a, ctx) {
   if (String(a?.sub_type ?? "").toUpperCase() === "RACE" || a?.race === true) return true;
   const name = String(a?.name ?? "");
@@ -95,7 +99,7 @@ function isRaceRun(a, ctx) {
   if (named && km > 0 && Math.abs(named - km) / named <= RACE_DISTANCE_TOLERANCE) return true;
   const close = (other) => km > 0 && other > 0 && Math.abs(other - km) / km <= RACE_DISTANCE_TOLERANCE;
   if (ctx?.raceDays?.get(day)?.some((evKm) => evKm == null || close(evKm))) return true;
-  return (ctx?.rzRuns ?? []).some((r) => r.date === day && runKindFromType(r.type) === "race" && close(r.distanceKm));
+  return isRunalyzeKind(a, ctx, "race");
 }
 
 // Bestimmt die Einheitsart, um die Pulsregel durchzusetzen: Puls gibt es nur bei
@@ -105,8 +109,7 @@ export function classifyRun(a, ctx = null) {
   const text = `${a?.name ?? ""} ${a?.description ?? ""}`;
   if (isRaceRun(a, ctx)) return "race";
   if (isIntervalActivity(a) || hasIntervalTextSignal(a) || TEMPO_PATTERN.test(String(a?.name ?? "")) || MIT_PATTERN.test(String(a?.name ?? ""))) return "intensity";
-  const distanceKm = (num(a?.distance) ?? 0) / 1000;
-  if (LONG_PATTERN.test(text) || distanceKm >= LONGRUN_MIN_KM) return "long";
+  if (isRunalyzeKind(a, ctx, "long")) return "long";
   if (BASE_PATTERN.test(text)) return "base";
   return "unknown";
 }
@@ -216,10 +219,25 @@ function buildThresholds(settingsList) {
   const swim = findSettings(settingsList, ["Swim", "OpenWaterSwim"]);
   const secPer = (ms, meters) => (ms && ms > 0 ? Math.round(meters / ms) : null);
   return {
-    run: { thresholdPaceSecPerKm: secPer(num(run?.threshold_pace), 1000), lthr: num(run?.lthr), maxHr: num(run?.max_hr) },
+    run: { thresholdPaceSecPerKm: secPer(num(run?.threshold_pace), 1000), paceZonePct: zonePctFromBounds(run?.pace_zones), lthr: num(run?.lthr), maxHr: num(run?.max_hr) },
     bike: { ftp: num(ride?.ftp), indoorFtp: num(ride?.indoor_ftp), lthr: num(ride?.lthr), maxHr: num(ride?.max_hr) },
     swim: { thresholdPaceSecPer100m: secPer(num(swim?.threshold_pace), 100) },
   };
+}
+
+// Intervals.icu liefert Zonen als obere Grenzen in % der Schwellenpace (letzte oft offen, z. B. 999).
+// Fuer die Hoehe der Workout-Bloecke zaehlt die Mitte der Zone; die erste (ohne untere Grenze) und die
+// offene letzte Zone werden aus dem Nachbarn abgeleitet. Ohne Zonen null, dann gilt das Standardmodell.
+export function zonePctFromBounds(bounds) {
+  const b = (Array.isArray(bounds) ? bounds : []).map(Number);
+  if (b.length < 2 || b.some((x) => !Number.isFinite(x) || x <= 0)) return null;
+  const out = {};
+  b.forEach((upper, i) => {
+    const lower = i === 0 ? Math.max(upper - (b[1] - upper), 0) : b[i - 1];
+    const top = upper > 200 ? lower + (lower - (i > 1 ? b[i - 2] : lower - 10)) : upper;
+    out[i + 1] = Math.round(((lower + top) / 2) * 10) / 10;
+  });
+  return out;
 }
 
 function buildPlanned(events, todayIso, stepOpts = {}) {
@@ -309,31 +327,25 @@ function buildInsights(rawWellness, activities) {
 
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
 function buildFitness(runs, snapshot, todayIso) {
-  const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
-  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm, decoupling: r.decoupling });
-  // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
-  // Bevorzugt aus Runalyze: Dort setzt der Nutzer die Art ("Langer Lauf") selbst und Runalyze liefert das Decoupling.
-  // Ohne Runalyze-Läufe: Läufe ab LONGRUN_MIN_KM aus Intervals.icu (Decoupling dort oft leer). Nur Datum, Distanz, Pace, Decoupling gehen raus.
+  // Longrun-Tracker: Fuer die Langstrecke zaehlen die laengsten Laeufe der 8 Wochen, nicht der Wochenumfang.
+  // Ein langer Lauf zaehlt nur, wenn er in Runalyze als "Langer Lauf" eingetragen ist (Art setzt der Nutzer selbst,
+  // Runalyze liefert das Decoupling). Nur Datum, Distanz, Pace, Decoupling gehen raus.
   const since = addDays(todayIso, -(HISTORY_DAYS - 1));
   const rz = (snapshot?.runs ?? []).filter((r) => r.date >= since && runKindFromType(r.type) === "long");
   const rzRecords = rz.map((r) => {
     const pace = r.durationSec ? r.durationSec / r.distanceKm : null;
     return { date: r.date, distanceKm: Math.round(r.distanceKm * 10) / 10, paceSecPerKm: pace != null ? Math.round(pace) : null, pace: pace != null ? formatPace(pace) : null, decoupling: r.decouplingPct };
   });
-  const source = rzRecords.length ? "runalyze" : "intervals";
-  const pool = source === "runalyze" ? rzRecords : runs.filter((r) => r.kind !== "race" && r.distanceKm >= LONGRUN_MIN_KM).map(pick);
-  const byLength = [...pool].sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
+  const byLength = [...rzRecords].sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
   return {
     longRunTracker: {
-      source,
-      minKm: source === "runalyze" ? null : LONGRUN_MIN_KM,
+      source: "runalyze",
+      minKm: null,
       longest: byLength[0] ?? null,
-      count16: pool.filter((r) => r.distanceKm >= 16).length,
+      count16: rzRecords.filter((r) => r.distanceKm >= 16).length,
       recent: byLength.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)),
     },
-    longRuns: source === "runalyze"
-      ? [...rzRecords].filter((r) => r.decoupling != null).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling }))
-      : asc.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
+    longRuns: [...rzRecords].filter((r) => r.decoupling != null).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
 }
 
@@ -471,7 +483,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
-    planned: buildPlanned(events, todayIso, { paces: stepPaces }),
+    planned: buildPlanned(events, todayIso, { paces: stepPaces, zonePct: thresholds.run.paceZonePct, thresholdSecPerKm: thresholds.run.thresholdPaceSecPerKm }),
   };
 }
 

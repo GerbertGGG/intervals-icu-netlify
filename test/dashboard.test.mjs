@@ -55,7 +55,8 @@ assert.equal(JSON.stringify(d).includes("Zweck: Beine lockern"), true); // nur g
 assert.equal(JSON.stringify(d).includes("Bobingen"), false);
 assert.equal(classifyRun(activities[0]), "intensity");
 assert.equal(classifyRun(activities[1]), "base");
-assert.equal(classifyRun(activities[2]), "long");
+assert.equal(classifyRun(activities[2]), "unknown"); // lang nur, wenn in Runalyze so eingetragen
+assert.equal(classifyRun(activities[2], { rzRuns: [{ date: day(-5), distanceKm: 16.2, type: "Langer Lauf" }] }), "long");
 assert.equal(classifyRun(activities.find((a) => a.name === "Intervalle 5x1000")), "intensity");
 assert.equal(sportOf({ type: "Swim" }), "swim");
 assert.equal(sportOf({ type: "OpenWaterSwim" }), "swim");
@@ -223,9 +224,9 @@ assert.ok(d.wellness.every((w) => w.soreness === null));
 assert.equal(d.goal.daysToGo, 3);
 assert.equal(d.goal.source, "config");
 assert.ok(d.weeks.at(-1).complete === false);
-// Fitness: Decoupling nur aus langen Läufen
-assert.equal(d.fitness.longRuns.length, 1);
-assert.equal(d.fitness.longRuns[0].decoupling, 3.1);
+// Ohne Runalyze-Snapshot gibt es keine langen Laeufe
+assert.equal(d.fitness.longRuns.length, 0);
+assert.equal(d.fitness.longRunTracker.recent.length, 0);
 assert.equal(d.runalyze, null); // ohne Snapshot: fehlt, keine Platzhalter
 // Runalyze-Snapshot (synthetische Werte, nur Test)
 const snap = { fetchedAt: "2026-09-30T05:00:00Z", vdot: 34.67, prognosis: [{ distanceKm: 5, seconds: 1600 }, { distanceKm: 21.1, seconds: 8000 }],
@@ -327,8 +328,8 @@ console.log("live-load ok");
   assert.equal(classifyRun(mk("MIT 4x2km")), "intensity");
   assert.equal(classifyRun(mk("Halbmarathon Berlin", { distance: 21100 })), "race");
   assert.equal(classifyRun(mk("Morgenlauf", { distance: 21100, sub_type: "RACE" })), "race");
-  assert.equal(classifyRun(mk("Lauf", { distance: 13900 })), "unknown");
-  assert.equal(classifyRun(mk("Lauf", { distance: 14000 })), "long");
+  assert.equal(classifyRun(mk("Long Slow Run", { distance: 21000 })), "unknown"); // Name und Distanz allein genuegen nicht
+  assert.equal(classifyRun(mk("Lauf", { distance: 16000 }), { rzRuns: [{ date: "2026-09-20", distanceKm: 16.1, type: "Langer Lauf" }] }), "long");
   // Runalyze-Art "Wettkampf" am selben Tag mit passender Distanz
   const ctx = { rzRuns: [{ date: "2026-09-20", distanceKm: 21.1, type: "Wettkampf" }] };
   assert.equal(classifyRun(mk("Lauf", { distance: 21000 }), ctx), "race");
@@ -365,3 +366,16 @@ console.log("live-load ok");
   assert.equal(parseWorkoutSteps("- 10m Z2", null, { sport: "bike" })[0].pct, 70);
 }
 console.log("race/phase/zones ok");
+
+// Laufzonen aus Intervals: obere Grenzen -> Mitte der Zone; Distanz-Schritte ueber die Schwellenpace
+{
+  const { zonePctFromBounds } = await import("../src/dashboard.js");
+  const z = zonePctFromBounds([77.5, 87.7, 94.3, 100.5, 115, 999]);
+  assert.equal(z[2], 82.6);
+  assert.ok(z[6] > 115 && z[6] < 140);
+  assert.equal(zonePctFromBounds(null), null);
+  assert.equal(parseWorkoutSteps("- 10m Z2", null, { sport: "run", zonePct: z })[0].pct, 82.6);
+  assert.equal(parseWorkoutSteps("- 5km 100% Pace", null, { sport: "run", thresholdSecPerKm: 270 })[0].secs, 1350);
+  assert.equal(parseWorkoutSteps("- 5km 90% Pace", null, { sport: "run", thresholdSecPerKm: 270 })[0].secs, 1500);
+}
+console.log("zones from intervals ok");

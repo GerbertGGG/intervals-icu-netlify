@@ -60,20 +60,24 @@ export function findHipFlags(text) {
 // Intervals-Workout-Format: "-15m 75% Pace", "3x" gefolgt von "-"-Zeilen bis zur Leerzeile.
 // Fließtext wird ignoriert. Distanz-Schritte (km) werden mit der Pace der passenden VDOT-Zone in Zeit
 // umgerechnet (opts.paces = { easy, marathon, threshold, interval, repetition } in s/km), ohne VDOT mit 6:00 min/km.
-// Zonen-Hoehe: Rad/Sonstiges nach Leistungszonen, Lauf nach Pace-Zonen (% der Schwellenpace, Mitte der Zone).
+// Zonen-Hoehe: Rad/Sonstiges nach Leistungszonen, Lauf nach den Pace-Zonen aus Intervals (opts.zonePct, % der
+// Schwellenpace, Mitte der Zone), ohne diese nach einem Standardmodell. Mit opts.thresholdSecPerKm rechnen
+// Distanz-Schritte mit Prozentangabe ueber die Schwellenpace.
 const ZONE_PCT = { 1: 55, 2: 70, 3: 85, 4: 98, 5: 110, 6: 125, 7: 150 };
 const RUN_ZONE_PCT = { 1: 70, 2: 83, 3: 91, 4: 97, 5: 108, 6: 120, 7: 130 };
 const FALLBACK_SEC_PER_KM = 360;
 const MAX_BLOCKS = 200;
 
 // Pace fuer einen Distanz-Schritt: Intensitaet (% Schwellenpace) bestimmt die Zone, unbekannt = locker.
-function stepSecPerKm(pct, paces) {
+function stepSecPerKm(pct, paces, thresholdSecPerKm = null) {
+  // % beziehen sich in Intervals auf die Schwellenpace (Geschwindigkeit): 100 % = Schwellenpace
+  if (pct != null && thresholdSecPerKm) return (thresholdSecPerKm * 100) / pct;
   if (!paces) return FALLBACK_SEC_PER_KM;
   const zone = pct == null || pct <= 85 ? "easy" : pct <= 94 ? "marathon" : pct <= 100 ? "threshold" : pct <= 112 ? "interval" : "repetition";
   return paces[zone] ?? FALLBACK_SEC_PER_KM;
 }
 
-function durationSecs(text, pct = null, paces = null) {
+function durationSecs(text, pct = null, paces = null, thresholdSecPerKm = null) {
   let secs = 0;
   let found = false;
   for (const m of text.matchAll(/(\d+(?:[.,]\d+)?)\s*(h|min|mtr|km|m|s)(?![a-z])/gi)) {
@@ -83,8 +87,8 @@ function durationSecs(text, pct = null, paces = null) {
     if (u === "h") secs += v * 3600;
     else if (u === "m" || u === "min") secs += v * 60;
     else if (u === "s") secs += v;
-    else if (u === "km") secs += v * stepSecPerKm(pct, paces);
-    else if (u === "mtr") secs += (v / 1000) * stepSecPerKm(pct, paces);
+    else if (u === "km") secs += v * stepSecPerKm(pct, paces, thresholdSecPerKm);
+    else if (u === "mtr") secs += (v / 1000) * stepSecPerKm(pct, paces, thresholdSecPerKm);
   }
   return found ? secs : null;
 }
@@ -117,7 +121,7 @@ function flattenDoc(steps, out, depth = 0) {
 }
 
 export function parseWorkoutSteps(description, workoutDoc, opts = {}) {
-  const zonePct = opts.sport === "run" ? RUN_ZONE_PCT : ZONE_PCT;
+  const zonePct = opts.sport === "run" ? opts.zonePct ?? RUN_ZONE_PCT : ZONE_PCT;
   const fromDoc = [];
   flattenDoc(workoutDoc?.steps, fromDoc);
   if (fromDoc.length) return fromDoc;
@@ -137,7 +141,7 @@ export function parseWorkoutSteps(description, workoutDoc, opts = {}) {
     const step = line.match(/^-\s*(.+)$/);
     if (!step) continue;
     const pct = intensityPct(step[1], zonePct);
-    const secs = durationSecs(step[1], pct, opts.paces);
+    const secs = durationSecs(step[1], pct, opts.paces, opts.sport === "run" ? opts.thresholdSecPerKm : null);
     if (!secs || secs <= 0) continue;
     const block = { secs: Math.round(secs), pct };
     if (group) group.steps.push(block);
