@@ -131,7 +131,7 @@ assert.equal(/#key/i.test(wjson), false); // das Kennzeichen selbst geht nicht r
 assert.equal(buildWidget({ ...d, planned: d.planned.map((p) => ({ ...p, tags: p.tags.map((t) => t.replace("#", "")) })) }).plan.upcoming[0].key, true); // Tag auch ohne #
 assert.equal(wdg.plan.today[0].key, false);
 // Phase
-{ const { racePhase } = await import("../src/widget.js"); assert.deepEqual([null, 20, 8, 7, 0, -1, -3, -4].map(racePhase), ["normal", "normal", "normal", "taper", "taper", "recovery", "recovery", "normal"]); }
+{ const { racePhase } = await import("../src/widget.js"); assert.deepEqual([null, 20, 8, 7, 0, -1, -7, -8].map((x) => racePhase(x)), ["normal", "normal", "normal", "taper", "taper", "recovery", "recovery", "normal"]); }
 // Wochenvolumen je Disziplin (Basis der Training-Ansicht)
 const cw = d.weeks.at(-1).bySport;
 assert.equal(cw.swim.km, 1.5);
@@ -318,3 +318,50 @@ console.log("dashboard tests ok");
   assert.equal(computeLoad(w, t).date, t);
 }
 console.log("live-load ok");
+
+// Einheitenart: "mit" als normales Wort, Steigerungen, Rennen, einheitliche Langlauf-Grenze
+{
+  const mk = (name, extra = {}) => ({ name, type: "Run", distance: 8000, moving_time: 2800, start_date_local: "2026-09-20T08:00:00", ...extra });
+  assert.equal(classifyRun(mk("Dauerlauf mit Anna", { description: "locker" })), "unknown");
+  assert.equal(classifyRun(mk("Easy Lauf mit Steigerungen")), "base");
+  assert.equal(classifyRun(mk("MIT 4x2km")), "intensity");
+  assert.equal(classifyRun(mk("Halbmarathon Berlin", { distance: 21100 })), "race");
+  assert.equal(classifyRun(mk("Morgenlauf", { distance: 21100, sub_type: "RACE" })), "race");
+  assert.equal(classifyRun(mk("Lauf", { distance: 13900 })), "unknown");
+  assert.equal(classifyRun(mk("Lauf", { distance: 14000 })), "long");
+  // Runalyze-Art "Wettkampf" am selben Tag mit passender Distanz
+  const ctx = { rzRuns: [{ date: "2026-09-20", distanceKm: 21.1, type: "Wettkampf" }] };
+  assert.equal(classifyRun(mk("Lauf", { distance: 21000 }), ctx), "race");
+  assert.equal(classifyRun(mk("Lauf", { distance: 5000 }), ctx), "unknown");
+  // Kalender-Rennen
+  assert.equal(classifyRun(mk("Lauf", { distance: 10000 }), { raceDays: new Map([["2026-09-20", [10]]]) }), "race");
+  assert.equal(buildRunRecord(mk("Halbmarathon", { distance: 21100, average_heartrate: 160, decoupling: 3 })).avgHr, null);
+}
+
+// Rennphase je Distanz, Erholung nach dem Rennen auch ohne aktuelles Ziel
+{
+  const { racePhase, racePhaseFor, phaseDaysFor } = await import("../src/widget.js");
+  const hm = { distance: "hm", daysToGo: 0 };
+  assert.equal(racePhaseFor(hm, null, "2026-10-03"), "taper");
+  assert.equal(racePhaseFor({ distance: "hm", daysToGo: 90 }, { date: "2026-10-03", distance: "hm" }, "2026-10-04"), "recovery");
+  assert.equal(racePhaseFor({ distance: "hm", daysToGo: 90 }, { date: "2026-10-03", distance: "hm" }, "2026-10-10"), "recovery");
+  assert.equal(racePhaseFor({ distance: "hm", daysToGo: 90 }, { date: "2026-10-03", distance: "hm" }, "2026-10-11"), "normal");
+  assert.equal(phaseDaysFor({ triathlon: { format: "middle" } }).taperFrom, 14);
+  assert.equal(racePhase(10, phaseDaysFor({ distance: "m" })), "taper");
+}
+
+// Marathon-Pace aus der Rennvorhersage, Workout-Schritte mit Zonen-Pace
+{
+  const { paceTargetsFromVdot } = await import("../src/vdot.js");
+  const z = Object.fromEntries(paceTargetsFromVdot(50).map((x) => [x.key, x]));
+  assert.equal(z.marathon.pace, "4:31/km");
+  const paces = { easy: z.easy.secPerKm, marathon: z.marathon.secPerKm, threshold: z.threshold.secPerKm, interval: z.interval.secPerKm, repetition: z.repetition.secPerKm };
+  const easy = parseWorkoutSteps("- 10km 70% Pace", null, { paces, sport: "run" });
+  const hard = parseWorkoutSteps("- 1km 105% Pace", null, { paces, sport: "run" });
+  assert.equal(easy[0].secs, 10 * paces.easy);
+  assert.equal(hard[0].secs, paces.interval);
+  assert.equal(parseWorkoutSteps("- 1km 70% Pace", null)[0].secs, 360);
+  assert.equal(parseWorkoutSteps("- 10m Z2", null, { sport: "run" })[0].pct, 83);
+  assert.equal(parseWorkoutSteps("- 10m Z2", null, { sport: "bike" })[0].pct, 70);
+}
+console.log("race/phase/zones ok");

@@ -26,14 +26,29 @@ const rpeOf = (s) => { const m = String(s ?? "").match(/\bRPE\s*:?\s*(\d{1,2}(?:
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
-// Rennphase aus den Tagen bis zum Rennen (Renntag = 0, danach negativ): normal, taper (letzte 7 Tage), recovery (3 Tage danach)
-export const PHASE_DAYS = { taperFrom: 7, recoveryDays: 3 };
-export function racePhase(daysToGo) {
-  if (daysToGo == null || daysToGo > PHASE_DAYS.taperFrom) return "normal";
-  if (daysToGo >= 0) return "taper";
-  return daysToGo >= -PHASE_DAYS.recoveryDays ? "recovery" : "normal";
+// Rennphase aus den Tagen bis zum Rennen (Renntag = 0, danach negativ): normal, taper, recovery.
+// Dauer je Distanz: Halbmarathon ca. 7 Tage Taper und 7 Tage Erholung (Standard), Mitteldistanz-Triathlon 14 Tage Taper.
+export const PHASE_DAYS = { taperFrom: 7, recoveryDays: 7 };
+const PHASE_DAYS_BY_DISTANCE = { "5k": { taperFrom: 3, recoveryDays: 3 }, "10k": { taperFrom: 5, recoveryDays: 4 }, hm: PHASE_DAYS, m: { taperFrom: 14, recoveryDays: 14 } };
+const PHASE_DAYS_BY_TRIATHLON = { sprint: { taperFrom: 5, recoveryDays: 4 }, olympic: { taperFrom: 7, recoveryDays: 5 }, middle: { taperFrom: 14, recoveryDays: 7 }, long: { taperFrom: 14, recoveryDays: 14 } };
+export function phaseDaysFor(race) {
+  const tri = race?.triathlon?.format ?? race?.triathlonFormat;
+  return (tri && PHASE_DAYS_BY_TRIATHLON[tri]) || PHASE_DAYS_BY_DISTANCE[race?.distance] || PHASE_DAYS;
 }
-const goalOf = (d) => ({ name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs, runKm: d.goal.runKm ?? null, phase: racePhase(d.goal.daysToGo) });
+export function racePhase(daysToGo, days = PHASE_DAYS) {
+  if (daysToGo == null || daysToGo > days.taperFrom) return "normal";
+  if (daysToGo >= 0) return "taper";
+  return daysToGo >= -days.recoveryDays ? "recovery" : "normal";
+}
+// Erholung nach dem letzten Rennen hat Vorrang, auch wenn das naechste Zielrennen schon feststeht.
+export function racePhaseFor(goal, recentRace, todayIso) {
+  if (recentRace?.date && todayIso && recentRace.date < todayIso) {
+    const since = Math.round((Date.parse(todayIso) - Date.parse(recentRace.date)) / 86400000);
+    if (since <= phaseDaysFor(recentRace).recoveryDays) return "recovery";
+  }
+  return racePhase(goal?.daysToGo, phaseDaysFor(goal));
+}
+const goalOf = (d) => ({ name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs, runKm: d.goal.runKm ?? null, phase: racePhaseFor(d.goal, d.recentRace, d.today) });
 const failedOf = (d) => Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k);
 
 // Wochenziel der TSS: Summe der geplanten Workouts der Woche aus dem Intervals-Kalender. Fehlt sie dort,

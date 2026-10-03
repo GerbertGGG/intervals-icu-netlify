@@ -58,11 +58,22 @@ export function findHipFlags(text) {
 // Zerlegt ein geplantes Workout in Blöcke [{ secs, pct }] für die Grafik (Breite = Dauer, Höhe = Intensität).
 // Bevorzugt das strukturierte workout_doc von Intervals.icu, sonst der Beschreibungstext im
 // Intervals-Workout-Format: "-15m 75% Pace", "3x" gefolgt von "-"-Zeilen bis zur Leerzeile.
-// Fließtext wird ignoriert. Distanz-Schritte (km) werden grob mit 6:00 min/km in Zeit umgerechnet.
+// Fließtext wird ignoriert. Distanz-Schritte (km) werden mit der Pace der passenden VDOT-Zone in Zeit
+// umgerechnet (opts.paces = { easy, marathon, threshold, interval, repetition } in s/km), ohne VDOT mit 6:00 min/km.
+// Zonen-Hoehe: Rad/Sonstiges nach Leistungszonen, Lauf nach Pace-Zonen (% der Schwellenpace, Mitte der Zone).
 const ZONE_PCT = { 1: 55, 2: 70, 3: 85, 4: 98, 5: 110, 6: 125, 7: 150 };
+const RUN_ZONE_PCT = { 1: 70, 2: 83, 3: 91, 4: 97, 5: 108, 6: 120, 7: 130 };
+const FALLBACK_SEC_PER_KM = 360;
 const MAX_BLOCKS = 200;
 
-function durationSecs(text) {
+// Pace fuer einen Distanz-Schritt: Intensitaet (% Schwellenpace) bestimmt die Zone, unbekannt = locker.
+function stepSecPerKm(pct, paces) {
+  if (!paces) return FALLBACK_SEC_PER_KM;
+  const zone = pct == null || pct <= 85 ? "easy" : pct <= 94 ? "marathon" : pct <= 100 ? "threshold" : pct <= 112 ? "interval" : "repetition";
+  return paces[zone] ?? FALLBACK_SEC_PER_KM;
+}
+
+function durationSecs(text, pct = null, paces = null) {
   let secs = 0;
   let found = false;
   for (const m of text.matchAll(/(\d+(?:[.,]\d+)?)\s*(h|min|mtr|km|m|s)(?![a-z])/gi)) {
@@ -72,13 +83,13 @@ function durationSecs(text) {
     if (u === "h") secs += v * 3600;
     else if (u === "m" || u === "min") secs += v * 60;
     else if (u === "s") secs += v;
-    else if (u === "km") secs += v * 360;
-    else if (u === "mtr") secs += (v / 1000) * 360;
+    else if (u === "km") secs += v * stepSecPerKm(pct, paces);
+    else if (u === "mtr") secs += (v / 1000) * stepSecPerKm(pct, paces);
   }
   return found ? secs : null;
 }
 
-function intensityPct(text) {
+function intensityPct(text, zonePct = ZONE_PCT) {
   const range = text.match(/(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*%/);
   if (range) {
     const a = Number(range[1].replace(",", "."));
@@ -86,7 +97,7 @@ function intensityPct(text) {
     return (a + b) / 2;
   }
   const z = text.match(/\bZ([1-7])\b/i);
-  return z ? ZONE_PCT[Number(z[1])] : null;
+  return z ? zonePct[Number(z[1])] : null;
 }
 
 function flattenDoc(steps, out, depth = 0) {
@@ -105,7 +116,8 @@ function flattenDoc(steps, out, depth = 0) {
   }
 }
 
-export function parseWorkoutSteps(description, workoutDoc) {
+export function parseWorkoutSteps(description, workoutDoc, opts = {}) {
+  const zonePct = opts.sport === "run" ? RUN_ZONE_PCT : ZONE_PCT;
   const fromDoc = [];
   flattenDoc(workoutDoc?.steps, fromDoc);
   if (fromDoc.length) return fromDoc;
@@ -124,9 +136,10 @@ export function parseWorkoutSteps(description, workoutDoc) {
     if (rep && !rep[2].startsWith("-")) { flush(); group = { reps: Math.min(Number(rep[1]), 50), steps: [] }; continue; }
     const step = line.match(/^-\s*(.+)$/);
     if (!step) continue;
-    const secs = durationSecs(step[1]);
+    const pct = intensityPct(step[1], zonePct);
+    const secs = durationSecs(step[1], pct, opts.paces);
     if (!secs || secs <= 0) continue;
-    const block = { secs: Math.round(secs), pct: intensityPct(step[1]) };
+    const block = { secs: Math.round(secs), pct };
     if (group) group.steps.push(block);
     else out.push(block);
   }

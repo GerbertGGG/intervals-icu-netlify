@@ -388,21 +388,35 @@ function formatPacePerKm(velocityMPerMin) {
 // (VDOT approximates VO2max, so vo2_target = pct * vdot).
 const PACE_ZONES = [
   { key: "easy", label: "Easy (E)", pct: 0.7 },
-  { key: "marathon", label: "Marathon (M)", pct: 0.84 },
+  // M-Pace: nicht als fester Anteil, sondern aus der Daniels-Rennvorhersage fuer 42,195 km (siehe unten)
+  { key: "marathon", label: "Marathon (M)", pct: 0.84, raceMeters: 42195 },
   { key: "threshold", label: "Threshold (T)", pct: 0.88 },
   { key: "interval", label: "Interval (I)", pct: 0.975 },
   { key: "repetition", label: "Repetition (R)", pct: 1.05 },
 ];
 
-// Returns [{ key, label, pace }] pace targets per km for the given VDOT, or null.
+// Pace einer Zone in s/km. Zonen mit raceMeters (Marathon) folgen der Rennvorhersage, die anderen dem %VDOT.
+function zoneSecPerKm(zone, v) {
+  if (zone.raceMeters) {
+    const t = predictRaceTimeSeconds(v, zone.raceMeters);
+    return t != null ? Math.round(t / (zone.raceMeters / 1000)) : null;
+  }
+  const vel = velocityFromVo2(zone.pct * v);
+  return vel ? Math.round(60000 / vel) : null;
+}
+
+function formatSecPerKm(secPerKm) {
+  return secPerKm != null ? `${Math.floor(secPerKm / 60)}:${String(secPerKm % 60).padStart(2, "0")}/km` : null;
+}
+
+// Returns [{ key, label, pace, secPerKm }] pace targets per km for the given VDOT, or null.
 export function paceTargetsFromVdot(vdot) {
   const v = Number(vdot);
   if (!Number.isFinite(v) || v <= 0) return null;
-  return PACE_ZONES.map((zone) => ({
-    key: zone.key,
-    label: zone.label,
-    pace: formatPacePerKm(velocityFromVo2(zone.pct * v)),
-  }));
+  return PACE_ZONES.map((zone) => {
+    const secPerKm = zoneSecPerKm(zone, v);
+    return { key: zone.key, label: zone.label, pace: formatSecPerKm(secPerKm), secPerKm };
+  });
 }
 
 const RACE_DISTANCES = [
