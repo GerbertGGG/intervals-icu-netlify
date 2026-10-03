@@ -780,10 +780,11 @@ function buildVdot(res) {
   lc.addSpacer(2);
   text(lc, `Stand ${dateShort(v.fetchedAt.slice(0, 10))}`, FS.xs, { color: COL.muted, minScale: 0.8 });
 
-  // Rechts: die fuenf Bereiche mit Pace
+  // Rechts: die fuenf Bereiche als Pace von-bis (schnell bis langsam), wie in den Runalyze-Lauftabellen
   const rc = card(row, RW, 7);
-  text(rc, "TRAININGSBEREICHE · PACE", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+  text(rc, "TRAININGSBEREICHE · MIN/KM", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
   rc.addSpacer(2);
+  const bare = (x) => (x ? x.replace("/km", "") : MISSING);
   for (const p of v.paces) {
     const ui = PACE_ZONES_UI[p.key] || [p.label, "", NEUTRAL_HEX];
     const r = rc.addStack(); r.centerAlignContent();
@@ -791,12 +792,11 @@ function buildVdot(res) {
     r.addSpacer(5);
     text(r, ui[0], FS.sm, { minScale: 0.7 });
     r.addSpacer();
-    text(r, p.pace ? p.pace.replace("/km", "") : MISSING, FS.sm, { bold: true, minScale: 0.8 });
-    text(r, " /km", FS.xs, { color: COL.muted, minScale: 1 });
+    text(r, `${bare(p.fastPace)}–${bare(p.slowPace)}`, FS.sm, { bold: true, minScale: 0.7 });
     rc.addSpacer(1);
   }
   w.addSpacer(4);
-  text(w, "Paces aus dem VDOT nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
+  text(w, "Bereiche wie in den Runalyze-Lauftabellen (% vVO2max)", FS.xs, { color: COL.muted, minScale: 0.7 });
   notice(w, res, d);
   return w;
 }

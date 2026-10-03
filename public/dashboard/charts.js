@@ -263,8 +263,8 @@
 
   /* ---------- Trainingspaces (VDOT-Zonen) als sortierte Liste, Ziel-Pace an passender Stelle ---------- */
   function paceRuler(host, zones, goalPace) {
-    const items = [...zones.map((z) => ({ label: z.label, sec: z.sec })), ...(goalPace ? [{ label: "Ziel-Pace", sec: goalPace, goal: true }] : [])].sort((a, b) => a.sec - b.sec);
-    host.innerHTML = items.map((z) => `<div class="prow${z.goal ? " goal" : ""}"><span>${U.esc(z.label)}</span><b>${U.pace(z.sec)} <small>min/km</small></b></div>`).join("");
+    const items = [...zones.map((z) => ({ label: z.label, sec: z.sec, fast: z.fast, slow: z.slow })), ...(goalPace ? [{ label: "Ziel-Pace", sec: goalPace, goal: true }] : [])].sort((a, b) => a.sec - b.sec);
+    host.innerHTML = items.map((z) => `<div class="prow${z.goal ? " goal" : ""}"><span>${U.esc(z.label)}</span><b>${z.fast != null ? `${U.pace(z.fast)}–${U.pace(z.slow)}` : U.pace(z.sec)} <small>min/km</small></b></div>`).join("");
   }
 
   /* ---------- Heatmap Wellness (Wert x Tag), Lücken schraffiert ---------- */
