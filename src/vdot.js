@@ -1,6 +1,7 @@
 import { isoDate, daysBetween } from "./date-utils.js";
 import { isRun, isRaceActivity, isIntervalActivity, isVdotExcluded } from "./activity-utils.js";
 import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
+import { readRunalyzeSnapshot } from "./runalyze-snapshot.js";
 import { loadCachedMaxHr, fetchAndCacheMaxHr, fetchRunPaceBenchmarks } from "./intervals-client.js";
 
 const REAL_VDOT_KV_PREFIX = "vdot:real:";
@@ -357,11 +358,10 @@ async function loadRealVdotState(env) {
   }
 }
 
-// Reads the persisted "real" VDOT (latest known overall fitness, not a per-window
-// estimate) so callers like the weekly report can show it without recomputing.
+// Der aktuelle VDOT kommt ausschließlich aus Runalyze (effectiveVO2max, per PUT /api/runalyze im KV).
 export async function getCurrentRealVdot(env) {
-  const state = await loadRealVdotState(env).catch(() => null);
-  const vdot = Number(state?.vdot);
+  const snapshot = await readRunalyzeSnapshot(env).catch(() => null);
+  const vdot = Number(snapshot?.vdot);
   return Number.isFinite(vdot) && vdot > 0 ? vdot : null;
 }
 

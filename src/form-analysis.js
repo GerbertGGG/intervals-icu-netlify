@@ -1321,7 +1321,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
   // progress report, which both already expose the same computeGoalRaceInfo() shape.
   const goalRace = await resolveActiveGoalRace(env, newest).catch(() => null);
   const currentVdot = await getCurrentRealVdot(env).catch(() => null);
-  const goalInfo = computeGoalRaceInfo(goalRace, newest, currentVdot ?? vdotHistory[vdotHistory.length - 1]?.vdot);
+  const goalInfo = computeGoalRaceInfo(goalRace, newest, currentVdot);
 
   const upcomingPlan = await buildUpcomingPlan(env, newest, planDays);
 

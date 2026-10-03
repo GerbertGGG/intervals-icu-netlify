@@ -433,7 +433,7 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
   const blockState = await readLatestBlockStateKv(env, todayIso).catch(() => null);
   const realVdot = await getCurrentRealVdot(env).catch(() => null);
   const goalRace = await resolveActiveGoalRace(env, todayIso).catch(() => null);
-  const goalInfo = computeGoalRaceInfo(goalRace, todayIso, realVdot ?? curr.vdot);
+  const goalInfo = computeGoalRaceInfo(goalRace, todayIso, realVdot);
   if (goalInfo) {
     const longRunPlan = await readLongRunPlan(env).catch(() => null);
     goalInfo.peakLongRunKm = longRunPlan?.peakLongRunKm ?? null;
@@ -442,8 +442,8 @@ export async function buildWeeklyProgressReport(env, todayIso, options = {}) {
     goalInfo.actualLongRunKm = longestRunKmInActivities(activities, week.start, week.end);
   }
   const correctionFactor = await getRaceCorrectionFactor(env).catch(() => 1);
-  const paceTargets = paceTargetsFromVdot(realVdot ?? curr.vdot);
-  const currRaceTimes = predictRaceTimesFromVdot(realVdot ?? curr.vdot);
+  const paceTargets = paceTargetsFromVdot(realVdot);
+  const currRaceTimes = predictRaceTimesFromVdot(realVdot);
   const prevRaceTimes = predictRaceTimesFromVdot(prev.vdot);
 
   const reportText = buildReportText({
