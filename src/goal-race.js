@@ -7,7 +7,8 @@ import { isARaceEvent } from "./event-utils.js";
 
 const GOAL_RACE_KV_PREFIX = "goal:race:";
 
-const DISTANCE_LABELS = { "5k": "5 km", "10k": "10 km", hm: "Halbmarathon", m: "Marathon" };
+export const DISTANCE_LABELS = { "5k": "5 km", "10k": "10 km", hm: "Halbmarathon", m: "Marathon" };
+export const DISTANCE_KM = { "5k": 5, "10k": 10, hm: 21.0975, m: 42.195 };
 
 function goalRaceKvKey(env) {
   return `${GOAL_RACE_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;

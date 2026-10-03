@@ -56,11 +56,12 @@ export function validateSnapshot(body) {
   return { value: { fetchedAt: new Date(fetchedAt).toISOString(), vdot, prognosis, races, runs } };
 }
 
-// Art des Laufs aus der Runalyze-Bezeichnung, die der Nutzer selbst setzt: lang, Intensität (Intervall, Tempo, Schwelle) oder sonstiges.
+// Art des Laufs aus der Runalyze-Bezeichnung, die der Nutzer selbst setzt: Rennen, lang, Intensität (Intervall, Tempo, Schwelle) oder sonstiges.
 export function runKindFromType(type) {
   const t = String(type ?? "");
+  if (/wettkampf|race|rennen/i.test(t)) return "race";
   if (/lang/i.test(t)) return "long";
-  if (/intervall|tempo|schwelle|wettkampf|race/i.test(t)) return "intensity";
+  if (/intervall|tempo|schwelle/i.test(t)) return "intensity";
   return "other";
 }
 

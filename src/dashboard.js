@@ -3,7 +3,9 @@ import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
-import { resolveActiveGoalRace } from "./goal-race.js";
+import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
+import { isARaceEvent } from "./event-utils.js";
+import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
@@ -20,11 +22,10 @@ import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./
 
 const HISTORY_DAYS = 56;
 const PLAN_AHEAD_DAYS = 14;
-const LONGRUN_MIN_KM = 12;
 
 // Vom Nutzer vorgegeben (Halbmarathon Samstag 03.10.2026, Ziel < 2:00:00). Wird nur
 // verwendet, wenn in Intervals.icu kein A-Rennen im Kalender steht.
-const CONFIGURED_GOAL = { date: "2026-10-03", name: "Halbmarathon", distanceKm: 21.0975, targetTimeSecs: 7200 };
+const CONFIGURED_GOAL = { date: "2026-10-03", name: "Halbmarathon", distance: "hm", distanceKm: 21.0975, targetTimeSecs: 7200 };
 
 function timingSafeEqual(a, b) {
   const x = new TextEncoder().encode(String(a));
@@ -70,26 +71,54 @@ function formatPace(secPerKm) {
   return s === 60 ? `${m + 1}:00` : `${m}:${String(s).padStart(2, "0")}`;
 }
 
-const TEMPO_PATTERN = /\b(tempo|tdl|mit\b|schwelle|wettkampfspezifisch|fartlek|strides?|steigerung)/i;
-const LONG_PATTERN = /\b(long\s*slow|long\s*run|lsr|langer?\s+lauf)/i;
+// "MIT" (Mitteltempo) nur als grossgeschriebenes Kuerzel: das Wort "mit" ("Dauerlauf mit Anna") zaehlt nicht.
+// Steigerungen/Strides sind kurze Zusaetze zu lockeren Laeufen und machen daraus keine Intensitaetseinheit.
+const TEMPO_PATTERN = /\b(tempo|tdl|schwelle|wettkampfspezifisch|fartlek)/i;
+const MIT_PATTERN = /\bMIT\b/;
+const RACE_PATTERN = /\b(wettkampf|rennen|race)\b/i;
 const BASE_PATTERN = /\b(grundlagen|easy|ga1|ga 1|regeneration|recovery)/i;
+const RACE_DISTANCE_TOLERANCE = 0.15;
+
+// ctx.raceDays: Tage mit Renn-Eintrag im Intervals-Kalender, ctx.rzRuns: Laeufe aus dem Runalyze-Snapshot
+// (dort setzt der Nutzer die Art "Wettkampf" selbst). Beide werden ueber Datum und Distanz zugeordnet.
+// Lauf am selben Tag mit passender Distanz in Runalyze mit der angegebenen Art
+function isRunalyzeKind(a, ctx, kind) {
+  const km = (num(a?.distance) ?? 0) / 1000;
+  const day = activityDay(a);
+  return km > 0 && (ctx?.rzRuns ?? []).some((r) => r.date === day && runKindFromType(r.type) === kind && Math.abs(r.distanceKm - km) / km <= RACE_DISTANCE_TOLERANCE);
+}
+
+function isRaceRun(a, ctx) {
+  if (String(a?.sub_type ?? "").toUpperCase() === "RACE" || a?.race === true) return true;
+  const name = String(a?.name ?? "");
+  if (RACE_PATTERN.test(name)) return true;
+  const day = activityDay(a);
+  const km = (num(a?.distance) ?? 0) / 1000;
+  // Name nennt die Distanz ("Halbmarathon Berlin") und die gelaufene Strecke passt dazu; "Marathonpace"-Training bleibt aussen vor
+  const named = /halbmarathon|halb\s*marathon/i.test(name) ? DISTANCE_KM.hm : /\bmarathon\b(?![\s-]*pace)/i.test(name) ? DISTANCE_KM.m : null;
+  if (named && km > 0 && Math.abs(named - km) / named <= RACE_DISTANCE_TOLERANCE) return true;
+  const close = (other) => km > 0 && other > 0 && Math.abs(other - km) / km <= RACE_DISTANCE_TOLERANCE;
+  if (ctx?.raceDays?.get(day)?.some((evKm) => evKm == null || close(evKm))) return true;
+  return isRunalyzeKind(a, ctx, "race");
+}
 
 // Bestimmt die Einheitsart, um die Pulsregel durchzusetzen: Puls gibt es nur bei
-// "base" und "long". Alles Unklare wird wie eine Intensitätseinheit behandelt.
-export function classifyRun(a) {
+// "base" und "long". Rennen ("race") haben eine eigene Kategorie und gehen weder in den
+// Longrun-Tracker noch in die Pulsauswertung. Alles Unklare wird wie eine Intensitaetseinheit behandelt.
+export function classifyRun(a, ctx = null) {
   const text = `${a?.name ?? ""} ${a?.description ?? ""}`;
-  if (isIntervalActivity(a) || hasIntervalTextSignal(a) || TEMPO_PATTERN.test(String(a?.name ?? ""))) return "intensity";
-  const distanceKm = (num(a?.distance) ?? 0) / 1000;
-  if (LONG_PATTERN.test(text) || distanceKm >= 14) return "long";
+  if (isRaceRun(a, ctx)) return "race";
+  if (isIntervalActivity(a) || hasIntervalTextSignal(a) || TEMPO_PATTERN.test(String(a?.name ?? "")) || MIT_PATTERN.test(String(a?.name ?? ""))) return "intensity";
+  if (isRunalyzeKind(a, ctx, "long")) return "long";
   if (BASE_PATTERN.test(text)) return "base";
   return "unknown";
 }
 
-export function buildRunRecord(a) {
+export function buildRunRecord(a, ctx = null) {
   const distanceM = num(a?.distance) ?? 0;
   const timeSecs = num(a?.moving_time) ?? 0;
   const pace = distanceM > 0 && timeSecs > 0 ? timeSecs / (distanceM / 1000) : null;
-  const kind = classifyRun(a);
+  const kind = classifyRun(a, ctx);
   const showHr = kind === "base" || kind === "long";
   return {
     id: a?.id ?? null,
@@ -190,13 +219,28 @@ function buildThresholds(settingsList) {
   const swim = findSettings(settingsList, ["Swim", "OpenWaterSwim"]);
   const secPer = (ms, meters) => (ms && ms > 0 ? Math.round(meters / ms) : null);
   return {
-    run: { thresholdPaceSecPerKm: secPer(num(run?.threshold_pace), 1000), lthr: num(run?.lthr), maxHr: num(run?.max_hr) },
+    run: { thresholdPaceSecPerKm: secPer(num(run?.threshold_pace), 1000), paceZonePct: zonePctFromBounds(run?.pace_zones), lthr: num(run?.lthr), maxHr: num(run?.max_hr) },
     bike: { ftp: num(ride?.ftp), indoorFtp: num(ride?.indoor_ftp), lthr: num(ride?.lthr), maxHr: num(ride?.max_hr) },
     swim: { thresholdPaceSecPer100m: secPer(num(swim?.threshold_pace), 100) },
   };
 }
 
-function buildPlanned(events, todayIso) {
+// Intervals.icu liefert Zonen als obere Grenzen in % der Schwellenpace (letzte oft offen, z. B. 999).
+// Fuer die Hoehe der Workout-Bloecke zaehlt die Mitte der Zone; die erste (ohne untere Grenze) und die
+// offene letzte Zone werden aus dem Nachbarn abgeleitet. Ohne Zonen null, dann gilt das Standardmodell.
+export function zonePctFromBounds(bounds) {
+  const b = (Array.isArray(bounds) ? bounds : []).map(Number);
+  if (b.length < 2 || b.some((x) => !Number.isFinite(x) || x <= 0)) return null;
+  const out = {};
+  b.forEach((upper, i) => {
+    const lower = i === 0 ? Math.max(upper - (b[1] - upper), 0) : b[i - 1];
+    const top = upper > 200 ? lower + (lower - (i > 1 ? b[i - 2] : lower - 10)) : upper;
+    out[i + 1] = Math.round(((lower + top) / 2) * 10) / 10;
+  });
+  return out;
+}
+
+function buildPlanned(events, todayIso, stepOpts = {}) {
   return events
     .filter((e) => String(e?.category ?? "").toUpperCase() === "WORKOUT")
     .map((e) => ({
@@ -209,7 +253,7 @@ function buildPlanned(events, todayIso) {
       type: e?.type ?? null,
       sport: sportOf(e),
       tags: Array.isArray(e?.tags) ? e.tags.map(String) : [],
-      steps: parseWorkoutSteps(e?.description, e?.workout_doc),
+      steps: parseWorkoutSteps(e?.description, e?.workout_doc, { ...stepOpts, sport: sportOf(e) }),
     }))
     .filter((e) => e.date >= todayIso)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -283,31 +327,25 @@ function buildInsights(rawWellness, activities) {
 
 // Fitness-Daten (Bereich 3). Puls nur aus Grundlagen- und Long-Slow-Läufen (Pulsregel).
 function buildFitness(runs, snapshot, todayIso) {
-  const asc = [...runs].sort((a, b) => a.date.localeCompare(b.date));
-  const pick = (r) => ({ date: r.date, distanceKm: r.distanceKm, pace: r.pace, paceSecPerKm: r.paceSecPerKm, decoupling: r.decoupling });
-  // Longrun-Tracker: Für die Langstrecke zählen die längsten Läufe der 8 Wochen, nicht der Wochenumfang.
-  // Bevorzugt aus Runalyze: Dort setzt der Nutzer die Art ("Langer Lauf") selbst und Runalyze liefert das Decoupling.
-  // Ohne Runalyze-Läufe: Läufe ab LONGRUN_MIN_KM aus Intervals.icu (Decoupling dort oft leer). Nur Datum, Distanz, Pace, Decoupling gehen raus.
+  // Longrun-Tracker: Fuer die Langstrecke zaehlen die laengsten Laeufe der 8 Wochen, nicht der Wochenumfang.
+  // Ein langer Lauf zaehlt nur, wenn er in Runalyze als "Langer Lauf" eingetragen ist (Art setzt der Nutzer selbst,
+  // Runalyze liefert das Decoupling). Nur Datum, Distanz, Pace, Decoupling gehen raus.
   const since = addDays(todayIso, -(HISTORY_DAYS - 1));
   const rz = (snapshot?.runs ?? []).filter((r) => r.date >= since && runKindFromType(r.type) === "long");
   const rzRecords = rz.map((r) => {
     const pace = r.durationSec ? r.durationSec / r.distanceKm : null;
     return { date: r.date, distanceKm: Math.round(r.distanceKm * 10) / 10, paceSecPerKm: pace != null ? Math.round(pace) : null, pace: pace != null ? formatPace(pace) : null, decoupling: r.decouplingPct };
   });
-  const source = rzRecords.length ? "runalyze" : "intervals";
-  const pool = source === "runalyze" ? rzRecords : runs.filter((r) => r.distanceKm >= LONGRUN_MIN_KM).map(pick);
-  const byLength = [...pool].sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
+  const byLength = [...rzRecords].sort((a, b) => b.distanceKm - a.distanceKm || b.date.localeCompare(a.date));
   return {
     longRunTracker: {
-      source,
-      minKm: source === "runalyze" ? null : LONGRUN_MIN_KM,
+      source: "runalyze",
+      minKm: null,
       longest: byLength[0] ?? null,
-      count16: pool.filter((r) => r.distanceKm >= 16).length,
+      count16: rzRecords.filter((r) => r.distanceKm >= 16).length,
       recent: byLength.slice(0, 6).sort((a, b) => b.date.localeCompare(a.date)),
     },
-    longRuns: source === "runalyze"
-      ? [...rzRecords].filter((r) => r.decoupling != null).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling }))
-      : asc.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
+    longRuns: [...rzRecords].filter((r) => r.decoupling != null).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: r.date, distanceKm: r.distanceKm, decoupling: r.decoupling })),
   };
 }
 
@@ -358,6 +396,34 @@ async function settle(label, fn) {
   }
 }
 
+const eventDayOf = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
+
+// Renn-Eintraege (A/B/C) des Kalenders je Tag mit Zieldistanz in km, fuer die Zuordnung "Lauf = Rennen".
+function buildRaceDays(events) {
+  const map = new Map();
+  for (const e of events) {
+    const cat = String(e?.category ?? "").toUpperCase();
+    if (!isARaceEvent(e) && !/^RACE(_[A-C])?$/.test(cat)) continue;
+    const day = eventDayOf(e);
+    const km = num(e?.distance_target ?? e?.distance);
+    map.set(day, [...(map.get(day) ?? []), km != null && km > 0 ? km / 1000 : null]);
+  }
+  return map;
+}
+
+// Letztes A-Rennen bis heute (Kalender, sonst die konfigurierte Vorgabe), damit die Erholungsphase auch
+// dann greift, wenn der Zielwettkampf nach dem Renntag schon aus "ab heute" herausgefallen ist.
+function findRecentRace(events, todayIso) {
+  const past = events
+    .filter((e) => isARaceEvent(e) && eventDayOf(e) <= todayIso && diffDays(eventDayOf(e), todayIso) <= 30)
+    .sort((a, b) => eventDayOf(b).localeCompare(eventDayOf(a)))[0];
+  if (past) {
+    const tri = parseTriathlonEvent(past);
+    return { date: eventDayOf(past), name: past.name ?? null, distance: getEventDistanceFromEvent(past), triathlonFormat: tri?.format ?? null };
+  }
+  return CONFIGURED_GOAL.date <= todayIso ? { date: CONFIGURED_GOAL.date, name: CONFIGURED_GOAL.name, distance: CONFIGURED_GOAL.distance, triathlonFormat: null } : null;
+}
+
 export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   mustEnv(env, "ATHLETE_ID");
   mustEnv(env, "INTERVALS_API_KEY");
@@ -382,16 +448,19 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
   const wellness = wellnessR.ok ? withActualToday(buildWellness(wellnessR.value), activities, todayIso) : [];
-  const runs = activities.filter(isRun).map(buildRunRecord).sort((a, b) => b.date.localeCompare(a.date));
+  const runCtx = { raceDays: buildRaceDays(events), rzRuns: snapshot?.runs ?? [] };
+  const runs = activities.filter(isRun).map((a) => buildRunRecord(a, runCtx)).sort((a, b) => b.date.localeCompare(a.date));
 
+  // Pace je Zone aus dem VDOT (Runalyze) fuer die Umrechnung von Distanz-Schritten geplanter Workouts
+  const stepPaces = snapshot?.vdot ? Object.fromEntries((paceTargetsFromVdot(snapshot.vdot) ?? []).map((z) => [z.key, z.secPerKm])) : null;
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
   const thresholds = buildThresholds(settingsR.ok ? settingsR.value : null);
   const tri = goalFromCalendar?.triathlon ?? null;
   // Triathlon: Gesamtzeit aus dem Eintrag, die Lauf-Ziele der Grafiken nur aus einer Lauf-Zeit in der Beschreibung ("Lauf 1:55:00").
   const goal = tri
-    ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm, targets: buildTriathlonTargets(tri, thresholds, goalFromCalendar.targetTimeSecs ?? null) }, source: "intervals" }
+    ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { format: tri.format, swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm, targets: buildTriathlonTargets(tri, thresholds, goalFromCalendar.targetTimeSecs ?? null) }, source: "intervals" }
     : goalFromCalendar
-      ? { date: goalFromCalendar.date, name: "Halbmarathon", targetTimeSecs: goalFromCalendar.targetTimeSecs ?? CONFIGURED_GOAL.targetTimeSecs, runKm: CONFIGURED_GOAL.distanceKm, source: "intervals" }
+      ? { date: goalFromCalendar.date, name: DISTANCE_LABELS[goalFromCalendar.distance] ?? "Rennen", distance: goalFromCalendar.distance ?? null, targetTimeSecs: goalFromCalendar.targetTimeSecs ?? (goalFromCalendar.distance === "hm" ? CONFIGURED_GOAL.targetTimeSecs : null), runKm: DISTANCE_KM[goalFromCalendar.distance] ?? null, source: "intervals" }
       : { ...CONFIGURED_GOAL, runKm: CONFIGURED_GOAL.distanceKm, source: "config" };
 
   return {
@@ -404,6 +473,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       intervalsSportSettings: settingsR.ok ? { ok: true } : { ok: false, error: settingsR.error },
     },
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
+    recentRace: findRecentRace(events, todayIso),
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
     summary: buildSummary(wellness, todayIso),
@@ -413,7 +483,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
-    planned: buildPlanned(events, todayIso),
+    planned: buildPlanned(events, todayIso, { paces: stepPaces, zonePct: thresholds.run.paceZonePct, thresholdSecPerKm: thresholds.run.thresholdPaceSecPerKm }),
   };
 }
 
