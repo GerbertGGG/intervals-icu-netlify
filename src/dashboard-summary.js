@@ -46,7 +46,7 @@ const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864000
 
 // Körperwerte (objektiv) gegen die eigenen Mediane der 14 Tage VOR heute (heute zählt nicht mit, damit ein
 // auffälliger Wert seinen eigenen Vergleichswert nicht verschiebt). Fehlende Werte = "none", nie "gut".
-export const BODY_LIMITS = { sleepHours: { ok: 7, warn: 6 }, hrv: { bad: 0.85, warn: 0.95, up: 1.05 }, restingHR: { warn: 3, bad: 6 } };
+export const BODY_LIMITS = { sleepHours: { ok: 7, warn: 6 }, hrv: { bad: 0.8, warn: 0.9, up: 1.05 }, restingHR: { warn: 3, bad: 6 } };
 
 export function computeBody(wellness, todayIso) {
   const today = wellness.find((w) => w.date === todayIso);
@@ -80,7 +80,7 @@ export function computeReadiness(wellness, todayIso, load) {
     if (!band) return { ...m, v, max, band, cls: "none", text: "kein Vergleich" };
     const delta = v - median(base), out = v > band[1];
     const cls = out && delta >= 2 ? "bad" : out && delta >= 1 ? "warn" : "ok";
-    return { ...m, v, max, band, cls, text: cls === "bad" ? "deutlich schlechter" : cls === "warn" ? "etwas schlechter" : "wie üblich" };
+    return { ...m, v, max, band, med: median(base), cls, text: cls === "bad" ? "deutlich schlechter" : cls === "warn" ? "etwas schlechter" : "wie üblich" };
   });
   const body = computeBody(wellness, todayIso);
   const bodyCls = [body.sleep.cls, body.hrv.cls, body.resting.cls];
@@ -89,11 +89,20 @@ export function computeReadiness(wellness, todayIso, load) {
   const nWarn = items.filter((i) => i.cls === "warn").length;
   const bodyBad = bodyCls.filter((c) => c === "bad").length;
   const bodyWarn = bodyCls.filter((c) => c === "warn").length;
+  const f = (x) => String(Math.round(x * 10) / 10).replace(".", ",");
+  const reasons = [
+    ...items.filter((i) => i.cls === "warn" || i.cls === "bad").map((i) => `${i.label} ${i.v} (üblich ${f(i.med)})`),
+    body.sleep.cls === "warn" || body.sleep.cls === "bad" ? `Schlaf ${f(today.sleepHours)} h (Ziel ab ${BODY_LIMITS.sleepHours.ok} h)` : null,
+    body.hrv.cls === "warn" || body.hrv.cls === "bad" ? `HRV ${f(today.hrv)} (Ø ${f(body.hrvMedian)})` : null,
+    body.resting.cls === "warn" || body.resting.cls === "bad" ? `Ruhepuls ${f(today.restingHR)} (Ø ${f(body.restingMedian)})` : null,
+    load?.tsb != null && load.tsb < THRESHOLDS.tsb.ok ? `Form (TSB) ${f(load.tsb)}` : null,
+  ].filter(Boolean);
   let verdict;
   if (!hasScales) verdict = { cls: "none", text: "Heute noch nichts eingetragen", sub: "Ohne Eintrag gebe ich keine Einschätzung ab." };
   else if (nBad >= 1 || bodyBad >= 2 || nWarn + bodyWarn + bodyBad >= 3) verdict = { cls: "bad", text: "Eher ruhig angehen", sub: "Mehrere Werte liegen schlechter als üblich." };
   else if (nWarn >= 1 || bodyBad + bodyWarn >= 1 || (load?.tsb != null && load.tsb < THRESHOLDS.tsb.ok)) verdict = { cls: "warn", text: "Mit Vorsicht", sub: "Einzelne Werte oder die Belastung sind auffällig." };
   else verdict = { cls: "ok", text: "Bereit", sub: "Die Werte liegen im üblichen Bereich." };
+  verdict.reasons = reasons;
   return { verdict, items, body, sleepHours: today?.sleepHours ?? null, hrv: today?.hrv ?? null, restingHR: today?.restingHR ?? null };
 }
 
