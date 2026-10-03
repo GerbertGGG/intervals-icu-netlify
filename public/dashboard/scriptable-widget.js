@@ -9,6 +9,7 @@
 //     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum, Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
+//              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -25,6 +26,7 @@ const VIEWS = {
   main: { endpoint: "", build: (r) => buildWidget(r), size: "large", label: "Vorschau groß" },
   detail: { endpoint: "detail", build: (r) => buildMedium(r), size: "medium", label: "Vorschau mittel: Form und Halbmarathon-Zeiten" },
   training: { endpoint: "training", build: (r) => buildTraining(r), size: "medium", label: "Vorschau mittel: Training (Disziplinen)" },
+  vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
   sleep: { endpoint: "small", build: (r) => buildSleep(r), size: "small", label: "Vorschau klein: Schlaf" },
   food: { endpoint: "small", build: (r) => buildFoodCard(r), size: "small", label: "Vorschau klein: Ernährung" },
@@ -32,7 +34,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(train|tri)/, "training"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -745,6 +747,57 @@ function buildFoodMedium(res) {
   }
   notice(w, res, d);
   w.addSpacer();
+  return w;
+}
+
+/* ---------- Mittel: VDOT und Trainingsbereiche (Parameter "vdot") ---------- */
+// Farbe je Bereich von locker (blau) bis schnell (rot)
+const PACE_ZONES_UI = { easy: ["Easy", "E", "#3fb6cc"], marathon: ["Marathon", "M", "#2f9d64"], threshold: ["Schwelle", "T", "#d99a1a"], interval: ["Intervall", "I", "#e0722a"], repetition: ["Repetition", "R", "#d0453b"] };
+
+function buildVdot(res) {
+  const d = res.data, W = widgetInnerWidth(), v = d.vdot;
+  const w = baseWidget({ flat: false, padV: 10 });
+  if (!v) {
+    header(w, W, "VDOT · TRAININGSBEREICHE", null);
+    w.addSpacer();
+    text(w, "Kein Runalyze-Snapshot", 16, { bold: true, color: COL.warn });
+    text(w, "VDOT und Bereiche erscheinen, sobald der Coaching-Task einen Snapshot schickt.", FS.xs, { color: COL.muted, lines: 2 });
+    w.addSpacer();
+    notice(w, res, d);
+    return w;
+  }
+  const row = w.addStack(); row.spacing = 7;
+  const LW = Math.floor((W - 7) * 0.4), RW = W - 7 - LW;
+
+  // Links: VDOT gross, Veraenderung und Verlauf
+  const lc = card(row, LW, 7);
+  text(lc, "VDOT", FS.xs, { bold: true, color: COL.muted });
+  text(lc, fmt(v.value, 1), 34, { bold: true, color: COL.accent, minScale: 0.7 });
+  const dl = v.delta;
+  text(lc, dl == null ? "kein Verlauf" : `${signed(dl, 1)} seit ${dateShort(v.deltaSince)}`, FS.xs, { bold: dl != null, color: dl == null ? COL.muted : dl > 0 ? COL.ok : dl < 0 ? COL.warn : COL.muted, minScale: 0.7 });
+  lc.addSpacer(3);
+  const im = lc.addImage(sparkImage(LW - 22, 26, v.history.map((h) => h.vdot), ACCENT_HEX, { dot: true })); im.imageSize = new Size(LW - 22, 26);
+  lc.addSpacer(2);
+  text(lc, `Stand ${dateShort(v.fetchedAt.slice(0, 10))}`, FS.xs, { color: COL.muted, minScale: 0.8 });
+
+  // Rechts: die fuenf Bereiche mit Pace
+  const rc = card(row, RW, 7);
+  text(rc, "TRAININGSBEREICHE · PACE", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+  rc.addSpacer(2);
+  for (const p of v.paces) {
+    const ui = PACE_ZONES_UI[p.key] || [p.label, "", NEUTRAL_HEX];
+    const r = rc.addStack(); r.centerAlignContent();
+    text(r, "●", FS.xs, { color: new Color(ui[2]), minScale: 1 });
+    r.addSpacer(5);
+    text(r, ui[0], FS.sm, { minScale: 0.7 });
+    r.addSpacer();
+    text(r, p.pace ? p.pace.replace("/km", "") : MISSING, FS.sm, { bold: true, minScale: 0.8 });
+    text(r, " /km", FS.xs, { color: COL.muted, minScale: 1 });
+    rc.addSpacer(1);
+  }
+  w.addSpacer(4);
+  text(w, "Paces aus dem VDOT nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
+  notice(w, res, d);
   return w;
 }
 
