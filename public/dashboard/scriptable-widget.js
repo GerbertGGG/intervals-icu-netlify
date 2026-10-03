@@ -774,7 +774,7 @@ function buildVdot(res) {
   text(lc, "VDOT", FS.xs, { bold: true, color: COL.muted });
   text(lc, fmt(v.value, 1), 34, { bold: true, color: COL.accent, minScale: 0.7 });
   const dl = v.delta;
-  text(lc, dl == null ? "kein Verlauf" : `${signed(dl, 1)} seit ${dateShort(v.deltaSince)}`, FS.xs, { bold: dl != null, color: dl == null ? COL.muted : dl > 0 ? COL.ok : dl < 0 ? COL.warn : COL.muted, minScale: 0.7 });
+  text(lc, dl == null ? (v.historySince ? `Verlauf ab ${dateShort(v.historySince)}` : "kein Verlauf") : `${signed(dl, 1)} seit ${dateShort(v.deltaSince)}`, FS.xs, { bold: dl != null, color: dl == null ? COL.muted : dl > 0 ? COL.ok : dl < 0 ? COL.warn : COL.muted, minScale: 0.7 });
   lc.addSpacer(3);
   const im = lc.addImage(sparkImage(LW - 22, 26, v.history.map((h) => h.vdot), ACCENT_HEX, { dot: true })); im.imageSize = new Size(LW - 22, 26);
   lc.addSpacer(2);

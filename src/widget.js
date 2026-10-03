@@ -115,6 +115,7 @@ export function buildWidgetVdot(d) {
   const from = addDays(d.today, -83);
   const hist = (r.hmHistory ?? []).filter((e) => e.vdot != null && e.date >= from).map((e) => ({ date: e.date, vdot: Math.round(e.vdot * 10) / 10 }));
   const first = hist[0];
+  const spanOk = first != null && first.date <= addDays(d.today, -7);
   return {
     generatedAt: d.generatedAt,
     today: d.today,
@@ -122,8 +123,10 @@ export function buildWidgetVdot(d) {
       value: r.vdot,
       fetchedAt: r.fetchedAt,
       history: hist,
-      delta: first && first.date < d.today ? Math.round((r.vdot - first.vdot) * 10) / 10 : null,
-      deltaSince: first && first.date < d.today ? first.date : null,
+      // Veraenderung erst ab 7 Tagen Abstand zum aeltesten Punkt, sonst ist es kein Trend; historySince zeigt, ab wann es Verlauf gibt
+      delta: spanOk ? Math.round((r.vdot - first.vdot) * 10) / 10 : null,
+      deltaSince: spanOk ? first.date : null,
+      historySince: first?.date ?? null,
       paces: (r.paces ?? []).map((p) => ({ key: p.key, label: p.label, pct: p.pct, pace: p.pace, secPerKm: p.secPerKm, fastPace: p.fastPace, slowPace: p.slowPace })),
     },
     sourcesFailed: failedOf(d),
