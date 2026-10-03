@@ -35,6 +35,7 @@ import {
 import { resolveActiveGoalRace, computeGoalRaceInfo } from "./goal-race.js";
 import { readLongRunPlan, getTargetLongRunKmForWeek, longestRunKmInRunRecords } from "./long-run-plan.js";
 import { isARaceEvent } from "./event-utils.js";
+import { withActualToday } from "./live-load.js";
 
 // HR% range (of max HR) treated as "easy/aerobic" for the purpose of a like-for-like
 // weekly pace comparison, roughly Daniels Easy zone. Runs outside this band (harder
@@ -1278,7 +1279,7 @@ export async function buildRecentFormAnalysis(env, todayIso, options = {}) {
     .map(buildRideRecord)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  const wellnessDaily = wellnessRaw.map(buildWellnessRecord).filter((w) => w.date);
+  const wellnessDaily = withActualToday(wellnessRaw.map(buildWellnessRecord).filter((w) => w.date), activities, newest);
   const wellnessByDay = new Map(wellnessDaily.map((w) => [w.date, w]));
 
   const buckets = buildWeekBuckets(newest, days);
