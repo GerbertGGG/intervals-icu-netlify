@@ -158,10 +158,11 @@ function emptySports() {
 // Intensitaetsverteilung aus den Zonenzeiten, die Intervals.icu je Einheit mitliefert: Rad nach Power-Zonen,
 // Laufen und Schwimmen nach Pace-Zonen. Pulszonen bleiben aussen vor (Pulsregel). Ohne Zonenzeiten null.
 // Dreiteilung wie die Polarisation in Intervals (S1/S2/S3): Z1-Z2 locker, Z3-Z4 mittel, Z5+ hart, egal ob 5 oder 7 Zonen.
-function zoneBuckets(a) {
+export function zoneBuckets(a) {
   const sport = sportOf(a);
   if (sport === "strength" || sport === "other") return null;
-  const raw = sport === "bike" ? a?.icu_zone_times : a?.pace_zone_times;
+  // Intervals rechnet Pace-Zonen mit steigungskorrigiertem Tempo (GAP), wenn use_gap_zone_times gesetzt ist
+  const raw = sport === "bike" ? a?.icu_zone_times : a?.use_gap_zone_times && Array.isArray(a?.gap_zone_times) ? a.gap_zone_times : a?.pace_zone_times;
   if (!Array.isArray(raw) || !raw.length) return null;
   const secs = raw.map((z) => Number(typeof z === "object" && z !== null ? z.secs : z) || 0);
   const [midFrom, hardFrom] = [2, 4];

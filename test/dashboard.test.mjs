@@ -390,3 +390,18 @@ console.log("race/phase/zones ok");
   assert.equal(parseWorkoutSteps("- 5km 90% Pace", null, { sport: "run", thresholdSecPerKm: 270 })[0].secs, 1500);
 }
 console.log("zones from intervals ok");
+
+// Intensitaet: GAP-Zonenzeiten, wenn Intervals sie nutzt (use_gap_zone_times), sonst Pace-Zonen
+{
+  const { zoneBuckets } = await import("../src/dashboard.js");
+  const runs = [
+    { pace_zone_times: [261, 3478, 1391, 276, 168], gap_zone_times: [519, 2909, 1324, 263, 559] },
+    { pace_zone_times: [630, 694, 110, 0, 0], gap_zone_times: [621, 695, 80, 2, 27] },
+    { pace_zone_times: [389, 888, 402, 63, 106], gap_zone_times: [399, 898, 278, 56, 217] },
+  ].map((r) => ({ type: "Run", use_gap_zone_times: true, ...r }));
+  const sum = runs.reduce((acc, r) => { const z = zoneBuckets(r); for (const k in z) acc[k] = (acc[k] || 0) + z[k]; return acc; }, {});
+  const tot = sum.easy + sum.mid + sum.hard;
+  assert.deepEqual([sum.easy, sum.mid, sum.hard].map((v) => Math.round((v / tot) * 100)), [68, 23, 9]); // wie S1/S2/S3 in Intervals
+  assert.deepEqual(zoneBuckets({ ...runs[0], use_gap_zone_times: false }), { easy: 3739, mid: 1667, hard: 168 });
+  console.log("gap zones ok");
+}
