@@ -37,6 +37,10 @@ assert.equal(Math.round(t2.bike.speedKmh), 30);
 assert.equal(t2.run.timeSecs, 6900);
 assert.equal(parseTriathlonEvent(ev("Mitteldistanz\nRad 215 W")).bikeTargetWatts, 215);
 assert.equal(buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz")), { bike: {}, swim: {} }).bike, null);
+const t3 = buildTriathlonTargets(parseTriathlonEvent(ev("Mitteldistanz")), th, null, { vdot: 40, weightKg: 75 });
+assert.ok(t3.bike.timeSecs > 9000 && t3.bike.timeSecs < 11000);
+assert.equal(t3.run.source, "vorschlag");
+assert.ok(t3.run.timeSecs > 6000 && t3.run.timeSecs < 9000);
 console.log("targets ok");
 
 import { historyEntryFromSnapshot, upsertHistory } from "../src/runalyze-history.js";
