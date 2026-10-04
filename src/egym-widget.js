@@ -13,6 +13,9 @@ import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioA
 // die Spanne zwischen erster und letzter Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
 const DEFAULT_WEEKLY_GOAL_MIN = 60;
 const WEEKS = 6;
+// Fuer Bestwerte reicht der Blick weiter zurueck als der Wochenverlauf; die API wird in Fenstern von 28 Tagen abgefragt
+const HISTORY_DAYS = 84;
+const WINDOW_DAYS = 28;
 const LB_TO_KG = 0.45359237;
 const SETS_KEY = "sets_of_reps_and_weight_or_duration_and_weight";
 
@@ -33,6 +36,20 @@ function setVolumeKg(s) {
   if (!Number.isFinite(reps) || !Number.isFinite(wt) || reps <= 0 || wt <= 0) return 0;
   const unit = String(s?.weight?.unit ?? "kg").toLowerCase();
   return reps * wt * (unit === "lb" || unit === "lbs" ? LB_TO_KG : 1);
+}
+
+const weightKgOf = (s) => {
+  const wt = Number(val(s?.weight));
+  if (!Number.isFinite(wt) || wt <= 0) return 0;
+  const unit = String(s?.weight?.unit ?? "kg").toLowerCase();
+  return wt * (unit === "lb" || unit === "lbs" ? LB_TO_KG : 1);
+};
+
+// Geschaetzter 1RM eines Satzes nach Epley (Gewicht mal 1 + Wiederholungen/30); ab 12 Wiederholungen nicht mehr belastbar, daher gedeckelt
+function setE1rm(s) {
+  const reps = Number(val(s?.reps));
+  const kg = weightKgOf(s);
+  return Number.isFinite(reps) && reps > 0 && kg > 0 ? kg * (1 + Math.min(reps, 12) / 30) : 0;
 }
 
 // Dieselbe Workout-Nummer kann mehrfach kommen (auch unvollstaendig): die Variante mit mehr Saetzen gewinnt
@@ -82,6 +99,57 @@ export function strengthDays(workouts) {
     const span = stamps.length > 1 ? (Math.max(...stamps) - Math.min(...stamps)) / 60000 : 0;
     return span >= 1 ? { ...d, minutes: Math.round(span), durationSource: "estimate" } : { ...d, minutes: null, durationSource: null };
   });
+}
+
+// Je Tag und Geraet: bester Satz (geschaetzter 1RM mit Gewicht und Wiederholungen) und Volumen. Das Geraet erkennt man
+// an exerciseCode (sonst Name); der Koerperbereich kommt ueber denselben Code aus den Kraft-Tests, wenn er dort vorkommt.
+export function machineSessions(workouts, regionByCode = new Map()) {
+  const out = new Map();
+  for (const w of uniqueWorkouts(workouts)) {
+    const at = w?.completedAt;
+    if (!at || !Number.isFinite(Date.parse(at))) continue;
+    const date = isoDateBerlin(new Date(at));
+    for (const ex of w.exercises ?? []) {
+      const sets = setsOf(ex);
+      if (!sets.length) continue;
+      const code = ex.exerciseCode != null ? String(ex.exerciseCode) : null;
+      const key = code ?? String(ex.name ?? "");
+      if (!key) continue;
+      const id = `${date}|${key}`;
+      const cur = out.get(id) ?? { date, key, label: String(ex.name ?? ex.exercise?.label ?? key).replace(/^EGYM\s+/i, ""), region: (code && regionByCode.get(code)) || null, e1rm: 0, topKg: 0, topReps: 0, volumeKg: 0 };
+      for (const st of sets) {
+        cur.volumeKg += setVolumeKg(st);
+        const e = setE1rm(st);
+        if (e > cur.e1rm) Object.assign(cur, { e1rm: e, topKg: weightKgOf(st), topReps: Number(val(st.reps)) });
+      }
+      out.set(id, cur);
+    }
+  }
+  return [...out.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Bestwerte: Geraete, an denen der beste Satz dieser Woche den geschaetzten 1RM aller frueheren Einheiten (im Abrufzeitraum)
+// uebertrifft. Verteilung: Anteil der Koerperbereiche am Volumen der letzten 4 Wochen, nur wenn mindestens die Haelfte
+// des Volumens einem Bereich zugeordnet werden konnte.
+export function machineInsights(sessions, monday) {
+  const byKey = new Map();
+  for (const x of sessions) byKey.set(x.key, [...(byKey.get(x.key) ?? []), x]);
+  const records = [];
+  for (const list of byKey.values()) {
+    const now = list.filter((x) => x.date >= monday && x.e1rm > 0).sort((a, b) => b.e1rm - a.e1rm)[0];
+    const before = list.filter((x) => x.date < monday && x.e1rm > 0).sort((a, b) => b.e1rm - a.e1rm)[0];
+    if (!now || !before || now.e1rm <= before.e1rm) continue;
+    records.push({ label: now.label, region: now.region, kg: round1(now.topKg), reps: now.topReps, e1rm: round1(now.e1rm), prevE1rm: round1(before.e1rm), diffKg: round1(now.e1rm - before.e1rm), pct: round1(((now.e1rm - before.e1rm) / before.e1rm) * 100) });
+  }
+  records.sort((a, b) => b.pct - a.pct);
+  const since = addDays(monday, -21);
+  const recent = sessions.filter((x) => x.date >= since);
+  const total = recent.reduce((a, x) => a + x.volumeKg, 0);
+  const share = { UPPER: 0, CORE: 0, LOWER: 0 };
+  for (const x of recent) if (x.region in share) share[x.region] += x.volumeKg;
+  const mapped = share.UPPER + share.CORE + share.LOWER;
+  const regions = total > 0 && mapped / total >= 0.5 ? Object.fromEntries(Object.entries(share).map(([k, v]) => [k, Math.round((v / mapped) * 100)])) : null;
+  return { records, regions };
 }
 
 // Zeitpunkt eines Kraft-Tests: aussen, bei Platzhalter 1970 der innere
@@ -177,7 +245,10 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   const withMin = done.filter((w) => w.minutes != null);
   const last = days.length ? days[days.length - 1].date : null;
   const dayDiff = (iso) => Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(iso + "T00:00:00Z")) / 86400000);
-  const prog = strength ? strengthProgress(strength.strengthMeasurements ?? strength) : null;
+  const measurements = strength ? strength.strengthMeasurements ?? strength : null;
+  const prog = measurements ? strengthProgress(measurements) : null;
+  const regionByCode = new Map((Array.isArray(measurements) ? measurements : []).filter((m) => m?.exercise?.code != null && m?.bodyRegion).map((m) => [String(m.exercise.code), m.bodyRegion]));
+  const insights = machineInsights(machineSessions(workouts?.workouts ?? workouts ?? [], regionByCode), monday);
   // Volumen: letzte abgeschlossene Woche gegen die davor (die laufende ist noch unvollstaendig)
   const [vPrev, vLast] = [weeks[WEEKS - 3].volumeKg, weeks[WEEKS - 2].volumeKg];
   return {
@@ -192,6 +263,8 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
     avg4Minutes: withMin.length ? Math.round(sum(withMin, (w) => w.minutes) / withMin.length) : null,
     volumeTrend: vPrev > 0 && vLast > 0 ? { prevKg: vPrev, lastKg: vLast, pct: round1(((vLast - vPrev) / vPrev) * 100) } : null,
     progress: prog,
+    records: insights.records,
+    regions: insights.regions,
     bioAge: bioAge ? bioAgeOf(bioAge) : null,
     sourcesFailed: failed,
   };
@@ -208,10 +281,17 @@ export async function loadWidgetKraft(env, fresh = false) {
     const c = await readKvJson(env, CACHE_KEY).catch(() => null);
     if (c?.data && c.data.today === today && Date.now() - c.at < KRAFT_CACHE_MS) return c.data;
   }
-  const from = addDays(today, -(7 * WEEKS + 6));
+  const fetchWorkouts = async () => {
+    const all = [];
+    for (let end = today; end > addDays(today, -HISTORY_DAYS); end = addDays(end, -WINDOW_DAYS - 1)) {
+      const r = await fetchEgymWorkouts(env, addDays(end, -WINDOW_DAYS), end);
+      all.push(...(Array.isArray(r) ? r : r?.workouts ?? []));
+    }
+    return { workouts: all };
+  };
   const settle = async (fn) => { try { return { v: await fn() }; } catch (e) { console.warn("egym fetch failed", String(e?.message ?? e)); return { v: null, e: true }; } };
   const [w, s, b] = await Promise.all([
-    settle(() => fetchEgymWorkouts(env, from, today)),
+    settle(fetchWorkouts),
     settle(() => fetchEgymStrength(env, addDays(today, -365), today)),
     settle(() => fetchEgymBioAge(env)),
   ]);

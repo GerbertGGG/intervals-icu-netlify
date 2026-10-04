@@ -10,7 +10,7 @@
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
-//              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), 6-Wochen-Verlauf, Fortschritt (1RM).
+//              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), bewegtes Gewicht, Bestwerte, Muskelalter.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -878,27 +878,26 @@ function buildTraining(res) {
 }
 
 /* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
-// Links der Ring der Woche (Trainingszeit gegen das Wochenziel in Minuten) mit den Trainingstagen, rechts die letzten
-// 6 Wochen als Saeulen gegen die Zielmarke und der Fortschritt der Kraft-Tests (1RM gegen den vorherigen Test).
+// Links der Ring der Woche (Trainingszeit gegen das Wochenziel in Minuten) mit den Trainingstagen. Rechts das bewegte
+// Gewicht der Woche (Tonnage) mit den letzten 6 Wochen als Saeulen und dem staerksten Bestwert (geschaetzter 1RM
+// gegen die frueheren Einheiten). Unten das Muskelalter je Bereich und die Verteilung des Volumens.
 const fmtVolume = (kg) => (kg >= 1000 ? `${fmt(kg / 1000, 1)} t` : `${fmt(kg)} kg`);
 const STRENGTH_OK = "#2f9d64";
+const CAR_KG = 1200; // Kleinwagen als grober Vergleich, nur als ungefaehre Groessenvorstellung (≈)
 
-// Saeulen je Woche (Minuten), Zielmarke gestrichelt; unbekannte Dauer = kurzer Strich, Schaetzung = blasser; letzte Saeule = laufende Woche
-function kraftWeeksImage(w, h, weeks, goal) {
+// Saeulen je Woche (bewegtes Gewicht); keine Einheit = kurzer Strich; letzte Saeule = laufende Woche, voll deckend
+function kraftVolumeImage(w, h, weeks) {
   const dc = newCtx(w, h), slot = w / weeks.length, bw = slot * 0.62;
-  const max = Math.max(goal * 1.25, ...weeks.map((x) => x.minutes || 0));
-  const Y = (v) => h - 2 - (v / max) * (h - 4);
+  const max = Math.max(1, ...weeks.map((x) => x.volumeKg || 0));
   weeks.forEach((wk, i) => {
     const cx = i * slot + slot / 2, last = i === weeks.length - 1;
-    if (wk.minutes == null || wk.minutes === 0) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.35)); dc.fillRect(new Rect(cx - bw / 2, h - 3, bw, 1.5)); return; }
-    const top = Y(wk.minutes), p = new Path();
-    p.addRoundedRect(new Rect(cx - bw / 2, top, bw, h - 2 - top), 3, 3);
+    if (!wk.volumeKg) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.35)); dc.fillRect(new Rect(cx - bw / 2, h - 3, bw, 1.5)); return; }
+    const bh = Math.max(3, (wk.volumeKg / max) * (h - 3)), p = new Path();
+    p.addRoundedRect(new Rect(cx - bw / 2, h - bh, bw, bh), 3, 3);
     dc.addPath(p);
-    dc.setFillColor(new Color(wk.minutes >= goal ? STRENGTH_OK : sportHex("strength"), wk.minutesSource === "estimate" ? 0.55 : last ? 1 : 0.85));
+    dc.setFillColor(new Color(sportHex("strength"), last ? 1 : 0.6));
     dc.fillPath();
   });
-  dc.setFillColor(new Color(INK_HEX, 0.55));
-  for (let x = 0; x < w; x += 6) dc.fillRect(new Rect(x, Y(goal), 3, 1));
   return dc.getImage();
 }
 
@@ -916,8 +915,9 @@ function buildKraft(res) {
   header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
   w.addSpacer(3);
   const row = w.addStack(); row.spacing = 7;
-  const LW = 124, RW = W - LW - 7, RING = 64;
+  const LW = 124, RW = W - LW - 7, RING = 58;
 
+  // Links: Zeit der Woche gegen das Ziel
   const lc = card(row, LW, 6);
   const rs = lc.addStack(); rs.addSpacer();
   const ring = rs.addImage(ringProgressImage(RING, min != null ? min / goal : 0, hex, 1, { big: min == null ? MISSING : `${min}${wk.minutesSource === "estimate" ? "≈" : ""}`, small: `von ${goal} min` }));
@@ -930,28 +930,34 @@ function buildKraft(res) {
     text(dots, wk.days[i] ? "●" : l, FS.xs, { bold: wk.days[i], color: wk.days[i] ? new Color(hex) : COL.muted, minScale: 1 });
   });
 
-  const rc = card(row, RW, 6), p = d.progress;
-  header(rc, null, "6 WOCHEN · MINUTEN", d.weeksHit && d.weeksHit.of ? `Ziel ${d.weeksHit.hit}/${d.weeksHit.of}` : null);
+  // Rechts: bewegtes Gewicht, 6-Wochen-Saeulen, staerkster Bestwert
+  const rc = card(row, RW, 6), prevWeek = d.weeks[d.weeks.length - 2];
+  header(rc, null, "BEWEGT · 6 WOCHEN", prevWeek && prevWeek.volumeKg ? `Vorwoche ${fmtVolume(prevWeek.volumeKg)}` : null);
+  const big = rc.addStack(); big.bottomAlignContent(); big.spacing = 5;
+  text(big, wk.volumeKg ? fmtVolume(wk.volumeKg) : MISSING, FS.xl - 2, { bold: true, color: wk.volumeKg ? COL.text : COL.muted, minScale: 0.7 });
+  if (wk.volumeKg >= CAR_KG) text(big, `≈ ${Math.round(wk.volumeKg / CAR_KG)} Kleinwagen`, FS.xs, { color: COL.muted, minScale: 0.6 });
   rc.addSpacer(2);
-  const bars = rc.addImage(kraftWeeksImage(RW - 22, 26, d.weeks, goal)); bars.imageSize = new Size(RW - 22, 26);
+  const bars = rc.addImage(kraftVolumeImage(RW - 22, 20, d.weeks)); bars.imageSize = new Size(RW - 22, 20);
   rc.addSpacer(3);
-  const cmp = p ? p.items.filter((i) => i.pct != null) : [];
-  if (!cmp.length) text(rc, p ? "1RM: je Gerät erst ein Test" : "Keine Kraft-Tests geladen", FS.xs, { color: COL.muted, minScale: 0.7 });
-  for (const it of cmp.slice(0, 2)) {
+  const rec = (d.records || [])[0], cmp = d.progress ? d.progress.items.filter((i) => i.pct != null && i.diffKg > 0)[0] : null;
+  const best = rec ? { label: rec.label, txt: `+${fmt(rec.diffKg, 1)} kg` } : cmp ? { label: cmp.label, txt: `+${fmt(cmp.diffKg, 1)} kg` } : null;
+  if (best) {
     const r = rc.addStack(); r.centerAlignContent();
-    text(r, it.label, FS.xs, { minScale: 0.7 });
+    text(r, `▲ ${best.label}`, FS.xs, { bold: true, color: COL.ok, minScale: 0.6 });
     r.addSpacer();
-    text(r, `${signed(it.diffKg, 1)} kg`, FS.xs, { bold: true, color: it.diffKg > 0 ? COL.ok : it.diffKg < 0 ? COL.bad : COL.muted, minScale: 0.7 });
-  }
+    text(r, best.txt, FS.xs, { bold: true, color: COL.ok, minScale: 0.7 });
+  } else text(rc, "Noch kein Bestwert diese Woche", FS.xs, { color: COL.muted, minScale: 0.6 });
 
+  // Unten: Muskelalter je Bereich, darunter Verteilung des Volumens (4 Wochen) oder die Wochenzahlen
   w.addSpacer(5);
+  const b = d.bioAge, rg = d.regions;
+  const ages = b && b.muscle != null ? `Muskelalter ${b.muscle}${b.upper != null ? ` · Ob ${b.upper} · Rumpf ${b.core} · Beine ${b.lower}` : ""}` : null;
+  if (ages) text(w, ages, FS.xs, { color: COL.muted, minScale: 0.6 });
   const since = d.daysSince == null ? null : d.daysSince === 0 ? "heute" : `vor ${d.daysSince} T`;
-  const bits = [];
-  if (wk.sessions) bits.push(`${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"}${wk.sets ? ` · ${wk.sets} Sätze · ${fmtVolume(wk.volumeKg)}` : ""}`);
-  if (d.bioAge && d.bioAge.muscle != null) bits.push(`Muskelalter ${d.bioAge.muscle}`);
-  if (d.streakWeeks > 0) bits.push(`Serie ${d.streakWeeks} Wo`);
-  if (!wk.sessions && since) bits.push(`zuletzt ${since}`);
-  text(w, bits.length ? bits.join(" · ") : MISSING, FS.xs, { color: COL.muted, minScale: 0.6 });
+  const tail = rg ? `Volumen 4 Wo: Ob ${rg.UPPER} % · Rumpf ${rg.CORE} % · Beine ${rg.LOWER} %`
+    : [wk.sessions ? `${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"}${wk.sets ? ` · ${wk.sets} Sätze` : ""}` : since && `zuletzt ${since}`, d.streakWeeks > 0 && `Serie ${d.streakWeeks} Wo`].filter(Boolean).join(" · ");
+  if (tail) text(w, tail, FS.xs, { color: COL.muted, minScale: 0.6 });
+  if (!ages && !tail) text(w, MISSING, FS.xs, { color: COL.muted });
   notice(w, res, d);
   return w;
 }
