@@ -740,9 +740,9 @@ function buildFoodMedium(res) {
     // Rechts: Protein, Kohlenhydrate, Fett als Balken (g / Ziel g); fehlende Werte als Strich ohne Balken
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(RW, 0);
     const macros = [
-      { label: "Protein", v: td.protein, goal: yg.proteinG ?? null },
-      { label: "Kohlenhydrate", v: td.carbs, goal: yg.carbsG ?? null },
-      { label: "Fett", v: td.fat, goal: yg.fatG ?? null },
+      { label: "Protein", v: td.protein, goal: yg.proteinG ?? null, hex: "#3fb6cc" },
+      { label: "Kohlenhydrate", v: td.carbs, goal: yg.carbsG ?? null, hex: "#7ba3dc" },
+      { label: "Fett", v: td.fat, goal: yg.fatG ?? null, hex: "#e0806a" },
     ];
     macros.forEach((m, i) => {
       if (i) col.addSpacer(7);
@@ -754,7 +754,7 @@ function buildFoodMedium(res) {
         text(l, fmt(m.v), FS.lg, { bold: true, opacity: op, minScale: 0.8 });
         text(l, m.goal ? ` / ${fmt(m.goal)} g` : " g", FS.sm, { color: COL.muted, minScale: 0.8 });
       }
-      if (m.v != null && m.goal) { col.addSpacer(3); progressBar(col, RW, m.v / m.goal, ACCENT_HEX, stale ? 0.5 : 1); }
+      if (m.v != null && m.goal) { col.addSpacer(3); progressBar(col, RW, m.v / m.goal, m.v > m.goal * 1.1 ? ZONE_RGB.warn : m.hex, stale ? 0.5 : 1); }
     });
   }
   notice(w, res, d);
