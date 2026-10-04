@@ -9,6 +9,7 @@
 //     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum, Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
+//              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), bewegtes Gewicht, Bestwerte, Muskelalter.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
@@ -27,6 +28,7 @@ const VIEWS = {
   main: { endpoint: "", build: (r) => buildWidget(r), size: "large", label: "Vorschau groß" },
   detail: { endpoint: "detail", build: (r) => buildMedium(r), size: "medium", label: "Vorschau mittel: Form und Halbmarathon-Zeiten" },
   training: { endpoint: "training", build: (r) => buildTraining(r), size: "medium", label: "Vorschau mittel: Training (Disziplinen)" },
+  intensity: { endpoint: "training", build: (r) => buildIntensity(r), size: "medium", label: "Vorschau mittel: Intensität" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
@@ -36,7 +38,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -827,7 +829,7 @@ function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf =
     if (b - a > 1) {
       const p = new Path(); p.addRoundedRect(new Rect(a + 0.5, 0, b - a - 1, h), 3, 3);
       dc.addPath(p); dc.setFillColor(new Color(hexOf(k))); dc.fillPath();
-      if (b - a > 30) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, 2, b - a, h - 2)); }
+      if (b - a > 34) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, (h - FS.xs) / 2 - 2, b - a, h)); }
     }
     acc += share[k];
   }
@@ -874,15 +876,31 @@ function buildTraining(res) {
     sc.addSpacer(3);
     const im = sc.addImage(splitImage(W - 22, 16, sp.share, sp.target)); im.imageSize = new Size(W - 22, 16);
   } else text(sc, "Noch keine abgeschlossene Woche mit Training.", FS.xs, { color: COL.muted });
-  // Intensitaet: Anteil der Zeit nach Zonen (Z1-Z2 locker, Z3 mittel, Z4-Z5 hart)
-  if (d.intensity) {
-    sc.addSpacer(5);
-    const it = d.intensity;
-    header(sc, null, "INTENSITÄT · 4 WOCHEN", `locker ${it.easy} · mittel ${it.mid} · hart ${it.hard} %`);
-    sc.addSpacer(3);
-    const ih = { easy: "#5BA88A", mid: "#E0B454", hard: "#D9695F" };
-    const im2 = sc.addImage(splitImage(W - 22, 12, it, null, ["easy", "mid", "hard"], (k) => ih[k])); im2.imageSize = new Size(W - 22, 12);
-  }
+  notice(w, res, d);
+  return w;
+}
+
+/* ---------- Mittel: Intensitaet (Parameter "intensitaet") ---------- */
+// Zeitanteile locker (Z1-Z2), mittel (Z3-Z4), hart (Z5+) wie die Polarisation in Intervals: diese Woche und Schnitt der letzten 4 Wochen
+const INT_HEX = { easy: "#5BA88A", mid: "#E0B454", hard: "#D9695F" };
+const INT_LABEL = { easy: "locker", mid: "mittel", hard: "hart" };
+
+function buildIntensity(res) {
+  const d = res.data, W = widgetInnerWidth();
+  const w = baseWidget({ flat: false, padV: 10 });
+  header(w, W, "INTENSITÄT · ZONENZEIT", "Z1–2 · Z3–4 · Z5+");
+  w.addSpacer(6);
+  const it = d.intensity || {};
+  const row = (title, sh) => {
+    const c = card(w, W, 6);
+    header(c, null, title, sh ? `locker ${sh.easy} · mittel ${sh.mid} · hart ${sh.hard} %` : null);
+    c.addSpacer(4);
+    if (sh) { const im = c.addImage(splitImage(W - 22, 22, sh, null, ["easy", "mid", "hard"], (k) => INT_HEX[k])); im.imageSize = new Size(W - 22, 22); }
+    else text(c, "Noch keine Zonenzeiten.", FS.xs, { color: COL.muted });
+  };
+  row("DIESE WOCHE", it.week);
+  w.addSpacer(6);
+  row("Ø 4 WOCHEN", it.avg);
   notice(w, res, d);
   return w;
 }

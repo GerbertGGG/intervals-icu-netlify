@@ -148,6 +148,16 @@ function splitTarget(env) {
   return Object.fromEntries(TRI.map((k, i) => [k, Math.round((v[i] / sum) * 100)]));
 }
 
+// Prozentanteile, die sich exakt auf 100 summieren (groesster Rest).
+function sharesTo100(tot, keys) {
+  const sum = keys.reduce((a, k) => a + tot[k], 0);
+  const raw = keys.map((k) => (tot[k] / sum) * 100);
+  const out = raw.map(Math.floor);
+  let rest = 100 - out.reduce((a, v) => a + v, 0);
+  raw.map((v, i) => [v - out[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (rest-- > 0) out[i] += 1; });
+  return Object.fromEntries(keys.map((k, i) => [k, out[i]]));
+}
+
 export function buildWidgetTraining(d, env = {}) {
   const done = d.weeks.filter((w) => w.complete);
   const cur = d.weeks[d.weeks.length - 1];
@@ -166,15 +176,18 @@ export function buildWidgetTraining(d, env = {}) {
   }));
   const tot = Object.fromEntries(TRI.map((k) => [k, recent.reduce((a, w) => a + w.bySport[k].minutes, 0)]));
   const sum = TRI.reduce((a, k) => a + tot[k], 0);
-  // Intensitaet der letzten 4 Wochen: Anteil der Trainingszeit nach Zonen (locker, mittel, hart)
+  // Intensitaet nach Zonen (locker, mittel, hart): laufende Woche und Schnitt der letzten 4 Wochen inkl. laufender
   const INT = ["easy", "mid", "hard"];
-  const itot = Object.fromEntries(INT.map((k) => [k, recent.reduce((a, w) => a + (w.intensity?.[k] ?? 0), 0)]));
-  const isum = INT.reduce((a, k) => a + itot[k], 0);
+  const intShare = (ws) => {
+    const tot = Object.fromEntries(INT.map((k) => [k, ws.reduce((a, w) => a + (w.intensity?.[k] ?? 0), 0)]));
+    return INT.reduce((a, k) => a + tot[k], 0) > 0 ? sharesTo100(tot, INT) : null;
+  };
+  const intensity = { week: intShare([cur]), avg: intShare(d.weeks.slice(-4)) };
   return {
     generatedAt: d.generatedAt,
     today: d.today,
     sports,
-    intensity: isum > 0 ? Object.fromEntries(INT.map((k) => [k, Math.round((itot[k] / isum) * 100)])) : null,
+    intensity,
     split: { share: sum > 0 ? Object.fromEntries(TRI.map((k) => [k, Math.round((tot[k] / sum) * 100)])) : null, target: splitTarget(env), weeks: recent.length },
     sourcesFailed: failedOf(d),
   };
