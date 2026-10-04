@@ -3,6 +3,7 @@ import { buildDashboard, isAuthorized } from "./dashboard.js";
 import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin } from "./date-utils.js";
+import { loadWidgetKraft } from "./egym-widget.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
@@ -238,8 +239,10 @@ export async function handleWidgetRequest(req, env) {
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
   const params = new URL(req.url).searchParams;
-  const dashboard = await dashboardCached(env, params.get("fresh") === "1");
   const view = params.get("view");
+  // Kraft kommt allein aus EGYM, ohne das Dashboard (Intervals, Yazio, Runalyze) zu laden
+  if (view === "kraft") return json(await loadWidgetKraft(env, params.get("fresh") === "1"), 200, headers);
+  const dashboard = await dashboardCached(env, params.get("fresh") === "1");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : buildWidget(dashboard, env);
