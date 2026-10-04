@@ -7,7 +7,7 @@
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
 //     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum, Wochenlast, die naechsten drei Tage.
-//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
+//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form, Wochen-TSS und Halbmarathon-Zeiten, Schwellen;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
@@ -598,7 +598,7 @@ function buildMedium(res) {
   const L = d.load, fc = card(row, LW, 7);
   text(fc, "FORM · 28 TAGE", FS.xs, { bold: true, color: COL.muted });
   fc.addSpacer(2);
-  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 46, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 46); }
+  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 54, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 54); }
   else text(fc, "Keine CTL/ATL-Werte", FS.xs, { color: COL.muted });
   fc.addSpacer(2);
   const nums = fc.addStack(); nums.centerAlignContent();
@@ -614,7 +614,7 @@ function buildMedium(res) {
     th.addSpacer();
     if (cur.tss != null) text(th, `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""}`, FS.xs, { bold: true, color: COL.text, minScale: 0.7 });
     fc.addSpacer(1);
-    const ti = fc.addImage(tssImage(LW - 22, 22, tw)); ti.imageSize = new Size(LW - 22, 22);
+    const ti = fc.addImage(tssImage(LW - 22, 32, tw)); ti.imageSize = new Size(LW - 22, 32);
   }
 
   // Rechts: Zeiten gegen das Ziel
@@ -633,19 +633,23 @@ function buildMedium(res) {
   };
   if (goal) line("Ziel", goal, true, COL.accent);
   if (d.hm && d.hm.estimates.length) {
-    // Zwei Vergleichswerte: Runalyze-Prognose und VDOT-Rechnung (sonst die schnellste Bestzeit-Rechnung)
+    // Zwei Vergleichswerte: Runalyze-Prognose und die schnellste Bestzeit-Rechnung (VDOT hat ein eigenes Widget)
     const est = d.hm.estimates, best = est.filter((e) => e.key.startsWith("best-")).sort((a, b) => a.seconds - b.seconds)[0];
-    const prog = est.find((e) => e.kind === "prognosis"), vd = est.find((e) => e.key === "vdot");
-    for (const e of [prog, vd || best].filter(Boolean)) line(e.kind === "prognosis" ? "Runalyze" : e.key === "vdot" ? "VDOT" : e.label.replace("aus ", "").replace("-Bestzeit", ""), e.seconds, false);
-    text(rc, "nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
+    const prog = est.find((e) => e.kind === "prognosis");
+    for (const e of [prog, best].filter(Boolean)) line(e.kind === "prognosis" ? "Runalyze" : e.label.replace("aus ", "").replace("-Bestzeit", ""), e.seconds, false);
+    if (best) text(rc, "nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
   } else text(rc, "Kein Runalyze-Snapshot", FS.xs, { color: COL.muted, lines: 2 });
+  if (goal && d.goal.runKm) {
+    rc.addSpacer(3);
+    const gp = rc.addStack(); gp.centerAlignContent();
+    text(gp, "Zielpace", FS.xs, { color: COL.muted });
+    gp.addSpacer();
+    text(gp, `${fmtPace(goal / d.goal.runKm)}/km`, FS.sm, { bold: true, color: COL.accent });
+  }
   w.addSpacer(5);
 
-  // Unten: VDOT und Paces, Schwellen
+  // Unten: Schwellen
   const bc = card(w, W, 6), T = d.thresholds;
-  const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
-  const goalPace = goal && d.goal.runKm ? ` · Ziel ${fmtPace(goal / d.goal.runKm)}` : "";
-  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} · Easy ${pz.easy} · Marathon ${pz.marathon} · Schwelle ${pz.threshold}${goalPace}` : "VDOT und Paces: kein Runalyze-Snapshot", FS.xs);
   text(bc, `Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : MISSING} · FTP ${T.bike.ftp ? T.bike.ftp + " W" : MISSING} · Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : MISSING}`, FS.xs);
   notice(w, res, d);
   return w;
