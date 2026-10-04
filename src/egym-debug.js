@@ -1,5 +1,5 @@
 import { json } from "./http-helpers.js";
-import { isAuthorized } from "./dashboard.js";
+import { isAuthorized, timingSafeEqual } from "./dashboard.js";
 import { isoDateBerlin } from "./date-utils.js";
 import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioAge } from "./egym-client.js";
 
@@ -28,12 +28,20 @@ function sample(data, full) {
   return data;
 }
 
+// Nur hier zusaetzlich ?token=<DASHBOARD_TOKEN>: der Aufruf vom Handy-Browser kann keinen Header setzen.
+// Das Token landet damit im Browserverlauf; nach dem Debuggen am besten neu setzen.
+function authorizedForDebug(req, env, params) {
+  if (isAuthorized(req, env)) return true;
+  const given = params.get("token") || "";
+  return given.length > 0 && timingSafeEqual(given, env.DASHBOARD_TOKEN);
+}
+
 export async function handleEgymDebugRequest(req, env) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
-  if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
-  if (!hasEgymCredentials(env)) return json({ ok: false, error: "EGYM_BRAND, EGYM_USERNAME und EGYM_PASSWORD nicht gesetzt" }, 503, headers);
   const params = new URL(req.url).searchParams;
+  if (!authorizedForDebug(req, env, params)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
+  if (!hasEgymCredentials(env)) return json({ ok: false, error: "EGYM_BRAND, EGYM_USERNAME und EGYM_PASSWORD nicht gesetzt" }, 503, headers);
   const full = params.get("full") === "1";
   const days = Math.min(180, Math.max(1, Math.floor(Number(params.get("days"))) || 28));
   const to = isoDateBerlin();

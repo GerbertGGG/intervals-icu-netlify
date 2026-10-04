@@ -27,7 +27,7 @@ const PLAN_AHEAD_DAYS = 14;
 // verwendet, wenn in Intervals.icu kein A-Rennen im Kalender steht.
 const CONFIGURED_GOAL = { date: "2026-10-03", name: "Halbmarathon", distance: "hm", distanceKm: 21.0975, targetTimeSecs: 7200 };
 
-function timingSafeEqual(a, b) {
+export function timingSafeEqual(a, b) {
   const x = new TextEncoder().encode(String(a));
   const y = new TextEncoder().encode(String(b));
   let diff = x.length ^ y.length;
