@@ -15,6 +15,7 @@ import { handleStudieRequest } from "./studie-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest } from "./widget.js";
+import { handleEgymDebugRequest } from "./egym-debug.js";
 
 function getBerlinHourFromScheduledEvent(event) {
   const t = Number(event?.scheduledTime);
@@ -99,6 +100,11 @@ export default {
     // Kompakte Daten für das iOS-Widget (Scriptable), siehe src/widget.js.
     if (url.pathname === "/api/widget") {
       return withWorkerErrorBoundary(() => handleWidgetRequest(req, env));
+    }
+
+    // Rohdaten der EGYM-Anbindung (Token-geschützt), siehe src/egym-debug.js.
+    if (url.pathname === "/api/egym-debug") {
+      return withWorkerErrorBoundary(() => handleEgymDebugRequest(req, env));
     }
 
     // Studien-Check der Woche aus dem Coaching-Bericht, siehe src/studie-snapshot.js.

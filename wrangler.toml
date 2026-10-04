@@ -24,3 +24,6 @@ directory = "./public"
 #   WEEKLY_TSS_GOAL   Wochenziel der TSS, falls im Intervals-Kalender keine Workouts mit Load stehen
 #   TRI_SPLIT_TARGET  Soll der Zeitverteilung Schwimmen,Rad,Lauf in Prozent, z. B. "20,45,35"
 #                     (Widget-Parameter "training"); ohne Wert zeigt das Widget kein Soll
+#
+# EGYM (Kraft-Daten, inoffizielle Netpulse-API, siehe src/egym-client.js) - als Secrets setzen:
+#   EGYM_BRAND, EGYM_USERNAME, EGYM_PASSWORD   Studio-Kennung (Host <brand>.netpulse.com) und Login der EGYM-App
