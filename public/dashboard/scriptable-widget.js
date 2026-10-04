@@ -532,27 +532,33 @@ function buildWidget(res) {
 }
 
 /* ---------- Mittel: Wochen-TSS (Parameter "form") ---------- */
-// Wochen-TSS als Saeulen (aelteste links) mit Wert darueber und Wochenanfang darunter; laufende Woche in Akzentfarbe,
-// Ziel je Woche als gruener Strich (nur wo ein Plan oder Wochenziel existiert), Luecken nur als kurzer Strich, nie 0.
-const TSS_VALUE_H = 13, TSS_LABEL_H = 14;
-function tssImage(w, h, weeks) {
-  const dc = newCtx(w, h), n = weeks.length, top = TSS_VALUE_H, base = h - TSS_LABEL_H, plotH = base - top;
+// Wochen-TSS als Saeulen (aelteste links); darunter drei Zeilen: erreichte TSS, Ziel, Wochenanfang. Laufende Woche in Akzentfarbe,
+// Ziel je Woche zusaetzlich als gruener Strich (nur wo ein Plan oder Wochenziel existiert), Luecken nur als kurzer Strich, nie 0.
+const TSS_LINE_H = 13, TSS_PLOT_H = 50;
+function tssImage(w, weeks) {
+  const h = TSS_PLOT_H + 3 * TSS_LINE_H + 4, n = weeks.length, base = TSS_PLOT_H, plotH = TSS_PLOT_H - 4;
+  const dc = newCtx(w, h);
   const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
   const max = Math.max(50, ...vals), slot = w / n, bw = slot * 0.62;
   dc.setTextAlignedCenter();
+  const line = (str, row, font, hex, i) => {
+    dc.setFont(font);
+    dc.setTextColor(new Color(hex));
+    dc.drawTextInRect(str, new Rect(i * slot, base + 4 + row * TSS_LINE_H, slot, TSS_LINE_H));
+  };
   weeks.forEach((k, i) => {
-    const cur = i === n - 1, x = i * slot + (slot - bw) / 2;
-    dc.setFont(cur ? Font.boldSystemFont(FS.xs) : Font.systemFont(FS.xs));
-    dc.setTextColor(new Color(cur ? INK_HEX : MUTED_HEX));
-    dc.drawTextInRect(dateShort(k.weekStart), new Rect(i * slot, base + 2, slot, TSS_LABEL_H - 2));
-    if (k.tss == null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, base - 2, bw, 1.5)); return; }
-    const bh = Math.max(2, (k.tss / max) * plotH);
-    dc.setFillColor(cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.55));
-    dc.fillRect(new Rect(x, base - bh, bw, bh));
-    dc.drawTextInRect(String(Math.round(k.tss)), new Rect(i * slot, Math.max(0, base - bh - TSS_VALUE_H), slot, TSS_VALUE_H));
+    const cur = i === n - 1, x = i * slot + (slot - bw) / 2, reached = k.tss != null && k.goal != null && k.tss >= k.goal;
+    line(k.tss != null ? String(Math.round(k.tss)) : MISSING, 0, Font.boldSystemFont(FS.xs), reached ? ZONE_RGB.ok : INK_HEX, i);
+    line(k.goal != null ? `Ziel ${Math.round(k.goal)}` : "Ziel –", 1, Font.systemFont(FS.xs), MUTED_HEX, i);
+    line(dateShort(k.weekStart), 2, cur ? Font.boldSystemFont(FS.xs) : Font.systemFont(FS.xs), cur ? INK_HEX : MUTED_HEX, i);
+    if (k.tss != null) {
+      const bh = Math.max(2, (k.tss / max) * plotH);
+      dc.setFillColor(cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.55));
+      dc.fillRect(new Rect(x, base - bh, bw, bh));
+    } else { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, base - 2, bw, 1.5)); }
     if (k.goal != null) { dc.setFillColor(new Color(ZONE_RGB.ok, 0.95)); dc.fillRect(new Rect(x - 3, base - (k.goal / max) * plotH - 0.75, bw + 6, 1.5)); }
   });
-  return dc.getImage();
+  return { image: dc.getImage(), height: h };
 }
 
 // Eine Karte: Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, darunter die Schwellen
@@ -567,7 +573,7 @@ function buildMedium(res) {
   const cur = tw[tw.length - 1];
   if (cur && cur.tss != null) text(head, `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""}`, FS.sm, { bold: true, color: COL.text, minScale: 0.7 });
   tc.addSpacer(3);
-  if (tw.some((k) => k.tss != null)) { const im = tc.addImage(tssImage(W - 22, 84, tw)); im.imageSize = new Size(W - 22, 84); }
+  if (tw.some((k) => k.tss != null)) { const t = tssImage(W - 22, tw); const im = tc.addImage(t.image); im.imageSize = new Size(W - 22, t.height); }
   else text(tc, "Keine TSS-Werte", FS.xs, { color: COL.muted });
   w.addSpacer(5);
 
