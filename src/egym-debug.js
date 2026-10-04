@@ -36,6 +36,16 @@ function authorizedForDebug(req, env, params) {
   return given.length > 0 && timingSafeEqual(given, env.DASHBOARD_TOKEN);
 }
 
+// Kompakte Uebersicht je Workout (Datum, Uebung, Quelle, Geraet, Satzzahl): zeigt, was das Kraft-Widget als Kraft-Einheit zaehlt
+function workoutSummary(data) {
+  const list = Array.isArray(data) ? data : data?.workouts;
+  if (!Array.isArray(list)) return null;
+  return list.map((w) => ({
+    at: w.completedAt,
+    exercises: (w.exercises ?? []).map((ex) => ({ name: ex.name, source: ex.source?.code ?? null, category: ex.exercise?.category?.code ?? null, machineBased: ex.exercise?.machineBased ?? null, sets: Array.isArray(ex.attributes?.sets_of_reps_and_weight_or_duration_and_weight) ? ex.attributes.sets_of_reps_and_weight_or_duration_and_weight.length : 0 })),
+  }));
+}
+
 export async function handleEgymDebugRequest(req, env) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
@@ -52,5 +62,6 @@ export async function handleEgymDebugRequest(req, env) {
     settle(() => fetchEgymBioAge(env)),
   ]);
   const view = (r) => (r.ok ? { ok: true, data: sample(r.data, full) } : r);
-  return json({ ok: true, from, to, workouts: view(workouts), strength: view(strength), bioAge: view(bioAge) }, 200, headers);
+  return json({ ok: true, from, to, workouts: view(workouts),
+    workoutSummary: workouts.ok ? workoutSummary(workouts.data) : null, strength: view(strength), bioAge: view(bioAge) }, 200, headers);
 }

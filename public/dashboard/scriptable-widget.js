@@ -10,6 +10,7 @@
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
+//              Parameter  kraft  = Krafttraining aus EGYM: Einheiten gegen Wochenziel, Fortschritt (1RM), Muskelalter.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -26,6 +27,7 @@ const VIEWS = {
   main: { endpoint: "", build: (r) => buildWidget(r), size: "large", label: "Vorschau groß" },
   detail: { endpoint: "detail", build: (r) => buildMedium(r), size: "medium", label: "Vorschau mittel: Form und Halbmarathon-Zeiten" },
   training: { endpoint: "training", build: (r) => buildTraining(r), size: "medium", label: "Vorschau mittel: Training (Disziplinen)" },
+  kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
   sleep: { endpoint: "small", build: (r) => buildSleep(r), size: "small", label: "Vorschau klein: Schlaf" },
@@ -34,7 +36,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -861,6 +863,70 @@ function buildTraining(res) {
     sc.addSpacer(3);
     const im = sc.addImage(splitImage(W - 22, 16, sp.share, sp.target)); im.imageSize = new Size(W - 22, 16);
   } else text(sc, "Noch keine abgeschlossene Woche mit Training.", FS.xs, { color: COL.muted });
+  notice(w, res, d);
+  return w;
+}
+
+/* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
+// Links die Woche (Einheiten gegen Wochenziel, Trainingstage), rechts der Fortschritt der Kraft-Tests (1RM gegen den vorherigen Test)
+const fmtVolume = (kg) => (kg >= 1000 ? `${fmt(kg / 1000, 1)} t` : `${fmt(kg)} kg`);
+
+function buildKraft(res) {
+  const d = res.data, W = widgetInnerWidth();
+  const w = baseWidget({ flat: false, padV: 10 });
+  if (d.configured === false) {
+    header(w, W, "KRAFT · EGYM", null);
+    w.addSpacer(6);
+    text(w, "EGYM ist im Worker nicht eingerichtet (EGYM_USERNAME und EGYM_PASSWORD).", FS.sm, { color: COL.muted, lines: 4 });
+    return w;
+  }
+  const wk = d.week;
+  header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
+  w.addSpacer(3);
+  const row = w.addStack(); row.spacing = 7;
+  const CW = Math.floor((W - 7) / 2), IW = CW - 20;
+  const reached = wk.sessions >= wk.goal, hex = reached ? "#2f9d64" : sportHex("strength");
+
+  const lc = card(row, CW, 6);
+  text(lc, "DIESE WOCHE", FS.xs, { bold: true, color: COL.muted });
+  const vl = lc.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
+  text(vl, `${wk.sessions}`, FS.xl - 2, { bold: true, color: reached ? COL.ok : COL.text });
+  text(vl, `/ ${wk.goal} Einheiten`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  lc.addSpacer(3);
+  progressBar(lc, IW, wk.goal ? wk.sessions / wk.goal : 0, hex);
+  lc.addSpacer(4);
+  const dots = lc.addStack(); dots.centerAlignContent();
+  ["M", "D", "M", "D", "F", "S", "S"].forEach((l, i) => {
+    if (i) dots.addSpacer();
+    text(dots, wk.days[i] ? "●" : l, FS.xs, { bold: wk.days[i], color: wk.days[i] ? new Color(hex) : COL.muted, minScale: 1 });
+  });
+  lc.addSpacer(3);
+  const since = d.daysSince == null ? MISSING : d.daysSince === 0 ? "heute" : `vor ${d.daysSince} T`;
+  text(lc, wk.sets ? `${wk.sets} Sätze · ${fmtVolume(wk.volumeKg)}` : `zuletzt ${since}`, FS.xs, { color: COL.muted, minScale: 0.7 });
+
+  const rc = card(row, CW, 6), p = d.progress;
+  text(rc, "FORTSCHRITT · 1RM", FS.xs, { bold: true, color: COL.muted });
+  rc.addSpacer(2);
+  const cmp = p ? p.items.filter((i) => i.pct != null) : [];
+  if (!cmp.length) text(rc, p ? "Noch kein Vergleich: je Gerät erst ein Test." : "Keine Kraft-Tests geladen.", FS.xs, { color: COL.muted, lines: 3 });
+  for (const it of cmp.slice(0, 3)) {
+    const r = rc.addStack(); r.centerAlignContent();
+    text(r, it.label, FS.xs, { minScale: 0.7 });
+    r.addSpacer();
+    text(r, `${signed(it.diffKg, 1)} kg`, FS.xs, { bold: true, color: it.diffKg > 0 ? COL.ok : it.diffKg < 0 ? COL.bad : COL.muted, minScale: 0.7 });
+  }
+  if (cmp.length) {
+    rc.addSpacer(2);
+    text(rc, `${p.improved} besser · ${p.same} gleich · ${p.declined} schwächer`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  }
+
+  w.addSpacer(5);
+  const bits = [];
+  if (d.bioAge && d.bioAge.muscle != null) bits.push(`Muskelalter ${d.bioAge.muscle}`);
+  if (d.avg4 != null) bits.push(`Ø 4 Wo ${fmt(d.avg4, 1)}`);
+  if (d.streakWeeks > 0) bits.push(`Serie ${d.streakWeeks} Wo`);
+  if (!bits.length) bits.push(`zuletzt ${since}`);
+  text(w, bits.join(" · "), FS.xs, { color: COL.muted, minScale: 0.7 });
   notice(w, res, d);
   return w;
 }
