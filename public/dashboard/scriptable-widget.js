@@ -881,7 +881,7 @@ function buildTraining(res) {
 
 /* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
 // Links der Ring der Woche (Saetze gegen das Wochenziel) mit Trainingstagen. Rechts das Muskelalter mit Balken je Bereich.
-const KRAFT_GOAL_SETS = 60; // Wochenziel in Saetzen
+const KRAFT_GOAL_SETS = 27; // Wochenziel in Saetzen: 9 Geraete x 3 Saetze
 
 function buildKraft(res) {
   const d = res.data, W = widgetInnerWidth();
