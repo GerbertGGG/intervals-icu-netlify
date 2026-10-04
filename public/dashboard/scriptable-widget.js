@@ -827,7 +827,7 @@ function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf =
     if (b - a > 1) {
       const p = new Path(); p.addRoundedRect(new Rect(a + 0.5, 0, b - a - 1, h), 3, 3);
       dc.addPath(p); dc.setFillColor(new Color(hexOf(k))); dc.fillPath();
-      if (b - a > 30) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, 2, b - a, h - 2)); }
+      if (b - a > 34) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, (h - FS.xs) / 2 - 2, b - a, h)); }
     }
     acc += share[k];
   }
@@ -881,7 +881,7 @@ function buildTraining(res) {
     header(sc, null, "INTENSITÄT · 4 WOCHEN", `locker ${it.easy} · mittel ${it.mid} · hart ${it.hard} %`);
     sc.addSpacer(3);
     const ih = { easy: "#5BA88A", mid: "#E0B454", hard: "#D9695F" };
-    const im2 = sc.addImage(splitImage(W - 22, 12, it, null, ["easy", "mid", "hard"], (k) => ih[k])); im2.imageSize = new Size(W - 22, 12);
+    const im2 = sc.addImage(splitImage(W - 22, 16, it, null, ["easy", "mid", "hard"], (k) => ih[k])); im2.imageSize = new Size(W - 22, 16);
   }
   notice(w, res, d);
   return w;
