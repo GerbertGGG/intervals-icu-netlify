@@ -900,9 +900,13 @@ function buildKraft(res) {
 
   // Links: Saetze der Woche gegen das Ziel, darunter die Trainingstage und die Einheiten
   const lc = row.addStack(); lc.layoutVertically(); lc.size = new Size(LW, 0);
+  // Zahl als echter Text im Ring (nicht ins Bild gezeichnet): so passt sie sich Hell/Dunkel an und bleibt lesbar
   const rs = lc.addStack(); rs.addSpacer();
-  const ring = rs.addImage(ringProgressImage(RING, sets / KRAFT_GOAL_SETS, hex, 1, { big: String(sets), small: `von ${KRAFT_GOAL_SETS} Sätzen` }));
-  ring.imageSize = new Size(RING, RING);
+  const ring = rs.addStack(); ring.size = new Size(RING, RING); ring.layoutVertically(); ring.centerAlignContent();
+  ring.backgroundImage = ringProgressImage(RING, sets / KRAFT_GOAL_SETS, hex, 1);
+  const cen = (str, size, o) => { const x = ring.addStack(); x.addSpacer(); text(x, str, size, { align: "center", minScale: 0.6, ...o }); x.addSpacer(); };
+  cen(String(sets), 28, { bold: true });
+  cen(`von ${KRAFT_GOAL_SETS} Sätzen`, FS.xs, { color: COL.muted, minScale: 0.5 });
   rs.addSpacer();
   lc.addSpacer(5);
   const dots = lc.addStack(); dots.centerAlignContent();
