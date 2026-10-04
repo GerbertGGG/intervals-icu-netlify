@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildWidgetKraft, strengthDays, strengthProgress } from "../src/egym-widget.js";
+import { buildWidgetKraft, strengthDays, strengthProgress, machineSessions, machineInsights } from "../src/egym-widget.js";
 
 // Garmin-Tagesaktivitaet wie in der echten Antwort: zaehlt nicht als Krafttraining
 const garmin = { code: "g1", completedAt: "2026-10-03T21:59:59Z", exercises: [{ name: "Daily routine", exercise: { machineBased: false }, attributes: { calories: { unit: "kcal", value: 69 } } }] };
@@ -84,4 +84,46 @@ test("Einheit ohne Dauer: Minuten unbekannt (null) statt 0", () => {
 test("Muskelalter aus der Bio-Age-Antwort", () => {
   const d = buildWidgetKraft({ workouts: [], strength: [], bioAge: { totalDetails: { totalBioAge: { value: 42 } }, muscleDetails: { muscleBioAge: { value: 36 }, upperBodyAge: { value: 51 }, coreAge: { value: 35 }, lowerBodyAge: { value: 21 } } }, today: "2026-10-04" });
   assert.deepEqual(d.bioAge, { total: 42, muscle: 36, upper: 51, core: 35, lower: 21 });
+});
+
+// Geraete-Workout mit exerciseCode, damit Bestwerte und Koerperbereich gebildet werden koennen
+const machine = (code, exCode, name, at, sets) => ({ code, completedAt: at, exercises: [{ name, exerciseCode: exCode, completedAt: at, exercise: { machineBased: true }, attributes: { sets_of_reps_and_weight_or_duration_and_weight: sets } }] });
+
+test("Bestwert: bester Satz dieser Woche gegen alle fruehere Einheiten, geschaetzter 1RM nach Epley", () => {
+  const sessions = machineSessions([
+    machine("a", "1000", "EGYM Lat Pulldown", "2026-09-15T16:00:00Z", [set(10, 50)]),
+    machine("b", "1000", "EGYM Lat Pulldown", "2026-09-29T16:00:00Z", [set(10, 55), set(8, 50)]),
+    machine("c", "1003", "EGYM Abductor", "2026-09-29T16:00:00Z", [set(10, 40)]),
+    machine("d", "1003", "EGYM Abductor", "2026-09-15T16:00:00Z", [set(10, 45)]),
+  ], new Map([["1000", "UPPER"]]));
+  const { records } = machineInsights(sessions, "2026-09-28");
+  assert.equal(records.length, 1); // Abductor wurde schwaecher
+  assert.equal(records[0].label, "Lat Pulldown");
+  assert.equal(records[0].kg, 55);
+  assert.equal(records[0].reps, 10);
+  assert.equal(records[0].e1rm, 73.3); // 55 * (1 + 10/30)
+  assert.equal(records[0].diffKg, 6.7); // gegen 50 * (1 + 10/30) = 66,7
+  assert.equal(records[0].pct, 10);
+});
+
+test("Ohne fruehere Einheit gibt es keinen Bestwert", () => {
+  const { records } = machineInsights(machineSessions([machine("a", "1000", "EGYM Lat Pulldown", "2026-09-29T16:00:00Z", [set(10, 55)])]), "2026-09-28");
+  assert.deepEqual(records, []);
+});
+
+test("Verteilung nach Koerperbereich nur bei genug zugeordnetem Volumen", () => {
+  const w = [machine("a", "1000", "Lat Pulldown", "2026-09-29T16:00:00Z", [set(10, 60)]), machine("b", "1003", "Abductor", "2026-09-30T16:00:00Z", [set(10, 20)]), machine("c", "1005", "Leg Press", "2026-10-01T16:00:00Z", [set(10, 20)])];
+  const map = new Map([["1000", "UPPER"], ["1003", "CORE"], ["1005", "LOWER"]]);
+  assert.deepEqual(machineInsights(machineSessions(w, map), "2026-09-28").regions, { UPPER: 60, CORE: 20, LOWER: 20 });
+  assert.equal(machineInsights(machineSessions(w, new Map([["1003", "CORE"]])), "2026-09-28").regions, null); // 20 von 100: zu wenig
+});
+
+test("buildWidgetKraft liefert Bestwerte und Verteilung, Region ueber den Kraft-Test-Code", () => {
+  const d = buildWidgetKraft({
+    workouts: [machine("a", "1000", "EGYM Lat Pulldown", "2026-09-15T16:00:00Z", [set(10, 50)]), machine("b", "1000", "EGYM Lat Pulldown", "2026-09-29T16:00:00Z", [set(10, 55)])],
+    strength: [{ createdAt: "2026-09-28T08:00:00Z", exercise: { code: "1000", label: "EGYM Lat Pulldown" }, strength: { value: 128 }, bodyRegion: "UPPER" }],
+    today: "2026-10-04",
+  });
+  assert.equal(d.records[0].label, "Lat Pulldown");
+  assert.deepEqual(d.regions, { UPPER: 100, CORE: 0, LOWER: 0 });
 });
