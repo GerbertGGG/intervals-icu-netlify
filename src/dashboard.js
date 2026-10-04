@@ -155,11 +155,26 @@ function emptySports() {
   return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null }]));
 }
 
+// Intensitaetsverteilung aus den Zonenzeiten, die Intervals.icu je Einheit mitliefert: Rad nach Power-Zonen,
+// Laufen und Schwimmen nach Pace-Zonen. Pulszonen bleiben aussen vor (Pulsregel). Ohne Zonenzeiten null.
+// 5 Zonen: Z1-Z2 locker, Z3 mittel, Z4-Z5 hart. 7 Zonen (Power): Z1-Z2 locker, Z3-Z4 mittel, Z5+ hart.
+function zoneBuckets(a) {
+  const sport = sportOf(a);
+  if (sport === "strength" || sport === "other") return null;
+  const raw = sport === "bike" ? a?.icu_zone_times : a?.pace_zone_times;
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const secs = raw.map((z) => Number(typeof z === "object" && z !== null ? z.secs : z) || 0);
+  const [midFrom, hardFrom] = secs.length >= 7 ? [2, 4] : [2, 3];
+  const out = { easy: 0, mid: 0, hard: 0 };
+  secs.forEach((s, i) => { out[i < midFrom ? "easy" : i < hardFrom ? "mid" : "hard"] += s; });
+  return out.easy + out.mid + out.hard > 0 ? out : null;
+}
+
 function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
   const weeks = new Map();
   for (let d = firstMonday; d <= todayIso; d = addDays(d, 7)) {
-    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, bySport: emptySports(), complete: addDays(d, 6) < todayIso });
+    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
   }
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
@@ -170,6 +185,8 @@ function buildWeeks(todayIso, activities, events) {
     sp.load += load;
     sp.minutes += (num(a?.moving_time) ?? 0) / 60;
     sp.km += (num(a?.distance) ?? 0) / 1000;
+    const zt = zoneBuckets(a);
+    if (zt) for (const k of Object.keys(zt)) w.intensity[k] += zt[k] / 60;
     w.load += load;
     if (isRun(a)) {
       w.km += (num(a?.distance) ?? 0) / 1000;
@@ -200,6 +217,7 @@ function buildWeeks(todayIso, activities, events) {
     load: Math.round(w.load),
     plannedKm: w.plannedKm != null ? r1(w.plannedKm) : null,
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
+    intensity: { easy: Math.round(w.intensity.easy), mid: Math.round(w.intensity.mid), hard: Math.round(w.intensity.hard) },
     bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null }])),
   }));
 }
