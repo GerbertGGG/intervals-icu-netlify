@@ -180,7 +180,11 @@ function raceScenarios(d) {
 }
 
 // Checkliste: Häkchen bleiben im Browser (localStorage), je Renntermin getrennt.
+// Nur in der letzten Woche vor dem Rennen (daysToGo 0–7) sichtbar.
 function renderChecklist(d, items) {
+  const card = $("checklist").closest(".card"), show = d.goal.daysToGo >= 0 && d.goal.daysToGo <= 7;
+  if (card) card.hidden = !show;
+  if (!show) { $("checklist").innerHTML = ""; return; }
   const key = "rennplan-check-" + d.goal.date;
   let done = {}; try { done = JSON.parse(localStorage.getItem(key) || "{}"); } catch {}
   $("checklist").innerHTML = items.map((t, i) => `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0"><input type="checkbox" data-i="${i}"${done[i] ? " checked" : ""}> <span>${esc(t)}</span></label>`).join("");
@@ -198,14 +202,17 @@ function renderTriRennplan(d, box) {
   const rows = [
     [`Schwimmen ${fmt(T.swimKm, 2)} km`, sw ? `<b>${hm(sw.timeSecs)}</b>${sw.timeSecs >= 3600 ? ` <small class="muted">${fmtTime(sw.timeSecs)}</small>` : ""}` : miss, sw ? `${paceLabel(sw.pacePer100m)} /100 m${tag(sw)}` : "CSS fehlt"],
     [`Rad ${fmt(T.bikeKm)} km`, b?.timeSecs ? `<b>${hm(b.timeSecs)}</b> <small class="muted">${fmtTime(b.timeSecs)}</small>` : miss, b ? [b.watts ? (b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)} W` : `${fmt(b.watts)} W`) : "", b.speedKmh ? `${fmt(b.speedKmh, 1)} km/h` : ""].filter(Boolean).join(" · ") + tag(b) : "FTP fehlt"],
-    [`Laufen ${fmt(T.runKm, 1)} km`, r ? `<b>${hm(r.timeSecs)}</b> <small class="muted">${fmtTime(r.timeSecs)}</small>` : miss, r ? `${paceLabel(r.pacePerKm)} min/km` : "in der Beschreibung: „Lauf 1:55:00“"],
+    [`Laufen ${fmt(T.runKm, 1)} km`, r ? `<b>${hm(r.timeSecs)}</b> <small class="muted">${fmtTime(r.timeSecs)}</small>` : miss, r ? `${paceLabel(r.pacePerKm)} min/km${tag(r)}` : "VDOT fehlt"],
   ];
   const known = [sw?.timeSecs, b?.timeSecs, r?.timeSecs], all = known.every((x) => x != null), sum = known.reduce((a, x) => a + (x ?? 0), 0);
   const total = g.totalTargetSecs;
-  $("staffel").innerHTML = `${total ? `<div class="big" style="font-size:1.4rem">${hm(total)}</div><div class="muted">Gesamtziel</div>` : '<div class="muted">Kein Gesamtziel hinterlegt.</div>'}
+  const head = total ? `<div class="big" style="font-size:1.4rem">${hm(total)}</div><div class="muted">Gesamtziel</div>`
+    : all ? `<div class="big" style="font-size:1.4rem">${hm(sum)}</div><div class="muted">Vorschlag Summe (ohne Wechselzeiten, kein Gesamtziel hinterlegt)</div>`
+    : '<div class="muted">Kein Gesamtziel hinterlegt.</div>';
+  $("staffel").innerHTML = `${head}
     <div class="scroll"><table class="mini" style="margin-top:8px"><thead><tr><th></th><th>Zeit</th><th>Pace / Leistung</th></tr></thead><tbody>${rows.map((x) => `<tr><td><b>${x[0]}</b></td><td>${x[1]}</td><td>${x[2]}</td></tr>`).join("")}</tbody></table></div>
-    ${all && total ? `<div class="${sum + 120 > total ? "notice" : "muted"}" style="margin-top:8px">Summe der Disziplinen ${fmtTime(sum)} ${sum > total ? `liegt ${hm(sum - total)} über dem Gesamtziel` : `plus Wechselzeiten unter dem Gesamtziel`}.</div>` : !all ? '<div class="muted" style="margin-top:8px">Für eine Summe fehlen Zeitziele. In die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 3:00:00“, „Lauf 1:55:00“.</div>' : ""}
-    <div class="muted">Vorschläge sind Faustwerte aus FTP und Schwimmschwelle, kein Trainingsplan. Wechselzeiten sind nicht eingerechnet.</div>`;
+    ${all && total ? `<div class="${sum + 120 > total ? "notice" : "muted"}" style="margin-top:8px">Summe der Disziplinen ${fmtTime(sum)} ${sum > total ? `liegt ${hm(sum - total)} über dem Gesamtziel` : `plus Wechselzeiten unter dem Gesamtziel`}.</div>` : !all ? '<div class="muted" style="margin-top:8px">Für Vorschläge fehlen Schwimmschwelle, FTP oder VDOT. Alternativ in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 3:00:00“, „Lauf 1:55:00“.</div>' : ""}
+    <div class="muted">Vorschläge sind Modellwerte (Schwimmschwelle, FTP mit Leistungsmodell, Lauf aus VDOT plus 6 % fürs Laufen nach dem Rad), kein Trainingsplan; Einträge in der Beschreibung haben Vorrang. Wechselzeiten sind nicht eingerechnet.</div>`;
 
   const marks = (km, step, secs) => { const out = []; for (let m = step; m < km - 0.01; m += step) out.push(m); out.push(km); return out.map((m) => `<tr><td>${m === km ? fmt(m, m % 1 ? 1 : 0) : m} km</td><td>${secs ? fmtTime(Math.round(secs * (m / km))) : "–"}</td></tr>`).join(""); };
   const part = (title, km, step, secs) => `<h3 style="margin-top:8px">${title}</h3><table class="mini"><tbody>${marks(km, step, secs)}</tbody></table>`;
