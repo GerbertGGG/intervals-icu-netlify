@@ -42,6 +42,7 @@ async function load() {
   }
   if (!r.ok) return showLogin("Fehler vom Worker (" + r.status + ").");
   render(await r.json());
+  loadEgym(token); // EGYM ist langsam und optional: die Karte kommt nach, die Seite wartet nicht darauf
 }
 function showLogin(msg) {
   $("app").hidden = true; $("login").hidden = false;
@@ -540,6 +541,46 @@ function renderStrength(d) {
   $("hip").innerHTML = recent.length
     ? `<div class="notice bad"><b>Hinweis auf Hüfte, Leiste oder Knie in den letzten 14 Tagen (${recent.length}×)</b> – Hüft-OP vor 2 Jahren, im Zweifel Belastung anpassen oder abklären.</div>${list(recent)}`
     : `<div class="muted">Keine Treffer in den letzten 14 Tagen. Ältere Treffer in 8 Wochen: ${d.hipFlags.length}.</div>${list(d.hipFlags)}`;
+}
+
+/* ---------- Kraft aus EGYM: eigene Abfrage, damit die Seite nicht auf EGYM warten muss ---------- */
+const REGION_LABEL = { UPPER: "Oberkörper", CORE: "Rumpf", LOWER: "Beine" };
+async function loadEgym(token) {
+  try {
+    const r = await fetch("/api/widget?view=kraft", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+    if (!r.ok) return;
+    const k = await r.json();
+    if (k.configured === false) return; // ohne EGYM-Zugang bleibt die Karte weg
+    renderEgym(k);
+  } catch (e) { console.error("egym", e); }
+}
+
+function renderEgym(k) {
+  $("kraft").hidden = false;
+  $("egym-card").hidden = false;
+  const failed = k.sourcesFailed || [];
+  if (failed.length >= 3) { $("egym").innerHTML = '<div class="notice bad"><b>EGYM nicht erreichbar.</b> Login oder Abruf ist fehlgeschlagen.</div>'; return; }
+  const wk = k.week, goal = wk.goalMin, min = wk.minutes, hit = min != null && min >= goal;
+  const est = (src) => (src === "estimate" ? "≈" : "");
+  const max = Math.max(goal, ...k.weeks.map((w) => w.minutes || 0)) * 1.1;
+  const row = (w, last) => { const m = w.minutes, ok = m != null && m >= goal; return `<div style="display:grid;grid-template-columns:64px 1fr 76px;gap:8px;align-items:center;padding:3px 0;${last ? "" : "opacity:.85"}"><span class="muted">${fmtDate(w.start)}${last ? " ·&nbsp;jetzt" : ""}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${((m || 0) / max) * 100}%;background:${ok ? "var(--ok)" : "var(--s-strength)"}${w.minutesSource === "estimate" ? ";opacity:.6" : ""}"></div><i style="left:${(goal / max) * 100}%"></i></div><b style="text-align:right">${m == null ? (w.sessions ? "Dauer ?" : "–") : m ? est(w.minutesSource) + fmt(m) + " min" : "–"}</b></div>`; };
+  const stat = (v, l) => `<div><div style="font-weight:650;font-size:1.15rem">${v}</div><div class="muted" style="font-size:.8rem">${l}</div></div>`;
+  const since = k.daysSince == null ? "–" : k.daysSince === 0 ? "heute" : `vor ${k.daysSince} T`;
+  const p = k.progress, items = p ? p.items : [];
+  const delta = (i) => (i.diffKg == null ? '<span class="muted">–</span>' : `<span class="badge ${i.diffKg > 0 ? "ok" : i.diffKg < 0 ? "bad" : "none"}">${i.diffKg > 0 ? "+" : i.diffKg < 0 ? "−" : ""}${fmt(Math.abs(i.diffKg), 1)} kg</span>`);
+  const b = k.bioAge;
+  const bio = b && b.muscle != null ? `<div style="margin-top:12px"><b>Muskelalter ${b.muscle}</b> <span class="muted">${[b.upper != null && `Oberkörper ${b.upper}`, b.core != null && `Rumpf ${b.core}`, b.lower != null && `Beine ${b.lower}`, b.total != null && `gesamt ${b.total}`].filter(Boolean).join(" · ")}</span></div>` : "";
+  const vt = k.volumeTrend;
+  $("egym").innerHTML = `${failed.length ? `<div class="notice bad" style="margin-bottom:8px">Teilweise nicht erreichbar: ${esc(failed.join(", "))}</div>` : ""}
+    <div class="big">${min == null ? "–" : est(wk.minutesSource) + fmt(min)} <small class="muted" style="font-size:.9rem">min diese Woche von ${goal}</small> ${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div>
+    <div class="muted" style="margin:2px 0 10px">Ziel erreicht in ${k.weeksHit.hit} von ${k.weeksHit.of} abgeschlossenen Wochen${k.streakWeeks ? ` · Serie ${k.streakWeeks} ${k.streakWeeks === 1 ? "Woche" : "Wochen"}` : ""} · senkrechte Marke = ${goal} min${wk.goalSource === "default" ? " (Standardziel)" : ""}</div>
+    ${k.weeks.slice().reverse().map((w, i) => row(w, i === 0)).join("")}
+    <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">${stat(wk.sessions, "Einheiten")}${stat(wk.sets || "–", "Sätze")}${stat(wk.volumeKg ? (wk.volumeKg >= 1000 ? fmt(wk.volumeKg / 1000, 1) + " t" : fmt(wk.volumeKg) + " kg") : "–", "Volumen")}${stat(since, "zuletzt")}</div>
+    ${vt ? `<div class="muted" style="margin-top:8px">Volumen letzte Woche gegen die davor: ${vt.pct > 0 ? "+" : vt.pct < 0 ? "−" : ""}${fmt(Math.abs(vt.pct), 1)} % (${fmt(vt.lastKg)} kg gegen ${fmt(vt.prevKg)} kg)</div>` : ""}
+    ${bio}
+    ${items.length ? `<h3 style="margin-top:14px">Fortschritt: 1RM je Gerät</h3><div style="overflow-x:auto"><table><thead><tr><th>Gerät</th><th>Bereich</th><th>1RM</th><th>Vorher</th><th>Veränderung</th><th>Test</th></tr></thead><tbody>${items.map((i) => `<tr><td>${esc(i.label)}</td><td class="muted">${esc(REGION_LABEL[i.region] || i.region || "–")}</td><td><b>${fmt(i.kg)} kg</b></td><td class="muted">${i.prevKg != null ? fmt(i.prevKg) + " kg" : "–"}</td><td>${delta(i)}</td><td class="muted">${fmtDate(i.at)}</td></tr>`).join("")}</tbody></table></div>
+      <div class="muted" style="margin-top:6px">${p.improved} besser · ${p.same} gleich · ${p.declined} schwächer gegen den vorherigen Test. Vergleich erst, wenn ein Gerät mindestens zwei Tests hat.</div>` : ""}
+    <div class="muted" style="margin-top:8px">Kraft-Einheit = Tag mit Satz-Übungen oder Geräten (Garmin-Tagesaktivität zählt nicht). „≈“ und blasse Balken: Dauer nur aus der Spanne der Übungen geschätzt, EGYM lieferte keine.</div>`;
 }
 
 /* ---------- Studien-Check der Woche ---------- */

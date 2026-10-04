@@ -10,7 +10,7 @@
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
-//              Parameter  kraft  = Krafttraining aus EGYM: Einheiten gegen Wochenziel, Fortschritt (1RM), Muskelalter.
+//              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), 6-Wochen-Verlauf, Fortschritt (1RM).
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -304,7 +304,7 @@ function ringImage(size, cls) {
 }
 
 // Fortschrittsring (Start oben, im Uhrzeigersinn); ratio wird auf 0..1 begrenzt
-function ringProgressImage(size, ratio, hex, alpha = 1) {
+function ringProgressImage(size, ratio, hex, alpha = 1, center = null) {
   const dc = newCtx(size, size), lw = 10, r = (size - lw) / 2, c = size / 2;
   dc.setStrokeColor(new Color(NEUTRAL_HEX, 0.25));
   dc.setLineWidth(lw);
@@ -321,6 +321,16 @@ function ringProgressImage(size, ratio, hex, alpha = 1) {
     dc.strokePath();
     dc.setFillColor(new Color(hex, alpha));
     for (const a of [a0, a0 + q * 2 * Math.PI]) dc.fillEllipse(new Rect(pt(a).x - lw / 2, pt(a).y - lw / 2, lw, lw));
+  }
+  // Mitteltext (gezeichnet, damit er im Ring sitzt): grosse Zahl, darunter eine kleine Zeile
+  if (center) {
+    dc.setTextAlignedCenter();
+    dc.setTextColor(new Color(INK_HEX));
+    dc.setFont(Font.boldSystemFont(size * 0.3));
+    dc.drawTextInRect(String(center.big), new Rect(0, size * 0.27, size, size * 0.34));
+    dc.setTextColor(new Color(MUTED_HEX));
+    dc.setFont(Font.systemFont(FS.xs));
+    dc.drawTextInRect(String(center.small), new Rect(0, size * 0.6, size, 15));
   }
   return dc.getImage();
 }
@@ -868,8 +878,29 @@ function buildTraining(res) {
 }
 
 /* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
-// Links die Woche (Einheiten gegen Wochenziel, Trainingstage), rechts der Fortschritt der Kraft-Tests (1RM gegen den vorherigen Test)
+// Links der Ring der Woche (Trainingszeit gegen das Wochenziel in Minuten) mit den Trainingstagen, rechts die letzten
+// 6 Wochen als Saeulen gegen die Zielmarke und der Fortschritt der Kraft-Tests (1RM gegen den vorherigen Test).
 const fmtVolume = (kg) => (kg >= 1000 ? `${fmt(kg / 1000, 1)} t` : `${fmt(kg)} kg`);
+const STRENGTH_OK = "#2f9d64";
+
+// Saeulen je Woche (Minuten), Zielmarke gestrichelt; unbekannte Dauer = kurzer Strich, Schaetzung = blasser; letzte Saeule = laufende Woche
+function kraftWeeksImage(w, h, weeks, goal) {
+  const dc = newCtx(w, h), slot = w / weeks.length, bw = slot * 0.62;
+  const max = Math.max(goal * 1.25, ...weeks.map((x) => x.minutes || 0));
+  const Y = (v) => h - 2 - (v / max) * (h - 4);
+  weeks.forEach((wk, i) => {
+    const cx = i * slot + slot / 2, last = i === weeks.length - 1;
+    if (wk.minutes == null || wk.minutes === 0) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.35)); dc.fillRect(new Rect(cx - bw / 2, h - 3, bw, 1.5)); return; }
+    const top = Y(wk.minutes), p = new Path();
+    p.addRoundedRect(new Rect(cx - bw / 2, top, bw, h - 2 - top), 3, 3);
+    dc.addPath(p);
+    dc.setFillColor(new Color(wk.minutes >= goal ? STRENGTH_OK : sportHex("strength"), wk.minutesSource === "estimate" ? 0.55 : last ? 1 : 0.85));
+    dc.fillPath();
+  });
+  dc.setFillColor(new Color(INK_HEX, 0.55));
+  for (let x = 0; x < w; x += 6) dc.fillRect(new Rect(x, Y(goal), 3, 1));
+  return dc.getImage();
+}
 
 function buildKraft(res) {
   const d = res.data, W = widgetInnerWidth();
@@ -880,53 +911,47 @@ function buildKraft(res) {
     text(w, "EGYM ist im Worker nicht eingerichtet (EGYM_USERNAME und EGYM_PASSWORD).", FS.sm, { color: COL.muted, lines: 4 });
     return w;
   }
-  const wk = d.week;
+  const wk = d.week, goal = wk.goalMin, min = wk.minutes;
+  const reached = min != null && min >= goal, hex = reached ? STRENGTH_OK : sportHex("strength");
   header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
   w.addSpacer(3);
   const row = w.addStack(); row.spacing = 7;
-  const CW = Math.floor((W - 7) / 2), IW = CW - 20;
-  const reached = wk.sessions >= wk.goal, hex = reached ? "#2f9d64" : sportHex("strength");
+  const LW = 124, RW = W - LW - 7, RING = 64;
 
-  const lc = card(row, CW, 6);
-  text(lc, "DIESE WOCHE", FS.xs, { bold: true, color: COL.muted });
-  const vl = lc.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
-  text(vl, `${wk.sessions}`, FS.xl - 2, { bold: true, color: reached ? COL.ok : COL.text });
-  text(vl, `/ ${wk.goal} Einheiten`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  const lc = card(row, LW, 6);
+  const rs = lc.addStack(); rs.addSpacer();
+  const ring = rs.addImage(ringProgressImage(RING, min != null ? min / goal : 0, hex, 1, { big: min == null ? MISSING : `${min}${wk.minutesSource === "estimate" ? "≈" : ""}`, small: `von ${goal} min` }));
+  ring.imageSize = new Size(RING, RING);
+  rs.addSpacer();
   lc.addSpacer(3);
-  progressBar(lc, IW, wk.goal ? wk.sessions / wk.goal : 0, hex);
-  lc.addSpacer(4);
   const dots = lc.addStack(); dots.centerAlignContent();
   ["M", "D", "M", "D", "F", "S", "S"].forEach((l, i) => {
     if (i) dots.addSpacer();
     text(dots, wk.days[i] ? "●" : l, FS.xs, { bold: wk.days[i], color: wk.days[i] ? new Color(hex) : COL.muted, minScale: 1 });
   });
-  lc.addSpacer(3);
-  const since = d.daysSince == null ? MISSING : d.daysSince === 0 ? "heute" : `vor ${d.daysSince} T`;
-  text(lc, wk.sets ? `${wk.sets} Sätze · ${fmtVolume(wk.volumeKg)}` : `zuletzt ${since}`, FS.xs, { color: COL.muted, minScale: 0.7 });
 
-  const rc = card(row, CW, 6), p = d.progress;
-  text(rc, "FORTSCHRITT · 1RM", FS.xs, { bold: true, color: COL.muted });
+  const rc = card(row, RW, 6), p = d.progress;
+  header(rc, null, "6 WOCHEN · MINUTEN", d.weeksHit && d.weeksHit.of ? `Ziel ${d.weeksHit.hit}/${d.weeksHit.of}` : null);
   rc.addSpacer(2);
+  const bars = rc.addImage(kraftWeeksImage(RW - 22, 26, d.weeks, goal)); bars.imageSize = new Size(RW - 22, 26);
+  rc.addSpacer(3);
   const cmp = p ? p.items.filter((i) => i.pct != null) : [];
-  if (!cmp.length) text(rc, p ? "Noch kein Vergleich: je Gerät erst ein Test." : "Keine Kraft-Tests geladen.", FS.xs, { color: COL.muted, lines: 3 });
-  for (const it of cmp.slice(0, 3)) {
+  if (!cmp.length) text(rc, p ? "1RM: je Gerät erst ein Test" : "Keine Kraft-Tests geladen", FS.xs, { color: COL.muted, minScale: 0.7 });
+  for (const it of cmp.slice(0, 2)) {
     const r = rc.addStack(); r.centerAlignContent();
     text(r, it.label, FS.xs, { minScale: 0.7 });
     r.addSpacer();
     text(r, `${signed(it.diffKg, 1)} kg`, FS.xs, { bold: true, color: it.diffKg > 0 ? COL.ok : it.diffKg < 0 ? COL.bad : COL.muted, minScale: 0.7 });
   }
-  if (cmp.length) {
-    rc.addSpacer(2);
-    text(rc, `${p.improved} besser · ${p.same} gleich · ${p.declined} schwächer`, FS.xs, { color: COL.muted, minScale: 0.6 });
-  }
 
   w.addSpacer(5);
+  const since = d.daysSince == null ? null : d.daysSince === 0 ? "heute" : `vor ${d.daysSince} T`;
   const bits = [];
+  if (wk.sessions) bits.push(`${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"}${wk.sets ? ` · ${wk.sets} Sätze · ${fmtVolume(wk.volumeKg)}` : ""}`);
   if (d.bioAge && d.bioAge.muscle != null) bits.push(`Muskelalter ${d.bioAge.muscle}`);
-  if (d.avg4 != null) bits.push(`Ø 4 Wo ${fmt(d.avg4, 1)}`);
   if (d.streakWeeks > 0) bits.push(`Serie ${d.streakWeeks} Wo`);
-  if (!bits.length) bits.push(`zuletzt ${since}`);
-  text(w, bits.join(" · "), FS.xs, { color: COL.muted, minScale: 0.7 });
+  if (!wk.sessions && since) bits.push(`zuletzt ${since}`);
+  text(w, bits.length ? bits.join(" · ") : MISSING, FS.xs, { color: COL.muted, minScale: 0.6 });
   notice(w, res, d);
   return w;
 }
