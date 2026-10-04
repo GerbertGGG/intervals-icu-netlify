@@ -155,9 +155,20 @@ function emptySports() {
   return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null }]));
 }
 
-// Grenzen der Einheiten-Intensitaet (IF in %): unter 75 locker, bis 90 mittel, darueber hart
-const INTENSITY_EASY_MAX = 75;
-const INTENSITY_MID_MAX = 90;
+// Intensitaetsverteilung aus den Zonenzeiten, die Intervals.icu je Einheit mitliefert: Rad nach Power-Zonen,
+// Laufen und Schwimmen nach Pace-Zonen. Pulszonen bleiben aussen vor (Pulsregel). Ohne Zonenzeiten null.
+// 5 Zonen: Z1-Z2 locker, Z3 mittel, Z4-Z5 hart. 7 Zonen (Power): Z1-Z2 locker, Z3-Z4 mittel, Z5+ hart.
+function zoneBuckets(a) {
+  const sport = sportOf(a);
+  if (sport === "strength" || sport === "other") return null;
+  const raw = sport === "bike" ? a?.icu_zone_times : a?.pace_zone_times;
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const secs = raw.map((z) => Number(typeof z === "object" && z !== null ? z.secs : z) || 0);
+  const [midFrom, hardFrom] = secs.length >= 7 ? [2, 4] : [2, 3];
+  const out = { easy: 0, mid: 0, hard: 0 };
+  secs.forEach((s, i) => { out[i < midFrom ? "easy" : i < hardFrom ? "mid" : "hard"] += s; });
+  return out.easy + out.mid + out.hard > 0 ? out : null;
+}
 
 function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
@@ -174,10 +185,8 @@ function buildWeeks(todayIso, activities, events) {
     sp.load += load;
     sp.minutes += (num(a?.moving_time) ?? 0) / 60;
     sp.km += (num(a?.distance) ?? 0) / 1000;
-    // Intensitaet je Einheit (IF in % der Schwelle), zeitgewichtet; ohne IF zaehlt die Einheit nicht mit
-    const iff = num(a?.icu_intensity);
-    const mins = (num(a?.moving_time) ?? 0) / 60;
-    if (iff != null && iff > 0 && sportOf(a) !== "strength") w.intensity[iff < INTENSITY_EASY_MAX ? "easy" : iff < INTENSITY_MID_MAX ? "mid" : "hard"] += mins;
+    const zt = zoneBuckets(a);
+    if (zt) for (const k of Object.keys(zt)) w.intensity[k] += zt[k] / 60;
     w.load += load;
     if (isRun(a)) {
       w.km += (num(a?.distance) ?? 0) / 1000;

@@ -166,7 +166,7 @@ export function buildWidgetTraining(d, env = {}) {
   }));
   const tot = Object.fromEntries(TRI.map((k) => [k, recent.reduce((a, w) => a + w.bySport[k].minutes, 0)]));
   const sum = TRI.reduce((a, k) => a + tot[k], 0);
-  // Intensitaet der letzten 4 Wochen: Anteil der Trainingszeit je Einheiten-Intensitaet (locker, mittel, hart)
+  // Intensitaet der letzten 4 Wochen: Anteil der Trainingszeit nach Zonen (locker, mittel, hart)
   const INT = ["easy", "mid", "hard"];
   const itot = Object.fromEntries(INT.map((k) => [k, recent.reduce((a, w) => a + (w.intensity?.[k] ?? 0), 0)]));
   const isum = INT.reduce((a, k) => a + itot[k], 0);

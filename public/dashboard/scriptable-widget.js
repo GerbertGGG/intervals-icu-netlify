@@ -874,7 +874,7 @@ function buildTraining(res) {
     sc.addSpacer(3);
     const im = sc.addImage(splitImage(W - 22, 16, sp.share, sp.target)); im.imageSize = new Size(W - 22, 16);
   } else text(sc, "Noch keine abgeschlossene Woche mit Training.", FS.xs, { color: COL.muted });
-  // Intensitaet: Anteil der Zeit nach Einheiten-Intensitaet (IF unter 75 locker, bis 90 mittel, darueber hart)
+  // Intensitaet: Anteil der Zeit nach Zonen (Z1-Z2 locker, Z3 mittel, Z4-Z5 hart)
   if (d.intensity) {
     sc.addSpacer(5);
     const it = d.intensity;
