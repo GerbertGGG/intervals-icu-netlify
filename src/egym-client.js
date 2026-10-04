@@ -11,12 +11,21 @@ const SESSION_KV_KEY = "egym:session";
 // Die Sitzung (Cookie) wird wiederverwendet; bei 401/403 gibt es einen neuen Login.
 const SESSION_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
-const HEADERS_BASE = {
-  "x-np-user-agent": "clientType=MOBILE_DEVICE; devicePlatform=IOS; deviceUid=intervals-worker; applicationName=NetpulseFitness; applicationVersion=3.11",
-  "user-agent": "NetpulseFitness/3.11",
-  "x-np-app-version": "3.11",
-  Accept: "application/json",
+// Header wie die aktuelle EGYM-Fitness-App (iOS), siehe python-egym; die alte Kennung (NetpulseFitness 3.11) lehnt der Server teils mit 403 ab.
+const APP_VERSION = "3.91";
+const APP_BUILD = "1190";
+const deviceUid = (env) => {
+  const h = [...String(env.EGYM_USERNAME)].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16).padStart(8, "0");
+  return `${h}-0000-4000-8000-${h}0000`.toUpperCase().slice(0, 36);
 };
+const headersFor = (env) => ({
+  Accept: "application/json,text/plain",
+  "Accept-Language": "de-DE",
+  "X-NP-API-Version": "1.5",
+  "X-NP-APP-Version": APP_VERSION,
+  "X-NP-User-Agent": `clientType=MOBILE_DEVICE; devicePlatform=IOS; deviceUid=${deviceUid(env)}; applicationName=EGYM Fitness; applicationVersion=${APP_VERSION}; applicationVersionCode=${APP_BUILD}; containerName=NetpulseFitness;`,
+  "User-Agent": `NetpulseFitness/${APP_VERSION} (com.netpulse.netpulsefitness; build:${APP_BUILD}; iOS 17.0.0) Alamofire/5.9.1`,
+});
 
 export function hasEgymCredentials(env) {
   return Boolean(env?.EGYM_BRAND && env?.EGYM_USERNAME && env?.EGYM_PASSWORD);
@@ -27,10 +36,11 @@ const baseUrl = (env) => `https://${String(env.EGYM_BRAND).trim().toLowerCase()}
 async function login(env) {
   const r = await fetch(`${baseUrl(env)}/np/exerciser/login`, {
     method: "POST",
-    headers: { ...HEADERS_BASE, "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ username: String(env.EGYM_USERNAME), password: String(env.EGYM_PASSWORD), relogin: "false" }),
+    headers: { ...headersFor(env), "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+    body: new URLSearchParams({ username: String(env.EGYM_USERNAME), password: String(env.EGYM_PASSWORD) }),
   });
-  if (!r.ok) throw new Error(`egym login ${r.status}`);
+  // Antworttext (gekuerzt) und Host mitgeben, damit ein 403 (falsche Kennung, Sperre, falsches Passwort) unterscheidbar ist; Zugangsdaten stehen nie darin.
+  if (!r.ok) throw new Error(`egym login ${r.status} bei ${new URL(baseUrl(env)).host}: ${(await r.text()).replace(/\s+/g, " ").slice(0, 200)}`);
   const body = await r.json();
   const cookies = typeof r.headers.getSetCookie === "function" ? r.headers.getSetCookie() : [r.headers.get("set-cookie") ?? ""];
   const cookie = cookies.map((c) => c.split(";", 1)[0]).filter(Boolean).join("; ");
@@ -51,7 +61,7 @@ async function getSession(env, force = false) {
 async function egymGet(env, buildUrl) {
   for (const force of [false, true]) {
     const session = await getSession(env, force);
-    const r = await fetch(buildUrl(session.uuid), { headers: { ...HEADERS_BASE, Cookie: session.cookie } });
+    const r = await fetch(buildUrl(session.uuid), { headers: { ...headersFor(env), Cookie: session.cookie } });
     if ((r.status === 401 || r.status === 403) && !force) continue;
     if (!r.ok) throw new Error(`egym GET ${r.status}: ${(await r.text()).slice(0, 300)}`);
     return r.json();
