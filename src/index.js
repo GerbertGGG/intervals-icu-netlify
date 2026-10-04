@@ -1,217 +1,81 @@
-import { isoDate, isMondayIso } from "./date-utils.js";
-import { handleSyncRequest, handleBackfillProfileRequest, handleWeeklyProgressRequest, handleGoalRequest, handleStatusRequest, handleRecentFormAnalysisRequest, handleReportEmailRequest, withWorkerErrorBoundary } from "./request-handlers.js";
-import { syncRange } from "./sync.js";
-import { buildWeeklyProgressReport } from "./weekly-progress.js";
-import { buildRecentFormAnalysis } from "./form-analysis.js";
-import { recordSyncSuccess, recordSyncError } from "./sync-status.js";
-import { writeDailyRecoveryNote } from "./recovery-note.js";
-import { sendRecentFormReportEmail } from "./email.js";
+import { isoDate } from "./date-utils.js";
+import { json } from "./http-helpers.js";
+import { syncYazioRange } from "./yazio-sync.js";
 import { handleAuthorizeRequest, handleTokenRequest, handleAuthServerMetadata, handleProtectedResourceMetadata } from "./mcp-oauth.js";
 import { handleMcpRequest } from "./mcp-server.js";
-import { isIntervalsEnabled } from "./kv.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest } from "./widget.js";
-import { handleEgymDebugRequest } from "./egym-debug.js";
 
-function getBerlinHourFromScheduledEvent(event) {
+async function withWorkerErrorBoundary(fn) {
+  try {
+    return await fn();
+  } catch (e) {
+    return json({ ok: false, error: "Worker exception", message: String(e?.message ?? e) }, 500);
+  }
+}
+
+function berlinHour(event) {
   const t = Number(event?.scheduledTime);
   if (!Number.isFinite(t)) return null;
-  const hour = Number(
-    new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" }).format(new Date(t)),
-  );
-  return Number.isFinite(hour) ? hour : null;
-}
-
-function getBerlinMinuteFromScheduledEvent(event) {
-  const t = Number(event?.scheduledTime);
-  if (!Number.isFinite(t)) return null;
-  const minute = Number(
-    new Intl.DateTimeFormat("en-GB", { minute: "2-digit", hour12: false, timeZone: "Europe/Berlin" }).format(new Date(t)),
-  );
-  return Number.isFinite(minute) ? minute : null;
-}
-
-function isScheduledWindowBerlin(event) {
-  const hour = getBerlinHourFromScheduledEvent(event);
-  return Number.isFinite(hour) && hour >= 7 && hour <= 21;
-}
-
-// Yazio is synced on every cron tick (15 min) between 07:00 and 23:59 Berlin, so the
-// diary can be followed over the day. The extra ":58" cron entry ("58 21-22 * * *")
-// fires at :58 past both UTC 21 and 22 to cover the CEST/CET boundary; the one landing
-// on 23:58 Berlin time is the end-of-day sync that captures the day's final totals
-// (the 15-min grid itself stops at 23:45), so DST transitions don't need a cron swap.
-function isYazioWindowBerlin(event) {
-  const hour = getBerlinHourFromScheduledEvent(event);
-  return Number.isFinite(hour) && hour >= 7 && hour <= 23;
-}
-
-// The Intervals.icu sync keeps its 30-min rhythm; with a 15-min cron that is every
-// second tick (:00/:30).
-function isIntervalsTickBerlin(event) {
-  const minute = getBerlinMinuteFromScheduledEvent(event);
-  return minute === 0 || minute === 30;
+  return Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" }).format(new Date(t)));
 }
 
 export default {
-  async fetch(req, env, ctx) {
+  async fetch(req, env) {
     const url = new URL(req.url);
+    const route = (fn) => withWorkerErrorBoundary(fn);
 
-    if (url.pathname === "/") return new Response("ok");
-
-    if (url.pathname === "/sync") {
-      return handleSyncRequest(url, env, ctx, { syncRange });
+    switch (url.pathname) {
+      case "/":
+        return new Response("ok");
+      // Daten fuer public/dashboard (Token-geschuetzt, siehe dashboard.js).
+      case "/api/dashboard":
+        return route(() => handleDashboardRequest(req, env));
+      // Kompakte Daten fuer das iOS-Widget (Scriptable), siehe widget.js.
+      case "/api/widget":
+        return route(() => handleWidgetRequest(req, env));
+      // Runalyze-Snapshot und Studien-Check, geschrieben aus einer Coaching-Sitzung.
+      case "/api/runalyze":
+        return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
+      case "/api/studie":
+        return route(() => handleStudieRequest(req, env, isAuthorized));
+      // MCP-Connector (mcp-oauth.js, mcp-server.js): Claude liest Intervals/Yazio und schreibt die Snapshots.
+      case "/.well-known/oauth-authorization-server":
+        return handleAuthServerMetadata(url);
+      case "/.well-known/oauth-protected-resource":
+        return handleProtectedResourceMetadata(url);
+      case "/authorize":
+        return route(() => handleAuthorizeRequest(req, url, env));
+      case "/token":
+        return route(() => handleTokenRequest(req, env));
+      case "/mcp":
+        return route(() => handleMcpRequest(req, url, env));
+      default:
+        return new Response("Not found", { status: 404 });
     }
-
-    if (url.pathname === "/backfill-profile") {
-      return withWorkerErrorBoundary(() => handleBackfillProfileRequest(url, env, ctx, { syncRange }));
-    }
-
-    if (url.pathname === "/weekly-progress") {
-      return withWorkerErrorBoundary(() => handleWeeklyProgressRequest(url, env, ctx, { buildWeeklyProgressReport }));
-    }
-
-    if (url.pathname === "/goal") {
-      return withWorkerErrorBoundary(() => handleGoalRequest(req, url, env, ctx));
-    }
-
-    if (url.pathname === "/status") {
-      return withWorkerErrorBoundary(() => handleStatusRequest(url, env, ctx));
-    }
-
-    if (url.pathname === "/api/analysis/recent-form") {
-      return withWorkerErrorBoundary(() => handleRecentFormAnalysisRequest(url, env, ctx, { buildRecentFormAnalysis }));
-    }
-
-    // Read-only Daten für public/dashboard (Token-geschützt, siehe src/dashboard.js).
-    if (url.pathname === "/api/dashboard") {
-      return withWorkerErrorBoundary(() => handleDashboardRequest(req, env));
-    }
-
-    // Runalyze-Snapshot (Prognose + Rennen) aus einer Sitzung mit Runalyze-MCP, siehe src/runalyze-snapshot.js.
-    if (url.pathname === "/api/runalyze") {
-      return withWorkerErrorBoundary(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
-    }
-
-    // Kompakte Daten für das iOS-Widget (Scriptable), siehe src/widget.js.
-    if (url.pathname === "/api/widget") {
-      return withWorkerErrorBoundary(() => handleWidgetRequest(req, env));
-    }
-
-    // Rohdaten der EGYM-Anbindung (Token-geschützt), siehe src/egym-debug.js.
-    if (url.pathname === "/api/egym-debug") {
-      return withWorkerErrorBoundary(() => handleEgymDebugRequest(req, env));
-    }
-
-    // Studien-Check der Woche aus dem Coaching-Bericht, siehe src/studie-snapshot.js.
-    if (url.pathname === "/api/studie") {
-      return withWorkerErrorBoundary(() => handleStudieRequest(req, env, isAuthorized));
-    }
-
-    if (url.pathname === "/report-email") {
-      return withWorkerErrorBoundary(() => handleReportEmailRequest(url, env, ctx, { sendRecentFormReportEmail }));
-    }
-
-    // MCP custom connector (see src/mcp-oauth.js, src/mcp-server.js): lets a Claude
-    // chat read planned workouts / activities / wellness from Intervals.icu and the
-    // nutrition diary from Yazio.
-    if (url.pathname === "/.well-known/oauth-authorization-server") {
-      return handleAuthServerMetadata(url);
-    }
-
-    if (url.pathname === "/.well-known/oauth-protected-resource") {
-      return handleProtectedResourceMetadata(url);
-    }
-
-    if (url.pathname === "/authorize") {
-      return withWorkerErrorBoundary(() => handleAuthorizeRequest(req, url, env));
-    }
-
-    if (url.pathname === "/token") {
-      return withWorkerErrorBoundary(() => handleTokenRequest(req, env));
-    }
-
-    if (url.pathname === "/mcp") {
-      return withWorkerErrorBoundary(() => handleMcpRequest(req, url, env));
-    }
-
-    return new Response("Not found", { status: 404 });
   },
 
   async scheduled(event, env, ctx) {
-    // Runalyze-/Studien-Snapshots, die der Coaching-Task per GitHub-Branch liefert (siehe github-snapshot.js).
-    // Danach den Tageseintrag im Halbmarathon-Zeitverlauf festhalten (siehe runalyze-history.js).
+    // Runalyze-/Studien-Snapshots, die der Coaching-Task per GitHub-Branch liefert, danach der Tageseintrag im Zeitverlauf.
     ctx.waitUntil(
       syncSnapshotsFromGithub(env)
         .then(() => recordRunalyzeHistory(env))
-        .catch((e) => console.error("runalyze history failed", String(e?.message ?? e))),
+        .catch((e) => console.error("snapshot sync failed", String(e?.message ?? e))),
     );
 
-    if (isYazioWindowBerlin(event)) {
-      const yazioDay = isoDate(new Date());
-      // Morning ticks (07:xx) also re-sync yesterday: entries added after the 23:58 run get picked up.
-      const yazioFrom = getBerlinHourFromScheduledEvent(event) === 7 ? isoDate(new Date(Date.now() - 86400000)) : yazioDay;
-      ctx.waitUntil(
-        syncRange(env, yazioFrom, yazioDay, true, false, { includeYazio: true }).catch((e) => {
-          console.error("yazio sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
-      );
-    }
-
-    // Cron fires every 15 min, but the Intervals.icu part only runs every 30 min and
-    // only 07:00–21:00 Berlin time.
-    if (!isIntervalsTickBerlin(event) || !isScheduledWindowBerlin(event)) return;
-
+    // Yazio alle 15 Minuten von 07:00 bis 23:59 Berlin (der Eintrag "58 21-22" in wrangler.toml
+    // liefert den Tagesabschluss um 23:58, unabhaengig von Sommer-/Winterzeit).
+    const hour = berlinHour(event);
+    if (!Number.isFinite(hour) || hour < 7 || hour > 23) return;
     const today = isoDate(new Date());
-    const berlinHour = getBerlinHourFromScheduledEvent(event);
-    const berlinMinute = getBerlinMinuteFromScheduledEvent(event);
-    const isFirstRunOfDay = berlinHour === 7 && berlinMinute !== null && berlinMinute < 30;
-    // Re-sync the last 2 days on every tick (not just the first run of the day), so a
-    // "#novdot" tag added retroactively to yesterday's or the day-before's training is
-    // picked up within the next 30-minute cycle instead of only at tomorrow's 07:00 run.
-    const oldest = isoDate(new Date(Date.now() - 2 * 86400000));
-
-    // Intervals.icu-Sync (und die davon abhängigen Auswertungen unten) ist über
-    // INTERVALS_ENABLED bewusst deaktiviert - siehe isIntervalsEnabled in kv.js.
-    if (isIntervalsEnabled(env)) {
-      ctx.waitUntil(
-        syncRange(env, oldest, today, true, false, {})
-          .then(() => recordSyncSuccess(env))
-          .catch((e) => {
-            console.error("scheduled sync failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-            return recordSyncError(env, e?.message ?? String(e));
-          }),
-      );
-    }
-
-    if (isFirstRunOfDay && isMondayIso(today)) {
-      if (isIntervalsEnabled(env)) {
-        ctx.waitUntil(
-          buildWeeklyProgressReport(env, today, { write: true }).catch((e) => {
-            console.error("weekly progress job failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-          }),
-        );
-      }
-
-      // Independent of the weekly progress note above: mail the raw recent-form
-      // JSON for manual analysis. A failure here must never block the report.
-      ctx.waitUntil(
-        sendRecentFormReportEmail(env, today).catch((e) => {
-          console.error("recent-form report email failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
-      );
-    }
-
-    if (isFirstRunOfDay && isIntervalsEnabled(env)) {
-      ctx.waitUntil(
-        writeDailyRecoveryNote(env, today).catch((e) => {
-          console.error("daily recovery note failed", { athlete: env?.ATHLETE_ID, error: String(e?.message ?? e) });
-        }),
-      );
-    }
+    // Der erste Tick des Tages holt auch gestern nach (Eintraege nach dem 23:58-Lauf).
+    const from = hour === 7 ? isoDate(new Date(Date.now() - 86400000)) : today;
+    ctx.waitUntil(
+      syncYazioRange(env, from, today).catch((e) => console.error("yazio sync failed", String(e?.message ?? e))),
+    );
   },
 };

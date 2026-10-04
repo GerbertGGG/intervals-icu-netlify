@@ -5,7 +5,7 @@ import { readRunalyzeSnapshot } from "./runalyze-snapshot.js";
 // Verlauf der Halbmarathon-Zeit: Das Dashboard kennt vom Runalyze-Snapshot nur den neuesten Stand.
 // Fuer "wie sinkt meine Zeit von Woche zu Woche" wird je Tag ein Eintrag aus dem Snapshot festgehalten
 // (VDOT-Rechnung nach Daniels und Runalyze-Prognose), ein neuer Snapshot am selben Tag ersetzt den alten.
-export const RUNALYZE_HISTORY_KV_KEY = "dashboard:runalyze-history";
+const RUNALYZE_HISTORY_KV_KEY = "dashboard:runalyze-history";
 const MAX_ENTRIES = 400;
 const HM_KM = 21.0975;
 

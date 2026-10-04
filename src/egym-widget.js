@@ -272,7 +272,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
 
 // EGYM-Abrufe sind langsam (Login, drei Endpunkte): das Ergebnis liegt kurz in KV
 const CACHE_KEY = "widget:egym-kraft";
-export const KRAFT_CACHE_MS = 15 * 60 * 1000;
+const KRAFT_CACHE_MS = 15 * 60 * 1000;
 
 export async function loadWidgetKraft(env, fresh = false) {
   const today = isoDateBerlin();

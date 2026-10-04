@@ -44,14 +44,14 @@ async function discoverJson(env, path, params) {
 }
 
 // Branding.plist ist XML oder binaer; in beiden Faellen liegt die Adresse als Klartext-String vor.
-export function backendFromPlist(text) {
+function backendFromPlist(text) {
   const xml = text.match(/<key>NGBackendAddressKey<\/key>\s*<string>([^<]+)<\/string>/);
   if (xml) return xml[1].trim();
   const urls = [...text.matchAll(/https:\/\/[A-Za-z0-9.-]+\.(?:netpulse|egym)\.com[A-Za-z0-9._~:/?#@!$&'()*+,;=%-]*/g)].map((m) => m[0]);
   return urls.find((u) => /netpulse\.com/.test(u) && !/one\.netpulse\.com/.test(u)) ?? null;
 }
 
-export async function discoverBase(env) {
+async function discoverBase(env) {
   const user = await discoverJson(env, "/np/egym/v1.0/users", { email: String(env.EGYM_USERNAME) });
   const c = user?.containerData ?? {};
   if (!c.brandIdentifier || !c.resourceType) throw new Error("egym discovery: keine Marke zu dieser E-Mail gefunden");
