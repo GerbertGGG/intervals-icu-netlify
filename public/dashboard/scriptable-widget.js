@@ -237,8 +237,27 @@ function progressBar(w, IW, ratio, hex, alpha = 1) {
 }
 
 // Mini-Kurve ueber die Breite: Luecken (null) bleiben offen, Punkt am Ende
-function sparkImage(w, h, values, hex, { dot = false } = {}) {
+function sparkImage(w, h, values, hex, { dot = false, second = null } = {}) {
   const dc = newCtx(w, h), pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+  // Zweite Kurve (z. B. TSB) mit eigener Skala, blasser und duenner hinter der Hauptkurve
+  if (second && second.hex) {
+    const sp = second.values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+    if (sp.length >= 2) {
+      const sv = sp.map(([, v]) => v), slo = Math.min(...sv), shi = Math.max(...sv), sspan = shi - slo || 1, spad = 4;
+      const SX = (i) => spad + (i / (second.values.length - 1)) * (w - 2 * spad), SY = (v) => h - spad - ((v - slo) / sspan) * (h - 2 * spad);
+      const sPath = new Path();
+      let sPen = false;
+      for (const [i, v] of sp) {
+        const pt = new Point(SX(i), SY(v));
+        if (sPen && second.values[i - 1] != null) sPath.addLine(pt); else sPath.move(pt);
+        sPen = true;
+      }
+      dc.addPath(sPath);
+      dc.setStrokeColor(new Color(second.hex, 0.85));
+      dc.setLineWidth(1.6);
+      dc.strokePath();
+    }
+  }
   if (pts.length < 2) {
     // Zu wenig Werte: nur eine blasse Grundlinie (ein leerer DrawContext liefert in Scriptable kein Bild, sondern null)
     dc.setFillColor(new Color(NEUTRAL_HEX, 0.3));
@@ -675,9 +694,12 @@ function buildFitness(res) {
   row.addSpacer();
   if (f.delta != null) chip(row, signed(f.delta), f.delta > 0 ? ZONE_RGB.ok : f.delta < 0 ? ZONE_RGB.warn : ZONE_RGB.none, FS.md, f.delta > 0 ? COL.ok : f.delta < 0 ? COL.warn : COL.muted);
   w.addSpacer(4);
-  const im = w.addImage(sparkImage(IW, 44, f.weekly, ACCENT_HEX, { dot: true })); im.imageSize = new Size(IW, 44);
+  const im = w.addImage(sparkImage(IW, 44, f.weekly, ACCENT_HEX, { dot: true, second: { values: f.tsbWeekly || [], hex: NEUTRAL_HEX } })); im.imageSize = new Size(IW, 44);
   w.addSpacer();
-  text(w, `${f.deltaWeeks || 6} Wochen`, FS.sm, { color: COL.muted });
+  const foot = w.addStack(); foot.centerAlignContent();
+  text(foot, `${f.deltaWeeks || 6} Wochen`, FS.sm, { color: COL.muted });
+  foot.addSpacer();
+  if (f.tsb != null) text(foot, `TSB ${signed(f.tsb)}`, FS.sm, { bold: true, color: COL.muted, minScale: 0.7 });
   notice(w, res, d);
   return w;
 }

@@ -212,6 +212,8 @@ assert.equal(sm.food.goals, null); // ohne Yazio-Zugang keine Ziele, nichts erfu
 assert.deepEqual(buildWidgetSmall(d, { kcal: 2100, proteinG: 120, carbsG: 250, fatG: 70 }).food.goals.proteinG, 120);
 assert.equal(sm.fitness.weekly.length, 7); // Fitness (CTL): ein Punkt je Woche
 assert.equal(sm.fitness.ctl, sm.fitness.weekly[6]);
+assert.equal(sm.fitness.tsbWeekly.length, 7); // TSB-Verlauf an denselben Wochenpunkten
+assert.equal(sm.fitness.tsb, sm.fitness.tsbWeekly[6]);
 assert.equal("cravings" in sm, false);
 assert.ok(sm.fitness.delta == null || sm.fitness.deltaWeeks >= 1);
 assert.ok(JSON.stringify(sm).length < 3000);

@@ -206,7 +206,12 @@ function buildFitness(d, byDate) {
   weekly[6] = now != null ? Math.round(now * 10) / 10 : weekly[6];
   const from = weekly.slice(0, 6).findIndex((v) => v != null);
   const ok = from >= 0 && weekly[6] != null;
-  return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly };
+  // TSB (Form) = CTL - ATL an denselben Wochenpunkten; heute aus dem juengsten Tag mit beiden Werten
+  const tsbOf = (w) => (w?.ctl != null && w?.atl != null ? Math.round((w.ctl - w.atl) * 10) / 10 : null);
+  const tsbWeekly = Array.from({ length: 7 }, (_, i) => tsbOf(byDate[addDays(d.today, -42 + i * 7)]));
+  const latest = [...d.wellness].reverse().find((w) => w.date <= d.today && tsbOf(w) != null);
+  if (latest) tsbWeekly[6] = tsbOf(latest);
+  return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly, tsb: tsbWeekly[6], tsbWeekly };
 }
 
 export function buildWidgetSmall(d, goals = null) {
