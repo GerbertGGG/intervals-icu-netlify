@@ -569,6 +569,23 @@ function formImage(w, h, form, zones) {
   return dc.getImage();
 }
 
+// Wochen-TSS als Saeulen (aelteste links); laufende Woche in Akzentfarbe, Luecken nur als kurzer Strich, optional Ziellinie
+function tssImage(w, h, weeks) {
+  const dc = newCtx(w, h), n = weeks.length;
+  const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
+  const max = Math.max(50, ...vals), slot = w / n, bw = slot * 0.62;
+  weeks.forEach((k, i) => {
+    const cur = i === n - 1, x = i * slot + (slot - bw) / 2;
+    if (k.tss == null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, h - 2, bw, 1.5)); return; }
+    const bh = Math.max(2, (k.tss / max) * (h - 2));
+    dc.setFillColor(cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.55));
+    dc.fillRect(new Rect(x, h - bh, bw, bh));
+  });
+  const goal = weeks[n - 1]?.goal;
+  if (goal != null) { dc.setFillColor(new Color(ZONE_RGB.ok, 0.9)); dc.fillRect(new Rect((n - 1) * slot, h - (goal / max) * (h - 2) - 0.5, slot, 1)); }
+  return dc.getImage();
+}
+
 // Links die Form der letzten 28 Tage, rechts die Zeiten gegen das Ziel, unten Paces und Schwellen
 function buildMedium(res) {
   const d = res.data;
@@ -588,6 +605,17 @@ function buildMedium(res) {
   text(nums, `CTL ${fmt(L.ctl, 1)}`, FS.xs, { bold: true, color: COL.accent });
   nums.addSpacer();
   text(nums, `TSB ${signed(L.tsb, 1)}`, FS.xs, { bold: true, color: colorFor(L.tsbCls) });
+  // Wochen-TSS der letzten 6 Wochen
+  const tw = d.tssWeeks || [];
+  if (tw.some((k) => k.tss != null)) {
+    fc.addSpacer(3);
+    const cur = tw[tw.length - 1], th = fc.addStack(); th.centerAlignContent();
+    text(th, "TSS · 6 WOCHEN", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+    th.addSpacer();
+    if (cur.tss != null) text(th, `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""}`, FS.xs, { bold: true, color: COL.text, minScale: 0.7 });
+    fc.addSpacer(1);
+    const ti = fc.addImage(tssImage(LW - 22, 22, tw)); ti.imageSize = new Size(LW - 22, 22);
+  }
 
   // Rechts: Zeiten gegen das Ziel
   const rc = card(row, RW, 7), goal = d.goal.targetTimeSecs;

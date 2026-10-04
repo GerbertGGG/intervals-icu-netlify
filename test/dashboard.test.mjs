@@ -183,6 +183,9 @@ assert.equal((await handleWidgetRequest(new Request("https://x/api/widget"), env
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { headers: { authorization: "Bearer geheim" } }), env)).status, 200);
 // Detail-Ansicht des Widgets
 const det = buildWidgetDetail(d);
+assert.ok(det.tssWeeks.length >= 1 && det.tssWeeks.length <= 6); // Wochen-TSS, aelteste zuerst
+assert.equal(det.tssWeeks[det.tssWeeks.length - 1].weekStart, d.weeks[d.weeks.length - 1].weekStart);
+assert.ok(det.tssWeeks.every((k) => k.tss == null || k.tss >= 0));
 assert.equal(det.form.length, 28);
 assert.equal(det.form.at(-1).date, today);
 assert.equal("cravings" in det || "nutrition" in det, false); // Heisshunger und Ernaehrung verlassen den Worker hier nicht
