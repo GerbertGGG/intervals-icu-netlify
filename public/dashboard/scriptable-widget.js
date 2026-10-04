@@ -7,7 +7,7 @@
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
 //     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum, Wochenlast, die naechsten drei Tage.
-//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form und Halbmarathon-Zeiten, VDOT, Paces;
+//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form, Wochen-TSS und Halbmarathon-Zeiten, Schwellen;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
@@ -237,8 +237,27 @@ function progressBar(w, IW, ratio, hex, alpha = 1) {
 }
 
 // Mini-Kurve ueber die Breite: Luecken (null) bleiben offen, Punkt am Ende
-function sparkImage(w, h, values, hex, { dot = false } = {}) {
+function sparkImage(w, h, values, hex, { dot = false, second = null } = {}) {
   const dc = newCtx(w, h), pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+  // Zweite Kurve (z. B. TSB) mit eigener Skala, blasser und duenner hinter der Hauptkurve
+  if (second && second.hex) {
+    const sp = second.values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+    if (sp.length >= 2) {
+      const sv = sp.map(([, v]) => v), slo = Math.min(...sv), shi = Math.max(...sv), sspan = shi - slo || 1, spad = 4;
+      const SX = (i) => spad + (i / (second.values.length - 1)) * (w - 2 * spad), SY = (v) => h - spad - ((v - slo) / sspan) * (h - 2 * spad);
+      const sPath = new Path();
+      let sPen = false;
+      for (const [i, v] of sp) {
+        const pt = new Point(SX(i), SY(v));
+        if (sPen && second.values[i - 1] != null) sPath.addLine(pt); else sPath.move(pt);
+        sPen = true;
+      }
+      dc.addPath(sPath);
+      dc.setStrokeColor(new Color(second.hex, 0.85));
+      dc.setLineWidth(1.6);
+      dc.strokePath();
+    }
+  }
   if (pts.length < 2) {
     // Zu wenig Werte: nur eine blasse Grundlinie (ein leerer DrawContext liefert in Scriptable kein Bild, sondern null)
     dc.setFillColor(new Color(NEUTRAL_HEX, 0.3));
@@ -550,6 +569,23 @@ function formImage(w, h, form, zones) {
   return dc.getImage();
 }
 
+// Wochen-TSS als Saeulen (aelteste links); laufende Woche in Akzentfarbe, Luecken nur als kurzer Strich, optional Ziellinie
+function tssImage(w, h, weeks) {
+  const dc = newCtx(w, h), n = weeks.length;
+  const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
+  const max = Math.max(50, ...vals), slot = w / n, bw = slot * 0.62;
+  weeks.forEach((k, i) => {
+    const cur = i === n - 1, x = i * slot + (slot - bw) / 2;
+    if (k.tss == null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, h - 2, bw, 1.5)); return; }
+    const bh = Math.max(2, (k.tss / max) * (h - 2));
+    dc.setFillColor(cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.55));
+    dc.fillRect(new Rect(x, h - bh, bw, bh));
+  });
+  const goal = weeks[n - 1]?.goal;
+  if (goal != null) { dc.setFillColor(new Color(ZONE_RGB.ok, 0.9)); dc.fillRect(new Rect((n - 1) * slot, h - (goal / max) * (h - 2) - 0.5, slot, 1)); }
+  return dc.getImage();
+}
+
 // Links die Form der letzten 28 Tage, rechts die Zeiten gegen das Ziel, unten Paces und Schwellen
 function buildMedium(res) {
   const d = res.data;
@@ -562,13 +598,24 @@ function buildMedium(res) {
   const L = d.load, fc = card(row, LW, 7);
   text(fc, "FORM · 28 TAGE", FS.xs, { bold: true, color: COL.muted });
   fc.addSpacer(2);
-  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 46, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 46); }
+  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 54, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 54); }
   else text(fc, "Keine CTL/ATL-Werte", FS.xs, { color: COL.muted });
   fc.addSpacer(2);
   const nums = fc.addStack(); nums.centerAlignContent();
   text(nums, `CTL ${fmt(L.ctl, 1)}`, FS.xs, { bold: true, color: COL.accent });
   nums.addSpacer();
   text(nums, `TSB ${signed(L.tsb, 1)}`, FS.xs, { bold: true, color: colorFor(L.tsbCls) });
+  // Wochen-TSS der letzten 6 Wochen
+  const tw = d.tssWeeks || [];
+  if (tw.some((k) => k.tss != null)) {
+    fc.addSpacer(3);
+    const cur = tw[tw.length - 1], th = fc.addStack(); th.centerAlignContent();
+    text(th, "TSS · 6 WOCHEN", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+    th.addSpacer();
+    if (cur.tss != null) text(th, `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""}`, FS.xs, { bold: true, color: COL.text, minScale: 0.7 });
+    fc.addSpacer(1);
+    const ti = fc.addImage(tssImage(LW - 22, 32, tw)); ti.imageSize = new Size(LW - 22, 32);
+  }
 
   // Rechts: Zeiten gegen das Ziel
   const rc = card(row, RW, 7), goal = d.goal.targetTimeSecs;
@@ -586,19 +633,23 @@ function buildMedium(res) {
   };
   if (goal) line("Ziel", goal, true, COL.accent);
   if (d.hm && d.hm.estimates.length) {
-    // Zwei Vergleichswerte: Runalyze-Prognose und VDOT-Rechnung (sonst die schnellste Bestzeit-Rechnung)
+    // Zwei Vergleichswerte: Runalyze-Prognose und die schnellste Bestzeit-Rechnung (VDOT hat ein eigenes Widget)
     const est = d.hm.estimates, best = est.filter((e) => e.key.startsWith("best-")).sort((a, b) => a.seconds - b.seconds)[0];
-    const prog = est.find((e) => e.kind === "prognosis"), vd = est.find((e) => e.key === "vdot");
-    for (const e of [prog, vd || best].filter(Boolean)) line(e.kind === "prognosis" ? "Runalyze" : e.key === "vdot" ? "VDOT" : e.label.replace("aus ", "").replace("-Bestzeit", ""), e.seconds, false);
-    text(rc, "nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
+    const prog = est.find((e) => e.kind === "prognosis");
+    for (const e of [prog, best].filter(Boolean)) line(e.kind === "prognosis" ? "Runalyze" : e.label.replace("aus ", "").replace("-Bestzeit", ""), e.seconds, false);
+    if (best) text(rc, "nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
   } else text(rc, "Kein Runalyze-Snapshot", FS.xs, { color: COL.muted, lines: 2 });
+  if (goal && d.goal.runKm) {
+    rc.addSpacer(3);
+    const gp = rc.addStack(); gp.centerAlignContent();
+    text(gp, "Zielpace", FS.xs, { color: COL.muted });
+    gp.addSpacer();
+    text(gp, `${fmtPace(goal / d.goal.runKm)}/km`, FS.sm, { bold: true, color: COL.accent });
+  }
   w.addSpacer(5);
 
-  // Unten: VDOT und Paces, Schwellen
+  // Unten: Schwellen
   const bc = card(w, W, 6), T = d.thresholds;
-  const pz = d.vdot && d.vdot.paces ? Object.fromEntries(d.vdot.paces.map((p) => [p.key, p.pace.replace("/km", "")])) : null;
-  const goalPace = goal && d.goal.runKm ? ` · Ziel ${fmtPace(goal / d.goal.runKm)}` : "";
-  text(bc, pz ? `VDOT ${fmt(d.vdot.value, 1)} · Easy ${pz.easy} · Marathon ${pz.marathon} · Schwelle ${pz.threshold}${goalPace}` : "VDOT und Paces: kein Runalyze-Snapshot", FS.xs);
   text(bc, `Lauf ${T.run.thresholdPaceSecPerKm ? fmtPace(T.run.thresholdPaceSecPerKm) + "/km" : MISSING} · FTP ${T.bike.ftp ? T.bike.ftp + " W" : MISSING} · Schwimmen ${T.swim.thresholdPaceSecPer100m ? fmtPace(T.swim.thresholdPaceSecPer100m) + "/100 m" : MISSING}`, FS.xs);
   notice(w, res, d);
   return w;
@@ -675,9 +726,12 @@ function buildFitness(res) {
   row.addSpacer();
   if (f.delta != null) chip(row, signed(f.delta), f.delta > 0 ? ZONE_RGB.ok : f.delta < 0 ? ZONE_RGB.warn : ZONE_RGB.none, FS.md, f.delta > 0 ? COL.ok : f.delta < 0 ? COL.warn : COL.muted);
   w.addSpacer(4);
-  const im = w.addImage(sparkImage(IW, 44, f.weekly, ACCENT_HEX, { dot: true })); im.imageSize = new Size(IW, 44);
+  const im = w.addImage(sparkImage(IW, 44, f.weekly, ACCENT_HEX, { dot: true, second: { values: f.tsbWeekly || [], hex: NEUTRAL_HEX } })); im.imageSize = new Size(IW, 44);
   w.addSpacer();
-  text(w, `${f.deltaWeeks || 6} Wochen`, FS.sm, { color: COL.muted });
+  const foot = w.addStack(); foot.centerAlignContent();
+  text(foot, `${f.deltaWeeks || 6} Wochen`, FS.sm, { color: COL.muted });
+  foot.addSpacer();
+  if (f.tsb != null) text(foot, `TSB ${signed(f.tsb)}`, FS.sm, { bold: true, color: COL.muted, minScale: 0.7 });
   notice(w, res, d);
   return w;
 }

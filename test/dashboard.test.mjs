@@ -183,6 +183,9 @@ assert.equal((await handleWidgetRequest(new Request("https://x/api/widget"), env
 assert.equal((await handleWidgetRequest(new Request("https://x/api/widget", { headers: { authorization: "Bearer geheim" } }), env)).status, 200);
 // Detail-Ansicht des Widgets
 const det = buildWidgetDetail(d);
+assert.ok(det.tssWeeks.length >= 1 && det.tssWeeks.length <= 6); // Wochen-TSS, aelteste zuerst
+assert.equal(det.tssWeeks[det.tssWeeks.length - 1].weekStart, d.weeks[d.weeks.length - 1].weekStart);
+assert.ok(det.tssWeeks.every((k) => k.tss == null || k.tss >= 0));
 assert.equal(det.form.length, 28);
 assert.equal(det.form.at(-1).date, today);
 assert.equal("cravings" in det || "nutrition" in det, false); // Heisshunger und Ernaehrung verlassen den Worker hier nicht
@@ -212,6 +215,8 @@ assert.equal(sm.food.goals, null); // ohne Yazio-Zugang keine Ziele, nichts erfu
 assert.deepEqual(buildWidgetSmall(d, { kcal: 2100, proteinG: 120, carbsG: 250, fatG: 70 }).food.goals.proteinG, 120);
 assert.equal(sm.fitness.weekly.length, 7); // Fitness (CTL): ein Punkt je Woche
 assert.equal(sm.fitness.ctl, sm.fitness.weekly[6]);
+assert.equal(sm.fitness.tsbWeekly.length, 7); // TSB-Verlauf an denselben Wochenpunkten
+assert.equal(sm.fitness.tsb, sm.fitness.tsbWeekly[6]);
 assert.equal("cravings" in sm, false);
 assert.ok(sm.fitness.delta == null || sm.fitness.deltaWeeks >= 1);
 assert.ok(JSON.stringify(sm).length < 3000);

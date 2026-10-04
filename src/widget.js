@@ -84,8 +84,14 @@ export function buildWidget(d, env = {}) {
 
 // Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces und Schwellen.
 // Ernaehrung hat ein eigenes Widget (small), Heisshunger bleibt auf der Dashboard-Seite. Wieder ohne Freitexte.
-export function buildWidgetDetail(d) {
+export function buildWidgetDetail(d, env = {}) {
   const from28 = addDays(d.today, -27);
+  // Wochen-TSS (alle Sportarten) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig (complete: false).
+  // Ziel nur fuer die laufende Woche (Plan oder WEEKLY_TSS_GOAL); fehlende Wochen bleiben null, nie 0.
+  const tssWeeks = d.weeks.slice(-6).map((w, i, arr) => {
+    const hasData = Object.values(w.bySport).some((s) => s.count > 0);
+    return { weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, complete: w.complete, goal: i === arr.length - 1 ? weeklyGoal(w, env).goal : null };
+  });
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const form = Array.from({ length: 28 }, (_, i) => {
     const date = addDays(from28, i);
@@ -100,6 +106,7 @@ export function buildWidgetDetail(d) {
     load: d.summary.load,
     tsbZones: d.summary.thresholds.tsb,
     form,
+    tssWeeks,
     hm: r ? { goalSec: d.goal.targetTimeSecs, estimates: r.hmEstimates } : null,
     vdot: r ? { value: r.vdot, paces: r.paces, fetchedAt: r.fetchedAt } : null,
     thresholds: d.thresholds,
@@ -206,7 +213,12 @@ function buildFitness(d, byDate) {
   weekly[6] = now != null ? Math.round(now * 10) / 10 : weekly[6];
   const from = weekly.slice(0, 6).findIndex((v) => v != null);
   const ok = from >= 0 && weekly[6] != null;
-  return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly };
+  // TSB (Form) = CTL - ATL an denselben Wochenpunkten; heute aus dem juengsten Tag mit beiden Werten
+  const tsbOf = (w) => (w?.ctl != null && w?.atl != null ? Math.round((w.ctl - w.atl) * 10) / 10 : null);
+  const tsbWeekly = Array.from({ length: 7 }, (_, i) => tsbOf(byDate[addDays(d.today, -42 + i * 7)]));
+  const latest = [...d.wellness].reverse().find((w) => w.date <= d.today && tsbOf(w) != null);
+  if (latest) tsbWeekly[6] = tsbOf(latest);
+  return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly, tsb: tsbWeekly[6], tsbWeekly };
 }
 
 export function buildWidgetSmall(d, goals = null) {
@@ -264,6 +276,6 @@ export async function handleWidgetRequest(req, env) {
   const dashboard = await dashboardCached(env, params.get("fresh") === "1");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }
