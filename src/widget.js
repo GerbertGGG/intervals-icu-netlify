@@ -87,10 +87,10 @@ export function buildWidget(d, env = {}) {
 export function buildWidgetDetail(d, env = {}) {
   const from28 = addDays(d.today, -27);
   // Wochen-TSS (alle Sportarten) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig (complete: false).
-  // Ziel nur fuer die laufende Woche (Plan oder WEEKLY_TSS_GOAL); fehlende Wochen bleiben null, nie 0.
+  // Ziel je Woche aus dem Plan (Kalender); fuer die laufende Woche zusaetzlich WEEKLY_TSS_GOAL. Ohne Plan null, nie 0.
   const tssWeeks = d.weeks.slice(-6).map((w, i, arr) => {
     const hasData = Object.values(w.bySport).some((s) => s.count > 0);
-    return { weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, complete: w.complete, goal: i === arr.length - 1 ? weeklyGoal(w, env).goal : null };
+    return { weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, complete: w.complete, goal: i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 ? w.plannedLoad : null };
   });
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const form = Array.from({ length: 28 }, (_, i) => {

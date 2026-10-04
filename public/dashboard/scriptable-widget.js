@@ -7,7 +7,7 @@
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
 //     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum, Wochenlast, die naechsten drei Tage.
-//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Form, Wochen-TSS und Halbmarathon-Zeiten, Schwellen;
+//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, Schwellen;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
@@ -531,121 +531,44 @@ function buildWidget(res) {
   return w;
 }
 
-/* ---------- Mittel: Form und Halbmarathon-Zeiten (Parameter "form") ---------- */
-function formImage(w, h, form, zones) {
-  const dc = newCtx(w, h);
-  const n = form.length, x = (i) => (i / (n - 1)) * w;
-  const splitY = Math.round(h * 0.64);                         // oben CTL/ATL, unten TSB
-  const vals = form.flatMap((f) => [f.ctl, f.atl]).filter((v) => v != null);
-  const max = Math.max(10, ...vals), yTop = (v) => splitY - 4 - (v / max) * (splitY - 10);
-  const line = (key, hex) => {
-    const p = new Path();
-    let pen = false;
-    form.forEach((f, i) => {
-      if (f[key] == null) { pen = false; return; }
-      const pt = new Point(x(i), yTop(f[key]));
-      if (!pen) { p.move(pt); pen = true; } else p.addLine(pt);
-    });
-    dc.addPath(p);
-    dc.setStrokeColor(new Color(hex));
-    dc.setLineWidth(2);
-    dc.strokePath();
-  };
-  line("atl", NEUTRAL_HEX);
-  line("ctl", ACCENT_HEX);
-  const tsbs = form.map((f) => (f.ctl != null && f.atl != null ? f.ctl - f.atl : null));
-  const tv = tsbs.filter((v) => v != null);
-  const lo = Math.min(-15, ...tv), hi = Math.max(15, ...tv), bandTop = splitY + 6, bandH = h - bandTop - 1;
-  const yz = (v) => bandTop + (1 - (v - lo) / (hi - lo)) * bandH;
-  dc.setFillColor(new Color(NEUTRAL_HEX, 0.35));
-  dc.fillRect(new Rect(0, yz(0), w, 1));
-  const bw = Math.max(2, (w / n) * 0.7);
-  tsbs.forEach((v, i) => {
-    if (v == null) return;
-    const cls = v >= zones.ok ? "ok" : v >= zones.warn ? "warn" : "bad";
-    dc.setFillColor(new Color(ZONE_RGB[cls], 0.85));
-    dc.fillRect(new Rect(x(i) - bw / 2, Math.min(yz(v), yz(0)), bw, Math.max(1, Math.abs(yz(v) - yz(0)))));
-  });
-  return dc.getImage();
-}
-
-// Wochen-TSS als Saeulen (aelteste links); laufende Woche in Akzentfarbe, Luecken nur als kurzer Strich, optional Ziellinie
+/* ---------- Mittel: Wochen-TSS (Parameter "form") ---------- */
+// Wochen-TSS als Saeulen (aelteste links) mit Wert darueber und Wochenanfang darunter; laufende Woche in Akzentfarbe,
+// Ziel je Woche als gruener Strich (nur wo ein Plan oder Wochenziel existiert), Luecken nur als kurzer Strich, nie 0.
+const TSS_VALUE_H = 13, TSS_LABEL_H = 14;
 function tssImage(w, h, weeks) {
-  const dc = newCtx(w, h), n = weeks.length;
+  const dc = newCtx(w, h), n = weeks.length, top = TSS_VALUE_H, base = h - TSS_LABEL_H, plotH = base - top;
   const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
   const max = Math.max(50, ...vals), slot = w / n, bw = slot * 0.62;
+  dc.setTextAlignedCenter();
   weeks.forEach((k, i) => {
     const cur = i === n - 1, x = i * slot + (slot - bw) / 2;
-    if (k.tss == null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, h - 2, bw, 1.5)); return; }
-    const bh = Math.max(2, (k.tss / max) * (h - 2));
+    dc.setFont(cur ? Font.boldSystemFont(FS.xs) : Font.systemFont(FS.xs));
+    dc.setTextColor(new Color(cur ? INK_HEX : MUTED_HEX));
+    dc.drawTextInRect(dateShort(k.weekStart), new Rect(i * slot, base + 2, slot, TSS_LABEL_H - 2));
+    if (k.tss == null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, base - 2, bw, 1.5)); return; }
+    const bh = Math.max(2, (k.tss / max) * plotH);
     dc.setFillColor(cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.55));
-    dc.fillRect(new Rect(x, h - bh, bw, bh));
+    dc.fillRect(new Rect(x, base - bh, bw, bh));
+    dc.drawTextInRect(String(Math.round(k.tss)), new Rect(i * slot, Math.max(0, base - bh - TSS_VALUE_H), slot, TSS_VALUE_H));
+    if (k.goal != null) { dc.setFillColor(new Color(ZONE_RGB.ok, 0.95)); dc.fillRect(new Rect(x - 3, base - (k.goal / max) * plotH - 0.75, bw + 6, 1.5)); }
   });
-  const goal = weeks[n - 1]?.goal;
-  if (goal != null) { dc.setFillColor(new Color(ZONE_RGB.ok, 0.9)); dc.fillRect(new Rect((n - 1) * slot, h - (goal / max) * (h - 2) - 0.5, slot, 1)); }
   return dc.getImage();
 }
 
-// Links die Form der letzten 28 Tage, rechts die Zeiten gegen das Ziel, unten Paces und Schwellen
+// Eine Karte: Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, darunter die Schwellen
 function buildMedium(res) {
   const d = res.data;
   const W = widgetInnerWidth();
   const w = baseWidget({ flat: false, padV: 10 });
-  const row = w.addStack(); row.spacing = 7;
-  const LW = Math.floor((W - 7) * 0.5), RW = W - 7 - LW;
-
-  // Links: Form
-  const L = d.load, fc = card(row, LW, 7);
-  text(fc, "FORM · 28 TAGE", FS.xs, { bold: true, color: COL.muted });
-  fc.addSpacer(2);
-  if (d.form.some((f) => f.ctl != null)) { const im = fc.addImage(formImage(LW - 22, 54, d.form, d.tsbZones)); im.imageSize = new Size(LW - 22, 54); }
-  else text(fc, "Keine CTL/ATL-Werte", FS.xs, { color: COL.muted });
-  fc.addSpacer(2);
-  const nums = fc.addStack(); nums.centerAlignContent();
-  text(nums, `CTL ${fmt(L.ctl, 1)}`, FS.xs, { bold: true, color: COL.accent });
-  nums.addSpacer();
-  text(nums, `TSB ${signed(L.tsb, 1)}`, FS.xs, { bold: true, color: colorFor(L.tsbCls) });
-  // Wochen-TSS der letzten 6 Wochen
-  const tw = d.tssWeeks || [];
-  if (tw.some((k) => k.tss != null)) {
-    fc.addSpacer(3);
-    const cur = tw[tw.length - 1], th = fc.addStack(); th.centerAlignContent();
-    text(th, "TSS · 6 WOCHEN", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    th.addSpacer();
-    if (cur.tss != null) text(th, `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""}`, FS.xs, { bold: true, color: COL.text, minScale: 0.7 });
-    fc.addSpacer(1);
-    const ti = fc.addImage(tssImage(LW - 22, 32, tw)); ti.imageSize = new Size(LW - 22, 32);
-  }
-
-  // Rechts: Zeiten gegen das Ziel
-  const rc = card(row, RW, 7), goal = d.goal.targetTimeSecs;
-  const rh = rc.addStack(); rh.centerAlignContent();
-  text(rh, String(d.goal.name || "Rennen").toUpperCase(), FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-  rh.addSpacer();
-  if (d.goal.daysToGo > 0) text(rh, `${d.goal.daysToGo} Tg`, FS.xs, { bold: true, color: COL.muted, minScale: 1 });
-  rc.addSpacer(2);
-  const line = (label, secs, bold, tone) => {
-    const r = rc.addStack(); r.centerAlignContent();
-    text(r, label, FS.xs, { bold, color: bold ? COL.text : COL.muted });
-    r.addSpacer();
-    text(r, fmtTime(secs), FS.sm, { bold: true, color: tone || COL.text });
-    if (goal && secs !== goal) { const diff = secs - goal; r.addSpacer(4); text(r, `${diff > 0 ? "+" : "−"}${fmtTime(Math.abs(diff))}`, FS.xs, { color: diff <= 0 ? COL.ok : COL.muted, minScale: 0.7 }); }
-  };
-  if (goal) line("Ziel", goal, true, COL.accent);
-  if (d.hm && d.hm.estimates.length) {
-    // Zwei Vergleichswerte: Runalyze-Prognose und die schnellste Bestzeit-Rechnung (VDOT hat ein eigenes Widget)
-    const est = d.hm.estimates, best = est.filter((e) => e.key.startsWith("best-")).sort((a, b) => a.seconds - b.seconds)[0];
-    const prog = est.find((e) => e.kind === "prognosis");
-    for (const e of [prog, best].filter(Boolean)) line(e.kind === "prognosis" ? "Runalyze" : e.label.replace("aus ", "").replace("-Bestzeit", ""), e.seconds, false);
-    if (best) text(rc, "nach Daniels gerechnet", FS.xs, { color: COL.muted, minScale: 0.7 });
-  } else text(rc, "Kein Runalyze-Snapshot", FS.xs, { color: COL.muted, lines: 2 });
-  if (goal && d.goal.runKm) {
-    rc.addSpacer(3);
-    const gp = rc.addStack(); gp.centerAlignContent();
-    text(gp, "Zielpace", FS.xs, { color: COL.muted });
-    gp.addSpacer();
-    text(gp, `${fmtPace(goal / d.goal.runKm)}/km`, FS.sm, { bold: true, color: COL.accent });
-  }
+  const tc = card(w, W, 7), tw = d.tssWeeks || [];
+  const head = tc.addStack(); head.centerAlignContent();
+  text(head, "TSS · 6 WOCHEN", FS.xs, { bold: true, color: COL.muted });
+  head.addSpacer();
+  const cur = tw[tw.length - 1];
+  if (cur && cur.tss != null) text(head, `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""}`, FS.sm, { bold: true, color: COL.text, minScale: 0.7 });
+  tc.addSpacer(3);
+  if (tw.some((k) => k.tss != null)) { const im = tc.addImage(tssImage(W - 22, 84, tw)); im.imageSize = new Size(W - 22, 84); }
+  else text(tc, "Keine TSS-Werte", FS.xs, { color: COL.muted });
   w.addSpacer(5);
 
   // Unten: Schwellen
