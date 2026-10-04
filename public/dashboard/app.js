@@ -475,8 +475,8 @@ function renderNutritionToday(d, map) {
   ];
   const bar = ([label, v, goal, unit, color]) => {
     const pct = v != null && goal ? Math.min(100, (v / goal) * 100) : 0;
-    const over = v != null && goal && v > goal * 1.1;
-    return `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;gap:8px"><b>${label}</b><span>${v != null ? fmt(v) : "–"}${goal ? ` von ${fmt(goal)}` : ""} ${unit}${v != null && goal ? ` · ${over ? "+" + fmt(v - goal) + " drüber" : "noch " + fmt(Math.max(0, goal - v))}` : ""}</span></div><div style="height:10px;border-radius:5px;background:var(--line);overflow:hidden"><div style="height:100%;width:${pct}%;background:${over ? "var(--bad)" : color}"></div></div></div>`;
+    const over = v != null && goal && v > goal;
+    return `<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;gap:8px"><b>${label}</b><span>${v != null ? fmt(v) : "–"}${goal ? ` von ${fmt(goal)}` : ""} ${unit}${v != null && goal ? ` · ${over ? "+" + fmt(v - goal) + " drüber" : "noch " + fmt(Math.max(0, goal - v))}` : ""}</span></div><div style="height:10px;border-radius:5px;background:var(--line);overflow:hidden"><div style="height:100%;width:${pct}%;background:${over ? "var(--warn)" : color}"></div></div></div>`;
   };
   $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3>${rows.map(bar).join("")}<div class="muted">Stand des letzten Syncs (alle 15 Minuten, Yazio).</div>`;
 }
@@ -560,6 +560,7 @@ function renderEgym(k) {
   $("egym-card").hidden = false;
   const failed = k.sourcesFailed || [];
   if (failed.length >= 3) { $("egym").innerHTML = '<div class="notice bad"><b>EGYM nicht erreichbar.</b> Login oder Abruf ist fehlgeschlagen.</div>'; return; }
+  const GOAL_SETS = 27; // 9 Geräte x 3 Sätze
   const wk = k.week, goal = wk.goalMin, min = wk.minutes, hit = min != null && min >= goal;
   const est = (src) => (src === "estimate" ? "≈" : "");
   const vol = (kg) => (kg >= 1000 ? fmt(kg / 1000, 1) + " t" : fmt(kg) + " kg");
@@ -571,15 +572,15 @@ function renderEgym(k) {
   const delta = (i) => (i.diffKg == null ? '<span class="muted">–</span>' : `<span class="badge ${i.diffKg > 0 ? "ok" : i.diffKg < 0 ? "bad" : "none"}">${i.diffKg > 0 ? "+" : i.diffKg < 0 ? "−" : ""}${fmt(Math.abs(i.diffKg), 1)} kg</span>`);
   const b = k.bioAge, rg = k.regions;
   const regionRows = ["UPPER", "CORE", "LOWER"].map((key) => ({ label: REGION_LABEL[key], age: b ? { UPPER: b.upper, CORE: b.core, LOWER: b.lower }[key] : null, share: rg ? rg[key] : null }));
-  const bio = b && b.muscle != null ? `<h3 style="margin-top:14px">Muskelalter ${b.muscle}${b.total != null ? ` <span class="muted" style="font-weight:400">· gesamt ${b.total}</span>` : ""}</h3>
-    <div class="muted" style="margin-bottom:4px">Je Bereich das Alter der Muskeln; Balken = Anteil am Trainingsvolumen der letzten 4 Wochen${rg ? "" : " (nicht berechenbar: zu wenige Geräte einem Bereich zugeordnet)"}.</div>
-    ${regionRows.map((r) => `<div style="display:grid;grid-template-columns:90px 1fr 56px;gap:8px;align-items:center;padding:3px 0"><span>${r.label}</span><div class="cbar" style="height:10px">${r.share != null ? `<div class="cfill" style="width:${r.share}%;background:var(--s-strength)"></div>` : ""}</div><b style="text-align:right">${r.age != null ? r.age + " J" : "–"}</b></div>`).join("")}
-    ${rg ? `<div class="muted" style="margin-top:2px">Volumenanteil: ${regionRows.map((r) => `${r.label} ${r.share} %`).join(" · ")}</div>` : ""}` : "";
+  const worstAge = Math.max(...regionRows.map((r) => r.age ?? 0));
+  const bio = b && b.muscle != null ? `<h3 style="margin-top:14px">Muskelalter <span style="color:var(--s-strength);font-size:1.6rem">${b.muscle}</span> <span class="muted" style="font-weight:400">Jahre${b.total != null ? ` · gesamt ${b.total}` : ""}</span></h3>
+    ${regionRows.map((r) => `<div style="display:grid;grid-template-columns:90px 1fr 40px;gap:8px;align-items:center;padding:4px 0"><span>${r.label}</span><div class="cbar" style="height:10px">${r.age != null ? `<div class="cfill" style="width:${Math.min(100, (r.age / 60) * 100)}%;background:${r.age === worstAge ? "#e39460" : "var(--s-strength)"}"></div>` : ""}</div><b style="text-align:right">${r.age ?? "–"}</b></div>`).join("")}
+    ${rg ? `<div class="muted" style="margin-top:2px">Volumenanteil 4 Wochen: ${regionRows.map((r) => `${r.label} ${r.share} %`).join(" · ")}</div>` : ""}` : "";
   const recs = k.records || [];
   const records = recs.length ? `<h3 style="margin-top:14px">Bestwerte diese Woche</h3><ul class="runs">${recs.map((r) => `<li><b>${esc(r.label)}</b> · ${fmt(r.kg, r.kg % 1 ? 1 : 0)} kg × ${r.reps} <span class="badge ok">+${fmt(r.diffKg, 1)} kg · +${fmt(r.pct, 1)} %</span><br><span class="muted">geschätzter 1RM ${fmt(r.e1rm, 1)} kg gegen ${fmt(r.prevE1rm, 1)} kg vorher (bester Satz nach Epley, höchstens 12 Wiederholungen angesetzt)</span></li>`).join("")}</ul>` : `<div class="muted" style="margin-top:12px">Noch kein Bestwert diese Woche: Ein Bestwert ist ein Satz mit höherem geschätzten 1RM als alle früheren Einheiten der letzten 12 Wochen am selben Gerät.</div>`;
   const vt = k.volumeTrend;
   $("egym").innerHTML = `${failed.length ? `<div class="notice bad" style="margin-bottom:8px">Teilweise nicht erreichbar: ${esc(failed.join(", "))}</div>` : ""}
-    <div class="big">${min == null ? "–" : est(wk.minutesSource) + fmt(min)} <small class="muted" style="font-size:.9rem">min diese Woche von ${goal}</small> ${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div>
+    <div class="big">${wk.sets || 0} <small class="muted" style="font-size:.9rem">von ${GOAL_SETS} Sätzen diese Woche</small> ${(wk.sets || 0) >= GOAL_SETS ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div><div class="cbar" style="height:12px;margin:6px 0"><div class="cfill" style="width:${Math.min(100, ((wk.sets || 0) / GOAL_SETS) * 100)}%;background:var(--s-strength)"></div></div><div class="muted">${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"} diese Woche · ${min == null ? "–" : est(wk.minutesSource) + fmt(min)} min</div>
     <div class="muted" style="margin:2px 0 10px">Ziel erreicht in ${k.weeksHit.hit} von ${k.weeksHit.of} abgeschlossenen Wochen${k.streakWeeks ? ` · Serie ${k.streakWeeks} ${k.streakWeeks === 1 ? "Woche" : "Wochen"}` : ""} · senkrechte Marke = ${goal} min${wk.goalSource === "default" ? " (Standardziel)" : ""}</div>
     ${k.weeks.slice().reverse().map((w, i) => row(w, i === 0)).join("")}
     <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">${stat(wk.sessions, "Einheiten")}${stat(wk.sets || "–", "Sätze")}${stat(wk.volumeKg ? (wk.volumeKg >= 1000 ? fmt(wk.volumeKg / 1000, 1) + " t" : fmt(wk.volumeKg) + " kg") : "–", "Volumen")}${stat(since, "zuletzt")}</div>

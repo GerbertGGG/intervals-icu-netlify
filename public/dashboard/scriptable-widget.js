@@ -704,6 +704,7 @@ function buildFoodCard(res) {
 }
 
 /* ---------- Mittel: Ernaehrung heute ---------- */
+const OVER_HEX = "#f0b95a"; // Wert ueber dem Ziel: gelb
 function buildFoodMedium(res) {
   const d = res.data, f = d.food, W = widgetInnerWidth();
   const hasVals = (x) => x && [x.calories, x.protein, x.carbs, x.fat].some((v) => v != null);
@@ -751,10 +752,11 @@ function buildFoodMedium(res) {
       l.addSpacer();
       if (m.v == null) text(l, MISSING, FS.md, { color: COL.muted, minScale: 1 });
       else {
-        text(l, fmt(m.v), FS.lg, { bold: true, opacity: op, minScale: 0.8 });
+        const over = m.goal && m.v > m.goal;
+        text(l, fmt(m.v), FS.lg, { bold: true, opacity: op, minScale: 0.8, color: over ? new Color(OVER_HEX) : COL.text });
         text(l, m.goal ? ` / ${fmt(m.goal)} g` : " g", FS.sm, { color: COL.muted, minScale: 0.8 });
       }
-      if (m.v != null && m.goal) { col.addSpacer(3); progressBar(col, RW, m.v / m.goal, ACCENT_HEX, stale ? 0.5 : 1); }
+      if (m.v != null && m.goal) { col.addSpacer(3); progressBar(col, RW, m.v / m.goal, m.v > m.goal ? OVER_HEX : ACCENT_HEX, stale ? 0.5 : 1); }
     });
   }
   notice(w, res, d);
@@ -878,28 +880,8 @@ function buildTraining(res) {
 }
 
 /* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
-// Links der Ring der Woche (Trainingszeit gegen das Wochenziel in Minuten) mit den Trainingstagen. Rechts das bewegte
-// Gewicht der Woche (Tonnage) mit den letzten 6 Wochen als Saeulen und dem staerksten Bestwert (geschaetzter 1RM
-// gegen die frueheren Einheiten). Unten das Muskelalter je Bereich und die Verteilung des Volumens.
-const fmtVolume = (kg) => (kg >= 1000 ? `${fmt(kg / 1000, 1)} t` : `${fmt(kg)} kg`);
-const STRENGTH_OK = "#2f9d64";
-const CAR_KG = 1200; // Kleinwagen als grober Vergleich, nur als ungefaehre Groessenvorstellung (≈)
-
-// Saeulen je Woche (bewegtes Gewicht); keine Einheit = kurzer Strich; letzte Saeule = laufende Woche, voll deckend
-function kraftVolumeImage(w, h, weeks) {
-  const dc = newCtx(w, h), slot = w / weeks.length, bw = slot * 0.62;
-  const max = Math.max(1, ...weeks.map((x) => x.volumeKg || 0));
-  weeks.forEach((wk, i) => {
-    const cx = i * slot + slot / 2, last = i === weeks.length - 1;
-    if (!wk.volumeKg) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.35)); dc.fillRect(new Rect(cx - bw / 2, h - 3, bw, 1.5)); return; }
-    const bh = Math.max(3, (wk.volumeKg / max) * (h - 3)), p = new Path();
-    p.addRoundedRect(new Rect(cx - bw / 2, h - bh, bw, bh), 3, 3);
-    dc.addPath(p);
-    dc.setFillColor(new Color(sportHex("strength"), last ? 1 : 0.6));
-    dc.fillPath();
-  });
-  return dc.getImage();
-}
+// Links der Ring der Woche (Saetze gegen das Wochenziel) mit Trainingstagen. Rechts das Muskelalter mit Balken je Bereich.
+const KRAFT_GOAL_SETS = 27; // Wochenziel in Saetzen: 9 Geraete x 3 Saetze
 
 function buildKraft(res) {
   const d = res.data, W = widgetInnerWidth();
@@ -910,54 +892,54 @@ function buildKraft(res) {
     text(w, "EGYM ist im Worker nicht eingerichtet (EGYM_USERNAME und EGYM_PASSWORD).", FS.sm, { color: COL.muted, lines: 4 });
     return w;
   }
-  const wk = d.week, goal = wk.goalMin, min = wk.minutes;
-  const reached = min != null && min >= goal, hex = reached ? STRENGTH_OK : sportHex("strength");
-  header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
-  w.addSpacer(3);
-  const row = w.addStack(); row.spacing = 7;
-  const LW = 124, RW = W - LW - 7, RING = 58;
+  const wk = d.week, sets = wk.sets || 0, hex = sportHex("strength");
+  header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`, COL.muted);
+  w.addSpacer(6);
+  const row = w.addStack(); row.centerAlignContent(); row.spacing = 12;
+  const LW = 110, RW = W - LW - 13, RING = 84;
 
-  // Links: Zeit der Woche gegen das Ziel
-  const lc = card(row, LW, 6);
+  // Links: Saetze der Woche gegen das Ziel, darunter die Trainingstage und die Einheiten
+  const lc = row.addStack(); lc.layoutVertically(); lc.size = new Size(LW, 0);
+  // Zahl als echter Text im Ring (nicht ins Bild gezeichnet): so passt sie sich Hell/Dunkel an und bleibt lesbar
   const rs = lc.addStack(); rs.addSpacer();
-  const ring = rs.addImage(ringProgressImage(RING, min != null ? min / goal : 0, hex, 1, { big: min == null ? MISSING : `${min}${wk.minutesSource === "estimate" ? "≈" : ""}`, small: `von ${goal} min` }));
-  ring.imageSize = new Size(RING, RING);
+  const ring = rs.addStack(); ring.size = new Size(RING, RING); ring.layoutVertically(); ring.centerAlignContent();
+  ring.backgroundImage = ringProgressImage(RING, sets / KRAFT_GOAL_SETS, hex, 1);
+  const cen = (str, size, o) => { const x = ring.addStack(); x.addSpacer(); text(x, str, size, { align: "center", minScale: 0.6, ...o }); x.addSpacer(); };
+  cen(String(sets), 28, { bold: true });
+  cen(`von ${KRAFT_GOAL_SETS} Sätzen`, FS.xs, { color: COL.muted, minScale: 0.5 });
   rs.addSpacer();
-  lc.addSpacer(3);
+  lc.addSpacer(5);
   const dots = lc.addStack(); dots.centerAlignContent();
-  ["M", "D", "M", "D", "F", "S", "S"].forEach((l, i) => {
+  for (let i = 0; i < 7; i++) {
     if (i) dots.addSpacer();
-    text(dots, wk.days[i] ? "●" : l, FS.xs, { bold: wk.days[i], color: wk.days[i] ? new Color(hex) : COL.muted, minScale: 1 });
-  });
+    text(dots, "●", FS.xs, { color: wk.days[i] ? new Color(hex) : new Color(NEUTRAL_HEX, 0.3), minScale: 1 });
+  }
+  lc.addSpacer(3);
+  const n = wk.sessions || 0;
+  text(lc, n ? `${n} ${n === 1 ? "Einheit" : "Einheiten"} diese Woche` : "Keine Einheit diese Woche", FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
 
-  // Rechts: bewegtes Gewicht, 6-Wochen-Saeulen, staerkster Bestwert
-  const rc = card(row, RW, 6), prevWeek = d.weeks[d.weeks.length - 2];
-  header(rc, null, "BEWEGT · 6 WOCHEN", prevWeek && prevWeek.volumeKg ? `Vorwoche ${fmtVolume(prevWeek.volumeKg)}` : null);
-  const big = rc.addStack(); big.bottomAlignContent(); big.spacing = 5;
-  text(big, wk.volumeKg ? fmtVolume(wk.volumeKg) : MISSING, FS.xl - 2, { bold: true, color: wk.volumeKg ? COL.text : COL.muted, minScale: 0.7 });
-  if (wk.volumeKg >= CAR_KG) text(big, `≈ ${Math.round(wk.volumeKg / CAR_KG)} Kleinwagen`, FS.xs, { color: COL.muted, minScale: 0.6 });
-  rc.addSpacer(2);
-  const bars = rc.addImage(kraftVolumeImage(RW - 22, 20, d.weeks)); bars.imageSize = new Size(RW - 22, 20);
-  rc.addSpacer(3);
-  const rec = (d.records || [])[0], cmp = d.progress ? d.progress.items.filter((i) => i.pct != null && i.diffKg > 0)[0] : null;
-  const best = rec ? { label: rec.label, txt: `+${fmt(rec.diffKg, 1)} kg` } : cmp ? { label: cmp.label, txt: `+${fmt(cmp.diffKg, 1)} kg` } : null;
-  if (best) {
-    const r = rc.addStack(); r.centerAlignContent();
-    text(r, `▲ ${best.label}`, FS.xs, { bold: true, color: COL.ok, minScale: 0.6 });
+  // Rechts: Muskelalter gross, darunter je Bereich ein Balken (Wert / 60) mit Zahl
+  const rc = row.addStack(); rc.layoutVertically(); rc.size = new Size(RW, 0);
+  const b = d.bioAge, mt = rc.addStack(); mt.bottomAlignContent(); mt.spacing = 5;
+  text(mt, "MUSKELALTER", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+  mt.addSpacer();
+  if (b && b.muscle != null) {
+    text(mt, String(b.muscle), 30, { bold: true, color: new Color(hex), minScale: 0.7 });
+    text(mt, "Jahre", FS.sm, { color: COL.muted, minScale: 0.8 });
+  } else text(mt, MISSING, FS.lg, { color: COL.muted });
+  rc.addSpacer(4);
+  const parts = b && b.upper != null ? [["Oberkörper", b.upper], ["Rumpf", b.core], ["Beine", b.lower]] : [];
+  const worst = Math.max(...parts.map((x) => x[1] ?? 0));
+  const BW = Math.max(40, Math.round(RW * 0.4));
+  parts.forEach(([label, v], i) => {
+    if (i) rc.addSpacer(4);
+    const r = rc.addStack(); r.centerAlignContent(); r.size = new Size(RW, 0);
+    text(r, label, FS.md, { minScale: 0.7 });
     r.addSpacer();
-    text(r, best.txt, FS.xs, { bold: true, color: COL.ok, minScale: 0.7 });
-  } else text(rc, "Noch kein Bestwert diese Woche", FS.xs, { color: COL.muted, minScale: 0.6 });
-
-  // Unten: Muskelalter je Bereich, darunter Verteilung des Volumens (4 Wochen) oder die Wochenzahlen
-  w.addSpacer(5);
-  const b = d.bioAge, rg = d.regions;
-  const ages = b && b.muscle != null ? `Muskelalter ${b.muscle}${b.upper != null ? ` · Ob ${b.upper} · Rumpf ${b.core} · Beine ${b.lower}` : ""}` : null;
-  if (ages) text(w, ages, FS.xs, { color: COL.muted, minScale: 0.6 });
-  const since = d.daysSince == null ? null : d.daysSince === 0 ? "heute" : `vor ${d.daysSince} T`;
-  const tail = rg ? `Volumen 4 Wo: Ob ${rg.UPPER} % · Rumpf ${rg.CORE} % · Beine ${rg.LOWER} %`
-    : [wk.sessions ? `${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"}${wk.sets ? ` · ${wk.sets} Sätze` : ""}` : since && `zuletzt ${since}`, d.streakWeeks > 0 && `Serie ${d.streakWeeks} Wo`].filter(Boolean).join(" · ");
-  if (tail) text(w, tail, FS.xs, { color: COL.muted, minScale: 0.6 });
-  if (!ages && !tail) text(w, MISSING, FS.xs, { color: COL.muted });
+    progressBar(r, BW, v != null ? v / 60 : 0, v === worst ? "#e39460" : hex);
+    r.addSpacer(8);
+    text(r, v != null ? String(v) : MISSING, FS.lg, { bold: true, color: v === worst ? new Color("#e39460") : COL.text, minScale: 0.8 });
+  });
   notice(w, res, d);
   return w;
 }
