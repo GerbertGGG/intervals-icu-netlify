@@ -176,16 +176,18 @@ export function buildWidgetTraining(d, env = {}) {
   }));
   const tot = Object.fromEntries(TRI.map((k) => [k, recent.reduce((a, w) => a + w.bySport[k].minutes, 0)]));
   const sum = TRI.reduce((a, k) => a + tot[k], 0);
-  // Intensitaet der letzten 4 Wochen: Anteil der Trainingszeit nach Zonen (locker, mittel, hart)
+  // Intensitaet nach Zonen (locker, mittel, hart): laufende Woche und Schnitt der letzten 4 Wochen inkl. laufender
   const INT = ["easy", "mid", "hard"];
-  const irecent = d.weeks.slice(-4); // inkl. laufender Woche, wie die Polarisation in Intervals
-  const itot = Object.fromEntries(INT.map((k) => [k, irecent.reduce((a, w) => a + (w.intensity?.[k] ?? 0), 0)]));
-  const isum = INT.reduce((a, k) => a + itot[k], 0);
+  const intShare = (ws) => {
+    const tot = Object.fromEntries(INT.map((k) => [k, ws.reduce((a, w) => a + (w.intensity?.[k] ?? 0), 0)]));
+    return INT.reduce((a, k) => a + tot[k], 0) > 0 ? sharesTo100(tot, INT) : null;
+  };
+  const intensity = { week: intShare([cur]), avg: intShare(d.weeks.slice(-4)) };
   return {
     generatedAt: d.generatedAt,
     today: d.today,
     sports,
-    intensity: isum > 0 ? sharesTo100(itot, INT) : null,
+    intensity,
     split: { share: sum > 0 ? Object.fromEntries(TRI.map((k) => [k, Math.round((tot[k] / sum) * 100)])) : null, target: splitTarget(env), weeks: recent.length },
     sourcesFailed: failedOf(d),
   };

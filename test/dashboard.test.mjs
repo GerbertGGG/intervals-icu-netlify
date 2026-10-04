@@ -173,6 +173,7 @@ assert.ok(trn.split.share && Math.abs(Object.values(trn.split.share).reduce((a, 
 assert.equal(trn.split.target, null); // ohne TRI_SPLIT_TARGET kein Soll, nichts erfunden
 assert.deepEqual(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "20,45,35" }).split.target, { swim: 20, bike: 45, run: 35 });
 assert.equal(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "kaputt" }).split.target, null);
+for (const sh of [trn.intensity.week, trn.intensity.avg]) if (sh) assert.equal(sh.easy + sh.mid + sh.hard, 100);
 assert.ok(JSON.stringify(trn).length < 2500);
 assert.equal(/Bobingen|Schokolade|CSS/.test(JSON.stringify(trn)), false);
 const trnRes = await handleWidgetRequest(new Request("https://x/api/widget?view=training", { headers: { authorization: "Bearer geheim" } }), env);
