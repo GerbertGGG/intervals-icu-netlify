@@ -115,9 +115,10 @@
   }
 
   /* ---------- Anteilsleisten je Woche ---------- */
-  function shares(host, weeks, sports, names) {
+  function shares(host, weeks, sports, names, o = {}) {
+    const unit = o.unit ?? "TSS";
     const W = 480, rowH = 20, L = 64, R = 8, H = weeks.length * rowH + 22;
-    const s = svg(W, H, "Anteil der Sportarten an der Wochenbelastung");
+    const s = svg(W, H, o.label ?? "Anteil der Sportarten an der Wochenbelastung");
     weeks.forEach((w, i) => {
       const total = sports.reduce((a, k) => a + w.by[k], 0), y = 4 + i * rowH;
       s.append(el("text", { x: L - 6, y: y + 12, "text-anchor": "end" }, w.label));
@@ -126,12 +127,12 @@
       for (const k of sports) {
         const v = w.by[k]; if (!v) continue;
         const bw = ((W - L - R) * v) / total;
-        s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--s-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} TSS)`));
+        s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--${o.prefix ?? "s"}-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} ${unit})`));
         acc += v;
       }
     });
     hatch(s);
-    s.append(el("text", { x: L, y: H - 6 }, "0 %"), el("text", { x: W - R, y: H - 6, "text-anchor": "end" }, "100 % der Wochen-TSS"));
+    s.append(el("text", { x: L, y: H - 6 }, "0 %"), el("text", { x: W - R, y: H - 6, "text-anchor": "end" }, o.end ?? "100 % der Wochen-TSS"));
     mount(host, s);
   }
 
