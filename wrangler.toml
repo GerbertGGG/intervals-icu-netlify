@@ -28,4 +28,4 @@ directory = "./public"
 # EGYM (Kraft-Daten, inoffizielle Netpulse-API, siehe src/egym-client.js) - als Secrets setzen:
 #   EGYM_USERNAME, EGYM_PASSWORD   Login der EGYM-App
 #   EGYM_BRAND (optional)          Studio-Kennung (Host <brand>.netpulse.com); ohne Wert wird der Host aus der E-Mail ermittelt
-#   EGYM_WEEKLY_GOAL (optional)    Wochenziel Kraft-Einheiten fuers Kraft-Widget (Parameter "kraft"); ohne Wert 2 pro Woche
+#   EGYM_WEEKLY_GOAL_MIN (optional) Wochenziel Krafttraining in Minuten (Kraft-Widget, Parameter "kraft", und Dashboard); ohne Wert 60

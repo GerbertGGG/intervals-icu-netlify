@@ -42,7 +42,7 @@ function workoutSummary(data) {
   if (!Array.isArray(list)) return null;
   return list.map((w) => ({
     at: w.completedAt,
-    exercises: (w.exercises ?? []).map((ex) => ({ name: ex.name, source: ex.source?.code ?? null, category: ex.exercise?.category?.code ?? null, machineBased: ex.exercise?.machineBased ?? null, sets: Array.isArray(ex.attributes?.sets_of_reps_and_weight_or_duration_and_weight) ? ex.attributes.sets_of_reps_and_weight_or_duration_and_weight.length : 0 })),
+    exercises: (w.exercises ?? []).map((ex) => ({ name: ex.name, source: ex.source?.code ?? null, category: ex.exercise?.category?.code ?? null, machineBased: ex.exercise?.machineBased ?? null, at: ex.completedAt ?? null, duration: ex.attributes?.duration ?? null, sets: Array.isArray(ex.attributes?.sets_of_reps_and_weight_or_duration_and_weight) ? ex.attributes.sets_of_reps_and_weight_or_duration_and_weight.length : 0 })),
   }));
 }
 
