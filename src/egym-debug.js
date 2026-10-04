@@ -41,7 +41,7 @@ export async function handleEgymDebugRequest(req, env) {
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   const params = new URL(req.url).searchParams;
   if (!authorizedForDebug(req, env, params)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
-  if (!hasEgymCredentials(env)) return json({ ok: false, error: "EGYM_BRAND, EGYM_USERNAME und EGYM_PASSWORD nicht gesetzt" }, 503, headers);
+  if (!hasEgymCredentials(env)) return json({ ok: false, error: "EGYM_USERNAME und EGYM_PASSWORD nicht gesetzt" }, 503, headers);
   const full = params.get("full") === "1";
   const days = Math.min(180, Math.max(1, Math.floor(Number(params.get("days"))) || 28));
   const to = isoDateBerlin();

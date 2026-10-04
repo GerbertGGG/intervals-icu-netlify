@@ -26,4 +26,5 @@ directory = "./public"
 #                     (Widget-Parameter "training"); ohne Wert zeigt das Widget kein Soll
 #
 # EGYM (Kraft-Daten, inoffizielle Netpulse-API, siehe src/egym-client.js) - als Secrets setzen:
-#   EGYM_BRAND, EGYM_USERNAME, EGYM_PASSWORD   Studio-Kennung (Host <brand>.netpulse.com) und Login der EGYM-App
+#   EGYM_USERNAME, EGYM_PASSWORD   Login der EGYM-App
+#   EGYM_BRAND (optional)          Studio-Kennung (Host <brand>.netpulse.com); ohne Wert wird der Host aus der E-Mail ermittelt
