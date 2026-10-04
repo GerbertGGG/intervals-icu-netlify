@@ -155,11 +155,15 @@ function emptySports() {
   return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null }]));
 }
 
+// Grenzen der Einheiten-Intensitaet (IF in %): unter 75 locker, bis 90 mittel, darueber hart
+const INTENSITY_EASY_MAX = 75;
+const INTENSITY_MID_MAX = 90;
+
 function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
   const weeks = new Map();
   for (let d = firstMonday; d <= todayIso; d = addDays(d, 7)) {
-    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, bySport: emptySports(), complete: addDays(d, 6) < todayIso });
+    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
   }
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
@@ -170,6 +174,10 @@ function buildWeeks(todayIso, activities, events) {
     sp.load += load;
     sp.minutes += (num(a?.moving_time) ?? 0) / 60;
     sp.km += (num(a?.distance) ?? 0) / 1000;
+    // Intensitaet je Einheit (IF in % der Schwelle), zeitgewichtet; ohne IF zaehlt die Einheit nicht mit
+    const iff = num(a?.icu_intensity);
+    const mins = (num(a?.moving_time) ?? 0) / 60;
+    if (iff != null && iff > 0 && sportOf(a) !== "strength") w.intensity[iff < INTENSITY_EASY_MAX ? "easy" : iff < INTENSITY_MID_MAX ? "mid" : "hard"] += mins;
     w.load += load;
     if (isRun(a)) {
       w.km += (num(a?.distance) ?? 0) / 1000;
@@ -200,6 +208,7 @@ function buildWeeks(todayIso, activities, events) {
     load: Math.round(w.load),
     plannedKm: w.plannedKm != null ? r1(w.plannedKm) : null,
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
+    intensity: { easy: Math.round(w.intensity.easy), mid: Math.round(w.intensity.mid), hard: Math.round(w.intensity.hard) },
     bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null }])),
   }));
 }

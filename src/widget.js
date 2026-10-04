@@ -134,8 +134,8 @@ export function buildWidgetVdot(d) {
   };
 }
 
-// Dritte Ansicht ("training", mittleres Widget): je Disziplin (Schwimmen, Rad, Lauf) Wochenvolumen gegen Plan,
-// Wochenzeit und Tage seit der letzten Einheit, dazu die Verteilung der letzten 4 Wochen nach Trainingszeit.
+// Dritte Ansicht ("training", mittleres Widget): je Disziplin (Schwimmen, Rad, Lauf) Wochen-TSS gegen Plan,
+// Wochenzeit, Kilometer und Tage seit der letzten Einheit, dazu die Verteilung der letzten 4 Wochen nach Trainingszeit.
 // CTL, TSB und TSS bleiben sportartuebergreifend (Hauptansicht), hier gibt es bewusst keine Last je Sportart.
 // Ein Soll fuer die Verteilung gibt es nur, wenn TRI_SPLIT_TARGET gesetzt ist (Schwimmen,Rad,Lauf in Prozent,
 // z. B. "20,45,35"); sonst bleibt es leer, nichts wird erfunden.
@@ -157,18 +157,24 @@ export function buildWidgetTraining(d, env = {}) {
   const sports = Object.fromEntries(TRI.map((k) => {
     const last = lastDay(k);
     return [k, {
+      weekLoad: cur.bySport[k].load,
+      plannedLoad: cur.bySport[k].plannedLoad,
       weekKm: cur.bySport[k].km,
-      plannedKm: cur.bySport[k].plannedKm,
       weekMinutes: cur.bySport[k].minutes,
       daysSince: last ? dayDiff(last) : null,
     }];
   }));
   const tot = Object.fromEntries(TRI.map((k) => [k, recent.reduce((a, w) => a + w.bySport[k].minutes, 0)]));
   const sum = TRI.reduce((a, k) => a + tot[k], 0);
+  // Intensitaet der letzten 4 Wochen: Anteil der Trainingszeit je Einheiten-Intensitaet (locker, mittel, hart)
+  const INT = ["easy", "mid", "hard"];
+  const itot = Object.fromEntries(INT.map((k) => [k, recent.reduce((a, w) => a + (w.intensity?.[k] ?? 0), 0)]));
+  const isum = INT.reduce((a, k) => a + itot[k], 0);
   return {
     generatedAt: d.generatedAt,
     today: d.today,
     sports,
+    intensity: isum > 0 ? Object.fromEntries(INT.map((k) => [k, Math.round((itot[k] / isum) * 100)])) : null,
     split: { share: sum > 0 ? Object.fromEntries(TRI.map((k) => [k, Math.round((tot[k] / sum) * 100)])) : null, target: splitTarget(env), weeks: recent.length },
     sourcesFailed: failedOf(d),
   };

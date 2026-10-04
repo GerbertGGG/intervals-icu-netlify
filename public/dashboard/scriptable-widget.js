@@ -817,8 +817,8 @@ function buildVdot(res) {
 
 /* ---------- Mittel: Disziplinen (Parameter "training") ---------- */
 // Anteile der Sportarten an der Trainingszeit als ein Balken mit Prozentzahl im Segment; Soll als helle Striche
-function splitImage(w, h, share, target) {
-  const dc = newCtx(w, h), keys = ["swim", "bike", "run"], tot = keys.reduce((a, k) => a + share[k], 0) || 1;
+function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf = sportHex) {
+  const dc = newCtx(w, h), tot = keys.reduce((a, k) => a + share[k], 0) || 1;
   let acc = 0;
   dc.setFont(Font.boldSystemFont(FS.xs));
   dc.setTextAlignedCenter();
@@ -826,7 +826,7 @@ function splitImage(w, h, share, target) {
     const a = (acc / tot) * w, b = ((acc + share[k]) / tot) * w;
     if (b - a > 1) {
       const p = new Path(); p.addRoundedRect(new Rect(a + 0.5, 0, b - a - 1, h), 3, 3);
-      dc.addPath(p); dc.setFillColor(new Color(sportHex(k))); dc.fillPath();
+      dc.addPath(p); dc.setFillColor(new Color(hexOf(k))); dc.fillPath();
       if (b - a > 30) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, 2, b - a, h - 2)); }
     }
     acc += share[k];
@@ -851,13 +851,12 @@ function buildTraining(res) {
     const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 3;
     const dot = nl.addText("●"); dot.font = Font.systemFont(FS.xs); dot.textColor = new Color(hex);
     text(nl, SPORTS[k][0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    // Wochenvolumen: Kilometer gegen Plan (Plan nur, wenn im Kalender Distanzen stehen)
-    const dec = (v) => fmt(v, v < 10 ? 1 : 0);
+    // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
-    text(vl, `${dec(s.weekKm)}`, FS.xl - 4, { bold: true });
-    text(vl, s.plannedKm ? `/ ${dec(s.plannedKm)} km` : "km", FS.xs, { color: COL.muted, minScale: 0.7 });
+    text(vl, `${Math.round(s.weekLoad || 0)}`, FS.xl - 4, { bold: true });
+    text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { color: COL.muted, minScale: 0.7 });
     c.addSpacer(4);
-    progressBar(c, IW, s.plannedKm ? s.weekKm / s.plannedKm : 0, hex);
+    progressBar(c, IW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
     c.addSpacer(4);
     // Trainingszeit und Tage seit der letzten Einheit; ab 7 Tagen Pause hervorgehoben
     const mins = Math.round(s.weekMinutes || 0);
@@ -875,6 +874,15 @@ function buildTraining(res) {
     sc.addSpacer(3);
     const im = sc.addImage(splitImage(W - 22, 16, sp.share, sp.target)); im.imageSize = new Size(W - 22, 16);
   } else text(sc, "Noch keine abgeschlossene Woche mit Training.", FS.xs, { color: COL.muted });
+  // Intensitaet: Anteil der Zeit nach Einheiten-Intensitaet (IF unter 75 locker, bis 90 mittel, darueber hart)
+  if (d.intensity) {
+    sc.addSpacer(5);
+    const it = d.intensity;
+    header(sc, null, "INTENSITÄT · 4 WOCHEN", `locker ${it.easy} · mittel ${it.mid} · hart ${it.hard} %`);
+    sc.addSpacer(3);
+    const ih = { easy: "#5BA88A", mid: "#E0B454", hard: "#D9695F" };
+    const im2 = sc.addImage(splitImage(W - 22, 12, it, null, ["easy", "mid", "hard"], (k) => ih[k])); im2.imageSize = new Size(W - 22, 12);
+  }
   notice(w, res, d);
   return w;
 }
