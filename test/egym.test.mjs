@@ -15,3 +15,9 @@ test("hasEgymCredentials braucht alle drei Variablen", () => {
   assert.equal(hasEgymCredentials({ EGYM_BRAND: "a", EGYM_USERNAME: "b" }), false);
   assert.equal(hasEgymCredentials({ EGYM_BRAND: "a", EGYM_USERNAME: "b", EGYM_PASSWORD: "c" }), true);
 });
+
+test("egym-debug akzeptiert das Token auch als ?token=", async () => {
+  const q = (t) => new Request(`https://x/api/egym-debug?token=${t}`);
+  assert.equal((await handleEgymDebugRequest(q("falsch"), { DASHBOARD_TOKEN: "t" })).status, 401);
+  assert.equal((await handleEgymDebugRequest(q("t"), { DASHBOARD_TOKEN: "t" })).status, 503);
+});
