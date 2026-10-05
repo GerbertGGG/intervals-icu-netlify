@@ -128,6 +128,8 @@
         const v = w.by[k]; if (!v) continue;
         const bw = ((W - L - R) * v) / total;
         s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--${o.prefix ?? "s"}-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} ${unit})`));
+        const pct = Math.round((100 * v) / total);
+        if (bw >= 26) s.append(el("text", { x: L + ((W - L - R) * acc) / total + bw / 2, y: y + 11, "text-anchor": "middle", style: "fill:#fff;font-weight:700;font-size:10px;pointer-events:none" }, `${pct} %`));
         acc += v;
       }
     });
