@@ -104,6 +104,7 @@ function renderCockpit(d) {
     ? tile("Heute geplant", `<div class="today"><div><div class="val" style="font-size:1.1rem">${esc(plan[0].name || "Einheit")}${plan.length > 1 ? ` <small>+${plan.length - 1}</small>` : ""}</div><div class="sub">${meta(plan[0]) || "&nbsp;"}</div>${plan[0].description ? `<div class="sub clamp">${esc(plan[0].description)}</div>` : ""}</div>${shown.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>`, "span4")
     : tile("Heute geplant", `<div class="val" style="font-size:1.1rem">Ruhetag</div><div class="sub">${next ? `Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}` : "keine Einheit geplant"}</div>`, "span4");
   const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · ${g.triathlon ? `Schwimmen ${fmt(g.triathlon.swimKm, 2)} km · Rad ${fmt(g.triathlon.bikeKm)} km · Lauf ${fmt(g.triathlon.runKm, 1)} km${g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : ""}${goalPace ? ` · Lauf-Ziel ${paceLabel(goalPace)} min/km` : ""}` : `Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)`}</div>`, "span15");
+  const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>`, "span15") : "";
   const prevWk = d.weeks[d.weeks.length - 2];
   const taperTile = taper ? tile("Taper-Status", `<div class="val" style="font-size:1.1rem">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.km, 1) : "–"} km${prevWk ? `, Vorwoche ${fmt(prevWk.km, 1)} km` : ""}. Niedriger ACWR und steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gelten als Soll, nicht als Mangel.</div>`, "span4") : "";
   const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15");
@@ -146,7 +147,7 @@ function renderCockpit(d) {
 
   $("cockpit").innerHTML = `
     <div class="cockpit-group">Rennen und Training</div>
-    <div class="cockpit">${weekTile}${raceTile}${tsbTile}${acwrTile}${taperTile}${todayTile}</div>
+    <div class="cockpit">${weekTile}${raceTile}${supportTile}${tsbTile}${acwrTile}${taperTile}${todayTile}</div>
     <div class="cockpit-group">Erholung</div>
     <div class="cockpit">${readyTile}${sleepTile}${sparkTile("HRV", "hrv", "ms", 0)}${sparkTile("Ruhepuls", "restingHR", "bpm", 0)}</div>
     <div class="cockpit-group">Ernährung</div>

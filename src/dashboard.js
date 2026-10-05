@@ -4,7 +4,7 @@ import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
-import { isARaceEvent } from "./event-utils.js";
+import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
@@ -443,16 +443,42 @@ function findRecentRace(events, todayIso) {
   return CONFIGURED_GOAL.date <= todayIso ? { date: CONFIGURED_GOAL.date, name: CONFIGURED_GOAL.name, distance: CONFIGURED_GOAL.distance, triathlonFormat: null } : null;
 }
 
+// Kommende B-Rennen (Vorbereitungswettkaempfe) bis ~13 Monate voraus. Das A-Ziel bestimmt weiter das ganze Dashboard,
+// B-Rennen erscheinen als Zwischenziele und werden nicht ausgeblendet.
+const B_RACE_LOOKAHEAD_DAYS = 400;
+
+function buildSupportRaces(events, todayIso, goalDate) {
+  return events
+    .filter((e) => isBRaceEvent(e) && eventDayOf(e) >= todayIso && eventDayOf(e) !== goalDate)
+    .sort((a, b) => eventDayOf(a).localeCompare(eventDayOf(b)))
+    .map((e) => {
+      const tri = parseTriathlonEvent(e);
+      const distance = getEventDistanceFromEvent(e);
+      const secs = Number(e?.time_target ?? e?.moving_time ?? NaN);
+      const day = eventDayOf(e);
+      return {
+        date: day,
+        daysToGo: diffDays(todayIso, day),
+        name: e?.name || (tri ? `Triathlon ${tri.label}` : DISTANCE_LABELS[distance] ?? "Rennen"),
+        distance: distance ?? null,
+        runKm: tri?.runKm ?? DISTANCE_KM[distance] ?? null,
+        targetTimeSecs: Number.isFinite(secs) && secs > 0 ? secs : null,
+        triathlonFormat: tri?.format ?? null,
+      };
+    });
+}
+
 export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   mustEnv(env, "ATHLETE_ID");
   mustEnv(env, "INTERVALS_API_KEY");
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
+    settle("bRaces", () => fetchIntervalsEvents(env, todayIso, addDays(todayIso, B_RACE_LOOKAHEAD_DAYS))),
     settle("goal", () => resolveActiveGoalRace(env, todayIso)),
     settle("sportSettings", async () => {
       const list = await fetchIntervalsSportSettings(env);
@@ -493,6 +519,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     },
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
     recentRace: findRecentRace(events, todayIso),
+    supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
     wellness,
     weeks: buildWeeks(todayIso, activities, events),
     summary: buildSummary(wellness, todayIso),
