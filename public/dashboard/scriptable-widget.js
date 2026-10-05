@@ -12,6 +12,7 @@
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), bewegtes Gewicht, Bestwerte, Muskelalter.
+//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N und der Fortschritt der Block-Ziele.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -30,6 +31,7 @@ const VIEWS = {
   training: { endpoint: "training", build: (r) => buildTraining(r), size: "medium", label: "Vorschau mittel: Training (Disziplinen)" },
   intensity: { endpoint: "training", build: (r) => buildIntensity(r), size: "medium", label: "Vorschau mittel: Intensität" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
+  block: { endpoint: "block", build: (r) => buildBlock(r), size: "medium", label: "Vorschau mittel: Trainingsblock und Ziele" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
   sleep: { endpoint: "small", build: (r) => buildSleep(r), size: "small", label: "Vorschau klein: Schlaf" },
@@ -38,7 +40,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -957,6 +959,69 @@ function buildKraft(res) {
     progressBar(r, BW, v != null ? v / 60 : 0, v === worst ? "#e39460" : hex);
     r.addSpacer(8);
     text(r, v != null ? String(v) : MISSING, FS.lg, { bold: true, color: v === worst ? new Color("#e39460") : COL.text, minScale: 0.8 });
+  });
+  notice(w, res, d);
+  return w;
+}
+
+/* ---------- Mittel: Trainingsblock und Ziele (Parameter "block") ---------- */
+// Oben Blockname und Woche x von N mit Wochenleiste, darunter je Ziel eine Karte: Wert, Ziel, Status.
+const STATUS_HEX = (st) => ZONE_RGB[st] || NEUTRAL_HEX;
+const STATUS_COL = (st) => (st === "ok" || st === "warn" || st === "bad" ? COL[st] : COL.muted);
+
+function weekStrip(w, IW, total, nowIdx, pastAll) {
+  const H = 5, gap = 3, seg = (IW - gap * (total - 1)) / total, dc = newCtx(IW, H);
+  for (let i = 0; i < total; i++) {
+    const p = new Path();
+    p.addRoundedRect(new Rect(i * (seg + gap), 0, seg, H), 2, 2);
+    dc.addPath(p);
+    dc.setFillColor(i + 1 === nowIdx ? new Color(ACCENT_HEX, 1) : pastAll || i + 1 < nowIdx ? new Color(ACCENT_HEX, 0.5) : new Color(NEUTRAL_HEX, 0.3));
+    dc.fillPath();
+  }
+  const im = w.addImage(dc.getImage()); im.imageSize = new Size(IW, H);
+}
+
+function buildBlock(res) {
+  const d = res.data, W = widgetInnerWidth();
+  const w = baseWidget({ flat: false, padV: 10 });
+  const b = d.block;
+  if (!b) {
+    header(w, W, "TRAININGSBLOCK", null);
+    w.addSpacer(6);
+    text(w, "Kein Block im Intervals-Kalender gefunden (Eintrag der Kategorie Saison, Name mit „Block“).", FS.sm, { color: COL.muted, lines: 4 });
+    notice(w, res, d);
+    return w;
+  }
+  const when = b.status === "active" ? `Woche ${b.weekNo}${b.weeks ? ` von ${b.weeks}` : ""}` : b.status === "upcoming" ? `Start in ${b.daysToStart} ${b.daysToStart === 1 ? "Tag" : "Tagen"}` : "beendet";
+  header(w, W, `BLOCK · ${String(b.name).replace(/^block\s+/i, "").toUpperCase()}`, when, b.status === "active" ? COL.ok : COL.muted);
+  w.addSpacer(4);
+  if (b.weeks) weekStrip(w, W, b.weeks, b.weekNo || 0, b.status === "done");
+  w.addSpacer(3);
+  text(w, `${dateShort(b.start)} – ${b.end ? dateShort(b.end) : MISSING}${b.daysLeft != null ? ` · noch ${b.daysLeft} Tage` : ""}`, FS.xs, { color: COL.muted });
+  w.addSpacer(5);
+  const goals = b.goals || [];
+  if (!goals.length) { text(w, "Im Eintrag stehen keine erkennbaren Ziele.", FS.sm, { color: COL.muted, lines: 2 }); notice(w, res, d); return w; }
+  const gap = 6, CW = Math.floor((W - gap * (goals.length - 1)) / goals.length), IW = CW - 16;
+  const row = w.addStack(); row.spacing = gap;
+  const SHORT = { decoupling: "DECOUPLING", strength: "KRAFT", acwr: "ACWR" };
+  goals.forEach((g) => {
+    const c = card(row, CW, 7);
+    text(c, SHORT[g.key] || g.label, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+    c.addSpacer(2);
+    const val = g.value == null ? MISSING : g.key === "strength" ? `${g.value} von ${g.of}` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)} %`;
+    text(c, val, FS.lg, { bold: true, color: STATUS_COL(g.status), minScale: 0.6 });
+    c.addSpacer(3);
+    if (g.key === "acwr" && g.value != null) progressBar(c, IW, g.value / 100, STATUS_HEX(g.status));
+    else if (g.key === "strength") {
+      const dots = c.addStack(); dots.centerAlignContent();
+      (g.weeks || []).forEach((x, i) => {
+        if (i) dots.addSpacer(2);
+        const hex = x.done ? (x.hit ? ZONE_RGB.ok : g.status === "base" ? NEUTRAL_HEX : ZONE_RGB.bad) : NEUTRAL_HEX;
+        text(dots, x.done ? "●" : "○", FS.xs, { color: new Color(hex, x.done && !x.hit && g.status === "base" ? 0.4 : 1), minScale: 1 });
+      });
+    }
+    c.addSpacer(2);
+    text(c, g.status === "base" ? "Ausgangswert" : g.target, FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
   });
   notice(w, res, d);
   return w;
