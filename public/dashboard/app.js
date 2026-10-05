@@ -116,8 +116,7 @@ function renderCockpit(d) {
     : tile("Heute geplant", `<div class="val" style="font-size:1.1rem">Ruhetag</div><div class="sub">${next ? `Nächste: ${weekday(next.date)} ${fmtDate(next.date)} – ${esc(next.name || "Einheit")}` : "keine Einheit geplant"}</div>`, "span4");
   const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)} · ${g.triathlon ? `Schwimmen ${fmt(g.triathlon.swimKm, 2)} km · Rad ${fmt(g.triathlon.bikeKm)} km · Lauf ${fmt(g.triathlon.runKm, 1)} km${g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : ""}${goalPace ? ` · Lauf-Ziel ${paceLabel(goalPace)} min/km` : ""}` : `Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)`}</div>`, "span15");
   const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>`, "span15") : "";
-  const SB = d.seasonBlock;
-  const blockTile = SB ? tile(`Trainingsblock · ${esc(SB.name)}`, `<div class="val">${SB.status === "active" ? `Woche ${SB.weekNo}${SB.weeks ? ` <small>von ${SB.weeks}</small>` : ""}` : SB.status === "upcoming" ? `${SB.daysToStart} <small>Tag${SB.daysToStart === 1 ? "" : "e"} bis Start</small>` : "beendet"}</div>${SB.status === "active" && SB.weeks ? `<div class="mbar"><div style="width:${Math.min(100, (SB.weekNo / SB.weeks) * 100)}%;background:var(--accent)"></div></div>` : ""}<div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div>${SB.goal ? `<div class="sub"><b>Ziel:</b> ${esc(SB.goal)}</div>` : ""}${SB.notes.map((n) => `<div class="sub clamp">${esc(n)}</div>`).join("")}`, "span3") : "";
+  const blockTile = renderBlock(d.seasonBlock);
   const prevWk = d.weeks[d.weeks.length - 2];
   const taperTile = taper ? tile("Taper-Status", `<div class="val" style="font-size:1.1rem">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.km, 1) : "–"} km${prevWk ? `, Vorwoche ${fmt(prevWk.km, 1)} km` : ""}. Niedriger ACWR und steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gelten als Soll, nicht als Mangel.</div>`, "span4") : "";
   const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15");
@@ -160,7 +159,7 @@ function renderCockpit(d) {
 
   $("cockpit").innerHTML = `
     <div class="cockpit-group">Rennen und Training</div>
-    <div class="cockpit flow">${weekTile}${raceTile}${blockTile}${supportTile}${tsbTile}${acwrTile}</div>
+    <div class="cockpit flow">${weekTile}${raceTile}${supportTile}${tsbTile}${acwrTile}</div>${blockTile}
     <div class="cockpit" style="margin-top:10px">${taperTile}${todayTile}</div>
     <div class="cockpit-group">Erholung</div>
     <div class="cockpit">${readyTile}${sleepTile}${sparkTile("HRV", "hrv", "ms", 0)}${sparkTile("Ruhepuls", "restingHR", "bpm", 0)}</div>
@@ -567,6 +566,34 @@ function renderNutritionWeek(d, map) {
     <div class="muted" style="margin-top:8px">${done.length ? `Schnitt abgeschlossener Tage (${done.length}): ${fmt(avg(kcal))} kcal, ${avg(prot) != null ? fmt(avg(prot)) : "–"} g Eiweiß${bal != null ? ` · Bilanz gegen Ziel ${bal > 0 ? "+" : ""}${fmt(bal)} kcal` : ""}` : "Noch kein abgeschlossener Tag mit Daten."} · Heute zählt noch nicht mit.</div>
     ${findings.length ? `<div class="notice" style="margin-top:8px"><b>Was auffällt</b><ul class="runs">${findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>` : done.length ? '<div class="notice ok" style="margin-top:8px">Nichts Auffälliges in den abgeschlossenen Tagen.</div>' : ""}
     <div class="muted" style="margin-top:6px">Faustwerte: über Ziel = mehr als ${Math.round((NUT.over - 1) * 100)} % drüber, deutlich drunter = unter ${Math.round(NUT.under * 100)} % des Ziels, wenig Eiweiß = unter ${NUT.proteinShare * 100} % der Kalorien. HH = Heißhunger-Einträge.</div>`;
+}
+
+
+/* ---------- Trainingsblock: Zeitleiste und Fortschritt der Ziele ---------- */
+function renderBlock(SB) {
+  if (!SB) return "";
+  const stLabel = { ok: "im Soll", warn: "knapp", bad: "unter Soll", base: "Basis", none: "keine Daten" };
+  const head = SB.status === "active" ? `Woche ${SB.weekNo}${SB.weeks ? ` von ${SB.weeks}` : ""}` : SB.status === "upcoming" ? `Start in ${SB.daysToStart} Tag${SB.daysToStart === 1 ? "" : "en"}` : "beendet";
+  const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}" title="Woche ${i + 1}"></i>`).join("")}</div>` : "";
+  const goalCard = (g) => {
+    const val = g.value == null ? "–" : g.key === "strength" ? `${g.value}<small> / ${g.of} Wochen</small>` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)}<small> %</small>`;
+    let vis = "";
+    if (g.key === "decoupling") {
+      const max = Math.max(g.max * 2, ...g.series.map((x) => x.value), 1);
+      vis = g.series.length ? `<div class="bbars">${g.series.slice(-10).map((x) => `<div title="${fmtDate(x.date)}: ${fmt(x.value, 1)} %" style="height:${Math.max(6, (Math.max(0, x.value) / max) * 100)}%;background:var(--${x.value <= g.max ? "ok" : "warn"})"></div>`).join("")}<u style="bottom:${(g.max / max) * 100}%"></u></div>` : "";
+    } else if (g.key === "strength") {
+      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.minutes} min"></i>`).join("")}</div>`;
+    } else if (g.key === "acwr") {
+      vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
+    } else if (g.key === "marathonShape") {
+      const top = Math.max(40, (g.stretch ?? g.min) * 1.15);
+      vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / top) * 100)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:${(g.min / top) * 100}%"></i>${g.stretch ? `<i style="left:${(g.stretch / top) * 100}%;opacity:.45"></i>` : ""}</div>` : "";
+    }
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div><div class="sub">${esc(g.note ?? "")}${g.basis ? ` · ${esc(g.basis)}` : ""}</div></div>`;
+  };
+  const goals = (SB.goals ?? []).length ? `<div class="bgoals">${SB.goals.map(goalCard).join("")}</div>` : "";
+  const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
+  return `<div class="cockpit"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val" style="font-size:1.25rem">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
