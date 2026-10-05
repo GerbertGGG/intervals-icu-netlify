@@ -257,6 +257,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
     week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalMin: goal, goalSource: source, sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
     weeks,
     lastDay: last,
+    strengthDates: days.map((d) => d.date), // alle Kraft-Tage der letzten 84 Tage (Block-Ziele im Dashboard)
     daysSince: last ? dayDiff(last) : null,
     streakWeeks: streak,
     weeksHit: { hit: done.filter(hit).length, of: done.length },
@@ -273,6 +274,13 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
 // EGYM-Abrufe sind langsam (Login, drei Endpunkte): das Ergebnis liegt kurz in KV
 const CACHE_KEY = "widget:egym-kraft";
 export const KRAFT_CACHE_MS = 15 * 60 * 1000;
+
+// Kraft-Tage aus dem Cache des Kraft-Widgets, ohne EGYM selbst abzufragen (das ist langsam und soll das Dashboard nicht
+// aufhalten). Fehlt der Cache oder stammt er aus der Zeit vor strengthDates, kommt null und der Aufrufer faellt zurueck.
+export async function readEgymStrengthDates(env) {
+  const c = await readKvJson(env, CACHE_KEY).catch(() => null);
+  return Array.isArray(c?.data?.strengthDates) ? { dates: c.data.strengthDates, at: c.at ?? null } : null;
+}
 
 export async function loadWidgetKraft(env, fresh = false) {
   const today = isoDateBerlin();
