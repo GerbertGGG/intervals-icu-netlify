@@ -6,6 +6,7 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
+import { resolveSeasonBlock } from "./season-block.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
@@ -531,6 +532,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       intervalsSportSettings: settingsR.ok ? { ok: true } : { ok: false, error: settingsR.error },
     },
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
+    seasonBlock: resolveSeasonBlock([...(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : []), ...events], todayIso),
     recentRace: findRecentRace(events, todayIso),
     supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
     wellness,
