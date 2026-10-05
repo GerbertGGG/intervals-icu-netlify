@@ -534,8 +534,12 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       if (xw.ok && Array.isArray(xw.value)) blockWell = [...xw.value, ...blockWell];
     }
     const blockRuns = blockActs === activities ? runs : blockActs.filter(isRun).map((a) => buildRunRecord(a, runCtx));
+    // Lange Laeufe wie im Longrun-Tracker: Art "Langer Lauf" und Decoupling aus Runalyze; Intervals nur als Ergaenzung fuer Tage ohne Runalyze-Wert.
+    const rzLong = (snapshot?.runs ?? []).filter((r) => runKindFromType(r.type) === "long" && Number.isFinite(r.decouplingPct)).map((r) => ({ date: r.date, decoupling: r.decouplingPct }));
+    const rzDays = new Set(rzLong.map((r) => r.date));
+    const icuLong = blockRuns.filter((r) => r.kind === "long" && r.decoupling != null && !rzDays.has(r.date)).map((r) => ({ date: r.date, decoupling: r.decoupling }));
     const goals = buildBlockGoals(seasonBlock, {
-      longRuns: blockRuns.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, decoupling: r.decoupling })),
+      longRuns: [...rzLong, ...icuLong],
       strength: blockActs.filter((a) => sportOf(a) === "strength").map((a) => ({ date: activityDay(a), minutes: (num(a?.moving_time) ?? 0) / 60 })),
       acwrDays: blockWell.map((x) => ({ date: String(x?.id ?? x?.date ?? "").slice(0, 10), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
     }, todayIso);
