@@ -576,7 +576,7 @@ function renderBlock(SB) {
   const head = SB.status === "active" ? `Woche ${SB.weekNo}${SB.weeks ? ` von ${SB.weeks}` : ""}` : SB.status === "upcoming" ? `Start in ${SB.daysToStart} Tag${SB.daysToStart === 1 ? "" : "en"}` : "beendet";
   const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}" title="Woche ${i + 1}"></i>`).join("")}</div>` : "";
   const goalCard = (g) => {
-    const val = g.value == null ? "–" : g.key === "strength" ? `${g.value}<small> / ${g.of} Wochen</small>` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)}<small> %</small>`;
+    const val = g.value == null ? "–" : g.key === "strength" ? `${g.value}<small> von ${g.of} Wochen</small>` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)}<small> %</small>`;
     let vis = "";
     if (g.key === "decoupling") {
       const max = Math.max(g.max * 2, ...g.series.map((x) => x.value), 1);
@@ -586,7 +586,7 @@ function renderBlock(SB) {
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div><div class="sub">${esc(g.note ?? "")}${g.basis ? ` · ${esc(g.basis)}` : ""}</div></div>`;
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${g.key === "strength" ? `<div class="sub">Jedes Kästchen = eine Woche, grün = Ziel erreicht</div>` : ""}<div class="sub">${[g.note, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ")}</div></div>`;
   };
   const goals = (SB.goals ?? []).length ? `<div class="bgoals">${SB.goals.map(goalCard).join("")}</div>` : "";
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);

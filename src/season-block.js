@@ -120,11 +120,12 @@ export function buildBlockGoals(block, input, todayIso) {
     }
     const full = weeks.filter((x) => x.done);
     const hits = full.filter((x) => x.hit).length;
+    const openWeek = weeks.find((x) => !x.done) ?? null;
     goals.push({
-      key: "strength", label: "Kraft-Konsistenz", target: `${targets.strength.perWeek}× Kraft pro Woche`, unit: "Wochen",
+      key: "strength", label: "Kraft-Konsistenz", target: `jede Woche ${targets.strength.perWeek}× Kraft`, unit: "Wochen",
       value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12),
       status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= 0.8, hits / full.length >= 0.6),
-      note: full.length ? `${hits} von ${full.length} abgeschlossenen Wochen erreicht` : "Noch keine abgeschlossene Woche.",
+      note: openWeek ? `Diese Woche: ${openWeek.count} von ${targets.strength.perWeek}` : null,
     });
   }
 
