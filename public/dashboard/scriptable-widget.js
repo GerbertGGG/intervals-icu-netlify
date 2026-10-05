@@ -732,8 +732,15 @@ function buildFoodMedium(res) {
     const ring = row.addStack(); ring.size = new Size(RS, RS); ring.layoutVertically(); ring.centerAlignContent();
     ring.backgroundImage = ringProgressImage(RS, td.calories != null && kcalGoal ? td.calories / kcalGoal : 0, ACCENT_HEX, stale ? 0.5 : 1);
     const cen = (str, size, o) => { const s = ring.addStack(); s.addSpacer(); text(s, str, size, { align: "center", minScale: 0.6, ...o }); s.addSpacer(); };
-    cen(td.calories != null ? fmt(td.calories) : MISSING, td.calories != null ? 24 : 16, { color: td.calories != null ? COL.text : COL.muted, opacity: op });
-    if (kcalGoal) cen(`von ${fmt(kcalGoal)}`, FS.sm, { color: COL.muted, minScale: 0.85 });
+    // Mitte: uebrige Kalorien (Ziel - gegessen); ueber dem Ziel gelb mit "drüber"
+    const left = td.calories != null && kcalGoal ? kcalGoal - td.calories : null;
+    if (left != null) {
+      cen(fmt(Math.abs(left)), 24, { opacity: op, color: left < 0 ? new Color(OVER_HEX) : COL.text });
+      cen(left < 0 ? "kcal drüber" : "kcal übrig", FS.sm, { color: COL.muted, minScale: 0.85 });
+    } else {
+      cen(td.calories != null ? fmt(td.calories) : MISSING, td.calories != null ? 24 : 16, { color: td.calories != null ? COL.text : COL.muted, opacity: op });
+      if (kcalGoal) cen(`von ${fmt(kcalGoal)}`, FS.sm, { color: COL.muted, minScale: 0.85 });
+    }
     // Rechts: Protein, Kohlenhydrate, Fett als Balken (g / Ziel g); fehlende Werte als Strich ohne Balken
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(RW, 0);
     const macros = [
