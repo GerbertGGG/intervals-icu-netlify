@@ -346,11 +346,13 @@ function renderFitness(d) {
   }
 
   // Eine konsolidierte Prognose: nur Rechnung aus VDOT und aus der 10-km-Bestzeit (5-km-Bestzeit und Runalyze-Prognose verwirren mehr).
-  const est = r.hmEstimates.filter((e) => RANGE_KEYS.includes(e.key));
-  if (!est.length) $("corridor").innerHTML = '<div class="muted">Keine Halbmarathon-Rechnung aus VDOT oder 10-km-Bestzeit möglich.</div>';
+  // Alle Distanzen; das Ziel (Strich, Abstand) nur bei der Distanz des Zielrennens.
+  const dists = r.raceEstimates ?? [];
+  if (!dists.length) $("corridor").innerHTML = '<div class="muted">Keine Rechnung aus VDOT oder 10-km-Bestzeit möglich.</div>';
   else {
-    $("corridor").innerHTML = '<div id="corridor-chart"></div><div class="muted">Rechnungen nach Daniels (VDOT-Modell), kein Halbmarathon-Ergebnis. Sie unterstellen Ausdauer wie über die Ausgangsdistanz und fallen von kürzeren Distanzen aus tendenziell zu optimistisch aus.</div>';
-    C.corridor($("corridor-chart"), { goal, estimates: est });
+    const goalKm = d.goal.runKm ?? 21.0975;
+    $("corridor").innerHTML = dists.map((x, i) => `<div class="sub" style="margin:${i ? 12 : 0}px 0 4px"><b>${x.label}</b></div><div id="corridor-chart-${i}"></div>`).join("") + '<div class="muted">Rechnungen nach Daniels (VDOT-Modell), kein Rennergebnis. Sie unterstellen Ausdauer wie über die Ausgangsdistanz und fallen von kürzeren Distanzen aus tendenziell zu optimistisch aus, besonders beim Marathon.</div>';
+    dists.forEach((x, i) => C.corridor($(`corridor-chart-${i}`), { goal: goal && Math.abs(x.km - goalKm) / goalKm < 0.02 ? goal : null, estimates: x.estimates }));
   }
 
   // Verlauf nur zeigen, wenn es einen gibt

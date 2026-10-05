@@ -386,6 +386,19 @@ function buildHmEstimates(snapshot, vdot, rows) {
   return out;
 }
 
+// Dieselbe Rechnung für alle Standarddistanzen (5 km, 10 km, Halbmarathon, Marathon): aus dem aktuellen VDOT und
+// aus dem VDOT der 10-km-Bestzeit. Je Distanz eine Liste wie in hmEstimates, damit das Dashboard zur Zieldistanz passt.
+function buildRaceEstimates(vdot, rows) {
+  const best10 = rows.find((r) => r.label === "10 km");
+  const vdot10 = best10?.bestSeconds != null ? computeVdotFromRaceTime(best10.bestDistanceKm * 1000, best10.bestSeconds) : null;
+  const sources = [vdot != null ? { key: "vdot", label: `aus VDOT ${Math.round(vdot * 10) / 10}`, vdot } : null, vdot10 != null ? { key: "best-10", label: "aus 10-km-Bestzeit", vdot: vdot10 } : null].filter(Boolean);
+  const dists = [{ key: "5k", km: 5 }, { key: "10k", km: 10 }, { key: "hm", km: 21.0975 }, { key: "m", km: 42.195 }];
+  return dists.map((d) => {
+    const estimates = sources.map((s) => ({ key: s.key, label: s.label, seconds: predictRaceTimesFromVdot(s.vdot)?.find((x) => x.key === d.key)?.seconds ?? null, kind: "calc" })).filter((e) => e.seconds);
+    return { key: d.key, km: d.km, label: DISTANCE_LABELS[d.key] ?? d.key, estimates };
+  }).filter((d) => d.estimates.length);
+}
+
 function buildRunalyze(snapshot, history = []) {
   if (!snapshot) return null;
   const rows = [{ label: "5 km", km: 5 }, { label: "10 km", km: 10 }, { label: "Halbmarathon", km: 21.0975 }].map(({ label, km }) => {
@@ -404,7 +417,7 @@ function buildRunalyze(snapshot, history = []) {
   // hier nach Daniels aus diesem VDOT berechnet (dieselbe Formel wie in vdot.js).
   const vdot = snapshot.vdot ?? null;
   const paces = vdot != null ? paceTargetsFromVdot(vdot) : null;
-  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows), hmHistory: upsertHistory(history, historyEntryFromSnapshot(snapshot)) };
+  return { fetchedAt: snapshot.fetchedAt, vdot, paces, rows, hmEstimates: buildHmEstimates(snapshot, vdot, rows), raceEstimates: buildRaceEstimates(vdot, rows), hmHistory: upsertHistory(history, historyEntryFromSnapshot(snapshot)) };
 }
 
 async function settle(label, fn) {
