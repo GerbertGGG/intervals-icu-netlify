@@ -585,9 +585,6 @@ function renderBlock(SB) {
       vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}× Kraft"></i>`).join("")}</div>`;
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
-    } else if (g.key === "marathonShape") {
-      const top = Math.max(40, (g.stretch ?? g.min) * 1.15);
-      vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / top) * 100)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:${(g.min / top) * 100}%"></i>${g.stretch ? `<i style="left:${(g.stretch / top) * 100}%;opacity:.45"></i>` : ""}</div>` : "";
     }
     return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div><div class="sub">${esc(g.note ?? "")}${g.basis ? ` · ${esc(g.basis)}` : ""}</div></div>`;
   };
