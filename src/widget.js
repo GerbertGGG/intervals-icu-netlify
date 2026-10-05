@@ -249,6 +249,25 @@ export function buildWidgetSmall(d, goals = null) {
   };
 }
 
+// Trainingsblock aus dem Kalender mit dem Fortschritt der Ziele (Decoupling, Kraft, ACWR). Das Widget stellt nur dar:
+// Status (ok/warn/bad/base/none), Werte und Ziele kommen fertig aus dem Dashboard (season-block.js).
+export function buildWidgetBlock(d) {
+  const b = d.seasonBlock;
+  if (!b) return { generatedAt: d.generatedAt, today: d.today, block: null, sourcesFailed: failedOf(d) };
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    block: {
+      name: b.name, status: b.status, start: b.start, end: b.end, weeks: b.weeks, weekNo: b.weekNo, daysToStart: b.daysToStart, daysLeft: b.daysLeft,
+      goals: (b.goals ?? []).map((g) => ({
+        key: g.key, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null,
+        weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count })) : undefined,
+      })),
+    },
+    sourcesFailed: failedOf(d),
+  };
+}
+
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
 // wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
 const CACHE_KEY = "widget:dashboard-cache";
@@ -276,6 +295,6 @@ export async function handleWidgetRequest(req, env) {
   const dashboard = await dashboardCached(env, params.get("fresh") === "1");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }

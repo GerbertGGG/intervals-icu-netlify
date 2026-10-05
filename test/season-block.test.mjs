@@ -31,3 +31,10 @@ assert.equal(g.marathonShape, undefined);
 const base = Object.fromEntries(buildBlockGoals(resolveSeasonBlock([{ ...ev, description: text }], "2026-10-05"), input, "2026-10-05").map((x) => [x.key, x]));
 assert.equal(base.decoupling.status, "base"); assert.equal(base.decoupling.value, 20);
 console.log("block goals ok");
+
+import { buildWidgetBlock } from "../src/widget.js";
+const wd = buildWidgetBlock({ generatedAt: "t", today: "2026-11-16", seasonBlock: { ...blk, goals: Object.values(g) }, sources: {} });
+assert.equal(wd.block.status, "active"); assert.equal(wd.block.weekNo, 5); assert.equal(wd.block.goals.length, 3);
+assert.equal(wd.block.goals.find((x) => x.key === "strength").weeks.length <= 6, true);
+assert.equal(buildWidgetBlock({ generatedAt: "t", today: "2026-11-16", seasonBlock: null, sources: {} }).block, null);
+console.log("block widget ok");
