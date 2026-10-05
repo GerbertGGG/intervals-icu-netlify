@@ -535,6 +535,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       if (xw.ok && Array.isArray(xw.value)) blockWell = [...xw.value, ...blockWell];
     }
     const blockRuns = blockActs === activities ? runs : blockActs.filter(isRun).map((a) => buildRunRecord(a, runCtx));
+    // Lange Laeufe wie im Longrun-Tracker: Art "Langer Lauf" und Decoupling aus Runalyze; Intervals nur als Ergaenzung fuer Tage ohne Runalyze-Wert.
+    const rzLong = (snapshot?.runs ?? []).filter((r) => runKindFromType(r.type) === "long" && Number.isFinite(r.decouplingPct)).map((r) => ({ date: r.date, decoupling: r.decouplingPct }));
+    const rzDays = new Set(rzLong.map((r) => r.date));
+    const icuLong = blockRuns.filter((r) => r.kind === "long" && r.decoupling != null && !rzDays.has(r.date)).map((r) => ({ date: r.date, decoupling: r.decoupling }));
     // Kraft-Tag = Tag mit EGYM-Training oder einer Kraft-Einheit aus Intervals von mind. 20 min (Mobility, Dehnen, Yoga zaehlen nicht)
     const egymDays = await readEgymStrengthDates(env).catch(() => null);
     const strengthDays = [...new Set([
@@ -542,7 +546,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ...blockActs.filter((a) => sportOf(a) === "strength" && (num(a?.moving_time) ?? 0) >= 20 * 60 && !/mobil|stretch|dehn|yoga/i.test(String(a?.name ?? ""))).map((a) => activityDay(a)),
     ])].map((date) => ({ date }));
     const goals = buildBlockGoals(seasonBlock, {
-      longRuns: blockRuns.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, decoupling: r.decoupling })),
+      longRuns: [...rzLong, ...icuLong],
       strength: strengthDays,
       strengthSource: { egym: Boolean(egymDays), egymAt: egymDays?.at ?? null },
       acwrDays: blockWell.map((x) => ({ date: String(x?.id ?? x?.date ?? "").slice(0, 10), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
