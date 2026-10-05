@@ -398,18 +398,21 @@ function renderThresholds(d) {
 function triathlonGoalCard(g) {
   const tg = g.triathlon?.targets;
   if (!tg) return "";
-  const tag = (x) => (x.source === "eintrag" ? "" : " <small>(Vorschlag)</small>");
-  const row = (l, v) => `<div class="row"><span>${l}</span><span>${v}</span></div>`;
+  const tag = (x) => (x.source === "eintrag" ? "" : "<small>Vorschlag</small>");
+  const row = (label, x, time, detail, cls = "") =>
+    `<div class="tri-row ${cls}"><div class="tri-head"><span class="tri-name">${label}${x ? tag(x) : ""}</span><span class="tri-time">${time}</span></div>${detail ? `<div class="tri-detail">${detail}</div>` : ""}</div>`;
+  const missing = (t) => `<span class="muted">${t}</span>`;
   const rows = [];
   const sw = tg.swim;
-  rows.push(row(`Schwimmen ${fmt(g.triathlon.swimKm, 2)} km`, sw ? `<b>${paceLabel(sw.pacePer100m)} min/100 m</b> · ${fmtTime(sw.timeSecs)}${tag(sw)}` : '<span class="muted">Schwellenpace fehlt</span>'));
+  rows.push(row(`🏊 Schwimmen · ${fmt(g.triathlon.swimKm, 2)} km`, sw, sw ? fmtTime(sw.timeSecs) : "–", sw ? `${paceLabel(sw.pacePer100m)} min/100 m` : missing("Schwellenpace fehlt")));
   const b = tg.bike;
-  const bikeVal = !b ? '<span class="muted">FTP fehlt</span>'
-    : [b.watts ? `<b>${b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)}` : fmt(b.watts)} W</b>` : "", b.pctFtp ? `${fmt(b.pctFtp * 100)} % FTP` : "", b.timeSecs ? `${fmtTime(b.timeSecs)} (${fmt(b.speedKmh, 1)} km/h)` : ""].filter(Boolean).join(" · ") + tag(b);
-  rows.push(row(`Rad ${fmt(g.triathlon.bikeKm)} km`, bikeVal));
-  rows.push(row(`Laufen ${fmt(g.triathlon.runKm, 1)} km`, tg.run ? `<b>${paceLabel(tg.run.pacePerKm)} min/km</b> · ${fmtTime(tg.run.timeSecs)}` : '<span class="muted">in der Beschreibung ergänzen: „Lauf 1:55:00“</span>'));
-  if (tg.totalTargetSecs) rows.push(row("Gesamtziel", `<b>${fmtTime(tg.totalTargetSecs)}</b>`));
-  return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<div class="muted">Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></div>`;
+  const bikeDetail = !b ? missing("FTP fehlt")
+    : [b.watts ? `${b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)}` : fmt(b.watts)} W` : "", b.pctFtp ? `${fmt(b.pctFtp * 100)} % FTP` : "", b.speedKmh ? `${fmt(b.speedKmh, 1)} km/h` : ""].filter(Boolean).join(" · ");
+  rows.push(row(`🚴 Rad · ${fmt(g.triathlon.bikeKm)} km`, b, b?.timeSecs ? fmtTime(b.timeSecs) : "–", bikeDetail));
+  const r = tg.run;
+  rows.push(row(`🏃 Laufen · ${fmt(g.triathlon.runKm, 1)} km`, null, r ? fmtTime(r.timeSecs) : "–", r ? `${paceLabel(r.pacePerKm)} min/km` : missing("in der Beschreibung ergänzen: „Lauf 1:55:00“")));
+  if (tg.totalTargetSecs) rows.push(row("Gesamtziel", null, fmtTime(tg.totalTargetSecs), "", "tri-total"));
+  return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<div class="muted" style="margin-top:8px">Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></div>`;
 }
 
 /* ---------- 5 · Erholung ---------- */

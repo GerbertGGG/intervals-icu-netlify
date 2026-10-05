@@ -51,6 +51,14 @@ a { color: var(--accent); }
 .stack > * + * { margin-top: 12px; }
 .big { font-size: 2rem; font-weight: 650; line-height: 1.1; }
 .row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.tri-row { padding: 9px 0; border-top: 1px solid var(--line); }
+.tri-row:first-of-type { border-top: 0; }
+.tri-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.tri-name { font-weight: 600; }
+.tri-name small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.tri-time { font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tri-detail { color: var(--muted); font-size: .85rem; margin-top: 2px; }
+.tri-total .tri-time { color: var(--accent); }
 .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .85rem; font-weight: 600; white-space: nowrap; }
 .big-badge { font-size: 1.05rem; }
 .ok { background: var(--ok-bg); color: var(--ok); }
