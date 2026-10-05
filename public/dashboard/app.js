@@ -316,7 +316,43 @@ function renderSport(d) {
     const sum = (x) => SPORT_ORDER.reduce((a, k) => a + x.bySport[k].load, 0), body = rows(w, ref);
     return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>Distanz</th><th>TSS</th><th>Vorwoche</th><th>Plan</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td></td><td></td><td><b>${fmt(sum(w))}</b></td><td class="muted">${ref ? fmt(sum(ref)) : "–"}</td><td class="muted">${w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
   };
-  $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + table(cur, done, "Laufende Woche");
+  $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + table(cur, done, "Laufende Woche") + sportFindings(d);
+}
+
+/* Auffälligkeiten im Training. Nur abgeschlossene Wochen zählen (die laufende ist unvollständig),
+   Vergleich gegen den Schnitt der bis zu 4 Wochen davor. Schwellen sind grobe Faustwerte, kein Trainingsplan. */
+const TRN = { jump: 1.3, drop: 0.6, planUnder: 0.75, planOver: 1.15, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
+function sportFindings(d) {
+  const full = d.weeks.filter((w) => w.complete), last = full[full.length - 1];
+  if (!last) return "";
+  const findings = [], from = fmtDate(last.weekStart), base = full.slice(-5, -1).filter((w) => w.load > 0);
+  const avg = (key) => base.length ? base.reduce((n, w) => n + w[key], 0) / base.length : null;
+  const aLoad = avg("load"), aKm = avg("km");
+  if (aLoad && last.load > aLoad * TRN.jump) findings.push(`Woche ab ${from}: Belastung ${fmt(last.load)} TSS, ${Math.round((last.load / aLoad - 1) * 100)} % mehr als dein Schnitt (${fmt(aLoad)}) – steiler Anstieg, Verletzungsrisiko beachten.`);
+  else if (aLoad && last.load < aLoad * TRN.drop) findings.push(`Woche ab ${from}: Belastung ${fmt(last.load)} TSS, nur ${Math.round((last.load / aLoad) * 100)} % deines Schnitts (${fmt(aLoad)}) – deutlich weniger Training.`);
+  if (aKm && last.km > aKm * TRN.jump) findings.push(`Woche ab ${from}: Laufumfang ${fmt(last.km, 1)} km, ${Math.round((last.km / aKm - 1) * 100)} % mehr als dein Schnitt (${fmt(aKm, 1)} km).`);
+  if (last.plannedLoad) {
+    if (last.load < last.plannedLoad * TRN.planUnder) findings.push(`Woche ab ${from}: nur ${fmt(last.load)} von ${fmt(last.plannedLoad)} TSS des Plans geschafft (${Math.round((last.load / last.plannedLoad) * 100)} %).`);
+    else if (last.load > last.plannedLoad * TRN.planOver) findings.push(`Woche ab ${from}: ${fmt(last.load - last.plannedLoad)} TSS über dem Plan (${fmt(last.load)} von ${fmt(last.plannedLoad)}).`);
+  }
+  for (const k of SPORT_ORDER) {
+    const b = last.bySport[k];
+    if (b.plannedLoad > 0 && b.count === 0) findings.push(`Woche ab ${from}: ${SPORT_LABEL[k]} war geplant (${fmt(b.plannedLoad)} TSS), aber nichts absolviert.`);
+  }
+  const z = last.intensity, zt = z.easy + z.mid + z.hard;
+  if (zt >= 60) {
+    if (z.hard / zt > TRN.hardShare) findings.push(`Woche ab ${from}: ${Math.round((z.hard / zt) * 100)} % der Zonenzeit hart (Z5+) – viel Intensität.`);
+    if (z.mid / zt > TRN.midShare) findings.push(`Woche ab ${from}: ${Math.round((z.mid / zt) * 100)} % der Zonenzeit im mittleren Bereich (Z3–4) – weder locker noch richtig hart.`);
+  }
+  // Tage in Folge: Training ohne Pause bzw. lange Pause bis heute (heute zählt nur, wenn schon trainiert)
+  const load = Object.fromEntries(d.daily.map((x) => [x.date, x.load]));
+  let streak = 0, pause = 0;
+  for (let x = d.today; load[x] != null; x = addDays(x, -1)) { if (load[x] > 0) streak++; else if (x !== d.today) break; }
+  for (let x = addDays(d.today, -1); load[x] != null && !(load[x] > 0); x = addDays(x, -1)) pause++;
+  if (streak >= TRN.streak) findings.push(`${streak} Trainingstage in Folge ohne Ruhetag.`);
+  if (load[d.today] === 0 && pause >= TRN.restDays) findings.push(`Seit ${pause} Tagen kein Training.`);
+  const body = findings.length ? `<div class="notice" style="margin-top:12px"><b>Was auffällt</b><ul class="runs">${findings.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></div>` : '<div class="notice ok" style="margin-top:12px">Nichts Auffälliges in der letzten vollen Woche.</div>';
+  return `${body}<div class="muted" style="margin-top:6px">Faustwerte: Anstieg = mehr als ${Math.round((TRN.jump - 1) * 100)} % über dem Schnitt der bis zu 4 Wochen davor, deutlich weniger = unter ${Math.round(TRN.drop * 100)} %, Plan verfehlt = unter ${Math.round(TRN.planUnder * 100)} % bzw. über ${Math.round(TRN.planOver * 100)} % des Plans, viel Intensität = über ${TRN.hardShare * 100} % hart oder über ${TRN.midShare * 100} % mittel, ${TRN.streak}+ Tage ohne Ruhetag, ${TRN.restDays}+ Tage Pause.</div>`;
 }
 
 /* ---------- 4 · Leistung ---------- */
