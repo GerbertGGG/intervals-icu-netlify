@@ -61,7 +61,7 @@ export function resolveSeasonBlock(events, todayIso) {
 // Schwellen werden aus dem Text gelesen ("unter 8%", "≥32-35%"), sonst gelten die Vorgaben unten.
 const ACWR_BAND = { lo: 0.8, hi: 1.3 };
 const ACWR_DAYS_SHARE = 0.8; // "Korridor gehalten": mindestens 80 % der Tage
-const STRENGTH_WEEK_MIN = 60; // wie die Kraft-Karte des Dashboards
+const STRENGTH_PER_WEEK = 2; // Kraft-Konsistenz: Einheiten pro Woche
 const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const numOf = (s) => Number(String(s).replace(",", "."));
@@ -73,7 +73,7 @@ export function parseBlockTargets(text) {
   const ms = t.match(/marathon\s*-?shape[^\d]{0,12}(\d+(?:[.,]\d+)?)(?:\s*[-–]\s*(\d+(?:[.,]\d+)?))?/i);
   return {
     decoupling: has(/decoupling/i) ? { max: dec ? numOf(dec[1]) : 8 } : null,
-    strength: has(/kraft/i) ? { weekMin: STRENGTH_WEEK_MIN } : null,
+    strength: has(/kraft/i) ? { perWeek: STRENGTH_PER_WEEK } : null,
     acwr: has(/acwr/i) ? { ...ACWR_BAND, share: ACWR_DAYS_SHARE } : null,
     marathonShape: has(/marathon\s*-?shape/i) ? { min: ms ? numOf(ms[1]) : 32, stretch: ms?.[2] ? numOf(ms[2]) : null } : null,
   };
@@ -118,13 +118,13 @@ export function buildBlockGoals(block, input, todayIso) {
     const weeks = [];
     for (let s = w.from; s <= w.to; s = addDays(s, 7)) {
       const e = addDays(s, 6);
-      const minutes = (input.strength ?? []).filter((x) => x.date >= s && x.date <= e).reduce((a, x) => a + x.minutes, 0);
-      weeks.push({ start: s, minutes: Math.round(minutes), done: e <= w.to && e < todayIso, hit: minutes >= targets.strength.weekMin });
+      const count = (input.strength ?? []).filter((x) => x.date >= s && x.date <= e).length;
+      weeks.push({ start: s, count, done: e <= w.to && e < todayIso, hit: count >= targets.strength.perWeek });
     }
     const full = weeks.filter((x) => x.done);
     const hits = full.filter((x) => x.hit).length;
     goals.push({
-      key: "strength", label: "Kraft-Konsistenz", target: `${targets.strength.weekMin} min pro Woche`, unit: "Wochen",
+      key: "strength", label: "Kraft-Konsistenz", target: `${targets.strength.perWeek}× Kraft pro Woche`, unit: "Wochen",
       value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12),
       status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= 0.8, hits / full.length >= 0.6),
       note: full.length ? `${hits} von ${full.length} abgeschlossenen Wochen erreicht` : "Noch keine abgeschlossene Woche.",
