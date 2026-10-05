@@ -18,8 +18,8 @@ export function historyEntryFromSnapshot(snapshot) {
     const v = (snapshot.prognosis ?? []).find((p) => Math.abs(p.distanceKm - km) / km <= 0.01)?.seconds;
     return v != null ? Math.round(v) : null;
   };
-  const entry = { date, vdot, hmVdotSecs: hmVdotSecs != null ? Math.round(hmVdotSecs) : null, hmProgSecs: prog(HM_KM), p5Secs: prog(5), p10Secs: prog(10) };
-  if (vdot == null && entry.hmProgSecs == null && entry.p5Secs == null && entry.p10Secs == null) return null;
+  const entry = { date, vdot, hmVdotSecs: hmVdotSecs != null ? Math.round(hmVdotSecs) : null, hmProgSecs: prog(HM_KM), p5Secs: prog(5), p10Secs: prog(10), marathonShape: snapshot.marathonShape ?? null };
+  if (vdot == null && entry.hmProgSecs == null && entry.p5Secs == null && entry.p10Secs == null && entry.marathonShape == null) return null;
   return entry;
 }
 

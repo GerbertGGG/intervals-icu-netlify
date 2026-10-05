@@ -6,7 +6,7 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock } from "./season-block.js";
+import { resolveSeasonBlock, buildBlockGoals } from "./season-block.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
@@ -522,6 +522,27 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ? { date: goalFromCalendar.date, name: DISTANCE_LABELS[goalFromCalendar.distance] ?? "Rennen", distance: goalFromCalendar.distance ?? null, targetTimeSecs: goalFromCalendar.targetTimeSecs ?? (goalFromCalendar.distance === "hm" ? CONFIGURED_GOAL.targetTimeSecs : null), runKm: DISTANCE_KM[goalFromCalendar.distance] ?? null, source: "intervals" }
       : { ...CONFIGURED_GOAL, runKm: CONFIGURED_GOAL.distanceKm, source: "config" };
 
+  // Trainingsblock aus dem Kalender samt Fortschritt der Ziele. Laeuft der Block schon laenger als die 56 Tage Historie,
+  // werden Aktivitaeten und Wellness ab Blockstart nachgeladen (best effort, sonst zaehlt nur das Vorhandene).
+  let seasonBlock = resolveSeasonBlock([...(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : []), ...events], todayIso);
+  if (seasonBlock) {
+    let blockActs = activities, blockWell = wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [];
+    if (seasonBlock.status === "active" && seasonBlock.start < oldest) {
+      const till = addDays(oldest, -1);
+      const [xa, xw] = await Promise.all([settle("blockActivities", () => fetchIntervalsActivities(env, seasonBlock.start, till)), settle("blockWellness", () => fetchIntervalsWellnessRange(env, seasonBlock.start, till))]);
+      if (xa.ok && Array.isArray(xa.value)) blockActs = [...xa.value, ...activities];
+      if (xw.ok && Array.isArray(xw.value)) blockWell = [...xw.value, ...blockWell];
+    }
+    const blockRuns = blockActs === activities ? runs : blockActs.filter(isRun).map((a) => buildRunRecord(a, runCtx));
+    const goals = buildBlockGoals(seasonBlock, {
+      longRuns: blockRuns.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, decoupling: r.decoupling })),
+      strength: blockActs.filter((a) => sportOf(a) === "strength").map((a) => ({ date: activityDay(a), minutes: (num(a?.moving_time) ?? 0) / 60 })),
+      acwrDays: blockWell.map((x) => ({ date: String(x?.id ?? x?.date ?? "").slice(0, 10), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
+      marathonShape: { now: snapshot?.marathonShape ?? null, history: (runalyzeHistory ?? []).filter((h) => h?.marathonShape != null).map((h) => ({ date: h.date, value: h.marathonShape })) },
+    }, todayIso);
+    seasonBlock = { ...seasonBlock, goals };
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     today: todayIso,
@@ -532,7 +553,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       intervalsSportSettings: settingsR.ok ? { ok: true } : { ok: false, error: settingsR.error },
     },
     goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
-    seasonBlock: resolveSeasonBlock([...(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : []), ...events], todayIso),
+    seasonBlock,
     recentRace: findRecentRace(events, todayIso),
     supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
     wellness,
