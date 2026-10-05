@@ -236,8 +236,9 @@
       if (!pts.length) return null;
       return { ...sr, pts: pts.map((r) => ({ date: r.date, v: r[sr.key] - pts[0][sr.key], abs: r[sr.key] })) };
     }).filter(Boolean);
-    const maxAbs = Math.max(30, ...lines.flatMap((l) => l.pts.map((p) => Math.abs(p.v))));
-    const lim = [30, 60, 120, 180, 300, 600, 900, 1800].find((n) => n >= maxAbs) ?? Math.ceil(maxAbs / 600) * 600;
+    // Mindestens ±5 Min, damit Schwankungen von unter einer Minute nicht wie ein Einbruch aussehen
+    const maxAbs = Math.max(300, ...lines.flatMap((l) => l.pts.map((p) => Math.abs(p.v))));
+    const lim = [300, 600, 900, 1800].find((n) => n >= maxAbs) ?? Math.ceil(maxAbs / 600) * 600;
     const t0 = Date.parse(rows[0].date), t1 = Date.parse(rows[rows.length - 1].date);
     const x = (d) => L + (W - L - R) * (t1 === t0 ? 0.5 : (Date.parse(d) - t0) / (t1 - t0));
     const y = (v) => T + (H - T - B) * (0.5 - v / (2 * lim));
