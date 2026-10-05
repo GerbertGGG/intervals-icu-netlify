@@ -45,6 +45,8 @@ a { color: var(--accent); }
 .grid.half { grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); }
 .grid.fill { grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); align-items: start; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.splitcols { display: grid; gap: 4px 24px; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); align-items: start; }
+.splitcols h3 { margin-top: 0; }
 .card.full { grid-column: 1 / -1; }
 .stack > * + * { margin-top: 12px; }
 .big { font-size: 2rem; font-weight: 650; line-height: 1.1; }
@@ -141,7 +143,7 @@ button, input { font: inherit; }
 
   <section id="rennplan" hidden>
     <h2>2 · Rennplan</h2>
-    <div class="grid wide" style="align-items:start">
+    <div class="grid" style="grid-template-columns:minmax(0,1fr)">
       <div class="card"><h3>Zielstaffel</h3><div id="staffel"></div></div>
       <div class="card"><h3>Splits und Verpflegung</h3><div id="splits"></div></div>
       <div class="card"><h3>Checkliste</h3><div id="checklist"></div></div>
