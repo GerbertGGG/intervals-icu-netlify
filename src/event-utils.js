@@ -42,3 +42,15 @@ export function isARaceEvent(event) {
     .map((v) => normalizeEventCategory(v))
     .some((v) => v === "RACE" || v.includes("RACE"));
 }
+
+export function isBRaceCategory(category) {
+  const cat = normalizeEventCategory(category);
+  if (!cat) return false;
+  const compact = cat.replace(/[^A-Z0-9]/g, "");
+  return cat === "B" || compact === "RACEB" || compact === "BRACE";
+}
+
+export function isBRaceEvent(event) {
+  if (!event || typeof event !== "object") return false;
+  return isBRaceCategory(event?.category);
+}
