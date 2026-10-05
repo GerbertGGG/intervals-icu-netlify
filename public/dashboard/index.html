@@ -103,6 +103,8 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .dots span { display: inline-flex; align-items: center; gap: 4px; }
 .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); display: inline-block; }
 .dots i.ok { background: var(--ok); } .dots i.warn { background: var(--warn); } .dots i.bad { background: var(--bad); }
+/* Kraft: EGYM-Karte rechts über zwei Zeilen, Hüfte rutscht unter Krafttraining statt Lücke zu lassen */
+@media (min-width: 1000px) { .kraft-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto 1fr; grid-auto-flow: dense; } .kraft-grid #egym-card { grid-column: 2; grid-row: 1 / span 2; } .kraft-grid #strength-card, .kraft-grid #hip-card { grid-column: 1; } }
 .split { display: grid; gap: 12px; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: stretch; }
 @media (max-width: 1000px) { .split { grid-template-columns: minmax(0, 1fr); } .split > .card { max-width: 520px; } .split > .stack { max-width: 520px; } }
 .ready-grid { margin-top: 10px; }
@@ -205,7 +207,7 @@ button, input { font: inherit; }
 
   <section id="kraft" hidden>
     <h2>7 · Kraft</h2>
-    <div class="grid half" style="align-items:start">
+    <div class="grid half kraft-grid" style="align-items:start">
       <div class="card" id="strength-card" hidden><h3>Krafttraining (Ziel 1 h pro Woche)</h3><div id="strength"></div></div>
       <div class="card" id="egym-card" hidden><h3>Krafttraining aus EGYM</h3><div id="egym"></div></div>
       <div class="card" id="hip-card" hidden><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
