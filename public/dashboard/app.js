@@ -52,8 +52,9 @@ async function load() {
     return showLogin(r.status === 503 ? "Auf dem Worker ist noch kein DASHBOARD_TOKEN gesetzt." : "Token wurde abgelehnt.");
   }
   if (!r.ok) return showLogin("Fehler vom Worker (" + r.status + ").");
-  render(await r.json());
-  loadEgym(token); // EGYM ist langsam und optional: die Karte kommt nach, die Seite wartet nicht darauf
+  const dash = await r.json();
+  render(dash);
+  loadEgym(token, dash); // EGYM ist langsam und optional: die Karte kommt nach, die Seite wartet nicht darauf
 }
 function showLogin(msg) {
   $("app").hidden = true; $("login").hidden = false;
@@ -576,7 +577,7 @@ function renderBlock(SB) {
   const head = SB.status === "active" ? `Woche ${SB.weekNo}${SB.weeks ? ` von ${SB.weeks}` : ""}` : SB.status === "upcoming" ? `Start in ${SB.daysToStart} Tag${SB.daysToStart === 1 ? "" : "en"}` : "beendet";
   const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}" title="Woche ${i + 1}"></i>`).join("")}</div>` : "";
   const goalCard = (g) => {
-    const val = g.value == null ? "–" : g.key === "strength" ? `${g.value}<small> / ${g.of} Wochen</small>` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)}<small> %</small>`;
+    const val = g.value == null ? "–" : g.key === "strength" ? `${g.value}<small> von ${g.of} Wochen</small>` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)}<small> %</small>`;
     let vis = "";
     if (g.key === "decoupling") {
       const max = Math.max(g.max * 2, ...g.series.map((x) => x.value), 1);
@@ -586,11 +587,11 @@ function renderBlock(SB) {
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div><div class="sub">${esc(g.note ?? "")}${g.basis ? ` · ${esc(g.basis)}` : ""}</div></div>`;
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${g.key === "strength" ? `<div class="sub">Jedes Kästchen = eine Woche, grün = Ziel erreicht</div>` : ""}<div class="sub">${[g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ")}</div></div>`;
   };
   const goals = (SB.goals ?? []).length ? `<div class="bgoals">${SB.goals.map(goalCard).join("")}</div>` : "";
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
-  return `<div class="cockpit"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val" style="font-size:1.25rem">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
+  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val" style="font-size:1.25rem">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
@@ -618,14 +619,27 @@ function renderStrength(d) {
 
 /* ---------- Kraft aus EGYM: eigene Abfrage, damit die Seite nicht auf EGYM warten muss ---------- */
 const REGION_LABEL = { UPPER: "Oberkörper", CORE: "Rumpf", LOWER: "Beine" };
-async function loadEgym(token) {
+async function loadEgym(token, dash) {
   try {
     const r = await fetch("/api/widget?view=kraft", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
     if (!r.ok) return;
     const k = await r.json();
     if (k.configured === false) return; // ohne EGYM-Zugang bleibt die Karte weg
     renderEgym(k);
+    refreshBlock(token, dash, k);
   } catch (e) { console.error("egym", e); }
+}
+
+// Die Kraft-Ziele des Blocks lesen die EGYM-Tage aus dem Cache. War der beim Laden des Dashboards noch leer oder
+// aelter als der gerade geholte Stand, wird die Block-Karte einmal mit frischen Daten neu gezeichnet.
+async function refreshBlock(token, dash, k) {
+  const g = dash?.seasonBlock?.goals?.find((x) => x.key === "strength");
+  if (!g || !$("block-card")) return;
+  if (g.egym && !(Date.parse(k.generatedAt) > (g.egymAt ?? 0) + 60000)) return;
+  try {
+    const r = await fetch("/api/dashboard", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+    if (r.ok && $("block-card")) $("block-card").outerHTML = renderBlock((await r.json()).seasonBlock);
+  } catch (e) { console.error("block refresh", e); }
 }
 
 function renderEgym(k) {
