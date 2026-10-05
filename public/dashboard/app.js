@@ -582,7 +582,7 @@ function renderBlock(SB) {
       const max = Math.max(g.max * 2, ...g.series.map((x) => x.value), 1);
       vis = g.series.length ? `<div class="bbars">${g.series.slice(-10).map((x) => `<div title="${fmtDate(x.date)}: ${fmt(x.value, 1)} %" style="height:${Math.max(6, (Math.max(0, x.value) / max) * 100)}%;background:var(--${x.value <= g.max ? "ok" : "warn"})"></div>`).join("")}<u style="bottom:${(g.max / max) * 100}%"></u></div>` : "";
     } else if (g.key === "strength") {
-      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.minutes} min"></i>`).join("")}</div>`;
+      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}× Kraft"></i>`).join("")}</div>`;
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     } else if (g.key === "marathonShape") {
