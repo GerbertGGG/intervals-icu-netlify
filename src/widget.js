@@ -1,6 +1,6 @@
 import { json } from "./http-helpers.js";
 import { buildDashboard, isAuthorized } from "./dashboard.js";
-import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
+import { hasYazioCredentials, fetchYazioDailyGoals, fetchYazioDailyNutrition } from "./yazio-client.js";
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin } from "./date-utils.js";
 import { loadWidgetKraft } from "./egym-widget.js";
@@ -221,13 +221,14 @@ function buildFitness(d, byDate) {
   return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly, tsb: tsbWeekly[6], tsbWeekly };
 }
 
-export function buildWidgetSmall(d, goals = null) {
+export function buildWidgetSmall(d, goals = null, live = null) {
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const days = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
   const body = d.summary.readiness.body;
   const sleepDays = days.map((date) => ({ date, hours: byDate[date]?.sleepHours ?? null, hrv: byDate[date]?.hrv ?? null, restingHR: byDate[date]?.restingHR ?? null }));
   const foodDays = days.map((date) => {
-    const w = byDate[date];
+    // Heute direkt aus Yazio (live), sonst waere der Stand bis zu 15 Min (Sync) plus 5 Min (Cache) alt
+    const w = date === d.today && live?.energyKcal > 0 ? { ...byDate[date], calories: Math.round(live.energyKcal), carbs: Math.round(live.carbG * 10) / 10, protein: Math.round(live.proteinG * 10) / 10, fat: Math.round(live.fatG * 10) / 10 } : byDate[date];
     return { date, calories: w?.calories ?? null, goal: w?.calorieGoal ?? null, carbs: w?.carbs ?? null, protein: w?.protein ?? null, fat: w?.fat ?? null };
   });
   const latest = [...foodDays].reverse().find((x) => x.calories != null) ?? null;
@@ -295,6 +296,7 @@ export async function handleWidgetRequest(req, env) {
   const dashboard = await dashboardCached(env, params.get("fresh") === "1");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : buildWidget(dashboard, env);
+  const live = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }
