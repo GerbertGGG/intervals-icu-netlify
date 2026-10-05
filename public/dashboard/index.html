@@ -89,6 +89,9 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 900px) { .cockpit { grid-template-columns: repeat(4, minmax(0, 1fr)); } .cockpit .tile { grid-column: span 2; } .cockpit .tile.span2, .cockpit .tile.span3, .cockpit .tile.span15 { grid-column: 1 / -1; } }
 @media (max-width: 480px) { .cockpit { grid-template-columns: 1fr; } }
+/* Kachel-Reihe füllt die Breite komplett, egal wie viele kommen (kein verschenkter Platz) */
+.cockpit.flow { grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); }
+.cockpit.flow .tile { grid-column: auto; }
 .today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .today > div:first-child { flex: 1 1 260px; min-width: 0; }
 .wprofile { flex: 1 1 320px; max-width: 560px; }
