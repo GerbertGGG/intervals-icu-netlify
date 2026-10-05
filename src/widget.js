@@ -29,7 +29,7 @@ const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864000
 
 // Rennphase aus den Tagen bis zum Rennen (Renntag = 0, danach negativ): normal, taper, recovery.
 // Dauer je Distanz: Halbmarathon ca. 7 Tage Taper und 7 Tage Erholung (Standard), Mitteldistanz-Triathlon 14 Tage Taper.
-export const PHASE_DAYS = { taperFrom: 7, recoveryDays: 7 };
+const PHASE_DAYS = { taperFrom: 7, recoveryDays: 7 };
 const PHASE_DAYS_BY_DISTANCE = { "5k": { taperFrom: 3, recoveryDays: 3 }, "10k": { taperFrom: 5, recoveryDays: 4 }, hm: PHASE_DAYS, m: { taperFrom: 14, recoveryDays: 14 } };
 const PHASE_DAYS_BY_TRIATHLON = { sprint: { taperFrom: 5, recoveryDays: 4 }, olympic: { taperFrom: 7, recoveryDays: 5 }, middle: { taperFrom: 14, recoveryDays: 7 }, long: { taperFrom: 14, recoveryDays: 14 } };
 export function phaseDaysFor(race) {
@@ -54,7 +54,7 @@ const failedOf = (d) => Object.entries(d.sources).filter(([, s]) => !s.ok).map((
 
 // Wochenziel der TSS: Summe der geplanten Workouts der Woche aus dem Intervals-Kalender. Fehlt sie dort,
 // zaehlt der optionale Wert WEEKLY_TSS_GOAL (Worker-Variable); sonst gibt es bewusst kein Ziel.
-export function weeklyGoal(week, env) {
+function weeklyGoal(week, env) {
   if (week.plannedLoad > 0) return { goal: week.plannedLoad, source: "plan" };
   const cfg = Number(env?.WEEKLY_TSS_GOAL);
   return Number.isFinite(cfg) && cfg > 0 ? { goal: Math.round(cfg), source: "config" } : { goal: null, source: null };
@@ -271,7 +271,7 @@ export function buildWidgetBlock(d) {
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
 // wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
 const CACHE_KEY = "widget:dashboard-cache";
-export const CACHE_MS = 5 * 60 * 1000;
+const CACHE_MS = 5 * 60 * 1000;
 async function dashboardCached(env, fresh) {
   const today = isoDateBerlin();
   if (!fresh) {

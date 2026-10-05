@@ -1,7 +1,6 @@
-import { isoDate } from "./date-utils.js";
-import { mustEnv, hasKv, readKvJson, writeKvJson } from "./kv.js";
+import { mustEnv } from "./kv.js";
 
-export const BASE_URL = "https://intervals.icu/api/v1";
+const BASE_URL = "https://intervals.icu/api/v1";
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const FETCH_TIMEOUT_MS = 20000;
@@ -12,7 +11,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function authHeader(env) {
+function authHeader(env) {
   return "Basic " + btoa(`API_KEY:${mustEnv(env, "INTERVALS_API_KEY")}`);
 }
 
@@ -61,39 +60,6 @@ export async function fetchIntervalsWellnessRange(env, oldest, newest) {
   return Array.isArray(data) ? data : Array.isArray(data?.wellness) ? data.wellness : [];
 }
 
-// Single-activity detail (icu_zone_times etc. aren't in the bulk /activities list
-// response). Best-effort: returns null on any failure instead of throwing, since this
-// only enriches runs[] and a missing/rate-limited detail for one activity shouldn't
-// fail the whole recent-form analysis.
-export async function fetchIntervalsActivityDetail(env, activityId) {
-  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}`;
-  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity detail ${activityId}`);
-  if (!r.ok) return null;
-  return r.json().catch(() => null);
-}
-
-// Auto-detected repeat/interval structure for a single activity. Same best-effort,
-// non-throwing contract as fetchIntervalsActivityDetail.
-export async function fetchIntervalsActivityIntervals(env, activityId) {
-  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/intervals`;
-  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity intervals ${activityId}`);
-  if (!r.ok) return null;
-  return r.json().catch(() => null);
-}
-
-// GPS track (latlngs) + per-point weather (temp/feels_like/humidity/... over time),
-// confirmed against the intervals.icu OpenAPI spec (MapData / ActivityWeather /
-// Time schemas): the bulk /activities list has no lat/lng field at all, and its
-// average_weather_temp/has_weather fields have no humidity counterpart, so this is
-// the only endpoint that can answer "was this run's HR-zone spread heat, not
-// pacing". Same best-effort, non-throwing contract as fetchIntervalsActivityDetail.
-export async function fetchIntervalsActivityMap(env, activityId) {
-  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/map?weather=true`;
-  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `activity map ${activityId}`);
-  if (!r.ok) return null;
-  return r.json().catch(() => null);
-}
-
 export async function fetchIntervalsEvents(env, oldest, newest) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/events?oldest=${oldest}&newest=${newest}`;
@@ -117,167 +83,7 @@ export async function putWellnessDay(env, day, patch) {
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
 
-// Returns null if the athlete has no wellness row for that day (e.g. 404) instead
-// of throwing, since that's an expected/normal state, not a failure.
-export async function fetchIntervalsWellnessDay(env, day) {
-  const athleteId = mustEnv(env, "ATHLETE_ID");
-  const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
-  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `wellness GET ${day}`);
-  if (!r.ok) return null;
-  return r.json();
-}
-
-export async function createIntervalsEvent(env, eventObj) {
-  const athleteId = mustEnv(env, "ATHLETE_ID");
-  const url = `${BASE_URL}/athlete/${athleteId}/events`;
-  const r = await fetchWithRetry(
-    url,
-    {
-      method: "POST",
-      headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
-      body: JSON.stringify(eventObj),
-    },
-    "events POST",
-  );
-  if (!r.ok) throw new Error(`events POST ${r.status}: ${await r.text()}`);
-  return r.json();
-}
-
-export async function updateIntervalsEvent(env, eventId, eventObj) {
-  const athleteId = mustEnv(env, "ATHLETE_ID");
-  const url = `${BASE_URL}/athlete/${athleteId}/events/${encodeURIComponent(String(eventId))}`;
-  const r = await fetchWithRetry(
-    url,
-    {
-      method: "PUT",
-      headers: { Authorization: authHeader(env), "Content-Type": "application/json" },
-      body: JSON.stringify(eventObj),
-    },
-    `events PUT ${eventId}`,
-  );
-  if (!r.ok) throw new Error(`events PUT ${r.status}: ${await r.text()}`);
-  return r.json();
-}
-
-function toNoteDescription(text) {
-  return String(text ?? "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n")
-    .join("<br />\n");
-}
-
-// Creates or updates a NOTE calendar event, matched by external_id within that day.
-// No-ops if the existing note already has the same description (avoids needless PUTs).
-export async function upsertIntervalsNote(env, { dayIso, externalId, name, description, color = "blue" }) {
-  const events = await fetchIntervalsEvents(env, dayIso, dayIso);
-  const list = Array.isArray(events) ? events : Array.isArray(events?.events) ? events.events : [];
-  const existing = list.find((e) => String(e?.external_id || "") === externalId) || null;
-
-  const body = {
-    category: "NOTE",
-    start_date_local: `${dayIso}T00:00:00`,
-    name,
-    description: toNoteDescription(description),
-    color,
-    external_id: externalId,
-  };
-
-  if (existing?.id) {
-    if (String(existing?.description || "") === body.description) return { id: existing.id, updated: false };
-    await updateIntervalsEvent(env, existing.id, body);
-    return { id: existing.id, updated: true };
-  }
-
-  const created = await createIntervalsEvent(env, body);
-  return { id: created?.id ?? null, updated: true, created: true };
-}
-
-const MAX_HR_KV_PREFIX = "vdot:maxhr:";
-const MAX_HR_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-function maxHrKvKey(env) {
-  return `${MAX_HR_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;
-}
-
-export async function loadCachedMaxHr(env) {
-  if (!hasKv(env)) return null;
-  try {
-    const cached = await readKvJson(env, maxHrKvKey(env));
-    if (!cached?.ts || !cached?.maxHr) return null;
-    if (Date.now() - cached.ts > MAX_HR_MAX_AGE_MS) return null;
-    return Number(cached.maxHr) || null;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveCachedMaxHr(env, maxHr) {
-  if (!hasKv(env)) return;
-  try {
-    await writeKvJson(env, maxHrKvKey(env), { ts: Date.now(), maxHr });
-  } catch {}
-}
-
-// max_hr lives per-sport on intervals.icu (GET /athlete/{id} itself has no max_hr
-// field at all - confirmed against the OpenAPI spec), so this reads the Run entry
-// from the sport-settings list rather than the plain athlete profile. Goes through
-// the shared sport-settings cache below (loadCachedSportSettings/
-// fetchIntervalsSportSettings, both function declarations so the forward reference
-// here is fine) instead of its own separate fetch, so a cold-cache request only
-// makes one GET /sport-settings call even though this and resolveAthleteProfile
-// (athlete-profile.js) both need data from it.
-export async function fetchAndCacheMaxHr(env) {
-  try {
-    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
-    let settingsList = await loadCachedSportSettings(env).catch(() => null);
-    if (!settingsList) {
-      settingsList = await fetchIntervalsSportSettings(env).catch(() => null);
-      if (settingsList) saveCachedSportSettings(env, settingsList).catch(() => {});
-    }
-    if (!settingsList) return null;
-    const runSettings = settingsList.find((s) => Array.isArray(s?.types) && s.types.includes("Run")) ?? settingsList[0];
-    const maxHr = Number(runSettings?.max_hr || 0);
-    if (maxHr > 100) {
-      saveCachedMaxHr(env, maxHr).catch(() => {});
-      return maxHr;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-const SPORT_SETTINGS_KV_PREFIX = "profile:sportsettings:";
-const SPORT_SETTINGS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-function sportSettingsKvKey(env) {
-  return `${SPORT_SETTINGS_KV_PREFIX}${mustEnv(env, "ATHLETE_ID")}`;
-}
-
-export async function loadCachedSportSettings(env) {
-  if (!hasKv(env)) return null;
-  try {
-    const cached = await readKvJson(env, sportSettingsKvKey(env));
-    if (!cached?.ts || !Array.isArray(cached?.list)) return null;
-    if (Date.now() - cached.ts > SPORT_SETTINGS_MAX_AGE_MS) return null;
-    return cached.list;
-  } catch {
-    return null;
-  }
-}
-
-export async function saveCachedSportSettings(env, list) {
-  if (!hasKv(env)) return;
-  try {
-    await writeKvJson(env, sportSettingsKvKey(env), { ts: Date.now(), list });
-  } catch {}
-}
-
-// Raw per-sport settings list (max HR, LTHR, HR/power zones, FTP, ...) - same
-// endpoint fetchAndCacheMaxHr above already uses for Run's max_hr, just returned in
-// full rather than reduced to one field. Best-effort: returns null on any failure
-// instead of throwing, same contract as fetchIntervalsActivityDetail.
+// Rohe Sportart-Einstellungen (Schwellen, Zonen, FTP). Best effort: null bei jedem Fehler.
 export async function fetchIntervalsSportSettings(env) {
   try {
     if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
@@ -286,107 +92,6 @@ export async function fetchIntervalsSportSettings(env) {
     if (!resp.ok) return null;
     const data = await resp.json();
     return Array.isArray(data) ? data : null;
-  } catch {
-    return null;
-  }
-}
-
-// Time-at-heart-rate histogram for a single activity (`Plot` schema: secs[]
-// indexed by bpm from min_bpm to max_bpm). Same best-effort, non-throwing contract
-// as fetchIntervalsActivityDetail - a run with no HR data simply has nothing here.
-export async function fetchIntervalsActivityTimeAtHr(env, activityId) {
-  const url = `${BASE_URL}/activity/${encodeURIComponent(String(activityId))}/time-at-hr`;
-  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, `time-at-hr ${activityId}`);
-  if (!r.ok) return null;
-  return r.json().catch(() => null);
-}
-
-// Full sport settings (HR/power zones, LTHR, FTP, ...) for a single sport, via
-// GET /athlete/{athleteId}/sport-settings/{id} where id is a type name (Run, Ride)
-// as documented - a different endpoint than fetchIntervalsSportSettings's list
-// variant above, called out explicitly since the report needs Run and Ride
-// individually rather than the whole list. Best-effort, same non-throwing contract
-// as fetchIntervalsSportSettings.
-export async function fetchIntervalsSportSettingsById(env, sportId) {
-  try {
-    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
-    const uid = mustEnv(env, "ATHLETE_ID");
-    const resp = await fetch(`${BASE_URL}/athlete/${uid}/sport-settings/${encodeURIComponent(sportId)}`, {
-      headers: { Authorization: authHeader(env) },
-    });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
-}
-
-// Best pace over a range of distances for activities in [oldest, newest] -
-// athlete-wide fitness curve over the export window, not a single run's splits
-// (contrast with fetchRunPaceBenchmarks above, which is a fixed 56-day/fixed-
-// distances lookup used elsewhere for VDOT). Best-effort, same non-throwing
-// contract as fetchIntervalsSportSettings.
-export async function fetchIntervalsActivityPaceCurves(env, oldest, newest, type = "Run") {
-  try {
-    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
-    const uid = mustEnv(env, "ATHLETE_ID");
-    const url = `${BASE_URL}/athlete/${uid}/activity-pace-curves?oldest=${oldest}&newest=${newest}&type=${encodeURIComponent(type)}`;
-    const resp = await fetch(url, { headers: { Authorization: authHeader(env) } });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
-}
-
-// Best HR over a range of durations for activities in [oldest, newest], counterpart
-// to fetchIntervalsActivityPaceCurves above.
-export async function fetchIntervalsActivityHrCurves(env, oldest, newest, type = "Run") {
-  try {
-    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
-    const uid = mustEnv(env, "ATHLETE_ID");
-    const url = `${BASE_URL}/athlete/${uid}/activity-hr-curves?oldest=${oldest}&newest=${newest}&type=${encodeURIComponent(type)}`;
-    const resp = await fetch(url, { headers: { Authorization: authHeader(env) } });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchRunPaceBenchmarks(env) {
-  try {
-    if (!env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return null;
-    const uid = mustEnv(env, "ATHLETE_ID");
-    const now = new Date();
-    const nowIso = isoDate(now);
-    const oldest = isoDate(new Date(now.getTime() - 56 * 86400000));
-    const url = `${BASE_URL}/athlete/${uid}/activity-pace-curves?type=Run&distances=1000,5000,10000,21097&oldest=${oldest}&newest=${nowIso}`;
-    const data = await fetch(url, { headers: { Authorization: authHeader(env) } })
-      .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
-    if (!data) return null;
-
-    const parsePace = (dist) => {
-      if (Array.isArray(data)) {
-        const entry = data.find((d) => Math.abs(Number(d.distance || d.dist || 0) - dist) < 100);
-        if (!entry) return null;
-        const s = Number(entry.secs || entry.time || entry.value);
-        return Number.isFinite(s) && s > 0 ? s : null;
-      }
-      if (data && typeof data === "object") {
-        const v = data[String(dist)];
-        return v != null ? Number(v) || null : null;
-      }
-      return null;
-    };
-
-    const current = {};
-    for (const dist of [1000, 5000, 10000, 21097]) {
-      const secs = parsePace(dist);
-      if (secs != null) current[dist] = secs;
-    }
-    return Object.keys(current).length > 0 ? { current } : null;
   } catch {
     return null;
   }

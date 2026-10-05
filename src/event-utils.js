@@ -1,8 +1,8 @@
-export function normalizeEventCategory(category) {
+function normalizeEventCategory(category) {
   return String(category ?? "").toUpperCase().trim();
 }
 
-export function isARaceCategory(category) {
+function isARaceCategory(category) {
   const cat = normalizeEventCategory(category);
   if (!cat) return false;
 

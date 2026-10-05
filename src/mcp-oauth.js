@@ -7,7 +7,7 @@
 import { json } from "./http-helpers.js";
 import { mustEnv } from "./kv.js";
 
-export const MCP_CLIENT_ID = "claude";
+const MCP_CLIENT_ID = "claude";
 
 const CODE_TTL_SECONDS = 300;
 const ACCESS_TOKEN_TTL_SECONDS = 3600;

@@ -22,40 +22,6 @@ export function diffDays(a, b) {
   return Math.round((db - da) / 86400000);
 }
 
-export function parseISODateSafe(iso) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(iso))) return null;
-  const [y, m, d] = String(iso).split("-").map((v) => Number(v));
-  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
-  const date = new Date(Date.UTC(y, m - 1, d));
-  if (Number.isNaN(date.getTime())) return null;
-  if (date.getUTCFullYear() !== y || date.getUTCMonth() + 1 !== m || date.getUTCDate() !== d) return null;
-  return date;
-}
-
-export function weeksBetween(dateAISO, dateBISO) {
-  const a = parseISODateSafe(dateAISO);
-  const b = parseISODateSafe(dateBISO);
-  if (!a || !b) return NaN;
-  return (b.getTime() - a.getTime()) / (7 * 86400000);
-}
-
-export function daysBetween(dateAISO, dateBISO) {
-  const a = parseISODateSafe(dateAISO);
-  const b = parseISODateSafe(dateBISO);
-  if (!a || !b) return NaN;
-  return (b.getTime() - a.getTime()) / 86400000;
-}
-
-export function clampStartDate(startISO, todayISO, maxAgeDays = 180) {
-  const start = parseISODateSafe(startISO);
-  const today = parseISODateSafe(todayISO);
-  if (!start || !today) return null;
-  if (start.getTime() > today.getTime()) return null;
-  const ageDays = (today.getTime() - start.getTime()) / 86400000;
-  if (ageDays > maxAgeDays) return null;
-  return isoDate(start);
-}
-
 export function listIsoDaysInclusive(oldest, newest) {
   const out = [];
   const start = new Date(oldest + "T00:00:00Z").getTime();
@@ -64,15 +30,10 @@ export function listIsoDaysInclusive(oldest, newest) {
   return out;
 }
 
-export function isMondayIso(dayIso) {
-  const d = new Date(dayIso + "T00:00:00Z");
-  return d.getUTCDay() === 1;
-}
-
 // Monday of the ISO week containing dayIso (dayIso itself if it's already a Monday).
 export function mondayOnOrBefore(dayIso) {
-  const d = parseISODateSafe(dayIso);
-  if (!d) return null;
+  const d = new Date(dayIso + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return null;
   const dow = d.getUTCDay(); // 0=Sun..6=Sat
   const diffDaysToMonday = dow === 0 ? 6 : dow - 1;
   return isoDate(new Date(d.getTime() - diffDaysToMonday * 86400000));

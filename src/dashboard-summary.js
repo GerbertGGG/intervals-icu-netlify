@@ -2,9 +2,9 @@
 // Frische (TSB), ACWR und "Bereit für Training?". Alle Grenzen sind eigene Standardwerte, keine
 // persönlich kalibrierten oder medizinischen Vorgaben.
 
-export const THRESHOLDS = { tsb: { ok: -10, warn: -25 }, acwr: { lo: 0.8, hi: 1.3 } };
+const THRESHOLDS = { tsb: { ok: -10, warn: -25 }, acwr: { lo: 0.8, hi: 1.3 } };
 
-export const READY_METRICS = [
+const READY_METRICS = [
   { key: "sleepQuality", label: "Schlaf" },
   { key: "fatigue", label: "Ermüdung" },
   { key: "soreness", label: "Muskelkater" },
@@ -49,9 +49,9 @@ const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864000
 
 // Körperwerte (objektiv) gegen die eigenen Mediane der 14 Tage VOR heute (heute zählt nicht mit, damit ein
 // auffälliger Wert seinen eigenen Vergleichswert nicht verschiebt). Fehlende Werte = "none", nie "gut".
-export const BODY_LIMITS = { sleepHours: { ok: 7, warn: 6 }, hrv: { bad: 0.7, warn: 0.85, up: 1.05 }, restingHR: { warn: 3, bad: 6 } };
+const BODY_LIMITS = { sleepHours: { ok: 7, warn: 6 }, hrv: { bad: 0.7, warn: 0.85, up: 1.05 }, restingHR: { warn: 3, bad: 6 } };
 
-export function computeBody(wellness, todayIso) {
+function computeBody(wellness, todayIso) {
   const today = wellness.find((w) => w.date === todayIso);
   const past = wellness.filter((w) => w.date >= addDays(todayIso, -14) && w.date < todayIso);
   const med = (key) => { const v = past.map((w) => w[key]).filter((x) => x != null); return v.length ? median(v) : null; };

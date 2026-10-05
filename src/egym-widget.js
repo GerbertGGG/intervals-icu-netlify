@@ -273,7 +273,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
 
 // EGYM-Abrufe sind langsam (Login, drei Endpunkte): das Ergebnis liegt kurz in KV
 const CACHE_KEY = "widget:egym-kraft";
-export const KRAFT_CACHE_MS = 15 * 60 * 1000;
+const KRAFT_CACHE_MS = 15 * 60 * 1000;
 
 // Kraft-Tage aus dem Cache des Kraft-Widgets, ohne EGYM selbst abzufragen (das ist langsam und soll das Dashboard nicht
 // aufhalten). Fehlt der Cache oder stammt er aus der Zeit vor strengthDates, kommt null und der Aufrufer faellt zurueck.

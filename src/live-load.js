@@ -6,12 +6,12 @@
 //   ctl_heute = ctl_gestern + (load - ctl_gestern) * (1 - e^(-1/42)),  ATL analog mit 1/7.
 import { activityDay, activityLoad } from "./activity-utils.js";
 
-export const CTL_DAYS = 42;
-export const ATL_DAYS = 7;
+const CTL_DAYS = 42;
+const ATL_DAYS = 7;
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
-export function decay(prev, load, days) {
+function decay(prev, load, days) {
   return prev + (load - prev) * (1 - Math.exp(-1 / days));
 }
 
