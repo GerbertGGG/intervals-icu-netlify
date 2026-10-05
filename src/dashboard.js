@@ -538,7 +538,6 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       longRuns: blockRuns.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, decoupling: r.decoupling })),
       strength: blockActs.filter((a) => sportOf(a) === "strength").map((a) => ({ date: activityDay(a), minutes: (num(a?.moving_time) ?? 0) / 60 })),
       acwrDays: blockWell.map((x) => ({ date: String(x?.id ?? x?.date ?? "").slice(0, 10), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
-      marathonShape: { now: snapshot?.marathonShape ?? null, history: (runalyzeHistory ?? []).filter((h) => h?.marathonShape != null).map((h) => ({ date: h.date, value: h.marathonShape })) },
     }, todayIso);
     seasonBlock = { ...seasonBlock, goals };
   }

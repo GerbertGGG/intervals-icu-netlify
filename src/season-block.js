@@ -57,7 +57,7 @@ export function resolveSeasonBlock(events, todayIso) {
 }
 
 // ---------- Fortschritt der Block-Ziele ----------
-// Welche Ziele verfolgt werden, steht im Text des Eintrags (Stichworte): Decoupling, Kraft, ACWR, marathonShape.
+// Welche Ziele verfolgt werden, steht im Text des Eintrags (Stichworte): Decoupling, Kraft, ACWR.
 // Schwellen werden aus dem Text gelesen ("unter 8%", "≥32-35%"), sonst gelten die Vorgaben unten.
 const ACWR_BAND = { lo: 0.8, hi: 1.3 };
 const ACWR_DAYS_SHARE = 0.8; // "Korridor gehalten": mindestens 80 % der Tage
@@ -70,12 +70,10 @@ export function parseBlockTargets(text) {
   const t = String(text ?? "");
   const has = (re) => re.test(t);
   const dec = t.match(/decoupling[^\d]{0,25}(\d+(?:[.,]\d+)?)\s*%/i);
-  const ms = t.match(/marathon\s*-?shape[^\d]{0,12}(\d+(?:[.,]\d+)?)(?:\s*[-–]\s*(\d+(?:[.,]\d+)?))?/i);
   return {
     decoupling: has(/decoupling/i) ? { max: dec ? numOf(dec[1]) : 8 } : null,
     strength: has(/kraft/i) ? { perWeek: STRENGTH_PER_WEEK } : null,
     acwr: has(/acwr/i) ? { ...ACWR_BAND, share: ACWR_DAYS_SHARE } : null,
-    marathonShape: has(/marathon\s*-?shape/i) ? { min: ms ? numOf(ms[1]) : 32, stretch: ms?.[2] ? numOf(ms[2]) : null } : null,
   };
 }
 
@@ -93,8 +91,7 @@ function statusOf(ok, warn) {
   return ok ? "ok" : warn ? "warn" : "bad";
 }
 
-// input: { longRuns:[{date,decoupling}], strength:[{date,minutes}], acwrDays:[{date,acwr}],
-//          marathonShape:{ now, history:[{date,value}] } }
+// input: { longRuns:[{date,decoupling}], strength:[{date,minutes}], acwrDays:[{date,acwr}]
 export function buildBlockGoals(block, input, todayIso) {
   const targets = parseBlockTargets(`${block.goal ?? ""}\n${(block.notes ?? []).join("\n")}`);
   const w = windowOf(block, todayIso);
@@ -140,28 +137,6 @@ export function buildBlockGoals(block, input, todayIso) {
       value: share != null ? Math.round(share * 100) : null, count: days.length, basis,
       status: share == null ? "none" : w.baseline ? "base" : statusOf(share >= targets.acwr.share, share >= targets.acwr.share - 0.15),
       note: share == null ? "Keine ACWR-Daten." : `${inBand} von ${days.length} Tagen im Korridor`,
-    });
-  }
-
-  if (targets.marathonShape) {
-    const { min, stretch } = targets.marathonShape;
-    const now = input.marathonShape?.now ?? null;
-    const hist = (input.marathonShape?.history ?? []).filter((h) => Number.isFinite(h.value)).sort((a, b) => a.date.localeCompare(b.date));
-    const startPoint = hist.find((h) => h.date >= block.start) ?? hist[0] ?? null;
-    let status = now == null ? "none" : w.baseline ? "base" : "warn";
-    if (now != null && !w.baseline) {
-      if (now >= min) status = "ok";
-      else if (startPoint && block.end) {
-        // Sollkurve: linear vom Startwert bis zum Mindestziel am Blockende
-        const frac = Math.min(1, Math.max(0, diffDays(block.start, todayIso) / Math.max(1, diffDays(block.start, block.end))));
-        const expected = startPoint.value + (min - startPoint.value) * frac;
-        status = statusOf(false, now >= expected - 3);
-      }
-    }
-    goals.push({
-      key: "marathonShape", label: "marathonShape", target: `≥ ${min}${stretch ? `–${stretch}` : ""} %`, unit: "%",
-      value: now, min, stretch, basis: w.baseline ? "aktuell" : basis, series: hist.slice(-24).map((h) => ({ date: h.date, value: h.value })),
-      status, note: now == null ? "Kein Runalyze-Wert übermittelt." : startPoint && startPoint.date !== todayIso ? `Start: ${startPoint.value} %` : null,
     });
   }
 

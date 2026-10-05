@@ -10,7 +10,6 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //   vdot: number,                                          // effectiveVO2max aus get_calculations (optional)
 //   prognosis: [{ distanceKm, seconds }],                  // aus get_prognosis
 //   races: [{ date, name, distanceKm, officialDistanceKm, officialTimeSec }]  // aus get_historical_races
-//   marathonShape: number (0-100, aus get_calculations; optional)
 //   runs: [{ date, distanceKm, durationSec, type, decouplingPct }]  // Läufe der letzten 8 Wochen: type = Art in Runalyze
 //                                                                   // (get_activities), decouplingPct = aerobic_decoupling_pace (get_activity_details)
 // }
@@ -52,11 +51,9 @@ export function validateSnapshot(body) {
     .filter((r) => r.date && r.distanceKm)
     .slice(0, 80);
   const vdot = finitePositive(body?.vdot);
-  const ms = Number(body?.marathonShape);
-  const marathonShape = body?.marathonShape != null && body.marathonShape !== "" && Number.isFinite(ms) && ms >= 0 && ms <= 100 ? ms : null;
   if (vdot != null && (vdot < 15 || vdot > 90)) return { error: "vdot außerhalb 15–90" };
   if (!prognosis.length && !races.length && vdot == null) return { error: "weder prognosis, races noch vdot enthalten" };
-  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), vdot, prognosis, races, runs, marathonShape } };
+  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), vdot, prognosis, races, runs } };
 }
 
 // Art des Laufs aus der Runalyze-Bezeichnung, die der Nutzer selbst setzt: Rennen, lang, Intensität (Intervall, Tempo, Schwelle) oder sonstiges.
