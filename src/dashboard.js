@@ -7,6 +7,7 @@ import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
 import { resolveSeasonBlock, buildBlockGoals } from "./season-block.js";
+import { readEgymStrengthDates } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
@@ -534,9 +535,16 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       if (xw.ok && Array.isArray(xw.value)) blockWell = [...xw.value, ...blockWell];
     }
     const blockRuns = blockActs === activities ? runs : blockActs.filter(isRun).map((a) => buildRunRecord(a, runCtx));
+    // Kraft-Tag = Tag mit EGYM-Training oder einer Kraft-Einheit aus Intervals von mind. 20 min (Mobility, Dehnen, Yoga zaehlen nicht)
+    const egymDays = await readEgymStrengthDates(env).catch(() => null);
+    const strengthDays = [...new Set([
+      ...(egymDays?.dates ?? []),
+      ...blockActs.filter((a) => sportOf(a) === "strength" && (num(a?.moving_time) ?? 0) >= 20 * 60 && !/mobil|stretch|dehn|yoga/i.test(String(a?.name ?? ""))).map((a) => activityDay(a)),
+    ])].map((date) => ({ date }));
     const goals = buildBlockGoals(seasonBlock, {
       longRuns: blockRuns.filter((r) => r.kind === "long" && r.decoupling != null).map((r) => ({ date: r.date, decoupling: r.decoupling })),
-      strength: blockActs.filter((a) => sportOf(a) === "strength").map((a) => ({ date: activityDay(a), minutes: (num(a?.moving_time) ?? 0) / 60 })),
+      strength: strengthDays,
+      strengthSource: { egym: Boolean(egymDays), egymAt: egymDays?.at ?? null },
       acwrDays: blockWell.map((x) => ({ date: String(x?.id ?? x?.date ?? "").slice(0, 10), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
     }, todayIso);
     seasonBlock = { ...seasonBlock, goals };
