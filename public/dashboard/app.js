@@ -215,14 +215,7 @@ function renderTriRennplan(d, box) {
     ${all && total ? `<div class="${sum + 120 > total ? "notice" : "muted"}" style="margin-top:8px">Summe der Disziplinen ${fmtTime(sum)} ${sum > total ? `liegt ${hm(sum - total)} über dem Gesamtziel` : `plus Wechselzeiten unter dem Gesamtziel`}.</div>` : !all ? '<div class="muted" style="margin-top:8px">Für Vorschläge fehlen Schwimmschwelle, FTP oder VDOT. Alternativ in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 3:00:00“, „Lauf 1:55:00“.</div>' : ""}
     <div class="muted">Vorschläge sind Modellwerte (Schwimmschwelle, FTP mit Leistungsmodell, Lauf aus VDOT plus 6 % fürs Laufen nach dem Rad), kein Trainingsplan; Einträge in der Beschreibung haben Vorrang. Wechselzeiten sind nicht eingerechnet.</div>`;
 
-  const marks = (km, step, secs) => { const out = []; for (let m = step; m < km - 0.01; m += step) out.push(m); out.push(km); return out.map((m) => `<tr><td>${m === km ? fmt(m, m % 1 ? 1 : 0) : m} km</td><td>${secs ? fmtTime(Math.round(secs * (m / km))) : "–"}</td></tr>`).join(""); };
-  const part = (title, km, step, secs) => `<div class="scroll"><h3>${title}</h3><table class="mini"><tbody>${marks(km, step, secs)}</tbody></table></div>`;
-  const gelKm = []; if (b?.timeSecs) for (let t = 40 * 60; t < b.timeSecs - 10 * 60; t += 40 * 60) gelKm.push(fmt(T.bikeKm * (t / b.timeSecs), 0));
-  $("splits").innerHTML = `<div class="splitcols"><div class="scroll"><h3>Schwimmen</h3><table class="mini"><tbody>${(() => { const m = T.swimKm * 1000, out = []; for (let x = 500; x < m - 1; x += 500) out.push(x); out.push(m); return out.map((x) => `<tr><td>${fmt(x)} m</td><td>${sw ? fmtTime(Math.round(sw.pacePer100m * x / 100)) : "–"}</td></tr>`).join(""); })()}</tbody></table></div>
-    ${b?.timeSecs ? part("Rad", T.bikeKm, T.bikeKm >= 60 ? 30 : 10, b.timeSecs) : '<div><h3>Rad</h3><div class="muted">Keine Zielzeit, daher keine Marken. Nach Leistung fahren; Zeit in die Beschreibung schreiben („Rad 3:00:00“).</div></div>'}${part("Laufen", T.runKm, T.runKm > 10 ? 5 : 2.5, r?.timeSecs)}</div>
-    <div style="margin-top:8px"><b>Verpflegung</b> <span class="muted">(Faustwerte)</span>
-    <div>Rad: ${gelKm.length ? `Kohlenhydrate etwa alle 40 min, bei km ${gelKm.join(", ")}.` : "Kohlenhydrate etwa alle 40 min."} Laufen: Gel/Getränk etwa alle 40 min, Wasser an den Stationen.</div>
-    <div class="muted">Richtwert Rad 60–90 g, Laufen 30–60 g Kohlenhydrate pro Stunde; nur Bewährtes aus dem Training verwenden.</div></div>`;
+  $("splits").closest(".card").hidden = true;
 
   renderChecklist(d, ["Startunterlagen, Startzeit und Anreise geprüft", "Wetter und Wassertemperatur geprüft, Neoprenpflicht klären", "Rad gewartet, Reifendruck, Ersatzschlauch und Werkzeug", "Wechselzone: Material je Disziplin sortiert, Wechselplätze angeschaut", "Gels, Riegel und Getränke nach Plan eingepackt", "Leistungs- und Pace-Plan (Rad Watt, Lauf Splits) auf die Uhr", "Frühstück 2–3 h vor dem Start geplant", "Schlaf: zwei Nächte vor dem Rennen früh ins Bett"]);
 }
@@ -242,6 +235,7 @@ function renderRennplan(d) {
     ${hasRange && sc.goal < sc.lo ? `<div class="notice">Das Ziel ${hm(sc.goal)} liegt unter der realistischen Spanne und gelingt nur bei perfektem Tag. Die ersten 5 km nicht schneller als die Pace des B-Ziels laufen, sonst droht der Einbruch ab km 15.</div>` : ""}
     <div class="muted">Die Spanne ist eine Rechnung, keine Vorhersage.</div>`;
 
+  $("splits").closest(".card").hidden = false;
   // Splits (gleichmäßige Pace) und Verpflegung nach Faustwert: Kohlenhydrate alle ca. 40 min
   const marks = [5, 10, 15, 20, sc.km].filter((m, i, a) => a.indexOf(m) === i);
   const splitRows = marks.map((m) => `<tr><td>${m === sc.km ? fmt(m, 1) : m} km</td>${sc.scenarios.map((x) => `<td>${fmtTime(Math.round(x.pace * m))}</td>`).join("")}</tr>`).join("");
