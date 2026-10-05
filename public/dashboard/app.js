@@ -359,13 +359,8 @@ function sportFindings(d) {
 /* ---------- 4 · Leistung ---------- */
 function renderFitness(d) {
   const r = d.runalyze;
-  // Decoupling: Säulen je langem Lauf
-  if (!d.sources.intervalsActivities.ok) $("chart-dec").innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>';
-  else if (!d.fitness.longRuns.length) $("chart-dec").innerHTML = '<div class="notice">Keine langen Läufe mit Decoupling-Wert in den letzten 8 Wochen – ein fehlender Nachweis, kein guter Wert.</div>';
-  else C.bars($("chart-dec"), d.fitness.longRuns.map((x) => ({ label: fmtDate(x.date), tip: `${fmtDate(x.date)} (${fmt(x.distanceKm, 1)} km)`, value: Math.max(0, x.decoupling) })), { unit: "Decoupling in %", label: "Decoupling je langem Lauf", valueLabels: true, dec: 1, ref: { value: 5, label: "5 % Orientierung" }, xLabel: "Datum des langen Laufs" });
-
   if (!r) {
-    for (const id of ["vdot", "corridor"]) $(id).innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT und Prognose fehlen.</div>';
+    $("vdot").innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT und Prognose fehlen.</div>';
     return;
   }
   const stale = (Date.now() - Date.parse(r.fetchedAt)) / 86400000 > 7;
@@ -379,16 +374,6 @@ function renderFitness(d) {
     const zones = r.paces.map((p) => ({ label: p.label.replace(/ \(.\)$/, ""), sec: toSec(p.pace), fast: p.fastSecPerKm, slow: p.slowSecPerKm })).sort((a, b) => a.sec - b.sec);
     $("vdot").innerHTML = `<div class="big">${fmt(r.vdot, 1)}</div><div class="muted">VDOT (effektive VO2max laut Runalyze), Stand ${new Date(r.fetchedAt).toLocaleDateString("de-DE")}</div><div id="vdot-ruler" style="margin-top:6px"></div>${staleHtml}<div class="muted">Runalyze liefert nur das VDOT, die Bereiche sind daraus wie in den Runalyze-Lauftabellen berechnet (Prozent der Geschwindigkeit bei vVO2max).</div>`;
     C.paceRuler($("vdot-ruler"), zones, goalPace);
-  }
-
-  // Eine konsolidierte Prognose: nur Rechnung aus VDOT und aus der 10-km-Bestzeit (5-km-Bestzeit und Runalyze-Prognose verwirren mehr).
-  // Alle Distanzen; das Ziel (Strich, Abstand) nur bei der Distanz des Zielrennens.
-  const dists = r.raceEstimates ?? [];
-  if (!dists.length) $("corridor").innerHTML = '<div class="muted">Keine Rechnung aus VDOT oder 10-km-Bestzeit möglich.</div>';
-  else {
-    const goalKm = d.goal.runKm ?? 21.0975;
-    $("corridor").innerHTML = dists.map((x, i) => `<div class="sub" style="margin:${i ? 12 : 0}px 0 4px"><b>${x.label}</b></div><div id="corridor-chart-${i}"></div>`).join("") + '<div class="muted">Rechnungen nach Daniels (VDOT-Modell), kein Rennergebnis. Sie unterstellen Ausdauer wie über die Ausgangsdistanz und fallen von kürzeren Distanzen aus tendenziell zu optimistisch aus, besonders beim Marathon.</div>';
-    dists.forEach((x, i) => C.corridor($(`corridor-chart-${i}`), { goal: goal && Math.abs(x.km - goalKm) / goalKm < 0.02 ? goal : null, estimates: x.estimates }));
   }
 
   // Verlauf nur zeigen, wenn es einen gibt
