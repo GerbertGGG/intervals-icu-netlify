@@ -147,7 +147,8 @@ function renderCockpit(d) {
 
   $("cockpit").innerHTML = `
     <div class="cockpit-group">Rennen und Training</div>
-    <div class="cockpit">${weekTile}${raceTile}${supportTile}${tsbTile}${acwrTile}${taperTile}${todayTile}</div>
+    <div class="cockpit flow">${weekTile}${raceTile}${supportTile}${tsbTile}${acwrTile}</div>
+    <div class="cockpit" style="margin-top:10px">${taperTile}${todayTile}</div>
     <div class="cockpit-group">Erholung</div>
     <div class="cockpit">${readyTile}${sleepTile}${sparkTile("HRV", "hrv", "ms", 0)}${sparkTile("Ruhepuls", "restingHR", "bpm", 0)}</div>
     <div class="cockpit-group">Ernährung</div>
