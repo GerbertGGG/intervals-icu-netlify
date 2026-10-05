@@ -6,19 +6,30 @@ const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange 
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
 const HISTORY_DAYS = 56;
-const SLEEP_TARGET_H = 7.5; // Richtwert je Nacht, kein persönlich kalibrierter Wert
+const SLEEP_TARGET_H = 8; // Richtwert je Nacht für Athleten (7–9 h), kein persönlich kalibrierter Wert
+const SLEEP_ACUTE_WEIGHT = 0.6; // Gewicht der letzten Nacht im akuten 2-Nächte-Wert
 const isTaper = (g) => g.daysToGo >= 0 && g.daysToGo <= 14;
 const hm = (secs) => (secs < 3600 ? fmtTime(secs) : fmtTime(Math.round(secs / 60) * 60).replace(/:00$/, "")); // ab 1 h als h:mm, darunter m:ss
-// Schlafkonto: die zwei letzten Nächte bis heute (Schlaf eines Tages = Nacht auf diesen Morgen). Fehlende Nacht zählt nie als gut.
+// Schlafkonto: akut (2 Nächte, letzte Nacht 60 %) und chronisch (7 Nächte). Schlaf eines Tages = Nacht auf diesen Morgen. Fehlende Nacht zählt nie als gut.
 function sleepAccount(d) {
   const by = Object.fromEntries(d.wellness.map((w) => [w.date, w.sleepHours]));
-  const nights = [d.today, addDays(d.today, -1)].map((date) => ({ date, h: by[date] ?? null }));
-  const known = nights.filter((n) => n.h != null), sum = known.reduce((a, n) => a + n.h, 0);
-  const target = SLEEP_TARGET_H * 2;
+  const night = (i) => { const date = addDays(d.today, -i); return { date, h: by[date] ?? null }; };
+  const nights = [night(0), night(1)];
+  const known = nights.filter((n) => n.h != null);
+  const w = [SLEEP_ACUTE_WEIGHT, 1 - SLEEP_ACUTE_WEIGHT];
+  const wSum = known.reduce((a, n) => a + w[nights.indexOf(n)], 0);
+  const avg = wSum ? known.reduce((a, n) => a + n.h * w[nights.indexOf(n)], 0) / wSum : null; // gewichtetes Mittel je Nacht
   const complete = known.length === 2;
-  const cls = !known.length ? "none" : sum >= target - 0.5 ? "ok" : sum >= target - 2 ? "warn" : "bad";
-  const text = !known.length ? "nicht erfasst" : complete ? (cls === "ok" ? "gut gefüllt" : cls === "warn" ? "leicht im Minus" : "im Minus") : "unvollständig";
-  return { nights, sum, known: known.length, target, cls: complete || cls === "none" ? cls : cls === "ok" ? "warn" : cls, text };
+  const cls = avg == null ? "none" : avg >= SLEEP_TARGET_H - 0.25 ? "ok" : avg >= SLEEP_TARGET_H - 1 ? "warn" : "bad";
+  const text = avg == null ? "nicht erfasst" : complete ? (cls === "ok" ? "gut gefüllt" : cls === "warn" ? "leicht im Minus" : "im Minus") : "unvollständig";
+  const week = Array.from({ length: 7 }, (_, i) => night(i)).filter((n) => n.h != null);
+  const wSumH = week.reduce((a, n) => a + n.h, 0), wAvg = week.length >= 4 ? wSumH / week.length : null;
+  const wCls = wAvg == null ? "none" : wAvg >= SLEEP_TARGET_H - 0.25 ? "ok" : wAvg >= SLEEP_TARGET_H - 0.75 ? "warn" : "bad";
+  const wText = wAvg == null ? "zu wenig Daten" : wCls === "ok" ? "Woche ausgeglichen" : wCls === "warn" ? "Woche leicht im Minus" : "Woche im Minus";
+  return {
+    nights, avg, target: SLEEP_TARGET_H, cls: complete || cls === "none" ? cls : cls === "ok" ? "warn" : cls, text,
+    week: { avg: wAvg, n: week.length, debt: wAvg == null ? null : Math.max(0, SLEEP_TARGET_H * week.length - wSumH), cls: wCls, text: wText },
+  };
 }
 
 /* ---------- Laden ---------- */
@@ -118,7 +129,7 @@ function renderCockpit(d) {
   const R = S.readiness;
   const readyTile = wellOk ? tile("Bereit für Training?", `<div><span class="badge ${R.verdict.cls} big-badge">${R.verdict.text}</span> <span class="sub">${esc(R.verdict.sub)}</span></div>${R.verdict.reasons?.length ? `<div class="sub">${esc(R.verdict.reasons.join(" · "))}</div>` : ""}<div class="dots">${R.items.map((i) => `<span title="${esc(i.text)}"><i class="${i.cls}"></i>${esc(i.label)}</span>`).join("")}</div>`, "span3") : tile("Bereit für Training?", '<div class="sub">Wellness nicht abrufbar.</div>', "span3");
   const SA = sleepAccount(d);
-  const sleepTile = tile("Schlafkonto 2 Nächte", `<div class="val">${SA.known ? fmt(SA.sum, 1) : "–"} <small>h von ${fmt(SA.target, 0)} h</small></div><div class="sub">${SA.nights.map((n) => `${weekday(n.date)} ${n.h != null ? fmt(n.h, 1) + " h" : "–"}`).join(" · ")}</div><div><span class="badge ${SA.cls}">${SA.text}</span></div>`);
+  const sleepTile = tile("Schlafkonto", `<div class="val">${SA.avg != null ? fmt(SA.avg, 1) : "–"} <small>h Ø akut (2 Nächte) · Ziel ${fmt(SA.target, 1)} h</small></div><div class="sub">${SA.nights.map((n) => `${weekday(n.date)} ${n.h != null ? fmt(n.h, 1) + " h" : "–"}`).join(" · ")}</div><div><span class="badge ${SA.cls}">${SA.text}</span> <span class="badge ${SA.week.cls}">${SA.week.text}</span></div>`);
   const sparkTile = (t, key, unit, dec) => { const l = last(key); return tile(t, `<div class="val">${l ? fmt(l.v, dec) : "–"} <small>${unit}${l && l.date !== d.today ? ` · ${fmtDate(l.date)}` : ""}</small></div><div id="ck-${key}"></div><div class="sub">letzte 14 Tage</div>`); };
 
   // Ernährung
@@ -466,9 +477,11 @@ function renderWellness(d) {
   });
   C.wellnessHeat($("wellness-heat"), days, rows);
   const SA = sleepAccount(d);
-  $("sleep-account").innerHTML = `<div class="big">${SA.known ? fmt(SA.sum, 1) : "–"} <small class="muted" style="font-size:.9rem">h von ${fmt(SA.target, 0)} h</small></div><div><span class="badge ${SA.cls}">${SA.text}</span></div>
+  $("sleep-account").innerHTML = `<div class="big">${SA.avg != null ? fmt(SA.avg, 1) : "–"} <small class="muted" style="font-size:.9rem">h Ø akut von ${fmt(SA.target, 1)} h</small></div><div><span class="badge ${SA.cls}">${SA.text}</span></div>
     ${SA.nights.map((n, i) => `<div class="row"><span>${i === 0 ? "Letzte Nacht (auf heute)" : "Nacht davor"} · ${weekday(n.date)} ${fmtDate(n.date)}</span><b>${n.h != null ? fmt(n.h, 1) + " h" : "nicht erfasst"}</b></div>`).join("")}
-    <div class="muted">Vor dem Rennen zählt die Summe der letzten zwei Nächte mehr als eine einzelne. Richtwert ${fmt(SLEEP_TARGET_H, 1)} h pro Nacht, kein persönlich kalibrierter Wert.</div>`;
+    <div class="row"><span>7 Nächte (${SA.week.n}/7 erfasst)</span><b>${SA.week.avg != null ? "Ø " + fmt(SA.week.avg, 1) + " h · Defizit " + fmt(SA.week.debt, 1) + " h" : "–"}</b></div>
+    <div><span class="badge ${SA.week.cls}">${SA.week.text}</span></div>
+    <div class="muted">Akut: letzte Nacht zählt ${Math.round(SLEEP_ACUTE_WEIGHT * 100)} %, die Nacht davor ${Math.round((1 - SLEEP_ACUTE_WEIGHT) * 100)} %. Die Woche zeigt die angesammelte Schlafschuld. Richtwert ${fmt(SLEEP_TARGET_H, 1)} h pro Nacht, kein persönlich kalibrierter Wert.</div>`;
   const wv = d.wellness.filter((w) => w.weight != null);
   if (wv.length) {
     $("weight-card").hidden = false;
