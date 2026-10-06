@@ -70,7 +70,8 @@
 
   /* ---------- Balken (Woche): Ist mit Plan-Marke ---------- */
   function bars(host, items, o) {
-    const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42;
+    const hasDev = o.valueLabels && items.some((w) => w.plan != null && w.value != null);
+    const W = 480, H = hasDev ? 250 : 230, L = 44, R = 8, T = 24, B = hasDev ? 62 : 42;
     const max = U.niceMax(Math.max(1, ...items.flatMap((w) => [w.value, w.plan]).filter((v) => v != null)));
     const s = svg(W, H, o.label);
     const y = (v) => T + (H - T - B) * (1 - v / max);
@@ -81,8 +82,16 @@
       const x = L + slot * i + (slot - bw) / 2;
       if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (Plan ${U.fmt(w.plan)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
-      if (o.valueLabels && w.value != null) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 4, "text-anchor": "middle" }, U.fmt(w.value, o.dec ?? 1)));
-      s.append(el("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, w.label));
+      if (o.valueLabels && w.value != null) {
+        // Zahl über Säule und Plan-Marke, damit der Plan-Strich sie nie schneidet
+        s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
+        // Abweichung zum Plan in einer eigenen Zeile unter dem Datum: grün bis 15 %, sonst gelb
+        if (w.plan != null && w.plan > 0) {
+          const dev = w.value - w.plan, off = Math.abs(dev) / w.plan > 0.15;
+          s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${off ? "warn" : "ok"})` }, `${dev > 0 ? "+" : dev < 0 ? "−" : "±"}${U.fmt(Math.abs(dev), o.dec ?? 1)}`), `Abweichung zum Plan (${U.fmt(w.plan, o.dec ?? 1)}): ${dev > 0 ? "+" : "−"}${U.fmt(Math.abs(dev), o.dec ?? 1)} ${o.unit}`));
+        }
+      }
+      s.append(el("text", { x: x + bw / 2, y: H - (hasDev ? 40 : 22), "text-anchor": "middle" }, w.label));
     });
     if (o.ref) s.append(el("line", { x1: L, x2: W - R, y1: y(o.ref.value), y2: y(o.ref.value), stroke: "var(--warn)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(o.ref.value) - 4, "text-anchor": "end" }, o.ref.label));
     s.append(el("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, o.xLabel));
@@ -213,6 +222,19 @@
     for (const v of [hi, 0, lo]) s.append(el("line", { x1: L, x2: W - R, y1: y2(v), y2: y2(v), class: v === 0 ? "axis" : "grid-l" }), el("text", { x: L - 8, y: y2(v) + 4, "text-anchor": "end" }, U.fmt(v)));
     const bw = Math.max(2, hw * 0.62);
     for (const p of tsb) s.append(title(el("rect", { x: x(p.d) - bw / 2, y: Math.min(y2(p.v), y2(0)), width: bw, height: Math.max(1, Math.abs(y2(p.v) - y2(0))), rx: 1.5, fill: TSB_COL[cls(p.v)] }), `${U.fmtDate(p.d)}: TSB ${U.fmt(p.v, 1)}`));
+    // Ereignisse (Rennen, Blockstart, Pause): Pausen als graues Band, Rennen/Blöcke als Linie mit Fähnchen in zwei Zeilen
+    (o.events ?? []).filter((e) => e.date <= last && (e.end ?? e.date) >= first).forEach((e, i) => {
+      const x0 = x(e.date < first ? first : e.date);
+      if (e.kind === "pause") {
+        const x1 = x(e.end > last ? last : e.end);
+        s.append(title(el("rect", { x: x0, y: T1, width: Math.max(2, x1 - x0), height: B1 - T1, fill: "var(--muted)", opacity: 0.14 }), `${e.label}: ${U.fmtDate(e.date)}–${U.fmtDate(e.end)}`), el("text", { x: x0 + 4, y: T1 + 12, style: "font-size:10.5px" }, e.label));
+        return;
+      }
+      const col = e.kind === "race" ? "var(--s-bike)" : "var(--muted)";
+      s.append(el("line", { x1: x0, x2: x0, y1: T1, y2: B1, stroke: col, "stroke-width": 1.3, "stroke-dasharray": e.kind === "race" ? null : "2 3" }));
+      const right = x0 > W - R - 120;
+      s.append(title(el("text", { x: x0 + (right ? -4 : 4), y: T1 + 12 + (i % 2) * 12, "text-anchor": right ? "end" : "start", class: "halo", style: `fill:${col};font-size:10.5px;font-weight:600` }, e.label.length > 22 ? e.label.slice(0, 21) + "…" : e.label), `${e.label} (${U.fmtDate(e.date)})`));
+    });
     // heute und Renntag
     for (const m of o.marks) {
       if (m.day < first || m.day > last) continue;
@@ -227,7 +249,7 @@
 
   /* ---------- Kalender-Heatmap (Tag x Woche) ---------- */
   function calendar(host, daily, today) {
-    const CW = 76, CH = 46, L = 66, T = 22, cols = 7;
+    const CW = 76, CH = 66, L = 66, T = 22, cols = 7;
     const first = daily[0].date, dow = (d) => (new Date(d + "T12:00:00").getDay() + 6) % 7;
     const start = U.addDays(first, -dow(first));
     const weeks = Math.ceil((U.dayDiff(start, today) + 1) / 7);
@@ -245,10 +267,13 @@
         const sports = Object.entries(day.sports).map(([k, v]) => `${k} ${U.fmt(v)}`).join(", ");
         const cell = title(el("rect", { x, y, width: CW - 4, height: CH - 4, rx: 4, fill: day.load ? "var(--accent)" : "none", "fill-opacity": day.load ? 0.18 + 0.82 * (day.load / max) : 1, stroke: date === today ? "var(--text)" : "var(--line)", "stroke-width": date === today ? 2 : 1 }), `${U.weekday(date)} ${U.fmtDate(date)}: ${day.load ? `${U.fmt(day.load)} TSS (${sports})` : "keine Belastung / Ruhetag"}`);
         s.append(cell);
-        if (day.load) s.append(el("text", { x: x + (CW - 4) / 2, y: y + (CH - 4) / 2 + 4, "text-anchor": "middle", style: `fill:${day.load / max > 0.55 ? "#fff" : "var(--text)"};font-size:10px` }, U.fmt(day.load)));
+        if (day.load) s.append(el("text", { x: x + (CW - 4) / 2, y: y + (CH - 4) / 2 - 1, "text-anchor": "middle", style: `fill:${day.load / max > 0.55 ? "#fff" : "var(--text)"};font-size:12px;font-weight:700;pointer-events:none` }, U.fmt(day.load)));
+        // Sportart je Zelle: ein Punkt pro Sportart in der Sportartfarbe, mit heller Kontur wegen des dunklen Untergrunds
+        const ks = Object.keys(day.sports);
+        ks.forEach((k, n) => s.append(title(el("circle", { cx: x + (CW - 4) / 2 + (n - (ks.length - 1) / 2) * 14, cy: y + CH - 14, r: 5, fill: `var(--s-${k})`, stroke: "var(--card)", "stroke-width": 1.5 }), `${k}: ${U.fmt(day.sports[k])} TSS`)));
       }
     }
-    s.append(el("text", { x: L, y: H - 6 }, "Zahl = TSS · dunkler = mehr · leer = Ruhetag"));
+    s.append(el("text", { x: L, y: H - 6 }, "Zahl = TSS · dunkler = mehr · Punkte = Sportart · leer = Ruhetag"));
     mount(host, s);
   }
 
@@ -281,16 +306,16 @@
   /* ---------- Veraenderung der Prognose gegenueber dem ersten Eintrag je Serie. Null-Linie = unveraendert,
      tiefer = schneller. Eine Linie je Distanz, direkt am Linienende beschriftet. ---------- */
   function deltaTrend(host, rows, o) {
-    const W = 480, H = 210, L = 52, R = 56, T = 22, B = 30;
+    const W = 480, H = 210, L = 52, R = 70, T = 22, B = 30;
     const fmtD = (v) => (v === 0 ? "0:00" : `${v < 0 ? "−" : "+"}${U.fmtTime(Math.abs(v))}`);
     const lines = o.series.map((sr) => {
       const pts = rows.filter((r) => r[sr.key] != null);
       if (!pts.length) return null;
       return { ...sr, pts: pts.map((r) => ({ date: r.date, v: r[sr.key] - pts[0][sr.key], abs: r[sr.key] })) };
     }).filter(Boolean);
-    // Mindestens ±5 Min, damit Schwankungen von unter einer Minute nicht wie ein Einbruch aussehen
-    const maxAbs = Math.max(300, ...lines.flatMap((l) => l.pts.map((p) => Math.abs(p.v))));
-    const lim = [300, 600, 900, 1800].find((n) => n >= maxAbs) ?? Math.ceil(maxAbs / 600) * 600;
+    // Skala auf den Datenbereich (mindestens ±30 s), damit eine Änderung von wenigen Sekunden nicht als flache Linie endet
+    const maxAbs = Math.max(30, ...lines.flatMap((l) => l.pts.map((p) => Math.abs(p.v)))) * 1.15;
+    const lim = [30, 60, 120, 180, 300, 600, 900, 1800].find((n) => n >= maxAbs) ?? Math.ceil(maxAbs / 600) * 600;
     const t0 = Date.parse(rows[0].date), t1 = Date.parse(rows[rows.length - 1].date);
     const x = (d) => L + (W - L - R) * (t1 === t0 ? 0.5 : (Date.parse(d) - t0) / (t1 - t0));
     const y = (v) => T + (H - T - B) * (0.5 - v / (2 * lim));
@@ -298,18 +323,18 @@
     for (const v of [-lim, -lim / 2, lim / 2, lim]) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmtD(Math.round(v))));
     s.append(el("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "axis", "stroke-width": 1.5 }), el("text", { x: L - 6, y: y(0) + 4, "text-anchor": "end", style: "font-weight:700" }, "0:00"));
     s.append(el("text", { x: 4, y: 12 }, "Prognose gegenüber dem ersten Eintrag"));
-    s.append(el("text", { x: W - R, y: H - 16, "text-anchor": "end", style: "fill:var(--ok)" }, "↓ schneller"), el("text", { x: W - R, y: T - 8, "text-anchor": "end", style: "fill:var(--muted)" }, "↑ langsamer"));
+    s.append(el("text", { x: W - R, y: H - 16, "text-anchor": "end", style: "fill:var(--ok)" }, "▼ schneller"), el("text", { x: W - R, y: T - 8, "text-anchor": "end", style: "fill:var(--muted)" }, "▲ langsamer"));
     const ends = [];
     for (const l of lines) {
       const col = l.color;
       const d = l.pts.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
       if (l.pts.length > 1) s.append(el("path", { d, fill: "none", stroke: col, "stroke-width": l.bold ? 2.5 : 1.8, "stroke-dasharray": l.dash ?? null }));
       for (const p of l.pts) s.append(title(el("circle", { cx: x(p.date), cy: y(p.v), r: l.bold ? 4.5 : 3.5, fill: col }), `${U.fmtDate(p.date)}: ${l.label} ${U.fmtTime(p.abs)} (${fmtD(p.v)})`));
-      ends.push({ l, py: y(l.pts[l.pts.length - 1].v) });
+      ends.push({ l, py: y(l.pts[l.pts.length - 1].v), dv: l.pts[l.pts.length - 1].v });
     }
     ends.sort((a, b) => a.py - b.py);
     let prev = -99;
-    for (const e of ends) { const ty = Math.max(e.py + 4, prev + 13); prev = ty; s.append(el("text", { x: W - R + 6, y: ty, style: `fill:${e.l.color};font-weight:700` }, e.l.label)); }
+    for (const e of ends) { const ty = Math.max(e.py + 4, prev + 13); prev = ty; s.append(el("text", { x: W - R + 6, y: ty, style: `fill:${e.l.color};font-weight:700` }, `${e.l.label} ${e.dv < 0 ? "▼" : e.dv > 0 ? "▲" : ""}`)); }
     const n = Math.min(rows.length, 5);
     for (let i = 0; i < n; i++) { const r = rows[n === 1 ? 0 : Math.round((i * (rows.length - 1)) / (n - 1))]; s.append(el("text", { x: x(r.date), y: H - 2, "text-anchor": i === n - 1 && n > 1 ? "end" : i === 0 && n > 1 ? "start" : "middle" }, U.fmtDate(r.date))); }
     mount(host, s);
@@ -345,17 +370,25 @@
 
   /* ---------- Linie mit Lücken (Ruhepuls) ---------- */
   function gapLine(host, days, values, o) {
-    const W = 480, H = 190, L = 40, R = 10, T = 24, B = 34;
+    const W = 480, H = 190, L = 40, R = o.last ? 46 : 10, T = 24, B = 34;
     const v = days.map((d) => values[d]).filter((x) => x != null);
-    const lo = Math.floor(Math.min(...v) - 2), hi = Math.ceil(Math.max(...v) + 2);
+    const second = o.line2 ? days.map((d) => o.line2.values[d]).filter((x) => x != null) : [];
+    const lo = Math.floor(Math.min(...v, ...second, o.band?.lo ?? Infinity) - 2), hi = Math.ceil(Math.max(...v, ...second, o.band?.hi ?? -Infinity) + 2);
     const s = svg(W, H, o.label);
     const x = (i) => L + (W - L - R) * (i / Math.max(1, days.length - 1)), y = (val) => T + (H - T - B) * (1 - (val - lo) / (hi - lo));
-    for (const t of [lo, (lo + hi) / 2, hi]) s.append(el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), class: "grid-l" }), el("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, U.fmt(t)));
+    // Persönliches Band (üblicher Bereich) als grauer Streifen hinter der Linie
+    if (o.band) s.append(title(el("rect", { x: L, y: y(o.band.hi), width: W - L - R, height: Math.max(2, y(o.band.lo) - y(o.band.hi)), fill: "var(--line)", opacity: 0.7 }), o.band.tip ?? "üblicher Bereich"), el("text", { x: L + 4, y: y(o.band.hi) + 11, style: "font-size:9.5px" }, o.band.label ?? "üblich"));
+    for (const t of [lo, (lo + hi) / 2, hi]) s.append(el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), class: "grid-l" }), el("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, U.fmt(t, o.dec ?? (hi - lo < 6 ? 1 : 0))));
     s.append(el("text", { x: 4, y: 12 }, o.unit));
-    let d = "", pen = false;
-    days.forEach((day, i) => { const val = values[day]; if (val == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(val).toFixed(1)}`; pen = true; });
-    s.append(el("path", { d, fill: "none", stroke: "var(--accent)", "stroke-width": 2 }));
-    days.forEach((day, i) => { const val = values[day]; if (val != null) s.append(title(el("circle", { cx: x(i), cy: y(val), r: 2.5, fill: "var(--accent)" }), `${U.fmtDate(day)}: ${U.fmt(val)} ${o.unit}`)); });
+    const path = (vals) => { let d = "", pen = false; days.forEach((day, i) => { const val = vals[day]; if (val == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(val).toFixed(1)}`; pen = true; }); return d; };
+    if (o.line2) s.append(el("path", { d: path(o.line2.values), fill: "none", stroke: o.line2.color ?? "var(--text)", "stroke-width": 2.4, opacity: 0.85 }));
+    s.append(el("path", { d: path(values), fill: "none", stroke: "var(--accent)", "stroke-width": o.line2 ? 1.2 : 2, opacity: o.line2 ? 0.55 : 1 }));
+    days.forEach((day, i) => { const val = values[day]; if (val != null) s.append(title(el("circle", { cx: x(i), cy: y(val), r: o.line2 ? 2 : 2.5, fill: "var(--accent)" }), `${U.fmtDate(day)}: ${U.fmt(val, o.dec ?? 0)} ${o.unit}`)); });
+    // Letzter Wert als Zahl am Linienende
+    if (o.last) {
+      const i = days.indexOf(o.last.date);
+      if (i >= 0) s.append(el("circle", { cx: x(i), cy: y(o.last.value), r: 4.5, fill: "var(--accent)", stroke: "var(--card)", "stroke-width": 1.5 }), el("text", { x: x(i) + 8, y: y(o.last.value) + 4, style: "font-weight:700;font-size:13px;fill:var(--text)" }, U.fmt(o.last.value, o.dec ?? 0)));
+    }
     const step = Math.max(1, Math.round(days.length / 6));
     for (let i = 0; i < days.length; i += step) s.append(el("text", { x: x(i), y: H - 16, "text-anchor": "middle" }, U.fmtDate(days[i])));
     mount(host, s);
@@ -384,19 +417,27 @@
   /* ---------- Ernährung: Tage mit Ziel-Marke, Lücken schraffiert ---------- */
   function nutrition(host, days, o) {
     const W = 480, H = 236, L = 44, R = 8, T = 24, B = 60;
+    const color = o.color ?? "var(--accent)";
     const vals = days.flatMap((d) => [o.values[d], o.goal?.[d]]).filter((v) => v != null);
-    const max = U.niceMax(Math.max(1, ...vals));
+    const max = U.niceMax(Math.max(1, ...vals) * 1.08);
     const s = svg(W, H, o.label);
     hatch(s);
     const y = (v) => T + (H - T - B) * (1 - v / max);
     for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.fmt(v))); }
     s.append(el("text", { x: 4, y: 12 }, o.unit));
-    const slot = (W - L - R) / days.length, bw = slot * 0.62;
+    const slot = (W - L - R) / days.length, bw = Math.min(slot * 0.62, 44);
     days.forEach((d, i) => {
-      const x = L + slot * i + (slot - bw) / 2, v = o.values[d];
+      const x = L + slot * i + (slot - bw) / 2, v = o.values[d], g = o.goal?.[d];
       if (v == null) s.append(title(el("rect", { x, y: T, width: bw, height: H - T - B, fill: "url(#hatch)" }), `${U.fmtDate(d)}: noch keine Daten`));
-      else s.append(title(el("rect", { x, y: y(v), width: bw, height: Math.max(0, y(0) - y(v)), fill: "var(--accent)" }), `${U.fmtDate(d)}: ${U.fmt(v)} ${o.unit}${o.goal?.[d] != null ? ` (Ziel ${U.fmt(o.goal[d])})` : ""}`));
-      const g = o.goal?.[d];
+      else {
+        // Überschreitung als eigenes Segment über der Zielmarke (Gelb = Warnung), Betrag direkt darüber
+        const base = g != null && v > g ? g : v;
+        s.append(title(el("rect", { x, y: y(base), width: bw, height: Math.max(0, y(0) - y(base)), fill: color }), `${U.fmtDate(d)}: ${U.fmt(v)} ${o.unit}${g != null ? ` (Ziel ${U.fmt(g)})` : ""}`));
+        if (g != null && v > g) {
+          s.append(title(el("rect", { x, y: y(v), width: bw, height: Math.max(1, y(g) - y(v)), fill: "var(--warn)" }), `${U.fmtDate(d)}: +${U.fmt(v - g)} ${o.unit} über dem Ziel`));
+          s.append(el("text", { x: x + bw / 2, y: y(v) - 4, "text-anchor": "middle", style: "font-size:10px;font-weight:700;fill:var(--warn)" }, `+${U.fmt(v - g)}`));
+        }
+      }
       if (g != null) s.append(el("line", { x1: x - 2, x2: x + bw + 2, y1: y(g), y2: y(g), stroke: "var(--text)", "stroke-width": 2.5 }));
       if (o.training?.[d]) s.append(title(el("circle", { cx: x + bw / 2, cy: H - B + 12, r: 4, fill: "var(--s-run)" }), "Trainingstag"));
       if (i % 2 === 0 || days.length <= 8) s.append(el("text", { x: x + bw / 2, y: H - 26, "text-anchor": "middle" }, U.fmtDate(d)));
@@ -478,6 +519,36 @@
     mount(host, s);
   }
 
+  /* ---------- Kleine Säulen je Woche (Disziplin-Sicht): Wert über jeder Säule, laufende Woche heller ---------- */
+  function miniBars(host, items, o) {
+    const W = 360, H = 120, L = 6, R = 6, T = 20, B = 20;
+    const s = svg(W, H, o.label);
+    const max = Math.max(1, ...items.map((i) => i.value ?? 0));
+    const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.62, 30), y = (v) => T + (H - T - B) * (1 - v / max);
+    s.append(el("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "axis" }));
+    items.forEach((it, i) => {
+      const cx = L + slot * i + slot / 2;
+      if (it.value > 0) s.append(title(el("rect", { x: cx - bw / 2, y: y(it.value), width: bw, height: y(0) - y(it.value), rx: 2, fill: o.color, opacity: it.partial ? 0.5 : 1 }), `Woche ab ${it.label}: ${U.fmt(it.value, o.dec ?? 0)} ${o.unit}${it.partial ? " – laufende Woche" : ""}`), el("text", { x: cx, y: y(it.value) - 4, "text-anchor": "middle", style: "font-size:10px;font-weight:700;fill:var(--text)" }, U.fmt(it.value, o.dec ?? 0)));
+      else s.append(el("text", { x: cx, y: y(0) - 4, "text-anchor": "middle", style: "font-size:10px" }, "–"));
+      if (i % 2 === (items.length - 1) % 2) s.append(el("text", { x: cx, y: H - 6, "text-anchor": "middle", style: "font-size:10px" }, it.label));
+    });
+    mount(host, s);
+  }
+
+  /* ---------- Kleine Linie über wenige Punkte (VDOT-Verlauf): Anfangs- und Endwert beschriftet ---------- */
+  function trend(host, pts, o) {
+    const W = 220, H = 62, L = 8, R = 36, T = 10, B = 16;
+    const s = svg(W, H, o.label);
+    const vs = pts.map((p) => p.value), lo = Math.min(...vs), hi = Math.max(...vs), pad = Math.max(0.2, (hi - lo) * 0.25);
+    const t0 = Date.parse(pts[0].date), t1 = Date.parse(pts[pts.length - 1].date);
+    const x = (d) => L + (W - L - R) * (t1 === t0 ? 1 : (Date.parse(d) - t0) / (t1 - t0)), y = (v) => T + (H - T - B) * (1 - (v - (lo - pad)) / (hi - lo + 2 * pad));
+    s.append(el("path", { d: pts.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${y(p.value).toFixed(1)}`).join(""), fill: "none", stroke: "var(--accent)", "stroke-width": 2 }));
+    for (const p of pts) s.append(title(el("circle", { cx: x(p.date), cy: y(p.value), r: 2.5, fill: "var(--accent)" }), `${U.fmtDate(p.date)}: ${U.fmt(p.value, o.dec ?? 1)}`));
+    const e = pts[pts.length - 1];
+    s.append(el("text", { x: x(e.date) + 6, y: y(e.value) + 4, style: "font-weight:700;fill:var(--text)" }, U.fmt(e.value, o.dec ?? 1)), el("text", { x: L, y: H - 3 }, U.fmtDate(pts[0].date)), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, U.fmtDate(e.date)));
+    mount(host, s);
+  }
+
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, miniBars, trend };
 })();
