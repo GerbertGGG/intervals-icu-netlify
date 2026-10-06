@@ -186,16 +186,16 @@
     const lo1 = Math.max(0, Math.floor((dMin - rough * 0.3) / stp) * stp), hi1 = Math.ceil((dMax + rough * 0.3) / stp) * stp;
     const y1 = (v) => T1 + (B1 - T1) * (1 - (v - lo1) / (hi1 - lo1));
     for (let v = lo1; v <= hi1 + 1e-9; v += stp) s.append(el("line", { x1: L, x2: W - R, y1: y1(v), y2: y1(v), class: "grid-l" }), el("text", { x: L - 8, y: y1(v) + 4, "text-anchor": "end" }, U.fmt(v)));
-    const curve = (map, color, fill) => {
+    const curve = (map, color, fill, sharp) => {
       const runs = []; let cur = null;
       for (const day of days) { const v = map[day]; if (v == null) { cur = null; continue; } if (!cur) runs.push(cur = []); cur.push([x(day), y1(v)]); }
       for (const pts of runs) {
-        const d = smooth(pts);
+        const d = sharp ? pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("") : smooth(pts);
         if (fill) s.append(el("path", { d: `${d}L${pts[pts.length - 1][0].toFixed(1)},${B1}L${pts[0][0].toFixed(1)},${B1}Z`, fill: color, "fill-opacity": 0.12, stroke: "none" }));
-        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": fill ? 2.4 : 1.7, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": fill ? 2.4 : 1.4, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
       }
     };
-    curve(o.ctl, CTL, true); curve(o.atl, ATL, false);
+    curve(o.ctl, CTL, true); curve(o.atl, ATL, false, true);
     if (cNow) s.append(el("circle", { cx: x(cNow.day), cy: y1(cNow.v), r: 4.5, fill: CTL, stroke: "var(--card)", "stroke-width": 1.5 }));
     // Tooltip je Tag über beide Kurven
     const hw = (W - L - R) / (span + 1);
