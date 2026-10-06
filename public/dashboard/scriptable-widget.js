@@ -873,6 +873,11 @@ function buildTraining(res) {
     const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 3;
     const dot = nl.addText("●"); dot.font = Font.systemFont(FS.xs); dot.textColor = new Color(hex);
     text(nl, SPORTS[k][0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+    // Tage seit der letzten Einheit; ab 7 Tagen Pause hervorgehoben
+    const since = s.daysSince == null ? MISSING : s.daysSince === 0 ? "heute" : `${s.daysSince} T`;
+    const long = s.daysSince != null && s.daysSince >= 7;
+    nl.addSpacer();
+    text(nl, since, FS.xs, { bold: long, color: long ? COL.warn : COL.muted, minScale: 0.7 });
     // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
     text(vl, `${Math.round(s.weekLoad || 0)}`, FS.lg + 1, { bold: true });
@@ -884,16 +889,7 @@ function buildTraining(res) {
     if (s.km4 != null) {
       const tr = s.trendPct == null ? "" : ` ${s.trendPct > 0 ? "▲" : s.trendPct < 0 ? "▼" : "="}${Math.abs(s.trendPct)} %`;
       text(c, `4 W: ${fmt(s.km4, k === "swim" ? 1 : 0)} km${tr}`, FS.xs, { bold: true, color: s.trendPct != null && s.trendPct < 0 ? COL.warn : COL.text, minScale: 0.6 });
-      c.addSpacer(1);
     }
-    // Trainingszeit und Tage seit der letzten Einheit; ab 7 Tagen Pause hervorgehoben
-    const mins = Math.round(s.weekMinutes || 0);
-    const since = s.daysSince == null ? MISSING : s.daysSince === 0 ? "heute" : `vor ${s.daysSince} T`;
-    const long = s.daysSince != null && s.daysSince >= 7;
-    const bl = c.addStack(); bl.centerAlignContent();
-    text(bl, mins ? `${Math.floor(mins / 60)}:${String(mins % 60).padStart(2, "0")} h` : MISSING, FS.xs, { color: COL.muted, minScale: 0.7 });
-    bl.addSpacer();
-    text(bl, since, FS.xs, { bold: long, color: long ? COL.warn : COL.muted, minScale: 0.7 });
   }
   w.addSpacer(4);
   const sc = card(w, W, 4), sp = d.split;
