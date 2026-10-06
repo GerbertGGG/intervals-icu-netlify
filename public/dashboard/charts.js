@@ -70,7 +70,8 @@
 
   /* ---------- Balken (Woche): Ist mit Plan-Marke ---------- */
   function bars(host, items, o) {
-    const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42;
+    const hasDev = o.valueLabels && items.some((w) => w.plan != null && w.value != null);
+    const W = 480, H = hasDev ? 250 : 230, L = 44, R = 8, T = 24, B = hasDev ? 62 : 42;
     const max = U.niceMax(Math.max(1, ...items.flatMap((w) => [w.value, w.plan]).filter((v) => v != null)));
     const s = svg(W, H, o.label);
     const y = (v) => T + (H - T - B) * (1 - v / max);
@@ -82,14 +83,15 @@
       if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (Plan ${U.fmt(w.plan)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
       if (o.valueLabels && w.value != null) {
-        s.append(el("text", { x: x + bw / 2, y: y(w.value) - 4, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:10.5px" }, U.fmt(w.value, o.dec ?? 1)));
-        // Abweichung zum Plan über der Zahl: grün bis 15 % daneben, sonst gelb (Plan fehlt = keine Angabe)
+        // Zahl über Säule und Plan-Marke, damit der Plan-Strich sie nie schneidet
+        s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
+        // Abweichung zum Plan in einer eigenen Zeile unter dem Datum: grün bis 15 %, sonst gelb
         if (w.plan != null && w.plan > 0) {
           const dev = w.value - w.plan, off = Math.abs(dev) / w.plan > 0.15;
-          s.append(el("text", { x: x + bw / 2, y: y(w.value) - 15, "text-anchor": "middle", style: `font-size:9.5px;fill:var(--${off ? "warn" : "ok"})` }, `${dev > 0 ? "+" : dev < 0 ? "−" : "±"}${U.fmt(Math.abs(dev), o.dec ?? 1)}`));
+          s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${off ? "warn" : "ok"})` }, `${dev > 0 ? "+" : dev < 0 ? "−" : "±"}${U.fmt(Math.abs(dev), o.dec ?? 1)}`), `Abweichung zum Plan (${U.fmt(w.plan, o.dec ?? 1)}): ${dev > 0 ? "+" : "−"}${U.fmt(Math.abs(dev), o.dec ?? 1)} ${o.unit}`));
         }
       }
-      s.append(el("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, w.label));
+      s.append(el("text", { x: x + bw / 2, y: H - (hasDev ? 40 : 22), "text-anchor": "middle" }, w.label));
     });
     if (o.ref) s.append(el("line", { x1: L, x2: W - R, y1: y(o.ref.value), y2: y(o.ref.value), stroke: "var(--warn)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(o.ref.value) - 4, "text-anchor": "end" }, o.ref.label));
     s.append(el("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, o.xLabel));

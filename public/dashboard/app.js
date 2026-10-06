@@ -550,10 +550,10 @@ function renderHmTrend(r) {
   if (rows.length > 1) C.deltaTrend($("hm-trend-chart"), rows, { label: "Veränderung der Prognose", series: SERIES });
 }
 
-/* ---------- 4 · Leistung: Disziplinen (Rad, Schwimmen) ----------
+/* ---------- 4 · Leistung: Disziplinen (Rad, Schwimmen, Laufen) ----------
    Je Disziplin Umfang, letzte Einheit und Entwicklung der letzten Wochen. Nur sichtbar, wenn ein Triathlon-Ziel
    besteht oder in der Disziplin trainiert wurde. Datenbasis sind die Wochen- und Tageswerte der Seite. */
-const DISC = { bike: { label: "Rad", unit: "km", dec: 0 }, swim: { label: "Schwimmen", unit: "km", dec: 1 } };
+const DISC = { bike: { label: "Rad", unit: "km", dec: 0 }, swim: { label: "Schwimmen", unit: "km", dec: 1 }, run: { label: "Laufen", unit: "km", dec: 0 } };
 function renderDisciplines(d) {
   const host = $("disciplines"), tri = d.goal.triathlon, used = Object.keys(DISC).filter((k) => tri || d.weeks.some((w) => w.bySport[k].count > 0));
   $("disciplines-head").hidden = host.hidden = !used.length;
@@ -567,8 +567,11 @@ function renderDisciplines(d) {
     const lastDay = [...d.daily].reverse().find((x) => x.sports[k] != null);
     const ago = lastDay ? U.dayDiff(lastDay.date, d.today) : null;
     const trend = earlier.length === 4 && kmEarlier > 0 ? Math.round((km4 / kmEarlier - 1) * 100) : null;
-    const thr = k === "bike" ? (t.bike.ftp != null ? `FTP ${fmt(t.bike.ftp)} W` : "FTP fehlt") : t.swim.thresholdPaceSecPer100m != null ? `Schwellenpace ${paceLabel(t.swim.thresholdPaceSecPer100m)} min/100 m` : "Schwellenpace fehlt";
-    const tgt = tg[k]?.timeSecs ? `Rennziel ${fmtTime(tg[k].timeSecs)} über ${fmt(k === "bike" ? tri.bikeKm : tri.swimKm, k === "bike" ? 0 : 2)} km` : null;
+    const thr = k === "bike" ? (t.bike.ftp != null ? `FTP ${fmt(t.bike.ftp)} W` : "FTP fehlt")
+      : k === "run" ? (t.run.thresholdPaceSecPerKm != null ? `Schwellenpace ${paceLabel(t.run.thresholdPaceSecPerKm)} min/km${d.runalyze?.vdot != null ? ` · VDOT ${fmt(d.runalyze.vdot, 1)}` : ""}` : "Schwellenpace fehlt")
+      : t.swim.thresholdPaceSecPer100m != null ? `Schwellenpace ${paceLabel(t.swim.thresholdPaceSecPer100m)} min/100 m` : "Schwellenpace fehlt";
+    const raceKm = { bike: tri?.bikeKm, swim: tri?.swimKm, run: tri?.runKm }[k];
+    const tgt = tg[k]?.timeSecs ? `Rennziel ${fmtTime(tg[k].timeSecs)} über ${fmt(raceKm, k === "swim" ? 2 : k === "run" ? 1 : 0)} km` : null;
     const lastTxt = lastDay ? `${weekday(lastDay.date)} ${fmtDate(lastDay.date)} · ${ago === 0 ? "heute" : `vor ${ago} Tag${ago === 1 ? "" : "en"}`} · ${fmt(lastDay.sports[k])} TSS` : "keine Einheit in den letzten 8 Wochen";
     const stale = tri && (ago == null || ago > 14);
     return `<div class="card"><h3>${cfg.label}</h3>
