@@ -6,6 +6,7 @@ const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange 
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
 const HISTORY_DAYS = 56;
+const FORM_DAYS = 180; // Formkurve: längerer Verlauf (siehe FORM_DAYS im Worker)
 const SLEEP_TARGET_H = 7.5; // Richtwert je Nacht für Athleten (7–9 h), kein persönlich kalibrierter Wert
 const SLEEP_ACUTE_WEIGHT = 0.6; // Gewicht der letzten Nacht im akuten 2-Nächte-Wert
 const isTaper = (g) => g.daysToGo >= 0 && g.daysToGo <= 14;
@@ -289,8 +290,9 @@ function renderHistory(d) {
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   const TSB_BANDS = d.summary.thresholds.tsb;
   const ctl = {}, atl = {};
-  for (const w of d.wellness) { ctl[w.date] = w.ctl; atl[w.date] = w.atl; }
-  const first = addDays(d.today, -(HISTORY_DAYS - 1));
+  const series = d.formSeries?.length ? d.formSeries : d.wellness;
+  for (const w of series) { ctl[w.date] = w.ctl; atl[w.date] = w.atl; }
+  const first = d.formSeries?.length ? addDays(d.today, -(FORM_DAYS - 1)) : addDays(d.today, -(HISTORY_DAYS - 1));
   const raceSoon = d.goal.daysToGo >= 0 && d.goal.daysToGo <= 28;
   const end = raceSoon ? d.goal.date : d.today;
   C.form($("form-chart"), {
@@ -298,7 +300,7 @@ function renderHistory(d) {
     zones: [{ from: TSB_BANDS.ok, to: 200, cls: "ok" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: -200, to: TSB_BANDS.warn, cls: "bad" }],
     marks: [{ day: d.today, label: "heute", color: "var(--muted)", anchor: raceSoon ? "end" : "middle" }, ...(raceSoon ? [{ day: d.goal.date, label: "Renntag", color: "var(--accent)", anchor: "start" }] : [])],
   });
-  if (!d.wellness.some((w) => w.ctl != null)) $("form-chart").insertAdjacentHTML("beforeend", '<div class="notice">Keine CTL/ATL-Werte im Zeitraum.</div>');
+  if (!series.some((w) => w.ctl != null)) $("form-chart").insertAdjacentHTML("beforeend", '<div class="notice">Keine CTL/ATL-Werte im Zeitraum.</div>');
   C.calendar($("calendar"), d.daily, d.today);
 }
 
