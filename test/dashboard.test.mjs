@@ -149,6 +149,12 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
   const one = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30 } : w)), today, computeLoad(d.wellness));
   assert.equal(one.verdict.cls, "warn"); // ein Koerperwert allein = Vorsicht
   assert.equal(one.body.hrvMedian, 48); // Median ohne heute
+  // Eine einzelne knappe Warnung (Schlaf 6,9 h) ist noch kein Grund zur Vorsicht, zwei sind es
+  const slight = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9 } : w)), today, computeLoad(d.wellness));
+  assert.equal(slight.body.sleep.cls, "warn");
+  assert.equal(slight.verdict.cls, "ok");
+  const two = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9, hrv: 40 } : w)), today, computeLoad(d.wellness));
+  if (two.body.hrv.cls === "warn") assert.equal(two.verdict.cls, "warn");
 }
 // Cache: zweiter Abruf kommt aus KV, ?fresh=1 umgeht ihn
 {

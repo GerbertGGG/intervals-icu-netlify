@@ -517,7 +517,7 @@ Gesamturteil, mit `nBad`/`nWarn` (Skalen) und `bodyBad`/`bodyWarn` (Körper: Sch
 ```
 kein Skalenwert heute                          → „Heute noch nichts eingetragen“ (none)
 nBad ≥ 1  ODER  bodyBad ≥ 2  ODER  nWarn + bodyWarn + bodyBad ≥ 3   → „Eher ruhig angehen“ (bad)
-nWarn ≥ 1  ODER  bodyBad + bodyWarn ≥ 1  ODER  TSB < −10             → „Mit Vorsicht“ (warn)
+nWarn + bodyWarn + bodyBad ≥ 2  ODER  bodyBad ≥ 1  ODER  TSB < −10  → „Mit Vorsicht“ (warn)
 sonst                                                              → „Bereit“ (ok)
 ```
 
@@ -525,7 +525,7 @@ Wichtig: Der Körper-Teil wird **nur** bewertet, wenn mindestens eine Skala heut
 
 ### 6.4 Schlafkonto (Frontend, `app.js:13`)
 
-Summe der **letzten zwei Nächte** (heute und gestern); Ziel `2 · 7,5 h = 15 h`. Klasse: Summe ≥ 14,5 ok · ≥ 13 warn · sonst bad; fehlt eine Nacht, wird `ok` höchstens zu `warn` heruntergestuft. Das Ziel 7,5 h ist ein anderer Wert als die 7 h in 6.2 und die 6,5 h in 4.3 **[P12]**.
+Gewichteter Schnitt der **letzten zwei Nächte** (letzte Nacht 60 %, davor 40 %); Ziel `SLEEP_TARGET_H = 7,5 h` je Nacht. Klasse: Ø ≥ Ziel − 0,25 ok · ≥ Ziel − 1 warn · sonst bad; fehlt eine Nacht, wird `ok` höchstens zu `warn` heruntergestuft. Woche (7 Nächte, ab 4 Werten): Ø ≥ Ziel − 0,25 ok · ≥ Ziel − 0,75 warn · sonst bad. Das Ziel 7,5 h ist ein anderer Wert als die 7 h in 6.2 und die 6,5 h in 4.3 **[P12]**.
 
 ---
 

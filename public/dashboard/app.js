@@ -6,7 +6,7 @@ const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange 
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
 const HISTORY_DAYS = 56;
-const SLEEP_TARGET_H = 8; // Richtwert je Nacht für Athleten (7–9 h), kein persönlich kalibrierter Wert
+const SLEEP_TARGET_H = 7.5; // Richtwert je Nacht für Athleten (7–9 h), kein persönlich kalibrierter Wert
 const SLEEP_ACUTE_WEIGHT = 0.6; // Gewicht der letzten Nacht im akuten 2-Nächte-Wert
 const isTaper = (g) => g.daysToGo >= 0 && g.daysToGo <= 14;
 const hm = (secs) => (secs < 3600 ? fmtTime(secs) : fmtTime(Math.round(secs / 60) * 60).replace(/:00$/, "")); // ab 1 h als h:mm, darunter m:ss

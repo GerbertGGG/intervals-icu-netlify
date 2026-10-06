@@ -105,7 +105,8 @@ export function computeReadiness(wellness, todayIso, load) {
   let verdict;
   if (!hasScales) verdict = { cls: "none", text: "Heute noch nichts eingetragen", sub: "Ohne Eintrag gebe ich keine Einschätzung ab." };
   else if (nBad >= 1 || bodyBad >= 2 || nWarn + bodyWarn + bodyBad >= 3) verdict = { cls: "bad", text: "Eher ruhig angehen", sub: "Mehrere Werte liegen schlechter als üblich." };
-  else if (nWarn >= 1 || bodyBad + bodyWarn >= 1 || (load?.tsb != null && load.tsb < THRESHOLDS.tsb.ok)) verdict = { cls: "warn", text: "Mit Vorsicht", sub: "Einzelne Werte oder die Belastung sind auffällig." };
+  // Ein einzelner knapper Warnwert (z. B. Motivation einen Schritt über dem Median) ist normales Rauschen: erst zwei Warnungen, ein deutlich schlechter Körperwert oder niedrige Form zählen.
+  else if (nWarn + bodyWarn + bodyBad >= 2 || bodyBad >= 1 || (load?.tsb != null && load.tsb < THRESHOLDS.tsb.ok)) verdict = { cls: "warn", text: "Mit Vorsicht", sub: "Mehrere Werte oder die Belastung sind auffällig." };
   else verdict = { cls: "ok", text: "Bereit", sub: "Die Werte liegen im üblichen Bereich." };
   verdict.reasons = reasons;
   return { verdict, items, body, sleepHours: today?.sleepHours ?? null, hrv: today?.hrv ?? null, restingHR: today?.restingHR ?? null };
