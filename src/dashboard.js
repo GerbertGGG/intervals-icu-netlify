@@ -12,6 +12,7 @@ import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
+import { buildIntervalSessions } from "./interval-splits.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { withActualToday } from "./live-load.js";
@@ -527,6 +528,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const runs = activities.filter(isRun).map((a) => buildRunRecord(a, runCtx)).sort((a, b) => b.date.localeCompare(a.date));
 
   // Pace je Zone aus dem VDOT (Runalyze) fuer die Umrechnung von Distanz-Schritten geplanter Workouts
+  const intervalSessions = await settle("intervalSplits", () => buildIntervalSessions(env, runs, todayIso, addDays(todayIso, -27)));
   const stepPaces = snapshot?.vdot ? Object.fromEntries((paceTargetsFromVdot(snapshot.vdot) ?? []).map((z) => [z.key, z.secPerKm])) : null;
   const goalFromCalendar = goalR.ok && goalR.value?.date ? goalR.value : null;
   const thresholds = buildThresholds(settingsR.ok ? settingsR.value : null);
@@ -589,6 +591,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs, snapshot, todayIso),
+    intervalSessions: intervalSessions.ok ? intervalSessions.value : [],
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,

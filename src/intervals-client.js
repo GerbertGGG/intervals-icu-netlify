@@ -68,6 +68,14 @@ export async function fetchIntervalsEvents(env, oldest, newest) {
   return r.json();
 }
 
+// Intervall-Splits einer Aktivitaet (IntervalsDTO: icu_intervals mit type WORK/RECOVERY).
+export async function fetchIntervalsActivityIntervals(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(activityId)}/intervals`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, "activity intervals");
+  if (!r.ok) throw new Error(`activity intervals ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 export async function putWellnessDay(env, day, patch) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;
