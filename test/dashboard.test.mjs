@@ -416,3 +416,21 @@ console.log("zones from intervals ok");
   assert.deepEqual(zoneBuckets({ ...runs[0], use_gap_zone_times: false }), { easy: 3739, mid: 1667, hard: 168 });
   console.log("gap zones ok");
 }
+
+// Intervall-Splits: nur WORK-Intervalle, Fade, keine Pulswerte
+{
+  const { buildIntervalSession } = await import("../src/interval-splits.js");
+  const dto = { icu_intervals: [
+    { type: "WARMUP", distance: 2000, moving_time: 700 },
+    ...[240, 242, 246, 252].map((t) => ({ type: "WORK", distance: 1000, moving_time: t, average_heartrate: 170 })),
+    { type: "RECOVERY", distance: 400, moving_time: 150 },
+  ] };
+  const s = buildIntervalSession(dto);
+  assert.equal(s.count, 4);
+  assert.equal(s.fadeSecPerKm, 8); // (246+252)/2 - (240+242)/2
+  assert.equal(s.spreadSecPerKm, 12);
+  assert.equal(s.avgPace, "4:05");
+  assert.ok(!JSON.stringify(s).includes("heart"));
+  assert.equal(buildIntervalSession({ icu_intervals: [{ type: "WORK", distance: 1000, moving_time: 240 }] }), null);
+  console.log("ok interval splits");
+}

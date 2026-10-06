@@ -69,7 +69,7 @@ function render(d) {
   $("stamp").textContent = "Stand " + new Date(d.generatedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderSport, renderFitness, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
+  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -277,6 +277,20 @@ function renderLongruns(d) {
   host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small class="muted" style="font-size:.9rem">km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
     <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · ${T.source === "runalyze" ? "Läufe der Art „Langer Lauf“ in Runalyze" : `Läufe ab ${T.minKm} km`}:</div>${list}${decNote}${warn}
     <div class="muted" style="margin-top:6px">Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; aus Runalyze (Pace-Decoupling), wo vorhanden. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div>`;
+}
+
+/* ---------- 3 · Form: Intervall-Splits ---------- */
+// Pace je Wiederholung aus Intervals.icu (nur Arbeitsintervalle, bewusst ohne Puls). Fade = zweite Hälfte minus erste Hälfte.
+function renderIntervals(d) {
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const list = d.intervalSessions ?? [];
+  $("intervals-card").hidden = !list.length;
+  if (!list.length) return;
+  const fadeCls = (f) => (f <= 3 ? "ok" : f <= 8 ? "warn" : "bad");
+  $("interval-splits").innerHTML = list.map((s) => `<div style="margin-bottom:12px"><b>${fmtDate(s.date)}</b> · ${esc(s.name ?? "Intervalle")}
+    <div class="muted">${s.count} Wdh. · ${fmt(s.workKm, 1)} km · Ø ${s.avgPace} min/km · Streuung ${s.spreadSecPerKm} s/km · <span class="badge ${fadeCls(s.fadeSecPerKm)}">${s.fadeSecPerKm > 0 ? "+" : ""}${s.fadeSecPerKm} s/km</span> Fade</div>
+    <div class="muted" style="margin-top:2px">${s.reps.map((r) => `${r.distanceM != null ? r.distanceM + " m " : ""}${r.pace}`).join(" · ")}</div></div>`).join("") +
+    '<div class="muted">Fade: Pace der zweiten Hälfte minus erste Hälfte der Wiederholungen. Bis +3 s/km stabil, ab +8 s/km deutlicher Einbruch.</div>';
 }
 
 /* ---------- 3 · Form: Verlauf ---------- */
