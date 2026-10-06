@@ -7,6 +7,7 @@ import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
+import { trainingFindings, nutritionFindings, topFinding } from "../src/findings.js";
 import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
 
 const today = "2026-09-30";
@@ -179,6 +180,24 @@ assert.ok(trn.split.share && Math.abs(Object.values(trn.split.share).reduce((a, 
 assert.equal(trn.split.target, null); // ohne TRI_SPLIT_TARGET kein Soll, nichts erfunden
 assert.deepEqual(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "20,45,35" }).split.target, { swim: 20, bike: 45, run: 35 });
 assert.equal(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "kaputt" }).split.target, null);
+// Umfang der letzten 4 vollen Wochen und Entwicklung gegen die 4 davor: ohne 4 volle Vergleichswochen kein Trend, nie 0 erfunden
+for (const k of ["swim", "bike", "run"]) assert.equal(typeof trn.sports[k].km4, "number");
+assert.equal(trn.sports.run.trendPct, null);
+const wk = (load, km, o = {}) => ({ complete: true, load, km, plannedLoad: null, intensity: { easy: 100, mid: 0, hard: 0 }, bySport: Object.fromEntries(["run", "bike", "swim", "strength", "other"].map((s) => [s, { count: 1, load: 0, km: s === "run" ? km : 0, minutes: 0, plannedLoad: null }])), ...o });
+const dd = (extra) => ({ today: "2026-09-30", weeks: [wk(100, 20), wk(100, 20), wk(100, 20), wk(100, 20), wk(250, 60), { ...wk(0, 0), complete: false }], daily: [{ date: "2026-09-29", load: 50 }, { date: "2026-09-30", load: 0 }], wellness: [], cravings: [], ...extra });
+const tf = trainingFindings(dd());
+assert.equal(tf[0].sev, 2); // steiler Anstieg der Belastung und des Laufumfangs
+assert.ok(tf[0].act && tf.some((f) => /Laufumfang/.test(f.short)));
+assert.deepEqual(trainingFindings({ ...dd(), weeks: [] }), []); // ohne volle Woche kein Befund
+assert.equal(topFinding(dd()).short.startsWith("Belastung letzte Woche +"), true);
+// Ernährung: Muster statt Einzeltage, "kein Tagebuch" an 4 von 6 Tagen ist eine Warnung
+const food = Array.from({ length: 7 }, (_, i) => ({ date: `2026-09-${24 + i}`, calories: i % 2 ? null : 1900, calorieGoal: 2100, protein: 40 }));
+const nf = nutritionFindings({ today: "2026-09-30", wellness: food, cravings: [] });
+assert.ok(nf.some((f) => /Kein Tagebuch an 3 von 6/.test(f.short)));
+assert.ok(nf.some((f) => /Eiweiß an 3 von 3/.test(f.short))); // 40 g * 4 / 1900 kcal = 8 %
+assert.equal(topFinding({ ...dd({ weeks: [] }), wellness: food }) != null, true);
+assert.equal(topFinding({ today: "2026-09-30", weeks: [], daily: [], wellness: [], cravings: [] }), null);
+assert.ok("focus" in buildWidget(d, env));
 for (const sh of [trn.intensity.week, trn.intensity.avg]) if (sh) assert.equal(sh.easy + sh.mid + sh.hard, 100);
 assert.ok(JSON.stringify(trn).length < 2500);
 assert.equal(/Bobingen|Schokolade|CSS/.test(JSON.stringify(trn)), false);

@@ -6,9 +6,9 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
-//     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum, Wochenlast, die naechsten drei Tage.
+//     Gross:   Rennen-Countdown, Bereitschaft, heutige Einheit mit Warum (bei einer Warnung aus "Was auffaellt" stattdessen Befund mit Konsequenz), Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, Schwellen;
-//              Parameter  training  = je Disziplin Wochenvolumen gegen Plan und Zeitverteilung.
+//              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), bewegtes Gewicht, Bestwerte, Muskelalter.
@@ -225,18 +225,33 @@ function header(w, W, title, extra, extraColor = COL.muted) {
   return h;
 }
 
-// Fortschrittsbalken, optional mit Marke (z. B. Ziel)
-function progressBar(w, IW, ratio, hex, alpha = 1) {
+// Fortschrittsbalken. opts.mark = Marke als Anteil des Ziels (z. B. "Soll bis jetzt"), opts.overHex = Farbe für den Überhang:
+// Liegt der Wert über dem Ziel (ratio > 1), reicht der Balken bis zum Wert, die Zielmarke steht dann innen und der Rest ist der Überhang.
+function progressBar(w, IW, ratio, hex, alpha = 1, opts = {}) {
   const dc = newCtx(IW, 6), track = new Path();
   track.addRoundedRect(new Rect(0, 0, IW, 6), 3, 3);
   dc.addPath(track); dc.setFillColor(new Color(NEUTRAL_HEX, 0.25)); dc.fillPath();
+  const over = opts.overHex && ratio > 1, full = over ? ratio : 1;
   if (ratio > 0) {
-    const bar = new Path();
-    bar.addRoundedRect(new Rect(0, 0, Math.max(6, Math.min(1, ratio) * IW), 6), 3, 3);
+    const bar = new Path(), base = (Math.min(1, ratio) / full) * IW;
+    bar.addRoundedRect(new Rect(0, 0, Math.max(6, base), 6), 3, 3);
     dc.addPath(bar); dc.setFillColor(new Color(hex, alpha)); dc.fillPath();
+    if (over) {
+      const x0 = IW / full, ex = new Path();
+      ex.addRoundedRect(new Rect(x0, 0, IW - x0, 6), 3, 3);
+      dc.addPath(ex); dc.setFillColor(new Color(opts.overHex, alpha)); dc.fillPath();
+    }
   }
+  dc.setFillColor(new Color(INK_HEX, 0.9));
+  if (over) dc.fillRect(new Rect(IW / full - 1, -1, 2, 8)); // Ziel
+  if (opts.mark != null) { const x = (opts.mark / full) * IW; dc.fillRect(new Rect(x - 0.5, -2, 1.2, 10)); } // Soll bis jetzt
   const im = w.addImage(dc.getImage()); im.imageSize = new Size(IW, 6);
 }
+// Soll bis jetzt: Anteil des Tagesziels, der nach Tageszeit erreicht sein sollte (linear von 6 bis 22 Uhr, grobe Orientierung)
+function dayFraction() { const n = new Date(), h = n.getHours() + n.getMinutes() / 60; return Math.max(0, Math.min(1, (h - 6) / 16)); }
+// Feste Farbe je Ernährungsgröße, passend zur Seite (Kalorien Rad-Violett, Eiweiß Schwimm-Türkis, Kohlenhydrate Lauf-Blau, Fett Kraft-Gold)
+const OVER_HEX = "#f0b95a"; // Wert ueber dem Ziel: gelb (Warnung); Rot bleibt Alarmen vorbehalten
+const NUT_HEX = { kcal: SPORTS.bike[1], protein: SPORTS.swim[1], carbs: SPORTS.run[1], fat: SPORTS.strength[1] };
 
 // Mini-Kurve ueber die Breite: Luecken (null) bleiben offen, Punkt am Ende
 function sparkImage(w, h, values, hex, { dot = false, second = null } = {}) {
@@ -511,7 +526,10 @@ function buildWidget(res) {
   w.addSpacer(5);
 
   // 4. Warum: Akzentstrich links, 1 bis 3 Zeilen
-  const why = whyText(d, p, v);
+  // Auffälligkeit mit Konsequenz hat Vorrang vor dem allgemeinen Warum, außer am Renntag und in Taper und Erholung
+  const raceFocus = g && (g.daysToGo === 0 || g.phase === "taper" || g.phase === "recovery");
+  const focusLine = d.focus && !raceFocus ? `Auffällig: ${d.focus.short}. ${d.focus.act}` : null;
+  const why = focusLine ? (focusLine.length > 145 ? focusLine.slice(0, 144) + "…" : focusLine) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 14) / 6.6));
   const nLines = Math.min(3, Math.max(1, Math.ceil(why.length / perLine)));
   const wr = w.addStack(); wr.size = new Size(W, nLines * 17 + 2);
@@ -693,14 +711,13 @@ function buildFoodCard(res) {
   w.addSpacer();
   text(w, show && td.calories != null ? `${fmt(td.calories)}${kcalGoal ? ` / ${fmt(kcalGoal)}` : ""} kcal` : kcalGoal ? `Ziel ${fmt(kcalGoal)} kcal` : "kcal –", FS.md, { bold: true, color: dim ? COL.muted : COL.text });
   w.addSpacer(4);
-  progressBar(w, IW, show && td.calories != null && kcalGoal ? td.calories / kcalGoal : 0, ACCENT_HEX, dim ? 0.5 : 1);
+  progressBar(w, IW, show && td.calories != null && kcalGoal ? td.calories / kcalGoal : 0, NUT_HEX.kcal, dim ? 0.5 : 1, { overHex: OVER_HEX, mark: has && kcalGoal ? dayFraction() : null });
   if (!has) { w.addSpacer(3); text(w, prev ? "Yazio heute noch nicht synchron" : "Yazio noch nicht synchron", FS.xs, { bold: true, color: COL.warn, minScale: 0.7 }); }
   else notice(w, res, d);
   return w;
 }
 
 /* ---------- Mittel: Ernaehrung heute ---------- */
-const OVER_HEX = "#f0b95a"; // Wert ueber dem Ziel: gelb
 function buildFoodMedium(res) {
   const d = res.data, f = d.food, W = widgetInnerWidth();
   const hasVals = (x) => x && [x.calories, x.protein, x.carbs, x.fat].some((v) => v != null);
@@ -730,7 +747,7 @@ function buildFoodMedium(res) {
     const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = GAP;
     // Links: Kalorienring, Zahl und Ziel darin
     const ring = row.addStack(); ring.size = new Size(RS, RS); ring.layoutVertically(); ring.centerAlignContent();
-    ring.backgroundImage = ringProgressImage(RS, td.calories != null && kcalGoal ? td.calories / kcalGoal : 0, ACCENT_HEX, stale ? 0.5 : 1);
+    ring.backgroundImage = ringProgressImage(RS, td.calories != null && kcalGoal ? td.calories / kcalGoal : 0, NUT_HEX.kcal, stale ? 0.5 : 1);
     const cen = (str, size, o) => { const s = ring.addStack(); s.addSpacer(); text(s, str, size, { align: "center", minScale: 0.6, ...o }); s.addSpacer(); };
     // Mitte: uebrige Kalorien (Ziel - gegessen); ueber dem Ziel gelb mit "drüber"
     const left = td.calories != null && kcalGoal ? kcalGoal - td.calories : null;
@@ -744,10 +761,11 @@ function buildFoodMedium(res) {
     // Rechts: Protein, Kohlenhydrate, Fett als Balken (g / Ziel g); fehlende Werte als Strich ohne Balken
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(RW, 0);
     const macros = [
-      { label: "Protein", v: td.protein, goal: yg.proteinG ?? null },
-      { label: "Kohlenhydrate", v: td.carbs, goal: yg.carbsG ?? null },
-      { label: "Fett", v: td.fat, goal: yg.fatG ?? null },
+      { label: "Protein", v: td.protein, goal: yg.proteinG ?? null, hex: NUT_HEX.protein },
+      { label: "Kohlenhydrate", v: td.carbs, goal: yg.carbsG ?? null, hex: NUT_HEX.carbs },
+      { label: "Fett", v: td.fat, goal: yg.fatG ?? null, hex: NUT_HEX.fat },
     ];
+    const soll = has ? dayFraction() : null; // Marke "Soll bis jetzt" nur für heute
     macros.forEach((m, i) => {
       if (i) col.addSpacer(7);
       const l = col.addStack(); l.centerAlignContent(); l.size = new Size(RW, 0);
@@ -759,8 +777,9 @@ function buildFoodMedium(res) {
         text(l, fmt(m.v), FS.lg, { bold: true, opacity: op, minScale: 0.8, color: over ? new Color(OVER_HEX) : COL.text });
         text(l, m.goal ? ` / ${fmt(m.goal)} g` : " g", FS.sm, { color: COL.muted, minScale: 0.8 });
       }
-      if (m.v != null && m.goal) { col.addSpacer(3); progressBar(col, RW, m.v / m.goal, m.v > m.goal ? OVER_HEX : ACCENT_HEX, stale ? 0.5 : 1); }
+      if (m.v != null && m.goal) { col.addSpacer(3); progressBar(col, RW, m.v / m.goal, m.hex, stale ? 0.5 : 1, { overHex: OVER_HEX, mark: soll }); }
     });
+    if (has) { w.addSpacer(4); text(w, "Strich = Soll bis jetzt · gelb = über Ziel", FS.xs, { color: COL.muted, minScale: 0.7 }); }
   }
   notice(w, res, d);
   w.addSpacer();
@@ -860,7 +879,13 @@ function buildTraining(res) {
     text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { color: COL.muted, minScale: 0.7 });
     c.addSpacer(4);
     progressBar(c, IW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
-    c.addSpacer(4);
+    c.addSpacer(3);
+    // Umfang der letzten 4 Wochen und Entwicklung gegen die 4 davor (Rad und Laufen km ohne Nachkommastelle, Schwimmen mit)
+    if (s.km4 != null) {
+      const tr = s.trendPct == null ? "" : ` ${s.trendPct > 0 ? "▲" : s.trendPct < 0 ? "▼" : "="}${Math.abs(s.trendPct)} %`;
+      text(c, `4 W: ${fmt(s.km4, k === "swim" ? 1 : 0)} km${tr}`, FS.xs, { bold: true, color: s.trendPct != null && s.trendPct < 0 ? COL.warn : COL.text, minScale: 0.6 });
+      c.addSpacer(2);
+    }
     // Trainingszeit und Tage seit der letzten Einheit; ab 7 Tagen Pause hervorgehoben
     const mins = Math.round(s.weekMinutes || 0);
     const since = s.daysSince == null ? MISSING : s.daysSince === 0 ? "heute" : `vor ${s.daysSince} T`;
