@@ -136,6 +136,37 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .findings .fl li > i { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); transform: translateY(1px); }
 .findings .fl li.s2 > i { background: var(--bad); } .findings .fl li.s0 > i { background: var(--muted); }
 .findings .act { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); font-size: .9rem; }
+/* feste Farbe je Größe in der Ernährung; Rot bleibt Warnungen vorbehalten (Überschreitung = Gelb) */
+:root { --n-kcal: var(--s-bike); --n-prot: var(--s-swim); --n-carb: var(--s-run); --n-fat: var(--s-strength); }
+.srcbar { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 10px; font-size: .8rem; color: var(--muted); }
+.src .badge { font-size: .75rem; padding: 1px 8px; font-weight: 600; }
+.jump a.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.hm2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; margin-bottom: 6px; }
+.big2 { font-size: 1.6rem; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.wt-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 4px; }
+#weight svg { max-width: 720px; }
+#vdot-spark svg { max-width: 240px; }
+.nbar { margin: 10px 0; }
+.nhead { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.ntrack { position: relative; height: 16px; border-radius: 8px; background: var(--line); margin: 3px 0 2px; overflow: visible; }
+.nfill { position: absolute; left: 0; top: 0; height: 100%; border-radius: 8px 0 0 8px; }
+.nover { position: absolute; top: 0; height: 100%; background: var(--warn); color: #fff; border-radius: 0 8px 8px 0; font-size: .7rem; font-weight: 700; line-height: 16px; text-align: center; overflow: hidden; white-space: nowrap; min-width: 4px; }
+.ngoal { position: absolute; top: -3px; width: 3px; height: 22px; background: var(--text); border-radius: 1px; transform: translateX(-1px); }
+.nsoll { position: absolute; top: -3px; height: 22px; border-left: 2px dashed var(--accent); }
+.nbar .muted { font-size: .78rem; }
+.kh { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; margin-bottom: 8px; }
+.kh h3 { margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { border: 0; background: var(--card); color: var(--muted); padding: 4px 12px; font-size: .82rem; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; }
+.disc-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 6px 0; }
+.disc-stats .v { font-size: 1.3rem; font-weight: 650; display: block; }
+.discbars { margin: 4px 0; }
+.agescale { font-size: .75rem; color: var(--muted); display: flex; justify-content: space-between; margin-left: 98px; margin-right: 48px; }
+.studie-fazit { border-left: 4px solid var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card)); padding: 10px 14px; border-radius: 6px; }
+.studie-fazit > div:last-child { font-size: 1.02rem; margin-top: 2px; }
+#studie .desc p { margin: 0 0 8px; }
 .cockpit.flow { grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); }
 .cockpit.flow .tile { grid-column: auto; }
 .today { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
@@ -166,6 +197,7 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .kraft-grid { display: flex; flex-wrap: wrap; }
 .kraft-grid #strength-card, .kraft-grid #hip-card { flex: 1 1 min(480px, 100%); min-width: 0; }
 .kraft-grid #egym-card { flex: 1 1 100%; min-width: 0; }
+.kraft-grid #strength-card[hidden], .kraft-grid #hip-card[hidden], .kraft-grid #egym-card[hidden] { display: none; }
 .egym-cols { display: grid; gap: 0 28px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 1000px) { .egym-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .split { display: grid; gap: 12px; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); align-items: stretch; }
@@ -196,12 +228,14 @@ button, input { font: inherit; }
     <h1>Trainings-Dashboard</h1>
     <span class="muted" id="stamp"></span>
   </header>
+  <div id="srcstatus" class="srcbar" aria-label="Quellen-Status"></div>
   <div id="sources"></div>
 
   <nav class="jump" aria-label="Sprungmarken">
-    <a href="#cockpit">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
+    <a href="#cockpit-top">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
   </nav>
 
+  <h2 id="cockpit-top" style="margin-top:8px">1 · Cockpit</h2>
   <div id="cockpit"></div>
 
   <section id="rennplan" hidden>
@@ -241,6 +275,8 @@ button, input { font: inherit; }
     <div class="card"><h3>VDOT und Ziel-Pace</h3><div id="vdot"></div></div>
     <div class="card" id="hm-trend-card" hidden><h3>Prognose-Entwicklung</h3><div id="hm-trend"></div></div>
   </div>
+  <h3 id="disciplines-head" style="margin:16px 0 8px" hidden>Disziplinen: Umfang, letzte Einheit, Entwicklung</h3>
+  <div class="grid wide" id="disciplines" hidden></div>
   <h3 style="margin:16px 0 8px">Schwellen</h3>
   <div class="grid" id="thresholds"></div>
 
@@ -257,11 +293,11 @@ button, input { font: inherit; }
       <div class="muted">Ohne Nachttracking ein Tageswert, kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div></div>
     <div class="card"><h3>Schlafdauer</h3><div id="sleep"></div><div class="muted">Lücken = nicht erfasst.</div></div>
     <div class="card"><h3>HRV</h3><div id="hrv"></div><div class="muted">Lücken = nicht erfasst.</div></div>
-    <div class="card" id="weight-card" hidden><h3>Gewicht</h3><div id="weight"></div></div>
   </div>
 
   <h2 id="ernaehrung">6 · Ernährung</h2>
   <div id="nutrition"></div>
+  <div class="card" id="weight-card" hidden style="margin-top:12px"><h3>Gewichtstrend</h3><div id="weight"></div></div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card" id="cravings-card" hidden><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div><div id="cravings-list"></div></div>
   </div>
@@ -269,8 +305,11 @@ button, input { font: inherit; }
   <section id="kraft" hidden>
     <h2>7 · Kraft</h2>
     <div class="grid half kraft-grid" style="align-items:start">
-      <div class="card" id="strength-card" hidden><h3>Krafttraining (Ziel 1 h pro Woche)</h3><div id="strength"></div></div>
-      <div class="card" id="egym-card" hidden><h3>Krafttraining aus EGYM</h3><div id="egym"></div></div>
+      <div class="card" id="strength-card" hidden>
+        <div class="kh"><h3>Krafttraining</h3>
+          <div class="seg" role="group" aria-label="Ansicht"><button type="button" data-k="min" class="on" aria-pressed="true">Minuten</button><button type="button" data-k="sets" id="kt-sets" hidden>Sätze (EGYM)</button><button type="button" data-k="weeks" id="kt-weeks" hidden>Wochen mit 2×</button></div></div>
+        <div id="kp-min"></div><div id="kp-sets" hidden></div><div id="kp-weeks" hidden></div></div>
+      <div class="card" id="egym-card" hidden><h3>EGYM: Muskelalter und Fortschritt</h3><div id="egym"></div></div>
       <div class="card" id="hip-card" hidden><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
     </div>
   </section>
