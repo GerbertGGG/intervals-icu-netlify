@@ -873,11 +873,6 @@ function buildTraining(res) {
     const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 3;
     const dot = nl.addText("●"); dot.font = Font.systemFont(FS.xs); dot.textColor = new Color(hex);
     text(nl, SPORTS[k][0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    // Tage seit der letzten Einheit; ab 7 Tagen Pause hervorgehoben
-    const since = s.daysSince == null ? MISSING : s.daysSince === 0 ? "heute" : `${s.daysSince} T`;
-    const long = s.daysSince != null && s.daysSince >= 7;
-    nl.addSpacer();
-    text(nl, since, FS.xs, { bold: long, color: long ? COL.warn : COL.muted, minScale: 0.7 });
     // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
     text(vl, `${Math.round(s.weekLoad || 0)}`, FS.lg + 1, { bold: true });
