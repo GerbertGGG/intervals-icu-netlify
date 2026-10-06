@@ -862,29 +862,29 @@ function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf =
 
 function buildTraining(res) {
   const d = res.data, W = widgetInnerWidth();
-  const w = baseWidget({ flat: false, padV: 10 });
+  const w = baseWidget({ flat: false, padV: 7 });
   header(w, W, "TRAINING · DISZIPLINEN", "diese Woche");
-  w.addSpacer(3);
+  w.addSpacer(2);
   const row = w.addStack(); row.spacing = 7;
   const CW = Math.floor((W - 14) / 3), IW = CW - 20;
   for (const k of ["swim", "bike", "run"]) {
     const s = d.sports[k], hex = sportHex(k);
-    const c = card(row, CW, 5);
+    const c = card(row, CW, 4);
     const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 3;
     const dot = nl.addText("●"); dot.font = Font.systemFont(FS.xs); dot.textColor = new Color(hex);
     text(nl, SPORTS[k][0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
     // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
-    text(vl, `${Math.round(s.weekLoad || 0)}`, FS.xl - 4, { bold: true });
+    text(vl, `${Math.round(s.weekLoad || 0)}`, FS.lg + 1, { bold: true });
     text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { color: COL.muted, minScale: 0.7 });
-    c.addSpacer(4);
+    c.addSpacer(2);
     progressBar(c, IW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
-    c.addSpacer(3);
+    c.addSpacer(2);
     // Umfang der letzten 4 Wochen und Entwicklung gegen die 4 davor (Rad und Laufen km ohne Nachkommastelle, Schwimmen mit)
     if (s.km4 != null) {
       const tr = s.trendPct == null ? "" : ` ${s.trendPct > 0 ? "▲" : s.trendPct < 0 ? "▼" : "="}${Math.abs(s.trendPct)} %`;
       text(c, `4 W: ${fmt(s.km4, k === "swim" ? 1 : 0)} km${tr}`, FS.xs, { bold: true, color: s.trendPct != null && s.trendPct < 0 ? COL.warn : COL.text, minScale: 0.6 });
-      c.addSpacer(2);
+      c.addSpacer(1);
     }
     // Trainingszeit und Tage seit der letzten Einheit; ab 7 Tagen Pause hervorgehoben
     const mins = Math.round(s.weekMinutes || 0);
@@ -895,12 +895,12 @@ function buildTraining(res) {
     bl.addSpacer();
     text(bl, since, FS.xs, { bold: long, color: long ? COL.warn : COL.muted, minScale: 0.7 });
   }
-  w.addSpacer(5);
-  const sc = card(w, W, 5), sp = d.split;
+  w.addSpacer(4);
+  const sc = card(w, W, 4), sp = d.split;
   header(sc, null, `ZEITVERTEILUNG · ${sp.weeks} WOCHEN`, sp.target ? `Soll S ${sp.target.swim} · R ${sp.target.bike} · L ${sp.target.run} %` : null);
   if (sp.share) {
-    sc.addSpacer(3);
-    const im = sc.addImage(splitImage(W - 22, 16, sp.share, sp.target)); im.imageSize = new Size(W - 22, 16);
+    sc.addSpacer(2);
+    const im = sc.addImage(splitImage(W - 22, 14, sp.share, sp.target)); im.imageSize = new Size(W - 22, 14);
   } else text(sc, "Noch keine abgeschlossene Woche mit Training.", FS.xs, { color: COL.muted });
   notice(w, res, d);
   return w;
