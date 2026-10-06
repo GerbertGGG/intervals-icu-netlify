@@ -149,13 +149,34 @@
     const max = U.niceMax(Math.max(10, ...cvals)), y1 = (v) => T1 + (B1 - T1) * (1 - v / max);
     for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s.append(el("line", { x1: L, x2: W - R, y1: y1(v), y2: y1(v), class: i ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y1(v) + 4, "text-anchor": "end" }, U.fmt(v, max < 10 ? 1 : 0))); }
     s.append(el("text", { x: 4, y: 12 }, "CTL / ATL"));
-    const line = (map, color, name) => {
-      let d = "", pen = false, last = null;
-      for (const day of days) { const v = map[day]; if (v == null) { pen = false; continue; } d += `${pen ? "L" : "M"}${x(day).toFixed(1)},${y1(v).toFixed(1)}`; pen = true; last = { day, v }; }
-      s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": 2 }));
+    // Glatte Kurve: monotone kubische Interpolation (Fritsch-Carlson), überschwingt nie über die Datenpunkte
+    const smooth = (pts) => {
+      const n = pts.length, f = (p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+      if (n < 3) return pts.map((p, i) => `${i ? "L" : "M"}${f(p)}`).join("");
+      const dx = [], m = [], t = [];
+      for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1][0] - pts[i][0] || 1e-6; m[i] = (pts[i + 1][1] - pts[i][1]) / dx[i]; }
+      t[0] = m[0]; t[n - 1] = m[n - 2];
+      for (let i = 1; i < n - 1; i++) t[i] = m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2;
+      for (let i = 0; i < n - 1; i++) {
+        if (m[i] === 0) { t[i] = t[i + 1] = 0; continue; }
+        const a = t[i] / m[i], b = t[i + 1] / m[i], h = Math.hypot(a, b);
+        if (h > 3) { t[i] = (3 * a / h) * m[i]; t[i + 1] = (3 * b / h) * m[i]; }
+      }
+      let d = `M${f(pts[0])}`;
+      for (let i = 0; i < n - 1; i++) d += `C${(pts[i][0] + dx[i] / 3).toFixed(1)},${(pts[i][1] + t[i] * dx[i] / 3).toFixed(1)} ${(pts[i + 1][0] - dx[i] / 3).toFixed(1)},${(pts[i + 1][1] - t[i + 1] * dx[i] / 3).toFixed(1)} ${f(pts[i + 1])}`;
+      return d;
+    };
+    const line = (map, color, name, fill) => {
+      const runs = []; let cur = null, last = null;
+      for (const day of days) { const v = map[day]; if (v == null) { cur = null; continue; } if (!cur) runs.push(cur = []); cur.push([x(day), y1(v)]); last = { day, v }; }
+      for (const pts of runs) {
+        const d = smooth(pts);
+        if (fill) s.append(el("path", { d: `${d}L${pts[pts.length - 1][0].toFixed(1)},${B1}L${pts[0][0].toFixed(1)},${B1}Z`, fill: color, "fill-opacity": 0.12, stroke: "none" }));
+        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": 2.25, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+      }
       if (last) s.append(el("text", { x: x(last.day) + 6, y: y1(last.v) + 4, style: `fill:${color};font-weight:700` }, name));
     };
-    line(o.ctl, "var(--accent)", "CTL"); line(o.atl, "var(--muted)", "ATL");
+    line(o.ctl, "var(--accent)", "CTL", true); line(o.atl, "var(--muted)", "ATL");
     // TSB als Säulen um die Nulllinie, Ampelfarben nach den Schwellen der Seite
     const tsb = days.map((d) => (o.ctl[d] != null && o.atl[d] != null ? { d, v: o.ctl[d] - o.atl[d] } : null));
     const tv = tsb.filter(Boolean).map((p) => p.v);
