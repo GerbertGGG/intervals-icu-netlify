@@ -220,7 +220,8 @@
     }
     // Datumsachse wöchentlich ab dem ersten Tag; Beschriftung nur, wenn sie nicht auf eine Marke fällt
     const mx = o.marks.map((m) => x(m.day));
-    for (let i = 0; i <= span; i += 7) { const d = U.addDays(first, i); if (mx.some((m) => Math.abs(m - x(d)) < 34)) continue; s.append(el("text", { x: x(d), y: T1 + 0 + (B1 - T1) + 20, "text-anchor": "middle" }, U.fmtDate(d)), el("text", { x: x(d), y: B2 + 22, "text-anchor": "middle" }, U.fmtDate(d))); }
+    const wk = 7 * Math.max(1, Math.ceil(span / 7 / 9));
+    for (let i = 0; i <= span; i += wk) { const d = U.addDays(first, i); if (mx.some((m) => Math.abs(m - x(d)) < 34)) continue; s.append(el("text", { x: x(d), y: T1 + 0 + (B1 - T1) + 20, "text-anchor": "middle" }, U.fmtDate(d)), el("text", { x: x(d), y: B2 + 22, "text-anchor": "middle" }, U.fmtDate(d))); }
     mount(host, s);
   }
 

@@ -23,6 +23,8 @@ import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./
 // Zugriff nur mit DASHBOARD_TOKEN (Header "Authorization: Bearer <token>").
 
 const HISTORY_DAYS = 56;
+// Formkurve (CTL/ATL) zeigt einen längeren Verlauf, damit die Tagesschwankungen wie in Intervals sichtbar werden
+const FORM_DAYS = 180;
 const PLAN_AHEAD_DAYS = 14;
 
 // Vom Nutzer vorgegeben (Halbmarathon Samstag 03.10.2026, Ziel < 2:00:00). Wird nur
@@ -285,6 +287,17 @@ function positive(v) {
   return n != null && n > 0 ? Math.round(n * 10) / 10 : null;
 }
 
+// CTL/ATL je Tag über FORM_DAYS; Tage der kurzen Wellness-Liste (inkl. Live-Wert für heute) haben Vorrang
+function buildFormSeries(list, wellness) {
+  const byDate = new Map();
+  for (const w of list) {
+    const date = String(w?.id ?? w?.date ?? "").slice(0, 10);
+    if (date) byDate.set(date, { date, ctl: num(w?.ctl), atl: num(w?.atl) });
+  }
+  for (const w of wellness) if (w.date && (w.ctl != null || w.atl != null)) byDate.set(w.date, { date: w.date, ctl: w.ctl, atl: w.atl });
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function buildWellness(list) {
   return list
     .map((w) => ({
@@ -508,6 +521,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
   const wellness = wellnessR.ok ? withActualToday(buildWellness(wellnessR.value), activities, todayIso) : [];
+  const fitnessR = await settle("fitness", () => fetchIntervalsWellnessRange(env, addDays(todayIso, -(FORM_DAYS - 1)), todayIso));
+  const formSeries = buildFormSeries(fitnessR.ok && Array.isArray(fitnessR.value) ? fitnessR.value : [], wellness);
   const runCtx = { raceDays: buildRaceDays(events), rzRuns: snapshot?.runs ?? [] };
   const runs = activities.filter(isRun).map((a) => buildRunRecord(a, runCtx)).sort((a, b) => b.date.localeCompare(a.date));
 
@@ -568,6 +583,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     recentRace: findRecentRace(events, todayIso),
     supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
     wellness,
+    formSeries,
     weeks: buildWeeks(todayIso, activities, events),
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
