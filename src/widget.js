@@ -4,6 +4,7 @@ import { hasYazioCredentials, fetchYazioDailyGoals, fetchYazioDailyNutrition } f
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin } from "./date-utils.js";
 import { loadWidgetKraft } from "./egym-widget.js";
+import { topFinding } from "./findings.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
@@ -78,6 +79,8 @@ export function buildWidget(d, env = {}) {
     readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name } : null, upcoming },
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source },
+    // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
+    focus: topFinding(d),
     sourcesFailed: failedOf(d),
   };
 }
@@ -173,7 +176,12 @@ export function buildWidgetTraining(d, env = {}) {
   const lastDay = (k) => [...d.daily].reverse().find((x) => x.sports?.[k])?.date ?? null;
   const sports = Object.fromEntries(TRI.map((k) => {
     const last = lastDay(k);
+    // Umfang der letzten 4 vollen Wochen gegen die 4 davor (Entwicklung); ohne Vergleichswert null
+    const kmOf = (ws) => ws.reduce((a, w) => a + w.bySport[k].km, 0);
+    const prior = done.slice(-8, -4), km4 = kmOf(recent), kmPrior = kmOf(prior);
     return [k, {
+      km4: Math.round(km4 * 10) / 10,
+      trendPct: prior.length === 4 && kmPrior > 0 ? Math.round((km4 / kmPrior - 1) * 100) : null,
       weekLoad: cur.bySport[k].load,
       plannedLoad: cur.bySport[k].plannedLoad,
       weekKm: cur.bySport[k].km,
