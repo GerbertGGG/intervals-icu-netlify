@@ -146,8 +146,12 @@
     const span = Math.max(1, U.dayDiff(first, days[days.length - 1]));
     const x = (d) => L + (W - L - R) * (U.dayDiff(first, d) / span);
     const cvals = days.flatMap((d) => [o.ctl[d], o.atl[d]]).filter((v) => v != null);
-    const max = U.niceMax(Math.max(10, ...cvals)), y1 = (v) => T1 + (B1 - T1) * (1 - v / max);
-    for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s.append(el("line", { x1: L, x2: W - R, y1: y1(v), y2: y1(v), class: i ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y1(v) + 4, "text-anchor": "end" }, U.fmt(v, max < 10 ? 1 : 0))); }
+    // Y-Achse eng an die Daten legen, damit die Kurven nicht als flache Linie am Boden kleben
+    const dMin = Math.min(...cvals), dMax = Math.max(...cvals), rough = Math.max(4, dMax - dMin) / 4;
+    const stp = [1, 2, 5, 10, 20, 50].find((q) => q >= rough) ?? 100;
+    const lo1 = Math.max(0, Math.floor((dMin - rough * 0.3) / stp) * stp), hi1 = Math.ceil((dMax + rough * 0.3) / stp) * stp;
+    const y1 = (v) => T1 + (B1 - T1) * (1 - (v - lo1) / (hi1 - lo1));
+    for (let v = lo1; v <= hi1 + 1e-9; v += stp) s.append(el("line", { x1: L, x2: W - R, y1: y1(v), y2: y1(v), class: v === lo1 ? "axis" : "grid-l" }), el("text", { x: L - 6, y: y1(v) + 4, "text-anchor": "end" }, U.fmt(v)));
     s.append(el("text", { x: 4, y: 12 }, "CTL / ATL"));
     // Glatte Kurve: monotone kubische Interpolation (Fritsch-Carlson), überschwingt nie über die Datenpunkte
     const smooth = (pts) => {
@@ -171,8 +175,8 @@
       for (const day of days) { const v = map[day]; if (v == null) { cur = null; continue; } if (!cur) runs.push(cur = []); cur.push([x(day), y1(v)]); last = { day, v }; }
       for (const pts of runs) {
         const d = smooth(pts);
-        if (fill) s.append(el("path", { d: `${d}L${pts[pts.length - 1][0].toFixed(1)},${B1}L${pts[0][0].toFixed(1)},${B1}Z`, fill: color, "fill-opacity": 0.12, stroke: "none" }));
-        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": 2.25, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+        if (fill) s.append(el("path", { d: `${d}L${pts[pts.length - 1][0].toFixed(1)},${B1}L${pts[0][0].toFixed(1)},${B1}Z`, fill: color, "fill-opacity": 0.1, stroke: "none" }));
+        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": 1.6, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
       }
       if (last) s.append(el("text", { x: x(last.day) + 6, y: y1(last.v) + 4, style: `fill:${color};font-weight:700` }, name));
     };
@@ -184,8 +188,15 @@
     for (const z of o.zones) s.append(el("rect", { x: L, y: y2(Math.min(hi, z.to)), width: W - L - R, height: Math.max(0, y2(Math.max(lo, z.from)) - y2(Math.min(hi, z.to))), fill: ZONE[z.cls], "fill-opacity": 0.1 }));
     s.append(el("line", { x1: L, x2: W - R, y1: y2(0), y2: y2(0), class: "axis" }), el("text", { x: L - 6, y: y2(0) + 4, "text-anchor": "end" }, "0"), el("text", { x: L - 6, y: y2(hi) + 10, "text-anchor": "end" }, U.fmt(hi)), el("text", { x: L - 6, y: y2(lo), "text-anchor": "end" }, U.fmt(lo)));
     s.append(el("text", { x: 4, y: T2 - 6 }, "TSB = CTL − ATL"));
-    const bw = Math.max(2, ((W - L - R) / (span + 1)) * 0.7);
-    for (const p of tsb) if (p) s.append(title(el("rect", { x: x(p.d) - bw / 2, y: Math.min(y2(p.v), y2(0)), width: bw, height: Math.abs(y2(p.v) - y2(0)), fill: ZONE[p.v >= o.zones[0].from ? "ok" : p.v >= o.zones[1].from ? "warn" : "bad"] }), `${U.fmtDate(p.d)}: TSB ${U.fmt(p.v, 1)}`));
+    const tp = tsb.filter(Boolean).map((p) => [x(p.d), y2(p.v)]);
+    if (tp.length) {
+      const d = smooth(tp), z = y2(0).toFixed(1);
+      s.append(el("path", { d: `${d}L${tp[tp.length - 1][0].toFixed(1)},${z}L${tp[0][0].toFixed(1)},${z}Z`, fill: "var(--accent)", "fill-opacity": 0.14, stroke: "none" }));
+      s.append(el("path", { d, fill: "none", stroke: "var(--accent)", "stroke-width": 1.4, "stroke-linejoin": "round", "vector-effect": "non-scaling-stroke" }));
+    }
+    // unsichtbare Trefferflächen für den Tooltip je Tag
+    const hw = (W - L - R) / (span + 1);
+    for (const p of tsb) if (p) s.append(title(el("rect", { x: x(p.d) - hw / 2, y: T2, width: hw, height: B2 - T2, fill: "transparent" }), `${U.fmtDate(p.d)}: TSB ${U.fmt(p.v, 1)}`));
     // heute und Renntag
     for (const m of o.marks) {
       if (m.day < first || m.day > days[days.length - 1]) continue;
