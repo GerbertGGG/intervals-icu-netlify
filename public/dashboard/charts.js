@@ -195,7 +195,7 @@
         s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": fill ? 2.4 : 1.4, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
       }
     };
-    curve(o.ctl, CTL, true); curve(o.atl, ATL, false, true);
+    curve(o.ctl, CTL, true, true); curve(o.atl, ATL, false, true);
     if (cNow) s.append(el("circle", { cx: x(cNow.day), cy: y1(cNow.v), r: 4.5, fill: CTL, stroke: "var(--card)", "stroke-width": 1.5 }));
     // Tooltip je Tag über beide Kurven
     const hw = (W - L - R) / (span + 1);
