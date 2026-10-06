@@ -283,6 +283,24 @@ function buildPlanned(events, todayIso, stepOpts = {}) {
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// Geplante Einheiten der laufenden Woche (Mo-So), auch die vergangenen Tage: Grundlage der Wochenvorschau
+// mit Plan gegen Ist. Ohne Workout-Schritte, die stehen nur in `planned` (ab heute).
+function buildPlannedWeek(events, todayIso) {
+  const start = mondayOf(todayIso), end = addDays(start, 6);
+  return events
+    .filter((e) => String(e?.category ?? "").toUpperCase() === "WORKOUT")
+    .map((e) => ({
+      date: String(e?.start_date_local || e?.start_date || "").slice(0, 10),
+      name: e?.name ?? null,
+      durationMin: num(e?.moving_time) != null ? Math.round(num(e.moving_time) / 60) : null,
+      distanceKm: num(e?.distance_target ?? e?.distance) != null ? Math.round((num(e.distance_target ?? e.distance) / 1000) * 10) / 10 : null,
+      load: num(e?.icu_training_load ?? e?.load_target) != null ? Math.round(num(e?.icu_training_load ?? e?.load_target)) : null,
+      sport: sportOf(e),
+    }))
+    .filter((e) => e.date >= start && e.date <= end)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function positive(v) {
   const n = num(v);
   return n != null && n > 0 ? Math.round(n * 10) / 10 : null;
@@ -595,6 +613,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
+    plannedWeek: buildPlannedWeek(events, todayIso),
     planned: buildPlanned(events, todayIso, { paces: stepPaces, zonePct: thresholds.run.paceZonePct, thresholdSecPerKm: thresholds.run.thresholdPaceSecPerKm }),
   };
 }
