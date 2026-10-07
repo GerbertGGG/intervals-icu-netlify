@@ -515,8 +515,29 @@ function renderFitness(d) {
     } else $("vdot-trend").innerHTML = '<div class="muted">Verlauf entsteht mit jedem weiteren Runalyze-Snapshot.</div>';
   }
 
+  renderPredictionTables(r);
+
   // Verlauf nur zeigen, wenn es einen gibt
   if ((r.hmHistory ?? []).length > 1) { $("hm-trend-card").hidden = false; renderHmTrend(r); }
+}
+
+/* Prognose je Distanz (von = schnellste, bis = langsamste Schätzung) und Daniels-Trainingsbereiche mit Prozent und Pace. */
+function renderPredictionTables(r) {
+  const pk = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}/km`;
+  const est = (r.raceEstimates ?? []).map((dst) => {
+    const secs = dst.estimates.map((e) => e.seconds);
+    const lo = Math.min(...secs), hi = Math.max(...secs);
+    return `<tr><td>${esc(dst.label)}</td><td style="text-align:right;white-space:nowrap"><span class="muted">Von</span> ${lo === hi ? "--" : `<b>${fmtTime(lo)}</b>`} <span class="muted">bis</span> <b>${fmtTime(hi)}</b> <span class="muted">(${pk(Math.round(hi / dst.km))})</span></td></tr>`;
+  }).join("");
+  if (est) {
+    $("race-pred-card").hidden = false;
+    $("race-pred").innerHTML = `<table class="mini"><tbody>${est}</tbody></table><div class="muted" style="margin-top:6px">Von/bis = schnellste und langsamste Schätzung aus Runalyze-Prognose, aktuellem VDOT und 10-km-Bestzeit. Das ist eine Rechnung nach Daniels, kein Ergebnis.</div>`;
+  }
+  if (r.paces?.length) {
+    $("pace-zones-card").hidden = false;
+    const rows = r.paces.map((p) => `<tr><td>${esc(p.label.replace(/ \(.\)$/, ""))} <span class="muted">(${p.pct[0]}% – ${p.pct[1]}%)</span></td><td style="text-align:right;white-space:nowrap">${pk(p.slowSecPerKm)} – ${pk(p.fastSecPerKm)}</td></tr>`).join("");
+    $("pace-zones").innerHTML = `<div class="muted" style="margin-bottom:4px">Daniels, aus VDOT ${fmt(r.vdot, 1)}</div><table class="mini"><tbody>${rows}</tbody></table>`;
+  }
 }
 
 /* Prognose-Entwicklung: wird die Prognose von Snapshot zu Snapshot schneller oder nicht? Ein Eintrag je Tag aus dem
