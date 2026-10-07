@@ -63,6 +63,7 @@ export function paceTargetsFromVdot(vdot) {
 }
 
 const RACE_DISTANCES = [
+  { key: "3k", meters: 3000, label: "3 km" },
   { key: "5k", meters: 5000, label: "5 km" },
   { key: "10k", meters: 10000, label: "10 km" },
   { key: "hm", meters: 21097, label: "Halbmarathon" },
