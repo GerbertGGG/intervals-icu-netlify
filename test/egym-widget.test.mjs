@@ -46,25 +46,27 @@ test("Dauer: EGYM-Angabe, sonst Saetze, sonst nur geschaetzte Spanne, sonst kein
   assert.deepEqual([d3[0].minutes, d3[0].durationSource], [40, "estimate"]);
 });
 
-test("Woche: Minuten gegen Ziel 60, Serie, Wochentage", () => {
+test("Woche: Saetze gegen Ziel 60, Serie, Wochentage", () => {
   // Heute Sonntag 04.10.2026, Woche ab Montag 28.09.
-  const w = [gym("a", "2026-09-29T16:00:00Z", [set(10, 50)], 1800), gym("b", "2026-10-02T16:00:00Z", [set(10, 50)], 2100), gym("c", "2026-09-22T16:00:00Z", [set(10, 50)], 3600), gym("d", "2026-09-17T16:00:00Z", [set(10, 50)], 4000), garmin];
+  const n = (k) => Array.from({ length: k }, () => set(10, 50));
+  const w = [gym("a", "2026-09-29T16:00:00Z", n(30), 1800), gym("b", "2026-10-02T16:00:00Z", n(30), 2100), gym("c", "2026-09-22T16:00:00Z", n(60), 3600), gym("d", "2026-09-17T16:00:00Z", n(61), 4000), gym("e", "2026-09-10T16:00:00Z", n(10), 600), garmin];
   const d = buildWidgetKraft({ workouts: { workouts: w }, strength: { strengthMeasurements: [] }, bioAge: null, today: "2026-10-04", env: {}, generatedAt: "x" });
+  assert.equal(d.week.sets, 60);
   assert.equal(d.week.minutes, 65);
-  assert.equal(d.week.goalMin, 60);
+  assert.equal(d.week.goalSets, 60);
   assert.equal(d.week.goalSource, "default");
   assert.equal(d.week.sessions, 2);
   assert.deepEqual(d.week.days, [false, true, false, false, true, false, false]);
   assert.deepEqual(d.week.dayMinutes, [null, 30, null, null, 35, null, null]);
-  assert.equal(d.streakWeeks, 3); // laufende Woche (65), 21.-27.09. (60), 14.-20.09. (67)
+  assert.equal(d.streakWeeks, 3); // laufende Woche (60), 21.-27.09. (60), 14.-20.09. (61)
   assert.deepEqual(d.weeksHit, { hit: 2, of: 4 });
   assert.equal(d.daysSince, 2);
   assert.equal(d.weeks.length, 6);
 });
 
-test("EGYM_WEEKLY_GOAL_MIN gilt, ohne Daten bleibt alles leer statt erfunden", () => {
-  const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-10-04", env: { EGYM_WEEKLY_GOAL_MIN: "90" }, failed: ["egymWorkouts"] });
-  assert.equal(d.week.goalMin, 90);
+test("EGYM_WEEKLY_GOAL_SETS gilt, ohne Daten bleibt alles leer statt erfunden", () => {
+  const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-10-04", env: { EGYM_WEEKLY_GOAL_SETS: "90" }, failed: ["egymWorkouts"] });
+  assert.equal(d.week.goalSets, 90);
   assert.equal(d.week.goalSource, "config");
   assert.equal(d.week.minutes, 0);
   assert.equal(d.daysSince, null);
@@ -126,4 +128,16 @@ test("buildWidgetKraft liefert Bestwerte und Verteilung, Region ueber den Kraft-
   });
   assert.equal(d.records[0].label, "Lat Pulldown");
   assert.deepEqual(d.regions, { UPPER: 100, CORE: 0, LOWER: 0 });
+});
+
+test("Intervals-Aktivitaet: eine je Kraft-Tag mit external_id, Saetzen und Dauer", async () => {
+  const { buildIntervalsActivities } = await import("../src/egym-intervals-sync.js");
+  const a = buildIntervalsActivities([garmin, gym("a", "2026-10-01T16:00:00Z", [set(10, 50), set(8, 60)], 1500)]);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].external_id, "egym-2026-10-01");
+  assert.equal(a[0].type, "WeightTraining");
+  assert.equal(a[0].moving_time, 1500);
+  assert.equal(a[0].start_date_local, "2026-10-01T18:00:00");
+  assert.match(a[0].description, /2 Sätze/);
+  assert.match(a[0].description, /Lat Pulldown: 10 × 50 kg, 8 × 60 kg/);
 });

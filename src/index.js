@@ -9,6 +9,7 @@ import { handleStudieRequest } from "./studie-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest } from "./widget.js";
+import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 
 async function withWorkerErrorBoundary(fn) {
   try {
@@ -74,6 +75,10 @@ export default {
     const today = isoDate(new Date());
     // Der erste Tick des Tages holt auch gestern nach (Eintraege nach dem 23:58-Lauf).
     const from = hour === 7 ? isoDate(new Date(Date.now() - 86400000)) : today;
+    // EGYM-Krafteinheiten einmal pro Stunde nach Intervals schreiben (EGYM-Abruf ist langsam, der Abgleich ist wiederholbar)
+    if (new Date(Number(event?.scheduledTime)).getUTCMinutes() < 15) {
+      ctx.waitUntil(syncEgymToIntervals(env).catch((e) => console.error("egym to intervals failed", String(e?.message ?? e))));
+    }
     ctx.waitUntil(
       syncYazioRange(env, from, today).catch((e) => console.error("yazio sync failed", String(e?.message ?? e))),
     );

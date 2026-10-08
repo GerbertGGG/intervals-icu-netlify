@@ -91,6 +91,19 @@ export async function putWellnessDay(env, day, patch) {
   if (!r.ok) throw new Error(`wellness PUT ${day} ${r.status}: ${await r.text()}`);
 }
 
+// Legt manuelle Aktivitaeten an (Bulk); eine vorhandene Aktivitaet mit derselben external_id wird aktualisiert.
+export async function postManualActivities(env, activities) {
+  const athleteId = mustEnv(env, "ATHLETE_ID");
+  const url = `${BASE_URL}/athlete/${athleteId}/activities/manual/bulk`;
+  const r = await fetchWithRetry(
+    url,
+    { method: "POST", headers: { Authorization: authHeader(env), "Content-Type": "application/json" }, body: JSON.stringify(activities) },
+    "manual activities",
+  );
+  if (!r.ok) throw new Error(`manual activities ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 // Rohe Sportart-Einstellungen (Schwellen, Zonen, FTP). Best effort: null bei jedem Fehler.
 export async function fetchIntervalsSportSettings(env) {
   try {
