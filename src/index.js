@@ -39,6 +39,17 @@ export default {
       // Kompakte Daten fuer das iOS-Widget (Scriptable), siehe widget.js.
       case "/api/widget":
         return route(() => handleWidgetRequest(req, env));
+      // EGYM-Kraft nach Intervals schreiben, von Hand ausloesbar (Token-geschuetzt); liefert Ergebnis oder die genaue Fehlermeldung.
+      case "/api/egym-sync":
+        return route(async () => {
+          if (req.method !== "POST") return json({ ok: false, error: "Nur POST erlaubt" }, 405, { allow: "POST" });
+          if (!isAuthorized(req, env)) return json({ ok: false, error: "unauthorized" }, 401);
+          try {
+            return json({ ok: true, ...(await syncEgymToIntervals(env)) });
+          } catch (e) {
+            return json({ ok: false, error: String(e?.message ?? e) }, 502);
+          }
+        });
       // Runalyze-Snapshot und Studien-Check, geschrieben aus einer Coaching-Sitzung.
       case "/api/runalyze":
         return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
