@@ -7,11 +7,11 @@ import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioA
 // vorherigen Test) und das Muskelalter.
 // Daten kommen aus der EGYM-App (siehe egym-client.js). Die Garmin-Tagesaktivitaet ("Daily routine") zaehlt nicht
 // als Krafttraining: Eine Kraft-Einheit ist ein Tag mit mindestens einer Uebung mit Saetzen (Wiederholungen und
-// Gewicht) oder an einem Geraet. Das Wochenziel ist Zeit: mindestens 60 Minuten Krafttraining pro Woche (wie im
-// Dashboard-Abschnitt Kraft), per EGYM_WEEKLY_GOAL_MIN aenderbar; goalSource sagt, was gilt.
+// Gewicht) oder an einem Geraet. Das Wochenziel sind Saetze: mindestens 60 Saetze Krafttraining pro Woche,
+// per EGYM_WEEKLY_GOAL_SETS aenderbar; goalSource sagt, was gilt. Die Minuten bleiben als Information.
 // Die Dauer eines Tages kommt aus den Angaben von EGYM (Dauer der Uebungen, sonst der Saetze); fehlen sie, ist es nur
 // die Spanne zwischen erster und letzter Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
-const DEFAULT_WEEKLY_GOAL_MIN = 60;
+const DEFAULT_WEEKLY_GOAL_SETS = 60;
 const WEEKS = 6;
 // Fuer Bestwerte reicht der Blick weiter zurueck als der Wochenverlauf; die API wird in Fenstern von 28 Tagen abgefragt
 const HISTORY_DAYS = 84;
@@ -23,14 +23,14 @@ const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864000
 const round1 = (x) => Math.round(x * 10) / 10;
 const val = (a) => (a && typeof a === "object" ? a.value : a);
 
-const setsOf = (ex) => {
+export const setsOf = (ex) => {
   const s = ex?.attributes?.[SETS_KEY];
   return Array.isArray(s) ? s : [];
 };
-const isStrengthExercise = (ex) => setsOf(ex).length > 0 || ex?.exercise?.machineBased === true;
+export const isStrengthExercise = (ex) => setsOf(ex).length > 0 || ex?.exercise?.machineBased === true;
 
 // Volumen eines Satzes in kg (Wiederholungen mal Gewicht); fehlen Angaben, zaehlt der Satz nur als Satz
-function setVolumeKg(s) {
+export function setVolumeKg(s) {
   const reps = Number(val(s?.reps));
   const wt = Number(val(s?.weight));
   if (!Number.isFinite(reps) || !Number.isFinite(wt) || reps <= 0 || wt <= 0) return 0;
@@ -38,7 +38,7 @@ function setVolumeKg(s) {
   return reps * wt * (unit === "lb" || unit === "lbs" ? LB_TO_KG : 1);
 }
 
-const weightKgOf = (s) => {
+export const weightKgOf = (s) => {
   const wt = Number(val(s?.weight));
   if (!Number.isFinite(wt) || wt <= 0) return 0;
   const unit = String(s?.weight?.unit ?? "kg").toLowerCase();
@@ -53,7 +53,7 @@ function setE1rm(s) {
 }
 
 // Dieselbe Workout-Nummer kann mehrfach kommen (auch unvollstaendig): die Variante mit mehr Saetzen gewinnt
-function uniqueWorkouts(list) {
+export function uniqueWorkouts(list) {
   const richness = (w) => (w.exercises ?? []).reduce((a, ex) => a + setsOf(ex).length, 0);
   const byCode = new Map();
   for (const w of list ?? []) {
@@ -65,7 +65,7 @@ function uniqueWorkouts(list) {
 }
 
 // Dauer in Sekunden aus einem EGYM-Attribut {value, unit}; unbekannte Einheit zaehlt nicht
-function secondsOf(attr) {
+export function secondsOf(attr) {
   const v = Number(val(attr));
   if (!Number.isFinite(v) || v <= 0) return 0;
   const unit = String(attr?.unit ?? "sec").toLowerCase();
@@ -213,8 +213,8 @@ function bioAgeOf(b) {
 }
 
 function goalOf(env) {
-  const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_MIN));
-  return Number.isFinite(n) && n > 0 ? { goal: n, source: "config" } : { goal: DEFAULT_WEEKLY_GOAL_MIN, source: "default" };
+  const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_SETS));
+  return Number.isFinite(n) && n > 0 ? { goal: n, source: "config" } : { goal: DEFAULT_WEEKLY_GOAL_SETS, source: "default" };
 }
 
 // Reine Funktion: Rohdaten der drei Endpunkte in die Widget-Daten (je Teil kann null sein, wenn der Abruf scheiterte)
@@ -236,7 +236,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   const dayAt = (i) => days.find((d) => d.date === addDays(monday, i));
   const dayFlags = Array.from({ length: 7 }, (_, i) => Boolean(dayAt(i)));
   const dayMinutes = Array.from({ length: 7 }, (_, i) => dayAt(i)?.minutes ?? null);
-  const hit = (w) => w.minutes != null && w.minutes >= goal;
+  const hit = (w) => w.sets >= goal;
   // Serie: aufeinanderfolgende abgeschlossene Wochen mit erreichtem Ziel; die laufende Woche zaehlt mit, sobald sie es erreicht
   let streak = 0;
   for (let i = WEEKS - 2; i >= 0 && hit(weeks[i]); i--) streak++;
@@ -254,7 +254,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   return {
     generatedAt,
     today,
-    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalMin: goal, goalSource: source, sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
+    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
     weeks,
     lastDay: last,
     strengthDates: days.map((d) => d.date), // alle Kraft-Tage der letzten 84 Tage (Block-Ziele im Dashboard)

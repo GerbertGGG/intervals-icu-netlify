@@ -11,7 +11,7 @@
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
-//              Parameter  kraft  = Krafttraining aus EGYM: Trainingszeit gegen Wochenziel (60 min), bewegtes Gewicht, Bestwerte, Muskelalter.
+//              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
 //              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N und der Fortschritt der Block-Ziele.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
@@ -924,8 +924,6 @@ function buildIntensity(res) {
 
 /* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
 // Links der Ring der Woche (Saetze gegen das Wochenziel) mit Trainingstagen. Rechts das Muskelalter mit Balken je Bereich.
-const KRAFT_GOAL_SETS = 27; // Wochenziel in Saetzen: 9 Geraete x 3 Saetze
-
 function buildKraft(res) {
   const d = res.data, W = widgetInnerWidth();
   const w = baseWidget({ flat: false, padV: 10 });
@@ -935,7 +933,7 @@ function buildKraft(res) {
     text(w, "EGYM ist im Worker nicht eingerichtet (EGYM_USERNAME und EGYM_PASSWORD).", FS.sm, { color: COL.muted, lines: 4 });
     return w;
   }
-  const wk = d.week, sets = wk.sets || 0, hex = sportHex("strength");
+  const wk = d.week, sets = wk.sets || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
   header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`, COL.muted);
   w.addSpacer(6);
   const row = w.addStack(); row.centerAlignContent(); row.spacing = 12;
@@ -946,10 +944,10 @@ function buildKraft(res) {
   // Zahl als echter Text im Ring (nicht ins Bild gezeichnet): so passt sie sich Hell/Dunkel an und bleibt lesbar
   const rs = lc.addStack(); rs.addSpacer();
   const ring = rs.addStack(); ring.size = new Size(RING, RING); ring.layoutVertically(); ring.centerAlignContent();
-  ring.backgroundImage = ringProgressImage(RING, sets / KRAFT_GOAL_SETS, hex, 1);
+  ring.backgroundImage = ringProgressImage(RING, sets / goalSets, hex, 1);
   const cen = (str, size, o) => { const x = ring.addStack(); x.addSpacer(); text(x, str, size, { align: "center", minScale: 0.6, ...o }); x.addSpacer(); };
   cen(String(sets), 28, { bold: true });
-  cen(`von ${KRAFT_GOAL_SETS} Sätzen`, FS.xs, { color: COL.muted, minScale: 0.5 });
+  cen(`von ${goalSets} Sätzen`, FS.xs, { color: COL.muted, minScale: 0.5 });
   rs.addSpacer();
   lc.addSpacer(5);
   const dots = lc.addStack(); dots.centerAlignContent();
