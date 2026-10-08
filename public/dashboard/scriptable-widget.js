@@ -947,10 +947,11 @@ function buildKraft(res) {
   ring.backgroundImage = ringProgressImage(RING, sets / goalSets, hex, 1);
   const cen = (str, size, o) => { const x = ring.addStack(); x.addSpacer(); text(x, str, size, { align: "center", minScale: 0.6, ...o }); x.addSpacer(); };
   cen(String(sets), 28, { bold: true });
-  cen(`von ${goalSets} Sätzen`, FS.xs, { color: COL.muted, minScale: 0.5 });
+  cen(`von ${goalSets}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  cen(sets >= goalSets ? "Ziel erreicht" : "Sätze", FS.xs, { color: COL.muted, minScale: 0.5 });
   rs.addSpacer();
   lc.addSpacer(5);
-  const dots = lc.addStack(); dots.centerAlignContent();
+  const dots = lc.addStack(); dots.centerAlignContent(); dots.size = new Size(LW - 4, 0);
   for (let i = 0; i < 7; i++) {
     if (i) dots.addSpacer();
     text(dots, "●", FS.xs, { color: wk.days[i] ? new Color(hex) : new Color(NEUTRAL_HEX, 0.3), minScale: 1 });
