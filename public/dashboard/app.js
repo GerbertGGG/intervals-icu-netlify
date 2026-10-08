@@ -931,7 +931,18 @@ function renderEgym(k) {
     ${k.weeks.slice().reverse().map((w, i) => row(w, i === 0)).join("")}
     <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">${stat(wk.sessions, "Einheiten")}${stat(wk.sets || "–", "Sätze")}${stat(wk.volumeKg ? (wk.volumeKg >= 1000 ? fmt(wk.volumeKg / 1000, 1) + " t" : fmt(wk.volumeKg) + " kg") : "–", "Volumen")}${stat(since, "zuletzt")}</div>
     ${vt ? `<div class="muted" style="margin-top:8px">Volumen letzte Woche gegen die davor: ${vt.pct > 0 ? "+" : vt.pct < 0 ? "−" : ""}${fmt(Math.abs(vt.pct), 1)} % (${fmt(vt.lastKg)} kg gegen ${fmt(vt.prevKg)} kg)</div>` : ""}
+    <div style="margin-top:10px"><button id="egym-sync" type="button">Jetzt nach Intervals schreiben</button> <span id="egym-sync-msg" class="muted"></span></div>
     <div class="muted" style="margin-top:8px">„≈“ und blasse Balken: Dauer nur aus der Spanne der Übungen geschätzt, EGYM lieferte keine.</div>`;
+  const syncBtn = $("egym-sync");
+  if (syncBtn) syncBtn.onclick = async () => {
+    const msg = $("egym-sync-msg");
+    msg.textContent = "schreibe …";
+    try {
+      const r = await fetch("/api/egym-sync", { method: "POST", headers: { Authorization: "Bearer " + localStorage.getItem("dashboard-token") } });
+      const j = await r.json();
+      msg.textContent = j.ok ? (j.skipped ? "übersprungen: EGYM- oder Intervals-Zugang fehlt im Worker" : `${j.count} Einheit(en) übertragen`) : "Fehler: " + j.error;
+    } catch (e) { msg.textContent = "Fehler: " + (e.message || e); }
+  };
   // Muskelalter mit Skala: Balken von 20 bis 60 Jahren, Gesamtalter als eigene Zeile
   const AGE = { lo: 20, hi: 60 }, ageW = (a) => `${Math.max(0, Math.min(100, ((a - AGE.lo) / (AGE.hi - AGE.lo)) * 100))}%`;
   const bio2 = b && b.muscle != null ? `<h3 style="margin-top:0">Muskelalter</h3><div class="big" style="color:var(--s-strength)">${b.muscle} <small class="muted" style="font-size:.9rem">Jahre${b.total != null ? ` · EGYM-Gesamtalter ${b.total}` : ""}</small></div>
