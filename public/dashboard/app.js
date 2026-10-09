@@ -847,13 +847,13 @@ function renderStrength(d) {
   if (!has) $("kp-min").innerHTML = '<div class="muted">Keine Kraft-Einheit aus Intervals in den letzten 8 Wochen.</div>';
   if (has) {
     $("strength-card").hidden = false;
-    // Wochenzeilen statt Säulen: Balken gegen die Zielmarke (60 min), laufende Woche oben mit großer Zahl.
-    const GOAL = 60, weeks = [...d.weeks].reverse(), cur = weeks[0];
-    const max = Math.max(GOAL, ...weeks.map((w) => w.bySport.strength.minutes)) * 1.1;
-    const done = d.weeks.filter((w) => w.complete && w.bySport.strength.minutes >= GOAL).length, full = d.weeks.filter((w) => w.complete).length;
-    const row = (w) => { const m = w.bySport.strength.minutes, hit = m >= GOAL; return `<div style="display:grid;grid-template-columns:64px 1fr 56px;gap:8px;align-items:center;padding:3px 0;${w.complete ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.weekStart)}${w.complete ? "" : " ·&nbsp;jetzt"}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${(m / max) * 100}%;background:${hit ? "var(--ok)" : "var(--s-strength)"}"></div><i style="left:${(GOAL / max) * 100}%"></i></div><b style="text-align:right">${m ? fmt(m) + " min" : "–"}</b></div>`; };
-    $("kp-min").innerHTML = `<div class="big">${fmt(cur.bySport.strength.minutes)} <small class="muted" style="font-size:.9rem">min diese Woche von ${GOAL}</small></div>
-      <div class="muted" style="margin:2px 0 10px">Ziel erreicht in ${done} von ${full} abgeschlossenen Wochen · senkrechte Marke = ${GOAL} min</div>${weeks.map(row).join("")}`;
+    // Wochenzeilen statt Säulen: Balken der Wochenminuten, laufende Woche oben mit großer Zahl.
+    // Das Wochenziel (60 Sätze) gilt nur in der Ansicht "Sätze (EGYM)", Minuten werden ohne Ziel gezeigt.
+    const weeks = [...d.weeks].reverse(), cur = weeks[0];
+    const max = Math.max(1, ...weeks.map((w) => w.bySport.strength.minutes)) * 1.1;
+    const row = (w) => { const m = w.bySport.strength.minutes; return `<div style="display:grid;grid-template-columns:64px 1fr 56px;gap:8px;align-items:center;padding:3px 0;${w.complete ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.weekStart)}${w.complete ? "" : " ·&nbsp;jetzt"}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${(m / max) * 100}%;background:var(--s-strength)"></div></div><b style="text-align:right">${m ? fmt(m) + " min" : "–"}</b></div>`; };
+    $("kp-min").innerHTML = `<div class="big">${fmt(cur.bySport.strength.minutes)} <small class="muted" style="font-size:.9rem">min diese Woche</small></div>
+      <div class="muted" style="margin:2px 0 10px">Das Wochenziel von 60 Sätzen steht in der Ansicht „Sätze (EGYM)“.</div>${weeks.map(row).join("")}`;
   }
   // Wochen mit mindestens zwei Kraft-Einheiten: kommt aus dem Trainingsblock (zählt EGYM mit, wenn vorhanden)
   const bg = d.seasonBlock?.goals?.find((x) => x.key === "strength");
