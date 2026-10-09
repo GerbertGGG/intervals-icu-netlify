@@ -453,3 +453,17 @@ console.log("zones from intervals ok");
   assert.equal(buildIntervalSession({ icu_intervals: [{ type: "WORK", distance: 1000, moving_time: 240 }] }), null);
   console.log("ok interval splits");
 }
+
+// Formprognose: geplante Last wird mit 42/7-Tage-Konstanten fortgeschrieben, Tage ohne Plan sind Ruhetage
+{
+  const { buildFormProjection } = await import("../src/dashboard.js");
+  const series = [{ date: "2026-10-09", ctl: 20, atl: 20 }];
+  const ev = [{ category: "WORKOUT", start_date_local: "2026-10-10T08:00:00", icu_training_load: 84 }];
+  const p = buildFormProjection(series, ev, "2026-10-09", 3);
+  assert.equal(p.length, 3);
+  assert.equal(p[0].date, "2026-10-10");
+  assert.equal(p[0].ctl, 21.5); // 20 + (84 - 20) / 42
+  assert.equal(p[0].atl, 29.1); // 20 + (84 - 20) / 7
+  assert.ok(p[1].atl < p[0].atl && p[2].ctl < p[0].ctl + 0.1); // Ruhetage: ATL fällt schnell, CTL langsam
+  assert.deepEqual(buildFormProjection([], ev, "2026-10-09"), []);
+}
