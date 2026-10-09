@@ -189,29 +189,37 @@
     };
     legend([{ color: CTL, text: "Fitness (CTL)", value: cNow?.v, round: true }, { color: ATL, text: "Ermüdung (ATL)", value: aNow?.v, round: true }], 14);
     // Y-Achse eng an die Daten legen, damit die Kurven nicht als flache Linie am Boden kleben
-    const cvals = days.flatMap((d) => [o.ctl[d], o.atl[d]]).filter((v) => v != null);
+    const P = o.proj ?? { ctl: {}, atl: {} };
+    const cvals = days.flatMap((d) => [o.ctl[d], o.atl[d], P.ctl[d], P.atl[d]]).filter((v) => v != null);
     const dMin = Math.min(...cvals, 10), dMax = Math.max(...cvals, 10), rough = Math.max(4, dMax - dMin) / 4;
     const stp = [1, 2, 5, 10, 20, 50].find((q) => q >= rough) ?? 100;
     const lo1 = Math.max(0, Math.floor((dMin - rough * 0.3) / stp) * stp), hi1 = Math.ceil((dMax + rough * 0.3) / stp) * stp;
     const y1 = (v) => T1 + (B1 - T1) * (1 - (v - lo1) / (hi1 - lo1));
     for (let v = lo1; v <= hi1 + 1e-9; v += stp) s.append(el("line", { x1: L, x2: W - R, y1: y1(v), y2: y1(v), class: "grid-l" }), el("text", { x: L - 8, y: y1(v) + 4, "text-anchor": "end" }, U.fmt(v)));
-    const curve = (map, color, fill, sharp) => {
+    const curve = (map, color, fill, sharp, dash) => {
       const runs = []; let cur = null;
       for (const day of days) { const v = map[day]; if (v == null) { cur = null; continue; } if (!cur) runs.push(cur = []); cur.push([x(day), y1(v)]); }
       for (const pts of runs) {
         const d = sharp ? pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("") : smooth(pts);
         if (fill) s.append(el("path", { d: `${d}L${pts[pts.length - 1][0].toFixed(1)},${B1}L${pts[0][0].toFixed(1)},${B1}Z`, fill: color, "fill-opacity": 0.12, stroke: "none" }));
-        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": fill ? 2.4 : 1.4, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+        s.append(el("path", { d, fill: "none", stroke: color, "stroke-width": fill ? 2.4 : 1.4, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke", "stroke-dasharray": dash ?? null }));
       }
     };
     curve(o.ctl, CTL, true, true); curve(o.atl, ATL, false, true);
+    // Prognose aus der Planung: gestrichelt, beginnt am letzten echten Wert
+    if (o.proj) {
+      const join = (real, pr) => ({ ...(cNow && real === o.ctl ? { [cNow.day]: cNow.v } : {}), ...(aNow && real === o.atl ? { [aNow.day]: aNow.v } : {}), ...pr });
+      curve(join(o.ctl, o.proj.ctl), CTL, false, true, "5 4"); curve(join(o.atl, o.proj.atl), ATL, false, true, "5 4");
+      const px = x(today);
+      s.append(el("rect", { x: px, y: T1, width: W - R - px, height: B2 - T1, fill: "var(--muted)", opacity: 0.05 }), el("text", { x: W - R - 4, y: T1 + 12, "text-anchor": "end", style: "font-size:10.5px;fill:var(--muted)" }, "Prognose laut Planung"));
+    }
     if (cNow) s.append(el("circle", { cx: x(cNow.day), cy: y1(cNow.v), r: 4.5, fill: CTL, stroke: "var(--card)", "stroke-width": 1.5 }));
     // Tooltip je Tag über beide Kurven
     const hw = (W - L - R) / (span + 1);
-    for (const d of days) if (o.ctl[d] != null || o.atl[d] != null) s.append(title(el("rect", { x: x(d) - hw / 2, y: T1, width: hw, height: B1 - T1, fill: "transparent" }), `${U.fmtDate(d)}: Fitness ${U.fmt(o.ctl[d], 1)} · Ermüdung ${U.fmt(o.atl[d], 1)}`));
+    for (const d of days) if (o.ctl[d] != null || o.atl[d] != null || P.ctl[d] != null) s.append(title(el("rect", { x: x(d) - hw / 2, y: T1, width: hw, height: B1 - T1, fill: "transparent" }), `${U.fmtDate(d)}${o.ctl[d] == null ? " (Prognose)" : ""}: Fitness ${U.fmt(o.ctl[d] ?? P.ctl[d], 1)} · Ermüdung ${U.fmt(o.atl[d] ?? P.atl[d], 1)}`));
 
     // TSB als Säulen um die Nulllinie: frisch / belastet / stark ermüdet nach den Schwellen der Seite
-    const tsb = days.map((d) => (o.ctl[d] != null && o.atl[d] != null ? { d, v: o.ctl[d] - o.atl[d] } : null)).filter(Boolean);
+    const tsb = days.map((d) => { const c = o.ctl[d] ?? P.ctl[d], a = o.atl[d] ?? P.atl[d]; return c != null && a != null ? { d, v: c - a, proj: o.ctl[d] == null } : null; }).filter(Boolean);
     const tv = tsb.map((p) => p.v);
     const hi = Math.max(5, Math.ceil(Math.max(5, ...tv) / 5) * 5), lo = Math.min(-5, Math.floor(Math.min(-5, ...tv) / 5) * 5);
     const y2 = (v) => T2 + (B2 - T2) * (1 - (v - lo) / (hi - lo));
@@ -221,7 +229,7 @@
     s.append(el("text", { x: L, y: T2 - 23, style: "font-size:13px;font-weight:700;fill:var(--text)" }, "Frische (TSB)"));
     for (const v of [hi, 0, lo]) s.append(el("line", { x1: L, x2: W - R, y1: y2(v), y2: y2(v), class: v === 0 ? "axis" : "grid-l" }), el("text", { x: L - 8, y: y2(v) + 4, "text-anchor": "end" }, U.fmt(v)));
     const bw = Math.max(2, hw * 0.62);
-    for (const p of tsb) s.append(title(el("rect", { x: x(p.d) - bw / 2, y: Math.min(y2(p.v), y2(0)), width: bw, height: Math.max(1, Math.abs(y2(p.v) - y2(0))), rx: 1.5, fill: TSB_COL[cls(p.v)] }), `${U.fmtDate(p.d)}: TSB ${U.fmt(p.v, 1)}`));
+    for (const p of tsb) s.append(title(el("rect", { x: x(p.d) - bw / 2, y: Math.min(y2(p.v), y2(0)), width: bw, height: Math.max(1, Math.abs(y2(p.v) - y2(0))), rx: 1.5, fill: TSB_COL[cls(p.v)], opacity: p.proj ? 0.5 : 1 }), `${U.fmtDate(p.d)}: ${p.proj ? "Prognose " : ""}TSB ${U.fmt(p.v, 1)}`));
     // Ereignisse (Rennen, Blockstart, Pause): Pausen als graues Band, Rennen/Blöcke als Linie mit Fähnchen in zwei Zeilen
     (o.events ?? []).filter((e) => e.date <= last && (e.end ?? e.date) >= first).forEach((e, i) => {
       const x0 = x(e.date < first ? first : e.date);

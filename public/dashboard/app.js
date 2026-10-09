@@ -378,9 +378,11 @@ function renderHistory(d) {
   for (const w of series) { ctl[w.date] = w.ctl; atl[w.date] = w.atl; }
   const first = d.formSeries?.length ? addDays(d.today, -(FORM_DAYS - 1)) : addDays(d.today, -(HISTORY_DAYS - 1));
   const raceSoon = d.goal.daysToGo >= 0 && d.goal.daysToGo <= 28;
-  const end = raceSoon ? d.goal.date : d.today;
+  const proj = d.formProjection ?? [], pctl = {}, patl = {};
+  for (const p of proj) { pctl[p.date] = p.ctl; patl[p.date] = p.atl; }
+  const end = proj.length ? proj[proj.length - 1].date : raceSoon ? d.goal.date : d.today;
   C.form($("form-chart"), {
-    days: dayRange(first, end), ctl, atl, events: formEvents(d, series, first),
+    days: dayRange(first, end), ctl, atl, proj: proj.length ? { ctl: pctl, atl: patl } : null, events: formEvents(d, series, first),
     zones: [{ from: TSB_BANDS.ok, to: 200, cls: "ok" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: -200, to: TSB_BANDS.warn, cls: "bad" }],
     marks: [{ day: d.today, label: "heute", color: "var(--muted)", anchor: raceSoon ? "end" : "middle" }, ...(raceSoon ? [{ day: d.goal.date, label: "Renntag", color: "var(--accent)", anchor: "start" }] : [])],
   });
