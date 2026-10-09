@@ -28,6 +28,8 @@ const LONGRUN_MIN_KM = 15;
 // Formkurve (CTL/ATL) zeigt einen längeren Verlauf, damit die Tagesschwankungen wie in Intervals sichtbar werden
 const FORM_DAYS = 180;
 const PLAN_AHEAD_DAYS = 14;
+const FORM_AHEAD_DAYS = 30; // Formprognose: so weit reicht die Vorschau auf CTL/ATL/TSB
+const CTL_DAYS = 42, ATL_DAYS = 7; // Zeitkonstanten wie in intervals.icu
 
 // Vom Nutzer vorgegeben (Halbmarathon Samstag 03.10.2026, Ziel < 2:00:00). Wird nur
 // verwendet, wenn in Intervals.icu kein A-Rennen im Kalender steht.
@@ -318,6 +320,29 @@ function buildFormSeries(list, wellness) {
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// Prognose von CTL/ATL ab dem letzten bekannten Wert: je Tag Last aus den geplanten Workouts (ohne Plan = Ruhetag),
+// CTL += (Last - CTL) / 42, ATL += (Last - ATL) / 7. Heute zählt schon in den echten Werten, die Prognose beginnt morgen.
+export function buildFormProjection(formSeries, events, todayIso, days = FORM_AHEAD_DAYS) {
+  const base = [...formSeries].reverse().find((p) => p.date <= todayIso && p.ctl != null && p.atl != null);
+  if (!base) return [];
+  const load = new Map();
+  for (const e of events) {
+    if (String(e?.category ?? "").toUpperCase() !== "WORKOUT") continue;
+    const day = String(e?.start_date_local || e?.start_date || "").slice(0, 10);
+    const l = num(e?.icu_training_load ?? e?.load_target);
+    if (day && l != null && l > 0) load.set(day, (load.get(day) ?? 0) + l);
+  }
+  const out = [];
+  let ctl = base.ctl, atl = base.atl;
+  for (let d = addDays(todayIso, 1); d <= addDays(todayIso, days); d = addDays(d, 1)) {
+    const l = load.get(d) ?? 0;
+    ctl += (l - ctl) / CTL_DAYS;
+    atl += (l - atl) / ATL_DAYS;
+    out.push({ date: d, ctl: Math.round(ctl * 10) / 10, atl: Math.round(atl * 10) / 10, plannedLoad: Math.round(l) });
+  }
+  return out;
+}
+
 function buildWellness(list) {
   return list
     .map((w) => ({
@@ -531,10 +556,11 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
+    settle("formEvents", () => fetchIntervalsEvents(env, todayIso, addDays(todayIso, FORM_AHEAD_DAYS))),
     settle("bRaces", () => fetchIntervalsEvents(env, todayIso, addDays(todayIso, B_RACE_LOOKAHEAD_DAYS))),
     settle("goal", () => resolveActiveGoalRace(env, todayIso)),
     settle("sportSettings", async () => {
@@ -614,6 +640,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
     wellness,
     formSeries,
+    formProjection: buildFormProjection(formSeries, formEventsR.ok && Array.isArray(formEventsR.value) ? formEventsR.value : [], todayIso),
     weeks: buildWeeks(todayIso, activities, events),
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
