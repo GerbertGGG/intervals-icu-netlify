@@ -255,9 +255,11 @@ assert.ok(d.wellness.every((w) => w.soreness === null));
 assert.equal(d.goal.daysToGo, 3);
 assert.equal(d.goal.source, "config");
 assert.ok(d.weeks.at(-1).complete === false);
-// Ohne Runalyze-Snapshot gibt es keine langen Laeufe
+// Ohne Runalyze-Snapshot zaehlt der 16-km-Lauf aus Intervals, aber ohne Decoupling (Art unklar, Pulsregel)
 assert.equal(d.fitness.longRuns.length, 0);
-assert.equal(d.fitness.longRunTracker.recent.length, 0);
+assert.equal(d.fitness.longRunTracker.recent.length, 1);
+assert.equal(d.fitness.longRunTracker.count16, 1);
+assert.equal(d.fitness.longRunTracker.recent[0].decoupling, null);
 assert.equal(d.runalyze, null); // ohne Snapshot: fehlt, keine Platzhalter
 // Runalyze-Snapshot (synthetische Werte, nur Test)
 const snap = { fetchedAt: "2026-09-30T05:00:00Z", vdot: 34.67, prognosis: [{ distanceKm: 5, seconds: 1600 }, { distanceKm: 21.1, seconds: 8000 }],
@@ -302,6 +304,7 @@ const ok = await handleDashboardRequest(new Request("https://x/api/dashboard", {
 assert.equal(ok.status, 200);
 assert.equal((await handleDashboardRequest(new Request("https://x/api/dashboard"), { ATHLETE_ID: "i" })).status, 503);
 // Quelle nicht erreichbar -> markiert, kein Absturz
+const okFetch = globalThis.fetch;
 globalThis.fetch = async () => new Response("nope", { status: 500 });
 const failed = await buildDashboard(env, today);
 assert.equal(failed.sources.intervalsWellness.ok, false);
@@ -452,6 +455,20 @@ console.log("zones from intervals ok");
   assert.ok(!JSON.stringify(s).includes("heart"));
   assert.equal(buildIntervalSession({ icu_intervals: [{ type: "WORK", distance: 1000, moving_time: 240 }] }), null);
   console.log("ok interval splits");
+}
+
+// Longrun-Tracker: Intervals-Laeufe ab 15 km (auch Rennabbruch) zaehlen mit, Intensitaet nicht, Runalyze gewinnt pro Tag
+{
+  globalThis.fetch = okFetch;
+  const snap = validateSnapshot({ fetchedAt: "2026-09-30T05:00:00Z", vdot: 40, runs: [{ date: day(-5), distanceKm: 16.2, durationSec: 6771, type: "Langer Lauf", decouplingPct: 4 }] });
+  kv.set("dashboard:runalyze", JSON.stringify(snap.value));
+  activities.push(act(8, { name: "Halbmarathon", description: "DNF", distance: 15177, moving_time: 5565 }), act(10, { name: "Tempolauf lang", distance: 15500, moving_time: 5000 }));
+  const T = (await buildDashboard(env, today)).fitness.longRunTracker;
+  assert.equal(T.recent.length, 2); // Runalyze-Tag -5 einmal, Halbmarathon-Abbruch Tag -8; Tempolauf nicht
+  assert.ok(T.recent.some((r) => r.distanceKm === 15.2));
+  assert.equal(T.recent.find((r) => r.distanceKm === 16.2).decoupling, 4);
+  assert.equal(T.count16, 1);
+  console.log("longrun intervals ok");
 }
 
 // Formprognose: geplante Last wird mit 42/7-Tage-Konstanten fortgeschrieben, Tage ohne Plan sind Ruhetage

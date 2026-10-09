@@ -544,7 +544,7 @@ Gewichteter Schnitt der **letzten zwei Nächte** (letzte Nacht 60 %, davor 40 %)
 
 ### 7.3 Longrun-Tracker (`buildFitness`, 284)
 
-Quelle: bevorzugt Runalyze-Läufe der Art „lang“ (`/lang/i` im Typ), sonst Intervals-Läufe ab **12 km**. `count16` = Anzahl ≥ 16 km; „längster“ = größte Distanz. Frontend-Ampel für Decoupling: < 5 % ok · < 8 % warn · sonst bad (`app.js:255`).
+Quellen: Runalyze-Läufe der Art „lang“ (`/lang/i` im Typ) **und** Intervals-Läufe ab **15 km** (auch Rennen/Abbrüche, nicht Intensitätseinheiten); pro Tag gilt der Runalyze-Eintrag. `count16` = Anzahl ≥ 16 km; „längster“ = größte Distanz. Frontend-Ampel für Decoupling: < 5 % ok · < 8 % warn · sonst bad (`app.js:255`).
 
 ### 7.4 Halbmarathon-Schätzungen (`buildHmEstimates`, 316)
 
