@@ -72,7 +72,7 @@ function render(d) {
   renderSources(d);
   initKraftTabs();
   initNav();
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
+  const steps = [renderCockpit, renderCoach, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -948,6 +948,20 @@ function renderEgym(k) {
     ${items.length ? `<h3>Fortschritt: 1RM je Gerät</h3><div style="overflow-x:auto"><table><thead><tr><th>Gerät</th><th>Bereich</th><th>1RM</th>${cmp ? "<th>Vorher</th><th>Veränderung</th>" : ""}<th>Test</th></tr></thead><tbody>${items.map((i) => `<tr><td>${esc(i.label)}</td><td class="muted">${esc(REGION_LABEL[i.region] || i.region || "–")}</td><td><b>${fmt(i.kg)} kg</b></td>${cmp ? `<td class="muted">${i.prevKg != null ? fmt(i.prevKg) + " kg" : "–"}</td><td>${delta(i)}</td>` : ""}<td class="muted">${fmtDate(i.at)}</td></tr>`).join("")}</tbody></table></div>
       ${cmp && p.improved + p.same + p.declined > 0 ? `<div class="muted" style="margin-top:6px">${p.improved} besser · ${p.same} gleich · ${p.declined} schwächer gegen den vorherigen Test.</div>` : '<div class="muted" style="margin-top:6px">Ein Vergleich (Vorher, Veränderung) erscheint, sobald ein Gerät mindestens zwei Tests hat.</div>'}` : ""}
     <div class="muted" style="margin-top:8px">Kraft-Einheit = Tag mit Satz-Übungen oder Geräten (Garmin-Tagesaktivität zählt nicht).</div></div></div>`;
+}
+
+/* ---------- Coach: Tagesaussage des Coaching-Tasks (das Widget zeigt nur den Hinweis, solange er frisch ist) ---------- */
+function renderCoach(d) {
+  const c = d.coach;
+  $("coach-card").hidden = !c;
+  if (!c) return;
+  const ageH = Math.max(0, Math.round((Date.now() - Date.parse(c.fetchedAt)) / 3600000));
+  const stale = ageH > 36;
+  const paras = String(c.text ?? "").split(/\n{2,}/).map((x) => x.trim()).filter(Boolean).map((x) => `<p>${esc(x)}</p>`).join("");
+  $("coach").innerHTML = `${c.headline ? `<div class="muted">${esc(c.headline)}</div>` : ""}
+    <div class="studie-fazit"><div>${esc(c.note)}</div></div>
+    ${paras ? `<details class="bdet" style="margin-top:8px"><summary>Ganzer Bericht</summary><div class="desc" style="color:var(--text)">${paras}</div></details>` : ""}
+    <div class="muted" style="margin-top:8px">Stand ${new Date(c.fetchedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}${stale ? " · veraltet, das Widget zeigt ihn nicht mehr" : " · steht im Widget"}</div>`;
 }
 
 /* ---------- Studien-Check der Woche ---------- */

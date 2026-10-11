@@ -5,6 +5,7 @@ import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin } from "./date-utils.js";
 import { loadWidgetKraft } from "./egym-widget.js";
 import { topFinding } from "./findings.js";
+import { isFreshCoach } from "./coach-snapshot.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
@@ -81,6 +82,8 @@ export function buildWidget(d, env = {}) {
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source },
     // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
     focus: topFinding(d),
+    // Hinweis des Coaches, nur solange er frisch ist; hat im Widget Vorrang vor focus und dem allgemeinen Warum
+    coach: isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? { note: d.coach.note, headline: d.coach.headline } : null,
     sourcesFailed: failedOf(d),
   };
 }

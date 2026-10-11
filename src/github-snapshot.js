@@ -1,12 +1,13 @@
 import { readKvJson, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
+import { COACH_KV_KEY, validateCoach } from "./coach-snapshot.js";
 
-// Fallback fuer PUT /api/runalyze und /api/studie: Der Coaching-Task erreicht den Worker nicht immer
+// Fallback fuer PUT /api/runalyze, /api/studie und /api/coach: Der Coaching-Task erreicht den Worker nicht immer
 // (Egress-Policy), GitHub aber schon. Er committet die Snapshots deshalb als JSON auf den Branch
 // "snapshots" (nicht main, damit kein Deploy ausgeloest wird), und der Cron holt sie von dort ins KV.
 //
-// Dateien auf dem Branch: runalyze.json, studie.json (gleicher Body wie bei den PUT-Endpunkten).
+// Dateien auf dem Branch: runalyze.json, studie.json, coach.json (gleicher Body wie bei den PUT-Endpunkten).
 // Optionale Worker-Variablen: GITHUB_REPO ("owner/repo"), SNAPSHOT_BRANCH, GITHUB_TOKEN (nur bei privatem Repo).
 
 const DEFAULT_REPO = "GerbertGGG/intervals-icu-netlify";
@@ -16,6 +17,7 @@ const MAX_BYTES = 60_000;
 const SOURCES = [
   { file: "runalyze.json", kvKey: RUNALYZE_KV_KEY, validate: validateSnapshot },
   { file: "studie.json", kvKey: STUDIE_KV_KEY, validate: validateStudie },
+  { file: "coach.json", kvKey: COACH_KV_KEY, validate: validateCoach },
 ];
 
 async function syncOne(env, { file, kvKey, validate }) {

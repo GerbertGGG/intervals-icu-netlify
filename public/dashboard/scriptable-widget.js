@@ -526,10 +526,13 @@ function buildWidget(res) {
   w.addSpacer(5);
 
   // 4. Warum: Akzentstrich links, 1 bis 3 Zeilen
-  // Auffälligkeit mit Konsequenz hat Vorrang vor dem allgemeinen Warum, außer am Renntag und in Taper und Erholung
+  // Auffälligkeit mit Konsequenz hat Vorrang vor dem allgemeinen Warum, außer am Renntag und in Taper und Erholung (der Coach-Hinweis gilt immer)
   const raceFocus = g && (g.daysToGo === 0 || g.phase === "taper" || g.phase === "recovery");
   const focusLine = d.focus && !raceFocus ? `Auffällig: ${d.focus.short}. ${d.focus.act}` : null;
-  const why = focusLine ? (focusLine.length > 145 ? focusLine.slice(0, 144) + "…" : focusLine) : whyText(d, p, v);
+  // Coach-Hinweis (frisch, vom Coaching-Task) vor Auffälligkeit, diese vor dem allgemeinen Warum
+  const coachLine = d.coach && d.coach.note ? d.coach.note : null;
+  const rawWhy = coachLine || focusLine;
+  const why = rawWhy ? (rawWhy.length > 145 ? rawWhy.slice(0, 144) + "…" : rawWhy) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 14) / 6.6));
   const nLines = Math.min(3, Math.max(1, Math.ceil(why.length / perLine)));
   const wr = w.addStack(); wr.size = new Size(W, nLines * 17 + 2);
