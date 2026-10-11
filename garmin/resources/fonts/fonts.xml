@@ -1,5 +1,7 @@
 <fonts>
+  <font id="Time" filename="time.fnt" antialias="true"/>
   <font id="Small" filename="small.fnt" antialias="true"/>
-  <font id="Tiny" filename="tiny.fnt" antialias="true"/>
   <font id="Mid" filename="mid.fnt" antialias="true"/>
+  <font id="Cap" filename="cap.fnt" antialias="true"/>
+  <font id="Tiny" filename="tiny.fnt" antialias="true"/>
 </fonts>

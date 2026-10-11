@@ -1,8 +1,15 @@
-"""Erzeugt die kleine Bitmap-Schrift (BMFont-Textformat) für das Watchface.
+"""Erzeugt Bitmap-Schriften (BMFont-Textformat) für das Watchface.
 
-Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf] [Größe in Pixel] [Name]
+Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel] [Name] [digits]
 Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmäßig "small")
-Die eingebauten Schriften der Uhr sind für Statuszeile, Sticker und Beschriftungen zu groß.
+Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit springt nicht).
+Die Schriften des Zifferblatts (Inter, SIL Open Font License, Paket fonts-inter):
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/InterDisplay-SemiBold.otf 126 time digits
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 19 small
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-Bold.otf 16 mid
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 13 cap
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 11 tiny
+Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys
 from pathlib import Path
@@ -11,10 +18,12 @@ from PIL import Image, ImageDraw, ImageFont
 ttf = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 size = int(sys.argv[2]) if len(sys.argv) > 2 else 18
 name = sys.argv[3] if len(sys.argv) > 3 else "small"
+digits = len(sys.argv) > 4 and sys.argv[4] == "digits"
 out = Path(__file__).resolve().parent.parent / "resources" / "fonts"
 font = ImageFont.truetype(ttf, size)
 ascent, descent = font.getmetrics()
-codes = list(range(32, 127)) + [0xB0, 0xB7]  # ASCII, Grad, Mittelpunkt
+# ASCII, Grad, Mittelpunkt, Umlaute, Minutenzeichen (′)
+codes = [ord(c) for c in "0123456789:"] if digits else list(range(32, 127)) + [0xB0, 0xB7, 0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC, 0xDF, 0x2032]
 
 glyphs = []
 for c in codes:
@@ -24,8 +33,18 @@ for c in codes:
     if h == 0:
         w = 0  # Leerzeichen: nur Vorschub
     glyphs.append((c, ch, l, t, w, h, int(round(font.getlength(ch)))))
+xoff, top, line_h, base = {}, 0, ascent + descent, ascent
+if digits:
+    # Gleiche Breite für alle Ziffern, Glyphe mittig im Vorschub
+    adv = max(g[6] for g in glyphs if g[1].isdigit())
+    xoff = {c: (adv - w) // 2 for c, ch, l, t, w, h, a in glyphs if ch.isdigit()}
+    glyphs = [(c, ch, l, t, w, h, adv if ch.isdigit() else a) for c, ch, l, t, w, h, a in glyphs]
+    # Zeilenhöhe = Ziffernhöhe, damit TEXT_JUSTIFY_VCENTER die Ziffern wirklich mittig setzt
+    top = min(g[3] for g in glyphs)
+    line_h = max(g[3] + g[5] for g in glyphs) - top
+    base = ascent - top
 
-W = 256
+W = 256 if size <= 40 else 1024
 x = y = row_h = 0
 placed = []
 for c, ch, l, t, w, h, adv in glyphs:
@@ -50,11 +69,11 @@ img.save(out / f"{name}.png")
 
 lines = [
     f'info face="{Path(ttf).stem}" size={size} bold=1 italic=0 charset="" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=1,1',
-    f"common lineHeight={ascent + descent} base={ascent} scaleW={W} scaleH={H} pages=1 packed=0",
+    f"common lineHeight={line_h} base={base} scaleW={W} scaleH={H} pages=1 packed=0",
     f'page id=0 file="{name}.png"',
     f"chars count={len(placed)}",
 ]
 for c, ch, l, t, w, h, adv, px, py in placed:
-    lines.append(f"char id={c} x={px} y={py} width={w} height={h} xoffset={l} yoffset={t} xadvance={adv} page=0 chnl=15")
+    lines.append(f"char id={c} x={px} y={py} width={w} height={h} xoffset={xoff.get(c, l)} yoffset={t - top} xadvance={adv} page=0 chnl=15")
 (out / f"{name}.fnt").write_text("\n".join(lines) + "\n")
-print(f"{len(placed)} Zeichen, Atlas {W}x{H}, Zeilenhöhe {ascent + descent}")
+print(f"{len(placed)} Zeichen, Atlas {W}x{H}, Zeilenhöhe {line_h}")
