@@ -528,13 +528,18 @@ function buildWidget(res) {
   // 4. Warum: Akzentstrich links, 1 bis 3 Zeilen
   // Auffälligkeit mit Konsequenz hat Vorrang vor dem allgemeinen Warum, außer am Renntag und in Taper und Erholung (der Coach-Hinweis gilt immer)
   const raceFocus = g && (g.daysToGo === 0 || g.phase === "taper" || g.phase === "recovery");
-  const focusLine = d.focus && !raceFocus ? `Auffällig: ${d.focus.short}. ${d.focus.act}` : null;
+  const focusLine = d.focus && !raceFocus ? `${d.focus.short}. ${d.focus.act}` : null;
   // Coach-Hinweis (frisch, vom Coaching-Task) vor Auffälligkeit, diese vor dem allgemeinen Warum
   const coachLine = d.coach && d.coach.note ? d.coach.note : null;
   const rawWhy = coachLine || focusLine;
-  // Gut 40 Zeichen je Zeile bei 3 Zeilen: lieber an einer Wortgrenze kürzen, als dass iOS mitten im Wort abschneidet
-  const clip = (s, max) => (s.length <= max ? s : s.slice(0, max).replace(/\s+\S*$/, "").replace(/[.,;:–-]+$/, "") + "…");
-  const why = rawWhy ? clip(rawWhy, 110) : whyText(d, p, v);
+  // Nie abschneiden: ganze Sätze, solange sie in 3 Zeilen (gut 40 Zeichen je Zeile) passen. Der erste Satz steht immer komplett da.
+  const sentences = (s) => {
+    const parts = s.trim().split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ])/);
+    let out = parts[0];
+    for (const x of parts.slice(1)) { if ((out + " " + x).length > 140) break; out += " " + x; }
+    return out;
+  };
+  const why = rawWhy ? sentences(rawWhy) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 14) / 6.6));
   const nLines = Math.min(3, Math.max(1, Math.ceil(why.length / perLine)));
   const wr = w.addStack(); wr.size = new Size(W, nLines * 17 + 2);
