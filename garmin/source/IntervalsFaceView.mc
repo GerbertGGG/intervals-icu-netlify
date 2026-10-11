@@ -83,7 +83,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var hs = h.format("%02d");
         var ms = clock.min.format("%02d");
-        var font = Graphics.FONT_NUMBER_HOT;
+        var font = Graphics.FONT_NUMBER_MEDIUM;
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         if (_sleep) {
             dc.setColor(GREY, Graphics.COLOR_BLACK);
@@ -92,9 +92,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var y = px(206);
         dc.setColor(PURPLE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx - px(78), y, font, hs, just);
+        dc.drawText(_cx - px(70), y, font, hs, just);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx + px(78), y, font, ms, just);
+        dc.drawText(_cx + px(70), y, font, ms, just);
     }
 
     // ---- Kopf: Rennziel (wenn nah) und Block -----------------------------------------
@@ -140,22 +140,22 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var letters = ["M", "D", "M", "D", "F", "S", "S"];
         var today = numOrNull(data.get("ti"));
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            var p = pt(px(211), -30 + 10 * i);
+            var p = pt(px(210), -33 + 11 * i);
             var day = days[i] as Dictionary?;
             var color = day != null ? sportColor(day.get("s")) : DIM;
             var planned = day != null && numOrNull(day.get("p")) == 1;
             dc.setPenWidth(2);
             if (today != null && today == i) {
                 dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(15.5));
+                dc.drawCircle(p[0], p[1], px(17));
             }
             if (planned) {
                 dc.setPenWidth(px(3));
                 dc.setColor(color, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(11));
+                dc.drawCircle(p[0], p[1], px(13));
             } else {
                 dc.setColor(color, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(11));
+                dc.fillCircle(p[0], p[1], px(14));
             }
             dc.setColor(planned ? color : (day != null ? Graphics.COLOR_BLACK : GREY), Graphics.COLOR_TRANSPARENT);
             dc.drawText(p[0], p[1], Graphics.FONT_XTINY, letters[i], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
@@ -277,11 +277,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 }
             }
         }
-        var base = px(414);
-        var hmax = px(30);
+        var base = px(424);
+        var hmax = px(40);
         for (var i = 0; i < wk.size() && i < 6; i++) {
             var pair = wk[i] as Array;
-            var x = px(118 + i * 38);
+            var x = px(135 + i * 32);
             var t = numOrNull(pair[0]);
             var g = numOrNull(pair[1]);
             var bh = t != null ? (t * hmax / max).toNumber() : 0;
@@ -289,10 +289,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 bh = px(4);
             }
             dc.setColor(i == wk.size() - 1 ? BAR_NOW : BAR, Graphics.COLOR_BLACK);
-            dc.fillRoundedRectangle(x, base - bh, px(28), bh, px(4));
+            dc.fillRoundedRectangle(x, base - bh, px(24), bh, px(4));
             if (g != null) {
                 dc.setColor(GREEN, Graphics.COLOR_BLACK);
-                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(34), px(3), px(1));
+                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(30), px(3), px(1));
             }
         }
     }
