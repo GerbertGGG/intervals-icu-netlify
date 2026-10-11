@@ -326,13 +326,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var cond = Weather.getCurrentConditions();
         if (cond != null) {
             if (cond.temperature != null) {
-                var c = cond.temperature as Number;
+                var c = (cond.temperature as Numeric).toFloat();
                 var imperial = System.getDeviceSettings().temperatureUnits == System.UNIT_STATUTE;
-                temp = (imperial ? (c * 9 / 5 + 32).toNumber() : c).toString() + "°";
+                temp = Math.round(imperial ? c * 9 / 5 + 32 : c).toNumber().toString() + "°";
             }
             if (cond.precipitationChance != null) {
-                rain = clamp01((cond.precipitationChance as Number).toFloat() / 100);
-                rainText = cond.precipitationChance.toString() + "%";
+                var chance = (cond.precipitationChance as Numeric).toFloat();
+                rain = clamp01(chance / 100);
+                rainText = Math.round(chance).toNumber().toString() + "%";
             }
         }
         sideArc(dc, r, pen, 68, 122, rain, SKY, 0x12263A);
