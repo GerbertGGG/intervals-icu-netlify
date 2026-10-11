@@ -272,7 +272,7 @@ export function buildWidgetBlock(d) {
     block: {
       name: b.name, status: b.status, start: b.start, end: b.end, weeks: b.weeks, weekNo: b.weekNo, daysToStart: b.daysToStart, daysLeft: b.daysLeft,
       goals: (b.goals ?? []).map((g) => ({
-        key: g.key, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null,
+        key: g.key, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count })) : undefined,
       })),
     },

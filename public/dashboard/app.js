@@ -831,11 +831,11 @@ function renderBlock(SB) {
       const max = Math.max(g.max * 2, ...g.series.map((x) => x.value), 1);
       vis = g.series.length ? `<div class="bbars">${g.series.slice(-10).map((x) => `<div title="${fmtDate(x.date)}: ${fmt(x.value, 1)} %" style="height:${Math.max(6, (Math.max(0, x.value) / max) * 100)}%;background:var(--${x.value <= g.max ? "ok" : "warn"})"></div>`).join("")}<u style="bottom:${(g.max / max) * 100}%"></u></div>` : "";
     } else if (g.key === "strength") {
-      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}× Kraft"></i>`).join("")}</div>`;
+      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}"></i>`).join("")}</div>`;
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${g.key === "strength" ? `<div class="sub">Jedes Kästchen = eine Woche, grün = Ziel erreicht</div>` : ""}<div class="sub">${[g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ")}</div></div>`;
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${g.key === "strength" ? `<div class="sub">Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}</div>` : ""}<div class="sub">${[g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ")}</div></div>`;
   };
   const goals = (SB.goals ?? []).length ? `<div class="bgoals">${SB.goals.map(goalCard).join("")}</div>` : "";
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
@@ -853,8 +853,8 @@ function renderStrength(d) {
     $("kt-weeks").hidden = false;
     $("kp-weeks").innerHTML = `<div class="big">${bg.value ?? "–"} <small class="muted" style="font-size:.9rem">von ${bg.of} Wochen mit Ziel erreicht</small></div>
       <div class="muted" style="margin:2px 0 10px">Ziel: ${esc(bg.target)}${bg.egym ? "" : " · ohne EGYM-Daten gezählt"}</div>
-      ${[...bg.weeks].reverse().map((w) => `<div style="display:grid;grid-template-columns:64px 1fr 64px;gap:8px;align-items:center;padding:3px 0;${w.done ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.start)}${w.done ? "" : " ·&nbsp;jetzt"}</span><div class="bsq">${Array.from({ length: Math.max(2, w.count) }, (_, i) => `<i class="${i < w.count ? (w.hit ? "ok" : "off") : "open"}"></i>`).join("")}</div><b style="text-align:right">${w.count}×</b></div>`).join("")}
-      <div class="muted" style="margin-top:6px">Jedes Kästchen = eine Kraft-Einheit, grün = Wochenziel erreicht.</div>`;
+      ${[...bg.weeks].reverse().map((w) => `<div style="display:grid;grid-template-columns:64px 1fr 64px;gap:8px;align-items:center;padding:3px 0;${w.done ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.start)}${w.done ? "" : " ·&nbsp;jetzt"}</span><div class="bsq">${bg.goalSets ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (w.count / bg.goalSets) * 100)}%;background:var(--${w.hit ? "ok" : "muted"})"></div></div>` : Array.from({ length: Math.max(2, w.count) }, (_, i) => `<i class="${i < w.count ? (w.hit ? "ok" : "off") : "open"}"></i>`).join("")}</div><b style="text-align:right">${w.count}${bg.goalSets ? "" : "×"}</b></div>`).join("")}
+      <div class="muted" style="margin-top:6px">${bg.goalSets ? `Balken = Sätze der Woche, grün = mind. ${bg.goalSets} Sätze.` : "Jedes Kästchen = eine Kraft-Einheit, grün = Wochenziel erreicht."}</div>`;
   }
   if (!d.hipFlags.length) return; // Eine Textsuche ohne Treffer ist keine Aussage
   $("hip-card").hidden = false;

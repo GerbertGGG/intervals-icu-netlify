@@ -1061,7 +1061,8 @@ function buildBlock(res) {
       });
     }
     c.addSpacer(2);
-    text(c, g.status === "base" ? "Ausgangswert" : g.target, FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
+    const cap = g.key === "strength" && g.goalSets ? `Wochen mit ≥ ${g.goalSets} Sätzen` : g.target;
+    text(c, g.status === "base" ? (g.key === "strength" ? `Ausgangswert · ${cap}` : "Ausgangswert") : cap, FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
   });
   notice(w, res, d);
   return w;
