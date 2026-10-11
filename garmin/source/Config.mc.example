@@ -1,0 +1,9 @@
+// Kopieren nach Config.mc (wird nicht eingecheckt) und eintragen.
+// Sideloaded Watchfaces haben in Garmin Connect keine Einstellungen, deshalb stehen die Werte hier.
+import Toybox.Lang;
+
+(:background)
+module Config {
+    const BASE_URL = "https://intervals-icu-netlify.DEIN-KONTO.workers.dev";
+    const TOKEN = "WATCH_TOKEN-vom-Worker";
+}

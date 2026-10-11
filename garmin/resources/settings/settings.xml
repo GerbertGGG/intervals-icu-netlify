@@ -1,0 +1,10 @@
+<resources>
+  <settings>
+    <setting propertyKey="@Properties.BaseUrl" title="@Strings.BaseUrlTitle">
+      <settingConfig type="alphaNumeric"/>
+    </setting>
+    <setting propertyKey="@Properties.Token" title="@Strings.TokenTitle">
+      <settingConfig type="alphaNumeric"/>
+    </setting>
+  </settings>
+</resources>
