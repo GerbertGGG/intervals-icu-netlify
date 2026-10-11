@@ -11,7 +11,7 @@ import Toybox.WatchUi;
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
 
-    const PURPLE = 0xC77DFF;
+    const HOUR = 0xFF6A1A;
     const AMBER = 0xFFB43A;
     const SKY = 0x6AB7FF;
     const GREEN = 0x4CAF6A;
@@ -91,7 +91,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             return;
         }
         var y = px(206);
-        dc.setColor(PURPLE, Graphics.COLOR_BLACK);
+        dc.setColor(HOUR, Graphics.COLOR_BLACK);
         dc.drawText(_cx - px(70), y, font, hs, just);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
         dc.drawText(_cx + px(70), y, font, ms, just);
@@ -137,7 +137,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (days == null) {
             return;
         }
-        var letters = ["M", "D", "M", "D", "F", "S", "S"];
         var today = numOrNull(data.get("ti"));
         for (var i = 0; i < 7 && i < days.size(); i++) {
             var p = pt(px(210), -33 + 11 * i);
@@ -157,8 +156,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dc.setColor(color, Graphics.COLOR_BLACK);
                 dc.fillCircle(p[0], p[1], px(14));
             }
-            dc.setColor(planned ? color : (day != null ? Graphics.COLOR_BLACK : GREY), Graphics.COLOR_TRANSPARENT);
-            dc.drawText(p[0], p[1], Graphics.FONT_XTINY, letters[i], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
 
@@ -219,19 +216,19 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var strFrac = (strV != null && strOf != null && strOf > 0) ? strV.toFloat() / strOf : 0.0;
         var acwrV = acwr != null ? numOrNull(acwr.get("v")) : null;
 
-        gauge(dc, 143, 312, "DEC", dec != null ? fmtNum(dec.get("v"), true) : "--", 0.0, dec);
-        gauge(dc, 227, 318, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
-        gauge(dc, 311, 312, "ACWR", acwr != null ? fmtNum(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
+        gauge(dc, 143, 310, "DEC", dec != null ? fmtNum(dec.get("v"), true) : "--", 0.0, dec);
+        gauge(dc, 227, 316, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
+        gauge(dc, 311, 310, "ACWR", acwr != null ? fmtNum(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
     }
 
     private function gauge(dc as Dc, x as Number, y as Number, label as String, value as String, frac as Float, goal as Dictionary?) as Void {
         var cx = px(x);
         var cy = px(y);
-        var r = px(30);
+        var r = px(33);
         var color = statusColor(goal != null ? goal.get("ok") : null);
         dc.setColor(0x12161B, Graphics.COLOR_BLACK);
         dc.fillCircle(cx, cy, r + px(5));
-        ring(dc, cx, cy, r, px(6), frac, color, DIM);
+        ring(dc, cx, cy, r, px(5), frac, color, DIM);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, cy, Graphics.FONT_XTINY, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
@@ -310,9 +307,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kf = (kv != null && kg != null && kg > 0) ? clamp01(kv.toFloat() / kg) : 0.0;
         sideArc(dc, r, pen, 238, 292, kf, AMBER, 0x2A2010);
         dc.setColor(AMBER, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(66), _cy - px(12), Graphics.FONT_XTINY, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(px(66), _cy - px(19), Graphics.FONT_XTINY, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(66), _cy + px(12), Graphics.FONT_XTINY, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(px(66), _cy + px(19), Graphics.FONT_XTINY, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         // Wetter kommt von der Uhr
         var temp = "--";
@@ -332,9 +329,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         sideArc(dc, r, pen, 68, 122, rain, SKY, 0x12263A);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(66), _cy - px(12), Graphics.FONT_XTINY, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx * 2 - px(66), _cy - px(19), Graphics.FONT_XTINY, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(SKY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(66), _cy + px(12), Graphics.FONT_XTINY, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx * 2 - px(66), _cy + px(19), Graphics.FONT_XTINY, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // Bogen von a1 nach a2 (Grad, 0 = oben, im Uhrzeigersinn), Füllung ab a1
