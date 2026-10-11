@@ -508,6 +508,9 @@ console.log("zones from intervals ok");
   const calm = buildWidgetWatch(withLoad({ acwr: 1.0, acwrCls: "ok" })).w;
   assert.ok(calm === null || calm.k === "hint");
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).str, null); // ohne Block-Ziel keine Kraft
+  assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).block, null);
+  assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: { status: "active", weekNo: 3, weeks: 6, daysToStart: -14, goals: [] } }).block, { st: "active", d: -14, w: 3, of: 6 });
+  assert.equal(w.race?.d ?? null, d.goal?.daysToGo ?? null); // Renn-Countdown fuer den unteren Rand
   assert.ok(JSON.stringify(w).length < 1500, "Antwort fuer den Hintergrunddienst der Uhr klein halten");
   const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   const envW = { ...env, WATCH_TOKEN: "uhr" };

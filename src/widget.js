@@ -286,6 +286,7 @@ export function buildWidgetBlock(d) {
 // next = naechste Einheit (d Tage ab heute, s Sportart, m Minuten, km); Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
 // rd = Bereitschaft wie im Dashboard (ok, warn, bad, none); w = Warnung: { k: "acwr", v } wenn der ACWR ueber dem Korridor liegt,
 // sonst { k: "hint" } bei einer Warnung aus "Was auffaellt", ohne beides null.
+// race.d = Tage bis zum Rennen; block = Trainingsblock (st Status, d Tage bis Start, w Woche von of) fuer die Zeile am unteren Rand.
 const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
 
 function watchWarning(d) {
@@ -310,7 +311,8 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const doneToday = Object.keys(d.daily.find((x) => x.date === d.today)?.sports ?? {}).length > 0;
   const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !doneToday));
   const next = nextP ? { d: Math.round((Date.parse(nextP.date + "T00:00:00Z") - Date.parse(d.today + "T00:00:00Z")) / 86400000), s: nextP.sport, m: nextP.durationMin ?? null, km: nextP.distanceKm ?? null } : null;
-  const strength = d.seasonBlock?.goals?.find((g) => g.key === "strength");
+  const b = d.seasonBlock;
+  const strength = b?.goals?.find((g) => g.key === "strength");
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const today = byDate[d.today];
   const kcal = live?.energyKcal > 0 ? Math.round(live.energyKcal) : today?.calories ?? null;
@@ -320,6 +322,8 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     ti: dayIndex(d.today),
     days,
     next,
+    race: d.goal ? { d: d.goal.daysToGo ?? null } : null,
+    block: b ? { st: b.status, d: b.daysToStart ?? null, w: b.weekNo ?? null, of: b.weeks ?? null } : null,
     rd: d.summary.readiness.verdict.cls,
     w: watchWarning(d),
     tss: total(week),

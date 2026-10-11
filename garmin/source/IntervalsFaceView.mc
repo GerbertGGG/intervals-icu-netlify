@@ -8,13 +8,14 @@ import Toybox.Weather;
 import Toybox.WatchUi;
 
 // Zifferblatt im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Oben die Woche am Rand,
-// dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung) und vier runde Komplikationen.
+// dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
+// am unteren Rand Renn-Countdown und Blockwoche als gebogene Schrift.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
 
     // true = jede Komplikation in eigener, dezenter Farbe; false = alle Ringe weiß (Mono)
-    const COLORFUL = true;
+    const COLORFUL = false;
 
     const FG = 0xF5F5F7;
     const SEC = 0x8E8E93;
@@ -29,9 +30,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const STR = 0xFF6482;
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
-    const TIME_Y = 206;
-    const READY_Y = 280;
-    const COMP_Y = 352;
+    const TIME_Y = 196;
+    const READY_Y = 266;
+    const COMP_Y = 334;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -88,6 +89,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawNext(dc, data);
         drawReady(dc, data);
         drawComplications(dc, data);
+        drawStatusArc(dc, data);
     }
 
     // ---- Zeit ----------------------------------------------------------------
@@ -193,7 +195,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         } else if (km != null) {
             label = label + " · " + km.toFloat().format("%.0f") + " km";
         }
-        drawLine(dc, px(122), [["dot", px(5), sportColor(sport)], ["gap", px(8)], ["t", dayText, SEC, _cap], ["gap", px(8)], ["t", label, FG, _small]]);
+        drawLine(dc, px(112), [["dot", px(5), sportColor(sport)], ["gap", px(8)], ["t", dayText, SEC, _cap], ["gap", px(8)], ["t", label, FG, _small]]);
     }
 
     // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
@@ -244,13 +246,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var tf = frac(tss, target);
         complication(dc, 188, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/ " + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
 
-        // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; knapp/verfehlt in Ampelfarbe
+        // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
+        // (base und none, also Ausgangswert oder noch keine Daten, grau)
         var str = data.get("str") as Dictionary?;
         var sv = str != null ? numOrNull(str.get("v")) : null;
         var so = str != null ? numOrNull(str.get("of")) : null;
         var st = str != null ? str.get("ok") : null;
-        var sc = "warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : accent(STR));
-        complication(dc, 266, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, sc == accent(STR) ? FG : sc);
+        var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
+        complication(dc, 266, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, FG);
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, Regenwahrscheinlichkeit als Ring
         var temp = "--";
@@ -284,6 +287,43 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (sub.length() > 0) {
             dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, cy + px(13), _tiny, sub, just);
+        }
+    }
+
+    // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
+    // drawRadialText braucht eine Vektorschrift der Uhr (Inter gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
+
+    private function drawStatusArc(dc as Dc, data as Dictionary) as Void {
+        var race = data.get("race") as Dictionary?;
+        var raceDays = race != null ? numOrNull(race.get("d")) : null;
+        var raceText = (raceDays != null && raceDays >= 0 && raceDays <= 100) ? "RENNEN " + raceDays.toNumber() + " T" : "";
+        var blockText = "";
+        var block = data.get("block") as Dictionary?;
+        if (block != null) {
+            var st = block.get("st");
+            var bd = numOrNull(block.get("d"));
+            var bw = numOrNull(block.get("w"));
+            var of = numOrNull(block.get("of"));
+            if ("upcoming".equals(st) && bd != null) {
+                blockText = "BLOCK IN " + bd.toNumber() + " T";
+            } else if ("active".equals(st) && bw != null) {
+                blockText = "WOCHE " + bw.toNumber() + (of != null ? "/" + of.toNumber() : "");
+            }
+        }
+        var text = raceText.length() > 0 && blockText.length() > 0 ? raceText + "  ·  " + blockText : raceText + blockText;
+        if (text.length() == 0) {
+            return;
+        }
+        dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+        var font = null;
+        if (Graphics has :getVectorFont) {
+            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicSemiBold", "RobotoRegular"], :size => px(15) });
+        }
+        if (font != null && dc has :drawRadialText) {
+            // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(203), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+        } else {
+            dc.drawText(_cx, px(418), _cap, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
 

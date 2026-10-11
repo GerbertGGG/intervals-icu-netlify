@@ -7,8 +7,9 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwar
 - **Uhrzeit**, groß.
 - **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampelpunkt. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat ("Hinweis").
 - **Vier Komplikationen**: Essen (kcal gegen Tagesziel), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot), Wetter (Temperatur, Regenwahrscheinlichkeit als Ring).
+- **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gebogene Schrift.
 
-Farben: `COLORFUL` in `IntervalsFaceView.mc` (true = jede Komplikation in eigener dezenter Farbe, false = alle Ringe weiß).
+Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mockup, true = jede Komplikation in eigener dezenter Farbe).
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Wetter und Akku kommen von der Uhr selbst.
 
@@ -43,4 +44,4 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 - Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter** (SIL Open Font License) in `resources/fonts/`, die Uhrzeit nur aus Ziffern und gleich breit. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und das Paket `fonts-inter`).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, wird die Bereitschaft grau und bekommt ein `!`.
-- Renn-Countdown und Blockwoche zeigt das Zifferblatt nicht mehr (Dashboard und Widgets).
+- Die gebogene Zeile unten nutzt `drawRadialText`. Das geht nur mit einer Vektorschrift der Uhr (Roboto Condensed, Inter gibt es nur als Bitmap). Hat die Uhr keine, steht die Zeile gerade.
