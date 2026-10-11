@@ -90,39 +90,43 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dc.drawText(_cx, _cy, font, hs + ":" + ms, just);
             return;
         }
-        var y = px(170);
+        var y = px(206);
         dc.setColor(PURPLE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx - px(67), y, font, hs, just);
+        dc.drawText(_cx - px(78), y, font, hs, just);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx + px(69), y, font, ms, just);
+        dc.drawText(_cx + px(78), y, font, ms, just);
     }
 
-    // ---- Kopf: Block, Akku -----------------------------------------------------
+    // ---- Kopf: Rennziel (wenn nah) und Block -----------------------------------------
 
     private function drawStatusLine(dc as Dc, data as Dictionary?) as Void {
-        var parts = [] as Array<String>;
         var race = data != null ? data.get("race") as Dictionary? : null;
         var raceDays = race != null ? numOrNull(race.get("d")) : null;
-        if (race != null && raceDays != null && raceDays >= 0) {
-            var rn = race.get("n") as String?;
-            parts.add((rn != null && rn.length() > 0 ? rn.toUpper() + " " : "") + raceDays + " T");
+        var raceText = "";
+        if (raceDays != null && raceDays >= 0 && raceDays <= 100) {
+            raceText = "RENNEN " + raceDays + " T";
         }
+        var blockText = "";
         var block = data != null ? data.get("block") as Dictionary? : null;
         if (block != null) {
             var st = block.get("st");
             if ("upcoming".equals(st) && block.get("d") != null) {
-                parts.add("BLOCK IN " + block.get("d") + " T");
+                blockText = "BLOCK IN " + block.get("d") + " T";
             } else if ("active".equals(st) && block.get("w") != null) {
-                parts.add("WOCHE " + block.get("w") + (block.get("of") != null ? "/" + block.get("of") : ""));
+                blockText = "WOCHE " + block.get("w") + (block.get("of") != null ? "/" + block.get("of") : "");
             }
         }
-        parts.add(System.getSystemStats().battery.format("%d") + " %");
-        var text = join(parts, " · ");
+        var font = Graphics.FONT_XTINY;
+        var text = join(compact([raceText, blockText]), " · ");
+        // Passt es nicht in die Breite, nur den Block zeigen
+        if (dc.getTextWidthInPixels(text, font) > px(250)) {
+            text = blockText;
+        }
         if (isStale(data)) {
             text = text + " !";
         }
         dc.setColor(GREY, Graphics.COLOR_BLACK);
-        dc.drawText(_cx, px(66), Graphics.FONT_XTINY, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx, px(84), font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // ---- Wochentage oben -------------------------------------------------------
@@ -190,12 +194,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var km = numOrNull(next.get("km"));
         var size = m != null ? m.toNumber() + "'" : (km != null ? km.toFloat().format("%.0f") + " km" : "");
         var text = join(compact([dayText, label, size]), " · ");
-        var w = px(230);
-        var h = px(36);
+        var font = Graphics.FONT_XTINY;
+        var w = dc.getTextWidthInPixels(text, font) + px(28);
+        var h = dc.getFontHeight(font) + px(6);
+        var top = px(104);
         dc.setColor(sportColor(sport), Graphics.COLOR_BLACK);
-        dc.fillRoundedRectangle(_cx - w / 2, px(80), w, h, h / 2);
+        dc.fillRoundedRectangle(_cx - w / 2, top, w, h, h / 2);
         dc.setColor(0x0A0A0A, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx, px(80) + h / 2, Graphics.FONT_TINY, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx, top + h / 2, font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // ---- Drei Rundanzeigen: Decoupling, Kraft, ACWR ------------------------------
@@ -213,23 +219,21 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var strFrac = (strV != null && strOf != null && strOf > 0) ? strV.toFloat() / strOf : 0.0;
         var acwrV = acwr != null ? numOrNull(acwr.get("v")) : null;
 
-        gauge(dc, 143, 268, "DEC", dec != null ? fmtPct(dec.get("v"), true) : "--", 0.0, dec);
-        gauge(dc, 227, 276, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
-        gauge(dc, 311, 268, "ACWR", acwr != null ? fmtPct(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
+        gauge(dc, 143, 312, "DEC", dec != null ? fmtNum(dec.get("v"), true) : "--", 0.0, dec);
+        gauge(dc, 227, 318, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
+        gauge(dc, 311, 312, "ACWR", acwr != null ? fmtNum(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
     }
 
     private function gauge(dc as Dc, x as Number, y as Number, label as String, value as String, frac as Float, goal as Dictionary?) as Void {
         var cx = px(x);
         var cy = px(y);
-        var r = px(28);
+        var r = px(30);
         var color = statusColor(goal != null ? goal.get("ok") : null);
         dc.setColor(0x12161B, Graphics.COLOR_BLACK);
         dc.fillCircle(cx, cy, r + px(5));
         ring(dc, cx, cy, r, px(6), frac, color, DIM);
-        dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(11), Graphics.FONT_XTINY, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy + px(11), Graphics.FONT_XTINY, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(cx, cy, Graphics.FONT_XTINY, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // ok = im Ziel, warn = knapp, bad = verfehlt; base und none (Ausgangswert, noch keine Daten) bleiben grau
@@ -257,7 +261,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             runs.add([" · Ziel ", GREY]);
             runs.add([goal.toNumber().toString(), Graphics.COLOR_WHITE]);
         }
-        drawRuns(dc, px(327), Graphics.FONT_XTINY, runs);
+        drawRuns(dc, px(367), Graphics.FONT_XTINY, runs);
 
         var wk = data.get("wk") as Array?;
         if (wk == null) {
@@ -273,11 +277,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 }
             }
         }
-        var base = px(408);
-        var hmax = px(62);
+        var base = px(414);
+        var hmax = px(30);
         for (var i = 0; i < wk.size() && i < 6; i++) {
             var pair = wk[i] as Array;
-            var x = px(107 + i * 42);
+            var x = px(118 + i * 38);
             var t = numOrNull(pair[0]);
             var g = numOrNull(pair[1]);
             var bh = t != null ? (t * hmax / max).toNumber() : 0;
@@ -285,10 +289,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 bh = px(4);
             }
             dc.setColor(i == wk.size() - 1 ? BAR_NOW : BAR, Graphics.COLOR_BLACK);
-            dc.fillRoundedRectangle(x, base - bh, px(30), bh, px(4));
+            dc.fillRoundedRectangle(x, base - bh, px(28), bh, px(4));
             if (g != null) {
                 dc.setColor(GREEN, Graphics.COLOR_BLACK);
-                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(36), px(3), px(1));
+                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(34), px(3), px(1));
             }
         }
     }
@@ -410,6 +414,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             }
         }
         return out;
+    }
+
+    // Zahl ohne Einheit (für die kleinen Rundanzeigen), Dezimalkomma
+    private function fmtNum(v, decimal as Boolean) as String {
+        var t = fmtPct(v, decimal);
+        return t.equals("--") ? t : t.substring(0, t.length() - 1);
     }
 
     private function join(parts as Array<String>, sep as String) as String {
