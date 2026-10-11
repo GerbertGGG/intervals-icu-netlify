@@ -32,7 +32,7 @@ Sideloaded Watchfaces haben in Garmin Connect keine Einstellungen. Wird die App 
 2. Ordner `garmin/` in VS Code öffnen, `Monkey C: Build for Device`, Gerät wählen.
 3. Die erzeugte `.prg` aus `bin/` per USB nach `GARMIN/APPS/` auf der Uhr kopieren, dann das Zifferblatt auf der Uhr auswählen. Zum Ausprobieren ohne Uhr gibt es den Simulator (`Run`).
 
-In `manifest.xml` stehen die Geräte (Venu 3, Venu 3S, Vivoactive 5, Forerunner 265/265S/965). Die Maße sind auf 454 Pixel ausgelegt und werden skaliert. Weitere runde Modelle lassen sich dort ergänzen.
+Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.xml`). Die Maße im Code sind auf 454 Pixel ausgelegt und werden auf die Displaygröße skaliert. Weitere runde Modelle lassen sich in `manifest.xml` ergänzen.
 
 ## Bekannte Abweichungen vom Mockup
 
