@@ -27,9 +27,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private var _cx as Number = 0;
     private var _cy as Number = 0;
     private var _sleep as Boolean = false;
+    private var _small as Graphics.FontType = Graphics.FONT_XTINY;
 
     function initialize() {
         WatchFace.initialize();
+        // Kleine Schrift für Statuszeile, Sticker und Beschriftungen (erzeugt mit tools/make_font.py)
+        _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
     }
 
     function onEnterSleep() as Void {
@@ -116,7 +119,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 blockText = "WOCHE " + block.get("w") + (block.get("of") != null ? "/" + block.get("of") : "");
             }
         }
-        var font = Graphics.FONT_XTINY;
+        var font = _small;
         var text = join(compact([raceText, blockText]), " · ");
         // Passt es nicht in die Breite, nur den Block zeigen
         if (dc.getTextWidthInPixels(text, font) > px(250)) {
@@ -192,9 +195,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         else if ("strength".equals(sport)) { label = "KRAFT"; }
         var m = numOrNull(next.get("m"));
         var km = numOrNull(next.get("km"));
-        var size = m != null ? m.toNumber() + "'" : (km != null ? km.toFloat().format("%.0f") + " km" : "");
+        var size = m != null ? m.toNumber() + "'" : (km != null ? km.toFloat().format("%.0f") + " KM" : "");
         var text = join(compact([dayText, label, size]), " · ");
-        var font = Graphics.FONT_XTINY;
+        var font = _small;
         var w = dc.getTextWidthInPixels(text, font) + px(28);
         var h = dc.getFontHeight(font) + px(6);
         var top = px(114);
@@ -233,7 +236,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(cx, cy, r + px(5));
         ring(dc, cx, cy, r, px(5), frac, color, DIM);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(52), Graphics.FONT_XTINY, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(cx, cy - px(47), _small, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, cy, Graphics.FONT_XTINY, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
