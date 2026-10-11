@@ -421,10 +421,18 @@ function shortLabel(e) {
   if (e.key) return "Schlüssel";
   if (/locker|easy|ruhig|regen|recovery|grundlagen/i.test(n)) return "locker";
   if (/intervall|tempo|schwelle|threshold|interval/i.test(n)) return "intensiv";
-  if (e.sport === "strength") return "Kraft";
-  if (e.sport === "bike") return "Rad";
-  if (e.sport === "swim") return "Schwimmen";
   return n || "Einheit";
+}
+
+const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft" };
+
+// Sportart zuerst, dann die Art der Einheit (bei Rad/Schwimmen/Kraft ohne Zusatz, wenn es nur der Sport selbst wäre)
+function tileSub(e) {
+  const sport = SPORT_LABEL[e.sport];
+  const label = shortLabel(e);
+  if (!sport) return label;
+  if (e.sport !== "run" && (label === "Einheit" || label === e.name || label === sport)) return sport;
+  return `${sport} · ${label}`;
 }
 
 function dayTile(row, TW, iso, g, upcoming) {
@@ -443,7 +451,7 @@ function dayTile(row, TW, iso, g, upcoming) {
   else {
     const mins = items.reduce((a, e) => a + (e.durationMin || 0), 0);
     main = mins ? `${mins} min` : items[0].name || "Einheit";
-    sub = shortLabel(items[0]);
+    sub = tileSub(items[0]);
   }
   text(t, dayShort(iso), FS.xs, { color: race ? COL.race : COL.muted, minScale: 1 });
   text(t, main, 16, { bold: true, color: race ? COL.race : COL.text });
