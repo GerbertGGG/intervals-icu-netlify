@@ -11,7 +11,7 @@ import Toybox.WatchUi;
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
 
-    const HOUR = 0xFF6A1A;
+    const HOUR = 0x3D8BFF;
     const AMBER = 0xFFB43A;
     const SKY = 0x6AB7FF;
     const GREEN = 0x4CAF6A;
@@ -83,18 +83,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var hs = h.format("%02d");
         var ms = clock.min.format("%02d");
-        var font = Graphics.FONT_NUMBER_MEDIUM;
+        var font = Graphics.FONT_NUMBER_MILD;
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         if (_sleep) {
             dc.setColor(GREY, Graphics.COLOR_BLACK);
             dc.drawText(_cx, _cy, font, hs + ":" + ms, just);
             return;
         }
-        var y = px(206);
+        var y = px(200);
         dc.setColor(HOUR, Graphics.COLOR_BLACK);
-        dc.drawText(_cx - px(70), y, font, hs, just);
+        dc.drawText(_cx - px(66), y, font, hs, just);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx + px(70), y, font, ms, just);
+        dc.drawText(_cx + px(66), y, font, ms, just);
     }
 
     // ---- Kopf: Rennziel (wenn nah) und Block -----------------------------------------
@@ -126,7 +126,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             text = text + " !";
         }
         dc.setColor(GREY, Graphics.COLOR_BLACK);
-        dc.drawText(_cx, px(84), font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx, px(94), font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // ---- Wochentage oben -------------------------------------------------------
@@ -137,25 +137,28 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (days == null) {
             return;
         }
+        var letters = ["M", "D", "M", "D", "F", "S", "S"];
         var today = numOrNull(data.get("ti"));
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            var p = pt(px(210), -33 + 11 * i);
+            var p = pt(px(208), -39 + 13 * i);
             var day = days[i] as Dictionary?;
             var color = day != null ? sportColor(day.get("s")) : DIM;
             var planned = day != null && numOrNull(day.get("p")) == 1;
             dc.setPenWidth(2);
             if (today != null && today == i) {
                 dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(17));
+                dc.drawCircle(p[0], p[1], px(21));
             }
             if (planned) {
                 dc.setPenWidth(px(3));
                 dc.setColor(color, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(13));
+                dc.drawCircle(p[0], p[1], px(16));
             } else {
                 dc.setColor(color, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(14));
+                dc.fillCircle(p[0], p[1], px(18));
             }
+            dc.setColor(planned ? color : (day != null ? Graphics.COLOR_BLACK : GREY), Graphics.COLOR_TRANSPARENT);
+            dc.drawText(p[0], p[1], Graphics.FONT_XTINY, letters[i], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
 
@@ -194,7 +197,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var font = Graphics.FONT_XTINY;
         var w = dc.getTextWidthInPixels(text, font) + px(28);
         var h = dc.getFontHeight(font) + px(6);
-        var top = px(104);
+        var top = px(114);
         dc.setColor(sportColor(sport), Graphics.COLOR_BLACK);
         dc.fillRoundedRectangle(_cx - w / 2, top, w, h, h / 2);
         dc.setColor(0x0A0A0A, Graphics.COLOR_TRANSPARENT);
@@ -229,6 +232,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(0x12161B, Graphics.COLOR_BLACK);
         dc.fillCircle(cx, cy, r + px(5));
         ring(dc, cx, cy, r, px(5), frac, color, DIM);
+        dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(cx, cy - px(52), Graphics.FONT_XTINY, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, cy, Graphics.FONT_XTINY, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
