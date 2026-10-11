@@ -23,7 +23,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const GAUGE = 0xA8AEB8;
     const STALE_SECS = 3600;
     const TIME_Y = 190;
-    const TRACK = 0x3A414C;
+    const TRACK = 0x5A6472;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -311,7 +311,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function drawSideArcs(dc as Dc, data as Dictionary) as Void {
         var r = px(204);
-        var pen = px(8);
+        var pen = px(10);
 
         // Kalorien: Bogen von unten links nach oben links (Winkel: 0 = oben, im Uhrzeigersinn)
         var kcal = data.get("kcal") as Dictionary?;
