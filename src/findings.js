@@ -32,11 +32,8 @@ export function trainingFindings(d) {
     if (last.load < last.plannedLoad * TRN.planUnder) add(1, `Plan nur zu ${pct(last.load / last.plannedLoad)} % geschafft`, `nur ${num(last.load)} von ${num(last.plannedLoad)} TSS des Plans geschafft.`, "Verpasste Einheiten nicht nachholen, sondern den Plan der laufenden Woche halten.");
     else if (last.load > last.plannedLoad * TRN.planOver) add(1, `${num(last.load - last.plannedLoad)} TSS über dem Plan`, `${num(last.load - last.plannedLoad)} TSS über dem Plan (${num(last.load)} von ${num(last.plannedLoad)}).`, "Mehr als geplant bringt vor dem Rennen selten etwas: lockere Einheiten wirklich locker laufen.");
   }
-  // Schwimmen wird ueber Distanz geplant, nicht ueber TSS: dort zaehlt der Plan in Metern
-  const planOf = (k) => (k === "swim" ? last.bySport[k].plannedKm : last.bySport[k].plannedLoad);
-  const planTxt = (k) => (k === "swim" ? `${num(last.bySport[k].plannedKm * 1000)} m` : `${num(last.bySport[k].plannedLoad)} TSS`);
-  const skipped = SPORT_ORDER.filter((k) => planOf(k) > 0 && last.bySport[k].count === 0);
-  if (skipped.length) add(1, `Geplant, aber ausgelassen: ${skipped.map((k) => SPORT_LABEL[k]).join(", ")}`, `${skipped.map((k) => `${SPORT_LABEL[k]} (${planTxt(k)})`).join(", ")} war geplant, aber nichts absolviert.`, "Die ausgelassene Sportart gezielt wieder einplanen, damit sie nicht ganz verschwindet.", skipped.length);
+  const skipped = SPORT_ORDER.filter((k) => last.bySport[k].plannedLoad > 0 && last.bySport[k].count === 0);
+  if (skipped.length) add(1, `Geplant, aber ausgelassen: ${skipped.map((k) => SPORT_LABEL[k]).join(", ")}`, `${skipped.map((k) => `${SPORT_LABEL[k]} (${num(last.bySport[k].plannedLoad)} TSS)`).join(", ")} war geplant, aber nichts absolviert.`, "Die ausgelassene Sportart gezielt wieder einplanen, damit sie nicht ganz verschwindet.", skipped.length);
   const z = last.intensity ?? { easy: 0, mid: 0, hard: 0 }, zt = z.easy + z.mid + z.hard;
   if (zt >= 60) {
     if (z.hard / zt > TRN.hardShare) add(1, `Viel Intensität: ${pct(z.hard / zt)} % hart`, `${pct(z.hard / zt)} % der Zonenzeit hart (Z5+) – viel Intensität.`, "Nächste Woche mehr lockere Zeit, harte Einheiten auf höchstens zwei begrenzen.");
