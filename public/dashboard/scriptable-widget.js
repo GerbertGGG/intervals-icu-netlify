@@ -532,7 +532,9 @@ function buildWidget(res) {
   // Coach-Hinweis (frisch, vom Coaching-Task) vor Auffälligkeit, diese vor dem allgemeinen Warum
   const coachLine = d.coach && d.coach.note ? d.coach.note : null;
   const rawWhy = coachLine || focusLine;
-  const why = rawWhy ? (rawWhy.length > 145 ? rawWhy.slice(0, 144) + "…" : rawWhy) : whyText(d, p, v);
+  // Gut 40 Zeichen je Zeile bei 3 Zeilen: lieber an einer Wortgrenze kürzen, als dass iOS mitten im Wort abschneidet
+  const clip = (s, max) => (s.length <= max ? s : s.slice(0, max).replace(/\s+\S*$/, "").replace(/[.,;:–-]+$/, "") + "…");
+  const why = rawWhy ? clip(rawWhy, 110) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 14) / 6.6));
   const nLines = Math.min(3, Math.max(1, Math.ceil(why.length / perLine)));
   const wr = w.addStack(); wr.size = new Size(W, nLines * 17 + 2);
