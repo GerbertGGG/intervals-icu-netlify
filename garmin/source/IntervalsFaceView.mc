@@ -12,7 +12,6 @@ import Toybox.WatchUi;
 class IntervalsFaceView extends WatchUi.WatchFace {
 
     const PURPLE = 0xC77DFF;
-    const CORAL = 0xFF6A4D;
     const AMBER = 0xFFB43A;
     const SKY = 0x6AB7FF;
     const GREEN = 0x4CAF6A;
@@ -65,7 +64,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             return;
         }
         drawWeekDots(dc, data);
-        drawRace(dc, data);
+        drawNext(dc, data);
         drawGauges(dc, data);
         drawWeekBars(dc, data);
         drawSideArcs(dc, data);
@@ -102,15 +101,17 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function drawStatusLine(dc as Dc, data as Dictionary?) as Void {
         var parts = [] as Array<String>;
+        var race = data != null ? data.get("race") as Dictionary? : null;
+        var raceDays = race != null ? numOrNull(race.get("d")) : null;
+        if (race != null && raceDays != null && raceDays >= 0) {
+            var rn = race.get("n") as String?;
+            parts.add((rn != null && rn.length() > 0 ? rn.toUpper() + " " : "") + raceDays + " T");
+        }
         var block = data != null ? data.get("block") as Dictionary? : null;
         if (block != null) {
-            var name = (block.get("n") as String?);
             var st = block.get("st");
-            if (name != null) {
-                parts.add(name.toUpper());
-            }
             if ("upcoming".equals(st) && block.get("d") != null) {
-                parts.add("START IN " + block.get("d") + " T");
+                parts.add("BLOCK IN " + block.get("d") + " T");
             } else if ("active".equals(st) && block.get("w") != null) {
                 parts.add("WOCHE " + block.get("w") + (block.get("of") != null ? "/" + block.get("of") : ""));
             }
@@ -165,21 +166,35 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return GREY;
     }
 
-    // ---- Rennziel (Sticker) ----------------------------------------------------
+    // ---- Sticker: nächste Einheit, in der Farbe der Sportart ----------------------------
 
-    private function drawRace(dc as Dc, data as Dictionary) as Void {
-        var race = data.get("race") as Dictionary?;
-        var days = race != null ? numOrNull(race.get("d")) : null;
-        if (race == null || days == null || days < 0) {
+    private function drawNext(dc as Dc, data as Dictionary) as Void {
+        var next = data.get("next") as Dictionary?;
+        if (next == null) {
             return;
         }
-        var name = race.get("n") as String?;
-        var text = (name != null && name.length() > 0 ? name.toUpper() + " · " : "") + days + " T";
-        var w = px(174);
+        var offset = numOrNull(next.get("d"));
+        var today = numOrNull(data.get("ti"));
+        var dayText = "";
+        if (offset != null) {
+            var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
+            dayText = offset == 0 ? "HEUTE" : (offset == 1 ? "MORGEN" : (today != null ? names[(today.toNumber() + offset.toNumber()) % 7] : ""));
+        }
+        var sport = next.get("s");
+        var label = "";
+        if ("run".equals(sport)) { label = "LAUF"; }
+        else if ("bike".equals(sport)) { label = "RAD"; }
+        else if ("swim".equals(sport)) { label = "SWIM"; }
+        else if ("strength".equals(sport)) { label = "KRAFT"; }
+        var m = numOrNull(next.get("m"));
+        var km = numOrNull(next.get("km"));
+        var size = m != null ? m.toNumber() + "'" : (km != null ? km.toFloat().format("%.0f") + " km" : "");
+        var text = join(compact([dayText, label, size]), " · ");
+        var w = px(230);
         var h = px(36);
-        dc.setColor(CORAL, Graphics.COLOR_BLACK);
+        dc.setColor(sportColor(sport), Graphics.COLOR_BLACK);
         dc.fillRoundedRectangle(_cx - w / 2, px(80), w, h, h / 2);
-        dc.setColor(0x2A0A04, Graphics.COLOR_TRANSPARENT);
+        dc.setColor(0x0A0A0A, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx, px(80) + h / 2, Graphics.FONT_TINY, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
@@ -385,6 +400,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             t = t.substring(0, i) + "," + t.substring(i + 1, t.length());
         }
         return t + "%";
+    }
+
+    private function compact(parts as Array<String>) as Array<String> {
+        var out = [] as Array<String>;
+        for (var i = 0; i < parts.size(); i++) {
+            if (parts[i].length() > 0) {
+                out.add(parts[i]);
+            }
+        }
+        return out;
     }
 
     private function join(parts as Array<String>, sep as String) as String {

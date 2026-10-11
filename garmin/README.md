@@ -1,6 +1,6 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C). Es zeigt Uhrzeit, Rennziel, die Woche (Mo bis So) nach Sportart, den Block mit Decoupling, Kraft und ACWR, Wochen-TSS (erledigt, Plan, Ziel) mit den letzten 6 Wochen, Kalorien und Wetter.
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C). Es zeigt Uhrzeit, nächste Einheit, Rennziel, die Woche (Mo bis So) nach Sportart, den Block mit Decoupling, Kraft und ACWR, Wochen-TSS (erledigt, Plan, Ziel) mit den letzten 6 Wochen, Kalorien und Wetter.
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Wetter und Akku kommen von der Uhr selbst.
 
@@ -39,4 +39,5 @@ In `manifest.xml` stehen die Geräte (Venu 3, Venu 3S, Vivoactive 5, Forerunner 
 - Schrift: Das Mockup nutzt eine dicke Bubble-Schrift. Die Uhr nimmt die eingebaute Zahlenschrift (`FONT_NUMBER_HOT`). Eine eigene Bitmap-Schrift (z. B. Titan One über BMFont) lässt sich später als Ressource ergänzen.
 - Kalorien- und Wettertext stehen waagerecht neben den Randbögen statt gedreht.
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet (AMOLED schonen).
+- Der Sticker zeigt die nächste Einheit in der Farbe der Sportart ("HEUTE · LAUF 60'"), das Rennziel steht in der Statuszeile.
 - Ein `!` hinter der Statuszeile bedeutet: Der letzte Abruf ist älter als eine Stunde.

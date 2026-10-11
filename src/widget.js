@@ -283,7 +283,7 @@ export function buildWidgetBlock(d) {
 
 // Garmin-Watchface (garmin/): eine einzige, kleine Ansicht ("watch"). Connect IQ erlaubt im Hintergrunddienst nur wenige KB
 // Antwort, deshalb kurze Schluessel und nur Zahlen, keine Freitexte. Wetter und Akku kommen von der Uhr selbst.
-// Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
+// next = naechste Einheit (d Tage ab heute, s Sportart, m Minuten, km); Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
 const WATCH_SPORTS = ["run", "bike", "swim", "strength"];
 const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
 
@@ -299,6 +299,10 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     const plan = date >= d.today ? d.plannedWeek.find((x) => x.date === date) : null;
     return plan ? { s: plan.sport, p: 1 } : null;
   });
+  // Naechste Einheit fuer den Sticker: heute, solange heute noch nichts gemacht wurde, sonst die naechste geplante
+  const doneToday = Object.keys(d.daily.find((x) => x.date === d.today)?.sports ?? {}).length > 0;
+  const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !doneToday));
+  const next = nextP ? { d: Math.round((Date.parse(nextP.date + "T00:00:00Z") - Date.parse(d.today + "T00:00:00Z")) / 86400000), s: nextP.sport, m: nextP.durationMin ?? null, km: nextP.distanceKm ?? null } : null;
   const b = d.seasonBlock;
   const goal = (key) => b?.goals?.find((g) => g.key === key);
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
@@ -313,6 +317,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
       dec: goal("decoupling") ? { v: goal("decoupling").value, ok: goal("decoupling").status } : null,
       str: goal("strength") ? { v: goal("strength").value, of: goal("strength").of, ok: goal("strength").status } : null,
       acwr: goal("acwr") ? { v: goal("acwr").value, ok: goal("acwr").status } : null } : null,
+    next,
     tss: total(week),
     plan: week.plannedLoad ?? null,
     goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
