@@ -313,7 +313,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
         var kf = (kv != null && kg != null && kg > 0) ? clamp01(kv.toFloat() / kg) : 0.0;
-        sideArc(dc, r, pen, 238, 292, kf, AMBER, 0x2A2010);
+        sideArc(dc, r, pen, 238, 292, kf, AMBER, 0x664816);
         dc.setColor(AMBER, Graphics.COLOR_TRANSPARENT);
         dc.drawText(px(66), _cy - px(19), Graphics.FONT_XTINY, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
@@ -336,7 +336,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 rainText = Math.round(chance).toNumber().toString() + "%";
             }
         }
-        sideArc(dc, r, pen, 68, 122, rain, SKY, 0x12263A);
+        sideArc(dc, r, pen, 68, 122, rain, SKY, 0x2A4966);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx * 2 - px(66), _cy - px(19), Graphics.FONT_XTINY, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(SKY, Graphics.COLOR_TRANSPARENT);
