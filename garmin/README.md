@@ -37,3 +37,4 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet (AMOLED schonen).
 - Der Sticker zeigt die nächste Einheit in der Farbe der Sportart ("HEUTE · LAUF 60'"), das Rennziel steht in der Statuszeile.
 - Ein `!` hinter der Statuszeile bedeutet: Der letzte Abruf ist älter als eine Stunde.
+- Die kleine Schrift für Statuszeile, Sticker und Beschriftungen (`resources/fonts/small.*`) ist eine Bitmap-Schrift. Neu erzeugen mit `python3 garmin/tools/make_font.py [ttf] [Größe]` (braucht Pillow).
