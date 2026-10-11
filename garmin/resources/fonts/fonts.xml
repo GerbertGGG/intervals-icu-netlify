@@ -1,3 +1,4 @@
 <fonts>
   <font id="Small" filename="small.fnt" antialias="true"/>
+  <font id="Tiny" filename="tiny.fnt" antialias="true"/>
 </fonts>

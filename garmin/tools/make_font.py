@@ -1,7 +1,7 @@
 """Erzeugt die kleine Bitmap-Schrift (BMFont-Textformat) für das Watchface.
 
-Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf] [Größe in Pixel]
-Ergebnis: garmin/resources/fonts/small.fnt und small.png
+Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf] [Größe in Pixel] [Name]
+Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmäßig "small")
 Die eingebauten Schriften der Uhr sind für Statuszeile, Sticker und Beschriftungen zu groß.
 """
 import sys
@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ttf = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 size = int(sys.argv[2]) if len(sys.argv) > 2 else 18
+name = sys.argv[3] if len(sys.argv) > 3 else "small"
 out = Path(__file__).resolve().parent.parent / "resources" / "fonts"
 font = ImageFont.truetype(ttf, size)
 ascent, descent = font.getmetrics()
@@ -45,15 +46,15 @@ for c, ch, l, t, w, h, adv, px, py in placed:
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).text((-l, -t), ch, font=font, fill=255, anchor="la")
     img.paste((255, 255, 255, 255), (px, py), mask)
-img.save(out / "small.png")
+img.save(out / f"{name}.png")
 
 lines = [
     f'info face="{Path(ttf).stem}" size={size} bold=1 italic=0 charset="" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=1,1',
     f"common lineHeight={ascent + descent} base={ascent} scaleW={W} scaleH={H} pages=1 packed=0",
-    'page id=0 file="small.png"',
+    f'page id=0 file="{name}.png"',
     f"chars count={len(placed)}",
 ]
 for c, ch, l, t, w, h, adv, px, py in placed:
     lines.append(f"char id={c} x={px} y={py} width={w} height={h} xoffset={l} yoffset={t} xadvance={adv} page=0 chnl=15")
-(out / "small.fnt").write_text("\n".join(lines) + "\n")
+(out / f"{name}.fnt").write_text("\n".join(lines) + "\n")
 print(f"{len(placed)} Zeichen, Atlas {W}x{H}, Zeilenhöhe {ascent + descent}")

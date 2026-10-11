@@ -30,11 +30,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private var _cy as Number = 0;
     private var _sleep as Boolean = false;
     private var _small as Graphics.FontType = Graphics.FONT_XTINY;
+    private var _tiny as Graphics.FontType = Graphics.FONT_XTINY;
 
     function initialize() {
         WatchFace.initialize();
         // Kleine Schrift für Statuszeile, Sticker und Beschriftungen (erzeugt mit tools/make_font.py)
         _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
+        _tiny = WatchUi.loadResource(Rez.Fonts.Tiny) as Graphics.FontType;
     }
 
     function onEnterSleep() as Void {
@@ -241,7 +243,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(cx, cy, r + px(4));
         ring(dc, cx, cy, r, px(4), frac, color, DIM);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(40), _small, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(cx, cy - px(38), _tiny, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, cy, _small, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
@@ -271,7 +273,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             runs.add([" · Ziel ", GREY]);
             runs.add([goal.toNumber().toString(), Graphics.COLOR_WHITE]);
         }
-        drawRuns(dc, px(338), Graphics.FONT_XTINY, runs);
+        drawRuns(dc, px(338), _small, runs);
 
         var wk = data.get("wk") as Array?;
         if (wk == null) {
