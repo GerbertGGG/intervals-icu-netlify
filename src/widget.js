@@ -284,8 +284,16 @@ export function buildWidgetBlock(d) {
 // Garmin-Watchface (garmin/): eine einzige, kleine Ansicht ("watch"). Connect IQ erlaubt im Hintergrunddienst nur wenige KB
 // Antwort, deshalb kurze Schluessel und nur Zahlen, keine Freitexte. Wetter und Akku kommen von der Uhr selbst.
 // next = naechste Einheit (d Tage ab heute, s Sportart, m Minuten, km); Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
-const WATCH_SPORTS = ["run", "bike", "swim", "strength"];
+// rd = Bereitschaft wie im Dashboard (ok, warn, bad, none); w = Warnung: { k: "acwr", v } wenn der ACWR ueber dem Korridor liegt,
+// sonst { k: "hint" } bei einer Warnung aus "Was auffaellt", ohne beides null.
+// race.d = Tage bis zum Rennen; block = Trainingsblock (st Status, d Tage bis Start, w Woche von of) fuer die Zeile am unteren Rand.
 const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
+
+function watchWarning(d) {
+  const load = d.summary.load;
+  if (load?.acwrCls === "bad" && Number.isFinite(load.acwr)) return { k: "acwr", v: Math.round(load.acwr * 100) / 100 };
+  return topFinding(d) ? { k: "hint" } : null;
+}
 
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
@@ -299,12 +307,12 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     const plan = date >= d.today ? d.plannedWeek.find((x) => x.date === date) : null;
     return plan ? { s: plan.sport, p: 1 } : null;
   });
-  // Naechste Einheit fuer den Sticker: heute, solange heute noch nichts gemacht wurde, sonst die naechste geplante
+  // Naechste Einheit: heute, solange heute noch nichts gemacht wurde, sonst die naechste geplante
   const doneToday = Object.keys(d.daily.find((x) => x.date === d.today)?.sports ?? {}).length > 0;
   const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !doneToday));
   const next = nextP ? { d: Math.round((Date.parse(nextP.date + "T00:00:00Z") - Date.parse(d.today + "T00:00:00Z")) / 86400000), s: nextP.sport, m: nextP.durationMin ?? null, km: nextP.distanceKm ?? null } : null;
   const b = d.seasonBlock;
-  const goal = (key) => b?.goals?.find((g) => g.key === key);
+  const strength = b?.goals?.find((g) => g.key === "strength");
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const today = byDate[d.today];
   const kcal = live?.energyKcal > 0 ? Math.round(live.energyKcal) : today?.calories ?? null;
@@ -312,17 +320,17 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   return {
     t: d.today,
     ti: dayIndex(d.today),
-    race: d.goal ? { n: String(d.goal.name ?? "").slice(0, 14), d: d.goal.daysToGo, s: d.goal.targetTimeSecs ?? null } : null,
-    block: b ? { n: String(b.name ?? "").slice(0, 14), st: b.status, d: b.daysToStart, l: b.daysLeft, w: b.weekNo, of: b.weeks ?? null,
-      dec: goal("decoupling") ? { v: goal("decoupling").value, ok: goal("decoupling").status } : null,
-      str: goal("strength") ? { v: goal("strength").value, of: goal("strength").of, ok: goal("strength").status } : null,
-      acwr: goal("acwr") ? { v: goal("acwr").value, ok: goal("acwr").status } : null } : null,
-    next,
-    tss: total(week),
-    plan: week.plannedLoad ?? null,
-    goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
-    wk: d.weeks.slice(-6).map((w) => [total(w), w.plannedLoad ?? null]),
     days,
+    next,
+    race: d.goal ? { d: d.goal.daysToGo ?? null } : null,
+    block: b ? { st: b.status, d: b.daysToStart ?? null, w: b.weekNo ?? null, of: b.weeks ?? null } : null,
+    rd: d.summary.readiness.verdict.cls,
+    w: watchWarning(d),
+    tss: total(week),
+    plan: week.plannedLoad > 0 ? week.plannedLoad : null,
+    goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
+    // Kraft-Saetze der Woche gegen das Ziel aus dem Trainingsblock; ohne Block-Ziel Kraft null
+    str: strength ? { v: strength.value ?? null, of: strength.of ?? null, ok: strength.status } : null,
     kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
     failed: failedOf(d).length,
   };

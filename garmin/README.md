@@ -1,6 +1,15 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C). Es zeigt Uhrzeit, nächste Einheit, Rennziel, die Woche (Mo bis So) nach Sportart, den Block mit Decoupling, Kraft und ACWR, Wochen-TSS (erledigt, Plan, Ziel) mit den letzten 6 Wochen, Kalorien und Wetter.
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Von oben nach unten:
+
+- **Woche** Mo bis So am oberen Rand: gefüllt in Sportfarbe = erledigt, Ring = geplant, dunkel = frei, weißer Ring = heute.
+- **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′").
+- **Uhrzeit**, groß.
+- **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampelpunkt. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat ("Hinweis").
+- **Vier Komplikationen**: Essen (kcal gegen Tagesziel), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot), Wetter (Temperatur, Regenwahrscheinlichkeit als Ring).
+- **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gebogene Schrift.
+
+Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mockup, true = jede Komplikation in eigener dezenter Farbe).
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Wetter und Akku kommen von der Uhr selbst.
 
@@ -30,11 +39,9 @@ Sideloaded Watchfaces haben in Garmin Connect keine Einstellungen. Wird die App 
 
 Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.xml`). Die Maße im Code sind auf 454 Pixel ausgelegt und werden auf die Displaygröße skaliert. Weitere runde Modelle lassen sich in `manifest.xml` ergänzen.
 
-## Bekannte Abweichungen vom Mockup
+## Hinweise
 
-- Schrift: Das Mockup nutzt eine dicke Bubble-Schrift. Die Uhr nimmt die eingebaute Zahlenschrift (`FONT_NUMBER_HOT`). Eine eigene Bitmap-Schrift (z. B. Titan One über BMFont) lässt sich später als Ressource ergänzen.
-- Kalorien- und Wettertext stehen waagerecht neben den Randbögen statt gedreht.
-- Always-on-Modus: Es wird nur die Uhrzeit gezeichnet (AMOLED schonen).
-- Der Sticker zeigt die nächste Einheit in der Farbe der Sportart ("HEUTE · LAUF 60'"), das Rennziel steht in der Statuszeile.
-- Ein `!` hinter der Statuszeile bedeutet: Der letzte Abruf ist älter als eine Stunde.
-- Die kleine Schrift für Statuszeile, Sticker und Beschriftungen (`resources/fonts/small.*`) ist eine Bitmap-Schrift. Neu erzeugen mit `python3 garmin/tools/make_font.py [ttf] [Größe]` (braucht Pillow).
+- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter** (SIL Open Font License) in `resources/fonts/`, die Uhrzeit nur aus Ziffern und gleich breit. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und das Paket `fonts-inter`).
+- Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
+- Ist der letzte Abruf älter als eine Stunde, wird die Bereitschaft grau und bekommt ein `!`.
+- Die gebogene Zeile unten nutzt `drawRadialText`. Das geht nur mit einer Vektorschrift der Uhr (Roboto Condensed, Inter gibt es nur als Bitmap). Hat die Uhr keine, steht die Zeile gerade.

@@ -7,38 +7,51 @@ import Toybox.Time;
 import Toybox.Weather;
 import Toybox.WatchUi;
 
-// Zifferblatt "Bubble". Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
+// Zifferblatt im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Oben die Woche am Rand,
+// dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
+// am unteren Rand Renn-Countdown und Blockwoche als gebogene Schrift.
+// Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
 
-    const HOUR = 0x3D8BFF;
-    const AMBER = 0xFFB43A;
-    const SKY = 0x6AB7FF;
-    const GREEN = 0x4CAF6A;
-    const RED = 0xE5534B;
-    const GREY = 0x8A9196;
-    const DIM = 0x2B3038;
-    const BAR = 0x5A606C;
-    const BAR_NOW = 0x4A7BD0;
-    const GAUGE = 0xA8AEB8;
+    // true = jede Komplikation in eigener, dezenter Farbe; false = alle Ringe weiß (Mono)
+    const COLORFUL = false;
+
+    const FG = 0xF5F5F7;
+    const SEC = 0x8E8E93;
+    const TER = 0x48484A;
+    const TRACK = 0x2C2C2E;
+    const FREE = 0x1C1C1E;
+    const OK = 0x30D158;
+    const WARN = 0xFF9F0A;
+    const BAD = 0xFF453A;
+    const KCAL = 0xFF9F0A;
+    const TSS = 0x0A84FF;
+    const STR = 0xFF6482;
+    const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
-    const TIME_Y = 190;
-    const TRACK = 0x5A6472;
+    const TIME_Y = 196;
+    const READY_Y = 266;
+    const COMP_Y = 334;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
     private var _cy as Number = 0;
     private var _sleep as Boolean = false;
+    private var _time as Graphics.FontType = Graphics.FONT_NUMBER_HOT;
     private var _small as Graphics.FontType = Graphics.FONT_XTINY;
-    private var _tiny as Graphics.FontType = Graphics.FONT_XTINY;
     private var _mid as Graphics.FontType = Graphics.FONT_XTINY;
+    private var _cap as Graphics.FontType = Graphics.FONT_XTINY;
+    private var _tiny as Graphics.FontType = Graphics.FONT_XTINY;
 
     function initialize() {
         WatchFace.initialize();
-        // Kleine Schrift für Statuszeile, Sticker und Beschriftungen (erzeugt mit tools/make_font.py)
+        // Bitmap-Schriften aus Inter (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
+        _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
-        _tiny = WatchUi.loadResource(Rez.Fonts.Tiny) as Graphics.FontType;
         _mid = WatchUi.loadResource(Rez.Fonts.Mid) as Graphics.FontType;
+        _cap = WatchUi.loadResource(Rez.Fonts.Cap) as Graphics.FontType;
+        _tiny = WatchUi.loadResource(Rez.Fonts.Tiny) as Graphics.FontType;
     }
 
     function onEnterSleep() as Void {
@@ -55,7 +68,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         _s = dc.getWidth() / 454.0;
         _cx = dc.getWidth() / 2;
         _cy = dc.getHeight() / 2;
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
+        dc.setColor(FG, Graphics.COLOR_BLACK);
         dc.clear();
         if (dc has :setAntiAlias) {
             dc.setAntiAlias(true);
@@ -68,15 +81,15 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
 
         var data = Application.Storage.getValue("d") as Dictionary?;
-        drawStatusLine(dc, data);
         if (data == null) {
+            drawLine(dc, px(READY_Y), [["dot", px(6), TER], ["gap", px(8)], ["t", "Keine Daten", SEC, _small]]);
             return;
         }
-        drawWeekDots(dc, data);
+        drawWeek(dc, data);
         drawNext(dc, data);
-        drawGauges(dc, data);
-        drawWeekBars(dc, data);
-        drawSideArcs(dc, data);
+        drawReady(dc, data);
+        drawComplications(dc, data);
+        drawStatusArc(dc, data);
     }
 
     // ---- Zeit ----------------------------------------------------------------
@@ -92,97 +105,70 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var hs = h.format("%02d");
         var ms = clock.min.format("%02d");
-        var font = Graphics.FONT_NUMBER_MILD;
-        var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         if (_sleep) {
-            dc.setColor(GREY, Graphics.COLOR_BLACK);
-            dc.drawText(_cx, _cy, font, hs + ":" + ms, just);
+            dc.setColor(SEC, Graphics.COLOR_BLACK);
+            dc.drawText(_cx, _cy, Graphics.FONT_NUMBER_MILD, hs + ":" + ms, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             return;
         }
         var y = px(TIME_Y);
-        dc.setColor(HOUR, Graphics.COLOR_BLACK);
-        dc.drawText(_cx - px(58), y, font, hs, just);
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx + px(58), y, font, ms, just);
-        dc.setColor(GREY, Graphics.COLOR_BLACK);
-        dc.fillCircle(_cx, y - px(12), px(3));
-        dc.fillCircle(_cx, y + px(12), px(3));
+        var gap = px(14);
+        dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(_cx - gap, y, _time, hs, Graphics.TEXT_JUSTIFY_RIGHT | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx + gap, y, _time, ms, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+        // Doppelpunkt zurückgenommen grau
+        dc.setColor(TER, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(_cx, y - px(16), px(6));
+        dc.fillCircle(_cx, y + px(16), px(6));
     }
 
-    // ---- Kopf: Rennziel (wenn nah) und Block -----------------------------------------
+    // ---- Oberer Rand: Woche Mo bis So ------------------------------------------
+    // Gefüllt in Sportfarbe = erledigt, Ring = geplant, dunkel = frei, weißer Ring = heute.
 
-    private function drawStatusLine(dc as Dc, data as Dictionary?) as Void {
-        var race = data != null ? data.get("race") as Dictionary? : null;
-        var raceDays = race != null ? numOrNull(race.get("d")) : null;
-        var raceText = "";
-        if (raceDays != null && raceDays >= 0 && raceDays <= 100) {
-            raceText = "RENNEN " + raceDays + " T";
-        }
-        var blockText = "";
-        var block = data != null ? data.get("block") as Dictionary? : null;
-        if (block != null) {
-            var st = block.get("st");
-            if ("upcoming".equals(st) && block.get("d") != null) {
-                blockText = "BLOCK IN " + block.get("d") + " T";
-            } else if ("active".equals(st) && block.get("w") != null) {
-                blockText = "WOCHE " + block.get("w") + (block.get("of") != null ? "/" + block.get("of") : "");
-            }
-        }
-        var font = _small;
-        var text = join(compact([raceText, blockText]), " · ");
-        // Passt es nicht in die Breite, nur den Block zeigen
-        if (dc.getTextWidthInPixels(text, font) > px(250)) {
-            text = blockText;
-        }
-        if (isStale(data)) {
-            text = text + " !";
-        }
-        dc.setColor(GREY, Graphics.COLOR_BLACK);
-        dc.drawText(_cx, px(96), font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-    }
-
-    // ---- Wochentage oben -------------------------------------------------------
-    // Gefüllt = erledigt, Ring = geplant, grau = frei, weißer Rahmen = heute. Farbe = Sportart.
-
-    private function drawWeekDots(dc as Dc, data as Dictionary) as Void {
+    private function drawWeek(dc as Dc, data as Dictionary) as Void {
         var days = data.get("days") as Array?;
         if (days == null) {
             return;
         }
         var letters = ["M", "D", "M", "D", "F", "S", "S"];
         var today = numOrNull(data.get("ti"));
+        var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            var p = pt(px(208), -39 + 13 * i);
+            var p = pt(px(196), -36 + 12 * i);
             var day = days[i] as Dictionary?;
-            var color = day != null ? sportColor(day.get("s")) : DIM;
-            var planned = day != null && numOrNull(day.get("p")) == 1;
-            dc.setPenWidth(2);
             if (today != null && today == i) {
-                dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(21));
+                dc.setPenWidth(px(2));
+                dc.setColor(FG, Graphics.COLOR_BLACK);
+                dc.drawCircle(p[0], p[1], px(17));
             }
-            if (planned) {
-                dc.setPenWidth(px(3));
-                dc.setColor(color, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(16));
+            if (day == null) {
+                dc.setColor(FREE, Graphics.COLOR_BLACK);
+                dc.fillCircle(p[0], p[1], px(13));
+                dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
             } else {
+                var color = sportColor(day.get("s"));
                 dc.setColor(color, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(18));
+                if (numOrNull(day.get("p")) == 1) {
+                    dc.setPenWidth(px(3));
+                    dc.drawCircle(p[0], p[1], px(12));
+                    dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+                } else {
+                    dc.fillCircle(p[0], p[1], px(14));
+                    dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+                }
             }
-            dc.setColor(planned ? color : (day != null ? Graphics.COLOR_BLACK : GREY), Graphics.COLOR_TRANSPARENT);
-            dc.drawText(p[0], p[1], Graphics.FONT_XTINY, letters[i], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(p[0], p[1], _tiny, letters[i], just);
         }
     }
 
     private function sportColor(sport) as Number {
-        if ("run".equals(sport)) { return 0x2FD1B0; }
-        if ("bike".equals(sport)) { return 0xE6C229; }
-        if ("strength".equals(sport)) { return 0xFF7EB6; }
-        if ("swim".equals(sport)) { return 0x22D3EE; }
-        return GREY;
+        if ("run".equals(sport)) { return 0x63E6BE; }
+        if ("bike".equals(sport)) { return 0xFFD60A; }
+        if ("swim".equals(sport)) { return 0x64D2FF; }
+        if ("strength".equals(sport)) { return 0xFF6482; }
+        return SEC;
     }
 
-    // ---- Sticker: nächste Einheit, in der Farbe der Sportart ----------------------------
+    // ---- Nächste Einheit: Sportpunkt, Tag (grau), Einheit (weiß) ----------------
 
     private function drawNext(dc as Dc, data as Dictionary) as Void {
         var next = data.get("next") as Dictionary?;
@@ -197,138 +183,79 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dayText = offset == 0 ? "HEUTE" : (offset == 1 ? "MORGEN" : (today != null ? names[(today.toNumber() + offset.toNumber()) % 7] : ""));
         }
         var sport = next.get("s");
-        var label = "";
-        if ("run".equals(sport)) { label = "LAUF"; }
-        else if ("bike".equals(sport)) { label = "RAD"; }
-        else if ("swim".equals(sport)) { label = "SWIM"; }
-        else if ("strength".equals(sport)) { label = "KRAFT"; }
+        var label = "Training";
+        if ("run".equals(sport)) { label = "Lauf"; }
+        else if ("bike".equals(sport)) { label = "Rad"; }
+        else if ("swim".equals(sport)) { label = "Schwimmen"; }
+        else if ("strength".equals(sport)) { label = "Kraft"; }
         var m = numOrNull(next.get("m"));
         var km = numOrNull(next.get("km"));
-        var size = m != null ? m.toNumber() + "'" : (km != null ? km.toFloat().format("%.0f") + " KM" : "");
-        var text = join(compact([dayText, label, size]), " · ");
-        var font = _small;
-        var w = dc.getTextWidthInPixels(text, font) + px(22);
-        var h = dc.getFontHeight(font) + px(2);
-        var top = px(108);
-        dc.setColor(sportColor(sport), Graphics.COLOR_BLACK);
-        dc.fillRoundedRectangle(_cx - w / 2, top, w, h, h / 2);
-        dc.setColor(0x0A0A0A, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx, top + h / 2, font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        if (m != null) {
+            label = label + " · " + m.toNumber() + "′";
+        } else if (km != null) {
+            label = label + " · " + km.toFloat().format("%.0f") + " km";
+        }
+        drawLine(dc, px(112), [["dot", px(5), sportColor(sport)], ["gap", px(8)], ["t", dayText, SEC, _cap], ["gap", px(8)], ["t", label, FG, _small]]);
     }
 
-    // ---- Drei Rundanzeigen: Decoupling, Kraft, ACWR ------------------------------
+    // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
+    // rd: ok, warn, bad, none (wie im Dashboard). w: { k: "acwr", v } oder { k: "hint" }.
 
-    private function drawGauges(dc as Dc, data as Dictionary) as Void {
-        var block = data.get("block") as Dictionary?;
-        if (block == null) {
-            return;
-        }
-        var dec = block.get("dec") as Dictionary?;
-        var str = block.get("str") as Dictionary?;
-        var acwr = block.get("acwr") as Dictionary?;
-        var strV = str != null ? numOrNull(str.get("v")) : null;
-        var strOf = str != null ? numOrNull(str.get("of")) : null;
-        var strFrac = (strV != null && strOf != null && strOf > 0) ? strV.toFloat() / strOf : 0.0;
-        var acwrV = acwr != null ? numOrNull(acwr.get("v")) : null;
-
-        gauge(dc, 150, 282, "DEC", dec != null ? fmtNum(dec.get("v"), true) : "--", 0.0, dec);
-        gauge(dc, 227, 286, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
-        gauge(dc, 304, 282, "ACWR", acwr != null ? fmtNum(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
-    }
-
-    private function gauge(dc as Dc, x as Number, y as Number, label as String, value as String, frac as Float, goal as Dictionary?) as Void {
-        var cx = px(x);
-        var cy = px(y);
-        var r = px(28);
-        var color = statusColor(goal != null ? goal.get("ok") : null);
-        dc.setColor(0x12161B, Graphics.COLOR_BLACK);
-        dc.fillCircle(cx, cy, r + px(4));
-        ring(dc, cx, cy, r, px(4), frac, color, DIM);
-        dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(38), _tiny, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy, _mid, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-    }
-
-    // ok = im Ziel, warn = knapp, bad = verfehlt; base und none (Ausgangswert, noch keine Daten) bleiben grau
-    private function statusColor(status) as Number {
-        if ("ok".equals(status)) { return GREEN; }
-        if ("warn".equals(status)) { return AMBER; }
-        if ("bad".equals(status)) { return RED; }
-        return GAUGE;
-    }
-
-    // ---- TSS: Textzeile und 6 Wochenbalken -----------------------------------------
-
-    private function drawWeekBars(dc as Dc, data as Dictionary) as Void {
-        var tss = numOrNull(data.get("tss"));
-        var plan = numOrNull(data.get("plan"));
-        var goal = numOrNull(data.get("goal"));
-        var runs = [] as Array<Array>;
-        runs.add([tss != null ? tss.toNumber().toString() : "--", BAR_NOW]);
-        runs.add([" TSS", GREY]);
-        if (plan != null) {
-            runs.add([" · Plan ", GREY]);
-            runs.add([plan.toNumber().toString(), Graphics.COLOR_WHITE]);
-        }
-        if (goal != null) {
-            runs.add([" · Ziel ", GREY]);
-            runs.add([goal.toNumber().toString(), Graphics.COLOR_WHITE]);
-        }
-        drawRuns(dc, px(338), _small, runs);
-
-        var wk = data.get("wk") as Array?;
-        if (wk == null) {
-            return;
-        }
-        var max = 100.0;
-        for (var i = 0; i < wk.size(); i++) {
-            var pair = wk[i] as Array;
-            for (var k = 0; k < 2; k++) {
-                var v = numOrNull(pair[k]);
-                if (v != null && v > max) {
-                    max = v.toFloat();
-                }
+    private function drawReady(dc as Dc, data as Dictionary) as Void {
+        var rd = data.get("rd");
+        var word = "Ohne Eintrag";
+        var color = SEC;
+        if ("ok".equals(rd)) { word = "Bereit"; color = OK; }
+        else if ("warn".equals(rd)) { word = "Mit Vorsicht"; color = WARN; }
+        else if ("bad".equals(rd)) { word = "Ruhig angehen"; color = BAD; }
+        // Älter als eine Stunde: alles grau mit "!"
+        var stale = isStale(data);
+        var items = [["dot", px(6), stale ? TER : color], ["gap", px(8)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
+        var w = data.get("w") as Dictionary?;
+        if (w != null) {
+            var text = "Hinweis";
+            var v = numOrNull(w.get("v"));
+            if ("acwr".equals(w.get("k")) && v != null) {
+                text = "ACWR " + decimal(v, "%.2f");
             }
+            items.add(["gap", px(14)]);
+            items.add(["bar", px(18), TER]);
+            items.add(["gap", px(14)]);
+            items.add(["tri", px(15), WARN]);
+            items.add(["gap", px(7)]);
+            items.add(["t", text, WARN, _small]);
         }
-        var base = px(392);
-        var hmax = px(34);
-        for (var i = 0; i < wk.size() && i < 6; i++) {
-            var pair = wk[i] as Array;
-            var x = px(147 + i * 28);
-            var t = numOrNull(pair[0]);
-            var g = numOrNull(pair[1]);
-            var bh = t != null ? (t * hmax / max).toNumber() : 0;
-            if (bh < px(4)) {
-                bh = px(4);
-            }
-            dc.setColor(i == wk.size() - 1 ? BAR_NOW : BAR, Graphics.COLOR_BLACK);
-            dc.fillRoundedRectangle(x, base - bh, px(20), bh, px(4));
-            if (g != null) {
-                dc.setColor(GREEN, Graphics.COLOR_BLACK);
-                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(26), px(3), px(1));
-            }
-        }
+        drawLine(dc, px(READY_Y), items);
     }
 
-    // ---- Randbögen: Kalorien links, Regenwahrscheinlichkeit rechts ---------------------
+    // ---- Vier Komplikationen: Essen, TSS, Kraft, Wetter --------------------------
 
-    private function drawSideArcs(dc as Dc, data as Dictionary) as Void {
-        var r = px(208);
-        var pen = px(6);
-
-        // Kalorien: Bogen von unten links nach oben links (Winkel: 0 = oben, im Uhrzeigersinn)
+    private function drawComplications(dc as Dc, data as Dictionary) as Void {
+        // Essen: Kalorien gegen das Tagesziel
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
-        var kf = (kv != null && kg != null && kg > 0) ? clamp01(kv.toFloat() / kg) : 0.0;
-        sideArc(dc, r, pen, 238, 292, kf, AMBER, TRACK);
-        dc.setColor(AMBER, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(74), px(TIME_Y) - px(17), _mid, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(74), px(TIME_Y) + px(16), _small, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        complication(dc, 110, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "KCAL", frac(kv, kg), accent(KCAL), FG);
 
-        // Wetter kommt von der Uhr
+        // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL); grün, sobald erreicht
+        var tss = numOrNull(data.get("tss"));
+        var target = numOrNull(data.get("plan"));
+        if (target == null) {
+            target = numOrNull(data.get("goal"));
+        }
+        var tf = frac(tss, target);
+        complication(dc, 188, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/ " + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
+
+        // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
+        // (base und none, also Ausgangswert oder noch keine Daten, grau)
+        var str = data.get("str") as Dictionary?;
+        var sv = str != null ? numOrNull(str.get("v")) : null;
+        var so = str != null ? numOrNull(str.get("of")) : null;
+        var st = str != null ? str.get("ok") : null;
+        var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
+        complication(dc, 266, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, FG);
+
+        // Wetter kommt von der Uhr: Temperatur in der Mitte, Regenwahrscheinlichkeit als Ring
         var temp = "--";
         var rain = 0.0;
         var rainText = "";
@@ -342,39 +269,134 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             if (cond.precipitationChance != null) {
                 var chance = (cond.precipitationChance as Numeric).toFloat();
                 rain = clamp01(chance / 100);
-                rainText = Math.round(chance).toNumber().toString() + "%";
+                rainText = Math.round(chance).toNumber().toString() + " %";
             }
         }
-        sideArc(dc, r, pen, 68, 122, rain, SKY, TRACK);
-        dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(74), px(TIME_Y) - px(17), _mid, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        dc.setColor(SKY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(74), px(TIME_Y) + px(17), _mid, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        complication(dc, 344, "WETTER", temp, rainText, rain, accent(RAIN), FG);
     }
 
-    // Bogen von a1 nach a2 (Grad, 0 = oben, im Uhrzeigersinn), Füllung ab a1
-    private function sideArc(dc as Dc, r as Number, pen as Number, a1 as Number, a2 as Number, frac as Float, color as Number, track as Number) as Void {
-        dc.setPenWidth(pen);
-        dc.setColor(track, Graphics.COLOR_BLACK);
-        dc.drawArc(_cx, _cy, r, Graphics.ARC_CLOCKWISE, norm(90 - a1), norm(90 - a2));
-        if (frac > 0) {
-            dc.setColor(color, Graphics.COLOR_BLACK);
-            dc.drawArc(_cx, _cy, r, Graphics.ARC_CLOCKWISE, norm(90 - a1), norm(90 - (a1 + (a2 - a1) * frac)));
+    private function complication(dc as Dc, x as Number, label as String, value as String, sub as String, f as Float, color as Number, valueColor as Number) as Void {
+        var cx = px(x);
+        var cy = px(COMP_Y);
+        var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+        ring(dc, cx, cy, px(29), px(5), f, color, TRACK);
+        dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(cx, px(COMP_Y - 42), _tiny, label, just);
+        dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(cx, cy - px(5), _mid, value, just);
+        if (sub.length() > 0) {
+            dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, cy + px(13), _tiny, sub, just);
         }
+    }
+
+    // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
+    // drawRadialText braucht eine Vektorschrift der Uhr (Inter gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
+
+    private function drawStatusArc(dc as Dc, data as Dictionary) as Void {
+        var race = data.get("race") as Dictionary?;
+        var raceDays = race != null ? numOrNull(race.get("d")) : null;
+        var raceText = (raceDays != null && raceDays >= 0 && raceDays <= 100) ? "RENNEN " + raceDays.toNumber() + " T" : "";
+        var blockText = "";
+        var block = data.get("block") as Dictionary?;
+        if (block != null) {
+            var st = block.get("st");
+            var bd = numOrNull(block.get("d"));
+            var bw = numOrNull(block.get("w"));
+            var of = numOrNull(block.get("of"));
+            if ("upcoming".equals(st) && bd != null) {
+                blockText = "BLOCK IN " + bd.toNumber() + " T";
+            } else if ("active".equals(st) && bw != null) {
+                blockText = "WOCHE " + bw.toNumber() + (of != null ? "/" + of.toNumber() : "");
+            }
+        }
+        var text = raceText.length() > 0 && blockText.length() > 0 ? raceText + "  ·  " + blockText : raceText + blockText;
+        if (text.length() == 0) {
+            return;
+        }
+        dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+        var font = null;
+        if (Graphics has :getVectorFont) {
+            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicSemiBold", "RobotoRegular"], :size => px(15) });
+        }
+        if (font != null && dc has :drawRadialText) {
+            // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(203), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+        } else {
+            dc.drawText(_cx, px(418), _cap, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        }
+    }
+
+    // Farbe einer Komplikation: dezent farbig oder weiß (Mono)
+    private function accent(color as Number) as Number {
+        return COLORFUL ? color : FG;
     }
 
     // Vollkreis mit Fortschritt ab 12 Uhr im Uhrzeigersinn
-    private function ring(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, frac as Float, color as Number, track as Number) as Void {
+    private function ring(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, f as Float, color as Number, track as Number) as Void {
         dc.setPenWidth(pen);
         dc.setColor(track, Graphics.COLOR_BLACK);
         dc.drawCircle(cx, cy, r);
-        if (frac >= 1.0) {
+        if (f >= 1.0) {
             dc.setColor(color, Graphics.COLOR_BLACK);
             dc.drawCircle(cx, cy, r);
-        } else if (frac > 0) {
+        } else if (f > 0) {
             dc.setColor(color, Graphics.COLOR_BLACK);
-            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, 90, norm(90 - 360 * frac));
+            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, 90, norm(90 - 360 * f));
         }
+    }
+
+    // ---- Zeile aus Text und Formen, als Ganzes zentriert -----------------------------
+    // Elemente: ["t", Text, Farbe, Schrift], ["dot", Radius, Farbe], ["tri", Größe, Farbe], ["bar", Höhe, Farbe], ["gap", Breite]
+
+    private function drawLine(dc as Dc, y as Number, items as Array<Array>) as Void {
+        var total = 0;
+        for (var i = 0; i < items.size(); i++) {
+            total += itemWidth(dc, items[i]);
+        }
+        var x = _cx - total / 2;
+        for (var i = 0; i < items.size(); i++) {
+            var it = items[i];
+            var kind = it[0] as String;
+            var w = itemWidth(dc, it);
+            if (kind.equals("t")) {
+                dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(x, y, it[3] as Graphics.FontType, it[1] as String, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
+            } else if (kind.equals("dot")) {
+                dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
+                dc.fillCircle(x + w / 2, y, it[1] as Number);
+            } else if (kind.equals("tri")) {
+                var sz = it[1] as Number;
+                dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
+                dc.fillPolygon([[x, y + sz / 2], [x + sz / 2, y - sz / 2], [x + sz, y + sz / 2]]);
+                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+                dc.fillRectangle(x + sz / 2 - 1, y - sz / 6, 2, sz / 3);
+                dc.fillRectangle(x + sz / 2 - 1, y + sz / 4, 2, 2);
+            } else if (kind.equals("bar")) {
+                var bh = it[1] as Number;
+                dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
+                dc.fillRectangle(x, y - bh / 2, w, bh);
+            }
+            x += w;
+        }
+    }
+
+    private function itemWidth(dc as Dc, it as Array) as Number {
+        var kind = it[0] as String;
+        if (kind.equals("t")) {
+            var text = it[1] as String;
+            return text.length() > 0 ? dc.getTextWidthInPixels(text, it[3] as Graphics.FontType) : 0;
+        }
+        if (kind.equals("dot")) {
+            return (it[1] as Number) * 2;
+        }
+        if (kind.equals("tri")) {
+            return it[1] as Number;
+        }
+        if (kind.equals("bar")) {
+            return px(2) > 1 ? px(2) : 1;
+        }
+        return it[1] as Number;
     }
 
     // ---- Helfer -------------------------------------------------------------------
@@ -398,6 +420,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return v < 0 ? 0.0 : (v > 1 ? 1.0 : v);
     }
 
+    // Anteil v / of zwischen 0 und 1; ohne Werte 0
+    private function frac(v as Numeric?, of as Numeric?) as Float {
+        return (v != null && of != null && of > 0) ? clamp01(v.toFloat() / of) : 0.0;
+    }
+
     private function numOrNull(v) as Numeric? {
         if (v instanceof Lang.Number || v instanceof Lang.Float || v instanceof Lang.Long || v instanceof Lang.Double) {
             return v;
@@ -405,59 +432,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return null;
     }
 
-    private function fmtPct(v, decimal as Boolean) as String {
-        var n = numOrNull(v);
-        if (n == null) {
-            return "--";
-        }
-        if (!decimal) {
-            return n.toNumber().toString() + "%";
-        }
-        var t = n.toFloat().format("%.1f");
+    // Zahl mit Dezimalkomma
+    private function decimal(v as Numeric, fmt as String) as String {
+        var t = v.toFloat().format(fmt);
         var i = t.find(".");
-        if (i != null) {
-            t = t.substring(0, i) + "," + t.substring(i + 1, t.length());
-        }
-        return t + "%";
-    }
-
-    private function compact(parts as Array<String>) as Array<String> {
-        var out = [] as Array<String>;
-        for (var i = 0; i < parts.size(); i++) {
-            if (parts[i].length() > 0) {
-                out.add(parts[i]);
-            }
-        }
-        return out;
-    }
-
-    // Zahl ohne Einheit (für die kleinen Rundanzeigen), Dezimalkomma
-    private function fmtNum(v, decimal as Boolean) as String {
-        var t = fmtPct(v, decimal);
-        return t.equals("--") ? t : t.substring(0, t.length() - 1);
-    }
-
-    private function join(parts as Array<String>, sep as String) as String {
-        var out = "";
-        for (var i = 0; i < parts.size(); i++) {
-            out = out + (i > 0 ? sep : "") + parts[i];
-        }
-        return out;
-    }
-
-    // Mehrfarbige Zeile, als Ganzes zentriert
-    private function drawRuns(dc as Dc, y as Number, font as Graphics.FontType, runs as Array<Array>) as Void {
-        var total = 0;
-        for (var i = 0; i < runs.size(); i++) {
-            total += dc.getTextWidthInPixels(runs[i][0] as String, font);
-        }
-        var x = _cx - total / 2;
-        for (var i = 0; i < runs.size(); i++) {
-            var text = runs[i][0] as String;
-            dc.setColor(runs[i][1] as Number, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(x, y, font, text, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
-            x += dc.getTextWidthInPixels(text, font);
-        }
+        return i != null ? t.substring(0, i) + "," + t.substring(i + 1, t.length()) : t;
     }
 
     private function isStale(data as Dictionary?) as Boolean {

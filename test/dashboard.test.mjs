@@ -492,7 +492,8 @@ console.log("zones from intervals ok");
   assert.equal(w.t, today);
   assert.equal(w.ti, 2); // 30.09.2026 ist ein Mittwoch
   assert.equal(w.days.length, 7);
-  assert.equal(w.wk.length, 6);
+  assert.equal(w.rd, d.summary.readiness.verdict.cls); // Bereitschaft wie im Dashboard
+  assert.equal(w.wk, undefined); // Wochenbalken zeigt das Zifferblatt nicht mehr
   assert.deepEqual(w.kcal, { v: 1840, g: 2100 });
   assert.equal(w.goal, 150);
   assert.deepEqual(w.next, { d: 0, s: "other", m: 30, km: null }); // heute noch nichts gemacht: die heutige Einheit
@@ -501,6 +502,15 @@ console.log("zones from intervals ok");
   assert.equal(done.next.s, "swim");
   assert.equal(buildWidgetWatch({ ...d, planned: [] }).next, null);
   assert.equal(w.days[6]?.p ?? 1, 1); // Zukunft hoechstens geplant, nie erledigt
+  // Warnung: ACWR ueber dem Korridor hat Vorrang, sonst ein Hinweis aus "Was auffaellt", sonst nichts
+  const withLoad = (load) => ({ ...d, summary: { ...d.summary, load: { ...d.summary.load, ...load } } });
+  assert.deepEqual(buildWidgetWatch(withLoad({ acwr: 1.5234, acwrCls: "bad" })).w, { k: "acwr", v: 1.52 });
+  const calm = buildWidgetWatch(withLoad({ acwr: 1.0, acwrCls: "ok" })).w;
+  assert.ok(calm === null || calm.k === "hint");
+  assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).str, null); // ohne Block-Ziel keine Kraft
+  assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).block, null);
+  assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: { status: "active", weekNo: 3, weeks: 6, daysToStart: -14, goals: [] } }).block, { st: "active", d: -14, w: 3, of: 6 });
+  assert.equal(w.race?.d ?? null, d.goal?.daysToGo ?? null); // Renn-Countdown fuer den unteren Rand
   assert.ok(JSON.stringify(w).length < 1500, "Antwort fuer den Hintergrunddienst der Uhr klein halten");
   const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   const envW = { ...env, WATCH_TOKEN: "uhr" };
