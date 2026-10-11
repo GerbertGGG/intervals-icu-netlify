@@ -5,7 +5,6 @@ dist
 test/fixture-*.json
 
 # Garmin-Watchface: eigene Zugangsdaten und Build-Ausgabe
-garmin/source/Config.mc
 garmin/bin/
 *.prg
 *.iq
