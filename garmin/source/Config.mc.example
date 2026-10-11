@@ -4,6 +4,6 @@ import Toybox.Lang;
 
 (:background)
 module Config {
-    const BASE_URL = "https://intervals-icu-netlify.DEIN-KONTO.workers.dev";
-    const TOKEN = "WATCH_TOKEN-vom-Worker";
+    const BASE_URL = "https://intervals-icu-netlify.gerbert.workers.dev";
+    const TOKEN = "niwa0934";
 }
