@@ -212,7 +212,7 @@ function bioAgeOf(b) {
   };
 }
 
-function goalOf(env) {
+export function goalOf(env) {
   const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_SETS));
   return Number.isFinite(n) && n > 0 ? { goal: n, source: "config" } : { goal: DEFAULT_WEEKLY_GOAL_SETS, source: "default" };
 }
@@ -258,6 +258,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
     weeks,
     lastDay: last,
     strengthDates: days.map((d) => d.date), // alle Kraft-Tage der letzten 84 Tage (Block-Ziele im Dashboard)
+    strengthSets: days.map((d) => ({ date: d.date, sets: d.sets })), // dasselbe mit Sätzen je Tag (Satz-Ziel im Block)
     daysSince: last ? dayDiff(last) : null,
     streakWeeks: streak,
     weeksHit: { hit: done.filter(hit).length, of: done.length },
@@ -279,7 +280,7 @@ const KRAFT_CACHE_MS = 15 * 60 * 1000;
 // aufhalten). Fehlt der Cache oder stammt er aus der Zeit vor strengthDates, kommt null und der Aufrufer faellt zurueck.
 export async function readEgymStrengthDates(env) {
   const c = await readKvJson(env, CACHE_KEY).catch(() => null);
-  return Array.isArray(c?.data?.strengthDates) ? { dates: c.data.strengthDates, at: c.at ?? null } : null;
+  return Array.isArray(c?.data?.strengthDates) ? { dates: c.data.strengthDates, days: Array.isArray(c.data.strengthSets) ? c.data.strengthSets : null, at: c.at ?? null } : null;
 }
 
 export async function loadWidgetKraft(env, fresh = false) {

@@ -61,7 +61,9 @@ export function resolveSeasonBlock(events, todayIso) {
 // Schwellen werden aus dem Text gelesen ("unter 8%", "≥32-35%"), sonst gelten die Vorgaben unten.
 const ACWR_BAND = { lo: 0.8, hi: 1.3 };
 const ACWR_DAYS_SHARE = 0.8; // "Korridor gehalten": mindestens 80 % der Tage
-const STRENGTH_PER_WEEK = 2; // Kraft-Konsistenz: Einheiten pro Woche
+const STRENGTH_WEEKS_SHARE = 0.75; // Kraft-Konsistenz: mindestens 75 % der Wochen mit erreichtem Satz-Ziel (nicht jede Woche)
+const STRENGTH_DAYS_PER_WEEK = 2; // nur Rückfall, wenn keine Satzzahlen vorliegen (kein EGYM): Kraft-Tage pro Woche
+const DEFAULT_WEEKLY_SETS = 60;
 const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const numOf = (s) => Number(String(s).replace(",", "."));
@@ -72,7 +74,7 @@ export function parseBlockTargets(text) {
   const dec = t.match(/decoupling[^\d]{0,25}(\d+(?:[.,]\d+)?)\s*%/i);
   return {
     decoupling: has(/decoupling/i) ? { max: dec ? numOf(dec[1]) : 8 } : null,
-    strength: has(/kraft/i) ? { perWeek: STRENGTH_PER_WEEK } : null,
+    strength: has(/kraft/i) ? { share: STRENGTH_WEEKS_SHARE } : null,
     acwr: has(/acwr/i) ? { ...ACWR_BAND, share: ACWR_DAYS_SHARE } : null,
   };
 }
@@ -91,7 +93,7 @@ function statusOf(ok, warn) {
   return ok ? "ok" : warn ? "warn" : "bad";
 }
 
-// input: { longRuns:[{date,decoupling}], strength:[{date}] (Kraft-Tage), strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}]
+// input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}]
 export function buildBlockGoals(block, input, todayIso) {
   const targets = parseBlockTargets(`${block.goal ?? ""}\n${(block.notes ?? []).join("\n")}`);
   const w = windowOf(block, todayIso);
@@ -112,21 +114,28 @@ export function buildBlockGoals(block, input, todayIso) {
   }
 
   if (targets.strength) {
+    // Wochenziel in Sätzen (EGYM). Ohne Satzzahlen (kein EGYM) zählen Kraft-Tage, dann gilt STRENGTH_DAYS_PER_WEEK.
+    const goalSets = Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
+    const setsMode = (input.strength ?? []).some((x) => Number.isFinite(x.sets));
+    const need = setsMode ? goalSets : STRENGTH_DAYS_PER_WEEK;
+    const share = targets.strength.share;
     const weeks = [];
     for (let s = w.from; s <= w.to; s = addDays(s, 7)) {
       const e = addDays(s, 6);
-      const count = new Set((input.strength ?? []).filter((x) => x.date >= s && x.date <= e).map((x) => x.date)).size; // Kraft-Tage, je Tag einmal
-      weeks.push({ start: s, count, done: e <= w.to && e < todayIso, hit: count >= targets.strength.perWeek });
+      const inWeek = (input.strength ?? []).filter((x) => x.date >= s && x.date <= e);
+      const count = setsMode ? inWeek.reduce((a, x) => a + (Number.isFinite(x.sets) ? x.sets : 0), 0) : new Set(inWeek.map((x) => x.date)).size;
+      weeks.push({ start: s, count, done: e <= w.to && e < todayIso, hit: count >= need });
     }
     const full = weeks.filter((x) => x.done);
     const hits = full.filter((x) => x.hit).length;
     const openWeek = weeks.find((x) => !x.done) ?? null;
+    const unit = setsMode ? "Sätze" : "× Kraft";
     goals.push({
-      key: "strength", label: "Kraft-Konsistenz", target: `jede Woche ${targets.strength.perWeek}× Kraft`, unit: "Wochen",
-      value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12),
-      status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= 0.8, hits / full.length >= 0.6),
+      key: "strength", label: "Kraft-Konsistenz", target: `${setsMode ? `≥ ${need} Sätze` : `${need}× Kraft`} in ${Math.round(share * 100)} % der Wochen`, unit: "Wochen",
+      value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), goalSets: setsMode ? need : null, countUnit: unit,
+      status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= share, hits / full.length >= share - 0.15),
       egym: Boolean(input.strengthSource?.egym), egymAt: input.strengthSource?.egymAt ?? null,
-      note: openWeek ? `Diese Woche: ${openWeek.count} von ${targets.strength.perWeek}` : null,
+      note: openWeek ? `Diese Woche: ${openWeek.count} von ${need}${setsMode ? " Sätzen" : ""}` : null,
     });
   }
 
