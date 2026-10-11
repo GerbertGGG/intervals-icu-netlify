@@ -187,6 +187,7 @@ export function buildWidgetTraining(d, env = {}) {
       trendPct: prior.length === 4 && kmPrior > 0 ? Math.round((km4 / kmPrior - 1) * 100) : null,
       weekLoad: cur.bySport[k].load,
       plannedLoad: cur.bySport[k].plannedLoad,
+      plannedKm: cur.bySport[k].plannedKm ?? null,
       weekKm: cur.bySport[k].km,
       weekMinutes: cur.bySport[k].minutes,
       daysSince: last ? dayDiff(last) : null,
