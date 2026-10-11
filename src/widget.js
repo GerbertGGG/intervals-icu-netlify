@@ -1,5 +1,5 @@
 import { json } from "./http-helpers.js";
-import { buildDashboard, isAuthorized } from "./dashboard.js";
+import { buildDashboard, isAuthorized, timingSafeEqual } from "./dashboard.js";
 import { hasYazioCredentials, fetchYazioDailyGoals, fetchYazioDailyNutrition } from "./yazio-client.js";
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin } from "./date-utils.js";
@@ -280,6 +280,49 @@ export function buildWidgetBlock(d) {
   };
 }
 
+
+// Garmin-Watchface (garmin/): eine einzige, kleine Ansicht ("watch"). Connect IQ erlaubt im Hintergrunddienst nur wenige KB
+// Antwort, deshalb kurze Schluessel und nur Zahlen, keine Freitexte. Wetter und Akku kommen von der Uhr selbst.
+// Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
+const WATCH_SPORTS = ["run", "bike", "swim", "strength"];
+const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
+
+export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
+  const week = d.weeks[d.weeks.length - 1];
+  const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
+  const monday = addDays(d.today, -dayIndex(d.today));
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(monday, i);
+    const sports = d.daily.find((x) => x.date === date)?.sports ?? {};
+    const top = Object.entries(sports).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (top && date <= d.today) return { s: top, p: 0 };
+    const plan = date >= d.today ? d.plannedWeek.find((x) => x.date === date) : null;
+    return plan ? { s: plan.sport, p: 1 } : null;
+  });
+  const b = d.seasonBlock;
+  const goal = (key) => b?.goals?.find((g) => g.key === key);
+  const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
+  const today = byDate[d.today];
+  const kcal = live?.energyKcal > 0 ? Math.round(live.energyKcal) : today?.calories ?? null;
+  const cfg = Number(env?.WEEKLY_TSS_GOAL);
+  return {
+    t: d.today,
+    ti: dayIndex(d.today),
+    race: d.goal ? { n: String(d.goal.name ?? "").slice(0, 14), d: d.goal.daysToGo, s: d.goal.targetTimeSecs ?? null } : null,
+    block: b ? { n: String(b.name ?? "").slice(0, 14), st: b.status, d: b.daysToStart, l: b.daysLeft, w: b.weekNo, of: b.weeks ?? null,
+      dec: goal("decoupling") ? { v: goal("decoupling").value, ok: goal("decoupling").status } : null,
+      str: goal("strength") ? { v: goal("strength").value, of: goal("strength").of, ok: goal("strength").status } : null,
+      acwr: goal("acwr") ? { v: goal("acwr").value, ok: goal("acwr").status } : null } : null,
+    tss: total(week),
+    plan: week.plannedLoad ?? null,
+    goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
+    wk: d.weeks.slice(-6).map((w) => [total(w), w.plannedLoad ?? null]),
+    days,
+    kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
+    failed: failedOf(d).length,
+  };
+}
+
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
 // wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
 const CACHE_KEY = "widget:dashboard-cache";
@@ -296,18 +339,26 @@ async function dashboardCached(env, fresh) {
   return data;
 }
 
+// Die Uhr bekommt ein eigenes Token (WATCH_TOKEN), das nur die Ansicht "watch" oeffnet: Es steht im Klartext in den
+// Watchface-Einstellungen von Garmin Connect und soll nicht das ganze Dashboard freigeben.
+function isWatchAuthorized(req, env) {
+  const given = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  return Boolean(env?.WATCH_TOKEN) && given.length > 0 && timingSafeEqual(given, env.WATCH_TOKEN);
+}
+
 export async function handleWidgetRequest(req, env) {
   const headers = { "cache-control": "no-store" };
-  if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
-  if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
+  const view0 = new URL(req.url).searchParams.get("view");
+  if (!env?.DASHBOARD_TOKEN && !env?.WATCH_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
+  if (!isAuthorized(req, env) && !(view0 === "watch" && isWatchAuthorized(req, env))) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
   const params = new URL(req.url).searchParams;
   const view = params.get("view");
   // Kraft kommt allein aus EGYM, ohne das Dashboard (Intervals, Yazio, Runalyze) zu laden
   if (view === "kraft") return json(await loadWidgetKraft(env, params.get("fresh") === "1"), 200, headers);
   const dashboard = await dashboardCached(env, params.get("fresh") === "1");
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
-  const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  const live = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : buildWidget(dashboard, env);
+  const goals = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
+  const live = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }

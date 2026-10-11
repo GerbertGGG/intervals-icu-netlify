@@ -1,0 +1,5 @@
+<strings>
+  <string id="AppName">Intervals</string>
+  <string id="BaseUrlTitle">Worker-Adresse</string>
+  <string id="TokenTitle">Uhr-Token (WATCH_TOKEN)</string>
+</strings>

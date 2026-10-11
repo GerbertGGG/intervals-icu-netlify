@@ -484,3 +484,24 @@ console.log("zones from intervals ok");
   assert.ok(p[1].atl < p[0].atl && p[2].ctl < p[0].ctl + 0.1); // Ruhetage: ATL fällt schnell, CTL langsam
   assert.deepEqual(buildFormProjection([], ev, "2026-10-09"), []);
 }
+
+// Garmin-Watchface: kleine Ansicht "watch" mit eigenem Token
+{
+  const { buildWidgetWatch } = await import("../src/widget.js");
+  const w = buildWidgetWatch(d, { WEEKLY_TSS_GOAL: "150" }, { kcal: 2100 }, { energyKcal: 1840.4 });
+  assert.equal(w.t, today);
+  assert.equal(w.ti, 2); // 30.09.2026 ist ein Mittwoch
+  assert.equal(w.days.length, 7);
+  assert.equal(w.wk.length, 6);
+  assert.deepEqual(w.kcal, { v: 1840, g: 2100 });
+  assert.equal(w.goal, 150);
+  assert.equal(w.days[6]?.p ?? 1, 1); // Zukunft hoechstens geplant, nie erledigt
+  assert.ok(JSON.stringify(w).length < 1500, "Antwort fuer den Hintergrunddienst der Uhr klein halten");
+  const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+  const envW = { ...env, WATCH_TOKEN: "uhr" };
+  assert.equal((await handleWidgetRequest(req("watch", "uhr"), envW)).status, 200);
+  assert.equal((await handleWidgetRequest(req("small", "uhr"), envW)).status, 401); // Uhr-Token oeffnet nur "watch"
+  assert.equal((await handleWidgetRequest(req("watch", "falsch"), envW)).status, 401);
+  assert.equal((await handleWidgetRequest(req("watch", "geheim"), envW)).status, 200); // Dashboard-Token geht weiter
+  assert.equal((await handleWidgetRequest(req("watch", "uhr"), env)).status, 401); // ohne WATCH_TOKEN kein Zugang
+}

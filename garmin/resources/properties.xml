@@ -1,0 +1,7 @@
+<resources>
+  <properties>
+    <!-- Leer = Werte aus source/Config.mc. Gesetzt (Garmin Connect, Store-Version) = diese Werte. -->
+    <property id="BaseUrl" type="string"></property>
+    <property id="Token" type="string"></property>
+  </properties>
+</resources>
