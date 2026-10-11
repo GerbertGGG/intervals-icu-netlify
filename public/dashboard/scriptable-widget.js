@@ -883,12 +883,19 @@ function buildTraining(res) {
     const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 3;
     const dot = nl.addText("●"); dot.font = Font.systemFont(FS.xs); dot.textColor = new Color(hex);
     text(nl, SPORTS[k][0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
+    // Wochenumfang gegen Plan. Schwimmen wird ueber Distanz (Meter) geplant, nicht ueber TSS; Rad und Laufen ueber TSS
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
-    text(vl, `${Math.round(s.weekLoad || 0)}`, FS.lg + 1, { bold: true });
-    text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { color: COL.muted, minScale: 0.7 });
-    c.addSpacer(2);
-    progressBar(c, IW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
+    if (k === "swim") {
+      text(vl, `${Math.round((s.weekKm || 0) * 1000)}`, FS.lg + 1, { bold: true });
+      text(vl, s.plannedKm ? `/ ${Math.round(s.plannedKm * 1000)} m` : "m", FS.xs, { color: COL.muted, minScale: 0.7 });
+      c.addSpacer(2);
+      progressBar(c, IW, s.plannedKm ? (s.weekKm || 0) / s.plannedKm : 0, hex);
+    } else {
+      text(vl, `${Math.round(s.weekLoad || 0)}`, FS.lg + 1, { bold: true });
+      text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { color: COL.muted, minScale: 0.7 });
+      c.addSpacer(2);
+      progressBar(c, IW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
+    }
     c.addSpacer(2);
     // Umfang der letzten 4 Wochen und Entwicklung gegen die 4 davor (Rad und Laufen km ohne Nachkommastelle, Schwimmen mit)
     if (s.km4 != null) {
