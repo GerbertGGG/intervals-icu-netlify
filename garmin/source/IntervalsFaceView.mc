@@ -203,8 +203,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var size = m != null ? m.toNumber() + "'" : (km != null ? km.toFloat().format("%.0f") + " KM" : "");
         var text = join(compact([dayText, label, size]), " · ");
         var font = _small;
-        var w = dc.getTextWidthInPixels(text, font) + px(28);
-        var h = dc.getFontHeight(font) + px(6);
+        var w = dc.getTextWidthInPixels(text, font) + px(22);
+        var h = dc.getFontHeight(font) + px(2);
         var top = px(108);
         dc.setColor(sportColor(sport), Graphics.COLOR_BLACK);
         dc.fillRoundedRectangle(_cx - w / 2, top, w, h, h / 2);
@@ -310,8 +310,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     // ---- Randbögen: Kalorien links, Regenwahrscheinlichkeit rechts ---------------------
 
     private function drawSideArcs(dc as Dc, data as Dictionary) as Void {
-        var r = px(204);
-        var pen = px(10);
+        var r = px(208);
+        var pen = px(6);
 
         // Kalorien: Bogen von unten links nach oben links (Winkel: 0 = oben, im Uhrzeigersinn)
         var kcal = data.get("kcal") as Dictionary?;
@@ -322,7 +322,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(AMBER, Graphics.COLOR_TRANSPARENT);
         dc.drawText(px(74), px(TIME_Y) - px(17), Graphics.FONT_XTINY, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(74), px(TIME_Y) + px(17), Graphics.FONT_XTINY, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(px(74), px(TIME_Y) + px(16), _small, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         // Wetter kommt von der Uhr
         var temp = "--";
