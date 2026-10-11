@@ -31,12 +31,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private var _sleep as Boolean = false;
     private var _small as Graphics.FontType = Graphics.FONT_XTINY;
     private var _tiny as Graphics.FontType = Graphics.FONT_XTINY;
+    private var _mid as Graphics.FontType = Graphics.FONT_XTINY;
 
     function initialize() {
         WatchFace.initialize();
         // Kleine Schrift für Statuszeile, Sticker und Beschriftungen (erzeugt mit tools/make_font.py)
         _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
         _tiny = WatchUi.loadResource(Rez.Fonts.Tiny) as Graphics.FontType;
+        _mid = WatchUi.loadResource(Rez.Fonts.Mid) as Graphics.FontType;
     }
 
     function onEnterSleep() as Void {
@@ -245,7 +247,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, cy - px(38), _tiny, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy, _small, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(cx, cy, _mid, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // ok = im Ziel, warn = knapp, bad = verfehlt; base und none (Ausgangswert, noch keine Daten) bleiben grau
@@ -322,7 +324,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kf = (kv != null && kg != null && kg > 0) ? clamp01(kv.toFloat() / kg) : 0.0;
         sideArc(dc, r, pen, 238, 292, kf, AMBER, TRACK);
         dc.setColor(AMBER, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(74), px(TIME_Y) - px(17), _small, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(px(74), px(TIME_Y) - px(17), _mid, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
         dc.drawText(px(74), px(TIME_Y) + px(16), _small, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
@@ -345,9 +347,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         sideArc(dc, r, pen, 68, 122, rain, SKY, TRACK);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(74), px(TIME_Y) - px(17), _small, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx * 2 - px(74), px(TIME_Y) - px(17), _mid, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(SKY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(74), px(TIME_Y) + px(17), _small, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx * 2 - px(74), px(TIME_Y) + px(17), _mid, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // Bogen von a1 nach a2 (Grad, 0 = oben, im Uhrzeigersinn), Füllung ab a1
