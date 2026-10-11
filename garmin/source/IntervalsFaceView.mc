@@ -22,6 +22,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const BAR_NOW = 0x4A7BD0;
     const GAUGE = 0xA8AEB8;
     const STALE_SECS = 3600;
+    const TIME_Y = 190;
+    const TRACK = 0x3A414C;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -93,11 +95,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dc.drawText(_cx, _cy, font, hs + ":" + ms, just);
             return;
         }
-        var y = px(200);
+        var y = px(TIME_Y);
         dc.setColor(HOUR, Graphics.COLOR_BLACK);
-        dc.drawText(_cx - px(66), y, font, hs, just);
+        dc.drawText(_cx - px(58), y, font, hs, just);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_BLACK);
-        dc.drawText(_cx + px(66), y, font, ms, just);
+        dc.drawText(_cx + px(58), y, font, ms, just);
+        dc.setColor(GREY, Graphics.COLOR_BLACK);
+        dc.fillCircle(_cx, y - px(12), px(3));
+        dc.fillCircle(_cx, y + px(12), px(3));
     }
 
     // ---- Kopf: Rennziel (wenn nah) und Block -----------------------------------------
@@ -129,7 +134,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             text = text + " !";
         }
         dc.setColor(GREY, Graphics.COLOR_BLACK);
-        dc.drawText(_cx, px(94), font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx, px(96), font, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // ---- Wochentage oben -------------------------------------------------------
@@ -200,7 +205,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var font = _small;
         var w = dc.getTextWidthInPixels(text, font) + px(28);
         var h = dc.getFontHeight(font) + px(6);
-        var top = px(114);
+        var top = px(108);
         dc.setColor(sportColor(sport), Graphics.COLOR_BLACK);
         dc.fillRoundedRectangle(_cx - w / 2, top, w, h, h / 2);
         dc.setColor(0x0A0A0A, Graphics.COLOR_TRANSPARENT);
@@ -222,21 +227,21 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var strFrac = (strV != null && strOf != null && strOf > 0) ? strV.toFloat() / strOf : 0.0;
         var acwrV = acwr != null ? numOrNull(acwr.get("v")) : null;
 
-        gauge(dc, 143, 310, "DEC", dec != null ? fmtNum(dec.get("v"), true) : "--", 0.0, dec);
-        gauge(dc, 227, 316, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
-        gauge(dc, 311, 310, "ACWR", acwr != null ? fmtNum(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
+        gauge(dc, 150, 282, "DEC", dec != null ? fmtNum(dec.get("v"), true) : "--", 0.0, dec);
+        gauge(dc, 227, 286, "KRAFT", strV != null ? strV.toNumber() + "/" + (strOf != null ? strOf.toNumber() : "?") : "--", strFrac, str);
+        gauge(dc, 304, 282, "ACWR", acwr != null ? fmtNum(acwr.get("v"), false) : "--", acwrV != null ? acwrV.toFloat() / 100 : 0.0, acwr);
     }
 
     private function gauge(dc as Dc, x as Number, y as Number, label as String, value as String, frac as Float, goal as Dictionary?) as Void {
         var cx = px(x);
         var cy = px(y);
-        var r = px(33);
+        var r = px(28);
         var color = statusColor(goal != null ? goal.get("ok") : null);
         dc.setColor(0x12161B, Graphics.COLOR_BLACK);
-        dc.fillCircle(cx, cy, r + px(5));
-        ring(dc, cx, cy, r, px(5), frac, color, DIM);
+        dc.fillCircle(cx, cy, r + px(4));
+        ring(dc, cx, cy, r, px(4), frac, color, DIM);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(47), _small, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(cx, cy - px(40), _small, label, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, cy, Graphics.FONT_XTINY, value, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
@@ -266,7 +271,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             runs.add([" · Ziel ", GREY]);
             runs.add([goal.toNumber().toString(), Graphics.COLOR_WHITE]);
         }
-        drawRuns(dc, px(367), Graphics.FONT_XTINY, runs);
+        drawRuns(dc, px(338), Graphics.FONT_XTINY, runs);
 
         var wk = data.get("wk") as Array?;
         if (wk == null) {
@@ -282,11 +287,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 }
             }
         }
-        var base = px(424);
-        var hmax = px(40);
+        var base = px(392);
+        var hmax = px(34);
         for (var i = 0; i < wk.size() && i < 6; i++) {
             var pair = wk[i] as Array;
-            var x = px(135 + i * 32);
+            var x = px(147 + i * 28);
             var t = numOrNull(pair[0]);
             var g = numOrNull(pair[1]);
             var bh = t != null ? (t * hmax / max).toNumber() : 0;
@@ -294,10 +299,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 bh = px(4);
             }
             dc.setColor(i == wk.size() - 1 ? BAR_NOW : BAR, Graphics.COLOR_BLACK);
-            dc.fillRoundedRectangle(x, base - bh, px(24), bh, px(4));
+            dc.fillRoundedRectangle(x, base - bh, px(20), bh, px(4));
             if (g != null) {
                 dc.setColor(GREEN, Graphics.COLOR_BLACK);
-                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(30), px(3), px(1));
+                dc.fillRoundedRectangle(x - px(3), base - (g * hmax / max).toNumber() - px(1), px(26), px(3), px(1));
             }
         }
     }
@@ -306,18 +311,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function drawSideArcs(dc as Dc, data as Dictionary) as Void {
         var r = px(204);
-        var pen = px(10);
+        var pen = px(8);
 
         // Kalorien: Bogen von unten links nach oben links (Winkel: 0 = oben, im Uhrzeigersinn)
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
         var kf = (kv != null && kg != null && kg > 0) ? clamp01(kv.toFloat() / kg) : 0.0;
-        sideArc(dc, r, pen, 238, 292, kf, AMBER, 0x664816);
+        sideArc(dc, r, pen, 238, 292, kf, AMBER, TRACK);
         dc.setColor(AMBER, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(66), _cy - px(19), Graphics.FONT_XTINY, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(px(74), px(TIME_Y) - px(17), Graphics.FONT_XTINY, kv != null ? kv.toNumber().toString() : "--", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(px(66), _cy + px(19), Graphics.FONT_XTINY, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(px(74), px(TIME_Y) + px(17), Graphics.FONT_XTINY, "kcal", Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
         // Wetter kommt von der Uhr
         var temp = "--";
@@ -336,11 +341,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 rainText = Math.round(chance).toNumber().toString() + "%";
             }
         }
-        sideArc(dc, r, pen, 68, 122, rain, SKY, 0x2A4966);
+        sideArc(dc, r, pen, 68, 122, rain, SKY, TRACK);
         dc.setColor(Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(66), _cy - px(19), Graphics.FONT_XTINY, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx * 2 - px(74), px(TIME_Y) - px(17), Graphics.FONT_XTINY, temp, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(SKY, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(_cx * 2 - px(66), _cy + px(19), Graphics.FONT_XTINY, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+        dc.drawText(_cx * 2 - px(74), px(TIME_Y) + px(17), Graphics.FONT_XTINY, rainText, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // Bogen von a1 nach a2 (Grad, 0 = oben, im Uhrzeigersinn), Füllung ab a1
