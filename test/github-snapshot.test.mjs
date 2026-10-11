@@ -14,7 +14,7 @@ globalThis.fetch = async (url) => {
 };
 
 let r = await syncSnapshotsFromGithub(env);
-assert.deepEqual(r.map((x) => x.status), ["übernommen", "keine Datei"]);
+assert.deepEqual(r.map((x) => x.status), ["übernommen", "keine Datei", "keine Datei"]);
 assert.ok(urls[0].endsWith("/GerbertGGG/intervals-icu-netlify/snapshots/runalyze.json"));
 assert.equal(JSON.parse(kv.get("dashboard:runalyze")).vdot, 40);
 
@@ -32,7 +32,7 @@ files["studie.json"] = JSON.stringify({ fetchedAt: "2026-10-01T05:00:00Z", text:
 const origErr = console.error; console.error = () => {};
 r = await syncSnapshotsFromGithub(env);
 console.error = origErr;
-assert.deepEqual(r.map((x) => x.status), ["Fehler", "übernommen"]);
+assert.deepEqual(r.map((x) => x.status), ["Fehler", "übernommen", "keine Datei"]);
 assert.equal(JSON.parse(kv.get("dashboard:runalyze")).vdot, 41);
 assert.equal(JSON.parse(kv.get("dashboard:studie")).source, "Autor 2026");
 console.log("github-snapshot tests ok");

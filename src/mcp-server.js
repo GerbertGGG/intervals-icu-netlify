@@ -2,8 +2,8 @@
 // (planned workouts, past activities, wellness) and the Yazio nutrition diary as
 // tools so a Claude chat can be added as a custom connector against this Worker,
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
-// second integrations. Die einzigen schreibenden Tools sind save_runalyze_snapshot und
-// save_studie: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// second integrations. Die einzigen schreibenden Tools sind save_runalyze_snapshot,
+// save_studie und save_coach: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
@@ -12,6 +12,7 @@ import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessR
 import { hasKv, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
+import { COACH_KV_KEY, validateCoach } from "./coach-snapshot.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -114,6 +115,21 @@ const TOOLS = [
       required: ["fetchedAt", "text", "source"],
     },
   },
+  {
+    name: "save_coach",
+    description:
+      "Schreibt die Tagesaussage des Coaches fürs Dashboard (Karte) und Widget (Hinweiszeile). Bei jedem Update aufrufen, fetchedAt = jetzt. Das Widget zeigt sie nur 36 Stunden lang.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+        note: { type: "string", description: "Hinweis für heute, 1-2 Sätze, max. 160 Zeichen, Du-Form, mit Konsequenz (steht im Widget)." },
+        headline: { type: "string", description: "Kurzurteil, max. 80 Zeichen (optional)." },
+        text: { type: "string", description: "Ganzer Bericht ohne Studien-Check, max. 8000 Zeichen (optional, fürs Dashboard)." },
+      },
+      required: ["fetchedAt", "note"],
+    },
+  },
 ];
 
 function resolveRange(args, { pastDefaultDays, futureDefaultDays }) {
@@ -133,6 +149,7 @@ async function saveSnapshot(env, args, validate, kvKey) {
 async function callTool(env, name, args) {
   if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
   if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
+  if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY);
   if (name === "get_planned_workouts") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 0, futureDefaultDays: 14 });
     return fetchIntervalsEvents(env, oldest, newest);

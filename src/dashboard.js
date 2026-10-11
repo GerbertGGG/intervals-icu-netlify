@@ -14,6 +14,7 @@ import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot 
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { buildIntervalSessions } from "./interval-splits.js";
 import { readStudie } from "./studie-snapshot.js";
+import { readCoach } from "./coach-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { withActualToday } from "./live-load.js";
 import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
@@ -556,7 +557,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -571,6 +572,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     readRunalyzeSnapshot(env),
     readRunalyzeHistory(env),
     readStudie(env),
+    readCoach(env),
   ]);
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
@@ -650,6 +652,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
+    coach: coach ?? null,
     plannedWeek: buildPlannedWeek(events, todayIso),
     planned: buildPlanned(events, todayIso, { paces: stepPaces, zonePct: thresholds.run.paceZonePct, thresholdSecPerKm: thresholds.run.thresholdPaceSecPerKm }),
   };

@@ -11,7 +11,7 @@ const rpc = async (method, params, token = "gut") => {
 };
 
 const list = await rpc("tools/list");
-assert.ok(["save_runalyze_snapshot", "save_studie"].every((n) => list.body.result.tools.some((t) => t.name === n)));
+assert.ok(["save_runalyze_snapshot", "save_studie", "save_coach"].every((n) => list.body.result.tools.some((t) => t.name === n)));
 
 const snap = { fetchedAt: "2026-10-02T05:00:00Z", vdot: 40, prognosis: [{ distanceKm: 5, seconds: 1500 }], races: [] };
 assert.equal((await rpc("tools/call", { name: "save_runalyze_snapshot", arguments: snap }, "schlecht")).status, 401);
@@ -28,5 +28,12 @@ assert.equal(r.body.result.isError, true); // source fehlt
 r = await rpc("tools/call", { name: "save_studie", arguments: { fetchedAt: snap.fetchedAt, text: "t", source: "Autor 2026" } });
 assert.ok(!r.body.result.isError);
 assert.equal(JSON.parse(kv.get("dashboard:studie")).source, "Autor 2026");
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt } });
+assert.equal(r.body.result.isError, true); // note fehlt
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt, note: "x".repeat(161) } });
+assert.equal(r.body.result.isError, true); // note zu lang
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt, note: "Heute locker bleiben.", headline: "Ruhe" } });
+assert.ok(!r.body.result.isError);
+assert.equal(JSON.parse(kv.get("dashboard:coach")).note, "Heute locker bleiben.");
 console.log = log;
 console.log("mcp-save tests ok");

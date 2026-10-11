@@ -6,6 +6,7 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
+import { handleCoachRequest } from "./coach-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest } from "./widget.js";
@@ -50,11 +51,13 @@ export default {
             return json({ ok: false, error: String(e?.message ?? e) }, 502);
           }
         });
-      // Runalyze-Snapshot und Studien-Check, geschrieben aus einer Coaching-Sitzung.
+      // Runalyze-Snapshot, Studien-Check und Coach-Aussage, geschrieben aus einer Coaching-Sitzung.
       case "/api/runalyze":
         return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
       case "/api/studie":
         return route(() => handleStudieRequest(req, env, isAuthorized));
+      case "/api/coach":
+        return route(() => handleCoachRequest(req, env, isAuthorized));
       // MCP-Connector (mcp-oauth.js, mcp-server.js): Claude liest Intervals/Yazio und schreibt die Snapshots.
       case "/.well-known/oauth-authorization-server":
         return handleAuthServerMetadata(url);
@@ -72,7 +75,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Runalyze-/Studien-Snapshots, die der Coaching-Task per GitHub-Branch liefert, danach der Tageseintrag im Zeitverlauf.
+    // Runalyze-/Studien-/Coach-Snapshots, die der Coaching-Task per GitHub-Branch liefert, danach der Tageseintrag im Zeitverlauf.
     ctx.waitUntil(
       syncSnapshotsFromGithub(env)
         .then(() => recordRunalyzeHistory(env))
