@@ -1,4 +1,4 @@
-import { diffDays } from "./date-utils.js";
+import { diffDays, mondayOnOrBefore } from "./date-utils.js";
 
 const addDays = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
 
@@ -397,6 +397,10 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     const full = weeks.filter((x) => x.done && x.load);
     const hits = full.filter((x) => x.hit).length;
     const openWeek = weeks.find((x) => !x.done) ?? null;
+    // Kalenderwoche (Mo–So) bis heute, wie die Kraft-Karte im Dashboard; die Blockwochen beginnen am Starttag des Blocks
+    const monday = mondayOnOrBefore(todayIso);
+    const calInWeek = (input.strength ?? []).filter((y) => y.date >= monday && y.date <= todayIso);
+    const calWeek = { start: monday, count: setsMode ? calInWeek.reduce((a, y) => a + (Number.isFinite(y.sets) ? y.sets : 0), 0) : new Set(calInWeek.map((y) => y.date)).size };
     const unit = setsMode ? "Sätze" : "× Kraft";
     const what = setsMode ? `≥ ${need} Sätze` : `${need}× Kraft`;
     let status, target;
@@ -410,7 +414,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     }
     goals.push({
       key: "strength", ...(perLoad ? { group: "leitplanke" } : {}), label: perLoad ? "Kraft" : "Kraft-Konsistenz", target, unit: "Wochen",
-      value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), goalSets: setsMode ? need : null, weekGoal: need, countUnit: unit,
+      value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), calWeek, goalSets: setsMode ? need : null, weekGoal: need, countUnit: unit,
       ...(perLoad ? { needWeeks: st.need, ofWeeks: st.of } : {}),
       status,
       egym: Boolean(input.strengthSource?.egym), egymAt: input.strengthSource?.egymAt ?? null,
