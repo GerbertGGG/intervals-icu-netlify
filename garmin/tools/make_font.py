@@ -4,11 +4,11 @@ Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel
 Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmäßig "small")
 Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit springt nicht).
 Die Schriften des Zifferblatts (Inter, SIL Open Font License, Paket fonts-inter):
-  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/InterDisplay-SemiBold.otf 126 time digits
-  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 19 small
-  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-Bold.otf 16 mid
-  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 13 cap
-  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 11 tiny
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/InterDisplay-SemiBold.otf 132 time digits
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 24 small
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-Bold.otf 21 mid
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 17 cap
+  python3 garmin/tools/make_font.py /usr/share/fonts/opentype/inter/Inter-SemiBold.otf 14 tiny
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys

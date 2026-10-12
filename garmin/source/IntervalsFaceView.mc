@@ -20,8 +20,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const FG = 0xF5F5F7;
     const SEC = 0x8E8E93;
     const TER = 0x48484A;
-    const TRACK = 0x2C2C2E;
-    const FREE = 0x1C1C1E;
+    const TRACK = 0x3A3A3C;
+    const FREE = 0x2C2C2E;
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
@@ -30,9 +30,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const STR = 0xFF6482;
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
-    const TIME_Y = 196;
-    const READY_Y = 266;
-    const COMP_Y = 334;
+    const TIME_Y = 184;
+    const READY_Y = 250;
+    const COMP_Y = 328;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -82,7 +82,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
         var data = Application.Storage.getValue("d") as Dictionary?;
         if (data == null) {
-            drawLine(dc, px(READY_Y), [["dot", px(6), TER], ["gap", px(8)], ["t", "Keine Daten", SEC, _small]]);
+            drawLine(dc, px(READY_Y), [["dot", px(7), TER], ["gap", px(9)], ["t", "Keine Daten", SEC, _small]]);
             return;
         }
         drawWeek(dc, data);
@@ -133,26 +133,26 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = numOrNull(data.get("ti"));
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            var p = pt(px(196), -36 + 12 * i);
+            var p = pt(px(194), -39 + 13 * i);
             var day = days[i] as Dictionary?;
             if (today != null && today == i) {
                 dc.setPenWidth(px(2));
                 dc.setColor(FG, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(17));
+                dc.drawCircle(p[0], p[1], px(21));
             }
             if (day == null) {
                 dc.setColor(FREE, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(13));
+                dc.fillCircle(p[0], p[1], px(16));
                 dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
             } else {
                 var color = sportColor(day.get("s"));
                 dc.setColor(color, Graphics.COLOR_BLACK);
                 if (numOrNull(day.get("p")) == 1) {
                     dc.setPenWidth(px(3));
-                    dc.drawCircle(p[0], p[1], px(12));
+                    dc.drawCircle(p[0], p[1], px(15));
                     dc.setColor(color, Graphics.COLOR_TRANSPARENT);
                 } else {
-                    dc.fillCircle(p[0], p[1], px(14));
+                    dc.fillCircle(p[0], p[1], px(17));
                     dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
                 }
             }
@@ -195,7 +195,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         } else if (km != null) {
             label = label + " · " + km.toFloat().format("%.0f") + " km";
         }
-        drawLine(dc, px(112), [["dot", px(5), sportColor(sport)], ["gap", px(8)], ["t", dayText, SEC, _cap], ["gap", px(8)], ["t", label, FG, _small]]);
+        drawLine(dc, px(106), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
     }
 
     // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
@@ -210,7 +210,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         else if ("bad".equals(rd)) { word = "Ruhig angehen"; color = BAD; }
         // Älter als eine Stunde: alles grau mit "!"
         var stale = isStale(data);
-        var items = [["dot", px(6), stale ? TER : color], ["gap", px(8)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
+        var items = [["dot", px(7), stale ? TER : color], ["gap", px(9)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
         var w = data.get("w") as Dictionary?;
         if (w != null) {
             var text = "Hinweis";
@@ -219,10 +219,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 text = "ACWR " + decimal(v, "%.2f");
             }
             items.add(["gap", px(14)]);
-            items.add(["bar", px(18), TER]);
+            items.add(["bar", px(22), TER]);
             items.add(["gap", px(14)]);
-            items.add(["tri", px(15), WARN]);
-            items.add(["gap", px(7)]);
+            items.add(["tri", px(19), WARN]);
+            items.add(["gap", px(8)]);
             items.add(["t", text, WARN, _small]);
         }
         drawLine(dc, px(READY_Y), items);
@@ -235,7 +235,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
-        complication(dc, 110, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "KCAL", frac(kv, kg), accent(KCAL), FG);
+        complication(dc, 104, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "KCAL", frac(kv, kg), accent(KCAL), FG);
 
         // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL); grün, sobald erreicht
         var tss = numOrNull(data.get("tss"));
@@ -244,7 +244,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             target = numOrNull(data.get("goal"));
         }
         var tf = frac(tss, target);
-        complication(dc, 188, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/ " + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
+        complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/ " + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
 
         // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
         // (base und none, also Ausgangswert oder noch keine Daten, grau)
@@ -253,7 +253,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var so = str != null ? numOrNull(str.get("of")) : null;
         var st = str != null ? str.get("ok") : null;
         var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
-        complication(dc, 266, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, FG);
+        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, FG);
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, Regenwahrscheinlichkeit als Ring
         var temp = "--";
@@ -272,21 +272,21 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 rainText = Math.round(chance).toNumber().toString() + " %";
             }
         }
-        complication(dc, 344, "WETTER", temp, rainText, rain, accent(RAIN), FG);
+        complication(dc, 350, "WETTER", temp, rainText, rain, accent(RAIN), FG);
     }
 
     private function complication(dc as Dc, x as Number, label as String, value as String, sub as String, f as Float, color as Number, valueColor as Number) as Void {
         var cx = px(x);
         var cy = px(COMP_Y);
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
-        ring(dc, cx, cy, px(29), px(5), f, color, TRACK);
+        ring(dc, cx, cy, px(34), px(6), f, color, TRACK);
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, px(COMP_Y - 42), _tiny, label, just);
+        dc.drawText(cx, px(COMP_Y - 48), _tiny, label, just);
         dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(5), _mid, value, just);
+        dc.drawText(cx, cy - px(6), _mid, value, just);
         if (sub.length() > 0) {
             dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, cy + px(13), _tiny, sub, just);
+            dc.drawText(cx, cy + px(16), _tiny, sub, just);
         }
     }
 
@@ -317,13 +317,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
         var font = null;
         if (Graphics has :getVectorFont) {
-            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicSemiBold", "RobotoRegular"], :size => px(15) });
+            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicSemiBold", "RobotoRegular"], :size => px(18) });
         }
         if (font != null && dc has :drawRadialText) {
             // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
-            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(203), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(208), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
         } else {
-            dc.drawText(_cx, px(418), _cap, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(_cx, px(414), _cap, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
 
