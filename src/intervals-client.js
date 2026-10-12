@@ -112,15 +112,15 @@ export async function postManualActivities(env, activities) {
   return r.json();
 }
 
-// Koppelt eine Aktivitaet mit einem geplanten Workout aus dem Kalender (wie "Mit geplantem Training verbinden" in Intervals).
-export async function pairActivityWithEvent(env, activityId, eventId) {
+// Aendert Felder einer Aktivitaet, z. B. paired_event_id (wie "Mit geplantem Training verbinden") oder die Dauer.
+export async function updateIntervalsActivity(env, activityId, patch) {
   const url = `${BASE_URL}/activity/${encodeURIComponent(activityId)}`;
   const r = await fetchWithRetry(
     url,
-    { method: "PUT", headers: { Authorization: authHeader(env), "Content-Type": "application/json" }, body: JSON.stringify({ paired_event_id: eventId }) },
-    "activity pair",
+    { method: "PUT", headers: { Authorization: authHeader(env), "Content-Type": "application/json" }, body: JSON.stringify(patch) },
+    "activity update",
   );
-  if (!r.ok) throw new Error(`activity pair ${r.status}: ${await r.text()}`);
+  if (!r.ok) throw new Error(`activity update ${r.status}: ${await r.text()}`);
 }
 
 // Rohe Sportart-Einstellungen (Schwellen, Zonen, FTP). Best effort: null bei jedem Fehler.

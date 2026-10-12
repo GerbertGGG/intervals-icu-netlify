@@ -159,3 +159,14 @@ test("EGYM-Aktivitaet wird mit dem geplanten Krafttraining desselben Tages gekop
   assert.deepEqual(pairsForPlanned([{ ...acts[0], paired_event_id: 3 }], events), []);
   assert.deepEqual(pairsForPlanned(acts, [{ ...events[2], paired_activity_id: "i9" }]), []);
 });
+
+test("Dauer wird nachgezogen, wenn Intervals beim Upsert die alte behalten hat", async () => {
+  const { durationFixes } = await import("../src/egym-intervals-sync.js");
+  const built = [{ external_id: "egym-2026-10-12", moving_time: 1500 }, { external_id: "egym-2026-10-08", moving_time: 1200 }];
+  const existing = [
+    { id: "i1", external_id: "egym-2026-10-12", moving_time: 180, elapsed_time: 180 },
+    { id: "i2", external_id: "egym-2026-10-08", moving_time: 1200, elapsed_time: 1200 },
+    { id: "i3", external_id: "24695691983", moving_time: 1347, elapsed_time: 1347 },
+  ];
+  assert.deepEqual(durationFixes(existing, built), [{ activityId: "i1", moving_time: 1500, elapsed_time: 1500 }]);
+});
