@@ -124,7 +124,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Oberer Rand: Woche Mo bis So ------------------------------------------
-    // Gefüllt in Sportfarbe = erledigt, Ring = geplant, dunkel = frei, weißer Ring = heute.
+    // Gefüllt in Sportfarbe = erledigt, gedimmt gefüllt = geplant, dunkel = frei, weißer Ring = heute.
     // Zwei Sportarten an einem Tag: geteilter Kreis, links die erste (erledigt vor geplant), rechts die zweite.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
@@ -149,7 +149,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dc.setColor(FREE, Graphics.COLOR_BLACK);
                 dc.fillCircle(p[0], p[1], px(20));
             } else if (day.get("s2") == null) {
-                // Eine Sportart: gefüllt = erledigt, Ring = geplant
+                // Eine Sportart: voll = erledigt, gedimmt = geplant
                 var color = sportColor(day.get("s"));
                 var planned = numOrNull(day.get("p")) == 1;
                 dayPart(dc, p, color, planned, 0);
@@ -169,18 +169,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Kreis oder Halbkreis eines Tages: side 0 = ganz, -1 = linke Hälfte, 1 = rechte Hälfte
+    // Kreis oder Halbkreis eines Tages: side 0 = ganz, -1 = linke Hälfte, 1 = rechte Hälfte.
+    // Erledigt = volle Sportfarbe, geplant = dieselbe Farbe gedimmt (ein dünner Ring war auf der Uhr schwer zu erkennen).
     private function dayPart(dc as Dc, p as Array<Number>, color as Number, planned as Boolean, side as Number) as Void {
-        dc.setColor(color, Graphics.COLOR_BLACK);
-        if (planned) {
-            dc.setPenWidth(px(4));
-            if (side == 0) {
-                dc.drawCircle(p[0], p[1], px(19));
-            } else {
-                // Garmin-Winkel: 0 = 3 Uhr, gegen den Uhrzeigersinn; links 90 bis 270, rechts 270 bis 90
-                dc.drawArc(p[0], p[1], px(19), Graphics.ARC_COUNTER_CLOCKWISE, side < 0 ? 90 : 270, side < 0 ? 270 : 90);
-            }
-        } else if (side == 0) {
+        dc.setColor(planned ? blend(0x000000, color, 0.38) : color, Graphics.COLOR_BLACK);
+        if (side == 0) {
             dc.fillCircle(p[0], p[1], px(21));
         } else {
             // Gefüllter Halbkreis als Vieleck
@@ -198,7 +191,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if ("run".equals(sport)) { return 0xFFD60A; }        // gelb
         if ("bike".equals(sport)) { return 0x30D158; }       // grün
         if ("swim".equals(sport)) { return 0x409CFF; }       // blau
-        if ("strength".equals(sport)) { return 0xFF9F0A; }   // orange
+        if ("strength".equals(sport)) { return 0xBF5AF2; }   // lila, Orange war neben dem Gelb vom Laufen kaum zu unterscheiden
         return SEC;
     }
 
