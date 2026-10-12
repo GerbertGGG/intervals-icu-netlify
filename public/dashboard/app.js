@@ -850,7 +850,7 @@ function renderBlock(SB) {
     } else if (g.key === "ramp") {
       vis = bars(g.weeks.filter((w) => w.ramp != null).map((w) => ({ v: w.ramp, muted: !w.load, t: `ab ${fmtDate(w.start)}: ${w.ramp > 0 ? "+" : ""}${fmt(w.ramp, 1)}${w.load ? "" : " (Entlastung)"}${w.done ? "" : " (läuft)"}` })), g.max);
     } else if (g.key === "pause") {
-      // Auch im Ausgangswert nach der Grenze färben (wie die Säulen der anderen Karten); das Badge bleibt „Basis“
+      // Auch im Ausgangswert nach der Grenze färben (wie die Säulen der anderen Karten); Badge-Text bleibt „Basis“, Farbe rot über der Grenze
       vis = `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / (g.max * 1.5)) * 100)}%;background:var(--${g.status === "base" ? (g.value > g.max ? "bad" : "ok") : g.status === "none" ? "muted" : g.status})"></div><i style="left:${(1 / 1.5) * 100}%"></i></div>`;
     } else if (g.key === "strength") {
       vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}${w.load === false ? " (Entlastungswoche, zählt nicht)" : ""}"></i>`).join("")}</div>`;
@@ -859,7 +859,7 @@ function renderBlock(SB) {
     }
     const legend = g.key === "strength" ? `Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group ? ", hell = Entlastungswoche" : ""}` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
     const sub = [g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ");
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${valOf(g)}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${legend ? `<div class="sub">${esc(legend)}</div>` : ""}<div class="sub">${sub}</div>${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}</div>`;
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${valOf(g)}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${legend ? `<div class="sub">${esc(legend)}</div>` : ""}<div class="sub">${sub}</div>${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}</div>`;
   };
   const list = SB.goals ?? [];
   const grouped = list.some((g) => g.group);
