@@ -32,8 +32,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
     const TIME_Y = 184;
-    const READY_Y = 250;
-    const COMP_Y = 328;
+    const READY_Y = 260;
+    const COMP_Y = 340;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -47,7 +47,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Barlow (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
+        // Bitmap-Schriften aus Nunito (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
         _mid = WatchUi.loadResource(Rez.Fonts.Mid) as Graphics.FontType;
@@ -326,7 +326,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
-    // drawRadialText braucht eine Vektorschrift der Uhr (Barlow gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
+    // drawRadialText braucht eine Vektorschrift der Uhr (Nunito gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
 
     private function drawStatusArc(dc as Dc, data as Dictionary) as Void {
         var race = data.get("race") as Dictionary?;
@@ -357,10 +357,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         if (font != null && dc has :drawRadialText) {
             // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
-            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(204), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(206), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
         } else {
             // Gerade Zeile: die große Schrift, wenn sie in die Breite des Kreises an dieser Stelle passt, sonst die kleinere
-            var y = px(392);
+            var y = px(400);
             var dy = y - _cy;
             var room = 2 * Math.sqrt(_cx * _cx - dy * dy) - px(40);
             var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;
