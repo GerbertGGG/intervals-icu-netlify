@@ -26,6 +26,8 @@ const g = Object.fromEntries(buildBlockGoals(blk, input, "2026-11-16").map((x) =
 assert.equal(g.decoupling.value, 7.8); assert.equal(g.decoupling.count, 2); assert.equal(g.decoupling.status, "ok"); // Lauf vor Blockstart zählt nicht
 assert.equal(g.strength.of, 4); assert.equal(g.strength.value, 2); // ohne Satzzahlen: Woche 1 und Woche 3 mit je 2 Kraft-Tagen
 const sg = Object.fromEntries(buildBlockGoals(blk, { ...input, strength: [{ date: "2026-10-20", sets: 40 }, { date: "2026-10-22", sets: 25 }, { date: "2026-10-28", sets: 30 }, { date: "2026-11-03", sets: 70 }], weeklyGoalSets: 60 }, "2026-11-16").map((x) => [x.key, x]));
+// Kalenderwoche fuer die Uhr: Mo 16.11. zaehlt nur ab Montag, nicht die Blockwoche ab dem Starttag
+assert.deepEqual(Object.fromEntries(buildBlockGoals(blk, { ...input, strength: [{ date: "2026-11-15", sets: 30 }, { date: "2026-11-16", sets: 12 }], weeklyGoalSets: 60 }, "2026-11-16").map((x) => [x.key, x])).strength.calWeek, { start: "2026-11-16", count: 12 });
 assert.equal(sg.strength.goalSets, 60); assert.equal(sg.strength.value, 2); assert.equal(sg.strength.of, 4); assert.match(sg.strength.target, /60 Sätze.*75 %/);
 assert.equal(g.strength.egym, true);
 assert.equal(g.acwr.value, 75); assert.equal(g.acwr.status, "warn");

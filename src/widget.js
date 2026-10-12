@@ -299,10 +299,11 @@ function watchWarning(d) {
   return f ? { k: "hint", t: f.tag ?? null } : null;
 }
 
-// Kraft fuer den Ring: Saetze der laufenden Woche gegen das Wochenziel (Standard 60, EGYM_WEEKLY_GOAL_SETS), nicht die
-// Zahl der Wochen im Ziel (value/of des Block-Ziels). Ohne Satzzahlen (kein EGYM) Kraft-Tage gegen 2. Ohne Block-Ziel null.
+// Kraft fuer den Ring: Saetze der laufenden Kalenderwoche (Mo–So, wie die Kraft-Karte im Dashboard) gegen das Wochenziel
+// (Standard 60, EGYM_WEEKLY_GOAL_SETS), nicht die Zahl der Wochen im Ziel (value/of des Block-Ziels) und nicht die
+// Blockwoche, die am Starttag des Blocks beginnt. Ohne Satzzahlen (kein EGYM) Kraft-Tage gegen 2. Ohne Block-Ziel null.
 function strengthWeek(goal) {
-  const cur = goal?.weeks?.find((w) => !w.done);
+  const cur = goal?.calWeek ?? goal?.weeks?.find((w) => !w.done);
   if (!cur || !(goal.weekGoal > 0)) return null;
   return { v: cur.count, of: goal.weekGoal, ok: "ok" };
 }

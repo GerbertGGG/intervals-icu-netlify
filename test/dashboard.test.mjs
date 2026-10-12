@@ -516,6 +516,8 @@ console.log("zones from intervals ok");
   // Kraft-Ring: Saetze der laufenden Woche gegen das Wochenziel, nicht Wochen im Ziel (value/of)
   const sb = { status: "upcoming", goals: [{ key: "strength", value: 0, of: 7, weekGoal: 60, weeks: [{ done: true, count: 40 }, { done: false, count: 18 }] }] };
   assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: sb }).str, { v: 18, of: 60, ok: "ok" });
+  // Kalenderwoche (Mo–So) hat Vorrang vor der Blockwoche, damit die Uhr dasselbe zeigt wie das Dashboard
+  assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: { ...sb, goals: [{ ...sb.goals[0], calWeek: { start: "2026-10-12", count: 0 } }] } }).str, { v: 0, of: 60, ok: "ok" });
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: { ...sb, goals: [{ ...sb.goals[0], weeks: [{ done: true, count: 40 }] }] } }).str, null);
   assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: { status: "active", weekNo: 3, weeks: 6, daysToStart: -14, goals: [] } }).block, { st: "active", d: -14, w: 3, of: 6 });
   assert.equal(w.race?.d ?? null, d.goal?.daysToGo ?? null); // Renn-Countdown fuer den unteren Rand
