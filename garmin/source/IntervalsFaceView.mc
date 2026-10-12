@@ -31,9 +31,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const STR = 0xFF9F0A;
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
-    const TIME_Y = 184;
-    const READY_Y = 260;
-    const COMP_Y = 340;
+    const TIME_Y = 192;
+    const READY_Y = 268;
+    const COMP_Y = 346;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -135,7 +135,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = numOrNull(data.get("ti"));
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            var p = pt(px(194), -39 + 13 * i);
+            var p = pt(px(194), -36 + 12 * i);
             var day = days[i] as Dictionary?;
             if (today != null && today == i) {
                 dc.setPenWidth(px(2));
@@ -227,7 +227,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         } else if (km != null) {
             label = label + " · " + km.toFloat().format("%.0f") + " km";
         }
-        drawLine(dc, px(106), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
+        drawLine(dc, px(116), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
     }
 
     // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
@@ -269,7 +269,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
-        complication(dc, 104, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "kcal", frac(kv, kg), accent(KCAL), FG);
+        // In der Mitte der Rest bis zum Ziel, darüber hinaus "+N"; ohne Ziel die gegessenen kcal mit "kcal".
+        // Der Ring füllt sich mit dem Gegessenen.
+        var kText = kv != null ? kv.toNumber().toString() : "--";
+        var kSub = "kcal";
+        if (kv != null && kg != null && kg > 0) {
+            var rest = (kg - kv).toNumber();
+            kText = rest >= 0 ? rest.toString() : "+" + (-rest).toString();
+            kSub = "";
+        }
+        complication(dc, 104, "ESSEN", kText, kSub, frac(kv, kg), accent(KCAL), FG);
 
         // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL); grün, sobald erreicht
         var tss = numOrNull(data.get("tss"));
@@ -317,7 +326,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, px(COMP_Y - 48), _tiny, label, just);
         dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(9), _mid, value, just);
+        dc.drawText(cx, sub.length() > 0 ? cy - px(9) : cy, _mid, value, just);
         if (sub.length() > 0) {
             // Unterzeile ("/60", "kcal") eine Stufe größer und heller, sonst sind 6 und 8 kaum zu unterscheiden
             dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
@@ -357,10 +366,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         if (font != null && dc has :drawRadialText) {
             // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
-            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(206), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(208), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
         } else {
             // Gerade Zeile: die große Schrift, wenn sie in die Breite des Kreises an dieser Stelle passt, sonst die kleinere
-            var y = px(400);
+            var y = px(406);
             var dy = y - _cy;
             var room = 2 * Math.sqrt(_cx * _cx - dy * dy) - px(40);
             var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;

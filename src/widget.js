@@ -328,9 +328,10 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
   const monday = addDays(d.today, -dayIndex(d.today));
   const days = Array.from({ length: 7 }, (_, i) => watchDay(d, addDays(monday, i)));
-  // Naechste Einheit: heute, solange heute noch nichts gemacht wurde, sonst die naechste geplante
-  const doneToday = Object.keys(d.daily.find((x) => x.date === d.today)?.sports ?? {}).length > 0;
-  const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !doneToday));
+  // Naechste Einheit: die erste geplante von heute, deren Sportart heute noch nicht erledigt ist (Rad erledigt,
+  // Kraft offen -> Kraft), sonst die naechste geplante an einem spaeteren Tag
+  const doneToday = d.daily.find((x) => x.date === d.today)?.sports ?? {};
+  const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !(doneToday[p.sport] > 0)));
   const next = nextP ? { d: Math.round((Date.parse(nextP.date + "T00:00:00Z") - Date.parse(d.today + "T00:00:00Z")) / 86400000), s: nextP.sport, m: nextP.durationMin ?? null, km: nextP.distanceKm ?? null } : null;
   const b = d.seasonBlock;
   const strength = b?.goals?.find((g) => g.key === "strength");
