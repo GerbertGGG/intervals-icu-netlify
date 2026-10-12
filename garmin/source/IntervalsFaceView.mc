@@ -4,6 +4,7 @@ import Toybox.Lang;
 import Toybox.Math;
 import Toybox.System;
 import Toybox.Time;
+import Toybox.Time.Gregorian;
 import Toybox.Weather;
 import Toybox.WatchUi;
 
@@ -298,10 +299,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
         complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", frac(sv, so), sc, FG);
 
-        // Wetter kommt von der Uhr: Temperatur in der Mitte, Regenwahrscheinlichkeit als Ring
+        // Wetter kommt von der Uhr: Temperatur in der Mitte, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden.
+        // Der Ring ist ein 12-Stunden-Zifferblatt: jede Stunde ein Segment an ihrer Uhrposition, je heller, desto wahrscheinlicher Regen.
         var temp = "--";
-        var rain = 0.0;
-        var rainText = "";
+        var chances = new Array<Number?>[12];
+        var now = Time.now().value();
         var cond = Weather.getCurrentConditions();
         if (cond != null) {
             if (cond.temperature != null) {
@@ -310,19 +312,50 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 temp = Math.round(imperial ? c * 9 / 5 + 32 : c).toNumber().toString() + "°";
             }
             if (cond.precipitationChance != null) {
-                var chance = (cond.precipitationChance as Numeric).toFloat();
-                rain = clamp01(chance / 100);
-                rainText = Math.round(chance).toNumber().toString() + " %";
+                chances[System.getClockTime().hour % 12] = Math.round((cond.precipitationChance as Numeric).toFloat()).toNumber();
             }
         }
-        complication(dc, 350, "WETTER", temp, rainText, rain, accent(RAIN), FG);
+        if (Weather has :getHourlyForecast) {
+            var hourly = Weather.getHourlyForecast();
+            if (hourly != null) {
+                for (var i = 0; i < hourly.size(); i++) {
+                    var h = hourly[i];
+                    if (h == null || h.forecastTime == null || h.precipitationChance == null) {
+                        continue;
+                    }
+                    var m = h.forecastTime as Time.Moment;
+                    // Laufende Stunde plus die nächsten 11; die Stunde in 12 Stunden läge wieder auf dem Segment von jetzt
+                    var dt = m.value() - now;
+                    if (dt <= -3600 || dt > 11 * 3600) {
+                        continue;
+                    }
+                    var slot = Gregorian.info(m, Time.FORMAT_SHORT).hour % 12;
+                    if (chances[slot] == null) {
+                        chances[slot] = Math.round((h.precipitationChance as Numeric).toFloat()).toNumber();
+                    }
+                }
+            }
+        }
+        var maxChance as Number? = null;
+        for (var i = 0; i < 12; i++) {
+            var hc = chances[i];
+            if (hc != null && (maxChance == null || hc > maxChance)) {
+                maxChance = hc;
+            }
+        }
+        rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, accent(RAIN));
+        labels(dc, 350, "WETTER", temp, maxChance != null ? maxChance.toString() + " %" : "", FG);
     }
 
     private function complication(dc as Dc, x as Number, label as String, value as String, sub as String, f as Float, color as Number, valueColor as Number) as Void {
+        ring(dc, px(x), px(COMP_Y), px(34), px(6), f, color, TRACK);
+        labels(dc, x, label, value, sub, valueColor);
+    }
+
+    private function labels(dc as Dc, x as Number, label as String, value as String, sub as String, valueColor as Number) as Void {
         var cx = px(x);
         var cy = px(COMP_Y);
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
-        ring(dc, cx, cy, px(34), px(6), f, color, TRACK);
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, px(COMP_Y - 48), _tiny, label, just);
         dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
@@ -332,6 +365,40 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, cy + px(15), _cap, sub, just);
         }
+    }
+
+    // Regenring: 12 Segmente, Segment i liegt zwischen i und i+1 Uhr. Unter 10 % oder ohne Vorhersage bleibt es dunkel,
+    // sonst wird es mit der Wahrscheinlichkeit heller. Ein weißer Strich markiert die aktuelle Uhrzeit,
+    // dort beginnt und endet die Zeitleiste.
+    private function rainRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, chances as Array<Number?>, color as Number) as Void {
+        dc.setPenWidth(pen);
+        for (var i = 0; i < 12; i++) {
+            var c = chances[i];
+            var col = (c == null || c < 10) ? TRACK : blend(TRACK, color, clamp01(c / 100.0));
+            dc.setColor(col, Graphics.COLOR_BLACK);
+            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - i * 30 - 2), norm(90 - (i + 1) * 30 + 2));
+        }
+        var clock = System.getClockTime();
+        var t = Math.toRadians((clock.hour % 12 + clock.min / 60.0) * 30);
+        var sin = Math.sin(t);
+        var cos = Math.cos(t);
+        var r0 = r - pen / 2 - px(3);
+        var r1 = r + pen / 2 + px(3);
+        // Schwarz unterlegt, damit der Strich auf hellen und dunklen Segmenten gleich gut zu sehen ist
+        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
+        dc.setPenWidth(px(6));
+        dc.drawLine(cx + r0 * sin, cy - r0 * cos, cx + r1 * sin, cy - r1 * cos);
+        dc.setColor(FG, Graphics.COLOR_BLACK);
+        dc.setPenWidth(px(2));
+        dc.drawLine(cx + r0 * sin, cy - r0 * cos, cx + r1 * sin, cy - r1 * cos);
+    }
+
+    // Farbe zwischen a (f = 0) und b (f = 1)
+    private function blend(a as Number, b as Number, f as Float) as Number {
+        var r = ((a >> 16) & 0xFF) + ((((b >> 16) & 0xFF) - ((a >> 16) & 0xFF)) * f).toNumber();
+        var g = ((a >> 8) & 0xFF) + ((((b >> 8) & 0xFF) - ((a >> 8) & 0xFF)) * f).toNumber();
+        var bl = (a & 0xFF) + (((b & 0xFF) - (a & 0xFF)) * f).toNumber();
+        return (r << 16) | (g << 8) | bl;
     }
 
     // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
