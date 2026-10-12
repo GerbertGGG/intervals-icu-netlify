@@ -141,3 +141,21 @@ test("Intervals-Aktivitaet: eine je Kraft-Tag mit external_id, Saetzen und Dauer
   assert.match(a[0].description, /2 Sätze/);
   assert.match(a[0].description, /Lat Pulldown: 10 × 50 kg, 8 × 60 kg/);
 });
+
+test("EGYM-Aktivitaet wird mit dem geplanten Krafttraining desselben Tages gekoppelt", async () => {
+  const { pairsForPlanned } = await import("../src/egym-intervals-sync.js");
+  const acts = [
+    { id: "i1", external_id: "egym-2026-10-12", start_date_local: "2026-10-12T19:50:42", paired_event_id: null },
+    { id: "i2", external_id: "egym-2026-10-08", start_date_local: "2026-10-08T19:29:27", paired_event_id: null },
+    { id: "i3", external_id: "24695691983", start_date_local: "2026-10-12T11:53:31", paired_event_id: null },
+  ];
+  const events = [
+    { id: 1, category: "SEASON_START", type: null, start_date_local: "2026-10-12T00:00:00" },
+    { id: 2, category: "WORKOUT", type: "Ride", start_date_local: "2026-10-12T00:00:00" },
+    { id: 3, category: "WORKOUT", type: "WeightTraining", start_date_local: "2026-10-12T00:00:00", paired_activity_id: null },
+  ];
+  assert.deepEqual(pairsForPlanned(acts, events), [{ activityId: "i1", eventId: 3 }]);
+  // schon gekoppelt: nichts zu tun
+  assert.deepEqual(pairsForPlanned([{ ...acts[0], paired_event_id: 3 }], events), []);
+  assert.deepEqual(pairsForPlanned(acts, [{ ...events[2], paired_activity_id: "i9" }]), []);
+});
