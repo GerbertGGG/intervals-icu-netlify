@@ -136,13 +136,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = numOrNull(data.get("ti"));
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            // 15° Abstand statt 12°, damit die Kreise größer sein können, ohne sich zu berühren
-            var p = pt(px(194), -45 + 15 * i);
+            // Weiter außen und 13,5° Abstand: die Kreise berühren sich nicht, und die äußeren liegen höher,
+            // sodass sie die Zeile mit der nächsten Einheit nicht mehr überdecken
+            var p = pt(px(200), -40.5 + 13.5 * i);
             var day = days[i] as Dictionary?;
             if (today != null && today == i) {
                 dc.setPenWidth(px(2));
                 dc.setColor(FG, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(25));
+                dc.drawCircle(p[0], p[1], px(24));
             }
             var textColor = SEC;
             if (day == null) {
@@ -160,8 +161,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 var planned2 = numOrNull(day.get("p2")) == 1;
                 dayPart(dc, p, sportColor(day.get("s")), planned1, -1);
                 dayPart(dc, p, sportColor(day.get("s2")), planned2, 1);
+                // Breiter schwarzer Spalt, sonst verschwimmen die beiden Hälften auf der Uhr zu einem Kreis
                 dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
-                dc.fillRectangle(p[0] - 1, p[1] - px(22), 2, px(44));
+                dc.fillRectangle(p[0] - px(2), p[1] - px(22), px(4), px(44));
                 textColor = planned1 || planned2 ? FG : Graphics.COLOR_BLACK;
             }
             dc.setColor(textColor, Graphics.COLOR_TRANSPARENT);
@@ -171,8 +173,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // Kreis oder Halbkreis eines Tages: side 0 = ganz, -1 = linke Hälfte, 1 = rechte Hälfte.
     // Erledigt = volle Sportfarbe, geplant = dieselbe Farbe gedimmt (ein dünner Ring war auf der Uhr schwer zu erkennen).
+    // Halbkreise geplant etwas heller als ganze Kreise, damit beide Sportfarben eines Doppeltags erkennbar bleiben.
     private function dayPart(dc as Dc, p as Array<Number>, color as Number, planned as Boolean, side as Number) as Void {
-        dc.setColor(planned ? blend(0x000000, color, 0.38) : color, Graphics.COLOR_BLACK);
+        dc.setColor(planned ? blend(0x000000, color, side == 0 ? 0.38 : 0.55) : color, Graphics.COLOR_BLACK);
         if (side == 0) {
             dc.fillCircle(p[0], p[1], px(21));
         } else {
@@ -222,7 +225,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         } else if (km != null) {
             label = label + " · " + km.toFloat().format("%.0f") + " km";
         }
-        drawLine(dc, px(116), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
+        drawLine(dc, px(119), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
     }
 
     // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
@@ -294,7 +297,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", frac(sv, so), sc, FG);
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden.
-        // Der Ring ist ein 12-Stunden-Zifferblatt: jede Stunde ein Segment an ihrer Uhrposition, je heller, desto wahrscheinlicher Regen.
+        // Der Ring ist ein 12-Stunden-Zifferblatt: jede Stunde ein Bogen an ihrer Uhrposition, blau, wenn es dann regnen kann,
+        // je kräftiger, desto wahrscheinlicher. Blau auch im Mono-Modus, denn hier bedeutet die Farbe etwas.
         var temp = "--";
         var chances = new Array<Number?>[12];
         var now = Time.now().value();
@@ -338,7 +342,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 maxChance = hc as Number;
             }
         }
-        rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, accent(RAIN));
+        rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, RAIN);
         labels(dc, 350, "WETTER", temp, maxChance >= 0 ? maxChance.toString() + " %" : "", FG);
     }
 
@@ -362,16 +366,20 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Regenring: 12 Segmente, Segment i liegt zwischen i und i+1 Uhr. Unter 10 % oder ohne Vorhersage bleibt es dunkel,
-    // sonst wird es mit der Wahrscheinlichkeit heller. Ein weißer Strich markiert die aktuelle Uhrzeit,
-    // dort beginnt und endet die Zeitleiste.
+    // Regenring: grauer Grundring wie bei den anderen Komplikationen, darauf ein blauer Bogen für jede Stunde
+    // mit mindestens 10 % Regenwahrscheinlichkeit (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert
+    // die aktuelle Uhrzeit, dort beginnt und endet die Zeitleiste. Ohne Regen bleibt der Ring grau.
     private function rainRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, chances as Array<Number?>, color as Number) as Void {
         dc.setPenWidth(pen);
+        dc.setColor(TRACK, Graphics.COLOR_BLACK);
+        dc.drawCircle(cx, cy, r);
         for (var i = 0; i < 12; i++) {
             var c = chances[i];
-            var col = (c == null || c < 10) ? TRACK : blend(TRACK, color, clamp01(c / 100.0));
-            dc.setColor(col, Graphics.COLOR_BLACK);
-            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - i * 30 - 2), norm(90 - (i + 1) * 30 + 2));
+            if (c == null || c < 10) {
+                continue;
+            }
+            dc.setColor(blend(TRACK, color, 0.35 + 0.65 * clamp01(c / 100.0)), Graphics.COLOR_BLACK);
+            dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - i * 30), norm(90 - (i + 1) * 30));
         }
         var clock = System.getClockTime();
         var t = Math.toRadians((clock.hour % 12 + clock.min / 60.0) * 30);
