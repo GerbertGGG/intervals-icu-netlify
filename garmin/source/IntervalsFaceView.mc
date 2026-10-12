@@ -136,17 +136,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = numOrNull(data.get("ti"));
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            var p = pt(px(194), -36 + 12 * i);
+            // 15° Abstand statt 12°, damit die Kreise größer sein können, ohne sich zu berühren
+            var p = pt(px(194), -45 + 15 * i);
             var day = days[i] as Dictionary?;
             if (today != null && today == i) {
                 dc.setPenWidth(px(2));
                 dc.setColor(FG, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(21));
+                dc.drawCircle(p[0], p[1], px(25));
             }
             var textColor = SEC;
             if (day == null) {
                 dc.setColor(FREE, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(16));
+                dc.fillCircle(p[0], p[1], px(20));
             } else if (day.get("s2") == null) {
                 // Eine Sportart: gefüllt = erledigt, Ring = geplant
                 var color = sportColor(day.get("s"));
@@ -160,11 +161,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dayPart(dc, p, sportColor(day.get("s")), planned1, -1);
                 dayPart(dc, p, sportColor(day.get("s2")), planned2, 1);
                 dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
-                dc.fillRectangle(p[0] - 1, p[1] - px(18), 2, px(36));
+                dc.fillRectangle(p[0] - 1, p[1] - px(22), 2, px(44));
                 textColor = planned1 || planned2 ? FG : Graphics.COLOR_BLACK;
             }
             dc.setColor(textColor, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(p[0], p[1], _tiny, letters[i], just);
+            dc.drawText(p[0], p[1], _cap, letters[i], just);
         }
     }
 
@@ -172,18 +173,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private function dayPart(dc as Dc, p as Array<Number>, color as Number, planned as Boolean, side as Number) as Void {
         dc.setColor(color, Graphics.COLOR_BLACK);
         if (planned) {
-            dc.setPenWidth(px(3));
+            dc.setPenWidth(px(4));
             if (side == 0) {
-                dc.drawCircle(p[0], p[1], px(15));
+                dc.drawCircle(p[0], p[1], px(19));
             } else {
                 // Garmin-Winkel: 0 = 3 Uhr, gegen den Uhrzeigersinn; links 90 bis 270, rechts 270 bis 90
-                dc.drawArc(p[0], p[1], px(15), Graphics.ARC_COUNTER_CLOCKWISE, side < 0 ? 90 : 270, side < 0 ? 270 : 90);
+                dc.drawArc(p[0], p[1], px(19), Graphics.ARC_COUNTER_CLOCKWISE, side < 0 ? 90 : 270, side < 0 ? 270 : 90);
             }
         } else if (side == 0) {
-            dc.fillCircle(p[0], p[1], px(17));
+            dc.fillCircle(p[0], p[1], px(21));
         } else {
             // Gefüllter Halbkreis als Vieleck
-            var r = px(17);
+            var r = px(21);
             var pts = [] as Array<Graphics.Point2D>;
             for (var k = 0; k <= 12; k++) {
                 var a = Math.toRadians(90 + 180 * k / 12.0);
