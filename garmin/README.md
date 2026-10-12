@@ -6,7 +6,7 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwar
 - **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′"). Heute bleibt eine geplante Einheit stehen, solange ihre Sportart heute noch nicht erledigt ist (Rad erledigt, Kraft offen → Kraft).
 - **Uhrzeit**, groß.
 - **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampelpunkt. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat (mit Stichwort, z. B. "Eiweiß", "Kalorien", "Tagebuch", "Heißhunger", "Ruhetag", "Last", "Laufumfang").
-- **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N drüber“; der Ring füllt sich mit dem Gegessenen), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot), Wetter (Temperatur, Regenwahrscheinlichkeit als Ring).
+- **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N“; der Ring füllt sich mit dem Gegessenen), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot), Wetter (Temperatur, Regenwahrscheinlichkeit als Ring).
 - **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gebogene Schrift.
 
 Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mockup, true = jede Komplikation in eigener dezenter Farbe).

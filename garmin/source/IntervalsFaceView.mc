@@ -269,14 +269,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
-        // In der Mitte der Rest bis zum Ziel ("übrig"), darüber hinaus "+N drüber"; ohne Ziel die gegessenen kcal.
+        // In der Mitte der Rest bis zum Ziel, darüber hinaus "+N"; ohne Ziel die gegessenen kcal mit "kcal".
         // Der Ring füllt sich mit dem Gegessenen.
         var kText = kv != null ? kv.toNumber().toString() : "--";
         var kSub = "kcal";
         if (kv != null && kg != null && kg > 0) {
             var rest = (kg - kv).toNumber();
             kText = rest >= 0 ? rest.toString() : "+" + (-rest).toString();
-            kSub = rest >= 0 ? "übrig" : "drüber";
+            kSub = "";
         }
         complication(dc, 104, "ESSEN", kText, kSub, frac(kv, kg), accent(KCAL), FG);
 
