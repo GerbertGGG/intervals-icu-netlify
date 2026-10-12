@@ -1,6 +1,6 @@
 import { isoDateBerlin } from "./date-utils.js";
 import { fetchEgymWorkouts, hasEgymCredentials } from "./egym-client.js";
-import { fetchIntervalsActivities, fetchIntervalsEvents, pairActivityWithEvent, postManualActivities } from "./intervals-client.js";
+import { fetchIntervalsActivities, fetchIntervalsEvents, postManualActivities, updateIntervalsActivity } from "./intervals-client.js";
 import { isStrengthExercise, secondsOf, setsOf, setVolumeKg, strengthDays, uniqueWorkouts, weightKgOf } from "./egym-widget.js";
 
 // Schreibt die EGYM-Krafteinheiten als manuelle Aktivitaeten (Typ WeightTraining) nach Intervals.icu, damit Kraft dort
@@ -71,16 +71,29 @@ export function pairsForPlanned(activities, events) {
   return out;
 }
 
-// Ungekoppelte EGYM-Aktivitaeten mit dem geplanten Krafttraining desselben Tages verbinden; Fehler nur protokollieren
-async function pairWithPlanned(env, oldest, newest) {
+// Reine Funktion: Dauer, die in Intervals nicht zum EGYM-Stand passt. Der Bulk-Upsert uebernimmt bei einer vorhandenen
+// Aktivitaet die Beschreibung, aber nicht die Dauer (ein Sync mitten im Training liess sonst z. B. 3 Minuten stehen).
+export function durationFixes(existing, built) {
+  const want = new Map((built ?? []).map((b) => [b.external_id, b.moving_time]));
+  return (existing ?? [])
+    .filter((a) => a?.id && want.has(a.external_id) && (a.moving_time !== want.get(a.external_id) || a.elapsed_time !== want.get(a.external_id)))
+    .map((a) => ({ activityId: a.id, moving_time: want.get(a.external_id), elapsed_time: want.get(a.external_id) }));
+}
+
+// Nach dem Upsert: Dauer nachziehen und ungekoppelte EGYM-Aktivitaeten mit dem geplanten Krafttraining desselben Tages
+// verbinden; Fehler nur protokollieren
+async function reconcile(env, built, oldest, newest) {
   try {
     const [acts, events] = await Promise.all([fetchIntervalsActivities(env, oldest, newest), fetchIntervalsEvents(env, oldest, newest)]);
+    const patches = new Map();
+    for (const f of durationFixes(acts, built)) patches.set(f.activityId, { moving_time: f.moving_time, elapsed_time: f.elapsed_time });
     const pairs = pairsForPlanned(acts, events);
-    for (const p of pairs) await pairActivityWithEvent(env, p.activityId, p.eventId);
-    return pairs.length;
+    for (const p of pairs) patches.set(p.activityId, { ...patches.get(p.activityId), paired_event_id: p.eventId });
+    for (const [id, patch] of patches) await updateIntervalsActivity(env, id, patch);
+    return { paired: pairs.length, updated: patches.size };
   } catch (e) {
-    console.warn("egym pairing failed", String(e?.message ?? e));
-    return 0;
+    console.warn("egym reconcile failed", String(e?.message ?? e));
+    return { paired: 0, updated: 0 };
   }
 }
 
@@ -91,6 +104,6 @@ export async function syncEgymToIntervals(env, today = isoDateBerlin()) {
   const activities = buildIntervalsActivities(Array.isArray(r) ? r : r?.workouts ?? []);
   if (!activities.length) return { skipped: false, count: 0 };
   await postManualActivities(env, activities);
-  const paired = await pairWithPlanned(env, activities[0].start_date_local.slice(0, 10), today);
-  return { skipped: false, count: activities.length, paired };
+  const done = await reconcile(env, activities, activities[0].start_date_local.slice(0, 10), today);
+  return { skipped: false, count: activities.length, ...done };
 }
