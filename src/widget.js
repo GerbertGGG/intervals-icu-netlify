@@ -287,6 +287,21 @@ export function buildWidgetBlock(d) {
 // Garmin-Watchface (garmin/): eine einzige, kleine Ansicht ("watch"). Connect IQ erlaubt im Hintergrunddienst nur wenige KB
 // Antwort, deshalb kurze Schluessel und nur Zahlen, keine Freitexte. Wetter und Akku kommen von der Uhr selbst.
 // next = naechste Einheit (d Tage ab heute, s Sportart, m Minuten, km); Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
+// Ein Tag fuer die Wochenpunkte: bis zu zwei Sportarten, erledigte (nach TSS) vor geplanten (nach geplanter Last).
+// Erste in s/p, zweite in s2/p2 (aeltere Uhr-Builds lesen nur s/p). Geplant zaehlt nur ab heute und nur, wenn die
+// Sportart an dem Tag noch nicht erledigt ist; ohne beides null.
+function watchDay(d, date) {
+  const sports = date <= d.today ? d.daily.find((x) => x.date === date)?.sports ?? {} : {};
+  const done = Object.entries(sports).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const planned = date >= d.today
+    ? d.plannedWeek.filter((x) => x.date === date && !done.includes(x.sport)).sort((a, b) => (b.load ?? 0) - (a.load ?? 0)).map((x) => x.sport)
+    : [];
+  const list = [...done.map((k) => ({ s: k, p: 0 })), ...planned.map((k) => ({ s: k, p: 1 }))]
+    .filter((x, i, arr) => arr.findIndex((y) => y.s === x.s) === i).slice(0, 2);
+  if (!list.length) return null;
+  return list.length > 1 ? { ...list[0], s2: list[1].s, p2: list[1].p } : list[0];
+}
+
 // rd = Bereitschaft wie im Dashboard (ok, warn, bad, none); w = Warnung: { k: "acwr", v } wenn der ACWR ueber dem Korridor liegt,
 // sonst { k: "hint", t } bei einer Warnung aus "Was auffaellt" mit Stichwort t (z. B. "Eiweiß"), ohne beides null.
 // race.d = Tage bis zum Rennen; block = Trainingsblock (st Status, d Tage bis Start, w Woche von of) fuer die Zeile am unteren Rand.
@@ -312,14 +327,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
   const monday = addDays(d.today, -dayIndex(d.today));
-  const days = Array.from({ length: 7 }, (_, i) => {
-    const date = addDays(monday, i);
-    const sports = d.daily.find((x) => x.date === date)?.sports ?? {};
-    const top = Object.entries(sports).sort((a, b) => b[1] - a[1])[0]?.[0];
-    if (top && date <= d.today) return { s: top, p: 0 };
-    const plan = date >= d.today ? d.plannedWeek.find((x) => x.date === date) : null;
-    return plan ? { s: plan.sport, p: 1 } : null;
-  });
+  const days = Array.from({ length: 7 }, (_, i) => watchDay(d, addDays(monday, i)));
   // Naechste Einheit: heute, solange heute noch nichts gemacht wurde, sonst die naechste geplante
   const doneToday = Object.keys(d.daily.find((x) => x.date === d.today)?.sports ?? {}).length > 0;
   const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !doneToday));

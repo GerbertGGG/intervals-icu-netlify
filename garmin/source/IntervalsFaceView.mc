@@ -123,6 +123,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // ---- Oberer Rand: Woche Mo bis So ------------------------------------------
     // Gefüllt in Sportfarbe = erledigt, Ring = geplant, dunkel = frei, weißer Ring = heute.
+    // Zwei Sportarten an einem Tag: geteilter Kreis, links die erste (erledigt vor geplant), rechts die zweite.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
         var days = data.get("days") as Array?;
@@ -140,23 +141,53 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dc.setColor(FG, Graphics.COLOR_BLACK);
                 dc.drawCircle(p[0], p[1], px(21));
             }
+            var textColor = SEC;
             if (day == null) {
                 dc.setColor(FREE, Graphics.COLOR_BLACK);
                 dc.fillCircle(p[0], p[1], px(16));
-                dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            } else {
+            } else if (day.get("s2") == null) {
+                // Eine Sportart: gefüllt = erledigt, Ring = geplant
                 var color = sportColor(day.get("s"));
-                dc.setColor(color, Graphics.COLOR_BLACK);
-                if (numOrNull(day.get("p")) == 1) {
-                    dc.setPenWidth(px(3));
-                    dc.drawCircle(p[0], p[1], px(15));
-                    dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-                } else {
-                    dc.fillCircle(p[0], p[1], px(17));
-                    dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-                }
+                var planned = numOrNull(day.get("p")) == 1;
+                dayPart(dc, p, color, planned, 0);
+                textColor = planned ? color : Graphics.COLOR_BLACK;
+            } else {
+                // Doppeltag: links die erste, rechts die zweite Sportart, getrennt durch eine schwarze Linie
+                var planned1 = numOrNull(day.get("p")) == 1;
+                var planned2 = numOrNull(day.get("p2")) == 1;
+                dayPart(dc, p, sportColor(day.get("s")), planned1, -1);
+                dayPart(dc, p, sportColor(day.get("s2")), planned2, 1);
+                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
+                dc.fillRectangle(p[0] - 1, p[1] - px(18), 2, px(36));
+                textColor = planned1 || planned2 ? FG : Graphics.COLOR_BLACK;
             }
+            dc.setColor(textColor, Graphics.COLOR_TRANSPARENT);
             dc.drawText(p[0], p[1], _tiny, letters[i], just);
+        }
+    }
+
+    // Kreis oder Halbkreis eines Tages: side 0 = ganz, -1 = linke Hälfte, 1 = rechte Hälfte
+    private function dayPart(dc as Dc, p as Array<Number>, color as Number, planned as Boolean, side as Number) as Void {
+        dc.setColor(color, Graphics.COLOR_BLACK);
+        if (planned) {
+            dc.setPenWidth(px(3));
+            if (side == 0) {
+                dc.drawCircle(p[0], p[1], px(15));
+            } else {
+                // Garmin-Winkel: 0 = 3 Uhr, gegen den Uhrzeigersinn; links 90 bis 270, rechts 270 bis 90
+                dc.drawArc(p[0], p[1], px(15), Graphics.ARC_COUNTER_CLOCKWISE, side < 0 ? 90 : 270, side < 0 ? 270 : 90);
+            }
+        } else if (side == 0) {
+            dc.fillCircle(p[0], p[1], px(17));
+        } else {
+            // Gefüllter Halbkreis als Vieleck
+            var r = px(17);
+            var pts = [] as Array<Graphics.Point2D>;
+            for (var k = 0; k <= 12; k++) {
+                var a = Math.toRadians(90 + 180 * k / 12.0);
+                pts.add([p[0] - side * r * Math.cos(a), p[1] - r * Math.sin(a)]);
+            }
+            dc.fillPolygon(pts);
         }
     }
 
