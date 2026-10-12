@@ -332,7 +332,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   // Kraft offen -> Kraft), sonst die naechste geplante an einem spaeteren Tag
   const doneToday = d.daily.find((x) => x.date === d.today)?.sports ?? {};
   const nextP = d.planned.find((p) => p.date > d.today || (p.date === d.today && !(doneToday[p.sport] > 0)));
-  const next = nextP ? { d: Math.round((Date.parse(nextP.date + "T00:00:00Z") - Date.parse(d.today + "T00:00:00Z")) / 86400000), s: nextP.sport, m: nextP.durationMin ?? null, km: nextP.distanceKm ?? null } : null;
+  const next = nextP ? { d: Math.round((Date.parse(nextP.date + "T00:00:00Z") - Date.parse(d.today + "T00:00:00Z")) / 86400000), s: nextP.sport, m: nextP.durationMin > 0 ? nextP.durationMin : null, km: nextP.distanceKm > 0 ? nextP.distanceKm : null } : null; // 0 (z. B. Kraft ohne Strecke) nicht anzeigen
   const b = d.seasonBlock;
   const strength = b?.goals?.find((g) => g.key === "strength");
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));

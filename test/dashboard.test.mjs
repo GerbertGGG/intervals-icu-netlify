@@ -507,6 +507,9 @@ console.log("zones from intervals ok");
   assert.deepEqual([other.next.d, other.next.s], [0, "other"]);
   assert.equal(done.next.s, "swim");
   assert.equal(buildWidgetWatch({ ...d, planned: [] }).next, null);
+  // Kraft ohne Dauer und mit Strecke 0: keine "0 km" auf der Uhr
+  const kraft = buildWidgetWatch({ ...d, planned: [{ date: today, sport: "strength", durationMin: null, distanceKm: 0 }] }).next;
+  assert.deepEqual([kraft.m, kraft.km], [null, null]);
   assert.equal(w.days[6]?.p ?? 1, 1); // Zukunft hoechstens geplant, nie erledigt
   // Doppeltage: zwei Sportarten, erledigt (nach TSS) vor geplant, gleiche Sportart nur einmal
   {
