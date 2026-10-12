@@ -330,15 +330,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 }
             }
         }
-        var maxChance as Number? = null;
+        // -1 = keine Regenwahrscheinlichkeit bekannt
+        var maxChance = -1;
         for (var i = 0; i < 12; i++) {
             var hc = chances[i];
-            if (hc != null && (maxChance == null || hc > maxChance)) {
-                maxChance = hc;
+            if (hc != null && (hc as Number) > maxChance) {
+                maxChance = hc as Number;
             }
         }
         rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, accent(RAIN));
-        labels(dc, 350, "WETTER", temp, maxChance != null ? maxChance.toString() + " %" : "", FG);
+        labels(dc, 350, "WETTER", temp, maxChance >= 0 ? maxChance.toString() + " %" : "", FG);
     }
 
     private function complication(dc as Dc, x as Number, label as String, value as String, sub as String, f as Float, color as Number, valueColor as Number) as Void {
