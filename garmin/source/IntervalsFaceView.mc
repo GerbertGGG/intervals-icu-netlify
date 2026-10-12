@@ -199,7 +199,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
-    // rd: ok, warn, bad, none (wie im Dashboard). w: { k: "acwr", v } oder { k: "hint" }.
+    // rd: ok, warn, bad, none (wie im Dashboard). w: { k: "acwr", v } oder { k: "hint", t: Stichwort }.
 
     private function drawReady(dc as Dc, data as Dictionary) as Void {
         var rd = data.get("rd");
@@ -213,7 +213,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var items = [["dot", px(7), stale ? TER : color], ["gap", px(9)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
         var w = data.get("w") as Dictionary?;
         if (w != null) {
-            var text = "Hinweis";
+            // Stichwort aus "Was auffällt" (z. B. "Eiweiß"); ohne Stichwort (ältere Worker-Version) "Hinweis"
+            var tag = w.get("t");
+            var text = tag instanceof Lang.String && tag.length() > 0 ? tag : "Hinweis";
             var v = numOrNull(w.get("v"));
             if ("acwr".equals(w.get("k")) && v != null) {
                 text = "ACWR " + decimal(v, "%.2f");

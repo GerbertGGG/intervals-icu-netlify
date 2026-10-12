@@ -288,14 +288,15 @@ export function buildWidgetBlock(d) {
 // Antwort, deshalb kurze Schluessel und nur Zahlen, keine Freitexte. Wetter und Akku kommen von der Uhr selbst.
 // next = naechste Einheit (d Tage ab heute, s Sportart, m Minuten, km); Tage: Mo bis So der laufenden Woche; s = Sportart (run, bike, swim, strength, other), p = 1 geplant, 0 erledigt, ohne Eintrag frei.
 // rd = Bereitschaft wie im Dashboard (ok, warn, bad, none); w = Warnung: { k: "acwr", v } wenn der ACWR ueber dem Korridor liegt,
-// sonst { k: "hint" } bei einer Warnung aus "Was auffaellt", ohne beides null.
+// sonst { k: "hint", t } bei einer Warnung aus "Was auffaellt" mit Stichwort t (z. B. "Eiweiß"), ohne beides null.
 // race.d = Tage bis zum Rennen; block = Trainingsblock (st Status, d Tage bis Start, w Woche von of) fuer die Zeile am unteren Rand.
 const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
 
 function watchWarning(d) {
   const load = d.summary.load;
   if (load?.acwrCls === "bad" && Number.isFinite(load.acwr)) return { k: "acwr", v: Math.round(load.acwr * 100) / 100 };
-  return topFinding(d) ? { k: "hint" } : null;
+  const f = topFinding(d);
+  return f ? { k: "hint", t: f.tag ?? null } : null;
 }
 
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
