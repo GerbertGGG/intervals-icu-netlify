@@ -168,5 +168,5 @@ test("Dauer wird nachgezogen, wenn Intervals beim Upsert die alte behalten hat",
     { id: "i2", external_id: "egym-2026-10-08", moving_time: 1200, elapsed_time: 1200 },
     { id: "i3", external_id: "24695691983", moving_time: 1347, elapsed_time: 1347 },
   ];
-  assert.deepEqual(durationFixes(existing, built), [{ activityId: "i1", moving_time: 1500, elapsed_time: 1500 }]);
+  assert.deepEqual(durationFixes(existing, built), [{ activityId: "i1", external_id: "egym-2026-10-12", moving_time: 1500, elapsed_time: 1500 }]);
 });

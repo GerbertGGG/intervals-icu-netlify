@@ -123,6 +123,12 @@ export async function updateIntervalsActivity(env, activityId, patch) {
   if (!r.ok) throw new Error(`activity update ${r.status}: ${await r.text()}`);
 }
 
+export async function deleteIntervalsActivity(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(activityId)}`;
+  const r = await fetchWithRetry(url, { method: "DELETE", headers: { Authorization: authHeader(env) } }, "activity delete");
+  if (!r.ok) throw new Error(`activity delete ${r.status}: ${await r.text()}`);
+}
+
 // Rohe Sportart-Einstellungen (Schwellen, Zonen, FTP). Best effort: null bei jedem Fehler.
 export async function fetchIntervalsSportSettings(env) {
   try {
