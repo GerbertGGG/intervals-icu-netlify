@@ -19,6 +19,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     const FG = 0xF5F5F7;
     const SEC = 0x8E8E93;
+    const BOTTOM = 0xAEAEB2;
     const TER = 0x48484A;
     const TRACK = 0x3A3A3C;
     const FREE = 0x2C2C2E;
@@ -347,16 +348,22 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (text.length() == 0) {
             return;
         }
-        dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+        // Heller als die übrigen Beschriftungen, sonst ist die Zeile am Rand kaum lesbar
+        dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
         var font = null;
         if (Graphics has :getVectorFont) {
-            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicSemiBold", "RobotoRegular"], :size => px(18) });
+            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicBold", "BionicSemiBold", "RobotoCondensedRegular", "RobotoRegular"], :size => px(24) });
         }
         if (font != null && dc has :drawRadialText) {
             // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
-            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(208), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(204), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
         } else {
-            dc.drawText(_cx, px(414), _cap, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            // Gerade Zeile: die große Schrift, wenn sie in die Breite des Kreises an dieser Stelle passt, sonst die kleinere
+            var y = px(392);
+            var dy = y - _cy;
+            var room = 2 * Math.sqrt(_cx * _cx - dy * dy) - px(40);
+            var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;
+            dc.drawText(_cx, y, f, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
     }
 

@@ -44,4 +44,4 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 - Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Barlow** (SIL Open Font License) in `resources/fonts/`, die Uhrzeit nur aus Ziffern und gleich breit. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die Barlow-Dateien von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, wird die Bereitschaft grau und bekommt ein `!`.
-- Die gebogene Zeile unten nutzt `drawRadialText`. Das geht nur mit einer Vektorschrift der Uhr (Roboto Condensed, Barlow gibt es nur als Bitmap). Hat die Uhr keine, steht die Zeile gerade.
+- Die gebogene Zeile unten nutzt `drawRadialText`. Das geht nur mit einer Vektorschrift der Uhr (Roboto Condensed, Barlow gibt es nur als Bitmap). Hat die Uhr keine, steht die Zeile gerade, in der großen Schrift, wenn sie in die Breite passt, sonst in der kleineren.
