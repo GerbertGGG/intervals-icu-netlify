@@ -269,7 +269,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
-        complication(dc, 104, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "KCAL", frac(kv, kg), accent(KCAL), FG);
+        complication(dc, 104, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "kcal", frac(kv, kg), accent(KCAL), FG);
 
         // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL); grün, sobald erreicht
         var tss = numOrNull(data.get("tss"));
@@ -278,7 +278,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             target = numOrNull(data.get("goal"));
         }
         var tf = frac(tss, target);
-        complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/ " + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
+        complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
 
         // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
         // (base und none, also Ausgangswert oder noch keine Daten, grau)
@@ -287,7 +287,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var so = str != null ? numOrNull(str.get("of")) : null;
         var st = str != null ? str.get("ok") : null;
         var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
-        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, FG);
+        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", frac(sv, so), sc, FG);
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, Regenwahrscheinlichkeit als Ring
         var temp = "--";
@@ -317,10 +317,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, px(COMP_Y - 48), _tiny, label, just);
         dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(6), _mid, value, just);
+        dc.drawText(cx, cy - px(9), _mid, value, just);
         if (sub.length() > 0) {
-            dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, cy + px(16), _tiny, sub, just);
+            // Unterzeile ("/60", "kcal") eine Stufe größer und heller, sonst sind 6 und 8 kaum zu unterscheiden
+            dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, cy + px(15), _cap, sub, just);
         }
     }
 
