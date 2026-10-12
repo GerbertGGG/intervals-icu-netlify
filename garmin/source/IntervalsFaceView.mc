@@ -326,7 +326,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, px(COMP_Y - 48), _tiny, label, just);
         dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(9), _mid, value, just);
+        dc.drawText(cx, sub.length() > 0 ? cy - px(9) : cy, _mid, value, just);
         if (sub.length() > 0) {
             // Unterzeile ("/60", "kcal") eine Stufe größer und heller, sonst sind 6 und 8 kaum zu unterscheiden
             dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
