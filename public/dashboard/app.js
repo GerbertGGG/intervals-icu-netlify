@@ -963,7 +963,9 @@ function renderEgym(k) {
     try {
       const r = await fetch("/api/egym-sync", { method: "POST", headers: { Authorization: "Bearer " + localStorage.getItem("dashboard-token") } });
       const j = await r.json();
-      msg.textContent = j.ok ? (j.skipped ? "übersprungen: EGYM- oder Intervals-Zugang fehlt im Worker" : `${j.count} Einheit(en) übertragen`) : "Fehler: " + j.error;
+      const mins = j.minutes ? " · Dauer " + Object.entries(j.minutes).map(([d, m]) => `${fmtDate(d)} ${m} min`).join(", ") : "";
+      const extra = j.reconcileError ? ` · Nachziehen fehlgeschlagen: ${j.reconcileError}` : ` · ${j.updated ?? 0} korrigiert, ${j.paired ?? 0} gekoppelt${mins}`;
+      msg.textContent = j.ok ? (j.skipped ? "übersprungen: EGYM- oder Intervals-Zugang fehlt im Worker" : `${j.count} Einheit(en) übertragen${j.count ? extra : ""}`) : "Fehler: " + j.error;
     } catch (e) { msg.textContent = "Fehler: " + (e.message || e); }
   };
   // Muskelalter mit Skala: Balken von 20 bis 60 Jahren, Gesamtalter als eigene Zeile

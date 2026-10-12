@@ -90,10 +90,10 @@ async function reconcile(env, built, oldest, newest) {
     const pairs = pairsForPlanned(acts, events);
     for (const p of pairs) patches.set(p.activityId, { ...patches.get(p.activityId), paired_event_id: p.eventId });
     for (const [id, patch] of patches) await updateIntervalsActivity(env, id, patch);
-    return { paired: pairs.length, updated: patches.size };
+    return { paired: pairs.length, updated: patches.size, minutes: Object.fromEntries(built.map((b) => [b.external_id.slice(5), Math.round(b.moving_time / 60)])) };
   } catch (e) {
     console.warn("egym reconcile failed", String(e?.message ?? e));
-    return { paired: 0, updated: 0 };
+    return { paired: 0, updated: 0, reconcileError: String(e?.message ?? e) };
   }
 }
 
