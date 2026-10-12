@@ -27,7 +27,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const BAD = 0xFF453A;
     const KCAL = 0xFF9F0A;
     const TSS = 0x0A84FF;
-    const STR = 0xFF6482;
+    const STR = 0xFFD60A;
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
     const TIME_Y = 184;
@@ -192,10 +192,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     private function sportColor(sport) as Number {
-        if ("run".equals(sport)) { return 0x63E6BE; }
-        if ("bike".equals(sport)) { return 0xFFD60A; }
-        if ("swim".equals(sport)) { return 0x64D2FF; }
-        if ("strength".equals(sport)) { return 0xFF6482; }
+        if ("run".equals(sport)) { return 0xBF5AF2; }        // lila
+        if ("bike".equals(sport)) { return 0x30D158; }       // grün
+        if ("swim".equals(sport)) { return 0x409CFF; }       // blau
+        if ("strength".equals(sport)) { return 0xFFD60A; }   // gelb
         return SEC;
     }
 
