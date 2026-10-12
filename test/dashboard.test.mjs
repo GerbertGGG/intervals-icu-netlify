@@ -190,12 +190,15 @@ assert.equal(tf[0].sev, 2); // steiler Anstieg der Belastung und des Laufumfangs
 assert.ok(tf[0].act && tf.some((f) => /Laufumfang/.test(f.short)));
 assert.deepEqual(trainingFindings({ ...dd(), weeks: [] }), []); // ohne volle Woche kein Befund
 assert.equal(topFinding(dd()).short.startsWith("Belastung letzte Woche +"), true);
+assert.equal(topFinding(dd()).tag, "Last");
 // Ernährung: Muster statt Einzeltage, "kein Tagebuch" an 4 von 6 Tagen ist eine Warnung
 const food = Array.from({ length: 7 }, (_, i) => ({ date: `2026-09-${24 + i}`, calories: i % 2 ? null : 1900, calorieGoal: 2100, protein: 40 }));
 const nf = nutritionFindings({ today: "2026-09-30", wellness: food, cravings: [] });
 assert.ok(nf.some((f) => /Kein Tagebuch an 3 von 6/.test(f.short)));
 assert.ok(nf.some((f) => /Eiweiß an 3 von 3/.test(f.short))); // 40 g * 4 / 1900 kcal = 8 %
 assert.equal(topFinding({ ...dd({ weeks: [] }), wellness: food }) != null, true);
+// Jeder Befund hat ein Stichwort fuer die Uhr, ein Wort
+for (const f of [...trainingFindings(dd()), ...nutritionFindings({ ...dd({ weeks: [] }), wellness: food })]) assert.match(f.tag ?? "", /^\p{L}+$/u, f.short);
 assert.equal(topFinding({ today: "2026-09-30", weeks: [], daily: [], wellness: [], cravings: [] }), null);
 assert.ok("focus" in buildWidget(d, env));
 for (const sh of [trn.intensity.week, trn.intensity.avg]) if (sh) assert.equal(sh.easy + sh.mid + sh.hard, 100);
@@ -507,6 +510,7 @@ console.log("zones from intervals ok");
   assert.deepEqual(buildWidgetWatch(withLoad({ acwr: 1.5234, acwrCls: "bad" })).w, { k: "acwr", v: 1.52 });
   const calm = buildWidgetWatch(withLoad({ acwr: 1.0, acwrCls: "ok" })).w;
   assert.ok(calm === null || calm.k === "hint");
+  if (calm) assert.equal(calm.t, topFinding(d).tag); // Stichwort fuer die Uhr statt nur "Hinweis"
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).str, null); // ohne Block-Ziel keine Kraft
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).block, null);
   assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: { status: "active", weekNo: 3, weeks: 6, daysToStart: -14, goals: [] } }).block, { st: "active", d: -14, w: 3, of: 6 });

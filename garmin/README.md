@@ -5,7 +5,7 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwar
 - **Woche** Mo bis So am oberen Rand: gefüllt in Sportfarbe = erledigt, Ring = geplant, dunkel = frei, weißer Ring = heute.
 - **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′").
 - **Uhrzeit**, groß.
-- **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampelpunkt. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat ("Hinweis").
+- **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampelpunkt. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat (mit Stichwort, z. B. "Eiweiß", "Kalorien", "Tagebuch", "Heißhunger", "Ruhetag", "Last", "Laufumfang").
 - **Vier Komplikationen**: Essen (kcal gegen Tagesziel), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot), Wetter (Temperatur, Regenwahrscheinlichkeit als Ring).
 - **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gebogene Schrift.
 
