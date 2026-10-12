@@ -1,6 +1,6 @@
 import { isoDateBerlin } from "./date-utils.js";
 import { fetchEgymWorkouts, hasEgymCredentials } from "./egym-client.js";
-import { postManualActivities } from "./intervals-client.js";
+import { fetchIntervalsActivities, fetchIntervalsEvents, pairActivityWithEvent, postManualActivities } from "./intervals-client.js";
 import { isStrengthExercise, secondsOf, setsOf, setVolumeKg, strengthDays, uniqueWorkouts, weightKgOf } from "./egym-widget.js";
 
 // Schreibt die EGYM-Krafteinheiten als manuelle Aktivitaeten (Typ WeightTraining) nach Intervals.icu, damit Kraft dort
@@ -55,6 +55,35 @@ export function buildIntervalsActivities(workouts) {
   });
 }
 
+// Reine Funktion: welche EGYM-Aktivitaet zu welchem geplanten Krafttraining gehoert. Manuell angelegte Aktivitaeten
+// koppelt Intervals nicht selbst mit dem Plan; je Tag nimmt eine EGYM-Aktivitaet das erste noch freie WeightTraining-Workout.
+export function pairsForPlanned(activities, events) {
+  const taken = new Set((activities ?? []).map((a) => a?.paired_event_id).filter(Boolean));
+  const out = [];
+  for (const a of activities ?? []) {
+    if (!String(a?.external_id ?? "").startsWith("egym-") || a.paired_event_id || !a.id) continue;
+    const date = String(a.start_date_local ?? "").slice(0, 10);
+    const ev = (events ?? []).find((e) => e?.category === "WORKOUT" && e.type === "WeightTraining" && String(e.start_date_local ?? "").slice(0, 10) === date && !e.paired_activity_id && !taken.has(e.id));
+    if (!ev) continue;
+    taken.add(ev.id);
+    out.push({ activityId: a.id, eventId: ev.id });
+  }
+  return out;
+}
+
+// Ungekoppelte EGYM-Aktivitaeten mit dem geplanten Krafttraining desselben Tages verbinden; Fehler nur protokollieren
+async function pairWithPlanned(env, oldest, newest) {
+  try {
+    const [acts, events] = await Promise.all([fetchIntervalsActivities(env, oldest, newest), fetchIntervalsEvents(env, oldest, newest)]);
+    const pairs = pairsForPlanned(acts, events);
+    for (const p of pairs) await pairActivityWithEvent(env, p.activityId, p.eventId);
+    return pairs.length;
+  } catch (e) {
+    console.warn("egym pairing failed", String(e?.message ?? e));
+    return 0;
+  }
+}
+
 // Letzte SYNC_DAYS Tage aus EGYM holen und nach Intervals schreiben; ohne Zugangsdaten tut es nichts
 export async function syncEgymToIntervals(env, today = isoDateBerlin()) {
   if (!hasEgymCredentials(env) || !env?.INTERVALS_API_KEY || !env?.ATHLETE_ID) return { skipped: true, count: 0 };
@@ -62,5 +91,6 @@ export async function syncEgymToIntervals(env, today = isoDateBerlin()) {
   const activities = buildIntervalsActivities(Array.isArray(r) ? r : r?.workouts ?? []);
   if (!activities.length) return { skipped: false, count: 0 };
   await postManualActivities(env, activities);
-  return { skipped: false, count: activities.length };
+  const paired = await pairWithPlanned(env, activities[0].start_date_local.slice(0, 10), today);
+  return { skipped: false, count: activities.length, paired };
 }
