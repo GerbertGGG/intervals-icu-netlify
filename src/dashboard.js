@@ -6,7 +6,8 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, buildBlockGoals } from "./season-block.js";
+import { resolveSeasonBlock, buildBlockGoalsFull, windowOf, parseBlockTargets } from "./season-block.js";
+import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
@@ -620,14 +621,26 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ...egymEntries,
       ...[...new Set(blockActs.filter((a) => sportOf(a) === "strength" && (num(a?.moving_time) ?? 0) >= 20 * 60 && !/mobil|stretch|dehn|yoga/i.test(String(a?.name ?? ""))).map((a) => activityDay(a)))].filter((date) => !egymSet.has(date)).map((date) => ({ date })),
     ];
-    const goals = buildBlockGoals(seasonBlock, {
+    // Abschlussziele (Lauf/Rad vergleichbar, Schwimmtest): Rohwerte je Einheit, Decoupling notfalls aus den Zeitreihen (best effort)
+    const tg = parseBlockTargets([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"));
+    const win = windowOf(seasonBlock, todayIso);
+    const sessions = tg.run || tg.bike || tg.swim
+      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500 }).catch((err) => { console.warn("block sessions", err); return {}; })
+      : {};
+    const dayOfWell = (x) => String(x?.id ?? x?.date ?? "").slice(0, 10);
+    const { goals, decision } = buildBlockGoalsFull(seasonBlock, {
       longRuns: [...rzLong, ...icuLong],
       strength: strengthDays,
       weeklyGoalSets: egymGoalOf(env).goal,
       strengthSource: { egym: Boolean(egymDays), egymAt: egymDays?.at ?? null },
-      acwrDays: blockWell.map((x) => ({ date: String(x?.id ?? x?.date ?? "").slice(0, 10), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
+      acwrDays: blockWell.map((x) => ({ date: dayOfWell(x), acwr: num(x?.ctl) > 0 ? num(x?.atl) / num(x.ctl) : null })),
+      ...sessions,
+      ftp: thresholds.bike.indoorFtp ?? thresholds.bike.ftp ?? null,
+      ctlDays: blockWell.map((x) => ({ date: dayOfWell(x), ctl: num(x?.ctl) })),
+      activityDays: [...blockActs.map((a) => activityDay(a)), ...egymEntries.map((x) => x.date)],
+      plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
-    seasonBlock = { ...seasonBlock, goals };
+    seasonBlock = { ...seasonBlock, goals, decision };
   }
 
   return {

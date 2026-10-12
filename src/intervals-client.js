@@ -76,6 +76,14 @@ export async function fetchIntervalsActivityIntervals(env, activityId) {
   return r.json();
 }
 
+// Zeitreihen einer Aktivitaet (z. B. heartrate, velocity_smooth, watts): Liste von { type, data }.
+export async function fetchIntervalsActivityStreams(env, activityId, types) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(activityId)}/streams.json?types=${encodeURIComponent(types.join(","))}`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, "activity streams");
+  if (!r.ok) throw new Error(`activity streams ${r.status}: ${await r.text()}`);
+  return r.json();
+}
+
 export async function putWellnessDay(env, day, patch) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;

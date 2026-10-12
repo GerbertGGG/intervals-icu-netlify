@@ -107,6 +107,12 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .bsq { display: flex; flex-wrap: wrap; gap: 4px; }
 .bsq i { width: 16px; height: 16px; border-radius: 4px; background: var(--line); }
 .bsq i.ok { background: var(--ok); } .bsq i.off { background: var(--plan); opacity: .5; } .bsq i.bad { background: var(--bad); } .bsq i.open { background: transparent; border: 2px dashed var(--line); box-sizing: border-box; }
+.bsq i.rec { background: var(--line); opacity: .45; }
+.btl i.rec { opacity: .35; } .btl i.past.rec, .btl i.now.rec { opacity: .3; }
+.bbars > u.aim { border-top-style: solid; } .bbars > u.must { border-top: 2px dashed var(--muted); }
+.bgh { margin: 4px 0 -2px; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+.bdec { border-radius: 10px; padding: 10px 12px; border: 1px solid var(--line); font-size: .92rem; }
+.bdec.next { border-color: var(--ok); } .bdec.extend { border-color: var(--warn); } .bdec.cause { border-color: var(--bad); }
 .bdet summary { cursor: pointer; font-size: .85rem; color: var(--muted); }
 .bdet p { margin: 6px 0 0; }
 .tile .more { margin-top: auto; padding-top: 4px; font-size: .8rem; text-decoration: none; }

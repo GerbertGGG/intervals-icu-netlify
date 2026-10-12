@@ -12,7 +12,7 @@
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
-//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N und der Fortschritt der Block-Ziele.
+//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart, Leitplanken und Entscheidung zu Woche 12.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -1036,34 +1036,68 @@ function buildBlock(res) {
   header(w, W, `BLOCK · ${String(b.name).replace(/^block\s+/i, "").toUpperCase()}`, when, b.status === "active" ? COL.ok : COL.muted);
   w.addSpacer(4);
   if (b.weeks) weekStrip(w, W, b.weeks, b.weekNo || 0, b.status === "done");
-  w.addSpacer(3);
-  text(w, `${dateShort(b.start)} – ${b.end ? dateShort(b.end) : MISSING}${b.daysLeft != null ? ` · noch ${b.daysLeft} Tage` : ""}`, FS.xs, { color: COL.muted });
+  const all = b.goals || [];
+  // Mit Leitplanken und Entscheidung wird es eng: dann ohne Datumszeile (Woche x von N steht im Kopf)
+  if (!all.some((g) => g.group)) {
+    w.addSpacer(3);
+    text(w, `${dateShort(b.start)} – ${b.end ? dateShort(b.end) : MISSING}${b.daysLeft != null ? ` · noch ${b.daysLeft} Tage` : ""}`, FS.xs, { color: COL.muted });
+  }
   w.addSpacer(5);
-  const goals = b.goals || [];
-  if (!goals.length) { text(w, "Im Eintrag stehen keine erkennbaren Ziele.", FS.sm, { color: COL.muted, lines: 2 }); notice(w, res, d); return w; }
+  if (!all.length) { text(w, "Im Eintrag stehen keine erkennbaren Ziele.", FS.sm, { color: COL.muted, lines: 2 }); notice(w, res, d); return w; }
+  // Block mit Abschlusszielen: oben je Sportart eine Karte, darunter die Leitplanken als eine Zeile und die Entscheidung zu Woche 12
+  const grouped = all.some((g) => g.group);
+  const goals = grouped ? all.filter((g) => g.group === "ziel") : all;
+  const rails = grouped ? all.filter((g) => g.group === "leitplanke") : [];
   const gap = 6, CW = Math.floor((W - gap * (goals.length - 1)) / goals.length), IW = CW - 16;
   const row = w.addStack(); row.spacing = gap;
-  const SHORT = { decoupling: "DECOUPLING", strength: "KRAFT", acwr: "ACWR" };
+  const SHORT = { decoupling: "DECOUPLING", strength: "KRAFT", acwr: "ACWR", runDecoupling: "LAUF", bikeDecoupling: "RAD", swimTest: "SCHWIMMEN" };
+  const valOf = (g) => {
+    if (g.value == null) return MISSING;
+    if (g.key === "strength") return `${g.value} von ${g.of}`;
+    if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)} s`;
+    return `${fmt(g.value, g.key === "acwr" ? 0 : 1)} %`;
+  };
+  const capOf = (g) => {
+    if (g.status === "base") return g.key === "strength" && g.goalSets ? `Ausgangswert · Wochen mit ≥ ${g.goalSets} Sätzen` : "Ausgangswert";
+    if (g.key === "strength" && g.goalSets) return `Wochen mit ≥ ${g.goalSets} Sätzen`;
+    if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}`;
+    if (g.key === "swimTest") return g.value == null ? "2× 500 m noch offen" : "2. 500 m je 100 m";
+    return g.target;
+  };
   goals.forEach((g) => {
     const c = card(row, CW, 7);
     text(c, SHORT[g.key] || g.label, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
     c.addSpacer(2);
-    const val = g.value == null ? MISSING : g.key === "strength" ? `${g.value} von ${g.of}` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)} %`;
-    text(c, val, FS.lg, { bold: true, color: STATUS_COL(g.status), minScale: 0.6 });
+    text(c, valOf(g), FS.lg, { bold: true, color: STATUS_COL(g.status), minScale: 0.6 });
     c.addSpacer(3);
     if (g.key === "acwr" && g.value != null) progressBar(c, IW, g.value / 100, STATUS_HEX(g.status));
     else if (g.key === "strength") {
       const dots = c.addStack(); dots.centerAlignContent();
       (g.weeks || []).forEach((x, i) => {
         if (i) dots.addSpacer(2);
-        const hex = x.done ? (x.hit ? ZONE_RGB.ok : g.status === "base" ? NEUTRAL_HEX : ZONE_RGB.bad) : NEUTRAL_HEX;
-        text(dots, x.done ? "●" : "○", FS.xs, { color: new Color(hex, x.done && !x.hit && g.status === "base" ? 0.4 : 1), minScale: 1 });
+        const hex = x.done && x.load !== false ? (x.hit ? ZONE_RGB.ok : g.status === "base" ? NEUTRAL_HEX : ZONE_RGB.bad) : NEUTRAL_HEX;
+        text(dots, x.done ? "●" : "○", FS.xs, { color: new Color(hex, x.load === false || (x.done && !x.hit && g.status === "base") ? 0.4 : 1), minScale: 1 });
       });
-    }
+    } else if ((g.key === "runDecoupling" || g.key === "bikeDecoupling") && g.value != null && g.must) progressBar(c, IW, Math.min(1, g.value / (g.must * 1.25)), STATUS_HEX(g.status));
     c.addSpacer(2);
-    const cap = g.key === "strength" && g.goalSets ? `Wochen mit ≥ ${g.goalSets} Sätzen` : g.target;
-    text(c, g.status === "base" ? (g.key === "strength" ? `Ausgangswert · ${cap}` : "Ausgangswert") : cap, FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
+    text(c, capOf(g), FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
   });
+  if (rails.length) {
+    w.addSpacer(5);
+    const lr = w.addStack(); lr.centerAlignContent();
+    const RAIL = { strength: (g) => `Kraft ${g.value ?? MISSING}/${g.of ?? MISSING}`, ramp: (g) => `Ramp ${g.value != null ? fmt(g.value, 1) : MISSING}`, pause: (g) => `Pause ${g.value ?? MISSING} T` };
+    rails.forEach((g, i) => {
+      if (i) lr.addSpacer(10);
+      text(lr, "●", FS.xs, { color: STATUS_COL(g.status), minScale: 1 });
+      lr.addSpacer(3);
+      text(lr, (RAIL[g.key] || ((x) => x.label))(g), FS.xs, { color: COL.text, minScale: 0.7 });
+    });
+  }
+  const dec = b.decision;
+  if (dec) {
+    w.addSpacer(3);
+    text(w, `Woche ${dec.week}${dec.due ? "" : " (Stand heute)"}: ${dec.text}`, FS.xs, { color: dec.state === "next" ? COL.ok : dec.state === "extend" ? COL.warn : COL.bad, lines: 1, minScale: 0.6 });
+  }
   notice(w, res, d);
   return w;
 }

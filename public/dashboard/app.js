@@ -823,23 +823,54 @@ function renderBlock(SB) {
   if (!SB) return "";
   const stLabel = { ok: "im Soll", warn: "knapp", bad: "unter Soll", base: "Basis", none: "keine Daten" };
   const head = SB.status === "active" ? `Woche ${SB.weekNo}${SB.weeks ? ` von ${SB.weeks}` : ""}` : SB.status === "upcoming" ? `Start in ${SB.daysToStart} Tag${SB.daysToStart === 1 ? "" : "en"}` : "beendet";
-  const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}" title="Woche ${i + 1}"></i>`).join("")}</div>` : "";
+  const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}${(i + 1) % 4 === 0 && SB.goals?.some((g) => g.group) ? " rec" : ""}" title="Woche ${i + 1}${(i + 1) % 4 === 0 && SB.goals?.some((g) => g.group) ? " · Entlastung" : ""}"></i>`).join("")}</div>` : "";
+  // Saeulen mit Ziellinie (durchgezogen) und optional Muss-Linie (gestrichelt, grau)
+  const bars = (pts, lim, must) => {
+    if (!pts.length) return "";
+    const max = Math.max((must ?? lim) * 1.6, ...pts.map((x) => x.v), 1);
+    const col = (v) => (v <= lim ? "ok" : must != null && v <= must ? "warn" : "bad");
+    return `<div class="bbars">${pts.map((x) => `<div title="${esc(x.t)}" style="height:${Math.max(6, (Math.max(0, x.v) / max) * 100)}%;background:var(--${x.muted ? "line" : col(x.v)})"></div>`).join("")}<u${must != null && must > lim ? ' class="aim"' : ""} style="bottom:${(lim / max) * 100}%"></u>${must != null && must > lim ? `<u class="must" style="bottom:${(must / max) * 100}%"></u>` : ""}</div>`;
+  };
+  const valOf = (g) => {
+    if (g.value == null) return "–";
+    if (g.key === "strength") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungsw." : "Wochen"}</small>`;
+    if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)}<small> s/100 m</small>`;
+    if (g.key === "ramp") return `${fmt(g.value, 1)}<small> max./Woche</small>`;
+    if (g.key === "pause") return `${g.value}<small> Tag${g.value === 1 ? "" : "e"} längste Lücke</small>`;
+    return `${fmt(g.value, g.key === "acwr" ? 0 : 1)}<small> %</small>`;
+  };
   const goalCard = (g) => {
-    const val = g.value == null ? "–" : g.key === "strength" ? `${g.value}<small> von ${g.of} Wochen</small>` : `${fmt(g.value, g.key === "decoupling" ? 1 : 0)}<small> %</small>`;
     let vis = "";
     if (g.key === "decoupling") {
-      const max = Math.max(g.max * 2, ...g.series.map((x) => x.value), 1);
-      vis = g.series.length ? `<div class="bbars">${g.series.slice(-10).map((x) => `<div title="${fmtDate(x.date)}: ${fmt(x.value, 1)} %" style="height:${Math.max(6, (Math.max(0, x.value) / max) * 100)}%;background:var(--${x.value <= g.max ? "ok" : "warn"})"></div>`).join("")}<u style="bottom:${(g.max / max) * 100}%"></u></div>` : "";
+      vis = bars(g.series.slice(-10).map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %` })), g.max, g.max + 2);
+    } else if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
+      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.tempC != null ? ` · ${x.tempC} °C` : ""}` })), g.max, g.must);
+    } else if (g.key === "swimTest") {
+      vis = g.tests.length ? bars(g.tests.map((x) => ({ v: x.slowerPer100, t: `${fmtDate(x.date)}: ${x.t1} / ${x.t2}${x.pauseSec != null ? ` · Pause ${x.pauseSec} s` : ""}` })), g.maxSlowerPer100) : "";
+    } else if (g.key === "ramp") {
+      vis = bars(g.weeks.filter((w) => w.ramp != null).map((w) => ({ v: w.ramp, muted: !w.load, t: `ab ${fmtDate(w.start)}: ${w.ramp > 0 ? "+" : ""}${fmt(w.ramp, 1)}${w.load ? "" : " (Entlastung)"}${w.done ? "" : " (läuft)"}` })), g.max);
+    } else if (g.key === "pause") {
+      vis = `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / (g.max * 1.5)) * 100)}%;background:var(--${g.status === "base" || g.status === "none" ? "muted" : g.status})"></div><i style="left:${(1 / 1.5) * 100}%"></i></div>`;
     } else if (g.key === "strength") {
-      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}"></i>`).join("")}</div>`;
+      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}${w.load === false ? " (Entlastungswoche, zählt nicht)" : ""}"></i>`).join("")}</div>`;
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${val}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${g.key === "strength" ? `<div class="sub">Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}</div>` : ""}<div class="sub">${[g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ")}</div></div>`;
+    const legend = g.key === "strength" ? `Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group ? ", hell = Entlastungswoche" : ""}` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
+    const sub = [g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ");
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${valOf(g)}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${legend ? `<div class="sub">${esc(legend)}</div>` : ""}<div class="sub">${sub}</div>${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}</div>`;
   };
-  const goals = (SB.goals ?? []).length ? `<div class="bgoals">${SB.goals.map(goalCard).join("")}</div>` : "";
+  const list = SB.goals ?? [];
+  const grouped = list.some((g) => g.group);
+  const section = (title, gs) => (gs.length ? `${title ? `<h4 class="bgh">${title}</h4>` : ""}<div class="bgoals">${gs.map(goalCard).join("")}</div>` : "");
+  const goals = grouped
+    ? section("Abschlussziele", list.filter((g) => g.group === "ziel")) + section("Leitplanken", list.filter((g) => g.group === "leitplanke")) + section("", list.filter((g) => !g.group))
+    : section("", list);
+  const D = SB.decision;
+  const decLabel = { next: "weiter", extend: "verlängern", cause: "Ursache klären" };
+  const decision = D ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · ${D.due ? "Entscheidung" : "Stand heute"}:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>` : "";
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
-  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val" style="font-size:1.25rem">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
+  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val" style="font-size:1.25rem">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */

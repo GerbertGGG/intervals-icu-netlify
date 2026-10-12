@@ -261,7 +261,7 @@ export function buildWidgetSmall(d, goals = null, live = null) {
   };
 }
 
-// Trainingsblock aus dem Kalender mit dem Fortschritt der Ziele (Decoupling, Kraft, ACWR). Das Widget stellt nur dar:
+// Trainingsblock aus dem Kalender mit dem Fortschritt der Ziele (Abschlussziele Lauf/Rad/Schwimmen, Leitplanken; aeltere Bloecke: Decoupling, Kraft, ACWR). Das Widget stellt nur dar:
 // Status (ok/warn/bad/base/none), Werte und Ziele kommen fertig aus dem Dashboard (season-block.js).
 export function buildWidgetBlock(d) {
   const b = d.seasonBlock;
@@ -272,9 +272,12 @@ export function buildWidgetBlock(d) {
     block: {
       name: b.name, status: b.status, start: b.start, end: b.end, weeks: b.weeks, weekNo: b.weekNo, daysToStart: b.daysToStart, daysLeft: b.daysLeft,
       goals: (b.goals ?? []).map((g) => ({
-        key: g.key, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
-        weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count })) : undefined,
+        key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
+        max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
+        weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count, load: w.load !== false })) : undefined,
       })),
+      // Entscheidung zum Blockende (Woche 12): next = weiter, extend = Sportart verlaengern, cause = erst Ursache klaeren
+      decision: b.decision ? { week: b.decision.week, due: b.decision.due, state: b.decision.state, text: b.decision.text } : null,
     },
     sourcesFailed: failedOf(d),
   };
