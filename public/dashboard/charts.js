@@ -82,7 +82,13 @@
       const x = L + slot * i + (slot - bw) / 2;
       if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (Plan ${U.fmt(w.plan)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
-      if (o.valueLabels && w.value != null) {
+      if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
+        // Laufende Woche: Ist ist noch unvollständig, über dem Plan-Strich steht das Wochenziel, darunter der bisherige Wert
+        s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, U.fmt(w.plan, o.dec ?? 1)), `Wochenziel: ${U.fmt(w.plan, o.dec ?? 1)} ${o.unit}`));
+        if (w.value && y(w.value) - y(w.plan) > 18) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
+        const rest = Math.max(0, w.plan - (w.value ?? 0));
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: "font-size:11px;font-weight:600;fill:var(--muted)" }, rest ? `noch ${U.fmt(rest, o.dec ?? 1)}` : "✓"), `bisher ${U.fmt(w.value ?? 0, o.dec ?? 1)} von ${U.fmt(w.plan, o.dec ?? 1)} ${o.unit}`));
+      } else if (o.valueLabels && w.value != null) {
         // Zahl über Säule und Plan-Marke, damit der Plan-Strich sie nie schneidet
         s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
         // Abweichung zum Plan in einer eigenen Zeile unter dem Datum: grün bis 15 %, sonst gelb
