@@ -410,7 +410,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     }
     goals.push({
       key: "strength", ...(perLoad ? { group: "leitplanke" } : {}), label: perLoad ? "Kraft" : "Kraft-Konsistenz", target, unit: "Wochen",
-      value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), goalSets: setsMode ? need : null, countUnit: unit,
+      value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), goalSets: setsMode ? need : null, weekGoal: need, countUnit: unit,
       ...(perLoad ? { needWeeks: st.need, ofWeeks: st.of } : {}),
       status,
       egym: Boolean(input.strengthSource?.egym), egymAt: input.strengthSource?.egymAt ?? null,
