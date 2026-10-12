@@ -498,6 +498,13 @@ console.log("zones from intervals ok");
   assert.equal(w.rd, d.summary.readiness.verdict.cls); // Bereitschaft wie im Dashboard
   assert.equal(w.wk, undefined); // Wochenbalken zeigt das Zifferblatt nicht mehr
   assert.deepEqual(w.kcal, { v: 1840, g: 2100 });
+  assert.deepEqual(buildWidgetWatch(d, {}, { kcal: 2100, proteinG: 140 }, { energyKcal: 1840, proteinG: 95.4 }).pr, { v: 95, g: 140 });
+  // TSS je Sportart: erledigt und laut Plan noch offen, Summe erledigt = tss
+  const wk = d.weeks[d.weeks.length - 1];
+  const ts = buildWidgetWatch({ ...d, weeks: [...d.weeks.slice(0, -1), { ...wk, bySport: { ...wk.bySport, run: { ...wk.bySport.run, load: 30, plannedLoad: 50 }, bike: { ...wk.bySport.bike, load: 60, plannedLoad: 40 } } }] }).ts;
+  assert.deepEqual(ts.find((x) => x[0] === "run"), ["run", 30, 20]);
+  assert.deepEqual(ts.find((x) => x[0] === "bike"), ["bike", 60, 0]); // mehr als geplant: nichts offen
+  assert.equal(w.ts.reduce((a, x) => a + x[1], 0), w.tss);
   assert.equal(w.goal, 150);
   assert.deepEqual(w.next, { d: 0, s: "other", m: 30, km: null }); // heute noch nichts gemacht: die heutige Einheit
   const done = buildWidgetWatch({ ...d, daily: d.daily.map((x) => (x.date === today ? { ...x, sports: { other: 40 } } : x)) });

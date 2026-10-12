@@ -8,15 +8,12 @@ import Toybox.Time.Gregorian;
 import Toybox.Weather;
 import Toybox.WatchUi;
 
-// Zifferblatt im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Oben die Woche am Rand,
+// Zifferblatt im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet (Sportarten, Essen, Regen). Oben die Woche am Rand,
 // dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
 // am unteren Rand Renn-Countdown und Blockwoche als gebogene Schrift.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
-
-    // true = jede Komplikation in eigener, dezenter Farbe; false = alle Ringe weiß (Mono)
-    const COLORFUL = false;
 
     const FG = 0xF5F5F7;
     const SEC = 0x8E8E93;
@@ -29,7 +26,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const BAD = 0xFF453A;
     const KCAL = 0xFF9F0A;
     const TSS = 0x0A84FF;
-    const STR = 0xFF9F0A;
+    const PROT = 0xFF375F;
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
     const TIME_Y = 192;
@@ -276,7 +273,17 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             kText = rest >= 0 ? rest.toString() : "+" + (-rest).toString();
             kSub = "";
         }
-        complication(dc, 104, "ESSEN", kText, kSub, frac(kv, kg), accent(KCAL), FG);
+        // Zwei Ringe: außen Kalorien (orange), innen Eiweiß (pink) gegen das Yazio-Ziel; ohne Eiweißziel nur der Kalorienring
+        var pr = data.get("pr") as Dictionary?;
+        var pv = pr != null ? numOrNull(pr.get("v")) : null;
+        var pg = pr != null ? numOrNull(pr.get("g")) : null;
+        if (pg != null && pg > 0 && kSub.length() == 0) {
+            ring(dc, px(104), px(COMP_Y), px(34), px(5), frac(kv, kg), KCAL, blend(0x000000, KCAL, 0.28));
+            ring(dc, px(104), px(COMP_Y), px(26), px(5), frac(pv, pg), PROT, blend(0x000000, PROT, 0.28));
+            labels(dc, 104, "ESSEN", kText, "", FG);
+        } else {
+            complication(dc, 104, "ESSEN", kText, kSub, frac(kv, kg), KCAL, blend(0x000000, KCAL, 0.28));
+        }
 
         // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL); grün, sobald erreicht
         var tss = numOrNull(data.get("tss"));
@@ -284,8 +291,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (target == null) {
             target = numOrNull(data.get("goal"));
         }
-        var tf = frac(tss, target);
-        complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
+        var tss2 = data.get("ts") as Array?;
+        if (tss2 != null && tss2.size() > 0) {
+            tssRing(dc, px(185), px(COMP_Y), px(34), px(6), tss2, target);
+            labels(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", FG);
+        } else {
+            // Älterer Worker ohne TSS je Sportart: ein blauer Ring
+            complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", frac(tss, target), TSS, TRACK);
+        }
 
         // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
         // (base und none, also Ausgangswert oder noch keine Daten, grau)
@@ -293,8 +306,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var sv = str != null ? numOrNull(str.get("v")) : null;
         var so = str != null ? numOrNull(str.get("of")) : null;
         var st = str != null ? str.get("ok") : null;
-        var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
-        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", frac(sv, so), sc, FG);
+        // Lila wie Kraft in den Wochenkreisen
+        var sc = "ok".equals(st) ? sportColor("strength") : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
+        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", frac(sv, so), sc, blend(0x000000, sc, 0.3));
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden.
         // Der Ring ist ein 12-Stunden-Zifferblatt: jede Stunde ein Bogen an ihrer Uhrposition, blau, wenn es dann regnen kann,
@@ -346,9 +360,49 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         labels(dc, 350, "WETTER", temp, maxChance >= 0 ? maxChance.toString() + " %" : "", FG);
     }
 
-    private function complication(dc as Dc, x as Number, label as String, value as String, sub as String, f as Float, color as Number, valueColor as Number) as Void {
-        ring(dc, px(x), px(COMP_Y), px(34), px(6), f, color, TRACK);
-        labels(dc, x, label, value, sub, valueColor);
+    // Ring mit Fortschritt; der Grundring ist die eigene Farbe abgedunkelt, damit auch ein leerer Ring farbig ist
+    private function complication(dc as Dc, x as Number, label as String, value as String, sub as String, f as Float, color as Number, track as Number) as Void {
+        ring(dc, px(x), px(COMP_Y), px(34), px(6), f, color, track);
+        labels(dc, x, label, value, sub, FG);
+    }
+
+    // TSS-Ring wie die Wochenkreise: ab 12 Uhr zuerst das Erledigte je Sportart in voller Farbe, dahinter das laut Plan
+    // noch Offene gedimmt. Volle Runde = Plan (ohne Plan das Wochenziel, ohne beides die Summe). ts: [[Sportart, erledigt, offen], ...]
+    private function tssRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, ts as Array, target as Numeric?) as Void {
+        var sum = 0.0;
+        for (var i = 0; i < ts.size(); i++) {
+            var e = ts[i] as Array;
+            sum += (e[1] as Numeric).toFloat() + (e[2] as Numeric).toFloat();
+        }
+        var full = (target != null && target > 0) ? target.toFloat() : sum;
+        dc.setPenWidth(pen);
+        dc.setColor(TRACK, Graphics.COLOR_BLACK);
+        dc.drawCircle(cx, cy, r);
+        if (full <= 0) {
+            return;
+        }
+        var a = 0.0;
+        for (var k = 1; k <= 2; k++) {
+            for (var i = 0; i < ts.size(); i++) {
+                var e = ts[i] as Array;
+                var v = (e[k] as Numeric).toFloat();
+                if (v <= 0 || a >= 360) {
+                    continue;
+                }
+                var d = 360 * v / full;
+                var end = a + d > 360 ? 360.0 : a + d;
+                // 3° Lücke zwischen den Abschnitten, sehr kleine Abschnitte ohne Lücke
+                var gap = end - a > 8 ? 3 : 0;
+                var color = sportColor(e[0]);
+                dc.setColor(k == 1 ? color : blend(0x000000, color, 0.42), Graphics.COLOR_BLACK);
+                if (end - a >= 359) {
+                    dc.drawCircle(cx, cy, r);
+                } else if (end - gap - a >= 1) {
+                    dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - a), norm(90 - end + gap));
+                }
+                a = end;
+            }
+        }
     }
 
     private function labels(dc as Dc, x as Number, label as String, value as String, sub as String, valueColor as Number) as Void {
@@ -445,11 +499,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;
             dc.drawText(_cx, y, f, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         }
-    }
-
-    // Farbe einer Komplikation: dezent farbig oder weiß (Mono)
-    private function accent(color as Number) as Number {
-        return COLORFUL ? color : FG;
     }
 
     // Vollkreis mit Fortschritt ab 12 Uhr im Uhrzeigersinn

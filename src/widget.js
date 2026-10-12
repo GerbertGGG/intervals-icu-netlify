@@ -323,6 +323,19 @@ function strengthWeek(goal) {
   return { v: cur.count, of: goal.weekGoal, ok: "ok" };
 }
 
+// TSS-Ring der Uhr in Sportfarben: je Sportart [s, erledigt, noch offen laut Plan]; offen = Plan der Woche minus erledigt.
+// Reihenfolge wie im Dashboard, nur Sportarten mit einem Wert; ohne beides leer.
+const WATCH_SPORTS = ["swim", "bike", "run", "strength", "other"];
+function watchTssBySport(week) {
+  return WATCH_SPORTS.map((k) => {
+    const s = week.bySport[k];
+    if (!s) return null;
+    const done = Math.round(s.load);
+    const open = Math.max(0, Math.round((s.plannedLoad ?? 0) - s.load));
+    return done > 0 || open > 0 ? [k, done, open] : null;
+  }).filter(Boolean);
+}
+
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
@@ -338,6 +351,8 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const today = byDate[d.today];
   const kcal = live?.energyKcal > 0 ? Math.round(live.energyKcal) : today?.calories ?? null;
+  // Eiweiß heute fuer den inneren Ring von Essen, wie kcal live aus Yazio, sonst aus dem Sync
+  const protein = live?.energyKcal > 0 && Number.isFinite(live.proteinG) ? Math.round(live.proteinG) : today?.protein != null ? Math.round(today.protein) : null;
   const cfg = Number(env?.WEEKLY_TSS_GOAL);
   return {
     t: d.today,
@@ -349,10 +364,12 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     rd: d.summary.readiness.verdict.cls,
     w: watchWarning(d),
     tss: total(week),
+    ts: watchTssBySport(week),
     plan: week.plannedLoad > 0 ? week.plannedLoad : null,
     goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
     str: strengthWeek(strength),
     kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
+    pr: { v: protein, g: goals?.proteinG ?? null },
     failed: failedOf(d).length,
   };
 }
