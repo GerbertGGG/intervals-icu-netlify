@@ -500,8 +500,11 @@ console.log("zones from intervals ok");
   assert.deepEqual(w.kcal, { v: 1840, g: 2100 });
   assert.equal(w.goal, 150);
   assert.deepEqual(w.next, { d: 0, s: "other", m: 30, km: null }); // heute noch nichts gemacht: die heutige Einheit
-  const done = buildWidgetWatch({ ...d, daily: d.daily.map((x) => (x.date === today ? { ...x, sports: { run: 40 } } : x)) });
-  assert.equal(done.next.d, 1); // heute schon erledigt: die naechste geplante
+  const done = buildWidgetWatch({ ...d, daily: d.daily.map((x) => (x.date === today ? { ...x, sports: { other: 40 } } : x)) });
+  assert.equal(done.next.d, 1); // heutige Einheit (other) erledigt: die naechste geplante
+  // Andere Sportart erledigt, die heutige Einheit steht noch aus: weiter die heutige
+  const other = buildWidgetWatch({ ...d, daily: d.daily.map((x) => (x.date === today ? { ...x, sports: { bike: 50 } } : x)) });
+  assert.deepEqual([other.next.d, other.next.s], [0, "other"]);
   assert.equal(done.next.s, "swim");
   assert.equal(buildWidgetWatch({ ...d, planned: [] }).next, null);
   assert.equal(w.days[6]?.p ?? 1, 1); // Zukunft hoechstens geplant, nie erledigt
