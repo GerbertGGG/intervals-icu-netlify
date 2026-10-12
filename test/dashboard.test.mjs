@@ -505,6 +505,18 @@ console.log("zones from intervals ok");
   assert.equal(done.next.s, "swim");
   assert.equal(buildWidgetWatch({ ...d, planned: [] }).next, null);
   assert.equal(w.days[6]?.p ?? 1, 1); // Zukunft hoechstens geplant, nie erledigt
+  // Doppeltage: zwei Sportarten, erledigt (nach TSS) vor geplant, gleiche Sportart nur einmal
+  {
+    const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+    const mon = addDays(today, -w.ti);
+    const dd2 = { ...d,
+      daily: d.daily.map((x) => (x.date === mon ? { ...x, sports: { run: 30, bike: 60 } } : x.date === today ? { ...x, sports: { strength: 20 } } : x)),
+      plannedWeek: [{ date: today, sport: "run", load: 40 }, { date: today, sport: "strength", load: 10 }, { date: addDays(today, 1), sport: "bike", load: 20 }, { date: addDays(today, 1), sport: "swim", load: 30 }] };
+    const ww = buildWidgetWatch(dd2);
+    assert.deepEqual(ww.days[0], { s: "bike", p: 0, s2: "run", p2: 0 });
+    assert.deepEqual(ww.days[w.ti], { s: "strength", p: 0, s2: "run", p2: 1 });
+    assert.deepEqual(ww.days[w.ti + 1], { s: "swim", p: 1, s2: "bike", p2: 1 });
+  }
   // Warnung: ACWR ueber dem Korridor hat Vorrang, sonst ein Hinweis aus "Was auffaellt", sonst nichts
   const withLoad = (load) => ({ ...d, summary: { ...d.summary, load: { ...d.summary.load, ...load } } });
   assert.deepEqual(buildWidgetWatch(withLoad({ acwr: 1.5234, acwrCls: "bad" })).w, { k: "acwr", v: 1.52 });
