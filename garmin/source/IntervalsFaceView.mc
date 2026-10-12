@@ -32,8 +32,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const RAIN = 0x64D2FF;
     const STALE_SECS = 3600;
     const TIME_Y = 184;
-    const READY_Y = 250;
-    const COMP_Y = 328;
+    const READY_Y = 260;
+    const COMP_Y = 340;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -47,7 +47,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Barlow (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
+        // Bitmap-Schriften aus Nunito (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
         _mid = WatchUi.loadResource(Rez.Fonts.Mid) as Graphics.FontType;
@@ -269,7 +269,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kcal = data.get("kcal") as Dictionary?;
         var kv = kcal != null ? numOrNull(kcal.get("v")) : null;
         var kg = kcal != null ? numOrNull(kcal.get("g")) : null;
-        complication(dc, 104, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "KCAL", frac(kv, kg), accent(KCAL), FG);
+        complication(dc, 104, "ESSEN", kv != null ? kv.toNumber().toString() : "--", "kcal", frac(kv, kg), accent(KCAL), FG);
 
         // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL); grün, sobald erreicht
         var tss = numOrNull(data.get("tss"));
@@ -278,7 +278,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             target = numOrNull(data.get("goal"));
         }
         var tf = frac(tss, target);
-        complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/ " + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
+        complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", tf, tf >= 1.0 ? OK : accent(TSS), FG);
 
         // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
         // (base und none, also Ausgangswert oder noch keine Daten, grau)
@@ -287,7 +287,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var so = str != null ? numOrNull(str.get("of")) : null;
         var st = str != null ? str.get("ok") : null;
         var sc = "ok".equals(st) ? accent(STR) : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
-        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/ " + so.toNumber() : "", frac(sv, so), sc, FG);
+        complication(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", frac(sv, so), sc, FG);
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, Regenwahrscheinlichkeit als Ring
         var temp = "--";
@@ -317,15 +317,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
         dc.drawText(cx, px(COMP_Y - 48), _tiny, label, just);
         dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
-        dc.drawText(cx, cy - px(6), _mid, value, just);
+        dc.drawText(cx, cy - px(9), _mid, value, just);
         if (sub.length() > 0) {
-            dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, cy + px(16), _tiny, sub, just);
+            // Unterzeile ("/60", "kcal") eine Stufe größer und heller, sonst sind 6 und 8 kaum zu unterscheiden
+            dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(cx, cy + px(15), _cap, sub, just);
         }
     }
 
     // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
-    // drawRadialText braucht eine Vektorschrift der Uhr (Barlow gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
+    // drawRadialText braucht eine Vektorschrift der Uhr (Nunito gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
 
     private function drawStatusArc(dc as Dc, data as Dictionary) as Void {
         var race = data.get("race") as Dictionary?;
@@ -356,10 +357,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         if (font != null && dc has :drawRadialText) {
             // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
-            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(204), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
+            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(206), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
         } else {
             // Gerade Zeile: die große Schrift, wenn sie in die Breite des Kreises an dieser Stelle passt, sonst die kleinere
-            var y = px(392);
+            var y = px(400);
             var dy = y - _cy;
             var room = 2 * Math.sqrt(_cx * _cx - dy * dy) - px(40);
             var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;

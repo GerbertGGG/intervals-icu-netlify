@@ -3,13 +3,13 @@
 Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel] [Name] [digits]
 Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmäßig "small")
 Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit springt nicht).
-Die Schriften des Zifferblatts sind Barlow (SIL Open Font License, fonts.google.com/specimen/Barlow),
-SemiBold und Bold als .ttf herunterladen:
-  python3 garmin/tools/make_font.py Barlow-SemiBold.ttf 142 time digits
-  python3 garmin/tools/make_font.py Barlow-SemiBold.ttf 25 small
-  python3 garmin/tools/make_font.py Barlow-Bold.ttf 22 mid
-  python3 garmin/tools/make_font.py Barlow-SemiBold.ttf 18 cap
-  python3 garmin/tools/make_font.py Barlow-SemiBold.ttf 15 tiny
+Die Schriften des Zifferblatts sind Nunito (SIL Open Font License, fonts.google.com/specimen/Nunito),
+Bold und ExtraBold als .ttf herunterladen:
+  python3 garmin/tools/make_font.py Nunito-Bold.ttf 138 time digits
+  python3 garmin/tools/make_font.py Nunito-Bold.ttf 25 small
+  python3 garmin/tools/make_font.py Nunito-ExtraBold.ttf 22 mid
+  python3 garmin/tools/make_font.py Nunito-Bold.ttf 18 cap
+  python3 garmin/tools/make_font.py Nunito-Bold.ttf 15 tiny
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys
