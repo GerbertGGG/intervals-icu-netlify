@@ -850,7 +850,8 @@ function renderBlock(SB) {
     } else if (g.key === "ramp") {
       vis = bars(g.weeks.filter((w) => w.ramp != null).map((w) => ({ v: w.ramp, muted: !w.load, t: `ab ${fmtDate(w.start)}: ${w.ramp > 0 ? "+" : ""}${fmt(w.ramp, 1)}${w.load ? "" : " (Entlastung)"}${w.done ? "" : " (läuft)"}` })), g.max);
     } else if (g.key === "pause") {
-      vis = `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / (g.max * 1.5)) * 100)}%;background:var(--${g.status === "base" || g.status === "none" ? "muted" : g.status})"></div><i style="left:${(1 / 1.5) * 100}%"></i></div>`;
+      // Auch im Ausgangswert nach der Grenze färben (wie die Säulen der anderen Karten); das Badge bleibt „Basis“
+      vis = `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / (g.max * 1.5)) * 100)}%;background:var(--${g.status === "base" ? (g.value > g.max ? "bad" : "ok") : g.status === "none" ? "muted" : g.status})"></div><i style="left:${(1 / 1.5) * 100}%"></i></div>`;
     } else if (g.key === "strength") {
       vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}${w.load === false ? " (Entlastungswoche, zählt nicht)" : ""}"></i>`).join("")}</div>`;
     } else if (g.key === "acwr") {
