@@ -1,4 +1,5 @@
 import { isoDateBerlin } from "./date-utils.js";
+import { readKvJson, writeKvJson } from "./kv.js";
 import { fetchEgymWorkouts, hasEgymCredentials } from "./egym-client.js";
 import { deleteIntervalsActivity, fetchIntervalsActivities, fetchIntervalsEvents, postManualActivities, updateIntervalsActivity } from "./intervals-client.js";
 import { isStrengthExercise, secondsOf, setsOf, setVolumeKg, strengthDays, uniqueWorkouts, weightKgOf } from "./egym-widget.js";
@@ -74,23 +75,43 @@ export function pairsForPlanned(activities, events) {
 // Reine Funktion: Dauer, die in Intervals nicht zum EGYM-Stand passt. Der Bulk-Upsert uebernimmt bei einer vorhandenen
 // Aktivitaet die Beschreibung, aber nicht die Dauer, und ein PUT mit moving_time wird mit 200 beantwortet, aendert sie
 // aber auch nicht (ein Sync mitten im Training liess so 3 Minuten stehen). Solche Aktivitaeten werden neu angelegt.
-export function durationFixes(existing, built) {
+// written: zuletzt vom Sync geschriebene Dauer je external_id. Weicht Intervals davon ab, hat der Nutzer die Dauer
+// selbst geaendert; die Aktivitaet bleibt dann, wie sie ist. Ohne Eintrag gilt die Dauer als vom Sync geschrieben.
+export function durationFixes(existing, built, written = {}) {
   const want = new Map((built ?? []).map((b) => [b.external_id, b.moving_time]));
   return (existing ?? [])
     .filter((a) => a?.id && want.has(a.external_id) && (a.moving_time !== want.get(a.external_id) || a.elapsed_time !== want.get(a.external_id)))
+    .filter((a) => written[a.external_id] == null || a.moving_time === written[a.external_id])
     .map((a) => ({ activityId: a.id, external_id: a.external_id, moving_time: want.get(a.external_id), elapsed_time: want.get(a.external_id) }));
 }
+
+// Reine Funktion: neuer Stand der geschriebenen Dauern. Was in Intervals jetzt mit EGYM uebereinstimmt, gilt als vom
+// Sync geschrieben; von Hand geaenderte Eintraege bleiben unveraendert, Eintraege aelter als KEEP_DAYS fallen weg.
+export function nextWritten(written, existing, built, fixed, today) {
+  const out = Object.fromEntries(Object.entries(written ?? {}).filter(([id]) => id.slice(5) >= addDays(today, -KEEP_DAYS)));
+  const now = new Map((existing ?? []).map((a) => [a.external_id, a.moving_time]));
+  const redone = new Set((fixed ?? []).map((f) => f.external_id));
+  for (const b of built ?? []) if (redone.has(b.external_id) || now.get(b.external_id) === b.moving_time) out[b.external_id] = b.moving_time;
+  return out;
+}
+
+const WRITTEN_KEY = "egym:intervals-written";
+const KEEP_DAYS = 14;
 
 // Nach dem Upsert: Aktivitaeten mit veralteter Dauer loeschen und neu anlegen (eine neue Aktivitaet bekommt die Dauer),
 // danach ungekoppelte EGYM-Aktivitaeten mit dem geplanten Krafttraining desselben Tages verbinden. Fehler nur protokollieren.
 async function reconcile(env, built, oldest, newest) {
   try {
-    const stale = durationFixes(await fetchIntervalsActivities(env, oldest, newest), built);
+    const written = (await readKvJson(env, WRITTEN_KEY)) ?? {};
+    const before = await fetchIntervalsActivities(env, oldest, newest);
+    const stale = durationFixes(before, built, written);
     if (stale.length) {
       for (const f of stale) await deleteIntervalsActivity(env, f.activityId);
       const redo = new Set(stale.map((f) => f.external_id));
       await postManualActivities(env, built.filter((b) => redo.has(b.external_id)));
     }
+    // erst nach erfolgreichem Neuanlegen merken, sonst gaelte eine liegengebliebene alte Dauer als Handaenderung
+    await writeKvJson(env, WRITTEN_KEY, nextWritten(written, before, built, stale, newest));
     const [acts, events] = await Promise.all([fetchIntervalsActivities(env, oldest, newest), fetchIntervalsEvents(env, oldest, newest)]);
     const pairs = pairsForPlanned(acts, events);
     for (const p of pairs) await updateIntervalsActivity(env, p.activityId, { paired_event_id: p.eventId });

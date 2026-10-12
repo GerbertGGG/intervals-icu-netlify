@@ -10,7 +10,7 @@ import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioA
 // Gewicht) oder an einem Geraet. Das Wochenziel sind Saetze: mindestens 60 Saetze Krafttraining pro Woche,
 // per EGYM_WEEKLY_GOAL_SETS aenderbar; goalSource sagt, was gilt. Die Minuten bleiben als Information.
 // Die Dauer eines Tages kommt aus den Angaben von EGYM (Dauer der Uebungen, sonst der Saetze); fehlen sie, ist es nur
-// die Spanne zwischen erster und letzter Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
+// die Spanne zwischen erster und letzter Uebung plus Zeit fuer die letzte Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
 const DEFAULT_WEEKLY_GOAL_SETS = 60;
 const WEEKS = 6;
 // Fuer Bestwerte reicht der Blick weiter zurueck als der Wochenverlauf; die API wird in Fenstern von 28 Tagen abgefragt
@@ -74,6 +74,8 @@ export function secondsOf(attr) {
   return unit.startsWith("s") ? v : 0;
 }
 
+const LAST_EXERCISE_MAX_MIN = 5;
+
 // Eine Zeile je Kraft-Tag: Datum (Berlin), Saetze, Volumen, Dauer in Minuten samt Herkunft ("egym" oder "estimate")
 export function strengthDays(workouts) {
   const days = new Map();
@@ -97,7 +99,10 @@ export function strengthDays(workouts) {
   return [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map(({ stamps, sec, ...d }) => {
     if (sec > 0) return { ...d, minutes: Math.round(sec / 60), durationSource: "egym" };
     const span = stamps.length > 1 ? (Math.max(...stamps) - Math.min(...stamps)) / 60000 : 0;
-    return span >= 1 ? { ...d, minutes: Math.round(span), durationSource: "estimate" } : { ...d, minutes: null, durationSource: null };
+    // Die Spanne endet mit dem Abschluss der letzten Uebung, deren eigene Zeit fehlt: dafuer kommt der mittlere Abstand
+    // zwischen zwei Uebungen dazu, hoechstens LAST_EXERCISE_MAX_MIN
+    const last = Math.min(span / (stamps.length - 1), LAST_EXERCISE_MAX_MIN);
+    return span >= 1 ? { ...d, minutes: Math.round(span + last), durationSource: "estimate" } : { ...d, minutes: null, durationSource: null };
   });
 }
 
