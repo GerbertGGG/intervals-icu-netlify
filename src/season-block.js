@@ -49,11 +49,16 @@ export function resolveSeasonBlock(events, todayIso) {
   const blocks = (Array.isArray(events) ? events : []).filter(isSeasonBlockEvent).map((e) => toBlock(e, todayIso)).filter(Boolean);
   const seen = new Set();
   const uniq = blocks.filter((b) => (seen.has(b.start + b.name) ? false : seen.add(b.start + b.name)));
+  const withNext = (b) => {
+    const n = uniq.filter((x) => x.start > b.start).sort((x, y) => x.start.localeCompare(y.start))[0];
+    return n ? { ...b, next: { name: n.name, start: n.start } } : b;
+  };
   const active = uniq.filter((b) => b.status === "active").sort((a, b) => b.start.localeCompare(a.start))[0];
-  if (active) return active;
+  if (active) return withNext(active);
   const next = uniq.filter((b) => b.status === "upcoming").sort((a, b) => a.start.localeCompare(b.start))[0];
-  if (next) return next;
-  return uniq.filter((b) => b.status === "done" && b.end && diffDays(b.end, todayIso) <= 14).sort((a, b) => b.end.localeCompare(a.end))[0] ?? null;
+  if (next) return withNext(next);
+  const done = uniq.filter((b) => b.status === "done" && b.end && diffDays(b.end, todayIso) <= 14).sort((a, b) => b.end.localeCompare(a.end))[0];
+  return done ? withNext(done) : null;
 }
 
 // ---------- Fortschritt der Block-Ziele ----------
@@ -68,19 +73,64 @@ const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const numOf = (s) => Number(String(s).replace(",", "."));
 
+// Abschlussziele je Sportart (Block A): je ein Absatz "1. Lauf: …", "2. Rad (Rolle): …", "3. Schwimmen: …" mit
+// "vergleichbar" bzw. einem Test (2× 500 m). Leitplanken stehen als Stichworte im Text (Kraft "8 von 9 Belastungswochen",
+// "Ramp Rate … ≤5", "Pause über 7 Tage"). Ein Muss-Kriterium ("bei 8 % … Muss-Kriterium") gilt fuer beide Decoupling-Ziele.
+const num1 = (m, fb) => (m ? numOf(m[1]) : fb);
+function parseSportGoals(t) {
+  const paras = t.split(/\n\s*\n/);
+  const para = (...res) => paras.find((p) => res.every((re) => re.test(p))) ?? null;
+  const must = t.match(/(\d+(?:[.,]\d+)?)\s*%[^\n]{0,50}muss/i);
+  const lastN = (p) => num1(p.match(/letzten\s*(\d+)/i), 3);
+  const decMax = (p) => num1(p.match(/decoupling[^\n\d]{0,40}?(?:≤|<=|<|unter|max(?:imal)?)\s*(\d+(?:[.,]\d+)?)\s*%/i), 5);
+  const runP = para(/\blauf/i, /decoupling/i, /vergleichbar/i);
+  const bikeP = para(/\brad\b|rolle/i, /decoupling/i, /vergleichbar/i);
+  const swimP = para(/schwimm/i, /\d\s*[×x]\s*\d{2,4}\s*m\b/i);
+  const out = {};
+  if (runP) {
+    const max = decMax(runP);
+    out.run = { max, must: must ? Math.max(max, numOf(must[1])) : null, lastN: lastN(runP), minMin: num1(runP.match(/(?:≥|>=|ab|mind(?:estens)?\.?)\s*(\d+)\s*min/i), 60), pace: /pace/i.test(runP) };
+  }
+  if (bikeP) {
+    const max = decMax(bikeP);
+    out.bike = { max, must: must ? Math.max(max, numOf(must[1])) : null, lastN: lastN(bikeP), minMin: num1(bikeP.match(/(\d+)\s*min\b/i), 75), ftpTest: /ftp/i.test(bikeP) };
+  }
+  if (swimP) {
+    const reps = swimP.match(/(\d)\s*[×x]\s*(\d{2,4})\s*m\b/i);
+    out.swim = {
+      reps: Number(reps[1]), distM: Number(reps[2]),
+      maxPauseSec: num1(swimP.match(/(?:max(?:imal)?|höchstens)\s*(\d+(?:[.,]\d+)?)\s*min\s*pause/i), 1) * 60,
+      maxSlowerPer100: num1(swimP.match(/(\d+(?:[.,]\d+)?)\s*s(?:ek(?:unden)?)?\s*(?:pro|\/|je)\s*100/i), 5),
+    };
+  }
+  return out;
+}
+
 export function parseBlockTargets(text) {
   const t = String(text ?? "");
   const has = (re) => re.test(t);
+  const sport = parseSportGoals(t);
   const dec = t.match(/decoupling[^\d]{0,25}(\d+(?:[.,]\d+)?)\s*%/i);
+  const loadWeeks = t.match(/(\d+)\s*von\s*(\d+)\s*belastungswochen/i);
+  const sets = t.match(/(\d+)\s*sätze/i);
+  const ramp = t.match(/ramp\s*-?\s*rate[^\d\n]{0,40}(\d+(?:[.,]\d+)?)/i);
+  const pause = t.match(/pause\s*(?:über|von mehr als|länger als|>)\s*(\d+)\s*tag/i);
+  const decision = t.match(/woche\s*(\d+)\s*:[^\n]*/i);
+  const ext = decision?.[0].match(/(\d+\s*[–-]\s*\d+|\d+)\s*wochen/i);
   return {
-    decoupling: has(/decoupling/i) ? { max: dec ? numOf(dec[1]) : 8 } : null,
-    strength: has(/kraft/i) ? { share: STRENGTH_WEEKS_SHARE } : null,
+    ...sport,
+    // Alte Form (nur Stichworte): Decoupling langer Laeufe, solange kein Lauf-Absatz mit vergleichbaren Laeufen da ist
+    decoupling: has(/decoupling/i) && !sport.run && !sport.bike ? { max: dec ? numOf(dec[1]) : 8 } : null,
+    strength: has(/kraft/i) ? (loadWeeks ? { need: Number(loadWeeks[1]), of: Number(loadWeeks[2]), sets: sets ? Number(sets[1]) : null } : { share: STRENGTH_WEEKS_SHARE }) : null,
     acwr: has(/acwr/i) ? { ...ACWR_BAND, share: ACWR_DAYS_SHARE } : null,
+    ramp: ramp ? { max: numOf(ramp[1]) } : null,
+    pause: pause ? { maxDays: Number(pause[1]) } : null,
+    decision: decision ? { week: Number(decision[1]), extend: ext && /verlänger/i.test(decision[0]) ? ext[1].replace(/\s*-\s*/, "–") : "3–4" } : null,
   };
 }
 
 // Fenster: laeuft der Block, ab Blockstart. Davor (oder bei Block-Ende) zaehlt der "Ausgangswert" der letzten 8 Wochen.
-function windowOf(block, todayIso) {
+export function windowOf(block, todayIso) {
   if (block.status === "active" || block.status === "done") {
     const end = block.end && block.end < todayIso ? block.end : todayIso;
     return { from: block.start, to: end, baseline: false };
@@ -93,12 +143,230 @@ function statusOf(ok, warn) {
   return ok ? "ok" : warn ? "warn" : "bad";
 }
 
-// input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}]
+// ---------- Abschlussziele: vergleichbare Einheiten, Schwimmtest, Leitplanken ----------
+// Vergleichbar heisst beim Laufen: locker (Grundlage/Long Slow, kein Tempo, kein Rennen), draussen, mind. minMin Minuten,
+// flach (hoechstens FLAT_M_PER_KM Hoehenmeter je km) und kein Hitzetag. Auf der Rolle: mind. minMin − 5 Minuten,
+// gleichmaessige Leistung (VI ≤ 1,05) und locker (IF ≤ 0,80). Raumtemperatur und Ventilator prueft der Worker nicht,
+// die Temperatur des Radcomputers wird nur angezeigt.
+export const FLAT_M_PER_KM = 10;
+export const HEAT_C = 22;
+const RIDE_MAX_VI = 1.05;
+const RIDE_MAX_IF = 80;
+const RIDE_MIN_SLACK = 5;
+const RECOVERY_EVERY = 4; // 3:1 – jede 4. Blockwoche ist Entlastung, die anderen sind Belastungswochen
+
+export function isComparableRun(r, cfg) {
+  return Boolean(r.easy) && !r.treadmill && !r.heat && (r.durationMin ?? 0) >= cfg.minMin && (r.elevPerKm == null || r.elevPerKm <= FLAT_M_PER_KM);
+}
+export function isComparableRide(r, cfg) {
+  return Boolean(r.easy) && Boolean(r.indoor) && (r.durationMin ?? 0) >= cfg.minMin - RIDE_MIN_SLACK && (r.vi == null || r.vi <= RIDE_MAX_VI) && (r.intensity == null || r.intensity <= RIDE_MAX_IF);
+}
+// Warum ein lockerer Lauf nicht zaehlt (fuer den Hinweis): erster Grund
+function runExclusion(r, cfg) {
+  if (r.treadmill) return "Laufband";
+  if ((r.durationMin ?? 0) < cfg.minMin) return `unter ${cfg.minMin} min`;
+  if (r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM) return "nicht flach";
+  if (r.heat) return "Hitze";
+  return null;
+}
+
+const fmtSecs = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+const countBy = (xs) => Object.entries(xs.reduce((a, x) => ({ ...a, [x]: (a[x] ?? 0) + 1 }), {})).map(([k, n]) => `${n}× ${k}`).join(", ");
+
+function decouplingGoal({ key, sport, label, sessions, cfg, w, basis, comparable, extraNotes = [], extra = {} }) {
+  const comp = sessions.filter((x) => inWin(x.date, w) && comparable(x) && Number.isFinite(x.decoupling)).sort((a, b) => a.date.localeCompare(b.date));
+  const n = cfg.lastN, last = comp.slice(-n), first = comp.slice(0, n);
+  const avg = mean(last.map((x) => x.decoupling));
+  const must = cfg.must ?? null;
+  const decOk = avg != null && avg <= cfg.max;
+  const decMust = avg != null && (must != null ? avg <= must : avg <= cfg.max + 2);
+  // Pace: letzte n gegen die ersten n Vergleichslaeufe, erst wenn es mehr als n gibt (sonst waeren es dieselben Laeufe)
+  let pace = null;
+  if (cfg.pace && comp.length > n) {
+    const f = mean(first.map((x) => x.paceSecPerKm).filter(Number.isFinite)), l = mean(last.map((x) => x.paceSecPerKm).filter(Number.isFinite));
+    if (f != null && l != null) pace = { first: Math.round(f), last: Math.round(l), ok: l <= f };
+  }
+  const status = avg == null ? "none" : w.baseline ? "base" : pace?.ok === false ? (decMust ? "warn" : "bad") : statusOf(decOk, decMust);
+  const notes = [];
+  if (avg != null) notes.push(comp.length < n ? `erst ${comp.length} von ${n} Vergleichseinheiten` : `Ø der letzten ${n}`);
+  if (pace) notes.push(`Pace ${fmtSecs(pace.last)} statt ${fmtSecs(pace.first)} /km${pace.ok ? "" : " – langsamer als zu Blockbeginn"}`);
+  return {
+    key, group: "ziel", sport, label, unit: "%", basis,
+    target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · letzte ${n} vergleichbare${cfg.pace ? " · Pace nicht langsamer" : ""}`,
+    value: avg != null ? r1(avg) : null, count: comp.length, max: cfg.max, must, lastN: n, pace,
+    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(x.watts ? { watts: Math.round(x.watts) } : {}), ...(Number.isFinite(x.tempC) ? { tempC: Math.round(x.tempC) } : {}) })),
+    status,
+    // Fuer die Entscheidung in Woche 12 zaehlt das Muss-Kriterium (ohne Muss der Zielwert), ueber volle n Einheiten
+    pass: !w.baseline && comp.length >= n && (must != null ? avg <= must : decOk) && pace?.ok !== false,
+    note: avg == null ? `Noch keine vergleichbare Einheit mit Decoupling-Wert.` : notes.join(" · "),
+    hints: extraNotes.filter(Boolean),
+    ...extra,
+  };
+}
+
+// Schwimmtest (z. B. 2× 500 m) aus den Intervallen einer Einheit: die ersten zwei aufeinanderfolgenden Arbeitsintervalle
+// mit ±10 % der Testdistanz. Pause = Abstand zwischen Ende des ersten und Start des zweiten.
+export function swimTestFromIntervals(dto, distM) {
+  const list = (Array.isArray(dto?.icu_intervals) ? dto.icu_intervals : []).filter((i) => String(i?.type ?? "").toUpperCase() !== "RECOVERY" && Number(i?.distance) > 0);
+  const near = (i) => Math.abs(Number(i.distance) - distM) <= distM * 0.1;
+  for (let k = 0; k + 1 < list.length; k++) {
+    const a = list[k], b = list[k + 1];
+    if (!near(a) || !near(b)) continue;
+    const t1 = Number(a.moving_time ?? a.elapsed_time), t2 = Number(b.moving_time ?? b.elapsed_time);
+    const pause = Number.isFinite(Number(b.start_time)) && Number.isFinite(Number(a.end_time)) ? Number(b.start_time) - Number(a.end_time) : null;
+    if (t1 > 0 && t2 > 0) return { t1Sec: Math.round(t1 * (distM / Number(a.distance))), t2Sec: Math.round(t2 * (distM / Number(b.distance))), pauseSec: pause != null && pause >= 0 ? Math.round(pause) : null, source: "intervalle" };
+  }
+  return null;
+}
+// Oder als Text in der Beschreibung/im Namen: "2x500: 9:40 / 9:52, Pause 45 s" (erste zwei Zeiten = die zwei Strecken)
+export function swimTestFromText(text, distM) {
+  const t = String(text ?? "");
+  if (!new RegExp(`(?<!\\d)${distM}(?!\\d)`).test(t)) return null;
+  const body = t.replace(/\d\s*[×x]\s*\d{2,4}\s*m?/gi, " ");
+  const pm = body.match(/pause\s*:?\s*(?:(\d{1,2}):(\d{2})|(\d+)\s*(s|sek|sekunden|min))/i);
+  const rest = pm ? body.replace(pm[0], " ") : body;
+  const times = [...rest.matchAll(/\b(\d{1,2}):(\d{2})\b/g)].map((m) => Number(m[1]) * 60 + Number(m[2]));
+  if (times.length < 2) return null;
+  const pauseSec = pm ? (pm[1] != null ? Number(pm[1]) * 60 + Number(pm[2]) : /min/i.test(pm[4]) ? Number(pm[3]) * 60 : Number(pm[3])) : null;
+  return { t1Sec: times[0], t2Sec: times[1], pauseSec, source: "text" };
+}
+
+function swimGoal(tests, cfg, w, basis) {
+  const per100 = cfg.distM / 100;
+  const list = tests.filter((x) => inWin(x.date, w) && x.t1Sec > 0 && x.t2Sec > 0).sort((a, b) => a.date.localeCompare(b.date)).map((x) => {
+    const slower = (x.t2Sec - x.t1Sec) / per100;
+    const pauseOk = x.pauseSec == null ? null : x.pauseSec <= cfg.maxPauseSec;
+    return { ...x, slowerPer100: r1(slower), pauseOk, pass: slower <= cfg.maxSlowerPer100 && pauseOk !== false };
+  });
+  const latest = list[list.length - 1] ?? null;
+  const anyPass = list.some((x) => x.pass);
+  return {
+    key: "swimTest", group: "ziel", sport: "swim", label: "Schwimmen: Dauer, saubere Technik", unit: "s/100 m", basis,
+    target: `${cfg.reps}× ${cfg.distM} m · Pause ≤ ${cfg.maxPauseSec / 60} min · 2. höchstens +${cfg.maxSlowerPer100} s/100 m`,
+    value: latest ? latest.slowerPer100 : null, count: list.length, maxSlowerPer100: cfg.maxSlowerPer100,
+    tests: list.slice(-6).map((x) => ({ date: x.date, t1: fmtSecs(x.t1Sec), t2: fmtSecs(x.t2Sec), pauseSec: x.pauseSec, slowerPer100: x.slowerPer100, pass: x.pass })),
+    status: !latest ? "none" : w.baseline ? "base" : statusOf(latest.pass, anyPass),
+    pass: !w.baseline && anyPass,
+    note: !latest ? `Noch kein Test (${cfg.reps}× ${cfg.distM} m) – Zeiten in die Beschreibung schreiben, z. B. „${cfg.reps}x${cfg.distM}: 9:40 / 9:50, Pause 45 s“.`
+      : `${fmtSecs(latest.t1Sec)} / ${fmtSecs(latest.t2Sec)}${latest.pauseSec != null ? ` · Pause ${latest.pauseSec} s` : " · Pause unbekannt"}${anyPass && !latest.pass ? " · früher schon bestanden" : ""}`,
+  };
+}
+
+const weeksOf = (block, w, todayIso) => {
+  const out = [];
+  for (let s = w.from, i = 0; s <= w.to; s = addDays(s, 7), i++) {
+    const e = addDays(s, 6);
+    out.push({ start: s, end: e, idx: i, done: e <= w.to && e < todayIso, load: w.baseline || (i + 1) % RECOVERY_EVERY !== 0 });
+  }
+  return out;
+};
+
+function rampGoal(ctlDays, cfg, block, w, basis, todayIso) {
+  const ctl = Object.fromEntries(ctlDays.filter((x) => Number.isFinite(x.ctl)).map((x) => [x.date, x.ctl]));
+  const at = (d) => { for (let k = 0; k < 4; k++) { const v = ctl[addDays(d, -k)]; if (v != null) return v; } return null; };
+  const weeks = weeksOf(block, w, todayIso).map((x) => {
+    const a = at(addDays(x.start, -1)), b = at(x.done ? x.end : todayIso);
+    return { start: x.start, load: x.load, done: x.done, ramp: a != null && b != null ? r1(b - a) : null };
+  });
+  const full = weeks.filter((x) => x.done && x.load && x.ramp != null);
+  const over = full.filter((x) => x.ramp > cfg.max);
+  const maxRamp = full.length ? Math.max(...full.map((x) => x.ramp)) : null;
+  const open = weeks.find((x) => !x.done);
+  return {
+    key: "ramp", group: "leitplanke", label: "Ramp Rate", unit: "CTL/Woche", basis,
+    target: `≤ ${cfg.max} je Belastungswoche`, value: maxRamp, max: cfg.max, weeks: weeks.slice(-12),
+    status: !full.length ? "none" : w.baseline ? "base" : over.length ? "bad" : "ok",
+    note: [full.length ? `höchste ${String(maxRamp).replace(".", ",")}${over.length ? ` · ${over.length}× über ${cfg.max}` : ""}` : "Noch keine abgeschlossene Belastungswoche.", open?.ramp != null ? `diese Woche bisher ${open.ramp > 0 ? "+" : ""}${String(open.ramp).replace(".", ",")}` : null].filter(Boolean).join(" · "),
+  };
+}
+
+function pauseGoal(activityDays, breaks, cfg, w, basis, todayIso) {
+  const days = [...new Set(activityDays.filter((d) => inWin(d, { from: addDays(w.from, -1), to: w.to })))].sort();
+  const planned = (from, to) => breaks.some((b) => b.from <= to && b.to >= from);
+  const gaps = [];
+  let prev = addDays(w.from, -1);
+  // Der laufende Tag zaehlt nicht als Luecke (es kann noch trainiert werden)
+  const end = w.to >= todayIso ? todayIso : addDays(w.to, 1);
+  for (const d of [...days.filter((x) => x < end), end]) {
+    const len = diffDays(prev, d) - 1;
+    if (len > 0) gaps.push({ from: addDays(prev, 1), to: addDays(d, -1), days: len, open: d === end });
+    prev = d;
+  }
+  const unplanned = gaps.filter((g) => !planned(g.from, g.to));
+  const longest = unplanned.reduce((m, g) => Math.max(m, g.days), 0);
+  const broken = unplanned.filter((g) => g.days > cfg.maxDays);
+  const openGap = unplanned.find((g) => g.open);
+  return {
+    key: "pause", group: "leitplanke", label: "Keine lange Pause", unit: "Tage", basis,
+    target: `keine ungeplante Pause über ${cfg.maxDays} Tage`, value: longest, max: cfg.maxDays,
+    status: w.baseline ? "base" : broken.length ? "bad" : openGap && openGap.days >= cfg.maxDays - 2 ? "warn" : "ok",
+    note: [`längste Lücke ${longest} Tag${longest === 1 ? "" : "e"}`, openGap ? `seit ${openGap.days} Tag${openGap.days === 1 ? "" : "en"} kein Training` : null, broken.length ? `${broken.length}× über ${cfg.maxDays} Tage` : null].filter(Boolean).join(" · "),
+    hints: ["Geplante Pausen als Notiz „Pause“ oder „Urlaub“ in den Kalender eintragen, dann zählen sie nicht."],
+  };
+}
+
+// Entscheidung zum Blockende (Woche 12): alle Ziele und Leitplanken erfuellt -> naechster Block; eine Leitplanke gerissen ->
+// erst Ursache klaeren; sonst die betroffenen Sportarten verlaengern. Vor der Woche als "Stand heute".
+const SPORT_DE = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
+export function buildBlockDecision(block, targets, goals) {
+  if (!targets.decision || block.status === "upcoming") return null;
+  const ziele = goals.filter((g) => g.group === "ziel"), lp = goals.filter((g) => g.group === "leitplanke");
+  if (!ziele.length) return null;
+  const broken = lp.filter((g) => g.status === "bad");
+  const missing = ziele.filter((g) => !g.pass);
+  const state = broken.length ? "cause" : missing.length ? "extend" : "next";
+  const sports = missing.map((g) => SPORT_DE[g.sport] ?? g.label);
+  const text = state === "next" ? `Weiter mit ${block.next?.name ?? "dem nächsten Block"}${block.next?.start ? ` (ab ${block.next.start.slice(8, 10)}.${block.next.start.slice(5, 7)}.)` : ""}.`
+    : state === "extend" ? `${sports.join(", ")} um ${targets.decision.extend} Wochen verlängern.`
+    : `Leitplanke gerissen (${broken.map((g) => g.label).join(", ")}): erst die Ursache klären, dann ${missing.length ? `${sports.join(", ")} verlängern` : "weiter"}.`;
+  return { week: targets.decision.week, due: block.status === "done" || (block.weekNo ?? 0) >= targets.decision.week, state, text, missing: missing.map((g) => g.sport), broken: broken.map((g) => g.key) };
+}
+
+// input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}],
+//   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,vi,intensity,indoor,easy,hasHr,tempC}],
+//   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}] }
 export function buildBlockGoals(block, input, todayIso) {
-  const targets = parseBlockTargets(`${block.goal ?? ""}\n${(block.notes ?? []).join("\n")}`);
+  return buildBlockGoalsFull(block, input, todayIso).goals;
+}
+
+export function buildBlockGoalsFull(block, input, todayIso) {
+  const targets = parseBlockTargets([block.goal, ...(block.notes ?? [])].filter(Boolean).join("\n\n"));
   const w = windowOf(block, todayIso);
   const basis = w.baseline ? "letzte 8 Wochen" : "seit Blockstart";
   const goals = [];
+
+  if (targets.run) {
+    const cfg = targets.run;
+    const easy = (input.runs ?? []).filter((r) => inWin(r.date, w) && r.easy);
+    const excluded = easy.map((r) => runExclusion(r, cfg)).filter(Boolean);
+    const noDec = easy.filter((r) => isComparableRun(r, cfg) && !Number.isFinite(r.decoupling)).length;
+    goals.push(decouplingGoal({
+      key: "runDecoupling", sport: "run", label: "Lauf: aerobe Stabilität", sessions: input.runs ?? [], cfg, w, basis,
+      comparable: (r) => isComparableRun(r, cfg),
+      extraNotes: [excluded.length ? `nicht vergleichbar: ${countBy(excluded)}` : null, noDec ? `${noDec}× ohne Decoupling-Wert` : null],
+    }));
+  }
+
+  if (targets.bike) {
+    const cfg = targets.bike;
+    const cand = (input.rides ?? []).filter((r) => inWin(r.date, w) && isComparableRide(r, cfg));
+    const noHr = cand.filter((r) => !Number.isFinite(r.decoupling) && r.hasHr === false).length;
+    const g = decouplingGoal({
+      key: "bikeDecoupling", sport: "bike", label: "Rad (Rolle): aerobe Stabilität", sessions: input.rides ?? [], cfg, w, basis,
+      comparable: (r) => isComparableRide(r, cfg),
+      extraNotes: [noHr ? `${noHr}× ohne Puls – ohne Pulsgurt gibt es kein Decoupling` : null],
+      extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null },
+    });
+    const last = g.series.slice(-g.lastN);
+    const watts = last.map((x) => x.watts).filter(Number.isFinite), temps = last.map((x) => x.tempC).filter(Number.isFinite);
+    const span = (xs, u) => (xs.length ? (Math.min(...xs) === Math.max(...xs) ? `${Math.min(...xs)} ${u}` : `${Math.min(...xs)}–${Math.max(...xs)} ${u}`) : null);
+    if (watts.length) g.hints.unshift(`Leistung ${span(watts, "W")}${temps.length ? ` · Temperatur ${span(temps, "°C")}` : ""}`);
+    if (cfg.ftpTest && !w.baseline) g.hints.push(input.ftpTest ? `FTP-Test am ${input.ftpTest.date.slice(8, 10)}.${input.ftpTest.date.slice(5, 7)}.${input.ftp ? ` · FTP ${input.ftp} W` : ""}` : (block.weekNo ?? 1) > 1 || block.status === "done" ? "Kein FTP-Test in Woche 1 gefunden." : "FTP-Test in Woche 1 steht an.");
+    goals.push(g);
+  }
+
+  if (targets.swim) goals.push(swimGoal(input.swimTests ?? [], targets.swim, w, basis));
+
 
   if (targets.decoupling) {
     const runs = (input.longRuns ?? []).filter((r) => inWin(r.date, w) && Number.isFinite(r.decoupling));
@@ -115,27 +383,38 @@ export function buildBlockGoals(block, input, todayIso) {
 
   if (targets.strength) {
     // Wochenziel in Sätzen (EGYM). Ohne Satzzahlen (kein EGYM) zählen Kraft-Tage, dann gilt STRENGTH_DAYS_PER_WEEK.
-    const goalSets = Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
+    // Leitplanke "8 von 9 Belastungswochen": Entlastungswochen (jede 4. Blockwoche) zählen nicht; es darf höchstens
+    // (of − need) Belastungswochen ohne Ziel geben.
+    const st = targets.strength, perLoad = st.need != null;
+    const goalSets = perLoad && st.sets ? st.sets : Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
     const setsMode = (input.strength ?? []).some((x) => Number.isFinite(x.sets));
     const need = setsMode ? goalSets : STRENGTH_DAYS_PER_WEEK;
-    const share = targets.strength.share;
-    const weeks = [];
-    for (let s = w.from; s <= w.to; s = addDays(s, 7)) {
-      const e = addDays(s, 6);
-      const inWeek = (input.strength ?? []).filter((x) => x.date >= s && x.date <= e);
-      const count = setsMode ? inWeek.reduce((a, x) => a + (Number.isFinite(x.sets) ? x.sets : 0), 0) : new Set(inWeek.map((x) => x.date)).size;
-      weeks.push({ start: s, count, done: e <= w.to && e < todayIso, hit: count >= need });
-    }
-    const full = weeks.filter((x) => x.done);
+    const weeks = weeksOf(block, w, todayIso).map((x) => {
+      const inWeek = (input.strength ?? []).filter((y) => y.date >= x.start && y.date <= x.end);
+      const count = setsMode ? inWeek.reduce((a, y) => a + (Number.isFinite(y.sets) ? y.sets : 0), 0) : new Set(inWeek.map((y) => y.date)).size;
+      return { start: x.start, count, done: x.done, hit: count >= need, load: perLoad ? x.load : true };
+    });
+    const full = weeks.filter((x) => x.done && x.load);
     const hits = full.filter((x) => x.hit).length;
     const openWeek = weeks.find((x) => !x.done) ?? null;
     const unit = setsMode ? "Sätze" : "× Kraft";
+    const what = setsMode ? `≥ ${need} Sätze` : `${need}× Kraft`;
+    let status, target;
+    if (perLoad) {
+      const allowed = Math.max(0, st.of - st.need), misses = full.length - hits;
+      target = `${what} in ${st.need} von ${st.of} Belastungswochen`;
+      status = w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : misses > allowed ? "bad" : misses === allowed && allowed > 0 ? "warn" : "ok";
+    } else {
+      target = `${what} in ${Math.round(st.share * 100)} % der Wochen`;
+      status = w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= st.share, hits / full.length >= st.share - 0.15);
+    }
     goals.push({
-      key: "strength", label: "Kraft-Konsistenz", target: `${setsMode ? `≥ ${need} Sätze` : `${need}× Kraft`} in ${Math.round(share * 100)} % der Wochen`, unit: "Wochen",
+      key: "strength", ...(perLoad ? { group: "leitplanke" } : {}), label: perLoad ? "Kraft" : "Kraft-Konsistenz", target, unit: "Wochen",
       value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), goalSets: setsMode ? need : null, countUnit: unit,
-      status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= share, hits / full.length >= share - 0.15),
+      ...(perLoad ? { needWeeks: st.need, ofWeeks: st.of } : {}),
+      status,
       egym: Boolean(input.strengthSource?.egym), egymAt: input.strengthSource?.egymAt ?? null,
-      note: openWeek ? `Diese Woche: ${openWeek.count} von ${need}${setsMode ? " Sätzen" : ""}` : null,
+      note: [openWeek ? `Diese Woche: ${openWeek.count} von ${need}${setsMode ? " Sätzen" : ""}${openWeek.load ? "" : " (Entlastungswoche)"}` : null, perLoad && full.length > hits ? `${full.length - hits} von ${Math.max(0, st.of - st.need)} erlaubten Fehlwochen` : null].filter(Boolean).join(" · ") || null,
     });
   }
 
@@ -151,5 +430,8 @@ export function buildBlockGoals(block, input, todayIso) {
     });
   }
 
-  return goals;
+  if (targets.ramp) goals.push(rampGoal(input.ctlDays ?? [], targets.ramp, block, w, basis, todayIso));
+  if (targets.pause) goals.push(pauseGoal(input.activityDays ?? [], input.plannedBreaks ?? [], targets.pause, w, basis, todayIso));
+
+  return { goals, decision: buildBlockDecision(block, targets, goals) };
 }
