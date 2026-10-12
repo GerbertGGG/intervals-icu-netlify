@@ -299,6 +299,14 @@ function watchWarning(d) {
   return f ? { k: "hint", t: f.tag ?? null } : null;
 }
 
+// Kraft fuer den Ring: Saetze der laufenden Woche gegen das Wochenziel (Standard 60, EGYM_WEEKLY_GOAL_SETS), nicht die
+// Zahl der Wochen im Ziel (value/of des Block-Ziels). Ohne Satzzahlen (kein EGYM) Kraft-Tage gegen 2. Ohne Block-Ziel null.
+function strengthWeek(goal) {
+  const cur = goal?.weeks?.find((w) => !w.done);
+  if (!cur || !(goal.weekGoal > 0)) return null;
+  return { v: cur.count, of: goal.weekGoal, ok: "ok" };
+}
+
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
@@ -333,8 +341,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     tss: total(week),
     plan: week.plannedLoad > 0 ? week.plannedLoad : null,
     goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
-    // Kraft-Saetze der Woche gegen das Ziel aus dem Trainingsblock; ohne Block-Ziel Kraft null
-    str: strength ? { v: strength.value ?? null, of: strength.of ?? null, ok: strength.status } : null,
+    str: strengthWeek(strength),
     kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
     failed: failedOf(d).length,
   };
