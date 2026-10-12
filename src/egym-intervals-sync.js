@@ -1,6 +1,6 @@
 import { isoDateBerlin } from "./date-utils.js";
 import { fetchEgymWorkouts, hasEgymCredentials } from "./egym-client.js";
-import { fetchIntervalsActivities, fetchIntervalsEvents, postManualActivities, updateIntervalsActivity } from "./intervals-client.js";
+import { deleteIntervalsActivity, fetchIntervalsActivities, fetchIntervalsEvents, postManualActivities, updateIntervalsActivity } from "./intervals-client.js";
 import { isStrengthExercise, secondsOf, setsOf, setVolumeKg, strengthDays, uniqueWorkouts, weightKgOf } from "./egym-widget.js";
 
 // Schreibt die EGYM-Krafteinheiten als manuelle Aktivitaeten (Typ WeightTraining) nach Intervals.icu, damit Kraft dort
@@ -72,25 +72,29 @@ export function pairsForPlanned(activities, events) {
 }
 
 // Reine Funktion: Dauer, die in Intervals nicht zum EGYM-Stand passt. Der Bulk-Upsert uebernimmt bei einer vorhandenen
-// Aktivitaet die Beschreibung, aber nicht die Dauer (ein Sync mitten im Training liess sonst z. B. 3 Minuten stehen).
+// Aktivitaet die Beschreibung, aber nicht die Dauer, und ein PUT mit moving_time wird mit 200 beantwortet, aendert sie
+// aber auch nicht (ein Sync mitten im Training liess so 3 Minuten stehen). Solche Aktivitaeten werden neu angelegt.
 export function durationFixes(existing, built) {
   const want = new Map((built ?? []).map((b) => [b.external_id, b.moving_time]));
   return (existing ?? [])
     .filter((a) => a?.id && want.has(a.external_id) && (a.moving_time !== want.get(a.external_id) || a.elapsed_time !== want.get(a.external_id)))
-    .map((a) => ({ activityId: a.id, moving_time: want.get(a.external_id), elapsed_time: want.get(a.external_id) }));
+    .map((a) => ({ activityId: a.id, external_id: a.external_id, moving_time: want.get(a.external_id), elapsed_time: want.get(a.external_id) }));
 }
 
-// Nach dem Upsert: Dauer nachziehen und ungekoppelte EGYM-Aktivitaeten mit dem geplanten Krafttraining desselben Tages
-// verbinden; Fehler nur protokollieren
+// Nach dem Upsert: Aktivitaeten mit veralteter Dauer loeschen und neu anlegen (eine neue Aktivitaet bekommt die Dauer),
+// danach ungekoppelte EGYM-Aktivitaeten mit dem geplanten Krafttraining desselben Tages verbinden. Fehler nur protokollieren.
 async function reconcile(env, built, oldest, newest) {
   try {
+    const stale = durationFixes(await fetchIntervalsActivities(env, oldest, newest), built);
+    if (stale.length) {
+      for (const f of stale) await deleteIntervalsActivity(env, f.activityId);
+      const redo = new Set(stale.map((f) => f.external_id));
+      await postManualActivities(env, built.filter((b) => redo.has(b.external_id)));
+    }
     const [acts, events] = await Promise.all([fetchIntervalsActivities(env, oldest, newest), fetchIntervalsEvents(env, oldest, newest)]);
-    const patches = new Map();
-    for (const f of durationFixes(acts, built)) patches.set(f.activityId, { moving_time: f.moving_time, elapsed_time: f.elapsed_time });
     const pairs = pairsForPlanned(acts, events);
-    for (const p of pairs) patches.set(p.activityId, { ...patches.get(p.activityId), paired_event_id: p.eventId });
-    for (const [id, patch] of patches) await updateIntervalsActivity(env, id, patch);
-    return { paired: pairs.length, updated: patches.size, minutes: Object.fromEntries(built.map((b) => [b.external_id.slice(5), Math.round(b.moving_time / 60)])) };
+    for (const p of pairs) await updateIntervalsActivity(env, p.activityId, { paired_event_id: p.eventId });
+    return { paired: pairs.length, updated: stale.length, minutes: Object.fromEntries(built.map((b) => [b.external_id.slice(5), Math.round(b.moving_time / 60)])) };
   } catch (e) {
     console.warn("egym reconcile failed", String(e?.message ?? e));
     return { paired: 0, updated: 0, reconcileError: String(e?.message ?? e) };
