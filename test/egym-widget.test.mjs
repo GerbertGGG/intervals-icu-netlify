@@ -43,7 +43,10 @@ test("Dauer: EGYM-Angabe, sonst Saetze, sonst nur geschaetzte Spanne, sonst kein
     { completedAt: "2026-10-03T16:00:00Z", exercise: { machineBased: true }, attributes: {} },
     { completedAt: "2026-10-03T16:40:00Z", exercise: { machineBased: true }, attributes: {} } ] };
   const d3 = strengthDays([twoEx]);
-  assert.deepEqual([d3[0].minutes, d3[0].durationSource], [40, "estimate"]);
+  assert.deepEqual([d3[0].minutes, d3[0].durationSource], [45, "estimate"]); // 40 min Spanne + hoechstens 5 min fuer die letzte Uebung
+  const ex = (min) => ({ completedAt: `2026-10-04T16:${String(min).padStart(2, "0")}:00Z`, exercise: { machineBased: true }, attributes: {} });
+  const d4 = strengthDays([{ code: "u", completedAt: "2026-10-04T16:20:00Z", exercises: [ex(0), ex(5), ex(10), ex(15), ex(20)] }]);
+  assert.equal(d4[0].minutes, 25); // 20 min Spanne + mittlerer Abstand 5 min
 });
 
 test("Woche: Saetze gegen Ziel 60, Serie, Wochentage", () => {
@@ -169,4 +172,17 @@ test("Dauer wird nachgezogen, wenn Intervals beim Upsert die alte behalten hat",
     { id: "i3", external_id: "24695691983", moving_time: 1347, elapsed_time: 1347 },
   ];
   assert.deepEqual(durationFixes(existing, built), [{ activityId: "i1", external_id: "egym-2026-10-12", moving_time: 1500, elapsed_time: 1500 }]);
+});
+
+test("Von Hand geaenderte Dauer bleibt, vom Sync geschriebene wird nachgezogen", async () => {
+  const { durationFixes, nextWritten } = await import("../src/egym-intervals-sync.js");
+  const built = [{ external_id: "egym-2026-10-12", moving_time: 900 }];
+  const synced = [{ id: "i1", external_id: "egym-2026-10-12", moving_time: 180, elapsed_time: 180 }];
+  assert.equal(durationFixes(synced, built, { "egym-2026-10-12": 180 }).length, 1); // vom Sync geschrieben: neu anlegen
+  assert.equal(durationFixes(synced, built, {}).length, 1); // ohne Eintrag ebenso
+  const manual = [{ id: "i1", external_id: "egym-2026-10-12", moving_time: 3600, elapsed_time: 3600 }];
+  assert.equal(durationFixes(manual, built, { "egym-2026-10-12": 840 }).length, 0); // Nutzer hat 60 min eingetragen
+  // Stand nach dem Sync: neu angelegt -> 900; von Hand geaendert -> alter Eintrag bleibt; alte Tage fallen weg
+  assert.deepEqual(nextWritten({ "egym-2026-09-01": 600 }, synced, built, durationFixes(synced, built, {}), "2026-10-12"), { "egym-2026-10-12": 900 });
+  assert.deepEqual(nextWritten({ "egym-2026-10-12": 840 }, manual, built, [], "2026-10-12"), { "egym-2026-10-12": 840 });
 });
