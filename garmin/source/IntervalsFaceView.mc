@@ -46,7 +46,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Inter (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
+        // Bitmap-Schriften aus Barlow (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _small = WatchUi.loadResource(Rez.Fonts.Small) as Graphics.FontType;
         _mid = WatchUi.loadResource(Rez.Fonts.Mid) as Graphics.FontType;
@@ -293,7 +293,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
-    // drawRadialText braucht eine Vektorschrift der Uhr (Inter gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
+    // drawRadialText braucht eine Vektorschrift der Uhr (Barlow gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
 
     private function drawStatusArc(dc as Dc, data as Dictionary) as Void {
         var race = data.get("race") as Dictionary?;
