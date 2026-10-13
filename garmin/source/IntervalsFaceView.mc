@@ -9,9 +9,9 @@ import Toybox.Weather;
 import Toybox.WatchUi;
 
 // Zifferblatt im Apple-Stil: Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
-// "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche am Rand,
-// dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
-// am unteren Rand Renn-Countdown und Blockwoche als gebogene Schrift.
+// "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche
+// als gerade Reihe, dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
+// unten Renn-Countdown und Blockwoche als gerade Zeile.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
@@ -89,7 +89,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawNext(dc, data);
         drawReady(dc, data);
         drawComplications(dc, data);
-        drawStatusArc(dc, data);
+        drawStatusLine(dc, data);
     }
 
     // ---- Zeit ----------------------------------------------------------------
@@ -121,7 +121,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(_cx, y + px(16), px(6));
     }
 
-    // ---- Oberer Rand: Woche Mo bis So ------------------------------------------
+    // ---- Oben: Woche Mo bis So als gerade Reihe ------------------------------------
     // Gefüllt in Sportfarbe = erledigt, graue Scheibe mit Buchstaben in Sportfarbe = geplant, dunkel = frei, weißer Ring = heute.
     // Zwei Sportarten an einem Tag: geteilter Kreis, links die erste (erledigt vor geplant), rechts die zweite;
     // sind beide nur geplant, zwei Punkte in den Sportfarben statt des Buchstabens.
@@ -135,19 +135,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = numOrNull(data.get("ti"));
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            // Weiter außen und 13,5° Abstand: die Kreise berühren sich nicht, und die äußeren liegen höher,
-            // sodass sie die Zeile mit der nächsten Einheit nicht mehr überdecken
-            var p = pt(px(200), -40.5 + 13.5 * i);
+            // Gerade Reihe mit 44 Pixel Abstand; Radius 19, damit Mo und So samt Heute-Ring noch im runden Display liegen
+            var p = [_cx + px(44 * (i - 3)), px(78)];
             var day = days[i] as Dictionary?;
             if (today != null && today == i) {
                 dc.setPenWidth(px(2));
                 dc.setColor(FG, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(24));
+                dc.drawCircle(p[0], p[1], px(22));
             }
             var textColor = SEC;
             if (day == null) {
                 dc.setColor(FREE, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(20));
+                dc.fillCircle(p[0], p[1], px(18));
             } else if (day.get("s2") == null) {
                 // Eine Sportart: voll = erledigt, grau mit farbigem Buchstaben = geplant
                 var color = sportColor(day.get("s"));
@@ -162,13 +161,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dayPart(dc, p, sportColor(day.get("s2")), planned2, 1);
                 // Breiter schwarzer Spalt, sonst verschwimmen die beiden Hälften auf der Uhr zu einem Kreis
                 dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
-                dc.fillRectangle(p[0] - px(2), p[1] - px(22), px(4), px(44));
+                dc.fillRectangle(p[0] - px(2), p[1] - px(20), px(4), px(40));
                 textColor = planned1 || planned2 ? FG : Graphics.COLOR_BLACK;
                 if (planned1 && planned2) {
                     dc.setColor(sportColor(day.get("s")), Graphics.COLOR_TRANSPARENT);
-                    dc.fillCircle(p[0] - px(9), p[1], px(5));
+                    dc.fillCircle(p[0] - px(8), p[1], px(5));
                     dc.setColor(sportColor(day.get("s2")), Graphics.COLOR_TRANSPARENT);
-                    dc.fillCircle(p[0] + px(9), p[1], px(5));
+                    dc.fillCircle(p[0] + px(8), p[1], px(5));
                     continue;
                 }
             }
@@ -182,10 +181,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private function dayPart(dc as Dc, p as Array<Number>, color as Number, planned as Boolean, side as Number) as Void {
         dc.setColor(planned ? blend(FREE, color, 0.18) : color, Graphics.COLOR_BLACK);
         if (side == 0) {
-            dc.fillCircle(p[0], p[1], px(21));
+            dc.fillCircle(p[0], p[1], px(19));
         } else {
             // Gefüllter Halbkreis als Vieleck
-            var r = px(21);
+            var r = px(19);
             var pts = [] as Array<Graphics.Point2D>;
             for (var k = 0; k <= 12; k++) {
                 var a = Math.toRadians(90 + 180 * k / 12.0);
@@ -471,10 +470,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return (r << 16) | (g << 8) | bl;
     }
 
-    // ---- Unterer Rand: Renn-Countdown und Blockwoche, gebogen -----------------------
-    // drawRadialText braucht eine Vektorschrift der Uhr (Nunito gibt es nur als Bitmap); ohne sie steht die Zeile gerade.
+    // ---- Unten: Renn-Countdown und Blockwoche als gerade Zeile -----------------------
 
-    private function drawStatusArc(dc as Dc, data as Dictionary) as Void {
+    private function drawStatusLine(dc as Dc, data as Dictionary) as Void {
         var race = data.get("race") as Dictionary?;
         var raceDays = race != null ? numOrNull(race.get("d")) : null;
         var raceText = (raceDays != null && raceDays >= 0 && raceDays <= 100) ? "RENNEN " + raceDays.toNumber() + " T" : "";
@@ -495,23 +493,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (text.length() == 0) {
             return;
         }
-        // Heller als die übrigen Beschriftungen, sonst ist die Zeile am Rand kaum lesbar
+        // Heller als die übrigen Beschriftungen, sonst ist die Zeile am Rand kaum lesbar.
+        // Die große Schrift, wenn sie in die Breite des Kreises an dieser Stelle passt, sonst die kleinere.
         dc.setColor(BOTTOM, Graphics.COLOR_TRANSPARENT);
-        var font = null;
-        if (Graphics has :getVectorFont) {
-            font = Graphics.getVectorFont({ :face => ["RobotoCondensedBold", "RobotoBold", "BionicBold", "BionicSemiBold", "RobotoCondensedRegular", "RobotoRegular"], :size => px(24) });
-        }
-        if (font != null && dc has :drawRadialText) {
-            // 270° = 6 Uhr; gegen den Uhrzeigersinn, damit die Schrift unten aufrecht steht
-            dc.drawRadialText(_cx, _cy, font, text, Graphics.TEXT_JUSTIFY_CENTER, 270, px(208), Graphics.RADIAL_TEXT_DIRECTION_COUNTER_CLOCKWISE);
-        } else {
-            // Gerade Zeile: die große Schrift, wenn sie in die Breite des Kreises an dieser Stelle passt, sonst die kleinere
-            var y = px(406);
-            var dy = y - _cy;
-            var room = 2 * Math.sqrt(_cx * _cx - dy * dy) - px(40);
-            var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;
-            dc.drawText(_cx, y, f, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-        }
+        var y = px(404);
+        var dy = y - _cy;
+        var room = 2 * Math.sqrt(_cx * _cx - dy * dy) - px(40);
+        var f = dc.getTextWidthInPixels(text, _small) <= room ? _small : _cap;
+        dc.drawText(_cx, y, f, text, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
     // Vollkreis mit Fortschritt ab 12 Uhr im Uhrzeigersinn
@@ -585,12 +574,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function px(v as Numeric) as Number {
         return (v * _s).toNumber();
-    }
-
-    // Punkt auf dem Kreis um die Mitte; Winkel in Grad, 0 = oben, im Uhrzeigersinn
-    private function pt(r as Numeric, a as Numeric) as Array<Number> {
-        var t = Math.toRadians(a);
-        return [ (_cx + r * Math.sin(t)).toNumber(), (_cy - r * Math.cos(t)).toNumber() ];
     }
 
     private function norm(a as Numeric) as Number {

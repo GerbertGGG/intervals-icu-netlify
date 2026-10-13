@@ -2,12 +2,12 @@
 
 Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Von oben nach unten:
 
-- **Woche** Mo bis So am oberen Rand (große Kreise im 15°-Abstand): gefüllt in Sportfarbe (Laufen gelb, Rad grün, Schwimmen blau, Kraft orange) = erledigt, gedimmt gefüllt = geplant, dunkel = frei, weißer Ring = heute. Zwei Sportarten an einem Tag: geteilter Kreis, links die erste (erledigt vor geplant, sonst nach Belastung), rechts die zweite.
+- **Woche** Mo bis So oben als gerade Reihe: gefüllt in Sportfarbe (Laufen gelb, Rad grün, Schwimmen blau, Kraft orange) = erledigt, gedimmt gefüllt = geplant, dunkel = frei, weißer Ring = heute. Zwei Sportarten an einem Tag: geteilter Kreis, links die erste (erledigt vor geplant, sonst nach Belastung), rechts die zweite.
 - **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′"). Heute bleibt eine geplante Einheit stehen, solange ihre Sportart heute noch nicht erledigt ist (Rad erledigt, Kraft offen → Kraft).
 - **Uhrzeit**, groß.
 - **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampelpunkt. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat (mit Stichwort, z. B. "Eiweiß", "Kalorien", "Tagebuch", "Heißhunger", "Ruhetag", "Last", "Laufumfang").
 - **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N“; der Ring füllt sich mit dem Gegessenen), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot), Wetter (Temperatur und höchste Regenwahrscheinlichkeit der nächsten 12 Stunden; der Ring ist ein 12-Stunden-Zifferblatt, jedes Stundensegment wird mit der Regenwahrscheinlichkeit heller, ein weißer Strich markiert die aktuelle Uhrzeit).
-- **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gebogene Schrift.
+- **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gerade Zeile.
 
 Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mockup, true = jede Komplikation in eigener dezenter Farbe).
 
@@ -44,4 +44,4 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 - Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Nunito** (SIL Open Font License) in `resources/fonts/`, die Uhrzeit nur aus Ziffern und gleich breit. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die Nunito-Dateien von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, wird die Bereitschaft grau und bekommt ein `!`.
-- Die gebogene Zeile unten nutzt `drawRadialText`. Das geht nur mit einer Vektorschrift der Uhr (Roboto Condensed, Nunito gibt es nur als Bitmap). Hat die Uhr keine, steht die Zeile gerade, in der großen Schrift, wenn sie in die Breite passt, sonst in der kleineren.
+- Die Zeile unten steht in der großen Schrift, wenn sie in die Breite des Kreises passt, sonst in der kleineren.
