@@ -122,8 +122,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Oben: Woche Mo bis So als gerade Reihe ------------------------------------
-    // Gefüllt in Sportfarbe = erledigt, graue Scheibe mit Buchstaben in Sportfarbe = geplant, dunkel = frei, weißer Ring = heute.
-    // Zwei Sportarten an einem Tag: geteilter Kreis, links die erste (erledigt vor geplant), rechts die zweite;
+    // Abgerundete Quadrate: gefüllt in Sportfarbe = erledigt, graues Feld mit Buchstaben in Sportfarbe = geplant, dunkel = frei, weißer Rahmen = heute.
+    // Zwei Sportarten an einem Tag: geteiltes Feld, links die erste (erledigt vor geplant), rechts die zweite;
     // sind beide nur geplant, zwei Punkte in den Sportfarben statt des Buchstabens.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
@@ -135,18 +135,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = numOrNull(data.get("ti"));
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         for (var i = 0; i < 7 && i < days.size(); i++) {
-            // Gerade Reihe mit 44 Pixel Abstand; Radius 19, damit Mo und So samt Heute-Ring noch im runden Display liegen
-            var p = [_cx + px(44 * (i - 3)), px(78)];
+            // Gerade Reihe mit 44 Pixel Abstand; Felder 36 Pixel, damit Mo und So samt Heute-Rahmen noch im runden Display liegen
+            var p = [_cx + px(44 * (i - 3)), px(80)];
             var day = days[i] as Dictionary?;
             if (today != null && today == i) {
                 dc.setPenWidth(px(2));
                 dc.setColor(FG, Graphics.COLOR_BLACK);
-                dc.drawCircle(p[0], p[1], px(22));
+                dc.drawRoundedRectangle(p[0] - px(22), p[1] - px(22), px(44), px(44), px(13));
             }
             var textColor = SEC;
             if (day == null) {
                 dc.setColor(FREE, Graphics.COLOR_BLACK);
-                dc.fillCircle(p[0], p[1], px(18));
+                dc.fillRoundedRectangle(p[0] - px(17), p[1] - px(17), px(34), px(34), px(8));
             } else if (day.get("s2") == null) {
                 // Eine Sportart: voll = erledigt, grau mit farbigem Buchstaben = geplant
                 var color = sportColor(day.get("s"));
@@ -159,9 +159,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 var planned2 = numOrNull(day.get("p2")) == 1;
                 dayPart(dc, p, sportColor(day.get("s")), planned1, -1);
                 dayPart(dc, p, sportColor(day.get("s2")), planned2, 1);
-                // Breiter schwarzer Spalt, sonst verschwimmen die beiden Hälften auf der Uhr zu einem Kreis
+                // Breiter schwarzer Spalt, sonst verschwimmen die beiden Hälften auf der Uhr zu einem Feld
                 dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_BLACK);
-                dc.fillRectangle(p[0] - px(2), p[1] - px(20), px(4), px(40));
+                dc.fillRectangle(p[0] - px(2), p[1] - px(19), px(4), px(38));
                 textColor = planned1 || planned2 ? FG : Graphics.COLOR_BLACK;
                 if (planned1 && planned2) {
                     dc.setColor(sportColor(day.get("s")), Graphics.COLOR_TRANSPARENT);
@@ -176,21 +176,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Kreis oder Halbkreis eines Tages: side 0 = ganz, -1 = linke Hälfte, 1 = rechte Hälfte.
-    // Erledigt = volle Sportfarbe, geplant = graue Scheibe mit einem Hauch der Sportfarbe; die Sportart zeigt dort der Buchstabe.
+    // Feld eines Tages (abgerundetes Quadrat): side 0 = ganz, -1 = linke Hälfte, 1 = rechte Hälfte.
+    // Erledigt = volle Sportfarbe, geplant = graues Feld mit einem Hauch der Sportfarbe; die Sportart zeigt dort der Buchstabe.
     private function dayPart(dc as Dc, p as Array<Number>, color as Number, planned as Boolean, side as Number) as Void {
         dc.setColor(planned ? blend(FREE, color, 0.18) : color, Graphics.COLOR_BLACK);
-        if (side == 0) {
-            dc.fillCircle(p[0], p[1], px(19));
-        } else {
-            // Gefüllter Halbkreis als Vieleck
-            var r = px(19);
-            var pts = [] as Array<Graphics.Point2D>;
-            for (var k = 0; k <= 12; k++) {
-                var a = Math.toRadians(90 + 180 * k / 12.0);
-                pts.add([p[0] - side * r * Math.cos(a), p[1] - r * Math.sin(a)]);
-            }
-            dc.fillPolygon(pts);
+        var h = px(18);
+        if (side != 0) {
+            // Halbes Feld: ganzes Feld zeichnen, aber nur die eine Hälfte freigeben
+            dc.setClip(side < 0 ? p[0] - h : p[0], p[1] - h, h, 2 * h);
+        }
+        dc.fillRoundedRectangle(p[0] - h, p[1] - h, 2 * h, 2 * h, px(9));
+        if (side != 0) {
+            dc.clearClip();
         }
     }
 
