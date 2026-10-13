@@ -199,7 +199,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if ("run".equals(sport)) { return 0xFFD60A; }        // gelb
         if ("bike".equals(sport)) { return 0x30D158; }       // grün
         if ("swim".equals(sport)) { return 0x409CFF; }       // blau
-        if ("strength".equals(sport)) { return 0xBF5AF2; }   // lila, Orange war neben dem Gelb vom Laufen kaum zu unterscheiden
+        if ("strength".equals(sport)) { return 0xFF7A00; }   // orange, kräftiger als das Warn-Orange, damit es sich vom Gelb vom Laufen abhebt
         return SEC;
     }
 
