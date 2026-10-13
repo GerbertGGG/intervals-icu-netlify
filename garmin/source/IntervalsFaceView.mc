@@ -9,7 +9,7 @@ import Toybox.Weather;
 import Toybox.WatchUi;
 
 // Zifferblatt im Apple-Stil: Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
-// "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche
+// "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen und gedämpftes Gold für die hellen Stunden. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche
 // als gerade Reihe, dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
 // unten Renn-Countdown und Blockwoche als gerade Zeile.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
@@ -29,6 +29,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const PROT_MIN = 0.8;    // Eiweiß-Anteil am Ziel, unter dem Essen ab PROT_HOUR orange wird
     const PROT_HOUR = 18;
     const RAIN = 0x64D2FF;
+    const SUN = 0x7F702A;    // gedämpftes Gold für die hellen Stunden im Wetterring, kräftiges Gelb ist Laufen
     const STALE_SECS = 3600;
     const TIME_Y = 192;
     const READY_Y = 268;
@@ -367,9 +368,34 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 maxChance = hc as Number;
             }
         }
-        rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, RAIN);
-        // Prozentzahl blau ab 30 %, darunter weiß
-        labels(dc, 350, "WETTER", temp, maxChance >= 0 ? maxChance.toString() + " %" : "", maxChance >= 30 ? RAIN : FG);
+        // Sonnenauf- und -untergänge von heute und morgen, damit auch abends der Morgen im 12-Stunden-Fenster liegt
+        var sun = [] as Array<Number>;
+        var pos = cond != null ? cond.observationLocationPosition : null;
+        if (pos != null && (Weather has :getSunrise)) {
+            for (var d = 0; d < 2; d++) {
+                var day = new Time.Moment(now + d * 86400);
+                var sr = Weather.getSunrise(pos, day);
+                var ss = Weather.getSunset(pos, day);
+                if (sr != null && ss != null) {
+                    sun.add(sr.value());
+                    sun.add(ss.value());
+                }
+            }
+        }
+        rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, sun, now);
+        // Prozentzahl blau ab 30 %, darunter weiß. Ohne Regen (unter 10 %) steht dort der nächste Sonnenauf- oder -untergang,
+        // passend zum goldenen Bogen
+        var sub = maxChance >= 0 ? maxChance.toString() + " %" : "";
+        if (maxChance < 10) {
+            for (var i = 0; i < sun.size(); i++) {
+                if (sun[i] > now) {
+                    var si = Gregorian.info(new Time.Moment(sun[i]), Time.FORMAT_SHORT);
+                    sub = si.hour.format("%02d") + ":" + si.min.format("%02d");
+                    break;
+                }
+            }
+        }
+        labels(dc, 350, "WETTER", temp, sub, maxChance >= 30 ? RAIN : FG);
     }
 
     // Ring mit Fortschritt; der Grundring ist die eigene Farbe abgedunkelt, damit auch ein leerer Ring farbig ist
@@ -429,19 +455,33 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Regenring: grauer Grundring wie bei den anderen Komplikationen, darauf ein blauer Bogen für jede Stunde
-    // mit mindestens 10 % Regenwahrscheinlichkeit (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert
-    // die aktuelle Uhrzeit, dort beginnt und endet die Zeitleiste. Ohne Regen bleibt der Ring grau.
-    private function rainRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, chances as Array<Number?>, color as Number) as Void {
+    // Wetterring: grauer Grundring wie bei den anderen Komplikationen, darauf in gedämpftem Gold die hellen Stunden
+    // (Sonnenaufgang bis -untergang) der nächsten 12 Stunden und darüber ein blauer Bogen für jede Stunde mit mindestens
+    // 10 % Regenwahrscheinlichkeit (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert die aktuelle
+    // Uhrzeit, dort beginnt und endet die Zeitleiste. sun: [Aufgang, Untergang, Aufgang, Untergang] in Sekunden.
+    private function rainRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, chances as Array<Number?>, sun as Array<Number>, now as Number) as Void {
         dc.setPenWidth(pen);
         dc.setColor(TRACK, Graphics.COLOR_BLACK);
         dc.drawCircle(cx, cy, r);
+        dc.setColor(SUN, Graphics.COLOR_BLACK);
+        for (var i = 0; i + 1 < sun.size(); i += 2) {
+            var a = sun[i] > now ? sun[i] : now;
+            var b = sun[i + 1] < now + 12 * 3600 ? sun[i + 1] : now + 12 * 3600;
+            if (b - a < 120) {
+                continue;
+            }
+            if (b - a >= 12 * 3600 - 120) {
+                dc.drawCircle(cx, cy, r);
+            } else {
+                dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - clockAngle(a)), norm(90 - clockAngle(b)));
+            }
+        }
         for (var i = 0; i < 12; i++) {
             var c = chances[i];
             if (c == null || c < 10) {
                 continue;
             }
-            dc.setColor(blend(TRACK, color, 0.35 + 0.65 * clamp01(c / 100.0)), Graphics.COLOR_BLACK);
+            dc.setColor(blend(TRACK, RAIN, 0.35 + 0.65 * clamp01(c / 100.0)), Graphics.COLOR_BLACK);
             dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - i * 30), norm(90 - (i + 1) * 30));
         }
         var clock = System.getClockTime();
@@ -457,6 +497,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(FG, Graphics.COLOR_BLACK);
         dc.setPenWidth(px(2));
         dc.drawLine(cx + r0 * sin, cy - r0 * cos, cx + r1 * sin, cy - r1 * cos);
+    }
+
+    // Winkel eines Zeitpunkts auf dem 12-Stunden-Zifferblatt in Grad ab 12 Uhr im Uhrzeigersinn
+    private function clockAngle(t as Number) as Float {
+        var info = Gregorian.info(new Time.Moment(t), Time.FORMAT_SHORT);
+        return (info.hour % 12 + info.min / 60.0) * 30;
     }
 
     // Farbe zwischen a (f = 0) und b (f = 1)
