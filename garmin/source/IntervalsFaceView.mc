@@ -1,3 +1,4 @@
+import Toybox.Activity;
 import Toybox.Application;
 import Toybox.Graphics;
 import Toybox.Lang;
@@ -368,20 +369,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 maxChance = hc as Number;
             }
         }
-        // Sonnenauf- und -untergänge von heute und morgen, damit auch abends der Morgen im 12-Stunden-Fenster liegt
-        var sun = [] as Array<Number>;
-        var pos = cond != null ? cond.observationLocationPosition : null;
-        if (pos != null && (Weather has :getSunrise)) {
-            for (var d = 0; d < 2; d++) {
-                var day = new Time.Moment(now + d * 86400);
-                var sr = Weather.getSunrise(pos, day);
-                var ss = Weather.getSunset(pos, day);
-                if (sr != null && ss != null) {
-                    sun.add(sr.value());
-                    sun.add(ss.value());
-                }
-            }
-        }
+        // Sonnenauf- und -untergänge von heute und morgen, damit auch abends der Morgen im 12-Stunden-Fenster liegt.
+        // Selbst gerechnet aus dem Standort (siehe sunNow), Weather.getSunrise und der Standort der Wetterdaten fehlen auf der Uhr oft.
+        var sun = sunNow(cond, now);
         rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, sun, now);
         // Prozentzahl blau ab 30 %, darunter weiß. Ohne Regen (unter 10 %) steht dort der nächste Sonnenauf- oder -untergang,
         // passend zum goldenen Bogen
@@ -497,6 +487,54 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(FG, Graphics.COLOR_BLACK);
         dc.setPenWidth(px(2));
         dc.drawLine(cx + r0 * sin, cy - r0 * cos, cx + r1 * sin, cy - r1 * cos);
+    }
+
+    // Sonnenzeiten für den aktuellen Standort: vom Wetter, sonst von der letzten Aktivität; der letzte bekannte Standort
+    // bleibt gespeichert, damit die Zeiten auch ohne frische Position da sind. Ohne jeden Standort leer.
+    private function sunNow(cond as Weather.CurrentConditions?, now as Number) as Array<Number> {
+        var pos = cond != null ? cond.observationLocationPosition : null;
+        if (pos == null) {
+            var ai = Activity.getActivityInfo();
+            pos = ai != null ? ai.currentLocation : null;
+        }
+        if (pos != null) {
+            var d = pos.toDegrees();
+            Application.Storage.setValue("loc", d);
+            return sunTimes(now, d[0].toDouble(), d[1].toDouble());
+        }
+        var saved = Application.Storage.getValue("loc");
+        if (saved instanceof Array && saved.size() == 2) {
+            return sunTimes(now, (saved[0] as Numeric).toDouble(), (saved[1] as Numeric).toDouble());
+        }
+        return [] as Array<Number>;
+    }
+
+    // Sonnenauf- und -untergang (Unix-Sekunden) für den heutigen und den morgigen Tag nach der Sonnenaufgangsgleichung,
+    // auf etwa eine Minute genau. Rechnet in Tagen ab J2000 (Unix 946728000), mit Double, weil Float zu ungenau ist.
+    // Ergebnis: [Aufgang, Untergang, Aufgang, Untergang]; Tage ohne Auf- oder Untergang (Polartag/-nacht) fehlen.
+    private function sunTimes(t as Number, lat as Double, lon as Double) as Array<Number> {
+        var out = [] as Array<Number>;
+        var rad = Math.PI / 180.0d;
+        var n0 = (t / 86400.0d - 10957.5d + lon / 360.0d + 0.5d).toLong();
+        for (var k = 0; k < 2; k++) {
+            var js = (n0 + k).toDouble() - lon / 360.0d;
+            var m = 357.5291d + 0.98560028d * js;
+            m = m - 360.0d * (m / 360.0d).toLong();
+            var c = 1.9148d * Math.sin(m * rad) + 0.02d * Math.sin(2 * m * rad) + 0.0003d * Math.sin(3 * m * rad);
+            var l = m + c + 282.9372d;
+            l = l - 360.0d * (l / 360.0d).toLong();
+            var jt = js + 0.0053d * Math.sin(m * rad) - 0.0069d * Math.sin(2 * l * rad);
+            var sd = Math.sin(l * rad) * Math.sin(23.4397d * rad);
+            var cd = Math.sqrt(1 - sd * sd);
+            var cw = (Math.sin(-0.833d * rad) - Math.sin(lat * rad) * sd) / (Math.cos(lat * rad) * cd);
+            if (cw < -1 || cw > 1) {
+                continue;
+            }
+            var w = Math.acos(cw) / rad / 360.0d;
+            out.add(((jt - w + 10957.5d) * 86400).toNumber());
+            out.add(((jt + w + 10957.5d) * 86400).toNumber());
+        }
+        return out;
     }
 
     // Winkel eines Zeitpunkts auf dem 12-Stunden-Zifferblatt in Grad ab 12 Uhr im Uhrzeigersinn
