@@ -61,7 +61,7 @@ const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
 const COL = {
   bg: dyn("#f2f4f7", "#0f1318"), card: dyn("#ffffff", "#1a2029"), text: dyn("#1c2430", "#e6eaf0"), muted: dyn("#5d6877", "#9aa5b4"),
   ok: dyn("#1f7a4d", "#6fd4a0"), warn: dyn("#9a6400", "#f0c060"), bad: dyn("#b3261e", "#f2a29c"), none: dyn("#5d6877", "#9aa5b4"),
-  accent: dyn("#3b6ea8", "#7ba3dc"), race: dyn("#c2410c", "#fb923c"),
+  accent: dyn("#3b6ea8", "#7ba3dc"), race: dyn("#c0306f", "#f472b6"),
   tile: dyn("#eef1f5", "#232b36"), line: dyn("#d6dbe3", "#2b323d"),
 };
 // Gezeichnete Bilder (DrawContext) kennen keine dynamischen Farben: sie bekommen die zur Darstellung passende Farbe
@@ -71,8 +71,9 @@ const NEUTRAL_HEX = "#8a94a3";
 const ACCENT_HEX = DARK ? "#7ba3dc" : "#3b6ea8";
 const ACCENT_HI_HEX = DARK ? "#a9c8f0" : "#285489";
 const ZONE_RGB = { ok: "#2f9d64", warn: "#d99a1a", bad: "#d0453b", none: NEUTRAL_HEX };
-const RACE_HEX = "#fb923c";
-const SPORTS = { run: ["Laufen", "#5b8fd6"], bike: ["Rad", "#a283d8"], swim: ["Schwimmen", "#3fb6cc"], strength: ["Kraft", "#d0a03c"], other: ["Sonst.", "#9aa5b4"] };
+const RACE_HEX = "#f472b6";
+// Sportfarben wie auf der Uhr und im Dashboard: Laufen gelb, Rad grün, Schwimmen blau, Kraft orange
+const SPORTS = { run: ["Laufen", "#f2c94c"], bike: ["Rad", "#4cc46f"], swim: ["Schwimmen", "#4a95e6"], strength: ["Kraft", "#f5862a"], other: ["Sonst.", "#9aa5b4"] };
 const sportHex = (k) => (SPORTS[k] || SPORTS.other)[1];
 // Schriftgroessen: nichts unter 11 pt (auf dem Homescreen sonst kaum lesbar)
 const FS = { xs: 11, sm: 12, md: 14, lg: 17, xl: 24, xxl: 34 };
@@ -249,7 +250,7 @@ function progressBar(w, IW, ratio, hex, alpha = 1, opts = {}) {
 }
 // Soll bis jetzt: Anteil des Tagesziels, der nach Tageszeit erreicht sein sollte (linear von 6 bis 22 Uhr, grobe Orientierung)
 function dayFraction() { const n = new Date(), h = n.getHours() + n.getMinutes() / 60; return Math.max(0, Math.min(1, (h - 6) / 16)); }
-// Feste Farbe je Ernährungsgröße, passend zur Seite (Kalorien Rad-Violett, Eiweiß Schwimm-Türkis, Kohlenhydrate Lauf-Blau, Fett Kraft-Gold)
+// Feste Farbe je Ernährungsgröße, passend zur Seite (Kalorien Rad-Grün, Eiweiß Schwimm-Blau, Kohlenhydrate Lauf-Gelb, Fett Kraft-Orange)
 const OVER_HEX = "#f0b95a"; // Wert ueber dem Ziel: gelb (Warnung); Rot bleibt Alarmen vorbehalten
 const NUT_HEX = { kcal: SPORTS.bike[1], protein: SPORTS.swim[1], carbs: SPORTS.run[1], fat: SPORTS.strength[1] };
 
@@ -867,7 +868,7 @@ function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf =
     if (b - a > 1) {
       const p = new Path(); p.addRoundedRect(new Rect(a + 0.5, 0, b - a - 1, h), 3, 3);
       dc.addPath(p); dc.setFillColor(new Color(hexOf(k))); dc.fillPath();
-      if (b - a > 34) { dc.setTextColor(new Color("#ffffff")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, (h - FS.xs) / 2 - 2, b - a, h)); }
+      if (b - a > 34) { dc.setTextColor(new Color("#1c2430")); dc.drawTextInRect(`${share[k]} %`, new Rect(a, (h - FS.xs) / 2 - 2, b - a, h)); }
     }
     acc += share[k];
   }

@@ -144,7 +144,7 @@
         const bw = ((W - L - R) * v) / total;
         s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--${o.prefix ?? "s"}-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} ${unit})`));
         const pct = Math.round((100 * v) / total);
-        if (bw >= 26) s.append(el("text", { x: L + ((W - L - R) * acc) / total + bw / 2, y: y + 11, "text-anchor": "middle", style: "fill:#fff;font-weight:700;font-size:10px;pointer-events:none" }, `${pct} %`));
+        if (bw >= 26) s.append(el("text", { x: L + ((W - L - R) * acc) / total + bw / 2, y: y + 11, "text-anchor": "middle", style: "fill:#1c2430;font-weight:700;font-size:10px;pointer-events:none" }, `${pct} %`));
         acc += v;
       }
     });
@@ -244,7 +244,7 @@
         s.append(title(el("rect", { x: x0, y: T1, width: Math.max(2, x1 - x0), height: B1 - T1, fill: "var(--muted)", opacity: 0.14 }), `${e.label}: ${U.fmtDate(e.date)}–${U.fmtDate(e.end)}`), el("text", { x: x0 + 4, y: T1 + 12, style: "font-size:10.5px" }, e.label));
         return;
       }
-      const col = e.kind === "race" ? "var(--s-bike)" : "var(--muted)";
+      const col = e.kind === "race" ? "var(--race)" : "var(--muted)";
       s.append(el("line", { x1: x0, x2: x0, y1: T1, y2: B1, stroke: col, "stroke-width": 1.3, "stroke-dasharray": e.kind === "race" ? null : "2 3" }));
       const right = x0 > W - R - 120;
       s.append(title(el("text", { x: x0 + (right ? -4 : 4), y: T1 + 12 + (i % 2) * 12, "text-anchor": right ? "end" : "start", class: "halo", style: `fill:${col};font-size:10.5px;font-weight:600` }, e.label.length > 22 ? e.label.slice(0, 21) + "…" : e.label), `${e.label} (${U.fmtDate(e.date)})`));
@@ -520,7 +520,7 @@
     const total = steps.reduce((n, b) => n + b.secs, 0);
     const s = svg(W, H, "Aufbau der geplanten Einheit");
     const lvl = (p) => (p == null ? "–" : p < 60 ? "locker" : p < 80 ? "Grundlage" : p < 95 ? "zügig" : p <= 105 ? "Schwelle" : "hart");
-    const col = (p) => (p == null ? "var(--plan)" : p < 60 ? "var(--plan)" : p < 80 ? "var(--s-swim)" : p < 95 ? "var(--accent)" : p <= 105 ? "var(--s-strength)" : "var(--s-bike)");
+    const col = (p) => (p == null ? "var(--plan)" : p < 60 ? "var(--plan)" : p < 80 ? "var(--i-easy)" : p < 95 ? "var(--i-mid)" : p <= 105 ? "var(--i-hard)" : "var(--bad)");
     const x = (secs) => L + (W - L - R) * (secs / total);
     let t = 0;
     for (const b of steps) {
