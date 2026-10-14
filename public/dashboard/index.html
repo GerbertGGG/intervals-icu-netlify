@@ -39,7 +39,7 @@ h1 { font-size: 1.5rem; font-weight: 750; letter-spacing: -.02em; margin: 0; }
 h2 { font-size: 1.4rem; font-weight: 750; letter-spacing: -.015em; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 2px solid var(--line); }
 html { scroll-behavior: smooth; }
 h2, #cockpit { scroll-margin-top: 56px; }
-.jump { position: sticky; top: 0; z-index: 10; display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px 12px; padding: 8px 16px; background: var(--bg); border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.jump { position: sticky; top: 0; z-index: 10; display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px 12px; padding: 8px 16px; background: color-mix(in srgb, var(--bg) 78%, transparent); -webkit-backdrop-filter: saturate(1.6) blur(12px); backdrop-filter: saturate(1.6) blur(12px); border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); scrollbar-width: none; }
 .jump a { flex: none; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); text-decoration: none; font-size: .85rem; }
 .jump a:hover, .jump a:focus-visible { border-color: var(--accent); color: var(--accent); }
 h3 { font-size: .95rem; font-weight: 650; margin: 0 0 6px; }
@@ -72,6 +72,18 @@ a { color: var(--accent); }
 .none { background: var(--line); color: var(--muted); }
 .notice { border-left: 4px solid var(--warn); background: var(--warn-bg); color: var(--text); padding: 8px 12px; border-radius: 6px; margin: 8px 0; font-size: .9rem; }
 .notice.bad { border-color: var(--bad); background: var(--bad-bg); color: var(--text); }
+/* Erklärtexte eingeklappt: ein Klick auf "Erklärung" öffnet sie */
+details.info { margin-top: 8px; font-size: .82rem; color: var(--muted); }
+details.info > summary { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; list-style: none; padding: 2px 9px 2px 6px; border-radius: 999px; background: var(--inset); font-size: .76rem; font-weight: 600; user-select: none; }
+details.info > summary::-webkit-details-marker { display: none; }
+details.info > summary::before { content: "i"; display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid currentColor; font: italic 700 9px/1 Georgia, serif; }
+details.info > summary:hover, details.info > summary:focus-visible { color: var(--accent); }
+details.info[open] > summary { margin-bottom: 4px; }
+/* Checkliste fürs Rennen */
+.chk { display: flex; gap: 10px; align-items: center; padding: 9px 10px; margin: 0 -10px; border-radius: 10px; cursor: pointer; }
+.chk:hover { background: var(--inset); }
+.chk input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--ok); cursor: pointer; }
+.chk:has(input:checked) span { color: var(--muted); text-decoration: line-through; }
 .desc { white-space: pre-wrap; font-size: .9rem; color: var(--muted); margin-top: 6px; }
 svg { width: 100%; height: auto; display: block; }
 svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
@@ -138,7 +150,11 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .wk-nums i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 2px; }
 .wk-v { font-weight: 600; }
 .wk-day.hit .wk-v { color: var(--ok); } .wk-day.miss .wk-v { color: var(--warn); } .wk-day.extra .wk-v { color: var(--muted); }
-@media (max-width: 900px) { .wk-grid { grid-template-columns: repeat(auto-fill, minmax(min(130px, 100%), 1fr)); } }
+/* schmal: Wochentage als wischbare Leiste statt sieben Zeilen; heute wird beim Laden in den Blick gescrollt (app.js) */
+@media (max-width: 900px) {
+  .wk-grid { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(128px, 42%); overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding: 0 2px; padding: 2px 2px 8px; margin: 0 -2px; scrollbar-width: thin; }
+  .wk-day { scroll-snap-align: start; }
+}
 .findings { margin-top: 12px; }
 .findings .notice { margin: 0; }
 .findings .fl { list-style: none; margin: 6px 0 0; padding: 0; }
@@ -270,16 +286,16 @@ button, input { font: inherit; }
 
   <section id="rennplan" hidden>
     <h2>Rennplan</h2>
-    <div class="grid" style="grid-template-columns:minmax(0,1fr)">
+    <div class="grid half" style="align-items:start">
       <div class="card"><h3>Zielstaffel</h3><div id="staffel"></div></div>
       <div class="card"><h3>Splits und Verpflegung</h3><div id="splits"></div></div>
-      <div class="card"><h3>Checkliste</h3><div id="checklist"></div></div>
     </div>
+    <div class="card" style="margin-top:12px"><h3>Checkliste</h3><div id="checklist"></div></div>
   </section>
 
   <h2 id="form">Form</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
-    <div class="muted">CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): sie rechnet die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></div>
+    <details class="info"><summary>Erklärung</summary><div>CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): sie rechnet die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></details></div>
   <div class="grid half" style="margin-top:12px">
     <div class="card"><h3>Laufumfang pro Woche</h3><div id="chart-km"></div>
       <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
@@ -298,7 +314,7 @@ button, input { font: inherit; }
     <div class="card"><h3>Intensität je Woche (Zonenzeit)</h3><div id="chart-intensity"></div><div class="legend" id="intensity-legend"></div></div>
   </div>
   <div class="card scroll" id="week-report" style="margin-top:12px"></div>
-  <div class="muted" style="margin-top:6px">TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div>
+  <details class="info"><summary>Erklärung</summary><div>TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert.</div></details>
 
   <h2 id="leistung">Leistung</h2>
   <div class="grid wide">
@@ -319,10 +335,10 @@ button, input { font: inherit; }
   </div>
   <div class="card" style="margin-top:12px"><h3>Ermüdung, Muskelkater, Schlafqualität</h3><div id="wellness-heat"></div>
     <div class="legend"><span><i style="background:var(--accent);opacity:.14"></i>1 (bestmöglich)</span><span><i style="background:var(--accent)"></i>höchster eingetragener Wert (schlechter)</span><span><i style="background:repeating-linear-gradient(45deg,var(--muted) 0 1px,transparent 1px 5px)"></i>nicht eingetragen</span></div>
-    <div class="muted" style="margin-top:6px">Skala 1 = bestmöglich; die Stufen-Beschriftungen liefert die API nicht, deshalb neutrale Farbe statt Ampel. Schraffiert = nichts eingetragen, nie „gut".</div></div>
+    <details class="info"><summary>Erklärung</summary><div>Skala 1 = bestmöglich; die Stufen-Beschriftungen liefert die API nicht, deshalb neutrale Farbe statt Ampel. Schraffiert = nichts eingetragen, nie „gut".</div></details></div>
   <div class="grid" style="margin-top:12px">
     <div class="card"><h3>Ruhepuls</h3><div id="rhr"></div>
-      <div class="muted">Ohne Nachttracking ein Tageswert, kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div></div>
+      <details class="info"><summary>Erklärung</summary><div>Ohne Nachttracking ein Tageswert, kein echter nächtlicher Ruhepuls – nur grobe Tendenz lesen.</div></details></div>
     <div class="card"><h3>Schlafdauer</h3><div id="sleep"></div><div class="muted">Lücken = nicht erfasst.</div></div>
     <div class="card"><h3>HRV</h3><div id="hrv"></div><div class="muted">Lücken = nicht erfasst.</div></div>
   </div>
