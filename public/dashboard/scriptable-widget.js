@@ -476,57 +476,58 @@ function dayTile(row, TW, iso, g, upcoming) {
   if (items && items.length && !race) symbol(t, SPORT_SYMBOL[items[0].sport] || SPORT_SYMBOL.other, 11, new Color(sportHex(items[0].sport)));
 }
 
-// Ausschnitt einer senkrechten Kapsel zwischen yTop und yBot als Pfad: so laesst sich eine Kapsel in mehrere Farben teilen
-function capsuleBand(x, y, w, h, yTop, yBot) {
+// Senkrechter Streifen (xa bis xb) aus einer Kapsel als Pfad: so wird eine Kapsel in Spalten geteilt (z. B. Rad und Kraft)
+function capsuleColumn(x, y, w, h, xa, xb) {
   const r = Math.min(w / 2, h / 2), cx = x + w / 2;
   const half = (yy) => {
     if (yy < y + r) { const d = y + r - yy; return Math.sqrt(Math.max(0, r * r - d * d)); }
     if (yy > y + h - r) { const d = yy - (y + h - r); return Math.sqrt(Math.max(0, r * r - d * d)); }
     return w / 2;
   };
-  const n = Math.max(2, Math.ceil((yBot - yTop) * 2)), pts = [];
-  for (let k = 0; k <= n; k++) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx - half(yy), yy)); }
-  for (let k = n; k >= 0; k--) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx + half(yy), yy)); }
-  const p = new Path(); p.addLines(pts); p.closeSubpath();
+  const n = Math.max(8, Math.ceil(h * 2)), left = [], right = [];
+  for (let k = 0; k <= n; k++) {
+    const yy = y + (h * k) / n, a = Math.max(xa, cx - half(yy)), b = Math.min(xb, cx + half(yy));
+    if (a < b) { left.push(new Point(a, yy)); right.push(new Point(b, yy)); }
+  }
+  const p = new Path(); p.addLines([...left, ...right.reverse()]); p.closeSubpath();
   return p;
 }
 
-// Woche Mo bis So als Kapseln: Hoehe = Load des Tages, gestapelt in Sportfarben; geplant und noch offen = Umriss in der
-// Sportfarbe; heute mit Rahmen. Fehlende Tage bleiben leere Kapseln, nie 0-Balken.
+// Woche Mo bis So als Kreise: erledigt = gefuellt in Sportfarbe (mehrere Sportarten geteilt), geplant und noch offen =
+// Umriss in der Sportfarbe, heute mit weissem Ring. Tage ohne alles bleiben ein blasser Kreis.
 const CAPS_LABEL_H = 14;
 function capsImage(W, H, days, todayIso) {
-  const P = 2, dc = newCtx(W, H + CAPS_LABEL_H + P), gap = 5, cw = (W - 2 * P - gap * 6) / 7, r = cw / 2;
-  const sum = (o) => Object.values(o || {}).reduce((a, b) => a + (b || 0), 0);
-  const max = Math.max(60, ...days.map((x) => sum(x.sports)), ...days.map((x) => (x.plan || []).reduce((a, p) => a + (p.load || 0), 0)));
+  // Echte Kreise: Durchmesser = Hoehe, der Abstand verteilt den Rest der Breite
+  const P = 2, dc = newCtx(W, H + CAPS_LABEL_H + P), cw = Math.min(H, (W - 2 * P - 4 * 6) / 7), gap = (W - 2 * P - 7 * cw) / 6, r = cw / 2;
   const cap = (rect, hex, a = 1, stroke = false) => {
-    const p = new Path(); p.addRoundedRect(rect, Math.min(r, rect.height / 2), Math.min(r, rect.height / 2)); dc.addPath(p);
+    const p = new Path(); p.addEllipse(rect); dc.addPath(p);
     if (stroke) { dc.setStrokeColor(new Color(hex, a)); dc.setLineWidth(1.5); dc.strokePath(); } else { dc.setFillColor(new Color(hex, a)); dc.fillPath(); }
   };
   dc.setTextAlignedCenter();
   days.forEach((x, i) => {
     const x0 = P + i * (cw + gap), today = x.date === todayIso;
-    cap(new Rect(x0, P, cw, H), NEUTRAL_HEX, 0.2);
-    // Erledigt: eine Kapsel mit der Hoehe des Tages-Loads, bei mehreren Sportarten nach Anteil geteilt (groesster unten)
-    const parts = Object.entries(x.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const y0 = P + H - cw;
+    cap(new Rect(x0, y0, cw, cw), NEUTRAL_HEX, 0.2);
+    // Erledigt: voller Kreis in Sportfarbe; mehrere Sportarten teilen ihn senkrecht in gleich breite Teile
+    // (groesster Load links), damit auch eine kurze Kraft-Einheit neben dem Rad klar zu sehen ist
+    const parts = Object.entries(x.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const tot = parts.reduce((a, [, v]) => a + v, 0);
     if (tot > 0) {
-      const ht = Math.min(H, Math.max(cw, (H * tot) / max)), top = P + H - ht;
-      let yb = P + H;
-      parts.forEach(([k, v], j) => {
-        const seg = j === parts.length - 1 ? yb - top : (ht * v) / tot;
-        const yt = Math.max(top, yb - seg);
-        dc.addPath(capsuleBand(x0, top, cw, ht, yt + (j === parts.length - 1 ? 0 : 0.8), yb - (j === 0 ? 0 : 0.8)));
-        dc.setFillColor(new Color(sportHex(k))); dc.fillPath();
-        yb = yt;
-      });
+      if (parts.length === 1) cap(new Rect(x0, y0, cw, cw), sportHex(parts[0][0]));
+      else {
+        const sw = cw / parts.length;
+        parts.forEach(([k], j) => {
+          const xa = x0 + j * sw + (j ? 0.7 : 0), xb = x0 + (j + 1) * sw - (j < parts.length - 1 ? 0.7 : 0);
+          dc.addPath(capsuleColumn(x0, y0, cw, cw, xa, xb)); dc.setFillColor(new Color(sportHex(k))); dc.fillPath();
+        });
+      }
     }
     // Geplant und noch nicht erledigt (heute oder spaeter): Umriss in der Sportfarbe
     const open = x.date >= todayIso ? (x.plan || []).filter((p) => !(x.sports || {})[p.sport]) : [];
     if (open.length) {
-      const h = Math.min(H, Math.max(cw, (H * open.reduce((a, p) => a + (p.load || 0), 0)) / max));
-      cap(new Rect(x0 + 1, P + H - h + 1, cw - 2, h - 2), sportHex(open[0].sport), 0.95, true);
+      cap(new Rect(x0 + 1, y0 + 1, cw - 2, cw - 2), sportHex(open[0].sport), 0.95, true);
     }
-    if (today) { const p = new Path(); p.addRoundedRect(new Rect(x0 - 1.5, P - 1.5, cw + 3, H + 3), r + 1.5, r + 1.5); dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.4); dc.strokePath(); }
+    if (today) { const p = new Path(); p.addEllipse(new Rect(x0 - 1.8, y0 - 1.8, cw + 3.6, cw + 3.6)); dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.4); dc.strokePath(); }
     dc.setTextColor(new Color(today ? INK_HEX : MUTED_HEX));
     dc.setFont(today ? Font.boldSystemFont(FS.xs) : Font.mediumSystemFont(FS.xs));
     dc.drawTextInRect(dayShort(x.date), new Rect(x0 - 6, P + H + 2, cw + 12, CAPS_LABEL_H));
@@ -616,12 +617,12 @@ function buildWidget(res) {
   };
   const why = rawWhy ? sentences(rawWhy) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 34) / 6.3));
-  const nLines = Math.min(4, Math.max(1, Math.ceil(why.length / perLine)));
+  const nLines = Math.max(1, Math.ceil(why.length / perLine));
   const ct = w.addStack(); ct.size = new Size(W, 0); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
-  const bar = ct.addStack(); bar.size = new Size(3, nLines * 15 + 1); bar.cornerRadius = 1.5;
+  const bar = ct.addStack(); bar.size = new Size(3, Math.min(5, nLines) * 15 + 1); bar.cornerRadius = 1.5;
   bar.backgroundColor = coachLine ? COL.accent : focusLine ? COL.warn : COL.muted;
   ct.addSpacer(9);
-  text(ct, why, FS.sm, { lines: 4, minScale: 0.9 });
+  text(ct, why, FS.sm, { lines: 0, minScale: 1 }); // nie abschneiden: der Hinweis ist das Wichtigste nach dem Urteil
   ct.addSpacer();
   w.addSpacer(6);
 
@@ -645,8 +646,8 @@ function buildWidget(res) {
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wk = d.week || {};
-  const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0);
-  const KW = Math.round(W * 0.6), KH = 24;
+  const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
+  const KW = Math.round(W * 0.6), KH = Math.floor((KW - 4 - 24) / 7); // Kreisdurchmesser passend zur Breite
   if (wk.days) { const im = wr.addImage(capsImage(KW, KH, wk.days, d.today)); im.imageSize = new Size(KW, KH + CAPS_LABEL_H + 2); }
   wr.addSpacer();
   const wc = wr.addStack(); wc.layoutVertically();
@@ -659,7 +660,8 @@ function buildWidget(res) {
   if (wk.goal && !wk.days) { w.addSpacer(4); progressBar(w, W, wk.total / wk.goal, ACCENT_HEX); }
   w.addSpacer(6);
 
-  // 6. Naechste Tage: drei Kacheln
+  // 6. Naechste Tage: drei Kacheln, nur wenn der Hinweis kurz ist (die Kapseln zeigen den Plan der Woche ohnehin als Umriss)
+  if (nLines > 2) { notice(w, res, d); w.addSpacer(); return w; }
   const TW = Math.floor((W - 12) / 3);
   const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
   for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), g, d.plan.upcoming);
