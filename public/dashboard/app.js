@@ -146,7 +146,7 @@ function renderReady(d) {
     ${verdict.reasons?.length ? `<div class="muted" style="margin-top:6px">Auslöser: ${esc(verdict.reasons.join(" · "))}</div>` : ""}
     <div style="margin-top:8px">${esc([sleep, ...extra].join(" · "))}</div>
     <div class="ready-grid">${items.map((i) => `<div class="rrow"><span class="lbl">${i.label}</span><span class="strip" id="strip-${i.key}"></span><span class="badge ${i.cls}">${i.text}</span></div>`).join("")}</div>
-    <div class="muted" style="margin-top:6px">Punkt = heute, graues Band = dein üblicher Bereich der letzten 8 Wochen (mind. 5 Einträge). Skala 1 = bestmöglich, links. Lücken zählen nie als „gut". Grenzen sind Standardwerte.</div></div>`;
+    <details class="info"><summary>Erklärung</summary><div>Punkt = heute, graues Band = dein üblicher Bereich der letzten 8 Wochen (mind. 5 Einträge). Skala 1 = bestmöglich, links. Lücken zählen nie als „gut". Grenzen sind Standardwerte.</div></details></div>`;
   for (const i of items) C.strip($(`strip-${i.key}`), { label: i.label, max: i.max, band: i.band, value: i.v, cls: i.cls });
 }
 
@@ -234,6 +234,9 @@ function renderCockpit(d) {
   C.gauge($("ck-tsb"), { label: "TSB", min: -40, max: 30, value: tsb, ticks: [-40, -25, -10, 0, 15, 30], zones: [{ from: -40, to: TSB_BANDS.warn, cls: "bad" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: TSB_BANDS.ok, to: 30, cls: "ok" }] });
   C.gauge($("ck-acwr"), { label: "ACWR", min: 0.4, max: 1.8, value: acwr, dec: 2, ticks: [0.4, 0.8, 1.0, 1.3, 1.8], tickLabel: (t) => fmt(t, 1), zones: [{ from: 0.4, to: ACWR.lo, cls: taper ? "ok" : "warn" }, { from: ACWR.lo, to: ACWR.hi, cls: "ok" }, { from: ACWR.hi, to: 1.8, cls: "bad" }] });
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
+  // Schmale Ansicht: die Wochenleiste ist wischbar; gestern und heute stehen beim Laden vorn
+  const wkNow = document.querySelector(".wk-grid .wk-day.now");
+  if (wkNow) { const g = wkNow.parentElement, t = wkNow.previousElementSibling ?? wkNow; g.scrollLeft = t.offsetLeft - g.firstElementChild.offsetLeft; }
   if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
@@ -289,7 +292,7 @@ function renderChecklist(d, items) {
   if (!show) { $("checklist").innerHTML = ""; return; }
   const key = "rennplan-check-" + d.goal.date;
   let done = {}; try { done = JSON.parse(localStorage.getItem(key) || "{}"); } catch {}
-  $("checklist").innerHTML = items.map((t, i) => `<label style="display:flex;gap:8px;align-items:flex-start;padding:3px 0"><input type="checkbox" data-i="${i}"${done[i] ? " checked" : ""}> <span>${esc(t)}</span></label>`).join("");
+  $("checklist").innerHTML = items.map((t, i) => `<label class="chk"><input type="checkbox" data-i="${i}"${done[i] ? " checked" : ""}><span>${esc(t)}</span></label>`).join("");
   $("checklist").onchange = (e) => { done[e.target.dataset.i] = e.target.checked; try { localStorage.setItem(key, JSON.stringify(done)); } catch {} };
 }
 
@@ -314,7 +317,7 @@ function renderTriRennplan(d, box) {
   $("staffel").innerHTML = `${head}
     <div class="scroll"><table class="mini" style="margin-top:8px"><thead><tr><th></th><th>Zeit</th><th>Pace / Leistung</th></tr></thead><tbody>${rows.map((x) => `<tr><td><b>${x[0]}</b></td><td>${x[1]}</td><td>${x[2]}</td></tr>`).join("")}</tbody></table></div>
     ${all && total ? `<div class="${sum + 120 > total ? "notice" : "muted"}" style="margin-top:8px">Summe der Disziplinen ${fmtTime(sum)} ${sum > total ? `liegt ${hm(sum - total)} über dem Gesamtziel` : `plus Wechselzeiten unter dem Gesamtziel`}.</div>` : !all ? '<div class="muted" style="margin-top:8px">Für Vorschläge fehlen Schwimmschwelle, FTP oder VDOT. Alternativ in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 3:00:00“, „Lauf 1:55:00“.</div>' : ""}
-    <div class="muted">Vorschläge sind Modellwerte (Schwimmschwelle, FTP mit Leistungsmodell, Lauf aus VDOT plus 6 % fürs Laufen nach dem Rad), kein Trainingsplan; Einträge in der Beschreibung haben Vorrang. Wechselzeiten sind nicht eingerechnet.</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Vorschläge sind Modellwerte (Schwimmschwelle, FTP mit Leistungsmodell, Lauf aus VDOT plus 6 % fürs Laufen nach dem Rad), kein Trainingsplan; Einträge in der Beschreibung haben Vorrang. Wechselzeiten sind nicht eingerechnet.</div></details>`;
 
   $("splits").closest(".card").hidden = true;
 
@@ -362,7 +365,7 @@ function renderLongruns(d) {
   const decNote = T.recent.length && !decN ? '<div class="notice" style="margin-top:8px">Kein Long Run mit Decoupling-Wert: Ohne ihn fehlt der Nachweis, dass die Ausdauer stabil bleibt.</div>' : "";
   host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small class="muted" style="font-size:.9rem">km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
     <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · Läufe der Art „Langer Lauf“ (Runalyze) und Läufe ab ${T.minKm} km (Intervals):</div>${list}${decNote}${warn}
-    <div class="muted" style="margin-top:6px">Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; aus Runalyze (Pace-Decoupling), wo vorhanden. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; aus Runalyze (Pace-Decoupling), wo vorhanden. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div></details>`;
 }
 
 /* ---------- 3 · Form: Intervall-Splits ---------- */
@@ -376,7 +379,7 @@ function renderIntervals(d) {
   $("interval-splits").innerHTML = list.map((s) => `<div style="margin-bottom:12px"><b>${fmtDate(s.date)}</b> · ${esc(s.name ?? "Intervalle")}
     <div class="muted">${s.count} Wdh. · ${fmt(s.workKm, 1)} km · Ø ${s.avgPace} min/km · Streuung ${s.spreadSecPerKm} s/km · <span class="badge ${fadeCls(s.fadeSecPerKm)}">${s.fadeSecPerKm > 0 ? "+" : ""}${s.fadeSecPerKm} s/km</span> Fade</div>
     <div class="muted" style="margin-top:2px">${s.reps.map((r) => `${r.distanceM != null ? r.distanceM + " m " : ""}${r.pace}`).join(" · ")}</div></div>`).join("") +
-    '<div class="muted">Fade: Pace der zweiten Hälfte minus erste Hälfte der Wiederholungen. Bis +3 s/km stabil, ab +8 s/km deutlicher Einbruch.</div>';
+    '<details class="info"><summary>Erklärung</summary><div>Fade: Pace der zweiten Hälfte minus erste Hälfte der Wiederholungen. Bis +3 s/km stabil, ab +8 s/km deutlicher Einbruch.</div></details>';
 }
 
 /* ---------- 3 · Form: Verlauf ---------- */
@@ -503,7 +506,7 @@ function sportFindings(d) {
   if (streak >= TRN.streak) findings.push({ sev: 2, n: streak, text: `${streak} Trainingstage in Folge ohne Ruhetag.`, act: "Heute oder morgen einen echten Ruhetag setzen." });
   if (load[d.today] === 0 && pause >= TRN.restDays) findings.push({ sev: 1, n: pause, text: `Seit ${pause} Tagen kein Training.`, act: "Mit einer lockeren Einheit wieder einsteigen, nicht mit dem Plantempo." });
   const body = findingsBox(findings, "Nichts Auffälliges in der letzten vollen Woche.");
-  return `${body}<div class="muted" style="margin-top:6px">Faustwerte: Anstieg = mehr als ${Math.round((TRN.jump - 1) * 100)} % über dem Schnitt der bis zu 4 Wochen davor, deutlich weniger = unter ${Math.round(TRN.drop * 100)} %, Plan verfehlt = unter ${Math.round(TRN.planUnder * 100)} % bzw. über ${Math.round(TRN.planOver * 100)} % des Plans, viel Intensität = über ${TRN.hardShare * 100} % hart oder über ${TRN.midShare * 100} % mittel, ${TRN.streak}+ Tage ohne Ruhetag, ${TRN.restDays}+ Tage Pause.</div>`;
+  return `${body}<details class="info"><summary>Erklärung</summary><div>Faustwerte: Anstieg = mehr als ${Math.round((TRN.jump - 1) * 100)} % über dem Schnitt der bis zu 4 Wochen davor, deutlich weniger = unter ${Math.round(TRN.drop * 100)} %, Plan verfehlt = unter ${Math.round(TRN.planUnder * 100)} % bzw. über ${Math.round(TRN.planOver * 100)} % des Plans, viel Intensität = über ${TRN.hardShare * 100} % hart oder über ${TRN.midShare * 100} % mittel, ${TRN.streak}+ Tage ohne Ruhetag, ${TRN.restDays}+ Tage Pause.</div></details>`;
 }
 
 /* ---------- 4 · Leistung ---------- */
@@ -549,7 +552,7 @@ function renderPredictionTables(r) {
   }).join("");
   if (est) {
     $("race-pred-card").hidden = false;
-    $("race-pred").innerHTML = `<table class="mini"><tbody>${est}</tbody></table><div class="muted" style="margin-top:6px">Von/bis = schnellste und langsamste Schätzung aus Runalyze-Prognose, aktuellem VDOT und 10-km-Bestzeit. Das ist eine Rechnung nach Daniels, kein Ergebnis.</div>`;
+    $("race-pred").innerHTML = `<table class="mini"><tbody>${est}</tbody></table><details class="info"><summary>Erklärung</summary><div>Von/bis = schnellste und langsamste Schätzung aus Runalyze-Prognose, aktuellem VDOT und 10-km-Bestzeit. Das ist eine Rechnung nach Daniels, kein Ergebnis.</div></details>`;
   }
   if (r.paces?.length) {
     $("pace-zones-card").hidden = false;
@@ -585,7 +588,7 @@ function renderHmTrend(r) {
   const hmVHave = rows.filter((x) => x.hmVdotSecs != null), hmVd = hmVHave.length > 1 ? hmVHave[hmVHave.length - 1].hmVdotSecs - hmVHave[0].hmVdotSecs : null;
   const pair = hmP != null && hmV != null ? `<div class="hm2"><div><div class="muted">Halbmarathon · Runalyze-Prognose</div><div class="big2">${fmtTime(hmP)}</div></div><div><div class="muted">Halbmarathon · aus VDOT gerechnet</div><div class="big2">${fmtTime(hmV)}</div>${hmVd != null ? `<div class="muted">${fmtD(hmVd)} seit ${fmtDate(hmVHave[0].date)}</div>` : ""}</div></div><div class="muted" style="margin-bottom:8px">${fmtTime(Math.abs(hmP - hmV))} Unterschied: Runalyze rechnet aus deinen tatsächlichen Läufen und ist vorsichtiger; die VDOT-Rechnung unterstellt Ausdauer wie über deine Testdistanz und ist bei fehlenden langen Läufen eher zu optimistisch.</div>` : "";
   const first = rows.length === 1 ? '<div class="muted" style="margin:6px 0">Der Vergleich beginnt heute. Mit jedem neuen Runalyze-Snapshot siehst du hier, ob die Prognose schneller wird – früher gespeicherte Werte gibt es nicht.</div>' : "";
-  $("hm-trend").innerHTML = `${pair}${table}${first}<div id="hm-trend-chart" style="margin-top:8px"></div><div class="muted">Linien fallen = Prognose wird schneller. Die Prognose ist eine Rechnung von Runalyze aus deinen Läufen, kein Ergebnis.</div>`;
+  $("hm-trend").innerHTML = `${pair}${table}${first}<div id="hm-trend-chart" style="margin-top:8px"></div><details class="info"><summary>Erklärung</summary><div>Linien fallen = Prognose wird schneller. Die Prognose ist eine Rechnung von Runalyze aus deinen Läufen, kein Ergebnis.</div></details>`;
   if (rows.length > 1) C.deltaTrend($("hm-trend-chart"), rows, { label: "Veränderung der Prognose", series: SERIES });
 }
 
@@ -654,7 +657,7 @@ function triathlonGoalCard(g) {
   const r = tg.run;
   rows.push(row(`🏃 Laufen · ${fmt(g.triathlon.runKm, 1)} km`, null, r ? fmtTime(r.timeSecs) : "–", r ? `${paceLabel(r.pacePerKm)} min/km` : missing("in der Beschreibung ergänzen: „Lauf 1:55:00“")));
   if (tg.totalTargetSecs) rows.push(row("Gesamtziel", null, fmtTime(tg.totalTargetSecs), "", "tri-total"));
-  return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<div class="muted" style="margin-top:8px">Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></div>`;
+  return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<details class="info"><summary>Erklärung</summary><div>Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></details></div>`;
 }
 
 /* ---------- 5 · Erholung ---------- */
@@ -674,7 +677,7 @@ function renderWellness(d) {
     ${SA.nights.map((n, i) => `<div class="row"><span>${i === 0 ? "Letzte Nacht (auf heute)" : "Nacht davor"} · ${weekday(n.date)} ${fmtDate(n.date)}</span><b>${n.h != null ? fmt(n.h, 1) + " h" : "nicht erfasst"}</b></div>`).join("")}
     <div class="row"><span>7 Nächte (${SA.week.n}/7 erfasst)</span><b>${SA.week.avg != null ? "Ø " + fmt(SA.week.avg, 1) + " h · Defizit " + fmt(SA.week.debt, 1) + " h" : "–"}</b></div>
     <div><span class="badge ${SA.week.cls}">${SA.week.text}</span></div>
-    <div class="muted">Akut: letzte Nacht zählt ${Math.round(SLEEP_ACUTE_WEIGHT * 100)} %, die Nacht davor ${Math.round((1 - SLEEP_ACUTE_WEIGHT) * 100)} %. Die Woche zeigt die angesammelte Schlafschuld. Richtwert ${fmt(SLEEP_TARGET_H, 1)} h pro Nacht, kein persönlich kalibrierter Wert.</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Akut: letzte Nacht zählt ${Math.round(SLEEP_ACUTE_WEIGHT * 100)} %, die Nacht davor ${Math.round((1 - SLEEP_ACUTE_WEIGHT) * 100)} %. Die Woche zeigt die angesammelte Schlafschuld. Richtwert ${fmt(SLEEP_TARGET_H, 1)} h pro Nacht, kein persönlich kalibrierter Wert.</div></details>`;
   // Band = mittlere 50 % der eigenen Werte im Zeitraum (wie das graue Band der Bereitschaftskarte); letzter Wert als Zahl
   const quart = (arr, q) => { const a = [...arr].sort((x, y) => x - y), i = (a.length - 1) * q, lo = Math.floor(i); return a[lo] + (a[Math.min(a.length - 1, lo + 1)] - a[lo]) * (i - lo); };
   for (const [id, key, unit, label, dec] of [["rhr", "restingHR", "bpm", "Ruhepuls", 0], ["sleep", "sleepHours", "h", "Schlafdauer", 1], ["hrv", "hrv", "ms", "HRV", 0]]) {
@@ -712,7 +715,7 @@ function renderWeight(d) {
   $("weight").insertAdjacentHTML("afterbegin", `<div class="wt-top"><div><div class="muted">7-Tage-Schnitt</div><b style="font-size:1.4rem">${fmt(avg7[lastDay], 1)} kg</b></div>
     <div><div class="muted">Gewicht, ${dKg != null ? `seit ${fmtDate(before)}` : "Verlauf"}</div><b style="font-size:1.4rem">${dKg != null ? sgn(dKg, 1) + " kg" : "–"}</b></div>
     <div><div class="muted">Kalorien gegen Ziel${both.length ? `, ${both.length} Tage` : ""}</div><b style="font-size:1.4rem">${bal != null ? sgn(bal) + " kcal" : "–"}</b></div></div>`);
-  $("weight").insertAdjacentHTML("beforeend", '<div class="muted">Dünne Linie = Tageswert, dicke Linie = 7-Tage-Schnitt. Kalorien gegen das Yazio-Ziel nur an Tagen mit Eintrag und ohne heute; das Ziel ist kein Verbrauch, die Zahl also keine exakte Energiebilanz.</div>');
+  $("weight").insertAdjacentHTML("beforeend", '<details class="info"><summary>Erklärung</summary><div>Dünne Linie = Tageswert, dicke Linie = 7-Tage-Schnitt. Kalorien gegen das Yazio-Ziel nur an Tagen mit Eintrag und ohne heute; das Ziel ist kein Verbrauch, die Zahl also keine exakte Energiebilanz.</div></details>');
 }
 
 /* ---------- 6 · Ernährung ---------- */
@@ -785,7 +788,7 @@ function renderNutritionToday(d, map) {
     $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3><div class="nempty">Heute noch nichts eingetragen.${goals ? `<br><small>Tagesziele: ${goals}</small>` : ""}</div><div class="muted">Stand des letzten Syncs (alle 15 Minuten, Yazio).</div>`;
     return;
   }
-  $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3>${rows.map(bar).join("")}<div class="muted">Stand des letzten Syncs (alle 15 Minuten, Yazio). Schwarze Marke = Tagesziel, gestrichelte Marke = Soll bis jetzt (linear von ${NUT_DAY.from} bis ${NUT_DAY.to} Uhr, grobe Orientierung).</div>`;
+  $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3>${rows.map(bar).join("")}<details class="info"><summary>Erklärung</summary><div>Stand des letzten Syncs (alle 15 Minuten, Yazio). Schwarze Marke = Tagesziel, gestrichelte Marke = Soll bis jetzt (linear von ${NUT_DAY.from} bis ${NUT_DAY.to} Uhr, grobe Orientierung).</div></details>`;
 }
 
 /* Übersicht der letzten 7 Tage: Tageswerte gegen Ziel plus Auffälligkeiten. Heute läuft noch und
@@ -836,7 +839,7 @@ function renderNutritionWeek(d, map) {
     <div style="overflow-x:auto"><table><thead><tr><th>Tag</th><th>kcal</th><th>Ziel</th><th>Diff</th><th>Eiweiß g${ng.proteinG ? `<small class="muted"> Ziel ${fmt(ng.proteinG)}</small>` : ""}</th><th>KH g${ng.carbsG ? `<small class="muted"> Ziel ${fmt(ng.carbsG)}</small>` : ""}</th><th>Fett g${ng.fatG ? `<small class="muted"> Ziel ${fmt(ng.fatG)}</small>` : ""}</th>${hasCrav ? "<th>HH</th>" : ""}<th></th></tr></thead><tbody>${rows.join("")}</tbody></table></div>
     <div class="muted" style="margin-top:8px">${done.length ? `Schnitt abgeschlossener Tage (${done.length}): ${fmt(avg(kcal))} kcal, ${avg(prot) != null ? fmt(avg(prot)) : "–"} g Eiweiß${bal != null ? ` · Bilanz gegen Ziel ${bal > 0 ? "+" : ""}${fmt(bal)} kcal` : ""}` : "Noch kein abgeschlossener Tag mit Daten."} · Heute zählt noch nicht mit.</div>
     ${findingsBox(findings, done.length ? "Nichts Auffälliges in den abgeschlossenen Tagen." : "", 8)}
-    <div class="muted" style="margin-top:6px">Faustwerte: über Ziel = mehr als ${Math.round((NUT.over - 1) * 100)} % drüber, deutlich drunter = unter ${Math.round(NUT.under * 100)} % des Ziels, wenig Eiweiß = unter ${NUT.proteinShare * 100} % der Kalorien.${hasCrav ? " HH = Heißhunger-Einträge." : ""}</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Faustwerte: über Ziel = mehr als ${Math.round((NUT.over - 1) * 100)} % drüber, deutlich drunter = unter ${Math.round(NUT.under * 100)} % des Ziels, wenig Eiweiß = unter ${NUT.proteinShare * 100} % der Kalorien.${hasCrav ? " HH = Heißhunger-Einträge." : ""}</div></details>`;
 }
 
 
