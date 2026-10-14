@@ -324,14 +324,15 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var sc = "ok".equals(st) ? FG : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
         ring(dc, px(269), px(COMP_Y), px(34), px(6), frac(sv, so), sc, TRACK);
         labels(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", "warn".equals(st) || "bad".equals(st) ? sc : FG);
-        // Hinterher nicht nur über die Farbe: Dreieck (knapp) oder Quadrat (verfehlt) rechts neben "KRAFT"
+        // Hinterher nicht nur über die Farbe: Dreieck (knapp) oder Quadrat (verfehlt) links neben "KRAFT"
+        // (links ist mehr Platz: rechts folgt gleich "WETTER")
         if ("warn".equals(st) || "bad".equals(st)) {
-            var lx = px(269) + dc.getTextWidthInPixels("KRAFT", _tiny) / 2 + px(6);
+            var left = px(269) - dc.getTextWidthInPixels("KRAFT", _tiny) / 2 - px(5);
             var ly = px(COMP_Y - 48);
             if ("warn".equals(st)) {
-                drawTri(dc, lx, ly, px(13), WARN);
+                drawTri(dc, left - px(13), ly, px(13), WARN);
             } else {
-                drawSq(dc, lx, ly, px(11), BAD);
+                drawSq(dc, left - px(11), ly, px(11), BAD);
             }
         }
 
