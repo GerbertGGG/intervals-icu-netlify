@@ -476,18 +476,20 @@ function dayTile(row, TW, iso, g, upcoming) {
   if (items && items.length && !race) symbol(t, SPORT_SYMBOL[items[0].sport] || SPORT_SYMBOL.other, 11, new Color(sportHex(items[0].sport)));
 }
 
-// Ausschnitt einer senkrechten Kapsel zwischen yTop und yBot als Pfad: so laesst sich eine Kapsel in mehrere Farben teilen
-function capsuleBand(x, y, w, h, yTop, yBot) {
+// Senkrechter Streifen (xa bis xb) aus einer Kapsel als Pfad: so wird eine Kapsel in Spalten geteilt (z. B. Rad und Kraft)
+function capsuleColumn(x, y, w, h, xa, xb) {
   const r = Math.min(w / 2, h / 2), cx = x + w / 2;
   const half = (yy) => {
     if (yy < y + r) { const d = y + r - yy; return Math.sqrt(Math.max(0, r * r - d * d)); }
     if (yy > y + h - r) { const d = yy - (y + h - r); return Math.sqrt(Math.max(0, r * r - d * d)); }
     return w / 2;
   };
-  const n = Math.max(2, Math.ceil((yBot - yTop) * 2)), pts = [];
-  for (let k = 0; k <= n; k++) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx - half(yy), yy)); }
-  for (let k = n; k >= 0; k--) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx + half(yy), yy)); }
-  const p = new Path(); p.addLines(pts); p.closeSubpath();
+  const n = Math.max(8, Math.ceil(h * 2)), left = [], right = [];
+  for (let k = 0; k <= n; k++) {
+    const yy = y + (h * k) / n, a = Math.max(xa, cx - half(yy)), b = Math.min(xb, cx + half(yy));
+    if (a < b) { left.push(new Point(a, yy)); right.push(new Point(b, yy)); }
+  }
+  const p = new Path(); p.addLines([...left, ...right.reverse()]); p.closeSubpath();
   return p;
 }
 
@@ -506,18 +508,16 @@ function capsImage(W, H, days, todayIso) {
   days.forEach((x, i) => {
     const x0 = P + i * (cw + gap), today = x.date === todayIso;
     cap(new Rect(x0, P, cw, H), NEUTRAL_HEX, 0.2);
-    // Erledigt: eine Kapsel mit der Hoehe des Tages-Loads, bei mehreren Sportarten nach Anteil geteilt (groesster unten)
-    const parts = Object.entries(x.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    // Erledigt: eine Kapsel mit der Hoehe des Tages-Loads; mehrere Sportarten teilen sie senkrecht in gleich breite
+    // Spalten (groesster Load links), damit auch kleine Anteile wie eine kurze Kraft-Einheit klar zu sehen sind
+    const parts = Object.entries(x.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 3);
     const tot = parts.reduce((a, [, v]) => a + v, 0);
     if (tot > 0) {
-      const ht = Math.min(H, Math.max(cw, (H * tot) / max)), top = P + H - ht;
-      let yb = P + H;
-      parts.forEach(([k, v], j) => {
-        const seg = j === parts.length - 1 ? yb - top : (ht * v) / tot;
-        const yt = Math.max(top, yb - seg);
-        dc.addPath(capsuleBand(x0, top, cw, ht, yt + (j === parts.length - 1 ? 0 : 0.8), yb - (j === 0 ? 0 : 0.8)));
+      const ht = Math.min(H, Math.max(cw, (H * tot) / max)), top = P + H - ht, sw = cw / parts.length;
+      parts.forEach(([k], j) => {
+        const xa = x0 + j * sw + (j ? 0.7 : 0), xb = x0 + (j + 1) * sw - (j < parts.length - 1 ? 0.7 : 0);
+        dc.addPath(parts.length === 1 ? capsuleColumn(x0, top, cw, ht, x0, x0 + cw) : capsuleColumn(x0, top, cw, ht, xa, xb));
         dc.setFillColor(new Color(sportHex(k))); dc.fillPath();
-        yb = yt;
       });
     }
     // Geplant und noch nicht erledigt (heute oder spaeter): Umriss in der Sportfarbe
@@ -616,12 +616,12 @@ function buildWidget(res) {
   };
   const why = rawWhy ? sentences(rawWhy) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 34) / 6.3));
-  const nLines = Math.min(4, Math.max(1, Math.ceil(why.length / perLine)));
+  const nLines = Math.max(1, Math.ceil(why.length / perLine));
   const ct = w.addStack(); ct.size = new Size(W, 0); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
-  const bar = ct.addStack(); bar.size = new Size(3, nLines * 15 + 1); bar.cornerRadius = 1.5;
+  const bar = ct.addStack(); bar.size = new Size(3, Math.min(5, nLines) * 15 + 1); bar.cornerRadius = 1.5;
   bar.backgroundColor = coachLine ? COL.accent : focusLine ? COL.warn : COL.muted;
   ct.addSpacer(9);
-  text(ct, why, FS.sm, { lines: 4, minScale: 0.9 });
+  text(ct, why, FS.sm, { lines: 0, minScale: 1 }); // nie abschneiden: der Hinweis ist das Wichtigste nach dem Urteil
   ct.addSpacer();
   w.addSpacer(6);
 
@@ -659,7 +659,8 @@ function buildWidget(res) {
   if (wk.goal && !wk.days) { w.addSpacer(4); progressBar(w, W, wk.total / wk.goal, ACCENT_HEX); }
   w.addSpacer(6);
 
-  // 6. Naechste Tage: drei Kacheln
+  // 6. Naechste Tage: drei Kacheln, nur wenn der Hinweis kurz ist (die Kapseln zeigen den Plan der Woche ohnehin als Umriss)
+  if (nLines > 2) { notice(w, res, d); w.addSpacer(); return w; }
   const TW = Math.floor((W - 12) / 3);
   const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
   for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), g, d.plan.upcoming);
