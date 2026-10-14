@@ -268,33 +268,39 @@
     mount(host, s);
   }
 
-  /* ---------- Kalender-Heatmap (Tag x Woche) ---------- */
+  /* ---------- Kalender-Heatmap: Wochen als Spalten (wie die Wochen-Diagramme daneben), Tage Mo–So als Zeilen ---------- */
   function calendar(host, daily, today) {
-    const CW = 76, CH = 66, L = 66, T = 22, cols = 7;
+    const C = 34, G = 4, L = 26, T = 22, B = 26;
     const first = daily[0].date, dow = (d) => (new Date(d + "T12:00:00").getDay() + 6) % 7;
     const start = U.addDays(first, -dow(first));
     const weeks = Math.ceil((U.dayDiff(start, today) + 1) / 7);
-    const W = L + cols * CW + 8, H = T + weeks * CH + 26;
+    const W = L + weeks * (C + G), H = T + 7 * (C + G) + B;
     const s = svg(W, H, "Belastung je Tag");
     const max = Math.max(1, ...daily.map((d) => d.load));
-    ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => s.append(el("text", { x: L + i * CW + CW / 2, y: 14, "text-anchor": "middle" }, n)));
+    const byDate = Object.fromEntries(daily.map((d) => [d.date, d]));
+    ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].forEach((n, i) => s.append(el("text", { x: L - 6, y: T + i * (C + G) + C / 2 + 4, "text-anchor": "end", style: "font-size:10px" }, n)));
     for (let w = 0; w < weeks; w++) {
-      const ws = U.addDays(start, w * 7);
-      s.append(el("text", { x: L - 8, y: T + w * CH + CH / 2 + 4, "text-anchor": "end" }, U.fmtDate(ws)));
+      const ws = U.addDays(start, w * 7), x = L + w * (C + G);
+      s.append(el("text", { x: x + C / 2, y: T - 8, "text-anchor": "middle", style: "font-size:9.5px" }, U.fmtDate(ws).slice(0, 5)));
       for (let i = 0; i < 7; i++) {
-        const date = U.addDays(ws, i);
+        const date = U.addDays(ws, i), y = T + i * (C + G);
         if (date < first || date > today) continue;
-        const day = daily.find((d) => d.date === date), x = L + i * CW + 2, y = T + w * CH + 2;
+        const day = byDate[date];
+        if (!day) continue;
         const sports = Object.entries(day.sports).map(([k, v]) => `${k} ${U.fmt(v)}`).join(", ");
-        const cell = title(el("rect", { x, y, width: CW - 4, height: CH - 4, rx: 4, fill: day.load ? "var(--accent)" : "none", "fill-opacity": day.load ? 0.18 + 0.82 * (day.load / max) : 1, stroke: date === today ? "var(--text)" : "var(--line)", "stroke-width": date === today ? 2 : 1 }), `${U.weekday(date)} ${U.fmtDate(date)}: ${day.load ? `${U.fmt(day.load)} TSS (${sports})` : "keine Belastung / Ruhetag"}`);
-        s.append(cell);
-        if (day.load) s.append(el("text", { x: x + (CW - 4) / 2, y: y + (CH - 4) / 2 - 1, "text-anchor": "middle", style: `fill:${day.load / max > 0.55 ? "#fff" : "var(--text)"};font-size:12px;font-weight:700;pointer-events:none` }, U.fmt(day.load)));
-        // Sportart je Zelle: ein Punkt pro Sportart in der Sportartfarbe, mit heller Kontur wegen des dunklen Untergrunds
-        const ks = Object.keys(day.sports);
-        ks.forEach((k, n) => s.append(title(el("circle", { cx: x + (CW - 4) / 2 + (n - (ks.length - 1) / 2) * 14, cy: y + CH - 14, r: 5, fill: `var(--s-${k})`, stroke: "var(--card)", "stroke-width": 1.5 }), `${k}: ${U.fmt(day.sports[k])} TSS`)));
+        s.append(title(el("rect", { x, y, width: C, height: C, rx: 6, fill: day.load ? "var(--accent)" : "var(--line)", "fill-opacity": day.load ? 0.18 + 0.82 * (day.load / max) : 0.45, stroke: date === today ? "var(--text)" : "none", "stroke-width": 2 }), `${U.weekday(date)} ${U.fmtDate(date)}: ${day.load ? `${U.fmt(day.load)} TSS (${sports})` : "keine Belastung / Ruhetag"}`));
+        if (!day.load) continue;
+        s.append(el("text", { x: x + C / 2, y: y + C / 2 + 2, "text-anchor": "middle", style: `fill:${day.load / max > 0.55 ? "#fff" : "var(--text)"};font-size:11px;font-weight:700;pointer-events:none` }, U.fmt(day.load)));
+        // Sportarten als Streifen am unteren Rand, Breite nach Anteil am Tages-TSS
+        let sx = x + 5;
+        for (const [k, v] of Object.entries(day.sports)) {
+          const sw = (C - 10) * (v / day.load);
+          s.append(el("rect", { x: sx, y: y + C - 7, width: Math.max(2, sw - 1), height: 3, rx: 1.5, fill: `var(--s-${k})`, style: "pointer-events:none" }));
+          sx += sw;
+        }
       }
     }
-    s.append(el("text", { x: L, y: H - 6 }, "Zahl = TSS · dunkler = mehr · Punkte = Sportart · leer = Ruhetag"));
+    s.append(el("text", { x: L, y: H - 8, style: "font-size:10px" }, "Zahl = TSS · dunkler = mehr · Streifen = Sportarten"));
     mount(host, s);
   }
 
