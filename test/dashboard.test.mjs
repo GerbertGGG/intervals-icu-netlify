@@ -124,6 +124,12 @@ assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goal, 250);
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goalSource, "config");
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "kaputt" }).week.goal, null);
 assert.equal(wdg.week.total, Object.values(d.weeks.at(-1).bySport).reduce((a, s) => a + s.load, 0));
+// Kapseln: Mo bis So der laufenden Woche, heute dabei, erledigter Load je Sportart und Plan des Tages
+assert.equal(wdg.week.days.length, 7);
+assert.equal(new Date(wdg.week.days[0].date + "T00:00:00Z").getUTCDay(), 1);
+assert.ok(wdg.week.days.some((x) => x.date === today));
+assert.deepEqual(wdg.week.days.find((x) => x.date === today).plan.map((p) => p.sport), d.planned.filter((p) => p.date === today).map((p) => p.sport));
+assert.equal(wdg.week.tsb, d.summary.load.tsb);
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
 // Naechste Tage fuer die Kacheln: nur Name/Sport/Dauer, keine Beschreibung
 assert.deepEqual(wdg.plan.upcoming.map((x) => [x.date, x.name, x.sport, x.key]), [[day(1), "CSS-Intervalle", "swim", true]]);
@@ -232,6 +238,7 @@ assert.equal(sm.sleep.days.at(-1).date, today);
 assert.equal(sm.sleep.days.at(-1).hours, 7.5);
 assert.equal(sm.sleep.medianHrv, 48);
 assert.equal(sm.sleep.medianHrv, d.summary.readiness.body.hrvMedian); // dieselben Mediane wie die Bereitschaft
+assert.deepEqual(sm.sleep.cls, { sleep: d.summary.readiness.body.sleep.cls, hrv: d.summary.readiness.body.hrv.cls, resting: d.summary.readiness.body.resting.cls });
 assert.equal(sm.goal.daysToGo, 3); // Rennziel kommt mit, kein Zweitabruf noetig
 assert.equal(sm.food.days.length, 7);
 assert.equal(sm.food.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal = keine Daten
