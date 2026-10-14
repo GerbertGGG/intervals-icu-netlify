@@ -175,7 +175,7 @@ function renderCockpit(d) {
   const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>`, "span15") : "";
   const blockTile = renderBlock(d.seasonBlock);
   const prevWk = d.weeks[d.weeks.length - 2];
-  const taperTile = taper ? tile("Taper-Status", `<div class="val" style="font-size:1.1rem">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.km, 1) : "–"} km${prevWk ? `, Vorwoche ${fmt(prevWk.km, 1)} km` : ""}. Niedriger ACWR und steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gelten als Soll, nicht als Mangel.</div>`, "span4") : "";
+  const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.km, 1) : "–"} km${prevWk ? `, Vorwoche ${fmt(prevWk.km, 1)} km` : ""}. Niedriger ACWR und steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gelten als Soll, nicht als Mangel.</div>`, "span4") : "";
   const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15", ["#form", "Formverlauf"]);
   const acwrTile = tile("Belastung (ACWR)", `<div id="ck-acwr"></div><div><span class="badge ${acwrShow}">${acwrText}</span> <span class="sub">${taper ? "Taper-Woche" : `Ziel ${fmt(ACWR.lo, 1)}–${fmt(ACWR.hi, 1)}`}</span></div>`, "span15", ["#form", "Wochenbelastung"]);
 
@@ -197,38 +197,43 @@ function renderCockpit(d) {
   const ng = d.nutritionGoals ?? {};
   const macroLine = [["Eiweiß", prot[nDay], ng.proteinG], ["KH", carbs[nDay], ng.carbsG], ["Fett", fat[nDay], ng.fatG]].map(([l, v, gl]) => `${l} ${fmt(v ?? 0)}${gl ? `/${fmt(gl)}` : ""} g`).join(" · ");
   const nutTile = lastData || d.nutritionGoals
-    ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div>${hasToday ? '<div id="ck-kcal"></div>' : ""}<div class="sub">${emptyNote || macroLine}</div>`, "span4", ["#ernaehrung", "Makros und Wochenübersicht"])
-    : tile("Ernährung", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span4");
+    ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div>${hasToday ? '<div id="ck-kcal"></div>' : ""}<div class="sub">${emptyNote || macroLine}</div>`, "span3", ["#ernaehrung", "Makros und Wochenübersicht"])
+    : tile("Ernährung", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
 
-  // Heute-Band: die Antwort auf "Was steht heute an?" ganz oben. Links die geplanten Einheiten (mit Profil der
-  // Haupteinheit), rechts Bereitschaft, Schlaf, Frische und Rennen als Kurzwerte; Details stehen in den Kacheln darunter.
+  // Heute oben, in fester Reihenfolge: 1. Hauptaussage = Erholung (Ampel mit Form und Text), 2. was heute ansteht
+  // (mit Profil der Haupteinheit), 3. Kennzahlen Schlaf, Frische, Belastung, Rennen. Details stehen in den Kacheln darunter.
   const doneToday = d.daily.find((x) => x.date === d.today);
   const meta = (p) => [p.durationMin && p.durationMin + " min", p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
   const planHtml = plan.length
     ? plan.map((p) => `<div class="hb-item"><i style="background:var(--s-${p.sport})"></i><div><b>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}</b><span class="sub">${meta(p) || "&nbsp;"}</span></div></div>`).join("")
-    : '<div class="hb-item"><i style="background:var(--line)"></i><div><b>Nichts geplant</b><span class="sub">Ruhetag oder frei</span></div></div>';
+    : '<div class="hb-item"><i style="background:var(--line-2)"></i><div><b>Nichts geplant</b><span class="sub">Ruhetag oder frei</span></div></div>';
   const doneHtml = doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
-  const stat = (label, value, badge, cls) => `<div class="hb-stat"><span class="hb-l">${label}</span><span class="hb-v">${value}</span>${badge ? `<span class="badge ${cls}">${badge}</span>` : ""}</div>`;
-  const heuteBand = `<div class="heute">
-    <div class="hb-main"><div class="hb-date">Heute · ${weekday(d.today)} ${fmtDate(d.today)}</div>${planHtml}${doneHtml}
-      ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>
-    <div class="hb-stats">
-      ${wellOk ? `<div class="hb-stat"><span class="hb-l">Bereit für Training?</span><span class="badge ${R.verdict.cls} big-badge">${esc(R.verdict.text)}</span><span class="hb-n">${esc(R.verdict.sub)}</span></div>` : stat("Bereit für Training?", "–", "Wellness fehlt", "none")}
-      ${stat("Schlaf (akut)", SA.avg != null ? `${fmt(SA.avg, 1)} <small>h</small>` : "–", SA.text, SA.cls)}
-      ${stat("Frische (TSB)", tsb != null ? fmt(tsb) : "–", tsbText, tsbCls)}
-      ${g.daysToGo >= 0 ? stat(esc(g.name), g.daysToGo === 0 ? "Heute!" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, `${weekday(g.date)} ${fmtDate(g.date)}`, taper ? "warn" : "none") : ""}
-    </div></div>`;
+  const vCls = wellOk ? R.verdict.cls : "none";
+  const status = `<div class="hero-status ${vCls}"><div class="hero-k">Erholung · ${weekday(d.today)} ${fmtDate(d.today)}</div>
+    <div class="verdict ${vCls}"><i class="sicon ${vCls}" aria-hidden="true"></i><span>${wellOk ? esc(R.verdict.text) : "Wellness fehlt"}</span></div>
+    <p class="hero-sub">${wellOk ? esc(R.verdict.sub) : "Wellness nicht abrufbar."}</p>
+    ${wellOk && R.verdict.reasons?.length ? `<div class="hero-why">Auslöser: ${esc(R.verdict.reasons.join(" · "))}</div>` : ""}
+    ${wellOk ? `<div class="dots">${R.items.map((i) => `<span title="${esc(i.text)}"><i class="${i.cls}"></i>${esc(i.label)}</span>`).join("")}</div>` : ""}
+    ${wellOk ? '<a class="more" href="#erholung">Bänder und Verläufe →</a>' : ""}</div>`;
+  const today = `<div class="hero-plan"><div class="hero-k">Heute geplant</div>${planHtml}${doneHtml}
+      ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>`;
+  const kpi = (label, value, badge, cls, sub = "") => `<div class="kpi"><span class="kpi-l">${label}</span><span class="kpi-v">${value}</span>${badge ? `<span class="badge ${cls}">${badge}</span>` : ""}${sub ? `<span class="sub">${sub}</span>` : ""}</div>`;
+  const kpis = `<div class="kpis">
+      ${kpi("Schlaf akut", SA.avg != null ? `${fmt(SA.avg, 1)} <small>h</small>` : "–", SA.text, SA.cls)}
+      ${kpi("Frische TSB", tsb != null ? fmt(tsb) : "–", tsbText, tsbCls)}
+      ${kpi("Belastung ACWR", acwr != null ? fmt(acwr, 2) : "–", acwrText, acwrShow)}
+      ${g.daysToGo >= 0 ? kpi(esc(g.name), g.daysToGo === 0 ? "Heute" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(g.date)} ${fmtDate(g.date)}${taper ? " · Taper" : ""}`) : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "")}
+    </div>`;
+  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${kpis}</div>`;
 
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
     ${weekTile}
     <div class="cockpit-group">Rennen und Form</div>
     <div class="cockpit flow">${raceTile}${supportTile}${tsbTile}${acwrTile}</div>${blockTile}
-    ${taperTile ? `<div class="cockpit" style="margin-top:10px">${taperTile}</div>` : ""}
-    <div class="cockpit-group">Erholung</div>
-    <div class="cockpit">${readyTile}${sleepTile}</div>
-    <div class="cockpit-group">Ernährung</div>
-    <div class="cockpit">${nutTile}</div>`;
+    ${taperTile ? `<div class="cockpit" style="margin-top:var(--gap)">${taperTile}</div>` : ""}
+    <div class="cockpit-group">Erholung und Ernährung</div>
+    <div class="cockpit">${wellOk ? "" : readyTile}${sleepTile}${nutTile}</div>`;
 
   if (g.daysToGo >= 0) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
   C.gauge($("ck-tsb"), { label: "TSB", min: -40, max: 30, value: tsb, ticks: [-40, -25, -10, 0, 15, 30], zones: [{ from: -40, to: TSB_BANDS.warn, cls: "bad" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: TSB_BANDS.ok, to: 30, cls: "ok" }] });
@@ -311,8 +316,8 @@ function renderTriRennplan(d, box) {
   ];
   const known = [sw?.timeSecs, b?.timeSecs, r?.timeSecs], all = known.every((x) => x != null), sum = known.reduce((a, x) => a + (x ?? 0), 0);
   const total = g.totalTargetSecs;
-  const head = total ? `<div class="big" style="font-size:1.4rem">${hm(total)}</div><div class="muted">Gesamtziel</div>`
-    : all ? `<div class="big" style="font-size:1.4rem">${hm(sum)}</div><div class="muted">Vorschlag Summe (ohne Wechselzeiten, kein Gesamtziel hinterlegt)</div>`
+  const head = total ? `<div class="big2">${hm(total)}</div><div class="muted">Gesamtziel</div>`
+    : all ? `<div class="big2">${hm(sum)}</div><div class="muted">Vorschlag Summe (ohne Wechselzeiten, kein Gesamtziel hinterlegt)</div>`
     : '<div class="muted">Kein Gesamtziel hinterlegt.</div>';
   $("staffel").innerHTML = `${head}
     <div class="scroll"><table class="mini" style="margin-top:8px"><thead><tr><th></th><th>Zeit</th><th>Pace / Leistung</th></tr></thead><tbody>${rows.map((x) => `<tr><td><b>${x[0]}</b></td><td>${x[1]}</td><td>${x[2]}</td></tr>`).join("")}</tbody></table></div>
@@ -334,7 +339,7 @@ function renderRennplan(d) {
   const hasRange = sc.lo != null;
   const label = (x) => (sc.scenarios.length === 1 ? "Ziel" : x.id + "-Ziel");
   const rows = sc.scenarios.map((x) => `<tr><td><b>${label(x)}</b>${x.isGoal ? ' <small class="muted">(dein Ziel)</small>' : ""}</td><td><b>${hm(x.secs)}</b> <small class="muted">${fmtTime(x.secs)}</small></td><td>${paceLabel(x.pace)} min/km</td><td class="muted">${hasRange && sc.scenarios.length === 3 ? note[x.id] : ""}</td></tr>`).join("");
-  $("staffel").innerHTML = `${hasRange ? `<div class="big" style="font-size:1.4rem">${hm(sc.lo)}–${hm(sc.hi)}</div><div class="muted">Realistische Spanne (aus VDOT und 10-km-Bestzeit${sc.noLong ? ", Obergrenze +3 %, da kein Lauf ab 16 km in 8 Wochen" : ""})</div>` : '<div class="muted">Keine Runalyze-Werte für eine Spanne – nur das Ziel ist hinterlegt.</div>'}
+  $("staffel").innerHTML = `${hasRange ? `<div class="big2">${hm(sc.lo)}–${hm(sc.hi)}</div><div class="muted">Realistische Spanne (aus VDOT und 10-km-Bestzeit${sc.noLong ? ", Obergrenze +3 %, da kein Lauf ab 16 km in 8 Wochen" : ""})</div>` : '<div class="muted">Keine Runalyze-Werte für eine Spanne – nur das Ziel ist hinterlegt.</div>'}
     <div class="scroll"><table class="mini" style="margin-top:8px"><thead><tr><th></th><th>Zeit</th><th>Pace</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     ${hasRange && sc.goal < sc.lo ? `<div class="notice">Das Ziel ${hm(sc.goal)} liegt unter der realistischen Spanne und gelingt nur bei perfektem Tag. Die ersten 5 km nicht schneller als die Pace des B-Ziels laufen, sonst droht der Einbruch ab km 15.</div>` : ""}
     <div class="muted">Die Spanne ist eine Rechnung, keine Vorhersage.</div>`;
@@ -363,7 +368,7 @@ function renderLongruns(d) {
   const list = T.recent.length ? `<table class="mini"><thead><tr><th>Datum</th><th>Distanz</th><th>Pace</th><th>Decoupling</th></tr></thead><tbody>${T.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.race ? " <span class=\"muted\">(Rennen)</span>" : ""}</td><td>${fmt(r.distanceKm, 1)} km</td><td>${r.pace ?? "–"}</td><td>${r.decoupling != null ? `<span class="badge ${decCls(r.decoupling)}">${fmt(r.decoupling, 1)} %</span>` : '<span class="muted">–</span>'}</td></tr>`).join("")}</tbody></table>` : `<div class="muted">Kein „Langer Lauf“ und kein Lauf ab ${T.minKm} km in den letzten 8 Wochen.</div>`;
   const decN = T.recent.filter((r) => r.decoupling != null).length;
   const decNote = T.recent.length && !decN ? '<div class="notice" style="margin-top:8px">Kein Long Run mit Decoupling-Wert: Ohne ihn fehlt der Nachweis, dass die Ausdauer stabil bleibt.</div>' : "";
-  host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small class="muted" style="font-size:.9rem">km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
+  host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small>km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
     <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · Läufe der Art „Langer Lauf“ (Runalyze) und Läufe ab ${T.minKm} km (Intervals):</div>${list}${decNote}${warn}
     <details class="info"><summary>Erklärung</summary><div>Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; aus Runalyze (Pace-Decoupling), wo vorhanden. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div></details>`;
 }
@@ -649,13 +654,13 @@ function triathlonGoalCard(g) {
   const missing = (t) => `<span class="muted">${t}</span>`;
   const rows = [];
   const sw = tg.swim;
-  rows.push(row(`🏊 Schwimmen · ${fmt(g.triathlon.swimKm, 2)} km`, sw, sw ? fmtTime(sw.timeSecs) : "–", sw ? `${paceLabel(sw.pacePer100m)} min/100 m` : missing("Schwellenpace fehlt")));
+  rows.push(row(`<i style="background:var(--s-swim)"></i>Schwimmen · ${fmt(g.triathlon.swimKm, 2)} km`, sw, sw ? fmtTime(sw.timeSecs) : "–", sw ? `${paceLabel(sw.pacePer100m)} min/100 m` : missing("Schwellenpace fehlt")));
   const b = tg.bike;
   const bikeDetail = !b ? missing("FTP fehlt")
     : [b.watts ? `${b.wattsLow ? `${fmt(b.wattsLow)}–${fmt(b.wattsHigh)}` : fmt(b.watts)} W` : "", b.pctFtp ? `${fmt(b.pctFtp * 100)} % FTP` : "", b.speedKmh ? `${fmt(b.speedKmh, 1)} km/h` : ""].filter(Boolean).join(" · ");
-  rows.push(row(`🚴 Rad · ${fmt(g.triathlon.bikeKm)} km`, b, b?.timeSecs ? fmtTime(b.timeSecs) : "–", bikeDetail));
+  rows.push(row(`<i style="background:var(--s-bike)"></i>Rad · ${fmt(g.triathlon.bikeKm)} km`, b, b?.timeSecs ? fmtTime(b.timeSecs) : "–", bikeDetail));
   const r = tg.run;
-  rows.push(row(`🏃 Laufen · ${fmt(g.triathlon.runKm, 1)} km`, null, r ? fmtTime(r.timeSecs) : "–", r ? `${paceLabel(r.pacePerKm)} min/km` : missing("in der Beschreibung ergänzen: „Lauf 1:55:00“")));
+  rows.push(row(`<i style="background:var(--s-run)"></i>Laufen · ${fmt(g.triathlon.runKm, 1)} km`, null, r ? fmtTime(r.timeSecs) : "–", r ? `${paceLabel(r.pacePerKm)} min/km` : missing("in der Beschreibung ergänzen: „Lauf 1:55:00“")));
   if (tg.totalTargetSecs) rows.push(row("Gesamtziel", null, fmtTime(tg.totalTargetSecs), "", "tri-total"));
   return `<div class="card"><h3>Triathlon-Ziele · ${esc(g.name.replace("Triathlon ", ""))}</h3>${rows.join("")}<details class="info"><summary>Erklärung</summary><div>Vorschläge aus FTP und Schwimmschwelle (Faustwerte). Eigene Ziele in die Beschreibung des Rennens schreiben, z. B. „Schwimmen 40:00“, „Rad 215 W“ oder „Rad 3:00:00“, „Lauf 1:55:00“.</div></details></div>`;
 }
@@ -673,7 +678,7 @@ function renderWellness(d) {
   });
   C.wellnessHeat($("wellness-heat"), days, rows);
   const SA = sleepAccount(d);
-  $("sleep-account").innerHTML = `<div class="big">${SA.avg != null ? fmt(SA.avg, 1) : "–"} <small class="muted" style="font-size:.9rem">h Ø akut von ${fmt(SA.target, 1)} h</small></div><div><span class="badge ${SA.cls}">${SA.text}</span></div>
+  $("sleep-account").innerHTML = `<div class="big">${SA.avg != null ? fmt(SA.avg, 1) : "–"} <small>h Ø akut von ${fmt(SA.target, 1)} h</small></div><div><span class="badge ${SA.cls}">${SA.text}</span></div>
     ${SA.nights.map((n, i) => `<div class="row"><span>${i === 0 ? "Letzte Nacht (auf heute)" : "Nacht davor"} · ${weekday(n.date)} ${fmtDate(n.date)}</span><b>${n.h != null ? fmt(n.h, 1) + " h" : "nicht erfasst"}</b></div>`).join("")}
     <div class="row"><span>7 Nächte (${SA.week.n}/7 erfasst)</span><b>${SA.week.avg != null ? "Ø " + fmt(SA.week.avg, 1) + " h · Defizit " + fmt(SA.week.debt, 1) + " h" : "–"}</b></div>
     <div><span class="badge ${SA.week.cls}">${SA.week.text}</span></div>
@@ -686,7 +691,7 @@ function renderWellness(d) {
     if (!have.length) { $(id).innerHTML = `<div class="muted">Keine ${label}-Werte im Zeitraum.</div>`; continue; }
     const lastDay = have[have.length - 1], nums = have.map((x) => vals[x]), q1 = quart(nums, 0.25), q3 = quart(nums, 0.75);
     C.gapLine($(id), days, vals, { unit, label, dec, last: { date: lastDay, value: vals[lastDay] }, band: nums.length >= 5 ? { lo: q1, hi: q3, label: "üblicher Bereich", tip: `Mittlere 50 % deiner Werte: ${fmt(q1, dec)}–${fmt(q3, dec)} ${unit}` } : null });
-    $(id).insertAdjacentHTML("afterbegin", `<div><b style="font-size:1.4rem">${fmt(vals[lastDay], dec)}</b> <span class="muted">${unit} · ${lastDay === d.today ? "heute" : fmtDate(lastDay)}${nums.length >= 5 ? ` · üblich ${fmt(q1, dec)}${fmt(q1, dec) === fmt(q3, dec) ? "" : "–" + fmt(q3, dec)}` : ""}</span></div>`);
+    $(id).insertAdjacentHTML("afterbegin", `<div><b class="num-l">${fmt(vals[lastDay], dec)}</b> <span class="muted">${unit} · ${lastDay === d.today ? "heute" : fmtDate(lastDay)}${nums.length >= 5 ? ` · üblich ${fmt(q1, dec)}${fmt(q1, dec) === fmt(q3, dec) ? "" : "–" + fmt(q3, dec)}` : ""}</span></div>`);
   }
 }
 
@@ -712,9 +717,9 @@ function renderWeight(d) {
   const both = dayRange(from, addDays(d.today, -1)).filter((x) => kc[x] != null && kg[x] != null);
   const bal = both.length ? both.reduce((n, x) => n + kc[x] - kg[x], 0) : null;
   const sgn = (v, dec = 0) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmt(Math.abs(v), dec)}`;
-  $("weight").insertAdjacentHTML("afterbegin", `<div class="wt-top"><div><div class="muted">7-Tage-Schnitt</div><b style="font-size:1.4rem">${fmt(avg7[lastDay], 1)} kg</b></div>
-    <div><div class="muted">Gewicht, ${dKg != null ? `seit ${fmtDate(before)}` : "Verlauf"}</div><b style="font-size:1.4rem">${dKg != null ? sgn(dKg, 1) + " kg" : "–"}</b></div>
-    <div><div class="muted">Kalorien gegen Ziel${both.length ? `, ${both.length} Tage` : ""}</div><b style="font-size:1.4rem">${bal != null ? sgn(bal) + " kcal" : "–"}</b></div></div>`);
+  $("weight").insertAdjacentHTML("afterbegin", `<div class="wt-top"><div><div class="muted">7-Tage-Schnitt</div><b class="num-l">${fmt(avg7[lastDay], 1)} kg</b></div>
+    <div><div class="muted">Gewicht, ${dKg != null ? `seit ${fmtDate(before)}` : "Verlauf"}</div><b class="num-l">${dKg != null ? sgn(dKg, 1) + " kg" : "–"}</b></div>
+    <div><div class="muted">Kalorien gegen Ziel${both.length ? `, ${both.length} Tage` : ""}</div><b class="num-l">${bal != null ? sgn(bal) + " kcal" : "–"}</b></div></div>`);
   $("weight").insertAdjacentHTML("beforeend", '<details class="info"><summary>Erklärung</summary><div>Dünne Linie = Tageswert, dicke Linie = 7-Tage-Schnitt. Kalorien gegen das Yazio-Ziel nur an Tagen mit Eintrag und ohne heute; das Ziel ist kein Verbrauch, die Zahl also keine exakte Energiebilanz.</div></details>');
 }
 
@@ -896,7 +901,7 @@ function renderBlock(SB) {
   const decLabel = { next: "weiter", extend: "verlängern", cause: "Ursache klären" };
   const decision = D ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · ${D.due ? "Entscheidung" : "Stand heute"}:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>` : "";
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
-  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val" style="font-size:1.25rem">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
+  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
@@ -908,7 +913,7 @@ function renderStrength(d) {
   if (bg?.weeks?.length) {
     $("strength-card").hidden = false; $("kraft").hidden = false;
     $("kt-weeks").hidden = false;
-    $("kp-weeks").innerHTML = `<div class="big">${bg.value ?? "–"} <small class="muted" style="font-size:.9rem">von ${bg.of} Wochen mit Ziel erreicht</small></div>
+    $("kp-weeks").innerHTML = `<div class="big">${bg.value ?? "–"} <small>von ${bg.of} Wochen mit Ziel erreicht</small></div>
       <div class="muted" style="margin:2px 0 10px">Ziel: ${esc(bg.target)}${bg.egym ? "" : " · ohne EGYM-Daten gezählt"}</div>
       ${[...bg.weeks].reverse().map((w) => `<div style="display:grid;grid-template-columns:64px 1fr 64px;gap:8px;align-items:center;padding:3px 0;${w.done ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.start)}${w.done ? "" : " ·&nbsp;jetzt"}</span><div class="bsq">${bg.goalSets ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (w.count / bg.goalSets) * 100)}%;background:var(--${w.hit ? "ok" : "muted"})"></div></div>` : Array.from({ length: Math.max(2, w.count) }, (_, i) => `<i class="${i < w.count ? (w.hit ? "ok" : "off") : "open"}"></i>`).join("")}</div><b style="text-align:right">${w.count}${bg.goalSets ? "" : "×"}</b></div>`).join("")}
       <div class="muted" style="margin-top:6px">${bg.goalSets ? `Balken = Sätze der Woche, grün = mind. ${bg.goalSets} Sätze.` : "Jedes Kästchen = eine Kraft-Einheit, grün = Wochenziel erreicht."}</div>`;
@@ -959,7 +964,7 @@ function renderEgym(k) {
   const vol = (kg) => (kg >= 1000 ? fmt(kg / 1000, 1) + " t" : fmt(kg) + " kg");
   const max = Math.max(goal, ...k.weeks.map((w) => w.sets || 0)) * 1.1;
   const row = (w, last) => { const m = w.minutes, ok = (w.sets || 0) >= goal; const det = [m ? est(w.minutesSource) + fmt(m) + " min" : "", w.volumeKg ? vol(w.volumeKg) : ""].filter(Boolean).join(" · "); return `<div style="display:grid;grid-template-columns:64px 1fr 76px;gap:0 8px;align-items:center;padding:4px 0;${last ? "" : "opacity:.85"}"><span class="muted">${fmtDate(w.start)}${last ? " ·&nbsp;jetzt" : ""}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${((w.sets || 0) / max) * 100}%;background:${ok ? "var(--ok)" : "var(--s-strength)"}${w.minutesSource === "estimate" ? ";opacity:.6" : ""}"></div><i style="left:${(goal / max) * 100}%"></i></div><b style="text-align:right;white-space:nowrap">${w.sets ? w.sets + " Sätze" : "–"}</b>${det ? `<span class="muted" style="grid-column:2/4;font-size:.8rem;padding-top:1px">${det}</span>` : ""}</div>`; };
-  const stat = (v, l) => `<div><div style="font-weight:650;font-size:1.15rem">${v}</div><div class="muted" style="font-size:.8rem">${l}</div></div>`;
+  const stat = (v, l) => `<div><div class="mval">${v}</div><div class="muted">${l}</div></div>`;
   const since = k.daysSince == null ? "–" : k.daysSince === 0 ? "heute" : `vor ${k.daysSince} T`;
   const p = k.progress, items = p ? p.items : [];
   const delta = (i) => (i.diffKg == null ? '<span class="muted">–</span>' : `<span class="badge ${i.diffKg > 0 ? "ok" : i.diffKg < 0 ? "bad" : "none"}">${i.diffKg > 0 ? "+" : i.diffKg < 0 ? "−" : ""}${fmt(Math.abs(i.diffKg), 1)} kg</span>`);
@@ -974,7 +979,7 @@ function renderEgym(k) {
   const vt = k.volumeTrend;
   // Karte "Krafttraining": EGYM als Umschalter "Sätze"; Muskelalter, Bestwerte und 1RM bleiben in der EGYM-Karte
   $("strength-card").hidden = false; $("kt-sets").hidden = false;
-  $("kp-sets").innerHTML = `<div class="big">${wk.sets || 0} <small class="muted" style="font-size:.9rem">von ${goal} Sätzen diese Woche</small> ${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div><div class="cbar" style="height:12px;margin:6px 0"><div class="cfill" style="width:${Math.min(100, ((wk.sets || 0) / goal) * 100)}%;background:var(--s-strength)"></div></div><div class="muted">${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"} diese Woche · ${min == null ? "–" : est(wk.minutesSource) + fmt(min)} min</div>
+  $("kp-sets").innerHTML = `<div class="big">${wk.sets || 0} <small>von ${goal} Sätzen diese Woche</small> ${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div><div class="cbar" style="height:12px;margin:6px 0"><div class="cfill" style="width:${Math.min(100, ((wk.sets || 0) / goal) * 100)}%;background:var(--s-strength)"></div></div><div class="muted">${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"} diese Woche · ${min == null ? "–" : est(wk.minutesSource) + fmt(min)} min</div>
     <div class="muted" style="margin:2px 0 10px">Satz-Ziel erreicht in ${k.weeksHit.hit} von ${k.weeksHit.of} abgeschlossenen Wochen${k.streakWeeks ? ` · Serie ${k.streakWeeks} ${k.streakWeeks === 1 ? "Woche" : "Wochen"}` : ""} · senkrechte Marke = ${goal} Sätze${wk.goalSource === "default" ? " (Standardziel)" : ""}</div>
     ${k.weeks.slice().reverse().map((w, i) => row(w, i === 0)).join("")}
     <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">${stat(wk.sessions, "Einheiten")}${stat(wk.sets || "–", "Sätze")}${stat(wk.volumeKg ? (wk.volumeKg >= 1000 ? fmt(wk.volumeKg / 1000, 1) + " t" : fmt(wk.volumeKg) + " kg") : "–", "Volumen")}${stat(since, "zuletzt")}</div>
@@ -995,7 +1000,7 @@ function renderEgym(k) {
   };
   // Muskelalter mit Skala: Balken von 20 bis 60 Jahren, Gesamtalter als eigene Zeile
   const AGE = { lo: 20, hi: 60 }, ageW = (a) => `${Math.max(0, Math.min(100, ((a - AGE.lo) / (AGE.hi - AGE.lo)) * 100))}%`;
-  const bio2 = b && b.muscle != null ? `<h3 style="margin-top:0">Muskelalter</h3><div class="big" style="color:var(--s-strength)">${b.muscle} <small class="muted" style="font-size:.9rem">Jahre${b.total != null ? ` · EGYM-Gesamtalter ${b.total}` : ""}</small></div>
+  const bio2 = b && b.muscle != null ? `<h3 style="margin-top:0">Muskelalter</h3><div class="big" style="color:var(--s-strength)">${b.muscle} <small>Jahre${b.total != null ? ` · EGYM-Gesamtalter ${b.total}` : ""}</small></div>
     <div class="muted" style="margin-bottom:6px">Niedriger ist besser. Die Balken zeigen das Alter je Körperbereich auf einer Skala von ${AGE.lo} bis ${AGE.hi} Jahren; der rötliche Balken ist der älteste Bereich.${b.total != null ? " Das Gesamtalter ist ein eigener EGYM-Wert und wird hier nicht nachgerechnet." : ""}</div>
     ${regionRows.map((r) => `<div style="display:grid;grid-template-columns:90px 1fr 40px;gap:8px;align-items:center;padding:4px 0"><span>${r.label}</span><div class="cbar" style="height:10px">${r.age != null ? `<div class="cfill" style="width:${ageW(r.age)};background:${r.age === worstAge ? "var(--bad)" : "var(--s-strength)"}"></div>` : ""}</div><b style="text-align:right">${r.age ?? "–"}</b></div>`).join("")}
     <div class="agescale"><span>${AGE.lo}</span><span>${(AGE.lo + AGE.hi) / 2}</span><span>${AGE.hi} Jahre</span></div>
