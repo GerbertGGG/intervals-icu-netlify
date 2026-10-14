@@ -73,13 +73,21 @@ export function buildWidget(d, env = {}) {
   const upcoming = d.sources.intervalsEvents?.ok === false ? null : d.planned.filter((p) => p.date > d.today && p.date <= horizon).map((p) => ({ date: p.date, name: stripKey(p.name), sport: p.sport, durationMin: p.durationMin, key: isKeySession(p) }));
   const r = d.summary.readiness;
   const wk = weeklyGoal(week, env);
+  // Woche Mo bis So fuer die Kapseln im grossen Widget: erledigter Load je Sportart und die geplanten Einheiten des Tages
+  const monday = addDays(d.today, -((new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7));
+  const dailyBy = Object.fromEntries((d.daily ?? []).map((x) => [x.date, x]));
+  const weekPlan = d.plannedWeek ?? d.planned;
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(monday, i);
+    return { date, sports: dailyBy[date]?.sports ?? {}, plan: weekPlan.filter((p) => p.date === date).map((p) => ({ sport: p.sport, load: p.load ?? null })) };
+  });
   return {
     generatedAt: d.generatedAt,
     today: d.today,
     goal: goalOf(d),
     readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name } : null, upcoming },
-    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source },
+    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays },
     // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
     focus: topFinding(d),
     // Hinweis des Coaches, nur solange er frisch ist; hat im Widget Vorrang vor focus und dem allgemeinen Warum
@@ -254,6 +262,8 @@ export function buildWidgetSmall(d, goals = null, live = null) {
       medianHours: body.sleepMedian,
       medianHrv: body.hrvMedian,
       medianRestingHR: body.restingMedian,
+      // Einschaetzung von heute wie in der Bereitschaft (ok/warn/bad/none), nur fuer heute gueltig
+      cls: { sleep: body.sleep.cls, hrv: body.hrv.cls, resting: body.resting.cls },
     },
     food: { days: foodDays, latest, hasData: latest != null, goals },
     fitness: buildFitness(d, byDate),
