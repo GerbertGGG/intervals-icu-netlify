@@ -200,7 +200,7 @@ function renderCockpit(d) {
   const ng = d.nutritionGoals ?? {};
   const macroLine = [["Eiweiß", prot[nDay], ng.proteinG], ["KH", carbs[nDay], ng.carbsG], ["Fett", fat[nDay], ng.fatG]].map(([l, v, gl]) => `${l} ${fmt(v ?? 0)}${gl ? `/${fmt(gl)}` : ""} g`).join(" · ");
   const nutTile = lastData || d.nutritionGoals
-    ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div><div id="ck-kcal"></div><div class="sub">${emptyNote || macroLine}</div>`, "span4", ["#ernaehrung", "Makros und Wochenübersicht"])
+    ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div>${hasToday ? '<div id="ck-kcal"></div>' : ""}<div class="sub">${emptyNote || macroLine}</div>`, "span4", ["#ernaehrung", "Makros und Wochenübersicht"])
     : tile("Ernährung", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span4");
 
   $("cockpit").innerHTML = `
@@ -763,6 +763,12 @@ function renderNutritionToday(d, map) {
         ${goal ? `<i class="ngoal" style="left:${w(goal)}" title="Tagesziel ${fmt(goal)} ${unit}"></i><i class="nsoll" style="left:${w(soll)}" title="Soll bis jetzt: ${fmt(soll)} ${unit}"></i>` : ""}</div>
       ${soll != null ? `<div class="muted">Soll bis jetzt ${fmt(soll)} ${unit}${gap ? ` · ${gap}` : ""}</div>` : ""}</div>`;
   };
+  // Noch nichts gegessen: ein ruhiger Hinweis mit den Tageszielen statt vier leerer Balken
+  if (rows.every((r) => r[1] == null)) {
+    const goals = rows.filter((r) => r[2]).map(([label, , goal, unit]) => `${label} ${fmt(goal)} ${unit}`).join(" · ");
+    $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3><div class="nempty">Heute noch nichts eingetragen.${goals ? `<br><small>Tagesziele: ${goals}</small>` : ""}</div><div class="muted">Stand des letzten Syncs (alle 15 Minuten, Yazio).</div>`;
+    return;
+  }
   $("n-today").innerHTML = `<h3>Heute · ${weekday(t)} ${fmtDate(t)}</h3>${rows.map(bar).join("")}<div class="muted">Stand des letzten Syncs (alle 15 Minuten, Yazio). Schwarze Marke = Tagesziel, gestrichelte Marke = Soll bis jetzt (linear von ${NUT_DAY.from} bis ${NUT_DAY.to} Uhr, grobe Orientierung).</div>`;
 }
 

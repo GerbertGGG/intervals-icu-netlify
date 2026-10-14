@@ -217,7 +217,7 @@
       const join = (real, pr) => ({ ...(cNow && real === o.ctl ? { [cNow.day]: cNow.v } : {}), ...(aNow && real === o.atl ? { [aNow.day]: aNow.v } : {}), ...pr });
       curve(join(o.ctl, o.proj.ctl), CTL, false, true, "5 4"); curve(join(o.atl, o.proj.atl), ATL, false, true, "5 4");
       const px = x(today);
-      s.append(el("rect", { x: px, y: T1, width: W - R - px, height: B2 - T1, fill: "var(--muted)", opacity: 0.05 }), el("text", { x: W - R - 4, y: T1 + 12, "text-anchor": "end", style: "font-size:10.5px;fill:var(--muted)" }, "Prognose laut Planung"));
+      s.append(el("rect", { x: px, y: T1, width: W - R - px, height: B2 - T1, fill: "var(--muted)", opacity: 0.05 }), el("text", { x: W - R, y: T1 - 10, "text-anchor": "end", style: "font-size:10.5px;fill:var(--muted)" }, "grau hinterlegt: Prognose laut Planung"));
     }
     if (cNow) s.append(el("circle", { cx: x(cNow.day), cy: y1(cNow.v), r: 4.5, fill: CTL, stroke: "var(--card)", "stroke-width": 1.5 }));
     // Tooltip je Tag über beide Kurven
@@ -249,15 +249,22 @@
       const right = x0 > W - R - 120;
       s.append(title(el("text", { x: x0 + (right ? -4 : 4), y: T1 + 12 + (i % 2) * 12, "text-anchor": right ? "end" : "start", class: "halo", style: `fill:${col};font-size:10.5px;font-weight:600` }, e.label.length > 22 ? e.label.slice(0, 21) + "…" : e.label), `${e.label} (${U.fmtDate(e.date)})`));
     });
-    // heute und Renntag
-    for (const m of o.marks) {
-      if (m.day < first || m.day > last) continue;
-      s.append(el("line", { x1: x(m.day), x2: x(m.day), y1: T1 - 4, y2: B2, stroke: m.color, "stroke-width": 1.3, "stroke-dasharray": "4 3" }), el("text", { x: x(m.day) + (m.anchor === "end" ? 2 : m.anchor === "start" ? 4 : 0), y: B2 + 22, "text-anchor": m.anchor === "end" ? "middle" : m.anchor ?? "middle", style: `fill:${m.color};font-weight:700` }, m.label));
+    // heute und Renntag: "heute" endet links der Linie, "Renntag" beginnt rechts davon, damit dicht beieinander liegende Marken nicht überlappen
+    const ML = { y: B2 + 22, w: (t) => t.length * 7 + 2 };
+    const box = (m) => { const mx = x(m.day), w = ML.w(m.label); return m.anchor === "end" ? [mx - 4 - w, mx - 4] : m.anchor === "start" ? [mx + 4, mx + 4 + w] : [mx - w / 2, mx + w / 2]; };
+    const shown = o.marks.filter((m) => m.day >= first && m.day <= last);
+    for (const m of shown) {
+      const [bx0, bx1] = box(m);
+      s.append(el("line", { x1: x(m.day), x2: x(m.day), y1: T1 - 4, y2: B2, stroke: m.color, "stroke-width": 1.3, "stroke-dasharray": "4 3" }), el("text", { x: m.anchor === "end" ? bx1 : m.anchor === "start" ? bx0 : x(m.day), y: ML.y, "text-anchor": m.anchor ?? "middle", style: `fill:${m.color};font-weight:700` }, m.label));
     }
-    // Datumsachse wöchentlich ab dem ersten Tag; Beschriftung nur, wenn sie nicht auf eine Marke fällt
-    const mx = o.marks.map((m) => x(m.day));
+    // Datumsachse wöchentlich ab dem ersten Tag; Beschriftung nur, wo sie keine Marken-Beschriftung berührt
+    const taken = shown.map(box);
     const wk = 7 * Math.max(1, Math.ceil(span / 7 / 9));
-    for (let i = 0; i <= span; i += wk) { const d = U.addDays(first, i); if (mx.some((m) => Math.abs(m - x(d)) < 34)) continue; s.append(el("text", { x: x(d), y: T1 + 0 + (B1 - T1) + 20, "text-anchor": "middle" }, U.fmtDate(d)), el("text", { x: x(d), y: B2 + 22, "text-anchor": "middle" }, U.fmtDate(d))); }
+    for (let i = 0; i <= span; i += wk) {
+      const d = U.addDays(first, i), tx = x(d);
+      if (!shown.some((m) => Math.abs(x(m.day) - tx) < 22)) s.append(el("text", { x: tx, y: B1 + 20, "text-anchor": "middle" }, U.fmtDate(d)));
+      if (!taken.some(([a, b]) => tx + 20 > a - 4 && tx - 20 < b + 4)) s.append(el("text", { x: tx, y: ML.y, "text-anchor": "middle" }, U.fmtDate(d)));
+    }
     mount(host, s);
   }
 
