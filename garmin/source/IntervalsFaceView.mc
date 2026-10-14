@@ -243,7 +243,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         else if ("bad".equals(rd)) { word = "Ruhig angehen"; color = BAD; }
         // Älter als eine Stunde: alles grau mit "!"
         var stale = isStale(data);
-        var items = [["dot", px(7), stale ? TER : color], ["gap", px(9)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
+        // Ampel nicht nur über die Farbe: Kreis = bereit, Dreieck = mit Vorsicht, Quadrat = ruhig angehen (wie Dashboard und Widget)
+        var shape = stale || "ok".equals(rd) || !("warn".equals(rd) || "bad".equals(rd)) ? ["dot", px(7), stale ? TER : color] : ("warn".equals(rd) ? ["tri", px(17), color] : ["sq", px(14), color]);
+        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
         var w = data.get("w") as Dictionary?;
         if (w != null) {
             // Stichwort aus "Was auffällt" (z. B. "Eiweiß"); ohne Stichwort (ältere Worker-Version) "Hinweis"
@@ -322,6 +324,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var sc = "ok".equals(st) ? FG : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
         ring(dc, px(269), px(COMP_Y), px(34), px(6), frac(sv, so), sc, TRACK);
         labels(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", "warn".equals(st) || "bad".equals(st) ? sc : FG);
+        // Hinterher nicht nur über die Farbe: Dreieck (knapp) oder Quadrat (verfehlt) rechts neben "KRAFT"
+        if ("warn".equals(st) || "bad".equals(st)) {
+            var lx = px(269) + dc.getTextWidthInPixels("KRAFT", _tiny) / 2 + px(6);
+            var ly = px(COMP_Y - 48);
+            if ("warn".equals(st)) {
+                drawTri(dc, lx, ly, px(13), WARN);
+            } else {
+                drawSq(dc, lx, ly, px(11), BAD);
+            }
+        }
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden.
         // Der Ring ist ein 12-Stunden-Zifferblatt: jede Stunde ein Bogen an ihrer Uhrposition, blau, wenn es dann regnen kann,
@@ -615,7 +627,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Zeile aus Text und Formen, als Ganzes zentriert -----------------------------
-    // Elemente: ["t", Text, Farbe, Schrift], ["dot", Radius, Farbe], ["tri", Größe, Farbe], ["bar", Höhe, Farbe], ["gap", Breite]
+    // Elemente: ["t", Text, Farbe, Schrift], ["dot", Radius, Farbe], ["tri", Größe, Farbe], ["sq", Größe, Farbe], ["bar", Höhe, Farbe], ["gap", Breite]
 
     private function drawLine(dc as Dc, y as Number, items as Array<Array>) as Void {
         var total = 0;
@@ -634,12 +646,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
                 dc.fillCircle(x + w / 2, y, it[1] as Number);
             } else if (kind.equals("tri")) {
-                var sz = it[1] as Number;
-                dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
-                dc.fillPolygon([[x, y + sz / 2], [x + sz / 2, y - sz / 2], [x + sz, y + sz / 2]]);
-                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-                dc.fillRectangle(x + sz / 2 - 1, y - sz / 6, 2, sz / 3);
-                dc.fillRectangle(x + sz / 2 - 1, y + sz / 4, 2, 2);
+                drawTri(dc, x, y, it[1] as Number, it[2] as Number);
+            } else if (kind.equals("sq")) {
+                drawSq(dc, x, y, it[1] as Number, it[2] as Number);
             } else if (kind.equals("bar")) {
                 var bh = it[1] as Number;
                 dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
@@ -647,6 +656,27 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             }
             x += w;
         }
+    }
+
+    // Warn-Dreieck mit schwarzem Ausrufezeichen; x = linke Kante, y = Mitte
+    private function drawTri(dc as Dc, x as Number, y as Number, sz as Number, color as Number) as Void {
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.fillPolygon([[x, y + sz / 2], [x + sz / 2, y - sz / 2], [x + sz, y + sz / 2]]);
+        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+        dc.fillRectangle(x + sz / 2 - 1, y - sz / 6, 2, sz / 3);
+        dc.fillRectangle(x + sz / 2 - 1, y + sz / 4, 2, 2);
+    }
+
+    // Quadrat mit schwarzem Kreuz (deutlich schlechter / verfehlt); x = linke Kante, y = Mitte
+    private function drawSq(dc as Dc, x as Number, y as Number, sz as Number, color as Number) as Void {
+        var h = sz / 2;
+        var k = sz / 4;
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(x, y - h, sz, sz, px(2));
+        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+        dc.drawLine(x + k, y - h + k, x + sz - k, y + h - k);
+        dc.drawLine(x + sz - k, y - h + k, x + k, y + h - k);
     }
 
     private function itemWidth(dc as Dc, it as Array) as Number {
@@ -658,7 +688,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (kind.equals("dot")) {
             return (it[1] as Number) * 2;
         }
-        if (kind.equals("tri")) {
+        if (kind.equals("tri") || kind.equals("sq")) {
             return it[1] as Number;
         }
         if (kind.equals("bar")) {
