@@ -171,9 +171,6 @@ function renderCockpit(d) {
   const plan = d.planned.filter((p) => p.date === d.today);
   const shown = plan.find((p) => p.steps?.length) ?? plan[0];
   const weekTile = renderWeekPreview(d, tile);
-  const todayTile = shown?.steps?.length
-    ? tile(`Heute: ${esc(shown.name || "Einheit")}`, `<div class="today"><div><div class="sub">${[shown.durationMin && shown.durationMin + " min", shown.distanceKm && fmt(shown.distanceKm, 1) + " km", shown.load && "Load " + fmt(shown.load)].filter(Boolean).join(" · ") || "&nbsp;"}</div>${shown.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}</div><div id="ck-workout" class="wprofile"></div></div>`, "span4")
-    : "";
   const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)}${g.triathlon ? (g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : "") : ` · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)`}</div>`, "span15", g.daysToGo >= 0 ? ["#rennplan", "Zielzeiten und Plan"] : null);
   const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>`, "span15") : "";
   const blockTile = renderBlock(d.seasonBlock);
@@ -203,9 +200,28 @@ function renderCockpit(d) {
     ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div>${hasToday ? '<div id="ck-kcal"></div>' : ""}<div class="sub">${emptyNote || macroLine}</div>`, "span4", ["#ernaehrung", "Makros und Wochenübersicht"])
     : tile("Ernährung", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span4");
 
-  $("cockpit").innerHTML = `
+  // Heute-Band: die Antwort auf "Was steht heute an?" ganz oben. Links die geplanten Einheiten (mit Profil der
+  // Haupteinheit), rechts Bereitschaft, Schlaf, Frische und Rennen als Kurzwerte; Details stehen in den Kacheln darunter.
+  const doneToday = d.daily.find((x) => x.date === d.today);
+  const meta = (p) => [p.durationMin && p.durationMin + " min", p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
+  const planHtml = plan.length
+    ? plan.map((p) => `<div class="hb-item"><i style="background:var(--s-${p.sport})"></i><div><b>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}</b><span class="sub">${meta(p) || "&nbsp;"}</span></div></div>`).join("")
+    : '<div class="hb-item"><i style="background:var(--line)"></i><div><b>Nichts geplant</b><span class="sub">Ruhetag oder frei</span></div></div>';
+  const doneHtml = doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
+  const stat = (label, value, badge, cls) => `<div class="hb-stat"><span class="hb-l">${label}</span><span class="hb-v">${value}</span>${badge ? `<span class="badge ${cls}">${badge}</span>` : ""}</div>`;
+  const heuteBand = `<div class="heute">
+    <div class="hb-main"><div class="hb-date">Heute · ${weekday(d.today)} ${fmtDate(d.today)}</div>${planHtml}${doneHtml}
+      ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>
+    <div class="hb-stats">
+      ${wellOk ? `<div class="hb-stat"><span class="hb-l">Bereit für Training?</span><span class="badge ${R.verdict.cls} big-badge">${esc(R.verdict.text)}</span><span class="hb-n">${esc(R.verdict.sub)}</span></div>` : stat("Bereit für Training?", "–", "Wellness fehlt", "none")}
+      ${stat("Schlaf (akut)", SA.avg != null ? `${fmt(SA.avg, 1)} <small>h</small>` : "–", SA.text, SA.cls)}
+      ${stat("Frische (TSB)", tsb != null ? fmt(tsb) : "–", tsbText, tsbCls)}
+      ${g.daysToGo >= 0 ? stat(esc(g.name), g.daysToGo === 0 ? "Heute!" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, `${weekday(g.date)} ${fmtDate(g.date)}`, taper ? "warn" : "none") : ""}
+    </div></div>`;
+
+  $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
-    ${weekTile}${todayTile ? `<div class="cockpit" style="margin-top:10px">${todayTile}</div>` : ""}
+    ${weekTile}
     <div class="cockpit-group">Rennen und Form</div>
     <div class="cockpit flow">${raceTile}${supportTile}${tsbTile}${acwrTile}</div>${blockTile}
     ${taperTile ? `<div class="cockpit" style="margin-top:10px">${taperTile}</div>` : ""}
