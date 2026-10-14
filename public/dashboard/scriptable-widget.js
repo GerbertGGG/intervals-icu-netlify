@@ -577,9 +577,9 @@ function buildWidget(res) {
   w.addSpacer(5);
 
   // 2. Urteil mit Symbol, ein Satz, darunter Koerper (objektiv) und Gefuehl (subjektiv)
-  const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 7;
-  statusIcon(vr, v.cls, 20);
-  num(vr, v.text, 21, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.7 });
+  const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 6;
+  statusIcon(vr, v.cls, 16);
+  num(vr, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.7 });
   w.addSpacer(6);
   const CW = Math.floor((W - 20) / 2);
   const cols = w.addStack(); cols.size = new Size(W, 0); cols.spacing = 20;
@@ -624,25 +624,25 @@ function buildWidget(res) {
   ct.addSpacer(9);
   text(ct, why, FS.sm, { lines: 0, minScale: 1 }); // nie abschneiden: der Hinweis ist das Wichtigste nach dem Urteil
   ct.addSpacer();
-  w.addSpacer(6);
+  w.addSpacer(10);
 
   // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
-  if (p) sportBadge(tr, p.sport, 26);
-  else { const c = tr.addStack(); c.size = new Size(26, 26); c.cornerRadius = 13; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 13, COL.muted); c.addSpacer(); }
+  if (p) sportBadge(tr, p.sport, 32);
+  else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
   const tc = tr.addStack(); tc.layoutVertically();
   if (p) {
-    text(tc, p.name || "Einheit", 15, { bold: true, minScale: 0.7 });
+    text(tc, p.name || "Einheit", FS.lg, { bold: true, minScale: 0.7 });
     const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`, p.rpe && `RPE ${p.rpe}`].filter(Boolean).join(" · ");
     if (meta) text(tc, meta, FS.xs, { color: COL.muted });
   } else {
-    text(tc, "Keine Einheit geplant", 15, { bold: true, minScale: 0.7 });
+    text(tc, "Keine Einheit geplant", FS.lg, { bold: true, minScale: 0.7 });
     if (d.plan.next) text(tc, `Nächste: ${dayShort(d.plan.next.date)} ${dateShort(d.plan.next.date)} · ${d.plan.next.name || "Einheit"}`, FS.xs, { color: COL.muted, minScale: 0.8 });
   }
   tr.addSpacer();
   // Aufbau der geplanten Einheit: Breite = Dauer, Hoehe = Intensitaet, Arbeitsbloecke in Sportfarbe
-  if (p && p.steps && p.steps.length) { w.addSpacer(5); const im = w.addImage(profileImage(W, 16, p.steps, p.sport)); im.imageSize = new Size(W, 16); }
-  w.addSpacer(6);
+  if (p && p.steps && p.steps.length) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
+  w.addSpacer(10);
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wk = d.week || {};
@@ -654,8 +654,8 @@ function buildWidget(res) {
   const right = (fn) => { const s = wc.addStack(); s.addSpacer(); fn(s); };
   right((s) => { s.bottomAlignContent(); num(s, fmt(wk.total), FS.xl); text(s, wk.goal ? ` / ${fmt(wk.goal)} TSS` : " TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
   // Vorwoche und Frische in einer kleinen Zeile: die Frische ist nur eine berechnete Zahl und soll nicht dominieren
-  const sub = [wk.lastTotal != null ? `Vorwoche ${fmt(wk.lastTotal)}` : null, wk.tsb != null ? `TSB ${signed(wk.tsb)}` : null].filter(Boolean).join(" · ");
-  if (sub) right((s) => text(s, sub, FS.xs, { color: COL.muted, minScale: 0.7 }));
+  if (wk.lastTotal != null) right((s) => text(s, `Vorwoche ${fmt(wk.lastTotal)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
+  if (wk.tsb != null) right((s) => text(s, `TSB ${signed(wk.tsb)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
   // Ohne Kapseln (alte Cache-Daten) der Balken gegen das Wochenziel
   if (wk.goal && !wk.days) { w.addSpacer(4); progressBar(w, W, wk.total / wk.goal, ACCENT_HEX); }
   w.addSpacer(6);
