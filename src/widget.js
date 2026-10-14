@@ -66,7 +66,7 @@ export function buildWidget(d, env = {}) {
   const week = d.weeks[d.weeks.length - 1];
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
   const total = (w) => (w ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null);
-  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(stripKey(p.description), 160), rpe: rpeOf(p.description) }));
+  const todayPlan = d.planned.filter((p) => p.date === d.today).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p), durationMin: p.durationMin, distanceKm: p.distanceKm, load: p.load, purpose: firstLine(stripKey(p.description), 160), rpe: rpeOf(p.description), steps: (p.steps ?? []).slice(0, 40).map((x) => ({ secs: x.secs, pct: x.pct ?? null })) }));
   const next = d.planned.find((p) => p.date > d.today);
   // Die naechsten drei Tage fuer die Kacheln; ohne Kalender (Quelle ausgefallen) null statt "frei"
   const horizon = addDays(d.today, 3);
