@@ -58,20 +58,21 @@ const cacheFile = () => `training-widget${endpointOf() ? "-" + endpointOf() : ""
 /* ---------- Design ---------- */
 const DARK = typeof Device !== "undefined" && Device.isUsingDarkAppearance();
 const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
+// Farben wie im Dashboard (public/dashboard/index.html): neutrale Flaechen, eine Akzentfarbe, Ampel nur mit Bedeutung
 const COL = {
-  bg: dyn("#f2f4f7", "#0f1318"), card: dyn("#ffffff", "#1a2029"), text: dyn("#1c2430", "#e6eaf0"), muted: dyn("#5d6877", "#9aa5b4"),
-  ok: dyn("#1f7a4d", "#6fd4a0"), warn: dyn("#9a6400", "#f0c060"), bad: dyn("#b3261e", "#f2a29c"), none: dyn("#5d6877", "#9aa5b4"),
-  accent: dyn("#3b6ea8", "#7ba3dc"), race: dyn("#c0306f", "#f472b6"),
-  tile: dyn("#eef1f5", "#232b36"), line: dyn("#d6dbe3", "#2b323d"),
+  bg: dyn("#f3f4f6", "#0d0f12"), card: dyn("#ffffff", "#16191d"), text: dyn("#14171a", "#e7e9ec"), muted: dyn("#5e6670", "#969da6"),
+  ok: dyn("#1d7a46", "#5fcb8f"), warn: dyn("#965800", "#eab456"), bad: dyn("#b42318", "#f2928a"), none: dyn("#5e6670", "#969da6"),
+  accent: dyn("#2b5d8c", "#80acd9"), race: dyn("#b8326a", "#ee75b0"),
+  tile: dyn("#f3f4f6", "#1d2126"), line: dyn("#e1e4e8", "#272c32"),
 };
 // Gezeichnete Bilder (DrawContext) kennen keine dynamischen Farben: sie bekommen die zur Darstellung passende Farbe
-const INK_HEX = DARK ? "#e6eaf0" : "#1c2430";
-const MUTED_HEX = DARK ? "#9aa5b4" : "#5d6877";
+const INK_HEX = DARK ? "#e7e9ec" : "#14171a";
+const MUTED_HEX = DARK ? "#969da6" : "#5e6670";
 const NEUTRAL_HEX = "#8a94a3";
-const ACCENT_HEX = DARK ? "#7ba3dc" : "#3b6ea8";
-const ACCENT_HI_HEX = DARK ? "#a9c8f0" : "#285489";
+const ACCENT_HEX = DARK ? "#80acd9" : "#2b5d8c";
+const ACCENT_HI_HEX = DARK ? "#a9c8f0" : "#1f4a73";
 const ZONE_RGB = { ok: "#2f9d64", warn: "#d99a1a", bad: "#d0453b", none: NEUTRAL_HEX };
-const RACE_HEX = "#f472b6";
+const RACE_HEX = DARK ? "#ee75b0" : "#b8326a";
 // Sportfarben wie auf der Uhr und im Dashboard: Laufen gelb, Rad grün, Schwimmen blau, Kraft orange
 const SPORTS = { run: ["Laufen", "#f2c94c"], bike: ["Rad", "#4cc46f"], swim: ["Schwimmen", "#4a95e6"], strength: ["Kraft", "#f5862a"], other: ["Sonst.", "#9aa5b4"] };
 const sportHex = (k) => (SPORTS[k] || SPORTS.other)[1];
@@ -79,6 +80,29 @@ const sportHex = (k) => (SPORTS[k] || SPORTS.other)[1];
 const FS = { xs: 11, sm: 12, md: 14, lg: 17, xl: 24, xxl: 34 };
 const MISSING = "–";
 const colorFor = (cls) => COL[cls] || COL.none;
+// Ampel nie nur ueber die Farbe: jede Stufe hat eine eigene Form (SF Symbols), dazu steht immer ein Text.
+// Urteil: Kreis mit Haken / Dreieck mit Ausrufezeichen / Quadrat mit Kreuz. Einzelwerte: Kreis / Dreieck / Quadrat, ohne Wert gestrichelt.
+const STATUS_SYMBOL = { ok: "checkmark.circle.fill", warn: "exclamationmark.triangle.fill", bad: "xmark.square.fill", none: "circle.dashed" };
+const MARK_SYMBOL = { ok: "circle.fill", warn: "triangle.fill", bad: "square.fill", none: "circle.dashed" };
+function symbol(parent, name, size, color) {
+  const sym = typeof SFSymbol !== "undefined" ? SFSymbol.named(name) : null;
+  if (!sym) return text(parent, "●", size, { color, minScale: 1 }); // aeltere Systeme ohne das Symbol
+  sym.applyFont(Font.boldSystemFont(size));
+  const im = parent.addImage(sym.image);
+  im.imageSize = new Size(size, size);
+  im.applyFittingContentMode();
+  im.tintColor = color;
+  return im;
+}
+const statusIcon = (parent, cls, size) => symbol(parent, STATUS_SYMBOL[cls] || STATUS_SYMBOL.none, size, colorFor(cls));
+const statusMark = (parent, cls, size = 9) => symbol(parent, MARK_SYMBOL[cls] || MARK_SYMBOL.none, size, colorFor(cls));
+// Zahl gross, Einheit klein und gedaempft dahinter
+function valueUnit(parent, value, unit, size, { color = COL.text } = {}) {
+  const s = parent.addStack(); s.bottomAlignContent(); s.spacing = 3;
+  text(s, value, size, { bold: true, color, minScale: 0.6 });
+  if (unit && value !== MISSING) { const u = s.addStack(); u.layoutVertically(); text(u, unit, Math.max(FS.sm, Math.round(size * 0.42)), { color: COL.muted, minScale: 1 }); u.addSpacer(Math.round(size * 0.14)); }
+  return s;
+}
 
 // Groesse des Widgets in Punkten nach Bildschirmbreite (Apple-Sollwerte): [Bildschirmbreite, Breite Mittel/Gross, Seite Klein]
 const WIDGET_SIZES = [[430, 364, 170], [428, 364, 170], [414, 360, 169], [393, 338, 158], [390, 338, 158], [375, 321, 148]];
@@ -331,14 +355,22 @@ function barsImage(w, h, values, todayIso, dates, goals, refLine) {
   return dc.getImage();
 }
 
-// Ring in Ampelfarbe; die Zahl kommt als Text darueber, damit sie in Hell und Dunkel lesbar ist
+// Markierung in Ampelfarbe UND Form (Kreis = wie ueblich, Dreieck = etwas schlechter, Quadrat = deutlich schlechter,
+// ohne Wert gestrichelter Kreis); die Zahl kommt als Text darueber, damit sie in Hell und Dunkel lesbar ist
 function ringImage(size, cls) {
-  const dc = newCtx(size, size), rgb = ZONE_RGB[cls] || ZONE_RGB.none;
-  dc.setFillColor(new Color(rgb, cls === "none" ? 0.12 : 0.24));
-  dc.fillEllipse(new Rect(2, 2, size - 4, size - 4));
-  dc.setStrokeColor(new Color(rgb));
-  dc.setLineWidth(3);
-  dc.strokeEllipse(new Rect(2, 2, size - 4, size - 4));
+  const dc = newCtx(size, size), rgb = ZONE_RGB[cls] || ZONE_RGB.none, i = 2, e = size - 2 * i;
+  const shape = new Path();
+  if (cls === "warn") shape.addLines([new Point(size / 2, i - 1), new Point(size - i + 1, size - i), new Point(i - 1, size - i)]);
+  else if (cls === "bad") shape.addRoundedRect(new Rect(i, i, e, e), 3, 3);
+  else shape.addEllipse(new Rect(i, i, e, e));
+  if (cls === "warn") shape.closeSubpath();
+  dc.addPath(shape); dc.setFillColor(new Color(rgb, cls === "none" ? 0.08 : 0.22)); dc.fillPath();
+  if (cls === "none") {
+    // gestrichelter Kreis: kurze Bogenstuecke
+    dc.setStrokeColor(new Color(rgb, 0.8)); dc.setLineWidth(1.5);
+    const c = size / 2, r = e / 2;
+    for (let k = 0; k < 12; k++) { const a0 = (k / 12) * 2 * Math.PI, a1 = a0 + Math.PI / 12, arc = new Path(); arc.move(new Point(c + r * Math.cos(a0), c + r * Math.sin(a0))); arc.addLine(new Point(c + r * Math.cos(a1), c + r * Math.sin(a1))); dc.addPath(arc); dc.strokePath(); }
+  } else { dc.addPath(shape); dc.setStrokeColor(new Color(rgb)); dc.setLineWidth(2.5); dc.strokePath(); }
   return dc.getImage();
 }
 
@@ -492,7 +524,9 @@ function buildWidget(res) {
   w.addSpacer(4);
 
   // 2. Bereitschaft: Urteil gross, ein Satz, darunter Koerper (objektiv) und Gefuehl (subjektiv)
-  text(w, v.text, FS.xxl, { bold: true, color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.6 });
+  const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 8;
+  statusIcon(vr, v.cls, FS.xxl - 6);
+  text(vr, v.text, FS.xxl, { bold: true, color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.6 });
   text(w, verdictLine(v, p), FS.sm, { color: COL.muted, lines: 1, minScale: 0.8 });
   w.addSpacer(7);
   const CW = Math.floor((W - 16) / 2);
@@ -500,7 +534,7 @@ function buildWidget(res) {
   const col = (title) => { const c = cols.addStack(); c.layoutVertically(); c.size = new Size(CW, 0); text(c, title, FS.xs, { color: COL.muted, minScale: 1 }); c.addSpacer(2); return c; };
   const line = (c, label, val, cls) => {
     const l = c.addStack(); l.centerAlignContent(); l.size = new Size(CW, 0);
-    text(l, "●", FS.xs, { color: colorFor(cls || "none"), minScale: 1 });
+    statusMark(l, cls || "none");
     l.addSpacer(6);
     text(l, label, FS.md, { minScale: 0.8 });
     l.addSpacer();
@@ -640,7 +674,7 @@ function buildSleep(res) {
   const w = smallWidget();
   const last = s.latest, isToday = last && last.date === d.today;
   header(w, IW, "SCHLAF", last ? (isToday ? "heute" : dateShort(last.date)) : null);
-  text(w, last ? `${fmt(last.hours, 1)} h` : MISSING, 28, { bold: true, color: last ? COL.text : COL.muted });
+  valueUnit(w, last ? fmt(last.hours, 1) : MISSING, "h", 28, { color: last ? COL.text : COL.muted });
   const t = s.days[s.days.length - 1];
   const cmp = (v, med) => (v == null || med == null ? "" : ` (Ø ${fmt(med)})`);
   text(w, `HRV ${fmt(t.hrv)}${cmp(t.hrv, s.medianHrv)}`, FS.xs, { bold: true });
@@ -665,7 +699,9 @@ function buildReady(res) {
   const d = res.data, r = d.readiness, v = r.verdict, g = d.goal, IW = smallInnerWidth();
   const w = smallWidget();
   const head = w.addStack(); head.centerAlignContent();
-  chip(head, v.text, ZONE_RGB[v.cls] || ZONE_RGB.none, FS.lg - 1, colorFor(v.cls));
+  statusIcon(head, v.cls, FS.lg);
+  head.addSpacer(5);
+  text(head, v.text, FS.lg, { bold: true, color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.6 });
   head.addSpacer();
   if (g && g.daysToGo >= 0) text(head, g.daysToGo === 0 ? "heute" : `${g.daysToGo} T`, FS.sm, { bold: true, color: COL.race, minScale: 1 });
   w.addSpacer(2);
@@ -725,7 +761,7 @@ function buildFoodCard(res) {
   const w = smallWidget(), dim = !has;
   header(w, IW, "ERNÄHRUNG", prev ? (prev === f.days[f.days.length - 2] ? "gestern" : dateShort(prev.date)) : null);
   w.addSpacer(1);
-  text(w, show && td.protein != null ? `${fmt(td.protein)} g` : MISSING, 34, { bold: true, color: dim ? COL.muted : COL.text });
+  valueUnit(w, show && td.protein != null ? fmt(td.protein) : MISSING, "g", 34, { color: dim ? COL.muted : COL.text });
   text(w, `Protein${yg.proteinG ? ` · Ziel ${fmt(yg.proteinG)}` : ""}`, FS.sm, { color: COL.muted });
   w.addSpacer();
   text(w, show && td.calories != null ? `${fmt(td.calories)}${kcalGoal ? ` / ${fmt(kcalGoal)}` : ""} kcal` : kcalGoal ? `Ziel ${fmt(kcalGoal)} kcal` : "kcal –", FS.md, { bold: true, color: dim ? COL.muted : COL.text });
@@ -1076,8 +1112,10 @@ function buildBlock(res) {
       const dots = c.addStack(); dots.centerAlignContent();
       (g.weeks || []).forEach((x, i) => {
         if (i) dots.addSpacer(2);
-        const hex = x.done && x.load !== false ? (x.hit ? ZONE_RGB.ok : g.status === "base" ? NEUTRAL_HEX : ZONE_RGB.bad) : NEUTRAL_HEX;
-        text(dots, x.done ? "●" : "○", FS.xs, { color: new Color(hex, x.load === false || (x.done && !x.hit && g.status === "base") ? 0.4 : 1), minScale: 1 });
+        // erreicht = Kreis, verfehlt = Quadrat, offen = leerer Kreis; Entlastungswochen und Ausgangswerte blass
+        const cls = x.done && x.load !== false ? (x.hit ? "ok" : g.status === "base" ? "none" : "bad") : "none";
+        const name = !x.done ? "circle" : x.hit ? "circle.fill" : "square.fill";
+        symbol(dots, name, 8, cls === "none" ? new Color(NEUTRAL_HEX, x.load === false || x.done ? 0.45 : 0.8) : colorFor(cls));
       });
     } else if ((g.key === "runDecoupling" || g.key === "bikeDecoupling") && g.value != null && g.must) progressBar(c, IW, Math.min(1, g.value / (g.must * 1.25)), STATUS_HEX(g.status));
     c.addSpacer(2);
@@ -1089,7 +1127,7 @@ function buildBlock(res) {
     const RAIL = { strength: (g) => `Kraft ${g.value ?? MISSING}/${g.of ?? MISSING}`, ramp: (g) => `Ramp ${g.value != null ? fmt(g.value, 1) : MISSING}`, pause: (g) => `Pause ${g.value ?? MISSING} T` };
     rails.forEach((g, i) => {
       if (i) lr.addSpacer(10);
-      text(lr, "●", FS.xs, { color: STATUS_COL(g.status), minScale: 1 });
+      statusMark(lr, g.status === "ok" || g.status === "warn" || g.status === "bad" ? g.status : "none");
       lr.addSpacer(3);
       text(lr, (RAIL[g.key] || ((x) => x.label))(g), FS.xs, { color: COL.text, minScale: 0.7 });
     });
@@ -1097,7 +1135,10 @@ function buildBlock(res) {
   const dec = b.decision;
   if (dec) {
     w.addSpacer(3);
-    text(w, `Woche ${dec.week}${dec.due ? "" : " (Stand heute)"}: ${dec.text}`, FS.xs, { color: dec.state === "next" ? COL.ok : dec.state === "extend" ? COL.warn : COL.bad, lines: 1, minScale: 0.6 });
+    const dr = w.addStack(); dr.centerAlignContent(); dr.spacing = 4;
+    const dcls = dec.state === "next" ? "ok" : dec.state === "extend" ? "warn" : "bad";
+    statusIcon(dr, dcls, FS.xs);
+    text(dr, `Woche ${dec.week}${dec.due ? "" : " (Stand heute)"}: ${dec.text}`, FS.xs, { color: colorFor(dcls), lines: 1, minScale: 0.6 });
   }
   notice(w, res, d);
   return w;
