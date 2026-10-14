@@ -414,12 +414,6 @@ function feelWord(it) {
 }
 const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motivation"]];
 
-// Satz unter dem Urteil
-function verdictLine(v, p) {
-  if (v.cls === "ok") return p ? "Körper und Gefühl passen: trainieren wie geplant." : "Körper und Gefühl passen.";
-  return v.sub || "";
-}
-
 // Zweck aus dem Plan nur, wenn er ein Satz ist und keine Intervall-/Zonenzeile
 function usablePurpose(s) {
   const t = String(s || "").replace(/\bRPE\s*:?\s*\d[\d\s–-]*/gi, "").trim();
@@ -463,29 +457,38 @@ function tileSub(e) {
   return `${sport} · ${label}`;
 }
 
-// Tageskachel (naechste drei Tage): Tag und Sportsymbol, darunter Dauer und Art in einer Zeile
+// Tageskachel (naechste drei Tage) in einer Zeile: Tag, Dauer (oder Pause/Rennen) und rechts das Sportsymbol
 function dayTile(row, TW, iso, g, upcoming) {
   const race = !!g && g.date === iso;
   const items = upcoming ? upcoming.filter((e) => e.date === iso) : null;
   const t = row.addStack();
-  t.layoutVertically(); t.size = new Size(TW, 0); t.cornerRadius = 11; t.setPadding(4, 9, 5, 8);
+  t.size = new Size(TW, 0); t.cornerRadius = 10; t.setPadding(5, 8, 5, 8); t.centerAlignContent();
   t.backgroundColor = race ? new Color(RACE_HEX, 0.16) : COL.tile;
-  let main, sub;
-  if (race) { main = "Rennen"; sub = g.name; }
-  else if (!items) { main = MISSING; sub = "kein Kalender"; }
-  else if (!items.length) { main = "Pause"; sub = "frei"; }
-  else {
-    const mins = items.reduce((a, e) => a + (e.durationMin || 0), 0);
-    main = mins ? `${mins} min` : items[0].name || "Einheit";
-    sub = shortLabel(items[0]);
-  }
-  const top = t.addStack(); top.centerAlignContent();
-  text(top, dayShort(iso), FS.xs, { bold: true, color: race ? COL.race : COL.muted, minScale: 1 });
-  top.addSpacer();
-  if (items && items.length && !race) symbol(top, SPORT_SYMBOL[items[0].sport] || SPORT_SYMBOL.other, 11, new Color(sportHex(items[0].sport)));
-  const bot = t.addStack(); bot.bottomAlignContent(); bot.spacing = 4;
-  text(bot, main, FS.md, { bold: true, color: race ? COL.race : COL.text, minScale: 0.8 });
-  text(bot, sub, FS.xs, { color: race ? COL.race : COL.muted, minScale: 0.7 });
+  let main;
+  if (race) main = "Rennen";
+  else if (!items) main = MISSING;
+  else if (!items.length) main = "Pause";
+  else { const mins = items.reduce((a, e) => a + (e.durationMin || 0), 0); main = mins ? `${mins} min` : shortLabel(items[0]); }
+  text(t, dayShort(iso), FS.xs, { bold: true, color: race ? COL.race : COL.muted, minScale: 1 });
+  t.addSpacer(5);
+  text(t, main, FS.sm, { bold: true, color: race ? COL.race : items && !items.length ? COL.muted : COL.text, minScale: 0.7 });
+  t.addSpacer();
+  if (items && items.length && !race) symbol(t, SPORT_SYMBOL[items[0].sport] || SPORT_SYMBOL.other, 11, new Color(sportHex(items[0].sport)));
+}
+
+// Ausschnitt einer senkrechten Kapsel zwischen yTop und yBot als Pfad: so laesst sich eine Kapsel in mehrere Farben teilen
+function capsuleBand(x, y, w, h, yTop, yBot) {
+  const r = Math.min(w / 2, h / 2), cx = x + w / 2;
+  const half = (yy) => {
+    if (yy < y + r) { const d = y + r - yy; return Math.sqrt(Math.max(0, r * r - d * d)); }
+    if (yy > y + h - r) { const d = yy - (y + h - r); return Math.sqrt(Math.max(0, r * r - d * d)); }
+    return w / 2;
+  };
+  const n = Math.max(2, Math.ceil((yBot - yTop) * 2)), pts = [];
+  for (let k = 0; k <= n; k++) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx - half(yy), yy)); }
+  for (let k = n; k >= 0; k--) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx + half(yy), yy)); }
+  const p = new Path(); p.addLines(pts); p.closeSubpath();
+  return p;
 }
 
 // Woche Mo bis So als Kapseln: Hoehe = Load des Tages, gestapelt in Sportfarben; geplant und noch offen = Umriss in der
@@ -503,11 +506,19 @@ function capsImage(W, H, days, todayIso) {
   days.forEach((x, i) => {
     const x0 = P + i * (cw + gap), today = x.date === todayIso;
     cap(new Rect(x0, P, cw, H), NEUTRAL_HEX, 0.2);
-    let y = P + H;
-    for (const [k, v] of Object.entries(x.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1])) {
-      const h = Math.min(y - P, Math.max(cw, (H * v) / max));
-      cap(new Rect(x0, y - h, cw, h), sportHex(k)); y -= h + 1.5;
-      if (y - P < cw) break;
+    // Erledigt: eine Kapsel mit der Hoehe des Tages-Loads, bei mehreren Sportarten nach Anteil geteilt (groesster unten)
+    const parts = Object.entries(x.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    const tot = parts.reduce((a, [, v]) => a + v, 0);
+    if (tot > 0) {
+      const ht = Math.min(H, Math.max(cw, (H * tot) / max)), top = P + H - ht;
+      let yb = P + H;
+      parts.forEach(([k, v], j) => {
+        const seg = j === parts.length - 1 ? yb - top : (ht * v) / tot;
+        const yt = Math.max(top, yb - seg);
+        dc.addPath(capsuleBand(x0, top, cw, ht, yt + (j === parts.length - 1 ? 0 : 0.8), yb - (j === 0 ? 0 : 0.8)));
+        dc.setFillColor(new Color(sportHex(k))); dc.fillPath();
+        yb = yt;
+      });
     }
     // Geplant und noch nicht erledigt (heute oder spaeter): Umriss in der Sportfarbe
     const open = x.date >= todayIso ? (x.plan || []).filter((p) => !(x.sports || {})[p.sport]) : [];
@@ -520,6 +531,22 @@ function capsImage(W, H, days, todayIso) {
     dc.setFont(today ? Font.boldSystemFont(FS.xs) : Font.mediumSystemFont(FS.xs));
     dc.drawTextInRect(dayShort(x.date), new Rect(x0 - 6, P + H + 2, cw + 12, CAPS_LABEL_H));
   });
+  return dc.getImage();
+}
+
+// Workout-Profil: Bloecke nebeneinander, Breite = Dauer, Hoehe = Intensitaet (% der Schwelle); ab 80 % in Sportfarbe, darunter grau
+function profileImage(W, H, steps, sport) {
+  const dc = newCtx(W, H), total = steps.reduce((a, s) => a + (s.secs || 0), 0) || 1;
+  let x = 0;
+  for (const s of steps) {
+    const w = (W * (s.secs || 0)) / total, pct = s.pct ?? 70;
+    const h = Math.max(0.25, Math.min(1, (pct - 40) / 70)) * H;
+    if (w - 2 > 0.5) {
+      const p = new Path(); p.addRoundedRect(new Rect(x, H - h, w - 2, h), Math.min(3, h / 2), Math.min(3, h / 2)); dc.addPath(p);
+      dc.setFillColor(pct >= 80 ? new Color(sportHex(sport)) : new Color(NEUTRAL_HEX, 0.45)); dc.fillPath();
+    }
+    x += w;
+  }
   return dc.getImage();
 }
 
@@ -552,8 +579,6 @@ function buildWidget(res) {
   const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 7;
   statusIcon(vr, v.cls, 20);
   num(vr, v.text, 21, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.7 });
-  w.addSpacer(1);
-  text(w, verdictLine(v, p), FS.xs, { color: COL.muted, minScale: 0.85 });
   w.addSpacer(6);
   const CW = Math.floor((W - 20) / 2);
   const cols = w.addStack(); cols.size = new Size(W, 0); cols.spacing = 20;
@@ -591,12 +616,12 @@ function buildWidget(res) {
   };
   const why = rawWhy ? sentences(rawWhy) : whyText(d, p, v);
   const perLine = Math.max(20, Math.floor((W - 34) / 6.3));
-  const nLines = Math.min(3, Math.max(1, Math.ceil(why.length / perLine)));
+  const nLines = Math.min(4, Math.max(1, Math.ceil(why.length / perLine)));
   const ct = w.addStack(); ct.size = new Size(W, 0); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
   const bar = ct.addStack(); bar.size = new Size(3, nLines * 15 + 1); bar.cornerRadius = 1.5;
   bar.backgroundColor = coachLine ? COL.accent : focusLine ? COL.warn : COL.muted;
   ct.addSpacer(9);
-  text(ct, why, FS.sm, { lines: 3, minScale: 0.85 });
+  text(ct, why, FS.sm, { lines: 4, minScale: 0.9 });
   ct.addSpacer();
   w.addSpacer(6);
 
@@ -614,7 +639,9 @@ function buildWidget(res) {
     if (d.plan.next) text(tc, `Nächste: ${dayShort(d.plan.next.date)} ${dateShort(d.plan.next.date)} · ${d.plan.next.name || "Einheit"}`, FS.xs, { color: COL.muted, minScale: 0.8 });
   }
   tr.addSpacer();
-  w.addSpacer(5);
+  // Aufbau der geplanten Einheit: Breite = Dauer, Hoehe = Intensitaet, Arbeitsbloecke in Sportfarbe
+  if (p && p.steps && p.steps.length) { w.addSpacer(5); const im = w.addImage(profileImage(W, 16, p.steps, p.sport)); im.imageSize = new Size(W, 16); }
+  w.addSpacer(6);
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wk = d.week || {};
@@ -642,22 +669,25 @@ function buildWidget(res) {
 }
 
 /* ---------- Mittel: Belastung der letzten 6 Wochen (Parameter "form") ---------- */
-// Wochen-TSS als Saeulen (aelteste links): abgeschlossene Wochen grau, laufende Woche blau, Ziel je Woche als Strich
-// (nur wo ein Plan oder Wochenziel existiert), Luecken nur als kurzer Strich, nie 0. Die Zahlen stehen als echte Widget-Texte
+// Wochen-TSS als Kapseln (aelteste links): abgeschlossene Wochen grau, laufende Woche blau, Ziel je Woche als Umriss
+// (nur wo ein Plan oder Wochenziel existiert); ohne Werte bleibt die Kapsel leer, nie 0. Die Zahlen stehen als echte Widget-Texte
 // darunter (tssLabels), weil Text im Bild feste Farben hat und im hellen/dunklen Modus nicht mitwechselt.
-const TSS_PLOT_H = 46;
+const TSS_PLOT_H = 50;
 function tssImage(w, weeks) {
-  const n = weeks.length, h = TSS_PLOT_H, plotH = h - 4, dc = newCtx(w, h);
+  const n = weeks.length, h = TSS_PLOT_H, dc = newCtx(w, h);
   const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
-  const max = Math.max(50, ...vals), slot = w / n, bw = slot * 0.56;
+  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(26, slot * 0.5), r = bw / 2;
+  const cap = (x, hh, color, stroke) => {
+    const i = stroke ? 0.8 : 0, ww = bw - 2 * i, rr = Math.min(ww / 2, (hh - i) / 2);
+    const p = new Path(); p.addRoundedRect(new Rect(x + i, h - hh, ww, hh - i), rr, rr); dc.addPath(p);
+    if (stroke) { dc.setStrokeColor(color); dc.setLineWidth(1.6); dc.strokePath(); } else { dc.setFillColor(color); dc.fillPath(); }
+  };
   weeks.forEach((k, i) => {
     const cur = i === n - 1, x = i * slot + (slot - bw) / 2;
-    if (k.tss != null) {
-      const bh = Math.max(3, (k.tss / max) * plotH), p = new Path();
-      p.addRoundedRect(new Rect(x, h - bh, bw, bh), Math.min(6, bh / 2), Math.min(6, bh / 2));
-      dc.addPath(p); dc.setFillColor(cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.45)); dc.fillPath();
-    } else { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x, h - 2, bw, 1.5)); }
-    if (k.goal != null) { dc.setFillColor(new Color(INK_HEX, 0.85)); dc.fillRect(new Rect(x - 3, h - (k.goal / max) * plotH - 1, bw + 6, 2)); }
+    cap(x, h, new Color(NEUTRAL_HEX, 0.15));
+    if (k.tss != null && k.tss > 0) cap(x, Math.max(bw, (k.tss / max) * h), cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.6));
+    // Ziel als Umriss in Hoehe des Ziels: liegt die Fuellung darunter, sieht man direkt, wie viel fehlt
+    if (k.goal != null) cap(x, Math.max(bw, (k.goal / max) * h), new Color(INK_HEX, 0.9), true);
   });
   return dc.getImage();
 }
