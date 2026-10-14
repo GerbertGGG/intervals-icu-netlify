@@ -339,6 +339,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             if (cond.precipitationChance != null) {
                 chances[System.getClockTime().hour % 12] = Math.round((cond.precipitationChance as Numeric).toFloat()).toNumber();
             }
+            // Die Wahrscheinlichkeit ist eine Vorhersage und hinkt oft hinterher: meldet die Wetterlage schon Niederschlag,
+            // regnet es jetzt, also zählt die laufende Stunde als 100 %
+            if (cond.condition != null && isPrecipitation(cond.condition as Number)) {
+                chances[System.getClockTime().hour % 12] = 100;
+            }
         }
         if (Weather has :getHourlyForecast) {
             var hourly = Weather.getHourlyForecast();
@@ -487,6 +492,17 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(FG, Graphics.COLOR_BLACK);
         dc.setPenWidth(px(2));
         dc.drawLine(cx + r0 * sin, cy - r0 * cos, cx + r1 * sin, cy - r1 * cos);
+    }
+
+    // Wetterlagen, bei denen es gerade regnet, schneit oder hagelt
+    private function isPrecipitation(c as Number) as Boolean {
+        return c == Weather.CONDITION_RAIN || c == Weather.CONDITION_LIGHT_RAIN || c == Weather.CONDITION_HEAVY_RAIN
+            || c == Weather.CONDITION_SHOWERS || c == Weather.CONDITION_HEAVY_SHOWERS || c == Weather.CONDITION_SCATTERED_SHOWERS
+            || c == Weather.CONDITION_DRIZZLE || c == Weather.CONDITION_THUNDERSTORMS || c == Weather.CONDITION_SCATTERED_THUNDERSTORMS
+            || c == Weather.CONDITION_SNOW || c == Weather.CONDITION_LIGHT_SNOW || c == Weather.CONDITION_HEAVY_SNOW
+            || c == Weather.CONDITION_RAIN_SNOW || c == Weather.CONDITION_LIGHT_RAIN_SNOW || c == Weather.CONDITION_HEAVY_RAIN_SNOW
+            || c == Weather.CONDITION_WINTRY_MIX || c == Weather.CONDITION_FREEZING_RAIN || c == Weather.CONDITION_SLEET
+            || c == Weather.CONDITION_HAIL || c == Weather.CONDITION_UNKNOWN_PRECIPITATION;
     }
 
     // Sonnenzeiten für den aktuellen Standort: vom Wetter, sonst von der letzten Aktivität; der letzte bekannte Standort
