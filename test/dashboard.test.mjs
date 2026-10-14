@@ -130,6 +130,8 @@ assert.equal(new Date(wdg.week.days[0].date + "T00:00:00Z").getUTCDay(), 1);
 assert.ok(wdg.week.days.some((x) => x.date === today));
 assert.deepEqual(wdg.week.days.find((x) => x.date === today).plan.map((p) => p.sport), d.planned.filter((p) => p.date === today).map((p) => p.sport));
 assert.equal(wdg.week.tsb, d.summary.load.tsb);
+// Belastung 6 Wochen: TSS je Sportart ergibt die Summe der Woche
+for (const k of buildWidgetDetail(d).tssWeeks) if (k.tss != null) assert.ok(Math.abs(Object.values(k.sports).reduce((a, b) => a + b, 0) - k.tss) <= 2); // gerundet je Sportart
 // Profil der heutigen Einheit: Bloecke aus dem Plan (Dauer, Intensitaet), immer ein Array
 for (const p of wdg.plan.today) assert.ok(Array.isArray(p.steps) && p.steps.every((x) => x.secs > 0));
 assert.equal(/Schokolade|Bobingen|Knieschmerz/.test(wjson), false); // keine Freitexte
