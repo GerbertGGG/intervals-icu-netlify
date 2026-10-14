@@ -675,25 +675,51 @@ function buildWidget(res) {
 }
 
 /* ---------- Mittel: Belastung der letzten 6 Wochen (Parameter "form") ---------- */
-// Wochen-TSS als Kapseln (aelteste links): abgeschlossene Wochen grau, laufende Woche blau, Ziel je Woche als Umriss
-// (nur wo ein Plan oder Wochenziel existiert); ohne Werte bleibt die Kapsel leer, nie 0. Die Zahlen stehen als echte Widget-Texte
-// darunter (tssLabels), weil Text im Bild feste Farben hat und im hellen/dunklen Modus nicht mitwechselt.
-const TSS_PLOT_H = 50;
-function tssImage(w, weeks) {
-  const n = weeks.length, h = TSS_PLOT_H, dc = newCtx(w, h);
-  const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
-  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(26, slot * 0.5), r = bw / 2;
-  const cap = (x, hh, color, stroke) => {
-    const i = stroke ? 0.8 : 0, ww = bw - 2 * i, rr = Math.min(ww / 2, (hh - i) / 2);
-    const p = new Path(); p.addRoundedRect(new Rect(x + i, h - hh, ww, hh - i), rr, rr); dc.addPath(p);
-    if (stroke) { dc.setStrokeColor(color); dc.setLineWidth(1.6); dc.strokePath(); } else { dc.setFillColor(color); dc.fillPath(); }
+// Je Woche eine Kapsel: Umriss = Ziel (Plan oder Wochenziel), Fuellung = gemacht, gestapelt in Sportfarben (groesster Anteil
+// unten). Ohne Ziel kein Umriss, ohne Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte
+// darunter (tssLabels), weil Text im Bild feste Farben hat.
+const TSS_PLOT_H = 52;
+// Waagrechter Streifen (yTop bis yBot) aus einer senkrechten Kapsel als Pfad: so wird die Fuellung in Sportfarben geteilt
+function capsuleBand(x, y, w, h, yTop, yBot) {
+  const r = Math.min(w / 2, h / 2), cx = x + w / 2;
+  const half = (yy) => {
+    if (yy < y + r) { const d = y + r - yy; return Math.sqrt(Math.max(0, r * r - d * d)); }
+    if (yy > y + h - r) { const d = yy - (y + h - r); return Math.sqrt(Math.max(0, r * r - d * d)); }
+    return w / 2;
   };
+  const n = Math.max(4, Math.ceil((yBot - yTop) * 2)), pts = [];
+  for (let k = 0; k <= n; k++) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx - half(yy), yy)); }
+  for (let k = n; k >= 0; k--) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx + half(yy), yy)); }
+  const p = new Path(); p.addLines(pts); p.closeSubpath();
+  return p;
+}
+function tssImage(w, weeks) {
+  // 3 pt Rand oben und unten, damit der Ziel-Umriss nicht am Bildrand abgeschnitten wird
+  const n = weeks.length, H = TSS_PLOT_H, M = 3, h = H - 2 * M, base = H - M, dc = newCtx(w, H);
+  const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
+  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(24, slot * 0.46);
   weeks.forEach((k, i) => {
-    const cur = i === n - 1, x = i * slot + (slot - bw) / 2;
-    cap(x, h, new Color(NEUTRAL_HEX, 0.15));
-    if (k.tss != null && k.tss > 0) cap(x, Math.max(bw, (k.tss / max) * h), cur ? new Color(ACCENT_HEX) : new Color(NEUTRAL_HEX, 0.6));
-    // Ziel als Umriss in Hoehe des Ziels: liegt die Fuellung darunter, sieht man direkt, wie viel fehlt
-    if (k.goal != null) cap(x, Math.max(bw, (k.goal / max) * h), new Color(INK_HEX, 0.9), true);
+    const x = i * slot + (slot - bw) / 2;
+    // Fuellung: gemacht, je Sportart ein Streifen (groesster unten)
+    if (k.tss != null && k.tss > 0) {
+      const ht = Math.max(bw, (k.tss / max) * h), top = base - ht;
+      const parts = Object.entries(k.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+      if (!parts.length) parts.push(["other", k.tss]);
+      const tot = parts.reduce((a, [, v]) => a + v, 0);
+      let yb = base;
+      parts.forEach(([sp, v], j) => {
+        const last = j === parts.length - 1, yt = last ? top : Math.max(top, yb - (ht * v) / tot);
+        dc.addPath(capsuleBand(x, top, bw, ht, yt + (last ? 0 : 0.6), yb - (j === 0 ? 0 : 0.6)));
+        dc.setFillColor(new Color(sportHex(sp))); dc.fillPath();
+        yb = yt;
+      });
+    }
+    // Umriss: Ziel bzw. Plan der Woche, mit etwas Luft um die Fuellung
+    if (k.goal != null) {
+      const gh = Math.max(bw, (k.goal / max) * h) + 3, p = new Path();
+      p.addRoundedRect(new Rect(x - 1.5, base + 1.5 - gh, bw + 3, gh), (bw + 3) / 2, (bw + 3) / 2);
+      dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.6); dc.strokePath();
+    }
   });
   return dc.getImage();
 }
@@ -707,7 +733,7 @@ function tssLabels(parent, W, weeks) {
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(slot, 0);
     const line = (fn) => { const r = col.addStack(); r.addSpacer(); fn(r); r.addSpacer(); };
     line((r) => num(r, k.tss != null ? fmt(k.tss) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
-    line((r) => text(r, k.goal != null ? `/${fmt(k.goal)}` : "ohne Ziel", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
+    line((r) => text(r, k.goal != null ? `/${fmt(k.goal)}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
     line((r) => text(r, dateShort(k.weekStart), FS.xs, { bold: cur, color: cur ? COL.text : COL.muted, align: "center", minScale: 0.7 }));
   });
 }
