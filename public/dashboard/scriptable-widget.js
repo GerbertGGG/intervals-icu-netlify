@@ -57,9 +57,7 @@ const endpointOf = () => (VIEWS[VIEW].endpoint === "main" ? "" : VIEWS[VIEW].end
 const cacheFile = () => `training-widget${endpointOf() ? "-" + endpointOf() : ""}-cache.json`;
 
 /* ---------- Design ---------- */
-const DARK = typeof Device !== "undefined" && Device.isUsingDarkAppearance();
 const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
-const pick = (l, d) => (DARK ? d : l);
 // iOS-Systemfarben: flache Widget-Flaeche, graue Kacheln nur zum Gruppieren, Ampel nur mit Bedeutung,
 // Blau fuer Werte, Rot-Pink fuer Datum und Rennen (wie im Kalender-Widget), Indigo fuer Schlaf
 const COL = {
@@ -68,16 +66,18 @@ const COL = {
   ok: dyn("#248a3d", "#30d158"), warn: dyn("#c93400", "#ff9f0a"), bad: dyn("#d70015", "#ff453a"), none: dyn("#6c6c70", "#8e8e93"),
   accent: dyn("#0a63c9", "#64a8ff"), race: dyn("#d30f45", "#ff375f"), sleep: dyn("#5856d6", "#7d7aff"),
 };
-// Gezeichnete Bilder (DrawContext) kennen keine dynamischen Farben: sie bekommen die zur Darstellung passende Farbe
-const INK_HEX = pick("#1c1c1e", "#ffffff");
-const MUTED_HEX = pick("#6c6c70", "#8e8e93");
+// Gezeichnete Bilder (DrawContext) kennen keine dynamischen Farben, und im Widget meldet iOS den Dunkelmodus nicht
+// (Device.isUsingDarkAppearance liefert dort immer false). Bilder bekommen deshalb Farben, die auf hellem und dunklem
+// Grund funktionieren: kraeftige Systemfarben, mittleres Grau fuer Marken und Beschriftung, Blau fuer "heute".
+const INK_HEX = "#a1a1a6";
+const MUTED_HEX = "#8e8e93";
 const NEUTRAL_HEX = "#8e8e93";
-const ACCENT_HEX = pick("#0a63c9", "#64a8ff");
-const ZONE_RGB = { ok: pick("#248a3d", "#30d158"), warn: pick("#c93400", "#ff9f0a"), bad: pick("#d70015", "#ff453a"), none: NEUTRAL_HEX };
-const RACE_HEX = pick("#d30f45", "#ff375f");
-const SLEEP_HEX = pick("#5856d6", "#7d7aff");
+const ACCENT_HEX = "#0a84ff";
+const ZONE_RGB = { ok: "#30d158", warn: "#ff9f0a", bad: "#ff453a", none: NEUTRAL_HEX };
+const RACE_HEX = "#ff375f";
+const SLEEP_HEX = "#7d7aff";
 // Sportfarben wie auf der Uhr und im Dashboard: Laufen gelb, Rad grün, Schwimmen blau, Kraft orange; dazu je Sport ein SF Symbol
-const SPORTS = { run: ["Laufen", pick("#b38f00", "#ffd60a")], bike: ["Rad", pick("#248a3d", "#30d158")], swim: ["Schwimmen", pick("#0a6fd9", "#409cff")], strength: ["Kraft", pick("#c95e00", "#ff9f45")], other: ["Sonst.", NEUTRAL_HEX] };
+const SPORTS = { run: ["Laufen", "#ffd60a"], bike: ["Rad", "#30d158"], swim: ["Schwimmen", "#409cff"], strength: ["Kraft", "#ff9f45"], other: ["Sonst.", NEUTRAL_HEX] };
 const SPORT_SYMBOL = { run: "figure.run", bike: "bicycle", swim: "figure.pool.swim", strength: "dumbbell.fill", other: "figure.mixed.cardio" };
 const sportHex = (k) => (SPORTS[k] || SPORTS.other)[1];
 // Schriftgroessen: nichts unter 11 pt (auf dem Homescreen sonst kaum lesbar)
@@ -345,7 +345,7 @@ function barsImage(w, h, values, todayIso, dates, goals, refLine, hex = ACCENT_H
   const dc = newCtx(w, h + DAY_LABEL_H), slot = w / values.length, bw = slot * 0.6;
   dc.setTextAlignedCenter();
   dates.forEach((dt, i) => {
-    dc.setTextColor(new Color(dt === todayIso ? INK_HEX : MUTED_HEX));
+    dc.setTextColor(new Color(dt === todayIso ? ACCENT_HEX : MUTED_HEX));
     dc.setFont(dt === todayIso ? Font.boldSystemFont(FS.xs) : Font.systemFont(FS.xs));
     dc.drawTextInRect(dayShort(dt), new Rect(i * slot, h + 2, slot, DAY_LABEL_H - 2));
   });
@@ -527,8 +527,8 @@ function capsImage(W, H, days, todayIso) {
     if (open.length) {
       cap(new Rect(x0 + 1, y0 + 1, cw - 2, cw - 2), sportHex(open[0].sport), 0.95, true);
     }
-    if (today) { const p = new Path(); p.addEllipse(new Rect(x0 - 1.8, y0 - 1.8, cw + 3.6, cw + 3.6)); dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.4); dc.strokePath(); }
-    dc.setTextColor(new Color(today ? INK_HEX : MUTED_HEX));
+    if (today) { const p = new Path(); p.addEllipse(new Rect(x0 - 2, y0 - 2, cw + 4, cw + 4)); dc.addPath(p); dc.setStrokeColor(new Color(ACCENT_HEX)); dc.setLineWidth(2); dc.strokePath(); }
+    dc.setTextColor(new Color(today ? ACCENT_HEX : MUTED_HEX));
     dc.setFont(today ? Font.boldSystemFont(FS.xs) : Font.mediumSystemFont(FS.xs));
     dc.drawTextInRect(dayShort(x.date), new Rect(x0 - 6, P + H + 2, cw + 12, CAPS_LABEL_H));
   });
@@ -616,14 +616,16 @@ function buildWidget(res) {
     return out;
   };
   const why = rawWhy ? sentences(rawWhy) : whyText(d, p, v);
-  const perLine = Math.max(20, Math.floor((W - 34) / 6.3));
+  // Hoehe nach Textlaenge schaetzen (gut 6 pt je Zeichen bei 12 pt) und fest setzen: In einem Stack mit fester Hoehe und
+  // fester Textbreite bricht Scriptable zuverlaessig um; ohne das blieb der Text einzeilig mit "...".
+  const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 6.1));
   const nLines = Math.max(1, Math.ceil(why.length / perLine));
-  const ct = w.addStack(); ct.size = new Size(W, 0); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
-  const bar = ct.addStack(); bar.size = new Size(3, Math.min(5, nLines) * 15 + 1); bar.cornerRadius = 1.5;
+  const ct = w.addStack(); ct.size = new Size(W, nLines * 16 + 12); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
+  const bar = ct.addStack(); bar.size = new Size(3, nLines * 16); bar.cornerRadius = 1.5;
   bar.backgroundColor = coachLine ? COL.accent : focusLine ? COL.warn : COL.muted;
   ct.addSpacer(9);
-  text(ct, why, FS.sm, { lines: 0, minScale: 1 }); // nie abschneiden: der Hinweis ist das Wichtigste nach dem Urteil
-  ct.addSpacer();
+  const tx = ct.addStack(); tx.layoutVertically(); tx.size = new Size(TXW, 0);
+  text(tx, why, FS.sm, { lines: nLines + 1, minScale: 0.85 });
   w.addSpacer(10);
 
   // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit
@@ -660,8 +662,10 @@ function buildWidget(res) {
   if (wk.goal && !wk.days) { w.addSpacer(4); progressBar(w, W, wk.total / wk.goal, ACCENT_HEX); }
   w.addSpacer(6);
 
-  // 6. Naechste Tage: drei Kacheln, nur wenn der Hinweis kurz ist (die Kapseln zeigen den Plan der Woche ohnehin als Umriss)
-  if (nLines > 2) { notice(w, res, d); w.addSpacer(); return w; }
+  // 6. Naechste Tage: drei Kacheln, nur wenn Platz ist (die Kreise zeigen den Plan der Woche ohnehin als Umriss)
+  // Platz: ein langer Hinweis hat Vorrang; mit Profil der Einheit reicht er schon ab drei Zeilen nicht mehr fuer die Kacheln
+  const withProfile = !!(p && p.steps && p.steps.length);
+  if (nLines > 3 || (withProfile && nLines >= 3)) { notice(w, res, d); w.addSpacer(); return w; }
   const TW = Math.floor((W - 12) / 3);
   const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
   for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), g, d.plan.upcoming);
