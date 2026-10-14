@@ -30,6 +30,17 @@
   function svg(W, H, label) { return el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": label }); }
   function title(node, text) { node.append(el("title", {}, text)); return node; }
   function mount(host, node) { host.replaceChildren(node); }
+  // Breite der Zeichnung = Breite des Platzes (zwischen min und max): Beschriftungen bleiben auf dem Handy in echter
+  // Schriftgröße lesbar, statt mit einer starren 880er-Zeichnung auf wenige Pixel zu schrumpfen.
+  function fitW(host, max, min = 340) { const w = Math.round(host.clientWidth || max); return Math.max(min, Math.min(max, w)); }
+  // Neu zeichnen, wenn sich die Breite deutlich ändert (Drehen des Handys, Fenstergröße)
+  function refit(host, draw, W, max, min) {
+    host._draw = draw;
+    if (host._ro || typeof ResizeObserver === "undefined") return;
+    let last = W;
+    host._ro = new ResizeObserver(() => { const w = fitW(host, max, min); if (Math.abs(w - last) > 40) { last = w; host._draw(); } });
+    host._ro.observe(host);
+  }
   // Schraffur für "nicht eingetragen": klar unterscheidbar von jedem Wert, auch von "gut".
   function hatch(s) {
     const defs = el("defs");
@@ -64,14 +75,21 @@
     s.append(el("line", { x1: L, x2: W - R, y1: Y, y2: Y, class: "axis", "stroke-width": 2 }));
     if (o.band) s.append(title(el("rect", { x: x(o.band[0]) - 4, y: Y - 8, width: x(o.band[1]) - x(o.band[0]) + 8, height: 16, rx: 8, fill: "var(--muted)", "fill-opacity": 0.22 }), "üblicher Bereich der letzten 8 Wochen"));
     for (let v = 1; v <= o.max; v++) s.append(el("text", { x: x(v), y: 32, "text-anchor": "middle" }, v));
-    if (o.value != null) s.append(title(el("circle", { cx: x(o.value), cy: Y, r: 6, fill: o.cls === "none" ? "var(--muted)" : ZONE[o.cls] }), `heute: ${o.value}`));
+    // Markierung mit Form je Status (Kreis = wie üblich, Dreieck = etwas schlechter, Quadrat = deutlich schlechter)
+    if (o.value != null) {
+      const cx = x(o.value), fill = o.cls === "none" ? "var(--muted)" : ZONE[o.cls];
+      const mark = o.cls === "warn" ? el("path", { d: `M${cx},${Y - 7} L${cx + 7},${Y + 5} L${cx - 7},${Y + 5} Z`, fill })
+        : o.cls === "bad" ? el("rect", { x: cx - 6, y: Y - 6, width: 12, height: 12, rx: 1.5, fill })
+        : el("circle", { cx, cy: Y, r: 6, fill });
+      s.append(title(mark, `heute: ${o.value}`));
+    }
     mount(host, s);
   }
 
   /* ---------- Balken (Woche): Ist mit Plan-Marke ---------- */
   function bars(host, items, o) {
     const hasDev = o.valueLabels && items.some((w) => w.plan != null && w.value != null);
-    const W = 480, H = hasDev ? 250 : 230, L = 44, R = 8, T = 24, B = hasDev ? 62 : 42;
+    const W = fitW(host, 480), H = hasDev ? 250 : 230, L = 44, R = 8, T = 24, B = hasDev ? 62 : 42;
     const max = U.niceMax(Math.max(1, ...items.flatMap((w) => [w.value, w.plan]).filter((v) => v != null)));
     const s = svg(W, H, o.label);
     const y = (v) => T + (H - T - B) * (1 - v / max);
@@ -97,7 +115,8 @@
           s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${off ? "warn" : "ok"})` }, `${dev > 0 ? "+" : dev < 0 ? "−" : "±"}${U.fmt(Math.abs(dev), o.dec ?? 1)}`), `Abweichung zum Plan (${U.fmt(w.plan, o.dec ?? 1)}): ${dev > 0 ? "+" : "−"}${U.fmt(Math.abs(dev), o.dec ?? 1)} ${o.unit}`));
         }
       }
-      s.append(el("text", { x: x + bw / 2, y: H - (hasDev ? 40 : 22), "text-anchor": "middle" }, w.label));
+      // schmal: nur jede zweite Woche beschriften (die laufende immer), damit die Daten nicht ineinanderlaufen
+      if (slot >= 40 || i % 2 === (items.length - 1) % 2) s.append(el("text", { x: x + bw / 2, y: H - (hasDev ? 40 : 22), "text-anchor": "middle" }, w.label));
     });
     if (o.ref) s.append(el("line", { x1: L, x2: W - R, y1: y(o.ref.value), y2: y(o.ref.value), stroke: "var(--warn)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), el("text", { x: W - R, y: y(o.ref.value) - 4, "text-anchor": "end" }, o.ref.label));
     s.append(el("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, o.xLabel));
@@ -106,7 +125,7 @@
 
   /* ---------- Gestapelte Balken (TSS je Sportart) ---------- */
   function stacked(host, weeks, sports, label) {
-    const W = 480, H = 230, L = 44, R = 8, T = 24, B = 42;
+    const W = fitW(host, 480), H = 230, L = 44, R = 8, T = 24, B = 42;
     const totals = weeks.map((w) => sports.reduce((a, k) => a + w.by[k], 0));
     const max = U.niceMax(Math.max(1, ...totals));
     const s = svg(W, H, label);
@@ -123,7 +142,7 @@
         s.append(title(el("rect", { x, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v)), fill: `var(--s-${k})`, opacity: w.partial ? 0.6 : 1 }), `Woche ab ${U.fmtDate(w.weekStart)} · ${k}: ${U.fmt(v)} TSS`));
         acc += v;
       }
-      s.append(el("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, w.label));
+      if (slot >= 40 || i % 2 === (weeks.length - 1) % 2) s.append(el("text", { x: x + bw / 2, y: H - 22, "text-anchor": "middle" }, w.label));
     });
     s.append(el("text", { x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle" }, "Woche ab (Montag) · helle Säule = laufende Woche"));
     mount(host, s);
@@ -155,8 +174,9 @@
 
   /* ---------- Formkurve: Fitness (CTL), Ermüdung (ATL) und Frische (TSB) bis zum Renntag ---------- */
   function form(host, o) {
-    const W = 880, H = 450, L = 34, R = 40, T1 = 40, B1 = 236, T2 = 316, B2 = 408;
-    const CTL = "var(--accent)", ATL = "#e8683f";
+    const W = fitW(host, 880), H = 450, L = 34, R = 40, T1 = 40, B1 = 236, T2 = 316, B2 = 408, narrow = W < 600;
+    refit(host, () => form(host, o), W, 880);
+    const CTL = "var(--accent)", ATL = "var(--atl)";
     const s = svg(W, H, "Fitness, Ermüdung und Frische bis zum Renntag");
     const days = o.days, first = days[0], last = days[days.length - 1];
     const span = Math.max(1, U.dayDiff(first, last));
@@ -231,8 +251,9 @@
     const y2 = (v) => T2 + (B2 - T2) * (1 - (v - lo) / (hi - lo));
     const cls = (v) => (v >= o.zones[0].from ? "ok" : v >= o.zones[1].from ? "warn" : "bad");
     const TSB_COL = { ok: "var(--ok)", warn: "var(--plan)", bad: "var(--bad)" };
-    legend([{ color: TSB_COL.ok, text: "frisch" }, { color: TSB_COL.warn, text: "belastet" }, { color: TSB_COL.bad, text: "stark ermüdet" }], T2 - 24, L + 112);
-    s.append(el("text", { x: L, y: T2 - 23, style: "font-size:13px;font-weight:700;fill:var(--text)" }, "Frische (TSB)"));
+    // schmal: Legende eine Zeile unter dem Titel, sonst daneben
+    legend([{ color: TSB_COL.ok, text: "frisch" }, { color: TSB_COL.warn, text: "belastet" }, { color: TSB_COL.bad, text: "stark ermüdet" }], narrow ? T2 - 12 : T2 - 24, narrow ? L : L + 112);
+    s.append(el("text", { x: L, y: narrow ? T2 - 32 : T2 - 23, style: "font-size:13px;font-weight:650;fill:var(--text)" }, "Frische (TSB)"));
     for (const v of [hi, 0, lo]) s.append(el("line", { x1: L, x2: W - R, y1: y2(v), y2: y2(v), class: v === 0 ? "axis" : "grid-l" }), el("text", { x: L - 8, y: y2(v) + 4, "text-anchor": "end" }, U.fmt(v)));
     const bw = Math.max(2, hw * 0.62);
     for (const p of tsb) s.append(title(el("rect", { x: x(p.d) - bw / 2, y: Math.min(y2(p.v), y2(0)), width: bw, height: Math.max(1, Math.abs(y2(p.v) - y2(0))), rx: 1.5, fill: TSB_COL[cls(p.v)], opacity: p.proj ? 0.5 : 1 }), `${U.fmtDate(p.d)}: ${p.proj ? "Prognose " : ""}TSB ${U.fmt(p.v, 1)}`));
@@ -259,7 +280,7 @@
     }
     // Datumsachse wöchentlich ab dem ersten Tag; Beschriftung nur, wo sie keine Marken-Beschriftung berührt
     const taken = shown.map(box);
-    const wk = 7 * Math.max(1, Math.ceil(span / 7 / 9));
+    const wk = 7 * Math.max(1, Math.ceil(span / 7 / (narrow ? 4 : 9)));
     for (let i = 0; i <= span; i += wk) {
       const d = U.addDays(first, i), tx = x(d);
       if (!shown.some((m) => Math.abs(x(m.day) - tx) < 22)) s.append(el("text", { x: tx, y: B1 + 20, "text-anchor": "middle" }, U.fmtDate(d)));
@@ -333,7 +354,7 @@
   /* ---------- Veraenderung der Prognose gegenueber dem ersten Eintrag je Serie. Null-Linie = unveraendert,
      tiefer = schneller. Eine Linie je Distanz, direkt am Linienende beschriftet. ---------- */
   function deltaTrend(host, rows, o) {
-    const W = 480, H = 210, L = 52, R = 70, T = 22, B = 30;
+    const W = fitW(host, 480), H = 210, L = 52, R = 70, T = 22, B = 30;
     const fmtD = (v) => (v === 0 ? "0:00" : `${v < 0 ? "−" : "+"}${U.fmtTime(Math.abs(v))}`);
     const lines = o.series.map((sr) => {
       const pts = rows.filter((r) => r[sr.key] != null);
@@ -375,7 +396,8 @@
 
   /* ---------- Heatmap Wellness (Wert x Tag), Lücken schraffiert ---------- */
   function wellnessHeat(host, days, rows) {
-    const L = 92, R = 8, T = 22, RH = 26, W = 880, H = T + rows.length * RH + 30;
+    const L = 92, R = 8, T = 22, RH = 26, W = fitW(host, 880), H = T + rows.length * RH + 30;
+    refit(host, () => wellnessHeat(host, days, rows), W, 880);
     const s = svg(W, H, "Wellness-Werte je Tag");
     const cw = (W - L - R) / days.length;
     hatch(s);
@@ -390,14 +412,14 @@
         s.append(title(el("rect", { x, y: y + 1, width: Math.max(1, cw - 1), height: RH - 4, fill: "var(--accent)", "fill-opacity": 0.14 + 0.86 * t }), `${U.fmtDate(d)}: ${r.label} ${v} (1 = bestmöglich)`));
       });
     });
-    const step = Math.max(1, Math.round(days.length / 8));
+    const step = Math.max(1, Math.round(days.length / (W < 600 ? 4 : 8)));
     for (let j = 0; j < days.length; j += step) s.append(el("text", { x: L + j * cw + cw / 2, y: T + rows.length * RH + 14, "text-anchor": "middle" }, U.fmtDate(days[j])));
     mount(host, s);
   }
 
   /* ---------- Linie mit Lücken (Ruhepuls) ---------- */
   function gapLine(host, days, values, o) {
-    const W = 480, H = 190, L = 40, R = o.last ? 46 : 10, T = 24, B = 34;
+    const W = fitW(host, 480), H = 190, L = 40, R = o.last ? 46 : 10, T = 24, B = 34;
     const v = days.map((d) => values[d]).filter((x) => x != null);
     const second = o.line2 ? days.map((d) => o.line2.values[d]).filter((x) => x != null) : [];
     const lo = Math.floor(Math.min(...v, ...second, o.band?.lo ?? Infinity) - 2), hi = Math.ceil(Math.max(...v, ...second, o.band?.hi ?? -Infinity) + 2);
@@ -443,7 +465,7 @@
 
   /* ---------- Ernährung: Tage mit Ziel-Marke, Lücken schraffiert ---------- */
   function nutrition(host, days, o) {
-    const W = 480, H = 236, L = 44, R = 8, T = 24, B = 60;
+    const W = fitW(host, 480), H = 236, L = 44, R = 8, T = 24, B = 60;
     const color = o.color ?? "var(--accent)";
     const vals = days.flatMap((d) => [o.values[d], o.goal?.[d]]).filter((v) => v != null);
     const max = U.niceMax(Math.max(1, ...vals) * 1.08);
