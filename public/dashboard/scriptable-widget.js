@@ -495,10 +495,10 @@ function capsuleColumn(x, y, w, h, xa, xb) {
 
 // Woche Mo bis So als Kreise: erledigt = gefuellt in Sportfarbe (mehrere Sportarten geteilt), geplant und noch offen =
 // Umriss in der Sportfarbe, heute mit weissem Ring. Tage ohne alles bleiben ein blasser Kreis.
-const CAPS_LABEL_H = 14;
+const CAPS_LABEL_H = 14, CAPS_PAD = 4; // Rand fuer den Heute-Ring (2 px ausserhalb des Kreises plus halbe Strichbreite)
 function capsImage(W, H, days, todayIso) {
   // Echte Kreise: Durchmesser = Hoehe, der Abstand verteilt den Rest der Breite
-  const P = 2, dc = newCtx(W, H + CAPS_LABEL_H + P), cw = Math.min(H, (W - 2 * P - 4 * 6) / 7), gap = (W - 2 * P - 7 * cw) / 6, r = cw / 2;
+  const P = CAPS_PAD, dc = newCtx(W, P + H + 2 + CAPS_LABEL_H), cw = Math.min(H, (W - 2 * P - 4 * 6) / 7), gap = (W - 2 * P - 7 * cw) / 6, r = cw / 2;
   const cap = (rect, hex, a = 1, stroke = false) => {
     const p = new Path(); p.addEllipse(rect); dc.addPath(p);
     if (stroke) { dc.setStrokeColor(new Color(hex, a)); dc.setLineWidth(1.5); dc.strokePath(); } else { dc.setFillColor(new Color(hex, a)); dc.fillPath(); }
@@ -649,8 +649,8 @@ function buildWidget(res) {
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wk = d.week || {};
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
-  const KW = Math.round(W * 0.6), KH = Math.floor((KW - 4 - 24) / 7); // Kreisdurchmesser passend zur Breite
-  if (wk.days) { const im = wr.addImage(capsImage(KW, KH, wk.days, d.today)); im.imageSize = new Size(KW, KH + CAPS_LABEL_H + 2); }
+  const KW = Math.round(W * 0.6), KH = Math.floor((KW - 2 * CAPS_PAD - 24) / 7); // Kreisdurchmesser passend zur Breite
+  if (wk.days) { const im = wr.addImage(capsImage(KW, KH, wk.days, d.today)); im.imageSize = new Size(KW, CAPS_PAD + KH + 2 + CAPS_LABEL_H); }
   wr.addSpacer();
   const wc = wr.addStack(); wc.layoutVertically();
   const right = (fn) => { const s = wc.addStack(); s.addSpacer(); fn(s); };
