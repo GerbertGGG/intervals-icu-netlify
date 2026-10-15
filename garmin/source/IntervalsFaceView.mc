@@ -349,14 +349,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 var imperial = System.getDeviceSettings().temperatureUnits == System.UNIT_STATUTE;
                 temp = Math.round(imperial ? c * 9 / 5 + 32 : c).toNumber().toString() + "°";
             }
-            if (cond.precipitationChance != null) {
-                chances[System.getClockTime().hour % 12] = Math.round((cond.precipitationChance as Numeric).toFloat()).toNumber();
-            }
-            // Die Wahrscheinlichkeit ist eine Vorhersage und hinkt oft hinterher: meldet die Wetterlage schon Niederschlag,
-            // regnet es jetzt, also zählt die laufende Stunde als 100 %
-            if (cond.condition != null && isPrecipitation(cond.condition as Number)) {
-                chances[System.getClockTime().hour % 12] = 100;
-            }
         }
         if (Weather has :getHourlyForecast) {
             var hourly = Weather.getHourlyForecast();
@@ -378,6 +370,17 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                     }
                 }
             }
+        }
+        // Die laufende Stunde kommt aus der Stundenvorhersage. Die Wahrscheinlichkeit aus dem aktuellen Wetter passt oft
+        // nicht zu ihr (eher ein Tageswert) und trieb die Prozentzahl hoch, deshalb nur, wenn die Stunde keinen Wert hat.
+        var nowSlot = System.getClockTime().hour % 12;
+        if (cond != null && chances[nowSlot] == null && cond.precipitationChance != null) {
+            chances[nowSlot] = Math.round((cond.precipitationChance as Numeric).toFloat()).toNumber();
+        }
+        // Die Vorhersage hinkt oft hinterher: meldet die Wetterlage schon Niederschlag, regnet es jetzt,
+        // also zählt die laufende Stunde als 100 %
+        if (cond != null && cond.condition != null && isPrecipitation(cond.condition as Number)) {
+            chances[nowSlot] = 100;
         }
         // -1 = keine Regenwahrscheinlichkeit bekannt
         var maxChance = -1;
