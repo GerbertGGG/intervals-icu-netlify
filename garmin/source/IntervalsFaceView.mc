@@ -394,10 +394,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         // Selbst gerechnet aus dem Standort (siehe sunNow), Weather.getSunrise und der Standort der Wetterdaten fehlen auf der Uhr oft.
         var sun = sunNow(cond, now);
         rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, sun, now);
-        // Prozentzahl blau ab 30 %, darunter weiß. Ohne Regen (unter 10 %) steht dort der nächste Sonnenauf- oder -untergang,
-        // passend zum goldenen Bogen
+        // Prozentzahl in Blau ab 30 %, ab da zeigt auch der Ring Regen. Darunter gilt es als trocken und dort steht der
+        // nächste Sonnenauf- oder -untergang, passend zum goldenen Bogen
         var sub = maxChance >= 0 ? maxChance.toString() + " %" : "";
-        if (maxChance < 10) {
+        if (maxChance < 30) {
             for (var i = 0; i < sun.size(); i++) {
                 if (sun[i] > now) {
                     var si = Gregorian.info(new Time.Moment(sun[i]), Time.FORMAT_SHORT);
@@ -468,7 +468,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // Wetterring: grauer Grundring wie bei den anderen Komplikationen, darauf in gedämpftem Gold die hellen Stunden
     // (Sonnenaufgang bis -untergang) der nächsten 12 Stunden und darüber ein blauer Bogen für jede Stunde mit mindestens
-    // 10 % Regenwahrscheinlichkeit (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert die aktuelle
+    // 30 % Regenwahrscheinlichkeit (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert die aktuelle
     // Uhrzeit, dort beginnt und endet die Zeitleiste. sun: [Aufgang, Untergang, Aufgang, Untergang] in Sekunden.
     private function rainRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, chances as Array<Number?>, sun as Array<Number>, now as Number) as Void {
         dc.setPenWidth(pen);
@@ -489,7 +489,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         for (var i = 0; i < 12; i++) {
             var c = chances[i];
-            if (c == null || c < 10) {
+            if (c == null || c < 30) {
                 continue;
             }
             dc.setColor(blend(TRACK, RAIN, 0.35 + 0.65 * clamp01(c / 100.0)), Graphics.COLOR_BLACK);
