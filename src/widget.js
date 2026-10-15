@@ -158,7 +158,7 @@ export function buildWidgetVdot(d) {
 }
 
 // Dritte Ansicht ("training", mittleres Widget): je Disziplin (Schwimmen, Rad, Lauf) Wochen-TSS gegen Plan,
-// Wochenzeit, Kilometer und Tage seit der letzten Einheit, dazu die Verteilung der letzten 4 Wochen nach Trainingszeit.
+// Wochenzeit, Stunden der letzten 4 Wochen und Tage seit der letzten Einheit, dazu die Verteilung der letzten 4 Wochen nach Trainingszeit.
 // CTL, TSB und TSS bleiben sportartuebergreifend (Hauptansicht), hier gibt es bewusst keine Last je Sportart.
 // Ein Soll fuer die Verteilung gibt es nur, wenn TRI_SPLIT_TARGET gesetzt ist (Schwimmen,Rad,Lauf in Prozent,
 // z. B. "20,45,35"); sonst bleibt es leer, nichts wird erfunden.
@@ -190,14 +190,13 @@ export function buildWidgetTraining(d, env = {}) {
   const sports = Object.fromEntries(TRI.map((k) => {
     const last = lastDay(k);
     // Umfang der letzten 4 vollen Wochen gegen die 4 davor (Entwicklung); ohne Vergleichswert null
-    const kmOf = (ws) => ws.reduce((a, w) => a + w.bySport[k].km, 0);
-    const prior = done.slice(-8, -4), km4 = kmOf(recent), kmPrior = kmOf(prior);
+    const minOf = (ws) => ws.reduce((a, w) => a + w.bySport[k].minutes, 0);
+    const prior = done.slice(-8, -4), min4 = minOf(recent), minPrior = minOf(prior);
     return [k, {
-      km4: Math.round(km4 * 10) / 10,
-      trendPct: prior.length === 4 && kmPrior > 0 ? Math.round((km4 / kmPrior - 1) * 100) : null,
+      min4: Math.round(min4),
+      trendPct: prior.length === 4 && minPrior > 0 ? Math.round((min4 / minPrior - 1) * 100) : null,
       weekLoad: cur.bySport[k].load,
       plannedLoad: cur.bySport[k].plannedLoad,
-      weekKm: cur.bySport[k].km,
       weekMinutes: cur.bySport[k].minutes,
       daysSince: last ? dayDiff(last) : null,
     }];

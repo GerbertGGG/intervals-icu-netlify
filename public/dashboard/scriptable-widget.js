@@ -635,7 +635,7 @@ function buildWidget(res) {
   const tc = tr.addStack(); tc.layoutVertically();
   if (p) {
     text(tc, p.name || "Einheit", FS.lg, { bold: true, minScale: 0.7 });
-    const meta = [p.durationMin && `${p.durationMin} min`, p.distanceKm && `${fmt(p.distanceKm, 1)} km`, p.rpe && `RPE ${p.rpe}`].filter(Boolean).join(" · ");
+    const meta = [p.durationMin ? `${p.durationMin} min` : p.distanceKm && `${fmt(p.distanceKm, 1)} km`, p.rpe && `RPE ${p.rpe}`].filter(Boolean).join(" · ");
     if (meta) text(tc, meta, FS.xs, { color: COL.muted });
   } else {
     text(tc, "Keine Einheit geplant", FS.lg, { bold: true, minScale: 0.7 });
@@ -1031,10 +1031,10 @@ function buildTraining(res) {
     c.addSpacer(4);
     progressBar(c, CW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
     c.addSpacer(4);
-    // Umfang der letzten 4 Wochen und Entwicklung gegen die 4 davor (Rad und Laufen km ohne Nachkommastelle, Schwimmen mit)
-    if (s.km4 != null) {
+    // Umfang (Stunden) der letzten 4 Wochen und Entwicklung gegen die 4 davor
+    if (s.min4 != null) {
       const tr = s.trendPct == null ? "" : ` ${s.trendPct > 0 ? "▲" : s.trendPct < 0 ? "▼" : "="}${Math.abs(s.trendPct)} %`;
-      text(c, `4 W ${fmt(s.km4, k === "swim" ? 1 : 0)} km${tr}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+      text(c, `4 W ${fmt(s.min4 / 60, 1)} h${tr}`, FS.xs, { color: COL.muted, minScale: 0.6 });
     }
   }
   w.addSpacer();

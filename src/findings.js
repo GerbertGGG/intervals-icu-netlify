@@ -24,11 +24,11 @@ export function trainingFindings(d) {
   if (!last) return [];
   const out = [], base = full.slice(-5, -1).filter((w) => w.load > 0);
   const avg = (key) => (base.length ? base.reduce((n, w) => n + w[key], 0) / base.length : null);
-  const aLoad = avg("load"), aKm = avg("km");
+  const aLoad = avg("load"), aRun = avg("runMin");
   const add = (sev, tag, short, text, act, n = 1) => out.push({ sev, n, short, text, act, tag });
   if (aLoad && last.load > aLoad * TRN.jump) add(2, "Last", `Belastung letzte Woche +${pct(last.load / aLoad - 1)} %`, `Belastung ${num(last.load)} TSS, ${pct(last.load / aLoad - 1)} % mehr als dein Schnitt (${num(aLoad)}) – steiler Anstieg.`, "Die nächste Woche nicht noch steigern, 1–2 lockere Tage fest einplanen (Verletzungsrisiko).");
   else if (aLoad && last.load < aLoad * TRN.drop) add(1, "Last", `Belastung letzte Woche nur ${pct(last.load / aLoad)} %`, `Belastung ${num(last.load)} TSS, nur ${pct(last.load / aLoad)} % deines Schnitts (${num(aLoad)}) – deutlich weniger Training.`, "Wenn das kein gewollter Entlastungsblock war: die Ursache klären und die Last schrittweise zurückholen.");
-  if (aKm && last.km > aKm * TRN.jump) add(2, "Laufumfang", `Laufumfang letzte Woche +${pct(last.km / aKm - 1)} %`, `Laufumfang ${num(last.km, 1)} km, ${pct(last.km / aKm - 1)} % mehr als dein Schnitt (${num(aKm, 1)} km).`, "Laufumfang in der Folgewoche auf den Schnitt oder knapp darüber begrenzen.");
+  if (aRun && last.runMin > aRun * TRN.jump) add(2, "Laufumfang", `Laufumfang letzte Woche +${pct(last.runMin / aRun - 1)} %`, `Laufumfang ${num(last.runMin / 60, 1)} h, ${pct(last.runMin / aRun - 1)} % mehr als dein Schnitt (${num(aRun / 60, 1)} h).`, "Laufumfang in der Folgewoche auf den Schnitt oder knapp darüber begrenzen.");
   if (last.plannedLoad) {
     if (last.load < last.plannedLoad * TRN.planUnder) add(1, "Plan", `Plan nur zu ${pct(last.load / last.plannedLoad)} % geschafft`, `nur ${num(last.load)} von ${num(last.plannedLoad)} TSS des Plans geschafft.`, "Verpasste Einheiten nicht nachholen, sondern den Plan der laufenden Woche halten.");
     else if (last.load > last.plannedLoad * TRN.planOver) add(1, "Plan", `${num(last.load - last.plannedLoad)} TSS über dem Plan`, `${num(last.load - last.plannedLoad)} TSS über dem Plan (${num(last.load)} von ${num(last.plannedLoad)}).`, "Mehr als geplant bringt vor dem Rennen selten etwas: lockere Einheiten wirklich locker laufen.");

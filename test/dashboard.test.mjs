@@ -149,6 +149,8 @@ const cw = d.weeks.at(-1).bySport;
 assert.equal(cw.swim.km, 1.5);
 assert.equal(cw.swim.plannedKm, 2);
 assert.equal(cw.run.plannedKm, null); // nichts geplant = null, nie 0
+assert.equal(cw.swim.plannedMin, 50); // Plan in Minuten aus moving_time
+assert.equal(d.weeks.at(-1).runMin, cw.run.minutes); // Laufumfang in Minuten fuer Dashboard und Widget
 assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
 // Urteil beachtet die Koerperwerte: zwei auffaellige Werte (HRV, Schlaf) kippen ein sonst gruenes Urteil
 {
@@ -191,10 +193,10 @@ assert.equal(trn.split.target, null); // ohne TRI_SPLIT_TARGET kein Soll, nichts
 assert.deepEqual(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "20,45,35" }).split.target, { swim: 20, bike: 45, run: 35 });
 assert.equal(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "kaputt" }).split.target, null);
 // Umfang der letzten 4 vollen Wochen und Entwicklung gegen die 4 davor: ohne 4 volle Vergleichswochen kein Trend, nie 0 erfunden
-for (const k of ["swim", "bike", "run"]) assert.equal(typeof trn.sports[k].km4, "number");
+for (const k of ["swim", "bike", "run"]) assert.equal(typeof trn.sports[k].min4, "number");
 assert.equal(trn.sports.run.trendPct, null);
-const wk = (load, km, o = {}) => ({ complete: true, load, km, plannedLoad: null, intensity: { easy: 100, mid: 0, hard: 0 }, bySport: Object.fromEntries(["run", "bike", "swim", "strength", "other"].map((s) => [s, { count: 1, load: 0, km: s === "run" ? km : 0, minutes: 0, plannedLoad: null }])), ...o });
-const dd = (extra) => ({ today: "2026-09-30", weeks: [wk(100, 20), wk(100, 20), wk(100, 20), wk(100, 20), wk(250, 60), { ...wk(0, 0), complete: false }], daily: [{ date: "2026-09-29", load: 50 }, { date: "2026-09-30", load: 0 }], wellness: [], cravings: [], ...extra });
+const wk = (load, runMin, o = {}) => ({ complete: true, load, runMin, plannedLoad: null, intensity: { easy: 100, mid: 0, hard: 0 }, bySport: Object.fromEntries(["run", "bike", "swim", "strength", "other"].map((s) => [s, { count: 1, load: 0, minutes: s === "run" ? runMin : 0, plannedLoad: null }])), ...o });
+const dd = (extra) => ({ today: "2026-09-30", weeks: [wk(100, 120), wk(100, 120), wk(100, 120), wk(100, 120), wk(250, 360), { ...wk(0, 0), complete: false }], daily: [{ date: "2026-09-29", load: 50 }, { date: "2026-09-30", load: 0 }], wellness: [], cravings: [], ...extra });
 const tf = trainingFindings(dd());
 assert.equal(tf[0].sev, 2); // steiler Anstieg der Belastung und des Laufumfangs
 assert.ok(tf[0].act && tf.some((f) => /Laufumfang/.test(f.short)));
