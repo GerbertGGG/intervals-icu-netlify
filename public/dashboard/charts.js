@@ -98,7 +98,7 @@
     const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.55, 46);
     items.forEach((w, i) => {
       const x = L + slot * i + (slot - bw) / 2;
-      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (Plan ${U.fmt(w.plan)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
+      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (Plan ${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
       if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
         // Laufende Woche: Ist ist noch unvollständig, über dem Plan-Strich steht das Wochenziel, darunter der bisherige Wert

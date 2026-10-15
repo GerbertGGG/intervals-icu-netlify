@@ -162,7 +162,7 @@ export function sportOf(a) {
 }
 
 function emptySports() {
-  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null }]));
+  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null, plannedMin: null }]));
 }
 
 // Intensitaetsverteilung aus den Zonenzeiten, die Intervals.icu je Einheit mitliefert: Rad nach Power-Zonen,
@@ -185,7 +185,7 @@ function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
   const weeks = new Map();
   for (let d = firstMonday; d <= todayIso; d = addDays(d, 7)) {
-    weeks.set(d, { weekStart: d, km: 0, load: 0, runs: 0, plannedKm: null, plannedLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
+    weeks.set(d, { weekStart: d, km: 0, runMin: 0, load: 0, runs: 0, plannedKm: null, plannedRunMin: null, plannedLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
   }
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
@@ -201,6 +201,7 @@ function buildWeeks(todayIso, activities, events) {
     w.load += load;
     if (isRun(a)) {
       w.km += (num(a?.distance) ?? 0) / 1000;
+      w.runMin += (num(a?.moving_time) ?? 0) / 60;
       w.runs += 1;
     }
   }
@@ -210,6 +211,12 @@ function buildWeeks(todayIso, activities, events) {
     if (!w || String(e?.category ?? "").toUpperCase() !== "WORKOUT") continue;
     const km = num(e?.distance_target ?? e?.distance);
     const load = num(e?.icu_training_load ?? e?.load_target);
+    const secs = num(e?.moving_time);
+    if (secs != null && secs > 0) {
+      const spm = w.bySport[sportOf(e)];
+      spm.plannedMin = (spm.plannedMin ?? 0) + secs / 60;
+      if (sportOf(e) === "run") w.plannedRunMin = (w.plannedRunMin ?? 0) + secs / 60;
+    }
     if (km != null) {
       w.plannedKm = (w.plannedKm ?? 0) + km / 1000;
       const spk = w.bySport[sportOf(e)];
@@ -225,11 +232,13 @@ function buildWeeks(todayIso, activities, events) {
   return [...weeks.values()].map((w) => ({
     ...w,
     km: r1(w.km),
+    runMin: Math.round(w.runMin),
+    plannedRunMin: w.plannedRunMin != null ? Math.round(w.plannedRunMin) : null,
     load: Math.round(w.load),
     plannedKm: w.plannedKm != null ? r1(w.plannedKm) : null,
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
     intensity: { easy: Math.round(w.intensity.easy), mid: Math.round(w.intensity.mid), hard: Math.round(w.intensity.hard) },
-    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null }])),
+    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null, plannedMin: v.plannedMin != null ? Math.round(v.plannedMin) : null }])),
   }));
 }
 

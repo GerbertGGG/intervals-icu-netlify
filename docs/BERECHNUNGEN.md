@@ -534,7 +534,7 @@ Gewichteter Schnitt der **letzten zwei Nächte** (letzte Nacht 60 %, davor 40 %)
 ### 7.1 Wochen und Tage (`dashboard.js`)
 
 - `HISTORY_DAYS = 56`; Wochen von dem Montag an, der `heute − 55` enthält, bis heute. `complete = (Montag + 6) < heute`.
-- Je Woche und Sportart: `count`, `minutes = moving_time/60` (gerundet), `km`, `load`; Laufumfang `km` zählt nur Läufe.
+- Je Woche und Sportart: `count`, `minutes = moving_time/60` (gerundet), `km`, `load`; Laufumfang `km` zählt nur Läufe; dazu `runMin` (Bewegungszeit der Läufe) und `plannedRunMin` bzw. je Sportart `plannedMin` aus `moving_time` der geplanten Workouts. Dashboard und Widget zeigen den Umfang in Stunden (`runMin`, `minutes`), km nur noch bei Pace, Renndistanzen und langen Läufen.
 - Plan: nur Kalender-Einträge der Kategorie `WORKOUT`. `plannedKm = Σ (distance_target ?? distance)/1000`, `plannedLoad = Σ (icu_training_load ?? load_target)`.
 - Tages-Heatmap: Tageslast = Σ `activityLoad`; leere Tage 0.
 
