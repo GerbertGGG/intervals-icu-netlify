@@ -473,7 +473,8 @@ function dayTile(row, TW, iso, g, upcoming) {
   t.addSpacer(5);
   text(t, main, FS.sm, { bold: true, color: race ? COL.race : items && !items.length ? COL.muted : COL.text, minScale: 0.7 });
   t.addSpacer();
-  if (items && items.length && !race) symbol(t, SPORT_SYMBOL[items[0].sport] || SPORT_SYMBOL.other, 11, new Color(sportHex(items[0].sport)));
+  // Ein Symbol je Sportart des Tages (hoechstens zwei), sonst sieht Kraft + Rad wie reine Kraft aus
+  if (items && items.length && !race) [...new Set(items.map((e) => e.sport))].slice(0, 2).forEach((sp, k) => { if (k) t.addSpacer(3); symbol(t, SPORT_SYMBOL[sp] || SPORT_SYMBOL.other, 11, new Color(sportHex(sp))); });
 }
 
 // Senkrechter Streifen (xa bis xb) aus einer Kapsel als Pfad: so wird eine Kapsel in Spalten geteilt (z. B. Rad und Kraft)
@@ -639,7 +640,8 @@ function buildWidget(res) {
     if (meta) text(tc, meta, FS.xs, { color: COL.muted });
   } else {
     text(tc, "Keine Einheit geplant", FS.lg, { bold: true, minScale: 0.7 });
-    if (d.plan.next) text(tc, `Nächste: ${dayShort(d.plan.next.date)} ${dateShort(d.plan.next.date)} · ${d.plan.next.name || "Einheit"}`, FS.xs, { color: COL.muted, minScale: 0.8 });
+    const nx = d.plan.next;
+    if (nx) text(tc, `Nächste: ${dayShort(nx.date)} ${dateShort(nx.date)} · ${nx.items && nx.items.length ? nx.items.map(tileSub).join(" + ") : nx.name || "Einheit"}`, FS.xs, { color: COL.muted, minScale: 0.6 });
   }
   tr.addSpacer();
   // Aufbau der geplanten Einheit: Breite = Dauer, Hoehe = Intensitaet, Arbeitsbloecke in Sportfarbe
