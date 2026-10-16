@@ -84,7 +84,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
         var data = Application.Storage.getValue("d") as Dictionary?;
         if (data == null) {
-            drawLine(dc, px(READY_Y), [["dot", px(7), TER], ["gap", px(9)], ["t", "Keine Daten", SEC, _small]]);
+            drawLine(dc, px(READY_Y), [["dot", px(7), TER], ["gap", px(9)], ["t", "Keine Daten" + errSuffix(), SEC, _small]]);
             return;
         }
         drawWeek(dc, data);
@@ -245,7 +245,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var stale = isStale(data);
         // Ampel nicht nur über die Farbe: Kreis = bereit, Dreieck = mit Vorsicht, Quadrat = ruhig angehen (wie Dashboard und Widget)
         var shape = stale || "ok".equals(rd) || !("warn".equals(rd) || "bad".equals(rd)) ? ["dot", px(7), stale ? TER : color] : ("warn".equals(rd) ? ["tri", px(17), color] : ["sq", px(14), color]);
-        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" : word, stale ? SEC : FG, _small]] as Array<Array>;
+        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale ? SEC : FG, _small]] as Array<Array>;
         var w = data.get("w") as Dictionary?;
         if (w != null) {
             // Stichwort aus "Was auffällt" (z. B. "Eiweiß"); ohne Stichwort (ältere Worker-Version) "Hinweis"
@@ -733,6 +733,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var t = v.toFloat().format(fmt);
         var i = t.find(".");
         return i != null ? t.substring(0, i) + "," + t.substring(i + 1, t.length()) : t;
+    }
+
+    // Letzter Fehlercode des Abrufs (" -104"), leer ohne Fehler
+    private function errSuffix() as String {
+        var e = Application.Storage.getValue("e");
+        return e instanceof Lang.Number ? " " + e.toString() : "";
     }
 
     private function isStale(data as Dictionary?) as Boolean {
