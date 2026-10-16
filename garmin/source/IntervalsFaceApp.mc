@@ -23,11 +23,15 @@ class IntervalsFaceApp extends Application.AppBase {
         return [ new SyncDelegate() ];
     }
 
-    // Antwort des Hintergrunddienstes: bei Fehler kommt null, dann bleibt der letzte Stand stehen
+    // Antwort des Hintergrunddienstes: bei Fehler kommt { "err" => Code }, dann bleibt der letzte Stand stehen
+    // und der Code wird neben dem "!" angezeigt
     function onBackgroundData(data as Application.PersistableType) as Void {
-        if (data instanceof Lang.Dictionary) {
+        if (data instanceof Lang.Dictionary && data.hasKey("err")) {
+            Application.Storage.setValue("e", data.get("err"));
+        } else if (data instanceof Lang.Dictionary) {
             data.put("at", Time.now().value());
             Application.Storage.setValue("d", data);
+            Application.Storage.deleteValue("e");
         }
         WatchUi.requestUpdate();
     }
