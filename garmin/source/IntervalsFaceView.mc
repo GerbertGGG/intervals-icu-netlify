@@ -29,7 +29,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const KCAL_OVER = 150;   // so viele kcal über dem Ziel, bevor Essen orange wird
     const PROT_MIN = 0.8;    // Eiweiß-Anteil am Ziel, unter dem Essen ab PROT_HOUR orange wird
     const PROT_HOUR = 18;
-    const RAIN = 0x64D2FF;
+    // Regenwahrscheinlichkeit in vier Stufen von sehr hellem bis dunklem Blau: je dunkler, desto sicherer Regen
+    const RAIN_1 = 0xCDEEFF; // 30-49 %
+    const RAIN_2 = 0x64D2FF; // 50-69 %
+    const RAIN_3 = 0x2F8CFF; // 70-84 %
+    const RAIN_4 = 0x1E4FE6; // ab 85 %
     const SUN = 0x7F702A;    // gedämpftes Gold für die hellen Stunden im Wetterring, kräftiges Gelb ist Laufen
     const STALE_SECS = 3600;
     const TIME_Y = 192;
@@ -338,7 +342,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden.
         // Der Ring ist ein 12-Stunden-Zifferblatt: jede Stunde ein Bogen an ihrer Uhrposition, blau, wenn es dann regnen kann,
-        // je kräftiger, desto wahrscheinlicher. Blau auch im Mono-Modus, denn hier bedeutet die Farbe etwas.
+        // von sehr hell (30 %) bis dunkel (ab 85 %), siehe rainColor. Blau auch im Mono-Modus, denn hier bedeutet die Farbe etwas.
         var temp = "--";
         var chances = new Array<Number?>[12];
         var now = Time.now().value();
@@ -394,7 +398,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         // Selbst gerechnet aus dem Standort (siehe sunNow), Weather.getSunrise und der Standort der Wetterdaten fehlen auf der Uhr oft.
         var sun = sunNow(cond, now);
         rainRing(dc, px(350), px(COMP_Y), px(34), px(6), chances, sun, now);
-        // Prozentzahl in Blau ab 30 %, ab da zeigt auch der Ring Regen. Darunter gilt es als trocken und dort steht der
+        // Prozentzahl ab 30 % im Blau ihrer Stufe, ab da zeigt auch der Ring Regen. Darunter gilt es als trocken und dort steht der
         // nächste Sonnenauf- oder -untergang, passend zum goldenen Bogen
         var sub = maxChance >= 0 ? maxChance.toString() + " %" : "";
         if (maxChance < 30) {
@@ -406,7 +410,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 }
             }
         }
-        labels(dc, 350, "WETTER", temp, sub, maxChance >= 30 ? RAIN : FG);
+        labels(dc, 350, "WETTER", temp, sub, maxChance >= 30 ? rainColor(maxChance) : FG);
     }
 
     // Ring mit Fortschritt; der Grundring ist die eigene Farbe abgedunkelt, damit auch ein leerer Ring farbig ist
@@ -468,7 +472,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // Wetterring: grauer Grundring wie bei den anderen Komplikationen, darauf in gedämpftem Gold die hellen Stunden
     // (Sonnenaufgang bis -untergang) der nächsten 12 Stunden und darüber ein blauer Bogen für jede Stunde mit mindestens
-    // 30 % Regenwahrscheinlichkeit (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert die aktuelle
+    // 30 % Regenwahrscheinlichkeit in der Farbe ihrer Stufe (Bogen i liegt zwischen i und i+1 Uhr). Ein weißer Strich markiert die aktuelle
     // Uhrzeit, dort beginnt und endet die Zeitleiste. sun: [Aufgang, Untergang, Aufgang, Untergang] in Sekunden.
     private function rainRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, chances as Array<Number?>, sun as Array<Number>, now as Number) as Void {
         dc.setPenWidth(pen);
@@ -492,7 +496,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             if (c == null || c < 30) {
                 continue;
             }
-            dc.setColor(blend(TRACK, RAIN, 0.35 + 0.65 * clamp01(c / 100.0)), Graphics.COLOR_BLACK);
+            dc.setColor(rainColor(c), Graphics.COLOR_BLACK);
             dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, norm(90 - i * 30), norm(90 - (i + 1) * 30));
         }
         var clock = System.getClockTime();
@@ -508,6 +512,20 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(FG, Graphics.COLOR_BLACK);
         dc.setPenWidth(px(2));
         dc.drawLine(cx + r0 * sin, cy - r0 * cos, cx + r1 * sin, cy - r1 * cos);
+    }
+
+    // Feste Stufen statt eines Verlaufs, damit man auf dem kleinen Ring 40 % und 80 % sicher auseinanderhält
+    private function rainColor(c as Number) as Number {
+        if (c >= 85) {
+            return RAIN_4;
+        }
+        if (c >= 70) {
+            return RAIN_3;
+        }
+        if (c >= 50) {
+            return RAIN_2;
+        }
+        return RAIN_1;
     }
 
     // Wetterlagen, bei denen es gerade regnet, schneit oder hagelt
