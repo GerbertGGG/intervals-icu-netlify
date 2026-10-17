@@ -47,6 +47,11 @@ test("Dauer: EGYM-Angabe, sonst Saetze, sonst nur geschaetzte Spanne, sonst kein
   const ex = (min) => ({ completedAt: `2026-10-04T16:${String(min).padStart(2, "0")}:00Z`, exercise: { machineBased: true }, attributes: {} });
   const d4 = strengthDays([{ code: "u", completedAt: "2026-10-04T16:20:00Z", exercises: [ex(0), ex(5), ex(10), ex(15), ex(20)] }]);
   assert.equal(d4[0].minutes, 25); // 20 min Spanne + mittlerer Abstand 5 min
+  // Zirkel 9 Geraete x 3 Runden: EGYM stempelt erst nach dem letzten Satz, die Spanne zeigt nur die letzte Runde (~12 min)
+  const station = (i, n) => ({ completedAt: new Date(Date.parse("2026-10-05T17:00:00Z") + i * 80000).toISOString(), exercise: { machineBased: true }, attributes: { sets_of_reps_and_weight_or_duration_and_weight: Array.from({ length: n }, () => set(20, 40)) } });
+  const circuit = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => station(i, i === 4 ? 6 : 3)); // Rotary Torso: 6 Saetze, eine Station je Runde
+  const d5 = strengthDays([{ code: "v", completedAt: "2026-10-05T17:11:00Z", exercises: circuit }]);
+  assert.deepEqual([d5[0].minutes, d5[0].durationSource], [32, "estimate"]); // 9 x 3 x 70 s = 31,5 min
 });
 
 test("Woche: Saetze gegen Ziel 60, Serie, Wochentage", () => {
