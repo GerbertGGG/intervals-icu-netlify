@@ -11,6 +11,9 @@ import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioA
 // per EGYM_WEEKLY_GOAL_SETS aenderbar; goalSource sagt, was gilt. Die Minuten bleiben als Information.
 // Die Dauer eines Tages kommt aus den Angaben von EGYM (Dauer der Uebungen, sonst der Saetze); fehlen sie, ist es nur
 // die Spanne zwischen erster und letzter Uebung plus Zeit fuer die letzte Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
+// EGYM stempelt eine Uebung erst nach ihrem letzten Satz: Beim Zirkel deckt die Spanne so nur die letzte Runde ab. Die
+// Schaetzung ist daher ab zwei Geraeten mindestens Geraete mal Runden mal STATION_SEC (EGYM-Zirkel: 70 s je Station); Runden ist die
+// haeufigste Satzzahl je Geraet (Rotary Torso mit 6 Saetzen, je Seite einer, bleibt so eine Station je Runde).
 const DEFAULT_WEEKLY_GOAL_SETS = 60;
 const WEEKS = 6;
 // Fuer Bestwerte reicht der Blick weiter zurueck als der Wochenverlauf; die API wird in Fenstern von 28 Tagen abgefragt
@@ -75,6 +78,16 @@ export function secondsOf(attr) {
 }
 
 const LAST_EXERCISE_MAX_MIN = 5;
+const STATION_SEC = 70;
+
+// Haeufigste Satzzahl je Geraet (bei Gleichstand die kleinere)
+function roundsOf(setCounts) {
+  const freq = new Map();
+  for (const n of setCounts) if (n > 0) freq.set(n, (freq.get(n) ?? 0) + 1);
+  let best = 0;
+  for (const [n, c] of freq) if (c > (freq.get(best) ?? 0) || (c === freq.get(best) && n < best)) best = n;
+  return best;
+}
 
 // Eine Zeile je Kraft-Tag: Datum (Berlin), Saetze, Volumen, Dauer in Minuten samt Herkunft ("egym" oder "estimate")
 export function strengthDays(workouts) {
@@ -85,10 +98,11 @@ export function strengthDays(workouts) {
     const exs = (w.exercises ?? []).filter(isStrengthExercise);
     if (!exs.length) continue;
     const date = isoDateBerlin(new Date(at));
-    const d = days.get(date) ?? { date, sets: 0, volumeKg: 0, sec: 0, stamps: [] };
+    const d = days.get(date) ?? { date, sets: 0, volumeKg: 0, sec: 0, stamps: [], setCounts: [] };
     for (const ex of exs) {
       const sets = setsOf(ex);
       d.sets += sets.length;
+      d.setCounts.push(sets.length);
       d.volumeKg += sets.reduce((a, s) => a + setVolumeKg(s), 0);
       d.sec += secondsOf(ex.attributes?.duration) || sets.reduce((a, s) => a + secondsOf(s?.duration), 0);
       const t = Date.parse(ex.completedAt ?? at);
@@ -96,13 +110,16 @@ export function strengthDays(workouts) {
     }
     days.set(date, d);
   }
-  return [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map(({ stamps, sec, ...d }) => {
+  return [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map(({ stamps, sec, setCounts, ...d }) => {
     if (sec > 0) return { ...d, minutes: Math.round(sec / 60), durationSource: "egym" };
     const span = stamps.length > 1 ? (Math.max(...stamps) - Math.min(...stamps)) / 60000 : 0;
     // Die Spanne endet mit dem Abschluss der letzten Uebung, deren eigene Zeit fehlt: dafuer kommt der mittlere Abstand
     // zwischen zwei Uebungen dazu, hoechstens LAST_EXERCISE_MAX_MIN
-    const last = Math.min(span / (stamps.length - 1), LAST_EXERCISE_MAX_MIN);
-    return span >= 1 ? { ...d, minutes: Math.round(span + last), durationSource: "estimate" } : { ...d, minutes: null, durationSource: null };
+    const last = span >= 1 ? Math.min(span / (stamps.length - 1), LAST_EXERCISE_MAX_MIN) : 0;
+    const stations = setCounts.filter((n) => n > 0).length;
+    const circuit = stations > 1 ? (stations * roundsOf(setCounts) * STATION_SEC) / 60 : 0;
+    const est = Math.max(span >= 1 ? span + last : 0, circuit);
+    return est >= 1 ? { ...d, minutes: Math.round(est), durationSource: "estimate" } : { ...d, minutes: null, durationSource: null };
   });
 }
 
