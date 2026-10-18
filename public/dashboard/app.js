@@ -271,7 +271,7 @@ function renderWeekPreview(d, tile) {
   return tile(`Woche ab ${fmtDate(monday)}`, `${head}<div class="wk-grid">${days.map(cell).join("")}</div>`, "span4", ["#form", "Wochenverlauf und Vergleich"]);
 }
 
-/* ---------- 2 · Rennplan: Zielstaffel, Splits, Verpflegung, Checkliste ---------- */
+/* ---------- 2 · Rennplan: Zielzeiten, Splits, Verpflegung, Checkliste ---------- */
 // Realistische Spanne = die beiden verbleibenden Rechnungen (aus VDOT, aus 10-km-Bestzeit). Beides sind Modellwerte
 // nach Daniels; ohne Lauf ab 16 km in den letzten 8 Wochen gibt es keinen Beleg für die Distanz, deshalb +3 % auf die Obergrenze.
 const RANGE_KEYS = ["vdot", "best-10"];
