@@ -726,6 +726,9 @@ function buildWeekTargets(w, W, d, wk, res, nLines, withOpen = true) {
   const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmt(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmt(sum(zeit, 2))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
   if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über TSS-Grenze`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
   else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ≤ ${fmt(sum(tss, 2))}`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  // Ohne Kapseln (Einheit heute) steht Kraft als kleine Zeile hier, sonst taucht sie nirgends auf
+  const st = withOpen ? null : (wk.open || []).find((o) => o.s === "strength");
+  if (st) text(rc, st.v > 0 ? `Kraft noch ${fmt(st.v)} ${st.unit}` : "Kraft ✓", FS.xs, { bold: true, color: new Color(sportHex("strength")), minScale: 0.7 });
   text(rc, [wk.tsb != null ? `TSB ${signed(wk.tsb)}` : null, wk.lastTotal != null ? `Vorwoche ${fmt(wk.lastTotal)} TSS` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.6 });
   row.addSpacer();
   // Offen: eine Kapsel je Sportart, nur wenn Platz ist (ein langer Hinweis hat Vorrang)
