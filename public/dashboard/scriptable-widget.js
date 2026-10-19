@@ -629,7 +629,10 @@ function buildWidget(res) {
   text(tx, why, FS.sm, { lines: nLines + 1, minScale: 0.85 });
   w.addSpacer(10);
 
-  // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit
+  // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit.
+  // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
+  const wk = d.week || {};
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, nLines);
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -648,26 +651,18 @@ function buildWidget(res) {
   if (p && p.steps && p.steps.length) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
   w.addSpacer(10);
 
+  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, nLines);
+
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
-  const wk = d.week || {};
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
   const KW = Math.round(W * 0.6), KH = Math.floor((KW - 2 * CAPS_PAD - 24) / 7); // Kreisdurchmesser passend zur Breite
   if (wk.days) { const im = wr.addImage(capsImage(KW, KH, wk.days, d.today)); im.imageSize = new Size(KW, CAPS_PAD + KH + 2 + CAPS_LABEL_H); }
   wr.addSpacer();
   const wc = wr.addStack(); wc.layoutVertically();
   const right = (fn) => { const s = wc.addStack(); s.addSpacer(); fn(s); };
-  // Wochenziele des Coaches: Zeit ist das Ziel (Minuten der Sportarten mit Zeitziel), TSS nur Obergrenze. Liegt eine
-  // Sportart darueber, steht sie in Warnfarbe darunter, sonst die TSS der Woche
-  const tg = (wk.targets || []).filter((t) => t.goal > 0), over = (wk.targets || []).filter((t) => t.over);
-  if (tg.length) {
-    right((s) => { s.bottomAlignContent(); num(s, fmt(tg.reduce((a, t) => a + t.min, 0)), FS.xl); text(s, ` / ${fmt(tg.reduce((a, t) => a + t.goal, 0))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
-    if (over.length) right((s) => text(s, `TSS über Grenze: ${over.map((t) => SPORTS[t.s][0]).join(", ")}`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 }));
-    else right((s) => text(s, `${fmt(wk.total)} TSS`, FS.xs, { color: COL.muted, minScale: 0.7 }));
-  } else {
-    right((s) => { s.bottomAlignContent(); num(s, fmt(wk.total), FS.xl); text(s, wk.goal ? ` / ${fmt(wk.goal)} TSS` : " TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
-    // Vorwoche und Frische in einer kleinen Zeile: die Frische ist nur eine berechnete Zahl und soll nicht dominieren
-    if (wk.lastTotal != null) right((s) => text(s, `Vorwoche ${fmt(wk.lastTotal)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
-  }
+  right((s) => { s.bottomAlignContent(); num(s, fmt(wk.total), FS.xl); text(s, wk.goal ? ` / ${fmt(wk.goal)} TSS` : " TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
+  // Vorwoche und Frische in einer kleinen Zeile: die Frische ist nur eine berechnete Zahl und soll nicht dominieren
+  if (wk.lastTotal != null) right((s) => text(s, `Vorwoche ${fmt(wk.lastTotal)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
   if (wk.tsb != null) right((s) => text(s, `TSB ${signed(wk.tsb)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
   // Ohne Kapseln (alte Cache-Daten) der Balken gegen das Wochenziel
   if (wk.goal && !wk.days) { w.addSpacer(4); progressBar(w, W, wk.total / wk.goal, ACCENT_HEX); }
@@ -680,6 +675,68 @@ function buildWidget(res) {
   const TW = Math.floor((W - 12) / 3);
   const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
   for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), g, d.plan.upcoming);
+  notice(w, res, d);
+  w.addSpacer();
+  return w;
+}
+
+// Ringe im Apple-Stil wie auf der Uhr: aussen Rad, Mitte Lauf, innen Schwimmen; Grundring in der Sportfarbe gedimmt,
+// Fortschritt ab 12 Uhr. Mit warn laeuft der Ueberschuss ueber der Vorgabe orange als zweite Runde weiter (TSS-Grenze).
+// rings: [[Sportart, erledigt, Vorgabe], ...]. Kreisboegen als Linienzug, DrawContext kennt keine Boegen.
+function ringsImage(S, rings, warn) {
+  const dc = newCtx(S, S), c = S / 2, pen = Math.max(4, S * 0.085), step = pen * 1.3;
+  const R = { bike: c - pen / 2 - 1, run: c - pen / 2 - 1 - step, swim: c - pen / 2 - 1 - 2 * step };
+  const arc = (r, f, hex, a = 1) => {
+    const n = Math.max(2, Math.ceil(f * 90)), pts = [];
+    for (let i = 0; i <= n; i++) { const t = -Math.PI / 2 + (2 * Math.PI * f * i) / n; pts.push(new Point(c + r * Math.cos(t), c + r * Math.sin(t))); }
+    const p = new Path(); p.addLines(pts); dc.addPath(p); dc.setStrokeColor(new Color(hex, a)); dc.setLineWidth(pen); dc.strokePath();
+    // runde Enden
+    for (const q of f < 1 ? [pts[0], pts[pts.length - 1]] : []) { const e = new Path(); e.addEllipse(new Rect(q.x - pen / 2, q.y - pen / 2, pen, pen)); dc.addPath(e); dc.setFillColor(new Color(hex, a)); dc.fillPath(); }
+  };
+  for (const [k, v, goal] of rings) {
+    const r = R[k];
+    if (r == null || !(goal > 0)) continue;
+    const t = new Path(); t.addEllipse(new Rect(c - r, c - r, 2 * r, 2 * r)); dc.addPath(t); dc.setStrokeColor(new Color(sportHex(k), 0.22)); dc.setLineWidth(pen); dc.strokePath();
+    const f = v / goal;
+    if (f > 0) arc(r, Math.min(f, 1), sportHex(k));
+    if (warn && f > 1) arc(r, Math.min(f - 1, 1), OVER_HEX);
+  }
+  return dc.getImage();
+}
+
+// Woche im grossen Widget mit Wochenzielen des Coaches: links die Ringe ZEIT und TSS, rechts Minuten gegen das Ziel, ob eine
+// Sportart ueber ihrer TSS-Grenze liegt, und die Frische; darunter je Sportart eine Kapsel mit dem, was noch offen ist
+// (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Ersetzt Wochenkreise mit Plan und die Tageskacheln.
+function buildWeekTargets(w, W, d, wk, res, nLines) {
+  const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
+  const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
+  const over = tss.filter((x) => x[1] > x[2]);
+  header(w, W, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, null);
+  w.addSpacer(5);
+  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 10;
+  const RZ = 66, RT = 48;
+  const iz = row.addImage(ringsImage(RZ, zeit, false)); iz.imageSize = new Size(RZ, RZ);
+  if (tss.length) { const it = row.addImage(ringsImage(RT, tss, true)); it.imageSize = new Size(RT, RT); }
+  const rc = row.addStack(); rc.layoutVertically();
+  const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmt(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmt(sum(zeit, 2))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
+  if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über TSS-Grenze`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
+  else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ≤ ${fmt(sum(tss, 2))}`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  text(rc, [wk.tsb != null ? `TSB ${signed(wk.tsb)}` : null, wk.lastTotal != null ? `Vorwoche ${fmt(wk.lastTotal)} TSS` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.6 });
+  row.addSpacer();
+  // Offen: eine Kapsel je Sportart, nur wenn Platz ist (ein langer Hinweis hat Vorrang)
+  if (nLines <= 4 && (wk.open || []).length) {
+    w.addSpacer(8);
+    const n = wk.open.length, gap = 6, CW = Math.floor((W - gap * (n - 1)) / n);
+    const chips = w.addStack(); chips.size = new Size(W, 0); chips.spacing = gap;
+    for (const o of wk.open) {
+      const hex = sportHex(o.s), done = !(o.v > 0);
+      const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
+      const pill = c.addStack(); pill.size = new Size(CW, 26); pill.cornerRadius = 13; pill.centerAlignContent();
+      pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
+      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? `${fmt(o.v)}′` : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.7 }); pill.addSpacer();
+      const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, SPORTS[o.s][0], FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
+    }
+  }
   notice(w, res, d);
   w.addSpacer();
   return w;

@@ -593,6 +593,15 @@ console.log("zones from intervals ok");
   assert.equal(tg.find((t) => t.s === "swim").max, null); // Schwimmen nur ueber Zeit
   assert.deepEqual(buildWidget(dt).week.targets, tg);
   assert.equal(buildWidget(dt).week.goal, null); // mit Wochenzielen kein TSS-Soll aus geplanten Workouts
+  // Grosses Widget: Ringe und was noch offen ist wie auf der Uhr; Kraft nur mit Block-Ziel
+  const wkO = buildWidget({ ...dt, seasonBlock: { goals: [{ key: "strength", weekGoal: 60, calWeek: { count: 34 } }] } }).week;
+  assert.deepEqual(wkO.rings.zeit.map((x) => x[0]), ["run", "swim"]);
+  assert.deepEqual(wkO.rings.tss, [["run", run.tss, 85]]);
+  assert.deepEqual(wkO.open.map((x) => [x.s, x.unit]), [["run", "min"], ["swim", "min"], ["strength", "Sätze"]]);
+  assert.equal(wkO.open[0].v, Math.max(0, 90 - run.min));
+  assert.equal(wkO.open[2].v, 26);
+  assert.equal(wkO.daysLeft, 5); // Mittwoch: Mi bis So
+  assert.equal(buildWidget(d).week.rings, undefined);
   assert.deepEqual(weekTargets(d.weeks.at(-1)), []);
   // Training-Ansicht: Zeitziel und TSS-Obergrenze je Disziplin
   const trn = buildWidgetTraining(dt).sports;

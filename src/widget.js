@@ -79,6 +79,18 @@ export function weekTargets(week) {
   }).filter(Boolean);
 }
 
+// Woche fuer das grosse Widget wie auf der Uhr: Ringe ZEIT (Minuten gegen das Zeitziel) und TSS (gegen die Obergrenze),
+// je [Sportart, erledigt, Vorgabe] fuer Rad, Lauf, Schwimmen; open = was noch fehlt (Minuten je Sportart, Kraft in Saetzen
+// aus dem Block-Ziel), v = 0 heisst erreicht; daysLeft = Tage bis Sonntag inkl. heute. Ohne Zeitziele leer.
+function weekOpen(d, week) {
+  const targets = weekTargets(week), zeit = watchRings(targets, "min", "goal");
+  if (!zeit.length) return {};
+  const open = ["run", "bike", "swim"].map((k) => zeit.find((x) => x[0] === k)).filter(Boolean).map(([s, done, goal]) => ({ s, v: Math.max(0, goal - done), unit: "min" }));
+  const st = strengthWeek(d.seasonBlock?.goals?.find((g) => g.key === "strength"));
+  if (st) open.push({ s: "strength", v: Math.max(0, st.of - st.v), unit: "Sätze" });
+  return { rings: { zeit, tss: watchRings(targets, "tss", "max") }, open, daysLeft: 7 - dayIndex(d.today) };
+}
+
 export function buildWidget(d, env = {}) {
   const week = d.weeks[d.weeks.length - 1];
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
@@ -105,8 +117,9 @@ export function buildWidget(d, env = {}) {
     readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
     // next.items: alle Einheiten des naechsten Tages mit Plan (z. B. Kraft und Rad am selben Tag)
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },
-    // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt
-    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week) },
+    // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt.
+    // rings/open/daysLeft: Woche wie auf der Uhr (Ringe ZEIT und TSS, was noch offen ist), nur mit Zeitzielen
+    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week) },
     // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
     focus: topFinding(d),
     // Hinweis des Coaches, nur solange er frisch ist; hat im Widget Vorrang vor focus und dem allgemeinen Warum
