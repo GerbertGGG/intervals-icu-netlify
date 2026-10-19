@@ -19,16 +19,23 @@ export function parseBlockWeeks(name) {
   return m ? Number(m[1]) : null;
 }
 
-// Regeln des Coaches fuer den Block: ein Abschnitt, der mit einer Zeile "Regeln" (oder "Trainingsregeln") beginnt; jede
-// folgende Zeile ist eine Regel ("- Laufen: HF nicht über 125"). Der Abschnitt endet an der ersten Leerzeile nach einer Regel.
+// Regeln des Coaches fuer den Block: ein Abschnitt, der mit einer Zeile "Regeln", "Trainingsregeln" oder "Fixpunkte" beginnt
+// (Zusatz in Klammern und Doppelpunkt erlaubt, z.B. "FIXPUNKTE (meine Zusagen)"); jede folgende Zeile ist eine Regel.
+// Ist die erste Regel ein Spiegelstrich, zaehlen nur Spiegelstriche, ein Satz danach gehoert nicht mehr dazu.
+// Der Abschnitt endet an der ersten Leerzeile nach einer Regel.
+const RULES_HEAD = /^(?:(?:trainings)?regeln|fixpunkte)\s*(?:\([^)]*\))?\s*:?$/i;
+const BULLET = /^(?:[-•*–]|\d+[.)])\s*/;
 export function parseBlockRules(text) {
   const lines = String(text ?? "").replace(/<br\s*\/?>/gi, "").split("\n").map((l) => l.trim());
-  const at = lines.findIndex((l) => /^(?:trainings)?regeln\s*:?$/i.test(l));
+  const at = lines.findIndex((l) => RULES_HEAD.test(l));
   if (at < 0) return [];
   const out = [];
+  let bullets = null;
   for (const l of lines.slice(at + 1)) {
     if (!l) { if (out.length) break; continue; }
-    out.push(l.replace(/^(?:[-•*–]|\d+[.)])\s*/, ""));
+    if (bullets == null) bullets = BULLET.test(l);
+    else if (bullets && !BULLET.test(l)) break;
+    out.push(l.replace(BULLET, ""));
   }
   return out.filter(Boolean);
 }
