@@ -9,7 +9,7 @@ import Toybox.Time.Gregorian;
 import Toybox.Weather;
 import Toybox.WatchUi;
 
-// Zifferblatt im Apple-Stil: Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
+// Zifferblatt im Apple-Stil (mit Wochenzielen oben stattdessen die offenen Minuten je Sportart und Kraft): Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
 // "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen und gedämpftes Gold für die hellen Stunden. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche
 // als gerade Reihe, dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
 // unten Renn-Countdown und Blockwoche als gerade Zeile.
@@ -91,8 +91,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             drawLine(dc, px(READY_Y), [["dot", px(7), TER], ["gap", px(9)], ["t", "Keine Daten" + errSuffix(), SEC, _small]]);
             return;
         }
-        drawWeek(dc, data);
-        drawNext(dc, data);
+        // Mit Wochenzielen des Coaches oben, was noch offen ist, statt der Wochenreihe und der nächsten Einheit
+        var rz = data.get("rz") as Array?;
+        if (rz != null && rz.size() > 0) {
+            drawOpen(dc, data, rz);
+        } else {
+            drawWeek(dc, data);
+            drawNext(dc, data);
+        }
         drawReady(dc, data);
         drawComplications(dc, data);
         drawStatusLine(dc, data);
@@ -205,6 +211,67 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return SEC;
     }
 
+    // ---- Oben mit Wochenzielen: was diese Woche noch offen ist ------------------------
+    // Je Sportart eine Kapsel mit den offenen Minuten bis zum Zeitziel (Lauf, Rad, Schwimmen), dazu Kraft mit den offenen
+    // Sätzen bis zum Wochenziel. Dunkel mit Zahl in Sportfarbe = noch offen, voll in Sportfarbe mit Haken = erreicht.
+    // Darunter die Tage bis Sonntag (heute zählt mit).
+
+    private function drawOpen(dc as Dc, data as Dictionary, rz as Array) as Void {
+        var sports = [] as Array;
+        var values = [] as Array;
+        var order = ["run", "bike", "swim"];
+        for (var k = 0; k < order.size(); k++) {
+            for (var i = 0; i < rz.size(); i++) {
+                var e = rz[i] as Array;
+                if (order[k].equals(e[0])) {
+                    var open = (e[2] as Numeric).toNumber() - (e[1] as Numeric).toNumber();
+                    sports.add(order[k]);
+                    values.add(open > 0 ? open.toString() + "′" : "");
+                }
+            }
+        }
+        var str = data.get("str") as Dictionary?;
+        var sv = str != null ? numOrNull(str.get("v")) : null;
+        var so = str != null ? numOrNull(str.get("of")) : null;
+        if (sv != null && so != null && so > 0) {
+            var openSets = so.toNumber() - sv.toNumber();
+            sports.add("strength");
+            values.add(openSets > 0 ? openSets.toString() : "");
+        }
+        var n = sports.size();
+        var w = px(76);
+        var gap = px(10);
+        var h = px(44);
+        var y = px(82);
+        var x = _cx - (n * w + (n - 1) * gap) / 2;
+        var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+        for (var i = 0; i < n; i++) {
+            var color = sportColor(sports[i]);
+            var v = values[i] as String;
+            var mx = x + w / 2;
+            dc.setColor(v.length() > 0 ? blend(Graphics.COLOR_BLACK, color, 0.25) : color, Graphics.COLOR_BLACK);
+            dc.fillRoundedRectangle(x, y - h / 2, w, h, h / 2);
+            if (v.length() > 0) {
+                dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(mx, y, _small, v, just);
+            } else {
+                // Haken als Linien, die Bitmap-Schriften haben kein ✓
+                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+                dc.setPenWidth(px(4));
+                dc.drawLine(mx - px(10), y, mx - px(3), y + px(8));
+                dc.drawLine(mx - px(3), y + px(8), mx + px(11), y - px(8));
+            }
+            x += w + gap;
+        }
+        var ti = numOrNull(data.get("ti"));
+        if (ti != null) {
+            var left = 7 - ti.toNumber();
+            var text = left <= 1 ? "OFFEN · NUR NOCH HEUTE" : "OFFEN · NOCH " + left + " TAGE";
+            dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(_cx, px(119), _cap, text, just);
+        }
+    }
+
     // ---- Nächste Einheit: Sportpunkt, Tag (grau), Einheit (weiß) ----------------
 
     private function drawNext(dc as Dc, data as Dictionary) as Void {
@@ -269,7 +336,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawLine(dc, px(READY_Y), items);
     }
 
-    // ---- Vier Komplikationen: Essen, TSS, Kraft, Wetter --------------------------
+    // ---- Vier Komplikationen: Essen, Zeit und TSS (mit Wochenzielen, sonst TSS und Kraft), Wetter ----------
 
     private function drawComplications(dc as Dc, data as Dictionary) as Void {
         // Essen: Kalorien gegen das Tagesziel
@@ -303,50 +370,27 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             labels(dc, 104, "ESSEN", kText, kSub, kColor);
         }
 
-        // Wochenziele des Coaches: Zeit (Minuten) gegen das Zeitziel, Ring je Sportart wie beim TSS. Zahl orange, wenn eine
-        // Sportart über ihrer TSS-Obergrenze liegt (zu intensiv). Ohne Zeitziele wie bisher TSS gegen Plan bzw. WEEKLY_TSS_GOAL.
-        var tss = numOrNull(data.get("tss"));
-        var target = numOrNull(data.get("plan"));
-        if (target == null) {
-            target = numOrNull(data.get("goal"));
-        }
-        var tss2 = data.get("ts") as Array?;
-        var tm = data.get("tm") as Array?;
-        if (tm != null && tm.size() > 0) {
-            var mn = numOrNull(data.get("mn"));
-            var mg = numOrNull(data.get("mg"));
-            var ovN = numOrNull(data.get("ov"));
-            var ov = ovN != null && ovN.toNumber() == 1;
-            tssRing(dc, px(185), px(COMP_Y), px(34), px(6), tm, mg);
-            labels(dc, 185, "ZEIT", mn != null ? mn.toNumber().toString() : "--", mg != null ? "/" + mg.toNumber() : "", ov ? WARN : FG);
-        } else if (tss2 != null && tss2.size() > 0) {
-            tssRing(dc, px(185), px(COMP_Y), px(34), px(6), tss2, target);
-            labels(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", FG);
-        } else {
-            // Älterer Worker ohne TSS je Sportart: ein weißer Ring
-            complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", frac(tss, target), FG, TRACK);
-        }
-
-        // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
-        // (base und none, also Ausgangswert oder noch keine Daten, grau)
-        var str = data.get("str") as Dictionary?;
-        var sv = str != null ? numOrNull(str.get("v")) : null;
-        var so = str != null ? numOrNull(str.get("of")) : null;
-        var st = str != null ? str.get("ok") : null;
-        // Im Ziel weiß, hinterher orange, deutlich hinterher rot (Ring und Zahl)
-        var sc = "ok".equals(st) ? FG : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
-        ring(dc, px(269), px(COMP_Y), px(34), px(6), frac(sv, so), sc, TRACK);
-        labels(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", "warn".equals(st) || "bad".equals(st) ? sc : FG);
-        // Hinterher nicht nur über die Farbe: Dreieck (knapp) oder Quadrat (verfehlt) links neben "KRAFT"
-        // (links ist mehr Platz: rechts folgt gleich "WETTER")
-        if ("warn".equals(st) || "bad".equals(st)) {
-            var left = px(269) - dc.getTextWidthInPixels("KRAFT", _tiny) / 2 - px(5);
-            var ly = px(COMP_Y - 48);
-            if ("warn".equals(st)) {
-                drawTri(dc, left - px(13), ly, px(13), WARN);
+        // Wochenziele des Coaches: zwei gleiche Kreise im Apple-Stil, ZEIT (Minuten gegen das Zeitziel) und TSS (gegen die
+        // Obergrenze), je ein Ring pro Sportart: außen Rad, Mitte Lauf, innen Schwimmen. In der Mitte die Summe; TSS orange, wenn
+        // eine Sportart über ihrer Grenze liegt. Kraft hat dann keinen Platz mehr auf der Uhr (Widget und Dashboard zeigen sie).
+        // Ohne Wochenziele wie bisher: TSS gegen Plan bzw. WEEKLY_TSS_GOAL und Kraft.
+        var rz = data.get("rz") as Array?;
+        if (rz != null && rz.size() > 0) {
+            activityRings(dc, px(185), px(COMP_Y), rz, false);
+            ringLabels(dc, 185, "ZEIT", ringSum(rz).toString(), FG);
+            var rt = data.get("rt") as Array?;
+            var over = false;
+            var tssText = "--";
+            if (rt != null && rt.size() > 0) {
+                over = activityRings(dc, px(269), px(COMP_Y), rt, true);
+                tssText = ringSum(rt).toString();
             } else {
-                drawSq(dc, left - px(11), ly, px(11), BAD);
+                var tssAll = numOrNull(data.get("tss"));
+                tssText = tssAll != null ? tssAll.toNumber().toString() : "--";
             }
+            ringLabels(dc, 269, "TSS", tssText, over ? WARN : FG);
+        } else {
+            drawTssAndStrength(dc, data);
         }
 
         // Wetter kommt von der Uhr: Temperatur in der Mitte, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden.
@@ -420,6 +464,101 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             }
         }
         labels(dc, 350, "WETTER", temp, sub, maxChance >= 30 ? rainColor(maxChance) : FG);
+    }
+
+    // Ohne Wochenziele: TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL) und Kraft daneben
+    private function drawTssAndStrength(dc as Dc, data as Dictionary) as Void {
+        var tss = numOrNull(data.get("tss"));
+        var target = numOrNull(data.get("plan"));
+        if (target == null) {
+            target = numOrNull(data.get("goal"));
+        }
+        var tss2 = data.get("ts") as Array?;
+        if (tss2 != null && tss2.size() > 0) {
+            tssRing(dc, px(185), px(COMP_Y), px(34), px(6), tss2, target);
+            labels(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", FG);
+        } else {
+            // Älterer Worker ohne TSS je Sportart: ein weißer Ring
+            complication(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", frac(tss, target), FG, TRACK);
+        }
+
+        // Kraft: Sätze der Woche gegen das Ziel aus dem Trainingsblock; Ring in Ampelfarbe, solange es nicht im Ziel ist
+        // (base und none, also Ausgangswert oder noch keine Daten, grau)
+        var str = data.get("str") as Dictionary?;
+        var sv = str != null ? numOrNull(str.get("v")) : null;
+        var so = str != null ? numOrNull(str.get("of")) : null;
+        var st = str != null ? str.get("ok") : null;
+        // Im Ziel weiß, hinterher orange, deutlich hinterher rot (Ring und Zahl)
+        var sc = "ok".equals(st) ? FG : ("warn".equals(st) ? WARN : ("bad".equals(st) ? BAD : SEC));
+        ring(dc, px(269), px(COMP_Y), px(34), px(6), frac(sv, so), sc, TRACK);
+        labels(dc, 269, "KRAFT", sv != null ? sv.toNumber().toString() : "--", so != null ? "/" + so.toNumber() : "", "warn".equals(st) || "bad".equals(st) ? sc : FG);
+        // Hinterher nicht nur über die Farbe: Dreieck (knapp) oder Quadrat (verfehlt) links neben "KRAFT"
+        // (links ist mehr Platz: rechts folgt gleich "WETTER")
+        if ("warn".equals(st) || "bad".equals(st)) {
+            var left = px(269) - dc.getTextWidthInPixels("KRAFT", _tiny) / 2 - px(5);
+            var ly = px(COMP_Y - 48);
+            if ("warn".equals(st)) {
+                drawTri(dc, left - px(13), ly, px(13), WARN);
+            } else {
+                drawSq(dc, left - px(11), ly, px(11), BAD);
+            }
+        }
+    }
+
+    // Ringe im Apple-Stil: je Sportart ein Ring an fester Stelle (außen Rad, Mitte Lauf, innen Schwimmen), Grundring in der
+    // abgedunkelten Sportfarbe, Fortschritt ab 12 Uhr. Über der Vorgabe ist der Ring voll; mit warnOver läuft der Überschuss
+    // als zweite Runde in Orange weiter. rings: [[Sportart, erledigt, Vorgabe], ...]. Gibt zurück, ob eine Sportart drüber ist.
+    private function activityRings(dc as Dc, cx as Number, cy as Number, rings as Array, warnOver as Boolean) as Boolean {
+        var over = false;
+        dc.setPenWidth(px(6));
+        for (var i = 0; i < rings.size(); i++) {
+            var e = rings[i] as Array;
+            var sport = e[0];
+            var r = "bike".equals(sport) ? px(36) : ("run".equals(sport) ? px(28) : px(20));
+            var color = sportColor(sport);
+            var v = (e[1] as Numeric).toFloat();
+            var g = (e[2] as Numeric).toFloat();
+            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.28), Graphics.COLOR_BLACK);
+            dc.drawCircle(cx, cy, r);
+            if (g <= 0 || v <= 0) {
+                continue;
+            }
+            var f = v / g;
+            dc.setColor(color, Graphics.COLOR_BLACK);
+            if (f >= 1) {
+                dc.drawCircle(cx, cy, r);
+            } else if (f * 360 >= 2) {
+                dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, 90, norm(90 - f * 360));
+            }
+            if (f > 1) {
+                over = true;
+                if (warnOver) {
+                    var d = (f - 1) * 360 > 359 ? 359.0 : (f - 1) * 360;
+                    if (d >= 2) {
+                        dc.setColor(WARN, Graphics.COLOR_BLACK);
+                        dc.drawArc(cx, cy, r, Graphics.ARC_CLOCKWISE, 90, norm(90 - d));
+                    }
+                }
+            }
+        }
+        return over;
+    }
+
+    private function ringSum(rings as Array) as Number {
+        var sum = 0;
+        for (var i = 0; i < rings.size(); i++) {
+            sum += ((rings[i] as Array)[1] as Numeric).toNumber();
+        }
+        return sum;
+    }
+
+    // Beschriftung der Ringe: Name darüber, die Summe klein in der Mitte (im inneren Ring ist nur Platz für drei Ziffern)
+    private function ringLabels(dc as Dc, x as Number, label as String, value as String, valueColor as Number) as Void {
+        var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+        dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(px(x), px(COMP_Y - 50), _tiny, label, just);
+        dc.setColor(valueColor, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(px(x), px(COMP_Y), _cap, value, just);
     }
 
     // Ring mit Fortschritt; der Grundring ist die eigene Farbe abgedunkelt, damit auch ein leerer Ring farbig ist

@@ -369,10 +369,12 @@ function watchTssBySport(week) {
   }).filter(Boolean);
 }
 
-// Zeit-Ring der Uhr, wenn der Coach Wochenziele gesetzt hat: je Sportart [s, erledigte Minuten bis zum Ziel, noch offen].
-// Mehr als das Ziel einer Sportart fuellt nicht die anderen auf; volle Runde = alle Zeitziele erreicht.
-function watchTimeBySport(targets) {
-  return targets.filter((t) => t.goal > 0).map((t) => [t.s, Math.min(t.min, t.goal), Math.max(0, t.goal - t.min)]);
+// Ringe der Uhr im Apple-Stil, wenn der Coach Wochenziele gesetzt hat: aussen Rad, Mitte Lauf, innen Schwimmen.
+// Je Sportart [s, erledigt, Vorgabe]; rz = Minuten gegen das Zeitziel, rt = TSS gegen die Obergrenze (Schwimmen meist ohne).
+// Nur Sportarten mit Vorgabe; die Uhr zeichnet den Ring an der festen Position der Sportart.
+const RING_SPORTS = ["bike", "run", "swim"];
+function watchRings(targets, done, goal) {
+  return RING_SPORTS.map((k) => targets.find((t) => t.s === k)).filter((t) => t && t[goal] > 0).map((t) => [t.s, t[done], t[goal]]);
 }
 
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
@@ -393,7 +395,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   // Eiweiß heute fuer den inneren Ring von Essen, wie kcal live aus Yazio, sonst aus dem Sync
   const protein = live?.energyKcal > 0 && Number.isFinite(live.proteinG) ? Math.round(live.proteinG) : today?.protein != null ? Math.round(today.protein) : null;
   const cfg = Number(env?.WEEKLY_TSS_GOAL);
-  const targets = weekTargets(week), tm = watchTimeBySport(targets);
+  const targets = weekTargets(week), rz = watchRings(targets, "min", "goal"), rt = watchRings(targets, "tss", "max");
   return {
     t: d.today,
     ti: dayIndex(d.today),
@@ -406,12 +408,9 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     tss: total(week),
     ts: watchTssBySport(week),
     plan: week.plannedLoad > 0 && !targets.length ? week.plannedLoad : null,
-    // Wochenziele des Coaches: tm Zeit je Sportart (wie ts), mn erledigte und mg Ziel-Minuten, ov = 1, wenn eine Sportart
-    // ueber ihrer TSS-Obergrenze liegt (zu intensiv). Ohne Zeitziele null; die Uhr zeigt dann den TSS-Ring.
-    tm: tm.length ? tm : null,
-    mn: tm.length ? targets.filter((t) => t.goal > 0).reduce((a, t) => a + t.min, 0) : null,
-    mg: tm.length ? targets.reduce((a, t) => a + (t.goal ?? 0), 0) : null,
-    ov: targets.some((t) => t.over) ? 1 : 0,
+    // Wochenziele des Coaches als Ringe (siehe watchRings); ohne Zeitziele null, dann zeigt die Uhr TSS-Ring und Kraft wie bisher
+    rz: rz.length ? rz : null,
+    rt: rz.length && rt.length ? rt : null,
     goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
     str: strengthWeek(strength),
     kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
