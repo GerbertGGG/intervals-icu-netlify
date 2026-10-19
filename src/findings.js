@@ -8,7 +8,7 @@
 //   short kurze Überschrift für das Widget, text der volle Satz, act die Konsequenz
 //   tag   ein Stichwort fürs Zifferblatt der Uhr (z. B. "Eiweiß"), höchstens ein Wort
 
-const TRN = { jump: 1.3, drop: 0.6, planUnder: 0.75, planOver: 1.15, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
+const TRN = { jump: 1.3, drop: 0.6, planUnder: 0.75, planOver: 1.15, timeUnder: 0.75, timeReached: 0.9, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
 const NUT = { over: 1.1, under: 0.75, proteinShare: 0.2 };
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
@@ -29,11 +29,18 @@ export function trainingFindings(d) {
   if (aLoad && last.load > aLoad * TRN.jump) add(2, "Last", `Belastung letzte Woche +${pct(last.load / aLoad - 1)} %`, `Belastung ${num(last.load)} TSS, ${pct(last.load / aLoad - 1)} % mehr als dein Schnitt (${num(aLoad)}) – steiler Anstieg.`, "Die nächste Woche nicht noch steigern, 1–2 lockere Tage fest einplanen (Verletzungsrisiko).");
   else if (aLoad && last.load < aLoad * TRN.drop) add(1, "Last", `Belastung letzte Woche nur ${pct(last.load / aLoad)} %`, `Belastung ${num(last.load)} TSS, nur ${pct(last.load / aLoad)} % deines Schnitts (${num(aLoad)}) – deutlich weniger Training.`, "Wenn das kein gewollter Entlastungsblock war: die Ursache klären und die Last schrittweise zurückholen.");
   if (aRun && last.runMin > aRun * TRN.jump) add(2, "Laufumfang", `Laufumfang letzte Woche +${pct(last.runMin / aRun - 1)} %`, `Laufumfang ${num(last.runMin / 60, 1)} h, ${pct(last.runMin / aRun - 1)} % mehr als dein Schnitt (${num(aRun / 60, 1)} h).`, "Laufumfang in der Folgewoche auf den Schnitt oder knapp darüber begrenzen.");
-  if (last.plannedLoad) {
+  // Wochenziele des Coaches: Zeit ist das Ziel, TSS die Obergrenze. Gibt es sie, ersetzen sie den Plan-Vergleich.
+  const targets = SPORT_ORDER.filter((k) => last.bySport[k].targetMin > 0 || last.bySport[k].targetLoad > 0);
+  for (const k of targets) {
+    const b = last.bySport[k], reached = b.targetMin > 0 && b.minutes >= b.targetMin * TRN.timeReached;
+    if (b.targetLoad > 0 && b.load > b.targetLoad) add(reached ? 2 : 1, "TSS", `${SPORT_LABEL[k]}: TSS über der Obergrenze`, `${SPORT_LABEL[k]} ${num(b.load)} TSS bei höchstens ${num(b.targetLoad)}${reached ? ` und Zeitziel erreicht (${num(b.minutes)} von ${num(b.targetMin)} min) – zu intensiv` : ""}.`, "Die Zeit locker füllen: langsamer laufen bzw. weniger Watt, nicht mehr Zeit.");
+    if (b.targetMin > 0 && b.minutes < b.targetMin * TRN.timeUnder) add(1, "Zeit", `${SPORT_LABEL[k]}: Zeitziel nur zu ${pct(b.minutes / b.targetMin)} %`, `${SPORT_LABEL[k]} ${num(b.minutes)} von ${num(b.targetMin)} min geschafft.`, "Fehlende Zeit nicht in die nächste Woche schieben, das neue Wochenziel gilt.");
+  }
+  if (last.plannedLoad && !targets.length) {
     if (last.load < last.plannedLoad * TRN.planUnder) add(1, "Plan", `Plan nur zu ${pct(last.load / last.plannedLoad)} % geschafft`, `nur ${num(last.load)} von ${num(last.plannedLoad)} TSS des Plans geschafft.`, "Verpasste Einheiten nicht nachholen, sondern den Plan der laufenden Woche halten.");
     else if (last.load > last.plannedLoad * TRN.planOver) add(1, "Plan", `${num(last.load - last.plannedLoad)} TSS über dem Plan`, `${num(last.load - last.plannedLoad)} TSS über dem Plan (${num(last.load)} von ${num(last.plannedLoad)}).`, "Mehr als geplant bringt vor dem Rennen selten etwas: lockere Einheiten wirklich locker laufen.");
   }
-  const skipped = SPORT_ORDER.filter((k) => last.bySport[k].plannedLoad > 0 && last.bySport[k].count === 0);
+  const skipped = SPORT_ORDER.filter((k) => last.bySport[k].plannedLoad > 0 && last.bySport[k].count === 0 && !(last.bySport[k].targetMin > 0));
   if (skipped.length) add(1, "Ausgelassen", `Geplant, aber ausgelassen: ${skipped.map((k) => SPORT_LABEL[k]).join(", ")}`, `${skipped.map((k) => `${SPORT_LABEL[k]} (${num(last.bySport[k].plannedLoad)} TSS)`).join(", ")} war geplant, aber nichts absolviert.`, "Die ausgelassene Sportart gezielt wieder einplanen, damit sie nicht ganz verschwindet.", skipped.length);
   const z = last.intensity ?? { easy: 0, mid: 0, hard: 0 }, zt = z.easy + z.mid + z.hard;
   if (zt >= 60) {

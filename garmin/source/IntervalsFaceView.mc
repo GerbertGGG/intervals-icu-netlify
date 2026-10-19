@@ -303,14 +303,23 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             labels(dc, 104, "ESSEN", kText, kSub, kColor);
         }
 
-        // TSS der Woche gegen den Plan (ohne Plan gegen WEEKLY_TSS_GOAL)
+        // Wochenziele des Coaches: Zeit (Minuten) gegen das Zeitziel, Ring je Sportart wie beim TSS. Zahl orange, wenn eine
+        // Sportart über ihrer TSS-Obergrenze liegt (zu intensiv). Ohne Zeitziele wie bisher TSS gegen Plan bzw. WEEKLY_TSS_GOAL.
         var tss = numOrNull(data.get("tss"));
         var target = numOrNull(data.get("plan"));
         if (target == null) {
             target = numOrNull(data.get("goal"));
         }
         var tss2 = data.get("ts") as Array?;
-        if (tss2 != null && tss2.size() > 0) {
+        var tm = data.get("tm") as Array?;
+        if (tm != null && tm.size() > 0) {
+            var mn = numOrNull(data.get("mn"));
+            var mg = numOrNull(data.get("mg"));
+            var ovN = numOrNull(data.get("ov"));
+            var ov = ovN != null && ovN.toNumber() == 1;
+            tssRing(dc, px(185), px(COMP_Y), px(34), px(6), tm, mg);
+            labels(dc, 185, "ZEIT", mn != null ? mn.toNumber().toString() : "--", mg != null ? "/" + mg.toNumber() : "", ov ? WARN : FG);
+        } else if (tss2 != null && tss2.size() > 0) {
             tssRing(dc, px(185), px(COMP_Y), px(34), px(6), tss2, target);
             labels(dc, 185, "TSS", tss != null ? tss.toNumber().toString() : "--", target != null ? "/" + target.toNumber() : "", FG);
         } else {
@@ -421,6 +430,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // TSS-Ring wie die Wochenkreise: ab 12 Uhr das Erledigte je Sportart in Sportfarbe, das noch Offene bleibt grauer
     // Grundring. Volle Runde = Plan (ohne Plan das Wochenziel, ohne beides die Summe). ts: [[Sportart, erledigt, offen], ...]
+    // Gleich für den Zeit-Ring (tm, Minuten gegen die Summe der Zeitziele).
     private function tssRing(dc as Dc, cx as Number, cy as Number, r as Number, pen as Number, ts as Array, target as Numeric?) as Void {
         var sum = 0.0;
         for (var i = 0; i < ts.size(); i++) {

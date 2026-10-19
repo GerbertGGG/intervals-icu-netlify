@@ -245,6 +245,21 @@ function renderCockpit(d) {
   if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
+/* Wochenziele des Coaches je Sportart (Kalender, Kategorie TARGET, jeden Montag): Balken = Zeit gegen das Zeitziel,
+   rechts TSS gegen die Obergrenze, rot sobald darüber (zu intensiv gefüllt). Schwimmen meist nur mit Zeit. Ohne Ziele leer. */
+function weekTargetRows(w) {
+  const ks = SPORT_ORDER.filter((k) => w.bySport[k].targetMin > 0 || w.bySport[k].targetLoad > 0);
+  if (!ks.length) return "";
+  return `<div class="wk-tg">${ks.map((k) => {
+    const b = w.bySport[k], over = b.targetLoad > 0 && b.load > b.targetLoad;
+    const pct = b.targetMin > 0 ? Math.min(100, (b.minutes / b.targetMin) * 100) : 0;
+    return `<span class="lbl"><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span>`
+      + `<div class="cbar">${b.targetMin > 0 ? `<div class="cfill" style="width:${pct}%;background:var(--s-${k})"></div>` : ""}</div>`
+      + `<span class="n"><b>${fmt(b.minutes)}</b>${b.targetMin > 0 ? ` <small>/ ${fmt(b.targetMin)} min</small>` : " <small>min</small>"}</span>`
+      + `<span class="n${over ? " over" : ""}">${b.targetLoad > 0 ? `${fmt(b.load)} <small>/ ≤ ${fmt(b.targetLoad)} TSS</small>` : `<small>${fmt(b.load)} TSS</small>`}</span>`;
+  }).join("")}</div>`;
+}
+
 /* Wochenvorschau Mo-So: je Tag die geplanten Einheiten mit Plan-Load neben dem Ist. Vergangene Tage zeigen, ob der Plan
    erfüllt wurde (ab 75 % des Plan-Loads), heutige und kommende Tage nur den Plan. Einheiten ohne Load zählen im Plan nicht mit. */
 const WEEK_HIT = 0.75;
@@ -264,10 +279,12 @@ function renderWeekPreview(d, tile) {
     const verdict = { hit: "erfüllt", miss: planLoad > 0 && ist === 0 ? "ausgefallen" : "unter Plan", extra: "ungeplant" }[state];
     return `<div class="wk-day${isToday ? " now" : ""}${past ? " past" : ""} ${state}"><div class="wk-h"><b>${weekday(x)}</b> <span>${fmtDate(x)}</span></div><div class="wk-plan">${lines || '<span class="wk-rest">frei</span>'}</div><div class="wk-nums"><span>Plan <b>${planLoad ? fmt(planLoad) : "–"}</b></span><span>Ist ${istTxt || "–"} ${done}</span>${verdict ? `<span class="wk-v">${verdict}</span>` : ""}</div></div>`;
   };
-  const planSum = cur?.plannedLoad ?? planned.reduce((n, p) => n + (p.load ?? 0), 0);
+  // Wochenziele des Coaches (Zeit = Ziel, TSS = Obergrenze) ersetzen das Plan-Soll aus den geplanten Workouts
+  const tg = cur ? weekTargetRows(cur) : "";
+  const planSum = tg ? 0 : cur?.plannedLoad ?? planned.reduce((n, p) => n + (p.load ?? 0), 0);
   const parts = cur ? SPORT_ORDER.filter((k) => cur.bySport[k].load > 0) : [];
   const pct = cur && planSum ? Math.min(100, (cur.load / planSum) * 100) : 0;
-  const head = cur ? `<div class="wk-head"><div class="val">${fmt(cur.load)} <small>Load${planSum ? ` von ${fmt(planSum)} geplant` : ""}</small></div>${planSum ? `<div class="cbar wk-bar"><div class="cfill" style="width:${pct}%;background:var(--accent)"></div></div>` : ""}<div class="dots">${parts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}<span class="sub">${fmt(SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0) / 60, 1)} h${cur.runMin ? ` · Laufen ${fmt(cur.runMin / 60, 1)} h` : ""}</span></div></div>` : "";
+  const head = cur ? `<div class="wk-head"><div class="val">${fmt(cur.load)} <small>Load${planSum ? ` von ${fmt(planSum)} geplant` : ""}</small></div>${planSum ? `<div class="cbar wk-bar"><div class="cfill" style="width:${pct}%;background:var(--accent)"></div></div>` : ""}<div class="dots">${parts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}<span class="sub">${fmt(SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0) / 60, 1)} h${cur.runMin ? ` · Laufen ${fmt(cur.runMin / 60, 1)} h` : ""}</span></div>${tg}</div>` : "";
   return tile(`Woche ab ${fmtDate(monday)}`, `${head}<div class="wk-grid">${days.map(cell).join("")}</div>`, "span4", ["#form", "Wochenverlauf und Vergleich"]);
 }
 
@@ -390,10 +407,13 @@ function renderIntervals(d) {
 /* ---------- 3 · Form: Verlauf ---------- */
 function renderHistory(d) {
   const items = (key, plan, f = 1) => d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w[key] != null ? w[key] / f : null, plan: w[plan] != null ? w[plan] / f : null, partial: !w.complete }));
-  C.bars($("chart-km"), items("runMin", "plannedRunMin", 60), { unit: "h", label: "Laufumfang pro Woche (Stunden)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 1 });
-  C.bars($("chart-load"), items("load", "plannedLoad"), { unit: "Load", label: "Belastung pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
-  const noPlan = d.weeks.every((w) => w.plannedRunMin == null && w.plannedLoad == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum liegen keine geplanten Workouts mit Dauer/Load vor – ein Plan-Marker wird deshalb nicht gezeigt." : "Zahl über der Säule = Wert, darüber die Abweichung zum Plan (grün bis 15 %, sonst gelb); Plan-Marker nur, wenn geplante Workouts Dauer bzw. Load enthalten. Laufumfang = Bewegungszeit aller Läufe, Belastung alle Sportarten.";
+  // Laufumfang gegen das Zeitziel des Coaches, wo es eins gibt, sonst gegen die geplanten Läufe
+  const runPlan = (w) => w.bySport.run.targetMin ?? w.plannedRunMin;
+  C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.runMin / 60, plan: runPlan(w) != null ? runPlan(w) / 60 : null, partial: !w.complete })), { unit: "h", label: "Laufumfang pro Woche (Stunden)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 1 });
+  // Mit Wochenzielen ist TSS kein Soll mehr (nur Obergrenze je Sportart), der Plan-Load der Workouts dann kein Marker
+  C.bars($("chart-load"), items("load", "plannedLoad").map((x, i) => (d.weeks[i].targetMin != null || d.weeks[i].targetLoad != null ? { ...x, plan: null } : x)), { unit: "Load", label: "Belastung pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
+  const noPlan = d.weeks.every((w) => runPlan(w) == null && w.plannedLoad == null);
+  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum liegen keine geplanten Workouts mit Dauer/Load vor – ein Plan-Marker wird deshalb nicht gezeigt." : "Zahl über der Säule = Wert, darüber die Abweichung zum Plan (grün bis 15 %, sonst gelb); Plan-Marker nur, wenn geplante Workouts Dauer bzw. Load enthalten; beim Laufumfang gilt das Zeitziel des Coaches, wenn es eins gibt. Laufumfang = Bewegungszeit aller Läufe, Belastung alle Sportarten.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   const TSB_BANDS = d.summary.thresholds.tsb;
@@ -452,19 +472,29 @@ function renderSport(d) {
   $("intensity-legend").innerHTML = Object.entries(INT).map(([k, t]) => `<span><i style="background:var(--i-${k})"></i>${t}</span>`).join("");
   $("sport-legend").innerHTML = used.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span>`).join("");
   const cur = d.weeks[d.weeks.length - 1], done = [...d.weeks].reverse().find((w) => w.complete), prev = done ? d.weeks[d.weeks.indexOf(done) - 1] : null;
-  const rows = (w, ref) => SPORT_ORDER.filter((k) => w.bySport[k].count > 0 || (ref && ref.bySport[k].count > 0) || w.bySport[k].plannedLoad != null).map((k) => {
-    const b = w.bySport[k], r = ref ? ref.bySport[k] : null;
-    return `<tr><td>${SPORT_LABEL[k]}</td><td>${b.count}</td><td>${fmt(b.minutes / 60, 1)} h</td><td><b>${fmt(b.load)}</b></td><td class="muted">${r ? fmt(r.load) : "–"}</td><td class="muted">${b.plannedLoad != null ? fmt(b.plannedLoad) : "–"}</td></tr>`;
-  }).join("");
+  // Spalte "Ziel": Wochenziel des Coaches (Zeit, TSS-Obergrenze); ohne Ziel der Plan-Load der geplanten Workouts
+  const goalCell = (b, hasTg) => {
+    if (!hasTg) return b.plannedLoad != null ? fmt(b.plannedLoad) : "–";
+    const parts = [b.targetMin > 0 ? `${fmt(b.targetMin)} min` : null, b.targetLoad > 0 ? `≤ ${fmt(b.targetLoad)} TSS` : null].filter(Boolean);
+    return parts.length ? parts.join(" · ") : "–";
+  };
+  const rows = (w, ref) => {
+    const hasTg = w.targetMin != null || w.targetLoad != null;
+    return SPORT_ORDER.filter((k) => w.bySport[k].count > 0 || (ref && ref.bySport[k].count > 0) || w.bySport[k].plannedLoad != null || w.bySport[k].targetMin != null || w.bySport[k].targetLoad != null).map((k) => {
+      const b = w.bySport[k], r = ref ? ref.bySport[k] : null, over = b.targetLoad > 0 && b.load > b.targetLoad;
+      return `<tr><td>${SPORT_LABEL[k]}</td><td>${b.count}</td><td>${fmt(b.minutes / 60, 1)} h</td><td><b${over ? ' style="color:var(--bad)"' : ""}>${fmt(b.load)}</b></td><td class="muted">${r ? fmt(r.load) : "–"}</td><td class="muted">${goalCell(b, hasTg)}</td></tr>`;
+    }).join("");
+  };
+  const tgOf = (w) => w.targetMin != null || w.targetLoad != null;
   const table = (w, ref, title) => {
     if (!w) return "";
     const sum = (x) => SPORT_ORDER.reduce((a, k) => a + x.bySport[k].load, 0), body = rows(w, ref);
-    return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>TSS</th><th>Vorwoche</th><th>Plan</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td><b>${fmt(SPORT_ORDER.reduce((a, k) => a + w.bySport[k].minutes, 0) / 60, 1)} h</b></td><td><b>${fmt(sum(w))}</b></td><td class="muted">${ref ? fmt(sum(ref)) : "–"}</td><td class="muted">${w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
+    return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>TSS</th><th>Vorwoche</th><th>${tgOf(w) ? "Ziel" : "Plan"}</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td><b>${fmt(SPORT_ORDER.reduce((a, k) => a + w.bySport[k].minutes, 0) / 60, 1)} h</b></td><td><b>${fmt(sum(w))}</b></td><td class="muted">${ref ? fmt(sum(ref)) : "–"}</td><td class="muted">${tgOf(w) ? (w.targetMin ? `${fmt(w.targetMin)} min` : "–") : w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
   };
   // Laufende Woche ohne Einheit: eine Zeile statt einer Tabelle voller Nullen
   const curEmpty = cur && cur !== done && SPORT_ORDER.every((k) => cur.bySport[k].count === 0);
   const curHtml = curEmpty
-    ? `<h3>Laufende Woche <span class="muted">ab ${fmtDate(cur.weekStart)}</span></h3><div class="muted">Woche läuft – noch keine Einheit${cur.plannedLoad != null ? `, ${fmt(cur.plannedLoad)} TSS geplant` : ""}.</div>`
+    ? `<h3>Laufende Woche <span class="muted">ab ${fmtDate(cur.weekStart)}</span></h3><div class="muted">Woche läuft – noch keine Einheit${cur.targetMin ? `, Ziel ${fmt(cur.targetMin)} min` : cur.plannedLoad != null ? `, ${fmt(cur.plannedLoad)} TSS geplant` : ""}.</div>`
     : table(cur, done, "Laufende Woche");
   $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + curHtml + sportFindings(d);
 }
@@ -481,7 +511,7 @@ function findingsBox(list, okText, top = 12) {
 
 /* Auffälligkeiten im Training. Nur abgeschlossene Wochen zählen (die laufende ist unvollständig),
    Vergleich gegen den Schnitt der bis zu 4 Wochen davor. Schwellen sind grobe Faustwerte, kein Trainingsplan. */
-const TRN = { jump: 1.3, drop: 0.6, planUnder: 0.75, planOver: 1.15, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
+const TRN = { jump: 1.3, drop: 0.6, planUnder: 0.75, planOver: 1.15, timeUnder: 0.75, timeReached: 0.9, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
 function sportFindings(d) {
   const full = d.weeks.filter((w) => w.complete), last = full[full.length - 1];
   if (!last) return "";
@@ -492,11 +522,18 @@ function sportFindings(d) {
   if (aLoad && last.load > aLoad * TRN.jump) add(2, `Belastung ${fmt(last.load)} TSS, ${Math.round((last.load / aLoad - 1) * 100)} % mehr als dein Schnitt (${fmt(aLoad)}) – steiler Anstieg.`, "Die nächste Woche nicht noch steigern, 1–2 lockere Tage fest einplanen (Verletzungsrisiko).");
   else if (aLoad && last.load < aLoad * TRN.drop) add(1, `Belastung ${fmt(last.load)} TSS, nur ${Math.round((last.load / aLoad) * 100)} % deines Schnitts (${fmt(aLoad)}) – deutlich weniger Training.`, "Wenn das kein gewollter Entlastungsblock war: die Ursache klären und die Last schrittweise zurückholen, nicht in einer Woche.");
   if (aRun && last.runMin > aRun * TRN.jump) add(2, `Laufumfang ${fmt(last.runMin / 60, 1)} h, ${Math.round((last.runMin / aRun - 1) * 100)} % mehr als dein Schnitt (${fmt(aRun / 60, 1)} h).`, "Laufumfang in der Folgewoche auf den Schnitt oder knapp darüber begrenzen.");
-  if (last.plannedLoad) {
+  // Wochenziele des Coaches: Zeit ist das Ziel, TSS die Obergrenze. Gibt es sie, ersetzen sie den Plan-Vergleich.
+  const targets = SPORT_ORDER.filter((k) => last.bySport[k].targetMin > 0 || last.bySport[k].targetLoad > 0);
+  for (const k of targets) {
+    const b = last.bySport[k], reached = b.targetMin > 0 && b.minutes >= b.targetMin * TRN.timeReached;
+    if (b.targetLoad > 0 && b.load > b.targetLoad) add(reached ? 2 : 1, `${SPORT_LABEL[k]} ${fmt(b.load)} TSS bei höchstens ${fmt(b.targetLoad)}${reached ? ` und Zeitziel erreicht (${fmt(b.minutes)} von ${fmt(b.targetMin)} min) – zu intensiv` : ""}.`, "Die Zeit locker füllen: langsamer laufen bzw. weniger Watt, nicht mehr Zeit.");
+    if (b.targetMin > 0 && b.minutes < b.targetMin * TRN.timeUnder) add(1, `${SPORT_LABEL[k]} ${fmt(b.minutes)} von ${fmt(b.targetMin)} min geschafft (${Math.round((b.minutes / b.targetMin) * 100)} %).`, "Fehlende Zeit nicht in die nächste Woche schieben, das neue Wochenziel gilt.");
+  }
+  if (last.plannedLoad && !targets.length) {
     if (last.load < last.plannedLoad * TRN.planUnder) add(1, `nur ${fmt(last.load)} von ${fmt(last.plannedLoad)} TSS des Plans geschafft (${Math.round((last.load / last.plannedLoad) * 100)} %).`, "Verpasste Einheiten nicht nachholen, sondern den Plan der laufenden Woche halten.");
     else if (last.load > last.plannedLoad * TRN.planOver) add(1, `${fmt(last.load - last.plannedLoad)} TSS über dem Plan (${fmt(last.load)} von ${fmt(last.plannedLoad)}).`, "Mehr als geplant bringt vor dem Rennen selten etwas: lockere Einheiten wirklich locker laufen.");
   }
-  const skipped = SPORT_ORDER.filter((k) => last.bySport[k].plannedLoad > 0 && last.bySport[k].count === 0);
+  const skipped = SPORT_ORDER.filter((k) => last.bySport[k].plannedLoad > 0 && last.bySport[k].count === 0 && !(last.bySport[k].targetMin > 0));
   if (skipped.length) add(1, `${skipped.map((k) => `${SPORT_LABEL[k]} (${fmt(last.bySport[k].plannedLoad)} TSS)`).join(", ")} war geplant, aber nichts absolviert.`, "Die ausgefallene Sportart gezielt wieder einplanen, damit sie im Plan nicht ganz verschwindet.", skipped.length);
   const z = last.intensity, zt = z.easy + z.mid + z.hard;
   if (zt >= 60) {

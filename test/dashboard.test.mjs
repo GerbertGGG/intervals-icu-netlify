@@ -568,3 +568,54 @@ console.log("zones from intervals ok");
   assert.equal((await handleWidgetRequest(req("watch", "geheim"), envW)).status, 200); // Dashboard-Token geht weiter
   assert.equal((await handleWidgetRequest(req("watch", "uhr"), env)).status, 401); // ohne WATCH_TOKEN kein Zugang
 }
+
+// Wochenziele des Coaches (Kategorie TARGET, Montag, je Sportart): Zeit ist das Ziel, TSS die Obergrenze
+{
+  const { buildWidgetWatch, weekTargets } = await import("../src/widget.js");
+  const mon = day(-2); // 30.09.2026 ist ein Mittwoch
+  const extra = [
+    { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Weekly", type: "Run", time_target: 5400, load_target: 85 },
+    { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Weekly", type: "Swim", time_target: 3300 },
+    { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Block Test (4 Wochen)", load_target: 999 }, // Block, kein Wochenziel
+  ];
+  events.push(...extra);
+  const dt = await buildDashboard(env, today);
+  events.splice(events.length - extra.length, extra.length);
+  const cur = dt.weeks.at(-1);
+  assert.deepEqual([cur.bySport.run.targetMin, cur.bySport.run.targetLoad, cur.bySport.swim.targetMin, cur.bySport.swim.targetLoad], [90, 85, 55, null]);
+  assert.deepEqual([cur.targetMin, cur.targetLoad], [145, 85]);
+  assert.equal(dt.weeks.at(-2).targetMin, null); // Vorwoche ohne Ziel
+  const tg = weekTargets(cur);
+  assert.deepEqual(tg.map((t) => t.s), ["run", "swim"]);
+  const run = tg.find((t) => t.s === "run");
+  assert.deepEqual([run.goal, run.max, run.min, run.tss], [90, 85, cur.bySport.run.minutes, cur.bySport.run.load]);
+  assert.equal(run.over, cur.bySport.run.load > 85);
+  assert.equal(tg.find((t) => t.s === "swim").max, null); // Schwimmen nur ueber Zeit
+  assert.deepEqual(buildWidget(dt).week.targets, tg);
+  assert.equal(buildWidget(dt).week.goal, null); // mit Wochenzielen kein TSS-Soll aus geplanten Workouts
+  assert.deepEqual(weekTargets(d.weeks.at(-1)), []);
+  // Training-Ansicht: Zeitziel und TSS-Obergrenze je Disziplin
+  const trn = buildWidgetTraining(dt).sports;
+  assert.deepEqual([trn.run.targetMin, trn.run.targetLoad, trn.bike.targetMin], [90, 85, null]);
+  // Uhr: Zeit-Ring je Sportart, erledigte Minuten hoechstens bis zum Ziel
+  const wt = buildWidgetWatch(dt);
+  assert.deepEqual(wt.tm.map((x) => x[0]), ["run", "swim"]);
+  for (const [s, done, open] of wt.tm) { const t = tg.find((x) => x.s === s); assert.equal(done, Math.min(t.min, t.goal)); assert.equal(open, Math.max(0, t.goal - t.min)); }
+  assert.equal(wt.mg, 145);
+  assert.equal(wt.mn, run.min + tg.find((t) => t.s === "swim").min);
+  assert.equal(wt.ov, run.over ? 1 : 0);
+  const over = buildWidgetWatch({ ...dt, weeks: [...dt.weeks.slice(0, -1), { ...cur, bySport: { ...cur.bySport, run: { ...cur.bySport.run, load: 120 } } }] });
+  assert.equal(over.ov, 1);
+  const none = buildWidgetWatch(d);
+  assert.deepEqual([none.tm, none.mn, none.mg, none.ov], [null, null, null, 0]);
+  assert.ok(JSON.stringify(wt).length < 1500);
+  // Wochenrueckblick: TSS ueber der Obergrenze bei erreichter Zeit = zu intensiv (Warnung), zu wenig Zeit = Hinweis
+  const wkT = (run, bike) => ({ complete: true, load: run.load + bike.load, runMin: run.minutes, plannedLoad: 20, targetMin: 195, targetLoad: 160, intensity: { easy: 0, mid: 0, hard: 0 },
+    bySport: { run: { count: 3, plannedLoad: null, targetMin: 90, targetLoad: 85, ...run }, bike: { count: 2, plannedLoad: null, targetMin: 105, targetLoad: 75, ...bike }, swim: { count: 0, load: 0, minutes: 0, plannedLoad: null }, strength: { count: 2, load: 20, minutes: 60, plannedLoad: 20 }, other: { count: 0, load: 0, minutes: 0, plannedLoad: null } } });
+  const fT = trainingFindings({ today, daily: [], weeks: [wkT({ load: 110, minutes: 92 }, { load: 50, minutes: 60 })] });
+  assert.deepEqual(fT.filter((f) => f.tag === "TSS").map((f) => f.sev), [2]);
+  assert.ok(/zu intensiv/.test(fT.find((f) => f.tag === "TSS").text));
+  assert.ok(fT.some((f) => f.tag === "Zeit" && /Rad 60 von 105 min/.test(f.text)));
+  assert.equal(fT.some((f) => f.tag === "Plan"), false); // Plan-Load (nur Kraft) zaehlt mit Wochenzielen nicht
+  console.log("week targets ok");
+}

@@ -243,6 +243,10 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 /* Wochenvorschau */
 .wk-head { display: grid; gap: 6px; margin-bottom: 10px; }
 .wk-bar { height: 6px; }
+.wk-tg { display: grid; grid-template-columns: auto minmax(40px, 1fr) auto auto; gap: 4px 10px; align-items: center; font-size: var(--fs-s); }
+.wk-tg .lbl { display: inline-flex; align-items: center; gap: 6px; } .wk-tg i { width: 8px; height: 8px; border-radius: 50%; }
+.wk-tg .cbar { height: 6px; } .wk-tg .n { text-align: right; white-space: nowrap; } .wk-tg .n small { color: var(--muted); }
+.wk-tg .over, .wk-tg .over small { color: var(--bad); font-weight: 600; }
 .wk-grid { display: grid; gap: 6px; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .wk-day { background: var(--inset); border: 1px solid transparent; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: var(--fs-s); }
 .wk-day.now { background: var(--card); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
