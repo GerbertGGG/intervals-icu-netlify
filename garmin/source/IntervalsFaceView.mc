@@ -9,7 +9,7 @@ import Toybox.Time.Gregorian;
 import Toybox.Weather;
 import Toybox.WatchUi;
 
-// Zifferblatt im Apple-Stil: Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
+// Zifferblatt im Apple-Stil (mit Wochenzielen oben stattdessen die offenen Minuten je Sportart und Kraft): Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
 // "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen und gedämpftes Gold für die hellen Stunden. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche
 // als gerade Reihe, dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
 // unten Renn-Countdown und Blockwoche als gerade Zeile.
@@ -91,8 +91,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             drawLine(dc, px(READY_Y), [["dot", px(7), TER], ["gap", px(9)], ["t", "Keine Daten" + errSuffix(), SEC, _small]]);
             return;
         }
-        drawWeek(dc, data);
-        drawNext(dc, data);
+        // Mit Wochenzielen des Coaches oben, was noch offen ist, statt der Wochenreihe und der nächsten Einheit
+        var rz = data.get("rz") as Array?;
+        if (rz != null && rz.size() > 0) {
+            drawOpen(dc, data, rz);
+        } else {
+            drawWeek(dc, data);
+            drawNext(dc, data);
+        }
         drawReady(dc, data);
         drawComplications(dc, data);
         drawStatusLine(dc, data);
@@ -203,6 +209,67 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if ("swim".equals(sport)) { return 0x409CFF; }       // blau
         if ("strength".equals(sport)) { return 0xFF7A00; }   // orange, kräftiger als das Warn-Orange, damit es sich vom Gelb vom Laufen abhebt
         return SEC;
+    }
+
+    // ---- Oben mit Wochenzielen: was diese Woche noch offen ist ------------------------
+    // Je Sportart eine Kapsel mit den offenen Minuten bis zum Zeitziel (Lauf, Rad, Schwimmen), dazu Kraft mit den offenen
+    // Sätzen bis zum Wochenziel. Dunkel mit Zahl in Sportfarbe = noch offen, voll in Sportfarbe mit Haken = erreicht.
+    // Darunter die Tage bis Sonntag (heute zählt mit).
+
+    private function drawOpen(dc as Dc, data as Dictionary, rz as Array) as Void {
+        var sports = [] as Array;
+        var values = [] as Array;
+        var order = ["run", "bike", "swim"];
+        for (var k = 0; k < order.size(); k++) {
+            for (var i = 0; i < rz.size(); i++) {
+                var e = rz[i] as Array;
+                if (order[k].equals(e[0])) {
+                    var open = (e[2] as Numeric).toNumber() - (e[1] as Numeric).toNumber();
+                    sports.add(order[k]);
+                    values.add(open > 0 ? open.toString() + "′" : "");
+                }
+            }
+        }
+        var str = data.get("str") as Dictionary?;
+        var sv = str != null ? numOrNull(str.get("v")) : null;
+        var so = str != null ? numOrNull(str.get("of")) : null;
+        if (sv != null && so != null && so > 0) {
+            var openSets = so.toNumber() - sv.toNumber();
+            sports.add("strength");
+            values.add(openSets > 0 ? openSets.toString() : "");
+        }
+        var n = sports.size();
+        var w = px(76);
+        var gap = px(10);
+        var h = px(44);
+        var y = px(82);
+        var x = _cx - (n * w + (n - 1) * gap) / 2;
+        var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
+        for (var i = 0; i < n; i++) {
+            var color = sportColor(sports[i]);
+            var v = values[i] as String;
+            var mx = x + w / 2;
+            dc.setColor(v.length() > 0 ? blend(Graphics.COLOR_BLACK, color, 0.25) : color, Graphics.COLOR_BLACK);
+            dc.fillRoundedRectangle(x, y - h / 2, w, h, h / 2);
+            if (v.length() > 0) {
+                dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(mx, y, _small, v, just);
+            } else {
+                // Haken als Linien, die Bitmap-Schriften haben kein ✓
+                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+                dc.setPenWidth(px(4));
+                dc.drawLine(mx - px(10), y, mx - px(3), y + px(8));
+                dc.drawLine(mx - px(3), y + px(8), mx + px(11), y - px(8));
+            }
+            x += w + gap;
+        }
+        var ti = numOrNull(data.get("ti"));
+        if (ti != null) {
+            var left = 7 - ti.toNumber();
+            var text = left <= 1 ? "OFFEN · NUR NOCH HEUTE" : "OFFEN · NOCH " + left + " TAGE";
+            dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(_cx, px(119), _cap, text, just);
+        }
     }
 
     // ---- Nächste Einheit: Sportpunkt, Tag (grau), Einheit (weiß) ----------------
