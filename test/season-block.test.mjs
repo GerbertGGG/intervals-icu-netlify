@@ -14,6 +14,7 @@ import { parseBlockRules } from "../src/season-block.js";
 assert.deepEqual(parseBlockRules("Ziel\n\nRegeln\n- Laufen: HF nicht über 125\n• Keine Racepace-Intervalle\n\nLeitplanken\nKraft"), ["Laufen: HF nicht über 125", "Keine Racepace-Intervalle"]);
 assert.deepEqual(parseBlockRules("Regeln:<br />\n\n1. Mehr Grundlage<br />\n2) Rad Z2\n\nWoche 12"), ["Mehr Grundlage", "Rad Z2"]);
 assert.deepEqual(resolveSeasonBlock([{ ...ev, description: ev.description + "\n\nRegeln\n- Locker laufen" }], "2026-11-02").rules, ["Locker laufen"]);
+assert.deepEqual(parseBlockRules("WOCHENRAHMEN\n- Zeit = Ziel\n\nFIXPUNKTE (meine Zusagen)\n- Lauf-Grundlage unter HF 125, Gehpausen erlaubt\n- Kraft ≥60 Sätze pro Woche\nBei jedem Blocktest entscheide ich neu.\n\nLEITPLANKEN\n- Kraft"), ["Lauf-Grundlage unter HF 125, Gehpausen erlaubt", "Kraft ≥60 Sätze pro Woche"]);
 console.log("season-block ok");
 
 import { buildBlockGoals, parseBlockTargets } from "../src/season-block.js";
