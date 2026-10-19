@@ -263,6 +263,22 @@ function weekRings(vals, warn) {
   }
   return s + "</svg>";
 }
+// Tempo-Hinweis: was pro verbleibendem Tag (heute mitgezählt) noch ansteht; je Sportart nur der eigene Rest,
+// Überschuss in einer Sportart gleicht keine andere aus. TSS ist die Summe der Restspielräume bis zu den Obergrenzen.
+function weekPace(cur, st, left) {
+  const ks = SPORT_ORDER.filter((k) => cur.bySport[k]);
+  const restMin = ks.reduce((n, k) => n + (cur.bySport[k].targetMin > 0 ? Math.max(0, cur.bySport[k].targetMin - cur.bySport[k].minutes) : 0), 0);
+  const capped = ks.filter((k) => cur.bySport[k].targetLoad > 0);
+  const restTss = capped.reduce((n, k) => n + Math.max(0, cur.bySport[k].targetLoad - cur.bySport[k].load), 0);
+  const restSets = st?.calWeek && st.weekGoal > 0 ? Math.max(0, st.weekGoal - st.calWeek.count) : null;
+  const line = (v, txt) => `<div><b>≈ ${fmt(v)}</b> ${txt}</div>`;
+  const lines = [
+    restMin > 0 ? line(restMin / left, "min Training") : '<div class="ok">✓ Zeitziele erreicht</div>',
+    restSets ? line(restSets / left, `${st.countUnit ?? "Sätze"} Kraft`) : "",
+    capped.length ? (restTss > 0 ? line(restTss / left, "TSS erlaubt") : '<div class="over">TSS-Grenze erreicht</div>') : "",
+  ];
+  return `<div class="wk-pace"><span>${left <= 1 ? "Heute noch" : "Pro Resttag"}</span>${lines.join("")}</div>`;
+}
 function renderTargetWeek(d, tile, cur, monday, days) {
   const ks = ["run", "bike", "swim"].filter((k) => cur.bySport[k].targetMin > 0 || cur.bySport[k].targetLoad > 0);
   const zeit = Object.fromEntries(ks.filter((k) => cur.bySport[k].targetMin > 0).map((k) => [k, [cur.bySport[k].minutes, cur.bySport[k].targetMin]]));
@@ -285,7 +301,7 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const over = Object.values(tss).some((v) => v[0] > v[1]);
   const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
     + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ≤ ${fmt(sum(tss, 1))} TSS</small>`)}`
-    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div></div>`;
+    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${weekPace(cur, st, left)}</div>`;
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cell = (x) => {
     const a = actual[x], isToday = x === d.today, past = x < d.today;
