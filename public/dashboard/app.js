@@ -245,19 +245,56 @@ function renderCockpit(d) {
   if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
-/* Wochenziele des Coaches je Sportart (Kalender, Kategorie TARGET, jeden Montag): Balken = Zeit gegen das Zeitziel,
-   rechts TSS gegen die Obergrenze, rot sobald darüber (zu intensiv gefüllt). Schwimmen meist nur mit Zeit. Ohne Ziele leer. */
-function weekTargetRows(w) {
-  const ks = SPORT_ORDER.filter((k) => w.bySport[k].targetMin > 0 || w.bySport[k].targetLoad > 0);
-  if (!ks.length) return "";
-  return `<div class="wk-tg">${ks.map((k) => {
-    const b = w.bySport[k], over = b.targetLoad > 0 && b.load > b.targetLoad;
-    const pct = b.targetMin > 0 ? Math.min(100, (b.minutes / b.targetMin) * 100) : 0;
-    return `<span class="lbl"><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span>`
-      + `<div class="cbar">${b.targetMin > 0 ? `<div class="cfill" style="width:${pct}%;background:var(--s-${k})"></div>` : ""}</div>`
-      + `<span class="n"><b>${fmt(b.minutes)}</b>${b.targetMin > 0 ? ` <small>/ ${fmt(b.targetMin)} min</small>` : " <small>min</small>"}</span>`
-      + `<span class="n${over ? " over" : ""}">${b.targetLoad > 0 ? `${fmt(b.load)} <small>/ ≤ ${fmt(b.targetLoad)} TSS</small>` : `<small>${fmt(b.load)} TSS</small>`}</span>`;
-  }).join("")}</div>`;
+/* Woche mit Wochenzielen des Coaches (Kalender, Kategorie TARGET, jeden Montag): zwei Ringe wie auf der Uhr (ZEIT gegen
+   die Zeitziele, TSS gegen die Obergrenzen; außen Rad, Mitte Lauf, innen Schwimmen, Überschuss rot als zweite Runde),
+   daneben je Sportart, was noch offen ist, Ist gegen Ziel und TSS gegen die Grenze; Kraft in Sätzen aus dem Block-Ziel.
+   Die Tage zeigen nur noch, was gemacht wurde: Ohne festen Plan gibt es kein "Plan / Ist" mehr. */
+const RING_R = { bike: 46, run: 35, swim: 24 };
+function weekRings(vals, warn) {
+  const S = 120, c = S / 2;
+  let s = `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" role="img">`;
+  for (const k of ["bike", "run", "swim"]) {
+    const v = vals[k];
+    if (!v) continue;
+    const r = RING_R[k], L = 2 * Math.PI * r, f = v[0] / v[1], arc = (x, col) => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:${col}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${x * L} ${L}" transform="rotate(-90 ${c} ${c})"/>`;
+    s += `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:var(--s-${k})" stroke-opacity=".18" stroke-width="9"><title>${SPORT_LABEL[k]}: ${fmt(v[0])} von ${fmt(v[1])}</title></circle>`;
+    if (f > 0) s += arc(Math.min(f, 1), `var(--s-${k})`);
+    if (warn && f > 1) s += arc(Math.min(f - 1, 1), "var(--bad)");
+  }
+  return s + "</svg>";
+}
+function renderTargetWeek(d, tile, cur, monday, days) {
+  const ks = ["run", "bike", "swim"].filter((k) => cur.bySport[k].targetMin > 0 || cur.bySport[k].targetLoad > 0);
+  const zeit = Object.fromEntries(ks.filter((k) => cur.bySport[k].targetMin > 0).map((k) => [k, [cur.bySport[k].minutes, cur.bySport[k].targetMin]]));
+  const tss = Object.fromEntries(ks.filter((k) => cur.bySport[k].targetLoad > 0).map((k) => [k, [cur.bySport[k].load, cur.bySport[k].targetLoad]]));
+  const sum = (o, i) => Object.values(o).reduce((a, v) => a + v[i], 0);
+  const left = 7 - ((new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7);
+  const row = (k, open, ist, cap) => `<span class="lbl"><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span><span class="o">${open}</span><span class="gap"></span><span class="n">${ist}</span><span class="n${cap.over ? " over" : ""}">${cap.html}</span>`;
+  const rows = ks.map((k) => {
+    const b = cur.bySport[k], rest = b.targetMin > 0 ? b.targetMin - b.minutes : null, over = b.targetLoad > 0 && b.load > b.targetLoad;
+    return row(k, rest == null ? "" : rest > 0 ? `noch ${fmt(rest)} min` : "✓ Ziel", `<b>${fmt(b.minutes)}</b>${b.targetMin > 0 ? ` <small>/ ${fmt(b.targetMin)} min</small>` : " <small>min</small>"}`,
+      { over, html: b.targetLoad > 0 ? `${fmt(b.load)} <small>/ ≤ ${fmt(b.targetLoad)} TSS</small>` : "" });
+  });
+  // Kraft: Sätze der Kalenderwoche gegen das Wochenziel des Blocks (wie Uhr und Kraft-Karte), sonst Minuten
+  const st = d.seasonBlock?.goals?.find((g) => g.key === "strength"), sb = cur.bySport.strength;
+  if (st?.calWeek && st.weekGoal > 0) {
+    const rest = st.weekGoal - st.calWeek.count, unit = st.countUnit ?? "Sätze", over = sb.targetLoad > 0 && sb.load > sb.targetLoad;
+    rows.push(row("strength", rest > 0 ? `noch ${fmt(rest)} ${unit}` : "✓ Ziel", `<b>${fmt(st.calWeek.count)}</b> <small>/ ${fmt(st.weekGoal)} ${unit}</small>`, { over, html: sb.targetLoad > 0 ? `${fmt(sb.load)} <small>/ ≤ ${fmt(sb.targetLoad)} TSS</small>` : "" }));
+  }
+  const ring = (label, vals, warn, cap) => `<div class="wk-ring"><b>${label}</b>${weekRings(vals, warn)}<div>${cap}</div></div>`;
+  const over = Object.values(tss).some((v) => v[0] > v[1]);
+  const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
+    + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ≤ ${fmt(sum(tss, 1))} TSS</small>`)}`
+    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div></div>`;
+  const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
+  const cell = (x) => {
+    const a = actual[x], isToday = x === d.today, past = x < d.today;
+    const ks2 = SPORT_ORDER.filter((k) => (a?.minutes?.[k] ?? 0) > 0 || (a?.sports?.[k] ?? 0) > 0);
+    const body = ks2.length ? ks2.map((k) => `<div class="wk-did"><i style="background:var(--s-${k})"></i><span>${SPORT_LABEL[k]} ${a.minutes?.[k] ? `${fmt(a.minutes[k])} min` : `${fmt(a.sports[k])} TSS`}</span></div>`).join("")
+      : `<span class="wk-rest">${past ? "Ruhetag" : isToday ? "heute" : ""}</span>`;
+    return `<div class="wk-day${isToday ? " now" : ""}${past ? " past" : ""}"><div class="wk-h"><b>${weekday(x)}</b> <span>${fmtDate(x)}</span></div><div class="wk-plan">${body}</div></div>`;
+  };
+  return tile(`Woche ab ${fmtDate(monday)}`, `${top}<div class="wk-grid">${days.map(cell).join("")}</div>`, "span4", ["#form", "Wochenverlauf und Vergleich"]);
 }
 
 /* Wochenvorschau Mo-So: je Tag die geplanten Einheiten mit Plan-Load neben dem Ist. Vergangene Tage zeigen, ob der Plan
@@ -269,6 +306,7 @@ function renderWeekPreview(d, tile) {
   const planned = d.plannedWeek ?? d.planned.filter((p) => p.date >= monday && p.date <= days[6]);
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cur = d.weeks[d.weeks.length - 1];
+  if (cur && (cur.targetMin > 0 || cur.targetLoad > 0)) return renderTargetWeek(d, tile, cur, monday, days);
   const cell = (x) => {
     const items = planned.filter((p) => p.date === x), isToday = x === d.today, past = x < d.today, a = actual[x];
     const planLoad = items.reduce((n, p) => n + (p.load ?? 0), 0), ist = a?.load ?? 0;
@@ -279,12 +317,10 @@ function renderWeekPreview(d, tile) {
     const verdict = { hit: "erfüllt", miss: planLoad > 0 && ist === 0 ? "ausgefallen" : "unter Plan", extra: "ungeplant" }[state];
     return `<div class="wk-day${isToday ? " now" : ""}${past ? " past" : ""} ${state}"><div class="wk-h"><b>${weekday(x)}</b> <span>${fmtDate(x)}</span></div><div class="wk-plan">${lines || '<span class="wk-rest">frei</span>'}</div><div class="wk-nums"><span>Plan <b>${planLoad ? fmt(planLoad) : "–"}</b></span><span>Ist ${istTxt || "–"} ${done}</span>${verdict ? `<span class="wk-v">${verdict}</span>` : ""}</div></div>`;
   };
-  // Wochenziele des Coaches (Zeit = Ziel, TSS = Obergrenze) ersetzen das Plan-Soll aus den geplanten Workouts
-  const tg = cur ? weekTargetRows(cur) : "";
-  const planSum = tg ? 0 : cur?.plannedLoad ?? planned.reduce((n, p) => n + (p.load ?? 0), 0);
+  const planSum = cur?.plannedLoad ?? planned.reduce((n, p) => n + (p.load ?? 0), 0);
   const parts = cur ? SPORT_ORDER.filter((k) => cur.bySport[k].load > 0) : [];
   const pct = cur && planSum ? Math.min(100, (cur.load / planSum) * 100) : 0;
-  const head = cur ? `<div class="wk-head"><div class="val">${fmt(cur.load)} <small>Load${planSum ? ` von ${fmt(planSum)} geplant` : ""}</small></div>${planSum ? `<div class="cbar wk-bar"><div class="cfill" style="width:${pct}%;background:var(--accent)"></div></div>` : ""}<div class="dots">${parts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}<span class="sub">${fmt(SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0) / 60, 1)} h${cur.runMin ? ` · Laufen ${fmt(cur.runMin / 60, 1)} h` : ""}</span></div>${tg}</div>` : "";
+  const head = cur ? `<div class="wk-head"><div class="val">${fmt(cur.load)} <small>Load${planSum ? ` von ${fmt(planSum)} geplant` : ""}</small></div>${planSum ? `<div class="cbar wk-bar"><div class="cfill" style="width:${pct}%;background:var(--accent)"></div></div>` : ""}<div class="dots">${parts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}<span class="sub">${fmt(SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0) / 60, 1)} h${cur.runMin ? ` · Laufen ${fmt(cur.runMin / 60, 1)} h` : ""}</span></div></div>` : "";
   return tile(`Woche ab ${fmtDate(monday)}`, `${head}<div class="wk-grid">${days.map(cell).join("")}</div>`, "span4", ["#form", "Wochenverlauf und Vergleich"]);
 }
 
@@ -406,14 +442,18 @@ function renderIntervals(d) {
 
 /* ---------- 3 · Form: Verlauf ---------- */
 function renderHistory(d) {
-  const items = (key, plan, f = 1) => d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w[key] != null ? w[key] / f : null, plan: w[plan] != null ? w[plan] / f : null, partial: !w.complete }));
   // Laufumfang gegen das Zeitziel des Coaches, wo es eins gibt, sonst gegen die geplanten Läufe
   const runPlan = (w) => w.bySport.run.targetMin ?? w.plannedRunMin;
   C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.runMin / 60, plan: runPlan(w) != null ? runPlan(w) / 60 : null, partial: !w.complete })), { unit: "h", label: "Laufumfang pro Woche (Stunden)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 1 });
-  // Mit Wochenzielen ist TSS kein Soll mehr (nur Obergrenze je Sportart), der Plan-Load der Workouts dann kein Marker
-  C.bars($("chart-load"), items("load", "plannedLoad").map((x, i) => (d.weeks[i].targetMin != null || d.weeks[i].targetLoad != null ? { ...x, plan: null } : x)), { unit: "Load", label: "Belastung pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
-  const noPlan = d.weeks.every((w) => runPlan(w) == null && w.plannedLoad == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum liegen keine geplanten Workouts mit Dauer/Load vor – ein Plan-Marker wird deshalb nicht gezeigt." : "Zahl über der Säule = Wert, darüber die Abweichung zum Plan (grün bis 15 %, sonst gelb); Plan-Marker nur, wenn geplante Workouts Dauer bzw. Load enthalten; beim Laufumfang gilt das Zeitziel des Coaches, wenn es eins gibt. Laufumfang = Bewegungszeit aller Läufe, Belastung alle Sportarten.";
+  // Belastung gegen die TSS-Obergrenze der Wochenziele: Summe der Grenzen plus die Last der Sportarten ohne Grenze
+  // (meist Schwimmen), die weder für noch gegen die Grenze zählt. Ohne Wochenziele wie früher gegen den Plan-Load.
+  const capOf = (w) => (w.targetLoad > 0 ? w.targetLoad + SPORT_ORDER.reduce((a, k) => a + (w.bySport[k].targetLoad > 0 ? 0 : w.bySport[k].load), 0) : null);
+  C.bars($("chart-load"), d.weeks.map((w) => {
+    const cap = capOf(w);
+    return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load, plan: cap ?? (w.targetMin != null ? null : w.plannedLoad), cap: cap != null, partial: !w.complete };
+  }), { unit: "Load", label: "Belastung pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
+  const noPlan = d.weeks.every((w) => runPlan(w) == null && w.plannedLoad == null && capOf(w) == null);
+  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Wochenziele noch geplante Workouts mit Dauer/Load – deshalb keine Marke." : "Marke = Wochenziel des Coaches (Laufumfang: Zeitziel Lauf; Belastung: Summe der TSS-Obergrenzen, Sportarten ohne Grenze zählen mit ihrem Ist), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: beim Ziel grün bis 15 %, sonst gelb; bei der Obergrenze ✓ oder rot, wenn drüber. Laufumfang = Bewegungszeit aller Läufe, Belastung alle Sportarten.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   const TSB_BANDS = d.summary.thresholds.tsb;
@@ -426,7 +466,7 @@ function renderHistory(d) {
   for (const p of proj) { pctl[p.date] = p.ctl; patl[p.date] = p.atl; }
   const end = proj.length ? proj[proj.length - 1].date : raceSoon ? d.goal.date : d.today;
   C.form($("form-chart"), {
-    days: dayRange(first, end), ctl, atl, proj: proj.length ? { ctl: pctl, atl: patl } : null, events: formEvents(d, series, first),
+    days: dayRange(first, end), ctl, atl, proj: proj.length ? { ctl: pctl, atl: patl } : null, projLabel: d.formProjectionSource === "target" ? "grau hinterlegt: Prognose aus den Wochenzielen (90 % der TSS-Grenzen, Woche bleibt gleich)" : null, events: formEvents(d, series, first),
     zones: [{ from: TSB_BANDS.ok, to: 200, cls: "ok" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: -200, to: TSB_BANDS.warn, cls: "bad" }],
     marks: [{ day: d.today, label: "heute", color: "var(--muted)", anchor: raceSoon ? "end" : "middle" }, ...(raceSoon ? [{ day: d.goal.date, label: "Renntag", color: "var(--accent)", anchor: "start" }] : [])],
   });

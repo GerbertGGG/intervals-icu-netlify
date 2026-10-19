@@ -346,9 +346,33 @@ function buildFormSeries(list, wellness) {
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// Prognose von CTL/ATL ab dem letzten bekannten Wert: je Tag Last aus den geplanten Workouts (ohne Plan = Ruhetag),
-// CTL += (Last - CTL) / 42, ATL += (Last - ATL) / 7. Heute zählt schon in den echten Werten, die Prognose beginnt morgen.
-export function buildFormProjection(formSeries, events, todayIso, days = FORM_AHEAD_DAYS) {
+// Tageslast für die Prognose aus den Wochenzielen des Coaches (ohne Ziele null, dann gelten die geplanten Workouts).
+// Wochensumme = TARGET_LOAD_SHARE der TSS-Obergrenzen (es sind Grenzen, kein Soll) plus Sportarten mit Zeitziel, aber ohne
+// Grenze (meist Schwimmen): Zielminuten × deren TSS je Minute der letzten vollen Wochen. Laufende Woche: Rest nach dem
+// bisher Erledigten gleichmäßig auf die Tage nach heute; spätere Wochen (noch ohne Ziel): dieselbe Woche wieder.
+const TARGET_LOAD_SHARE = 0.9;
+export function targetDailyLoad(weeks, todayIso) {
+  const cur = weeks[weeks.length - 1];
+  if (!cur || !(cur.targetLoad > 0 || cur.targetMin > 0)) return null;
+  const past = weeks.slice(0, -1);
+  let total = 0;
+  for (const k of Object.keys(cur.bySport)) {
+    const b = cur.bySport[k];
+    if (b.targetLoad > 0) total += b.targetLoad * TARGET_LOAD_SHARE;
+    else if (b.targetMin > 0) {
+      const min = past.reduce((a, w) => a + w.bySport[k].minutes, 0), load = past.reduce((a, w) => a + w.bySport[k].load, 0);
+      if (min > 0) total += b.targetMin * (load / min);
+    }
+  }
+  const monday = mondayOf(todayIso), sunday = addDays(monday, 6), daysLeft = diffDays(todayIso, sunday);
+  const rest = daysLeft > 0 ? Math.max(0, total - cur.load) / daysLeft : 0;
+  return (date) => (date <= sunday ? rest : total / 7);
+}
+
+// Prognose von CTL/ATL ab dem letzten bekannten Wert: je Tag Last aus den Wochenzielen (targetLoad, siehe targetDailyLoad)
+// oder ohne Ziele aus den geplanten Workouts (ohne Plan = Ruhetag), CTL += (Last - CTL) / 42, ATL += (Last - ATL) / 7.
+// Heute zählt schon in den echten Werten, die Prognose beginnt morgen.
+export function buildFormProjection(formSeries, events, todayIso, days = FORM_AHEAD_DAYS, targetLoad = null) {
   const base = [...formSeries].reverse().find((p) => p.date <= todayIso && p.ctl != null && p.atl != null);
   if (!base) return [];
   const load = new Map();
@@ -361,7 +385,7 @@ export function buildFormProjection(formSeries, events, todayIso, days = FORM_AH
   const out = [];
   let ctl = base.ctl, atl = base.atl;
   for (let d = addDays(todayIso, 1); d <= addDays(todayIso, days); d = addDays(d, 1)) {
-    const l = load.get(d) ?? 0;
+    const l = targetLoad ? targetLoad(d) : load.get(d) ?? 0;
     ctl += (l - ctl) / CTL_DAYS;
     atl += (l - atl) / ATL_DAYS;
     out.push({ date: d, ctl: Math.round(ctl * 10) / 10, atl: Math.round(atl * 10) / 10, plannedLoad: Math.round(l) });
@@ -400,16 +424,19 @@ function buildWellness(list) {
 // Tageswerte der Belastung für die Kalender-Heatmap (leere Tage = 0, keine Lücken).
 function buildDaily(todayIso, activities) {
   const out = [];
-  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {} });
+  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {} });
   const byDate = new Map(out.map((x) => [x.date, x]));
   for (const a of activities) {
     const day = byDate.get(activityDay(a));
     if (!day) continue;
-    const load = activityLoad(a);
+    const load = activityLoad(a), secs = num(a?.moving_time) ?? 0;
     day.load += load;
     if (load) day.sports[sportOf(a)] = (day.sports[sportOf(a)] ?? 0) + load;
+    // Minuten je Sportart (auch ohne Load, z. B. Kraft) fuer die Wochenkarte
+    if (secs > 0) day.minutes[sportOf(a)] = (day.minutes[sportOf(a)] ?? 0) + secs / 60;
   }
-  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: Object.fromEntries(Object.entries(x.sports).map(([k, v]) => [k, Math.round(v)])) }));
+  const round = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
+  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes) }));
 }
 
 // Heißhunger-Einträge und Hüft-/Leisten-/Knie-Hinweise aus den Freitexten. Die Rohtexte bleiben im Worker.
@@ -667,6 +694,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     seasonBlock = { ...seasonBlock, goals, decision };
   }
 
+  const weeks = buildWeeks(todayIso, activities, events);
+  const targetLoad = targetDailyLoad(weeks, todayIso);
   return {
     generatedAt: new Date().toISOString(),
     today: todayIso,
@@ -682,8 +711,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
     wellness,
     formSeries,
-    formProjection: buildFormProjection(formSeries, formEventsR.ok && Array.isArray(formEventsR.value) ? formEventsR.value : [], todayIso),
-    weeks: buildWeeks(todayIso, activities, events),
+    formProjection: buildFormProjection(formSeries, formEventsR.ok && Array.isArray(formEventsR.value) ? formEventsR.value : [], todayIso, FORM_AHEAD_DAYS, targetLoad),
+    // Grundlage der Prognose: "target" = Wochenziele des Coaches, "plan" = geplante Workouts
+    formProjectionSource: targetLoad ? "target" : "plan",
+    weeks,
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
