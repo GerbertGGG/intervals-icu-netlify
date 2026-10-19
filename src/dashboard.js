@@ -6,7 +6,7 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, buildBlockGoalsFull, windowOf, parseBlockTargets } from "./season-block.js";
+import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets } from "./season-block.js";
 import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
@@ -162,7 +162,7 @@ export function sportOf(a) {
 }
 
 function emptySports() {
-  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null, plannedMin: null }]));
+  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null, plannedMin: null, targetMin: null, targetLoad: null }]));
 }
 
 // Intensitaetsverteilung aus den Zonenzeiten, die Intervals.icu je Einheit mitliefert: Rad nach Power-Zonen,
@@ -181,11 +181,15 @@ export function zoneBuckets(a) {
   return out.easy + out.mid + out.hard > 0 ? out : null;
 }
 
+export function isWeekTarget(e) {
+  return String(e?.category ?? "").toUpperCase() === "TARGET" && !isSeasonBlockEvent(e);
+}
+
 function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
   const weeks = new Map();
   for (let d = firstMonday; d <= todayIso; d = addDays(d, 7)) {
-    weeks.set(d, { weekStart: d, km: 0, runMin: 0, load: 0, runs: 0, plannedKm: null, plannedRunMin: null, plannedLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
+    weeks.set(d, { weekStart: d, km: 0, runMin: 0, load: 0, runs: 0, plannedKm: null, plannedRunMin: null, plannedLoad: null, targetMin: null, targetLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
   }
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
@@ -208,7 +212,16 @@ function buildWeeks(todayIso, activities, events) {
   for (const e of events) {
     const day = String(e?.start_date_local || e?.start_date || "").slice(0, 10);
     const w = weeks.get(mondayOf(day));
-    if (!w || String(e?.category ?? "").toUpperCase() !== "WORKOUT") continue;
+    if (!w) continue;
+    // Wochenziel des Coaches ("Weekly", Kategorie TARGET, je Sportart): Zeit ist das Ziel, TSS die Obergrenze.
+    // Ein Trainingsblock kann ebenfalls TARGET sein ("Block …"), der zaehlt hier nicht.
+    if (isWeekTarget(e)) {
+      const sp = w.bySport[sportOf(e)], secs = num(e?.time_target), load = num(e?.load_target);
+      if (secs != null && secs > 0) { sp.targetMin = (sp.targetMin ?? 0) + secs / 60; w.targetMin = (w.targetMin ?? 0) + secs / 60; }
+      if (load != null && load > 0) { sp.targetLoad = (sp.targetLoad ?? 0) + load; w.targetLoad = (w.targetLoad ?? 0) + load; }
+      continue;
+    }
+    if (String(e?.category ?? "").toUpperCase() !== "WORKOUT") continue;
     const km = num(e?.distance_target ?? e?.distance);
     const load = num(e?.icu_training_load ?? e?.load_target);
     const secs = num(e?.moving_time);
@@ -237,8 +250,10 @@ function buildWeeks(todayIso, activities, events) {
     load: Math.round(w.load),
     plannedKm: w.plannedKm != null ? r1(w.plannedKm) : null,
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
+    targetMin: w.targetMin != null ? Math.round(w.targetMin) : null,
+    targetLoad: w.targetLoad != null ? Math.round(w.targetLoad) : null,
     intensity: { easy: Math.round(w.intensity.easy), mid: Math.round(w.intensity.mid), hard: Math.round(w.intensity.hard) },
-    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null, plannedMin: v.plannedMin != null ? Math.round(v.plannedMin) : null }])),
+    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null, plannedMin: v.plannedMin != null ? Math.round(v.plannedMin) : null, targetMin: v.targetMin != null ? Math.round(v.targetMin) : null, targetLoad: v.targetLoad != null ? Math.round(v.targetLoad) : null }])),
   }));
 }
 

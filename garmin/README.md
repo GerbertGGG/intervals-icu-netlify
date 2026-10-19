@@ -6,7 +6,7 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwar
 - **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′"). Heute bleibt eine geplante Einheit stehen, solange ihre Sportart heute noch nicht erledigt ist (Rad erledigt, Kraft offen → Kraft).
 - **Uhrzeit**, groß.
 - **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampel in Farbe und Form: Kreis = bereit, Dreieck = mit Vorsicht, Quadrat mit Kreuz = ruhig angehen. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat (mit Stichwort, z. B. "Eiweiß", "Kalorien", "Tagebuch", "Heißhunger", "Ruhetag", "Last", "Laufumfang").
-- **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N“; der Ring füllt sich mit dem Gegessenen), TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`, grün, sobald erreicht), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot und zusätzlich mit Dreieck/Quadrat links neben „KRAFT“), Wetter (Temperatur und höchste Regenwahrscheinlichkeit der nächsten 12 Stunden, unter 30 % stattdessen die Uhrzeit des nächsten Sonnenauf- oder -untergangs; der Ring ist ein 12-Stunden-Zifferblatt: die hellen Stunden zwischen Sonnenauf- und -untergang in gedämpftem Gold, darüber jedes Stundensegment ab 30 % Regenwahrscheinlichkeit in Blau, je wahrscheinlicher, desto dunkler: sehr hell 30–49 %, hell 50–69 %, kräftig 70–84 %, dunkel ab 85 %; die Prozentzahl steht im Blau ihrer Stufe; ein weißer Strich markiert die aktuelle Uhrzeit).
+- **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N“; der Ring füllt sich mit dem Gegessenen), Zeit der Woche gegen die Wochenziele des Coaches („ZEIT“: Minuten gegen das Zeitziel, Ring je Sportart; die Zahl wird orange, sobald eine Sportart über ihrer TSS-Obergrenze liegt), ohne Wochenziele TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`), Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot und zusätzlich mit Dreieck/Quadrat links neben „KRAFT“), Wetter (Temperatur und höchste Regenwahrscheinlichkeit der nächsten 12 Stunden, unter 30 % stattdessen die Uhrzeit des nächsten Sonnenauf- oder -untergangs; der Ring ist ein 12-Stunden-Zifferblatt: die hellen Stunden zwischen Sonnenauf- und -untergang in gedämpftem Gold, darüber jedes Stundensegment ab 30 % Regenwahrscheinlichkeit in Blau, je wahrscheinlicher, desto dunkler: sehr hell 30–49 %, hell 50–69 %, kräftig 70–84 %, dunkel ab 85 %; die Prozentzahl steht im Blau ihrer Stufe; ein weißer Strich markiert die aktuelle Uhrzeit).
 - **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gerade Zeile.
 
 Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mockup, true = jede Komplikation in eigener dezenter Farbe).
@@ -25,7 +25,7 @@ Ein eigenes Token, das nur die Ansicht `watch` öffnet (das Dashboard-Token blei
 npx wrangler secret put WATCH_TOKEN
 ```
 
-Optional `WEEKLY_TSS_GOAL` für das Wochenziel (siehe `wrangler.toml`). Der Plan der Woche kommt aus dem Intervals-Kalender.
+Optional `WEEKLY_TSS_GOAL` für das Wochenziel (siehe `wrangler.toml`). Der Plan der Woche kommt aus dem Intervals-Kalender; die Wochenziele sind dort Einträge der Kategorie „Target“ (Weekly) je Sportart mit Zeit und Load.
 
 ## 2. Zugangsdaten für die Uhr
 

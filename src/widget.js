@@ -56,10 +56,27 @@ const failedOf = (d) => Object.entries(d.sources).filter(([, s]) => !s.ok).map((
 
 // Wochenziel der TSS: Summe der geplanten Workouts der Woche aus dem Intervals-Kalender. Fehlt sie dort,
 // zaehlt der optionale Wert WEEKLY_TSS_GOAL (Worker-Variable); sonst gibt es bewusst kein Ziel.
+// Hat die Woche Wochenziele des Coaches (Zeit + TSS-Obergrenze), ist TSS kein Ziel mehr: Die geplanten Workouts
+// (z. B. nur Kraft) waeren dann ein falsches Soll, es zaehlen die Wochenziele (weekTargets).
 function weeklyGoal(week, env) {
-  if (week.plannedLoad > 0) return { goal: week.plannedLoad, source: "plan" };
+  if (week.plannedLoad > 0 && !hasTargets(week)) return { goal: week.plannedLoad, source: "plan" };
   const cfg = Number(env?.WEEKLY_TSS_GOAL);
   return Number.isFinite(cfg) && cfg > 0 ? { goal: Math.round(cfg), source: "config" } : { goal: null, source: null };
+}
+
+// Wochenziele des Coaches je Sportart (Intervals-Kalender, Kategorie TARGET, jeden Montag neu): Zeit ist das Ziel,
+// TSS die Obergrenze. Schwimmen meist nur mit Zeit. s Sportart, min erledigt, goal Ziel-Minuten, tss erledigt,
+// max TSS-Obergrenze (null = keine), over = ueber der Obergrenze. Ohne Ziele leer.
+const TARGET_SPORTS = ["run", "bike", "swim", "strength", "other"];
+const hasTargets = (week) => Boolean(week && (week.targetMin > 0 || week.targetLoad > 0));
+export function weekTargets(week) {
+  if (!hasTargets(week)) return [];
+  return TARGET_SPORTS.map((k) => {
+    const s = week.bySport[k];
+    if (!s || !(s.targetMin > 0 || s.targetLoad > 0)) return null;
+    const max = s.targetLoad > 0 ? s.targetLoad : null;
+    return { s: k, min: Math.round(s.minutes), goal: s.targetMin > 0 ? s.targetMin : null, tss: Math.round(s.load), max, over: max != null && s.load > max };
+  }).filter(Boolean);
 }
 
 export function buildWidget(d, env = {}) {
@@ -88,7 +105,8 @@ export function buildWidget(d, env = {}) {
     readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
     // next.items: alle Einheiten des naechsten Tages mit Plan (z. B. Kraft und Rad am selben Tag)
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },
-    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays },
+    // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt
+    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week) },
     // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
     focus: topFinding(d),
     // Hinweis des Coaches, nur solange er frisch ist; hat im Widget Vorrang vor focus und dem allgemeinen Warum
@@ -107,7 +125,7 @@ export function buildWidgetDetail(d, env = {}) {
     const hasData = Object.values(w.bySport).some((s) => s.count > 0);
     // TSS je Sportart fuer die Fuellung in Sportfarben (nur Sportarten mit Last)
     const sports = Object.fromEntries(Object.entries(w.bySport).filter(([, v]) => v.load > 0).map(([k, v]) => [k, Math.round(v.load)]));
-    return { weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, complete: w.complete, goal: i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 ? w.plannedLoad : null };
+    return { weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, complete: w.complete, goal: i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 && !hasTargets(w) ? w.plannedLoad : null };
   });
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const form = Array.from({ length: 28 }, (_, i) => {
@@ -199,6 +217,9 @@ export function buildWidgetTraining(d, env = {}) {
       weekLoad: cur.bySport[k].load,
       plannedLoad: cur.bySport[k].plannedLoad,
       weekMinutes: cur.bySport[k].minutes,
+      // Wochenziel des Coaches: Minuten als Ziel, TSS als Obergrenze (je null ohne Eintrag)
+      targetMin: cur.bySport[k].targetMin ?? null,
+      targetLoad: cur.bySport[k].targetLoad ?? null,
       daysSince: last ? dayDiff(last) : null,
     }];
   }));
@@ -348,6 +369,12 @@ function watchTssBySport(week) {
   }).filter(Boolean);
 }
 
+// Zeit-Ring der Uhr, wenn der Coach Wochenziele gesetzt hat: je Sportart [s, erledigte Minuten bis zum Ziel, noch offen].
+// Mehr als das Ziel einer Sportart fuellt nicht die anderen auf; volle Runde = alle Zeitziele erreicht.
+function watchTimeBySport(targets) {
+  return targets.filter((t) => t.goal > 0).map((t) => [t.s, Math.min(t.min, t.goal), Math.max(0, t.goal - t.min)]);
+}
+
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
@@ -366,6 +393,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   // Eiweiß heute fuer den inneren Ring von Essen, wie kcal live aus Yazio, sonst aus dem Sync
   const protein = live?.energyKcal > 0 && Number.isFinite(live.proteinG) ? Math.round(live.proteinG) : today?.protein != null ? Math.round(today.protein) : null;
   const cfg = Number(env?.WEEKLY_TSS_GOAL);
+  const targets = weekTargets(week), tm = watchTimeBySport(targets);
   return {
     t: d.today,
     ti: dayIndex(d.today),
@@ -377,7 +405,13 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     w: watchWarning(d),
     tss: total(week),
     ts: watchTssBySport(week),
-    plan: week.plannedLoad > 0 ? week.plannedLoad : null,
+    plan: week.plannedLoad > 0 && !targets.length ? week.plannedLoad : null,
+    // Wochenziele des Coaches: tm Zeit je Sportart (wie ts), mn erledigte und mg Ziel-Minuten, ov = 1, wenn eine Sportart
+    // ueber ihrer TSS-Obergrenze liegt (zu intensiv). Ohne Zeitziele null; die Uhr zeigt dann den TSS-Ring.
+    tm: tm.length ? tm : null,
+    mn: tm.length ? targets.filter((t) => t.goal > 0).reduce((a, t) => a + t.min, 0) : null,
+    mg: tm.length ? targets.reduce((a, t) => a + (t.goal ?? 0), 0) : null,
+    ov: targets.some((t) => t.over) ? 1 : 0,
     goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
     str: strengthWeek(strength),
     kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },

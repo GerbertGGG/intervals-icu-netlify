@@ -656,9 +656,18 @@ function buildWidget(res) {
   wr.addSpacer();
   const wc = wr.addStack(); wc.layoutVertically();
   const right = (fn) => { const s = wc.addStack(); s.addSpacer(); fn(s); };
-  right((s) => { s.bottomAlignContent(); num(s, fmt(wk.total), FS.xl); text(s, wk.goal ? ` / ${fmt(wk.goal)} TSS` : " TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
-  // Vorwoche und Frische in einer kleinen Zeile: die Frische ist nur eine berechnete Zahl und soll nicht dominieren
-  if (wk.lastTotal != null) right((s) => text(s, `Vorwoche ${fmt(wk.lastTotal)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
+  // Wochenziele des Coaches: Zeit ist das Ziel (Minuten der Sportarten mit Zeitziel), TSS nur Obergrenze. Liegt eine
+  // Sportart darueber, steht sie in Warnfarbe darunter, sonst die TSS der Woche
+  const tg = (wk.targets || []).filter((t) => t.goal > 0), over = (wk.targets || []).filter((t) => t.over);
+  if (tg.length) {
+    right((s) => { s.bottomAlignContent(); num(s, fmt(tg.reduce((a, t) => a + t.min, 0)), FS.xl); text(s, ` / ${fmt(tg.reduce((a, t) => a + t.goal, 0))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
+    if (over.length) right((s) => text(s, `TSS über Grenze: ${over.map((t) => SPORTS[t.s][0]).join(", ")}`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 }));
+    else right((s) => text(s, `${fmt(wk.total)} TSS`, FS.xs, { color: COL.muted, minScale: 0.7 }));
+  } else {
+    right((s) => { s.bottomAlignContent(); num(s, fmt(wk.total), FS.xl); text(s, wk.goal ? ` / ${fmt(wk.goal)} TSS` : " TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); });
+    // Vorwoche und Frische in einer kleinen Zeile: die Frische ist nur eine berechnete Zahl und soll nicht dominieren
+    if (wk.lastTotal != null) right((s) => text(s, `Vorwoche ${fmt(wk.lastTotal)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
+  }
   if (wk.tsb != null) right((s) => text(s, `TSB ${signed(wk.tsb)}`, FS.xs, { color: COL.muted, minScale: 0.7 }));
   // Ohne Kapseln (alte Cache-Daten) der Balken gegen das Wochenziel
   if (wk.goal && !wk.days) { w.addSpacer(4); progressBar(w, W, wk.total / wk.goal, ACCENT_HEX); }
@@ -1026,12 +1035,23 @@ function buildTraining(res) {
     sportBadge(nl, k, 20);
     text(nl, SPORTS[k][0], FS.sm, { bold: true, minScale: 0.7 });
     c.addSpacer(4);
-    // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
-    num(vl, `${Math.round(s.weekLoad || 0)}`, FS.xl);
-    text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    c.addSpacer(4);
-    progressBar(c, CW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
+    if (s.targetMin || s.targetLoad) {
+      // Wochenziel des Coaches: Minuten gegen das Zeitziel, darunter TSS gegen die Obergrenze (Warnfarbe, wenn darueber)
+      num(vl, `${Math.round(s.weekMinutes || 0)}`, FS.xl);
+      text(vl, s.targetMin ? `/ ${Math.round(s.targetMin)} min` : "min", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+      c.addSpacer(4);
+      progressBar(c, CW, s.targetMin ? (s.weekMinutes || 0) / s.targetMin : 0, hex);
+      c.addSpacer(3);
+      const over = s.targetLoad && s.weekLoad > s.targetLoad;
+      text(c, s.targetLoad ? `TSS ${Math.round(s.weekLoad || 0)} / ≤ ${Math.round(s.targetLoad)}` : `TSS ${Math.round(s.weekLoad || 0)}`, FS.xs, { bold: !!over, color: over ? COL.warn : COL.muted, minScale: 0.6 });
+    } else {
+      // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
+      num(vl, `${Math.round(s.weekLoad || 0)}`, FS.xl);
+      text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+      c.addSpacer(4);
+      progressBar(c, CW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
+    }
     c.addSpacer(4);
     // Umfang (Stunden) der letzten 4 Wochen und Entwicklung gegen die 4 davor
     if (s.min4 != null) {
