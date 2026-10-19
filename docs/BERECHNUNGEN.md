@@ -654,7 +654,7 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 
 ## 11. Freitext-Parser (`src/dashboard-parse.js`)
 
-- **Heißhunger** (`parseCravings`, 9): jeder Eintrag beginnt mit „HH“. Uhrzeit `HH h[:|.|h]mm` (Stunde 0–24, Minute 0–59), `Stärke n`, `Auslöser …`, `davor …`; der Rest bis zum nächsten Komma ist „was“. Nicht lesbare Teile bleiben `null`, der Eintrag wird trotzdem gezählt.
+- **Heißhunger** (`parseCravings`, 9): jeder Eintrag beginnt mit „HH“ oder „Heißhunger“/„Heisshunger“. Uhrzeit `HH h[:|.|h]mm`, optional mit „h“ oder „Uhr“ dahinter (Stunde 0–24, Minute 0–59), `Stärke n`, `Auslöser …`, `davor …`; der Rest bis zum nächsten Komma ist „was“. Nicht lesbare Teile bleiben `null`, der Eintrag wird trotzdem gezählt.
 - **Hüfte/Leiste/Knie** (`findHipFlags`, 46): Treffer auf Wörter wie `hüft*`, `leiste*`, `knie*`, `hip`, `groin`; Kniebeuge/Kniehebe-Wörter und Verneinungen in den 30 Zeichen davor (`kein`, `ohne`, `nicht`, `schmerzfrei` …) werden ausgelassen.
 - **Workout-Schritte** (`parseWorkoutSteps`, 108): bevorzugt Intervals-`workout_doc`, sonst Beschreibung im Intervals-Format. Dauer: Zahl + Einheit (`h`, `min`/`m`, `s`, `km`, `mtr`); **Distanz wird mit 6:00 min/km (360 s/km) in Zeit umgerechnet**. Intensität: Prozentwert (bei Bereich der Mittelwert) oder Zone `Z1…Z7` → 55/70/85/98/110/125/150 %. Wiederholungen max. 50, Blöcke max. 200.
 
