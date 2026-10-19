@@ -59,6 +59,13 @@ assert.deepEqual(ta.swim, { reps: 2, distM: 500, maxPauseSec: 60, maxSlowerPer10
 assert.deepEqual(ta.strength, { need: 8, of: 9, sets: 60 });
 assert.equal(ta.ramp.max, 5); assert.equal(ta.pause.maxDays, 7); assert.deepEqual(ta.decision, { week: 12, extend: "3–4" });
 assert.equal(ta.decoupling, null); assert.equal(ta.acwr, null);
+// Neue Form: Listenpunkte ohne Leerzeile, "Blocktest" bzw. "Vergleichseinheiten", Muss/Ziel im Absatz, FTP nur als Referenz
+const blockA2 = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nABSCHLUSSZIELE\n1. Lauf: aerobe Stabilität Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min nicht langsamer als im Basistest. Blocktest = langer Lauf am Sonntag der 3. Belastungswoche (Basistest 25.10., dann 08.11., 06.12., 03.01.). HF-Band 120–125, gleiche flache Runde.\n2. Rad (Rolle): aerobe Stabilität Decoupling (Leistung zu Puls) ≤5 % im Mittel der letzten 3 Vergleichseinheiten: 75 min bei fester Leistung, mit Ventilator und gleicher Raumtemperatur. Referenz: FTP 252 W (Rampentest 12.10.). Feste Leistung einmal wählen (ca. 165–170 W) und im ganzen Block beibehalten.\n3. Schwimmen: Dauer mit sauberer Technik 2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.";
+const ta2 = parseBlockTargets(blockA2);
+assert.deepEqual(ta2.run, { max: 5, must: 8, lastN: 3, minMin: 60, pace: true });
+assert.deepEqual(ta2.bike, { max: 5, must: null, lastN: 3, minMin: 75, ftpTest: false });
+assert.deepEqual(ta2.swim, { reps: 2, distM: 500, maxPauseSec: 60, maxSlowerPer100: 5 });
+assert.equal(ta2.decoupling, null);
 
 const evA = { ...ev, description: blockA };
 const evB = { category: "SEASON_START", name: "Block B", start_date_local: "2027-01-11T00:00:00" };
