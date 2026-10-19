@@ -88,27 +88,32 @@ const r1 = (v) => Math.round(v * 10) / 10;
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const numOf = (s) => Number(String(s).replace(",", "."));
 
-// Abschlussziele je Sportart (Block A): je ein Absatz "1. Lauf: …", "2. Rad (Rolle): …", "3. Schwimmen: …" mit
-// "vergleichbar" bzw. einem Test (2× 500 m). Leitplanken stehen als Stichworte im Text (Kraft "8 von 9 Belastungswochen",
-// "Ramp Rate … ≤5", "Pause über 7 Tage"). Ein Muss-Kriterium ("bei 8 % … Muss-Kriterium") gilt fuer beide Decoupling-Ziele.
+// Abschlussziele je Sportart (Block A): je ein Absatz bzw. Listenpunkt "1. Lauf: …", "2. Rad (Rolle): …", "3. Schwimmen: …"
+// mit Vergleichseinheiten ("vergleichbar", "Vergleichseinheiten", "Blocktest") bzw. einem Test (2× 500 m). Leitplanken stehen
+// als Stichworte im Text (Kraft "8 von 9 Belastungswochen", "Ramp Rate … ≤5", "Pause über 7 Tage"). Muss-Kriterium: "Muss ≤8 %"
+// im Absatz der Sportart, sonst gilt ein allgemeines ("bei 8 % … Muss-Kriterium") fuer beide Decoupling-Ziele.
 const num1 = (m, fb) => (m ? numOf(m[1]) : fb);
+const LE = "(?:≤|<=|<|unter|max(?:imal)?)";
 function parseSportGoals(t) {
-  const paras = t.split(/\n\s*\n/);
+  const paras = t.split(/\n\s*\n|\n(?=\s*\d+\.\s)/);
   const para = (...res) => paras.find((p) => res.every((re) => re.test(p))) ?? null;
-  const must = t.match(/(\d+(?:[.,]\d+)?)\s*%[^\n]{0,50}muss/i);
+  const mustAll = t.match(/(\d+(?:[.,]\d+)?)\s*%[^\n]{0,50}muss/i);
+  const mustOf = (p) => num1(p.match(new RegExp(`muss\\s*:?\\s*${LE}?\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), mustAll ? numOf(mustAll[1]) : null);
   const lastN = (p) => num1(p.match(/letzten\s*(\d+)/i), 3);
-  const decMax = (p) => num1(p.match(/decoupling[^\n\d]{0,40}?(?:≤|<=|<|unter|max(?:imal)?)\s*(\d+(?:[.,]\d+)?)\s*%/i), 5);
-  const runP = para(/\blauf/i, /decoupling/i, /vergleichbar/i);
-  const bikeP = para(/\brad\b|rolle/i, /decoupling/i, /vergleichbar/i);
+  const decMax = (p) => num1(p.match(new RegExp(`ziel(?:wert)?\\s*:?\\s*${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")) ?? p.match(new RegExp(`decoupling[^\\n\\d]{0,40}?${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), 5);
+  const cmp = /vergleich|test/i;
+  const runP = para(/\blauf/i, /decoupling/i, cmp);
+  const bikeP = para(/\brad\b|rolle/i, /decoupling/i, cmp);
   const swimP = para(/schwimm/i, /\d\s*[×x]\s*\d{2,4}\s*m\b/i);
   const out = {};
   if (runP) {
-    const max = decMax(runP);
-    out.run = { max, must: must ? Math.max(max, numOf(must[1])) : null, lastN: lastN(runP), minMin: num1(runP.match(/(?:≥|>=|ab|mind(?:estens)?\.?)\s*(\d+)\s*min/i), 60), pace: /pace/i.test(runP) };
+    const max = decMax(runP), must = mustOf(runP);
+    out.run = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(runP), minMin: num1(runP.match(/(?:≥|>=|ab|mind(?:estens)?\.?)\s*(\d+)\s*min/i), 60), pace: /pace/i.test(runP) };
   }
   if (bikeP) {
-    const max = decMax(bikeP);
-    out.bike = { max, must: must ? Math.max(max, numOf(must[1])) : null, lastN: lastN(bikeP), minMin: num1(bikeP.match(/(\d+)\s*min\b/i), 75), ftpTest: /ftp/i.test(bikeP) };
+    const max = decMax(bikeP), must = mustOf(bikeP);
+    // FTP-Test nur, wenn er im Block ansteht ("FTP-Test in Woche 1"); eine Referenz wie "FTP 252 W (Rampentest 12.10.)" nicht
+    out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: num1(bikeP.match(/(\d+)\s*min\b/i), 75), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
   }
   if (swimP) {
     const reps = swimP.match(/(\d)\s*[×x]\s*(\d{2,4})\s*m\b/i);
