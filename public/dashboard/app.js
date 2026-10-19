@@ -249,15 +249,16 @@ function renderCockpit(d) {
    die Zeitziele, TSS gegen die Obergrenzen; außen Rad, Mitte Lauf, innen Schwimmen, Überschuss rot als zweite Runde),
    daneben je Sportart, was noch offen ist, Ist gegen Ziel und TSS gegen die Grenze; Kraft in Sätzen aus dem Block-Ziel.
    Die Tage zeigen nur noch, was gemacht wurde: Ohne festen Plan gibt es kein "Plan / Ist" mehr. */
-const RING_R = { bike: 46, run: 35, swim: 24 };
+// Die vorhandenen Ringe teilen sich das Band zwischen RING_OUT und RING_IN, damit die Mitte nicht leer wirkt
+const RING_OUT = 56, RING_IN = 14, RING_GAP = 2;
 function weekRings(vals, warn) {
-  const S = 120, c = S / 2;
+  const S = 120, c = S / 2, ks = ["bike", "run", "swim"].filter((k) => vals[k]);
+  const w = Math.min(20, (RING_OUT - RING_IN - (ks.length - 1) * RING_GAP) / Math.max(ks.length, 1));
   let s = `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" role="img">`;
-  for (const k of ["bike", "run", "swim"]) {
+  for (const [i, k] of ks.entries()) {
     const v = vals[k];
-    if (!v) continue;
-    const r = RING_R[k], L = 2 * Math.PI * r, f = v[0] / v[1], arc = (x, col) => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:${col}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${x * L} ${L}" transform="rotate(-90 ${c} ${c})"/>`;
-    s += `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:var(--s-${k})" stroke-opacity=".18" stroke-width="9"><title>${SPORT_LABEL[k]}: ${fmt(v[0])} von ${fmt(v[1])}</title></circle>`;
+    const r = RING_OUT - w / 2 - i * (w + RING_GAP), L = 2 * Math.PI * r, f = v[0] / v[1], arc = (x, col) => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${x * L} ${L}" transform="rotate(-90 ${c} ${c})"/>`;
+    s += `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:var(--s-${k})" stroke-opacity=".18" stroke-width="${w}"><title>${SPORT_LABEL[k]}: ${fmt(v[0])} von ${fmt(v[1])}</title></circle>`;
     if (f > 0) s += arc(Math.min(f, 1), `var(--s-${k})`);
     if (warn && f > 1) s += arc(Math.min(f - 1, 1), "var(--bad)");
   }
