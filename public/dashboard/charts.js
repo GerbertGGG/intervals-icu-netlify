@@ -100,17 +100,20 @@
       const x = L + slot * i + (slot - bw) / 2;
       if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (${w.cap ? "Obergrenze" : "Ziel"} ${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
-      if (o.valueLabels && w.cap && w.plan != null && w.plan > 0) {
+      if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
+        // Laufende Woche: Ist ist noch unvollständig, über dem Plan-Strich steht die Wochenplanung (Ziel bzw. Obergrenze),
+        // der bisherige Wert nur über der Säule, wenn er Platz hat; unten, was noch offen ist
+        const d0 = o.dec ?? (w.cap ? 0 : 1), kind = w.cap ? "Obergrenze" : "Wochenziel";
+        s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, U.fmt(w.plan, d0)), `${kind}: ${U.fmt(w.plan, d0)} ${o.unit}`));
+        if (w.value && y(w.value) - y(w.plan) > 18) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, d0)));
+        const dev = (w.value ?? 0) - w.plan;
+        const txt = w.cap ? (dev > 0 ? `+${U.fmt(dev, d0)} drüber` : `bis ${U.fmt(-dev, d0)}`) : dev < 0 ? `noch ${U.fmt(-dev, d0)}` : "✓";
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${w.cap && dev > 0 ? "bad" : "muted"})` }, txt), `bisher ${U.fmt(w.value ?? 0, d0)} von ${w.cap ? "höchstens " : ""}${U.fmt(w.plan, d0)} ${o.unit}`));
+      } else if (o.valueLabels && w.cap && w.plan != null && w.plan > 0) {
         // Obergrenze statt Ziel (Wochenziele des Coaches, TSS): darunter ist gut, nur darüber wird es markiert
         s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value ?? 0, o.dec ?? 0)), `Obergrenze: ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
         const dev = (w.value ?? 0) - w.plan;
-        const txt = dev > 0 ? `+${U.fmt(dev, o.dec ?? 0)} drüber` : w.partial ? `bis ${U.fmt(-dev, o.dec ?? 0)}` : "✓";
-        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : w.partial ? "muted" : "ok"})` }, txt), `${U.fmt(w.value ?? 0, o.dec ?? 0)} von höchstens ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
-      } else if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
-        // Laufende Woche: oben wie bei der Obergrenze der bisherige Ist-Wert, unten was zum Wochenziel noch fehlt
-        s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value ?? 0, o.dec ?? 1)), `Wochenziel: ${U.fmt(w.plan, o.dec ?? 1)} ${o.unit}`));
-        const rest = Math.max(0, w.plan - (w.value ?? 0));
-        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: "font-size:11px;font-weight:600;fill:var(--muted)" }, rest ? `noch ${U.fmt(rest, o.dec ?? 1)}` : "✓"), `bisher ${U.fmt(w.value ?? 0, o.dec ?? 1)} von ${U.fmt(w.plan, o.dec ?? 1)} ${o.unit}`));
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : "ok"})` }, dev > 0 ? `+${U.fmt(dev, o.dec ?? 0)} drüber` : "✓"), `${U.fmt(w.value ?? 0, o.dec ?? 0)} von höchstens ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
       } else if (o.valueLabels && w.value != null) {
         // Zahl über Säule und Plan-Marke, damit der Plan-Strich sie nie schneidet
         s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
