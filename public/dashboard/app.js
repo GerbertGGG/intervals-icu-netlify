@@ -462,9 +462,10 @@ function renderIntervals(d) {
 
 /* ---------- 3 · Form: Verlauf ---------- */
 function renderHistory(d) {
-  // Laufumfang gegen das Zeitziel des Coaches, wo es eins gibt, sonst gegen die geplanten Läufe
-  const runPlan = (w) => w.bySport.run.targetMin ?? w.plannedRunMin;
-  C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.runMin / 60, plan: runPlan(w) != null ? runPlan(w) / 60 : null, partial: !w.complete })), { unit: "h", label: "Laufumfang pro Woche (Stunden)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 1 });
+  // Trainingszeit aller Sportarten gegen die Zeitziele des Coaches, wo es welche gibt, sonst gegen die geplanten Workouts
+  const sumMin = (w, f) => SPORT_ORDER.reduce((a, k) => (w.bySport[k][f] != null ? (a ?? 0) + w.bySport[k][f] : a), null);
+  const timePlan = (w) => w.targetMin ?? sumMin(w, "plannedMin");
+  C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: sumMin(w, "minutes") ?? 0, plan: timePlan(w), partial: !w.complete })), { unit: "min", label: "Trainingszeit pro Woche (Minuten)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   // Belastung gegen die TSS-Obergrenze der Wochenziele: Summe der Grenzen plus die Last der Sportarten ohne Grenze
   // (meist Schwimmen), die weder für noch gegen die Grenze zählt. Wie im TSS-Ring der Wochenkarte zählen nur die Grenzen
   // von Lauf, Rad, Schwimmen; Kraft hat dort ein Satz-Ziel und zählt mit ihrem Ist. Ohne Wochenziele gegen den Plan-Load.
@@ -474,8 +475,8 @@ function renderHistory(d) {
     const cap = capOf(w);
     return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load, plan: cap ?? (w.targetMin != null ? null : w.plannedLoad), cap: cap != null, partial: !w.complete };
   }), { unit: "Load", label: "Belastung pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
-  const noPlan = d.weeks.every((w) => runPlan(w) == null && w.plannedLoad == null && capOf(w) == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Wochenziele noch geplante Workouts mit Dauer/Load – deshalb keine Marke." : "Marke = Wochenziel des Coaches (Laufumfang: Zeitziel Lauf; Belastung: Summe der TSS-Obergrenzen von Lauf, Rad, Schwimmen, Kraft und Sportarten ohne Grenze zählen mit ihrem Ist), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: beim Ziel grün bis 15 %, sonst gelb; bei der Obergrenze ✓ oder rot, wenn drüber. Laufumfang = Bewegungszeit aller Läufe, Belastung alle Sportarten.";
+  const noPlan = d.weeks.every((w) => timePlan(w) == null && w.plannedLoad == null && capOf(w) == null);
+  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Wochenziele noch geplante Workouts mit Dauer/Load – deshalb keine Marke." : "Marke = Wochenziel des Coaches (Trainingszeit: Summe der Zeitziele aller Sportarten; Belastung: Summe der TSS-Obergrenzen von Lauf, Rad, Schwimmen, Kraft und Sportarten ohne Grenze zählen mit ihrem Ist), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: beim Ziel grün bis 15 %, sonst gelb; bei der Obergrenze ✓ oder rot, wenn drüber. Trainingszeit = Bewegungszeit aller Sportarten in Minuten, Belastung ebenfalls alle Sportarten.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   const TSB_BANDS = d.summary.thresholds.tsb;
