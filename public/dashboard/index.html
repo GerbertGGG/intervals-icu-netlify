@@ -243,10 +243,16 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 /* Wochenvorschau */
 .wk-head { display: grid; gap: 6px; margin-bottom: 10px; }
 .wk-bar { height: 6px; }
-.wk-tg { display: grid; grid-template-columns: auto minmax(40px, 1fr) auto auto; gap: 4px 10px; align-items: center; font-size: var(--fs-s); }
-.wk-tg .lbl { display: inline-flex; align-items: center; gap: 6px; } .wk-tg i { width: 8px; height: 8px; border-radius: 50%; }
-.wk-tg .cbar { height: 6px; } .wk-tg .n { text-align: right; white-space: nowrap; } .wk-tg .n small { color: var(--muted); }
-.wk-tg .over, .wk-tg .over small { color: var(--bad); font-weight: 600; }
+.wk-top { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 12px 26px; align-items: center; margin-bottom: 12px; }
+.wk-ring { text-align: center; } .wk-ring b { display: block; font-size: var(--fs-xs); color: var(--muted); letter-spacing: .06em; }
+.wk-ring svg { display: block; margin: 4px auto; } .wk-ring div { font-weight: 600; } .wk-ring small { color: var(--muted); font-weight: 400; }
+.wk-open { display: grid; grid-template-columns: auto auto 1fr auto auto; gap: 6px 14px; align-items: center; font-size: var(--fs-s); }
+.wk-open > b { grid-column: 1 / -1; font-size: var(--fs-m, 15px); }
+.wk-open .lbl { display: inline-flex; align-items: center; gap: 6px; } .wk-open .lbl i { width: 8px; height: 8px; border-radius: 50%; }
+.wk-open .o { font-weight: 600; white-space: nowrap; } .wk-open .n { text-align: right; white-space: nowrap; } .wk-open .n small { color: var(--muted); }
+.wk-open .over, .wk-open .over small { color: var(--bad); font-weight: 600; }
+.wk-did { display: flex; gap: 6px; align-items: center; line-height: 1.3; } .wk-did i { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+@media (max-width: 720px) { .wk-top { grid-template-columns: auto auto; } .wk-open { grid-column: 1 / -1; grid-template-columns: auto auto 1fr auto; } .wk-open .gap { display: none; } }
 .wk-grid { display: grid; gap: 6px; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .wk-day { background: var(--inset); border: 1px solid transparent; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: var(--fs-s); }
 .wk-day.now { background: var(--card); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -407,12 +413,12 @@ td .badge { font-size: var(--fs-xs); }
 
   <h2 id="form">Form</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische bis zum Renntag</h3><div id="form-chart"></div>
-    <details class="info"><summary>Erklärung</summary><div>CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): sie rechnet die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></details></div>
+    <details class="info"><summary>Erklärung</summary><div>CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB) mit Ampelzonen. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): gibt es Wochenziele des Coaches, rechnet sie mit 90 % der TSS-Obergrenzen (Schwimmen aus den Zielminuten und deinen bisherigen TSS je Minute), verteilt den Rest der Woche gleichmäßig und nimmt für die Wochen danach dieselbe Woche an. Ohne Wochenziele rechnet sie die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></details></div>
   <div class="grid half" style="margin-top:12px">
     <div class="card"><h3>Laufumfang pro Woche (Stunden)</h3><div id="chart-km"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel (früher Plan)</span></div></div>
     <div class="card"><h3>Belastung pro Woche (alle Sportarten)</h3><div id="chart-load"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Plan</span></div></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>TSS-Obergrenze (früher Plan)</span></div></div>
   </div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Longrun-Tracker (8 Wochen)</h3><div id="longruns"></div></div>

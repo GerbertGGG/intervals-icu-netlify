@@ -614,3 +614,21 @@ console.log("zones from intervals ok");
   assert.equal(fT.some((f) => f.tag === "Plan"), false); // Plan-Load (nur Kraft) zaehlt mit Wochenzielen nicht
   console.log("week targets ok");
 }
+
+// Formprognose aus den Wochenzielen: 90 % der TSS-Grenzen plus Schwimmen aus Zielminuten × TSS/min der Vorwochen
+{
+  const { targetDailyLoad, buildFormProjection } = await import("../src/dashboard.js");
+  const sp = (o = {}) => ({ count: 0, minutes: 0, km: 0, load: 0, targetMin: null, targetLoad: null, ...o });
+  const wk = (bySport, extra = {}) => ({ load: Object.values(bySport).reduce((a, b) => a + b.load, 0), bySport: { run: sp(), bike: sp(), swim: sp(), strength: sp(), other: sp(), ...bySport }, ...extra });
+  const prev = wk({ swim: sp({ minutes: 60, load: 30 }) }); // 0,5 TSS/min
+  const cur = wk({ run: sp({ targetMin: 90, targetLoad: 100, load: 40 }), bike: sp({ targetMin: 100, targetLoad: 100 }), swim: sp({ targetMin: 40 }) }, { targetLoad: 200, targetMin: 230 });
+  const f = targetDailyLoad([prev, cur], "2026-10-21"); // Mittwoch: noch 4 Tage nach heute
+  const total = 200 * 0.9 + 40 * 0.5; // 200
+  assert.equal(f("2026-10-22"), (total - 40) / 4);
+  assert.equal(f("2026-10-25"), (total - 40) / 4);
+  assert.equal(f("2026-10-26"), total / 7); // naechste Woche: dieselbe Woche wieder
+  assert.equal(targetDailyLoad([prev, wk({})], "2026-10-21"), null); // ohne Ziele: Plan
+  const p = buildFormProjection([{ date: "2026-10-21", ctl: 20, atl: 20 }], [], "2026-10-21", 3, f);
+  assert.ok(Math.abs(p[0].ctl - (20 + (40 - 20) / 42)) < 0.06);
+  console.log("projection targets ok");
+}

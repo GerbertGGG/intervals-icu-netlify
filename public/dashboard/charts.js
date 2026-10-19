@@ -98,9 +98,15 @@
     const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.55, 46);
     items.forEach((w, i) => {
       const x = L + slot * i + (slot - bw) / 2;
-      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (Plan ${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
+      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (${w.cap ? "Obergrenze" : "Ziel"} ${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
-      if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
+      if (o.valueLabels && w.cap && w.plan != null && w.plan > 0) {
+        // Obergrenze statt Ziel (Wochenziele des Coaches, TSS): darunter ist gut, nur darüber wird es markiert
+        s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value ?? 0, o.dec ?? 0)), `Obergrenze: ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
+        const dev = (w.value ?? 0) - w.plan;
+        const txt = dev > 0 ? `+${U.fmt(dev, o.dec ?? 0)} drüber` : w.partial ? `bis ${U.fmt(-dev, o.dec ?? 0)}` : "✓";
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : w.partial ? "muted" : "ok"})` }, txt), `${U.fmt(w.value ?? 0, o.dec ?? 0)} von höchstens ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
+      } else if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
         // Laufende Woche: Ist ist noch unvollständig, über dem Plan-Strich steht das Wochenziel, darunter der bisherige Wert
         s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, U.fmt(w.plan, o.dec ?? 1)), `Wochenziel: ${U.fmt(w.plan, o.dec ?? 1)} ${o.unit}`));
         if (w.value && y(w.value) - y(w.plan) > 18) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
@@ -237,7 +243,7 @@
       const join = (real, pr) => ({ ...(cNow && real === o.ctl ? { [cNow.day]: cNow.v } : {}), ...(aNow && real === o.atl ? { [aNow.day]: aNow.v } : {}), ...pr });
       curve(join(o.ctl, o.proj.ctl), CTL, false, true, "5 4"); curve(join(o.atl, o.proj.atl), ATL, false, true, "5 4");
       const px = x(today);
-      s.append(el("rect", { x: px, y: T1, width: W - R - px, height: B2 - T1, fill: "var(--muted)", opacity: 0.05 }), el("text", { x: W - R, y: T1 - 10, "text-anchor": "end", style: "font-size:10.5px;fill:var(--muted)" }, "grau hinterlegt: Prognose laut Planung"));
+      s.append(el("rect", { x: px, y: T1, width: W - R - px, height: B2 - T1, fill: "var(--muted)", opacity: 0.05 }), el("text", { x: W - R, y: T1 - 10, "text-anchor": "end", style: "font-size:10.5px;fill:var(--muted)" }, o.projLabel ?? "grau hinterlegt: Prognose laut Planung"));
     }
     if (cNow) s.append(el("circle", { cx: x(cNow.day), cy: y1(cNow.v), r: 4.5, fill: CTL, stroke: "var(--card)", "stroke-width": 1.5 }));
     // Tooltip je Tag über beide Kurven
