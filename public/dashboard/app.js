@@ -279,6 +279,10 @@ function weekPace(cur, st, left) {
   ];
   return `<div class="wk-pace"><span>${left <= 1 ? "Heute noch" : "Pro Resttag"}</span>${lines.join("")}</div>`;
 }
+// Regeln des Coaches aus dem Block-Eintrag (Abschnitt "Regeln"); sie ersetzen den Tempo-Hinweis, solange der Block läuft
+function blockRules(SB) {
+  return `<div class="wk-pace wk-rules"><span>Regeln · ${esc(SB.name)}</span><ul>${SB.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`;
+}
 function renderTargetWeek(d, tile, cur, monday, days) {
   const ks = ["run", "bike", "swim"].filter((k) => cur.bySport[k].targetMin > 0 || cur.bySport[k].targetLoad > 0);
   const zeit = Object.fromEntries(ks.filter((k) => cur.bySport[k].targetMin > 0).map((k) => [k, [cur.bySport[k].minutes, cur.bySport[k].targetMin]]));
@@ -301,7 +305,7 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const over = Object.values(tss).some((v) => v[0] > v[1]);
   const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
     + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ≤ ${fmt(sum(tss, 1))} TSS</small>`)}`
-    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${weekPace(cur, st, left)}</div>`;
+    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${d.seasonBlock?.status === "active" && d.seasonBlock.rules?.length ? blockRules(d.seasonBlock) : weekPace(cur, st, left)}</div>`;
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cell = (x) => {
     const a = actual[x], isToday = x === d.today, past = x < d.today;

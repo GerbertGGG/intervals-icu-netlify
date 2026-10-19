@@ -19,6 +19,20 @@ export function parseBlockWeeks(name) {
   return m ? Number(m[1]) : null;
 }
 
+// Regeln des Coaches fuer den Block: ein Abschnitt, der mit einer Zeile "Regeln" (oder "Trainingsregeln") beginnt; jede
+// folgende Zeile ist eine Regel ("- Laufen: HF nicht über 125"). Der Abschnitt endet an der ersten Leerzeile nach einer Regel.
+export function parseBlockRules(text) {
+  const lines = String(text ?? "").replace(/<br\s*\/?>/gi, "").split("\n").map((l) => l.trim());
+  const at = lines.findIndex((l) => /^(?:trainings)?regeln\s*:?$/i.test(l));
+  if (at < 0) return [];
+  const out = [];
+  for (const l of lines.slice(at + 1)) {
+    if (!l) { if (out.length) break; continue; }
+    out.push(l.replace(/^(?:[-•*–]|\d+[.)])\s*/, ""));
+  }
+  return out.filter(Boolean);
+}
+
 function toBlock(e, todayIso) {
   const start = dayOf(e.start_date_local || e.start_date);
   if (!start) return null;
@@ -41,6 +55,7 @@ function toBlock(e, todayIso) {
     status,
     goal: paras[0] ?? null,
     notes: paras.slice(1),
+    rules: parseBlockRules(e.description),
   };
 }
 
