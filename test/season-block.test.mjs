@@ -64,7 +64,10 @@ assert.equal(ta.decoupling, null); assert.equal(ta.acwr, null);
 const blockA2 = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nABSCHLUSSZIELE\n1. Lauf: aerobe Stabilität Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min nicht langsamer als im Basistest. Blocktest = langer Lauf am Sonntag der 3. Belastungswoche (Basistest 25.10., dann 08.11., 06.12., 03.01.). HF-Band 120–125, gleiche flache Runde.\n2. Rad (Rolle): aerobe Stabilität Decoupling (Leistung zu Puls) ≤5 % im Mittel der letzten 3 Vergleichseinheiten: 75 min bei fester Leistung, mit Ventilator und gleicher Raumtemperatur. Referenz: FTP 252 W (Rampentest 12.10.). Feste Leistung einmal wählen (ca. 165–170 W) und im ganzen Block beibehalten.\n3. Schwimmen: Dauer mit sauberer Technik 2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.";
 const ta2 = parseBlockTargets(blockA2);
 assert.deepEqual(ta2.run, { max: 5, must: 8, lastN: 3, minMin: 60, pace: true });
-assert.deepEqual(ta2.bike, { max: 5, must: null, lastN: 3, minMin: 75, ftpTest: false });
+assert.deepEqual(ta2.bike, { max: 5, must: null, lastN: 3, minMin: 75, firstMin: null, ftpTest: false });
+// Radziel "der ersten 60 min … ab 60 min": Mindestdauer 60, ausgewertet werden nur die ersten 60 min
+const ta3 = parseBlockTargets("2. Rad (Rolle): aerobe Stabilität Decoupling (Leistung zu Puls) der ersten 60 min ≤5 % im Mittel der letzten 3 Vergleichseinheiten. Vergleichseinheit = jede Grundlagen-Ausfahrt ab 60 min, deren erste 60 min bei fester Leistung laufen. Danach frei.");
+assert.deepEqual(ta3.bike, { max: 5, must: null, lastN: 3, minMin: 60, firstMin: 60, ftpTest: false });
 assert.deepEqual(ta2.swim, { reps: 2, distM: 500, maxPauseSec: 60, maxSlowerPer100: 5 });
 assert.equal(ta2.decoupling, null);
 
@@ -123,4 +126,6 @@ assert.deepEqual(swimTestFromIntervals({ icu_intervals: [{ type: "WORK", distanc
 const n2 = 1800;
 assert.equal(decouplingFromStreams([{ type: "heartrate", data: Array.from({ length: n2 * 2 }, (_, i) => (i < n2 ? 130 : 136.5)) }, { type: "watts", data: Array(n2 * 2).fill(150) }], "watts"), 4.8);
 assert.equal(decouplingFromStreams([{ type: "heartrate", data: [130] }, { type: "watts", data: [150] }], "watts"), null);
+// nur die ersten maxSec Sekunden: danach steigender Puls zaehlt nicht
+assert.equal(decouplingFromStreams([{ type: "heartrate", data: Array.from({ length: n2 * 3 }, (_, i) => (i < n2 ? 130 : i < n2 * 2 ? 136.5 : 160)) }, { type: "watts", data: Array(n2 * 3).fill(150) }], "watts", n2 * 2), 4.8);
 console.log("block A ok");

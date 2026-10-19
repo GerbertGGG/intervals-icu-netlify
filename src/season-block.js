@@ -120,7 +120,7 @@ function parseSportGoals(t) {
   if (bikeP) {
     const max = decMax(bikeP), must = mustOf(bikeP);
     // FTP-Test nur, wenn er im Block ansteht ("FTP-Test in Woche 1"); eine Referenz wie "FTP 252 W (Rampentest 12.10.)" nicht
-    out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: num1(bikeP.match(/(\d+)\s*min\b/i), 75), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
+    out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: num1(bikeP.match(/(\d+)\s*min\b/i), 75), firstMin: num1(bikeP.match(/ersten\s*(\d+)\s*min/i), null), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
   }
   if (swimP) {
     const reps = swimP.match(/(\d)\s*[×x]\s*(\d{2,4})\s*m\b/i);
