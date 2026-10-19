@@ -647,11 +647,16 @@ function buildWidget(res) {
     if (nx) text(tc, `Nächste: ${dayShort(nx.date)} ${dateShort(nx.date)} · ${nx.items && nx.items.length ? nx.items.map(tileSub).join(" + ") : nx.name || "Einheit"}`, FS.xs, { color: COL.muted, minScale: 0.6 });
   }
   tr.addSpacer();
-  // Aufbau der geplanten Einheit: Breite = Dauer, Hoehe = Intensitaet, Arbeitsbloecke in Sportfarbe
-  if (p && p.steps && p.steps.length) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
+  // Aufbau der geplanten Einheit: Breite = Dauer, Hoehe = Intensitaet, Arbeitsbloecke in Sportfarbe. Mit Wochenzielen ist
+  // der Platz knapp: dann nur bei kurzem Hinweis und nur mit Arbeitsbloecken (eine gleichmaessige Einheit waere nur ein grauer Balken).
+  const structured = !!(p && p.steps && p.steps.some((x) => (x.pct ?? 0) >= 80));
+  const showProfile = !!(p && p.steps && p.steps.length) && (!wk.rings || (structured && nLines <= 2));
+  if (showProfile) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
   w.addSpacer(10);
 
-  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, nLines);
+  // Mit Einheit heute keine Kapseln "offen": Sie passen unter Einheit und Ringe nicht mehr ins Widget und stehen je Sportart
+  // ohnehin im Trainings-Widget.
+  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, nLines, false);
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
@@ -707,7 +712,7 @@ function ringsImage(S, rings, warn) {
 // Woche im grossen Widget mit Wochenzielen des Coaches: links die Ringe ZEIT und TSS, rechts Minuten gegen das Ziel, ob eine
 // Sportart ueber ihrer TSS-Grenze liegt, und die Frische; darunter je Sportart eine Kapsel mit dem, was noch offen ist
 // (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Ersetzt Wochenkreise mit Plan und die Tageskacheln.
-function buildWeekTargets(w, W, d, wk, res, nLines) {
+function buildWeekTargets(w, W, d, wk, res, nLines, withOpen = true) {
   const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
   const over = tss.filter((x) => x[1] > x[2]);
@@ -724,7 +729,7 @@ function buildWeekTargets(w, W, d, wk, res, nLines) {
   text(rc, [wk.tsb != null ? `TSB ${signed(wk.tsb)}` : null, wk.lastTotal != null ? `Vorwoche ${fmt(wk.lastTotal)} TSS` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.6 });
   row.addSpacer();
   // Offen: eine Kapsel je Sportart, nur wenn Platz ist (ein langer Hinweis hat Vorrang)
-  if (nLines <= 4 && (wk.open || []).length) {
+  if (withOpen && nLines <= 4 && (wk.open || []).length) {
     w.addSpacer(8);
     const n = wk.open.length, gap = 6, CW = Math.floor((W - gap * (n - 1)) / n);
     const chips = w.addStack(); chips.size = new Size(W, 0); chips.spacing = gap;
