@@ -439,6 +439,16 @@ function buildDaily(todayIso, activities) {
   return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes) }));
 }
 
+// Letzte erledigte Einheit fürs Heute-Band, wenn nichts geplant ist. Nur Datum, Sport, Dauer, Distanz, Load
+// (Namen verlassen den Worker nicht).
+export function buildLastActivity(activities, todayIso) {
+  const done = activities.filter((a) => activityDay(a) && activityDay(a) <= todayIso && ((num(a?.moving_time) ?? 0) > 0 || activityLoad(a) > 0));
+  const a = done.sort((x, y) => String(y?.start_date_local ?? "").localeCompare(String(x?.start_date_local ?? "")))[0];
+  if (!a) return null;
+  const km = (num(a?.distance) ?? 0) / 1000, secs = num(a?.moving_time) ?? 0;
+  return { date: activityDay(a), sport: sportOf(a), durationMin: secs > 0 ? Math.round(secs / 60) : null, distanceKm: km > 0 ? Math.round(km * 10) / 10 : null, load: activityLoad(a) ? Math.round(activityLoad(a)) : null };
+}
+
 // Heißhunger-Einträge und Hüft-/Leisten-/Knie-Hinweise aus den Freitexten. Die Rohtexte bleiben im Worker.
 function buildInsights(rawWellness, activities) {
   const cravings = [];
@@ -717,6 +727,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     weeks,
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
+    lastActivity: buildLastActivity(activities, todayIso),
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs, snapshot, todayIso),
     intervalSessions: intervalSessions.ok ? intervalSessions.value : [],

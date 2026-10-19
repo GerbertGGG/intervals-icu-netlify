@@ -8,7 +8,7 @@ import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
 import { trainingFindings, nutritionFindings, topFinding } from "../src/findings.js";
-import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun } from "../src/dashboard.js";
+import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun, buildLastActivity } from "../src/dashboard.js";
 
 const today = "2026-09-30";
 const day = (n) => new Date(Date.parse(today + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -640,4 +640,11 @@ console.log("zones from intervals ok");
   const p = buildFormProjection([{ date: "2026-10-21", ctl: 20, atl: 20 }], [], "2026-10-21", 3, f);
   assert.ok(Math.abs(p[0].ctl - (20 + (40 - 20) / 42)) < 0.06);
   console.log("projection targets ok");
+}
+
+// Letzte Einheit fürs Heute-Band: jüngste erledigte Einheit, keine aus der Zukunft, leere Liste = null.
+{
+  const la = buildLastActivity([act(3, { name: "Alt", moving_time: 1800 }), act(1, { name: "Lauf locker", moving_time: 3000, distance: 9050 }), act(-1, { name: "Zukunft", moving_time: 600 })], today);
+  assert.deepEqual(la, { date: day(-1), sport: "run", durationMin: 50, distanceKm: 9.1, load: 50 });
+  assert.equal(buildLastActivity([], today), null);
 }
