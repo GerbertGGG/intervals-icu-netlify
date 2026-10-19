@@ -379,16 +379,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             activityRings(dc, px(185), px(COMP_Y), rz, false);
             ringLabels(dc, 185, "ZEIT", ringSum(rz).toString(), FG);
             var rt = data.get("rt") as Array?;
-            var over = false;
+            var tssOver = false;
             var tssText = "--";
             if (rt != null && rt.size() > 0) {
-                over = activityRings(dc, px(269), px(COMP_Y), rt, true);
+                tssOver = activityRings(dc, px(269), px(COMP_Y), rt, true);
                 tssText = ringSum(rt).toString();
             } else {
                 var tssAll = numOrNull(data.get("tss"));
                 tssText = tssAll != null ? tssAll.toNumber().toString() : "--";
             }
-            ringLabels(dc, 269, "TSS", tssText, over ? WARN : FG);
+            ringLabels(dc, 269, "TSS", tssText, tssOver ? WARN : FG);
         } else {
             drawTssAndStrength(dc, data);
         }
