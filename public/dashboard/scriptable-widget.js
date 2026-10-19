@@ -632,7 +632,7 @@ function buildWidget(res) {
   // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit.
   // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
   const wk = d.week || {};
-  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, nLines);
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res);
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -654,9 +654,7 @@ function buildWidget(res) {
   if (showProfile) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
   w.addSpacer(10);
 
-  // Mit Einheit heute keine Kapseln "offen": Sie passen unter Einheit und Ringe nicht mehr ins Widget und stehen je Sportart
-  // ohnehin im Trainings-Widget.
-  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, nLines, false);
+  if (wk.rings) return buildWeekTargets(w, W, d, wk, res);
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
@@ -689,10 +687,11 @@ function buildWidget(res) {
 // Fortschritt ab 12 Uhr. Mit warn laeuft der Ueberschuss ueber der Vorgabe orange als zweite Runde weiter (TSS-Grenze).
 // rings: [[Sportart, erledigt, Vorgabe], ...]. Kreisboegen als Linienzug, DrawContext kennt keine Boegen.
 function ringsImage(S, rings, warn) {
-  const dc = newCtx(S, S), c = S / 2, pen = Math.max(4, S * 0.085), step = pen * 1.3;
+  // Dicke Ringe mit schmaler Fuge wie auf der Uhr; der Grundring etwas kraeftiger, sonst wirkt Gelb auf Schwarz wie Oliv
+  const dc = newCtx(S, S), c = S / 2, pen = Math.max(5, S * 0.11), step = pen * 1.12;
   const R = { bike: c - pen / 2 - 1, run: c - pen / 2 - 1 - step, swim: c - pen / 2 - 1 - 2 * step };
   const arc = (r, f, hex, a = 1) => {
-    const n = Math.max(2, Math.ceil(f * 90)), pts = [];
+    const n = Math.max(2, Math.ceil(f * 180)), pts = [];
     for (let i = 0; i <= n; i++) { const t = -Math.PI / 2 + (2 * Math.PI * f * i) / n; pts.push(new Point(c + r * Math.cos(t), c + r * Math.sin(t))); }
     const p = new Path(); p.addLines(pts); dc.addPath(p); dc.setStrokeColor(new Color(hex, a)); dc.setLineWidth(pen); dc.strokePath();
     // runde Enden
@@ -701,7 +700,7 @@ function ringsImage(S, rings, warn) {
   for (const [k, v, goal] of rings) {
     const r = R[k];
     if (r == null || !(goal > 0)) continue;
-    const t = new Path(); t.addEllipse(new Rect(c - r, c - r, 2 * r, 2 * r)); dc.addPath(t); dc.setStrokeColor(new Color(sportHex(k), 0.22)); dc.setLineWidth(pen); dc.strokePath();
+    const t = new Path(); t.addEllipse(new Rect(c - r, c - r, 2 * r, 2 * r)); dc.addPath(t); dc.setStrokeColor(new Color(sportHex(k), 0.28)); dc.setLineWidth(pen); dc.strokePath();
     const f = v / goal;
     if (f > 0) arc(r, Math.min(f, 1), sportHex(k));
     if (warn && f > 1) arc(r, Math.min(f - 1, 1), OVER_HEX);
@@ -709,39 +708,38 @@ function ringsImage(S, rings, warn) {
   return dc.getImage();
 }
 
-// Woche im grossen Widget mit Wochenzielen des Coaches: links die Ringe ZEIT und TSS, rechts Minuten gegen das Ziel, ob eine
-// Sportart ueber ihrer TSS-Grenze liegt, und die Frische; darunter je Sportart eine Kapsel mit dem, was noch offen ist
-// (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Ersetzt Wochenkreise mit Plan und die Tageskacheln.
-function buildWeekTargets(w, W, d, wk, res, nLines, withOpen = true) {
+// Woche im grossen Widget mit Wochenzielen des Coaches: links ein Ring je Sportart (Zeit gegen das Ziel), rechts Minuten
+// gegen das Ziel, TSS gegen die Grenze (oder welche Sportart darueber liegt) mit der Frische, darunter je Sportart eine
+// Kapsel mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Die Kapseln stehen neben dem
+// Ring statt darunter: so passt die Woche auch mit geplanter Einheit ins Widget. Ersetzt Wochenkreise und Tageskacheln.
+function buildWeekTargets(w, W, d, wk, res) {
   const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
   const over = tss.filter((x) => x[1] > x[2]);
   header(w, W, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, null);
   w.addSpacer(5);
-  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 10;
-  const RZ = 66, RT = 48;
+  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 12;
+  const RZ = 78;
   const iz = row.addImage(ringsImage(RZ, zeit, false)); iz.imageSize = new Size(RZ, RZ);
-  if (tss.length) { const it = row.addImage(ringsImage(RT, tss, true)); it.imageSize = new Size(RT, RT); }
-  const rc = row.addStack(); rc.layoutVertically();
+  const RW = W - RZ - 12;
+  const rc = row.addStack(); rc.layoutVertically(); rc.size = new Size(RW, 0);
   const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmt(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmt(sum(zeit, 2))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
-  if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über TSS-Grenze`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
-  else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ≤ ${fmt(sum(tss, 2))}`, FS.xs, { color: COL.muted, minScale: 0.7 });
-  // Ohne Kapseln (Einheit heute) steht Kraft als kleine Zeile hier, sonst taucht sie nirgends auf
-  const st = withOpen ? null : (wk.open || []).find((o) => o.s === "strength");
-  if (st) text(rc, st.v > 0 ? `Kraft noch ${fmt(st.v)} ${st.unit}` : "Kraft ✓", FS.xs, { bold: true, color: new Color(sportHex("strength")), minScale: 0.7 });
-  text(rc, [wk.tsb != null ? `TSB ${signed(wk.tsb)}` : null, wk.lastTotal != null ? `Vorwoche ${fmt(wk.lastTotal)} TSS` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.6 });
-  row.addSpacer();
-  // Offen: eine Kapsel je Sportart, nur wenn Platz ist (ein langer Hinweis hat Vorrang)
-  if (withOpen && nLines <= 4 && (wk.open || []).length) {
-    w.addSpacer(8);
-    const n = wk.open.length, gap = 6, CW = Math.floor((W - gap * (n - 1)) / n);
-    const chips = w.addStack(); chips.size = new Size(W, 0); chips.spacing = gap;
-    for (const o of wk.open) {
+  const tsb = wk.tsb != null ? ` · TSB ${signed(wk.tsb)}` : "";
+  if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über TSS-Grenze${tsb}`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
+  else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ≤ ${fmt(sum(tss, 2))}${tsb}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  else if (tsb) text(rc, tsb.slice(3), FS.xs, { color: COL.muted, minScale: 0.6 });
+  // Offen: eine Kapsel je Sportart in der Sportfarbe, Zahl = was noch fehlt
+  const open = wk.open || [];
+  if (open.length) {
+    rc.addSpacer(6);
+    const gap = 5, CW = Math.floor((RW - gap * (open.length - 1)) / open.length);
+    const chips = rc.addStack(); chips.spacing = gap;
+    for (const o of open) {
       const hex = sportHex(o.s), done = !(o.v > 0);
       const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
-      const pill = c.addStack(); pill.size = new Size(CW, 26); pill.cornerRadius = 13; pill.centerAlignContent();
+      const pill = c.addStack(); pill.size = new Size(CW, 24); pill.cornerRadius = 12; pill.centerAlignContent();
       pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
-      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? `${fmt(o.v)}′` : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.7 }); pill.addSpacer();
+      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? `${fmt(o.v)}′` : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
       const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, SPORTS[o.s][0], FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
     }
   }
