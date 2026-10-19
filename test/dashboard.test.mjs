@@ -91,6 +91,9 @@ assert.equal(d.studie, null);
 // Parser
 assert.equal(parseCravings("d", "Gut geschlafen. hh 21.15 stärke 3 Chips auslöser: Stress; HH 10h00, Stärke 2, Kekse").length, 2);
 assert.equal(parseCravings("d", "HH abends sehr stark")[0].time, null);
+assert.deepEqual(parseCravings("d", "Heißhunger 18:13 Uhr nach dem Abendessen ").map((c) => [c.time, c.what]), [["18:13", "nach dem Abendessen"]]);
+assert.equal(parseCravings("d", "Heisshunger 21h, Chips")[0].what, "Chips");
+assert.equal(parseCravings("d", "Heißhungerattacke").length, 0);
 assert.equal(findHipFlags("Kniebeugen ok, ohne Hüftschmerz").length, 0);
 assert.equal(findHipFlags("Linke Hüfte zwickt, Leiste leicht").length, 2);
 // Studien-Check

@@ -3,15 +3,18 @@
 
 const clean = (s) => (s == null ? null : String(s).replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "") || null);
 
+const KEY = /(?:HH|Hei(?:ß|ss)hunger)/;
+const TIME = /\s*[:\-]?\s*(\d{1,2})(?:\s*[:.h]\s*(\d{2}))?(?:\s*(?:h|Uhr)(?!\p{L}))?/;
+
 // Beispiel: "HH 16:30, Stärke 4, Schokolade, davor 12:00 Salat, Auslöser Müdigkeit".
-// Mehrere Einträge pro Kommentar beginnen jeweils mit "HH". Was sich nicht lesen lässt, bleibt null
-// (der Eintrag wird trotzdem gezählt, damit nichts stillschweigend verschwindet).
+// Mehrere Einträge pro Kommentar beginnen jeweils mit "HH" oder "Heißhunger". Was sich nicht lesen
+// lässt, bleibt null (der Eintrag wird trotzdem gezählt, damit nichts stillschweigend verschwindet).
 export function parseCravings(dateIso, comment) {
   const text = String(comment ?? "");
-  const starts = [...text.matchAll(/(?:^|[^\p{L}\d])(HH)(?![\p{L}\d])/giu)].map((m) => m.index + m[0].toLowerCase().indexOf("hh"));
+  const starts = [...text.matchAll(new RegExp(`(?:^|[^\\p{L}\\d])(${KEY.source})(?![\\p{L}\\d])`, "giu"))].map((m) => m.index + m[0].length - m[1].length);
   return starts.map((from, i) => {
     const chunk = text.slice(from, starts[i + 1] ?? text.length);
-    const t = chunk.match(/HH\s*[:\-]?\s*(\d{1,2})(?:\s*[:.h]\s*(\d{2}))?/i);
+    const t = chunk.match(new RegExp(KEY.source + TIME.source, "iu"));
     let hour = null;
     let time = null;
     if (t) {
@@ -26,7 +29,8 @@ export function parseCravings(dateIso, comment) {
     const trigger = clean(chunk.match(/Ausl[öo]ser\s*[:=]?\s*([^,;\n]+)/i)?.[1]);
     const before = clean(chunk.match(/davor\s*[:=]?\s*([^,;\n]+)/i)?.[1]);
     const what = chunk
-      .replace(/HH\s*[:\-]?\s*\d{1,2}(?:\s*[:.h]\s*\d{2})?/i, "")
+      .replace(new RegExp(KEY.source + TIME.source, "iu"), "")
+      .replace(new RegExp("^" + KEY.source, "iu"), "")
       .replace(/St[äa]rke\s*[:=]?\s*\d{1,2}/i, "")
       .replace(/davor\s*[:=]?\s*[^,;\n]+/i, "")
       .replace(/Ausl[öo]ser\s*[:=]?\s*[^,;\n]+/i, "")
