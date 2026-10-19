@@ -686,7 +686,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     const tg = parseBlockTargets([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"));
     const win = windowOf(seasonBlock, todayIso);
     const sessions = tg.run || tg.bike || tg.swim
-      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500 }).catch((err) => { console.warn("block sessions", err); return {}; })
+      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, bike: tg.bike ?? null }).catch((err) => { console.warn("block sessions", err); return {}; })
       : {};
     const dayOfWell = (x) => String(x?.id ?? x?.date ?? "").slice(0, 10);
     const { goals, decision } = buildBlockGoalsFull(seasonBlock, {

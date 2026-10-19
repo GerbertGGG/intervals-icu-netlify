@@ -17,13 +17,17 @@ const HEAT_TEXT = /hitze|heiß|heiss|\bhot\b/i;
 
 // Aerobe Entkopplung (Pa:HR bzw. Pw:HR): Effizienz (Tempo bzw. Leistung je Herzschlag) der ersten gegen die zweite Haelfte.
 // Nur Proben mit Puls und Bewegung; mindestens 20 Minuten. Positiv = zweite Haelfte schlechter.
-export function decouplingFromStreams(streams, field) {
+// maxSec: nur die ersten maxSec Sekunden (Zeitstrahl "time", sonst eine Probe je Sekunde).
+export function decouplingFromStreams(streams, field, maxSec = null) {
   const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
-  const hr = get("heartrate"), out = get(field);
+  const hr = get("heartrate"), out = get(field), time = get("time");
   if (!Array.isArray(hr) || !Array.isArray(out)) return null;
   const minOut = field === "velocity_smooth" ? 1 : 10;
   const pts = [];
-  for (let i = 0; i < Math.min(hr.length, out.length); i++) if (hr[i] > 40 && out[i] >= minOut) pts.push([out[i], hr[i]]);
+  for (let i = 0; i < Math.min(hr.length, out.length); i++) {
+    if (maxSec != null && (Array.isArray(time) ? time[i] : i) >= maxSec) break;
+    if (hr[i] > 40 && out[i] >= minOut) pts.push([out[i], hr[i]]);
+  }
   if (pts.length < 1200) return null;
   const half = Math.floor(pts.length / 2);
   const ef = (xs) => xs.reduce((a, p) => a + p[0], 0) / xs.reduce((a, p) => a + p[1], 0);
@@ -46,11 +50,15 @@ async function cached(env, key, budget, load) {
 
 const hasHrOf = (a) => a?.has_heartrate === true || num(a?.average_heartrate) != null;
 
-async function decouplingOf(env, a, field, budget) {
+// firstMin: nur die ersten firstMin Minuten zaehlen (Ziel "der ersten 60 min"); bei laengeren Einheiten passt der
+// Intervals-Wert ueber die ganze Einheit nicht, dann aus den Zeitreihen.
+async function decouplingOf(env, a, field, budget, firstMin = null) {
+  const cut = firstMin != null && (num(a?.moving_time) ?? 0) > (firstMin + 1) * 60;
   const own = num(a?.decoupling);
-  if (own != null) return own;
+  if (own != null && !cut) return own;
   if (!hasHrOf(a) || a?.id == null) return null;
-  const v = await cached(env, DEC_CACHE + a.id, budget, async () => decouplingFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["heartrate", field]), field));
+  const key = DEC_CACHE + a.id + (cut ? `:${firstMin}` : "");
+  const v = await cached(env, key, budget, async () => decouplingFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", field]), field, cut ? firstMin * 60 : null));
   return v ?? null;
 }
 
@@ -61,7 +69,8 @@ const heatOf = (a) => {
 };
 
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
-export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500 }) {
+// bike: Radziel aus parseBlockTargets (minMin, firstMin) – Decoupling nur fuer Rollen-Einheiten, die lang genug sind
+export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null }) {
   const budget = { left: MAX_FETCH };
   const byId = new Map(acts.map((a) => [a?.id, a]));
   const rzDec = new Map((rzRuns ?? []).filter((r) => Number.isFinite(r.decouplingPct)).map((r) => [r.date, r.decouplingPct]));
@@ -88,7 +97,7 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
       date: activityDay(a), durationMin: Math.round((num(a.moving_time) ?? 0) / 60), watts: num(a.icu_average_watts) ?? num(a.average_watts),
       vi: num(a.icu_variability_index), intensity: num(a.icu_intensity), indoor, easy: !HARD_NAME.test(name), hasHr: hasHrOf(a), tempC: num(a.average_temp), decoupling: null,
     };
-    if (indoor && rec.easy && rec.durationMin >= 65) rec.decoupling = await decouplingOf(env, a, "watts", budget);
+    if (indoor && rec.easy && rec.durationMin >= (bike?.minMin ?? 75) - 5) rec.decoupling = await decouplingOf(env, a, "watts", budget, bike?.firstMin ?? null);
     rides.push(rec);
   }
   const ftpAct = acts.filter((x) => isBike(x) && inWin(activityDay(x)) && /\bftp\b/i.test(String(x.name ?? ""))).sort((x, y) => activityDay(x).localeCompare(activityDay(y)))[0];
