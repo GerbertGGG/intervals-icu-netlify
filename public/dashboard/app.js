@@ -292,17 +292,17 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const tss = Object.fromEntries(ks.filter((k) => cur.bySport[k].targetLoad > 0).map((k) => [k, [cur.bySport[k].load, cur.bySport[k].targetLoad]]));
   const sum = (o, i) => Object.values(o).reduce((a, v) => a + v[i], 0);
   const left = 7 - ((new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7);
-  const row = (k, open, ist, cap) => `<span class="lbl"><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]}</span><span class="o">${open}</span><span class="gap"></span><span class="n">${ist}</span><span class="n${cap.over ? " over" : ""}">${cap.html}</span>`;
+  const row = (k, open, ist, cap) => `<span class="lbl"><i style="background:var(--s-${k})"></i><span>${SPORT_LABEL[k]}<em>${open}</em></span></span><span class="o">${open}</span><span class="gap"></span><span class="n">${ist[0]}</span><span class="t">${ist[1]}</span><span class="n c${cap.over ? " over" : ""}">${cap.html[0]}</span><span class="t${cap.over ? " over" : ""}">${cap.html[1]}</span>`;
   const rows = ks.map((k) => {
     const b = cur.bySport[k], rest = b.targetMin > 0 ? b.targetMin - b.minutes : null, over = b.targetLoad > 0 && b.load > b.targetLoad;
-    return row(k, rest == null ? "" : rest > 0 ? `noch ${fmt(rest)} min` : "✓ Ziel", `<b>${fmt(b.minutes)}</b>${b.targetMin > 0 ? ` <small>/ ${fmt(b.targetMin)} min</small>` : " <small>min</small>"}`,
-      { over, html: b.targetLoad > 0 ? `${fmt(b.load)} <small>/ ≤ ${fmt(b.targetLoad)} TSS</small>` : "" });
+    return row(k, rest == null ? "" : rest > 0 ? `noch ${fmt(rest)} min` : "✓ Ziel", [fmt(b.minutes), b.targetMin > 0 ? `/ ${fmt(b.targetMin)} min` : "min"],
+      { over, html: b.targetLoad > 0 ? [fmt(b.load), `/ ≤ ${fmt(b.targetLoad)} TSS`] : ["", ""] });
   });
   // Kraft: Sätze der Kalenderwoche gegen das Wochenziel des Blocks (wie Uhr und Kraft-Karte), sonst Minuten
   const st = d.seasonBlock?.goals?.find((g) => g.key === "strength"), sb = cur.bySport.strength;
   if (st?.calWeek && st.weekGoal > 0) {
     const rest = st.weekGoal - st.calWeek.count, unit = st.countUnit ?? "Sätze", over = sb.targetLoad > 0 && sb.load > sb.targetLoad;
-    rows.push(row("strength", rest > 0 ? `noch ${fmt(rest)} ${unit}` : "✓ Ziel", `<b>${fmt(st.calWeek.count)}</b> <small>/ ${fmt(st.weekGoal)} ${unit}</small>`, { over, html: sb.targetLoad > 0 ? `${fmt(sb.load)} <small>/ ≤ ${fmt(sb.targetLoad)} TSS</small>` : "" }));
+    rows.push(row("strength", rest > 0 ? `noch ${fmt(rest)} ${unit}` : "✓ Ziel", [fmt(st.calWeek.count), `/ ${fmt(st.weekGoal)} ${unit}`], { over, html: sb.targetLoad > 0 ? [fmt(sb.load), `/ ≤ ${fmt(sb.targetLoad)} TSS`] : ["", ""] }));
   }
   const ring = (label, vals, warn, cap) => `<div class="wk-ring"><b>${label}</b>${weekRings(vals, warn)}<div>${cap}</div></div>`;
   const over = Object.values(tss).some((v) => v[0] > v[1]);

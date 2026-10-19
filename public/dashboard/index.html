@@ -245,16 +245,18 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .wk-bar { height: 6px; }
 .wk-top { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr); gap: 12px 26px; align-items: center; margin-bottom: 12px; }
 .wk-ring { text-align: center; } .wk-ring b { display: block; font-size: var(--fs-xs); color: var(--muted); letter-spacing: .06em; }
-.wk-ring svg { display: block; margin: 4px auto; } .wk-ring div { font-weight: 600; } .wk-ring small { color: var(--muted); font-weight: 400; }
-.wk-open { display: grid; grid-template-columns: auto auto 10px auto auto; gap: 6px 14px; justify-self: start; align-items: center; font-size: var(--fs-s); }
-.wk-open > b { grid-column: 1 / -1; font-size: var(--fs-m, 15px); }
-.wk-open .lbl { display: inline-flex; align-items: center; gap: 6px; } .wk-open .lbl i { width: 8px; height: 8px; border-radius: 50%; }
-.wk-open .o { font-weight: 600; white-space: nowrap; } .wk-open .n { text-align: right; white-space: nowrap; } .wk-open .n small { color: var(--muted); }
-.wk-open .over, .wk-open .over small { color: var(--bad); font-weight: 600; }
+.wk-ring svg { display: block; margin: 4px auto; } .wk-ring div { font-weight: 650; font-size: var(--fs-l); font-variant-numeric: tabular-nums; } .wk-ring small { color: var(--muted); font-weight: 400; font-size: var(--fs-s); }
+.wk-open { display: grid; grid-template-columns: auto auto 6px auto auto auto auto; gap: 8px 14px; justify-self: start; align-items: baseline; font-size: var(--fs-m); font-variant-numeric: tabular-nums; }
+.wk-open > b { grid-column: 1 / -1; font-size: var(--fs-l); margin-bottom: 2px; }
+.wk-open .lbl { display: inline-flex; align-items: baseline; gap: 6px; } .wk-open .lbl em { display: none; } .wk-open .lbl i { width: 8px; height: 8px; border-radius: 50%; }
+.wk-open .o { font-weight: 600; white-space: nowrap; } .wk-open .n { text-align: right; white-space: nowrap; font-weight: 650; } .wk-open .n.c { padding-left: 10px; }
+.wk-open .t { white-space: nowrap; color: var(--muted); font-size: var(--fs-s); margin-left: -9px; }
+.wk-open .over { color: var(--bad); }
 .wk-pace { justify-self: center; display: grid; gap: 4px; padding-left: 22px; border-left: 1px solid var(--line); font-size: var(--fs-s); } .wk-pace > span { font-size: var(--fs-xs); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; font-weight: 600; } .wk-pace b { font-size: var(--fs-m, 15px); } .wk-pace .ok { color: var(--ok); font-weight: 600; } .wk-pace .over { color: var(--bad); font-weight: 600; }
 .wk-rules { max-width: 340px; } .wk-rules ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; } .wk-rules li::marker { color: var(--muted); }
 .wk-did { display: flex; gap: 6px; align-items: center; line-height: 1.3; } .wk-did i { flex: none; width: 8px; height: 8px; border-radius: 50%; }
-@media (max-width: 720px) { .wk-top { grid-template-columns: auto auto; } .wk-open { grid-column: 1 / -1; justify-self: stretch; grid-template-columns: auto auto 1fr auto; } .wk-open .gap { display: none; } .wk-pace { grid-column: 1 / -1; justify-self: stretch; padding: 10px 0 0; border-left: 0; border-top: 1px solid var(--line); } }
+@media (max-width: 720px) { .wk-top { grid-template-columns: auto auto; } .wk-open { grid-column: 1 / -1; justify-self: stretch; grid-template-columns: 1fr auto auto auto auto; gap: 10px 10px; font-size: var(--fs-s); } .wk-open .t { font-size: var(--fs-xs); margin-left: -6px; } .wk-open .o, .wk-open .gap { display: none; }
+    .wk-open .lbl em { display: block; font-style: normal; font-weight: 600; font-size: var(--fs-xs); } .wk-open .n.c { padding-left: 6px; } .wk-pace { grid-column: 1 / -1; justify-self: stretch; padding: 10px 0 0; border-left: 0; border-top: 1px solid var(--line); } }
 .wk-grid { display: grid; gap: 6px; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .wk-day { background: var(--inset); border: 1px solid transparent; border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: var(--fs-s); }
 .wk-day.now { background: var(--card); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
