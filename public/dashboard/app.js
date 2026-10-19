@@ -249,20 +249,35 @@ function renderCockpit(d) {
    die Zeitziele, TSS gegen die Obergrenzen; außen Rad, Mitte Lauf, innen Schwimmen, Überschuss rot als zweite Runde),
    daneben je Sportart, was noch offen ist, Ist gegen Ziel und TSS gegen die Grenze; Kraft in Sätzen aus dem Block-Ziel.
    Die Tage zeigen nur noch, was gemacht wurde: Ohne festen Plan gibt es kein "Plan / Ist" mehr. */
-// Die vorhandenen Ringe teilen sich das Band zwischen RING_OUT und RING_IN, damit die Mitte nicht leer wirkt
-const RING_OUT = 56, RING_IN = 14, RING_GAP = 2;
+const RING_R = { bike: 46, run: 35, swim: 24 };
 function weekRings(vals, warn) {
-  const S = 120, c = S / 2, ks = ["bike", "run", "swim"].filter((k) => vals[k]);
-  const w = Math.min(20, (RING_OUT - RING_IN - (ks.length - 1) * RING_GAP) / Math.max(ks.length, 1));
+  const S = 120, c = S / 2;
   let s = `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" role="img">`;
-  for (const [i, k] of ks.entries()) {
+  for (const k of ["bike", "run", "swim"]) {
     const v = vals[k];
-    const r = RING_OUT - w / 2 - i * (w + RING_GAP), L = 2 * Math.PI * r, f = v[0] / v[1], arc = (x, col) => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${x * L} ${L}" transform="rotate(-90 ${c} ${c})"/>`;
-    s += `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:var(--s-${k})" stroke-opacity=".18" stroke-width="${w}"><title>${SPORT_LABEL[k]}: ${fmt(v[0])} von ${fmt(v[1])}</title></circle>`;
+    if (!v) continue;
+    const r = RING_R[k], L = 2 * Math.PI * r, f = v[0] / v[1], arc = (x, col) => `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:${col}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${x * L} ${L}" transform="rotate(-90 ${c} ${c})"/>`;
+    s += `<circle cx="${c}" cy="${c}" r="${r}" fill="none" style="stroke:var(--s-${k})" stroke-opacity=".18" stroke-width="9"><title>${SPORT_LABEL[k]}: ${fmt(v[0])} von ${fmt(v[1])}</title></circle>`;
     if (f > 0) s += arc(Math.min(f, 1), `var(--s-${k})`);
     if (warn && f > 1) s += arc(Math.min(f - 1, 1), "var(--bad)");
   }
   return s + "</svg>";
+}
+// Tempo-Hinweis: was pro verbleibendem Tag (heute mitgezählt) noch ansteht; je Sportart nur der eigene Rest,
+// Überschuss in einer Sportart gleicht keine andere aus. TSS ist die Summe der Restspielräume bis zu den Obergrenzen.
+function weekPace(cur, st, left) {
+  const ks = SPORT_ORDER.filter((k) => cur.bySport[k]);
+  const restMin = ks.reduce((n, k) => n + (cur.bySport[k].targetMin > 0 ? Math.max(0, cur.bySport[k].targetMin - cur.bySport[k].minutes) : 0), 0);
+  const capped = ks.filter((k) => cur.bySport[k].targetLoad > 0);
+  const restTss = capped.reduce((n, k) => n + Math.max(0, cur.bySport[k].targetLoad - cur.bySport[k].load), 0);
+  const restSets = st?.calWeek && st.weekGoal > 0 ? Math.max(0, st.weekGoal - st.calWeek.count) : null;
+  const line = (v, txt) => `<div><b>≈ ${fmt(v)}</b> ${txt}</div>`;
+  const lines = [
+    restMin > 0 ? line(restMin / left, "min Training") : '<div class="ok">✓ Zeitziele erreicht</div>',
+    restSets ? line(restSets / left, `${st.countUnit ?? "Sätze"} Kraft`) : "",
+    capped.length ? (restTss > 0 ? line(restTss / left, "TSS erlaubt") : '<div class="over">TSS-Grenze erreicht</div>') : "",
+  ];
+  return `<div class="wk-pace"><span>${left <= 1 ? "Heute noch" : "Pro Resttag"}</span>${lines.join("")}</div>`;
 }
 function renderTargetWeek(d, tile, cur, monday, days) {
   const ks = ["run", "bike", "swim"].filter((k) => cur.bySport[k].targetMin > 0 || cur.bySport[k].targetLoad > 0);
@@ -286,7 +301,7 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const over = Object.values(tss).some((v) => v[0] > v[1]);
   const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
     + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ≤ ${fmt(sum(tss, 1))} TSS</small>`)}`
-    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div></div>`;
+    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${weekPace(cur, st, left)}</div>`;
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cell = (x) => {
     const a = actual[x], isToday = x === d.today, past = x < d.today;
