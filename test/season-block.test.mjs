@@ -9,6 +9,11 @@ assert.equal(b.name, "Block Grundlage"); assert.match(b.goal, /Decoupling/); ass
 b = resolveSeasonBlock([ev], "2026-11-02");
 assert.equal(b.status, "active"); assert.equal(b.weekNo, 3);
 assert.equal(resolveSeasonBlock([{ category: "WORKOUT", name: "Block x" }], "2026-10-05"), null);
+assert.deepEqual(b.rules, []);
+import { parseBlockRules } from "../src/season-block.js";
+assert.deepEqual(parseBlockRules("Ziel\n\nRegeln\n- Laufen: HF nicht über 125\n• Keine Racepace-Intervalle\n\nLeitplanken\nKraft"), ["Laufen: HF nicht über 125", "Keine Racepace-Intervalle"]);
+assert.deepEqual(parseBlockRules("Regeln:<br />\n\n1. Mehr Grundlage<br />\n2) Rad Z2\n\nWoche 12"), ["Mehr Grundlage", "Rad Z2"]);
+assert.deepEqual(resolveSeasonBlock([{ ...ev, description: ev.description + "\n\nRegeln\n- Locker laufen" }], "2026-11-02").rules, ["Locker laufen"]);
 console.log("season-block ok");
 
 import { buildBlockGoals, parseBlockTargets } from "../src/season-block.js";
