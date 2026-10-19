@@ -204,10 +204,13 @@ function renderCockpit(d) {
   // (mit Profil der Haupteinheit), 3. Kennzahlen Schlaf, Frische, Belastung, Rennen. Details stehen in den Kacheln darunter.
   const doneToday = d.daily.find((x) => x.date === d.today);
   const meta = (p) => [p.durationMin ? p.durationMin + " min" : p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
+  // Ohne Plan zeigt das Band die letzte erledigte Einheit (geplant wird nicht mehr in Intervals).
+  const L = d.lastActivity;
   const planHtml = plan.length
     ? plan.map((p) => `<div class="hb-item"><i style="background:var(--s-${p.sport})"></i><div><b>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}</b><span class="sub">${meta(p) || "&nbsp;"}</span></div></div>`).join("")
-    : '<div class="hb-item"><i style="background:var(--line-2)"></i><div><b>Nichts geplant</b><span class="sub">Ruhetag oder frei</span></div></div>';
-  const doneHtml = doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
+    : L ? `<div class="hb-item"><i style="background:var(--s-${L.sport})"></i><div><b>${SPORT_LABEL[L.sport] || "Einheit"}</b><span class="sub">${[L.date === d.today ? "heute" : `${weekday(L.date)} ${fmtDate(L.date)}`, meta(L)].filter(Boolean).join(" · ")}</span></div></div>`
+    : '<div class="hb-item"><i style="background:var(--line-2)"></i><div><b>Keine Einheit</b><span class="sub">Noch nichts erfasst</span></div></div>';
+  const doneHtml = plan.length && doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
   const vCls = wellOk ? R.verdict.cls : "none";
   const status = `<div class="hero-status ${vCls}"><div class="hero-k">Erholung · ${weekday(d.today)} ${fmtDate(d.today)}</div>
     <div class="verdict ${vCls}"><i class="sicon ${vCls}" aria-hidden="true"></i><span>${wellOk ? esc(R.verdict.text) : "Wellness fehlt"}</span></div>
@@ -215,7 +218,7 @@ function renderCockpit(d) {
     ${wellOk && R.verdict.reasons?.length ? `<div class="hero-why">Auslöser: ${esc(R.verdict.reasons.join(" · "))}</div>` : ""}
     ${wellOk ? `<div class="dots">${R.items.map((i) => `<span title="${esc(i.text)}"><i class="${i.cls}"></i>${esc(i.label)}</span>`).join("")}</div>` : ""}
     ${wellOk ? '<a class="more" href="#erholung">Bänder und Verläufe →</a>' : ""}</div>`;
-  const today = `<div class="hero-plan"><div class="hero-k">Heute geplant</div>${planHtml}${doneHtml}
+  const today = `<div class="hero-plan"><div class="hero-k">${plan.length ? "Heute geplant" : "Letzte Einheit"}</div>${planHtml}${doneHtml}
       ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>`;
   const kpi = (label, value, badge, cls, sub = "") => `<div class="kpi"><span class="kpi-l">${label}</span><span class="kpi-v">${value}</span>${badge ? `<span class="badge ${cls}">${badge}</span>` : ""}${sub ? `<span class="sub">${sub}</span>` : ""}</div>`;
   const kpis = `<div class="kpis">
