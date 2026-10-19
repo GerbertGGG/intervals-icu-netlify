@@ -597,17 +597,12 @@ console.log("zones from intervals ok");
   // Training-Ansicht: Zeitziel und TSS-Obergrenze je Disziplin
   const trn = buildWidgetTraining(dt).sports;
   assert.deepEqual([trn.run.targetMin, trn.run.targetLoad, trn.bike.targetMin], [90, 85, null]);
-  // Uhr: Zeit-Ring je Sportart, erledigte Minuten hoechstens bis zum Ziel
+  // Uhr: Ringe aussen Rad, Mitte Lauf, innen Schwimmen; Zeit gegen Ziel, TSS gegen Obergrenze (Schwimmen ohne Grenze)
   const wt = buildWidgetWatch(dt);
-  assert.deepEqual(wt.tm.map((x) => x[0]), ["run", "swim"]);
-  for (const [s, done, open] of wt.tm) { const t = tg.find((x) => x.s === s); assert.equal(done, Math.min(t.min, t.goal)); assert.equal(open, Math.max(0, t.goal - t.min)); }
-  assert.equal(wt.mg, 145);
-  assert.equal(wt.mn, run.min + tg.find((t) => t.s === "swim").min);
-  assert.equal(wt.ov, run.over ? 1 : 0);
-  const over = buildWidgetWatch({ ...dt, weeks: [...dt.weeks.slice(0, -1), { ...cur, bySport: { ...cur.bySport, run: { ...cur.bySport.run, load: 120 } } }] });
-  assert.equal(over.ov, 1);
+  assert.deepEqual(wt.rz, [["run", run.min, 90], ["swim", tg.find((t) => t.s === "swim").min, 55]]);
+  assert.deepEqual(wt.rt, [["run", run.tss, 85]]);
   const none = buildWidgetWatch(d);
-  assert.deepEqual([none.tm, none.mn, none.mg, none.ov], [null, null, null, 0]);
+  assert.deepEqual([none.rz, none.rt], [null, null]);
   assert.ok(JSON.stringify(wt).length < 1500);
   // Wochenrueckblick: TSS ueber der Obergrenze bei erreichter Zeit = zu intensiv (Warnung), zu wenig Zeit = Hinweis
   const wkT = (run, bike) => ({ complete: true, load: run.load + bike.load, runMin: run.minutes, plannedLoad: 20, targetMin: 195, targetLoad: 160, intensity: { easy: 0, mid: 0, hard: 0 },
