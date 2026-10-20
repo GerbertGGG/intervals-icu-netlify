@@ -653,7 +653,10 @@ console.log("zones from intervals ok");
   assert.deepEqual(la, { date: day(-1), sport: "run", durationMin: 50, distanceKm: 9.1, load: 50, paceSecPerKm: 331, rpe: 5, feel: 2 });
   assert.equal(buildLastActivity([], today), null);
   const base = buildLastActivity([act(1, { name: "Grundlagenlauf", moving_time: 3000, distance: 9050 })], today);
-  assert.equal(base.avgHr, 140); assert.equal(base.decoupling, 3.1);
+  // Decoupling beim Laufen nie von Intervals (dort aus Leistung), nur der Runalyze-Wert desselben Laufs
+  assert.equal(base.avgHr, 140); assert.equal(base.decoupling, undefined);
+  const rzCtx = { rzRuns: [{ date: day(-1), distanceKm: 9.0, durationSec: 3000, type: "Easy run", decouplingPct: 4.4 }, { date: day(-1), distanceKm: 3, durationSec: 900, type: "Easy run", decouplingPct: 9 }] };
+  assert.equal(buildLastActivity([act(1, { name: "Grundlagenlauf", moving_time: 3000, distance: 9050 })], today, rzCtx).decoupling, 4.4);
   const ride = buildLastActivity([act(1, { type: "VirtualRide", name: "LIT", moving_time: 3600, icu_average_watts: 165, icu_weighted_avg_watts: 168, icu_intensity: 59.4 })], today);
   assert.equal(ride.sport, "bike"); assert.equal(ride.watts, 165); assert.equal(ride.normWatts, 168); assert.equal(ride.intensity, 59);
   assert.equal(ride.avgHr, undefined); assert.equal(ride.decoupling, undefined); assert.equal(ride.paceSecPerKm, undefined);

@@ -5,7 +5,8 @@ import { FLAT_M_PER_KM, HEAT_C, swimTestFromIntervals, swimTestFromText } from "
 
 // Eingaben fuer die Abschlussziele des Trainingsblocks (season-block.js): lockere Laeufe und Rollen-Einheiten mit
 // Decoupling, Schwimmtests, FTP-Test. Welche Einheit vergleichbar ist, entscheidet season-block.js; hier werden nur
-// die Rohwerte gesammelt. Decoupling: Runalyze (lange Laeufe) vor Intervals vor eigener Rechnung aus den Zeitreihen.
+// die Rohwerte gesammelt. Decoupling Laufen: Runalyze (lange Laeufe) vor eigener Rechnung aus den Zeitreihen (Intervals
+// nie, s. decouplingOf); Rad: Intervals vor eigener Rechnung.
 
 const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
 const MAX_FETCH = 6; // je Aufruf hoechstens so viele Einheiten nachladen (Rest beim naechsten Mal, Ergebnis in KV)
@@ -57,10 +58,11 @@ async function cached(env, key, budget, load) {
 const hasHrOf = (a) => a?.has_heartrate === true || num(a?.average_heartrate) != null;
 
 // firstMin: nur die ersten firstMin Minuten zaehlen (Ziel "der ersten 60 min"); bei laengeren Einheiten passt der
-// Intervals-Wert ueber die ganze Einheit nicht, dann aus den Zeitreihen.
+// Intervals-Wert ueber die ganze Einheit nicht, dann aus den Zeitreihen. Beim Laufen (velocity_smooth) nie den
+// Intervals-Wert: ohne Laufleistung liefert Intervals dort nichts Brauchbares.
 async function decouplingOf(env, a, field, budget, firstMin = null) {
   const cut = firstMin != null && (num(a?.moving_time) ?? 0) > (firstMin + 1) * 60;
-  const own = num(a?.decoupling);
+  const own = field === "velocity_smooth" ? null : num(a?.decoupling);
   if (own != null && !cut) return own;
   if (!hasHrOf(a) || a?.id == null) return null;
   const key = DEC_CACHE + a.id + (cut ? `:${firstMin}` : "");
@@ -92,7 +94,7 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     const treadmill = /virtual|treadmill/i.test(String(a.type ?? "")) || a.trainer === true;
     const rec = { date: r.date, durationMin: r.movingTimeMin, paceSecPerKm: r.paceSecPerKm, elevPerKm: km > 0 && num(a.total_elevation_gain) != null ? Math.round((num(a.total_elevation_gain) / km) * 10) / 10 : null, heat: heatOf(a), easy, treadmill, decoupling: null };
     // Decoupling nur fuer lockere Laeufe (Pulsregel), Zeitreihen nur fuer die, die sonst vergleichbar waeren
-    if (easy) rec.decoupling = rzDec.get(r.date) ?? (!treadmill && !rec.heat && rec.durationMin >= 55 && (rec.elevPerKm == null || rec.elevPerKm <= FLAT_M_PER_KM) ? await decouplingOf(env, a, "velocity_smooth", budget) : num(a.decoupling));
+    if (easy) rec.decoupling = rzDec.get(r.date) ?? (!treadmill && !rec.heat && rec.durationMin >= 55 && (rec.elevPerKm == null || rec.elevPerKm <= FLAT_M_PER_KM) ? await decouplingOf(env, a, "velocity_smooth", budget) : null);
     runOut.push(rec);
   }
 

@@ -10,7 +10,7 @@ const events = [
   { category: "SEASON_START", start_date_local: "2026-10-19T00:00:00", name: "Block Grundlage (12 Wochen)", description: desc },
   { category: "SEASON_START", start_date_local: "2027-01-11T00:00:00", name: "Block B", description: "" },
 ];
-const run = (id, n, o) => ({ id, start_date_local: day(-n) + "T10:00:00", type: "Run", name: "Long Slow Run", distance: 11000, moving_time: 4500, total_elevation_gain: 40, average_heartrate: 130, has_heartrate: true, icu_training_load: 60, ...o });
+const run = (id, n, o) => ({ id, start_date_local: day(-n) + "T10:00:00", type: "Run", name: "Long Slow Run", distance: 11000, moving_time: 4500, total_elevation_gain: 40, average_heartrate: 130, has_heartrate: true, icu_training_load: 60, decoupling: 50, ...o }); // Intervals-Wert beim Laufen wird ignoriert
 const activities = [
   run("r1", 26), run("r2", 19), run("r3", 12), run("r4", 5), run("r5", 4, { name: "Grundlagenlauf", total_elevation_gain: 300 }),
   { id: "b1", start_date_local: day(-30) + "T12:00:00", type: "VirtualRide", name: "FTP / Vo2Max Test", moving_time: 1500, trainer: true, icu_average_watts: 200 },
