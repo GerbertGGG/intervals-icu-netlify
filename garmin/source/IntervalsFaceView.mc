@@ -36,6 +36,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const RAIN_4 = 0x1E4FE6; // ab 85 %
     const SUN = 0x7F702A;    // gedämpftes Gold für die hellen Stunden im Wetterring, kräftiges Gelb ist Laufen
     const STALE_SECS = 3600;
+    const BAT_LOW = 20;      // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
+    const DATE_Y = 42;
     const TIME_Y = 192;
     const READY_Y = 268;
     const COMP_Y = 346;
@@ -85,6 +87,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (_sleep) {
             return;
         }
+        drawDate(dc);
 
         var data = Application.Storage.getValue("d") as Dictionary?;
         if (data == null) {
@@ -131,6 +134,41 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(TER, Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(_cx, y - px(16), px(6));
         dc.fillCircle(_cx, y + px(16), px(6));
+    }
+
+    // ---- Ganz oben: Datum und Akku als gerade Zeile -----------------------------------
+    // "DI 20. OKT", daneben ein Akkusymbol mit Prozent. Weiß im Normalfall, orange ab BAT_LOW, rot ab der Hälfte davon,
+    // grün beim Laden. Kommt von der Uhr selbst, steht also auch ohne Daten vom Worker.
+
+    private function drawDate(dc as Dc) as Void {
+        var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+        var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
+        var months = ["JAN", "FEB", "MÄR", "APR", "MAI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ"];
+        var text = days[(info.day_of_week as Number) - 1] + " " + info.day + ". " + months[(info.month as Number) - 1];
+        var stats = System.getSystemStats();
+        var pct = Math.round(stats.battery).toNumber();
+        var charging = stats.charging;
+        var color = charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : FG));
+        drawLine(dc, px(DATE_Y), [["t", text, FG, _cap], ["gap", px(14)], ["bat", px(26), color, pct], ["gap", px(6)],
+            ["t", pct.toString() + " %", color == FG ? SEC : color, _cap]]);
+    }
+
+    // Akkusymbol: Rahmen mit Pol rechts, gefüllt nach Ladestand; x = linke Kante, y = Mitte, w = Breite samt Pol
+    private function drawBattery(dc as Dc, x as Number, y as Number, w as Number, color as Number, pct as Number) as Void {
+        var nub = px(3) > 1 ? px(3) : 1;
+        var bw = w - nub;
+        var h = px(14);
+        var pen = px(2) > 1 ? px(2) : 1;
+        dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(pen);
+        dc.drawRoundedRectangle(x, y - h / 2, bw, h, px(3));
+        dc.fillRectangle(x + bw, y - h / 4, nub, h / 2);
+        var inner = bw - 2 * pen - 2;
+        var fill = (inner * (pct < 0 ? 0 : (pct > 100 ? 100 : pct)) / 100).toNumber();
+        if (fill > 0) {
+            dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+            dc.fillRectangle(x + pen + 1, y - h / 2 + pen + 1, fill, h - 2 * pen - 2);
+        }
     }
 
     // ---- Oben: Woche Mo bis So als gerade Reihe ------------------------------------
@@ -798,7 +836,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Zeile aus Text und Formen, als Ganzes zentriert -----------------------------
-    // Elemente: ["t", Text, Farbe, Schrift], ["dot", Radius, Farbe], ["tri", Größe, Farbe], ["sq", Größe, Farbe], ["bar", Höhe, Farbe], ["gap", Breite]
+    // Elemente: ["t", Text, Farbe, Schrift], ["dot", Radius, Farbe], ["tri", Größe, Farbe], ["sq", Größe, Farbe], ["bat", Breite, Farbe, Prozent],
+    // ["bar", Höhe, Farbe], ["gap", Breite]
 
     private function drawLine(dc as Dc, y as Number, items as Array<Array>) as Void {
         var total = 0;
@@ -820,6 +859,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 drawTri(dc, x, y, it[1] as Number, it[2] as Number);
             } else if (kind.equals("sq")) {
                 drawSq(dc, x, y, it[1] as Number, it[2] as Number);
+            } else if (kind.equals("bat")) {
+                drawBattery(dc, x, y, w, it[2] as Number, it[3] as Number);
             } else if (kind.equals("bar")) {
                 var bh = it[1] as Number;
                 dc.setColor(it[2] as Number, Graphics.COLOR_TRANSPARENT);
@@ -859,7 +900,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (kind.equals("dot")) {
             return (it[1] as Number) * 2;
         }
-        if (kind.equals("tri") || kind.equals("sq")) {
+        if (kind.equals("tri") || kind.equals("sq") || kind.equals("bat")) {
             return it[1] as Number;
         }
         if (kind.equals("bar")) {
