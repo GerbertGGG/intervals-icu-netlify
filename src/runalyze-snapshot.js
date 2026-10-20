@@ -46,7 +46,7 @@ export function validateSnapshot(body) {
         durationSec: finitePositive(r?.durationSec),
         type: r?.type ? String(r.type).slice(0, 60) : null,
         decouplingPct: r?.decouplingPct != null && r.decouplingPct !== "" && Number.isFinite(dec) && Math.abs(dec) < 100 ? dec : null,
-        // DFA alpha1 (Mittel ueber den Lauf, Runalyze dfa.avg): Ziel bei Grundlage ≥ ca. 0,75
+        // DFA alpha1 (Mittel ueber den Lauf, Runalyze dfa.avg): nur Hinweis, beim Nutzer nicht validiert, entscheidet nichts
         dfaAlpha1: Number.isFinite(Number(r?.dfaAlpha1)) && Number(r.dfaAlpha1) > 0 && Number(r.dfaAlpha1) < 2 ? Math.round(Number(r.dfaAlpha1) * 100) / 100 : null,
       };
     })
