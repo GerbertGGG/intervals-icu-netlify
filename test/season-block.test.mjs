@@ -128,4 +128,8 @@ assert.equal(decouplingFromStreams([{ type: "heartrate", data: Array.from({ leng
 assert.equal(decouplingFromStreams([{ type: "heartrate", data: [130] }, { type: "watts", data: [150] }], "watts"), null);
 // nur die ersten maxSec Sekunden: danach steigender Puls zaehlt nicht
 assert.equal(decouplingFromStreams([{ type: "heartrate", data: Array.from({ length: n2 * 3 }, (_, i) => (i < n2 ? 130 : i < n2 * 2 ? 136.5 : 160)) }, { type: "watts", data: Array(n2 * 3).fill(150) }], "watts", n2 * 2), 4.8);
+// Auf-/Abwaermzeit wie bei Intervals auslassen: kalter Start (Puls 100) und Ausrollen (Puls 90) zaehlen nicht
+const warm = [{ type: "heartrate", data: Array.from({ length: 600 + n2 * 2 + 300 }, (_, i) => (i < 600 ? 100 : i < 600 + n2 ? 130 : i < 600 + n2 * 2 ? 136.5 : 90)) }, { type: "watts", data: Array(600 + n2 * 2 + 300).fill(150) }];
+assert.equal(decouplingFromStreams(warm, "watts", null, { warmupSec: 600, cooldownSec: 300 }), 4.8);
+assert.notEqual(decouplingFromStreams(warm, "watts"), 4.8);
 console.log("block A ok");
