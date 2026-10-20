@@ -1011,6 +1011,19 @@ function renderBlock(SB) {
     if (g.key === "runStable") return `${g.value === 0 ? "unter 60" : g.value}<small> min${g.baseValue != null && g.count > 1 ? ` · Basistest ${fmtStable(g.baseValue)}` : ""}</small>`;
     return `${fmt(g.value, g.key === "acwr" ? 0 : 1)}<small> %</small>`;
   };
+  // Kurs (Worker: goalCourse in season-block.js): erster Messwert → letzter und Richtung, steht direkt in der Zielkarte
+  // statt in einer eigenen Tabelle (der Status steht schon im Badge). Trend, keine Entscheidung; ohne Vergleich nur die nächste Messung.
+  const DIR = { better: "besser", worse: "schlechter", flat: "gleich" };
+  const cv = (v, u) => (v == null ? "–" : typeof v === "string" ? esc(v) : u === "min" ? fmtStable(v) : u === "%" ? `${fmt(v, 1)}&nbsp;%` : `${v > 0 ? "+" : ""}${fmt(v, 1)}&nbsp;s`);
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  const courseOf = (g) => {
+    const C = g.course;
+    if (!C) return "";
+    if (C.state === "open") return "";
+    const main = C.main ? `<div class="sub">${esc(C.main)}${C.mainDir ? ` (${DIR[C.mainDir]})` : ""}</div>` : "";
+    return `<div class="bcrs" title="Trend, keine Entscheidung${C.baseline ? " · vor dem Blockstart: Ausgangswerte" : ""}">Verlauf: ${cv(C.from, C.unit)} → ${cv(C.to, C.unit)}${C.dir ? ` (${DIR[C.dir]})` : ""}</div>${main}`;
+  };
+  const nextOf = (g) => (g.course?.nextText && g.value != null ? `<div class="sub muted">${esc(cap(g.course.nextText))}</div>` : "");
   const goalCard = (g) => {
     let vis = "";
     if (g.key === "decoupling") {
@@ -1040,7 +1053,8 @@ function renderBlock(SB) {
     }
     const legend = g.key === "intensity" ? "Jedes Kästchen = eine Woche, grün = beides erledigt, hell = zählt nicht (Woche 1, Entlastung oder krank)" : g.key === "strength" ? `Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group ? ", hell = Entlastungswoche" : ""}` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
     const sub = [g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ");
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${valOf(g)}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${legend ? `<div class="sub">${esc(legend)}</div>` : ""}<div class="sub">${sub}</div>${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}</div>`;
+    const lines = [`Ziel: ${esc(g.target)}`, vis && legend ? esc(legend) : null, sub || null].filter(Boolean);
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div>${g.value != null ? `<div class="val">${valOf(g)}</div>` : ""}${vis}${courseOf(g)}${lines.map((t) => `<div class="sub">${t}</div>`).join("")}${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}${nextOf(g)}</div>`;
   };
   const list = SB.goals ?? [];
   const grouped = list.some((g) => g.group);
@@ -1048,15 +1062,6 @@ function renderBlock(SB) {
   const goals = grouped
     ? section("Abschlussziele", list.filter((g) => g.group === "ziel")) + section("Leitplanken", list.filter((g) => g.group === "leitplanke")) + section("", list.filter((g) => !g.group))
     : section("", list);
-  // Kurs der Abschlussziele (Worker: goalCourse in season-block.js): erster Messwert → letzter → Ziel und Richtung, dazu die
-  // Hauptkurve (Pace bei gleichem Puls bzw. Puls bei fester Leistung) und die nächste Messung. Trend, keine Entscheidung.
-  const withCourse = list.filter((g) => g.course);
-  const CC = { on: "ok", close: "warn", behind: "bad", open: "none" }, DIR = { better: "besser", worse: "schlechter", flat: "gleich" };
-  const cv = (v, u) => (v == null ? "–" : typeof v === "string" ? esc(v) : u === "min" ? fmtStable(v) : u === "%" ? `${fmt(v, 1)}&nbsp;%` : `${v > 0 ? "+" : ""}${fmt(v, 1)}&nbsp;s`);
-  const course = withCourse.length ? `<h4 class="bgh">Kurs der Abschlussziele</h4><div class="scroll"><table class="mini bcourse"><thead><tr><th>Ziel</th><th>Start</th><th>zuletzt</th><th>Ziel</th><th>Kurs</th></tr></thead><tbody>${withCourse.map((g) => {
-    const C = g.course, extra = [C.main ? `${esc(C.main)}${C.mainDir ? ` (${DIR[C.mainDir]})` : ""}` : null, C.dir && C.dir !== "flat" ? `${g.key === "runStable" ? "stabile Dauer" : g.key === "swimTest" ? "Abfall der 2. Strecke" : "Decoupling"} ${DIR[C.dir]}` : null, C.nextText ? esc(C.nextText) : null].filter(Boolean);
-    return `<tr><td>${esc(g.label)}</td><td>${cv(C.from, C.unit)}</td><td>${cv(C.to, C.unit)}</td><td>${typeof C.target === "string" ? esc(C.target) : C.unit === "%" ? `≤&nbsp;${fmt(C.target)}&nbsp;%` : `≤&nbsp;+${fmt(C.target)}&nbsp;s`}</td><td><span class="badge ${CC[C.state]}">${C.label}</span></td></tr>${extra.length ? `<tr><td></td><td class="main" colspan="4">${extra.join(" · ")}</td></tr>` : ""}`;
-  }).join("")}</tbody></table></div><div class="sub">Trend, keine Entscheidung: auf Kurs = Ziel schon erreicht, knapp = im Muss oder auf dem Weg dorthin, offen = noch kein Vergleich.${withCourse.some((g) => g.course.baseline) ? " Vor dem Blockstart: Ausgangswerte." : ""}</div>` : "";
   const D = SB.decision;
   const decLabel = { next: "weiter", extend: "verlängern", cause: "Ursache klären" };
   // Vor Woche 12 kein "Stand heute": solange Tests fehlen, wäre das immer "verlängern" und nur Rauschen
@@ -1064,7 +1069,7 @@ function renderBlock(SB) {
   const decision = !D ? "" : D.due ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · Entscheidung:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>`
     : `<div class="sub" style="margin-top:8px">Entscheidung in Woche ${D.week}${decAt ? ` (ab ${fmtDate(decAt)})` : ""}: alle Ziele und Leitplanken erfüllt → nächster Block, sonst die betroffene Sportart verlängern.</div>`;
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
-  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${course}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
+  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
