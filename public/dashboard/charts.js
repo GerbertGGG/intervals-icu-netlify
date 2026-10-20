@@ -252,7 +252,7 @@
     const hw = (W - L - R) / (span + 1);
     for (const d of days) if (o.ctl[d] != null || o.atl[d] != null || P.ctl[d] != null) s.append(title(el("rect", { x: x(d) - hw / 2, y: T1, width: hw, height: B1 - T1, fill: "transparent" }), `${U.fmtDate(d)}${o.ctl[d] == null ? " (Prognose)" : ""}: Fitness ${U.fmt(o.ctl[d] ?? P.ctl[d], 1)} · Ermüdung ${U.fmt(o.atl[d] ?? P.atl[d], 1)}`));
 
-    // TSB als Säulen um die Nulllinie: frisch / belastet / stark ermüdet nach den Schwellen der Seite
+    // TSB als Säulen um die Nulllinie: Trainingsbereich / hohes Risiko nach den Zonen der Seite (in % der CTL)
     const tsb = days.map((d) => { const c = o.ctl[d] ?? P.ctl[d], a = o.atl[d] ?? P.atl[d]; return c != null && a != null ? { d, v: c - a, proj: o.ctl[d] == null } : null; }).filter(Boolean);
     const tv = tsb.map((p) => p.v);
     const hi = Math.max(5, Math.ceil(Math.max(5, ...tv) / 5) * 5), lo = Math.min(-5, Math.floor(Math.min(-5, ...tv) / 5) * 5);
@@ -260,7 +260,7 @@
     const cls = (v) => (v >= o.zones[0].from ? "ok" : v >= o.zones[1].from ? "warn" : "bad");
     const TSB_COL = { ok: "var(--ok)", warn: "var(--plan)", bad: "var(--bad)" };
     // schmal: Legende eine Zeile unter dem Titel, sonst daneben
-    legend([{ color: TSB_COL.ok, text: "frisch" }, { color: TSB_COL.warn, text: "belastet" }, { color: TSB_COL.bad, text: "stark ermüdet" }], narrow ? T2 - 12 : T2 - 24, narrow ? L : L + 112);
+    legend([{ color: TSB_COL.ok, text: "Trainingsbereich" }, { color: TSB_COL.bad, text: "hohes Risiko (unter −30 % der CTL)" }], narrow ? T2 - 12 : T2 - 24, narrow ? L : L + 112);
     s.append(el("text", { x: L, y: narrow ? T2 - 32 : T2 - 23, style: "font-size:13px;font-weight:650;fill:var(--text)" }, "Frische (TSB)"));
     for (const v of [hi, 0, lo]) s.append(el("line", { x1: L, x2: W - R, y1: y2(v), y2: y2(v), class: v === 0 ? "axis" : "grid-l" }), el("text", { x: L - 8, y: y2(v) + 4, "text-anchor": "end" }, U.fmt(v)));
     const bw = Math.max(2, hw * 0.62);
