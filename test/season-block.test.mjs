@@ -133,3 +133,32 @@ const warm = [{ type: "heartrate", data: Array.from({ length: 600 + n2 * 2 + 300
 assert.equal(decouplingFromStreams(warm, "watts", null, { warmupSec: 600, cooldownSec: 300 }), 4.8);
 assert.notEqual(decouplingFromStreams(warm, "watts"), 4.8);
 console.log("block A ok");
+
+// ---------- Leitplanke Intensität: Rad-HIIT und Hügelsprints je Belastungswoche ab Woche 2 ----------
+import { intensityKindOf } from "../src/season-block.js";
+const lpText = "Block A\n\nLEITPLANKEN\n- Kraft ≥60 Sätze in 8 von 9 Belastungswochen\n- Ramp Rate (CTL) in Belastungswochen ≤5\n- Intensität: Rad-HIIT und Hügelsprints je 1× pro Woche in 6 von 8 Belastungswochen ab Woche 2 (Krankheitswochen zählen nicht als verfehlt)";
+const tl = parseBlockTargets(lpText);
+assert.deepEqual(tl.intensity, { need: 6, of: 8, fromWeek: 2, kinds: ["bikeHiit", "hillSprints"], sickOk: true });
+assert.equal(tl.strength.need, 8); assert.equal(tl.strength.of, 9); assert.equal(tl.ramp.max, 5);
+assert.equal(intensityKindOf("bike", "Rad-HIIT 30/30"), "bikeHiit");
+assert.equal(intensityKindOf("bike", "Rolle 3x 4min"), "bikeHiit");
+assert.equal(intensityKindOf("bike", "Zwift", 300), "bikeHiit");
+assert.equal(intensityKindOf("bike", "FTP Test", 392), null);
+assert.equal(intensityKindOf("bike", "Vergleichstest", 0), null);
+assert.equal(intensityKindOf("run", "Lockerer Lauf + Hügelsprints 4x8s"), "hillSprints");
+assert.equal(intensityKindOf("run", "Bobingen Laufen"), null);
+const bL = resolveSeasonBlock([{ ...ev, description: lpText }, evB], "2027-01-08");
+// Belastungswochen ab Woche 2: 2,3,5,6,7,9,10,11. Woche 3 nur HIIT (verfehlt), Woche 6 krank ohne Einheit (zählt nicht)
+const wk = (n) => addDaysT("2026-10-19", (n - 1) * 7);
+const addDaysT = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
+const ints = [2, 3, 5, 7, 9, 10, 11].flatMap((n) => [{ date: wk(n), kind: "bikeHiit" }, ...(n === 3 ? [] : [{ date: addDaysT(wk(n), 2), kind: "hillSprints" }])]);
+let gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)] }, "2027-01-08").goals.find((x) => x.key === "intensity");
+assert.equal(gi.group, "leitplanke"); assert.equal(gi.of, 7); assert.equal(gi.value, 6); assert.equal(gi.status, "ok");
+assert.equal(gi.weeks.filter((x) => !x.load).length, 4); // Woche 1 und Entlastungswochen 4/8/12
+// ohne Krankmeldung zählt Woche 6 als verfehlt: 2 von 2 erlaubten Fehlwochen
+gi = buildBlockGoalsFull(bL, { intensity: ints }, "2027-01-08").goals.find((x) => x.key === "intensity");
+assert.equal(gi.of, 8); assert.equal(gi.status, "warn");
+// drei Fehlwochen -> gerissen, Entscheidung "Ursache klären" nur mit Abschlusszielen; hier Status bad
+gi = buildBlockGoalsFull(bL, { intensity: ints.filter((x) => x.date !== wk(10)) }, "2027-01-08").goals.find((x) => x.key === "intensity");
+assert.equal(gi.status, "bad");
+console.log("block intensity ok");

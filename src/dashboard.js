@@ -6,7 +6,7 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets } from "./season-block.js";
+import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf } from "./season-block.js";
 import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
@@ -720,6 +720,24 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, bike: tg.bike ?? null }).catch((err) => { console.warn("block sessions", err); return {}; })
       : {};
     const dayOfWell = (x) => String(x?.id ?? x?.date ?? "").slice(0, 10);
+    // Intensitaets-Leitplanke: Rad-HIIT und Huegelsprints aus Name/Beschreibung der Einheit und des gekoppelten Workouts
+    const evById = new Map(events.map((e) => [String(e?.id), e]));
+    const textOf = (a) => { const e = evById.get(String(a?.paired_event_id)); return [a?.name, a?.description, e?.name, e?.description].filter(Boolean).join(" "); };
+    const intensity = tg.intensity
+      ? blockActs.map((a) => {
+          const sport = isBike(a) ? "bike" : isRun(a) ? "run" : null;
+          const z5 = Array.isArray(a?.icu_zone_times) ? num(a.icu_zone_times.find((z) => z?.id === "Z5")?.secs) : null;
+          return { date: activityDay(a), kind: sport ? intensityKindOf(sport, textOf(a), z5) : null };
+        }).filter((x) => x.kind)
+      : [];
+    // Krankheit: Kalendereintraege der Kategorie SICK/INJURED oder eine Notiz "krank" (Ende im Kalender exklusiv)
+    const sickDays = events.filter((e) => /SICK|INJURED/i.test(String(e?.category ?? "")) || (/NOTE/i.test(String(e?.category ?? "")) && /krank/i.test(String(e?.name ?? "")))).flatMap((e) => {
+      const from = String(e.start_date_local ?? "").slice(0, 10), endRaw = String(e.end_date_local ?? "").slice(0, 10);
+      const to = endRaw > from ? addDays(endRaw, -1) : from;
+      const out = [];
+      for (let d = from; d && d <= to && out.length < 60; d = addDays(d, 1)) out.push(d);
+      return out;
+    });
     const { goals, decision } = buildBlockGoalsFull(seasonBlock, {
       longRuns: [...rzLong, ...icuLong],
       strength: strengthDays,
@@ -730,6 +748,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ftp: thresholds.bike.indoorFtp ?? thresholds.bike.ftp ?? null,
       ctlDays: blockWell.map((x) => ({ date: dayOfWell(x), ctl: num(x?.ctl) })),
       activityDays: [...blockActs.map((a) => activityDay(a)), ...egymEntries.map((x) => x.date)],
+      intensity,
+      sickDays,
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
     seasonBlock = { ...seasonBlock, goals, decision };

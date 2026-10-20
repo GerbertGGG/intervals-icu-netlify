@@ -138,7 +138,11 @@ export function parseBlockTargets(text) {
   const has = (re) => re.test(t);
   const sport = parseSportGoals(t);
   const dec = t.match(/decoupling[^\d]{0,25}(\d+(?:[.,]\d+)?)\s*%/i);
-  const loadWeeks = t.match(/(\d+)\s*von\s*(\d+)\s*belastungswochen/i);
+  // "x von y Belastungswochen" gibt es auch bei der Intensitaet: fuer Kraft zuerst die Zeile mit "Kraft"
+  const loadWeeks = t.match(/kraft[^\n]*?(\d+)\s*von\s*(\d+)\s*belastungswochen/i) ?? t.match(/(\d+)\s*von\s*(\d+)\s*belastungswochen/i);
+  const intLine = t.match(/intensit(?:ä|ae|a)t[^\n]*?(\d+)\s*von\s*(\d+)\s*belastungswochen[^\n]*/i);
+  const intFrom = intLine?.[0].match(/ab\s*woche\s*(\d+)/i);
+  const intKinds = intLine ? [/hiit/i.test(intLine[0]) ? "bikeHiit" : null, /hügel|huegel|sprint/i.test(intLine[0]) ? "hillSprints" : null].filter(Boolean) : [];
   const sets = t.match(/(\d+)\s*sätze/i);
   const ramp = t.match(/ramp\s*-?\s*rate[^\d\n]{0,40}(\d+(?:[.,]\d+)?)/i);
   const pause = t.match(/pause\s*(?:über|von mehr als|länger als|>)\s*(\d+)\s*tag/i);
@@ -152,6 +156,7 @@ export function parseBlockTargets(text) {
     acwr: has(/acwr/i) ? { ...ACWR_BAND, share: ACWR_DAYS_SHARE } : null,
     ramp: ramp ? { max: numOf(ramp[1]) } : null,
     pause: pause ? { maxDays: Number(pause[1]) } : null,
+    intensity: intKinds.length ? { need: Number(intLine[1]), of: Number(intLine[2]), fromWeek: intFrom ? Number(intFrom[1]) : 1, kinds: intKinds, sickOk: /krank/i.test(intLine[0]) } : null,
     decision: decision ? { week: Number(decision[1]), extend: ext && /verlänger/i.test(decision[0]) ? ext[1].replace(/\s*-\s*/, "–") : "3–4" } : null,
   };
 }
@@ -332,6 +337,44 @@ function pauseGoal(activityDays, breaks, cfg, w, basis, todayIso) {
   };
 }
 
+// Intensitaets-Leitplanke: je Belastungswoche ab fromWeek muessen alle Arten (Rad-HIIT, Huegelsprints) mind. 1× vorkommen,
+// in need von of Wochen. Wochen mit Krankheit (Kalender) zaehlen nicht als verfehlt, wenn der Zieltext das sagt.
+const BIKE_HIIT = /hiit|\bhit\b|30\s*\/\s*30|\b\d\s*[x×]\s*4\s*min|vo2/i;
+const HILL_SPRINT = /hügel|huegel|\bhill|berg\s*-?sprint|\bsprints?\b/i;
+const INT_KIND_DE = { bikeHiit: "Rad-HIIT", hillSprints: "Hügelsprints" };
+// sport "bike"/"run", text: Name/Beschreibung der Einheit samt geplantem Workout. Rad ohne Stichwort: mind. 4 min in Z5 (kein Test).
+export function intensityKindOf(sport, text, z5Secs = null) {
+  if (sport === "bike" && (BIKE_HIIT.test(text) || (z5Secs != null && z5Secs >= 240 && !/ftp|rampe|test/i.test(text)))) return "bikeHiit";
+  if (sport === "run" && HILL_SPRINT.test(text)) return "hillSprints";
+  return null;
+}
+
+function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
+  const sick = new Set(sickDays);
+  const weeks = weeksOf(block, w, todayIso).map((x) => {
+    const inWeek = sessions.filter((y) => y.date >= x.start && y.date <= x.end);
+    const has = Object.fromEntries(cfg.kinds.map((k) => [k, inWeek.filter((y) => y.kind === k).length]));
+    const hit = cfg.kinds.every((k) => has[k] > 0);
+    let ill = false;
+    for (let d = x.start; d <= x.end; d = addDays(d, 1)) if (sick.has(d)) ill = true;
+    return { start: x.start, done: x.done, load: x.load && (w.baseline || x.idx + 1 >= cfg.fromWeek), has, hit, sick: ill };
+  });
+  // Krankheitswoche ohne Ziel faellt heraus; mit Ziel zaehlt sie normal
+  const full = weeks.filter((x) => x.done && x.load && (x.hit || !(cfg.sickOk && x.sick)));
+  const hits = full.filter((x) => x.hit).length;
+  const allowed = Math.max(0, cfg.of - cfg.need), misses = full.length - hits;
+  const open = weeks.find((x) => !x.done) ?? null;
+  const what = cfg.kinds.map((k) => INT_KIND_DE[k]).join(" und ");
+  return {
+    key: "intensity", group: "leitplanke", label: "Intensität", unit: "Wochen", basis,
+    target: `${what} je 1× in ${cfg.need} von ${cfg.of} Belastungswochen${cfg.fromWeek > 1 ? ` ab Woche ${cfg.fromWeek}` : ""}`,
+    value: full.length ? hits : null, of: full.length, needWeeks: cfg.need, ofWeeks: cfg.of, kinds: cfg.kinds, weeks: weeks.slice(-12),
+    status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : misses > allowed ? "bad" : misses === allowed && allowed > 0 ? "warn" : "ok",
+    note: [open ? `Diese Woche: ${cfg.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k] ? "✓" : "offen"}`).join(", ")}${open.load ? "" : " (zählt nicht)"}` : null, misses ? `${misses} von ${allowed} erlaubten Fehlwochen` : null, weeks.some((x) => x.done && x.sick && !x.hit && cfg.sickOk) ? "Krankheitswoche ausgenommen" : null].filter(Boolean).join(" · ") || null,
+    hints: cfg.sickOk ? ["Krankheit als Kalendereintrag „Krank“ (oder Kategorie Krankheit/Verletzung) eintragen, dann zählt die Woche nicht als verfehlt."] : [],
+  };
+}
+
 // Entscheidung zum Blockende (Woche 12): alle Ziele und Leitplanken erfuellt -> naechster Block; eine Leitplanke gerissen ->
 // erst Ursache klaeren; sonst die betroffenen Sportarten verlaengern. Vor der Woche als "Stand heute".
 const SPORT_DE = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
@@ -351,7 +394,8 @@ export function buildBlockDecision(block, targets, goals) {
 
 // input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}],
 //   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,vi,intensity,indoor,easy,hasHr,tempC}],
-//   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}] }
+//   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}],
+//   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date] }
 export function buildBlockGoals(block, input, todayIso) {
   return buildBlockGoalsFull(block, input, todayIso).goals;
 }
@@ -462,6 +506,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   }
 
   if (targets.ramp) goals.push(rampGoal(input.ctlDays ?? [], targets.ramp, block, w, basis, todayIso));
+  if (targets.intensity) goals.push(intensityGoal(input.intensity ?? [], input.sickDays ?? [], targets.intensity, block, w, basis, todayIso));
   if (targets.pause) goals.push(pauseGoal(input.activityDays ?? [], input.plannedBreaks ?? [], targets.pause, w, basis, todayIso));
 
   return { goals, decision: buildBlockDecision(block, targets, goals) };

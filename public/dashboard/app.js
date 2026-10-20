@@ -986,7 +986,7 @@ function renderBlock(SB) {
   };
   const valOf = (g) => {
     if (g.value == null) return "–";
-    if (g.key === "strength") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungsw." : "Wochen"}</small>`;
+    if (g.key === "strength" || g.key === "intensity") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungsw." : "Wochen"}</small>`;
     if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)}<small> s/100 m</small>`;
     if (g.key === "ramp") return `${fmt(g.value, 1)}<small> max./Woche</small>`;
     if (g.key === "pause") return `${g.value}<small> Tag${g.value === 1 ? "" : "e"} längste Lücke</small>`;
@@ -1007,10 +1007,13 @@ function renderBlock(SB) {
       vis = `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (g.value / (g.max * 1.5)) * 100)}%;background:var(--${g.status === "base" ? (g.value > g.max ? "bad" : "ok") : g.status === "none" ? "muted" : g.status})"></div><i style="left:${(1 / 1.5) * 100}%"></i></div>`;
     } else if (g.key === "strength") {
       vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="ab ${fmtDate(w.start)}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}${w.load === false ? " (Entlastungswoche, zählt nicht)" : ""}"></i>`).join("")}</div>`;
+    } else if (g.key === "intensity") {
+      const kd = { bikeHiit: "Rad-HIIT", hillSprints: "Hügelsprints" };
+      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : !w.done ? "open" : w.hit ? "ok" : w.sick ? "rec" : g.status === "base" ? "off" : "bad"}" title="ab ${fmtDate(w.start)}: ${g.kinds.map((k) => `${kd[k]} ${w.has[k] ?? 0}×`).join(", ")}${w.load === false ? " (zählt nicht)" : w.sick ? " (krank)" : ""}"></i>`).join("")}</div>`;
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    const legend = g.key === "strength" ? `Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group ? ", hell = Entlastungswoche" : ""}` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
+    const legend = g.key === "intensity" ? "Jedes Kästchen = eine Woche, grün = beides erledigt, hell = zählt nicht (Woche 1, Entlastung oder krank)" : g.key === "strength" ? `Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group ? ", hell = Entlastungswoche" : ""}` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
     const sub = [g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ");
     return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div><div class="val">${valOf(g)}</div>${vis}<div class="sub">Ziel: ${esc(g.target)}</div>${legend ? `<div class="sub">${esc(legend)}</div>` : ""}<div class="sub">${sub}</div>${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}</div>`;
   };
