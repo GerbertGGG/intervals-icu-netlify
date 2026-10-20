@@ -599,7 +599,7 @@ Pace 0–60 = 3600 s / Distanz nach 60 min
 über Deckel = Sekunden mit HF > Deckel (je Probe höchstens 10 s), in Minuten
 ```
 
-Gehpausen und Stopps bleiben drin. Die Karte „Grundlagenläufe ab 60 min“ zeigt je Lauf Dauer (statt km, die Pace ist durch den Deckel bewusst langsamer), Decoupling 0–60, stabile Dauer (Fensterreihe beim Darüberfahren), Pace 0–60, Minuten über dem Deckel und DFA α1 aus Runalyze (`dfaAlpha1` im Snapshot, gleicher Tag; ab 0,75 unter der aeroben Schwelle). Blocktests sind markiert. Die Kennzahlen der letzten Einheit zeigen beim Lauf dieselben Werte; das Decoupling über den ganzen Lauf entfällt dort, weil es mit der Länge wächst.
+Gehpausen und Stopps bleiben drin. Die Karte „Grundlagenläufe ab 60 min“ zeigt je Lauf Dauer (statt km, die Pace ist durch den Deckel bewusst langsamer), Decoupling 0–60, stabile Dauer (Fensterreihe beim Darüberfahren), Pace 0–60, Minuten über dem Deckel und DFA α1 aus Runalyze (`dfaAlpha1` im Snapshot, gleicher Tag; nur als Hinweis ohne Ampel, weil der Runalyze-Wert beim Nutzer nicht stimmt – er entscheidet nichts). Blocktests sind markiert. Die Kennzahlen der letzten Einheit zeigen beim Lauf dieselben Werte; das Decoupling über den ganzen Lauf entfällt dort, weil es mit der Länge wächst.
 
 ---
 

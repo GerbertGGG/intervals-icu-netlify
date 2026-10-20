@@ -481,18 +481,17 @@ function renderRennplan(d) {
 
 /* ---------- 3 · Form: Grundlagenläufe ab 60 min ----------
    Aus den Zeitreihen (Worker: block-inputs.js): Dauer statt km (der lange Lauf wächst in Minuten, die Pace ist durch den
-   HF-Deckel bewusst langsamer), Decoupling der ersten 60 min, stabile Dauer, Minuten über dem Deckel und DFA alpha1 (Runalyze).
+   HF-Deckel bewusst langsamer), Decoupling der ersten 60 min, stabile Dauer, Minuten über dem Deckel und DFA alpha1 (Runalyze, nur Hinweis ohne Ampel, nicht validiert).
    Blocktests sind markiert; nur sie zählen fürs Blockziel, die anderen sind Trend. */
 function renderLongruns(d) {
   const host = $("longruns"), B = d.baseRuns;
   if (!d.sources.intervalsActivities.ok) { host.innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; return; }
   const decCls = (v) => (v == null ? "none" : v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
-  const dfaCls = (v) => (v == null ? "none" : v >= 0.75 ? "ok" : v >= 0.6 ? "warn" : "bad");
   const next = d.todayPlan?.nextTest;
   if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Grundlagenlauf ab 60 min mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
-  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmt(r.durationMin)} min</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? `<span class="badge ${r.overCapMin <= 2 ? "ok" : r.overCapMin <= 10 ? "warn" : "bad"}">${fmt(r.overCapMin)} min</span>` : "–"}</td><td>${r.dfa != null ? `<span class="badge ${dfaCls(r.dfa)}">${fmt(r.dfa, 2)}</span>` : "–"}</td></tr>`).join("");
+  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmt(r.durationMin)} min</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? `<span class="badge ${r.overCapMin <= 2 ? "ok" : r.overCapMin <= 10 ? "warn" : "bad"}">${fmt(r.overCapMin)} min</span>` : "–"}</td><td class="muted">${r.dfa != null ? fmt(r.dfa, 2) : "–"}</td></tr>`).join("");
   host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 0–60</th><th>stabil</th><th>Pace 0–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th><th>DFA α1</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 aus Runalyze: ab 0,75 unter der aeroben Schwelle; liegt er auch unter dem Deckel deutlich darunter, sitzt der Deckel zu hoch. Nur die Blocktests zählen fürs Blockziel.</div></details>`;
+    <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 aus Runalyze nur als Hinweis ohne Ampel: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts, weder über den Deckel noch übers Blockziel. Nur die Blocktests zählen fürs Blockziel.</div></details>`;
 }
 
 /* ---------- 3 · Form: Intervall-Splits ---------- */
