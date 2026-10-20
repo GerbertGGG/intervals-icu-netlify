@@ -99,6 +99,15 @@ function isRunalyzeKind(a, ctx, kind) {
   return km > 0 && (ctx?.rzRuns ?? []).some((r) => r.date === day && runKindFromType(r.type) === kind && Math.abs(r.distanceKm - km) / km <= RACE_DISTANCE_TOLERANCE);
 }
 
+// Decoupling eines Laufs: nur der Runalyze-Wert desselben Laufs (gleicher Tag, Distanz passt). Intervals liefert
+// beim Laufen ohne Laufleistung nichts Brauchbares, sein Wert wird deshalb nie genommen.
+function runalyzeDecoupling(a, ctx) {
+  const km = (num(a?.distance) ?? 0) / 1000;
+  const day = activityDay(a);
+  const hit = km > 0 ? (ctx?.rzRuns ?? []).find((r) => r.date === day && Number.isFinite(r.decouplingPct) && Math.abs(r.distanceKm - km) / km <= RACE_DISTANCE_TOLERANCE) : null;
+  return hit ? hit.decouplingPct : null;
+}
+
 function isRaceRun(a, ctx) {
   if (String(a?.sub_type ?? "").toUpperCase() === "RACE" || a?.race === true) return true;
   const name = String(a?.name ?? "");
@@ -146,7 +155,7 @@ export function buildRunRecord(a, ctx = null) {
     feel: num(a?.feel),
     // Harte Regel: bei Intervall-/Tempo-/unklaren Einheiten verlassen keine Pulswerte den Worker.
     avgHr: showHr ? num(a?.average_heartrate) : null,
-    decoupling: showHr ? num(a?.decoupling) : null,
+    decoupling: showHr ? runalyzeDecoupling(a, ctx) : null,
     compliance: num(a?.compliance),
   };
 }
@@ -464,7 +473,7 @@ export function buildLastActivity(activities, todayIso, ctx = null) {
     normWatts: sport === "bike" ? num(a?.icu_weighted_avg_watts) : null,
     intensity: num(a?.icu_intensity) != null ? Math.round(num(a.icu_intensity)) : null,
     avgHr: hr ? num(a?.average_heartrate) : null,
-    decoupling: hr ? num(a?.decoupling) : null,
+    decoupling: hr ? runalyzeDecoupling(a, ctx) : null,
     rpe: num(a?.icu_rpe),
     feel: num(a?.feel),
   };
