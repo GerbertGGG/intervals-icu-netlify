@@ -1,6 +1,7 @@
 // Tagesentscheidung fürs Heute-Band: Erholungsampel (dashboard-summary.js) plus die Regeln aus dem Block-Eintrag im
 // Kalender (nie zwei Lauftage hintereinander, keine Intensität vor Woche X, kein HIIT kurz vor dem Blocktest, Ruhetag pro Woche).
-// Ergebnis ist eine Aussage "Qualität möglich / nur locker / locker-kurz oder frei / kein Training" mit Begründung.
+// Ergebnis ist eine Aussage "Qualität möglich / locker und kürzer / frei / kein Training" mit Umfang, Laufen je eigener
+// Bremse (Hüfte/Leiste/Knie, Muskelkater) und Begründung.
 // Eine Regel greift nur, wenn sie im Block-Eintrag steht; ohne Block bleibt nur die Ampel.
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -43,10 +44,17 @@ export function buildTodayPlan(input) {
   const deload = B?.weekNo != null && B.weekNo % RECOVERY_EVERY === 0;
   const preTest = rules.preTestDays != null && daysTo != null && daysTo <= rules.preTestDays;
 
-  // 1. Laufen
+  // 0. Umfang: die Ampel sagt auch, wie viel (im Grundlagenblock ist ohnehin fast alles locker)
+  if (verdict.dose && !verdict.sick && verdict.cls !== "none") add(verdict.cls, `Umfang: ${verdict.dose.text}.`);
+
+  // 1. Laufen (eigene Bremsen aus der Ampel: Hüfte/Leiste/Knie, Muskelkater)
+  const runV = verdict.sports?.run ?? null;
+  const runOff = runV?.cls === "bad" && verdict.cls !== "bad";
   if (B && rules.noRunBackToBack && ran(addDays(today, -1))) add("bad", "Kein Lauf heute – gestern gelaufen (nie zwei Tage hintereinander).");
   else if (ran(today)) add("none", "Heute schon gelaufen.");
-  else if (B && input.hrCap) add("ok", `Laufen möglich: locker unter HF ${input.hrCap}, Gehpausen erlaubt.`);
+  else if (runOff) add("bad", `Laufen: ${runV.text} – Rad oder Schwimmen locker.`);
+  else if (B && input.hrCap) add(runV?.cls === "warn" ? "warn" : "ok", `Laufen möglich: locker unter HF ${input.hrCap}, Gehpausen erlaubt${runV?.cls === "warn" ? ` – ${runV.text}` : ""}.`);
+  else if (runV?.cls === "warn" && verdict.cls === "ok") add("warn", `Laufen ${runV.text}.`);
 
   // 2. Intensität (nur über Pace/Watt, RPE und Gefühl gesteuert)
   let qualityOpen = false;
@@ -63,7 +71,7 @@ export function buildTodayPlan(input) {
         else {
           qualityOpen = true;
           const stop = verdict.cls === "warn" || verdict.cls === "bad";
-          add(verdict.cls === "ok" ? "ok" : stop ? "warn" : "none", `${label} noch offen${stop ? " – heute nicht (Ampel)" : ""}${k === "hillSprints" && rules.noRunBackToBack && ran(addDays(today, -1)) ? " – heute kein Lauf" : ""}.`);
+          add(verdict.cls === "ok" ? "ok" : stop ? "warn" : "none", `${label} noch offen${stop ? " – heute nicht (Ampel)" : ""}${k === "hillSprints" && ((rules.noRunBackToBack && ran(addDays(today, -1))) || runOff) ? " – heute kein Lauf" : ""}.`);
         }
       }
       if (deload) add("none", "Entlastungswoche: keine Hügelsprints.");
@@ -89,9 +97,10 @@ export function buildTodayPlan(input) {
   let title;
   if (verdict.sick) title = "Kein Training";
   else if (testToday) title = verdict.cls === "bad" ? "Blocktest verschieben" : "Heute Blocktest";
-  else if (verdict.cls === "bad") title = "Nur locker und kurz – oder frei";
-  else if (verdict.cls === "warn") title = "Heute nur locker";
+  else if (verdict.cls === "bad") title = "Frei – oder kurz und locker";
+  else if (verdict.missing) title = "Erst Gefühlswerte eintragen";
+  else if (verdict.cls === "warn") title = "Heute locker und kürzer";
   else if (verdict.cls === "ok") title = qualityOpen ? "Qualität möglich" : "Locker nach Wochenrahmen";
   else title = "Keine Einschätzung";
-  return { cls: verdict.cls, title, sub: verdict.sub, reasons: verdict.reasons ?? [], note: [verdict.note, verdict.watch, verdict.thin].filter(Boolean).join(" · ") || null, lines, nextTest, daysToTest: daysTo };
+  return { cls: verdict.cls, title, sub: verdict.sub, dose: verdict.dose ?? null, sports: verdict.sports ?? null, reasons: verdict.reasons ?? [], note: [verdict.note, verdict.watch, verdict.thin].filter(Boolean).join(" · ") || null, lines, nextTest, daysToTest: daysTo };
 }

@@ -1,7 +1,7 @@
 // Erholungsampel und Rad-Last gegen echte Werte aus Oktober 2026 (Ruhepuls, HRV, Schlaf-Score, Gefühlswerte; Krankheit
 // am 14.10. im Kalender). Ausführen: node test/readiness.test.mjs
 import assert from "node:assert/strict";
-import { computeReadiness } from "../src/dashboard-summary.js";
+import { computeReadiness, computeDrift, computeEasyRunSignal } from "../src/dashboard-summary.js";
 import { sessionLoad, activityLoad } from "../src/activity-utils.js";
 
 // [Datum, Ruhepuls, HRV, Schlaf-Score, Schlafqualität, Muskelkater, Ermüdung, Stimmung, Motivation]
@@ -77,6 +77,56 @@ const at = (d, list = upTo(d)) => computeReadiness(list, d, null, { sickDays: SI
   const r = at(d, list);
   assert.equal(r.body.sleep.cls, "warn");
   assert.equal(r.verdict.cls, "warn");
+}
+
+// ---------- Ampel als Steuerung: Umfang, Laufen je eigener Bremse, schwächere Stimmung/Motivation ----------
+{
+  const d = "2026-10-20", g = at(d);
+  assert.equal(g.verdict.cls, "ok"); assert.equal(g.verdict.dose.factor, 1);
+  assert.equal(g.verdict.sports.run.cls, "ok"); assert.equal(g.verdict.sports.bike.cls, "ok");
+  // Stimmung deutlich schlechter allein: nur eine Warnung, kein Gelb (Job und Alltag, nicht Erholung)
+  assert.equal(at(d, upTo(d).map((w) => (w.date === d ? { ...w, mood: 5 } : w))).verdict.cls, "ok");
+  // Stimmung und Motivation etwas schlechter: nur Hinweis
+  const soft = at(d, upTo(d).map((w) => (w.date === d ? { ...w, mood: 3, motivation: 3 } : w)));
+  assert.equal(soft.verdict.cls, "ok"); assert.match(soft.verdict.watch, /Stimmung 3/);
+  // Muskelkater deutlich schlechter: gelb (nicht rot), Laufen aus, Rad locker und kürzer
+  const sore = at(d, upTo(d).map((w) => (w.date === d ? { ...w, soreness: 4 } : w)));
+  assert.equal(sore.verdict.cls, "warn"); assert.equal(sore.verdict.dose.factor, 0.7);
+  assert.equal(sore.verdict.sports.run.cls, "bad"); assert.equal(sore.verdict.sports.bike.cls, "warn");
+  // Ermüdung deutlich schlechter bleibt rot: frei
+  const tired = at(d, upTo(d).map((w) => (w.date === d ? { ...w, fatigue: 4 } : w)));
+  assert.equal(tired.verdict.cls, "bad"); assert.equal(tired.verdict.dose.factor, 0);
+  // Hüfte erwähnt: Ampel grün, Laufen aus
+  const hip = computeReadiness(upTo(d), d, null, { sickDays: SICK, hipFlags: [{ date: "2026-10-19" }] });
+  assert.equal(hip.verdict.cls, "ok"); assert.match(hip.verdict.sports.run.text, /kein Lauf.*Hüfte/);
+  // Heute noch nichts eingetragen: kein Grün
+  const miss = at(d, upTo(d).map((w) => (w.date === d ? { ...w, sleepQuality: null, soreness: null, fatigue: null, mood: null, motivation: null } : w)));
+  assert.equal(miss.verdict.cls, "warn"); assert.equal(miss.verdict.missing, true); assert.match(miss.verdict.note, /gestern/);
+}
+// Langzeitbasis: 8 Wochen HRV 50 / Ruhepuls 45, dann 4 Wochen langsam auf 45 / 47 -> die 28-Tage-Basis ist mitgewandert,
+// gegen die Tage 29–90 liegt der 7-Tage-Schnitt aber deutlich daneben -> ein gelbes Signal
+{
+  const day = (n) => new Date(Date.parse("2026-10-20T00:00:00Z") - n * 86400000).toISOString().slice(0, 10);
+  const long = Array.from({ length: 90 }, (_, i) => { const n = 89 - i; return { date: day(n), hrv: n > 28 ? 50 : 45, restingHR: n > 28 ? 45 : 47 }; });
+  const dr = computeDrift(long, "2026-10-20");
+  assert.equal(dr.cls, "warn"); assert.equal(dr.hrvAnchor, 50); assert.equal(dr.hrv7, 45);
+  assert.equal(computeDrift(long, "2026-10-20", long.slice(-7).map((x) => x.date)), null); // Krankheitstage zählen nicht
+  const well = long.slice(-40).map((x) => ({ ...x, sleepScore: 85, sleepQuality: 2, soreness: 2, fatigue: 2, mood: 2, motivation: 2 }));
+  const r = computeReadiness(well, "2026-10-20", null, { longWellness: long });
+  assert.equal(r.body.hrv.cls, "ok"); assert.equal(r.body.drift.counted, true);
+  assert.equal(r.verdict.cls, "warn"); assert.match(r.verdict.reasons.join(), /Langzeitbasis/);
+}
+// Leistungssignal: Puls bei lockerem Tempo; heutige Läufe zählen nicht (Ampel = Zustand vor dem Training)
+{
+  const run = (date, pace, hr, kind = "base") => ({ date, kind, movingTimeMin: 50, paceSecPerKm: pace, avgHr: hr });
+  const base = ["2026-09-20", "2026-09-27", "2026-10-04", "2026-10-11"].map((x) => run(x, 420, 125));
+  assert.equal(computeEasyRunSignal([...base, run("2026-10-18", 420, 134)], "2026-10-20").cls, "warn"); // 7 % weniger Tempo je Schlag
+  assert.equal(computeEasyRunSignal([...base, run("2026-10-18", 420, 127)], "2026-10-20").cls, "ok");
+  assert.equal(computeEasyRunSignal([...base, run("2026-10-20", 420, 140)], "2026-10-20"), null);
+  assert.equal(computeEasyRunSignal([...base, run("2026-10-18", 380, 160, "intensity")], "2026-10-20"), null);
+  const perf = { cls: "warn", text: "Puls bei lockerem Tempo erhöht" };
+  assert.equal(at("2026-10-20").verdict.cls, computeReadiness(upTo("2026-10-20"), "2026-10-20", null, { sickDays: SICK, perf }).verdict.cls); // allein kein Gelb
+  assert.equal(computeReadiness(upTo("2026-10-20").map((w) => (w.date === "2026-10-20" ? { ...w, soreness: 3 } : w)), "2026-10-20", null, { sickDays: SICK, perf }).verdict.cls, "warn"); // mit zweiter Warnung gelb
 }
 
 // Rad-Last aus Leistung (19.10.: HRSS 26, Leistung 43), Lauf und Fahrten ohne Leistung wie Intervals

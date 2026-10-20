@@ -190,13 +190,19 @@ assert.equal(gR.runDecoupling.value, 5.5); assert.equal(gR.runDecoupling.pass, f
 assert.equal(gR.runDecoupling.pace.ok, true); // 428 vs 430: nicht langsamer
 assert.match(gR.runDecoupling.hints[0], /Trend.*1 Grundlagenlauf ab 60 min.*3 %/);
 assert.equal(gR.runStable.value, 75); assert.equal(gR.runStable.baseValue, 0); assert.equal(gR.runStable.status, "ok");
+// Kurs (Trend, keine Entscheidung): Decoupling 6 → Ø 5,5 bei Ziel 5 und Muss 8 = knapp; Hauptkurve Pace 0–60 im HF-Band
+assert.deepEqual([gR.runDecoupling.course.state, gR.runDecoupling.course.from, gR.runDecoupling.course.to, gR.runDecoupling.course.dir], ["close", 6, 5.5, "better"]);
+assert.equal(gR.runDecoupling.course.main, "Pace 0–60 7:10 → 7:08 /km"); assert.equal(gR.runDecoupling.course.mainDir, "better");
+assert.equal(gR.runDecoupling.course.nextText, "nächster Blocktest 06.12.");
+assert.deepEqual([gR.runStable.course.state, gR.runStable.course.from, gR.runStable.course.to], ["on", 0, 75]);
+assert.equal(buildBlockGoalsFull(bR, { runs: runsR.slice(0, 1) }, "2026-11-12").goals.find((x) => x.key === "runDecoupling").course.state, "open"); // nur der Basistest
 // Pace mehr als 5 s/km langsamer als im Basistest: verfehlt
 const slow = Object.fromEntries(buildBlockGoalsFull(bR, { runs: runsR.map((r) => (r.date === "2026-11-09" ? { ...r, analysis: an(5, 75, 440) } : r)) }, "2026-11-12").goals.map((x) => [x.key, x]));
 assert.equal(slow.runDecoupling.pace.ok, false); assert.equal(slow.runDecoupling.status, "warn");
 // Rad: nur Fahrten mit 165 W im Messfenster sind Vergleichseinheiten; Geraetetemperatur kommt nicht vor
 const rides = [{ date: "2026-10-26", durationMin: 72, decoupling: 4, mainWatts: 165, vi: 1.01, intensity: 66, indoor: true, easy: true, hasHr: true }, { date: "2026-10-28", durationMin: 30, decoupling: 1, mainWatts: 130, vi: 1.01, intensity: 50, indoor: true, easy: true, hasHr: true }, { date: "2026-10-30", durationMin: 75, decoupling: 9, mainWatts: 140, vi: 1.01, intensity: 56, indoor: true, easy: true, hasHr: true }];
 const gb = buildBlockGoalsFull(bR, { rides }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
-assert.equal(gb.count, 1); assert.equal(gb.value, 4); assert.ok(gb.hints.some((h) => /Messfenster: 60 min nach 10 min Einrollen, Leistung 165 W/.test(h)));
+assert.equal(gb.count, 1); assert.equal(gb.value, 4); assert.equal(gb.course.state, "open"); assert.ok(gb.hints.some((h) => /Messfenster: 60 min nach 10 min Einrollen, Leistung 165 W/.test(h)));
 assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
 // Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 0–60 stabil, 0–75 ok, 0–90 drüber
 {
@@ -213,7 +219,7 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   const n = 70 * 60, time = Array.from({ length: n }, (_, i) => i);
   const watts = time.map((t) => (t < 600 ? 130 : 165)), heartrate = time.map((t) => (t < 600 ? 100 : t < 600 + 1800 ? 130 : 136.5));
   const st = [{ type: "time", data: time }, { type: "watts", data: watts }, { type: "heartrate", data: heartrate }];
-  assert.deepEqual(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: n }), { decoupling: 4.8, mainWatts: 165, noWarmup: false });
+  assert.deepEqual(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: n }), { decoupling: 4.8, mainWatts: 165, mainHr: 133, noWarmup: false }); // Puls im Fenster: Hälfte 130, Hälfte 136,5
   assert.equal(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: 3600 }).noWarmup, true); // 60-min-Fahrt ohne Einrollen
 }
 // Tagesentscheidung: Ampel plus Regeln aus dem Block
@@ -233,7 +239,7 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   const w2b = { ...base, block: { ...blk, weekNo: 2 }, testDates: ["2026-11-08"] };
   assert.ok(buildTodayPlan({ ...w2b, today: "2026-11-06", verdict: { cls: "ok" } }).lines.some((l) => /Kein HIIT, keine Sprints: Blocktest am So 08\.11\./.test(l.text)));
   assert.equal(buildTodayPlan({ ...w2b, today: "2026-11-04", verdict: { cls: "ok" } }).title, "Qualität möglich");
-  assert.equal(buildTodayPlan({ ...w2b, today: "2026-11-04", verdict: { cls: "warn" } }).title, "Heute nur locker");
+  assert.equal(buildTodayPlan({ ...w2b, today: "2026-11-04", verdict: { cls: "warn" } }).title, "Heute locker und kürzer");
   // Testtag bei Rot: verschieben; Krankheit: kein Training
   assert.equal(buildTodayPlan({ ...base, today: "2026-10-25", verdict: { cls: "bad" } }).title, "Blocktest verschieben");
   assert.equal(buildTodayPlan({ ...base, verdict: { cls: "bad", sick: true } }).title, "Kein Training");

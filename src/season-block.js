@@ -254,7 +254,7 @@ function decouplingGoal({ key, sport, label, sessions, cfg, w, basis, comparable
     key, group: "ziel", sport, label, unit: "%", basis,
     target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · letzte ${n} vergleichbare${cfg.pace ? " · Pace nicht langsamer" : ""}`,
     value: avg != null ? r1(avg) : null, count: comp.length, max: cfg.max, must, lastN: n, pace,
-    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(Number.isFinite(x.mainWatts ?? x.watts) ? { watts: Math.round(x.mainWatts ?? x.watts) } : {}), ...(x.noWarmup ? { noWarmup: true } : {}) })),
+    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(Number.isFinite(x.mainWatts ?? x.watts) ? { watts: Math.round(x.mainWatts ?? x.watts) } : {}), ...(Number.isFinite(x.mainHr) ? { hr: x.mainHr } : {}), ...(x.noWarmup ? { noWarmup: true } : {}) })),
     status,
     // Fuer die Entscheidung in Woche 12 zaehlt das Muss-Kriterium (ohne Muss der Zielwert), ueber volle n Einheiten
     pass: !w.baseline && comp.length >= n && (must != null ? avg <= must : decOk) && pace?.ok !== false,
@@ -603,5 +603,50 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   if (targets.intensity) goals.push(intensityGoal(input.intensity ?? [], input.sickDays ?? [], targets.intensity, block, w, basis, todayIso));
   if (targets.pause) goals.push(pauseGoal(input.activityDays ?? [], input.plannedBreaks ?? [], targets.pause, w, basis, todayIso));
 
+  for (const g of goals) if (g.group === "ziel") g.course = goalCourse(g, w);
   return { goals, decision: buildBlockDecision(block, targets, goals) };
+}
+
+// Kurs der Abschlussziele: Erster Messwert → letzter → Ziel, dazu die Richtung. Das ist ausdrücklich ein Trend, keine
+// Entscheidung (die fällt in Woche 12). Hauptkurve ist die Leistung bei gleichem Puls bzw. der Puls bei gleicher Leistung:
+// Unter einem strengen HF-Deckel ist das Decoupling oft schon niedrig, der Fortschritt zeigt sich dann im Tempo (Lauf,
+// Pace 0–60 im HF-Band) bzw. im Puls bei fester Leistung (Rad). Das Decoupling bleibt das Abnahmekriterium.
+//   auf Kurs = Ziel schon erreicht · knapp = im Muss oder auf dem Weg dorthin · hinten = weder noch · offen = noch kein Vergleich
+const COURSE_TEXT = { on: "auf Kurs", close: "knapp", behind: "hinten", open: "offen" };
+function goalCourse(g, w) {
+  const dirOf = (a, b, lowerBetter = true) => (a == null || b == null ? null : a === b ? "flat" : (b < a) === lowerBetter ? "better" : "worse");
+  const out = (state, extra) => ({ state, label: COURSE_TEXT[state], baseline: Boolean(w?.baseline), ...extra });
+  if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
+    const s = g.series ?? [];
+    const next = g.key === "runDecoupling" ? (g.nextTest ?? null) : null;
+    const nextText = g.key === "runDecoupling" ? (g.nextTest ? `nächster Blocktest ${g.nextTest.slice(8, 10)}.${g.nextTest.slice(5, 7)}.` : g.tests ? null : "nächster langer Grundlagenlauf") : "nächste Rolle mit Messfenster";
+    if (!s.length) return out("open", { from: null, to: null, target: g.max, unit: "%", dir: null, main: null, next, nextText });
+    const first = s[0], last = s[s.length - 1];
+    let main = null, mainDir = null;
+    if (g.key === "runDecoupling" && g.tests?.length) {
+      const a = g.tests[0], b = g.tests[g.tests.length - 1];
+      if (a.pace60 && b.pace60) { main = `Pace 0–60 ${a.pace60} → ${b.pace60} /km`; mainDir = a === b ? null : dirOf(a.pace60Sec, b.pace60Sec); }
+    } else if (g.key === "bikeDecoupling") {
+      const hs = s.filter((x) => Number.isFinite(x.hr));
+      if (hs.length) { const a = hs[0], b = hs[hs.length - 1]; main = `Puls bei ${b.watts ?? "fester"} W ${a.hr} → ${b.hr}`; mainDir = a === b ? null : dirOf(a.hr, b.hr); }
+    }
+    const must = g.must ?? g.max + 2;
+    const dir = s.length > 1 ? dirOf(first.value, g.value) : null;
+    const state = s.length < 2 ? "open" : g.value <= g.max ? "on" : g.value <= must || dir === "better" || mainDir === "better" ? "close" : "behind";
+    return out(state, { from: first.value, to: g.value, target: g.max, unit: "%", dir, main, mainDir, next, nextText });
+  }
+  if (g.key === "runStable") {
+    const n = g.tests?.length ?? 0;
+    const nextText = g.nextTest ? `nächster Blocktest ${g.nextTest.slice(8, 10)}.${g.nextTest.slice(5, 7)}.` : null;
+    if (n < 2) return out("open", { from: g.baseValue ?? null, to: null, target: "länger als Basistest", unit: "min", dir: null, next: g.nextTest ?? null, nextText });
+    const dir = dirOf(g.baseValue, g.value, false);
+    return out(g.value > g.baseValue ? "on" : g.value === g.baseValue ? "close" : "behind", { from: g.baseValue, to: g.value, target: "länger als Basistest", unit: "min", dir, next: g.nextTest ?? null, nextText });
+  }
+  if (g.key === "swimTest") {
+    const t = g.tests ?? [];
+    if (!t.length) return out("open", { from: null, to: null, target: g.maxSlowerPer100, unit: "s/100 m", dir: null, nextText: "nächster Schwimmtest" });
+    const a = t[0], b = t[t.length - 1], dir = t.length > 1 ? dirOf(a.slowerPer100, b.slowerPer100) : null;
+    return out(b.pass ? "on" : dir === "better" || t.some((x) => x.pass) ? "close" : "behind", { from: a.slowerPer100, to: b.slowerPer100, target: g.maxSlowerPer100, unit: "s/100 m", dir, nextText: b.pass ? null : "nächster Schwimmtest" });
+  }
+  return null;
 }
