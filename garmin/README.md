@@ -2,6 +2,7 @@
 
 Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Von oben nach unten:
 
+- **Datum und Akku** ganz oben als kleine Zeile („DI 20. OKT“ und Akkusymbol mit Prozent): weiß, ab 20 % orange, ab 10 % rot, beim Laden grün. Kommt von der Uhr, steht also auch ohne Daten vom Worker.
 - **Woche** Mo bis So oben als gerade Reihe abgerundeter Quadrate: gefüllt in Sportfarbe (Laufen gelb, Rad grün, Schwimmen blau, Kraft orange) = erledigt, gedimmt gefüllt = geplant, dunkel = frei, weißer Rahmen = heute. Zwei Sportarten an einem Tag: geteiltes Feld, links die erste (erledigt vor geplant, sonst nach Belastung), rechts die zweite.
 - **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′"). Heute bleibt eine geplante Einheit stehen, solange ihre Sportart heute noch nicht erledigt ist (Rad erledigt, Kraft offen → Kraft).
 - **Oben mit Wochenzielen des Coaches**: statt Wochenreihe und nächster Einheit je eine Kapsel mit dem, was diese Woche noch offen ist: Minuten bis zum Zeitziel für Lauf, Rad und Schwimmen, offene Sätze für Kraft (dunkel mit Zahl in Sportfarbe = offen, voll mit Haken = erreicht), darunter „OFFEN · NOCH N TAGE“ bis Sonntag.
