@@ -7,7 +7,11 @@ import { readKvJson, writeKvJson } from "./kv.js";
 // Body: { fetchedAt: ISO-Zeitstempel,
 //         note: string (max 160, Hinweis fuer heute, steht im Widget),
 //         headline?: string (max 80, Kurzurteil),
-//         text?: string (max 8000, ganzer Bericht fuers Dashboard) }
+//         text?: string (max 8000, ganzer Bericht fuers Dashboard),
+//         question?: string (max 300, Rueckfrage des Coaches an Gerbert),
+//         answer?: string (max 1000, seine Antwort), answeredAt?: ISO-Zeitstempel }
+// Die Antwort kommt entweder aus dem Dashboard (POST /api/coach/answer) oder aus dem Chat mit dem Coach (save_coach mit
+// answer). Der Coach liest sie am naechsten Morgen per MCP-Tool get_coach, bevor er die neue Aussage schreibt.
 
 export const COACH_KV_KEY = "dashboard:coach";
 export const COACH_MAX_AGE_HOURS = 36;
@@ -15,6 +19,8 @@ const MAX_BODY_BYTES = 40_000;
 const MAX_NOTE = 160;
 const MAX_HEADLINE = 80;
 const MAX_TEXT = 8000;
+const MAX_QUESTION = 300;
+const MAX_ANSWER = 1000;
 
 export function validateCoach(body) {
   const fetchedAt = Date.parse(body?.fetchedAt);
@@ -26,7 +32,23 @@ export function validateCoach(body) {
   if (headline.length > MAX_HEADLINE) return { error: `headline länger als ${MAX_HEADLINE} Zeichen` };
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   if (text.length > MAX_TEXT) return { error: `text länger als ${MAX_TEXT} Zeichen` };
-  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, text: text || null } };
+  const question = typeof body?.question === "string" ? body.question.trim() : "";
+  if (question.length > MAX_QUESTION) return { error: `question länger als ${MAX_QUESTION} Zeichen` };
+  const answer = typeof body?.answer === "string" ? body.answer.trim() : "";
+  if (answer.length > MAX_ANSWER) return { error: `answer länger als ${MAX_ANSWER} Zeichen` };
+  if (answer && !question) return { error: "answer ohne question" };
+  const answeredMs = Date.parse(body?.answeredAt);
+  const answeredAt = answer ? new Date(Number.isFinite(answeredMs) ? answeredMs : Date.now()).toISOString() : null;
+  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, text: text || null, question: question || null, answer: answer || null, answeredAt } };
+}
+
+// Antwort aus dem Dashboard: haengt sie an die aktuelle Aussage, ohne Urteil und Bericht des Coaches zu veraendern.
+export function applyAnswer(coach, body, nowMs = Date.now()) {
+  if (!coach?.question) return { error: "Keine offene Frage des Coaches" };
+  const answer = typeof body?.answer === "string" ? body.answer.trim() : "";
+  if (!answer) return { error: "answer fehlt" };
+  if (answer.length > MAX_ANSWER) return { error: `answer länger als ${MAX_ANSWER} Zeichen` };
+  return { value: { ...coach, answer, answeredAt: new Date(nowMs).toISOString() } };
 }
 
 export async function readCoach(env) {
@@ -37,6 +59,26 @@ export async function readCoach(env) {
 export function isFreshCoach(coach, nowMs) {
   const at = Date.parse(coach?.fetchedAt);
   return Number.isFinite(at) && Number.isFinite(nowMs) && nowMs - at >= 0 && nowMs - at <= COACH_MAX_AGE_HOURS * 3600_000;
+}
+
+export async function handleCoachAnswerRequest(req, env, isAuthorized) {
+  const headers = { "cache-control": "no-store" };
+  if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
+  if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
+  if (req.method !== "POST") return json({ ok: false, error: "Nur POST erlaubt" }, 405, { ...headers, allow: "POST" });
+  if (!env?.KV) return json({ ok: false, error: "KV nicht verfügbar" }, 503, headers);
+  const text = await req.text();
+  if (text.length > MAX_BODY_BYTES) return json({ ok: false, error: "Body zu groß" }, 413, headers);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ ok: false, error: "Kein gültiges JSON" }, 400, headers);
+  }
+  const { value, error } = applyAnswer(await readCoach(env), body);
+  if (error) return json({ ok: false, error }, 409, headers);
+  await writeKvJson(env, COACH_KV_KEY, value);
+  return json({ ok: true, answeredAt: value.answeredAt }, 200, headers);
 }
 
 export async function handleCoachRequest(req, env, isAuthorized) {
