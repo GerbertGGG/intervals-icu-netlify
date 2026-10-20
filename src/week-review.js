@@ -6,15 +6,17 @@
 // Stufe (für alle Sportarten, Laufen kann strenger sein):
 //   Entlastungswoche (jede 4. Blockwoche)                                  → Entlastung, etwa −35 %
 //   Krankheit, ein roter Tag                                                → zurücknehmen, etwa −25 %
+//     (in einer Woche ohne Rahmen nur halten: dort war nichts geplant, und der Einbruch steckt schon in der CTL)
 //   ≥ 2 gelbe Tage, Ermüdung/Muskelkater ≥ 0,5 schlechter als in den 4 Wochen davor, Monotonie > 2,
 //     Rahmen unter 75 % erfüllt oder TSS-Grenze überschritten              → halten
 //   sonst                                                                   → steigern, +5–10 %
 // Laufen extra: Beschwerden (Hüfte/Leiste/Knie) → zurücknehmen; Laufminuten > 15 % über dem 4-Wochen-Schnitt oder
 //   > 10 min über dem HF-Deckel → halten; Laufen steigt höchstens 10 %.
 //
-// Vorschlag: Gab es letzte Woche einen Rahmen (Zeitziele), dann Zeitziel je Sportart × Faktor. Ohne Rahmen keine Minuten je
-// Sportart (das Ist einer Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis), sondern die Wochen-TSS gesamt aus der
-// Fitness: 7 × CTL am Sonntag hält die Fitness, × Faktor ergibt den Vorschlag.
+// Vorschlag: Gab es letzte Woche einen Rahmen (Zeitziele), dann Zeitziel je Sportart × Faktor. Ohne Rahmen letzte Woche, aber
+// mit Rahmen für die laufende Woche (vom Coach gesetzt): dieser je Sportart, die Stufe nimmt ihn nur zurück, steigert ihn nicht.
+// Ohne beides keine Minuten je Sportart (das Ist einer Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis), sondern
+// die Wochen-TSS gesamt aus der Fitness: 7 × CTL am Sonntag hält die Fitness, × Faktor ergibt den Vorschlag.
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 const dm = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
@@ -27,7 +29,7 @@ export const REVIEW_RULES = {
   factor: { up: [1.05, 1.1], hold: [1, 1], down: [0.75, 0.75], deload: [0.65, 0.65] },
 };
 const LEVEL_TEXT = { up: "steigern (+5–10 %)", hold: "halten", down: "zurücknehmen (etwa −25 %)", deload: "Entlastung (etwa −35 %)" };
-const SPORTS = ["run", "bike", "swim"];
+const SPORTS = ["run", "bike", "swim", "strength", "other"];
 
 // input: { today, weeks (buildWeeks), wellness, sessions: [{date, sport, minutes, rpe}], daily: [{date, load}],
 //   ampel: (date) => cls, sickDays, hipFlags, runs: [{date, movingTimeMin}], capRuns: [{date, overCapMin}]|null,
@@ -53,7 +55,8 @@ export function buildWeekReview(input) {
   const sickText = sickDays.length ? `krank (${sickDays.length} Tag${sickDays.length === 1 ? "" : "e"})` : null;
   const redText = ampel.bad ? `${ampel.bad} rote${ampel.bad === 1 ? "r" : ""} Tag${ampel.bad === 1 ? "" : "e"}` : null;
   // Krankheit und rote Tage sind meist dasselbe Ereignis: ein Grund statt zwei
-  if (sickText || redText) add("down", [sickText, redText].filter(Boolean).join(", "));
+  const lastFramed = SPORTS.some((k) => W.bySport[k]?.targetMin > 0);
+  if (sickText || redText) add(lastFramed ? "down" : "hold", [sickText, redText].filter(Boolean).join(", "));
   else if (ampel.warn >= R.warnDays) add("hold", `${ampel.warn} gelbe Tage`);
 
   // Gefühlswerte (1 = bestmöglich): Wochenschnitt gegen die 4 Wochen davor
@@ -95,7 +98,7 @@ export function buildWeekReview(input) {
   if (hipDays.length) add("down", `Hüfte/Leiste/Knie erwähnt (${hipDays.map(dm).join(", ")})`, "run");
 
   // Wochenrahmen: Zeit erfüllt? TSS-Grenze eingehalten?
-  const frame = SPORTS.filter((k) => W.bySport[k].targetMin > 0 || W.bySport[k].targetLoad > 0).map((k) => {
+  const frame = SPORTS.filter((k) => W.bySport[k]?.targetMin > 0 || W.bySport[k]?.targetLoad > 0).map((k) => {
     const b = W.bySport[k];
     return { sport: k, minutes: b.minutes, targetMin: b.targetMin, share: b.targetMin > 0 ? Math.round((b.minutes / b.targetMin) * 100) / 100 : null, load: b.load, targetLoad: b.targetLoad, over: b.targetLoad > 0 && b.load > b.targetLoad };
   });
@@ -112,16 +115,21 @@ export function buildWeekReview(input) {
   const general = deload ? "deload" : pick(signals.filter((s) => !s.sport));
   const sportLevel = (k) => (deload ? "deload" : pick([{ level: general }, ...signals.filter((s) => s.sport === k)]));
 
-  // Vorschlag: mit Rahmen Zeitziel je Sportart × Faktor (Laufen höchstens +10 %), ohne Rahmen Wochen-TSS gesamt = 7 × CTL × Faktor
+  // Vorschlag: mit Rahmen Zeitziel je Sportart × Faktor (Laufen höchstens +10 %), sonst der Rahmen der laufenden Woche
+  // (höchstens Faktor 1), ohne beides Wochen-TSS gesamt = 7 × CTL × Faktor
   const hasFrame = frame.some((f) => f.targetMin > 0);
-  const range = (base, level, run = false) => {
+  const cur = (input.weeks ?? []).find((w) => w.weekStart === addDays(to, 1));
+  const curFrame = hasFrame ? [] : SPORTS.filter((k) => cur?.bySport?.[k]?.targetMin > 0).map((k) => ({ sport: k, targetMin: cur.bySport[k].targetMin, targetLoad: cur.bySport[k].targetLoad }));
+  const range = (base, level, run = false, capOne = false) => {
     let [lo, hi] = R.factor[level];
     if (run && level === "up") hi = Math.min(hi, 1 + R.runMaxUp);
+    if (capOne) [lo, hi] = [Math.min(lo, 1), Math.min(hi, 1)];
     return { from: r5(base * lo), to: r5(base * hi) };
   };
   const ctl = [...(input.wellness ?? [])].filter((w) => w.date <= to && w.ctl != null).sort((a, b) => a.date.localeCompare(b.date)).pop()?.ctl ?? null;
   const proposal = hasFrame
     ? frame.filter((f) => f.targetMin > 0).map((f) => { const level = sportLevel(f.sport); return { sport: f.sport, unit: "min", basis: "frame", level, base: f.targetMin, ...range(f.targetMin, level, f.sport === "run") }; })
+    : curFrame.length ? curFrame.map((f) => { const level = sportLevel(f.sport); const rg = range(f.targetMin, level, false, true); return { sport: f.sport, unit: "min", basis: "current", level, base: f.targetMin, ...rg, maxLoad: f.targetLoad > 0 ? r5(f.targetLoad * Math.min(1, R.factor[level][1])) : null }; })
     : ctl > 0 ? [{ sport: "all", unit: "tss", basis: "ctl", level: general, ctl: Math.round(ctl), base: Math.round(ctl * 7), ...range(ctl * 7, general) }] : [];
   const runLevel = sportLevel("run");
   return {

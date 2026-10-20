@@ -142,7 +142,7 @@ export function readinessLine(v) {
 }
 
 // Montagsbilanz fuers Widget: nur Montag bis Mittwoch (danach ist der Rahmen gesetzt), Stufe und Vorschlag (Minuten oder TSS)
-const SPORT_SHORT = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
+const SPORT_SHORT = { run: "Lauf", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 export function reviewOf(d) {
   const V = d.weekReview;
   const dow = (new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7;
