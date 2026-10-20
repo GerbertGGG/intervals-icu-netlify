@@ -343,19 +343,27 @@ function renderWeekReview(d, tile) {
   const rows = [
     row("Ampel", dots, "", `${V.ampel.ok} grün · ${V.ampel.warn} gelb · ${V.ampel.bad} rot${V.ampel.none ? ` · ${V.ampel.none} ohne Eintrag` : ""}`),
     feel ? row("Gefühl", feel, "", "Wochenschnitt, 1 = bestmöglich, vor dem Training eingetragen") : "",
-    R.srpe != null || R.monotony != null ? row("Session-RPE", R.srpe != null ? fmt(R.srpe) : "–", R.monotony > 2 ? "warn" : "", [R.ref != null ? `Ø davor ${fmt(R.ref)}` : null, R.coverage != null ? `RPE bei ${fmt(R.coverage * 100)} % der Einheiten` : null, R.monotony != null ? `Monotonie ${f1(R.monotony)}${R.basis === "tss" ? " (aus TSS)" : ""}` : null].filter(Boolean).join(" · ")) : "",
+    // Session-RPE nur bei genug RPE-Einträgen; sonst wäre die Summe gegen den Schnitt davor ein Zufallsvergleich
+    R.basis === "rpe" ? row("Session-RPE", fmt(R.srpe), R.monotony > 2 ? "warn" : "", [R.ref != null ? `Ø davor ${fmt(R.ref)}` : null, `RPE bei ${fmt(R.coverage * 100)} % der Einheiten`, R.monotony != null ? `Monotonie ${f1(R.monotony)}` : null].filter(Boolean).join(" · "))
+      : R.monotony != null ? row("Monotonie", f1(R.monotony), R.monotony > 2 ? "warn" : "", `aus dem Tages-TSS${R.coverage != null ? ` (RPE nur bei ${fmt(R.coverage * 100)} % der Einheiten)` : ""}`) : "",
     row("Laufen", `${fmt(U.minutes)} min`, U.ratio > 1.15 ? "warn" : "", [U.ref != null ? `Ø 4 Wochen ${fmt(U.ref)} min${U.ratio != null ? ` (${U.ratio >= 1 ? "+" : ""}${fmt((U.ratio - 1) * 100)} %)` : ""}` : null, U.longest ? `längster ${fmt(U.longest)} min${U.longestRef ? ` (davor ${fmt(U.longestRef)})` : ""}` : null, U.capOver != null ? `${fmt(U.capOver)} min über HF-Deckel` : null].filter(Boolean).join(" · ")),
     V.frameShare != null ? row("Rahmen", `${fmt(V.frameShare * 100)} %`, V.frameShare < 0.75 ? "warn" : "", V.frame.map((x) => `${SPORT_LABEL[x.sport]} ${fmt(x.minutes)}${x.targetMin ? `/${fmt(x.targetMin)}` : ""} min${x.over ? " (TSS über Grenze)" : ""}`).join(" · ")) : "",
   ].join("");
-  const prop = V.proposal.map((p) => `<span><i style="background:var(--s-${p.sport})"></i>${SPORT_LABEL[p.sport]} <b>${p.from === p.to ? fmt(p.from) : `${fmt(p.from)}–${fmt(p.to)}`} min/Woche</b>${p.level !== V.level ? ` (${REVIEW_LABEL[p.level]})` : ""}</span>`).join("");
-  const BASIS = { frame: "Rahmen der letzten Woche", avg: "Ø der 4 Wochen davor (letzte Woche lag darunter)", actual: "Ist der letzten Woche" };
-  const propBasis = [...new Set(V.proposal.map((p) => BASIS[p.basis] ?? BASIS.frame))].join(" bzw. ");
+  // Vorschlag: mit Rahmen Minuten je Sportart (Zeitziel der letzten Woche × Stufe), ohne Rahmen die Wochen-TSS aus der Fitness
+  const rng = (p) => (p.from === p.to ? fmt(p.from) : `${fmt(p.from)}–${fmt(p.to)}`);
+  const prop = V.proposal.map((p) => p.unit === "tss"
+    ? `<span><b>${rng(p)} TSS</b> in der Woche, alle Sportarten</span>`
+    : `<span><i style="background:var(--s-${p.sport})"></i>${SPORT_LABEL[p.sport]} <b>${rng(p)} min</b>${p.level !== V.level ? ` (${REVIEW_LABEL[p.level]})` : ""}</span>`).join("");
+  const p0 = V.proposal[0];
+  const propSub = !p0 ? "" : p0.unit === "tss"
+    ? `Kein Wochenrahmen: Fitness halten wäre 7 × CTL ${fmt(p0.ctl)} = ${fmt(p0.base)} TSS, davon ${REVIEW_LABEL[V.level]}${V.runText ? ` · Laufen ${esc(V.runText)}` : ""}`
+    : "Wochensumme · Basis: Zeitziel der letzten Woche";
   const why = V.reasons.length ? `Warum: ${esc(V.reasons.join(" · "))}` : "Gut verkraftet: keine Warnung aus Ampel, Gefühl, Monotonie oder Laufumfang.";
   return `<div class="cockpit" style="margin-top:var(--gap)">${tile(`Montagsbilanz · Woche ab ${fmtDate(V.weekStart)}`,
-    `<div class="rv-head"><span class="badge ${REVIEW_CLS[V.level]}">Rahmen ${esc(V.text)}</span>${V.runText ? `<span class="badge ${REVIEW_CLS[V.runLevel]}">Laufen ${esc(V.runText)}</span>` : ""}</div>
+    `<div class="rv-head"><span class="badge ${REVIEW_CLS[V.level]}">${V.hasFrame ? "Rahmen" : "Woche"} ${esc(V.text)}</span>${V.runText ? `<span class="badge ${REVIEW_CLS[V.runLevel]}">Laufen ${esc(V.runText)}</span>` : ""}</div>
     <div class="sub">${why}</div><div class="rv-rows">${rows}</div>
-    ${prop ? `<div class="rv-prop"><b>Vorschlag diese Woche</b>${prop}<span class="sub">Summe für die ganze Woche · Basis: ${esc(propBasis)}</span></div>` : ""}
-    <details class="info"><summary>Erklärung</summary><div>Steigern (+5–10 %, Laufen höchstens +10 %), wenn die Woche gut verkraftet war. Halten bei 2 oder mehr gelben Tagen, Ermüdung oder Muskelkater im Wochenschnitt mindestens 0,5 schlechter als in den 4 Wochen davor, Monotonie über 2 (jeder Tag ähnlich belastet), Rahmen unter 75 % erfüllt oder TSS-Grenze überschritten. Zurücknehmen (etwa −25 %) bei einem roten Tag oder Krankheit. Laufen extra: Hüfte/Leiste/Knie erwähnt = zurücknehmen; mehr als 15 % über dem 4-Wochen-Schnitt oder mehr als 10 min über dem HF-Deckel = halten. In der Entlastungswoche (jede 4. Blockwoche) gilt etwa −35 %. Der Vorschlag ist die Summe für die ganze Woche; Basis ist der Rahmen der letzten Woche, ohne Rahmen der Schnitt der 4 Wochen davor (oder das Ist, wenn es höher war), damit eine Krankheitswoche nicht doppelt kürzt. Session-RPE = RPE × Minuten; trägst du RPE bei weniger als 70 % der Einheiten ein, rechnet die Monotonie mit dem TSS. Tage ohne Gefühlseintrag zählen nicht als gelb.</div></details>`, "span4")}</div>`;
+    ${prop ? `<div class="rv-prop"><b>Vorschlag diese Woche</b>${prop}<span class="sub">${propSub}</span></div>` : ""}
+    <details class="info"><summary>Erklärung</summary><div>Steigern (+5–10 %, Laufen höchstens +10 %), wenn die Woche gut verkraftet war. Halten bei 2 oder mehr gelben Tagen, Ermüdung oder Muskelkater im Wochenschnitt mindestens 0,5 schlechter als in den 4 Wochen davor, Monotonie über 2 (jeder Tag ähnlich belastet), Rahmen unter 75 % erfüllt oder TSS-Grenze überschritten. Zurücknehmen (etwa −25 %) bei einem roten Tag oder Krankheit. Laufen extra: Hüfte/Leiste/Knie erwähnt = zurücknehmen; mehr als 15 % über dem 4-Wochen-Schnitt oder mehr als 10 min über dem HF-Deckel = halten. In der Entlastungswoche (jede 4. Blockwoche) gilt etwa −35 %. Der Vorschlag gilt für die ganze Woche: mit Wochenrahmen das Zeitziel der letzten Woche je Sportart mal Stufe; ohne Rahmen keine Minuten (eine Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis), sondern Wochen-TSS über alle Sportarten aus der Fitness: 7 × CTL hält sie, die Stufe verschiebt das.</div></details>`, "span4")}</div>`;
 }
 
 /* Wochenvorschau Mo-So: je Tag die geplanten Einheiten mit Plan-Load neben dem Ist. Vergangene Tage zeigen, ob der Plan

@@ -11,6 +11,10 @@
 //   sonst                                                                   → steigern, +5–10 %
 // Laufen extra: Beschwerden (Hüfte/Leiste/Knie) → zurücknehmen; Laufminuten > 15 % über dem 4-Wochen-Schnitt oder
 //   > 10 min über dem HF-Deckel → halten; Laufen steigt höchstens 10 %.
+//
+// Vorschlag: Gab es letzte Woche einen Rahmen (Zeitziele), dann Zeitziel je Sportart × Faktor. Ohne Rahmen keine Minuten je
+// Sportart (das Ist einer Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis), sondern die Wochen-TSS gesamt aus der
+// Fitness: 7 × CTL am Sonntag hält die Fitness, × Faktor ergibt den Vorschlag.
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 const dm = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
@@ -45,7 +49,11 @@ export function buildWeekReview(input) {
   // Ampeltage
   const ampel = { ok: 0, warn: 0, bad: 0, none: 0 };
   const ampelDays = days.map((d) => { const c = input.ampel?.(d) ?? "none"; ampel[c] = (ampel[c] ?? 0) + 1; return { date: d, cls: c }; });
-  if (ampel.bad) add("down", `${ampel.bad} roter Tag${ampel.bad === 1 ? "" : "e"}`);
+  const sickDays = (input.sickDays ?? []).filter(inWeek);
+  const sickText = sickDays.length ? `krank (${sickDays.length} Tag${sickDays.length === 1 ? "" : "e"})` : null;
+  const redText = ampel.bad ? `${ampel.bad} rote${ampel.bad === 1 ? "r" : ""} Tag${ampel.bad === 1 ? "" : "e"}` : null;
+  // Krankheit und rote Tage sind meist dasselbe Ereignis: ein Grund statt zwei
+  if (sickText || redText) add("down", [sickText, redText].filter(Boolean).join(", "));
   else if (ampel.warn >= R.warnDays) add("hold", `${ampel.warn} gelbe Tage`);
 
   // Gefühlswerte (1 = bestmöglich): Wochenschnitt gegen die 4 Wochen davor
@@ -85,8 +93,6 @@ export function buildWeekReview(input) {
   if (capOver != null && capOver > R.capOverMin) add("hold", `${capOver} min über dem HF-Deckel`, "run");
   const hipDays = [...new Set((input.hipFlags ?? []).filter((x) => inWeek(x.date)).map((x) => x.date))];
   if (hipDays.length) add("down", `Hüfte/Leiste/Knie erwähnt (${hipDays.map(dm).join(", ")})`, "run");
-  const sickDays = (input.sickDays ?? []).filter(inWeek);
-  if (sickDays.length) add("down", `krank (${sickDays.length} Tag${sickDays.length === 1 ? "" : "e"})`);
 
   // Wochenrahmen: Zeit erfüllt? TSS-Grenze eingehalten?
   const frame = SPORTS.filter((k) => W.bySport[k].targetMin > 0 || W.bySport[k].targetLoad > 0).map((k) => {
@@ -106,22 +112,21 @@ export function buildWeekReview(input) {
   const general = deload ? "deload" : pick(signals.filter((s) => !s.sport));
   const sportLevel = (k) => (deload ? "deload" : pick([{ level: general }, ...signals.filter((s) => s.sport === k)]));
 
-  // Vorschlag (Wochensumme): Basis ist der Rahmen der letzten Woche. Ohne Rahmen der Schnitt der 4 Wochen davor oder das Ist,
-  // wenn es höher war: eine Krankheits- oder Ausfallwoche drückt die Basis sonst doppelt (wenig Ist und dann noch −25 %).
-  // Laufen steigt höchstens 10 %.
-  const priorMin = (k) => (prior.length ? mean(prior.map((w) => w.bySport[k]?.minutes ?? 0)) : 0);
-  const proposal = SPORTS.filter((k) => W.bySport[k].targetMin > 0 || W.bySport[k].minutes > 0 || priorMin(k) > 0).map((k) => {
-    const b = W.bySport[k], ref = priorMin(k), level = sportLevel(k);
-    const basis = b.targetMin > 0 ? "frame" : ref > b.minutes ? "avg" : "actual";
-    const base = basis === "frame" ? b.targetMin : basis === "avg" ? Math.round(ref) : b.minutes;
+  // Vorschlag: mit Rahmen Zeitziel je Sportart × Faktor (Laufen höchstens +10 %), ohne Rahmen Wochen-TSS gesamt = 7 × CTL × Faktor
+  const hasFrame = frame.some((f) => f.targetMin > 0);
+  const range = (base, level, run = false) => {
     let [lo, hi] = R.factor[level];
-    if (k === "run" && level === "up") hi = Math.min(hi, 1 + R.runMaxUp);
-    return { sport: k, level, base, basis, from: r5(base * lo), to: r5(base * hi) };
-  });
+    if (run && level === "up") hi = Math.min(hi, 1 + R.runMaxUp);
+    return { from: r5(base * lo), to: r5(base * hi) };
+  };
+  const ctl = [...(input.wellness ?? [])].filter((w) => w.date <= to && w.ctl != null).sort((a, b) => a.date.localeCompare(b.date)).pop()?.ctl ?? null;
+  const proposal = hasFrame
+    ? frame.filter((f) => f.targetMin > 0).map((f) => { const level = sportLevel(f.sport); return { sport: f.sport, unit: "min", basis: "frame", level, base: f.targetMin, ...range(f.targetMin, level, f.sport === "run") }; })
+    : ctl > 0 ? [{ sport: "all", unit: "tss", basis: "ctl", level: general, ctl: Math.round(ctl), base: Math.round(ctl * 7), ...range(ctl * 7, general) }] : [];
   const runLevel = sportLevel("run");
   return {
     weekStart: from, weekEnd: to,
-    level: general, text: LEVEL_TEXT[general], runLevel, runText: runLevel !== general ? LEVEL_TEXT[runLevel] : null,
+    level: general, text: LEVEL_TEXT[general], hasFrame, runLevel, runText: runLevel !== general ? LEVEL_TEXT[runLevel] : null,
     deload, curWeekNo,
     reasons: deload ? [`Woche ${curWeekNo} ist Entlastungswoche`] : signals.map((s) => (s.sport === "run" ? `Laufen: ${s.text}` : s.text)),
     ampel, ampelDays, feel,
