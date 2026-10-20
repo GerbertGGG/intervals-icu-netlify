@@ -120,6 +120,16 @@ const wdg = buildWidget(d);
 const wjson = JSON.stringify(wdg);
 assert.ok(wjson.length < 3000, "Widget-Payload klein");
 assert.equal(wdg.readiness.verdict.text, d.summary.readiness.verdict.text);
+// Zeile unter dem Urteil (Umfang, Laufsperre) und Montagsbilanz Mo–Mi (30.09. ist ein Mittwoch)
+assert.equal(wdg.readiness.line, null); // grün ohne Laufbremse: keine Zeile
+assert.match(wdg.review.text, /^Montagsbilanz: Rahmen /); assert.ok(["ok", "warn", "bad", "none"].includes(wdg.review.cls));
+{
+  const { readinessLine, reviewOf } = await import("../src/widget.js");
+  assert.equal(readinessLine({ cls: "ok", sports: { run: { cls: "bad", text: "kein Lauf (Hüfte/Leiste/Knie erwähnt)" } } }), "Kein Lauf (Hüfte/Leiste/Knie erwähnt)");
+  assert.equal(readinessLine({ cls: "warn", sports: { run: { cls: "bad", text: "kein Lauf (Muskelkater deutlich)" } } }), "Umfang −30 %, lange Einheit verschieben · Kein Lauf (Muskelkater deutlich)");
+  assert.equal(readinessLine({ cls: "bad", sick: true, sports: { run: { cls: "bad", text: "kein Training" } } }), null);
+  assert.equal(reviewOf({ ...d, today: "2026-10-01" }), null); // Donnerstag: Rahmen steht
+}
 assert.equal(wdg.goal.daysToGo, 3);
 assert.equal(wdg.goal.phase, "taper"); // Rennphase kommt fertig vom Server
 assert.equal(wdg.goal.runKm, d.goal.runKm);
