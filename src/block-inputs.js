@@ -133,7 +133,14 @@ async function decouplingOf(env, a, field, budget, firstMin = null) {
   return v ?? null;
 }
 
-const easyRun = (r, a) => r.kind === "base" || r.kind === "long" || (r.kind === "unknown" && EASY_NAME.test(`${a?.name ?? ""} ${a?.description ?? ""}`));
+// Unklarer Lauf ohne Stichwort im Namen zaehlt als locker, wenn der Puls es zeigt: mindestens 80 % der Zeit in HF-Zone 1–2.
+const EASY_HR_SHARE = 0.8;
+const easyByHr = (a) => {
+  const z = Array.isArray(a?.icu_hr_zone_times) ? a.icu_hr_zone_times.map((x) => num(x) ?? 0) : [];
+  const total = z.reduce((n, x) => n + x, 0);
+  return total > 0 && (z[0] + (z[1] ?? 0)) / total >= EASY_HR_SHARE;
+};
+export const easyRun = (r, a) => r.kind === "base" || r.kind === "long" || (r.kind === "unknown" && (EASY_NAME.test(`${a?.name ?? ""} ${a?.description ?? ""}`) || easyByHr(a)));
 const heatOf = (a) => {
   const t = num(a?.average_weather_temp) ?? num(a?.average_feels_like);
   return (t != null && t >= HEAT_C) || HEAT_TEXT.test(`${a?.name ?? ""} ${a?.description ?? ""}`) || (a?.tags ?? []).some((x) => HEAT_TEXT.test(String(x)));

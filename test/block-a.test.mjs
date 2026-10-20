@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { buildDashboard } from "../src/dashboard.js";
 import { buildWidgetBlock } from "../src/widget.js";
+import { easyRun } from "../src/block-inputs.js";
 
 // Ende-zu-Ende: Block A aus dem Kalender, Decoupling aus den Zeitreihen (Intervals liefert keins), Schwimmtest aus dem Text.
 const today = "2026-11-20";
@@ -52,3 +53,10 @@ const wb = buildWidgetBlock(d);
 assert.equal(wb.block.decision.state, "cause"); assert.equal(wb.block.goals.filter((x) => x.group === "ziel").length, 3);
 assert.ok(wb.block.goals.filter((x) => x.group === "ziel").every((x) => x.course && x.course.label)); // Kurs auch im Widget
 console.log("block A dashboard ok");
+
+// Lauf ohne Stichwort im Namen: locker, wenn der Puls >= 80 % in Zone 1–2 lag ("Bobingen Laufen" am 20.10.)
+assert.equal(easyRun({ kind: "unknown" }, { name: "Bobingen Laufen", icu_hr_zone_times: [1575, 474, 0, 0, 0] }), true);
+assert.equal(easyRun({ kind: "unknown" }, { name: "Bobingen Laufen", icu_hr_zone_times: [600, 600, 600, 300, 0] }), false);
+assert.equal(easyRun({ kind: "unknown" }, { name: "Bobingen Laufen" }), false);
+assert.equal(easyRun({ kind: "intensity" }, { name: "Intervalle", icu_hr_zone_times: [2000, 0, 0, 0, 0] }), false);
+console.log("easy run by HR ok");
