@@ -256,6 +256,7 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   assert.equal(post.title, "Heute erledigt");
   assert.equal(post.lines[0].text, "Heute erledigt: Lauf 34 min. Heute kein weiteres Training nötig.");
   assert.equal(post.lines[1].text, "Offen diese Woche: Lauf 56 min, Rad 45 min, Schwimmen 30 min (noch 5 Tage).");
+  assert.equal(post.lines.some((l) => /schon gelaufen/.test(l.text)), false);
   const warn = buildTodayPlan({ ...base, frame, verdict: { cls: "warn", dose: { text: "x" } } });
   assert.match(warn.lines[0].text, /^Heute etwa 30 % kürzer, lange Einheit verschieben\. Offen diese Woche: Lauf 90 min/);
   assert.equal(buildTodayPlan({ ...base, verdict: { cls: "ok", dose: { text: "x" } } }).lines[0].text, "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");

@@ -69,7 +69,7 @@ export function buildTodayPlan(input) {
   const runV = verdict.sports?.run ?? null;
   const runOff = runV?.cls === "bad" && verdict.cls !== "bad";
   if (B && rules.noRunBackToBack && ran(addDays(today, -1))) add("bad", "Kein Lauf heute – gestern gelaufen (nie zwei Tage hintereinander).");
-  else if (ran(today)) add("none", "Heute schon gelaufen.");
+  else if (ran(today)) { if (verdict.sick) add("none", "Heute schon gelaufen."); } // sonst steht der Lauf unter "Heute erledigt"
   else if (runOff) add("bad", `Laufen: ${runV.text} – Rad oder Schwimmen locker.`);
   else if (B && input.hrCap) add(runV?.cls === "warn" ? "warn" : "ok", `Laufen möglich: locker unter HF ${input.hrCap}, Gehpausen erlaubt${runV?.cls === "warn" ? ` – ${runV.text}` : ""}.`);
   else if (runV?.cls === "warn" && verdict.cls === "ok") add("warn", `Laufen ${runV.text}.`);
