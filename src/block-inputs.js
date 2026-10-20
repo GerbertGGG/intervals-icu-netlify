@@ -46,6 +46,8 @@ export function decouplingFromStreams(streams, field, maxSec = null, { warmupSec
 // geteilt; Effizienz je Haelfte = (Distanzzuwachs / Zeit) / mittlere HF (nur Proben mit HF). Decoupling % = (Eff1 / Eff2 − 1) × 100.
 // Gehpausen und Stopps bleiben drin (sie gehoeren zur Einheit). Fenster 60, 75, 90 … min bis zur Gesamtdauer; stabile Dauer =
 // laengstes Fenster mit Decoupling ≤ stableMax (0 = schon 0–60 darueber). Dazu Pace 0–60 und Minuten ueber dem HF-Deckel.
+const EF_WINDOW = [5, 35]; // Minuten
+const EF_MIN_SEC = 15 * 60;
 export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstMin = 60, stepMin = 15 } = {}) {
   const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
   const hr = get("heartrate"), time = get("time"), vel = get("velocity_smooth");
@@ -74,7 +76,12 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
   const dec60 = windows.find((x) => x.min === firstMin)?.value ?? null;
   const ok = windows.filter((x) => x.value <= stableMax);
   const d60 = dist[idxAt(firstMin * 60)];
+  // Aerobe Effizienz (EF) im Standardfenster Minute 5–35, kuerzere Laeufe Minute 5 bis Ende (mind. 15 min):
+  // Tempo in m/min je Herzschlag, ohne den Pulsanstieg aus dem Stand. Trend der Grundlage zwischen den Blocktests.
+  const efEnd = Math.min(EF_WINDOW[1] * 60, durSec);
+  const efRaw = efEnd >= EF_MIN_SEC ? half(EF_WINDOW[0] * 60, efEnd) : null;
   return {
+    ef: efRaw ? Math.round(efRaw * 60 * 1000) / 1000 : null, efToMin: efRaw ? Math.round(efEnd / 60) : null,
     durationMin: Math.round(durSec / 60),
     dec60, windows,
     stableMin: dec60 == null ? null : dec60 > stableMax ? 0 : Math.max(...ok.map((x) => x.min)),
@@ -148,7 +155,7 @@ const heatOf = (a) => {
 
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
 // bike: Radziel aus parseBlockTargets (minMin, firstMin) – Decoupling nur fuer Rollen-Einheiten, die lang genug sind
-const RUN_CACHE = "icu:runanalysis:v1:";
+const RUN_CACHE = "icu:runanalysis:v2:"; // v2: EF Minute 5–35
 const RIDE_CACHE = "icu:ridewindow:v2:"; // v2: mittlerer Puls im Messfenster (Kurs: Puls bei fester Leistung)
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
 export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null, run = null, hrCap = null }) {
@@ -165,20 +172,24 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     const km = (num(a.distance) ?? 0) / 1000;
     const treadmill = /virtual|treadmill/i.test(String(a.type ?? "")) || a.trainer === true;
     const rec = { date: r.date, durationMin: r.movingTimeMin, paceSecPerKm: r.paceSecPerKm, elevPerKm: km > 0 && num(a.total_elevation_gain) != null ? Math.round((num(a.total_elevation_gain) / km) * 10) / 10 : null, heat: heatOf(a), easy, treadmill, decoupling: null };
-    // Blocktest-Modus: jeder lockere Lauf (Pulsregel) bekommt die Auswertung aus den Zeitreihen (Fenster, stabile Dauer,
-    // Minuten ueber dem HF-Deckel); das Decoupling ueber den ganzen Lauf wird nicht mehr gebraucht.
+    // Lockere Laeufe (Pulsregel) bekommen die Auswertung aus den Zeitreihen: EF Minute 5–35, Minuten ueber dem HF-Deckel,
+    // Fenster und stabile Dauer – im Blocktest-Modus immer, sonst wenn der Block einen HF-Deckel hat. Im Blocktest-Modus
+    // wird das Decoupling ueber den ganzen Lauf nicht mehr gebraucht; sonst hat es Vorrang beim Abrufbudget (Blockziel).
+    rec.id = a.id; rec.name = a.name ?? null;
+    const analyse = async () => {
+      if (!easy || !hasHrOf(a) || a.id == null || (rec.durationMin ?? 0) < STREAM_MIN) return;
+      const opts = { capHr: hrCap, stableMax: run?.stableMax ?? 5 };
+      const v = await cached(env, `${RUN_CACHE}${a.id}:${hrCap ?? "-"}:${opts.stableMax}`, budget, async () => analyzeRunStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "distance", "velocity_smooth"]), opts));
+      if (v) rec.analysis = v;
+    };
     if (run?.tests?.length) {
-      rec.id = a.id; rec.name = a.name ?? null;
-      if (easy && hasHrOf(a) && a.id != null && (rec.durationMin ?? 0) >= STREAM_MIN) {
-        const opts = { capHr: hrCap, stableMax: run.stableMax ?? 5 };
-        const v = await cached(env, `${RUN_CACHE}${a.id}:${hrCap ?? "-"}:${opts.stableMax}`, budget, async () => analyzeRunStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "distance", "velocity_smooth"]), opts));
-        if (v) rec.analysis = v;
-      }
+      await analyse();
       runOut.push(rec);
       continue;
     }
     // Decoupling nur fuer lockere Laeufe (Pulsregel), Zeitreihen nur fuer die, die sonst vergleichbar waeren
     if (easy) rec.decoupling = rzDec.get(r.date) ?? (!treadmill && !rec.heat && rec.durationMin >= 55 && (rec.elevPerKm == null || rec.elevPerKm <= FLAT_M_PER_KM) ? await decouplingOf(env, a, "velocity_smooth", budget) : null);
+    if (hrCap != null) await analyse();
     runOut.push(rec);
   }
 

@@ -29,16 +29,39 @@ const base = { today: "2026-10-20", weeks, wellness, sessions, runs, daily: [], 
   assert.deepEqual([bike.from, bike.to], [160, 165]);
   assert.equal(r.run.ratio, 1.07); // 150 gegen Ø 140
 }
-// Zwei gelbe Tage: halten
+// Zwei gelbe Tage: eine Gruppe gelb (Erholung) -> leicht steigern, +3–5 %
 {
   const r = buildWeekReview({ ...base, ampel: (d) => (["2026-10-14", "2026-10-17"].includes(d) ? "warn" : "ok") });
-  assert.equal(r.level, "hold"); assert.match(r.reasons.join(), /2 gelbe Tage/);
-  assert.equal(r.proposal.find((p) => p.sport === "run").to, 150);
+  assert.equal(r.level, "small"); assert.match(r.reasons.join(), /2 gelbe Tage/);
+  assert.deepEqual([r.proposal.find((p) => p.sport === "run").from, r.proposal.find((p) => p.sport === "run").to], [155, 160]); // 150 × 1,03–1,05
+  assert.deepEqual(r.groups.map((g) => [g.key, g.cls]), [["erholung", "warn"], ["befinden", "ok"], ["ausfuehrung", "ok"], ["warnzeichen", "ok"]]);
 }
-// Ermüdung im Wochenschnitt 0,5 schlechter als davor: halten
+// Ermüdung im Wochenschnitt 0,5 schlechter als davor: Befinden gelb -> leicht steigern
 {
   const r = buildWeekReview({ ...base, wellness: wellness.map((w) => (w.date >= "2026-10-12" ? { ...w, fatigue: 3 } : w)) });
-  assert.equal(r.level, "hold"); assert.equal(r.feel.fatigue.delta, 1);
+  assert.equal(r.level, "small"); assert.equal(r.feel.fatigue.delta, 1);
+}
+// Zwei Gruppen gelb (Erholung und Befinden): halten
+{
+  const r = buildWeekReview({ ...base, ampel: (d) => (["2026-10-14", "2026-10-17"].includes(d) ? "warn" : "ok"), wellness: wellness.map((w) => (w.date >= "2026-10-12" ? { ...w, fatigue: 3 } : w)) });
+  assert.equal(r.level, "hold"); assert.equal(r.proposal.find((p) => p.sport === "run").to, 150);
+}
+// Kraft unter Soll zählt zur Ausführung
+{
+  const r = buildWeekReview({ ...base, strength: { count: 30, goal: 60, unit: "Sätze" } });
+  assert.equal(r.level, "small"); assert.match(r.reasons.join(), /Kraft 30 von 60 Sätze/);
+}
+// Testwoche (Blocktest in der laufenden Woche): höchstens +3 %
+{
+  const r = buildWeekReview({ ...base, testDates: ["2026-10-25"] });
+  assert.equal(r.level, "up"); assert.equal(r.testWeek, true);
+  assert.deepEqual([r.proposal.find((p) => p.sport === "run").from, r.proposal.find((p) => p.sport === "run").to], [155, 155]); // 150 × 1,03
+  assert.match(r.reasons.join(), /Testwoche/);
+}
+// Laufregel: längster Lauf der letzten 30 Tage (Distanz) + 10 %
+{
+  const r = buildWeekReview({ ...base, runs: [...runs, { date: "2026-10-03", movingTimeMin: 95, distanceKm: 15 }, { date: "2026-09-01", movingTimeMin: 120, distanceKm: 20 }] });
+  assert.deepEqual([r.run.longest30Km, r.run.maxNextKm], [15, 16.5]);
 }
 // Ein roter Tag oder Krankheit: zurücknehmen
 {
@@ -48,14 +71,16 @@ const base = { today: "2026-10-20", weeks, wellness, sessions, runs, daily: [], 
 // Hüfte erwähnt: nur Laufen zurück, der Rest steigt
 {
   const r = buildWeekReview({ ...base, hipFlags: [{ date: "2026-10-16" }] });
-  assert.equal(r.level, "up"); assert.equal(r.runLevel, "down"); assert.match(r.runText, /zurücknehmen/);
+  assert.equal(r.level, "up"); assert.equal(r.runLevel, "down"); assert.match(r.runText, /reduzieren/);
   assert.equal(r.proposal.find((p) => p.sport === "run").to, 115); // 150 × 0,75 auf 5 min
 }
 // Laufumfang deutlich über dem Schnitt oder über dem HF-Deckel: Laufen halten
 {
   const steep = weeks.map((w) => (w.weekStart === "2026-10-12" ? { ...w, runMin: 170 } : w));
-  assert.equal(buildWeekReview({ ...base, weeks: steep }).runLevel, "hold");
-  assert.equal(buildWeekReview({ ...base, capRuns: [{ date: "2026-10-18", overCapMin: 14 }] }).runLevel, "hold");
+  assert.equal(buildWeekReview({ ...base, weeks: steep }).runLevel, "small");
+  assert.equal(buildWeekReview({ ...base, capRuns: [{ date: "2026-10-18", overCapMin: 14 }] }).runLevel, "small");
+  // beides: eine Gruppe (Ausführung) -> weiter leicht steigern
+  assert.equal(buildWeekReview({ ...base, weeks: steep, capRuns: [{ date: "2026-10-18", overCapMin: 14 }] }).runLevel, "small");
 }
 // Monotonie: jeden Tag gleich viel -> halten; ohne RPE rechnet sie mit dem Tages-TSS
 {
@@ -64,7 +89,7 @@ const base = { today: "2026-10-20", weeks, wellness, sessions, runs, daily: [], 
   // Standardabweichung 0 -> keine Zahl; ein Ruhetag bei sonst gleicher Last ergibt Monotonie > 2
   const withRest = same.filter((x) => x.date !== "2026-10-18");
   const r = buildWeekReview({ ...base, sessions: withRest });
-  assert.ok(r.rpe.monotony > 2); assert.equal(r.level, "hold");
+  assert.ok(r.rpe.monotony > 2); assert.equal(r.level, "small");
   const tss = buildWeekReview({ ...base, sessions: sessions.map((x) => ({ ...x, rpe: null })), daily: daily.map((x) => (x.date === "2026-10-18" ? { ...x, load: 0 } : x)) });
   assert.equal(tss.rpe.basis, "tss"); assert.ok(tss.rpe.monotony > 2);
 }
@@ -77,7 +102,7 @@ const base = { today: "2026-10-20", weeks, wellness, sessions, runs, daily: [], 
 // Entlastungswoche (Blockwoche 4): Entlastung geht vor
 {
   const r = buildWeekReview({ ...base, block: { status: "active", weekNo: 4 } });
-  assert.equal(r.level, "deload"); assert.equal(r.proposal.find((p) => p.sport === "run").to, 100); // 150 × 0,65
+  assert.equal(r.level, "deload"); assert.deepEqual([r.proposal.find((p) => p.sport === "run").from, r.proposal.find((p) => p.sport === "run").to], [90, 105]); // 150 × 0,6–0,7
 }
 // Ohne volle Woche keine Bilanz
 assert.equal(buildWeekReview({ ...base, weeks: [weeks[5]] }), null);
@@ -102,7 +127,10 @@ assert.equal(buildWeekReview({ ...base, weeks: [weeks[5]] }), null);
   const framed = sick.map((w) => (w.weekStart === "2026-10-19" ? { ...w, bySport: { ...w.bySport, run: sport(0, 0, 90, 90), bike: sport(0, 0, 105, 75), swim: sport(0, 0, 30), other: sport(0, 0, 64, 34) } } : w));
   const r = buildWeekReview({ ...base, weeks: framed, sickDays: ["2026-10-14"], ampel: (d) => (d === "2026-10-15" ? "bad" : "ok") });
   assert.equal(r.level, "hold");
-  assert.deepEqual(r.proposal.map((p) => [p.sport, p.basis, p.from, p.to, p.maxLoad]), [["run", "current", 90, 90, 90], ["bike", "current", 105, 105, 75], ["swim", "current", 30, 30, null], ["other", "current", 65, 65, 35]]);
+  assert.deepEqual(r.proposal.map((p) => [p.sport, p.basis, p.from, p.to, p.maxLoad, p.prevMin]), [["run", "current", 90, 90, 90, 33], ["bike", "current", 105, 105, 75, 20], ["swim", "current", 30, 30, null, 60], ["other", "current", 65, 65, 35, 0]]);
+  // Gegenprobe: TSS-Grenzen 90 + 75 + 34 = 199 gegen 7 × CTL
+  const chk = buildWeekReview({ ...base, weeks: framed, wellness: wellness.map((w) => ({ ...w, ctl: 20 })) }).check;
+  assert.deepEqual(chk, { ctl: 20, keep: 140, capTss: 199, ratio: 1.42 });
   // gut verkraftet: der Rahmen des Coaches gilt, die Bilanz legt nichts drauf
   const up = buildWeekReview({ ...base, weeks: framed.map((w) => (w.weekStart === "2026-10-12" ? weeks[4] : w)) });
   assert.equal(up.proposal[0].basis, "frame"); // mit Rahmen letzte Woche bleibt es bei dessen Fortschreibung

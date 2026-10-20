@@ -27,7 +27,8 @@ export function parseDayRules(text) {
 
 // input: { today, verdict, block: {status, weekNo, start, rulesText}|null, testDates:[iso], band:[lo,hi]|null, hrCap,
 //   intensity: {fromWeek, kinds}|null, intensitySessions:[{date,kind}], daily:[{date,load,minutes}],
-//   frame: {run,bike,swim,strength: Zielminuten der laufenden Woche (Weekly-Target)}|null }
+//   frame: {run,bike,swim,strength: Zielminuten der laufenden Woche (Weekly-Target)}|null, frameLoad: {run,bike,…: TSS-Grenzen}|null,
+//   testMin: Mindestdauer des Blocktests (min), compareTss: TSS einer Rad-Vergleichseinheit, compareDone: diese Woche schon gefahren }
 export function buildTodayPlan(input) {
   const { today, verdict } = input;
   const B = input.block?.status === "active" ? input.block : null;
@@ -62,8 +63,9 @@ export function buildTodayPlan(input) {
     if (frame.length) add("none", openText);
   } else if (verdict.sick || verdict.cls === "none" || verdict.cls === "bad") {
     if (verdict.dose && !verdict.sick && verdict.cls !== "none") add(verdict.cls, `Umfang: ${verdict.dose.text}.`);
-  } else if (!frame.length) add(verdict.cls === "warn" ? "warn" : "none", verdict.cls === "warn" ? `Umfang: ${verdict.dose?.text ?? "etwa 30 % kürzer"}. Kein Wochenrahmen eingetragen.` : "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");
-  else add(verdict.cls, `${verdict.cls === "warn" ? "Heute etwa 30 % kürzer, lange Einheit verschieben. " : ""}${openText}`);
+  // Am Testtag gilt bei Gelb: Test in voller Länge laufen und die Ampel notieren – kein "kürzer, lange Einheit verschieben"
+  } else if (!frame.length) add(verdict.cls === "warn" ? "warn" : "none", verdict.cls === "warn" ? (testToday ? "Kein Wochenrahmen eingetragen." : `Umfang: ${verdict.dose?.text ?? "etwa 30 % kürzer"}. Kein Wochenrahmen eingetragen.`) : "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");
+  else add(verdict.cls, `${verdict.cls === "warn" && !testToday ? "Heute etwa 30 % kürzer, lange Einheit verschieben. " : ""}${openText}`);
 
   // 1. Laufen (eigene Bremsen aus der Ampel: Hüfte/Leiste/Knie, Muskelkater)
   const runV = verdict.sports?.run ?? null;
@@ -112,6 +114,22 @@ export function buildTodayPlan(input) {
     else add(verdict.cls === "warn" ? "warn" : "ok", `Blocktest heute: volle geplante Länge, ${band}, ruhig anlaufen, gleiche Runde und Bedingungen${verdict.cls === "warn" ? " – Ampel gelb notieren" : ""}.`);
   } else if (nextTest && daysTo <= TEST_SOON_DAYS) add("none", `Blocktest ${wd(nextTest)} ${dm(nextTest)} (in ${daysTo} Tag${daysTo === 1 ? "" : "en"}): ${band}, flache Runde, gleiche Tageszeit, Schuhe und Mahlzeit.`);
 
+  // 5. Passen Test und Vergleichseinheit noch in den Wochenrahmen? Zeit ist ein Ziel, TSS die Grenze: Für den Blocktest wird
+  // der Zeitrahmen bewusst überzogen, statt den Test zu kürzen.
+  const testWeek = tests.find((x) => x >= today && x <= week[6]);
+  const runFrame = frame.find((f) => f.k === "run");
+  if (testWeek && runFrame && input.testMin && !(testWeek === today && ran(today))) {
+    const openRun = Math.max(0, runFrame.target - runFrame.done);
+    const cap = input.frameLoad?.run;
+    if (openRun < input.testMin) add("warn", `Blocktest ${wd(testWeek)} ${dm(testWeek)} braucht mindestens ${input.testMin} min, im Laufrahmen sind noch ${openRun} min offen – Zeitrahmen dafür überziehen${cap ? ` (TSS-Grenze ${cap} bleibt)` : ""}, den Test nicht kürzen.`);
+  }
+  const bikeCap = input.frameLoad?.bike;
+  if (B && input.compareTss && bikeCap > 0 && !input.compareDone && !deload) {
+    const used = week.filter((d) => d <= today).reduce((n, d) => n + (daily[d]?.sports?.bike ?? 0), 0);
+    const left = Math.max(0, Math.round(bikeCap - used));
+    if (left < input.compareTss) add("none", `Rad-Vergleichseinheit (~${input.compareTss} TSS) passt nicht mehr unter die Rad-Grenze (offen ${left} TSS) – diese Woche locker fahren oder die Grenze anheben.`);
+  }
+
   let title;
   if (verdict.sick) title = "Kein Training";
   else if (testToday) title = verdict.cls === "bad" ? "Blocktest verschieben" : "Heute Blocktest";
@@ -121,5 +139,6 @@ export function buildTodayPlan(input) {
   else if (verdict.cls === "warn") title = "Heute locker und kürzer";
   else if (verdict.cls === "ok") title = qualityOpen ? "Qualität möglich" : "Locker nach Wochenrahmen";
   else title = "Keine Einschätzung";
-  return { cls: verdict.cls, title, sub: verdict.sub, dose: verdict.dose ?? null, sports: verdict.sports ?? null, reasons: verdict.reasons ?? [], note: [verdict.note, verdict.watch, verdict.thin].filter(Boolean).join(" · ") || null, lines, nextTest, daysToTest: daysTo };
+  const sub = testToday && verdict.cls === "warn" && !verdict.missing ? "Blocktest trotzdem in voller Länge laufen und Gelb notieren; Qualität und Zusatzeinheiten streichen." : verdict.sub;
+  return { cls: verdict.cls, title, sub, dose: verdict.dose ?? null, sports: verdict.sports ?? null, reasons: verdict.reasons ?? [], note: [verdict.note, verdict.watch, verdict.thin].filter(Boolean).join(" · ") || null, lines, nextTest, daysToTest: daysTo };
 }

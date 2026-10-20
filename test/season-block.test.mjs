@@ -135,7 +135,7 @@ assert.notEqual(decouplingFromStreams(warm, "watts"), 4.8);
 console.log("block A ok");
 
 // ---------- Leitplanke Intensität: Rad-HIIT und Hügelsprints je Belastungswoche ab Woche 2 ----------
-import { intensityKindOf } from "../src/season-block.js";
+import { intensityKindOf, checkBlockText } from "../src/season-block.js";
 const lpText = "Block A\n\nLEITPLANKEN\n- Kraft ≥60 Sätze in 8 von 9 Belastungswochen\n- Ramp Rate (CTL) in Belastungswochen ≤5\n- Intensität: Rad-HIIT und Hügelsprints je 1× pro Woche in 6 von 8 Belastungswochen ab Woche 2 (Krankheitswochen zählen nicht als verfehlt)";
 const tl = parseBlockTargets(lpText);
 assert.deepEqual(tl.intensity, { need: 6, of: 8, fromWeek: 2, kinds: ["bikeHiit", "hillSprints"], sickOk: true });
@@ -213,6 +213,10 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   assert.deepEqual(a.windows.map((x) => x.min), [60, 75, 90]);
   assert.ok(a.windows[2].value > 5 && a.windows[1].value <= 5); assert.equal(a.stableMin, 75);
   assert.equal(a.overCapMin, 28); // ab Minute 72 über 125
+  assert.deepEqual([a.ef, a.efToMin], [1.23, 35]); // EF Minute 5–35: 150 m/min ÷ 122
+  const short = analyzeRunStreams([{ type: "time", data: time.slice(0, 20 * 60) }, { type: "heartrate", data: heartrate.slice(0, 20 * 60) }, { type: "velocity_smooth", data: velocity_smooth.slice(0, 20 * 60) }]);
+  assert.equal(short.efToMin, 20); // kürzer als 35 min: Minute 5 bis Ende
+  assert.equal(analyzeRunStreams([{ type: "time", data: time.slice(0, 14 * 60) }, { type: "heartrate", data: heartrate.slice(0, 14 * 60) }, { type: "velocity_smooth", data: velocity_smooth.slice(0, 14 * 60) }]).ef, null);
 }
 // Zeitreihen Rad: 10 min Einrollen bei 130 W, dann 60 min 165 W mit 5 % mehr Puls in der zweiten Hälfte
 {
@@ -260,5 +264,50 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   const warn = buildTodayPlan({ ...base, frame, verdict: { cls: "warn", dose: { text: "x" } } });
   assert.match(warn.lines[0].text, /^Heute etwa 30 % kürzer, lange Einheit verschieben\. Offen diese Woche: Lauf 90 min/);
   assert.equal(buildTodayPlan({ ...base, verdict: { cls: "ok", dose: { text: "x" } } }).lines[0].text, "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");
+  // Passt der Basistest (mind. 60 min) noch in den Laufrahmen? 56 min offen -> Zeitrahmen überziehen, Test nicht kürzen
+  const fit = buildTodayPlan({ ...base, frame, frameLoad: { run: 90, bike: 75 }, testMin: 60, daily: ranToday, verdict: { cls: "ok" } });
+  assert.ok(fit.lines.some((l) => l.cls === "warn" && /Blocktest So 25\.10\. braucht mindestens 60 min, im Laufrahmen sind noch 56 min offen.*TSS-Grenze 90 bleibt/.test(l.text)));
+  assert.equal(buildTodayPlan({ ...base, frame, testMin: 60, verdict: { cls: "ok" } }).lines.some((l) => /braucht mindestens/.test(l.text)), false); // 90 min offen
+  // Rad-Vergleichseinheit (~48 TSS) passt nicht mehr unter die Grenze 75, wenn schon 43 verbraucht sind
+  const bikeDaily = [{ date: "2026-10-19", load: 43, sports: { bike: 43 }, minutes: { bike: 60 } }];
+  const cmp = (extra) => buildTodayPlan({ ...base, frame, frameLoad: { run: 90, bike: 75 }, compareTss: 48, daily: bikeDaily, verdict: { cls: "ok" }, ...extra });
+  assert.ok(cmp({}).lines.some((l) => /Rad-Vergleichseinheit \(~48 TSS\) passt nicht mehr unter die Rad-Grenze \(offen 32 TSS\)/.test(l.text)));
+  assert.equal(cmp({ compareDone: true }).lines.some((l) => /Vergleichseinheit/.test(l.text)), false);
+  // Testtag bei Gelb: kein "kürzer, lange Einheit verschieben", sondern Test in voller Länge und notieren
+  const tday = buildTodayPlan({ ...base, today: "2026-10-25", frame, verdict: { cls: "warn", sub: "Qualität streichen, Umfang etwa 30 % kürzer, die lange Einheit verschieben." } });
+  assert.equal(tday.lines.some((l) => /lange Einheit verschieben/.test(l.text)), false);
+  assert.match(tday.sub, /voller Länge.*Gelb notieren/);
+  assert.ok(tday.lines.some((l) => /Blocktest heute: volle geplante Länge.*Ampel gelb notieren/.test(l.text)));
+}
+// Block-Eintrag prüfen: was gelesen wurde und Widersprüche (Deckel, Testband, fehlende Testtermine)
+{
+  const chk = checkBlockText(real);
+  assert.deepEqual([chk.hrCap, chk.band, chk.tests.length, chk.hints], [125, [120, 125], 4, []]);
+  const bad = real.replace("Basistest 25.10., dann 08.11., 06.12., 03.01.", "Basistest in Woche 1").replace("HF-Band 120–125", "HF-Band 120–128").replace("Gehpausen erlaubt", "Gehpausen erlaubt, Hügelsprints bis HF 128");
+  const c2 = checkBlockText(bad);
+  assert.deepEqual(c2.band, [120, 128]); assert.equal(c2.tests.length, 0);
+  assert.ok(c2.hints.some((h) => /Verschiedene HF-Grenzen im Text: 125, 128/.test(h)));
+  assert.ok(c2.hints.some((h) => /Testband 120–128 reicht über den HF-Deckel 125/.test(h)));
+  assert.ok(c2.hints.some((h) => /Keine Blocktest-Termine gefunden/.test(h)));
+  assert.equal(parseBlockTargets(real + "\n- Rad: Vergleichseinheit inkl. Einrollen ca. 70 min / ~48 TSS.").compareTss, 48);
+  // Deckel aus der Zeile "Lauf-Grundlage unter HF …", nicht aus dem früheren Trend-Satz "Grundlagenlauf … unter HF 125"
+  const c128 = real.replace("Lauf-Grundlage unter HF 125", "Lauf-Grundlage unter HF 128");
+  assert.equal(parseBlockTargets(c128).hrCap, 128);
+  assert.ok(checkBlockText(c128).hints.some((h) => /Verschiedene HF-Grenzen im Text: 125, 128 – als Deckel gezählt wird 128/.test(h)));
+  assert.equal(parseBlockTargets("Lauf: HF-Deckel 128\nGrundlagenlauf unter HF 125").hrCap, 128);
+}
+// Was die restlichen Tests fürs Blockziel brauchen: gezählt wird das Mittel der letzten 3 (08.11., 06.12., 03.01.)
+{
+  const only = buildBlockGoalsFull(bR, { runs: runsR.slice(0, 1) }, "2026-11-01").goals.find((x) => x.key === "runDecoupling");
+  assert.ok(only.hints.some((h) => /Fürs Ziel zählen die Tests am 08\.11\., 06\.12\., 03\.01\. – der Basistest nicht/.test(h)));
+  // Test 1 mit 5 %: die restlichen 2 brauchen im Mittel ≤ 5 % (Ziel) bzw. ≤ 9,5 % (Muss)
+  const need = gR.runDecoupling.hints.find((h) => /restlichen/.test(h));
+  assert.equal(need, "Die restlichen 2 Tests brauchen im Mittel ≤ 5 % fürs Ziel, ≤ 9,5 % fürs Muss.");
+}
+// Ramp Rate bei niedriger CTL: Hinweis, wie viel Last die Grenze erlaubt
+{
+  const ctlDays = Array.from({ length: 30 }, (_, i) => ({ date: new Date(Date.parse("2026-10-19") + i * 86400000).toISOString().slice(0, 10), ctl: 20 }));
+  const ramp = buildBlockGoalsFull(bR, { ctlDays }, "2026-11-12").goals.find((x) => x.key === "ramp");
+  assert.match(ramp.hints[0], /Bei CTL 20 erlaubt Ramp 5 etwa das 2,6-Fache der Erhaltungslast/);
 }
 console.log("block A calendar ok");

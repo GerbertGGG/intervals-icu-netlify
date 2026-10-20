@@ -128,9 +128,10 @@ function parseSportGoals(t) {
     if (tests.length) {
       out.run.tests = tests;
       out.run.stableMax = num1(runP.match(new RegExp(`stabile\\s*dauer[^\\n]*?decoupling\\s*${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), 5);
-      const band = runP.match(/hf-?band\s*(\d{2,3})\s*[–-]\s*(\d{2,3})/i);
-      if (band) out.run.band = [Number(band[1]), Number(band[2])];
     }
+    // HF-Band des Blocktests, auch ohne Termine (fuer die Pruefung des Block-Eintrags)
+    const band = runP.match(/hf-?band\s*(\d{2,3})\s*[–-]\s*(\d{2,3})/i);
+    if (band) out.run.band = [Number(band[1]), Number(band[2])];
   }
   if (bikeP) {
     const max = decMax(bikeP), must = mustOf(bikeP);
@@ -180,10 +181,26 @@ export function parseBlockTargets(text) {
     ramp: ramp ? { max: numOf(ramp[1]) } : null,
     pause: pause ? { maxDays: Number(pause[1]) } : null,
     intensity: intKinds.length ? { need: Number(intLine[1]), of: Number(intLine[2]), fromWeek: intFrom ? Number(intFrom[1]) : 1, kinds: intKinds, sickOk: /krank/i.test(intLine[0]) } : null,
-    // HF-Deckel fuer lockere Laeufe ("Lauf-Grundlage unter HF 125")
-    hrCap: num1(t.match(/grundlage[^\n]{0,40}?(?:unter|≤|<=|<)\s*hf\s*(\d{3})/i) ?? t.match(/hf-?(?:deckel|obergrenze)\s*:?\s*(\d{3})/i), null),
+    // HF-Deckel fuer lockere Laeufe: "HF-Deckel 128", sonst die Zeile "Lauf-Grundlage unter HF 128", erst danach irgendein
+    // "Grundlage… unter HF" (sonst gewinnt ein frueherer Satz wie "Grundlagenlauf ab 60 min unter HF 125 als Trend")
+    hrCap: num1(t.match(/hf-?(?:deckel|obergrenze)\s*:?\s*(\d{3})/i) ?? t.match(/lauf-?grundlage[^\n]{0,40}?(?:unter|≤|<=|<)\s*hf\s*(\d{3})/i) ?? t.match(/grundlage[^\n]{0,40}?(?:unter|≤|<=|<)\s*hf\s*(\d{3})/i), null),
     decision: decision ? { week: Number(decision[1]), extend: ext ? (ext[1] ?? ext[2]).replace(/\s*[–-]\s*/, "–") : "3–4" } : null,
+    // TSS einer Rad-Vergleichseinheit inkl. Einrollen ("Vergleichseinheit inkl. Einrollen ca. 70 min / ~48 TSS")
+    compareTss: num1(t.match(/vergleichseinheit[^\n]{0,60}?(\d{2,3})\s*tss/i), null),
   };
+}
+
+// Was das Dashboard aus dem Block-Eintrag gelesen hat, und Widersprueche darin. Der Text steuert Deckel, Testband und
+// Testtermine; ein Tippfehler dort verfaelscht still die Auswertung (z. B. Deckel 125 statt 128, keine Testtermine).
+export function checkBlockText(text, targets = parseBlockTargets(text)) {
+  const t = String(text ?? "");
+  const hints = [];
+  const limits = [...new Set([...t.matchAll(/(?:unter|≤|<=|<|bis)\s*hf\s*(\d{3})/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
+  if (limits.length > 1) hints.push(`Verschiedene HF-Grenzen im Text: ${limits.join(", ")} – als Deckel gezählt wird ${targets.hrCap ?? "keine"} (Zeile „Lauf-Grundlage unter HF …“).`);
+  const band = targets.run?.band ?? null;
+  if (band && targets.hrCap != null && band[1] > targets.hrCap) hints.push(`Testband ${band[0]}–${band[1]} reicht über den HF-Deckel ${targets.hrCap}.`);
+  if (targets.run && !targets.run.tests?.length && /blocktest|basistest/i.test(t)) hints.push("Keine Blocktest-Termine gefunden (Form: „Basistest 25.10., dann 08.11., 06.12., 03.01.“) – ohne sie bleiben Testauswertung, Testtag-Hinweise und die Minuten über dem HF-Deckel aus.");
+  return { hrCap: targets.hrCap ?? null, band, tests: targets.run?.tests ?? [], hints };
 }
 
 // Fenster: laeuft der Block, ab Blockstart. Davor (oder bei Block-Ende) zaehlt der "Ausgangswert" der letzten 8 Wochen.
@@ -332,7 +349,12 @@ function rampGoal(ctlDays, cfg, block, w, basis, todayIso) {
   const over = full.filter((x) => x.ramp > cfg.max);
   const maxRamp = full.length ? Math.max(...full.map((x) => x.ramp)) : null;
   const open = weeks.find((x) => !x.done);
+  // Wie viel Wochenlast die Grenze erlaubt: CTL steigt je Woche um etwa (Tageslast − CTL) × (1 − e^(−7/42)).
+  // Bei niedriger CTL greift die Grenze erst bei einem Vielfachen der Erhaltungslast (7 × CTL).
+  const ctlNow = at(todayIso);
+  const allowed = ctlNow > 0 ? 1 + cfg.max / ((1 - Math.exp(-7 / 42)) * ctlNow) : null;
   return {
+    hints: allowed != null && allowed > 1.5 ? [`Bei CTL ${Math.round(ctlNow)} erlaubt Ramp ${cfg.max} etwa das ${String(Math.round(allowed * 10) / 10).replace(".", ",")}-Fache der Erhaltungslast (7 × CTL) – die Regel „höchstens +10 % pro Woche“ greift viel früher.`] : [],
     key: "ramp", group: "leitplanke", label: "Ramp Rate", unit: "CTL/Woche", basis,
     target: `≤ ${cfg.max} je Belastungswoche`, value: maxRamp, max: cfg.max, weeks: weeks.slice(-12),
     status: !full.length ? "none" : w.baseline ? "base" : over.length ? "bad" : "ok",
@@ -450,6 +472,19 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso) {
     note: avg == null ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : [tests.length < n ? `erst ${tests.length} von ${n} Tests` : `Ø der letzten ${n} Tests`, paceOk === false ? `Pace 0–60 ${lastT.pace60} statt ${baseT.pace60} /km – langsamer als im Basistest` : null, nextTxt].filter(Boolean).join(" · "),
     hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Grundlagenl${trend.length === 1 ? "auf" : "äufe"} ab ${cfg.minMin} min, Ø Decoupling 0–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
   };
+  // Was die restlichen Tests fuers Ziel brauchen: gemessen wird das Mittel der letzten n Tests, nicht des ganzen Blocks
+  const finalPlanned = planned.slice(-n), doneFinal = tests.filter((t) => finalPlanned.includes(t.planned));
+  const openFinal = finalPlanned.filter((p) => p >= todayIso && !tests.some((t) => t.planned === p)).length;
+  if (planned.length > 1 && openFinal) {
+    const dmOf = (d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+    const sum = doneFinal.reduce((a, t) => a + t.dec60, 0);
+    const need = (lim) => (lim * n - sum) / openFinal;
+    const f1 = (v) => String(r1(v)).replace(".", ",");
+    base.hints.push(!doneFinal.length
+      ? `Fürs Ziel zählen die Tests am ${finalPlanned.map(dmOf).join(", ")}${planned.length > n ? " – der Basistest nicht" : ""}.`
+      : need(cfg.max) < 0 ? `Ø ≤ ${cfg.max} % ist rechnerisch nicht mehr erreichbar${must != null ? `; fürs Muss brauchen die restlichen ${openFinal} Tests im Mittel ≤ ${f1(need(must))} %` : ""}.`
+      : `Die restlichen ${openFinal} Test${openFinal === 1 ? "" : "s"} brauch${openFinal === 1 ? "t" : "en"} im Mittel ≤ ${f1(need(cfg.max))} % fürs Ziel${must != null ? `, ≤ ${f1(need(must))} % fürs Muss` : ""}.`);
+  }
   const grow = baseT && lastT && lastT !== baseT ? lastT.stableMin > baseT.stableMin : null;
   const stable = {
     key: "runStable", ...shared, label: "Lauf: stabile Dauer", unit: "min", stableMax: cfg.stableMax,
