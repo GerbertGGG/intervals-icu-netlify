@@ -35,5 +35,15 @@ assert.equal(r.body.result.isError, true); // note zu lang
 r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt, note: "Heute locker bleiben.", headline: "Ruhe" } });
 assert.ok(!r.body.result.isError);
 assert.equal(JSON.parse(kv.get("dashboard:coach")).note, "Heute locker bleiben.");
+assert.ok(list.body.result.tools.some((t) => t.name === "get_coach"));
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt, note: "Locker.", question: "Hüfte nach den Sprints, 0–10?" } });
+assert.ok(!r.body.result.isError);
+r = await rpc("tools/call", { name: "get_coach", arguments: {} });
+assert.ok(!r.body.result.isError);
+const got = JSON.parse(r.body.result.content[0].text);
+assert.equal(got.question, "Hüfte nach den Sprints, 0–10?");
+assert.equal(got.answer, null);
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt, note: "Locker.", answer: "2" } });
+assert.equal(r.body.result.isError, true); // Antwort ohne Frage
 console.log = log;
 console.log("mcp-save tests ok");

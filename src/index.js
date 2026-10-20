@@ -6,7 +6,7 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
-import { handleCoachRequest } from "./coach-snapshot.js";
+import { handleCoachRequest, handleCoachAnswerRequest } from "./coach-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest } from "./widget.js";
@@ -58,6 +58,9 @@ export default {
         return route(() => handleStudieRequest(req, env, isAuthorized));
       case "/api/coach":
         return route(() => handleCoachRequest(req, env, isAuthorized));
+      // Antwort auf die Rückfrage des Coaches, aus dem Dashboard
+      case "/api/coach/answer":
+        return route(() => handleCoachAnswerRequest(req, env, isAuthorized));
       // MCP-Connector (mcp-oauth.js, mcp-server.js): Claude liest Intervals/Yazio und schreibt die Snapshots.
       case "/.well-known/oauth-authorization-server":
         return handleAuthServerMetadata(url);
