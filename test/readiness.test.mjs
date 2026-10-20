@@ -1,7 +1,8 @@
 // Erholungsampel und Rad-Last gegen echte Werte aus Oktober 2026 (Ruhepuls, HRV, Schlaf-Score, Gefühlswerte; Krankheit
 // am 14.10. im Kalender). Ausführen: node test/readiness.test.mjs
 import assert from "node:assert/strict";
-import { computeReadiness, computeDrift, computeEasyRunSignal } from "../src/dashboard-summary.js";
+import { computeReadiness, computeDrift, computeEasyRunSignal, computeQualityFeelSignal, computeFixedPowerSignal } from "../src/dashboard-summary.js";
+import { buildBaseTrend } from "../src/base-trend.js";
 import { sessionLoad, activityLoad } from "../src/activity-utils.js";
 
 // [Datum, Ruhepuls, HRV, Schlaf-Score, Schlafqualität, Muskelkater, Ermüdung, Stimmung, Motivation]
@@ -127,6 +128,53 @@ const at = (d, list = upTo(d)) => computeReadiness(list, d, null, { sickDays: SI
   const perf = { cls: "warn", text: "Puls bei lockerem Tempo erhöht" };
   assert.equal(at("2026-10-20").verdict.cls, computeReadiness(upTo("2026-10-20"), "2026-10-20", null, { sickDays: SICK, perf }).verdict.cls); // allein kein Gelb
   assert.equal(computeReadiness(upTo("2026-10-20").map((w) => (w.date === "2026-10-20" ? { ...w, soreness: 3 } : w)), "2026-10-20", null, { sickDays: SICK, perf }).verdict.cls, "warn"); // mit zweiter Warnung gelb
+}
+
+// Ausreißer bleiben aus der Basis: die Krankheitsnacht 11.10. (HRV 22) ohne Kalendereintrag drückt die HRV-Basis nicht
+{
+  const r = at("2026-10-20");
+  const vals = W.filter((w) => w.date < "2026-10-20" && w.date >= "2026-09-22" && w.hrv != null && !["2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17"].includes(w.date)).map((w) => w.hrv);
+  assert.ok(vals.includes(22)); assert.equal(r.body.hrv.n, vals.length - 1);
+}
+// Gefühl in den Qualitätseinheiten (nur feel, kein Puls): 2 Stufen schlechter über 3 Einheiten = Warnung, zählt wie perf
+{
+  const q = (feels, last = "2026-10-18") => feels.map((feel, i) => ({ date: i === feels.length - 1 ? last : `2026-10-0${i + 1}`, kind: "bikeHiit", feel }));
+  const sig = computeQualityFeelSignal(q([2, 3, 4]), "2026-10-20");
+  assert.equal(sig.cls, "warn"); assert.match(sig.text, /feel 2 → 3 → 4/);
+  assert.equal(computeQualityFeelSignal(q([2, 3, 3]), "2026-10-20").cls, "ok");
+  assert.equal(computeQualityFeelSignal(q([2, 3, 4], "2026-10-05"), "2026-10-20"), null); // letzte Einheit älter als 7 Tage
+  assert.equal(computeQualityFeelSignal(q([2, 4]), "2026-10-20"), null);
+  const r = computeReadiness(upTo("2026-10-20").map((w) => (w.date === "2026-10-20" ? { ...w, soreness: 3 } : w)), "2026-10-20", null, { sickDays: SICK, signals: [sig] });
+  assert.equal(r.verdict.cls, "warn"); assert.ok(r.verdict.reasons.some((x) => /Qualitätseinheiten/.test(x)));
+}
+// Puls bei fester Leistung: letzte Vergleichseinheit +5 gegen den Median der 3 davor = Warnung; ohne Einrollen zählt nicht
+{
+  const ride = (date, mainHr, noWarmup = false) => ({ date, mainHr, mainWatts: 165, noWarmup });
+  const rides = [ride("2026-09-28", 120), ride("2026-10-05", 118), ride("2026-10-12", 119), ride("2026-10-19", 125)];
+  const f = computeFixedPowerSignal(rides, "2026-10-20");
+  assert.equal(f.cls, "warn"); assert.equal(f.ref, 119); assert.match(f.text, /6 höher als üblich \(125 statt 119 bei 165 W\)/);
+  assert.equal(computeFixedPowerSignal([...rides.slice(0, 3), ride("2026-10-19", 122)], "2026-10-20").cls, "ok");
+  assert.equal(computeFixedPowerSignal([...rides.slice(0, 3), ride("2026-10-19", 130, true)], "2026-10-20"), null); // ohne Einrollen: letzte zählbare ist 12.10. – älter als 7 Tage
+}
+// Puls bei lockerem Tempo: mit Blockstart zählen nur Läufe unter dem neuen Deckel als Basis
+{
+  const run = (date, pace, hr) => ({ date, kind: "base", movingTimeMin: 40, paceSecPerKm: pace, avgHr: hr });
+  const old = ["2026-09-20", "2026-09-25", "2026-09-30", "2026-10-05"].map((d) => run(d, 400, 130));
+  const blk = [run("2026-10-20", 456, 125)];
+  assert.equal(computeEasyRunSignal([...old, ...blk], "2026-10-21").cls, "warn"); // langsamer unter dem Deckel = rechnerisch weniger Tempo je Schlag
+  assert.equal(computeEasyRunSignal([...old, ...blk], "2026-10-21", "2026-10-19"), null); // seit Blockstart noch keine Basis
+}
+// Greift die Grundlage? EF der lockeren flachen Läufe (Median erste 3 gegen letzte 3), Puls bei 165 W
+{
+  const r = (date, ef, extra = {}) => ({ date, easy: true, treadmill: false, elevPerKm: 4, durationMin: 40, analysis: { ef, efToMin: 35 }, ...extra });
+  const runs = [r("2026-10-20", 1.05), r("2026-10-23", 1.06), r("2026-10-25", 1.04), r("2026-10-28", 1.08), r("2026-10-30", 1.09), r("2026-11-01", 1.1), r("2026-11-02", 1.3, { elevPerKm: 30 })];
+  const ride = (date, mainHr, noWarmup = false) => ({ date, mainHr, mainWatts: 165, noWarmup, durationMin: 72, indoor: true, easy: true, vi: 1.0, intensity: 65 });
+  const rides = [ride("2026-10-19", 101, true), ride("2026-10-21", 110), ride("2026-10-26", 109), ride("2026-11-02", 108), ride("2026-11-09", 106), ride("2026-11-16", 105), ride("2026-11-23", 104)];
+  const t = buildBaseTrend({ runs, rides }, { watts: 165, minMin: 60 });
+  assert.equal(t.runs.length, 6); // der hügelige Lauf zählt nicht
+  assert.deepEqual(t.runTrend, { first: 1.05, last: 1.09, delta: 3.8, dir: "better" });
+  assert.equal(t.rides.length, 7); assert.deepEqual(t.rideTrend, { first: 109, last: 105, delta: -4, dir: "better" });
+  assert.equal(buildBaseTrend({ runs: runs.slice(0, 5), rides: [] }, null).runTrend, null); // erst ab 6 Läufen
 }
 
 // Rad-Last aus Leistung (19.10.: HRSS 26, Leistung 43), Lauf und Fahrten ohne Leistung wie Intervals

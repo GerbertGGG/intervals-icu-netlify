@@ -72,6 +72,8 @@ export const BODY_RULES = {
   hrvDrop: 0.88, hrvStrong: 0.8, hrvUp: 1.05,
   trend: { days: 7, minN: 4, hrv: 0.93, resting: 3, hrvToday: 0.95, restingToday: 2 },
   sleepScore: 80, sleepHoursMin: 6,
+  // Ausreißer bleiben aus der Basis (z. B. eine Krankheitsnacht ohne Kalendereintrag): HRV unter 70 % bzw. Ruhepuls über +8
+  outlier: { hrv: 0.7, restingHR: 8 },
 };
 
 function sickSetOf(sickDays) {
@@ -85,7 +87,12 @@ function computeBody(wellness, todayIso, sickDays = []) {
   const by = Object.fromEntries(wellness.map((w) => [w.date, w]));
   const today = by[todayIso], yday = by[addDays(todayIso, -1)];
   const past = wellness.filter((w) => w.date >= addDays(todayIso, -R.baseDays) && w.date < todayIso && !skip.has(w.date));
-  const base = (key, list = past) => { const v = list.map((w) => w[key]).filter((x) => x != null); return { med: v.length >= R.minN ? median(v) : null, n: v.length }; };
+  const keep = { hrv: (v, m) => v >= m * R.outlier.hrv, restingHR: (v, m) => v <= m + R.outlier.restingHR };
+  const base = (key, list = past) => {
+    let v = list.map((w) => w[key]).filter((x) => x != null);
+    if (keep[key] && v.length >= R.minN) { const m = median(v); v = v.filter((x) => keep[key](x, m)); }
+    return { med: v.length >= R.minN ? median(v) : null, n: v.length };
+  };
   // Trend-Basis: die 28 Tage VOR der Trendwoche, sonst steckt ein langsamer Abfall schon in der Basis und hebt sich auf
   const prior = wellness.filter((w) => w.date >= addDays(todayIso, -(T.days - 1) - R.baseDays) && w.date <= addDays(todayIso, -T.days) && !skip.has(w.date));
   // 7-Tage-Schnitt bis einschließlich heute (Krankheitstage zählen mit: danach soll die Ampel vorsichtig bleiben)
@@ -139,11 +146,13 @@ export function computeDrift(longWellness, todayIso, sickDays = []) {
 // gegen den Median der lockeren Läufe der 6 Wochen davor (mind. 4). Effizienz = Tempo je Herzschlag (m/min ÷ HF).
 // Liegt sie ≥ 6 % darunter, ist das eine Warnung (Hügel, Wind und Hitze verfälschen sie, deshalb allein kein Gelb).
 // Heutige Läufe zählen nicht: die Ampel beschreibt den Zustand vor dem Training.
+// since: erst Läufe ab diesem Tag (Blockstart): Mit einem neuen HF-Deckel läuft man langsamer, die Effizienz fällt dann allein
+// wegen der geringeren Intensität – ein Vergleich mit den Läufen vor dem Block wäre ein Fehlalarm.
 export const PERF_RULES = { lookback: 3, baseDays: 42, minN: 4, minMin: 30, drop: 0.94 };
-export function computeEasyRunSignal(runs, todayIso) {
+export function computeEasyRunSignal(runs, todayIso, since = null) {
   const P = PERF_RULES;
   const ef = (r) => (r.avgHr > 0 && r.paceSecPerKm > 0 ? (60000 / r.paceSecPerKm) / r.avgHr : null);
-  const easy = (runs ?? []).filter((r) => ["base", "long"].includes(r.kind) && (r.movingTimeMin ?? 0) >= P.minMin && ef(r) != null && r.date < todayIso);
+  const easy = (runs ?? []).filter((r) => ["base", "long"].includes(r.kind) && (r.movingTimeMin ?? 0) >= P.minMin && ef(r) != null && r.date < todayIso && (since == null || r.date >= since));
   const last = easy.filter((r) => r.date >= addDays(todayIso, -P.lookback)).sort((a, b) => b.date.localeCompare(a.date))[0];
   if (!last) return null;
   const base = easy.filter((r) => r.date < last.date && r.date >= addDays(last.date, -P.baseDays)).map(ef);
@@ -151,6 +160,32 @@ export function computeEasyRunSignal(runs, todayIso) {
   const q = ef(last) / median(base);
   const dm = `${last.date.slice(8, 10)}.${last.date.slice(5, 7)}.`;
   return { cls: q <= P.drop ? "warn" : "ok", ratio: Math.round(q * 1000) / 1000, date: last.date, text: q <= P.drop ? `Puls bei lockerem Tempo erhöht (Lauf ${dm}: ${Math.round((1 - q) * 100)} % weniger Tempo je Herzschlag als üblich)` : null };
+}
+
+// Gefühl in den Qualitätseinheiten (Rad-HIIT, Hügelsprints; nur feel und RPE, kein Puls): Wird feel über die letzten 3
+// Einheiten um 2 Stufen schlechter (Intervals: 1 = stark, 5 = schwach), ist das ein Warnsignal – vor Landsberg lief es 2, 2, 3, 4, 5.
+// Zählt nur, solange die letzte dieser Einheiten höchstens 7 Tage zurückliegt.
+export const QUALITY_RULES = { n: 3, worse: 2, maxAgeDays: 7 };
+export function computeQualityFeelSignal(sessions, todayIso) {
+  const Q = QUALITY_RULES;
+  const list = (sessions ?? []).filter((x) => Number.isFinite(x.feel) && x.date < todayIso).sort((a, b) => a.date.localeCompare(b.date)).slice(-Q.n);
+  if (list.length < Q.n || list[list.length - 1].date < addDays(todayIso, -Q.maxAgeDays)) return null;
+  const d = list[list.length - 1].feel - list[0].feel;
+  return { cls: d >= Q.worse ? "warn" : "ok", feels: list.map((x) => x.feel), text: d >= Q.worse ? `Gefühl in den Qualitätseinheiten kippt (feel ${list.map((x) => x.feel).join(" → ")})` : null };
+}
+
+// Puls bei fester Leistung (Rad-Vergleichseinheit, Messfenster nach dem Einrollen): letzte Einheit der 7 Tage vor heute gegen den
+// Median der 3 davor. Mindestens 5 Schläge mehr bei gleicher Leistung = Warnsignal (Ermüdung oder beginnender Infekt).
+// Einheiten ohne Einrollen zählen nicht (der Puls aus dem Stand verschiebt das Fenster).
+export const FIXED_POWER_RULES = { n: 3, up: 5, maxAgeDays: 7 };
+export function computeFixedPowerSignal(rides, todayIso) {
+  const F = FIXED_POWER_RULES;
+  const list = (rides ?? []).filter((r) => Number.isFinite(r.mainHr) && !r.noWarmup && r.date < todayIso).sort((a, b) => a.date.localeCompare(b.date));
+  const last = list[list.length - 1];
+  if (!last || last.date < addDays(todayIso, -F.maxAgeDays) || list.length < F.n + 1) return null;
+  const ref = median(list.slice(-(F.n + 1), -1).map((r) => r.mainHr));
+  const d = last.mainHr - ref;
+  return { cls: d >= F.up ? "warn" : "ok", hr: last.mainHr, ref, date: last.date, text: d >= F.up ? `Puls bei fester Leistung ${Math.round(d)} höher als üblich (${last.mainHr} statt ${ref}${last.mainWatts ? ` bei ${last.mainWatts} W` : ""})` : null };
 }
 
 // Umfang je Ampelfarbe: Im Grundlagenblock ist fast alles locker, "nur locker" ändert dort kaum etwas. Die Ampel sagt
@@ -177,7 +212,8 @@ export const DOSE = {
 // Schwimmen nach der Ampel; Muskelkater etwas schlechter = Lauf kurz. Die eingetragene Schlafqualität macht allein höchstens
 // gelb und zählt nicht zusätzlich, wenn der Schlaf-Score schon meldet (Schlaf zählt einmal). Die Trainingslast (TSB) gehört
 // nicht ins Erholungsurteil.
-// ctx: { sickDays: [date], hipFlags: [{date}], longWellness: [{date,hrv,restingHR}], perf: {cls,text}|null }
+// ctx: { sickDays: [date], hipFlags: [{date}], longWellness: [{date,hrv,restingHR}], perf: {cls,text}|null,
+//   signals: [{cls,text}] (Gefühl in Qualitätseinheiten, Puls bei fester Leistung; je eine Warnung wie perf) }
 export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   const yIso = addDays(todayIso, -1);
   const entry = (d) => wellness.find((w) => w.date === d && READY_METRICS.some((m) => w[m.key] != null)) ?? null;
@@ -212,7 +248,9 @@ export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   const sleepQBad = is("sleepQuality", "bad");
   const weakBad = counted.filter((i) => i.weak && i.cls === "bad").length;
   const weakWarn = counted.filter((i) => i.weak && i.cls === "warn");
-  const perfWarn = ctx.perf?.cls === "warn" ? 1 : 0;
+  // Leistungssignale (Puls bei lockerem Tempo, Gefühl in Qualitätseinheiten, Puls bei fester Leistung): je eine Warnung
+  const perfs = [ctx.perf, ...(ctx.signals ?? [])].filter((x) => x?.cls === "warn");
+  const perfWarn = perfs.length;
   const subjWarn = counted.filter((i) => !i.weak && i.cls === "warn").length + (sleepQBad ? 1 : 0) + weakBad + perfWarn;
   const sick = (ctx.sickDays ?? []).includes(todayIso) || (ctx.sickDays ?? []).includes(yIso);
   const hip = (ctx.hipFlags ?? []).filter((x) => x.date >= addDays(todayIso, -2) && x.date <= todayIso);
@@ -224,7 +262,7 @@ export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
     driftWarn ? `Abstand zur Langzeitbasis (${[drift.hrvLow ? `HRV 7 Tage ${f(drift.hrv7)} statt ${f(drift.hrvAnchor)}` : null, drift.rhrHigh ? `Ruhepuls 7 Tage ${f(drift.rhr7)} statt ${f(drift.rhrAnchor)}` : null].filter(Boolean).join(", ")})` : null,
     body.sleep.cls === "warn" ? (body.sleep.score != null ? `Schlaf-Score ${body.sleep.score} (2. Tag unter ${BODY_RULES.sleepScore})` : `Schlaf ${f(body.sleep.hours)} h`) : null,
     ...items.filter((i) => (i.cls === "warn" && !i.weak) || i.cls === "bad").map((i) => `${i.label} ${i.v} (üblich ${f(i.med)})`),
-    perfWarn ? ctx.perf.text : null,
+    ...perfs.map((x) => x.text),
   ].filter(Boolean);
   const hasAny = Boolean(src) || [body.sleep, body.hrv, body.resting].some((b) => b.cls !== "none");
   let verdict;

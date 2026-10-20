@@ -6,7 +6,8 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, testDatesOf } from "./season-block.js";
+import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, testDatesOf, checkBlockText, isComparableRide, TEST_RE } from "./season-block.js";
+import { buildBaseTrend } from "./base-trend.js";
 import { buildTodayPlan } from "./today-plan.js";
 import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
@@ -18,7 +19,7 @@ import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
-import { buildSummary, computeEasyRunSignal, computeReadiness } from "./dashboard-summary.js";
+import { buildSummary, computeEasyRunSignal, computeReadiness, computeQualityFeelSignal, computeFixedPowerSignal } from "./dashboard-summary.js";
 import { buildWeekReview } from "./week-review.js";
 import { withActualToday } from "./live-load.js";
 import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
@@ -439,6 +440,8 @@ function buildWellness(list) {
 // Tageswerte der Belastung für die Kalender-Heatmap (leere Tage = 0, keine Lücken).
 // Zielminuten je Sportart aus den Weekly-Targets der laufenden Woche; ohne Rahmen null
 const frameOf = (w) => (w?.targetMin > 0 ? Object.fromEntries(SPORTS.map((k) => [k, w.bySport[k]?.targetMin ?? null])) : null);
+// TSS-Grenzen je Sportart aus den Weekly-Targets der laufenden Woche; ohne Grenzen null
+const frameLoadOf = (w) => (SPORTS.some((k) => w?.bySport?.[k]?.targetLoad > 0) ? Object.fromEntries(SPORTS.map((k) => [k, w.bySport[k]?.targetLoad ?? null])) : null);
 
 function buildDaily(todayIso, activities) {
   const out = [];
@@ -545,8 +548,7 @@ function buildBaseRuns(runs, snapshot, targets, block, todayIso) {
   if (!analysed.length && cap == null) return null;
   const dow = (new Date(todayIso + "T00:00:00Z").getUTCDay() + 6) % 7, monday = addDays(todayIso, -dow);
   const wk = analysed.filter((r) => r.date >= monday && r.date <= todayIso && r.analysis.overCapMin != null);
-  const tests = targets?.run?.tests && block ? new Set(testDatesOf(block, targets.run.tests)) : new Set();
-  const isTest = (r) => /blocktest|basistest/i.test(r.name ?? "") || [0, 1, 2].some((k) => tests.has(addDays(r.date, -k)));
+  const isTest = (r) => r.test || TEST_RE.test(r.name ?? "");
   const dfa = new Map((snapshot?.runs ?? []).filter((x) => x.dfaAlpha1 != null).map((x) => [x.date, x.dfaAlpha1]));
   return {
     cap,
@@ -732,8 +734,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   // Langzeitbasis (180 Tage Wellness aus der Formkurve) und Puls bei lockerem Tempo fuer die Erholungsampel
   const longWellness = fitnessR.ok && Array.isArray(fitnessR.value) ? buildWellness(fitnessR.value).map((w) => ({ date: w.date, hrv: w.hrv, restingHR: w.restingHR })) : [];
   const readyCtx = { sickDays, hipFlags: insights.hipFlags, longWellness };
-  const summary = buildSummary(wellness, todayIso, { ...readyCtx, perf: computeEasyRunSignal(runs, todayIso) });
-  let blockTargets = null, blockSessions = {}, intensity = [];
+  let blockTargets = null, blockSessions = {}, intensity = [], plannedTests = [];
+  // Name/Beschreibung der Einheit und des gekoppelten Workouts (Intensitaet, Blocktest)
+  const evById = new Map(events.map((e) => [String(e?.id), e]));
+  const textOf = (a) => { const e = evById.get(String(a?.paired_event_id)); return [a?.name, a?.description, e?.name, e?.description].filter(Boolean).join(" "); };
 
   // Trainingsblock aus dem Kalender samt Fortschritt der Ziele. Laeuft der Block schon laenger als die 56 Tage Historie,
   // werden Aktivitaeten und Wellness ab Blockstart nachgeladen (best effort, sonst zaehlt nur das Vorhandene).
@@ -763,19 +767,24 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     const tg = parseBlockTargets([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"));
     blockTargets = tg;
     const win = windowOf(seasonBlock, todayIso);
+    // Blocktests legt der Nutzer selbst fest: als Test zaehlt ein Lauf mit "Blocktest"/"Basistest" in Name oder Beschreibung
+    // (auch des gekoppelten Workouts); geplante Tests = Lauf-Workouts im Kalender mit diesem Namen, dazu Termine aus dem Text
+    const testIds = new Set(blockActs.filter((a) => isRun(a) && TEST_RE.test(textOf(a))).map((a) => a.id));
+    plannedTests = [...new Set([
+      ...events.filter((e) => /WORKOUT/i.test(String(e?.category ?? "")) && /run/i.test(String(e?.type ?? "")) && TEST_RE.test(`${e?.name ?? ""} ${e?.description ?? ""}`)).map((e) => eventDayOf(e)),
+      ...testDatesOf(seasonBlock, tg.run?.tests),
+    ])].filter(Boolean).sort();
     const sessions = tg.run || tg.bike || tg.swim
-      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, bike: tg.bike ?? null, run: tg.run ?? null, hrCap: tg.hrCap ?? null }).catch((err) => { console.warn("block sessions", err); return {}; })
+      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, bike: tg.bike ?? null, run: tg.run ?? null, hrCap: tg.hrCap ?? null, testIds }).catch((err) => { console.warn("block sessions", err); return {}; })
       : {};
     const dayOfWell = (x) => String(x?.id ?? x?.date ?? "").slice(0, 10);
     // Intensitaets-Leitplanke: Rad-HIIT und Huegelsprints aus Name/Beschreibung der Einheit und des gekoppelten Workouts
-    const evById = new Map(events.map((e) => [String(e?.id), e]));
-    const textOf = (a) => { const e = evById.get(String(a?.paired_event_id)); return [a?.name, a?.description, e?.name, e?.description].filter(Boolean).join(" "); };
     blockSessions = sessions;
     intensity = tg.intensity
       ? blockActs.map((a) => {
           const sport = isBike(a) ? "bike" : isRun(a) ? "run" : null;
           const z5 = Array.isArray(a?.icu_zone_times) ? num(a.icu_zone_times.find((z) => z?.id === "Z5")?.secs) : null;
-          return { date: activityDay(a), kind: sport ? intensityKindOf(sport, textOf(a), z5) : null };
+          return { date: activityDay(a), kind: sport ? intensityKindOf(sport, textOf(a), z5) : null, feel: num(a?.feel) };
         }).filter((x) => x.kind)
       : [];
     const { goals, decision } = buildBlockGoalsFull(seasonBlock, {
@@ -789,11 +798,21 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ctlDays: blockWell.map((x) => ({ date: dayOfWell(x), ctl: num(x?.ctl) })),
       activityDays: [...blockActs.map((a) => activityDay(a)), ...egymEntries.map((x) => x.date)],
       intensity,
+      plannedTests,
       sickDays,
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
-    seasonBlock = { ...seasonBlock, goals, decision };
+    seasonBlock = { ...seasonBlock, goals, decision, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };
   }
+
+  // Erholungsampel nach dem Block: Leistungssignale brauchen die Einheiten des Blocks. Puls bei lockerem Tempo nur gegen Läufe
+  // seit Blockstart (neuer HF-Deckel), Gefühl in den Qualitätseinheiten, Puls bei fester Leistung (Rad-Vergleichseinheit).
+  const blockSince = seasonBlock?.status === "active" ? seasonBlock.start : null;
+  const compareRides = blockTargets?.bike ? (blockSessions.rides ?? []).filter((r) => isComparableRide(r, blockTargets.bike)) : [];
+  const summary = buildSummary(wellness, todayIso, {
+    ...readyCtx, perf: computeEasyRunSignal(runs, todayIso, blockSince),
+    signals: [computeQualityFeelSignal(intensity, todayIso), computeFixedPowerSignal(compareRides, todayIso)].filter(Boolean),
+  });
 
   const daily = buildDaily(todayIso, activities);
   const weeks = buildWeeks(todayIso, activities, events);
@@ -801,10 +820,15 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const todayPlan = buildTodayPlan({
     today: todayIso, verdict: summary.readiness.verdict, daily, hrCap: blockTargets?.hrCap ?? null,
     block: seasonBlock ? { status: seasonBlock.status, weekNo: seasonBlock.weekNo, rulesText: [seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n") } : null,
-    testDates: blockTargets?.run?.tests && seasonBlock ? testDatesOf(seasonBlock, blockTargets.run.tests) : [], band: blockTargets?.run?.band ?? null,
+    testDates: plannedTests, band: blockTargets?.run?.band ?? null,
     intensity: blockTargets?.intensity ?? null, intensitySessions: intensity,
-    frame: frameOf(weeks.find((w) => w.weekStart === mondayOf(todayIso))),
+    frame: frameOf(weeks.find((w) => w.weekStart === mondayOf(todayIso))), frameLoad: frameLoadOf(weeks.find((w) => w.weekStart === mondayOf(todayIso))),
+    testMin: Array.isArray(blockTargets?.run?.tests) ? blockTargets.run.minMin ?? 60 : null,
+    compareTss: blockTargets?.compareTss ?? null, compareDone: compareRides.some((r) => r.date >= mondayOf(todayIso) && r.date <= todayIso),
   });
+  // Kraft der letzten vollen Woche (Blockwoche mit gleichem Start) für die Montagsbilanz; Entlastungswochen zählen nicht
+  const strengthGoal = seasonBlock?.goals?.find((g) => g.key === "strength");
+  const strengthWeek = strengthGoal?.weeks?.find((x) => x.start === addDays(mondayOf(todayIso), -7) && x.load !== false);
 
   // Montagsbilanz: Ampel je Tag der letzten vollen Woche (Tage ohne Gefühlseintrag zählen nicht als gelb)
   const weekReview = buildWeekReview({
@@ -812,6 +836,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     sessions: activities.map((a) => ({ date: activityDay(a), sport: sportOf(a), minutes: (num(a?.moving_time) ?? 0) / 60, rpe: num(a?.icu_rpe) })),
     ampel: (d) => { const v = computeReadiness(wellness.filter((w) => w.date <= d), d, null, readyCtx).verdict; return v.missing ? "none" : v.cls; },
     sickDays, hipFlags: insights.hipFlags,
+    testDates: plannedTests,
+    strength: strengthWeek && strengthGoal.weekGoal ? { count: strengthWeek.count, goal: strengthGoal.weekGoal, unit: strengthGoal.countUnit } : null,
     capRuns: blockTargets?.hrCap != null ? (blockSessions.runs ?? []).filter((r) => r.easy && r.analysis?.overCapMin != null).map((r) => ({ date: r.date, overCapMin: r.analysis.overCapMin })) : null,
   });
   const targetLoad = targetDailyLoad(weeks, todayIso);
@@ -852,6 +878,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     todayPlan,
     weekReview,
     baseRuns,
+    baseTrend: buildBaseTrend(blockSessions, blockTargets?.bike ?? null),
     daily,
     lastActivity,
     ...insights,
