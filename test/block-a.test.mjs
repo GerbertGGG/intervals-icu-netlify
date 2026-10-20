@@ -43,7 +43,7 @@ assert.ok(g.bikeDecoupling.hints.some((h) => /ohne Puls/.test(h))); assert.ok(g.
 assert.equal(g.swimTest.status, "ok"); assert.equal(g.swimTest.value, 3);
 assert.equal(sb.decision.due, false); assert.equal(sb.decision.state, "cause"); assert.deepEqual(sb.decision.broken, ["strength"]); // kein Krafttraining im Fixture
 assert.equal(sb.decision.text, "Leitplanke gerissen (Kraft): erst die Ursache klären, dann Rad verlängern.");
-assert.equal(streamCalls, 5); // 4 flache Läufe + 1 Rad mit Puls; der hügelige Lauf und das Rad ohne Puls brauchen keine Zeitreihen
+assert.equal(streamCalls, 6); // 4 flache Läufe + 1 Rad mit Puls (der hügelige Lauf und das Rad ohne Puls brauchen keine) + Profil der letzten Einheit
 // zweiter Aufruf: alles aus dem KV-Cache
 streamCalls = 0;
 await buildDashboard(env, today);

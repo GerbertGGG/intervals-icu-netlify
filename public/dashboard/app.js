@@ -151,6 +151,25 @@ function renderReady(d) {
 }
 
 /* ---------- Cockpit: alles Wichtige auf einen Blick ---------- */
+// Kennzahlen der letzten Einheit als kleine Kacheln (wie auf der Intervals-Karte). Puls nur, wenn der Worker ihn liefert (Pulsregel).
+const FEEL_LABEL = { 1: "stark", 2: "gut", 3: "normal", 4: "schlecht", 5: "schwach" };
+function lastStats(L) {
+  const st = (label, value, cls = "") => `<div class="ls"><span class="ls-v${cls ? ` ${cls}` : ""}">${value}</span><span class="ls-l">${label}</span></div>`;
+  const decCls = (v) => (v < 5 ? "ok" : v < 8 ? "warn" : "bad");
+  const items = [
+    L.watts != null && st("Ø Leistung", `${fmt(L.watts)} <small>W</small>`),
+    L.normWatts != null && st("NP", `${fmt(L.normWatts)} <small>W</small>`),
+    L.paceSecPerKm != null && st("Ø Pace", `${paceLabel(L.paceSecPerKm)} <small>/km</small>`),
+    L.paceSecPer100m != null && st("Ø Pace", `${paceLabel(L.paceSecPer100m)} <small>/100 m</small>`),
+    L.avgHr != null && st("Ø Puls", `${fmt(L.avgHr)} <small>bpm</small>`),
+    L.intensity != null && st("Intensität", `${fmt(L.intensity)} <small>%</small>`),
+    L.decoupling != null && st("Decoupling", `${fmt(L.decoupling, 1)} <small>%</small>`, `badge ${decCls(L.decoupling)}`),
+    L.rpe != null && st("RPE", fmt(L.rpe)),
+    L.feel != null && FEEL_LABEL[L.feel] && st("Gefühl", FEEL_LABEL[L.feel]),
+  ].filter(Boolean);
+  return items.length ? `<div class="lstats">${items.join("")}</div>` : "";
+}
+
 function renderCockpit(d) {
   const S = d.summary, w = S.load, { ctl, atl, tsb, acwr, tsbCls, acwrCls } = w, g = d.goal;
   const TSB_BANDS = S.thresholds.tsb, ACWR = S.thresholds.acwr;
@@ -208,7 +227,7 @@ function renderCockpit(d) {
   const L = d.lastActivity;
   const planHtml = plan.length
     ? plan.map((p) => `<div class="hb-item"><i style="background:var(--s-${p.sport})"></i><div><b>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}</b><span class="sub">${meta(p) || "&nbsp;"}</span></div></div>`).join("")
-    : L ? `<div class="hb-item"><i style="background:var(--s-${L.sport})"></i><div><b>${SPORT_LABEL[L.sport] || "Einheit"}</b><span class="sub">${[L.date === d.today ? "heute" : `${weekday(L.date)} ${fmtDate(L.date)}`, meta(L)].filter(Boolean).join(" · ")}</span></div></div>`
+    : L ? `<div class="hb-item"><i style="background:var(--s-${L.sport})"></i><div><b>${SPORT_LABEL[L.sport] || "Einheit"}</b><span class="sub">${[L.date === d.today ? "heute" : `${weekday(L.date)} ${fmtDate(L.date)}`, meta(L), L.distanceKm && L.durationMin ? fmt(L.distanceKm, 1) + " km" : ""].filter(Boolean).join(" · ")}</span></div></div>${lastStats(L)}${L.profile ? '<div id="ck-last" class="wprofile"></div>' : ""}`
     : '<div class="hb-item"><i style="background:var(--line-2)"></i><div><b>Keine Einheit</b><span class="sub">Noch nichts erfasst</span></div></div>';
   const doneHtml = plan.length && doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
   const vCls = wellOk ? R.verdict.cls : "none";
@@ -242,6 +261,7 @@ function renderCockpit(d) {
   C.gauge($("ck-tsb"), { label: "TSB", min: -40, max: 30, value: tsb, ticks: [-40, -25, -10, 0, 15, 30], zones: [{ from: -40, to: TSB_BANDS.warn, cls: "bad" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: TSB_BANDS.ok, to: 30, cls: "ok" }] });
   C.gauge($("ck-acwr"), { label: "ACWR", min: 0.4, max: 1.8, value: acwr, dec: 2, ticks: [0.4, 0.8, 1.0, 1.3, 1.8], tickLabel: (t) => fmt(t, 1), zones: [{ from: 0.4, to: ACWR.lo, cls: taper ? "ok" : "warn" }, { from: ACWR.lo, to: ACWR.hi, cls: "ok" }, { from: ACWR.hi, to: 1.8, cls: "bad" }] });
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
+  if (!plan.length && L?.profile && $("ck-last")) C.session($("ck-last"), L.profile, { sport: L.sport });
   // Schmale Ansicht: die Wochenleiste ist wischbar; gestern und heute stehen beim Laden vorn
   const wkNow = document.querySelector(".wk-grid .wk-day.now");
   if (wkNow) { const g = wkNow.parentElement, t = wkNow.previousElementSibling ?? wkNow; g.scrollLeft = t.offsetLeft - g.firstElementChild.offsetLeft; }

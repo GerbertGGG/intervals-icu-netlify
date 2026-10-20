@@ -607,6 +607,13 @@ Der Block ist ein Saison-Eintrag im Intervals-Kalender („Block …“). Welche
 - **Pause:** längste Lücke ohne Aktivität (alle Sportarten, EGYM-Tage zählen mit), der laufende Tag zählt nicht. Eine Notiz „Pause“/„Urlaub“ oder ein Urlaubseintrag im Kalender macht die Lücke zur geplanten Pause.
 - **Woche 12:** Ist eine Leitplanke gerissen, heißt es „erst die Ursache klären“. Fehlt ein Ziel (weniger als 3 vergleichbare Einheiten, Muss verfehlt, Pace langsamer oder kein bestandener Schwimmtest), wird diese Sportart um 3–4 Wochen verlängert. Sonst geht es mit dem nächsten Block im Kalender weiter. Vor Woche 12 erscheint dieselbe Rechnung als „Stand heute“.
 
+
+### 7.10 Letzte Einheit im Heute-Band (`buildLastActivity`, `session-profile.js`)
+
+Ohne Plan für heute zeigt das Band die jüngste erledigte Einheit. Kennzahlen: Dauer, Distanz, Load, Ø Pace (Laufen /km, Schwimmen /100 m), Ø Leistung und NP (Rad, `icu_average_watts`, `icu_weighted_avg_watts`), Intensität (`icu_intensity`), RPE und Gefühl (`feel`: 1 stark … 5 schwach). **Puls und Decoupling nur bei lockeren Läufen** (`base`/`long`, Pulsregel 7.2); Rad und Schwimmen ohne Puls.
+
+Profil (Laufen und Rad): Zeitreihen von Intervals (`watts` bzw. `velocity_smooth`, Puls nur mit Freigabe) in höchstens 120 Abschnitte (mind. 10 s) gemittelt. Pace in s/km; langsamer als 15:00/km bleibt eine Lücke. Das Ergebnis wird je Aktivität in KV gespeichert (`icu:profile:v1:<id>`), auch „keine Zeitreihen“ (404). In der Grafik ist Leistung bzw. Pace die Fläche in Sportfarbe (Pace: schneller = höher, Skala ohne die äußersten 3 %), Puls die Linie mit eigener Skala rechts.
+
 ## 8. Ernährung (Yazio-Sync und Dashboard)
 
 ### 8.1 Tagessummen (`yazio-client.js:176`)
