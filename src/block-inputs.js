@@ -9,7 +9,7 @@ import { FLAT_M_PER_KM, HEAT_C, swimTestFromIntervals, swimTestFromText } from "
 
 const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
 const MAX_FETCH = 6; // je Aufruf hoechstens so viele Einheiten nachladen (Rest beim naechsten Mal, Ergebnis in KV)
-const DEC_CACHE = "icu:decoupling:v1:";
+const DEC_CACHE = "icu:decoupling:v2:"; // v2: Auf-/Abwaermzeit aus Intervals bleibt draussen
 const SWIM_CACHE = "icu:swimtest:v1:";
 const EASY_NAME = /long\s*slow|\blsr\b|\blit\b|locker|grundlage|langer\s*lauf|\bz2\b|ga\s*1|ausdauer|endurance/i;
 const HARD_NAME = /\b(hit|hiit|sit|vo2|ftp|test|sprint|pyramid|sweet\s*spot|schwelle|threshold|tempo|intervall|fatmax|eb)\b/i;
@@ -18,14 +18,20 @@ const HEAT_TEXT = /hitze|heiß|heiss|\bhot\b/i;
 // Aerobe Entkopplung (Pa:HR bzw. Pw:HR): Effizienz (Tempo bzw. Leistung je Herzschlag) der ersten gegen die zweite Haelfte.
 // Nur Proben mit Puls und Bewegung; mindestens 20 Minuten. Positiv = zweite Haelfte schlechter.
 // maxSec: nur die ersten maxSec Sekunden (Zeitstrahl "time", sonst eine Probe je Sekunde).
-export function decouplingFromStreams(streams, field, maxSec = null) {
+// warmupSec/cooldownSec: wie bei Intervals (icu_warmup_time, icu_cooldown_time) vorne bzw. hinten ausgelassen.
+export function decouplingFromStreams(streams, field, maxSec = null, { warmupSec = 0, cooldownSec = 0 } = {}) {
   const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
   const hr = get("heartrate"), out = get(field), time = get("time");
   if (!Array.isArray(hr) || !Array.isArray(out)) return null;
   const minOut = field === "velocity_smooth" ? 1 : 10;
+  const n = Math.min(hr.length, out.length);
+  const tOf = (i) => (Array.isArray(time) && Number.isFinite(time[i]) ? time[i] : i);
+  const endSec = cooldownSec > 0 ? tOf(n - 1) - cooldownSec : Infinity;
   const pts = [];
-  for (let i = 0; i < Math.min(hr.length, out.length); i++) {
-    if (maxSec != null && (Array.isArray(time) ? time[i] : i) >= maxSec) break;
+  for (let i = 0; i < n; i++) {
+    const t = tOf(i);
+    if ((maxSec != null && t >= maxSec) || t > endSec) break;
+    if (t < warmupSec) continue;
     if (hr[i] > 40 && out[i] >= minOut) pts.push([out[i], hr[i]]);
   }
   if (pts.length < 1200) return null;
@@ -58,7 +64,8 @@ async function decouplingOf(env, a, field, budget, firstMin = null) {
   if (own != null && !cut) return own;
   if (!hasHrOf(a) || a?.id == null) return null;
   const key = DEC_CACHE + a.id + (cut ? `:${firstMin}` : "");
-  const v = await cached(env, key, budget, async () => decouplingFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", field]), field, cut ? firstMin * 60 : null));
+  const skip = { warmupSec: num(a?.icu_warmup_time) ?? 0, cooldownSec: num(a?.icu_cooldown_time) ?? 0 };
+  const v = await cached(env, key, budget, async () => decouplingFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", field]), field, cut ? firstMin * 60 : null, skip));
   return v ?? null;
 }
 
