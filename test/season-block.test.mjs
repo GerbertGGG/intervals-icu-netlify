@@ -162,3 +162,6 @@ assert.equal(gi.of, 8); assert.equal(gi.status, "warn");
 gi = buildBlockGoalsFull(bL, { intensity: ints.filter((x) => x.date !== wk(10)) }, "2027-01-08").goals.find((x) => x.key === "intensity");
 assert.equal(gi.status, "bad");
 console.log("block intensity ok");
+// Woche 1 läuft: kein "offen", sondern der Grund, warum sie nicht zählt
+assert.match(buildBlockGoalsFull(resolveSeasonBlock([{ ...ev, description: lpText }], "2026-10-20"), {}, "2026-10-20").goals.find((x) => x.key === "intensity").note, /^Diese Woche: Woche 1, zählt erst ab Woche 2$/);
+console.log("block intensity week 1 ok");
