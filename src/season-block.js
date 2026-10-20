@@ -357,7 +357,8 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
     const hit = cfg.kinds.every((k) => has[k] > 0);
     let ill = false;
     for (let d = x.start; d <= x.end; d = addDays(d, 1)) if (sick.has(d)) ill = true;
-    return { start: x.start, done: x.done, load: x.load && (w.baseline || x.idx + 1 >= cfg.fromWeek), has, hit, sick: ill };
+    const early = !w.baseline && x.idx + 1 < cfg.fromWeek;
+    return { start: x.start, done: x.done, load: x.load && !early, skip: early ? `Woche ${x.idx + 1}, zählt erst ab Woche ${cfg.fromWeek}` : x.load ? null : "Entlastungswoche, zählt nicht", has, hit, sick: ill };
   });
   // Krankheitswoche ohne Ziel faellt heraus; mit Ziel zaehlt sie normal
   const full = weeks.filter((x) => x.done && x.load && (x.hit || !(cfg.sickOk && x.sick)));
@@ -370,7 +371,7 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
     target: `${what} je 1× in ${cfg.need} von ${cfg.of} Belastungswochen${cfg.fromWeek > 1 ? ` ab Woche ${cfg.fromWeek}` : ""}`,
     value: full.length ? hits : null, of: full.length, needWeeks: cfg.need, ofWeeks: cfg.of, kinds: cfg.kinds, weeks: weeks.slice(-12),
     status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : misses > allowed ? "bad" : misses === allowed && allowed > 0 ? "warn" : "ok",
-    note: [open ? `Diese Woche: ${cfg.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k] ? "✓" : "offen"}`).join(", ")}${open.load ? "" : " (zählt nicht)"}` : null, misses ? `${misses} von ${allowed} erlaubten Fehlwochen` : null, weeks.some((x) => x.done && x.sick && !x.hit && cfg.sickOk) ? "Krankheitswoche ausgenommen" : null].filter(Boolean).join(" · ") || null,
+    note: [open ? (open.skip ? `Diese Woche: ${open.skip}` : `Diese Woche: ${cfg.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k] ? "✓" : "offen"}`).join(", ")}`) : null, misses ? `${misses} von ${allowed} erlaubten Fehlwochen` : null, weeks.some((x) => x.done && x.sick && !x.hit && cfg.sickOk) ? "Krankheitswoche ausgenommen" : null].filter(Boolean).join(" · ") || null,
     hints: cfg.sickOk ? ["Krankheit als Kalendereintrag „Krank“ (oder Kategorie Krankheit/Verletzung) eintragen, dann zählt die Woche nicht als verfehlt."] : [],
   };
 }
