@@ -8,7 +8,7 @@
 const THRESHOLDS = { tsb: { ok: -10, warn: -25 }, tsbPct: { risk: -30, optimal: -10, fresh: 5, transition: 25 }, acwr: { lo: 0.8, hi: 1.3 } };
 
 const READY_METRICS = [
-  { key: "sleepQuality", label: "Schlaf" },
+  { key: "sleepQuality", label: "Schlaf", soft: true },
   { key: "fatigue", label: "Ermüdung" },
   { key: "soreness", label: "Muskelkater" },
   { key: "mood", label: "Stimmung", soft: true },
@@ -56,9 +56,22 @@ const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 864000
 
 // Körperwerte (objektiv) nach den Regeln des Coachings: Basis = Median der 28 Tage VOR heute (heute zählt nicht mit),
 // ohne Krankheitstage und die 3 Tage danach, nur Tage mit Wert. Unter 5 Werten keine Aussage, unter 10 "Basis dünn".
-// Gelb: Ruhepuls ≥ 4 über Basis, HRV ≥ 12 % unter Basis, Schlaf-Score < 80 an 2 Tagen in Folge (ohne Score: unter 6 h).
-// Rot: Ruhepuls ≥ 8 über Basis oder zwei gelbe Signale. Fehlende Werte = "none", nie "gut".
-export const BODY_RULES = { baseDays: 28, minN: 5, thinN: 10, restingHR: { warn: 4, bad: 8 }, hrvDrop: 0.88, hrvUp: 1.05, sleepScore: 80, sleepHoursMin: 6, sickTail: 3 };
+// Einzelne Tage streuen stark (HRV bei dir 22–53), deshalb zählt ein leichter Ausschlag nur mit Bestätigung:
+//   HRV: Einbruch ≥ 20 % unter Basis zählt allein. 12–20 % unter Basis zählt nur, wenn Ruhepuls, Schlaf oder ein Trend
+//        ihn bestätigen. Trend: 7-Tage-Schnitt ≥ 7 % unter dem Median der 4 Wochen davor und heute noch ≥ 5 % darunter.
+//   Ruhepuls: ≥ 8 über Basis = rot, ≥ 6 zählt allein, 4–5 nur mit Bestätigung. Trend: 7-Tage-Schnitt ≥ 3 über dem
+//        Median der 4 Wochen davor und heute noch ≥ 2 darüber.
+//   Schlaf: Schlaf-Score < 80 an 2 Tagen in Folge (ohne Score: unter 6 h).
+// Gelb = ein Signal, Rot = Ruhepuls ≥ 8 über Basis oder zwei Signale. Zeigen HRV und Ruhepuls nur über den Trend aus, ist
+// das eine Beobachtung (dieselbe Woche), also ein Signal. Ein unbestätigter Einzelwert bleibt "ok" mit
+// single = true (Hinweis, kein Signal). Fehlende Werte = "none", nie "gut".
+export const BODY_RULES = {
+  baseDays: 28, minN: 5, thinN: 10, sickTail: 3,
+  restingHR: { mild: 4, warn: 6, bad: 8 },
+  hrvDrop: 0.88, hrvStrong: 0.8, hrvUp: 1.05,
+  trend: { days: 7, minN: 4, hrv: 0.93, resting: 3, hrvToday: 0.95, restingToday: 2 },
+  sleepScore: 80, sleepHoursMin: 6,
+};
 
 function sickSetOf(sickDays) {
   const set = new Set();
@@ -67,22 +80,38 @@ function sickSetOf(sickDays) {
 }
 
 function computeBody(wellness, todayIso, sickDays = []) {
-  const R = BODY_RULES, skip = sickSetOf(sickDays);
+  const R = BODY_RULES, T = R.trend, skip = sickSetOf(sickDays);
   const by = Object.fromEntries(wellness.map((w) => [w.date, w]));
   const today = by[todayIso], yday = by[addDays(todayIso, -1)];
   const past = wellness.filter((w) => w.date >= addDays(todayIso, -R.baseDays) && w.date < todayIso && !skip.has(w.date));
-  const base = (key) => { const v = past.map((w) => w[key]).filter((x) => x != null); return { med: v.length >= R.minN ? median(v) : null, n: v.length }; };
+  const base = (key, list = past) => { const v = list.map((w) => w[key]).filter((x) => x != null); return { med: v.length >= R.minN ? median(v) : null, n: v.length }; };
+  // Trend-Basis: die 28 Tage VOR der Trendwoche, sonst steckt ein langsamer Abfall schon in der Basis und hebt sich auf
+  const prior = wellness.filter((w) => w.date >= addDays(todayIso, -(T.days - 1) - R.baseDays) && w.date <= addDays(todayIso, -T.days) && !skip.has(w.date));
+  // 7-Tage-Schnitt bis einschließlich heute (Krankheitstage zählen mit: danach soll die Ampel vorsichtig bleiben)
+  const recent = wellness.filter((w) => w.date > addDays(todayIso, -T.days) && w.date <= todayIso);
+  const mean7 = (key) => { const v = recent.map((w) => w[key]).filter((x) => x != null); return v.length >= T.minN ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   const hrvB = base("hrv"), rhrB = base("restingHR"), sleepB = base("sleepHours");
   const h = today?.sleepHours ?? null, score = today?.sleepScore ?? null, hrv = today?.hrv ?? null, rhr = today?.restingHR ?? null;
   const q = hrv != null && hrvB.med > 0 ? hrv / hrvB.med : null;
   const diff = rhr != null && rhrB.med != null ? rhr - rhrB.med : null;
+  const hrvT = base("hrv", prior).med, rhrT = base("restingHR", prior).med;
+  const hrv7 = hrvT > 0 ? mean7("hrv") : null, rhr7 = rhrT != null ? mean7("restingHR") : null;
   const sleepCls = score != null
     ? (score < R.sleepScore && (yday?.sleepScore ?? 100) < R.sleepScore ? "warn" : "ok")
     : h == null ? "none" : h < R.sleepHoursMin ? "warn" : "ok";
+  const hrvTrend = hrv7 != null && hrv7 <= hrvT * T.hrv && (hrv == null || hrv <= hrvT * T.hrvToday);
+  const rhrTrend = rhr7 != null && rhr7 >= rhrT + T.resting && (rhr == null || rhr >= rhrT + T.restingToday);
+  const hrvMild = q != null && q <= R.hrvDrop, rhrMild = diff != null && diff >= R.restingHR.mild;
+  // Bestätigung eines leichten Ausschlags: ein anderes Körpersignal oder ein Trend zeigt in dieselbe Richtung
+  const hrvDay = (q != null && q <= R.hrvStrong) || (hrvMild && (rhrMild || rhrTrend || sleepCls === "warn"));
+  const rhrDay = (diff != null && diff >= R.restingHR.warn) || (rhrMild && (hrvMild || hrvTrend || sleepCls === "warn"));
+  const hrvOk = hrvDay || hrvTrend, rhrOk = rhrDay || rhrTrend;
+  const hrvCls = hrvOk ? "warn" : q == null && hrv7 == null ? "none" : "ok";
+  const rhrCls = diff != null && diff >= R.restingHR.bad ? "bad" : rhrOk ? "warn" : diff == null && rhr7 == null ? "none" : "ok";
   return {
     sleep: { cls: sleepCls, score, hours: h },
-    hrv: { cls: q == null ? "none" : q <= R.hrvDrop ? "warn" : "ok", trend: q == null ? null : q <= R.hrvDrop ? "down" : q > R.hrvUp ? "up" : "flat", thin: hrvB.n < R.thinN, n: hrvB.n },
-    resting: { cls: diff == null ? "none" : diff >= R.restingHR.bad ? "bad" : diff >= R.restingHR.warn ? "warn" : "ok", thin: rhrB.n < R.thinN, n: rhrB.n },
+    hrv: { cls: hrvCls, trend: q == null ? null : q <= R.hrvDrop ? "down" : q > R.hrvUp ? "up" : "flat", mean7: hrv7, base7: hrvT, low7: hrvTrend, trendOnly: hrvTrend && !hrvDay, single: hrvMild && !hrvOk, thin: hrvB.n < R.thinN, n: hrvB.n },
+    resting: { cls: rhrCls, mean7: rhr7, base7: rhrT, high7: rhrTrend, trendOnly: rhrTrend && !rhrDay && rhrCls === "warn", single: rhrMild && rhrCls === "ok", thin: rhrB.n < R.thinN, n: rhrB.n },
     sleepMedian: sleepB.med, hrvMedian: hrvB.med, restingMedian: rhrB.med,
   };
 }
@@ -92,9 +121,10 @@ function computeBody(wellness, todayIso, sickDays = []) {
 // Die Gefühlswerte trägt der Nutzer immer VOR dem Lauf ein: sie beschreiben den Ausgangszustand, nicht die Reaktion auf die
 // Einheit des Tages, und dürfen nicht als Lauffolge gelesen werden. Fehlt der heutige Eintrag, gilt der von gestern früh.
 // Urteil (Coaching-Regeln): Krankheit (Kalender) = kein Training. Rot = Ruhepuls ≥ 8 über Basis, zwei gelbe Körpersignale,
-// Ermüdung/Muskelkater/Schlaf deutlich schlechter oder drei Warnungen insgesamt. Gelb = ein gelbes Körpersignal, zwei
-// Warnungen, Stimmung/Motivation deutlich schlechter oder Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt. Eine einzelne
-// knappe Gefühls-Warnung ist Rauschen. Die Trainingslast (TSB) gehört nicht ins Erholungsurteil.
+// Ermüdung/Muskelkater deutlich schlechter oder drei Warnungen insgesamt. Gelb = ein gelbes Körpersignal, zwei
+// Warnungen, Schlafqualität/Stimmung/Motivation deutlich schlechter oder Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt.
+// Die eingetragene Schlafqualität macht allein höchstens gelb und zählt nicht zusätzlich, wenn der Schlaf-Score schon
+// meldet (Schlaf zählt einmal). Eine einzelne knappe Gefühls-Warnung ist Rauschen. Die Trainingslast (TSB) gehört nicht ins Erholungsurteil.
 // ctx: { sickDays: [date], hipFlags: [{date}] }
 export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   const yIso = addDays(todayIso, -1);
@@ -116,18 +146,21 @@ export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   const body = computeBody(wellness, todayIso, ctx.sickDays);
   const today = wellness.find((w) => w.date === todayIso);
   const f = (x) => String(Math.round(x * 10) / 10).replace(".", ",");
-  const bodyWarn = [body.sleep, body.hrv, body.resting].filter((b) => b.cls === "warn").length;
+  const bodyReason = (label, v, b, med) => [v != null && med != null ? `${label} ${f(v)} (Basis ${f(med)})` : null, b.low7 || b.high7 ? `7-Tage-Schnitt ${f(b.mean7)} (Wochen davor ${f(b.base7)})` : null].filter(Boolean).join(", ");
+  const bodyWarn = [body.sleep, body.hrv, body.resting].filter((b) => b.cls === "warn").length - (body.hrv.trendOnly && body.resting.trendOnly ? 1 : 0);
   const bodyBad = body.resting.cls === "bad";
-  const hardBad = items.filter((i) => i.cls === "bad" && !i.soft).length;
-  const softBad = items.filter((i) => i.cls === "bad" && i.soft).length;
-  const subjWarn = items.filter((i) => i.cls === "warn").length + softBad;
+  // Schlaf zählt einmal: meldet schon der Schlaf-Score, zählt die eingetragene Schlafqualität nicht noch einmal
+  const counted = items.filter((i) => !(i.key === "sleepQuality" && body.sleep.cls === "warn"));
+  const hardBad = counted.filter((i) => i.cls === "bad" && !i.soft).length;
+  const softBad = counted.filter((i) => i.cls === "bad" && i.soft).length;
+  const subjWarn = counted.filter((i) => i.cls === "warn").length + softBad;
   const sick = (ctx.sickDays ?? []).includes(todayIso) || (ctx.sickDays ?? []).includes(yIso);
   const hip = (ctx.hipFlags ?? []).filter((x) => x.date >= addDays(todayIso, -2) && x.date <= todayIso);
   const reasons = [
     sick ? "Krankheit im Kalender" : null,
     ...hip.slice(0, 1).map((x) => `Hüfte/Leiste/Knie erwähnt (${x.date.slice(8, 10)}.${x.date.slice(5, 7)}.)`),
-    body.resting.cls === "warn" || body.resting.cls === "bad" ? `Ruhepuls ${f(today.restingHR)} (Basis ${f(body.restingMedian)})` : null,
-    body.hrv.cls === "warn" ? `HRV ${f(today.hrv)} (Basis ${f(body.hrvMedian)})` : null,
+    body.resting.cls === "warn" || body.resting.cls === "bad" ? bodyReason("Ruhepuls", today?.restingHR, body.resting, body.restingMedian) : null,
+    body.hrv.cls === "warn" ? bodyReason("HRV", today?.hrv, body.hrv, body.hrvMedian) : null,
     body.sleep.cls === "warn" ? (body.sleep.score != null ? `Schlaf-Score ${body.sleep.score} (2. Tag unter ${BODY_RULES.sleepScore})` : `Schlaf ${f(body.sleep.hours)} h`) : null,
     ...items.filter((i) => i.cls === "warn" || i.cls === "bad").map((i) => `${i.label} ${i.v} (üblich ${f(i.med)})`),
   ].filter(Boolean);
@@ -140,6 +173,9 @@ export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   else verdict = { cls: "ok", text: "Grün: Qualität möglich", sub: "Erholungswerte im üblichen Bereich." };
   verdict.reasons = reasons;
   if (ydayE) verdict.note = "Gefühlswerte von gestern früh (heute noch nicht eingetragen).";
+  // Unbestätigte Einzelwerte: sichtbar machen, aber nicht werten
+  const single = [body.hrv.single ? `HRV ${f(today.hrv)} (Basis ${f(body.hrvMedian)})` : null, body.resting.single ? `Ruhepuls ${f(today.restingHR)} (Basis ${f(body.restingMedian)})` : null].filter(Boolean);
+  if (single.length) verdict.watch = `Einzelwert, allein kein Signal: ${single.join(" · ")}`;
   const thin = [body.hrv.thin && body.hrv.n >= BODY_RULES.minN ? "HRV" : null, body.resting.thin && body.resting.n >= BODY_RULES.minN ? "Ruhepuls" : null].filter(Boolean);
   if (thin.length) verdict.thin = `Basis noch dünn: ${thin.join(", ")}`;
   return { verdict, items, body, entryDate: src?.date ?? null, sleepHours: today?.sleepHours ?? null, sleepScore: today?.sleepScore ?? null, hrv: today?.hrv ?? null, restingHR: today?.restingHR ?? null };

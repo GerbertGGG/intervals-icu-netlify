@@ -178,7 +178,14 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
   // Ruhepuls ≥ 8 über Basis = rot, ≥ 4 = gelb
   const rhr = (v) => computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, restingHR: v } : w)), today);
   const rb = rhr(null).body.restingMedian;
-  if (rb != null) { assert.equal(rhr(rb + 8).verdict.cls, "bad"); assert.equal(rhr(rb + 4).body.resting.cls, "warn"); assert.equal(rhr(rb + 3).body.resting.cls, "ok"); }
+  if (rb != null) {
+    assert.equal(rhr(rb + 8).verdict.cls, "bad");
+    assert.equal(rhr(rb + 6).body.resting.cls, "warn"); // ab 6 allein ein Signal
+    assert.equal(rhr(rb + 4).body.resting.cls, "ok"); // 4–5 allein: Einzelwert, kein Signal
+    assert.equal(rhr(rb + 4).body.resting.single, true);
+    assert.match(rhr(rb + 4).verdict.watch, /Einzelwert/);
+    assert.equal(rhr(rb + 3).body.resting.cls, "ok");
+  }
   // Krankheit im Kalender übersteuert alles; Krankheitstage zählen nicht zur Basis
   const sick = computeReadiness(d.wellness, today, null, { sickDays: [day(-1)] });
   assert.equal(sick.verdict.cls, "bad"); assert.equal(sick.verdict.sick, true);

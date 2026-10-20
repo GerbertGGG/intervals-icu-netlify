@@ -93,5 +93,5 @@ export function buildTodayPlan(input) {
   else if (verdict.cls === "warn") title = "Heute nur locker";
   else if (verdict.cls === "ok") title = qualityOpen ? "Qualität möglich" : "Locker nach Wochenrahmen";
   else title = "Keine Einschätzung";
-  return { cls: verdict.cls, title, sub: verdict.sub, reasons: verdict.reasons ?? [], note: [verdict.note, verdict.thin].filter(Boolean).join(" · ") || null, lines, nextTest, daysToTest: daysTo };
+  return { cls: verdict.cls, title, sub: verdict.sub, reasons: verdict.reasons ?? [], note: [verdict.note, verdict.watch, verdict.thin].filter(Boolean).join(" · ") || null, lines, nextTest, daysToTest: daysTo };
 }
