@@ -100,6 +100,12 @@ const numOf = (s) => Number(String(s).replace(",", "."));
 // als Stichworte im Text (Kraft "8 von 9 Belastungswochen", "Ramp Rate … ≤5", "Pause über 7 Tage"). Muss-Kriterium: "Muss ≤8 %"
 // im Absatz der Sportart, sonst gilt ein allgemeines ("bei 8 % … Muss-Kriterium") fuer beide Decoupling-Ziele.
 const num1 = (m, fb) => (m ? numOf(m[1]) : fb);
+// Termine der Blocktests aus dem Satz mit "Basistest"/"Blocktest" als "MM-DD" (Jahr ergibt sich aus dem Blockstart)
+export function parseTestDates(p) {
+  const m = String(p ?? "").match(/basistest\s*(\d{1,2}\.\d{1,2}\.[^)\n]*)/i);
+  if (!m) return [];
+  return [...m[1].matchAll(/(\d{1,2})\.(\d{1,2})\./g)].map((x) => `${x[2].padStart(2, "0")}-${x[1].padStart(2, "0")}`);
+}
 const LE = "(?:≤|<=|<|unter|max(?:imal)?)";
 function parseSportGoals(t) {
   const paras = t.split(/\n\s*\n|\n(?=\s*\d+\.\s)/);
@@ -116,11 +122,26 @@ function parseSportGoals(t) {
   if (runP) {
     const max = decMax(runP), must = mustOf(runP);
     out.run = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(runP), minMin: num1(runP.match(/(?:≥|>=|ab|mind(?:estens)?\.?)\s*(\d+)\s*min/i), 60), pace: /pace/i.test(runP) };
+    // Blocktests mit Terminen ("Basistest 25.10., dann 08.11., 06.12., 03.01."): Ziel wird nur an diesen Laeufen gemessen,
+    // Decoupling der ersten 60 min und stabile Dauer (laengstes Fenster 0–60, 0–75 … mit Decoupling ≤ stableMax)
+    const tests = parseTestDates(runP);
+    if (tests.length) {
+      out.run.tests = tests;
+      out.run.stableMax = num1(runP.match(new RegExp(`stabile\\s*dauer[^\\n]*?decoupling\\s*${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), 5);
+      const band = runP.match(/hf-?band\s*(\d{2,3})\s*[–-]\s*(\d{2,3})/i);
+      if (band) out.run.band = [Number(band[1]), Number(band[2])];
+    }
   }
   if (bikeP) {
     const max = decMax(bikeP), must = mustOf(bikeP);
+    // Messfenster ("60-min-Messfenster") nach dem Einrollen ("10 min Einrollen") bei fester Leistung ("fester Leistung 165 W")
+    const win = num1(bikeP.match(/(\d+)\s*-?\s*min\s*-?\s*messfenster/i), null);
+    const warm = num1(bikeP.match(/(\d+)\s*min\s*einrollen/i), null);
+    const watts = num1(bikeP.match(/fest(?:e|er|en)?\s*leistung\s*(?:von\s*)?(\d{2,3})\s*w\b/i), null);
     // FTP-Test nur, wenn er im Block ansteht ("FTP-Test in Woche 1"); eine Referenz wie "FTP 252 W (Rampentest 12.10.)" nicht
-    out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: num1(bikeP.match(/(\d+)\s*min\b/i), 75), firstMin: num1(bikeP.match(/ersten\s*(\d+)\s*min/i), null), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
+    out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: win ?? num1(bikeP.match(/(\d+)\s*min\b/i), 75), firstMin: win ?? num1(bikeP.match(/ersten\s*(\d+)\s*min/i), null), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
+    if (warm != null) out.bike.warmupMin = warm;
+    if (watts != null) out.bike.watts = watts;
   }
   if (swimP) {
     const reps = swimP.match(/(\d)\s*[×x]\s*(\d{2,4})\s*m\b/i);
@@ -146,8 +167,10 @@ export function parseBlockTargets(text) {
   const sets = t.match(/(\d+)\s*sätze/i);
   const ramp = t.match(/ramp\s*-?\s*rate[^\d\n]{0,40}(\d+(?:[.,]\d+)?)/i);
   const pause = t.match(/pause\s*(?:über|von mehr als|länger als|>)\s*(\d+)\s*tag/i);
-  const decision = t.match(/woche\s*(\d+)\s*:[^\n]*/i);
-  const ext = decision?.[0].match(/(\d+\s*[–-]\s*\d+|\d+)\s*wochen/i);
+  // Entscheidung zum Blockende: eine Zeile, die mit "Woche 12" beginnt ("Woche 12: …" oder Ueberschrift "WOCHE 12" mit Absatz darunter).
+  // "Intensität ab Woche 2:" mitten in einer Zeile ist keine Entscheidung.
+  const decision = t.match(/^[ \t]*woche\s*(\d+)\b[^\n]*(?:\n(?![ \t]*\n)[^\n]*)*/im);
+  const ext = decision?.[0].match(/(\d+\s*[–-]\s*\d+|\d+)\s*wochen[^\n]{0,20}verlänger|verlänger[^\n]{0,40}?(\d+\s*[–-]\s*\d+|\d+)\s*wochen/i);
   return {
     ...sport,
     // Alte Form (nur Stichworte): Decoupling langer Laeufe, solange kein Lauf-Absatz mit vergleichbaren Laeufen da ist
@@ -157,7 +180,9 @@ export function parseBlockTargets(text) {
     ramp: ramp ? { max: numOf(ramp[1]) } : null,
     pause: pause ? { maxDays: Number(pause[1]) } : null,
     intensity: intKinds.length ? { need: Number(intLine[1]), of: Number(intLine[2]), fromWeek: intFrom ? Number(intFrom[1]) : 1, kinds: intKinds, sickOk: /krank/i.test(intLine[0]) } : null,
-    decision: decision ? { week: Number(decision[1]), extend: ext && /verlänger/i.test(decision[0]) ? ext[1].replace(/\s*-\s*/, "–") : "3–4" } : null,
+    // HF-Deckel fuer lockere Laeufe ("Lauf-Grundlage unter HF 125")
+    hrCap: num1(t.match(/grundlage[^\n]{0,40}?(?:unter|≤|<=|<)\s*hf\s*(\d{3})/i) ?? t.match(/hf-?(?:deckel|obergrenze)\s*:?\s*(\d{3})/i), null),
+    decision: decision ? { week: Number(decision[1]), extend: ext ? (ext[1] ?? ext[2]).replace(/\s*[–-]\s*/, "–") : "3–4" } : null,
   };
 }
 
@@ -190,8 +215,11 @@ const RECOVERY_EVERY = 4; // 3:1 – jede 4. Blockwoche ist Entlastung, die ande
 export function isComparableRun(r, cfg) {
   return Boolean(r.easy) && !r.treadmill && !r.heat && (r.durationMin ?? 0) >= cfg.minMin && (r.elevPerKm == null || r.elevPerKm <= FLAT_M_PER_KM);
 }
+const RIDE_WATTS_TOL = 0.06; // feste Leistung: Messfenster hoechstens 6 % daneben
 export function isComparableRide(r, cfg) {
-  return Boolean(r.easy) && Boolean(r.indoor) && (r.durationMin ?? 0) >= cfg.minMin - RIDE_MIN_SLACK && (r.vi == null || r.vi <= RIDE_MAX_VI) && (r.intensity == null || r.intensity <= RIDE_MAX_IF);
+  const w = r.mainWatts ?? r.watts;
+  const wattsOk = !cfg.watts || !Number.isFinite(w) || Math.abs(w - cfg.watts) <= cfg.watts * RIDE_WATTS_TOL;
+  return Boolean(r.easy) && Boolean(r.indoor) && wattsOk && (r.durationMin ?? 0) >= cfg.minMin - RIDE_MIN_SLACK && (r.vi == null || r.vi <= RIDE_MAX_VI) && (r.intensity == null || r.intensity <= RIDE_MAX_IF);
 }
 // Warum ein lockerer Lauf nicht zaehlt (fuer den Hinweis): erster Grund
 function runExclusion(r, cfg) {
@@ -226,7 +254,7 @@ function decouplingGoal({ key, sport, label, sessions, cfg, w, basis, comparable
     key, group: "ziel", sport, label, unit: "%", basis,
     target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · letzte ${n} vergleichbare${cfg.pace ? " · Pace nicht langsamer" : ""}`,
     value: avg != null ? r1(avg) : null, count: comp.length, max: cfg.max, must, lastN: n, pace,
-    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(x.watts ? { watts: Math.round(x.watts) } : {}), ...(Number.isFinite(x.tempC) ? { tempC: Math.round(x.tempC) } : {}) })),
+    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(Number.isFinite(x.mainWatts ?? x.watts) ? { watts: Math.round(x.mainWatts ?? x.watts) } : {}), ...(x.noWarmup ? { noWarmup: true } : {}) })),
     status,
     // Fuer die Entscheidung in Woche 12 zaehlt das Muss-Kriterium (ohne Muss der Zielwert), ueber volle n Einheiten
     pass: !w.baseline && comp.length >= n && (must != null ? avg <= must : decOk) && pace?.ok !== false,
@@ -376,6 +404,65 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
   };
 }
 
+// ---------- Lauf mit Blocktests: Basis (Decoupling 0–60 min) und Haltbarkeit (stabile Dauer) ----------
+// Ein Blocktest ist der lockere Lauf am Testtermin oder bis zu 2 Tage danach (Verschiebung bei roter Ampel), oder ein Lauf
+// mit "Blocktest"/"Basistest" im Namen; am Termin zaehlt der laengste. Jeder Lauf traegt seine Auswertung aus den
+// Zeitreihen (analysis, siehe block-inputs.js): dec60, pace60, windows [{min, value}], stableMin (0 = unter 60 min).
+// Grundlagenlaeufe ab 60 min ausserhalb der Tests sind nur Trend, nicht Ziel.
+const TEST_SHIFT_DAYS = 2;
+const PACE_NOISE_SEC = 5; // Pace-Unterschiede unter 5 s/km sind Rauschen
+export function testDatesOf(block, tests) {
+  const y0 = Number(block.start.slice(0, 4));
+  return tests.map((md) => { const iso = `${y0}-${md}`; return iso < addDays(block.start, -7) ? `${y0 + 1}-${md}` : iso; });
+}
+const fmtMin = (m) => (m == null ? "–" : m === 0 ? "unter 60 min" : `${m} min`);
+function blocktestGoals(block, runs, cfg, w, basis, todayIso) {
+  const planned = testDatesOf(block, cfg.tests);
+  const usable = runs.filter((r) => inWin(r.date, w) && r.easy && !r.treadmill && Number.isFinite(r.analysis?.dec60));
+  const named = usable.filter((r) => /blocktest|basistest/i.test(r.name ?? ""));
+  const used = new Set();
+  const tests = [];
+  planned.forEach((p, i) => {
+    const cand = usable.filter((r) => !used.has(r) && ((r.date >= p && r.date <= addDays(p, TEST_SHIFT_DAYS)) || (named.includes(r) && Math.abs(diffDays(p, r.date)) <= 6)));
+    const r = cand.sort((a, b) => (b.durationMin ?? 0) - (a.durationMin ?? 0))[0];
+    if (!r) return;
+    used.add(r);
+    const a = r.analysis;
+    tests.push({ date: r.date, planned: p, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM });
+  });
+  const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.planned === p)) ?? null;
+  const n = cfg.lastN, last = tests.slice(-n), baseT = tests[0] ?? null, lastT = tests[tests.length - 1] ?? null;
+  const avg = mean(last.map((t) => t.dec60));
+  const must = cfg.must ?? null;
+  const paceOk = baseT && lastT && lastT !== baseT && baseT.pace60Sec != null && lastT.pace60Sec != null ? lastT.pace60Sec <= baseT.pace60Sec + PACE_NOISE_SEC : null;
+  const decOk = avg != null && avg <= cfg.max, decMust = avg != null && (must != null ? avg <= must : avg <= cfg.max + 2);
+  const trend = usable.filter((r) => !used.has(r) && (r.durationMin ?? 0) >= cfg.minMin);
+  const nextTxt = nextTest ? `nächster Test ${nextTest.slice(8, 10)}.${nextTest.slice(5, 7)}.` : null;
+  const conds = tests.filter((t) => t.heat || t.hilly).map((t) => `${t.date.slice(8, 10)}.${t.date.slice(5, 7)}. ${t.heat ? "Hitze" : "nicht flach"}`);
+  const shared = { group: "ziel", sport: "run", basis, tests, nextTest, count: tests.length, lastN: n };
+  const base = {
+    key: "runDecoupling", ...shared, label: "Lauf: Basis (0–60 min)", unit: "%",
+    target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · Decoupling 0–60 min der letzten ${n} Blocktests · Pace 0–60 nicht langsamer als im Basistest`,
+    value: avg != null ? r1(avg) : null, max: cfg.max, must, pace: paceOk == null ? null : { first: baseT.pace60Sec, last: lastT.pace60Sec, ok: paceOk },
+    series: tests.map((t) => ({ date: t.date, value: r1(t.dec60), ...(t.pace60 ? { pace: t.pace60 } : {}) })),
+    status: avg == null ? "none" : w.baseline ? "base" : paceOk === false ? (decMust ? "warn" : "bad") : statusOf(decOk, decMust),
+    pass: !w.baseline && tests.length >= n && (must != null ? avg <= must : decOk) && paceOk !== false,
+    note: avg == null ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : [tests.length < n ? `erst ${tests.length} von ${n} Tests` : `Ø der letzten ${n} Tests`, paceOk === false ? `Pace 0–60 ${lastT.pace60} statt ${baseT.pace60} /km – langsamer als im Basistest` : null, nextTxt].filter(Boolean).join(" · "),
+    hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Grundlagenl${trend.length === 1 ? "auf" : "äufe"} ab ${cfg.minMin} min, Ø Decoupling 0–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
+  };
+  const grow = baseT && lastT && lastT !== baseT ? lastT.stableMin > baseT.stableMin : null;
+  const stable = {
+    key: "runStable", ...shared, label: "Lauf: stabile Dauer", unit: "min", stableMax: cfg.stableMax,
+    target: `im letzten Blocktest länger als im Basistest · längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ ${cfg.stableMax} %`,
+    value: lastT ? lastT.stableMin : null, baseValue: baseT ? baseT.stableMin : null,
+    status: !lastT ? "none" : w.baseline ? "base" : grow == null ? "none" : grow ? "ok" : lastT.stableMin === baseT.stableMin ? "warn" : "bad",
+    pass: !w.baseline && grow === true,
+    note: !lastT ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : grow == null ? `Basistest: ${fmtMin(baseT.stableMin)} – verglichen wird ab dem nächsten Test${nextTxt ? ` (${nextTxt})` : ""}` : `${fmtMin(lastT.stableMin)} statt ${fmtMin(baseT.stableMin)} im Basistest${nextTxt ? ` · ${nextTxt}` : ""}`,
+    hints: [],
+  };
+  return [base, stable];
+}
+
 // Entscheidung zum Blockende (Woche 12): alle Ziele und Leitplanken erfuellt -> naechster Block; eine Leitplanke gerissen ->
 // erst Ursache klaeren; sonst die betroffenen Sportarten verlaengern. Vor der Woche als "Stand heute".
 const SPORT_DE = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
@@ -386,15 +473,16 @@ export function buildBlockDecision(block, targets, goals) {
   const broken = lp.filter((g) => g.status === "bad");
   const missing = ziele.filter((g) => !g.pass);
   const state = broken.length ? "cause" : missing.length ? "extend" : "next";
-  const sports = missing.map((g) => SPORT_DE[g.sport] ?? g.label);
+  const sports = [...new Set(missing.map((g) => SPORT_DE[g.sport] ?? g.label))];
   const text = state === "next" ? `Weiter mit ${block.next?.name ?? "dem nächsten Block"}${block.next?.start ? ` (ab ${block.next.start.slice(8, 10)}.${block.next.start.slice(5, 7)}.)` : ""}.`
     : state === "extend" ? `${sports.join(", ")} um ${targets.decision.extend} Wochen verlängern.`
     : `Leitplanke gerissen (${broken.map((g) => g.label).join(", ")}): erst die Ursache klären, dann ${missing.length ? `${sports.join(", ")} verlängern` : "weiter"}.`;
-  return { week: targets.decision.week, due: block.status === "done" || (block.weekNo ?? 0) >= targets.decision.week, state, text, missing: missing.map((g) => g.sport), broken: broken.map((g) => g.key) };
+  return { week: targets.decision.week, due: block.status === "done" || (block.weekNo ?? 0) >= targets.decision.week, state, text, missing: [...new Set(missing.map((g) => g.sport))], broken: broken.map((g) => g.key) };
 }
 
 // input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}],
-//   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,vi,intensity,indoor,easy,hasHr,tempC}],
+//   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,mainWatts,noWarmup,vi,intensity,indoor,easy,hasHr}],
+//   im Blocktest-Modus runs zusaetzlich mit {id,name,analysis} (analyzeRunStreams),
 //   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}],
 //   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date] }
 export function buildBlockGoals(block, input, todayIso) {
@@ -407,7 +495,8 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   const basis = w.baseline ? "letzte 8 Wochen" : "seit Blockstart";
   const goals = [];
 
-  if (targets.run) {
+  if (targets.run?.tests?.length) goals.push(...blocktestGoals(block, input.runs ?? [], targets.run, w, basis, todayIso));
+  else if (targets.run) {
     const cfg = targets.run;
     const easy = (input.runs ?? []).filter((r) => inWin(r.date, w) && r.easy);
     const excluded = easy.map((r) => runExclusion(r, cfg)).filter(Boolean);
@@ -430,9 +519,13 @@ export function buildBlockGoalsFull(block, input, todayIso) {
       extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null },
     });
     const last = g.series.slice(-g.lastN);
-    const watts = last.map((x) => x.watts).filter(Number.isFinite), temps = last.map((x) => x.tempC).filter(Number.isFinite);
+    // Temperatur des Radcomputers bleibt draussen: der Sensor misst Koerperwaerme mit
+    const watts = last.map((x) => x.watts).filter(Number.isFinite);
     const span = (xs, u) => (xs.length ? (Math.min(...xs) === Math.max(...xs) ? `${Math.min(...xs)} ${u}` : `${Math.min(...xs)}–${Math.max(...xs)} ${u}`) : null);
-    if (watts.length) g.hints.unshift(`Leistung ${span(watts, "W")}${temps.length ? ` · Temperatur ${span(temps, "°C")}` : ""}`);
+    if (watts.length) g.hints.unshift(`Leistung im Messfenster ${span(watts, "W")}`);
+    if (cfg.firstMin && cfg.warmupMin) g.hints.push(`Messfenster: ${cfg.firstMin} min nach ${cfg.warmupMin} min Einrollen${cfg.watts ? `, Leistung ${cfg.watts} W ±${Math.round(RIDE_WATTS_TOL * 100)} %` : ""}`);
+    const noWarm = last.filter((x) => x.noWarmup).length;
+    if (noWarm) g.hints.push(`${noWarm}× ohne Einrollen gemessen (Fenster ab Minute 0)`);
     if (cfg.ftpTest && !w.baseline) g.hints.push(input.ftpTest ? `FTP-Test am ${input.ftpTest.date.slice(8, 10)}.${input.ftpTest.date.slice(5, 7)}.${input.ftp ? ` · FTP ${input.ftp} W` : ""}` : (block.weekNo ?? 1) > 1 || block.status === "done" ? "Kein FTP-Test in Woche 1 gefunden." : "FTP-Test in Woche 1 steht an.");
     goals.push(g);
   }

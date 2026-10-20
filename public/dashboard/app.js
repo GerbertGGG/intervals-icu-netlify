@@ -7,31 +7,13 @@ const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
 const HISTORY_DAYS = 56;
 const FORM_DAYS = 180; // Formkurve: längerer Verlauf (siehe FORM_DAYS im Worker)
-const SLEEP_TARGET_H = 7.5; // Richtwert je Nacht für Athleten (7–9 h), kein persönlich kalibrierter Wert
-const SLEEP_ACUTE_WEIGHT = 0.6; // Gewicht der letzten Nacht im akuten 2-Nächte-Wert
 const isTaper = (g) => g.daysToGo >= 0 && g.daysToGo <= 14;
+// Kommendes Rennen im Kalender? Ohne (none) keine Renn-Kacheln, Zielpaces und Prognosen: das Dashboard misst den laufenden Block.
+const hasRace = (g) => Boolean(g) && !g.none && g.daysToGo >= 0;
 const hm = (secs) => (secs < 3600 ? fmtTime(secs) : fmtTime(Math.round(secs / 60) * 60).replace(/:00$/, "")); // ab 1 h als h:mm, darunter m:ss
-// Schlafkonto: akut (2 Nächte, letzte Nacht 60 %) und chronisch (7 Nächte). Schlaf eines Tages = Nacht auf diesen Morgen. Fehlende Nacht zählt nie als gut.
-function sleepAccount(d) {
-  const by = Object.fromEntries(d.wellness.map((w) => [w.date, w.sleepHours]));
-  const night = (i) => { const date = addDays(d.today, -i); return { date, h: by[date] ?? null }; };
-  const nights = [night(0), night(1)];
-  const known = nights.filter((n) => n.h != null);
-  const w = [SLEEP_ACUTE_WEIGHT, 1 - SLEEP_ACUTE_WEIGHT];
-  const wSum = known.reduce((a, n) => a + w[nights.indexOf(n)], 0);
-  const avg = wSum ? known.reduce((a, n) => a + n.h * w[nights.indexOf(n)], 0) / wSum : null; // gewichtetes Mittel je Nacht
-  const complete = known.length === 2;
-  const cls = avg == null ? "none" : avg >= SLEEP_TARGET_H - 0.25 ? "ok" : avg >= SLEEP_TARGET_H - 1 ? "warn" : "bad";
-  const text = avg == null ? "nicht erfasst" : complete ? (cls === "ok" ? "gut gefüllt" : cls === "warn" ? "leicht im Minus" : "im Minus") : "unvollständig";
-  const week = Array.from({ length: 7 }, (_, i) => night(i)).filter((n) => n.h != null);
-  const wSumH = week.reduce((a, n) => a + n.h, 0), wAvg = week.length >= 4 ? wSumH / week.length : null;
-  const wCls = wAvg == null ? "none" : wAvg >= SLEEP_TARGET_H - 0.25 ? "ok" : wAvg >= SLEEP_TARGET_H - 0.75 ? "warn" : "bad";
-  const wText = wAvg == null ? "zu wenig Daten" : wCls === "ok" ? "Woche ausgeglichen" : wCls === "warn" ? "Woche leicht im Minus" : "Woche im Minus";
-  return {
-    nights, avg, target: SLEEP_TARGET_H, cls: complete || cls === "none" ? cls : cls === "ok" ? "warn" : cls, text,
-    week: { avg: wAvg, n: week.length, debt: wAvg == null ? null : Math.max(0, SLEEP_TARGET_H * week.length - wSumH), cls: wCls, text: wText },
-  };
-}
+// Frische in % der Fitness (CTL), Zonen wie Intervals.icu (Worker: dashboard-summary.js)
+const TSB_ZONE_TEXT = { risk: "hohes Risiko", optimal: "produktiv belastet", neutral: "neutral", fresh: "frisch", transition: "Übergang: Fitness sinkt" };
+const fmtStable = (m) => (m == null ? "–" : m === 0 ? "unter 60 min" : `${m} min`);
 
 /* ---------- Laden ---------- */
 async function load() {
@@ -71,15 +53,17 @@ function render(d) {
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
   initKraftTabs();
-  initNav();
   const steps = [renderCockpit, renderCoach, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
+  initNav();
 }
 
-/* Sprungleiste: der Abschnitt, in dem man gerade ist, ist hervorgehoben (leichtgewichtig über den Scroll-Stand) */
+/* Sprungleiste: der Abschnitt, in dem man gerade ist, ist hervorgehoben (leichtgewichtig über den Scroll-Stand).
+   Links auf ausgeblendete Abschnitte (Rennplan ohne Rennen) verschwinden. */
 function initNav() {
+  for (const l of document.querySelectorAll(".jump a")) l.hidden = Boolean(document.querySelector(l.getAttribute("href"))?.closest("[hidden]"));
   const links = [...document.querySelectorAll(".jump a")], targets = links.map((l) => document.querySelector(l.getAttribute("href")));
   const mark = () => {
     let cur = 0;
@@ -133,36 +117,49 @@ function renderSources(d) {
 }
 
 /* ---------- 5 · Erholung: Bereitschaft ---------- */
-// Die Einschätzungen (Bereitschaft, TSB, ACWR) rechnet der Worker (dashboard-summary.js), damit Seite
-// und Widget dasselbe zeigen. Hier wird nur dargestellt.
+// Die Einschätzungen (Bereitschaft, TSB) rechnet der Worker (dashboard-summary.js), damit Seite, Widget und Coach
+// dasselbe zeigen. Hier wird nur dargestellt.
+function bodyLine(R) {
+  const b = R.body, f1 = (v) => fmt(v, 1);
+  return [
+    R.sleepScore != null ? `Schlaf-Score ${fmt(R.sleepScore)}${R.sleepHours != null ? ` (${f1(R.sleepHours)} h)` : ""}` : R.sleepHours != null ? `${f1(R.sleepHours)} h Schlaf` : "Schlaf nicht erfasst",
+    R.hrv != null && `HRV ${fmt(R.hrv)}${b.hrvMedian != null ? ` · Basis ${f1(b.hrvMedian)}` : ""}`,
+    R.restingHR != null && `Ruhepuls ${fmt(R.restingHR)}${b.restingMedian != null ? ` · Basis ${f1(b.restingMedian)}` : ""}`,
+  ].filter(Boolean).join(" · ");
+}
 function renderReady(d) {
   const host = $("ready");
-  if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="card"><h3>Bereit für Training?</h3><div class="muted">Wellness nicht abrufbar.</div></div>'; return; }
+  if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="card"><h3>Erholungsampel</h3><div class="muted">Wellness nicht abrufbar.</div></div>'; return; }
   const R = d.summary.readiness, items = R.items, verdict = R.verdict;
-  const sleep = R.sleepHours != null ? `${fmt(R.sleepHours, 1)} h Schlaf` : "Schlafdauer nicht erfasst";
-  const extra = [R.hrv != null && `HRV ${fmt(R.hrv)}`, R.restingHR != null && `Ruhepuls ${fmt(R.restingHR)} bpm (Tageswert)`].filter(Boolean);
-  host.innerHTML = `<div class="card"><h3>Bereit für Training?</h3>
-    <div><span class="badge ${verdict.cls} big-badge">${verdict.text}</span> <span class="muted">${verdict.sub}</span></div>
+  const sig = (label, x, txt) => `<div class="row"><span>${label}</span><span class="badge ${x.cls}">${txt[x.cls] ?? "keine Daten"}</span></div>`;
+  host.innerHTML = `<div class="card"><h3>Erholungsampel</h3>
+    <div><span class="badge ${verdict.cls} big-badge">${esc(verdict.text)}</span> <span class="muted">${esc(verdict.sub)}</span></div>
     ${verdict.reasons?.length ? `<div class="muted" style="margin-top:6px">Auslöser: ${esc(verdict.reasons.join(" · "))}</div>` : ""}
-    <div style="margin-top:8px">${esc([sleep, ...extra].join(" · "))}</div>
+    ${verdict.note || verdict.thin ? `<div class="muted">${esc([verdict.note, verdict.thin].filter(Boolean).join(" · "))}</div>` : ""}
+    <div style="margin-top:8px">${esc(bodyLine(R))}</div>
+    <div style="margin-top:8px">${sig("Ruhepuls", R.body.resting, { ok: "im Rahmen", warn: "≥ 4 über Basis", bad: "≥ 8 über Basis" })}${sig("HRV", R.body.hrv, { ok: "im Rahmen", warn: "≥ 12 % unter Basis" })}${sig("Schlaf", R.body.sleep, { ok: "im Rahmen", warn: R.sleepScore != null ? "2 Tage Score < 80" : "unter 6 h" })}</div>
     <div class="ready-grid">${items.map((i) => `<div class="rrow"><span class="lbl">${i.label}</span><span class="strip" id="strip-${i.key}"></span><span class="badge ${i.cls}">${i.text}</span></div>`).join("")}</div>
-    <details class="info"><summary>Erklärung</summary><div>Punkt = heute, graues Band = dein üblicher Bereich der letzten 8 Wochen (mind. 5 Einträge). Skala 1 = bestmöglich, links. Lücken zählen nie als „gut". Grenzen sind Standardwerte.</div></details></div>`;
+    <details class="info"><summary>Erklärung</summary><div>Regeln wie im Coaching: Basis = Median der letzten 28 Tage ohne Krankheitstage (mind. 5 Werte, unter 10 „dünn“). Gelb: Ruhepuls ≥ 4 über Basis, HRV ≥ 12 % unter Basis oder Schlaf-Score unter 80 an zwei Tagen in Folge. Rot: Ruhepuls ≥ 8 über Basis, zwei gelbe Signale, Ermüdung/Muskelkater/Schlafqualität deutlich schlechter als üblich oder drei Warnungen. Stimmung und Motivation allein machen höchstens gelb. Krankheit im Kalender = kein Training; Hüfte/Leiste/Knie in den letzten 3 Tagen = mindestens gelb. Die Gefühlswerte beschreiben den Zustand vor dem Training (Punkt = Eintrag, graues Band = dein üblicher Bereich der letzten 8 Wochen, 1 = bestmöglich); fehlt der Eintrag von heute, gilt der von gestern früh. Die Trainingslast (TSB) fließt nicht ein.</div></details></div>`;
   for (const i of items) C.strip($(`strip-${i.key}`), { label: i.label, max: i.max, band: i.band, value: i.v, cls: i.cls });
 }
 
 /* ---------- Cockpit: alles Wichtige auf einen Blick ---------- */
 // Kennzahlen der letzten Einheit als kleine Kacheln (wie auf der Intervals-Karte). Puls nur, wenn der Worker ihn liefert (Pulsregel).
+// Decoupling nur für die ersten 60 min (der Wert über den ganzen Lauf wächst mit der Länge), dazu stabile Dauer und HF-Deckel.
 const FEEL_LABEL = { 1: "stark", 2: "gut", 3: "normal", 4: "schlecht", 5: "schwach" };
 function lastStats(L) {
   const st = (label, value, cls = "") => `<div class="ls"><span class="ls-v${cls ? ` ${cls}` : ""}">${value}</span><span class="ls-l">${label}</span></div>`;
-  const decCls = (v) => (v < 5 ? "ok" : v < 8 ? "warn" : "bad");
+  const decCls = (v) => (v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
   const items = [
     L.watts != null && st("Ø Leistung", `${fmt(L.watts)} <small>W</small>`),
     L.normWatts != null && st("NP", `${fmt(L.normWatts)} <small>W</small>`),
     L.paceSecPerKm != null && st("Ø Pace", `${paceLabel(L.paceSecPerKm)} <small>/km</small>`),
     L.paceSecPer100m != null && st("Ø Pace", `${paceLabel(L.paceSecPer100m)} <small>/100 m</small>`),
     L.avgHr != null && st("Ø Puls", `${fmt(L.avgHr)} <small>bpm</small>`),
+    L.overCapMin != null && st(`über HF ${fmt(L.capHr)}`, `${fmt(L.overCapMin)} <small>min</small>`, `badge ${L.overCapMin <= 2 ? "ok" : L.overCapMin <= 10 ? "warn" : "bad"}`),
     L.intensity != null && st("Intensität", `${fmt(L.intensity)} <small>%</small>`),
+    L.dec60 != null && st("Decoupling 0–60", `${fmt(L.dec60, 1)} <small>%</small>`, `badge ${decCls(L.dec60)}`),
+    L.stableMin != null && st("stabile Dauer", fmtStable(L.stableMin)),
     L.decoupling != null && st("Decoupling", `${fmt(L.decoupling, 1)} <small>%</small>`, `badge ${decCls(L.decoupling)}`),
     L.rpe != null && st("RPE", fmt(L.rpe)),
     L.feel != null && FEEL_LABEL[L.feel] && st("Gefühl", FEEL_LABEL[L.feel]),
@@ -171,44 +168,31 @@ function lastStats(L) {
 }
 
 function renderCockpit(d) {
-  const S = d.summary, w = S.load, { ctl, atl, tsb, acwr, tsbCls, acwrCls } = w, g = d.goal;
-  const TSB_BANDS = S.thresholds.tsb, ACWR = S.thresholds.acwr;
-  const tsbText = { ok: "frisch", warn: "belastet", bad: "stark ermüdet", none: "keine Daten" }[tsbCls];
-  const taper = isTaper(g);
-  // Im Taper ist ein niedriger ACWR gewollt: kein Alarm, nur "über Zielkorridor" bleibt eine Warnung.
-  const acwrShow = taper && acwrCls === "warn" ? "ok" : acwrCls;
-  const acwrText = taper && acwrCls === "warn" ? "Taper: bewusst niedrig" : { ok: "im Zielkorridor", warn: "unter Zielkorridor", bad: "über Zielkorridor", none: "keine Daten" }[acwrCls];
+  const S = d.summary, w = S.load, { ctl, atl, tsb, tsbPct, tsbZone, tsbCls } = w, g = d.goal;
+  const race = hasRace(g), taper = race && isTaper(g);
+  const tsbText = TSB_ZONE_TEXT[tsbZone] ?? "keine Daten";
   const wellOk = d.sources.intervalsWellness.ok;
   const cur = d.weeks[d.weeks.length - 1];
-  const days7 = dayRange(addDays(d.today, -13), d.today), map = (k) => Object.fromEntries(d.wellness.map((x) => [x.date, x[k]]));
-  const last = (k) => { const m = map(k); for (let i = days7.length - 1; i >= 0; i--) if (m[days7[i]] != null) return { v: m[days7[i]], date: days7[i] }; return null; };
-  // Das Cockpit ist nur die Kurzfassung: eine Kennzahl je Thema und ein Link zum Detail weiter unten.
   const tile = (title, body, cls = "", more = null) => `<div class="tile ${cls}"><h3>${title}</h3>${body}${more ? `<a class="more" href="${more[0]}">${more[1]} →</a>` : ""}</div>`;
   const goalPace = g.targetTimeSecs ? g.targetTimeSecs / (g.runKm ?? 21.0975) : null;
+  const map = (k) => Object.fromEntries(d.wellness.map((x) => [x.date, x[k]]));
+  const days14 = dayRange(addDays(d.today, -13), d.today);
 
-  // Training: Wochenvorschau Mo-So mit Plan und Ist, darunter die Schritte der heutigen Einheit
   const plan = d.planned.filter((p) => p.date === d.today);
   const shown = plan.find((p) => p.steps?.length) ?? plan[0];
   const weekTile = renderWeekPreview(d, tile);
-  const raceTile = tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : g.daysToGo === 0 ? "Heute!" : "vorbei"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)}${g.triathlon ? (g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : "") : ` · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)`}</div>`, "span15", g.daysToGo >= 0 ? ["#rennplan", "Zielzeiten und Plan"] : null);
-  const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>`, "span15") : "";
+  // Renn-Kacheln nur mit kommendem Rennen im Kalender
+  const raceTile = race ? tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : "Heute!"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)}${g.triathlon ? (g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : "") : g.targetTimeSecs ? ` · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)` : ""}</div>`, "span15", ["#rennplan", "Zielzeiten und Plan"]) : "";
+  const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + (race ? `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>` : ""), "span15") : "";
   const blockTile = renderBlock(d.seasonBlock);
   const prevWk = d.weeks[d.weeks.length - 2];
-  const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.runMin / 60, 1) : "–"} h Laufen${prevWk ? `, Vorwoche ${fmt(prevWk.runMin / 60, 1)} h` : ""}. Niedriger ACWR und steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gelten als Soll, nicht als Mangel.</div>`, "span4") : "";
-  const tsbTile = tile("Frische (TSB)", `<div id="ck-tsb"></div><div><span class="badge ${tsbCls}">${tsbText}</span></div>`, "span15", ["#form", "Formverlauf"]);
-  const acwrTile = tile("Belastung (ACWR)", `<div id="ck-acwr"></div><div><span class="badge ${acwrShow}">${acwrText}</span> <span class="sub">${taper ? "Taper-Woche" : `Ziel ${fmt(ACWR.lo, 1)}–${fmt(ACWR.hi, 1)}`}</span></div>`, "span15", ["#form", "Wochenbelastung"]);
-
-  // Erholung: Urteil, Schlafkonto und die letzten Werte als Zahl; Verläufe und Bänder stehen in Abschnitt 5
+  const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.runMin / 60, 1) : "–"} h Laufen${prevWk ? `, Vorwoche ${fmt(prevWk.runMin / 60, 1)} h` : ""}. Steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gilt als Soll, nicht als Mangel.</div>`, "span4") : "";
   const R = S.readiness;
-  const readyTile = wellOk ? tile("Bereit für Training?", `<div><span class="badge ${R.verdict.cls} big-badge">${R.verdict.text}</span> <span class="sub">${esc(R.verdict.sub)}</span></div>${R.verdict.reasons?.length ? `<div class="sub">${esc(R.verdict.reasons.join(" · "))}</div>` : ""}<div class="dots">${R.items.map((i) => `<span title="${esc(i.text)}"><i class="${i.cls}"></i>${esc(i.label)}</span>`).join("")}</div>`, "span3", ["#erholung", "Bänder und Verläufe"]) : tile("Bereit für Training?", '<div class="sub">Wellness nicht abrufbar.</div>', "span3");
-  const SA = sleepAccount(d);
-  const lastVal = (key, unit) => { const l = last(key); return l ? `${key === "hrv" ? "HRV" : "Ruhepuls"} ${fmt(l.v)} ${unit}${l.date !== d.today ? ` (${fmtDate(l.date)})` : ""}` : null; };
-  const sleepTile = tile("Schlafkonto", `<div class="val">${SA.avg != null ? fmt(SA.avg, 1) : "–"} <small>h Ø akut · Ziel ${fmt(SA.target, 1)} h</small></div><div><span class="badge ${SA.cls}">${SA.text}</span> <span class="badge ${SA.week.cls}">${SA.week.text}</span></div><div class="sub">${[lastVal("hrv", "ms"), lastVal("restingHR", "bpm")].filter(Boolean).join(" · ") || "&nbsp;"}</div>`, "span3", ["#erholung", "Schlaf, HRV, Ruhepuls"]);
+  const readyTile = tile("Erholungsampel", '<div class="sub">Wellness nicht abrufbar.</div>', "span3");
 
   // Ernährung: Kalorien heute und die Makros als eine Zeile; Balken je Größe stehen in Abschnitt 6
   const kcal = map("calories"), goal = map("calorieGoal"), carbs = map("carbs"), prot = map("protein"), fat = map("fat");
-  // Heute immer anzeigen: vor dem ersten Yazio-Eintrag leer (0), nicht der Stand von gestern.
-  const lastData = [...days7].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
+  const lastData = [...days14].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
   const nDay = d.today;
   const hasToday = kcal[nDay] != null || carbs[nDay] != null || prot[nDay] != null;
   const kcalToday = kcal[nDay] ?? 0, kcalGoal = goal[nDay] ?? d.nutritionGoals?.kcal ?? null;
@@ -219,52 +203,65 @@ function renderCockpit(d) {
     ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div>${hasToday ? '<div id="ck-kcal"></div>' : ""}<div class="sub">${emptyNote || macroLine}</div>`, "span3", ["#ernaehrung", "Makros und Wochenübersicht"])
     : tile("Ernährung", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
 
-  // Heute oben, in fester Reihenfolge: 1. Hauptaussage = Erholung (Ampel mit Form und Text), 2. was heute ansteht
-  // (mit Profil der Haupteinheit), 3. Kennzahlen Schlaf, Frische, Belastung, Rennen. Details stehen in den Kacheln darunter.
+  // Heute oben: 1. Entscheidung (Ampel plus Regeln des Blocks, Worker: today-plan.js), 2. was heute ansteht bzw. die letzte
+  // Einheit, 3. Kennzahlen Schlaf, Frische, HF-Deckel, Blocktest bzw. Rennen. Details stehen in den Kacheln darunter.
   const doneToday = d.daily.find((x) => x.date === d.today);
   const meta = (p) => [p.durationMin ? p.durationMin + " min" : p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
-  // Ohne Plan zeigt das Band die letzte erledigte Einheit (geplant wird nicht mehr in Intervals).
   const L = d.lastActivity;
   const planHtml = plan.length
     ? plan.map((p) => `<div class="hb-item"><i style="background:var(--s-${p.sport})"></i><div><b>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}</b><span class="sub">${meta(p) || "&nbsp;"}</span></div></div>`).join("")
     : L ? `<div class="hb-item"><i style="background:var(--s-${L.sport})"></i><div><b>${SPORT_LABEL[L.sport] || "Einheit"}</b><span class="sub">${[L.date === d.today ? "heute" : `${weekday(L.date)} ${fmtDate(L.date)}`, meta(L), L.distanceKm && L.durationMin ? fmt(L.distanceKm, 1) + " km" : ""].filter(Boolean).join(" · ")}</span></div></div>${lastStats(L)}${L.profile ? '<div id="ck-last" class="wprofile"></div>' : ""}`
     : '<div class="hb-item"><i style="background:var(--line-2)"></i><div><b>Keine Einheit</b><span class="sub">Noch nichts erfasst</span></div></div>';
   const doneHtml = plan.length && doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
-  const vCls = wellOk ? R.verdict.cls : "none";
-  const status = `<div class="hero-status ${vCls}"><div class="hero-k">Erholung · ${weekday(d.today)} ${fmtDate(d.today)}</div>
-    <div class="verdict ${vCls}"><i class="sicon ${vCls}" aria-hidden="true"></i><span>${wellOk ? esc(R.verdict.text) : "Wellness fehlt"}</span></div>
-    <p class="hero-sub">${wellOk ? esc(R.verdict.sub) : "Wellness nicht abrufbar."}</p>
+  const P = d.todayPlan;
+  const vCls = wellOk ? (P?.cls ?? R.verdict.cls) : "none";
+  const lines = (P?.lines ?? []).map((l) => `<li class="${l.cls}"><i class="sicon ${l.cls}" aria-hidden="true"></i><span>${esc(l.text)}</span></li>`).join("");
+  const status = `<div class="hero-status ${vCls}"><div class="hero-k">Heute · ${weekday(d.today)} ${fmtDate(d.today)}</div>
+    <div class="verdict ${vCls}"><i class="sicon ${vCls}" aria-hidden="true"></i><span>${wellOk ? esc(P?.title ?? R.verdict.text) : "Wellness fehlt"}</span></div>
+    <p class="hero-sub">${wellOk ? `<b>${esc(R.verdict.text)}.</b> ${esc(R.verdict.sub)}` : "Wellness nicht abrufbar."}</p>
     ${wellOk && R.verdict.reasons?.length ? `<div class="hero-why">Auslöser: ${esc(R.verdict.reasons.join(" · "))}</div>` : ""}
+    ${wellOk && P?.note ? `<div class="hero-why">${esc(P.note)}</div>` : ""}
+    ${lines ? `<ul class="hero-lines">${lines}</ul>` : ""}
     ${wellOk ? `<div class="dots">${R.items.map((i) => `<span title="${esc(i.text)}"><i class="${i.cls}"></i>${esc(i.label)}</span>`).join("")}</div>` : ""}
-    ${wellOk ? '<a class="more" href="#erholung">Bänder und Verläufe →</a>' : ""}</div>`;
+    ${wellOk ? '<a class="more" href="#erholung">Erholungsampel im Detail →</a>' : ""}</div>`;
   const today = `<div class="hero-plan"><div class="hero-k">${plan.length ? "Heute geplant" : "Letzte Einheit"}</div>${planHtml}${doneHtml}
       ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}</div>`;
   const kpi = (label, value, badge, cls, sub = "") => `<div class="kpi"><span class="kpi-l">${label}</span><span class="kpi-v">${value}</span>${badge ? `<span class="badge ${cls}">${badge}</span>` : ""}${sub ? `<span class="sub">${sub}</span>` : ""}</div>`;
+  const B = R.body, BR = d.baseRuns;
+  const sleepKpi = R.sleepScore != null
+    ? kpi("Schlaf-Score", fmt(R.sleepScore), B.sleep.cls === "warn" ? "2. Tag unter 80" : B.sleep.cls === "ok" ? "im Rahmen" : "", B.sleep.cls, R.sleepHours != null ? `${fmt(R.sleepHours, 1)} h` : "")
+    : kpi("Schlaf", R.sleepHours != null ? `${fmt(R.sleepHours, 1)} <small>h</small>` : "–", B.sleep.cls === "warn" ? "unter 6 h" : "", B.sleep.cls);
+  const capKpi = BR?.cap != null
+    ? kpi(`HF-Deckel ${fmt(BR.cap)}`, BR.week.runs ? `${fmt(BR.week.overMin)} <small>min drüber</small>` : "–", BR.week.runs ? (BR.week.overMin <= 2 ? "eingehalten" : BR.week.overMin <= 10 ? "knapp" : "überschritten") : "", BR.week.runs ? (BR.week.overMin <= 2 ? "ok" : BR.week.overMin <= 10 ? "warn" : "bad") : "", BR.week.runs ? `diese Woche · ${BR.week.runs} Grundlagenl${BR.week.runs === 1 ? "auf" : "äufe"}, ${fmt(BR.week.minutes)} min` : "diese Woche noch kein Grundlagenlauf")
+    : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "");
+  const lastKpi = race
+    ? kpi(esc(g.name), g.daysToGo === 0 ? "Heute" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(g.date)} ${fmtDate(g.date)}${taper ? " · Taper" : ""}`)
+    : P?.nextTest ? kpi("Blocktest", `${P.daysToTest} <small>Tag${P.daysToTest === 1 ? "" : "e"}</small>`, "", "", `${weekday(P.nextTest)} ${fmtDate(P.nextTest)}`)
+    : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "");
   const kpis = `<div class="kpis">
-      ${kpi("Schlaf akut", SA.avg != null ? `${fmt(SA.avg, 1)} <small>h</small>` : "–", SA.text, SA.cls)}
-      ${kpi("Frische TSB", tsb != null ? fmt(tsb) : "–", tsbText, tsbCls)}
-      ${kpi("Belastung ACWR", acwr != null ? fmt(acwr, 2) : "–", acwrText, acwrShow)}
-      ${g.daysToGo >= 0 ? kpi(esc(g.name), g.daysToGo === 0 ? "Heute" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(g.date)} ${fmtDate(g.date)}${taper ? " · Taper" : ""}`) : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "")}
+      ${sleepKpi}
+      ${kpi("Frische TSB", tsbPct != null ? `${tsbPct > 0 ? "+" : ""}${fmt(tsbPct)} <small>% der CTL</small>` : "–", tsbText, tsbCls, tsb != null ? `TSB ${fmt(tsb)} · CTL ${fmt(ctl)} · ATL ${fmt(atl)}` : "")}
+      ${capKpi}
+      ${lastKpi}
     </div>`;
   const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${kpis}</div>`;
 
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
     ${weekTile}
-    <div class="cockpit-group">Rennen und Form</div>
-    <div class="cockpit flow">${raceTile}${supportTile}${tsbTile}${acwrTile}</div>${blockTile}
+    <div class="cockpit-group">${race ? "Rennen, Block und Form" : "Block und Form"}</div>
+    ${blockTile}
+    ${raceTile || supportTile ? `<div class="cockpit flow" style="margin-top:var(--gap)">${raceTile}${supportTile}</div>` : ""}
     ${taperTile ? `<div class="cockpit" style="margin-top:var(--gap)">${taperTile}</div>` : ""}
-    <div class="cockpit-group">Erholung und Ernährung</div>
-    <div class="cockpit">${wellOk ? "" : readyTile}${sleepTile}${nutTile}</div>`;
+    <div class="cockpit-group">Ernährung</div>
+    <div class="cockpit">${wellOk ? "" : readyTile}${nutTile}</div>`;
 
-  if (g.daysToGo >= 0) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
-  C.gauge($("ck-tsb"), { label: "TSB", min: -40, max: 30, value: tsb, ticks: [-40, -25, -10, 0, 15, 30], zones: [{ from: -40, to: TSB_BANDS.warn, cls: "bad" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: TSB_BANDS.ok, to: 30, cls: "ok" }] });
-  C.gauge($("ck-acwr"), { label: "ACWR", min: 0.4, max: 1.8, value: acwr, dec: 2, ticks: [0.4, 0.8, 1.0, 1.3, 1.8], tickLabel: (t) => fmt(t, 1), zones: [{ from: 0.4, to: ACWR.lo, cls: taper ? "ok" : "warn" }, { from: ACWR.lo, to: ACWR.hi, cls: "ok" }, { from: ACWR.hi, to: 1.8, cls: "bad" }] });
+  if (race) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
   if (!plan.length && L?.profile && $("ck-last")) C.session($("ck-last"), L.profile, { sport: L.sport });
   // Schmale Ansicht: die Wochenleiste ist wischbar; gestern und heute stehen beim Laden vorn
   const wkNow = document.querySelector(".wk-grid .wk-day.now");
-  if (wkNow) { const g = wkNow.parentElement, t = wkNow.previousElementSibling ?? wkNow; g.scrollLeft = t.offsetLeft - g.firstElementChild.offsetLeft; }
+  if (wkNow) { const gr = wkNow.parentElement, t = wkNow.previousElementSibling ?? wkNow; gr.scrollLeft = t.offsetLeft - gr.firstElementChild.offsetLeft; }
   if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
@@ -303,8 +300,9 @@ function weekPace(cur, st, left) {
   return `<div class="wk-pace"><span>${left <= 1 ? "Heute noch" : "Pro Resttag"}</span>${lines.join("")}</div>`;
 }
 // Regeln des Coaches aus dem Block-Eintrag (Abschnitt "Regeln"); sie ersetzen den Tempo-Hinweis, solange der Block läuft
-function blockRules(SB) {
-  return `<div class="wk-pace wk-rules"><span>Regeln · ${esc(SB.name)}</span><ul>${SB.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`;
+function blockRules(SB, d) {
+  const B = d?.baseRuns, cap = B?.cap != null && B.week.runs ? `<div class="${B.week.overMin <= 2 ? "ok" : "over"}">HF-Deckel ${fmt(B.cap)}: ${fmt(B.week.overMin)} min drüber in ${B.week.runs} Grundlagenl${B.week.runs === 1 ? "auf" : "äufen"}</div>` : "";
+  return `<div class="wk-pace wk-rules"><span>Regeln · ${esc(SB.name)}</span>${cap}<ul>${SB.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`;
 }
 function renderTargetWeek(d, tile, cur, monday, days) {
   const ks = ["run", "bike", "swim"].filter((k) => cur.bySport[k].targetMin > 0 || cur.bySport[k].targetLoad > 0);
@@ -328,7 +326,7 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const over = Object.values(tss).some((v) => v[0] > v[1]);
   const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
     + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ≤ ${fmt(sum(tss, 1))} TSS</small>`)}`
-    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${d.seasonBlock?.status === "active" && d.seasonBlock.rules?.length ? blockRules(d.seasonBlock) : weekPace(cur, st, left)}</div>`;
+    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${d.seasonBlock?.status === "active" && d.seasonBlock.rules?.length ? blockRules(d.seasonBlock, d) : weekPace(cur, st, left)}</div>`;
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cell = (x) => {
     const a = actual[x], isToday = x === d.today, past = x < d.today;
@@ -452,21 +450,20 @@ function renderRennplan(d) {
   renderChecklist(d, ["Startnummer, Startzeit und Anreise geprüft", "Wetter geprüft, Kleidung und Schuhe festgelegt", "Gels und Getränk nach Plan eingepackt", "Frühstück 2–3 h vor dem Start geplant", "Pace-Plan (Splits) aufs Handgelenk oder in die Uhr", "Schlaf: zwei Nächte vor dem Rennen früh ins Bett"]);
 }
 
-/* ---------- 3 · Form: Longrun-Tracker ---------- */
+/* ---------- 3 · Form: Grundlagenläufe ab 60 min ----------
+   Aus den Zeitreihen (Worker: block-inputs.js): Dauer statt km (der lange Lauf wächst in Minuten, die Pace ist durch den
+   HF-Deckel bewusst langsamer), Decoupling der ersten 60 min, stabile Dauer, Minuten über dem Deckel und DFA alpha1 (Runalyze).
+   Blocktests sind markiert; nur sie zählen fürs Blockziel, die anderen sind Trend. */
 function renderLongruns(d) {
-  const host = $("longruns"), T = d.fitness.longRunTracker;
+  const host = $("longruns"), B = d.baseRuns;
   if (!d.sources.intervalsActivities.ok) { host.innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; return; }
-  if (!T) { host.innerHTML = ""; return; }
-  const need = (d.goal.runKm ?? 21.0975) >= 20;
-  const warn = need && T.count16 === 0 ? `<div class="notice bad"><b>Kein Lauf ab 16 km in den letzten 8 Wochen.</b> Es gibt keinen Beleg, dass ${fmt(d.goal.runKm ?? 21.0975, 1)} km in Zielpace getragen werden. Der Aufbau davor sagt über die Langstreckentauglichkeit weniger als der längste Einzellauf.</div>` : "";
-  // Decoupling (Puls driftet gegen Pace) sagt mehr als die Pace: Long Runs laufen bewusst langsam. Wert nur bei Grundlagen-/Long-Läufen (Pulsregel im Worker).
-  const decCls = (v) => (v == null ? "none" : v < 5 ? "ok" : v < 8 ? "warn" : "bad");
-  const list = T.recent.length ? `<table class="mini"><thead><tr><th>Datum</th><th>Distanz</th><th>Pace</th><th>Decoupling</th></tr></thead><tbody>${T.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.race ? " <span class=\"muted\">(Rennen)</span>" : ""}</td><td>${fmt(r.distanceKm, 1)} km</td><td>${r.pace ?? "–"}</td><td>${r.decoupling != null ? `<span class="badge ${decCls(r.decoupling)}">${fmt(r.decoupling, 1)} %</span>` : '<span class="muted">–</span>'}</td></tr>`).join("")}</tbody></table>` : `<div class="muted">Kein „Langer Lauf“ und kein Lauf ab ${T.minKm} km in den letzten 8 Wochen.</div>`;
-  const decN = T.recent.filter((r) => r.decoupling != null).length;
-  const decNote = T.recent.length && !decN ? '<div class="notice" style="margin-top:8px">Kein Long Run mit Decoupling-Wert: Ohne ihn fehlt der Nachweis, dass die Ausdauer stabil bleibt.</div>' : "";
-  host.innerHTML = `${T.longest ? `<div class="big">${fmt(T.longest.distanceKm, 1)} <small>km längster Lauf · ${fmtDate(T.longest.date)}${T.longest.pace ? " · " + T.longest.pace + " min/km" : ""}</small></div>` : ""}
-    <div class="muted" style="margin:4px 0">${T.count16}× ab 16 km · Läufe der Art „Langer Lauf“ (Runalyze) und Läufe ab ${T.minKm} km (Intervals):</div>${list}${decNote}${warn}
-    <details class="info"><summary>Erklärung</summary><div>Decoupling: unter 5 % stabil, ab 8 % deutlicher Puls-Drift; aus Runalyze (Pace-Decoupling), wo vorhanden. Racepace-Blöcke innerhalb von Läufen werden nicht erkannt.</div></details>`;
+  const decCls = (v) => (v == null ? "none" : v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
+  const dfaCls = (v) => (v == null ? "none" : v >= 0.75 ? "ok" : v >= 0.6 ? "warn" : "bad");
+  const next = d.todayPlan?.nextTest;
+  if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Grundlagenlauf ab 60 min mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
+  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmt(r.durationMin)} min</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? `<span class="badge ${r.overCapMin <= 2 ? "ok" : r.overCapMin <= 10 ? "warn" : "bad"}">${fmt(r.overCapMin)} min</span>` : "–"}</td><td>${r.dfa != null ? `<span class="badge ${dfaCls(r.dfa)}">${fmt(r.dfa, 2)}</span>` : "–"}</td></tr>`).join("");
+  host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 0–60</th><th>stabil</th><th>Pace 0–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th><th>DFA α1</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 aus Runalyze: ab 0,75 unter der aeroben Schwelle; liegt er auch unter dem Deckel deutlich darunter, sitzt der Deckel zu hoch. Nur die Blocktests zählen fürs Blockziel.</div></details>`;
 }
 
 /* ---------- 3 · Form: Intervall-Splits ---------- */
@@ -502,18 +499,19 @@ function renderHistory(d) {
   $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Wochenziele noch geplante Workouts mit Dauer/Load – deshalb keine Marke." : "Marke = Wochenziel des Coaches (Trainingszeit: Summe der Zeitziele aller Sportarten; Belastung: Summe der TSS-Obergrenzen von Lauf, Rad, Schwimmen, Kraft und Sportarten ohne Grenze zählen mit ihrem Ist), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: beim Ziel grün bis 15 %, sonst gelb; bei der Obergrenze ✓ oder rot, wenn drüber. Trainingszeit = Bewegungszeit aller Sportarten in Minuten, Belastung ebenfalls alle Sportarten.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
-  const TSB_BANDS = d.summary.thresholds.tsb;
+  // Zonen in % der aktuellen Fitness wie Intervals.icu: unter −30 % hohes Risiko, sonst normaler Trainingsbereich
+  const ctlNow = d.summary.load.ctl ?? 0, riskAt = -0.3 * ctlNow;
   const ctl = {}, atl = {};
   const series = d.formSeries?.length ? d.formSeries : d.wellness;
   for (const w of series) { ctl[w.date] = w.ctl; atl[w.date] = w.atl; }
   const first = d.formSeries?.length ? addDays(d.today, -(FORM_DAYS - 1)) : addDays(d.today, -(HISTORY_DAYS - 1));
-  const raceSoon = d.goal.daysToGo >= 0 && d.goal.daysToGo <= 28;
+  const raceSoon = hasRace(d.goal) && d.goal.daysToGo <= 28;
   const proj = d.formProjection ?? [], pctl = {}, patl = {};
   for (const p of proj) { pctl[p.date] = p.ctl; patl[p.date] = p.atl; }
   const end = proj.length ? proj[proj.length - 1].date : raceSoon ? d.goal.date : d.today;
   C.form($("form-chart"), {
     days: dayRange(first, end), ctl, atl, proj: proj.length ? { ctl: pctl, atl: patl } : null, projLabel: d.formProjectionSource === "target" ? "grau hinterlegt: Prognose aus den Wochenzielen (90 % der TSS-Grenzen, Woche bleibt gleich)" : null, events: formEvents(d, series, first),
-    zones: [{ from: TSB_BANDS.ok, to: 200, cls: "ok" }, { from: TSB_BANDS.warn, to: TSB_BANDS.ok, cls: "warn" }, { from: -200, to: TSB_BANDS.warn, cls: "bad" }],
+    zones: [{ from: riskAt, to: 200, cls: "ok" }, { from: -200, to: riskAt, cls: "bad" }],
     marks: [{ day: d.today, label: "heute", color: "var(--muted)", anchor: raceSoon ? "end" : "middle" }, ...(raceSoon ? [{ day: d.goal.date, label: "Renntag", color: "var(--accent)", anchor: "start" }] : [])],
   });
   if (!series.some((w) => w.ctl != null)) $("form-chart").insertAdjacentHTML("beforeend", '<div class="notice">Keine CTL/ATL-Werte im Zeitraum.</div>');
@@ -640,6 +638,10 @@ function sportFindings(d) {
 /* ---------- 4 · Leistung ---------- */
 function renderFitness(d) {
   const r = d.runalyze;
+  // VDOT, Daniels-Paces und Prognosen nur mit kommendem Rennen: im Grundlagenblock widersprechen die Paces dem HF-Deckel
+  const show = hasRace(d.goal);
+  $("vdot-card").hidden = !show;
+  if (!show) { for (const id of ["race-pred-card", "pace-zones-card", "hm-trend-card"]) $(id).hidden = true; return; }
   if (!r) {
     $("vdot").innerHTML = '<div class="muted">Noch kein Runalyze-Snapshot eingespielt – VDOT und Prognose fehlen.</div>';
     return;
@@ -800,12 +802,6 @@ function renderWellness(d) {
     return { label: m.label, values, max: Math.max(2, ...Object.values(values).filter((v) => v != null)) };
   });
   C.wellnessHeat($("wellness-heat"), days, rows);
-  const SA = sleepAccount(d);
-  $("sleep-account").innerHTML = `<div class="big">${SA.avg != null ? fmt(SA.avg, 1) : "–"} <small>h Ø akut von ${fmt(SA.target, 1)} h</small></div><div><span class="badge ${SA.cls}">${SA.text}</span></div>
-    ${SA.nights.map((n, i) => `<div class="row"><span>${i === 0 ? "Letzte Nacht (auf heute)" : "Nacht davor"} · ${weekday(n.date)} ${fmtDate(n.date)}</span><b>${n.h != null ? fmt(n.h, 1) + " h" : "nicht erfasst"}</b></div>`).join("")}
-    <div class="row"><span>7 Nächte (${SA.week.n}/7 erfasst)</span><b>${SA.week.avg != null ? "Ø " + fmt(SA.week.avg, 1) + " h · Defizit " + fmt(SA.week.debt, 1) + " h" : "–"}</b></div>
-    <div><span class="badge ${SA.week.cls}">${SA.week.text}</span></div>
-    <details class="info"><summary>Erklärung</summary><div>Akut: letzte Nacht zählt ${Math.round(SLEEP_ACUTE_WEIGHT * 100)} %, die Nacht davor ${Math.round((1 - SLEEP_ACUTE_WEIGHT) * 100)} %. Die Woche zeigt die angesammelte Schlafschuld. Richtwert ${fmt(SLEEP_TARGET_H, 1)} h pro Nacht, kein persönlich kalibrierter Wert.</div></details>`;
   // Band = mittlere 50 % der eigenen Werte im Zeitraum (wie das graue Band der Bereitschaftskarte); letzter Wert als Zahl
   const quart = (arr, q) => { const a = [...arr].sort((x, y) => x - y), i = (a.length - 1) * q, lo = Math.floor(i); return a[lo] + (a[Math.min(a.length - 1, lo + 1)] - a[lo]) * (i - lo); };
   for (const [id, key, unit, label, dec] of [["rhr", "restingHR", "bpm", "Ruhepuls", 0], ["sleep", "sleepHours", "h", "Schlafdauer", 1], ["hrv", "hrv", "ms", "HRV", 0]]) {
@@ -990,14 +986,21 @@ function renderBlock(SB) {
     if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)}<small> s/100 m</small>`;
     if (g.key === "ramp") return `${fmt(g.value, 1)}<small> max./Woche</small>`;
     if (g.key === "pause") return `${g.value}<small> Tag${g.value === 1 ? "" : "e"} längste Lücke</small>`;
+    if (g.key === "runStable") return `${g.value === 0 ? "unter 60" : g.value}<small> min${g.baseValue != null && g.count > 1 ? ` · Basistest ${fmtStable(g.baseValue)}` : ""}</small>`;
     return `${fmt(g.value, g.key === "acwr" ? 0 : 1)}<small> %</small>`;
   };
   const goalCard = (g) => {
     let vis = "";
     if (g.key === "decoupling") {
       vis = bars(g.series.slice(-10).map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %` })), g.max, g.max + 2);
+    } else if (g.key === "runDecoupling" && g.tests) {
+      // Blocktests: eine Zeile je Test (Decoupling 0–60, Pace 0–60, stabile Dauer, Fensterreihe beim Darüberfahren)
+      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}` })), g.max, g.must)
+        + (g.tests.length ? `<div class="scroll"><table class="mini tests" style="margin-top:6px"><thead><tr><th>Test</th><th>0–60</th><th>Pace</th><th>stabil</th></tr></thead><tbody>${g.tests.map((t) => `<tr title="${esc(`${t.label}, ${fmt(t.durationMin)} min${t.date !== t.planned ? `, geplant ${fmtDate(t.planned)}` : ""} · ${t.windows.map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · ")}`)}"><td>${fmtDate(t.date)}</td><td>${fmt(t.dec60, 1)}&nbsp;%</td><td>${t.pace60 ?? "–"}</td><td>${t.stableMin === 0 ? "&lt;&nbsp;60" : `${fmt(t.stableMin)}&nbsp;min`}</td></tr>`).join("")}</tbody></table></div>` : "");
+    } else if (g.key === "runStable") {
+      vis = g.tests.length ? `<div class="sub">${g.tests.map((t) => `${esc(t.label)} ${fmtDate(t.date)}: ${fmtStable(t.stableMin)}`).join(" · ")}</div>` : "";
     } else if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
-      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.tempC != null ? ` · ${x.tempC} °C` : ""}` })), g.max, g.must);
+      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.noWarmup ? " · ohne Einrollen" : ""}` })), g.max, g.must);
     } else if (g.key === "swimTest") {
       vis = g.tests.length ? bars(g.tests.map((x) => ({ v: x.slowerPer100, t: `${fmtDate(x.date)}: ${x.t1} / ${x.t2}${x.pauseSec != null ? ` · Pause ${x.pauseSec} s` : ""}` })), g.maxSlowerPer100) : "";
     } else if (g.key === "ramp") {
@@ -1025,7 +1028,10 @@ function renderBlock(SB) {
     : section("", list);
   const D = SB.decision;
   const decLabel = { next: "weiter", extend: "verlängern", cause: "Ursache klären" };
-  const decision = D ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · ${D.due ? "Entscheidung" : "Stand heute"}:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>` : "";
+  // Vor Woche 12 kein "Stand heute": solange Tests fehlen, wäre das immer "verlängern" und nur Rauschen
+  const decAt = SB.start && D ? addDays(SB.start, (D.week - 1) * 7) : null;
+  const decision = !D ? "" : D.due ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · Entscheidung:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>`
+    : `<div class="sub" style="margin-top:8px">Entscheidung in Woche ${D.week}${decAt ? ` (ab ${fmtDate(decAt)})` : ""}: alle Ziele und Leitplanken erfüllt → nächster Block, sonst die betroffene Sportart verlängern.</div>`;
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
   return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }

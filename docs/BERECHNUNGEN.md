@@ -474,58 +474,83 @@ Bericht verwendet `realVdot ?? Wochen-VDOT` für Paces (2.10) und Rennzeiten (2.
 
 ## 6. Dashboard: Belastung, Bereitschaft, Körperwerte (`src/dashboard-summary.js`)
 
-### 6.1 Belastung (`computeLoad`, 31)
+### 6.1 Belastung (`computeLoad`)
 
 ```
-Datensatz = letzter Eintrag mit CTL und ATL (nur Tage < heute, wenn heute noch keine Aktivität vorliegt)
-TSB  = CTL − ATL
-ACWR = ATL / CTL   (nur wenn CTL > 0)
-TSB-Klasse:  ≥ −10 ok | ≥ −25 warn | sonst bad
-ACWR-Klasse: < 0,8 warn | ≤ 1,3 ok | > 1,3 bad
+Datensatz = letzter Eintrag mit CTL und ATL (nur Tage ≤ heute)
+TSB   = CTL − ATL
+TSB % = TSB / CTL × 100          (nur wenn CTL > 0)
+Zone (wie Intervals.icu, in % der CTL):
+  < −30 %  hohes Risiko (bad) | −30 bis −10 % produktiv belastet (ok) | −10 bis +5 % neutral
+  +5 bis +25 % frisch (ok)    | > +25 % Übergang: Fitness sinkt
+ACWR  = ATL / CTL                (nur noch fürs Widget)
 ```
 
-Begründung im Code: Der Wellness-Eintrag von heute rechnet die **geplante** Einheit bereits ein. Der „ACWR“ ist hier das ATL/CTL-Verhältnis der Intervals-Kurven, nicht das klassische 7:28-Tage-Verhältnis der rollierenden Mittel **[P16]**. Die Frontend-Anzeige (`app.js:84`) wertet im Taper (0–14 Tage vor dem Rennen) ein „zu niedrig“ als ok **[P3]**.
+Die Zonen hängen an der Fitness: Bei CTL 20 ist TSB −10 schon −50 %, bei CTL 40 nur −25 %. Feste Punktgrenzen (früher −10/−25) haben jede Belastungswoche als „belastet“ markiert, obwohl genau das der Trainingsbereich ist. Der ACWR erscheint auf der Seite nicht mehr: Er zeigt dieselbe Information wie der TSB (ATL gegen CTL) und hat bei jeder geplanten Entlastungswoche „zu niedrig“ gemeldet; das Steigerungsrisiko deckt die Leitplanke Ramp Rate (7.9) ab. `thresholds.tsb` (alte Punktgrenzen) bleibt nur für das Widget.
 
-### 6.2 Körperwerte (`computeBody`, 54)
+### 6.2 Körperwerte (`computeBody`, Regeln `BODY_RULES`)
 
-Vergleichsbasis: **Median der 14 Tage vor heute** (ohne heute) je Messgröße.
+Dieselben Regeln wie im Coaching (Morgen-Update), damit beide dasselbe Urteil fällen. Vergleichsbasis: **Median der 28 Tage vor heute** (ohne heute), **ohne Krankheitstage und die 3 Tage danach** (Kalender: Kategorie SICK/INJURED oder Notiz „krank“), nur Tage mit Wert. Unter 5 Werten keine Aussage (`none`), unter 10 „Basis dünn“.
 
 | Größe | Klasse |
 |---|---|
-| Schlaf (h, heute) | ≥ 7 ok · ≥ 6 warn · sonst bad **[P12]** |
-| HRV | `q = HRV_heute / Median` ; `q < 0,8` bad · `< 0,9` warn · sonst ok; Trend `down` (q < 0,9) / `up` (q > 1,05) / `flat` |
-| Ruhepuls | `heute − Median` ≥ 6 bad · ≥ 3 warn · sonst ok |
+| Schlaf | Schlaf-Score heute **und** gestern < 80 → warn, sonst ok; ohne Score: Schlafdauer < 6 h → warn |
+| HRV | `q = HRV_heute / Basis`; `q ≤ 0,88` (≥ 12 % darunter) → warn, sonst ok; Trend `down`/`up` (> 1,05)/`flat` |
+| Ruhepuls | `heute − Basis` ≥ 8 → bad · ≥ 4 → warn · sonst ok |
 
 Fehlende Werte ergeben `none` (nie „gut“).
 
-### 6.3 Bereitschaft (`computeReadiness`, 74)
+### 6.3 Erholungsampel (`computeReadiness`)
 
-Fünf Skalen aus Intervals (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; Werte ab 1, 1 = bestmöglich; 0/leer = „nicht erfasst“, siehe `scaleValue`, `dashboard.js:60`):
-
-```
-Basis  = alle Werte der Skala vor heute im geladenen Fenster (56 Tage); Band erst ab ≥ 5 Werten
-Band   = [25 %-Quantil ; 75 %-Quantil]      (lineare Interpolation, `quantile`, 21)
-out    = heute > 75 %-Quantil
-delta  = heute − Median
-Klasse: bad  = out UND delta ≥ 2
-        warn = out UND delta ≥ 1
-        ok   sonst
-```
-
-Gesamturteil, mit `nBad`/`nWarn` (Skalen) und `bodyBad`/`bodyWarn` (Körper: Schlaf, HRV, Ruhepuls):
+Fünf Gefühlsskalen aus Intervals (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = bestmöglich). Sie werden **vor** dem Training eingetragen und beschreiben den Ausgangszustand. Fehlt der Eintrag von heute, gilt der von gestern früh (Hinweis im Band).
 
 ```
-kein Skalenwert heute                          → „Heute noch nichts eingetragen“ (none)
-nBad ≥ 1  ODER  bodyBad ≥ 2  ODER  nWarn + bodyWarn + bodyBad ≥ 3   → „Eher ruhig angehen“ (bad)
-nWarn + bodyWarn + bodyBad ≥ 2  ODER  bodyBad ≥ 1  ODER  TSB < −10  → „Mit Vorsicht“ (warn)
-sonst                                                              → „Bereit“ (ok)
+Basis  = alle Werte der Skala vor dem Eintragstag im geladenen Fenster (56 Tage); Band erst ab ≥ 5 Werten
+Band   = [25 %-Quantil ; 75 %-Quantil],  out = Wert > 75 %-Quantil,  delta = Wert − Median
+Klasse: bad = out UND delta ≥ 2 · warn = out UND delta ≥ 1 · sonst ok
 ```
 
-Wichtig: Der Körper-Teil wird **nur** bewertet, wenn mindestens eine Skala heute einen Wert hat (`hasScales`). Ohne Skalen gibt es keine Einschätzung, auch bei schlechtem Schlaf.
+Urteil (`bodyWarn` = gelbe Körpersignale, `hardBad` = Ermüdung/Muskelkater/Schlafqualität deutlich schlechter, `subjWarn` = Gefühls-Warnungen plus Stimmung/Motivation deutlich schlechter):
 
-### 6.4 Schlafkonto (Frontend, `app.js:13`)
+```
+Krankheit im Kalender heute oder gestern                        → „Krank: kein Training“ (bad)
+keine Werte (weder Uhr noch Gefühl)                             → keine Einschätzung (none)
+Ruhepuls bad ODER bodyWarn ≥ 2 ODER hardBad ≥ 1
+  ODER bodyWarn + subjWarn + hardBad ≥ 3                        → „Rot: nur locker und kurz“ (bad)
+bodyWarn ≥ 1 ODER subjWarn ≥ 2 ODER Stimmung/Motivation deutlich schlechter
+  ODER Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt         → „Gelb: heute nur locker“ (warn)
+sonst                                                           → „Grün: Qualität möglich“ (ok)
+```
 
-Gewichteter Schnitt der **letzten zwei Nächte** (letzte Nacht 60 %, davor 40 %); Ziel `SLEEP_TARGET_H = 7,5 h` je Nacht. Klasse: Ø ≥ Ziel − 0,25 ok · ≥ Ziel − 1 warn · sonst bad; fehlt eine Nacht, wird `ok` höchstens zu `warn` heruntergestuft. Woche (7 Nächte, ab 4 Werten): Ø ≥ Ziel − 0,25 ok · ≥ Ziel − 0,75 warn · sonst bad. Das Ziel 7,5 h ist ein anderer Wert als die 7 h in 6.2 und die 6,5 h in 4.3 **[P12]**.
+Eine einzelne knappe Gefühls-Warnung ist Rauschen. Die Trainingslast (TSB) fließt **nicht** ein: Ein negativer TSB in Belastungswochen ist gewollt und wäre sonst doppelt gezählt.
+
+### 6.4 Tagesentscheidung (`today-plan.js`)
+
+Das Heute-Band verbindet die Ampel mit den Regeln aus dem Block-Eintrag. Eine Regel greift nur, wenn sie dort steht:
+
+- **Laufen:** „nie an zwei Tagen hintereinander“ und gestern gelaufen → heute kein Lauf. Sonst: locker unter dem HF-Deckel.
+- **Intensität** (Rad-HIIT, Hügelsprints; Steuerung nur über Watt/Pace, RPE, Gefühl): vor der Startwoche keine; in den 2 Tagen vor einem Blocktest keine; in Entlastungswochen (jede 4. Blockwoche) Rad-HIIT halbiert, keine Sprints; sonst je Art „erledigt“ oder „offen“ (bei Gelb/Rot „heute nicht“).
+- **Ruhetag:** mindestens einer pro Woche; ab 2 Resttagen ohne Ruhetag ein Hinweis.
+- **Blocktest:** Ankündigung ab 7 Tagen vorher; am Testtag bei Rot „1–2 Tage verschieben“, bei Gelb „laufen und notieren“.
+
+Titel: Krank → „Kein Training“; Testtag → „Heute Blocktest“ bzw. „Blocktest verschieben“; Rot → „Nur locker und kurz – oder frei“; Gelb → „Heute nur locker“; Grün → „Qualität möglich“, wenn eine Intensität offen ist, sonst „Locker nach Wochenrahmen“.
+
+Die Kennzahlen darunter: Schlaf-Score (sonst Schlafdauer), TSB in % der CTL, Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest bzw. Rennen. Das frühere Schlafkonto (7,5-h-Ziel) ist entfallen: Es war eine dritte Schlafschwelle neben der Ampel.
+
+### 6.5 Grundlagenläufe aus den Zeitreihen (`analyzeRunStreams`, `buildBaseRuns`)
+
+Im Blocktest-Modus (7.9) bekommt jeder lockere Lauf ab 20 min mit Puls die Auswertung aus den Intervals-Zeitreihen (`time`, `heartrate`, `distance`, sonst `velocity_smooth` aufsummiert), gespeichert je Aktivität in KV (`icu:runanalysis:v1:<id>:<Deckel>:<Grenze>`):
+
+```
+Fenster 0–T (T = 60, 75, 90 … min bis zur Gesamtdauer), nach Zeit in zwei Hälften geteilt
+Effizienz je Hälfte = (Distanzzuwachs / Zeit) / mittlere HF (nur Proben mit HF > 40)
+Decoupling % = (Eff_1 / Eff_2 − 1) × 100
+stabile Dauer = längstes Fenster mit Decoupling ≤ 5 % (0 = schon 0–60 darüber, „unter 60 min“)
+Pace 0–60 = 3600 s / Distanz nach 60 min
+über Deckel = Sekunden mit HF > Deckel (je Probe höchstens 10 s), in Minuten
+```
+
+Gehpausen und Stopps bleiben drin. Die Karte „Grundlagenläufe ab 60 min“ zeigt je Lauf Dauer (statt km, die Pace ist durch den Deckel bewusst langsamer), Decoupling 0–60, stabile Dauer (Fensterreihe beim Darüberfahren), Pace 0–60, Minuten über dem Deckel und DFA α1 aus Runalyze (`dfaAlpha1` im Snapshot, gleicher Tag; ab 0,75 unter der aeroben Schwelle). Blocktests sind markiert. Die Kennzahlen der letzten Einheit zeigen beim Lauf dieselben Werte; das Decoupling über den ganzen Lauf entfällt dort, weil es mit der Länge wächst.
 
 ---
 
@@ -545,7 +570,11 @@ Gewichteter Schnitt der **letzten zwei Nächte** (letzte Nacht 60 %, davor 40 %)
 
 ### 7.3 Longrun-Tracker (`buildFitness`, 284)
 
-Quellen: Runalyze-Läufe der Art „lang“ (`/lang/i` im Typ) **und** Intervals-Läufe ab **15 km** (auch Rennen/Abbrüche, nicht Intensitätseinheiten); pro Tag gilt der Runalyze-Eintrag. `count16` = Anzahl ≥ 16 km; „längster“ = größte Distanz. Frontend-Ampel für Decoupling: < 5 % ok · < 8 % warn · sonst bad (`app.js:255`).
+Wird nur noch fürs Widget und als Rückfall berechnet: Runalyze-Läufe der Art „lang“ und Intervals-Läufe ab **15 km**; `count16` = Anzahl ≥ 16 km. Die Seite zeigt stattdessen die Grundlagenläufe ab 60 min aus den Zeitreihen (6.5). Die frühere Warnung „kein Lauf ab 16 km … Zielpace“ ist entfallen.
+
+### 7.3a Renn-Kacheln, VDOT und Prognosen
+
+Nur mit einem kommenden A-Rennen im Kalender. Ohne Rennen ist das Ziel als `none` markiert (die eingebaute Vorgabe Landsberg 03.10.2026 ist vorbei): keine Renn-Kachel, kein Rennplan, kein VDOT mit Daniels-Paces (die E-Pace widerspricht im Grundlagenblock dem HF-Deckel), keine Prognosen.
 
 ### 7.4 Halbmarathon-Schätzungen (`buildHmEstimates`, 316)
 
@@ -594,23 +623,27 @@ Je Tag ein Eintrag (VDOT-Rechnung, Runalyze-Prognosen für 5 km, 10 km, HM; Zuor
 
 ### 7.9 Trainingsblock: Abschlussziele und Leitplanken (`season-block.js`, `block-inputs.js`)
 
-Der Block ist ein Saison-Eintrag im Intervals-Kalender („Block …“). Welche Ziele verfolgt werden, steht im Text der Beschreibung. Ein Absatz (durch Leerzeile getrennt) mit „Lauf“ + „Decoupling“ + „vergleichbar“ ergibt das Laufziel; „Rad“/„Rolle“ + „Decoupling“ + „vergleichbar“ ergibt das Radziel; „Schwimm…“ + „2× 500 m“ ergibt den Schwimmtest. Die Zahlen (≤ 5 %, letzte 3, ≥ 60 min, 75 min, 1 min Pause, 5 s pro 100 m, 8 von 9 Belastungswochen, Ramp Rate ≤ 5, Pause über 7 Tage, Woche 12, 3–4 Wochen) liest der Worker aus dem Text. Ein Satz mit „8 % … Muss-Kriterium“ setzt das Muss für beide Decoupling-Ziele. Beim Rad zählt eine Rolleneinheit ab der genannten Dauer minus 5 min; steht „der ersten 60 min“ im Text, wird bei längeren Einheiten nur das Decoupling der ersten 60 min gewertet (aus den Zeitreihen).
+Der Block ist ein Saison-Eintrag im Intervals-Kalender („Block …“). Welche Ziele verfolgt werden, steht im Text der Beschreibung. Ein Absatz (durch Leerzeile getrennt) mit „Lauf“ + „Decoupling“ + „vergleichbar“ ergibt das Laufziel; „Rad“/„Rolle“ + „Decoupling“ + „vergleichbar“ ergibt das Radziel; „Schwimm…“ + „2× 500 m“ ergibt den Schwimmtest. Die Zahlen (≤ 5 %, letzte 3, ≥ 60 min, 75 min, 1 min Pause, 5 s pro 100 m, 8 von 9 Belastungswochen, Ramp Rate ≤ 5, Pause über 7 Tage, Woche 12, 3–4 Wochen) liest der Worker aus dem Text. Ein Satz mit „8 % … Muss-Kriterium“ setzt das Muss für beide Decoupling-Ziele. Beim Rad zählt eine Rolleneinheit ab der genannten Dauer minus 5 min; steht „der ersten 60 min“ im Text, wird bei längeren Einheiten nur das Decoupling der ersten 60 min gewertet (aus den Zeitreihen). Steht ein Messfenster mit Einrollen und fester Leistung im Text („10 min Einrollen … 60-min-Messfenster … fester Leistung 165 W“), rechnet der Worker das Decoupling nur im Fenster von Minute 10 bis 70 (`rideWindowFromStreams`); ist die Fahrt zu kurz fürs Einrollen, beginnt das Fenster bei 0 und die Karte sagt „ohne Einrollen“. Vergleichbar sind dann nur Fahrten mit 165 W ± 6 % im Messfenster.
+
+**Blocktest-Modus (Lauf):** Stehen Testtermine im Lauf-Absatz („Basistest 25.10., dann 08.11., 06.12., 03.01.“), wird das Laufziel nur an diesen Läufen gemessen. Blocktest = lockerer Lauf am Termin oder bis zu 2 Tage danach (Verschiebung bei roter Ampel), bei mehreren der längste; ein Lauf mit „Blocktest“/„Basistest“ im Namen zählt bis 6 Tage um den Termin. Ziel 1a: Ø Decoupling 0–60 der letzten 3 Tests (Ziel/Muss aus dem Text), Pace 0–60 des letzten Tests höchstens 5 s/km langsamer als im Basistest (darunter Rauschen). Ziel 1b: stabile Dauer (6.5) im letzten Test länger als im Basistest. Alle anderen Grundlagenläufe ab 60 min sind nur Trend (Hinweis in der Karte). Ohne Testtermine gilt die ältere Regel mit vergleichbaren Läufen (unten).
+
+**Woche 12:** gelesen wird nur eine Zeile, die mit „Woche N“ beginnt („Woche 12: …“ oder die Überschrift „WOCHE 12“ mit dem Absatz darunter). „Intensität ab Woche 2:“ mitten in einer Zeile ist keine Entscheidung (früher als Woche 2 gelesen).
 
 - **Fenster:** ab Blockstart. Vor dem Start zählen die letzten 8 Wochen als Ausgangswert (Status „Basis“, keine Entscheidung).
 - **Lauf, vergleichbar:** locker (`base`/`long` oder Name mit Long Slow, LIT, locker, Grundlage, GA1, Z2), draußen (kein Laufband), mindestens 60 min, flach (≤ 10 Hm/km) und kein Hitzetag. Ein Hitzetag ist eine Wetter-Temperatur ≥ 22 °C von Intervals oder „Hitze“/„heiß“ in Name, Beschreibung oder Tags. Die Temperatur der Uhr zählt nicht, weil sie durch den Körper erwärmt wird.
-- **Rad, vergleichbar:** auf der Rolle (`trainer` oder VirtualRide), mindestens 70 min (75 min − 5), gleichmäßige Leistung (VI ≤ 1,05), locker (IF ≤ 0,80) und kein Intensitätsname (HIT, VO2, FTP, SIT, Pyramide …). Ventilator und Raumtemperatur kann der Worker nicht prüfen. Er zeigt die Leistung und die Temperatur des Radcomputers der letzten 3 Einheiten. Ein FTP-Test wird über „FTP“ im Namen einer Radeinheit erkannt.
+- **Rad, vergleichbar:** auf der Rolle (`trainer` oder VirtualRide), mindestens 70 min (75 min − 5), gleichmäßige Leistung (VI ≤ 1,05), locker (IF ≤ 0,80) und kein Intensitätsname (HIT, VO2, FTP, SIT, Pyramide …). Ventilator und Raumtemperatur kann der Worker nicht prüfen. Er zeigt die Leistung der letzten 3 Einheiten; die Temperatur des Radcomputers nicht (der Sensor misst Körperwärme mit). Ein FTP-Test wird über „FTP“ im Namen einer Radeinheit erkannt.
 - **Decoupling:** Laufen: Runalyze-Wert des Tages (lange Läufe), sonst eine eigene Rechnung aus Tempo und Puls; den Intervals-Wert nie (Intervals liefert beim Laufen ohne Laufleistung nichts Brauchbares). Rad: der Wert von Intervals, sonst eine eigene Rechnung aus den Zeitreihen (`decouplingFromStreams`): Tempo bzw. Leistung je Herzschlag in der ersten gegen die zweite Hälfte, nur Proben mit Puls und Bewegung, mindestens 20 min. Auf- und Abwärmzeit der Aktivität (`icu_warmup_time`, `icu_cooldown_time`, in Intervals einstellbar) bleiben wie bei Intervals draußen. Das Ergebnis wird je Aktivität in KV gespeichert. Je Aufruf werden höchstens 6 Einheiten nachgeladen. Ohne Puls gibt es keinen Wert, das steht dann als Hinweis in der Karte.
 - **Bewertung Lauf/Rad:** Ø der letzten 3 vergleichbaren Einheiten. ≤ Ziel (5 %) ist „im Soll“, ≤ Muss (8 %) ist „knapp“, darüber „unter Soll“. Pace beim Laufen: Ø der letzten 3 gegen Ø der ersten 3 Vergleichsläufe. Das wird erst geprüft, wenn es mehr als 3 gibt. Ist der Lauf langsamer, ist die Karte höchstens „knapp“, und das Ziel gilt als nicht erfüllt.
 - **Schwimmtest:** aus dem Text der Einheit („2x500: 9:40 / 9:52, Pause 45 s“), sonst aus den Intervallen: zwei aufeinanderfolgende Abschnitte mit 500 m ± 10 %, Pause = Abstand dazwischen. Bestanden heißt: Pause ≤ 60 s und die zweiten 500 m höchstens 5 s je 100 m langsamer. Der Status richtet sich nach dem letzten Test. „Knapp“ heißt, ein früherer Test war bestanden.
 - **Kraft:** Sätze je Woche (EGYM). Entlastungswochen sind nach dem 3:1-Muster jede 4. Blockwoche und zählen nicht. Bei „8 von 9“ ist eine Fehlwoche erlaubt („knapp“, wenn sie verbraucht ist). Eine zweite reißt die Leitplanke.
 - **Ramp Rate:** CTL am Wochenende minus CTL am Vortag des Wochenstarts, je abgeschlossener Belastungswoche. Liegt ein Wert über 5, ist die Leitplanke gerissen.
 - **Pause:** längste Lücke ohne Aktivität (alle Sportarten, EGYM-Tage zählen mit), der laufende Tag zählt nicht. Eine Notiz „Pause“/„Urlaub“ oder ein Urlaubseintrag im Kalender macht die Lücke zur geplanten Pause.
-- **Woche 12:** Ist eine Leitplanke gerissen, heißt es „erst die Ursache klären“. Fehlt ein Ziel (weniger als 3 vergleichbare Einheiten, Muss verfehlt, Pace langsamer oder kein bestandener Schwimmtest), wird diese Sportart um 3–4 Wochen verlängert. Sonst geht es mit dem nächsten Block im Kalender weiter. Vor Woche 12 erscheint dieselbe Rechnung als „Stand heute“.
+- **Woche 12:** Ist eine Leitplanke gerissen, heißt es „erst die Ursache klären“. Fehlt ein Ziel (weniger als 3 vergleichbare Einheiten, Muss verfehlt, Pace langsamer oder kein bestandener Schwimmtest), wird diese Sportart um 3–4 Wochen verlängert. Sonst geht es mit dem nächsten Block im Kalender weiter. Vor Woche 12 zeigt die Karte nur, wann entschieden wird: Ein „Stand heute“ wäre ohne die Tests immer „verlängern“ und damit Rauschen. Mehrere fehlende Ziele derselben Sportart (Lauf 1a und 1b) erscheinen einmal.
 
 
 ### 7.10 Letzte Einheit im Heute-Band (`buildLastActivity`, `session-profile.js`)
 
-Ohne Plan für heute zeigt das Band die jüngste erledigte Einheit. Kennzahlen: Dauer, Distanz, Load, Ø Pace (Laufen /km, Schwimmen /100 m), Ø Leistung und NP (Rad, `icu_average_watts`, `icu_weighted_avg_watts`), Intensität (`icu_intensity`), RPE und Gefühl (`feel`: 1 stark … 5 schwach). **Puls und Decoupling nur bei lockeren Läufen** (`base`/`long`, Pulsregel 7.2; Decoupling aus Runalyze); Rad und Schwimmen ohne Puls.
+Ohne Plan für heute zeigt das Band die jüngste erledigte Einheit. Kennzahlen: Dauer, Distanz, Load, Ø Pace (Laufen /km, Schwimmen /100 m), Ø Leistung und NP (Rad, `icu_average_watts`, `icu_weighted_avg_watts`), Intensität (`icu_intensity`), RPE und Gefühl (`feel`: 1 stark … 5 schwach). **Puls und Decoupling nur bei lockeren Läufen** (`base`/`long`, Pulsregel 7.2); im Blocktest-Modus Decoupling 0–60, stabile Dauer und Minuten über dem HF-Deckel (6.5), sonst Decoupling aus Runalyze. Rad und Schwimmen ohne Puls.
 
 Profil (Laufen und Rad): Zeitreihen von Intervals (`watts` bzw. `velocity_smooth`, Puls nur mit Freigabe) in höchstens 120 Abschnitte (mind. 10 s) gemittelt. Pace in s/km; langsamer als 15:00/km bleibt eine Lücke. Das Ergebnis wird je Aktivität in KV gespeichert (`icu:profile:v1:<id>`), auch „keine Zeitreihen“ (404). In der Grafik ist Leistung bzw. Pace die Fläche in Sportfarbe (Pace: schneller = höher, Skala ohne die äußersten 3 %), Puls die Linie mit eigener Skala rechts.
 
@@ -697,7 +730,7 @@ Sortiert nach Gewicht. „Beleg“ nennt, wie ich es festgestellt habe.
 
 **P11 – HRV-Schwellen absolut.** −3 bzw. −8 als HRV-Einheiten (7.4/4.3) passen zu rMSSD in einem üblichen Bereich; bei anderer Skala (SDNN, andere Uhr) verschieben sich die Auslöser. Das Verhältnis (0,7/0,5) ist skalenunabhängig.
 
-**P12 – Uneinheitliche Schlafwerte.** Formcheck: Ø < 6,5 h oder 2 Nächte < 5 h; Körper-Ampel: ≥ 7 ok, ≥ 6 warn; Schlafkonto: Ziel 7,5 h/Nacht; Empfehlungstext: „mind. 7 h“.
+**P12 – Uneinheitliche Schlafwerte.** Formcheck: Ø < 6,5 h oder 2 Nächte < 5 h; Körper-Ampel im Dashboard (seit Oktober 2026 wie im Coaching): Schlaf-Score < 80 an 2 Tagen, ohne Score < 6 h; Empfehlungstext: „mind. 7 h“. Das Schlafkonto (Ziel 7,5 h/Nacht) ist entfallen.
 
 **P13 – Kalorienziel addiert die volle Aktivitätskalorien.** `calories` aus Intervals enthält typischerweise den Grundumsatz-Anteil der Einheit mit; bei langen Einheiten wird das Ziel dadurch eher zu hoch.
 

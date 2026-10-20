@@ -92,8 +92,8 @@ const TOOLS = [
         },
         runs: {
           type: "array",
-          description: "Läufe der letzten 8 Wochen aus get_activities (date, distance -> distanceKm, duration -> durationSec, type = vom Nutzer gesetzte Art, z. B. Langer Lauf) plus aerobic_decoupling_pace aus get_activity_details -> decouplingPct (nur bei Langen Läufen holen, sonst weglassen).",
-          items: { type: "object", properties: { date: { type: "string" }, distanceKm: { type: "number" }, durationSec: { type: "number" }, type: { type: "string" }, decouplingPct: { type: "number" } } },
+          description: "Läufe der letzten 8 Wochen aus get_activities (date, distance -> distanceKm, duration -> durationSec, type = vom Nutzer gesetzte Art, z. B. Langer Lauf) plus aerobic_decoupling_pace aus get_activity_details -> decouplingPct und dfa.avg -> dfaAlpha1 (beides nur bei Langen Läufen und Grundlagenläufen ab 60 min holen, sonst weglassen).",
+          items: { type: "object", properties: { date: { type: "string" }, distanceKm: { type: "number" }, durationSec: { type: "number" }, type: { type: "string" }, decouplingPct: { type: "number" }, dfaAlpha1: { type: "number" } } },
         },
       },
       required: ["fetchedAt"],

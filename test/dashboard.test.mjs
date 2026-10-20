@@ -110,7 +110,8 @@ assert.equal(d.summary.load.tsbCls, "ok");
 assert.equal(d.summary.readiness.verdict.cls, "ok");
 assert.equal(d.summary.readiness.items.length, 5);
 const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
-assert.equal(noToday.verdict.cls, "none"); // ohne heutigen Eintrag keine Einschätzung
+assert.match(noToday.verdict.note, /gestern/); // ohne heutigen Eintrag gilt der von gestern früh
+assert.equal(noToday.entryDate, day(-1));
 const wdg = buildWidget(d);
 const wjson = JSON.stringify(wdg);
 assert.ok(wjson.length < 3000, "Widget-Payload klein");
@@ -160,16 +161,31 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
 {
   const bad = d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30, sleepHours: 5 } : w));
   const rd = computeReadiness(bad, today, computeLoad(bad));
-  assert.equal(rd.body.hrv.cls, "bad");
-  assert.equal(rd.body.sleep.cls, "bad");
-  assert.equal(rd.verdict.cls, "bad");
+  assert.equal(rd.body.hrv.cls, "warn"); // HRV ≥ 12 % unter Basis = gelb (Coaching-Regel)
+  assert.equal(rd.body.sleep.cls, "warn"); // ohne Schlaf-Score: unter 6 h
+  assert.equal(rd.verdict.cls, "bad"); // zwei gelbe Signale = rot
   const one = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30 } : w)), today, computeLoad(d.wellness));
   assert.equal(one.verdict.cls, "warn"); // ein Koerperwert allein = Vorsicht
   assert.equal(one.body.hrvMedian, 48); // Median ohne heute
-  // Eine einzelne knappe Warnung (Schlaf 6,9 h) ist noch kein Grund zur Vorsicht, zwei sind es
+  // 6,9 h Schlaf ist kein Signal (gelb erst unter 6 h bzw. Schlaf-Score < 80 an 2 Tagen)
   const slight = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9 } : w)), today, computeLoad(d.wellness));
-  assert.equal(slight.body.sleep.cls, "warn");
+  assert.equal(slight.body.sleep.cls, "ok");
   assert.equal(slight.verdict.cls, "ok");
+  // Schlaf-Score unter 80 an zwei Tagen in Folge = gelb, an einem Tag nicht
+  const sc = (t, y) => d.wellness.map((w) => (w.date === today ? { ...w, sleepScore: t } : w.date === day(-1) ? { ...w, sleepScore: y } : w));
+  assert.equal(computeReadiness(sc(70, 75), today).body.sleep.cls, "warn");
+  assert.equal(computeReadiness(sc(70, 85), today).body.sleep.cls, "ok");
+  // Ruhepuls ≥ 8 über Basis = rot, ≥ 4 = gelb
+  const rhr = (v) => computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, restingHR: v } : w)), today);
+  const rb = rhr(null).body.restingMedian;
+  if (rb != null) { assert.equal(rhr(rb + 8).verdict.cls, "bad"); assert.equal(rhr(rb + 4).body.resting.cls, "warn"); assert.equal(rhr(rb + 3).body.resting.cls, "ok"); }
+  // Krankheit im Kalender übersteuert alles; Krankheitstage zählen nicht zur Basis
+  const sick = computeReadiness(d.wellness, today, null, { sickDays: [day(-1)] });
+  assert.equal(sick.verdict.cls, "bad"); assert.equal(sick.verdict.sick, true);
+  const hipR = computeReadiness(d.wellness, today, null, { hipFlags: [{ date: day(-1) }] });
+  assert.equal(hipR.verdict.cls, "warn"); assert.match(hipR.reasons ?? hipR.verdict.reasons.join(), /Hüfte/);
+  // Trainingslast gehört nicht ins Erholungsurteil
+  assert.equal(computeReadiness(d.wellness, today, { tsb: -40 }).verdict.cls, d.summary.readiness.verdict.cls);
   const two = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9, hrv: 40 } : w)), today, computeLoad(d.wellness));
   if (two.body.hrv.cls === "warn") assert.equal(two.verdict.cls, "warn");
 }

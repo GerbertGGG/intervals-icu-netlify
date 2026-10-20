@@ -1273,11 +1273,12 @@ function buildBlock(res) {
   const rails = grouped ? all.filter((g) => g.group === "leitplanke") : [];
   const gap = 6, CW = Math.floor((W - gap * (goals.length - 1)) / goals.length), IW = CW - 18;
   const row = w.addStack(); row.spacing = gap;
-  const SHORT = { decoupling: "DECOUPLING", strength: "KRAFT", acwr: "ACWR", runDecoupling: "LAUF", bikeDecoupling: "RAD", swimTest: "SCHWIMMEN" };
+  const SHORT = { decoupling: "DECOUPLING", strength: "KRAFT", acwr: "ACWR", runDecoupling: "LAUF", runStable: "LAUF STABIL", bikeDecoupling: "RAD", swimTest: "SCHWIMMEN" };
   const valOf = (g) => {
     if (g.value == null) return MISSING;
     if (g.key === "strength") return `${g.value} von ${g.of}`;
     if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)} s`;
+    if (g.key === "runStable") return g.value === 0 ? "< 60 min" : `${g.value} min`;
     return `${fmt(g.value, g.key === "acwr" ? 0 : 1)} %`;
   };
   const capOf = (g) => {
@@ -1285,6 +1286,7 @@ function buildBlock(res) {
     if (g.key === "strength" && g.goalSets) return `Wochen mit ≥ ${g.goalSets} Sätzen`;
     if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}`;
     if (g.key === "swimTest") return g.value == null ? "2× 500 m noch offen" : "2. 500 m je 100 m";
+    if (g.key === "runStable") return "länger als im Basistest";
     return g.target;
   };
   goals.forEach((g) => {

@@ -10,7 +10,7 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //   vdot: number,                                          // effectiveVO2max aus get_calculations (optional)
 //   prognosis: [{ distanceKm, seconds }],                  // aus get_prognosis
 //   races: [{ date, name, distanceKm, officialDistanceKm, officialTimeSec }]  // aus get_historical_races
-//   runs: [{ date, distanceKm, durationSec, type, decouplingPct }]  // Läufe der letzten 8 Wochen: type = Art in Runalyze
+//   runs: [{ date, distanceKm, durationSec, type, decouplingPct, dfaAlpha1 }]  // Läufe der letzten 8 Wochen: type = Art in Runalyze
 //                                                                   // (get_activities), decouplingPct = aerobic_decoupling_pace (get_activity_details)
 // }
 
@@ -46,6 +46,8 @@ export function validateSnapshot(body) {
         durationSec: finitePositive(r?.durationSec),
         type: r?.type ? String(r.type).slice(0, 60) : null,
         decouplingPct: r?.decouplingPct != null && r.decouplingPct !== "" && Number.isFinite(dec) && Math.abs(dec) < 100 ? dec : null,
+        // DFA alpha1 (Mittel ueber den Lauf, Runalyze dfa.avg): Ziel bei Grundlage ≥ ca. 0,75
+        dfaAlpha1: Number.isFinite(Number(r?.dfaAlpha1)) && Number(r.dfaAlpha1) > 0 && Number(r.dfaAlpha1) < 2 ? Math.round(Number(r.dfaAlpha1) * 100) / 100 : null,
       };
     })
     .filter((r) => r.date && r.distanceKm)
