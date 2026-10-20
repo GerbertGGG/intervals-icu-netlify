@@ -106,12 +106,17 @@ export function buildWeekReview(input) {
   const general = deload ? "deload" : pick(signals.filter((s) => !s.sport));
   const sportLevel = (k) => (deload ? "deload" : pick([{ level: general }, ...signals.filter((s) => s.sport === k)]));
 
-  // Vorschlag: Basis ist der Rahmen der letzten Woche (ohne Rahmen das Ist), Laufen steigt höchstens 10 %
-  const proposal = SPORTS.filter((k) => W.bySport[k].targetMin > 0 || W.bySport[k].minutes > 0).map((k) => {
-    const b = W.bySport[k], base = b.targetMin > 0 ? b.targetMin : b.minutes, level = sportLevel(k);
+  // Vorschlag (Wochensumme): Basis ist der Rahmen der letzten Woche. Ohne Rahmen der Schnitt der 4 Wochen davor oder das Ist,
+  // wenn es höher war: eine Krankheits- oder Ausfallwoche drückt die Basis sonst doppelt (wenig Ist und dann noch −25 %).
+  // Laufen steigt höchstens 10 %.
+  const priorMin = (k) => (prior.length ? mean(prior.map((w) => w.bySport[k]?.minutes ?? 0)) : 0);
+  const proposal = SPORTS.filter((k) => W.bySport[k].targetMin > 0 || W.bySport[k].minutes > 0 || priorMin(k) > 0).map((k) => {
+    const b = W.bySport[k], ref = priorMin(k), level = sportLevel(k);
+    const basis = b.targetMin > 0 ? "frame" : ref > b.minutes ? "avg" : "actual";
+    const base = basis === "frame" ? b.targetMin : basis === "avg" ? Math.round(ref) : b.minutes;
     let [lo, hi] = R.factor[level];
     if (k === "run" && level === "up") hi = Math.min(hi, 1 + R.runMaxUp);
-    return { sport: k, level, base, from: r5(base * lo), to: r5(base * hi) };
+    return { sport: k, level, base, basis, from: r5(base * lo), to: r5(base * hi) };
   });
   const runLevel = sportLevel("run");
   return {

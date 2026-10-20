@@ -83,3 +83,12 @@ const base = { today: "2026-10-20", weeks, wellness, sessions, runs, daily: [], 
 assert.equal(buildWeekReview({ ...base, weeks: [weeks[5]] }), null);
 
 console.log("week review ok");
+// Krankheitswoche ohne Rahmen: Basis ist der 4-Wochen-Schnitt, nicht das eingebrochene Ist (sonst doppelt gekürzt)
+{
+  const sick = weeks.map((w) => (w.weekStart === "2026-10-12" ? { ...w, runMin: 33, bySport: { ...w.bySport, run: sport(33), bike: sport(20) } } : w));
+  const r = buildWeekReview({ ...base, weeks: sick, sickDays: ["2026-10-14"] });
+  const run = r.proposal.find((p) => p.sport === "run"), bike = r.proposal.find((p) => p.sport === "bike");
+  assert.equal(r.level, "down");
+  assert.deepEqual([run.basis, run.base, run.to], ["avg", 140, 105]); // Ø 140 × 0,75
+  assert.deepEqual([bike.basis, bike.base, bike.to], ["avg", 150, 115]);
+}
