@@ -141,14 +141,15 @@ export function readinessLine(v) {
   return parts.length ? parts.join(" · ") : null;
 }
 
-// Montagsbilanz fuers Widget: nur Montag bis Mittwoch (danach ist der Rahmen gesetzt), Stufe und Vorschlag in Minuten
+// Montagsbilanz fuers Widget: nur Montag bis Mittwoch (danach ist der Rahmen gesetzt), Stufe und Vorschlag (Minuten oder TSS)
 const SPORT_SHORT = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
 export function reviewOf(d) {
   const V = d.weekReview;
   const dow = (new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7;
   if (!V || dow > 2) return null;
-  const plan = (V.proposal ?? []).map((p) => `${SPORT_SHORT[p.sport] ?? p.sport} ${p.from === p.to ? p.from : `${p.from}–${p.to}`}`).join(", ");
-  const text = [`Montagsbilanz: Rahmen ${V.text}.`, V.runText ? `Laufen ${V.runText}.` : null, plan ? `Vorschlag: ${plan} min.` : null].filter(Boolean).join(" ");
+  const rng = (p) => (p.from === p.to ? p.from : `${p.from}–${p.to}`);
+  const plan = (V.proposal ?? []).map((p) => (p.unit === "tss" ? `${rng(p)} TSS gesamt` : `${SPORT_SHORT[p.sport] ?? p.sport} ${rng(p)} min`)).join(", ");
+  const text = [`Montagsbilanz: ${V.hasFrame === false ? "Woche" : "Rahmen"} ${V.text}.`, V.runText ? `Laufen ${V.runText}.` : null, plan ? `Vorschlag: ${plan}.` : null].filter(Boolean).join(" ");
   return { level: V.level, runLevel: V.runLevel, cls: { up: "ok", hold: "warn", down: "bad", deload: "none" }[V.level], text };
 }
 

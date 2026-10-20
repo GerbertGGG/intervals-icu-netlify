@@ -577,7 +577,14 @@ Laufen zusätzlich: Hüfte/Leiste/Knie erwähnt → zurücknehmen; Laufminuten >
   Laufen steigt höchstens +10 %. Die strengste Regel gewinnt.
 ```
 
-Vorschlag je Sportart = Zeitziel der letzten Woche (ohne Ziel das Ist) × Faktor, auf 5 min gerundet. Faustregeln, kein Trainingsplan.
+Krankheit und rote Tage werden zu einem Grund zusammengefasst („krank (1 Tag), 4 rote Tage“), weil sie meist dasselbe Ereignis sind.
+
+Vorschlag für die ganze Woche, auf 5 gerundet:
+
+- **Mit Wochenrahmen** (Zeitziele letzte Woche): je Sportart Zeitziel × Faktor (Laufen höchstens +10 %). Badge „Rahmen …“.
+- **Ohne Rahmen:** keine Minuten je Sportart, denn das Ist einer Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis und der 4-Wochen-Schnitt kann noch die Wettkampfvorbereitung enthalten. Stattdessen Wochen-TSS über alle Sportarten = 7 × CTL (letzter Wert bis Sonntag) × Faktor; 7 × CTL hält die Fitness. Ohne CTL kein Vorschlag. Badge „Woche …“.
+
+Session-RPE wird nur bei mindestens 70 % RPE-Abdeckung angezeigt; sonst nur die Monotonie aus dem TSS. Faustregeln, kein Trainingsplan.
 
 ### 6.5 Grundlagenläufe aus den Zeitreihen (`analyzeRunStreams`, `buildBaseRuns`)
 
@@ -724,7 +731,7 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 - **Fitness (CTL)** (`buildFitness`, 138): sieben Wochenpunkte bei `heute − 42, −35, …, −7, heute`; der letzte Punkt wird durch den **letzten vorhandenen CTL** ersetzt; `delta = CTL_heute − erster vorhandener Wochenpunkt` (gerundet), mit der Anzahl Wochen dazwischen.
 - **Trainingsverteilung** (`buildWidgetTraining`, 108): Anteil je Sportart (Schwimmen/Rad/Lauf) = Minuten der **letzten bis zu vier abgeschlossenen Wochen** / Gesamtminuten, gerundet auf ganze Prozent; Soll nur, wenn `TRI_SPLIT_TARGET` gesetzt ist (Normierung auf 100 %). „Tage seit letzter Einheit“ aus der jüngsten Tagesaktivität der Sportart.
 - **Zeile unter dem Urteil** (`readinessLine`): bei Gelb „Umfang −30 %, lange Einheit verschieben“, bei Rot „frei oder 30 min locker Rad/Schwimmen“ (6.3 `dose`), dazu die Laufsperre aus `verdict.sports.run`, wenn sie strenger ist als die Ampel („Kein Lauf (Hüfte/Leiste/Knie erwähnt)“). Krankheit, fehlender Gefühlseintrag und Grün ohne Laufbremse: keine Zeile. Großes Widget und kleines „bereit“.
-- **Montagsbilanz** (`reviewOf`): nur Montag bis Mittwoch, Text aus 6.4a mit Vorschlag in Minuten. Im großen Widget im Hinweis-Feld: Coach vor Montagsbilanz vor „Was auffällt“.
+- **Montagsbilanz** (`reviewOf`): nur Montag bis Mittwoch, Text aus 6.4a mit Vorschlag (Minuten je Sportart mit Rahmen, sonst TSS gesamt). Im großen Widget im Hinweis-Feld: Coach vor Montagsbilanz vor „Was auffällt“.
 - **Block-Widget:** je Abschlussziel der Kurs (7.9, `course.state`/`label`), nicht bei Ausgangswerten.
 - **Cache:** das Dashboard wird 5 Minuten in KV gehalten (`CACHE_MS`), nur bei vollständigen Daten und gleichem Berliner Datum.
 
