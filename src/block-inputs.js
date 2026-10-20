@@ -158,7 +158,8 @@ const heatOf = (a) => {
 const RUN_CACHE = "icu:runanalysis:v2:"; // v2: EF Minute 5–35
 const RIDE_CACHE = "icu:ridewindow:v2:"; // v2: mittlerer Puls im Messfenster (Kurs: Puls bei fester Leistung)
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
-export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null, run = null, hrCap = null }) {
+// testIds: Aktivitaeten, die der Nutzer als Blocktest benannt hat (Name/Beschreibung der Einheit oder des gekoppelten Workouts)
+export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null, run = null, hrCap = null, testIds = null }) {
   const budget = { left: MAX_FETCH };
   const byId = new Map(acts.map((a) => [a?.id, a]));
   const rzDec = new Map((rzRuns ?? []).filter((r) => Number.isFinite(r.decouplingPct)).map((r) => [r.date, r.decouplingPct]));
@@ -175,14 +176,14 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     // Lockere Laeufe (Pulsregel) bekommen die Auswertung aus den Zeitreihen: EF Minute 5–35, Minuten ueber dem HF-Deckel,
     // Fenster und stabile Dauer – im Blocktest-Modus immer, sonst wenn der Block einen HF-Deckel hat. Im Blocktest-Modus
     // wird das Decoupling ueber den ganzen Lauf nicht mehr gebraucht; sonst hat es Vorrang beim Abrufbudget (Blockziel).
-    rec.id = a.id; rec.name = a.name ?? null;
+    rec.id = a.id; rec.name = a.name ?? null; rec.test = Boolean(testIds?.has(a.id));
     const analyse = async () => {
       if (!easy || !hasHrOf(a) || a.id == null || (rec.durationMin ?? 0) < STREAM_MIN) return;
       const opts = { capHr: hrCap, stableMax: run?.stableMax ?? 5 };
       const v = await cached(env, `${RUN_CACHE}${a.id}:${hrCap ?? "-"}:${opts.stableMax}`, budget, async () => analyzeRunStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "distance", "velocity_smooth"]), opts));
       if (v) rec.analysis = v;
     };
-    if (run?.tests?.length) {
+    if (Array.isArray(run?.tests)) {
       await analyse();
       runOut.push(rec);
       continue;

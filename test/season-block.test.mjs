@@ -179,16 +179,17 @@ const evR = { category: "SEASON_START", name: "Block Grundlage (12 Wochen)", sta
 // Woche 2: keine Entscheidung fällig, auch wenn noch nichts erfüllt ist
 const w2 = buildBlockGoalsFull(resolveSeasonBlock([evR], "2026-10-27"), {}, "2026-10-27");
 assert.equal(w2.decision.week, 12); assert.equal(w2.decision.due, false);
-// Blocktests: nur Läufe am Termin (bis 2 Tage später) zählen fürs Ziel, andere Grundlagenläufe nur als Trend
+// Blocktests legt der Nutzer fest: nur als "Blocktest"/"Basistest" benannte Läufe (r.test aus dem gekoppelten Workout oder
+// der Name) zählen fürs Ziel – auch ein langer Lauf am Termin nicht automatisch; andere Grundlagenläufe nur als Trend
 const an = (dec60, stableMin, pace60, extra = {}) => ({ dec60, stableMin, pace60, windows: [{ min: 60, value: dec60 }], overCapMin: 0, ...extra });
 const lr = (date, dur, a, extra = {}) => ({ date, durationMin: dur, easy: true, treadmill: false, heat: false, elevPerKm: 3, name: "Langer Lauf", analysis: a, ...extra });
-const runsR = [lr("2026-10-25", 95, an(6, 0, 430)), lr("2026-10-29", 70, an(3, 70, 425)), lr("2026-11-09", 105, an(5, 75, 428)), lr("2026-11-08", 50, an(1, 60, 400))];
+const runsR = [lr("2026-10-25", 95, an(6, 0, 430), { name: "Basistest" }), lr("2026-10-29", 70, an(3, 70, 425)), lr("2026-11-09", 105, an(5, 75, 428), { test: true }), lr("2026-11-08", 50, an(1, 60, 400)), lr("2026-11-01", 100, an(9, 0, 420))];
 const bR = resolveSeasonBlock([evR], "2026-11-12");
 const gR = Object.fromEntries(buildBlockGoalsFull(bR, { runs: runsR }, "2026-11-12").goals.map((x) => [x.key, x]));
-assert.deepEqual(gR.runDecoupling.tests.map((t) => [t.date, t.label]), [["2026-10-25", "Basistest"], ["2026-11-09", "Test 1"]]); // 08.11. verschoben auf 09.11. (längster)
+assert.deepEqual(gR.runDecoupling.tests.map((t) => [t.date, t.label]), [["2026-10-25", "Basistest"], ["2026-11-09", "Test 1"]]); // der Lauf am Termin 08.11. ist nicht benannt
 assert.equal(gR.runDecoupling.value, 5.5); assert.equal(gR.runDecoupling.pass, false); assert.match(gR.runDecoupling.note, /erst 2 von 3 Tests.*nächster Test 06\.12\./);
 assert.equal(gR.runDecoupling.pace.ok, true); // 428 vs 430: nicht langsamer
-assert.match(gR.runDecoupling.hints[0], /Trend.*1 Grundlagenlauf ab 60 min.*3 %/);
+assert.match(gR.runDecoupling.hints[0], /Trend.*2 Grundlagenläufe ab 60 min.*6 %/); // 29.10. (3 %) und der unbenannte lange Lauf 01.11. (9 %)
 assert.equal(gR.runStable.value, 75); assert.equal(gR.runStable.baseValue, 0); assert.equal(gR.runStable.status, "ok");
 // Kurs (Trend, keine Entscheidung): Decoupling 6 → Ø 5,5 bei Ziel 5 und Muss 8 = knapp; Hauptkurve Pace 0–60 im HF-Band
 assert.deepEqual([gR.runDecoupling.course.state, gR.runDecoupling.course.from, gR.runDecoupling.course.to, gR.runDecoupling.course.dir], ["close", 6, 5.5, "better"]);
@@ -288,7 +289,8 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   assert.deepEqual(c2.band, [120, 128]); assert.equal(c2.tests.length, 0);
   assert.ok(c2.hints.some((h) => /Verschiedene HF-Grenzen im Text: 125, 128/.test(h)));
   assert.ok(c2.hints.some((h) => /Testband 120–128 reicht über den HF-Deckel 125/.test(h)));
-  assert.ok(c2.hints.some((h) => /Keine Blocktest-Termine gefunden/.test(h)));
+  assert.equal(c2.testsByName, true); // ohne Termine: Tests werden über den Namen erkannt, keine Warnung
+  assert.equal(c2.hints.length, 2);
   assert.equal(parseBlockTargets(real + "\n- Rad: Vergleichseinheit inkl. Einrollen ca. 70 min / ~48 TSS.").compareTss, 48);
   // Deckel aus der Zeile "Lauf-Grundlage unter HF …", nicht aus dem früheren Trend-Satz "Grundlagenlauf … unter HF 125"
   const c128 = real.replace("Lauf-Grundlage unter HF 125", "Lauf-Grundlage unter HF 128");
@@ -296,13 +298,17 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   assert.ok(checkBlockText(c128).hints.some((h) => /Verschiedene HF-Grenzen im Text: 125, 128 – als Deckel gezählt wird 128/.test(h)));
   assert.equal(parseBlockTargets("Lauf: HF-Deckel 128\nGrundlagenlauf unter HF 125").hrCap, 128);
 }
-// Was die restlichen Tests fürs Blockziel brauchen: gezählt wird das Mittel der letzten 3 (08.11., 06.12., 03.01.)
+// Was der nächste Test fürs Blockziel braucht: gezählt wird das Mittel der letzten 3 Tests
 {
   const only = buildBlockGoalsFull(bR, { runs: runsR.slice(0, 1) }, "2026-11-01").goals.find((x) => x.key === "runDecoupling");
-  assert.ok(only.hints.some((h) => /Fürs Ziel zählen die Tests am 08\.11\., 06\.12\., 03\.01\. – der Basistest nicht/.test(h)));
-  // Test 1 mit 5 %: die restlichen 2 brauchen im Mittel ≤ 5 % (Ziel) bzw. ≤ 9,5 % (Muss)
-  const need = gR.runDecoupling.hints.find((h) => /restlichen/.test(h));
-  assert.equal(need, "Die restlichen 2 Tests brauchen im Mittel ≤ 5 % fürs Ziel, ≤ 9,5 % fürs Muss.");
+  assert.ok(only.hints.includes("Fürs Ziel zählt das Mittel der letzten 3 Tests – bisher 1."));
+  // Basistest 6 %, Test 1 5 %: der nächste braucht ≤ 4 % (Ziel 5) bzw. ≤ 13 % (Muss 8)
+  assert.ok(gR.runDecoupling.hints.includes("Der nächste Test braucht ≤ 4 % fürs Ziel, ≤ 13 % fürs Muss (Mittel der letzten 3)."));
+  // Ohne Termine im Text: Blocktest-Modus bleibt an, nächster Test aus dem Kalender (geplantes Workout "Blocktest")
+  const noDates = { ...evR, description: real.replace("(Basistest 25.10., dann 08.11., 06.12., 03.01.)", "") };
+  const bN = resolveSeasonBlock([noDates], "2026-11-12");
+  const gN = buildBlockGoalsFull(bN, { runs: runsR, plannedTests: ["2026-11-15"] }, "2026-11-12").goals.find((x) => x.key === "runDecoupling");
+  assert.equal(gN.count, 2); assert.equal(gN.nextTest, "2026-11-15");
 }
 // Ramp Rate bei niedriger CTL: Hinweis, wie viel Last die Grenze erlaubt
 {

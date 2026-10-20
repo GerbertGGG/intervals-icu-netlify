@@ -1102,10 +1102,10 @@ function renderBlock(SB) {
   const decision = !D ? "" : D.due ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · Entscheidung:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>`
     : `<div class="sub" style="margin-top:8px">Entscheidung in Woche ${D.week}${decAt ? ` (ab ${fmtDate(decAt)})` : ""}: alle Ziele und Leitplanken erfüllt → nächster Block, sonst die betroffene Sportart verlängern.</div>`;
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
-  // Was aus dem Block-Eintrag gelesen wurde (Deckel, Testband, Testtermine) und Widersprüche darin – ein Tippfehler im Text
+  // Was aus dem Block-Eintrag gelesen wurde (Deckel, Testband, wie Blocktests erkannt werden) und Widersprüche darin – ein Tippfehler im Text
   // verfälscht sonst still die Auswertung
   const CK = SB.check;
-  const check = CK ? `<div class="sub muted" style="margin-top:6px">Gelesen aus dem Block-Eintrag: HF-Deckel ${CK.hrCap ?? "–"} · Testband ${CK.band ? CK.band.join("–") : "–"} · Blocktests ${CK.tests.length ? CK.tests.map((md) => `${md.slice(3)}.${md.slice(0, 2)}.`).join(", ") : "keine"}</div>${CK.hints.map((h) => `<div class="notice" style="margin-top:6px">${esc(h)}</div>`).join("")}` : "";
+  const check = CK ? `<div class="sub muted" style="margin-top:6px">Gelesen aus dem Block-Eintrag: HF-Deckel ${CK.hrCap ?? "–"} · Testband ${CK.band ? CK.band.join("–") : "–"} · Blocktests ${CK.testsByName ? "= Läufe mit „Blocktest“/„Basistest“ im Namen (du legst sie fest)" : "keine"}</div>${CK.hints.map((h) => `<div class="notice" style="margin-top:6px">${esc(h)}</div>`).join("")}` : "";
   return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${check}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 

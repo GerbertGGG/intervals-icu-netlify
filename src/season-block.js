@@ -122,10 +122,11 @@ function parseSportGoals(t) {
   if (runP) {
     const max = decMax(runP), must = mustOf(runP);
     out.run = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(runP), minMin: num1(runP.match(/(?:≥|>=|ab|mind(?:estens)?\.?)\s*(\d+)\s*min/i), 60), pace: /pace/i.test(runP) };
-    // Blocktests mit Terminen ("Basistest 25.10., dann 08.11., 06.12., 03.01."): Ziel wird nur an diesen Laeufen gemessen,
-    // Decoupling der ersten 60 min und stabile Dauer (laengstes Fenster 0–60, 0–75 … mit Decoupling ≤ stableMax)
+    // Blocktest-Modus, sobald der Lauf-Absatz Blocktests nennt: Das Ziel wird nur an Laeufen gemessen, die der Nutzer als
+    // "Blocktest"/"Basistest" benennt (Decoupling der ersten 60 min und stabile Dauer, laengstes Fenster 0–60, 0–75 … mit
+    // Decoupling ≤ stableMax). Termine im Text ("Basistest 25.10., dann 08.11.") sind optional und nur Anzeige.
     const tests = parseTestDates(runP);
-    if (tests.length) {
+    if (tests.length || TEST_RE.test(runP)) {
       out.run.tests = tests;
       out.run.stableMax = num1(runP.match(new RegExp(`stabile\\s*dauer[^\\n]*?decoupling\\s*${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), 5);
     }
@@ -191,7 +192,7 @@ export function parseBlockTargets(text) {
 }
 
 // Was das Dashboard aus dem Block-Eintrag gelesen hat, und Widersprueche darin. Der Text steuert Deckel, Testband und
-// Testtermine; ein Tippfehler dort verfaelscht still die Auswertung (z. B. Deckel 125 statt 128, keine Testtermine).
+// Erkennung der Blocktests; ein Tippfehler dort verfaelscht still die Auswertung (z. B. Deckel 125 statt 128).
 export function checkBlockText(text, targets = parseBlockTargets(text)) {
   const t = String(text ?? "");
   const hints = [];
@@ -199,8 +200,7 @@ export function checkBlockText(text, targets = parseBlockTargets(text)) {
   if (limits.length > 1) hints.push(`Verschiedene HF-Grenzen im Text: ${limits.join(", ")} – als Deckel gezählt wird ${targets.hrCap ?? "keine"} (Zeile „Lauf-Grundlage unter HF …“).`);
   const band = targets.run?.band ?? null;
   if (band && targets.hrCap != null && band[1] > targets.hrCap) hints.push(`Testband ${band[0]}–${band[1]} reicht über den HF-Deckel ${targets.hrCap}.`);
-  if (targets.run && !targets.run.tests?.length && /blocktest|basistest/i.test(t)) hints.push("Keine Blocktest-Termine gefunden (Form: „Basistest 25.10., dann 08.11., 06.12., 03.01.“) – ohne sie bleiben Testauswertung, Testtag-Hinweise und die Minuten über dem HF-Deckel aus.");
-  return { hrCap: targets.hrCap ?? null, band, tests: targets.run?.tests ?? [], hints };
+  return { hrCap: targets.hrCap ?? null, band, tests: targets.run?.tests ?? [], testsByName: Array.isArray(targets.run?.tests), hints };
 }
 
 // Fenster: laeuft der Block, ab Blockstart. Davor (oder bei Block-Ende) zaehlt der "Ausgangswert" der letzten 8 Wochen.
@@ -427,32 +427,29 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
 }
 
 // ---------- Lauf mit Blocktests: Basis (Decoupling 0–60 min) und Haltbarkeit (stabile Dauer) ----------
-// Ein Blocktest ist der lockere Lauf am Testtermin oder bis zu 2 Tage danach (Verschiebung bei roter Ampel), oder ein Lauf
-// mit "Blocktest"/"Basistest" im Namen; am Termin zaehlt der laengste. Jeder Lauf traegt seine Auswertung aus den
-// Zeitreihen (analysis, siehe block-inputs.js): dec60, pace60, windows [{min, value}], stableMin (0 = unter 60 min).
-// Grundlagenlaeufe ab 60 min ausserhalb der Tests sind nur Trend, nicht Ziel.
-const TEST_SHIFT_DAYS = 2;
+// Wann ein Blocktest ist, entscheidet der Nutzer: Ein Lauf zaehlt nur als Test, wenn er so heisst ("Blocktest"/"Basistest"
+// im Namen oder in der Beschreibung der Einheit bzw. des gekoppelten Workouts, r.test aus dashboard.js). Ein langer Lauf
+// ist nicht automatisch ein Test, auch nicht an einem im Text genannten Termin. Der erste Test im Block ist der Basistest.
+// Jeder Lauf traegt seine Auswertung aus den Zeitreihen (analysis, siehe block-inputs.js): dec60, pace60, windows
+// [{min, value}], stableMin (0 = unter 60 min). Grundlagenlaeufe ab 60 min ausserhalb der Tests sind nur Trend, nicht Ziel.
+// planned: kommende Testtage (geplante Workouts "Blocktest" im Kalender, sonst Termine aus dem Block-Text) – nur Anzeige.
+export const TEST_RE = /blocktest|basistest/i;
 const PACE_NOISE_SEC = 5; // Pace-Unterschiede unter 5 s/km sind Rauschen
 export function testDatesOf(block, tests) {
   const y0 = Number(block.start.slice(0, 4));
-  return tests.map((md) => { const iso = `${y0}-${md}`; return iso < addDays(block.start, -7) ? `${y0 + 1}-${md}` : iso; });
+  return (tests ?? []).map((md) => { const iso = `${y0}-${md}`; return iso < addDays(block.start, -7) ? `${y0 + 1}-${md}` : iso; });
 }
 const fmtMin = (m) => (m == null ? "–" : m === 0 ? "unter 60 min" : `${m} min`);
-function blocktestGoals(block, runs, cfg, w, basis, todayIso) {
-  const planned = testDatesOf(block, cfg.tests);
+function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = []) {
+  const planned = [...new Set([...plannedTests, ...testDatesOf(block, cfg.tests)])].sort();
   const usable = runs.filter((r) => inWin(r.date, w) && r.easy && !r.treadmill && Number.isFinite(r.analysis?.dec60));
-  const named = usable.filter((r) => /blocktest|basistest/i.test(r.name ?? ""));
-  const used = new Set();
-  const tests = [];
-  planned.forEach((p, i) => {
-    const cand = usable.filter((r) => !used.has(r) && ((r.date >= p && r.date <= addDays(p, TEST_SHIFT_DAYS)) || (named.includes(r) && Math.abs(diffDays(p, r.date)) <= 6)));
-    const r = cand.sort((a, b) => (b.durationMin ?? 0) - (a.durationMin ?? 0))[0];
-    if (!r) return;
-    used.add(r);
+  const marked = usable.filter((r) => r.test || TEST_RE.test(r.name ?? "")).sort((a, b) => a.date.localeCompare(b.date));
+  const used = new Set(marked);
+  const tests = marked.map((r, i) => {
     const a = r.analysis;
-    tests.push({ date: r.date, planned: p, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM });
+    return { date: r.date, planned: r.date, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
   });
-  const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.planned === p)) ?? null;
+  const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.date === p)) ?? null;
   const n = cfg.lastN, last = tests.slice(-n), baseT = tests[0] ?? null, lastT = tests[tests.length - 1] ?? null;
   const avg = mean(last.map((t) => t.dec60));
   const must = cfg.must ?? null;
@@ -472,18 +469,15 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso) {
     note: avg == null ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : [tests.length < n ? `erst ${tests.length} von ${n} Tests` : `Ø der letzten ${n} Tests`, paceOk === false ? `Pace 0–60 ${lastT.pace60} statt ${baseT.pace60} /km – langsamer als im Basistest` : null, nextTxt].filter(Boolean).join(" · "),
     hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Grundlagenl${trend.length === 1 ? "auf" : "äufe"} ab ${cfg.minMin} min, Ø Decoupling 0–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
   };
-  // Was die restlichen Tests fuers Ziel brauchen: gemessen wird das Mittel der letzten n Tests, nicht des ganzen Blocks
-  const finalPlanned = planned.slice(-n), doneFinal = tests.filter((t) => finalPlanned.includes(t.planned));
-  const openFinal = finalPlanned.filter((p) => p >= todayIso && !tests.some((t) => t.planned === p)).length;
-  if (planned.length > 1 && openFinal) {
-    const dmOf = (d) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
-    const sum = doneFinal.reduce((a, t) => a + t.dec60, 0);
-    const need = (lim) => (lim * n - sum) / openFinal;
+  // Was der naechste Test fuers Ziel braucht: gemessen wird das Mittel der letzten n Tests
+  if (tests.length) {
     const f1 = (v) => String(r1(v)).replace(".", ",");
-    base.hints.push(!doneFinal.length
-      ? `Fürs Ziel zählen die Tests am ${finalPlanned.map(dmOf).join(", ")}${planned.length > n ? " – der Basistest nicht" : ""}.`
-      : need(cfg.max) < 0 ? `Ø ≤ ${cfg.max} % ist rechnerisch nicht mehr erreichbar${must != null ? `; fürs Muss brauchen die restlichen ${openFinal} Tests im Mittel ≤ ${f1(need(must))} %` : ""}.`
-      : `Die restlichen ${openFinal} Test${openFinal === 1 ? "" : "s"} brauch${openFinal === 1 ? "t" : "en"} im Mittel ≤ ${f1(need(cfg.max))} % fürs Ziel${must != null ? `, ≤ ${f1(need(must))} % fürs Muss` : ""}.`);
+    const prev = tests.slice(-(n - 1)), sum = prev.reduce((x, t) => x + t.dec60, 0);
+    const need = (lim) => lim * n - sum;
+    base.hints.push(tests.length < n - 1
+      ? `Fürs Ziel zählt das Mittel der letzten ${n} Tests – bisher ${tests.length}.`
+      : need(cfg.max) < 0 ? `Mit dem nächsten Test bleibt das Mittel der letzten ${n} über ${cfg.max} %${must != null && need(must) >= 0 ? `; fürs Muss braucht er ≤ ${f1(need(must))} %` : ""}.`
+      : `Der nächste Test braucht ≤ ${f1(need(cfg.max))} % fürs Ziel${must != null ? `, ≤ ${f1(need(must))} % fürs Muss` : ""} (Mittel der letzten ${n}).`);
   }
   const grow = baseT && lastT && lastT !== baseT ? lastT.stableMin > baseT.stableMin : null;
   const stable = {
@@ -530,7 +524,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   const basis = w.baseline ? "letzte 8 Wochen" : "seit Blockstart";
   const goals = [];
 
-  if (targets.run?.tests?.length) goals.push(...blocktestGoals(block, input.runs ?? [], targets.run, w, basis, todayIso));
+  if (Array.isArray(targets.run?.tests)) goals.push(...blocktestGoals(block, input.runs ?? [], targets.run, w, basis, todayIso, input.plannedTests ?? []));
   else if (targets.run) {
     const cfg = targets.run;
     const easy = (input.runs ?? []).filter((r) => inWin(r.date, w) && r.easy);
