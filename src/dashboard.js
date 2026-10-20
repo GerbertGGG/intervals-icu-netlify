@@ -437,6 +437,9 @@ function buildWellness(list) {
 }
 
 // Tageswerte der Belastung für die Kalender-Heatmap (leere Tage = 0, keine Lücken).
+// Zielminuten je Sportart aus den Weekly-Targets der laufenden Woche; ohne Rahmen null
+const frameOf = (w) => (w?.targetMin > 0 ? Object.fromEntries(SPORTS.map((k) => [k, w.bySport[k]?.targetMin ?? null])) : null);
+
 function buildDaily(todayIso, activities) {
   const out = [];
   for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {} });
@@ -793,15 +796,16 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   }
 
   const daily = buildDaily(todayIso, activities);
+  const weeks = buildWeeks(todayIso, activities, events);
   const baseRuns = buildBaseRuns(blockSessions.runs ?? [], snapshot, blockTargets, seasonBlock, todayIso);
   const todayPlan = buildTodayPlan({
     today: todayIso, verdict: summary.readiness.verdict, daily, hrCap: blockTargets?.hrCap ?? null,
     block: seasonBlock ? { status: seasonBlock.status, weekNo: seasonBlock.weekNo, rulesText: [seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n") } : null,
     testDates: blockTargets?.run?.tests && seasonBlock ? testDatesOf(seasonBlock, blockTargets.run.tests) : [], band: blockTargets?.run?.band ?? null,
     intensity: blockTargets?.intensity ?? null, intensitySessions: intensity,
+    frame: frameOf(weeks.find((w) => w.weekStart === mondayOf(todayIso))),
   });
 
-  const weeks = buildWeeks(todayIso, activities, events);
   // Montagsbilanz: Ampel je Tag der letzten vollen Woche (Tage ohne Gefühlseintrag zählen nicht als gelb)
   const weekReview = buildWeekReview({
     today: todayIso, weeks, wellness, daily, runs, block: seasonBlock ? { status: seasonBlock.status, weekNo: seasonBlock.weekNo } : null,
