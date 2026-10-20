@@ -234,7 +234,7 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   assert.ok(p1.lines.some((l) => /Blocktest So 25\.10\. \(in 5 Tagen\): HF-Band 120–125/.test(l.text)));
   // gestern gelaufen -> heute kein Lauf
   const p2 = buildTodayPlan({ ...base, daily: [{ date: "2026-10-19", load: 40, minutes: { run: 60 } }], verdict: { cls: "ok", sub: "", reasons: [] } });
-  assert.equal(p2.lines[0].cls, "bad"); assert.match(p2.lines[0].text, /Kein Lauf heute/);
+  assert.ok(p2.lines.some((l) => l.cls === "bad" && /Kein Lauf heute/.test(l.text)));
   // Woche 2, zwei Tage vor dem Test: kein HIIT; drei Tage vorher und grün: Qualität möglich
   const w2b = { ...base, block: { ...blk, weekNo: 2 }, testDates: ["2026-11-08"] };
   assert.ok(buildTodayPlan({ ...w2b, today: "2026-11-06", verdict: { cls: "ok" } }).lines.some((l) => /Kein HIIT, keine Sprints: Blocktest am So 08\.11\./.test(l.text)));
@@ -246,5 +246,18 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   // Ruhetag: Mo trainiert, Di frei -> erledigt
   const p3 = buildTodayPlan({ ...base, today: "2026-10-21", daily: [...daily, { date: "2026-10-21", load: 0, minutes: {} }], verdict: { cls: "ok" } });
   assert.ok(p3.lines.some((l) => l.cls === "ok" && /Ruhetag diese Woche: Di 20\.10\.$/.test(l.text)));
+  // Umfang in Minuten aus dem Wochenrahmen: vor dem Training offen, nach einem Lauf heute erledigt (20.10.: Rad 60 Mo, Lauf 34 Di)
+  const frame = { run: 90, bike: 105, swim: 30, strength: null };
+  const pre = buildTodayPlan({ ...base, frame, verdict: { cls: "ok", dose: { text: "voller Umfang laut Wochenrahmen" } } });
+  assert.equal(pre.lines[0].text, "Offen diese Woche: Lauf 90 min, Rad 45 min, Schwimmen 30 min (noch 5 Tage).");
+  assert.equal(pre.lines.some((l) => /voller Umfang/.test(l.text)), false);
+  const ranToday = [daily[0], { date: "2026-10-20", load: 26, minutes: { run: 34 } }];
+  const post = buildTodayPlan({ ...base, frame, daily: ranToday, verdict: { cls: "ok", dose: { text: "voller Umfang laut Wochenrahmen" } } });
+  assert.equal(post.title, "Heute erledigt");
+  assert.equal(post.lines[0].text, "Heute erledigt: Lauf 34 min. Heute kein weiteres Training nötig.");
+  assert.equal(post.lines[1].text, "Offen diese Woche: Lauf 56 min, Rad 45 min, Schwimmen 30 min (noch 5 Tage).");
+  const warn = buildTodayPlan({ ...base, frame, verdict: { cls: "warn", dose: { text: "x" } } });
+  assert.match(warn.lines[0].text, /^Heute etwa 30 % kürzer, lange Einheit verschieben\. Offen diese Woche: Lauf 90 min/);
+  assert.equal(buildTodayPlan({ ...base, verdict: { cls: "ok", dose: { text: "x" } } }).lines[0].text, "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");
 }
 console.log("block A calendar ok");

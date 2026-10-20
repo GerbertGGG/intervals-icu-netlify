@@ -111,7 +111,8 @@ assert.equal(d.summary.readiness.verdict.cls, "ok");
 assert.equal(d.summary.readiness.items.length, 5);
 // Ampel mit Umfang und Laufen je Sportart, Montagsbilanz im Payload
 assert.equal(d.summary.readiness.verdict.dose.factor, 1); assert.ok(d.summary.readiness.verdict.sports.run);
-assert.ok(d.todayPlan.lines.some((l) => /^Umfang: voller Umfang/.test(l.text)));
+assert.ok(d.todayPlan.lines.some((l) => /^(Offen diese Woche|Wochenrahmen erfüllt|Kein Wochenrahmen|Heute erledigt)/.test(l.text)));
+assert.equal(d.todayPlan.lines.some((l) => /voller Umfang/.test(l.text)), false);
 assert.ok(d.weekReview && ["up", "hold", "down", "deload"].includes(d.weekReview.level)); assert.equal(d.weekReview.ampelDays.length, 7);
 const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
 assert.match(noToday.verdict.note, /gestern/); // ohne heutigen Eintrag gilt der von gestern früh

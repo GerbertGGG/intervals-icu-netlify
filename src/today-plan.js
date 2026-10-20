@@ -9,6 +9,8 @@ const dm = (iso) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
 const WD = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const wd = (iso) => WD[new Date(iso + "T00:00:00Z").getUTCDay()];
 const KIND_DE = { bikeHiit: "Rad-HIIT", hillSprints: "Hügelsprints" };
+const SPORT_DE = { run: "Lauf", bike: "Rad", swim: "Schwimmen", strength: "Kraft" };
+const ENDURANCE = ["run", "bike", "swim"];
 const RECOVERY_EVERY = 4;
 const TEST_SOON_DAYS = 7; // Blocktest im Band ankündigen
 
@@ -24,7 +26,8 @@ export function parseDayRules(text) {
 }
 
 // input: { today, verdict, block: {status, weekNo, start, rulesText}|null, testDates:[iso], band:[lo,hi]|null, hrCap,
-//   intensity: {fromWeek, kinds}|null, intensitySessions:[{date,kind}], daily:[{date,load,minutes}] }
+//   intensity: {fromWeek, kinds}|null, intensitySessions:[{date,kind}], daily:[{date,load,minutes}],
+//   frame: {run,bike,swim,strength: Zielminuten der laufenden Woche (Weekly-Target)}|null }
 export function buildTodayPlan(input) {
   const { today, verdict } = input;
   const B = input.block?.status === "active" ? input.block : null;
@@ -44,8 +47,23 @@ export function buildTodayPlan(input) {
   const deload = B?.weekNo != null && B.weekNo % RECOVERY_EVERY === 0;
   const preTest = rules.preTestDays != null && daysTo != null && daysTo <= rules.preTestDays;
 
-  // 0. Umfang: die Ampel sagt auch, wie viel (im Grundlagenblock ist ohnehin fast alles locker)
-  if (verdict.dose && !verdict.sick && verdict.cls !== "none") add(verdict.cls, `Umfang: ${verdict.dose.text}.`);
+  // 0. Umfang in Minuten: Wochenrahmen minus schon Erledigtes (Montag bis heute). Nach einer Ausdauereinheit heute ist der
+  // Tag erledigt; die Ampel beschreibt den Zustand vor dem Training und sagt nur noch, wie viel bei Gelb/Rot geht.
+  const doneToday = ENDURANCE.filter((k) => (daily[today]?.minutes?.[k] ?? 0) > 0);
+  const weekMin = (k) => week.filter((d) => d <= today).reduce((n, d) => n + (daily[d]?.minutes?.[k] ?? 0), 0);
+  const frame = Object.entries(input.frame ?? {}).filter(([k, t]) => SPORT_DE[k] && t > 0).map(([k, t]) => ({ k, target: Math.round(t), done: Math.round(weekMin(k)) }));
+  const open = frame.filter((f) => f.done < f.target);
+  const daysAfter = 6 - dow;
+  const openText = open.length
+    ? `Offen diese Woche: ${open.map((f) => `${SPORT_DE[f.k]} ${f.target - f.done} min`).join(", ")} (${daysAfter === 0 ? "Woche endet heute" : `noch ${daysAfter} Tag${daysAfter === 1 ? "" : "e"}`}).`
+    : "Wochenrahmen erfüllt.";
+  if (doneToday.length && !verdict.sick) {
+    add("ok", `Heute erledigt: ${doneToday.map((k) => `${SPORT_DE[k]} ${daily[today].minutes[k]} min`).join(", ")}. Heute kein weiteres Training nötig.`);
+    if (frame.length) add("none", openText);
+  } else if (verdict.sick || verdict.cls === "none" || verdict.cls === "bad") {
+    if (verdict.dose && !verdict.sick && verdict.cls !== "none") add(verdict.cls, `Umfang: ${verdict.dose.text}.`);
+  } else if (!frame.length) add(verdict.cls === "warn" ? "warn" : "none", verdict.cls === "warn" ? `Umfang: ${verdict.dose?.text ?? "etwa 30 % kürzer"}. Kein Wochenrahmen eingetragen.` : "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");
+  else add(verdict.cls, `${verdict.cls === "warn" ? "Heute etwa 30 % kürzer, lange Einheit verschieben. " : ""}${openText}`);
 
   // 1. Laufen (eigene Bremsen aus der Ampel: Hüfte/Leiste/Knie, Muskelkater)
   const runV = verdict.sports?.run ?? null;
@@ -97,6 +115,7 @@ export function buildTodayPlan(input) {
   let title;
   if (verdict.sick) title = "Kein Training";
   else if (testToday) title = verdict.cls === "bad" ? "Blocktest verschieben" : "Heute Blocktest";
+  else if (doneToday.length) title = "Heute erledigt";
   else if (verdict.cls === "bad") title = "Frei – oder kurz und locker";
   else if (verdict.missing) title = "Erst Gefühlswerte eintragen";
   else if (verdict.cls === "warn") title = "Heute locker und kürzer";
