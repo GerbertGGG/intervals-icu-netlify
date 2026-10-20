@@ -82,18 +82,32 @@ const base = { today: "2026-10-20", weeks, wellness, sessions, runs, daily: [], 
 // Ohne volle Woche keine Bilanz
 assert.equal(buildWeekReview({ ...base, weeks: [weeks[5]] }), null);
 
-// Krankheitswoche ohne Rahmen: keine Minuten aus dem eingebrochenen Ist, sondern Wochen-TSS aus der Fitness (7 × CTL × 0,75).
-// Krankheit und rote Tage ergeben einen Grund, nicht zwei.
+// Krankheitswoche ohne Rahmen: keine Minuten aus dem eingebrochenen Ist, sondern Wochen-TSS aus der Fitness (7 × CTL).
+// Nur halten, nicht zurücknehmen: der Einbruch steckt schon in der CTL. Krankheit und rote Tage ergeben einen Grund, nicht zwei.
 {
   const sick = weeks.map((w) => (w.weekStart === "2026-10-12" ? { ...w, runMin: 33, bySport: { ...w.bySport, run: sport(33), bike: sport(20) } } : w));
   const ctlWell = wellness.map((w) => ({ ...w, ctl: w.date === "2026-10-18" ? 19.7 : 25 }));
   const r = buildWeekReview({ ...base, weeks: sick, wellness: ctlWell, sickDays: ["2026-10-14"], ampel: (d) => (d >= "2026-10-14" && d <= "2026-10-17" ? "bad" : "ok") });
-  assert.equal(r.level, "down"); assert.equal(r.hasFrame, false);
+  assert.equal(r.level, "hold"); assert.equal(r.hasFrame, false);
   assert.deepEqual(r.reasons, ["krank (1 Tag), 4 rote Tage"]);
   assert.equal(r.proposal.length, 1);
-  assert.deepEqual([r.proposal[0].unit, r.proposal[0].ctl, r.proposal[0].base, r.proposal[0].to], ["tss", 20, 138, 105]); // 19,7 × 7 × 0,75
+  assert.deepEqual([r.proposal[0].unit, r.proposal[0].ctl, r.proposal[0].base, r.proposal[0].to], ["tss", 20, 138, 140]); // 19,7 × 7, auf 5 gerundet
   // ohne CTL kein Vorschlag statt einer erfundenen Zahl
   assert.equal(buildWeekReview({ ...base, weeks: sick }).proposal.length, 0);
+}
+// Kein Rahmen letzte Woche, aber der Coach hat den Rahmen für die laufende Woche gesetzt: Vorschlag je Sportart daraus,
+// die Stufe nimmt ihn nur zurück (rote Tage mit Rahmen letzte Woche wären −25 %, hier halten)
+{
+  const sick = weeks.map((w) => (w.weekStart === "2026-10-12" ? { ...w, runMin: 33, bySport: { ...w.bySport, run: sport(33), bike: sport(20) } } : w));
+  const framed = sick.map((w) => (w.weekStart === "2026-10-19" ? { ...w, bySport: { ...w.bySport, run: sport(0, 0, 90, 90), bike: sport(0, 0, 105, 75), swim: sport(0, 0, 30), other: sport(0, 0, 64, 34) } } : w));
+  const r = buildWeekReview({ ...base, weeks: framed, sickDays: ["2026-10-14"], ampel: (d) => (d === "2026-10-15" ? "bad" : "ok") });
+  assert.equal(r.level, "hold");
+  assert.deepEqual(r.proposal.map((p) => [p.sport, p.basis, p.from, p.to, p.maxLoad]), [["run", "current", 90, 90, 90], ["bike", "current", 105, 105, 75], ["swim", "current", 30, 30, null], ["other", "current", 65, 65, 35]]);
+  // gut verkraftet: der Rahmen des Coaches gilt, die Bilanz legt nichts drauf
+  const up = buildWeekReview({ ...base, weeks: framed.map((w) => (w.weekStart === "2026-10-12" ? weeks[4] : w)) });
+  assert.equal(up.proposal[0].basis, "frame"); // mit Rahmen letzte Woche bleibt es bei dessen Fortschreibung
+  const noLast = buildWeekReview({ ...base, weeks: framed.map((w) => (w.weekStart === "2026-10-12" ? { ...weeks[4], bySport: { ...weeks[4].bySport, run: sport(150), bike: sport(150) } } : w)) });
+  assert.equal(noLast.level, "up"); assert.deepEqual(noLast.proposal.map((p) => p.to), [90, 105, 30, 65]);
 }
 // Ein roter Tag ohne Krankheit: Einzahl
 assert.deepEqual(buildWeekReview({ ...base, ampel: (d) => (d === "2026-10-15" ? "bad" : "ok") }).reasons, ["1 roter Tag"]);

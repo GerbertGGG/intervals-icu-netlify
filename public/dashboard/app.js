@@ -353,17 +353,18 @@ function renderWeekReview(d, tile) {
   const rng = (p) => (p.from === p.to ? fmt(p.from) : `${fmt(p.from)}–${fmt(p.to)}`);
   const prop = V.proposal.map((p) => p.unit === "tss"
     ? `<span><b>${rng(p)} TSS</b> in der Woche, alle Sportarten</span>`
-    : `<span><i style="background:var(--s-${p.sport})"></i>${SPORT_LABEL[p.sport]} <b>${rng(p)} min</b>${p.level !== V.level ? ` (${REVIEW_LABEL[p.level]})` : ""}</span>`).join("");
+    : `<span><i style="background:var(--s-${p.sport})"></i>${SPORT_LABEL[p.sport]} <b>${rng(p)} min</b>${p.maxLoad ? ` · ≤ ${fmt(p.maxLoad)} TSS` : ""}${p.level !== V.level ? ` (${REVIEW_LABEL[p.level]})` : ""}</span>`).join("");
   const p0 = V.proposal[0];
   const propSub = !p0 ? "" : p0.unit === "tss"
     ? `Kein Wochenrahmen: Fitness halten wäre 7 × CTL ${fmt(p0.ctl)} = ${fmt(p0.base)} TSS, davon ${REVIEW_LABEL[V.level]}${V.runText ? ` · Laufen ${esc(V.runText)}` : ""}`
+    : p0.basis === "current" ? `Wochensumme · Basis: Wochenrahmen dieser Woche (Coach)${V.level === "up" ? "" : `, ${REVIEW_LABEL[V.level]}`}`
     : "Wochensumme · Basis: Zeitziel der letzten Woche";
   const why = V.reasons.length ? `Warum: ${esc(V.reasons.join(" · "))}` : "Gut verkraftet: keine Warnung aus Ampel, Gefühl, Monotonie oder Laufumfang.";
   return `<div class="cockpit" style="margin-top:var(--gap)">${tile(`Montagsbilanz · Woche ab ${fmtDate(V.weekStart)}`,
     `<div class="rv-head"><span class="badge ${REVIEW_CLS[V.level]}">${V.hasFrame ? "Rahmen" : "Woche"} ${esc(V.text)}</span>${V.runText ? `<span class="badge ${REVIEW_CLS[V.runLevel]}">Laufen ${esc(V.runText)}</span>` : ""}</div>
     <div class="sub">${why}</div><div class="rv-rows">${rows}</div>
     ${prop ? `<div class="rv-prop"><b>Vorschlag diese Woche</b>${prop}<span class="sub">${propSub}</span></div>` : ""}
-    <details class="info"><summary>Erklärung</summary><div>Steigern (+5–10 %, Laufen höchstens +10 %), wenn die Woche gut verkraftet war. Halten bei 2 oder mehr gelben Tagen, Ermüdung oder Muskelkater im Wochenschnitt mindestens 0,5 schlechter als in den 4 Wochen davor, Monotonie über 2 (jeder Tag ähnlich belastet), Rahmen unter 75 % erfüllt oder TSS-Grenze überschritten. Zurücknehmen (etwa −25 %) bei einem roten Tag oder Krankheit. Laufen extra: Hüfte/Leiste/Knie erwähnt = zurücknehmen; mehr als 15 % über dem 4-Wochen-Schnitt oder mehr als 10 min über dem HF-Deckel = halten. In der Entlastungswoche (jede 4. Blockwoche) gilt etwa −35 %. Der Vorschlag gilt für die ganze Woche: mit Wochenrahmen das Zeitziel der letzten Woche je Sportart mal Stufe; ohne Rahmen keine Minuten (eine Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis), sondern Wochen-TSS über alle Sportarten aus der Fitness: 7 × CTL hält sie, die Stufe verschiebt das.</div></details>`, "span4")}</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Steigern (+5–10 %, Laufen höchstens +10 %), wenn die Woche gut verkraftet war. Halten bei 2 oder mehr gelben Tagen, Ermüdung oder Muskelkater im Wochenschnitt mindestens 0,5 schlechter als in den 4 Wochen davor, Monotonie über 2 (jeder Tag ähnlich belastet), Rahmen unter 75 % erfüllt oder TSS-Grenze überschritten. Zurücknehmen (etwa −25 %) bei einem roten Tag oder Krankheit; in einer Woche ohne Rahmen nur halten, weil der Einbruch schon in der CTL steckt. Laufen extra: Hüfte/Leiste/Knie erwähnt = zurücknehmen; mehr als 15 % über dem 4-Wochen-Schnitt oder mehr als 10 min über dem HF-Deckel = halten. In der Entlastungswoche (jede 4. Blockwoche) gilt etwa −35 %. Der Vorschlag gilt für die ganze Woche: mit Wochenrahmen das Zeitziel der letzten Woche je Sportart mal Stufe; ohne Rahmen letzte Woche, aber mit Rahmen für diese Woche dieser je Sportart (die Stufe nimmt ihn nur zurück, steigert ihn nicht); ganz ohne Rahmen keine Minuten (eine Krankheits-, Wettkampf- oder Übergangswoche ist keine Basis), sondern Wochen-TSS über alle Sportarten aus der Fitness: 7 × CTL hält sie, die Stufe verschiebt das.</div></details>`, "span4")}</div>`;
 }
 
 /* Wochenvorschau Mo-So: je Tag die geplanten Einheiten mit Plan-Load neben dem Ist. Vergangene Tage zeigen, ob der Plan
