@@ -114,7 +114,7 @@ export function buildWidget(d, env = {}) {
     generatedAt: d.generatedAt,
     today: d.today,
     goal: goalOf(d),
-    readiness: { verdict: r.verdict, sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
+    readiness: { verdict: r.verdict, line: readinessLine(r.verdict), sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
     // next.items: alle Einheiten des naechsten Tages mit Plan (z. B. Kraft und Rad am selben Tag)
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },
     // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt.
@@ -122,10 +122,34 @@ export function buildWidget(d, env = {}) {
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week) },
     // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
     focus: topFinding(d),
+    // Montagsbilanz (week-review.js) von Montag bis Mittwoch: wie stark der Wochenrahmen steigen darf; danach null
+    review: reviewOf(d),
     // Hinweis des Coaches, nur solange er frisch ist; hat im Widget Vorrang vor focus und dem allgemeinen Warum
     coach: isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? { note: d.coach.note, headline: d.coach.headline } : null,
     sourcesFailed: failedOf(d),
   };
+}
+
+// Eine Zeile unter dem Urteil: Umfang (bei Gelb/Rot) und die Laufsperre, die die Ampelfarbe allein nicht zeigt
+// (Hüfte/Leiste/Knie, Muskelkater). Krankheit und Grün ohne Laufbremse brauchen keine Zeile.
+const DOSE_SHORT = { warn: "Umfang −30 %, lange Einheit verschieben", bad: "frei oder 30 min locker Rad/Schwimmen" };
+export function readinessLine(v) {
+  if (!v || v.sick || v.missing) return null;
+  const run = v.sports?.run;
+  const runTxt = run && run.cls !== v.cls && (run.cls === "bad" || run.cls === "warn") ? (run.cls === "bad" ? run.text.replace(/^kein Lauf/, "Kein Lauf") : `Lauf ${run.text}`) : null;
+  const parts = [DOSE_SHORT[v.cls] ?? null, runTxt].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+// Montagsbilanz fuers Widget: nur Montag bis Mittwoch (danach ist der Rahmen gesetzt), Stufe und Vorschlag in Minuten
+const SPORT_SHORT = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
+export function reviewOf(d) {
+  const V = d.weekReview;
+  const dow = (new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7;
+  if (!V || dow > 2) return null;
+  const plan = (V.proposal ?? []).map((p) => `${SPORT_SHORT[p.sport] ?? p.sport} ${p.from === p.to ? p.from : `${p.from}–${p.to}`}`).join(", ");
+  const text = [`Montagsbilanz: Rahmen ${V.text}.`, V.runText ? `Laufen ${V.runText}.` : null, plan ? `Vorschlag: ${plan} min.` : null].filter(Boolean).join(" ");
+  return { level: V.level, runLevel: V.runLevel, cls: { up: "ok", hold: "warn", down: "bad", deload: "none" }[V.level], text };
 }
 
 // Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces und Schwellen.
@@ -320,6 +344,8 @@ export function buildWidgetBlock(d) {
       goals: (b.goals ?? []).map((g) => ({
         key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
+        // Kurs der Abschlussziele (season-block.js goalCourse): Trend, keine Entscheidung
+        course: g.course ? { state: g.course.state, label: g.course.label } : null,
         weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count, load: w.load !== false })) : undefined,
       })),
       // Entscheidung zum Blockende (Woche 12): next = weiter, extend = Sportart verlaengern, cause = erst Ursache klaeren

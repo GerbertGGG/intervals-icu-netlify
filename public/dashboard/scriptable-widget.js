@@ -6,14 +6,15 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
-//     Gross:   Rennen-Countdown, Bereitschaft, Hinweis (Coach, sonst Befund aus "Was auffaellt" mit Konsequenz, sonst Warum), heutige Einheit,
+//     Gross:   Rennen-Countdown, Bereitschaft mit Umfang und Laufsperre, Hinweis (Coach, sonst Mo–Mi die Montagsbilanz, sonst Befund
+//              aus "Was auffaellt" mit Konsequenz, sonst Warum), heutige Einheit,
 //              Woche Mo bis So als Kapseln mit Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, Schwellen;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
-//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart, Leitplanken und Entscheidung zu Woche 12.
+//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Kurs, Leitplanken und Entscheidung zu Woche 12.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -581,6 +582,8 @@ function buildWidget(res) {
   const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 6;
   statusIcon(vr, v.cls, 16);
   num(vr, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.7 });
+  // Umfang und Laufsperre (Huefte/Leiste/Knie, Muskelkater), die die Ampelfarbe allein nicht zeigt; kommt fertig vom Worker
+  if (r.line) { w.addSpacer(2); text(w, r.line, FS.sm, { bold: true, color: colorFor(/^Kein Lauf/.test(r.line) ? "bad" : v.cls), lines: 1, minScale: 0.7 }); }
   w.addSpacer(6);
   const CW = Math.floor((W - 20) / 2);
   const cols = w.addStack(); cols.size = new Size(W, 0); cols.spacing = 20;
@@ -603,12 +606,14 @@ function buildWidget(res) {
   }
   w.addSpacer(7);
 
-  // 3. Hinweis in einer grauen Kachel: Coach vor Auffaelligkeit vor dem allgemeinen Warum; Strich links in Blau (Coach),
-  // Orange (Auffaelligkeit) oder Grau (Warum). Auffaelligkeit nicht am Renntag und nicht in Taper und Erholung.
+  // 3. Hinweis in einer grauen Kachel: Coach vor Montagsbilanz (Mo–Mi) vor Auffaelligkeit vor dem allgemeinen Warum; Strich
+  // links in Blau (Coach), Ampelfarbe der Bilanz, Orange (Auffaelligkeit) oder Grau (Warum). Auffaelligkeit nicht am Renntag und nicht in Taper und Erholung.
   const raceFocus = g && (g.daysToGo === 0 || g.phase === "taper" || g.phase === "recovery");
   const focusLine = d.focus && !raceFocus ? `${d.focus.short}. ${d.focus.act}` : null;
   const coachLine = d.coach && d.coach.note ? d.coach.note : null;
-  const rawWhy = coachLine || focusLine;
+  // Montag bis Mittwoch: Montagsbilanz (wie stark der Wochenrahmen steigen darf) vor der Auffaelligkeit
+  const reviewLine = d.review && d.review.text && !raceFocus ? d.review.text : null;
+  const rawWhy = coachLine || reviewLine || focusLine;
   // Nie abschneiden: ganze Saetze, solange sie in 3 Zeilen passen. Der erste Satz steht immer komplett da.
   const sentences = (s) => {
     const parts = s.trim().split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ])/);
@@ -623,7 +628,7 @@ function buildWidget(res) {
   const nLines = Math.max(1, Math.ceil(why.length / perLine));
   const ct = w.addStack(); ct.size = new Size(W, nLines * 16 + 12); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
   const bar = ct.addStack(); bar.size = new Size(3, nLines * 16); bar.cornerRadius = 1.5;
-  bar.backgroundColor = coachLine ? COL.accent : focusLine ? COL.warn : COL.muted;
+  bar.backgroundColor = coachLine ? COL.accent : reviewLine ? (d.review.cls === "none" ? COL.muted : colorFor(d.review.cls)) : focusLine ? COL.warn : COL.muted;
   ct.addSpacer(9);
   const tx = ct.addStack(); tx.layoutVertically(); tx.size = new Size(TXW, 0);
   text(tx, why, FS.sm, { lines: nLines + 1, minScale: 0.85 });
@@ -882,6 +887,7 @@ function buildReady(res) {
   statusIcon(w, v.cls, 26);
   w.addSpacer(5);
   num(w, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), lines: 2, minScale: 0.7 });
+  if (r.line) { w.addSpacer(2); text(w, r.line, FS.xs, { bold: true, color: colorFor(/^Kein Lauf/.test(r.line) ? "bad" : v.cls), lines: 2, minScale: 0.7 }); }
   w.addSpacer();
   const short = { Schlaf: "Schlaf", Ermüdung: "Ermüd.", Muskelkater: "Musk.", Stimmung: "Stimm.", Motivation: "Motiv." };
   const row = w.addStack(); row.size = new Size(IW, 0);
@@ -1312,6 +1318,12 @@ function buildBlock(res) {
       c.addSpacer(3);
     } else if ((g.key === "runDecoupling" || g.key === "bikeDecoupling") && g.value != null && g.must) { progressBar(c, IW, Math.min(1, g.value / (g.must * 1.25)), STATUS_HEX(g.status)); c.addSpacer(3); }
     text(c, capOf(g), FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
+    // Kurs (Trend, keine Entscheidung): auf Kurs / knapp / hinten / offen
+    if (g.course && g.status !== "base") {
+      const cc = { on: "ok", close: "warn", behind: "bad" }[g.course.state] || "none";
+      c.addSpacer(2);
+      text(c, `Kurs: ${g.course.label}`, FS.xs, { bold: true, color: cc === "none" ? COL.muted : colorFor(cc), lines: 1, minScale: 0.7 });
+    }
   });
   if (rails.length) {
     w.addSpacer(6);

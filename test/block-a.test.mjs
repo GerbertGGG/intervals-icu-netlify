@@ -50,4 +50,5 @@ await buildDashboard(env, today);
 assert.equal(streamCalls, 0);
 const wb = buildWidgetBlock(d);
 assert.equal(wb.block.decision.state, "cause"); assert.equal(wb.block.goals.filter((x) => x.group === "ziel").length, 3);
+assert.ok(wb.block.goals.filter((x) => x.group === "ziel").every((x) => x.course && x.course.label)); // Kurs auch im Widget
 console.log("block A dashboard ok");

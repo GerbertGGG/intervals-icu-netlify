@@ -723,6 +723,9 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 - **Wochenlast** (`buildWidget`, 47): Summe der Last über alle Sportarten der laufenden und der Vorwoche.
 - **Fitness (CTL)** (`buildFitness`, 138): sieben Wochenpunkte bei `heute − 42, −35, …, −7, heute`; der letzte Punkt wird durch den **letzten vorhandenen CTL** ersetzt; `delta = CTL_heute − erster vorhandener Wochenpunkt` (gerundet), mit der Anzahl Wochen dazwischen.
 - **Trainingsverteilung** (`buildWidgetTraining`, 108): Anteil je Sportart (Schwimmen/Rad/Lauf) = Minuten der **letzten bis zu vier abgeschlossenen Wochen** / Gesamtminuten, gerundet auf ganze Prozent; Soll nur, wenn `TRI_SPLIT_TARGET` gesetzt ist (Normierung auf 100 %). „Tage seit letzter Einheit“ aus der jüngsten Tagesaktivität der Sportart.
+- **Zeile unter dem Urteil** (`readinessLine`): bei Gelb „Umfang −30 %, lange Einheit verschieben“, bei Rot „frei oder 30 min locker Rad/Schwimmen“ (6.3 `dose`), dazu die Laufsperre aus `verdict.sports.run`, wenn sie strenger ist als die Ampel („Kein Lauf (Hüfte/Leiste/Knie erwähnt)“). Krankheit, fehlender Gefühlseintrag und Grün ohne Laufbremse: keine Zeile. Großes Widget und kleines „bereit“.
+- **Montagsbilanz** (`reviewOf`): nur Montag bis Mittwoch, Text aus 6.4a mit Vorschlag in Minuten. Im großen Widget im Hinweis-Feld: Coach vor Montagsbilanz vor „Was auffällt“.
+- **Block-Widget:** je Abschlussziel der Kurs (7.9, `course.state`/`label`), nicht bei Ausgangswerten.
 - **Cache:** das Dashboard wird 5 Minuten in KV gehalten (`CACHE_MS`), nur bei vollständigen Daten und gleichem Berliner Datum.
 
 ---
