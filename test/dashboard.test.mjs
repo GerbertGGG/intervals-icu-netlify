@@ -8,6 +8,7 @@ import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
 import { trainingFindings, nutritionFindings, topFinding } from "../src/findings.js";
+import { buildSessionProfile } from "../src/session-profile.js";
 import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun, buildLastActivity } from "../src/dashboard.js";
 
 const today = "2026-09-30";
@@ -648,6 +649,25 @@ console.log("zones from intervals ok");
 // Letzte Einheit fürs Heute-Band: jüngste erledigte Einheit, keine aus der Zukunft, leere Liste = null.
 {
   const la = buildLastActivity([act(3, { name: "Alt", moving_time: 1800 }), act(1, { name: "Lauf locker", moving_time: 3000, distance: 9050 }), act(-1, { name: "Zukunft", moving_time: 600 })], today);
-  assert.deepEqual(la, { date: day(-1), sport: "run", durationMin: 50, distanceKm: 9.1, load: 50 });
+  // Art unklar ("locker" ist kein Grundlagen-Stichwort): Pace, RPE, Gefühl, aber kein Puls und kein Decoupling (Pulsregel)
+  assert.deepEqual(la, { date: day(-1), sport: "run", durationMin: 50, distanceKm: 9.1, load: 50, paceSecPerKm: 331, rpe: 5, feel: 2 });
   assert.equal(buildLastActivity([], today), null);
+  const base = buildLastActivity([act(1, { name: "Grundlagenlauf", moving_time: 3000, distance: 9050 })], today);
+  assert.equal(base.avgHr, 140); assert.equal(base.decoupling, 3.1);
+  const ride = buildLastActivity([act(1, { type: "VirtualRide", name: "LIT", moving_time: 3600, icu_average_watts: 165, icu_weighted_avg_watts: 168, icu_intensity: 59.4 })], today);
+  assert.equal(ride.sport, "bike"); assert.equal(ride.watts, 165); assert.equal(ride.normWatts, 168); assert.equal(ride.intensity, 59);
+  assert.equal(ride.avgHr, undefined); assert.equal(ride.decoupling, undefined); assert.equal(ride.paceSecPerKm, undefined);
+}
+
+// Profil der Einheit: Abschnitte gemittelt, Pace in s/km (Stehen bleibt Lücke), Puls nur mit Freigabe
+{
+  const n = 3600;
+  const streams = [{ type: "time", data: Array.from({ length: n }, (_, i) => i) }, { type: "watts", data: Array.from({ length: n }, (_, i) => (i < n / 2 ? 150 : 170)) }, { type: "heartrate", data: Array(n).fill(120) }];
+  const p = buildSessionProfile(streams, "watts", true);
+  assert.equal(p.points.length, 120); assert.equal(p.durationMin, 60); assert.equal(p.hr, true);
+  assert.deepEqual(p.points[0], [0, 150, 120]); assert.equal(p.points[119][1], 170);
+  assert.equal(buildSessionProfile(streams, "watts", false).hr, false);
+  const run = buildSessionProfile([{ type: "velocity_smooth", data: Array.from({ length: n }, (_, i) => (i >= 600 && i < 660 ? 0 : 3)) }], "pace", false);
+  assert.equal(run.points[0][1], 333); assert.equal(run.points[20][1], null); assert.equal(run.points[20][2], null);
+  assert.equal(buildSessionProfile([{ type: "watts", data: [100, 120] }], "watts", false), null);
 }

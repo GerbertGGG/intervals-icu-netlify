@@ -576,6 +576,54 @@
     mount(host, s);
   }
 
+  /* ---------- Profil der letzten Einheit: Leistung bzw. Pace als Fläche (Sportfarbe), Puls als Linie (rechte Achse).
+     Pace: schneller = höher. Lücken (Stehen, Gehen) bleiben Lücken. ---------- */
+  function session(host, p, o = {}) {
+    const draw = () => {
+      const W = fitW(host, 560), H = 132, L = 40, R = p.hr ? 36 : 8, T = 8, B = 18;
+      const s = svg(W, H, p.metric === "watts" ? "Leistung und Puls der Einheit" : "Pace und Puls der Einheit");
+      const pts = p.points, tMax = Math.max(p.durationMin || 0, pts[pts.length - 1][0]) || 1;
+      const vs = pts.map((q) => q[1]).filter((v) => v != null), hs = pts.map((q) => q[2]).filter((v) => v != null);
+      const isPace = p.metric === "pace";
+      // Pace: obere/untere 5 % abschneiden, damit eine Ampelpause die Skala nicht staucht
+      const lo = isPace ? U.quantile(vs, 0.03) : 0, hi = isPace ? U.quantile(vs, 0.97) : U.niceMax(Math.max(...vs) * 1.08);
+      const span = Math.max(isPace ? 20 : 1, hi - lo);
+      const x = (m) => L + (W - L - R) * (m / tMax);
+      const yv = (v) => { const r = isPace ? (hi + span * 0.1 - v) / (span * 1.2) : (v - lo) / span; return T + (H - T - B) * (1 - Math.min(1, Math.max(0, r))); };
+      const color = `var(--s-${o.sport ?? "other"})`, base = H - B;
+      // Fläche je zusammenhängendem Abschnitt
+      const runs = []; let cur = [];
+      for (const q of pts) { if (q[1] == null) { if (cur.length) runs.push(cur); cur = []; } else cur.push(q); }
+      if (cur.length) runs.push(cur);
+      for (const r of runs) {
+        const line = r.map((q, i) => `${i ? "L" : "M"}${x(q[0]).toFixed(1)},${yv(q[1]).toFixed(1)}`).join("");
+        s.append(el("path", { d: `${line}L${x(r[r.length - 1][0]).toFixed(1)},${base}L${x(r[0][0]).toFixed(1)},${base}Z`, fill: color, "fill-opacity": 0.22 }), el("path", { d: line, fill: "none", stroke: color, "stroke-width": 1.6, "stroke-linejoin": "round" }));
+      }
+      // Mittelwert als gestrichelte Linie
+      const avg = isPace ? null : vs.reduce((a, b) => a + b, 0) / vs.length;
+      if (avg != null) s.append(title(el("line", { x1: L, x2: W - R, y1: yv(avg), y2: yv(avg), stroke: color, "stroke-dasharray": "3 3", opacity: 0.8 }), `Ø ${U.fmt(avg)} W`));
+      const lab = (v) => (isPace ? U.pace(v) : `${U.fmt(v)} W`);
+      const ticksV = isPace ? [hi, lo] : [hi, hi / 2];
+      for (const v of ticksV) s.append(el("line", { x1: L, x2: W - R, y1: yv(v), y2: yv(v), stroke: "var(--line)" }), el("text", { x: L - 4, y: yv(v) + 4, "text-anchor": "end" }, lab(v)));
+      if (p.hr && hs.length) {
+        const hLo = Math.min(...hs) - 5, hHi = Math.max(...hs) + 5;
+        const yh = (h) => T + (H - T - B) * (1 - (h - hLo) / (hHi - hLo));
+        let d = "", pen = false;
+        for (const q of pts) { if (q[2] == null) { pen = false; continue; } d += `${pen ? "L" : "M"}${x(q[0]).toFixed(1)},${yh(q[2]).toFixed(1)}`; pen = true; }
+        s.append(el("path", { d, fill: "none", stroke: "var(--hr)", "stroke-width": 1.6, "stroke-linejoin": "round" }));
+        for (const h of [Math.max(...hs), Math.min(...hs)]) s.append(el("text", { x: W - R + 4, y: yh(h) + 4, style: "fill:var(--hr)" }, `${U.fmt(h)}`));
+      }
+      // Tooltips: unsichtbare Streifen je Abschnitt
+      const bw = (W - L - R) / pts.length;
+      for (const q of pts) s.append(title(el("rect", { x: x(q[0]), y: T, width: Math.max(1, bw), height: H - T - B, fill: "transparent" }), [`${U.fmt(q[0])} min`, q[1] != null ? (isPace ? `${U.pace(q[1])} /km` : `${U.fmt(q[1])} W`) : null, q[2] != null ? `${U.fmt(q[2])} bpm` : null].filter(Boolean).join(" · ")));
+      s.append(el("line", { x1: L, x2: W - R, y1: base, y2: base, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, `${U.fmt(tMax)} min`));
+      if (p.hr && hs.length) s.append(el("text", { x: (L + W - R) / 2, y: H - 3, "text-anchor": "middle", style: "fill:var(--hr)" }, "Puls (bpm) rechts"));
+      mount(host, s);
+    };
+    draw();
+    refit(host, draw, fitW(host, 560), 560, 340);
+  }
+
   /* ---------- Kleine Säulen je Woche (Disziplin-Sicht): Wert über jeder Säule, laufende Woche heller ---------- */
   function miniBars(host, items, o) {
     const W = 360, H = 120, L = 6, R = 6, T = 20, B = 20;
@@ -607,5 +655,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, miniBars, trend };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend };
 })();

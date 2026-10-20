@@ -14,6 +14,7 @@ import { mustEnv } from "./kv.js";
 import { computeVdotFromRaceTime, paceTargetsFromVdot, predictRaceTimesFromVdot } from "./vdot.js";
 import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-parse.js";
 import { buildIntervalSessions } from "./interval-splits.js";
+import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
@@ -439,14 +440,35 @@ function buildDaily(todayIso, activities) {
   return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes) }));
 }
 
-// Letzte erledigte Einheit fürs Heute-Band, wenn nichts geplant ist. Nur Datum, Sport, Dauer, Distanz, Load
-// (Namen verlassen den Worker nicht).
-export function buildLastActivity(activities, todayIso) {
+// Letzte erledigte Einheit fürs Heute-Band, wenn nichts geplant ist (Namen verlassen den Worker nicht).
+export function pickLastActivity(activities, todayIso) {
   const done = activities.filter((a) => activityDay(a) && activityDay(a) <= todayIso && ((num(a?.moving_time) ?? 0) > 0 || activityLoad(a) > 0));
-  const a = done.sort((x, y) => String(y?.start_date_local ?? "").localeCompare(String(x?.start_date_local ?? "")))[0];
+  return done.sort((x, y) => String(y?.start_date_local ?? "").localeCompare(String(x?.start_date_local ?? "")))[0] ?? null;
+}
+
+// Puls und Decoupling nur bei lockeren Läufen (Pulsregel); Rad und Schwimmen ohne Puls.
+export const lastActivityHrAllowed = (a, ctx = null) => sportOf(a) === "run" && ["base", "long"].includes(classifyRun(a, ctx));
+
+// Kennzahlen wie auf der Intervals-Karte: Dauer, Distanz, Load, Pace bzw. Leistung, IF, RPE, Gefühl.
+export function buildLastActivity(activities, todayIso, ctx = null) {
+  const a = pickLastActivity(activities, todayIso);
   if (!a) return null;
-  const km = (num(a?.distance) ?? 0) / 1000, secs = num(a?.moving_time) ?? 0;
-  return { date: activityDay(a), sport: sportOf(a), durationMin: secs > 0 ? Math.round(secs / 60) : null, distanceKm: km > 0 ? Math.round(km * 10) / 10 : null, load: activityLoad(a) ? Math.round(activityLoad(a)) : null };
+  const sport = sportOf(a), km = (num(a?.distance) ?? 0) / 1000, secs = num(a?.moving_time) ?? 0;
+  const base = { date: activityDay(a), sport, durationMin: secs > 0 ? Math.round(secs / 60) : null, distanceKm: km > 0 ? Math.round(km * 10) / 10 : null, load: activityLoad(a) ? Math.round(activityLoad(a)) : null };
+  const hr = lastActivityHrAllowed(a, ctx);
+  const pace = km > 0 && secs > 0 && (sport === "run" || sport === "swim") ? Math.round(sport === "swim" ? secs / (km * 10) : secs / km) : null;
+  const extra = {
+    paceSecPerKm: sport === "run" ? pace : null,
+    paceSecPer100m: sport === "swim" ? pace : null,
+    watts: sport === "bike" ? (num(a?.icu_average_watts) ?? num(a?.average_watts)) : null,
+    normWatts: sport === "bike" ? num(a?.icu_weighted_avg_watts) : null,
+    intensity: num(a?.icu_intensity) != null ? Math.round(num(a.icu_intensity)) : null,
+    avgHr: hr ? num(a?.average_heartrate) : null,
+    decoupling: hr ? num(a?.decoupling) : null,
+    rpe: num(a?.icu_rpe),
+    feel: num(a?.feel),
+  };
+  return { ...base, ...Object.fromEntries(Object.entries(extra).filter(([, v]) => v != null)) };
 }
 
 // Heißhunger-Einträge und Hüft-/Leisten-/Knie-Hinweise aus den Freitexten. Die Rohtexte bleiben im Worker.
@@ -706,6 +728,12 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
 
   const weeks = buildWeeks(todayIso, activities, events);
   const targetLoad = targetDailyLoad(weeks, todayIso);
+  const lastRaw = pickLastActivity(activities, todayIso);
+  const lastActivity = buildLastActivity(activities, todayIso, runCtx);
+  if (lastActivity && lastRaw) {
+    const profile = await loadSessionProfile(env, lastRaw, lastActivity.sport, lastActivityHrAllowed(lastRaw, runCtx));
+    if (profile) lastActivity.profile = profile;
+  }
   return {
     generatedAt: new Date().toISOString(),
     today: todayIso,
@@ -727,7 +755,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     weeks,
     summary: buildSummary(wellness, todayIso),
     daily: buildDaily(todayIso, activities),
-    lastActivity: buildLastActivity(activities, todayIso),
+    lastActivity,
     ...buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities),
     fitness: buildFitness(runs, snapshot, todayIso),
     intervalSessions: intervalSessions.ok ? intervalSessions.value : [],

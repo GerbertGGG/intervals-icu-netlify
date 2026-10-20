@@ -15,7 +15,7 @@
 :root {
   --bg: #f3f4f6; --card: #ffffff; --inset: #f5f6f8; --text: #14171a; --muted: #5e6670; --line: #e1e4e8; --line-2: #cdd2d8;
   --accent: #2b5d8c; --on-accent: #ffffff; --plan: #a3acb7; --atl: #cf5f2e;
-  --s-run: #b38a00; --s-bike: #2e8b57; --s-swim: #2f6fb5; --s-strength: #c9640f; --race: #b8326a; --s-other: #a3acb7; --i-easy: #5a9f86; --i-mid: #cf9f3a; --i-hard: #cf6158;
+  --s-run: #b38a00; --s-bike: #2e8b57; --s-swim: #2f6fb5; --s-strength: #c9640f; --race: #b8326a; --hr: #c2334d; --s-other: #a3acb7; --i-easy: #5a9f86; --i-mid: #cf9f3a; --i-hard: #cf6158;
   --ok: #1d7a46; --ok-bg: #e5f2ea; --warn: #965800; --warn-bg: #fbefd9; --bad: #b42318; --bad-bg: #fbe6e4;
   --fs-xs: 12px; --fs-s: 13px; --fs-m: 15px; --fs-l: 17px; --fs-xl: 22px; --fs-2xl: 28px; --fs-hero: 36px;
   --r: 10px; --gap: 12px;
@@ -25,7 +25,7 @@
   :root:not([data-theme="light"]) {
     --bg: #0d0f12; --card: #16191d; --inset: #1d2126; --text: #e7e9ec; --muted: #969da6; --line: #272c32; --line-2: #3a4048;
     --accent: #80acd9; --on-accent: #0d0f12; --plan: #5f6874; --atl: #ef8a5c;
-    --s-run: #e8c048; --s-bike: #5ccb7c; --s-swim: #62a6ec; --s-strength: #f39445; --race: #ee75b0; --s-other: #5f6874; --i-easy: #6fc2a1; --i-mid: #e0b454; --i-hard: #e5827a;
+    --s-run: #e8c048; --s-bike: #5ccb7c; --s-swim: #62a6ec; --s-strength: #f39445; --race: #ee75b0; --hr: #f07a8e; --s-other: #5f6874; --i-easy: #6fc2a1; --i-mid: #e0b454; --i-hard: #e5827a;
     --ok: #5fcb8f; --ok-bg: #13291d; --warn: #eab456; --warn-bg: #2f2512; --bad: #f2928a; --bad-bg: #35191a;
     color-scheme: dark;
   }
@@ -33,7 +33,7 @@
 :root[data-theme="dark"] {
   --bg: #0d0f12; --card: #16191d; --inset: #1d2126; --text: #e7e9ec; --muted: #969da6; --line: #272c32; --line-2: #3a4048;
   --accent: #80acd9; --on-accent: #0d0f12; --plan: #5f6874; --atl: #ef8a5c;
-  --s-run: #e8c048; --s-bike: #5ccb7c; --s-swim: #62a6ec; --s-strength: #f39445; --race: #ee75b0; --s-other: #5f6874; --i-easy: #6fc2a1; --i-mid: #e0b454; --i-hard: #e5827a;
+  --s-run: #e8c048; --s-bike: #5ccb7c; --s-swim: #62a6ec; --s-strength: #f39445; --race: #ee75b0; --hr: #f07a8e; --s-other: #5f6874; --i-easy: #6fc2a1; --i-mid: #e0b454; --i-hard: #e5827a;
   --ok: #5fcb8f; --ok-bg: #13291d; --warn: #eab456; --warn-bg: #2f2512; --bad: #f2928a; --bad-bg: #35191a;
   color-scheme: dark;
 }
@@ -172,6 +172,12 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .hb-done::before { content: ""; width: 1.05em; height: 1.05em; background: currentColor; -webkit-mask: var(--ic-ok) center / contain no-repeat; mask: var(--ic-ok) center / contain no-repeat; }
 .hb-done i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .heute .wprofile, .wprofile { max-width: 560px; }
+.lstats { display: flex; flex-wrap: wrap; gap: 6px; }
+.ls { display: grid; gap: 1px; padding: 6px 10px; border-radius: 8px; background: var(--inset); min-width: 72px; }
+.ls-v { font-size: var(--fs-m); font-weight: 600; line-height: 1.3; white-space: nowrap; }
+.ls-v small { font-size: var(--fs-xs); font-weight: 500; color: var(--muted); }
+.ls-v.badge { font-size: var(--fs-m); padding: 0; background: none; }
+.ls-l { font-size: var(--fs-xs); color: var(--muted); }
 .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
 .kpi { background: var(--card); padding: 12px 14px; display: grid; gap: 2px; align-content: start; justify-items: start; min-width: 0; }
 .kpi-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
