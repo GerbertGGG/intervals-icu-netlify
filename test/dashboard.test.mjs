@@ -109,6 +109,10 @@ assert.equal((await putS({ fetchedAt: "2026-09-27T10:00:00Z", text: "Kurzer Absc
 assert.equal(d.summary.load.tsbCls, "ok");
 assert.equal(d.summary.readiness.verdict.cls, "ok");
 assert.equal(d.summary.readiness.items.length, 5);
+// Ampel mit Umfang und Laufen je Sportart, Montagsbilanz im Payload
+assert.equal(d.summary.readiness.verdict.dose.factor, 1); assert.ok(d.summary.readiness.verdict.sports.run);
+assert.ok(d.todayPlan.lines.some((l) => /^Umfang: voller Umfang/.test(l.text)));
+assert.ok(d.weekReview && ["up", "hold", "down", "deload"].includes(d.weekReview.level)); assert.equal(d.weekReview.ampelDays.length, 7);
 const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
 assert.match(noToday.verdict.note, /gestern/); // ohne heutigen Eintrag gilt der von gestern früh
 assert.equal(noToday.entryDate, day(-1));
@@ -190,7 +194,10 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
   const sick = computeReadiness(d.wellness, today, null, { sickDays: [day(-1)] });
   assert.equal(sick.verdict.cls, "bad"); assert.equal(sick.verdict.sick, true);
   const hipR = computeReadiness(d.wellness, today, null, { hipFlags: [{ date: day(-1) }] });
-  assert.equal(hipR.verdict.cls, "warn"); assert.match(hipR.reasons ?? hipR.verdict.reasons.join(), /Hüfte/);
+  // Hüfte/Leiste/Knie bremst nur das Laufen: kein Lauf, Rad und Schwimmen nach der Ampel
+  assert.equal(hipR.verdict.cls, d.summary.readiness.verdict.cls); assert.match(hipR.reasons ?? hipR.verdict.reasons.join(), /Hüfte/);
+  assert.equal(hipR.verdict.sports.run.cls, "bad"); assert.match(hipR.verdict.sports.run.text, /kein Lauf/);
+  assert.equal(hipR.verdict.sports.bike.cls, d.summary.readiness.verdict.cls);
   // Trainingslast gehört nicht ins Erholungsurteil
   assert.equal(computeReadiness(d.wellness, today, { tsb: -40 }).verdict.cls, d.summary.readiness.verdict.cls);
   const two = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9, hrv: 40 } : w)), today, computeLoad(d.wellness));

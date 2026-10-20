@@ -11,8 +11,9 @@ const READY_METRICS = [
   { key: "sleepQuality", label: "Schlaf", soft: true },
   { key: "fatigue", label: "Ermüdung" },
   { key: "soreness", label: "Muskelkater" },
-  { key: "mood", label: "Stimmung", soft: true },
-  { key: "motivation", label: "Motivation", soft: true },
+  // Stimmung und Motivation spiegeln oft Job und Alltag, nicht die Erholung: sie zählen schwächer (weak)
+  { key: "mood", label: "Stimmung", soft: true, weak: true },
+  { key: "motivation", label: "Motivation", soft: true, weak: true },
 ];
 
 function median(a) {
@@ -116,16 +117,67 @@ function computeBody(wellness, todayIso, sickDays = []) {
   };
 }
 
+// Langzeitbasis: Die 28-Tage-Basis wandert bei schleichender Ermüdung über 4–6 Wochen mit, der Trend (7 Tage gegen die
+// 4 Wochen davor) dann auch. Deshalb ein zweiter, fester Bezug: Median der Tage 29–90 vor heute (ohne Krankheitstage,
+// mind. 20 Werte). Abstand = 7-Tage-Schnitt (ohne Krankheitstage, mind. 4 Werte) HRV ≤ 92 % bzw. Ruhepuls ≥ +3 davon.
+export const DRIFT_RULES = { from: 90, to: 29, minN: 20, recentMinN: 4, hrv: 0.92, resting: 3 };
+export function computeDrift(longWellness, todayIso, sickDays = []) {
+  const R = DRIFT_RULES, skip = sickSetOf(sickDays);
+  if (!Array.isArray(longWellness) || !longWellness.length) return null;
+  const anchorDays = longWellness.filter((w) => w.date >= addDays(todayIso, -R.from) && w.date <= addDays(todayIso, -R.to) && !skip.has(w.date));
+  const recent = longWellness.filter((w) => w.date > addDays(todayIso, -7) && w.date <= todayIso && !skip.has(w.date));
+  const med = (list, k) => { const v = list.map((w) => w[k]).filter((x) => x != null); return v.length >= R.minN ? median(v) : null; };
+  const avg = (list, k) => { const v = list.map((w) => w[k]).filter((x) => x != null); return v.length >= R.recentMinN ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const hrvA = med(anchorDays, "hrv"), rhrA = med(anchorDays, "restingHR");
+  const hrv7 = hrvA != null ? avg(recent, "hrv") : null, rhr7 = rhrA != null ? avg(recent, "restingHR") : null;
+  if (hrv7 == null && rhr7 == null) return null;
+  const hrvLow = hrv7 != null && hrv7 <= hrvA * R.hrv, rhrHigh = rhr7 != null && rhr7 >= rhrA + R.resting;
+  return { cls: hrvLow || rhrHigh ? "warn" : "ok", hrv7, hrvAnchor: hrvA, rhr7, rhrAnchor: rhrA, hrvLow, rhrHigh };
+}
+
+// Leistungssignal: Puls bei lockerem Tempo. Letzter lockerer Lauf (Grundlage/lang, mind. 30 min, Puls) der 3 Tage VOR heute
+// gegen den Median der lockeren Läufe der 6 Wochen davor (mind. 4). Effizienz = Tempo je Herzschlag (m/min ÷ HF).
+// Liegt sie ≥ 6 % darunter, ist das eine Warnung (Hügel, Wind und Hitze verfälschen sie, deshalb allein kein Gelb).
+// Heutige Läufe zählen nicht: die Ampel beschreibt den Zustand vor dem Training.
+export const PERF_RULES = { lookback: 3, baseDays: 42, minN: 4, minMin: 30, drop: 0.94 };
+export function computeEasyRunSignal(runs, todayIso) {
+  const P = PERF_RULES;
+  const ef = (r) => (r.avgHr > 0 && r.paceSecPerKm > 0 ? (60000 / r.paceSecPerKm) / r.avgHr : null);
+  const easy = (runs ?? []).filter((r) => ["base", "long"].includes(r.kind) && (r.movingTimeMin ?? 0) >= P.minMin && ef(r) != null && r.date < todayIso);
+  const last = easy.filter((r) => r.date >= addDays(todayIso, -P.lookback)).sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (!last) return null;
+  const base = easy.filter((r) => r.date < last.date && r.date >= addDays(last.date, -P.baseDays)).map(ef);
+  if (base.length < P.minN) return null;
+  const q = ef(last) / median(base);
+  const dm = `${last.date.slice(8, 10)}.${last.date.slice(5, 7)}.`;
+  return { cls: q <= P.drop ? "warn" : "ok", ratio: Math.round(q * 1000) / 1000, date: last.date, text: q <= P.drop ? `Puls bei lockerem Tempo erhöht (Lauf ${dm}: ${Math.round((1 - q) * 100)} % weniger Tempo je Herzschlag als üblich)` : null };
+}
+
+// Umfang je Ampelfarbe: Im Grundlagenblock ist fast alles locker, "nur locker" ändert dort kaum etwas. Die Ampel sagt
+// deshalb auch, wie viel: grün = voller Wochenrahmen, gelb = etwa 30 % kürzer und keine lange Einheit, rot = frei.
+export const DOSE = {
+  ok: { factor: 1, text: "voller Umfang laut Wochenrahmen" },
+  warn: { factor: 0.7, text: "etwa 30 % kürzer, lange Einheit verschieben" },
+  bad: { factor: 0, text: "frei – oder höchstens 30 min locker Rad/Schwimmen" },
+  sick: { factor: 0, text: "kein Training" },
+  none: { factor: null, text: "ohne Werte keine Vorgabe" },
+};
+
 // Gefühlswerte gegen den eigenen üblichen Bereich der letzten 8 Wochen. Skala ab 1 = bestmöglich: auffällig ist ein Wert nur,
 // wenn er über dem üblichen Bereich (Quartile) liegt: ein Schritt schlechter als der Median = Achtung, zwei oder mehr = deutlich.
 // Die Gefühlswerte trägt der Nutzer immer VOR dem Lauf ein: sie beschreiben den Ausgangszustand, nicht die Reaktion auf die
-// Einheit des Tages, und dürfen nicht als Lauffolge gelesen werden. Fehlt der heutige Eintrag, gilt der von gestern früh.
+// Einheit des Tages, und dürfen nicht als Lauffolge gelesen werden. Fehlt der heutige Eintrag, gilt der von gestern früh,
+// grün gibt es dann aber nicht (höchstens gelb, bis eingetragen ist).
 // Urteil (Coaching-Regeln): Krankheit (Kalender) = kein Training. Rot = Ruhepuls ≥ 8 über Basis, zwei gelbe Körpersignale,
-// Ermüdung/Muskelkater deutlich schlechter oder drei Warnungen insgesamt. Gelb = ein gelbes Körpersignal, zwei
-// Warnungen, Schlafqualität/Stimmung/Motivation deutlich schlechter oder Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt.
-// Die eingetragene Schlafqualität macht allein höchstens gelb und zählt nicht zusätzlich, wenn der Schlaf-Score schon
-// meldet (Schlaf zählt einmal). Eine einzelne knappe Gefühls-Warnung ist Rauschen. Die Trainingslast (TSB) gehört nicht ins Erholungsurteil.
-// ctx: { sickDays: [date], hipFlags: [{date}] }
+// Ermüdung deutlich schlechter oder drei Warnungen insgesamt. Gelb = ein gelbes Körpersignal (auch Abstand zur Langzeitbasis),
+// zwei Warnungen, Schlafqualität oder Muskelkater deutlich schlechter.
+// Stimmung und Motivation zählen schwächer: "etwas schlechter" ist nur ein Hinweis, "deutlich schlechter" eine Warnung
+// (allein kein Gelb). Das Leistungssignal (Puls bei lockerem Tempo erhöht, ctx.perf) ist ebenfalls eine Warnung.
+// Je Sportart: Hüfte/Leiste/Knie in den letzten 3 Tagen oder Muskelkater deutlich schlechter = kein Lauf, Rad und
+// Schwimmen nach der Ampel; Muskelkater etwas schlechter = Lauf kurz. Die eingetragene Schlafqualität macht allein höchstens
+// gelb und zählt nicht zusätzlich, wenn der Schlaf-Score schon meldet (Schlaf zählt einmal). Die Trainingslast (TSB) gehört
+// nicht ins Erholungsurteil.
+// ctx: { sickDays: [date], hipFlags: [{date}], longWellness: [{date,hrv,restingHR}], perf: {cls,text}|null }
 export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   const yIso = addDays(todayIso, -1);
   const entry = (d) => wellness.find((w) => w.date === d && READY_METRICS.some((m) => w[m.key] != null)) ?? null;
@@ -147,13 +199,21 @@ export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
   const today = wellness.find((w) => w.date === todayIso);
   const f = (x) => String(Math.round(x * 10) / 10).replace(".", ",");
   const bodyReason = (label, v, b, med) => [v != null && med != null ? `${label} ${f(v)} (Basis ${f(med)})` : null, b.low7 || b.high7 ? `7-Tage-Schnitt ${f(b.mean7)} (Wochen davor ${f(b.base7)})` : null].filter(Boolean).join(", ");
-  const bodyWarn = [body.sleep, body.hrv, body.resting].filter((b) => b.cls === "warn").length - (body.hrv.trendOnly && body.resting.trendOnly ? 1 : 0);
+  // Langzeitbasis zählt nur, wenn der Trend den Abfall nicht schon meldet (sonst dieselbe Beobachtung doppelt)
+  const drift = computeDrift(ctx.longWellness, todayIso, ctx.sickDays);
+  const driftWarn = drift?.cls === "warn" && !body.hrv.low7 && !body.resting.high7;
+  if (drift) body.drift = { ...drift, counted: driftWarn };
+  const bodyWarn = [body.sleep, body.hrv, body.resting].filter((b) => b.cls === "warn").length - (body.hrv.trendOnly && body.resting.trendOnly ? 1 : 0) + (driftWarn ? 1 : 0);
   const bodyBad = body.resting.cls === "bad";
   // Schlaf zählt einmal: meldet schon der Schlaf-Score, zählt die eingetragene Schlafqualität nicht noch einmal
   const counted = items.filter((i) => !(i.key === "sleepQuality" && body.sleep.cls === "warn"));
-  const hardBad = counted.filter((i) => i.cls === "bad" && !i.soft).length;
-  const softBad = counted.filter((i) => i.cls === "bad" && i.soft).length;
-  const subjWarn = counted.filter((i) => i.cls === "warn").length + softBad;
+  const is = (key, cls) => counted.some((i) => i.key === key && i.cls === cls);
+  const fatigueBad = is("fatigue", "bad"), soreBad = is("soreness", "bad"), soreWarn = is("soreness", "warn");
+  const sleepQBad = is("sleepQuality", "bad");
+  const weakBad = counted.filter((i) => i.weak && i.cls === "bad").length;
+  const weakWarn = counted.filter((i) => i.weak && i.cls === "warn");
+  const perfWarn = ctx.perf?.cls === "warn" ? 1 : 0;
+  const subjWarn = counted.filter((i) => !i.weak && i.cls === "warn").length + (sleepQBad ? 1 : 0) + weakBad + perfWarn;
   const sick = (ctx.sickDays ?? []).includes(todayIso) || (ctx.sickDays ?? []).includes(yIso);
   const hip = (ctx.hipFlags ?? []).filter((x) => x.date >= addDays(todayIso, -2) && x.date <= todayIso);
   const reasons = [
@@ -161,20 +221,33 @@ export function computeReadiness(wellness, todayIso, load = null, ctx = {}) {
     ...hip.slice(0, 1).map((x) => `Hüfte/Leiste/Knie erwähnt (${x.date.slice(8, 10)}.${x.date.slice(5, 7)}.)`),
     body.resting.cls === "warn" || body.resting.cls === "bad" ? bodyReason("Ruhepuls", today?.restingHR, body.resting, body.restingMedian) : null,
     body.hrv.cls === "warn" ? bodyReason("HRV", today?.hrv, body.hrv, body.hrvMedian) : null,
+    driftWarn ? `Abstand zur Langzeitbasis (${[drift.hrvLow ? `HRV 7 Tage ${f(drift.hrv7)} statt ${f(drift.hrvAnchor)}` : null, drift.rhrHigh ? `Ruhepuls 7 Tage ${f(drift.rhr7)} statt ${f(drift.rhrAnchor)}` : null].filter(Boolean).join(", ")})` : null,
     body.sleep.cls === "warn" ? (body.sleep.score != null ? `Schlaf-Score ${body.sleep.score} (2. Tag unter ${BODY_RULES.sleepScore})` : `Schlaf ${f(body.sleep.hours)} h`) : null,
-    ...items.filter((i) => i.cls === "warn" || i.cls === "bad").map((i) => `${i.label} ${i.v} (üblich ${f(i.med)})`),
+    ...items.filter((i) => (i.cls === "warn" && !i.weak) || i.cls === "bad").map((i) => `${i.label} ${i.v} (üblich ${f(i.med)})`),
+    perfWarn ? ctx.perf.text : null,
   ].filter(Boolean);
   const hasAny = Boolean(src) || [body.sleep, body.hrv, body.resting].some((b) => b.cls !== "none");
   let verdict;
   if (sick) verdict = { cls: "bad", sick: true, text: "Krank: kein Training", sub: "Krankheit geht vor Plan. Danach locker und kurz einsteigen, nichts nachholen." };
   else if (!hasAny) verdict = { cls: "none", text: "Keine Werte", sub: "Weder Uhr- noch Gefühlswerte für heute – keine Einschätzung." };
-  else if (bodyBad || bodyWarn >= 2 || hardBad >= 1 || bodyWarn + subjWarn + hardBad >= 3) verdict = { cls: "bad", text: "Rot: nur locker und kurz", sub: "Qualität und Zusatzeinheiten streichen, lockere Grundlage kurz halten – oder frei." };
-  else if (bodyWarn >= 1 || subjWarn >= 2 || softBad >= 1 || hip.length) verdict = { cls: "warn", text: "Gelb: heute nur locker", sub: "Qualität streichen, die lockere Grundlage bleibt." };
+  else if (bodyBad || bodyWarn >= 2 || fatigueBad || bodyWarn + subjWarn + (soreBad ? 1 : 0) >= 3) verdict = { cls: "bad", text: "Rot: frei oder kurz und locker", sub: "Qualität und lange Einheiten streichen; wenn überhaupt, 30 min locker Rad oder Schwimmen." };
+  else if (bodyWarn >= 1 || subjWarn >= 2 || sleepQBad || soreBad) verdict = { cls: "warn", text: "Gelb: locker und kürzer", sub: "Qualität streichen, Umfang etwa 30 % kürzer, die lange Einheit verschieben." };
   else verdict = { cls: "ok", text: "Grün: Qualität möglich", sub: "Erholungswerte im üblichen Bereich." };
+  // Ohne heutigen Eintrag kein Grün: der Zustand von heute früh ist noch nicht bekannt
+  if (verdict.cls === "ok" && !todayE) verdict = { cls: "warn", missing: true, text: "Gelb: Gefühlswerte fehlen", sub: "Heute noch nichts eingetragen – erst eintragen, dann gilt die Ampel. Bis dahin locker." };
   verdict.reasons = reasons;
   if (ydayE) verdict.note = "Gefühlswerte von gestern früh (heute noch nicht eingetragen).";
+  verdict.dose = DOSE[verdict.sick ? "sick" : verdict.cls] ?? DOSE.none;
+  // Je Sportart: Laufen hat eigene Bremsen (Hüfte/Leiste/Knie, Muskelkater), Rad und Schwimmen folgen der Ampel
+  const general = { ok: "nach Wochenrahmen", warn: "locker und kürzer", bad: verdict.sick ? "kein Training" : "frei oder 30 min locker", none: "keine Einschätzung" }[verdict.cls];
+  const run = verdict.cls === "bad" ? { cls: "bad", text: verdict.sick ? "kein Training" : "kein Lauf" }
+    : hip.length ? { cls: "bad", text: "kein Lauf (Hüfte/Leiste/Knie erwähnt)" }
+    : soreBad ? { cls: "bad", text: "kein Lauf (Muskelkater deutlich)" }
+    : soreWarn ? { cls: "warn", text: "nur kurz und locker (Muskelkater)" }
+    : { cls: verdict.cls, text: general };
+  verdict.sports = { run, bike: { cls: verdict.cls, text: general }, swim: { cls: verdict.cls, text: general } };
   // Unbestätigte Einzelwerte: sichtbar machen, aber nicht werten
-  const single = [body.hrv.single ? `HRV ${f(today.hrv)} (Basis ${f(body.hrvMedian)})` : null, body.resting.single ? `Ruhepuls ${f(today.restingHR)} (Basis ${f(body.restingMedian)})` : null].filter(Boolean);
+  const single = [body.hrv.single ? `HRV ${f(today.hrv)} (Basis ${f(body.hrvMedian)})` : null, body.resting.single ? `Ruhepuls ${f(today.restingHR)} (Basis ${f(body.restingMedian)})` : null, ...weakWarn.map((i) => `${i.label} ${i.v} (üblich ${f(i.med)})`)].filter(Boolean);
   if (single.length) verdict.watch = `Einzelwert, allein kein Signal: ${single.join(" · ")}`;
   const thin = [body.hrv.thin && body.hrv.n >= BODY_RULES.minN ? "HRV" : null, body.resting.thin && body.resting.n >= BODY_RULES.minN ? "Ruhepuls" : null].filter(Boolean);
   if (thin.length) verdict.thin = `Basis noch dünn: ${thin.join(", ")}`;

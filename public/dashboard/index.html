@@ -246,6 +246,19 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .btl i.rec { opacity: .35; } .btl i.past.rec, .btl i.now.rec { opacity: .3; }
 .bbars > u.aim { border-top-style: solid; } .bbars > u.must { border-top: 2px dashed var(--muted); }
 .bgh { margin: 4px 0 -2px; }
+.rv-head { display: flex; flex-wrap: wrap; gap: 6px; }
+.rv-rows { display: grid; gap: 6px; margin-top: 4px; }
+.rv-row { display: grid; grid-template-columns: 7.5em auto minmax(0, 1fr); gap: 4px 12px; align-items: baseline; font-size: var(--fs-s); }
+.rv-l { color: var(--muted); }
+.rv-v { font-weight: 600; white-space: nowrap; }
+.rv-v.warn { color: var(--warn); } .rv-v.bad { color: var(--bad); }
+.rv-row .dots { gap: 2px 8px; font-size: var(--fs-xs); }
+@media (max-width: 600px) { .rv-row { grid-template-columns: 7.5em minmax(0, 1fr); } .rv-row .sub { grid-column: 1 / -1; } }
+.rv-prop { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; font-size: var(--fs-s); margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); }
+.rv-prop > b { flex-basis: 100%; }
+.rv-prop i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.bcourse td, .bcourse th { white-space: nowrap; }
+.bcourse td.main { white-space: normal; color: var(--muted); }
 .bdec { border-radius: 8px; padding: 10px 12px; background: var(--inset); border-left: 3px solid var(--line-2); font-size: var(--fs-s); }
 .bdec.next { border-left-color: var(--ok); } .bdec.extend { border-left-color: var(--warn); } .bdec.cause { border-left-color: var(--bad); }
 .bdet summary { cursor: pointer; font-size: var(--fs-s); color: var(--muted); }
@@ -427,14 +440,10 @@ td .badge { font-size: var(--fs-xs); }
   </section>
 
   <h2 id="form">Form</h2>
-  <div class="card"><h3>Fitness, Ermüdung und Frische</h3><div id="form-chart"></div>
+  <div class="card"><h3>Fitness, Ermüdung und Frische</h3><div id="form-chart"></div><div class="muted" id="form-now" style="margin-top:6px"></div>
     <details class="info"><summary>Erklärung</summary><div>CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB). Die Zonen rechnen wie Intervals.icu in Prozent der aktuellen Fitness: unter −30 % hohes Risiko (rot), −30 bis +25 % normaler Trainingsbereich – ein negativer TSB in Belastungswochen ist gewollt. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): gibt es Wochenziele des Coaches, rechnet sie mit 90 % der TSS-Obergrenzen (Schwimmen aus den Zielminuten und deinen bisherigen TSS je Minute), verteilt den Rest der Woche gleichmäßig und nimmt für die Wochen danach dieselbe Woche an. Ohne Wochenziele rechnet sie die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></details></div>
-  <div class="grid half" style="margin-top:12px">
-    <div class="card"><h3>Trainingszeit pro Woche (Minuten, alle Sportarten)</h3><div id="chart-km"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel (früher Plan)</span></div></div>
-    <div class="card"><h3>Belastung pro Woche (alle Sportarten)</h3><div id="chart-load"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>TSS-Obergrenze (früher Plan)</span></div></div>
-  </div>
+  <div class="card" style="margin-top:12px"><h3>Trainingszeit pro Woche (Minuten, alle Sportarten)</h3><div id="chart-km"></div>
+    <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel (früher Plan)</span></div></div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Grundlagenläufe ab 60 min</h3><div id="longruns"></div></div>
     <div class="card" id="intervals-card" hidden><h3>Intervall-Splits (4 Wochen)</h3><div id="interval-splits"></div></div>
@@ -443,7 +452,6 @@ td .badge { font-size: var(--fs-xs); }
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
     <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
-    <div class="card"><h3>Anteil der Sportarten je Woche</h3><div id="chart-share"></div></div>
     <div class="card"><h3>Intensität je Woche (Zonenzeit)</h3><div id="chart-intensity"></div><div class="legend" id="intensity-legend"></div></div>
   </div>
   <div class="card scroll" id="week-report" style="margin-top:12px"></div>

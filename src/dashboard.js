@@ -18,7 +18,8 @@ import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
-import { buildSummary } from "./dashboard-summary.js";
+import { buildSummary, computeEasyRunSignal, computeReadiness } from "./dashboard-summary.js";
+import { buildWeekReview } from "./week-review.js";
 import { withActualToday } from "./live-load.js";
 import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
 import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./runalyze-history.js";
@@ -421,6 +422,8 @@ function buildWellness(list) {
       fatigue: scaleValue(w?.fatigue),
       mood: scaleValue(w?.mood),
       motivation: scaleValue(w?.motivation),
+      // Stress außerhalb des Trainings (Job, Alltag), nur für die Montagsbilanz
+      stress: scaleValue(w?.stress),
       // Yazio-Werte stehen als Intervals-Zusatzfelder im Wellness-Eintrag (siehe sync.js). Der Sync
       // schreibt bei leerem Tagebuch 0: Nichts zu essen gibt es nicht, also zählt <= 0 als "keine Daten".
       calories: positive(w?.Calories),
@@ -723,7 +726,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     return out;
   });
   const insights = buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities);
-  const summary = buildSummary(wellness, todayIso, { sickDays, hipFlags: insights.hipFlags });
+  // Langzeitbasis (180 Tage Wellness aus der Formkurve) und Puls bei lockerem Tempo fuer die Erholungsampel
+  const longWellness = fitnessR.ok && Array.isArray(fitnessR.value) ? buildWellness(fitnessR.value).map((w) => ({ date: w.date, hrv: w.hrv, restingHR: w.restingHR })) : [];
+  const readyCtx = { sickDays, hipFlags: insights.hipFlags, longWellness };
+  const summary = buildSummary(wellness, todayIso, { ...readyCtx, perf: computeEasyRunSignal(runs, todayIso) });
   let blockTargets = null, blockSessions = {}, intensity = [];
 
   // Trainingsblock aus dem Kalender samt Fortschritt der Ziele. Laeuft der Block schon laenger als die 56 Tage Historie,
@@ -796,6 +802,14 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   });
 
   const weeks = buildWeeks(todayIso, activities, events);
+  // Montagsbilanz: Ampel je Tag der letzten vollen Woche (Tage ohne Gefühlseintrag zählen nicht als gelb)
+  const weekReview = buildWeekReview({
+    today: todayIso, weeks, wellness, daily, runs, block: seasonBlock ? { status: seasonBlock.status, weekNo: seasonBlock.weekNo } : null,
+    sessions: activities.map((a) => ({ date: activityDay(a), sport: sportOf(a), minutes: (num(a?.moving_time) ?? 0) / 60, rpe: num(a?.icu_rpe) })),
+    ampel: (d) => { const v = computeReadiness(wellness.filter((w) => w.date <= d), d, null, readyCtx).verdict; return v.missing ? "none" : v.cls; },
+    sickDays, hipFlags: insights.hipFlags,
+    capRuns: blockTargets?.hrCap != null ? (blockSessions.runs ?? []).filter((r) => r.easy && r.analysis?.overCapMin != null).map((r) => ({ date: r.date, overCapMin: r.analysis.overCapMin })) : null,
+  });
   const targetLoad = targetDailyLoad(weeks, todayIso);
   const lastRaw = pickLastActivity(activities, todayIso);
   const lastActivity = buildLastActivity(activities, todayIso, runCtx);
@@ -832,6 +846,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     weeks,
     summary,
     todayPlan,
+    weekReview,
     baseRuns,
     daily,
     lastActivity,

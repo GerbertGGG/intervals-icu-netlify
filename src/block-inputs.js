@@ -84,19 +84,22 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
 }
 
 // Rad-Messfenster: windowMin Minuten ab Ende des Einrollens (warmupMin). Fehlt das Einrollen (Einheit zu kurz dafuer),
-// beginnt das Fenster bei 0 (noWarmup). Leistung zu Puls wie decouplingFromStreams, dazu die mittlere Leistung im Fenster.
+// beginnt das Fenster bei 0 (noWarmup). Leistung zu Puls wie decouplingFromStreams, dazu mittlere Leistung und mittlerer Puls
+// im Fenster (sinkt der Puls bei gleicher Leistung, wird die Grundlage besser, auch wenn das Decoupling schon niedrig ist).
 export function rideWindowFromStreams(streams, { warmupMin = 0, windowMin = 60, durationSec = null } = {}) {
   const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
-  const w = get("watts"), time = get("time");
+  const w = get("watts"), time = get("time"), hr = get("heartrate");
   if (!Array.isArray(w)) return null;
   const dur = durationSec ?? (Array.isArray(time) ? time[time.length - 1] : w.length);
   const start = warmupMin > 0 && dur >= (warmupMin + windowMin - 2) * 60 ? warmupMin * 60 : 0;
   const end = start + windowMin * 60;
   const tOf = (i) => (Array.isArray(time) && Number.isFinite(time[i]) ? time[i] : i);
-  const ws = []; for (let i = 0; i < w.length; i++) { const t = tOf(i); if (t >= start && t < end && w[i] >= 10) ws.push(w[i]); }
+  const ws = [], hs = [];
+  for (let i = 0; i < w.length; i++) { const t = tOf(i); if (t >= start && t < end && w[i] >= 10) { ws.push(w[i]); if (Array.isArray(hr) && hr[i] > 40) hs.push(hr[i]); } }
   return {
     decoupling: decouplingFromStreams(streams, "watts", end, { warmupSec: start }),
     mainWatts: ws.length ? Math.round(ws.reduce((a, b) => a + b, 0) / ws.length) : null,
+    mainHr: hs.length >= 60 ? Math.round(hs.reduce((a, b) => a + b, 0) / hs.length) : null,
     noWarmup: warmupMin > 0 && start === 0,
   };
 }
@@ -139,7 +142,7 @@ const heatOf = (a) => {
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
 // bike: Radziel aus parseBlockTargets (minMin, firstMin) – Decoupling nur fuer Rollen-Einheiten, die lang genug sind
 const RUN_CACHE = "icu:runanalysis:v1:";
-const RIDE_CACHE = "icu:ridewindow:v1:";
+const RIDE_CACHE = "icu:ridewindow:v2:"; // v2: mittlerer Puls im Messfenster (Kurs: Puls bei fester Leistung)
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
 export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null, run = null, hrCap = null }) {
   const budget = { left: MAX_FETCH };
@@ -185,7 +188,7 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
         // Messfenster nach dem Einrollen selbst rechnen (der Intervals-Wert umfasst bei laengeren Fahrten den Rest der Fahrt)
         const opts = { warmupMin: bike.warmupMin, windowMin: bike.firstMin, durationSec: num(a.moving_time) };
         const v = await cached(env, `${RIDE_CACHE}${a.id}:${opts.warmupMin}:${opts.windowMin}`, budget, async () => rideWindowFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"]), opts));
-        if (v) Object.assign(rec, { decoupling: v.decoupling, mainWatts: v.mainWatts, noWarmup: v.noWarmup });
+        if (v) Object.assign(rec, { decoupling: v.decoupling, mainWatts: v.mainWatts, mainHr: v.mainHr ?? null, noWarmup: v.noWarmup });
       } else rec.decoupling = await decouplingOf(env, a, "watts", budget, bike?.firstMin ?? null);
     }
     rides.push(rec);

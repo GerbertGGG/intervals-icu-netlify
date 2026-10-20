@@ -507,7 +507,7 @@ Geprüft gegen Okt 2026: Der 13.10. (Vortag der Krankheit: HRV −17 %, Ruhepuls
 
 ### 6.3 Erholungsampel (`computeReadiness`)
 
-Fünf Gefühlsskalen aus Intervals (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = bestmöglich). Sie werden **vor** dem Training eingetragen und beschreiben den Ausgangszustand. Fehlt der Eintrag von heute, gilt der von gestern früh (Hinweis im Band).
+Fünf Gefühlsskalen aus Intervals (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = bestmöglich). Sie werden **vor** dem Training eingetragen und beschreiben den Ausgangszustand. Fehlt der Eintrag von heute, gilt der von gestern früh (Hinweis im Band), Grün gibt es dann aber nicht: Die Ampel steht auf „Gelb: Gefühlswerte fehlen“, bis eingetragen ist.
 
 ```
 Basis  = alle Werte der Skala vor dem Eintragstag im geladenen Fenster (56 Tage); Band erst ab ≥ 5 Werten
@@ -515,19 +515,28 @@ Band   = [25 %-Quantil ; 75 %-Quantil],  out = Wert > 75 %-Quantil,  delta = Wer
 Klasse: bad = out UND delta ≥ 2 · warn = out UND delta ≥ 1 · sonst ok
 ```
 
-Urteil (`bodyWarn` = gelbe Körpersignale, zwei reine Trend-Signale zählen als eines; `hardBad` = Ermüdung/Muskelkater deutlich schlechter; `subjWarn` = Gefühls-Warnungen plus Schlafqualität/Stimmung/Motivation deutlich schlechter). **Schlaf zählt einmal:** Meldet der Schlaf-Score schon warn, zählt die eingetragene Schlafqualität nicht zusätzlich. Die Schlafqualität allein macht höchstens gelb (vorher: eine einzige Nacht mit „deutlich schlechter“ = rot, obwohl der Schlaf-Score erst nach zwei Nächten zählt):
+**Langzeitbasis** (`computeDrift`): Die 28-Tage-Basis und der Trend wandern bei schleichender Ermüdung über 4–6 Wochen mit. Zweiter, fester Bezug: Median der Tage 29–90 vor heute aus der 180-Tage-Wellness der Formkurve (ohne Krankheitstage, mind. 20 Werte). Liegt der 7-Tage-Schnitt (ohne Krankheitstage, mind. 4 Werte) bei der HRV ≤ 92 % oder beim Ruhepuls ≥ 3 darüber, ist das **ein** gelbes Körpersignal – nur, wenn der Trend (6.2) es nicht schon meldet.
+
+**Leistungssignal** (`computeEasyRunSignal`): letzter lockerer Lauf (Grundlage/lang, ≥ 30 min, Puls) der 3 Tage **vor** heute gegen den Median der lockeren Läufe der 6 Wochen davor (mind. 4). Effizienz = Tempo (m/min) ÷ Ø-Puls. Liegt sie ≥ 6 % darunter, ist das eine Warnung (Hügel, Wind, Hitze verfälschen sie, deshalb allein kein Gelb). Heutige Läufe zählen nicht.
+
+Urteil (`bodyWarn` = gelbe Körpersignale inkl. Langzeitbasis, zwei reine Trend-Signale zählen als eines; `subjWarn` = Gefühls-Warnungen ohne Stimmung/Motivation, plus Schlafqualität deutlich schlechter, plus Stimmung/Motivation **deutlich** schlechter, plus Leistungssignal). **Schlaf zählt einmal.** **Stimmung und Motivation zählen schwächer** (sie spiegeln oft Job und Alltag): „etwas schlechter“ ist nur ein Hinweis (`verdict.watch`), „deutlich schlechter“ eine Warnung, allein kein Gelb.
 
 ```
 Krankheit im Kalender heute oder gestern                        → „Krank: kein Training“ (bad)
 keine Werte (weder Uhr noch Gefühl)                             → keine Einschätzung (none)
-Ruhepuls bad ODER bodyWarn ≥ 2 ODER hardBad ≥ 1
-  ODER bodyWarn + subjWarn + hardBad ≥ 3                        → „Rot: nur locker und kurz“ (bad)
-bodyWarn ≥ 1 ODER subjWarn ≥ 2 ODER Schlafqualität/Stimmung/Motivation deutlich schlechter
-  ODER Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt         → „Gelb: heute nur locker“ (warn)
+Ruhepuls bad ODER bodyWarn ≥ 2 ODER Ermüdung deutlich schlechter
+  ODER bodyWarn + subjWarn + (Muskelkater deutlich) ≥ 3         → „Rot: frei oder kurz und locker“ (bad)
+bodyWarn ≥ 1 ODER subjWarn ≥ 2 ODER Schlafqualität deutlich schlechter
+  ODER Muskelkater deutlich schlechter                          → „Gelb: locker und kürzer“ (warn)
 sonst                                                           → „Grün: Qualität möglich“ (ok)
+Grün ohne heutigen Gefühlseintrag                               → „Gelb: Gefühlswerte fehlen“ (warn, missing)
 ```
 
-Eine einzelne knappe Gefühls-Warnung ist Rauschen. Die Trainingslast (TSB) fließt **nicht** ein: Ein negativer TSB in Belastungswochen ist gewollt und wäre sonst doppelt gezählt.
+**Umfang** (`verdict.dose`, `DOSE`): Im Grundlagenblock ist fast alles locker, „nur locker“ ändert dort kaum etwas. Deshalb: grün = voller Wochenrahmen (Faktor 1), gelb = etwa 30 % kürzer und die lange Einheit verschieben (0,7), rot = frei oder höchstens 30 min locker Rad/Schwimmen (0).
+
+**Je Sportart** (`verdict.sports`): Rad und Schwimmen folgen der Ampel. Laufen hat eigene Bremsen: Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt oder Muskelkater deutlich schlechter = kein Lauf; Muskelkater etwas schlechter = Lauf kurz und locker. Hüfte/Leiste/Knie macht die Gesamtampel **nicht** mehr gelb (früher: mindestens gelb für alles).
+
+Eine einzelne knappe Gefühls-Warnung ist Rauschen. Die Trainingslast (TSB) fließt **nicht** ein: Ein negativer TSB in Belastungswochen ist gewollt, und der TSB läuft der tatsächlichen Erholung hinterher. Er steht deshalb auch nicht mehr im Heute-Band, sondern unter der Formkurve.
 
 ### 6.4 Tagesentscheidung (`today-plan.js`)
 
@@ -538,9 +547,37 @@ Das Heute-Band verbindet die Ampel mit den Regeln aus dem Block-Eintrag. Eine Re
 - **Ruhetag:** mindestens einer pro Woche; ab 2 Resttagen ohne Ruhetag ein Hinweis.
 - **Blocktest:** Ankündigung ab 7 Tagen vorher; am Testtag bei Rot „1–2 Tage verschieben“, bei Gelb „laufen und notieren“.
 
-Titel: Krank → „Kein Training“; Testtag → „Heute Blocktest“ bzw. „Blocktest verschieben“; Rot → „Nur locker und kurz – oder frei“; Gelb → „Heute nur locker“; Grün → „Qualität möglich“, wenn eine Intensität offen ist, sonst „Locker nach Wochenrahmen“.
+- **Umfang** (erste Zeile): Text aus `verdict.dose` (6.3).
+- **Laufen je Sportart:** Ist `verdict.sports.run` rot, obwohl die Ampel es nicht ist (Hüfte/Leiste/Knie, Muskelkater), heißt die Zeile „Laufen: kein Lauf … – Rad oder Schwimmen locker“, und Hügelsprints sind „heute kein Lauf“.
 
-Die Kennzahlen darunter: Schlaf-Score (sonst Schlafdauer), TSB in % der CTL, Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest bzw. Rennen. Das frühere Schlafkonto (7,5-h-Ziel) ist entfallen: Es war eine dritte Schlafschwelle neben der Ampel.
+Titel: Krank → „Kein Training“; Testtag → „Heute Blocktest“ bzw. „Blocktest verschieben“; Rot → „Frei – oder kurz und locker“; Gefühlswerte fehlen → „Erst Gefühlswerte eintragen“; Gelb → „Heute locker und kürzer“; Grün → „Qualität möglich“, wenn eine Intensität offen ist, sonst „Locker nach Wochenrahmen“.
+
+Die Kennzahlen darunter: Schlaf-Score (sonst Schlafdauer), **Laufen 7 Tage** (Laufminuten der letzten 7 Tage gegen den Wochenschnitt der 4 Wochen davor; bis +15 % im Rahmen, bis +30 % steil, darüber zu steil – Laufen getrennt von der Gesamt-TSS, weil die Stoßbelastung Hüfte, Leiste und Knie trifft), Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest bzw. Rennen. Der TSB steht unter der Formkurve (Wochengröße). Das frühere Schlafkonto (7,5-h-Ziel) ist entfallen: Es war eine dritte Schlafschwelle neben der Ampel. Die Ernährungskachel ist aus dem Cockpit in den Abschnitt Ernährung gewandert, die Diagramme „Belastung pro Woche“ und „Anteil der Sportarten“ sind entfallen (dieselbe Frage wie Trainingszeit pro Woche und TSS je Sportart).
+
+### 6.4a Montagsbilanz (`week-review.js`, `buildWeekReview`)
+
+Beantwortet am Montag: Wie wurde die **letzte volle Woche** verkraftet, und wie stark darf der Rahmen der laufenden Woche steigen? Vergleich jeweils gegen die bis zu 4 vollen Wochen davor.
+
+| Größe | Rechnung |
+|---|---|
+| Ampeltage | `computeReadiness` je Tag mit der Wellness bis zu diesem Tag; Tage ohne Gefühlseintrag zählen als „ohne Eintrag“, nicht als gelb |
+| Gefühl | Wochenschnitt Ermüdung, Muskelkater (und Stress, falls in Intervals erfasst) gegen den Schnitt der 4 Wochen davor |
+| Session-RPE | Σ RPE × Minuten (Einheiten ab 10 min mit RPE); Anteil der Einheiten mit RPE |
+| Monotonie | Tagesschnitt ÷ Standardabweichung über 7 Tage (Ruhetage = 0), aus Session-RPE, bei < 70 % RPE-Abdeckung aus dem Tages-TSS; Strain = Wochensumme × Monotonie |
+| Laufen | Wochenminuten gegen den 4-Wochen-Schnitt, längster Lauf gegen den längsten der 4 Wochen davor, Minuten über dem HF-Deckel (Blocktest-Modus) |
+| Rahmen | Ist-Minuten gegen die Zeitziele (Lauf, Rad, Schwimmen), TSS gegen die Obergrenzen |
+
+```
+Entlastungswoche (laufende Blockwoche durch 4 teilbar)                     → Entlastung (×0,65)
+Krankheit ODER ≥ 1 roter Tag                                               → zurücknehmen (×0,75)
+≥ 2 gelbe Tage ODER Ermüdung/Muskelkater ≥ 0,5 schlechter ODER Monotonie > 2
+  ODER Rahmen < 75 % erfüllt ODER TSS-Grenze überschritten                  → halten (×1)
+sonst                                                                      → steigern (×1,05–1,10)
+Laufen zusätzlich: Hüfte/Leiste/Knie erwähnt → zurücknehmen; Laufminuten > +15 % oder > 10 min über dem HF-Deckel → halten;
+  Laufen steigt höchstens +10 %. Die strengste Regel gewinnt.
+```
+
+Vorschlag je Sportart = Zeitziel der letzten Woche (ohne Ziel das Ist) × Faktor, auf 5 min gerundet. Faustregeln, kein Trainingsplan.
 
 ### 6.5 Grundlagenläufe aus den Zeitreihen (`analyzeRunStreams`, `buildBaseRuns`)
 
@@ -643,6 +680,7 @@ Der Block ist ein Saison-Eintrag im Intervals-Kalender („Block …“). Welche
 - **Kraft:** Sätze je Woche (EGYM). Entlastungswochen sind nach dem 3:1-Muster jede 4. Blockwoche und zählen nicht. Bei „8 von 9“ ist eine Fehlwoche erlaubt („knapp“, wenn sie verbraucht ist). Eine zweite reißt die Leitplanke.
 - **Ramp Rate:** CTL am Wochenende minus CTL am Vortag des Wochenstarts, je abgeschlossener Belastungswoche. Liegt ein Wert über 5, ist die Leitplanke gerissen.
 - **Pause:** längste Lücke ohne Aktivität (alle Sportarten, EGYM-Tage zählen mit), der laufende Tag zählt nicht. Eine Notiz „Pause“/„Urlaub“ oder ein Urlaubseintrag im Kalender macht die Lücke zur geplanten Pause.
+- **Kurs** (`goalCourse`, je Abschlussziel): erster Messwert → letzter (Lauf/Rad: Ø der letzten 3) → Ziel, Richtung, nächste Messung. Ausdrücklich ein Trend, keine Entscheidung. Hauptkurve ist die Leistung bei gleichem Puls: Lauf = Pace 0–60 im HF-Band (Basistest gegen letzten Test), Rad = mittlerer Puls im Messfenster bei fester Leistung (`mainHr` aus `rideWindowFromStreams`, Cache `icu:ridewindow:v2:`). Unter einem strengen HF-Deckel ist das Decoupling oft schon niedrig, der Fortschritt zeigt sich dann dort. Stufen: *auf Kurs* = Ziel erreicht (Schwimmen: letzter Test bestanden, stabile Dauer: länger als im Basistest); *knapp* = im Muss bzw. besser als zu Beginn (Decoupling oder Hauptkurve), Schwimmen: früher schon bestanden oder besser; *hinten* = weder noch; *offen* = noch kein Vergleich (unter 2 Messungen).
 - **Woche 12:** Ist eine Leitplanke gerissen, heißt es „erst die Ursache klären“. Fehlt ein Ziel (weniger als 3 vergleichbare Einheiten, Muss verfehlt, Pace langsamer oder kein bestandener Schwimmtest), wird diese Sportart um 3–4 Wochen verlängert. Sonst geht es mit dem nächsten Block im Kalender weiter. Vor Woche 12 zeigt die Karte nur, wann entschieden wird: Ein „Stand heute“ wäre ohne die Tests immer „verlängern“ und damit Rauschen. Mehrere fehlende Ziele derselben Sportart (Lauf 1a und 1b) erscheinen einmal.
 
 

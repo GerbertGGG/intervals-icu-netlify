@@ -137,9 +137,9 @@ function renderReady(d) {
     ${verdict.reasons?.length ? `<div class="muted" style="margin-top:6px">Auslöser: ${esc(verdict.reasons.join(" · "))}</div>` : ""}
     ${verdict.note || verdict.watch || verdict.thin ? `<div class="muted">${esc([verdict.note, verdict.watch, verdict.thin].filter(Boolean).join(" · "))}</div>` : ""}
     <div style="margin-top:8px">${esc(bodyLine(R))}</div>
-    <div style="margin-top:8px">${sig("Ruhepuls", R.body.resting, { ok: R.body.resting.single ? "Einzelwert erhöht" : "im Rahmen", warn: R.body.resting.high7 ? "7 Tage erhöht" : "über Basis", bad: "≥ 8 über Basis" })}${sig("HRV", R.body.hrv, { ok: R.body.hrv.single ? "Einzelwert niedrig" : "im Rahmen", warn: R.body.hrv.low7 ? "7 Tage unter Basis" : "unter Basis" })}${sig("Schlaf", R.body.sleep, { ok: "im Rahmen", warn: R.sleepScore != null ? "2 Tage Score < 80" : "unter 6 h" })}</div>
+    <div style="margin-top:8px">${sig("Ruhepuls", R.body.resting, { ok: R.body.resting.single ? "Einzelwert erhöht" : "im Rahmen", warn: R.body.resting.high7 ? "7 Tage erhöht" : "über Basis", bad: "≥ 8 über Basis" })}${sig("HRV", R.body.hrv, { ok: R.body.hrv.single ? "Einzelwert niedrig" : "im Rahmen", warn: R.body.hrv.low7 ? "7 Tage unter Basis" : "unter Basis" })}${sig("Schlaf", R.body.sleep, { ok: "im Rahmen", warn: R.sleepScore != null ? "2 Tage Score < 80" : "unter 6 h" })}${R.body.drift ? sig("Langzeitbasis", R.body.drift, { ok: "im Rahmen", warn: R.body.drift.counted ? "7 Tage unter 3-Monats-Basis" : "unter 3-Monats-Basis (Trend zählt schon)" }) : ""}</div>
     <div class="ready-grid">${items.map((i) => `<div class="rrow"><span class="lbl">${i.label}</span><span class="strip" id="strip-${i.key}"></span><span class="badge ${i.cls}">${i.text}</span></div>`).join("")}</div>
-    <details class="info"><summary>Erklärung</summary><div>Regeln wie im Coaching: Basis = Median der letzten 28 Tage ohne Krankheitstage (mind. 5 Werte, unter 10 „dünn“). Einzelne Tage streuen stark, deshalb zählt ein leichter Ausschlag nur mit Bestätigung. HRV: ab 20 % unter Basis gelb; 12–20 % unter Basis nur, wenn Ruhepuls, Schlaf oder ein Trend es bestätigen; Trend = 7-Tage-Schnitt mindestens 7 % unter dem Median der 4 Wochen davor und heute noch mindestens 5 % darunter. Ruhepuls: ab 6 über Basis gelb, ab 8 rot; 4–5 über Basis nur mit Bestätigung; Trend = 7-Tage-Schnitt mindestens 3 über dem Median der 4 Wochen davor und heute noch mindestens 2 darüber. Zeigen HRV und Ruhepuls nur über den Trend aus, zählt das als ein Signal. Schlaf: Score unter 80 an zwei Tagen in Folge. Ein unbestätigter Einzelwert wird angezeigt, zählt aber nicht. Rot: Ruhepuls ≥ 8 über Basis, zwei gelbe Signale, Ermüdung/Muskelkater deutlich schlechter als üblich oder drei Warnungen. Schlafqualität, Stimmung und Motivation allein machen höchstens gelb; Schlaf zählt nur einmal (Score und eingetragene Schlafqualität nicht doppelt). Krankheit im Kalender = kein Training; Hüfte/Leiste/Knie in den letzten 3 Tagen = mindestens gelb. Die Gefühlswerte beschreiben den Zustand vor dem Training (Punkt = Eintrag, graues Band = dein üblicher Bereich der letzten 8 Wochen, 1 = bestmöglich); fehlt der Eintrag von heute, gilt der von gestern früh. Die Trainingslast (TSB) fließt nicht ein.</div></details></div>`;
+    <details class="info"><summary>Erklärung</summary><div>Regeln wie im Coaching: Basis = Median der letzten 28 Tage ohne Krankheitstage (mind. 5 Werte, unter 10 „dünn“). Einzelne Tage streuen stark, deshalb zählt ein leichter Ausschlag nur mit Bestätigung. HRV: ab 20 % unter Basis gelb; 12–20 % unter Basis nur, wenn Ruhepuls, Schlaf oder ein Trend es bestätigen; Trend = 7-Tage-Schnitt mindestens 7 % unter dem Median der 4 Wochen davor und heute noch mindestens 5 % darunter. Ruhepuls: ab 6 über Basis gelb, ab 8 rot; 4–5 über Basis nur mit Bestätigung; Trend = 7-Tage-Schnitt mindestens 3 über dem Median der 4 Wochen davor und heute noch mindestens 2 darüber. Zeigen HRV und Ruhepuls nur über den Trend aus, zählt das als ein Signal. Schlaf: Score unter 80 an zwei Tagen in Folge. Ein unbestätigter Einzelwert wird angezeigt, zählt aber nicht. Langzeitbasis: 7-Tage-Schnitt ohne Krankheitstage gegen den Median der Tage 29–90 davor (HRV ≤ 92 % oder Ruhepuls ≥ +3 = ein gelbes Signal), damit eine schleichende Ermüdung nicht in der 28-Tage-Basis verschwindet. Rot: Ruhepuls ≥ 8 über Basis, zwei gelbe Signale, Ermüdung deutlich schlechter als üblich oder drei Warnungen. Gelb: ein gelbes Signal, zwei Warnungen, Schlafqualität oder Muskelkater deutlich schlechter. Stimmung und Motivation zählen schwächer (sie spiegeln oft Job und Alltag): etwas schlechter ist nur ein Hinweis, deutlich schlechter eine Warnung. Ebenfalls eine Warnung: Puls bei lockerem Tempo erhöht (letzter Grundlagenlauf der 3 Tage vor heute mindestens 6 % weniger Tempo je Herzschlag als die lockeren Läufe der 6 Wochen davor). Schlaf zählt nur einmal (Score und eingetragene Schlafqualität nicht doppelt). Krankheit im Kalender = kein Training. Laufen hat eigene Bremsen: Hüfte/Leiste/Knie in den letzten 3 Tagen oder Muskelkater deutlich schlechter = kein Lauf, Rad und Schwimmen nach der Ampel. Umfang: grün = voller Wochenrahmen, gelb = etwa 30 % kürzer und keine lange Einheit, rot = frei oder höchstens 30 min locker Rad/Schwimmen. Ohne heutigen Eintrag gibt es kein Grün. Die Gefühlswerte beschreiben den Zustand vor dem Training (Punkt = Eintrag, graues Band = dein üblicher Bereich der letzten 8 Wochen, 1 = bestmöglich); fehlt der Eintrag von heute, gilt der von gestern früh (dann höchstens gelb). Die Trainingslast (TSB) fließt nicht ein.</div></details></div>`;
   for (const i of items) C.strip($(`strip-${i.key}`), { label: i.label, max: i.max, band: i.band, value: i.v, cls: i.cls });
 }
 
@@ -168,15 +168,12 @@ function lastStats(L) {
 }
 
 function renderCockpit(d) {
-  const S = d.summary, w = S.load, { ctl, atl, tsb, tsbPct, tsbZone, tsbCls } = w, g = d.goal;
+  const S = d.summary, w = S.load, { ctl, atl, tsb } = w, g = d.goal;
   const race = hasRace(g), taper = race && isTaper(g);
-  const tsbText = TSB_ZONE_TEXT[tsbZone] ?? "keine Daten";
   const wellOk = d.sources.intervalsWellness.ok;
   const cur = d.weeks[d.weeks.length - 1];
   const tile = (title, body, cls = "", more = null) => `<div class="tile ${cls}"><h3>${title}</h3>${body}${more ? `<a class="more" href="${more[0]}">${more[1]} →</a>` : ""}</div>`;
   const goalPace = g.targetTimeSecs ? g.targetTimeSecs / (g.runKm ?? 21.0975) : null;
-  const map = (k) => Object.fromEntries(d.wellness.map((x) => [x.date, x[k]]));
-  const days14 = dayRange(addDays(d.today, -13), d.today);
 
   const plan = d.planned.filter((p) => p.date === d.today);
   const shown = plan.find((p) => p.steps?.length) ?? plan[0];
@@ -188,23 +185,11 @@ function renderCockpit(d) {
   const prevWk = d.weeks[d.weeks.length - 2];
   const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.runMin / 60, 1) : "–"} h Laufen${prevWk ? `, Vorwoche ${fmt(prevWk.runMin / 60, 1)} h` : ""}. Steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gilt als Soll, nicht als Mangel.</div>`, "span4") : "";
   const R = S.readiness;
-  const readyTile = tile("Erholungsampel", '<div class="sub">Wellness nicht abrufbar.</div>', "span3");
-
-  // Ernährung: Kalorien heute und die Makros als eine Zeile; Balken je Größe stehen in Abschnitt 6
-  const kcal = map("calories"), goal = map("calorieGoal"), carbs = map("carbs"), prot = map("protein"), fat = map("fat");
-  const lastData = [...days14].reverse().find((x) => kcal[x] != null || carbs[x] != null || prot[x] != null);
-  const nDay = d.today;
-  const hasToday = kcal[nDay] != null || carbs[nDay] != null || prot[nDay] != null;
-  const kcalToday = kcal[nDay] ?? 0, kcalGoal = goal[nDay] ?? d.nutritionGoals?.kcal ?? null;
-  const emptyNote = hasToday ? "" : `Heute noch nichts eingetragen${lastData ? ` (zuletzt ${fmtDate(lastData)}: ${fmt(kcal[lastData])} kcal)` : ""}`;
-  const ng = d.nutritionGoals ?? {};
-  const macroLine = [["Eiweiß", prot[nDay], ng.proteinG], ["KH", carbs[nDay], ng.carbsG], ["Fett", fat[nDay], ng.fatG]].map(([l, v, gl]) => `${l} ${fmt(v ?? 0)}${gl ? `/${fmt(gl)}` : ""} g`).join(" · ");
-  const nutTile = lastData || d.nutritionGoals
-    ? tile(`Ernährung · ${fmtDate(nDay)}`, `<div class="val">${fmt(kcalToday)} <small>kcal${kcalGoal ? ` von ${fmt(kcalGoal)}` : ""}</small></div>${hasToday ? '<div id="ck-kcal"></div>' : ""}<div class="sub">${emptyNote || macroLine}</div>`, "span3", ["#ernaehrung", "Makros und Wochenübersicht"])
-    : tile("Ernährung", '<div class="sub">Noch keine Yazio-Daten – erscheinen nach dem Sync.</div>', "span3");
 
   // Heute oben: 1. Entscheidung (Ampel plus Regeln des Blocks, Worker: today-plan.js), 2. was heute ansteht bzw. die letzte
-  // Einheit, 3. Kennzahlen Schlaf, Frische, HF-Deckel, Blocktest bzw. Rennen. Details stehen in den Kacheln darunter.
+  // Einheit, 3. Kennzahlen Schlaf, Laufumfang, HF-Deckel, Blocktest bzw. Rennen. Details stehen in den Kacheln darunter.
+  // Die Frische (TSB) steht bewusst nicht hier: Sie ist eine Wochengröße, läuft der Erholung hinterher und fließt nicht in die
+  // Ampel; sie steht unter "Form".
   const doneToday = d.daily.find((x) => x.date === d.today);
   const meta = (p) => [p.durationMin ? p.durationMin + " min" : p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
   const L = d.lastActivity;
@@ -238,9 +223,15 @@ function renderCockpit(d) {
     ? kpi(esc(g.name), g.daysToGo === 0 ? "Heute" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(g.date)} ${fmtDate(g.date)}${taper ? " · Taper" : ""}`)
     : P?.nextTest ? kpi("Blocktest", `${P.daysToTest} <small>Tag${P.daysToTest === 1 ? "" : "e"}</small>`, "", "", `${weekday(P.nextTest)} ${fmtDate(P.nextTest)}`)
     : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "");
+  // Laufen getrennt von der Gesamt-TSS (Stoßbelastung, Hüfte/Leiste/Knie): Minuten der letzten 7 Tage gegen den Wochenschnitt
+  // der 4 Wochen davor. Ab +15 % steil, ab +30 % zu steil (wie die Montagsbilanz, Worker: week-review.js).
+  const runSum = (a, b) => d.daily.filter((x) => x.date >= a && x.date <= b).reduce((n, x) => n + (x.minutes?.run ?? 0), 0);
+  const run7 = runSum(addDays(d.today, -6), d.today), runRef = runSum(addDays(d.today, -34), addDays(d.today, -7)) / 4;
+  const runQ = runRef > 0 ? run7 / runRef : null, runCls = runQ == null ? "" : runQ <= 1.15 ? "ok" : runQ <= 1.3 ? "warn" : "bad";
+  const runKpi = kpi("Laufen 7 Tage", `${fmt(run7)} <small>min</small>`, runQ == null ? "" : { ok: "im Rahmen", warn: "steil", bad: "zu steil" }[runCls], runCls, runRef > 0 ? `Ø 4 Wochen davor ${fmt(runRef)} min · ${runQ >= 1 ? "+" : ""}${fmt((runQ - 1) * 100)} %` : "kein Vergleich");
   const kpis = `<div class="kpis">
       ${sleepKpi}
-      ${kpi("Frische TSB", tsbPct != null ? `${tsbPct > 0 ? "+" : ""}${fmt(tsbPct)} <small>% der CTL</small>` : "–", tsbText, tsbCls, tsb != null ? `TSB ${fmt(tsb)} · CTL ${fmt(ctl)} · ATL ${fmt(atl)}` : "")}
+      ${runKpi}
       ${capKpi}
       ${lastKpi}
     </div>`;
@@ -249,12 +240,11 @@ function renderCockpit(d) {
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
     ${weekTile}
+    ${renderWeekReview(d, tile)}
     <div class="cockpit-group">${race ? "Rennen, Block und Form" : "Block und Form"}</div>
     ${blockTile}
     ${raceTile || supportTile ? `<div class="cockpit flow" style="margin-top:var(--gap)">${raceTile}${supportTile}</div>` : ""}
-    ${taperTile ? `<div class="cockpit" style="margin-top:var(--gap)">${taperTile}</div>` : ""}
-    <div class="cockpit-group">Ernährung</div>
-    <div class="cockpit">${wellOk ? "" : readyTile}${nutTile}</div>`;
+    ${taperTile ? `<div class="cockpit" style="margin-top:var(--gap)">${taperTile}</div>` : ""}`;
 
   if (race) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
@@ -262,7 +252,6 @@ function renderCockpit(d) {
   // Schmale Ansicht: die Wochenleiste ist wischbar; gestern und heute stehen beim Laden vorn
   const wkNow = document.querySelector(".wk-grid .wk-day.now");
   if (wkNow) { const gr = wkNow.parentElement, t = wkNow.previousElementSibling ?? wkNow; gr.scrollLeft = t.offsetLeft - gr.firstElementChild.offsetLeft; }
-  if ($("ck-kcal")) C.meter($("ck-kcal"), { label: "Kalorien", value: kcalToday, goal: kcalGoal, max: Math.max(kcalToday, kcalGoal ?? 0, 1) * 1.15, unit: "kcal" });
 }
 
 /* Woche mit Wochenzielen des Coaches (Kalender, Kategorie TARGET, jeden Montag): zwei Ringe wie auf der Uhr (ZEIT gegen
@@ -336,6 +325,35 @@ function renderTargetWeek(d, tile, cur, monday, days) {
     return `<div class="wk-day${isToday ? " now" : ""}${past ? " past" : ""}"><div class="wk-h"><b>${weekday(x)}</b> <span>${fmtDate(x)}</span></div><div class="wk-plan">${body}</div></div>`;
   };
   return tile(`Woche ab ${fmtDate(monday)}`, `${top}<div class="wk-grid">${days.map(cell).join("")}</div>`, "span4", ["#form", "Wochenverlauf und Vergleich"]);
+}
+
+/* Montagsbilanz (Worker: week-review.js): Wie wurde die letzte volle Woche verkraftet, und wie stark darf der Rahmen der
+   laufenden Woche steigen? Grundlage sind die Reaktion auf die Last (Ampeltage, Gefühlswerte vor dem Training, Session-RPE und
+   Monotonie, Laufumfang, HF-Deckel, Beschwerden, Krankheit), nicht der Umfang allein. Vorschlag in Minuten je Sportart. */
+const REVIEW_CLS = { up: "ok", hold: "warn", down: "bad", deload: "none" };
+const REVIEW_LABEL = { up: "steigern", hold: "halten", down: "zurücknehmen", deload: "Entlastung" };
+function renderWeekReview(d, tile) {
+  const V = d.weekReview;
+  if (!V) return "";
+  const f1 = (v) => fmt(v, 1);
+  const row = (label, value, cls = "", sub = "") => `<div class="rv-row"><span class="rv-l">${label}</span><span class="rv-v${cls ? ` ${cls}` : ""}">${value}</span><span class="sub">${sub}</span></div>`;
+  const dots = `<span class="dots">${V.ampelDays.map((x) => `<span title="${weekday(x.date)} ${fmtDate(x.date)}"><i class="${x.cls}"></i>${weekday(x.date)}</span>`).join("")}</span>`;
+  const feel = Object.values(V.feel).map((x) => `${x.label} ${f1(x.mean)}${x.ref != null ? ` (davor ${f1(x.ref)})` : ""}`).join(" · ");
+  const R = V.rpe, U = V.run;
+  const rows = [
+    row("Ampel", dots, "", `${V.ampel.ok} grün · ${V.ampel.warn} gelb · ${V.ampel.bad} rot${V.ampel.none ? ` · ${V.ampel.none} ohne Eintrag` : ""}`),
+    feel ? row("Gefühl", feel, "", "Wochenschnitt, 1 = bestmöglich, vor dem Training eingetragen") : "",
+    R.srpe != null || R.monotony != null ? row("Session-RPE", R.srpe != null ? fmt(R.srpe) : "–", R.monotony > 2 ? "warn" : "", [R.ref != null ? `Ø davor ${fmt(R.ref)}` : null, R.coverage != null ? `RPE bei ${fmt(R.coverage * 100)} % der Einheiten` : null, R.monotony != null ? `Monotonie ${f1(R.monotony)}${R.basis === "tss" ? " (aus TSS)" : ""}` : null].filter(Boolean).join(" · ")) : "",
+    row("Laufen", `${fmt(U.minutes)} min`, U.ratio > 1.15 ? "warn" : "", [U.ref != null ? `Ø 4 Wochen ${fmt(U.ref)} min${U.ratio != null ? ` (${U.ratio >= 1 ? "+" : ""}${fmt((U.ratio - 1) * 100)} %)` : ""}` : null, U.longest ? `längster ${fmt(U.longest)} min${U.longestRef ? ` (davor ${fmt(U.longestRef)})` : ""}` : null, U.capOver != null ? `${fmt(U.capOver)} min über HF-Deckel` : null].filter(Boolean).join(" · ")),
+    V.frameShare != null ? row("Rahmen", `${fmt(V.frameShare * 100)} %`, V.frameShare < 0.75 ? "warn" : "", V.frame.map((x) => `${SPORT_LABEL[x.sport]} ${fmt(x.minutes)}${x.targetMin ? `/${fmt(x.targetMin)}` : ""} min${x.over ? " (TSS über Grenze)" : ""}`).join(" · ")) : "",
+  ].join("");
+  const prop = V.proposal.map((p) => `<span><i style="background:var(--s-${p.sport})"></i>${SPORT_LABEL[p.sport]} <b>${p.from === p.to ? fmt(p.from) : `${fmt(p.from)}–${fmt(p.to)}`} min</b>${p.level !== V.level ? ` (${REVIEW_LABEL[p.level]})` : ""}</span>`).join("");
+  const why = V.reasons.length ? `Warum: ${esc(V.reasons.join(" · "))}` : "Gut verkraftet: keine Warnung aus Ampel, Gefühl, Monotonie oder Laufumfang.";
+  return `<div class="cockpit" style="margin-top:var(--gap)">${tile(`Montagsbilanz · Woche ab ${fmtDate(V.weekStart)}`,
+    `<div class="rv-head"><span class="badge ${REVIEW_CLS[V.level]}">Rahmen ${esc(V.text)}</span>${V.runText ? `<span class="badge ${REVIEW_CLS[V.runLevel]}">Laufen ${esc(V.runText)}</span>` : ""}</div>
+    <div class="sub">${why}</div><div class="rv-rows">${rows}</div>
+    ${prop ? `<div class="rv-prop"><b>Vorschlag diese Woche</b>${prop}<span class="sub">Basis: Rahmen der letzten Woche (ohne Rahmen das Ist)</span></div>` : ""}
+    <details class="info"><summary>Erklärung</summary><div>Steigern (+5–10 %, Laufen höchstens +10 %), wenn die Woche gut verkraftet war. Halten bei 2 oder mehr gelben Tagen, Ermüdung oder Muskelkater im Wochenschnitt mindestens 0,5 schlechter als in den 4 Wochen davor, Monotonie über 2 (jeder Tag ähnlich belastet), Rahmen unter 75 % erfüllt oder TSS-Grenze überschritten. Zurücknehmen (etwa −25 %) bei einem roten Tag oder Krankheit. Laufen extra: Hüfte/Leiste/Knie erwähnt = zurücknehmen; mehr als 15 % über dem 4-Wochen-Schnitt oder mehr als 10 min über dem HF-Deckel = halten. In der Entlastungswoche (jede 4. Blockwoche) gilt etwa −35 %. Session-RPE = RPE × Minuten; trägst du RPE bei weniger als 70 % der Einheiten ein, rechnet die Monotonie mit dem TSS. Tage ohne Gefühlseintrag zählen nicht als gelb.</div></details>`, "span4")}</div>`;
 }
 
 /* Wochenvorschau Mo-So: je Tag die geplanten Einheiten mit Plan-Load neben dem Ist. Vergangene Tage zeigen, ob der Plan
@@ -486,17 +504,8 @@ function renderHistory(d) {
   const sumMin = (w, f) => SPORT_ORDER.reduce((a, k) => (w.bySport[k][f] != null ? (a ?? 0) + w.bySport[k][f] : a), null);
   const timePlan = (w) => w.targetMin ?? sumMin(w, "plannedMin");
   C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: sumMin(w, "minutes") ?? 0, plan: timePlan(w), partial: !w.complete })), { unit: "min", label: "Trainingszeit pro Woche (Minuten)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
-  // Belastung gegen die TSS-Obergrenze der Wochenziele: Summe der Grenzen plus die Last der Sportarten ohne Grenze
-  // (meist Schwimmen), die weder für noch gegen die Grenze zählt. Wie im TSS-Ring der Wochenkarte zählen nur die Grenzen
-  // von Lauf, Rad, Schwimmen; Kraft hat dort ein Satz-Ziel und zählt mit ihrem Ist. Ohne Wochenziele gegen den Plan-Load.
-  const capped = (w, k) => ["run", "bike", "swim"].includes(k) && w.bySport[k].targetLoad > 0;
-  const capOf = (w) => (SPORT_ORDER.some((k) => capped(w, k)) ? SPORT_ORDER.reduce((a, k) => a + (capped(w, k) ? w.bySport[k].targetLoad : w.bySport[k].load), 0) : null);
-  C.bars($("chart-load"), d.weeks.map((w) => {
-    const cap = capOf(w);
-    return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load, plan: cap ?? (w.targetMin != null ? null : w.plannedLoad), cap: cap != null, partial: !w.complete };
-  }), { unit: "Load", label: "Belastung pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
-  const noPlan = d.weeks.every((w) => timePlan(w) == null && w.plannedLoad == null && capOf(w) == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Wochenziele noch geplante Workouts mit Dauer/Load – deshalb keine Marke." : "Marke = Wochenziel des Coaches (Trainingszeit: Summe der Zeitziele aller Sportarten; Belastung: Summe der TSS-Obergrenzen von Lauf, Rad, Schwimmen, Kraft und Sportarten ohne Grenze zählen mit ihrem Ist), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: beim Ziel grün bis 15 %, sonst gelb; bei der Obergrenze ✓ oder rot, wenn drüber. Trainingszeit = Bewegungszeit aller Sportarten in Minuten, Belastung ebenfalls alle Sportarten.";
+  const noPlan = d.weeks.every((w) => timePlan(w) == null);
+  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb. Trainingszeit = Bewegungszeit aller Sportarten in Minuten; die TSS je Sportart und gegen die Obergrenzen stehen in der Wochenkarte und unten.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   // Zonen in % der aktuellen Fitness wie Intervals.icu: unter −30 % hohes Risiko, sonst normaler Trainingsbereich
@@ -515,6 +524,9 @@ function renderHistory(d) {
     marks: [{ day: d.today, label: "heute", color: "var(--muted)", anchor: raceSoon ? "end" : "middle" }, ...(raceSoon ? [{ day: d.goal.date, label: "Renntag", color: "var(--accent)", anchor: "start" }] : [])],
   });
   if (!series.some((w) => w.ctl != null)) $("form-chart").insertAdjacentHTML("beforeend", '<div class="notice">Keine CTL/ATL-Werte im Zeitraum.</div>');
+  // Frische als Wochengröße (früher im Heute-Band): läuft der Erholung hinterher und fließt nicht in die Tagesampel
+  const L = d.summary.load;
+  $("form-now").innerHTML = L.tsb != null ? `Heute: TSB ${fmt(L.tsb)}${L.tsbPct != null ? ` (${L.tsbPct > 0 ? "+" : ""}${fmt(L.tsbPct)} % der CTL, ${esc(TSB_ZONE_TEXT[L.tsbZone] ?? "–")})` : ""} · CTL ${fmt(L.ctl)} · ATL ${fmt(L.atl)}. Für die Wochensteuerung, nicht für die Tagesentscheidung.` : "";
   C.calendar($("calendar"), d.daily, d.today);
 }
 
@@ -548,7 +560,6 @@ function renderSport(d) {
   const used = SPORT_ORDER.filter((k) => d.weeks.some((w) => w.bySport[k].load > 0));
   const weeks = d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), partial: !w.complete, by: Object.fromEntries(SPORT_ORDER.map((k) => [k, w.bySport[k].load])) }));
   C.stacked($("chart-sport"), weeks, used, "TSS pro Woche und Sportart");
-  C.shares($("chart-share"), weeks, used, SPORT_LABEL);
   // Intensität: Zeitanteile locker (Z1-2), mittel (Z3-4), hart (Z5+) wie die Polarisation in Intervals
   const INT = { easy: "locker (Z1–2)", mid: "mittel (Z3–4)", hard: "hart (Z5+)" };
   const iw = d.weeks.map((w) => ({ weekStart: w.weekStart, label: fmtDate(w.weekStart), by: w.intensity || { easy: 0, mid: 0, hard: 0 } }));
@@ -595,7 +606,8 @@ function findingsBox(list, okText, top = 12) {
 
 /* Auffälligkeiten im Training. Nur abgeschlossene Wochen zählen (die laufende ist unvollständig),
    Vergleich gegen den Schnitt der bis zu 4 Wochen davor. Schwellen sind grobe Faustwerte, kein Trainingsplan. */
-const TRN = { jump: 1.3, drop: 0.6, planUnder: 0.75, planOver: 1.15, timeUnder: 0.75, timeReached: 0.9, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
+// runJump: Laufen ist Stoßbelastung (Hüfte/Leiste/Knie), deshalb schon ab +15 % ein Hinweis, ab +30 % eine Warnung
+const TRN = { jump: 1.3, runJump: 1.15, drop: 0.6, planUnder: 0.75, planOver: 1.15, timeUnder: 0.75, timeReached: 0.9, hardShare: 0.2, midShare: 0.25, streak: 6, restDays: 4 };
 function sportFindings(d) {
   const full = d.weeks.filter((w) => w.complete), last = full[full.length - 1];
   if (!last) return "";
@@ -605,7 +617,7 @@ function sportFindings(d) {
   const add = (sev, text, act = null, n = 1) => findings.push({ sev, text: `Woche ab ${from}: ${text}`, act, n });
   if (aLoad && last.load > aLoad * TRN.jump) add(2, `Belastung ${fmt(last.load)} TSS, ${Math.round((last.load / aLoad - 1) * 100)} % mehr als dein Schnitt (${fmt(aLoad)}) – steiler Anstieg.`, "Die nächste Woche nicht noch steigern, 1–2 lockere Tage fest einplanen (Verletzungsrisiko).");
   else if (aLoad && last.load < aLoad * TRN.drop) add(1, `Belastung ${fmt(last.load)} TSS, nur ${Math.round((last.load / aLoad) * 100)} % deines Schnitts (${fmt(aLoad)}) – deutlich weniger Training.`, "Wenn das kein gewollter Entlastungsblock war: die Ursache klären und die Last schrittweise zurückholen, nicht in einer Woche.");
-  if (aRun && last.runMin > aRun * TRN.jump) add(2, `Laufumfang ${fmt(last.runMin / 60, 1)} h, ${Math.round((last.runMin / aRun - 1) * 100)} % mehr als dein Schnitt (${fmt(aRun / 60, 1)} h).`, "Laufumfang in der Folgewoche auf den Schnitt oder knapp darüber begrenzen.");
+  if (aRun && last.runMin > aRun * TRN.runJump) add(last.runMin > aRun * TRN.jump ? 2 : 1, `Laufumfang ${fmt(last.runMin / 60, 1)} h, ${Math.round((last.runMin / aRun - 1) * 100)} % mehr als dein Schnitt (${fmt(aRun / 60, 1)} h).`, "Laufumfang in der Folgewoche auf den Schnitt oder knapp darüber begrenzen.");
   // Wochenziele des Coaches: Zeit ist das Ziel, TSS die Obergrenze. Gibt es sie, ersetzen sie den Plan-Vergleich.
   const targets = SPORT_ORDER.filter((k) => last.bySport[k].targetMin > 0 || last.bySport[k].targetLoad > 0);
   for (const k of targets) {
@@ -632,7 +644,7 @@ function sportFindings(d) {
   if (streak >= TRN.streak) findings.push({ sev: 2, n: streak, text: `${streak} Trainingstage in Folge ohne Ruhetag.`, act: "Heute oder morgen einen echten Ruhetag setzen." });
   if (load[d.today] === 0 && pause >= TRN.restDays) findings.push({ sev: 1, n: pause, text: `Seit ${pause} Tagen kein Training.`, act: "Mit einer lockeren Einheit wieder einsteigen, nicht mit dem Plantempo." });
   const body = findingsBox(findings, "Nichts Auffälliges in der letzten vollen Woche.");
-  return `${body}<details class="info"><summary>Erklärung</summary><div>Faustwerte: Anstieg = mehr als ${Math.round((TRN.jump - 1) * 100)} % über dem Schnitt der bis zu 4 Wochen davor, deutlich weniger = unter ${Math.round(TRN.drop * 100)} %, Plan verfehlt = unter ${Math.round(TRN.planUnder * 100)} % bzw. über ${Math.round(TRN.planOver * 100)} % des Plans, viel Intensität = über ${TRN.hardShare * 100} % hart oder über ${TRN.midShare * 100} % mittel, ${TRN.streak}+ Tage ohne Ruhetag, ${TRN.restDays}+ Tage Pause.</div></details>`;
+  return `${body}<details class="info"><summary>Erklärung</summary><div>Faustwerte: Anstieg = mehr als ${Math.round((TRN.jump - 1) * 100)} % über dem Schnitt der bis zu 4 Wochen davor (Laufen schon ab ${Math.round((TRN.runJump - 1) * 100)} % als Hinweis), deutlich weniger = unter ${Math.round(TRN.drop * 100)} %, Plan verfehlt = unter ${Math.round(TRN.planUnder * 100)} % bzw. über ${Math.round(TRN.planOver * 100)} % des Plans, viel Intensität = über ${TRN.hardShare * 100} % hart oder über ${TRN.midShare * 100} % mittel, ${TRN.streak}+ Tage ohne Ruhetag, ${TRN.restDays}+ Tage Pause.</div></details>`;
 }
 
 /* ---------- 4 · Leistung ---------- */
@@ -1026,6 +1038,15 @@ function renderBlock(SB) {
   const goals = grouped
     ? section("Abschlussziele", list.filter((g) => g.group === "ziel")) + section("Leitplanken", list.filter((g) => g.group === "leitplanke")) + section("", list.filter((g) => !g.group))
     : section("", list);
+  // Kurs der Abschlussziele (Worker: goalCourse in season-block.js): erster Messwert → letzter → Ziel und Richtung, dazu die
+  // Hauptkurve (Pace bei gleichem Puls bzw. Puls bei fester Leistung) und die nächste Messung. Trend, keine Entscheidung.
+  const withCourse = list.filter((g) => g.course);
+  const CC = { on: "ok", close: "warn", behind: "bad", open: "none" }, DIR = { better: "besser", worse: "schlechter", flat: "gleich" };
+  const cv = (v, u) => (v == null ? "–" : typeof v === "string" ? esc(v) : u === "min" ? fmtStable(v) : u === "%" ? `${fmt(v, 1)}&nbsp;%` : `${v > 0 ? "+" : ""}${fmt(v, 1)}&nbsp;s`);
+  const course = withCourse.length ? `<h4 class="bgh">Kurs der Abschlussziele</h4><div class="scroll"><table class="mini bcourse"><thead><tr><th>Ziel</th><th>Start</th><th>zuletzt</th><th>Ziel</th><th>Kurs</th></tr></thead><tbody>${withCourse.map((g) => {
+    const C = g.course, extra = [C.main ? `${esc(C.main)}${C.mainDir ? ` (${DIR[C.mainDir]})` : ""}` : null, C.dir && C.dir !== "flat" ? `${g.key === "runStable" ? "stabile Dauer" : g.key === "swimTest" ? "Abfall der 2. Strecke" : "Decoupling"} ${DIR[C.dir]}` : null, C.nextText ? esc(C.nextText) : null].filter(Boolean);
+    return `<tr><td>${esc(g.label)}</td><td>${cv(C.from, C.unit)}</td><td>${cv(C.to, C.unit)}</td><td>${typeof C.target === "string" ? esc(C.target) : C.unit === "%" ? `≤&nbsp;${fmt(C.target)}&nbsp;%` : `≤&nbsp;+${fmt(C.target)}&nbsp;s`}</td><td><span class="badge ${CC[C.state]}">${C.label}</span></td></tr>${extra.length ? `<tr><td></td><td class="main" colspan="4">${extra.join(" · ")}</td></tr>` : ""}`;
+  }).join("")}</tbody></table></div><div class="sub">Trend, keine Entscheidung: auf Kurs = Ziel schon erreicht, knapp = im Muss oder auf dem Weg dorthin, offen = noch kein Vergleich.${withCourse.some((g) => g.course.baseline) ? " Vor dem Blockstart: Ausgangswerte." : ""}</div>` : "";
   const D = SB.decision;
   const decLabel = { next: "weiter", extend: "verlängern", cause: "Ursache klären" };
   // Vor Woche 12 kein "Stand heute": solange Tests fehlen, wäre das immer "verlängern" und nur Rauschen
@@ -1033,7 +1054,7 @@ function renderBlock(SB) {
   const decision = !D ? "" : D.due ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · Entscheidung:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>`
     : `<div class="sub" style="margin-top:8px">Entscheidung in Woche ${D.week}${decAt ? ` (ab ${fmtDate(decAt)})` : ""}: alle Ziele und Leitplanken erfüllt → nächster Block, sonst die betroffene Sportart verlängern.</div>`;
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
-  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
+  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${course}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
