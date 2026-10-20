@@ -40,7 +40,8 @@ Alle Zahlenbeispiele wurden mit dem echten Code ausgeführt (`node`), nicht von 
 | `isIntervalActivity` (65) | irgendein Tag beginnt (ohne führendes `#`) mit `interval` |
 | `hasIntervalTextSignal` (83) | Name+Beschreibung enthält Wort `intervall`/`interval` **oder** Muster `\d+\s*[x×]\s*\d+` (z. B. „5x1000“) |
 | `isVdotExcluded` (104) | Tag ist (ohne `#`) genau `novdot` |
-| `activityLoad` (5) | `icu_training_load`, sonst `training_load`, sonst `load`; nur Werte > 0, sonst 0 |
+| `activityLoad` (5) | `icu_training_load`, sonst `training_load`, sonst `load`; nur Werte > 0, sonst 0. Nur für CTL/ATL von heute (`live-load.js`), damit sie zur Fitness-Kurve von Intervals passen |
+| `sessionLoad` (13) | Rad (`isBike`) mit `power_load` > 0 → `power_load`, sonst `activityLoad`. Für Wochen- und Tageslast, Wochenrahmen (TSS-Obergrenzen) und letzte Einheit: Intervals rechnet den Load bei Puls-Priorität als HRSS, die Obergrenzen sind aber in Leistungs-TSS geplant (19.10.2026: HRSS 26 statt 43, FTP-Test 14 statt 35) |
 | `activityDay` (1) | erste 10 Zeichen von `start_date_local`, sonst `start_date` |
 
 `sportOf` im Dashboard (`src/dashboard.js:115`) prüft in dieser Reihenfolge: Typ enthält `swim` → Schwimmen; `isBike` → Rad; `isRun` → Laufen; Typ enthält `weight`/`strength`/`kraft` → Kraft; sonst „other“.
@@ -490,15 +491,19 @@ Die Zonen hängen an der Fitness: Bei CTL 20 ist TSB −10 schon −50 %, bei CT
 
 ### 6.2 Körperwerte (`computeBody`, Regeln `BODY_RULES`)
 
-Dieselben Regeln wie im Coaching (Morgen-Update), damit beide dasselbe Urteil fällen. Vergleichsbasis: **Median der 28 Tage vor heute** (ohne heute), **ohne Krankheitstage und die 3 Tage danach** (Kalender: Kategorie SICK/INJURED oder Notiz „krank“), nur Tage mit Wert. Unter 5 Werten keine Aussage (`none`), unter 10 „Basis dünn“.
+Vergleichsbasis: **Median der 28 Tage vor heute** (ohne heute), **ohne Krankheitstage und die 3 Tage danach** (Kalender: Kategorie SICK/INJURED oder Notiz „krank“), nur Tage mit Wert. Unter 5 Werten keine Aussage (`none`), unter 10 „Basis dünn“.
+
+Einzelne Tage streuen stark (HRV Okt 2026: 22–53). Deshalb zählt ein leichter Ausschlag nur, wenn ein anderes Körpersignal oder ein Trend ihn bestätigt, und ein langsamer Abfall wird über den **7-Tage-Schnitt** (heute und 6 Tage davor, mind. 4 Werte, Krankheitstage zählen mit) erkannt. Trend-Basis = Median der 28 Tage **vor** dieser Woche (sonst steckt der Abfall schon in der Basis).
 
 | Größe | Klasse |
 |---|---|
 | Schlaf | Schlaf-Score heute **und** gestern < 80 → warn, sonst ok; ohne Score: Schlafdauer < 6 h → warn |
-| HRV | `q = HRV_heute / Basis`; `q ≤ 0,88` (≥ 12 % darunter) → warn, sonst ok; Trend `down`/`up` (> 1,05)/`flat` |
-| Ruhepuls | `heute − Basis` ≥ 8 → bad · ≥ 4 → warn · sonst ok |
+| HRV | `q = HRV_heute / Basis`. warn, wenn `q ≤ 0,80` · ODER `q ≤ 0,88` und bestätigt (Ruhepuls ≥ 4 über Basis, Ruhepuls-Trend oder Schlaf warn) · ODER Trend: 7-Tage-Schnitt ≤ 93 % der Trend-Basis und heute ≤ 95 % davon. `0,80 < q ≤ 0,88` ohne Bestätigung → ok mit `single` (Hinweis) |
+| Ruhepuls | `d = heute − Basis`. bad bei `d ≥ 8`; warn bei `d ≥ 6` · ODER `d ≥ 4` und bestätigt (HRV ≤ 88 %, HRV-Trend oder Schlaf warn) · ODER Trend: 7-Tage-Schnitt ≥ Trend-Basis + 3 und heute ≥ Trend-Basis + 2. `d = 4–5` ohne Bestätigung → ok mit `single` |
 
-Fehlende Werte ergeben `none` (nie „gut“).
+Zeigen HRV und Ruhepuls **nur** über den Trend aus (`trendOnly`), zählen sie zusammen als **ein** Signal: Beides beschreibt dieselbe Woche. Unbestätigte Einzelwerte stehen als `verdict.watch` („Einzelwert, allein kein Signal“) im Band, werten aber nicht. Fehlende Werte ergeben `none` (nie „gut“).
+
+Geprüft gegen Okt 2026: Der 13.10. (Vortag der Krankheit: HRV −17 %, Ruhepuls +4) bleibt rot, weil sich beide bestätigen. Der 19.10. wird gelb (Ruhepuls-Trend nach der Krankheit), der 20.10. ist grün.
 
 ### 6.3 Erholungsampel (`computeReadiness`)
 
@@ -510,14 +515,14 @@ Band   = [25 %-Quantil ; 75 %-Quantil],  out = Wert > 75 %-Quantil,  delta = Wer
 Klasse: bad = out UND delta ≥ 2 · warn = out UND delta ≥ 1 · sonst ok
 ```
 
-Urteil (`bodyWarn` = gelbe Körpersignale, `hardBad` = Ermüdung/Muskelkater/Schlafqualität deutlich schlechter, `subjWarn` = Gefühls-Warnungen plus Stimmung/Motivation deutlich schlechter):
+Urteil (`bodyWarn` = gelbe Körpersignale, zwei reine Trend-Signale zählen als eines; `hardBad` = Ermüdung/Muskelkater deutlich schlechter; `subjWarn` = Gefühls-Warnungen plus Schlafqualität/Stimmung/Motivation deutlich schlechter). **Schlaf zählt einmal:** Meldet der Schlaf-Score schon warn, zählt die eingetragene Schlafqualität nicht zusätzlich. Die Schlafqualität allein macht höchstens gelb (vorher: eine einzige Nacht mit „deutlich schlechter“ = rot, obwohl der Schlaf-Score erst nach zwei Nächten zählt):
 
 ```
 Krankheit im Kalender heute oder gestern                        → „Krank: kein Training“ (bad)
 keine Werte (weder Uhr noch Gefühl)                             → keine Einschätzung (none)
 Ruhepuls bad ODER bodyWarn ≥ 2 ODER hardBad ≥ 1
   ODER bodyWarn + subjWarn + hardBad ≥ 3                        → „Rot: nur locker und kurz“ (bad)
-bodyWarn ≥ 1 ODER subjWarn ≥ 2 ODER Stimmung/Motivation deutlich schlechter
+bodyWarn ≥ 1 ODER subjWarn ≥ 2 ODER Schlafqualität/Stimmung/Motivation deutlich schlechter
   ODER Hüfte/Leiste/Knie in den letzten 3 Tagen erwähnt         → „Gelb: heute nur locker“ (warn)
 sonst                                                           → „Grün: Qualität möglich“ (ok)
 ```

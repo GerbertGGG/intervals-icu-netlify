@@ -1,7 +1,7 @@
 import { json } from "./http-helpers.js";
 import { hasYazioCredentials, fetchYazioDailyGoals } from "./yazio-client.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
-import { activityDay, activityLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
+import { activityDay, activityLoad, sessionLoad, isRun, isBike, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSettings, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
@@ -205,7 +205,7 @@ function buildWeeks(todayIso, activities, events) {
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
     if (!w) continue;
-    const load = activityLoad(a);
+    const load = sessionLoad(a);
     const sp = w.bySport[sportOf(a)];
     sp.count += 1;
     sp.load += load;
@@ -441,7 +441,7 @@ function buildDaily(todayIso, activities) {
   for (const a of activities) {
     const day = byDate.get(activityDay(a));
     if (!day) continue;
-    const load = activityLoad(a), secs = num(a?.moving_time) ?? 0;
+    const load = sessionLoad(a), secs = num(a?.moving_time) ?? 0;
     day.load += load;
     if (load) day.sports[sportOf(a)] = (day.sports[sportOf(a)] ?? 0) + load;
     // Minuten je Sportart (auch ohne Load, z. B. Kraft) fuer die Wochenkarte
@@ -465,7 +465,7 @@ export function buildLastActivity(activities, todayIso, ctx = null) {
   const a = pickLastActivity(activities, todayIso);
   if (!a) return null;
   const sport = sportOf(a), km = (num(a?.distance) ?? 0) / 1000, secs = num(a?.moving_time) ?? 0;
-  const base = { date: activityDay(a), sport, durationMin: secs > 0 ? Math.round(secs / 60) : null, distanceKm: km > 0 ? Math.round(km * 10) / 10 : null, load: activityLoad(a) ? Math.round(activityLoad(a)) : null };
+  const base = { date: activityDay(a), sport, durationMin: secs > 0 ? Math.round(secs / 60) : null, distanceKm: km > 0 ? Math.round(km * 10) / 10 : null, load: sessionLoad(a) ? Math.round(sessionLoad(a)) : null };
   const hr = lastActivityHrAllowed(a, ctx);
   const pace = km > 0 && secs > 0 && (sport === "run" || sport === "swim") ? Math.round(sport === "swim" ? secs / (km * 10) : secs / km) : null;
   const extra = {

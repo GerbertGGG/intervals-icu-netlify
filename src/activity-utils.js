@@ -7,6 +7,15 @@ export function activityLoad(a) {
   return Number.isFinite(v) && v > 0 ? v : 0;
 }
 
+// Last für Wochenrahmen und TSS-Obergrenzen: beim Rad aus der Leistung (power_load), sonst wie Intervals.
+// Intervals rechnet bei dir den Load aus dem Puls (HRSS), die Obergrenzen sind aber in Leistungs-TSS geplant; die HRSS
+// unterschätzt lockere Fahrten um ~40 % und HIIT um ~60 % und sinkt, wenn bei gleicher Leistung der Puls fällt.
+// CTL/ATL bleiben bei activityLoad, damit sie zur Fitness-Kurve von Intervals passen.
+export function sessionLoad(a) {
+  const p = Number(a?.power_load);
+  return isBike(a) && Number.isFinite(p) && p > 0 ? p : activityLoad(a);
+}
+
 export function isRun(a) {
   const t = String(a?.type ?? "").toLowerCase();
   return (
