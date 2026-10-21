@@ -774,8 +774,8 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
 // Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Ziel (TSS-Obergrenze
-// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel; die Untergrenze des
-// TSS-Korridors steht als duenne Marke quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne
+// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Der TSS-Korridor
+// (Untergrenze bis Obergrenze) liegt als etwas kraeftigeres, seitlich ueberstehendes Band dahinter und bleibt so auch neben der Saeule sichtbar. Ohne Ziel keine Flaeche, ohne
 // Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
@@ -802,6 +802,8 @@ function weekImage(w, weeks, K) {
     const x = i * slot + (slot - bw) / 2, v = K.val(k), g = K.goal(k);
     const gy = g != null ? base - Math.max(2, (g / max) * h) : null;
     if (gy != null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.16)); dc.fillRect(new Rect(x, gy, bw, base - gy)); }
+    const fl = K.floor ? K.floor(k) : null;
+    if (gy != null && fl != null) { const fy = base - Math.max(2, (fl / max) * h); dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x - 3, gy, bw + 6, fy - gy)); }
     // Saeule: je Sportart ein Abschnitt (groesster unten), ohne Luecken
     if (v != null && v > 0) {
       const ht = Math.max(2, (v / max) * h), top = base - ht;
@@ -817,8 +819,6 @@ function weekImage(w, weeks, K) {
     }
     // Ueber dem Ziel verdeckt die Saeule die Flaeche: dann markiert ein Strich die Zielhoehe
     if (gy != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, gy - 1.25, tick, 2.5)); }
-    const fl = K.floor ? K.floor(k) : null;
-    if (fl != null) { const fy = base - Math.max(2, (fl / max) * h); dc.setFillColor(new Color(INK_HEX, 0.6)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, fy - 0.5, tick, 1)); }
   });
   return dc.getImage();
 }
