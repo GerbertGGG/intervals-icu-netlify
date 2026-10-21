@@ -571,8 +571,10 @@ function buildWidget(res) {
   w.addSpacer(5);
 
   // 2. Urteil des Coaches: Kapsel "Hart erlaubt" / "Nur locker" / "Frei" (Farbe aus seinem go), daneben seine Blocker.
-  // Ohne go seine Kopfzeile, ohne Aussage von heute grau. Kein eigenes Urteil des Widgets.
+  // Ohne go keine Zeile (seine Notiz steht unten in der Kachel, die Kopfzeile wuerde dasselbe noch einmal sagen), ohne
+  // Aussage von heute grau "Noch keine Coach-Auswertung". Kein eigenes Urteil des Widgets.
   const c0 = d.coach, go = c0 && GO_TEXT[c0.go];
+  if (go || !c0) {
   const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 6; vr.size = new Size(W, 0);
   if (go) {
     const gp = vr.addStack(); gp.cornerRadius = 11; gp.setPadding(3, 10, 3, 10); gp.backgroundColor = new Color(ZONE_RGB[go[1]] || NEUTRAL_HEX, 0.22);
@@ -585,6 +587,7 @@ function buildWidget(res) {
   }
   vr.addSpacer();
   w.addSpacer(6);
+  } else w.addSpacer(2);
 
   // Koerper und Gefuehl als eine kompakte Zeile: Wert gross, Kurzname klein darunter (Gefuehl 1 = bestmoeglich)
   const vals = [
@@ -746,11 +749,17 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false) {
     const TW = Math.floor((W - 12) / 3);
     const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
     for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), d.goal, d.plan.upcoming);
-  } else if (withDays && q) {
+  } else if (withDays && wk.days) {
+    // Sonst die Woche Mo bis So: was an welchem Tag gemacht wurde (Kreise in Sportfarbe), heute umrandet
+    w.addSpacer(12);
+    const KH = Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7);
+    const im = w.addImage(capsImage(W, KH, wk.days, d.today)); im.imageSize = new Size(W, CAPS_PAD + KH + 2 + CAPS_LABEL_H);
+  }
+  if (withDays && q && !(d.plan.upcoming || []).length) {
     w.addSpacer(10);
     const qs = w.addStack(); qs.layoutVertically(); qs.size = new Size(W, 0);
     text(qs, d.coach.answer ? "FRAGE DES COACHES · BEANTWORTET" : "FRAGE DES COACHES", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
-    text(qs, q, FS.sm, { lines: 3, minScale: 0.8 });
+    text(qs, q, FS.sm, { lines: 2, minScale: 0.8 });
   }
   notice(w, res, d);
   w.addSpacer();
