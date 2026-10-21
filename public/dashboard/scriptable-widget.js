@@ -711,9 +711,11 @@ function ringsImage(S, rings, warn) {
 }
 
 // Woche im grossen Widget mit Wochenzielen des Coaches: links ein Ring je Sportart (Zeit gegen das Ziel), rechts Minuten
-// gegen das Ziel, TSS gegen die Grenze (oder welche Sportart darueber liegt) mit der Frische, darunter je Sportart eine
+// gegen das Ziel, TSS gegen den Korridor (Untergrenze–Obergrenze; oder welche Sportart ueber der Obergrenze liegt) mit der Frische, darunter je Sportart eine
 // Kapsel mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Die Kapseln stehen neben dem
 // Ring statt darunter: so passt die Woche auch mit geplanter Einheit ins Widget. Ersetzt Wochenkreise und Tageskacheln.
+// TSS-Korridor als Text: "220–275", ohne Untergrenze "≤ 275"
+function tssRange(lo, hi) { return lo > 0 ? `${fmt(lo)}–${fmt(hi)}` : `≤ ${fmt(hi)}`; }
 function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = false) {
   const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
@@ -728,7 +730,7 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
   const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmt(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmt(sum(zeit, 2))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
   const tsb = wk.tsb != null ? ` · TSB ${signed(wk.tsb)}` : "";
   if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über TSS-Grenze${tsb}`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
-  else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ≤ ${fmt(sum(tss, 2))}${tsb}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ${tssRange(tss.reduce((a, x) => a + (x[3] || 0), 0), sum(tss, 2))}${tsb}`, FS.xs, { color: COL.muted, minScale: 0.6 });
   else if (tsb) text(rc, tsb.slice(3), FS.xs, { color: COL.muted, minScale: 0.6 });
   // Offen: eine Kapsel je Sportart in der Sportfarbe, Zahl = was noch fehlt
   const open = wk.open || [];
@@ -772,15 +774,16 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
 // Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Ziel (TSS-Obergrenze
-// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Ohne Ziel keine Flaeche, ohne
+// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel; die Untergrenze des
+// TSS-Korridors steht als duenne Marke quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne
 // Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
 const WEEK_KINDS = {
   tss: {
     title: "BELASTUNG · 6 WOCHEN", unit: "TSS",
-    val: (k) => k.tss, goal: (k) => k.goal, parts: (k) => k.sports,
-    goalText: (k) => (k.goal != null ? `${k.cap ? "≤" : ""}${fmt(k.goal)}` : null),
+    val: (k) => k.tss, goal: (k) => k.goal, floor: (k) => (k.cap && k.goalMin > 0 ? k.goalMin : null), parts: (k) => k.sports,
+    goalText: (k) => (k.goal == null ? null : k.cap ? tssRange(k.goalMin, k.goal).replace(" ", "") : fmt(k.goal)),
   },
   time: {
     title: "ZEIT · 6 WOCHEN", unit: "min",
@@ -814,6 +817,8 @@ function weekImage(w, weeks, K) {
     }
     // Ueber dem Ziel verdeckt die Saeule die Flaeche: dann markiert ein Strich die Zielhoehe
     if (gy != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, gy - 1.25, tick, 2.5)); }
+    const fl = K.floor ? K.floor(k) : null;
+    if (fl != null) { const fy = base - Math.max(2, (fl / max) * h); dc.setFillColor(new Color(INK_HEX, 0.6)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, fy - 0.5, tick, 1)); }
   });
   return dc.getImage();
 }
@@ -1129,14 +1134,14 @@ function buildTraining(res) {
     c.addSpacer(4);
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
     if (s.targetMin || s.targetLoad) {
-      // Wochenziel des Coaches: Minuten gegen das Zeitziel, darunter TSS gegen die Obergrenze (Warnfarbe, wenn darueber)
+      // Wochenziel des Coaches: Minuten gegen das Zeitziel, darunter TSS gegen den Korridor (Warnfarbe ueber der Obergrenze)
       num(vl, `${Math.round(s.weekMinutes || 0)}`, FS.xl);
       text(vl, s.targetMin ? `/ ${Math.round(s.targetMin)} min` : "min", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
       c.addSpacer(4);
       progressBar(c, CW, s.targetMin ? (s.weekMinutes || 0) / s.targetMin : 0, hex);
       c.addSpacer(3);
       const over = s.targetLoad && s.weekLoad > s.targetLoad;
-      text(c, s.targetLoad ? `TSS ${Math.round(s.weekLoad || 0)} / ≤ ${Math.round(s.targetLoad)}` : `TSS ${Math.round(s.weekLoad || 0)}`, FS.xs, { bold: !!over, color: over ? COL.warn : COL.muted, minScale: 0.6 });
+      text(c, s.targetLoad ? `TSS ${Math.round(s.weekLoad || 0)} / ${tssRange(s.targetLoadMin, s.targetLoad)}` : `TSS ${Math.round(s.weekLoad || 0)}`, FS.xs, { bold: !!over, color: over ? COL.warn : COL.muted, minScale: 0.6 });
     } else {
       // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
       num(vl, `${Math.round(s.weekLoad || 0)}`, FS.xl);

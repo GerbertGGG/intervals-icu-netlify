@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import { buildWeekReview } from "../src/week-review.js";
 
 const addDays = (iso, n) => new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
-const sport = (minutes, load = minutes, targetMin = null, targetLoad = null) => ({ count: minutes ? 3 : 0, minutes, load, targetMin, targetLoad });
+const sport = (minutes, load = minutes, targetMin = null, targetLoad = null, targetLoadMin = null) => ({ count: minutes ? 3 : 0, minutes, load, targetMin, targetLoad, targetLoadMin });
 // 5 volle Wochen (Mo 14.09. – So 18.10.) plus die laufende ab 19.10.
 const week = (start, runMin, extra = {}) => ({
   weekStart: start, complete: start < "2026-10-19", runMin, load: 300,
-  bySport: { run: sport(runMin, runMin, extra.runTarget ?? null), bike: sport(150, extra.bikeLoad ?? 150, extra.bikeTarget ?? null, extra.bikeCap ?? null), swim: sport(60), strength: sport(40), other: sport(0) },
+  bySport: { run: sport(runMin, runMin, extra.runTarget ?? null), bike: sport(150, extra.bikeLoad ?? 150, extra.bikeTarget ?? null, extra.bikeCap ?? null, extra.bikeFloor ?? null), swim: sport(60), strength: sport(40), other: sport(0) },
 });
 const starts = ["2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19"];
 const weeks = starts.map((s, i) => week(s, i === 4 ? 150 : 140, i === 4 ? { runTarget: 200, bikeTarget: 150, bikeCap: 120 } : {}));
@@ -30,6 +30,14 @@ const base = { weeks, wellness, sessions, runs, daily: [], sickDays: [], hipFlag
   // Rahmen: Lauf 150 von 200, Rad 150 von 150 -> 300 von 350 min; Rad über der TSS-Grenze
   assert.equal(r.frameShare, 0.86);
   assert.equal(r.frame.find((f) => f.sport === "bike").over, true);
+  assert.equal(r.frame.find((f) => f.sport === "bike").under, false);
+  assert.equal(r.frame.find((f) => f.sport === "run").targetLoadMin, null); // Lauf ohne TSS-Ziel
+}
+// TSS-Korridor im Rahmen: unter der Untergrenze ist under gesetzt, nicht over
+{
+  const ws = weeks.map((w, i) => (i === 4 ? week(w.weekStart, 150, { runTarget: 200, bikeTarget: 150, bikeCap: 250, bikeFloor: 200 }) : w));
+  const bike = buildWeekReview({ ...base, weeks: ws }).frame.find((f) => f.sport === "bike");
+  assert.deepEqual([bike.load, bike.targetLoadMin, bike.targetLoad, bike.under, bike.over], [150, 200, 250, true, false]);
 }
 // Ohne RPE-Abdeckung rechnet die Monotonie mit dem Tages-TSS
 {

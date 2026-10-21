@@ -50,10 +50,10 @@ export function buildWeekReview(input) {
   const longest = (rs) => rs.reduce((a, r) => Math.max(a, r.movingTimeMin ?? 0), 0) || null;
   const capOver = input.capRuns ? input.capRuns.filter((r) => inWeek(r.date)).reduce((a, r) => a + (r.overCapMin ?? 0), 0) : null;
 
-  // Wochenrahmen des Coaches: Ist gegen Zeitziel und TSS-Grenze
+  // Wochenrahmen des Coaches: Ist gegen Zeitziel und TSS-Korridor (Untergrenze bis Obergrenze)
   const frame = SPORTS.filter((k) => W.bySport[k]?.targetMin > 0 || W.bySport[k]?.targetLoad > 0).map((k) => {
     const b = W.bySport[k];
-    return { sport: k, minutes: b.minutes, targetMin: b.targetMin, load: b.load, targetLoad: b.targetLoad, over: b.targetLoad > 0 && b.load > b.targetLoad };
+    return { sport: k, minutes: b.minutes, targetMin: b.targetMin, load: b.load, targetLoad: b.targetLoad, targetLoadMin: b.targetLoadMin ?? null, over: b.targetLoad > 0 && b.load > b.targetLoad, under: b.targetLoadMin > 0 && b.load < b.targetLoadMin };
   });
   const tMin = frame.reduce((a, f) => a + (f.targetMin ?? 0), 0), dMin = frame.reduce((a, f) => a + (f.targetMin ? f.minutes : 0), 0);
 

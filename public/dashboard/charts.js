@@ -98,23 +98,26 @@
     const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.55, 46);
     items.forEach((w, i) => {
       const x = L + slot * i + (slot - bw) / 2;
-      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (${w.cap ? "Obergrenze" : "Ziel"} ${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
+      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (${w.cap ? (w.floor ? `Korridor ${U.fmt(w.floor, o.dec ?? 0)}–` : "Obergrenze ") : "Ziel "}${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
+      // floor: Untergrenze des TSS-Korridors als dünne Marke unter der Obergrenze
+      if (w.floor != null) s.append(title(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.floor), y2: y(w.floor), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }), `Untergrenze: ${U.fmt(w.floor, o.dec ?? 0)} ${o.unit}`));
       if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
         // Laufende Woche: Ist ist noch unvollständig, über dem Plan-Strich steht die Wochenplanung (Ziel bzw. Obergrenze),
         // der bisherige Wert nur über der Säule, wenn er Platz hat; unten, was noch offen ist
-        const d0 = o.dec ?? (w.cap ? 0 : 1), kind = w.cap ? "Obergrenze" : "Wochenziel";
-        s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, U.fmt(w.plan, d0)), `${kind}: ${U.fmt(w.plan, d0)} ${o.unit}`));
+        const d0 = o.dec ?? (w.cap ? 0 : 1), kind = w.cap ? (w.floor ? "Korridor" : "Obergrenze") : "Wochenziel", planTxt = `${w.floor ? `${U.fmt(w.floor, d0)}–` : ""}${U.fmt(w.plan, d0)}`;
+        s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, planTxt), `${kind}: ${planTxt} ${o.unit}`));
         if (w.value && y(w.value) - y(w.plan) > 18) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, d0)));
         // capValue: nur die Sportarten mit Obergrenze (Schwimmen hat keine TSS-Grenze, steckt aber in der Säule)
-        const dev = (w.capValue ?? w.value ?? 0) - w.plan;
-        const txt = w.cap ? (dev > 0 ? `+${U.fmt(dev, d0)} drüber` : `bis ${U.fmt(-dev, d0)}`) : dev < 0 ? `noch ${U.fmt(-dev, d0)}` : "✓";
+        const dev = (w.capValue ?? w.value ?? 0) - w.plan, toFloor = w.floor ? w.floor - (w.capValue ?? w.value ?? 0) : 0;
+        const txt = w.cap ? (dev > 0 ? `+${U.fmt(dev, d0)} drüber` : toFloor > 0 ? `noch ${U.fmt(toFloor, d0)} bis Untergr.` : `bis ${U.fmt(-dev, d0)}`) : dev < 0 ? `noch ${U.fmt(-dev, d0)}` : "✓";
         s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${w.cap && dev > 0 ? "bad" : "muted"})` }, txt), `bisher ${U.fmt(w.capValue ?? w.value ?? 0, d0)} von ${w.cap ? "höchstens " : ""}${U.fmt(w.plan, d0)} ${o.unit}`));
       } else if (o.valueLabels && w.cap && w.plan != null && w.plan > 0) {
-        // Obergrenze statt Ziel (Wochenziele des Coaches, TSS): darunter ist gut, nur darüber wird es markiert
-        s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value ?? 0, o.dec ?? 0)), `Obergrenze: ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
-        const dev = (w.capValue ?? w.value ?? 0) - w.plan;
-        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : "ok"})` }, dev > 0 ? `+${U.fmt(dev, o.dec ?? 0)} drüber` : "✓"), `${U.fmt(w.capValue ?? w.value ?? 0, o.dec ?? 0)} von höchstens ${U.fmt(w.plan, o.dec ?? 0)} ${o.unit}`));
+        // Korridor bzw. Obergrenze statt Ziel (Wochenziele des Coaches, TSS): darüber rot, unter der Untergrenze gedämpft, dazwischen ✓
+        const d0 = o.dec ?? 0, range = `${w.floor ? `${U.fmt(w.floor, d0)}–` : "höchstens "}${U.fmt(w.plan, d0)}`;
+        s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value ?? 0, d0)), `${w.floor ? "Korridor" : "Obergrenze"}: ${range} ${o.unit}`));
+        const v = w.capValue ?? w.value ?? 0, dev = v - w.plan, under = w.floor ? w.floor - v : 0;
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : under > 0 ? "muted" : "ok"})` }, dev > 0 ? `+${U.fmt(dev, d0)} drüber` : under > 0 ? `−${U.fmt(under, d0)} unter` : "✓"), `${U.fmt(v, d0)} von ${range} ${o.unit}`));
       } else if (o.valueLabels && w.value != null) {
         // Zahl über Säule und Plan-Marke, damit der Plan-Strich sie nie schneidet
         s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));

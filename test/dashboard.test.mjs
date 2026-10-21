@@ -556,34 +556,52 @@ console.log("zones from intervals ok");
   assert.equal((await handleWidgetRequest(req("watch", "uhr"), env)).status, 401); // ohne WATCH_TOKEN kein Zugang
 }
 
-// Wochenziele des Coaches (Kategorie TARGET, Montag, je Sportart): Zeit ist das Ziel, TSS die Obergrenze
+// Wochenziele des Coaches (Kategorie TARGET, Montag, je Sportart): Zeit ist das Ziel, TSS ein Korridor (Untergrenze 80 %
+// der Obergrenze oder eigene Untergrenze aus der Beschreibung)
+{
+  const { targetLoadFloor, TARGET_LOAD_FLOOR_SHARE } = await import("../src/dashboard.js");
+  assert.equal(TARGET_LOAD_FLOOR_SHARE, 0.8);
+  assert.equal(targetLoadFloor({ load_target: 275 }), 220); // Standard 80 %
+  assert.equal(targetLoadFloor({ load_target: 275, description: "Korridor min 200" }), 200); // eigene Untergrenze
+  assert.equal(targetLoadFloor({ load_target: 275, description: "mindestens: 240 TSS" }), 240);
+  assert.equal(targetLoadFloor({ load_target: 275, description: "Untergrenze 230" }), 230);
+  assert.equal(targetLoadFloor({ load_target: 275, description: "min 300" }), 275); // höchstens die Obergrenze
+  assert.equal(targetLoadFloor({ load_target: 275, description: "90 min locker, 45 min Z2" }), 220); // Minuten sind keine Untergrenze
+  assert.equal(targetLoadFloor({ time_target: 3300, description: "min 200" }), null); // ohne TSS-Ziel kein Korridor
+}
 {
   const { buildWidgetWatch, weekTargets } = await import("../src/widget.js");
   const mon = day(-2); // 30.09.2026 ist ein Mittwoch
   const extra = [
     { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Weekly", type: "Run", time_target: 5400, load_target: 85 },
     { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Weekly", type: "Swim", time_target: 3300 },
+    { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Weekly", type: "Ride", load_target: 200, description: "min 170" },
     { category: "TARGET", start_date_local: mon + "T00:00:00", name: "Block Test (4 Wochen)", load_target: 999 }, // Block, kein Wochenziel
   ];
   events.push(...extra);
   const dt = await buildDashboard(env, today);
   events.splice(events.length - extra.length, extra.length);
   const cur = dt.weeks.at(-1);
-  assert.deepEqual([cur.bySport.run.targetMin, cur.bySport.run.targetLoad, cur.bySport.swim.targetMin, cur.bySport.swim.targetLoad], [90, 85, 55, null]);
-  assert.deepEqual([cur.targetMin, cur.targetLoad], [145, 85]);
-  assert.equal(dt.weeks.at(-2).targetMin, null); // Vorwoche ohne Ziel
+  assert.deepEqual([cur.bySport.run.targetMin, cur.bySport.run.targetLoad, cur.bySport.run.targetLoadMin, cur.bySport.swim.targetMin, cur.bySport.swim.targetLoad, cur.bySport.swim.targetLoadMin], [90, 85, 68, 55, null, null]);
+  assert.deepEqual([cur.bySport.bike.targetMin, cur.bySport.bike.targetLoad, cur.bySport.bike.targetLoadMin], [null, 200, 170]); // Untergrenze aus der Beschreibung
+  assert.deepEqual([cur.targetMin, cur.targetLoad, cur.targetLoadMin], [145, 285, 238]);
+  assert.deepEqual([dt.weeks.at(-2).targetMin, dt.weeks.at(-2).targetLoad, dt.weeks.at(-2).targetLoadMin], [null, null, null]); // Vorwoche ohne Ziel
   const tg = weekTargets(cur);
-  assert.deepEqual(tg.map((t) => t.s), ["run", "swim"]);
+  assert.deepEqual(tg.map((t) => t.s), ["run", "bike", "swim"]);
   const run = tg.find((t) => t.s === "run");
-  assert.deepEqual([run.goal, run.max, run.min, run.tss], [90, 85, cur.bySport.run.minutes, cur.bySport.run.load]);
+  assert.deepEqual([run.goal, run.max, run.lo, run.min, run.tss], [90, 85, 68, cur.bySport.run.minutes, cur.bySport.run.load]);
   assert.equal(run.over, cur.bySport.run.load > 85);
-  assert.equal(tg.find((t) => t.s === "swim").max, null); // Schwimmen nur ueber Zeit
+  assert.equal(run.under, cur.bySport.run.load < 68);
+  const bike = tg.find((t) => t.s === "bike");
+  assert.deepEqual([bike.goal, bike.max, bike.lo, bike.under], [null, 200, 170, cur.bySport.bike.load < 170]);
+  const swim = tg.find((t) => t.s === "swim");
+  assert.deepEqual([swim.max, swim.lo, swim.over, swim.under], [null, null, false, false]); // Schwimmen nur ueber Zeit
   assert.deepEqual(buildWidget(dt).week.targets, tg);
   assert.equal(buildWidget(dt).week.goal, null); // mit Wochenzielen kein TSS-Soll aus geplanten Workouts
   // Grosses Widget: Ringe und was noch offen ist wie auf der Uhr; Kraft nur mit Block-Ziel
   const wkO = buildWidget({ ...dt, seasonBlock: { goals: [{ key: "strength", weekGoal: 60, calWeek: { count: 34 } }] } }).week;
   assert.deepEqual(wkO.rings.zeit.map((x) => x[0]), ["run", "swim"]);
-  assert.deepEqual(wkO.rings.tss, [["run", run.tss, 85]]);
+  assert.deepEqual(wkO.rings.tss, [["bike", bike.tss, 200, 170], ["run", run.tss, 85, 68]]); // viertes Element: Untergrenze
   assert.deepEqual(wkO.open.map((x) => [x.s, x.unit]), [["run", "min"], ["swim", "min"], ["strength", "Sätze"]]);
   assert.equal(wkO.open[0].v, Math.max(0, 90 - run.min));
   assert.equal(wkO.open[2].v, 26);
@@ -592,37 +610,40 @@ console.log("zones from intervals ok");
   assert.deepEqual(weekTargets(d.weeks.at(-1)), []);
   // Training-Ansicht: Zeitziel und TSS-Obergrenze je Disziplin
   const trn = buildWidgetTraining(dt).sports;
-  assert.deepEqual([trn.run.targetMin, trn.run.targetLoad, trn.bike.targetMin], [90, 85, null]);
+  assert.deepEqual([trn.run.targetMin, trn.run.targetLoad, trn.run.targetLoadMin, trn.bike.targetMin, trn.bike.targetLoadMin, trn.swim.targetLoadMin], [90, 85, 68, null, 170, null]);
   // Belastung (mittleres Widget): laufende Woche mit TSS-Obergrenze und Zeitziel des Coaches wie im Dashboard
   const tw = buildWidgetDetail(dt).tssWeeks.at(-1);
-  assert.deepEqual([tw.goal, tw.cap, tw.minGoal], [cur.targetLoad, true, cur.targetMin]);
+  assert.deepEqual([tw.goal, tw.goalMin, tw.cap, tw.minGoal], [cur.targetLoad, cur.targetLoadMin, true, cur.targetMin]);
+  assert.equal(buildWidgetDetail(dt).tssWeeks.at(-2).goalMin, null); // Woche ohne TSS-Ziel
   assert.equal(tw.min, Object.values(cur.bySport).reduce((a, s) => a + s.minutes, 0));
   assert.equal(Object.values(tw.minSports).reduce((a, b) => a + b, 0), tw.min);
   // Uhr: Ringe aussen Rad, Mitte Lauf, innen Schwimmen; Zeit gegen Ziel, TSS gegen Obergrenze (Schwimmen ohne Grenze)
   const wt = buildWidgetWatch(dt);
   assert.deepEqual(wt.rz, [["run", run.min, 90], ["swim", tg.find((t) => t.s === "swim").min, 55]]);
-  assert.deepEqual(wt.rt, [["run", run.tss, 85]]);
+  assert.deepEqual(wt.rt, [["bike", bike.tss, 200], ["run", run.tss, 85]]); // Uhr unverändert ohne Untergrenze
   const none = buildWidgetWatch(d);
   assert.deepEqual([none.rz, none.rt], [null, null]);
   assert.ok(JSON.stringify(wt).length < 1500);
   console.log("week targets ok");
 }
 
-// Formprognose aus den Wochenzielen: 90 % der TSS-Grenzen plus Schwimmen aus Zielminuten × TSS/min der Vorwochen
+// Formprognose aus den Wochenzielen: Mitte der TSS-Korridore plus Schwimmen aus Zielminuten × TSS/min der Vorwochen
 {
   const { targetDailyLoad, buildFormProjection } = await import("../src/dashboard.js");
   const sp = (o = {}) => ({ count: 0, minutes: 0, km: 0, load: 0, targetMin: null, targetLoad: null, ...o });
   const wk = (bySport, extra = {}) => ({ load: Object.values(bySport).reduce((a, b) => a + b.load, 0), bySport: { run: sp(), bike: sp(), swim: sp(), strength: sp(), other: sp(), ...bySport }, ...extra });
   const prev = wk({ swim: sp({ minutes: 60, load: 30 }) }); // 0,5 TSS/min
-  const cur = wk({ run: sp({ targetMin: 90, targetLoad: 100, load: 40 }), bike: sp({ targetMin: 100, targetLoad: 100 }), swim: sp({ targetMin: 40 }) }, { targetLoad: 200, targetMin: 230 });
+  const cur = wk({ run: sp({ targetMin: 90, targetLoad: 100, targetLoadMin: 80, load: 40 }), bike: sp({ targetMin: 100, targetLoad: 100, targetLoadMin: 60 }), swim: sp({ targetMin: 40 }) }, { targetLoad: 200, targetLoadMin: 140, targetMin: 230 });
   const f = targetDailyLoad([prev, cur], "2026-10-21"); // Mittwoch: noch 4 Tage nach heute
-  const total = 200 * 0.9 + 40 * 0.5; // 200
+  const total = 90 + 80 + 40 * 0.5; // Mitte 80–100 und 60–100 plus Schwimmen = 190
   assert.equal(f("2026-10-22"), (total - 40) / 4);
   assert.equal(f("2026-10-25"), (total - 40) / 4);
   assert.equal(f("2026-10-26"), total / 7); // naechste Woche: dieselbe Woche wieder
   assert.equal(targetDailyLoad([prev, wk({})], "2026-10-21"), null); // ohne Ziele: Plan
+  // ohne Untergrenze (ältere Daten) zählt die Obergrenze
+  assert.equal(targetDailyLoad([prev, wk({ run: sp({ targetLoad: 100 }) }, { targetLoad: 100 })], "2026-10-21")("2026-10-26"), 100 / 7);
   const p = buildFormProjection([{ date: "2026-10-21", ctl: 20, atl: 20 }], [], "2026-10-21", 3, f);
-  assert.ok(Math.abs(p[0].ctl - (20 + (40 - 20) / 42)) < 0.06);
+  assert.ok(Math.abs(p[0].ctl - (20 + ((total - 40) / 4 - 20) / 42)) < 0.06);
   console.log("projection targets ok");
 }
 
