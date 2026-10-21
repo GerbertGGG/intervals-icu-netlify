@@ -771,10 +771,9 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 }
 
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
-// Je Woche eine Saeule: Rahmen = Ziel (TSS-Obergrenze bzw. Zeitziel des Coaches, sonst Plan), die Fuellung = gemacht fuellt
-// ihn von unten, gestapelt in Sportfarben (groesster Anteil unten). Liegt der Wert ueber dem Ziel, waechst die Fuellung
-// aus dem Rahmen heraus und ein Strich markiert das Ziel. Ohne Ziel kein Rahmen, ohne Training keine Fuellung, nie ein
-// 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
+// Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); Marke = Ziel (TSS-Obergrenze bzw.
+// Zeitziel des Coaches, sonst Plan) mit blasser Flaeche bis dorthin, die die Saeule fuellt. Ohne Ziel keine Marke, ohne
+// Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
 const WEEK_KINDS = {
@@ -790,21 +789,17 @@ const WEEK_KINDS = {
   },
 };
 function weekImage(w, weeks, K) {
-  // 3 pt Rand oben und unten, damit der Ziel-Rahmen nicht am Bildrand abgeschnitten wird
-  const n = weeks.length, H = WEEK_PLOT_H, M = 3, h = H - 2 * M, base = H - M, dc = newCtx(w, H);
+  // Wie die Wochen-Charts im Dashboard: schmale Saeule, Ziel als waagrechte Marke. Bis zur Marke eine blasse Flaeche,
+  // die die Saeule fuellt; darueber waechst die Saeule aus der Flaeche heraus. 3 pt Rand oben fuer die Marke.
+  const n = weeks.length, H = WEEK_PLOT_H, M = 3, h = H - M - 1, base = H - 1, dc = newCtx(w, H);
   const vals = weeks.flatMap((k) => [K.val(k), K.goal(k)]).filter((v) => v != null);
-  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(30, slot * 0.6);
+  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(16, slot * 0.34), tick = bw + 12;
+  dc.setFillColor(new Color(NEUTRAL_HEX, 0.35)); dc.fillRect(new Rect(0, base, w, 1)); // Grundlinie
   weeks.forEach((k, i) => {
     const x = i * slot + (slot - bw) / 2, v = K.val(k), g = K.goal(k);
-    // Rahmen zuerst: das Ziel als leere Saeule, die Fuellung kommt hinein
     const gy = g != null ? base - Math.max(2, (g / max) * h) : null;
-    if (gy != null) {
-      const p = new Path();
-      p.addRoundedRect(new Rect(x - 1.5, gy - 1.5, bw + 3, base + 1.5 - gy), 2, 2);
-      dc.addPath(p); dc.setFillColor(new Color(NEUTRAL_HEX, 0.18)); dc.fillPath();
-      dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.4); dc.strokePath();
-    }
-    // Fuellung: gemacht, je Sportart ein Streifen (groesster unten)
+    if (gy != null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.16)); dc.fillRect(new Rect(x, gy, bw, base - gy)); }
+    // Saeule: je Sportart ein Abschnitt (groesster unten), ohne Luecken
     if (v != null && v > 0) {
       const ht = Math.max(2, (v / max) * h), top = base - ht;
       const parts = Object.entries(K.parts(k) || {}).filter(([, pv]) => pv > 0).sort((a, b) => b[1] - a[1]);
@@ -812,14 +807,13 @@ function weekImage(w, weeks, K) {
       const tot = parts.reduce((a, [, pv]) => a + pv, 0);
       let yb = base;
       parts.forEach(([sp, pv], j) => {
-        const last = j === parts.length - 1, yt = last ? top : Math.max(top, yb - (ht * pv) / tot);
-        dc.setFillColor(new Color(sportHex(sp)));
-        dc.fillRect(new Rect(x, yt + (last ? 0 : 0.5), bw, Math.max(0.5, yb - yt - (last ? 0 : 0.5))));
+        const yt = j === parts.length - 1 ? top : Math.max(top, yb - (ht * pv) / tot);
+        dc.setFillColor(new Color(sportHex(sp))); dc.fillRect(new Rect(x, yt, bw, yb - yt));
         yb = yt;
       });
-      // Ueber dem Ziel: Strich auf Zielhoehe quer durch die Fuellung
-      if (gy != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x - 3, gy - 0.7, bw + 6, 1.4)); }
     }
+    // Zielmarke zuletzt, damit sie auch ueber einer hoeheren Saeule sichtbar bleibt
+    if (gy != null) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, gy - 1.25, tick, 2.5)); }
   });
   return dc.getImage();
 }
