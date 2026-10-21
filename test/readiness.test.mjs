@@ -43,6 +43,16 @@ const at = (d, list = upTo(d)) => computeReadiness(list, d, null, { sickDays: SI
   assert.equal(r.verdict.cls, "warn");
   assert.match(r.verdict.reasons.join(), /7-Tage-Schnitt/);
 }
+// 21.10.: HRV 43 knapp unter 95 % der Basis, 7-Tage-Schnitt noch vom Tief 16.–18.10. gedrückt, aber die letzten 3 Tage
+// (44/46/43) liegen klar darüber → Erholung, kein Trend → grün
+{
+  const list = [...W, { date: "2026-10-21", restingHR: 49, hrv: 43, sleepScore: 82, sleepQuality: 2, soreness: 2, fatigue: 2, mood: 2, motivation: 2 }];
+  const r = at("2026-10-21", list);
+  assert.ok(r.body.hrv.mean7 < r.body.hrv.base7 * 0.93);
+  assert.equal(r.body.hrv.recovering, true);
+  assert.equal(r.body.hrv.cls, "ok");
+  assert.equal(r.verdict.cls, "ok");
+}
 // Einzelner HRV-Ausschlag von −13 % bei sonst normalen Werten: angezeigt, aber kein Signal
 {
   const d = "2026-10-09";
