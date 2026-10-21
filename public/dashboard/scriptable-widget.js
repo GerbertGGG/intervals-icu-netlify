@@ -616,7 +616,8 @@ function buildWidget(res) {
   const why = rawWhy ? sentences(rawWhy) : whyText(p);
   // Hoehe nach Textlaenge schaetzen (gut 6 pt je Zeichen bei 12 pt) und fest setzen: In einem Stack mit fester Hoehe und
   // fester Textbreite bricht Scriptable zuverlaessig um; ohne das blieb der Text einzeilig mit "...".
-  const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 6.1));
+  // 5,7 pt je Zeichen (gemessen: 48 Zeichen fuellen eine Zeile); 6,1 hat eine Zeile zu viel geschaetzt
+  const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 5.7));
   const nLines = Math.max(1, Math.ceil(why.length / perLine));
   const ct = w.addStack(); ct.size = new Size(W, nLines * 16 + 12); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
   const bar = ct.addStack(); bar.size = new Size(3, nLines * 16); bar.cornerRadius = 1.5;
@@ -630,7 +631,7 @@ function buildWidget(res) {
   // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
   const wk = d.week || {};
   // Ohne Einheit heute ist unten Platz: darunter die naechsten drei Tage (nicht bei langem Hinweis)
-  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, nLines <= 3);
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, true, nLines <= 3);
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -710,14 +711,14 @@ function ringsImage(S, rings, warn) {
 // gegen das Ziel, TSS gegen die Grenze (oder welche Sportart darueber liegt) mit der Frische, darunter je Sportart eine
 // Kapsel mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Die Kapseln stehen neben dem
 // Ring statt darunter: so passt die Woche auch mit geplanter Einheit ins Widget. Ersetzt Wochenkreise und Tageskacheln.
-function buildWeekTargets(w, W, d, wk, res, withDays = false) {
+function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = false) {
   const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
   const over = tss.filter((x) => x[1] > x[2]);
   header(w, W, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, null);
   w.addSpacer(5);
   const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 12;
-  const RZ = 78;
+  const RZ = withDays ? 88 : 78;
   const iz = row.addImage(ringsImage(RZ, zeit, false)); iz.imageSize = new Size(RZ, RZ);
   const RW = W - RZ - 12;
   const rc = row.addStack(); rc.layoutVertically(); rc.size = new Size(RW, 0);
@@ -755,7 +756,7 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false) {
     const KH = Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7);
     const im = w.addImage(capsImage(W, KH, wk.days, d.today)); im.imageSize = new Size(W, CAPS_PAD + KH + 2 + CAPS_LABEL_H);
   }
-  if (withDays && q && !(d.plan.upcoming || []).length) {
+  if (withQuestion && q && !(d.plan.upcoming || []).length) {
     w.addSpacer(10);
     const qs = w.addStack(); qs.layoutVertically(); qs.size = new Size(W, 0);
     text(qs, d.coach.answer ? "FRAGE DES COACHES · BEANTWORTET" : "FRAGE DES COACHES", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
