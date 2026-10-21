@@ -39,7 +39,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SUN = 0x7F702A;    // gedämpftes Gold für die hellen Stunden im Wetterring, kräftiges Gelb ist Laufen
     const STALE_SECS = 3600;
     const BAT_LOW = 20;      // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
-    const PROT = 0xC77DFF;   // Eiweiß im Essen-Ring: lila, damit es sich von Kalorien (weiß) und den Sportfarben abhebt
+    const PROT = 0xFF7EB6;   // Eiweiß im Essen-Ring: rosa, damit es sich von Kalorien (weiß) und den Sportfarben abhebt
     const BAT_Y = 40;
     const TIME_Y = 200;
     const DATE_Y = 290;
@@ -401,7 +401,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var rest = (kg - kv).toNumber();
             kText = rest >= 0 ? rest.toString() : "+" + (-rest).toString();
         }
-        // Zwei Ringe: außen Kalorien (weiß), innen Eiweiß (lila) gegen das Yazio-Ziel; ohne Eiweißziel nur der Kalorienring.
+        // Zwei Ringe: außen Kalorien (weiß), innen Eiweiß (rosa) gegen das Yazio-Ziel; ohne Eiweißziel nur der Kalorienring.
         // Orange nur bei einem Problem: mehr als KCAL_OVER über dem Ziel (Ring und Zahl) oder ab PROT_HOUR Uhr unter PROT_MIN Eiweiß.
         var over = hasGoal && kv - kg > KCAL_OVER;
         var kColor = over ? WARN : FG;
