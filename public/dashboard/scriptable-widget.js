@@ -131,12 +131,12 @@ function pill(parent, str, color, hex) {
   return s;
 }
 
-// Groesse des Widgets in Punkten nach Bildschirmbreite (Apple-Sollwerte): [Bildschirmbreite, Breite Mittel/Gross, Seite Klein]
-const WIDGET_SIZES = [[430, 364, 170], [428, 364, 170], [414, 360, 169], [393, 338, 158], [390, 338, 158], [375, 321, 148]];
+// Groesse des Widgets in Punkten nach Bildschirmbreite (Apple-Sollwerte): [Bildschirmbreite, Breite Mittel/Gross, Seite Klein, Hoehe Gross]
+const WIDGET_SIZES = [[430, 364, 170, 382], [428, 364, 170, 382], [414, 360, 169, 379], [393, 338, 158, 354], [390, 338, 158, 354], [375, 321, 148, 338]];
 function widgetSize() {
   const sw = Math.min(Device.screenSize().width, Device.screenSize().height);
   const hit = WIDGET_SIZES.find(([w]) => sw >= w) || WIDGET_SIZES[WIDGET_SIZES.length - 1];
-  return { w: hit[1], small: hit[2] };
+  return { w: hit[1], small: hit[2], large: hit[3] };
 }
 const PAD = 14; // einheitlicher Rand aller Widgets
 const widgetInnerWidth = () => widgetSize().w - 2 * PAD;
@@ -634,7 +634,10 @@ function buildWidget(res) {
   // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
   const wk = d.week || {};
   // Ohne Einheit heute ist unten Platz: darunter die naechsten drei Tage (nicht bei langem Hinweis)
-  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, nLines <= 2, nLines <= 3);
+  // Platz unter der Woche (Punkte), geschaetzt aus dem, was darueber steht: gemessen frei sind 60 pt im grossen Widget
+  // (Hoehe 354) bei drei Zeilen Hinweis, ohne Urteils-Zeile, ohne Einheit heute und ohne Quellen-Hinweis
+  const room = (extra) => 60 + (widgetSize().large - 354) + 16 * (3 - nLines) - (go || !c0 ? 27 : 0) - (res.stale || (d.sourcesFailed || []).length ? 18 : 0) - extra;
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, room(0));
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -656,7 +659,7 @@ function buildWidget(res) {
   if (showProfile) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
   w.addSpacer(10);
 
-  if (wk.rings) return buildWeekTargets(w, W, d, wk, res);
+  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, room(42 + (showProfile ? 30 : 0)));
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
@@ -719,11 +722,22 @@ function ringsImage(S, rings, warn) {
 // Woche im grossen Widget mit Wochenzielen des Coaches wie im Dashboard: zwei Ringe ZEIT (gegen das Zeitziel) und TSS (gegen
 // die Obergrenze, Untergrenze als Querstrich), rechts Minuten gegen das Ziel, TSS gegen den Korridor (Untergrenze–Obergrenze;
 // oder welche Sportart ueber der Obergrenze liegt) und die Frische; darunter ueber die volle Breite je Sportart eine Kapsel
-// mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Ersetzt Wochenkreise und Tageskacheln.
+// mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). room = freier Platz darunter (pt):
+// er fuellt sich mit den naechsten drei Tagen (wenn dort etwas geplant ist) bzw. der Woche Mo bis So, der Rueckfrage des
+// Coaches und zuletzt mit hoeheren Kapseln, damit das Widget bis unten genutzt ist.
 // TSS-Korridor als Text: "220–275", ohne Untergrenze "≤ 275"
 function tssRange(lo, hi) { return lo > 0 ? `${fmt(lo)}–${fmt(hi)}` : `≤ ${fmt(hi)}`; }
-function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = false) {
+function buildWeekTargets(w, W, d, wk, res, room = 0) {
   const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
+  // Unten, was in den Platz passt: die naechsten drei Tage, sofern dort etwas geplant ist (sonst stuende dreimal "Pause"),
+  // sonst die Woche Mo bis So (Kreise so gross, wie Breite und Platz erlauben), danach die Rueckfrage des Coaches
+  const q = d.coach && d.coach.question, upcoming = (d.plan.upcoming || []).length > 0;
+  let left = room - 2;
+  const TILE_H = 36, Q_H = 54, KH = Math.min(Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7), left - 10 - CAPS_PAD - 2 - CAPS_LABEL_H);
+  const showTiles = upcoming && left >= TILE_H; if (showTiles) left -= TILE_H;
+  const showDays = !showTiles && wk.days && KH >= 22; if (showDays) left -= 10 + CAPS_PAD + KH + 2 + CAPS_LABEL_H;
+  const showQ = !!q && left >= Q_H; if (showQ) left -= Q_H;
+  const grow = Math.max(0, Math.min(12, left)); // Rest: Kapseln hoeher, Abstand groesser
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
   const over = tss.filter((x) => x[1] > x[2]);
   header(w, W, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, null);
@@ -755,33 +769,29 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
   // Offen: eine Kapsel je Sportart in der Sportfarbe ueber die volle Breite, Zahl = was noch fehlt
   const open = wk.open || [];
   if (open.length) {
-    w.addSpacer(8);
-    const gap = 6, CW = Math.floor((W - gap * (open.length - 1)) / open.length);
+    w.addSpacer(8 + Math.floor(grow / 3));
+    const gap = 6, CW = Math.floor((W - gap * (open.length - 1)) / open.length), PH = 24 + grow - Math.floor(grow / 3);
     const chips = w.addStack(); chips.spacing = gap; chips.size = new Size(W, 0);
     for (const o of open) {
       const hex = sportHex(o.s), done = !(o.v > 0);
       const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
-      const pill = c.addStack(); pill.size = new Size(CW, 24); pill.cornerRadius = 12; pill.centerAlignContent();
+      const pill = c.addStack(); pill.size = new Size(CW, PH); pill.cornerRadius = PH / 2; pill.centerAlignContent();
       pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
       pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? `${fmt(o.v)}′` : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
       const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, SPORTS[o.s][0], FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
     }
   }
-  // Unten, wenn Platz ist: die naechsten drei Tage, sofern dort etwas geplant ist (sonst stuende dreimal "Pause"),
-  // sonst die Rueckfrage des Coaches (beantworten im Dashboard)
-  const q = d.coach && d.coach.question;
-  if (withDays && (d.plan.upcoming || []).length) {
+  if (showTiles) {
     w.addSpacer(10);
     const TW = Math.floor((W - 12) / 3);
     const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
     for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), d.goal, d.plan.upcoming);
-  } else if (withDays && wk.days) {
+  } else if (showDays) {
     // Sonst die Woche Mo bis So: was an welchem Tag gemacht wurde (Kreise in Sportfarbe), heute umrandet
-    w.addSpacer(12);
-    const KH = Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7);
+    w.addSpacer(10);
     const im = w.addImage(capsImage(W, KH, wk.days, d.today)); im.imageSize = new Size(W, CAPS_PAD + KH + 2 + CAPS_LABEL_H);
   }
-  if (withQuestion && q && !(d.plan.upcoming || []).length) {
+  if (showQ) {
     w.addSpacer(10);
     const qs = w.addStack(); qs.layoutVertically(); qs.size = new Size(W, 0);
     text(qs, d.coach.answer ? "FRAGE DES COACHES · BEANTWORTET" : "FRAGE DES COACHES", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
