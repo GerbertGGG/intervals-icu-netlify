@@ -168,13 +168,11 @@ console.log("block intensity week 1 ok");
 
 // ---------- Block A wie im Kalender (Stand 20.10.2026): Blocktests, Rad-Messfenster, Woche-12-Entscheidung ----------
 import { analyzeRunStreams, rideWindowFromStreams } from "../src/block-inputs.js";
-import { buildTodayPlan, parseDayRules } from "../src/today-plan.js";
 const real = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nABSCHLUSSZIELE\n\n1. Lauf: aerobe Stabilität\na) Basis: Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min nicht langsamer als im Basistest.\nb) Haltbarkeit: Stabile Dauer im letzten Blocktest länger als im Basistest.\nStabile Dauer = längstes Fenster ab Start (0–60, 0–75, 0–90 min … in 15-min-Schritten) mit Decoupling ≤5 %.\nBlocktest = langer Lauf am Sonntag der 3. Belastungswoche (Basistest 25.10., dann 08.11., 06.12., 03.01.). Volle geplante Länge, HF-Band 120–125, gleiche flache Runde in Bobingen.\nZusätzlich zählt jeder Grundlagenlauf ab 60 min unter HF 125 als Trend (nicht fürs Ziel).\n\n2. Rad (Rolle): aerobe Stabilität\nDecoupling (Leistung zu Puls) im 60-min-Messfenster ≤5 % im Mittel der letzten 3 Vergleichseinheiten.\nVergleichseinheit = 10 min Einrollen (ca. 5 min 110–130 W, 5 min 140–160 W), danach mindestens 60 min bei fester Leistung 165 W = Messfenster.\n\n3. Schwimmen: Dauer mit sauberer Technik\n2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.\n\nLAUFREGELN\n- Nie an zwei Tagen hintereinander laufen.\n\nFIXPUNKTE (meine Zusagen)\n- Mindestens 1 Ruhetag pro Woche, kein fester Wochentag.\n- Lauf-Grundlage unter HF 125, Gehpausen erlaubt\n- Intensität ab Woche 2:\n  Rad-HIIT 1× pro Woche (30/30 oder 3–4× 4 min)\n  Kein HIIT und keine Sprints in den 2 Tagen vor einem Blocktest.\n\nLEITPLANKEN\n- Kraft ≥60 Sätze in 8 von 9 Belastungswochen\n- Ramp Rate (CTL) in Belastungswochen ≤5\n- Intensität: Rad-HIIT und Hügelsprints je 1× pro Woche in 6 von 8 Belastungswochen ab Woche 2 (Krankheitswochen zählen nicht als verfehlt)\n\nWOCHE 12\nAlle Ziele und Leitplanken erfüllt: weiter mit Block B. Fehlt ein Ziel: betroffene Sportart um 3–4 Wochen verlängern. Leitplanken gerissen: erst Ursache klären, dann verlängern.";
 const tr = parseBlockTargets(real);
 assert.deepEqual(tr.decision, { week: 12, extend: "3–4" }); // nicht "ab Woche 2:" aus der Intensitätszeile
 assert.equal(tr.bike.minMin, 60); assert.equal(tr.bike.firstMin, 60); assert.equal(tr.bike.warmupMin, 10); assert.equal(tr.bike.watts, 165);
 assert.deepEqual(tr.run.tests, ["10-25", "11-08", "12-06", "01-03"]); assert.equal(tr.hrCap, 125);
-assert.deepEqual(parseDayRules(real), { noRunBackToBack: true, restDay: true, preTestDays: 2 });
 const evR = { category: "SEASON_START", name: "Block Grundlage (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: real };
 // Woche 2: keine Entscheidung fällig, auch wenn noch nichts erfüllt ist
 const w2 = buildBlockGoalsFull(resolveSeasonBlock([evR], "2026-10-27"), {}, "2026-10-27");
@@ -226,59 +224,6 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   const st = [{ type: "time", data: time }, { type: "watts", data: watts }, { type: "heartrate", data: heartrate }];
   assert.deepEqual(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: n }), { decoupling: 4.8, mainWatts: 165, mainHr: 133, noWarmup: false }); // Puls im Fenster: Hälfte 130, Hälfte 136,5
   assert.equal(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: 3600 }).noWarmup, true); // 60-min-Fahrt ohne Einrollen
-}
-// Tagesentscheidung: Ampel plus Regeln aus dem Block
-{
-  const blk = { status: "active", weekNo: 1, rulesText: real };
-  const daily = [{ date: "2026-10-19", load: 40, minutes: { bike: 60 } }, { date: "2026-10-20", load: 0, minutes: {} }];
-  const base = { today: "2026-10-20", daily, block: blk, hrCap: 125, testDates: ["2026-10-25", "2026-11-08"], band: [120, 125], intensity: { fromWeek: 2, kinds: ["bikeHiit", "hillSprints"] }, intensitySessions: [] };
-  const p1 = buildTodayPlan({ ...base, verdict: { cls: "ok", sub: "", reasons: [] } });
-  assert.equal(p1.title, "Locker nach Wochenrahmen"); // Woche 1: noch keine Intensität
-  assert.ok(p1.lines.some((l) => /Laufen möglich: locker unter HF 125/.test(l.text)));
-  assert.ok(p1.lines.some((l) => /Keine Intensität in Woche 1/.test(l.text)));
-  assert.ok(p1.lines.some((l) => /Blocktest So 25\.10\. \(in 5 Tagen\): HF-Band 120–125/.test(l.text)));
-  // gestern gelaufen -> heute kein Lauf
-  const p2 = buildTodayPlan({ ...base, daily: [{ date: "2026-10-19", load: 40, minutes: { run: 60 } }], verdict: { cls: "ok", sub: "", reasons: [] } });
-  assert.ok(p2.lines.some((l) => l.cls === "bad" && /Kein Lauf heute/.test(l.text)));
-  // Woche 2, zwei Tage vor dem Test: kein HIIT; drei Tage vorher und grün: Qualität möglich
-  const w2b = { ...base, block: { ...blk, weekNo: 2 }, testDates: ["2026-11-08"] };
-  assert.ok(buildTodayPlan({ ...w2b, today: "2026-11-06", verdict: { cls: "ok" } }).lines.some((l) => /Kein HIIT, keine Sprints: Blocktest am So 08\.11\./.test(l.text)));
-  assert.equal(buildTodayPlan({ ...w2b, today: "2026-11-04", verdict: { cls: "ok" } }).title, "Qualität möglich");
-  assert.equal(buildTodayPlan({ ...w2b, today: "2026-11-04", verdict: { cls: "warn" } }).title, "Heute locker und kürzer");
-  // Testtag bei Rot: verschieben; Krankheit: kein Training
-  assert.equal(buildTodayPlan({ ...base, today: "2026-10-25", verdict: { cls: "bad" } }).title, "Blocktest verschieben");
-  assert.equal(buildTodayPlan({ ...base, verdict: { cls: "bad", sick: true } }).title, "Kein Training");
-  // Ruhetag: Mo trainiert, Di frei -> erledigt
-  const p3 = buildTodayPlan({ ...base, today: "2026-10-21", daily: [...daily, { date: "2026-10-21", load: 0, minutes: {} }], verdict: { cls: "ok" } });
-  assert.ok(p3.lines.some((l) => l.cls === "ok" && /Ruhetag diese Woche: Di 20\.10\.$/.test(l.text)));
-  // Umfang in Minuten aus dem Wochenrahmen: vor dem Training offen, nach einem Lauf heute erledigt (20.10.: Rad 60 Mo, Lauf 34 Di)
-  const frame = { run: 90, bike: 105, swim: 30, strength: null };
-  const pre = buildTodayPlan({ ...base, frame, verdict: { cls: "ok", dose: { text: "voller Umfang laut Wochenrahmen" } } });
-  assert.equal(pre.lines[0].text, "Offen diese Woche: Lauf 90 min, Rad 45 min, Schwimmen 30 min (noch 5 Tage).");
-  assert.equal(pre.lines.some((l) => /voller Umfang/.test(l.text)), false);
-  const ranToday = [daily[0], { date: "2026-10-20", load: 26, minutes: { run: 34 } }];
-  const post = buildTodayPlan({ ...base, frame, daily: ranToday, verdict: { cls: "ok", dose: { text: "voller Umfang laut Wochenrahmen" } } });
-  assert.equal(post.title, "Heute erledigt");
-  assert.equal(post.lines[0].text, "Heute erledigt: Lauf 34 min. Heute kein weiteres Training nötig.");
-  assert.equal(post.lines[1].text, "Offen diese Woche: Lauf 56 min, Rad 45 min, Schwimmen 30 min (noch 5 Tage).");
-  assert.equal(post.lines.some((l) => /schon gelaufen/.test(l.text)), false);
-  const warn = buildTodayPlan({ ...base, frame, verdict: { cls: "warn", dose: { text: "x" } } });
-  assert.match(warn.lines[0].text, /^Heute etwa 30 % kürzer, lange Einheit verschieben\. Offen diese Woche: Lauf 90 min/);
-  assert.equal(buildTodayPlan({ ...base, verdict: { cls: "ok", dose: { text: "x" } } }).lines[0].text, "Kein Wochenrahmen eingetragen – keine Minutenvorgabe.");
-  // Passt der Basistest (mind. 60 min) noch in den Laufrahmen? 56 min offen -> Zeitrahmen überziehen, Test nicht kürzen
-  const fit = buildTodayPlan({ ...base, frame, frameLoad: { run: 90, bike: 75 }, testMin: 60, daily: ranToday, verdict: { cls: "ok" } });
-  assert.ok(fit.lines.some((l) => l.cls === "warn" && /Blocktest So 25\.10\. braucht mindestens 60 min, im Laufrahmen sind noch 56 min offen.*TSS-Grenze 90 bleibt/.test(l.text)));
-  assert.equal(buildTodayPlan({ ...base, frame, testMin: 60, verdict: { cls: "ok" } }).lines.some((l) => /braucht mindestens/.test(l.text)), false); // 90 min offen
-  // Rad-Vergleichseinheit (~48 TSS) passt nicht mehr unter die Grenze 75, wenn schon 43 verbraucht sind
-  const bikeDaily = [{ date: "2026-10-19", load: 43, sports: { bike: 43 }, minutes: { bike: 60 } }];
-  const cmp = (extra) => buildTodayPlan({ ...base, frame, frameLoad: { run: 90, bike: 75 }, compareTss: 48, daily: bikeDaily, verdict: { cls: "ok" }, ...extra });
-  assert.ok(cmp({}).lines.some((l) => /Rad-Vergleichseinheit \(~48 TSS\) passt nicht mehr unter die Rad-Grenze \(offen 32 TSS\)/.test(l.text)));
-  assert.equal(cmp({ compareDone: true }).lines.some((l) => /Vergleichseinheit/.test(l.text)), false);
-  // Testtag bei Gelb: kein "kürzer, lange Einheit verschieben", sondern Test in voller Länge und notieren
-  const tday = buildTodayPlan({ ...base, today: "2026-10-25", frame, verdict: { cls: "warn", sub: "Qualität streichen, Umfang etwa 30 % kürzer, die lange Einheit verschieben." } });
-  assert.equal(tday.lines.some((l) => /lange Einheit verschieben/.test(l.text)), false);
-  assert.match(tday.sub, /voller Länge.*Gelb notieren/);
-  assert.ok(tday.lines.some((l) => /Blocktest heute: volle geplante Länge.*Ampel gelb notieren/.test(l.text)));
 }
 // Block-Eintrag prüfen: was gelesen wurde und Widersprüche (Deckel, Testband, fehlende Testtermine)
 {

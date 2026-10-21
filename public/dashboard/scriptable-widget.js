@@ -6,8 +6,8 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
-//     Gross:   Rennen-Countdown, Bereitschaft mit Umfang und Laufsperre, Hinweis (Coach, sonst Mo–Mi die Montagsbilanz, sonst Befund
-//              aus "Was auffaellt" mit Konsequenz, sonst Warum), heutige Einheit,
+//     Gross:   Rennen-Countdown, Kopfzeile des Coaches (Morgen-Auswertung), Koerper- und Gefuehlswerte, Hinweis (Coach, sonst
+//              Warum zur Einheit), heutige Einheit,
 //              Woche Mo bis So als Kapseln mit Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, Schwellen;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
@@ -15,11 +15,11 @@
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
 //              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Kurs, Leitplanken und Entscheidung zu Woche 12.
-//     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Ringe) oder  schlaf.
+//     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
-// Einschaetzungen (Rennphase, Koerper-Ampeln, Urteil) kommen fertig vom Worker; das Skript stellt nur dar.
+// Ein Urteil ueber den Tag gibt es nur vom Coach (kommt fertig vom Worker); das Skript stellt nur dar und bewertet nichts selbst.
 
 const KEY_URL = "training-dashboard-url";
 const KEY_TOKEN = "training-dashboard-token";
@@ -84,10 +84,10 @@ const sportHex = (k) => (SPORTS[k] || SPORTS.other)[1];
 // Schriftgroessen: nichts unter 11 pt (auf dem Homescreen sonst kaum lesbar)
 const FS = { xs: 11, sm: 12, md: 14, lg: 17, xl: 22, xxl: 30 };
 const MISSING = "–";
-const colorFor = (cls) => COL[cls] || COL.none;
+const colorFor = (cls) => (cls === "coach" ? COL.accent : COL[cls] || COL.none);
 // Ampel nie nur ueber die Farbe: jede Stufe hat eine eigene Form (SF Symbols), dazu steht immer ein Text.
 // Urteil: Kreis mit Haken / Dreieck mit Ausrufezeichen / Quadrat mit Kreuz. Einzelwerte: Kreis / Dreieck / Quadrat, ohne Wert gestrichelt.
-const STATUS_SYMBOL = { ok: "checkmark.circle.fill", warn: "exclamationmark.triangle.fill", bad: "xmark.square.fill", none: "circle.dashed" };
+const STATUS_SYMBOL = { ok: "checkmark.circle.fill", warn: "exclamationmark.triangle.fill", bad: "xmark.square.fill", none: "circle.dashed", coach: "text.bubble.fill" };
 const MARK_SYMBOL = { ok: "circle.fill", warn: "triangle.fill", bad: "square.fill", none: "circle.dashed" };
 function symbol(parent, name, size, color) {
   const sym = typeof SFSymbol !== "undefined" ? SFSymbol.named(name) : null;
@@ -152,7 +152,7 @@ function baseWidget({ flat = true, padV = 12 } = {}) {
 }
 
 // Morgens kommen die Uhrwerte in Etappen (erst ein vorlaeufiger Ruhepuls, Schlaf und HRV einige Minuten spaeter).
-// Fehlt bis 11 Uhr noch Schlaf oder HRV, frueher nachladen, damit die Ampel nicht auf dem Zwischenstand stehen bleibt.
+// Fehlt bis 11 Uhr noch Schlaf oder HRV, frueher nachladen, damit die Werte nicht auf dem Zwischenstand stehen bleiben.
 function refreshSoonIfPending(w, r) {
   const pending = r && (r.hrv == null || (r.sleepHours == null && !(r.body && r.body.sleep && r.body.sleep.score != null)));
   if (pending && new Date().getHours() < 11) w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);
@@ -410,16 +410,8 @@ function ringProgressImage(size, ratio, hex, alpha = 1, center = null) {
 }
 
 /* ---------- Grosses Widget ---------- */
-// Koerper: Ampeln kommen fertig vom Worker (readiness.body); hier nur Pfeil und Text
-const HRV_ARROW = { down: " ↓", up: " ↑", flat: " →" };
-// Gefuehl: nur so einstufen wie das Dashboard (gegen den eigenen ueblichen Bereich). Ohne Vergleich kein Urteil.
-function feelWord(it) {
-  if (!it || it.v == null) return { txt: MISSING, cls: "none" };
-  if (it.cls === "ok") return { txt: "gut", cls: "ok" };
-  if (it.cls === "warn") return { txt: "mittel", cls: "warn" };
-  if (it.cls === "bad") return { txt: "schlecht", cls: "bad" };
-  return { txt: String(it.v), cls: "none" };
-}
+// Koerper und Gefuehl als Werte ohne Ampel (die Einordnung macht der Coach); Gefuehl als Zahl, 1 = bestmoeglich
+const feelWord = (it) => (it && it.v != null ? String(it.v) : MISSING);
 const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motivation"]];
 
 // Zweck aus dem Plan nur, wenn er ein Satz ist und keine Intervall-/Zonenzeile
@@ -429,8 +421,8 @@ function usablePurpose(s) {
   if (/^[\d\-•*]/.test(t) || /\d\s*(%|x\b)|\bz[1-7]\b|\bbpm\b|\d+\s*min\b/i.test(t)) return null;
   return t;
 }
-// Warum: Plan-Zweck, sonst regelbasiert aus Rennphase (vom Worker), Bereitschaft und Einheit
-function whyText(d, p, v) {
+// Warum: Plan-Zweck, sonst allgemein aus Rennphase (vom Worker) und Einheit
+function whyText(d, p) {
   const pu = p && usablePurpose(p.purpose);
   if (pu) return pu;
   const g = d.goal, phase = g && g.phase;
@@ -438,7 +430,6 @@ function whyText(d, p, v) {
   if (phase === "recovery") return "Nach dem Rennen zählt Erholung. Nur locker bewegen, nichts erzwingen.";
   if (phase === "taper") return "Der Umfang sinkt vor dem Rennen. Die Beine sollen frisch werden, nicht müde. Locker bleiben.";
   if (!p) return "Ruhetag: Erholung gehört zum Training. So kann der Reiz der letzten Tage wirken.";
-  if (v.cls === "bad") return "Die Werte liegen schlechter als üblich. Die Einheit kürzen oder locker halten.";
   if (p.key) return "Schlüsseleinheit: Hier entsteht der Trainingsreiz. Nur durchziehen, wenn Körper und Gefühl passen.";
   if (p.sport === "strength") return "Kraft stützt Hüfte und Laufwirtschaftlichkeit. Sauber ausführen statt schwer.";
   if (/locker|easy|ruhig|regen|recovery|grundlagen/i.test(p.name || "")) return "Locker halten: Der Reiz kommt aus dem Umfang, nicht aus dem Tempo.";
@@ -573,7 +564,6 @@ function buildWidget(res) {
   const W = widgetInnerWidth();
   const g = d.goal;
   const r = d.readiness, v = r.verdict, p = d.plan.today[0];
-  const none = { cls: "none" }, body = r.body || { sleep: none, hrv: none, resting: none }; // alte Cache-Daten ohne Ampeln
   const w = baseWidget({ padV: 12 });
   refreshSoonIfPending(w, r);
 
@@ -586,42 +576,30 @@ function buildWidget(res) {
   if (g && g.daysToGo != null && g.daysToGo >= 0) pill(head, raceShort(g), COL.race, RACE_HEX);
   w.addSpacer(5);
 
-  // 2. Urteil mit Symbol, ein Satz, darunter Koerper (objektiv) und Gefuehl (subjektiv)
+  // 2. Kopfzeile des Coaches (ohne Aussage von heute grau), darunter Koerper (objektiv) und Gefuehl (subjektiv) als Werte
   const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 6;
   statusIcon(vr, v.cls, 16);
   num(vr, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.7 });
-  // Umfang und Laufsperre (Huefte/Leiste/Knie, Muskelkater), die die Ampelfarbe allein nicht zeigt; kommt fertig vom Worker
-  if (r.line) { w.addSpacer(2); text(w, r.line, FS.sm, { bold: true, color: colorFor(/^Kein Lauf/.test(r.line) ? "bad" : v.cls), lines: 1, minScale: 0.7 }); }
   w.addSpacer(6);
   const CW = Math.floor((W - 20) / 2);
   const cols = w.addStack(); cols.size = new Size(W, 0); cols.spacing = 20;
   const col = (title) => { const c = cols.addStack(); c.layoutVertically(); c.size = new Size(CW, 0); text(c, title, FS.xs, { bold: true, color: COL.muted, minScale: 1 }); c.addSpacer(1); return c; };
-  const line = (c, label, val, cls) => {
+  const line = (c, label, val) => {
     const l = c.addStack(); l.centerAlignContent(); l.size = new Size(CW, 0);
-    statusMark(l, cls || "none");
-    l.addSpacer(6);
     text(l, label, FS.md, { minScale: 0.8 });
     l.addSpacer();
     text(l, val, FS.md, { bold: true, color: val === MISSING ? COL.muted : COL.text, align: "right", minScale: 0.8 });
   };
   const bodyCol = col("KÖRPER"), feel = col("GEFÜHL");
-  line(bodyCol, "Schlaf", r.sleepHours != null ? `${fmt(r.sleepHours, 1)} h` : MISSING, body.sleep.cls);
-  line(bodyCol, "HRV", r.hrv != null ? `${fmt(r.hrv)}${HRV_ARROW[body.hrv.trend] || ""}` : MISSING, body.hrv.cls);
-  line(bodyCol, "Ruhepuls", fmt(r.restingHR), body.resting.cls);
-  for (const [lab, short] of FEEL) {
-    const f = feelWord((r.items || []).find((i) => i.label === lab));
-    line(feel, short, f.txt, f.cls);
-  }
+  line(bodyCol, "Schlaf", r.sleepHours != null ? `${fmt(r.sleepHours, 1)} h` : MISSING);
+  line(bodyCol, "HRV", r.hrv != null ? fmt(r.hrv) : MISSING);
+  line(bodyCol, "Ruhepuls", fmt(r.restingHR));
+  for (const [lab, short] of FEEL) line(feel, short, feelWord((r.items || []).find((i) => i.label === lab)));
   w.addSpacer(7);
 
-  // 3. Hinweis in einer grauen Kachel: Coach vor Montagsbilanz (Mo–Mi) vor Auffaelligkeit vor dem allgemeinen Warum; Strich
-  // links in Blau (Coach), Ampelfarbe der Bilanz, Orange (Auffaelligkeit) oder Grau (Warum). Auffaelligkeit nicht am Renntag und nicht in Taper und Erholung.
-  const raceFocus = g && (g.daysToGo === 0 || g.phase === "taper" || g.phase === "recovery");
-  const focusLine = d.focus && !raceFocus ? `${d.focus.short}. ${d.focus.act}` : null;
+  // 3. Hinweis in einer grauen Kachel: Notiz des Coaches (Strich blau), sonst das allgemeine Warum zur Einheit (Strich grau)
   const coachLine = d.coach && d.coach.note ? d.coach.note : null;
-  // Montag bis Mittwoch: Montagsbilanz (wie stark der Wochenrahmen steigen darf) vor der Auffaelligkeit
-  const reviewLine = d.review && d.review.text && !raceFocus ? d.review.text : null;
-  const rawWhy = coachLine || reviewLine || focusLine;
+  const rawWhy = coachLine;
   // Nie abschneiden: ganze Saetze, solange sie in 3 Zeilen passen. Der erste Satz steht immer komplett da.
   const sentences = (s) => {
     const parts = s.trim().split(/(?<=[.!?])\s+(?=[A-ZÄÖÜ])/);
@@ -629,14 +607,14 @@ function buildWidget(res) {
     for (const x of parts.slice(1)) { if ((out + " " + x).length > 140) break; out += " " + x; }
     return out;
   };
-  const why = rawWhy ? sentences(rawWhy) : whyText(d, p, v);
+  const why = rawWhy ? sentences(rawWhy) : whyText(d, p);
   // Hoehe nach Textlaenge schaetzen (gut 6 pt je Zeichen bei 12 pt) und fest setzen: In einem Stack mit fester Hoehe und
   // fester Textbreite bricht Scriptable zuverlaessig um; ohne das blieb der Text einzeilig mit "...".
   const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 6.1));
   const nLines = Math.max(1, Math.ceil(why.length / perLine));
   const ct = w.addStack(); ct.size = new Size(W, nLines * 16 + 12); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
   const bar = ct.addStack(); bar.size = new Size(3, nLines * 16); bar.cornerRadius = 1.5;
-  bar.backgroundColor = coachLine ? COL.accent : reviewLine ? (d.review.cls === "none" ? COL.muted : colorFor(d.review.cls)) : focusLine ? COL.warn : COL.muted;
+  bar.backgroundColor = coachLine ? COL.accent : COL.muted;
   ct.addSpacer(9);
   const tx = ct.addStack(); tx.layoutVertically(); tx.size = new Size(TXW, 0);
   text(tx, why, FS.sm, { lines: nLines + 1, minScale: 0.85 });
@@ -854,24 +832,22 @@ function smallWidget() { return baseWidget({ padV: 12 }); }
 function buildSleep(res) {
   const d = res.data, s = d.sleep, IW = smallInnerWidth();
   const w = smallWidget();
-  const last = s.latest, isToday = last && last.date === d.today, cls = isToday && s.cls ? s.cls : null;
+  const last = s.latest, isToday = last && last.date === d.today;
   header(w, IW, "SCHLAF", last ? (isToday ? "heute" : dateShort(last.date)) : null);
   w.addSpacer(2);
   const top = w.addStack(); top.centerAlignContent(); top.size = new Size(IW, 0);
   valueUnit(top, last ? fmt(last.hours, 1) : MISSING, "h", 32, { color: last ? COL.sleep : COL.muted });
   top.addSpacer();
-  if (cls && cls.sleep !== "none") statusIcon(top, cls.sleep, 15);
   const t = s.days[s.days.length - 1];
-  const vital = (label, val, med, c) => {
+  const vital = (label, val, med) => {
     const r = w.addStack(); r.centerAlignContent(); r.size = new Size(IW, 0);
-    if (c) { statusMark(r, c, 8); r.addSpacer(5); }
     text(r, label, FS.xs, { minScale: 0.8 });
     r.addSpacer();
     text(r, fmt(val), FS.xs, { bold: true, minScale: 0.8 });
     if (med != null) text(r, ` Ø ${fmt(med)}`, FS.xs, { color: COL.muted, minScale: 0.8 });
   };
-  vital("HRV", t.hrv, s.medianHrv, cls && cls.hrv);
-  vital("Ruhepuls", t.restingHR, s.medianRestingHR, cls && cls.resting);
+  vital("HRV", t.hrv, s.medianHrv);
+  vital("Ruhepuls", t.restingHR, s.medianRestingHR);
   w.addSpacer(4);
   const missing = s.days.filter((x) => x.hours == null);
   if (missing.length >= 3 && s.days.length - missing.length <= 1) {
@@ -886,24 +862,24 @@ function buildSleep(res) {
   return w;
 }
 
-// Bereitschaft: Urteil mit Symbol gross, darunter die fuenf Werte als Form (Kreis/Dreieck/Quadrat) mit Kurzname. Daten wie im grossen Widget.
+// Bereit (klein): Kopfzeile des Coaches gross, darunter die fuenf Gefuehlswerte als Zahl (1 = bestmoeglich) mit Kurzname.
+// Ohne Coach-Aussage von heute grau. Daten wie im grossen Widget.
 function buildReady(res) {
   const d = res.data, r = d.readiness, v = r.verdict, IW = smallInnerWidth();
   const w = smallWidget();
   refreshSoonIfPending(w, r);
-  header(w, IW, "BEREITSCHAFT", null);
+  header(w, IW, "HEUTE", null);
   w.addSpacer(7);
   statusIcon(w, v.cls, 26);
   w.addSpacer(5);
-  num(w, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), lines: 2, minScale: 0.7 });
-  if (r.line) { w.addSpacer(2); text(w, r.line, FS.xs, { bold: true, color: colorFor(/^Kein Lauf/.test(r.line) ? "bad" : v.cls), lines: 2, minScale: 0.7 }); }
+  num(w, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), lines: 3, minScale: 0.6 });
   w.addSpacer();
   const short = { Schlaf: "Schlaf", Ermüdung: "Ermüd.", Muskelkater: "Musk.", Stimmung: "Stimm.", Motivation: "Motiv." };
   const row = w.addStack(); row.size = new Size(IW, 0);
   const cw = IW / Math.max(1, r.items.length);
   for (const it of r.items) {
     const c = row.addStack(); c.layoutVertically(); c.size = new Size(cw, 0);
-    const m = c.addStack(); m.addSpacer(); statusMark(m, it.v == null ? "none" : it.cls, 10); m.addSpacer();
+    const m = c.addStack(); m.addSpacer(); text(m, feelWord(it), FS.sm, { bold: true, color: it.v == null ? COL.muted : COL.text, align: "center", minScale: 0.7 }); m.addSpacer();
     c.addSpacer(2);
     const l = c.addStack(); l.addSpacer(); text(l, short[it.label] || it.label, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }); l.addSpacer();
   }

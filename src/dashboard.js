@@ -6,9 +6,8 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, testDatesOf, checkBlockText, isComparableRide, TEST_RE } from "./season-block.js";
+import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, testDatesOf, checkBlockText, TEST_RE } from "./season-block.js";
 import { buildBaseTrend } from "./base-trend.js";
-import { buildTodayPlan } from "./today-plan.js";
 import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
@@ -19,7 +18,7 @@ import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
-import { buildSummary, computeEasyRunSignal, computeReadiness, computeQualityFeelSignal, computeFixedPowerSignal } from "./dashboard-summary.js";
+import { buildSummary } from "./dashboard-summary.js";
 import { buildWeekReview } from "./week-review.js";
 import { withActualToday } from "./live-load.js";
 import { bestForDistance, readRunalyzeSnapshot, runKindFromType } from "./runalyze-snapshot.js";
@@ -438,10 +437,6 @@ function buildWellness(list) {
 }
 
 // Tageswerte der Belastung für die Kalender-Heatmap (leere Tage = 0, keine Lücken).
-// Zielminuten je Sportart aus den Weekly-Targets der laufenden Woche; ohne Rahmen null
-const frameOf = (w) => (w?.targetMin > 0 ? Object.fromEntries(SPORTS.map((k) => [k, w.bySport[k]?.targetMin ?? null])) : null);
-// TSS-Grenzen je Sportart aus den Weekly-Targets der laufenden Woche; ohne Grenzen null
-const frameLoadOf = (w) => (SPORTS.some((k) => w?.bySport?.[k]?.targetLoad > 0) ? Object.fromEntries(SPORTS.map((k) => [k, w.bySport[k]?.targetLoad ?? null])) : null);
 
 function buildDaily(todayIso, activities) {
   const out = [];
@@ -722,7 +717,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   // none: kein kommendes Rennen im Kalender (die Vorgabe ist vorbei). Dann zeigt die Seite keine Renn-Kacheln, Zielpaces oder Prognosen.
 
   // Krankheit: Kalendereintraege der Kategorie SICK/INJURED oder eine Notiz "krank" (Ende im Kalender exklusiv).
-  // Zaehlt fuer die Intensitaets-Leitplanke und die Erholungsampel (Krankheit geht vor Plan, Basis ohne Krankheitstage).
+  // Zaehlt fuer die Intensitaets-Leitplanke und die Erholungswerte (Basis ohne Krankheitstage).
   const sickDays = events.filter((e) => /SICK|INJURED/i.test(String(e?.category ?? "")) || (/NOTE/i.test(String(e?.category ?? "")) && /krank/i.test(String(e?.name ?? "")))).flatMap((e) => {
     const from = String(e.start_date_local ?? "").slice(0, 10), endRaw = String(e.end_date_local ?? "").slice(0, 10);
     const to = endRaw > from ? addDays(endRaw, -1) : from;
@@ -731,9 +726,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     return out;
   });
   const insights = buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities);
-  // Langzeitbasis (180 Tage Wellness aus der Formkurve) und Puls bei lockerem Tempo fuer die Erholungsampel
+  // Langzeitbasis der Erholungswerte (180 Tage Wellness aus der Formkurve)
   const longWellness = fitnessR.ok && Array.isArray(fitnessR.value) ? buildWellness(fitnessR.value).map((w) => ({ date: w.date, hrv: w.hrv, restingHR: w.restingHR })) : [];
-  const readyCtx = { sickDays, hipFlags: insights.hipFlags, longWellness };
   let blockTargets = null, blockSessions = {}, intensity = [], plannedTests = [];
   // Name/Beschreibung der Einheit und des gekoppelten Workouts (Intensitaet, Blocktest)
   const evById = new Map(events.map((e) => [String(e?.id), e]));
@@ -805,38 +799,22 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     seasonBlock = { ...seasonBlock, goals, decision, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };
   }
 
-  // Erholungsampel nach dem Block: Leistungssignale brauchen die Einheiten des Blocks. Puls bei lockerem Tempo nur gegen Läufe
-  // seit Blockstart (neuer HF-Deckel), Gefühl in den Qualitätseinheiten, Puls bei fester Leistung (Rad-Vergleichseinheit).
-  const blockSince = seasonBlock?.status === "active" ? seasonBlock.start : null;
-  const compareRides = blockTargets?.bike ? (blockSessions.rides ?? []).filter((r) => isComparableRide(r, blockTargets.bike)) : [];
-  const summary = buildSummary(wellness, todayIso, {
-    ...readyCtx, perf: computeEasyRunSignal(runs, todayIso, blockSince),
-    signals: [computeQualityFeelSignal(intensity, todayIso), computeFixedPowerSignal(compareRides, todayIso)].filter(Boolean),
-  });
+  const summary = buildSummary(wellness, todayIso, { sickDays, longWellness });
 
   const daily = buildDaily(todayIso, activities);
   const weeks = buildWeeks(todayIso, activities, events);
   const baseRuns = buildBaseRuns(blockSessions.runs ?? [], snapshot, blockTargets, seasonBlock, todayIso);
-  const todayPlan = buildTodayPlan({
-    today: todayIso, verdict: summary.readiness.verdict, daily, hrCap: blockTargets?.hrCap ?? null,
-    block: seasonBlock ? { status: seasonBlock.status, weekNo: seasonBlock.weekNo, rulesText: [seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n") } : null,
-    testDates: plannedTests, band: blockTargets?.run?.band ?? null,
-    intensity: blockTargets?.intensity ?? null, intensitySessions: intensity,
-    frame: frameOf(weeks.find((w) => w.weekStart === mondayOf(todayIso))), frameLoad: frameLoadOf(weeks.find((w) => w.weekStart === mondayOf(todayIso))),
-    testMin: Array.isArray(blockTargets?.run?.tests) ? blockTargets.run.minMin ?? 60 : null,
-    compareTss: blockTargets?.compareTss ?? null, compareDone: compareRides.some((r) => r.date >= mondayOf(todayIso) && r.date <= todayIso),
-  });
+  // Naechster Blocktest (Termin aus dem Block-Eintrag oder geplantes Workout "Blocktest") fuer Heute-Band und Grundlagenlaeufe
+  const nextTest = plannedTests.find((x) => x >= todayIso) ?? null;
   // Kraft der letzten vollen Woche (Blockwoche mit gleichem Start) für die Montagsbilanz; Entlastungswochen zählen nicht
   const strengthGoal = seasonBlock?.goals?.find((g) => g.key === "strength");
   const strengthWeek = strengthGoal?.weeks?.find((x) => x.start === addDays(mondayOf(todayIso), -7) && x.load !== false);
 
-  // Montagsbilanz: Ampel je Tag der letzten vollen Woche (Tage ohne Gefühlseintrag zählen nicht als gelb)
+  // Montagsbilanz: Fakten zur letzten vollen Woche
   const weekReview = buildWeekReview({
-    today: todayIso, weeks, wellness, daily, runs, block: seasonBlock ? { status: seasonBlock.status, weekNo: seasonBlock.weekNo } : null,
+    weeks, wellness, daily, runs,
     sessions: activities.map((a) => ({ date: activityDay(a), sport: sportOf(a), minutes: (num(a?.moving_time) ?? 0) / 60, rpe: num(a?.icu_rpe) })),
-    ampel: (d) => { const v = computeReadiness(wellness.filter((w) => w.date <= d), d, null, readyCtx).verdict; return v.missing ? "none" : v.cls; },
     sickDays, hipFlags: insights.hipFlags,
-    testDates: plannedTests,
     strength: strengthWeek && strengthGoal.weekGoal ? { count: strengthWeek.count, goal: strengthGoal.weekGoal, unit: strengthGoal.countUnit } : null,
     capRuns: blockTargets?.hrCap != null ? (blockSessions.runs ?? []).filter((r) => r.easy && r.analysis?.overCapMin != null).map((r) => ({ date: r.date, overCapMin: r.analysis.overCapMin })) : null,
   });
@@ -875,7 +853,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     formProjectionSource: targetLoad ? "target" : "plan",
     weeks,
     summary,
-    todayPlan,
+    nextTest: nextTest ? { date: nextTest, daysToGo: diffDays(todayIso, nextTest) } : null,
     weekReview,
     baseRuns,
     baseTrend: buildBaseTrend(blockSessions, blockTargets?.bike ?? null),

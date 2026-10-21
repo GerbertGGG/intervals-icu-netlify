@@ -7,7 +7,7 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwar
 - **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′"). Heute bleibt eine geplante Einheit stehen, solange ihre Sportart heute noch nicht erledigt ist (Rad erledigt, Kraft offen → Kraft).
 - **Oben mit Wochenzielen des Coaches**: statt Wochenreihe und nächster Einheit je eine Kapsel mit dem, was diese Woche noch offen ist: Minuten bis zum Zeitziel für Lauf, Rad und Schwimmen, offene Sätze für Kraft (dunkel mit Zahl in Sportfarbe = offen, voll mit Haken = erreicht), darunter „OFFEN · NOCH N TAGE“ bis Sonntag.
 - **Uhrzeit**, groß.
-- **Bereitschaft** wie im Dashboard (Bereit, Mit Vorsicht, Ruhig angehen, Ohne Eintrag) mit Ampel in Farbe und Form: Kreis = bereit, Dreieck = mit Vorsicht, Quadrat mit Kreuz = ruhig angehen. Dahinter eine **Warnung** (gelbes Dreieck), wenn der ACWR über dem Korridor liegt (mit Wert) oder "Was auffällt" eine Warnung hat (mit Stichwort, z. B. "Eiweiß", "Kalorien", "Tagebuch", "Heißhunger", "Ruhetag", "Last", "Laufumfang").
+- **Coach**: blauer Punkt und „Coach hat geschrieben“, sobald die Morgen-Auswertung von heute da ist, sonst grau „Noch kein Coach“. Eine eigene Ampel oder Warnung zeigt die Uhr nicht: Das Urteil über den Tag macht der Coach.
 - **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N“; der Ring füllt sich mit dem Gegessenen), mit Wochenzielen des Coaches zwei gleiche Kreise im Apple-Stil, „ZEIT“ (Minuten gegen das Zeitziel) und „TSS“ (gegen die Obergrenze), je ein Ring pro Sportart: außen Rad, Mitte Lauf, innen Schwimmen (ohne TSS-Grenze kein Ring); in der Mitte die Summe; über der TSS-Grenze läuft der Überschuss orange als zweite Runde weiter und die Zahl wird orange. Ohne Wochenziele stattdessen TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`) und Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot und zusätzlich mit Dreieck/Quadrat links neben „KRAFT“), Wetter (Temperatur und höchste Regenwahrscheinlichkeit der nächsten 12 Stunden, unter 30 % stattdessen die Uhrzeit des nächsten Sonnenauf- oder -untergangs; der Ring ist ein 12-Stunden-Zifferblatt: die hellen Stunden zwischen Sonnenauf- und -untergang in gedämpftem Gold, darüber jedes Stundensegment ab 30 % Regenwahrscheinlichkeit in Blau, je wahrscheinlicher, desto dunkler: sehr hell 30–49 %, hell 50–69 %, kräftig 70–84 %, dunkel ab 85 %; die Prozentzahl steht im Blau ihrer Stufe; ein weißer Strich markiert die aktuelle Uhrzeit).
 - **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gerade Zeile.
 
@@ -15,7 +15,7 @@ Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mo
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Wetter und Akku kommen von der Uhr selbst.
 
-Ist der letzte Stand älter als eine Stunde, steht hinter der Bereitschaft ein „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
+Ist der letzte Stand älter als eine Stunde, steht hinter der Coach-Zeile ein „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
 
 Stand: noch nicht auf einer Uhr getestet. Der Code ist nach dem Mockup geschrieben und wurde nicht mit dem Connect-IQ-Compiler gebaut. Beim ersten Build sind kleine Anpassungen möglich (z. B. Berechtigungen im Manifest, Typhinweise).
 
@@ -47,5 +47,5 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 - Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Nunito** (SIL Open Font License) in `resources/fonts/`, die Uhrzeit nur aus Ziffern und gleich breit. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die Nunito-Dateien von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
-- Ist der letzte Abruf älter als eine Stunde, wird die Bereitschaft grau und bekommt ein `!`.
+- Ist der letzte Abruf älter als eine Stunde, wird die Coach-Zeile grau und bekommt ein `!`.
 - Die Zeile unten steht in der großen Schrift, wenn sie in die Breite des Kreises passt, sonst in der kleineren.
