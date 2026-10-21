@@ -497,7 +497,7 @@ Körperwerte (Ruhepuls, HRV, Schlaf): Wert von heute gegen die **Basis = Median 
 
 **Langzeitbasis** (`computeDrift`): 7-Tage-Schnitt (ohne Krankheitstage) gegen den Median der Tage 29–90 vor heute aus der 180-Tage-Wellness der Formkurve (mind. 20 Werte). Nur Werte, kein Signal.
 
-Gefühlswerte (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = bestmöglich): Sie werden **vor** dem Training eingetragen und beschreiben den Ausgangszustand. Fehlt der Eintrag von heute, steht der von gestern da (`entryDate`). Üblicher Bereich = 25–75 %-Quantil aller Werte vor dem Eintragstag im 56-Tage-Fenster (ab 5 Werten), dazu der Median.
+Gefühlswerte (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = bestmöglich): Sie werden **vor** dem Training eingetragen und beschreiben den Ausgangszustand. Fehlt der Eintrag von heute, steht der von gestern da (`entryDate`). Üblicher Bereich = 25–75 %-Quantil aller Werte vor dem Eintragstag im 56-Tage-Fenster (ab 5 Werten), dazu der Median. Farbe (`cls`, Widget und Dashboard) nur im Vergleich damit: im Bereich oder besser = ok, über dem Bereich und ≥ 1 schlechter als der Median = warn, ≥ 2 = bad. Das ist kein Urteil über den Tag.
 
 `sick` = Krankheit im Kalender heute oder gestern (als Fakt im Heute-Band).
 

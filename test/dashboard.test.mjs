@@ -135,7 +135,7 @@ assert.equal(wdg.plan.today[0].purpose, "Zweck: Beine lockern");
 for (const gone of ["hip", "trend", "load", "thresholds", "hm"]) assert.equal(gone in wdg, false, gone); // nichts, was das Widget nicht zeichnet
 assert.deepEqual(Object.keys(wdg.readiness.body), ["sleep", "hrv", "resting"]);
 assert.equal(wdg.readiness.body.hrv.median, 48); assert.equal(wdg.readiness.body.hrv.cls, undefined);
-for (const i of wdg.readiness.items) assert.equal(i.cls, undefined);
+for (const i of wdg.readiness.items) assert.ok(["ok", "warn", "bad", "none"].includes(i.cls)); // Gefühl gegen den eigenen üblichen Bereich
 assert.equal(wdg.week.goal, null); // ohne Plan-Load und ohne Konfiguration kein Ziel, nichts erfunden
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goal, 250);
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goalSource, "config");

@@ -131,7 +131,7 @@ function renderReady(d) {
   const host = $("ready");
   if (!d.sources.intervalsWellness.ok) { host.innerHTML = '<div class="card"><h3>Erholungswerte</h3><div class="muted">Wellness nicht abrufbar.</div></div>'; return; }
   const R = d.summary.recovery, items = R.items, f1 = (v) => fmt(v, 1);
-  // Vergleich mit der eigenen Basis als Fakt, ohne Farbe: Die Bewertung macht der Coach.
+  // Vergleich mit der eigenen Basis als Fakt; die Gefühlswerte sind nur gegen den eigenen üblichen Bereich gefärbt. Die Bewertung macht der Coach.
   const row = (label, v, unit, base, extra = "") => {
     const rest = [base != null ? `Basis ${f1(base)}` : "", extra].filter(Boolean).join(" · ");
     return `<div class="row"><span>${label}</span><span>${unit ? (v != null ? `<b>${fmt(v, unit === "h" ? 1 : 0)}</b> ${unit}` : "–") : ""}${rest ? ` <span class="muted">${unit ? "· " : ""}${rest}</span>` : ""}</span></div>`;
@@ -141,8 +141,8 @@ function renderReady(d) {
     ${row("Ruhepuls", R.restingHR, "bpm", B.restingMedian, w7(B.resting))}${row("HRV", R.hrv, "ms", B.hrvMedian, w7(B.hrv))}${row("Schlaf", R.sleepHours, "h", B.sleepMedian, R.sleepScore != null ? `Score ${fmt(R.sleepScore)}` : "")}${B.drift ? row("Langzeitbasis", null, "", null, [B.drift.hrv7 != null ? `HRV 7 Tage ${f1(B.drift.hrv7)} gegen ${f1(B.drift.hrvAnchor)} (Tag 29–90)` : null, B.drift.rhr7 != null ? `Ruhepuls 7 Tage ${f1(B.drift.rhr7)} gegen ${f1(B.drift.rhrAnchor)}` : null].filter(Boolean).join(" · ")) : ""}
     <div class="ready-grid">${items.map((i) => `<div class="rrow"><span class="lbl">${i.label}</span><span class="strip" id="strip-${i.key}"></span><span class="muted">${i.v != null ? `${i.v}${i.med != null ? ` · üblich ${f1(i.med)}` : ""}` : "fehlt"}</span></div>`).join("")}</div>
     ${R.entryDate ? `<div class="muted" style="margin-top:6px">Gefühlswerte vom ${fmtDate(R.entryDate)}, vor dem Training eingetragen.</div>` : ""}
-    <details class="info"><summary>Erklärung</summary><div>Basis = Median der letzten 28 Tage ohne Krankheitstage (mind. 5 Werte), Ausreißer bleiben draußen. Gefühlswerte: Skala ab 1 = bestmöglich, das graue Band zeigt deinen üblichen Bereich der letzten 8 Wochen. Hier steht kein Urteil – die Einordnung macht der Coach in der Morgen-Auswertung.</div></details></div>`;
-  for (const i of items) C.strip($(`strip-${i.key}`), { label: i.label, max: i.max, band: i.band, value: i.v, cls: "none" });
+    <details class="info"><summary>Erklärung</summary><div>Basis = Median der letzten 28 Tage ohne Krankheitstage (mind. 5 Werte), Ausreißer bleiben draußen. Gefühlswerte: Skala ab 1 = bestmöglich, das graue Band zeigt deinen üblichen Bereich der letzten 8 Wochen. Farbe nur im Vergleich dazu: über dem Bereich und 1 schlechter als üblich = gelb, 2 und mehr = rot. Ein Urteil über den Tag ist das nicht – das macht der Coach in der Morgen-Auswertung.</div></details></div>`;
+  for (const i of items) C.strip($(`strip-${i.key}`), { label: i.label, max: i.max, band: i.band, value: i.v, cls: i.cls ?? "none" });
 }
 
 /* ---------- Cockpit: alles Wichtige auf einen Blick ---------- */
