@@ -434,8 +434,12 @@ td .badge { font-size: var(--fs-xs); }
   <h2 id="form">Form</h2>
   <div class="card"><h3>Fitness, Ermüdung und Frische</h3><div id="form-chart"></div><div class="muted" id="form-now" style="margin-top:6px"></div>
     <details class="info"><summary>Erklärung</summary><div>CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB). Die Zonen rechnen wie Intervals.icu in Prozent der aktuellen Fitness: unter −30 % hohes Risiko (rot), −30 bis +25 % normaler Trainingsbereich – ein negativer TSB in Belastungswochen ist gewollt. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): gibt es Wochenziele des Coaches, rechnet sie mit 90 % der TSS-Obergrenzen (Schwimmen aus den Zielminuten und deinen bisherigen TSS je Minute), verteilt den Rest der Woche gleichmäßig und nimmt für die Wochen danach dieselbe Woche an. Ohne Wochenziele rechnet sie die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></details></div>
-  <div class="card" style="margin-top:12px"><h3>Trainingszeit pro Woche (Minuten, alle Sportarten)</h3><div id="chart-km"></div>
-    <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel (früher Plan)</span></div></div>
+  <div class="grid half" style="margin-top:12px;align-items:start">
+    <div class="card"><h3>Trainingszeit pro Woche (Minuten, alle Sportarten)</h3><div id="chart-km"></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel (früher Plan)</span></div></div>
+    <div class="card"><h3>TSS pro Woche (alle Sportarten)</h3><div id="chart-tss"></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Obergrenze (früher Plan)</span></div></div>
+  </div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Grundlagenläufe ab 60 min</h3><div id="longruns"></div></div>
     <div class="card" id="intervals-card" hidden><h3>Intervall-Splits (4 Wochen)</h3><div id="interval-splits"></div></div>

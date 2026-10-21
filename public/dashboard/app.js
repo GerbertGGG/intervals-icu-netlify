@@ -526,8 +526,14 @@ function renderHistory(d) {
   const sumMin = (w, f) => SPORT_ORDER.reduce((a, k) => (w.bySport[k][f] != null ? (a ?? 0) + w.bySport[k][f] : a), null);
   const timePlan = (w) => w.targetMin ?? sumMin(w, "plannedMin");
   C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: sumMin(w, "minutes") ?? 0, plan: timePlan(w), partial: !w.complete })), { unit: "min", label: "Trainingszeit pro Woche (Minuten)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
+  // TSS daneben: Obergrenze des Coaches (Summe der TSS-Grenzen), in älteren Wochen der Plan aus geplanten Workouts
+  const capOf = (w) => SPORT_ORDER.reduce((a, k) => (w.bySport[k].targetLoad > 0 ? (a ?? 0) + w.bySport[k].load : a), null);
+  C.bars($("chart-tss"), d.weeks.map((w) => {
+    const cap = w.targetLoad > 0;
+    return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load ?? 0, plan: cap ? w.targetLoad : w.plannedLoad, cap, capValue: cap ? capOf(w) ?? 0 : undefined, partial: !w.complete };
+  }), { unit: "TSS", label: "TSS pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   const noPlan = d.weeks.every((w) => timePlan(w) == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb. Trainingszeit = Bewegungszeit aller Sportarten in Minuten; die TSS je Sportart und gegen die Obergrenzen stehen in der Wochenkarte und unten.";
+  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb. Trainingszeit = Bewegungszeit aller Sportarten in Minuten. TSS: Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan); die Säule enthält alle Sportarten, „drüber“ zählt nur die Sportarten mit Obergrenze (Schwimmen hat keine).";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   // Zonen in % der aktuellen Fitness wie Intervals.icu: unter −30 % hohes Risiko, sonst normaler Trainingsbereich
