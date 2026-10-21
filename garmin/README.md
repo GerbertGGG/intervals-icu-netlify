@@ -7,10 +7,10 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Regenboge
 
 Innen von oben nach unten:
 
-- **Kalorien und Eiweiß**: was heute noch übrig ist, kcal bis zum Tagesziel (darüber „+N“) mit kleinem grauem „kcal“ und Eiweiß bis zum Yazio-Ziel mit „g Eiweiß“ (erreicht: Haken). Ohne Ziel jeweils das Gegessene.
+- **Kalorien und Eiweiß**: was heute noch übrig ist, kcal bis zum Tagesziel (darüber „+N“) mit kleinem grauem „kcal“ und Eiweiß bis zum Yazio-Ziel mit kleinem grauem „g“ (erreicht: Haken). Ohne Ziel jeweils das Gegessene.
 - **Datum** („MI 21. OKT“) in Grau, dahinter der **Akku** als Symbol mit Prozentzahl, weiß, ab 20 % orange, ab 10 % rot, beim Laden grün.
 - **Uhrzeit**, groß. Der **Doppelpunkt** trägt das Urteil des Coaches für heute (Feld `go` in `save_coach`): grüne Kreise = hart erlaubt, orange Dreiecke = nur locker, rote Quadrate = frei, blaue Kreise = Coach hat geschrieben, aber kein Urteil, grau = noch nichts. Eine eigene Ampel hat die Uhr nicht.
-- **Offene Minuten** je Sportart bis zum Zeitziel, groß in Sportfarbe, darunter klein und grau LAUF, RAD, SCHWIMM. Ziel erreicht: Haken in Sportfarbe, ohne Ziel „--“.
+- **Offene Minuten** je Sportart bis zum Zeitziel, groß in Sportfarbe, darunter klein und grau LAUF, RAD, SCHWIMM Ziel erreicht: Haken in Sportfarbe, ohne Ziel „--“.
 
 Wetter, TSS, Kraft, Wochenreihe, nächste Einheit und Blocker stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt die Felder weiter, die Uhr nutzt davon `rz`, `kcal`, `pr`, `rd` und `co`.
 
