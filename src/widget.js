@@ -141,13 +141,19 @@ export function buildWidget(d, env = {}) {
 // Ernaehrung hat ein eigenes Widget (small), Heisshunger bleibt auf der Dashboard-Seite. Wieder ohne Freitexte.
 export function buildWidgetDetail(d, env = {}) {
   const from28 = addDays(d.today, -27);
-  // Wochen-TSS (alle Sportarten) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig (complete: false).
-  // Ziel je Woche aus dem Plan (Kalender); fuer die laufende Woche zusaetzlich WEEKLY_TSS_GOAL. Ohne Plan null, nie 0.
+  // Wochen-TSS und Trainingszeit (alle Sportarten) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig
+  // (complete: false). Ziele wie im Dashboard: TSS-Obergrenze bzw. Zeitziel des Coaches (cap: true), sonst der Plan aus dem
+  // Kalender; fuer die laufende Woche ohne beides WEEKLY_TSS_GOAL. Ohne Ziel null, nie 0.
   const tssWeeks = d.weeks.slice(-6).map((w, i, arr) => {
     const hasData = Object.values(w.bySport).some((s) => s.count > 0);
     // TSS je Sportart fuer die Fuellung in Sportfarben (nur Sportarten mit Last)
     const sports = Object.fromEntries(Object.entries(w.bySport).filter(([, v]) => v.load > 0).map(([k, v]) => [k, Math.round(v.load)]));
-    return { weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, complete: w.complete, goal: i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 && !hasTargets(w) ? w.plannedLoad : null };
+    const cap = w.targetLoad > 0, plannedMin = Object.values(w.bySport).reduce((a, s) => (s.plannedMin != null ? (a ?? 0) + s.plannedMin : a), null);
+    const goal = cap ? w.targetLoad : i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 && !hasTargets(w) ? w.plannedLoad : null;
+    return {
+      weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, complete: w.complete, goal, cap,
+      min: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.minutes, 0) : null, minGoal: w.targetMin > 0 ? w.targetMin : plannedMin > 0 ? plannedMin : null,
+    };
   });
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const form = Array.from({ length: 28 }, (_, i) => {
