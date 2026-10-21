@@ -348,16 +348,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private function drawReady(dc as Dc, data as Dictionary) as Void {
         var rd = data.get("rd");
         var co = numOrNull(data.get("co"));
-        var has = co != null && co.toNumber() == 1;
-        var word = has ? "Coach hat geschrieben" : "Noch kein Coach";
-        var color = has ? ACCENT : SEC;
+        var hasCoach = co != null && co.toNumber() == 1;
+        var word = hasCoach ? "Coach hat geschrieben" : "Noch kein Coach";
+        var color = hasCoach ? ACCENT : SEC;
         if ("ok".equals(rd)) { word = "Hart erlaubt"; color = OK; }
         else if ("warn".equals(rd)) { word = "Nur locker"; color = WARN; }
         else if ("bad".equals(rd)) { word = "Frei"; color = BAD; }
         // Älter als eine Stunde: alles grau mit "!"
         var stale = isStale(data);
         var shape = stale || !("warn".equals(rd) || "bad".equals(rd)) ? ["dot", px(7), stale ? TER : color] : ("warn".equals(rd) ? ["tri", px(17), color] : ["sq", px(14), color]);
-        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale || !has ? SEC : FG, _small]] as Array<Array>;
+        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale || !hasCoach ? SEC : FG, _small]] as Array<Array>;
         var bl = numOrNull(data.get("bl"));
         if (!stale && bl != null && bl.toNumber() > 0) {
             items.add(["gap", px(12)]);
