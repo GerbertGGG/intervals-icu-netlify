@@ -124,7 +124,7 @@ export function buildWidget(d, env = {}) {
       verdict: coach ? { cls: GO_CLS[coach.go] ?? "coach", text: coach.headline ?? coach.note } : { cls: "none", text: "Noch keine Coach-Auswertung" }, line: null,
       sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR,
       body: { sleep: { score: r.sleepScore, median: r.body.sleepMedian }, hrv: { median: r.body.hrvMedian }, resting: { median: r.body.restingMedian } },
-      items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, med: i.med ?? null })),
+      items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, med: i.med ?? null, cls: i.cls })),
     },
     // next.items: alle Einheiten des naechsten Tages mit Plan (z. B. Kraft und Rad am selben Tag)
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },

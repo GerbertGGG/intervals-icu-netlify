@@ -36,7 +36,10 @@ const at = (d, list = upTo(d)) => computeRecovery(list, d, { sickDays: SICK });
   assert.equal(r.sick, false);
   assert.equal(r.entryDate, "2026-10-20");
   const fat = r.items.find((i) => i.key === "fatigue");
-  assert.equal(fat.v, 2); assert.equal(fat.cls, undefined); assert.ok(fat.band && fat.med != null);
+  assert.equal(fat.v, 2); assert.equal(fat.cls, "ok"); assert.ok(fat.band && fat.med != null);
+  // Farbe nur gegen den eigenen üblichen Bereich: Muskelkater 4 bei sonst 1–2 ist deutlich schlechter
+  const sore = computeRecovery(upTo("2026-10-20").map((w) => (w.date === "2026-10-20" ? { ...w, soreness: 4 } : w)), "2026-10-20", { sickDays: SICK }).items.find((i) => i.key === "soreness");
+  assert.equal(sore.cls, "bad");
 }
 // Krankheit im Kalender heute oder gestern steht als Fakt drin; ohne heutigen Gefühlseintrag gilt der von gestern
 {

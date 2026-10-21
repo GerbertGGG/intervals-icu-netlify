@@ -589,16 +589,17 @@ function buildWidget(res) {
   w.addSpacer(6);
   } else w.addSpacer(2);
 
-  // Koerper und Gefuehl als eine kompakte Zeile: Wert gross, Kurzname klein darunter (Gefuehl 1 = bestmoeglich)
+  // Koerper und Gefuehl als eine kompakte Zeile: Wert gross, Kurzname klein darunter (Gefuehl 1 = bestmoeglich). Gefuehl in
+  // Farbe nur gegen den eigenen ueblichen Bereich (cls vom Worker): gruen = wie ueblich, gelb = schlechter, rot = deutlich schlechter
   const vals = [
     [r.sleepHours != null ? `${fmt(r.sleepHours, 1)}h` : MISSING, "Schlaf"], [r.hrv != null ? fmt(r.hrv) : MISSING, "HRV"], [fmt(r.restingHR), "Puls"],
-    ...FEEL.map(([lab, short]) => [feelWord((r.items || []).find((i) => i.label === lab)), short]),
+    ...FEEL.map(([lab, short]) => { const it = (r.items || []).find((i) => i.label === lab); return [feelWord(it), short, it && it.v != null && ["ok", "warn", "bad"].includes(it.cls) ? colorFor(it.cls) : null]; }),
   ];
   const vrow = w.addStack(); vrow.size = new Size(W, 0);
   const VW = W / vals.length;
-  vals.forEach(([val, lab], i) => {
+  vals.forEach(([val, lab, col]) => {
     const cell = vrow.addStack(); cell.layoutVertically(); cell.size = new Size(VW, 0);
-    const a = cell.addStack(); a.addSpacer(); num(a, val, FS.md, { color: val === MISSING ? COL.muted : i < 3 ? COL.text : COL.muted, minScale: 0.6 }); a.addSpacer();
+    const a = cell.addStack(); a.addSpacer(); num(a, val, FS.md, { color: val === MISSING ? COL.muted : col || COL.text, minScale: 0.6 }); a.addSpacer();
     const b = cell.addStack(); b.addSpacer(); text(b, lab, FS.xs, { color: COL.muted, minScale: 0.6 }); b.addSpacer();
   });
   w.addSpacer(7);
@@ -907,7 +908,7 @@ function buildReady(res) {
   const cw = IW / Math.max(1, r.items.length);
   for (const it of r.items) {
     const c = row.addStack(); c.layoutVertically(); c.size = new Size(cw, 0);
-    const m = c.addStack(); m.addSpacer(); text(m, feelWord(it), FS.sm, { bold: true, color: it.v == null ? COL.muted : COL.text, align: "center", minScale: 0.7 }); m.addSpacer();
+    const m = c.addStack(); m.addSpacer(); text(m, feelWord(it), FS.sm, { bold: true, color: it.v == null ? COL.muted : ["ok", "warn", "bad"].includes(it.cls) ? colorFor(it.cls) : COL.text, align: "center", minScale: 0.7 }); m.addSpacer();
     c.addSpacer(2);
     const l = c.addStack(); l.addSpacer(); text(l, short[it.label] || it.label, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }); l.addSpacer();
   }

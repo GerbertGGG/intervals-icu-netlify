@@ -104,7 +104,9 @@ export function computeDrift(longWellness, todayIso, sickDays = []) {
 // Erholungswerte von heute als Fakten: Körperwerte gegen die eigene Basis, Gefühlswerte gegen den üblichen Bereich der
 // letzten 8 Wochen (Band = 25–75 %-Quantil ab 5 Werten, Skala ab 1 = bestmöglich). Die Gefühlswerte trägt der Nutzer
 // immer VOR dem Lauf ein: Sie beschreiben den Ausgangszustand, nicht die Reaktion auf die Einheit des Tages. Fehlt der
-// heutige Eintrag, steht der von gestern da (entryDate). Keine Ampel, keine Vorgabe: das entscheidet der Coach.
+// heutige Eintrag, steht der von gestern da (entryDate). Keine Vorgabe: das entscheidet der Coach.
+// cls je Gefuehlswert ist nur der Vergleich mit dem eigenen ueblichen Bereich (Farbe in Widget und Dashboard): im Bereich
+// oder besser = ok, ueber dem Bereich und 1 schlechter als der Median = warn, 2 und mehr = bad, ohne Bereich none.
 // ctx: { sickDays: [date], longWellness: [{date,hrv,restingHR}] }
 export function computeRecovery(wellness, todayIso, ctx = {}) {
   const yIso = addDays(todayIso, -1);
@@ -115,7 +117,9 @@ export function computeRecovery(wellness, todayIso, ctx = {}) {
     const v = src ? src[m.key] ?? null : null;
     const base = past.map((w) => w[m.key]).filter((x) => x != null);
     const max = Math.max(2, ...wellness.map((w) => w[m.key] ?? 0));
-    return { ...m, v, max, band: base.length >= 5 ? [quantile(base, 0.25), quantile(base, 0.75)] : null, med: base.length >= 5 ? median(base) : null };
+    const band = base.length >= 5 ? [quantile(base, 0.25), quantile(base, 0.75)] : null, med = band ? median(base) : null;
+    const cls = v == null || !band ? "none" : v <= band[1] ? "ok" : v - med >= 2 ? "bad" : v - med >= 1 ? "warn" : "ok";
+    return { ...m, v, max, band, med, cls };
   });
   const body = computeBody(wellness, todayIso, ctx.sickDays);
   const drift = computeDrift(ctx.longWellness, todayIso, ctx.sickDays);
