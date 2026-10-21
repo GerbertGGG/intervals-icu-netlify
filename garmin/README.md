@@ -7,7 +7,7 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Regenboge
 
 Innen von oben nach unten:
 
-- **Kalorien und Eiweiß**: übrige kcal bis zum Tagesziel (darüber „+N“, ohne Ziel die gegessenen) mit kleinem grauem „kcal“, daneben das gegessene Eiweiß in Gramm.
+- **Kalorien und Eiweiß**: was heute noch übrig ist, kcal bis zum Tagesziel (darüber „+N“) mit kleinem grauem „kcal“ und Eiweiß bis zum Yazio-Ziel mit „g Eiweiß“ (erreicht: Haken). Ohne Ziel jeweils das Gegessene.
 - **Datum** („MI 21. OKT“) in Grau, dahinter der **Akku** als Symbol mit Prozentzahl, weiß, ab 20 % orange, ab 10 % rot, beim Laden grün.
 - **Uhrzeit**, groß. Der **Doppelpunkt** trägt das Urteil des Coaches für heute (Feld `go` in `save_coach`): grüne Kreise = hart erlaubt, orange Dreiecke = nur locker, rote Quadrate = frei, blaue Kreise = Coach hat geschrieben, aber kein Urteil, grau = noch nichts. Eine eigene Ampel hat die Uhr nicht.
 - **Offene Minuten** je Sportart bis zum Zeitziel, groß in Sportfarbe, darunter klein und grau LAUF, RAD, SCHWIMM. Ziel erreicht: Haken in Sportfarbe, ohne Ziel „--“.
@@ -46,6 +46,6 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 ## Hinweise
 
-- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Nunito** (SIL Open Font License) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit), `open` (offene Minuten, Kalorien, Eiweiß), `cap` (Datum, Akku), `tag` (Beschriftung unter den Minuten, „kcal“). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die Nunito-Dateien von Google Fonts).
+- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Roboto Medium** (SIL Open Font License) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit), `open` (offene Minuten, Kalorien, Eiweiß), `cap` (Datum, Akku), `tag` (Beschriftung unter den Minuten, „kcal“). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und Roboto von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, wird der Doppelpunkt grau und das Datum bekommt ein `!`.
