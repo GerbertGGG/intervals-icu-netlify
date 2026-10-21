@@ -42,16 +42,15 @@ assert.match(g.runDecoupling.hints.join(), /nicht flach/);
 assert.equal(g.bikeDecoupling.count, 1); assert.equal(g.bikeDecoupling.value, 4.8);
 assert.ok(g.bikeDecoupling.hints.some((h) => /ohne Puls/.test(h))); assert.ok(g.bikeDecoupling.hints.some((h) => /FTP-Test am 21\.10\..*240 W/.test(h)));
 assert.equal(g.swimTest.status, "ok"); assert.equal(g.swimTest.value, 3);
-assert.equal(sb.decision.due, false); assert.equal(sb.decision.state, "cause"); assert.deepEqual(sb.decision.broken, ["strength"]); // kein Krafttraining im Fixture
-assert.equal(sb.decision.text, "Leitplanke gerissen (Kraft): erst die Ursache klären, dann Rad verlängern.");
+assert.equal("decision" in sb, false); // keine Woche-12-Entscheidung: die trifft der Coach
 assert.equal(streamCalls, 6); // 4 flache Läufe + 1 Rad mit Puls (der hügelige Lauf und das Rad ohne Puls brauchen keine) + Profil der letzten Einheit
 // zweiter Aufruf: alles aus dem KV-Cache
 streamCalls = 0;
 await buildDashboard(env, today);
 assert.equal(streamCalls, 0);
 const wb = buildWidgetBlock(d);
-assert.equal(wb.block.decision.state, "cause"); assert.equal(wb.block.goals.filter((x) => x.group === "ziel").length, 3);
-assert.ok(wb.block.goals.filter((x) => x.group === "ziel").every((x) => x.course && x.course.label)); // Kurs auch im Widget
+assert.equal("decision" in wb.block, false); assert.equal(wb.block.goals.filter((x) => x.group === "ziel").length, 3);
+assert.ok(wb.block.goals.filter((x) => x.group === "ziel").every((x) => x.course === null || !("state" in x.course))); // Verlauf ohne Stufe
 console.log("block A dashboard ok");
 
 // Lauf ohne Stichwort im Namen: locker, wenn der Puls >= 80 % in Zone 1–2 lag ("Bobingen Laufen" am 20.10.)

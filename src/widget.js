@@ -322,12 +322,10 @@ export function buildWidgetBlock(d) {
       goals: (b.goals ?? []).map((g) => ({
         key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
-        // Kurs der Abschlussziele (season-block.js goalCourse): Trend, keine Entscheidung
-        course: g.course ? { state: g.course.state, label: g.course.label } : null,
+        // Verlauf der Abschlussziele (season-block.js goalCourse): Richtung besser/schlechter/gleich, keine Entscheidung
+        course: g.course && !g.course.open ? { dir: g.course.dir ?? null } : null,
         weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count, load: w.load !== false })) : undefined,
       })),
-      // Entscheidung zum Blockende (Woche 12): next = weiter, extend = Sportart verlaengern, cause = erst Ursache klaeren
-      decision: b.decision ? { week: b.decision.week, due: b.decision.due, state: b.decision.state, text: b.decision.text } : null,
     },
     sourcesFailed: failedOf(d),
   };

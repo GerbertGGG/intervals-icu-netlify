@@ -14,7 +14,7 @@
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
-//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Kurs, Leitplanken und Entscheidung zu Woche 12.
+//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Verlauf und Leitplanken.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -1258,7 +1258,7 @@ function buildBlock(res) {
   }
   w.addSpacer(7);
   if (!all.length) { text(w, "Im Eintrag stehen keine erkennbaren Ziele.", FS.sm, { color: COL.muted, lines: 2 }); notice(w, res, d); return w; }
-  // Block mit Abschlusszielen: je Sportart eine Kachel, darunter die Leitplanken als eine Zeile und die Entscheidung zu Woche 12
+  // Block mit Abschlusszielen: je Sportart eine Kachel, darunter die Leitplanken als eine Zeile
   const grouped = all.some((g) => g.group);
   const goals = grouped ? all.filter((g) => g.group === "ziel") : all;
   const rails = grouped ? all.filter((g) => g.group === "leitplanke") : [];
@@ -1303,11 +1303,11 @@ function buildBlock(res) {
       c.addSpacer(3);
     } else if ((g.key === "runDecoupling" || g.key === "bikeDecoupling") && g.value != null && g.must) { progressBar(c, IW, Math.min(1, g.value / (g.must * 1.25)), STATUS_HEX(g.status)); c.addSpacer(3); }
     text(c, capOf(g), FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
-    // Kurs (Trend, keine Entscheidung): auf Kurs / knapp / hinten / offen
-    if (g.course && g.status !== "base") {
-      const cc = { on: "ok", close: "warn", behind: "bad" }[g.course.state] || "none";
+    // Verlauf seit der ersten Messung (Trend, keine Entscheidung)
+    const dirTxt = g.course && g.status !== "base" ? { better: "besser", worse: "schlechter", flat: "gleich" }[g.course.dir] : null;
+    if (dirTxt) {
       c.addSpacer(2);
-      text(c, `Kurs: ${g.course.label}`, FS.xs, { bold: true, color: cc === "none" ? COL.muted : colorFor(cc), lines: 1, minScale: 0.7 });
+      text(c, `Verlauf: ${dirTxt}`, FS.xs, { bold: true, color: COL.muted, lines: 1, minScale: 0.7 });
     }
   });
   if (rails.length) {
@@ -1320,14 +1320,6 @@ function buildBlock(res) {
       lr.addSpacer(4);
       text(lr, (RAIL[g.key] || ((x) => x.label))(g), FS.xs, { bold: true, minScale: 0.7 });
     });
-  }
-  const dec = b.decision;
-  if (dec) {
-    w.addSpacer(4);
-    const dr = w.addStack(); dr.centerAlignContent(); dr.spacing = 4;
-    const dcls = dec.state === "next" ? "ok" : dec.state === "extend" ? "warn" : "bad";
-    statusIcon(dr, dcls, FS.xs);
-    text(dr, `Woche ${dec.week}${dec.due ? "" : " (Stand heute)"}: ${dec.text}`, FS.xs, { color: colorFor(dcls), lines: 1, minScale: 0.6 });
   }
   notice(w, res, d);
   return w;

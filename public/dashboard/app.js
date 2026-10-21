@@ -270,7 +270,7 @@ function renderBaseTrend(d, tile) {
       <div id="bt-ride" class="wprofile"></div>${line(T.rideTrend, T.rides.filter((r) => !r.noWarmup).length, "Vergleichseinheiten mit Einrollen", (v) => fmt(v), " bpm")}
       <div class="sub muted">Mittlerer Puls im Messfenster der Vergleichseinheit. Sinkt er bei gleicher Leistung, wirkt die Grundlage – auch wenn das Decoupling schon niedrig ist.</div></div>` : "";
   return `<div class="cockpit" style="margin-top:var(--gap)">${tile("Greift die Grundlage?", `<div class="bgoals">${runs}${rides}</div>
-    <details class="info"><summary>Erklärung</summary><div>Frühindikator zwischen den Blocktests, keine Entscheidung: Das Blockziel misst nur der Blocktest. Einzelne Einheiten schwanken mit Tageszeit, Wind, Müdigkeit und Ampel; verglichen wird deshalb der Median der ersten ${T.n} mit dem der letzten ${T.n} Einheiten im Block. Unter 3 % (EF) bzw. 3 Schlägen ist es Rauschen. Hitzetage zählen beim Laufen nicht mit, Fahrten ohne Einrollen nicht beim Puls.</div></details>`, "span4")}</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Frühindikator zwischen den Blocktests, keine Entscheidung: Das Blockziel misst nur der Blocktest. Einzelne Einheiten schwanken mit Tageszeit, Wind und Müdigkeit; verglichen wird deshalb der Median der ersten ${T.n} mit dem der letzten ${T.n} Einheiten im Block. Unter 3 % (EF) bzw. 3 Schlägen ist es Rauschen. Hitzetage zählen beim Laufen nicht mit, Fahrten ohne Einrollen nicht beim Puls.</div></details>`, "span4")}</div>`;
 }
 function drawBaseTrend(d) {
   const T = d.baseTrend;
@@ -501,7 +501,7 @@ function renderLongruns(d) {
   const decCls = (v) => (v == null ? "none" : v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
   const next = d.nextTest?.date;
   if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Grundlagenlauf ab 60 min mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
-  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmt(r.durationMin)} min</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? `<span class="badge ${r.overCapMin <= 2 ? "ok" : r.overCapMin <= 10 ? "warn" : "bad"}">${fmt(r.overCapMin)} min</span>` : "–"}</td></tr>`).join("");
+  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmt(r.durationMin)} min</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? `${fmt(r.overCapMin)} min` : "–"}</td></tr>`).join("");
   host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 0–60</th><th>stabil</th><th>Pace 0–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th></tr></thead><tbody>${rows}</tbody></table></div>
     <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 steht hier nicht mehr: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts. Nur die Blocktests zählen fürs Blockziel; den Trend zwischen den Tests zeigt „Greift die Grundlage?“.</div></details>`;
 }
@@ -548,7 +548,7 @@ function renderHistory(d) {
   if (!series.some((w) => w.ctl != null)) $("form-chart").insertAdjacentHTML("beforeend", '<div class="notice">Keine CTL/ATL-Werte im Zeitraum.</div>');
   // Frische als Wochengröße (früher im Heute-Band): läuft der Erholung hinterher und fließt nicht in die Tagesampel
   const L = d.summary.load;
-  $("form-now").innerHTML = L.tsb != null ? `Heute: TSB ${fmt(L.tsb)}${L.tsbPct != null ? ` (${L.tsbPct > 0 ? "+" : ""}${fmt(L.tsbPct)} % der CTL, ${esc(TSB_ZONE_TEXT[L.tsbZone] ?? "–")})` : ""} · CTL ${fmt(L.ctl)} · ATL ${fmt(L.atl)}. Für die Wochensteuerung, nicht für die Tagesentscheidung.` : "";
+  $("form-now").innerHTML = L.tsb != null ? `Heute: TSB ${fmt(L.tsb)}${L.tsbPct != null ? ` (${L.tsbPct > 0 ? "+" : ""}${fmt(L.tsbPct)} % der CTL, ${esc(TSB_ZONE_TEXT[L.tsbZone] ?? "–")})` : ""} · CTL ${fmt(L.ctl)} · ATL ${fmt(L.atl)}.` : "";
   C.calendar($("calendar"), d.daily, d.today);
 }
 
@@ -941,15 +941,15 @@ function renderBlock(SB) {
     if (g.key === "runStable") return `${g.value === 0 ? "unter 60" : g.value}<small> min${g.baseValue != null && g.count > 1 ? ` · Basistest ${fmtStable(g.baseValue)}` : ""}</small>`;
     return `${fmt(g.value, g.key === "acwr" ? 0 : 1)}<small> %</small>`;
   };
-  // Kurs (Worker: goalCourse in season-block.js): erster Messwert → letzter und Richtung, steht direkt in der Zielkarte
-  // statt in einer eigenen Tabelle (der Status steht schon im Badge). Trend, keine Entscheidung; ohne Vergleich nur die nächste Messung.
+  // Verlauf (Worker: goalCourse in season-block.js): erster Messwert → letzter und Richtung, steht direkt in der Zielkarte.
+  // Nur der Trend, keine Entscheidung (die trifft der Coach); ohne Vergleich nur die nächste Messung.
   const DIR = { better: "besser", worse: "schlechter", flat: "gleich" };
   const cv = (v, u) => (v == null ? "–" : typeof v === "string" ? esc(v) : u === "min" ? fmtStable(v) : u === "%" ? `${fmt(v, 1)}&nbsp;%` : `${v > 0 ? "+" : ""}${fmt(v, 1)}&nbsp;s`);
   const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
   const courseOf = (g) => {
     const C = g.course;
     if (!C) return "";
-    if (C.state === "open") return "";
+    if (C.open) return "";
     const main = C.main ? `<div class="sub">${esc(C.main)}${C.mainDir ? ` (${DIR[C.mainDir]})` : ""}</div>` : "";
     return `<div class="bcrs" title="Trend, keine Entscheidung${C.baseline ? " · vor dem Blockstart: Ausgangswerte" : ""}">Verlauf: ${cv(C.from, C.unit)} → ${cv(C.to, C.unit)}${C.dir ? ` (${DIR[C.dir]})` : ""}</div>${main}`;
   };
@@ -992,18 +992,12 @@ function renderBlock(SB) {
   const goals = grouped
     ? section("Abschlussziele", list.filter((g) => g.group === "ziel")) + section("Leitplanken", list.filter((g) => g.group === "leitplanke")) + section("", list.filter((g) => !g.group))
     : section("", list);
-  const D = SB.decision;
-  const decLabel = { next: "weiter", extend: "verlängern", cause: "Ursache klären" };
-  // Vor Woche 12 kein "Stand heute": solange Tests fehlen, wäre das immer "verlängern" und nur Rauschen
-  const decAt = SB.start && D ? addDays(SB.start, (D.week - 1) * 7) : null;
-  const decision = !D ? "" : D.due ? `<div class="bdec ${D.state}"><b>Woche ${D.week} · Entscheidung:</b> ${esc(D.text)} <span class="badge ${D.state === "next" ? "ok" : D.state === "extend" ? "warn" : "bad"}">${decLabel[D.state]}</span></div>`
-    : `<div class="sub" style="margin-top:8px">Entscheidung in Woche ${D.week}${decAt ? ` (ab ${fmtDate(decAt)})` : ""}: alle Ziele und Leitplanken erfüllt → nächster Block, sonst die betroffene Sportart verlängern.</div>`;
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
   // Was aus dem Block-Eintrag gelesen wurde (Deckel, Testband, wie Blocktests erkannt werden) und Widersprüche darin – ein Tippfehler im Text
   // verfälscht sonst still die Auswertung
   const CK = SB.check;
   const check = CK ? `<div class="sub muted" style="margin-top:6px">Gelesen aus dem Block-Eintrag: HF-Deckel ${CK.hrCap ?? "–"} · Testband ${CK.band ? CK.band.join("–") : "–"} · Blocktests ${CK.testsByName ? "= Läufe mit „Blocktest“/„Basistest“ im Namen (du legst sie fest)" : "keine"}</div>${CK.hints.map((h) => `<div class="notice" style="margin-top:6px">${esc(h)}</div>`).join("")}` : "";
-  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${check}${goals}${decision}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
+  return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${check}${goals}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */

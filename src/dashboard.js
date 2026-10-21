@@ -781,7 +781,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
           return { date: activityDay(a), kind: sport ? intensityKindOf(sport, textOf(a), z5) : null, feel: num(a?.feel) };
         }).filter((x) => x.kind)
       : [];
-    const { goals, decision } = buildBlockGoalsFull(seasonBlock, {
+    const { goals } = buildBlockGoalsFull(seasonBlock, {
       longRuns: [...rzLong, ...icuLong],
       strength: strengthDays,
       weeklyGoalSets: egymGoalOf(env).goal,
@@ -796,7 +796,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       sickDays,
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
-    seasonBlock = { ...seasonBlock, goals, decision, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };
+    seasonBlock = { ...seasonBlock, goals, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };
   }
 
   const summary = buildSummary(wellness, todayIso, { sickDays, longWellness });
