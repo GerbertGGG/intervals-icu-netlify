@@ -3,11 +3,10 @@
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { buildWidget, buildWidgetDetail, buildWidgetVdot, buildWidgetSmall, buildWidgetTraining, handleWidgetRequest } from "../src/widget.js";
-import { computeReadiness, computeLoad } from "../src/dashboard-summary.js";
+import { computeRecovery, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
-import { trainingFindings, nutritionFindings, topFinding } from "../src/findings.js";
 import { buildSessionProfile } from "../src/session-profile.js";
 import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun, buildLastActivity } from "../src/dashboard.js";
 
@@ -107,29 +106,24 @@ assert.equal((await putS({}, "falsch")).status, 401);
 assert.equal((await putS({ fetchedAt: "2026-09-27T10:00:00Z", text: "Kurzer Abschnitt", source: "Autor 2024" })).status, 200);
 // Zusammenfassung und Widget
 assert.equal(d.summary.load.tsbCls, "ok");
-assert.equal(d.summary.readiness.verdict.cls, "ok");
-assert.equal(d.summary.readiness.items.length, 5);
-// Ampel mit Umfang und Laufen je Sportart, Montagsbilanz im Payload
-assert.equal(d.summary.readiness.verdict.dose.factor, 1); assert.ok(d.summary.readiness.verdict.sports.run);
-assert.ok(d.todayPlan.lines.some((l) => /^(Offen diese Woche|Wochenrahmen erfüllt|Kein Wochenrahmen|Heute erledigt)/.test(l.text)));
-assert.equal(d.todayPlan.lines.some((l) => /voller Umfang/.test(l.text)), false);
-assert.ok(d.weekReview && ["up", "hold", "down", "deload"].includes(d.weekReview.level)); assert.equal(d.weekReview.ampelDays.length, 7);
-const noToday = computeReadiness(d.wellness.filter((w) => w.date !== today), today, computeLoad(d.wellness));
-assert.match(noToday.verdict.note, /gestern/); // ohne heutigen Eintrag gilt der von gestern früh
-assert.equal(noToday.entryDate, day(-1));
+// Erholungswerte ohne Urteil, Montagsbilanz als Faktenliste, keine Tagesentscheidung
+assert.equal(d.summary.readiness, undefined); assert.equal(d.todayPlan, undefined);
+assert.equal(d.summary.recovery.items.length, 5);
+assert.equal(d.summary.recovery.verdict, undefined);
+assert.ok(d.weekReview && d.weekReview.level === undefined && d.weekReview.proposal === undefined && d.weekReview.run);
+const noToday = computeRecovery(d.wellness.filter((w) => w.date !== today), today);
+assert.equal(noToday.entryDate, day(-1)); // ohne heutigen Eintrag gilt der von gestern früh
 const wdg = buildWidget(d);
 const wjson = JSON.stringify(wdg);
 assert.ok(wjson.length < 3000, "Widget-Payload klein");
-assert.equal(wdg.readiness.verdict.text, d.summary.readiness.verdict.text);
-// Zeile unter dem Urteil (Umfang, Laufsperre) und Montagsbilanz Mo–Mi (30.09. ist ein Mittwoch)
-assert.equal(wdg.readiness.line, null); // grün ohne Laufbremse: keine Zeile
-assert.match(wdg.review.text, /^Montagsbilanz: (Rahmen|Woche) /); assert.ok(["ok", "warn", "bad", "none"].includes(wdg.review.cls));
+// Ohne Coach-Aussage kein Urteil: Kopfzeile "none", keine Zeile darunter, kein Befund und keine Montagsbilanz
+assert.deepEqual(wdg.readiness.verdict, { cls: "none", text: "Noch keine Coach-Auswertung" });
+assert.equal(wdg.readiness.line, null);
+for (const gone of ["focus", "review"]) assert.equal(gone in wdg, false, gone);
 {
-  const { readinessLine, reviewOf } = await import("../src/widget.js");
-  assert.equal(readinessLine({ cls: "ok", sports: { run: { cls: "bad", text: "kein Lauf (Hüfte/Leiste/Knie erwähnt)" } } }), "Kein Lauf (Hüfte/Leiste/Knie erwähnt)");
-  assert.equal(readinessLine({ cls: "warn", sports: { run: { cls: "bad", text: "kein Lauf (Muskelkater deutlich)" } } }), "Umfang −30 %, lange Einheit verschieben · Kein Lauf (Muskelkater deutlich)");
-  assert.equal(readinessLine({ cls: "bad", sick: true, sports: { run: { cls: "bad", text: "kein Training" } } }), null);
-  assert.equal(reviewOf({ ...d, today: "2026-10-01" }), null); // Donnerstag: Rahmen steht
+  const withCoach = buildWidget({ ...d, coach: { fetchedAt: d.generatedAt, note: "Heute 45 min locker.", headline: "Locker laufen" } });
+  assert.deepEqual(withCoach.readiness.verdict, { cls: "coach", text: "Locker laufen" });
+  assert.equal(withCoach.coach.note, "Heute 45 min locker.");
 }
 assert.equal(wdg.goal.daysToGo, 3);
 assert.equal(wdg.goal.phase, "taper"); // Rennphase kommt fertig vom Server
@@ -137,8 +131,8 @@ assert.equal(wdg.goal.runKm, d.goal.runKm);
 assert.equal(wdg.plan.today[0].purpose, "Zweck: Beine lockern");
 for (const gone of ["hip", "trend", "load", "thresholds", "hm"]) assert.equal(gone in wdg, false, gone); // nichts, was das Widget nicht zeichnet
 assert.deepEqual(Object.keys(wdg.readiness.body), ["sleep", "hrv", "resting"]);
-assert.equal(wdg.readiness.body.sleep.cls, "ok");
-assert.equal(wdg.readiness.body.hrv.cls, "ok");
+assert.equal(wdg.readiness.body.hrv.median, 48); assert.equal(wdg.readiness.body.hrv.cls, undefined);
+for (const i of wdg.readiness.items) assert.equal(i.cls, undefined);
 assert.equal(wdg.week.goal, null); // ohne Plan-Load und ohne Konfiguration kein Ziel, nichts erfunden
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goal, 250);
 assert.equal(buildWidget(d, { WEEKLY_TSS_GOAL: "250" }).week.goalSource, "config");
@@ -172,47 +166,12 @@ assert.equal(cw.run.plannedKm, null); // nichts geplant = null, nie 0
 assert.equal(cw.swim.plannedMin, 50); // Plan in Minuten aus moving_time
 assert.equal(d.weeks.at(-1).runMin, cw.run.minutes); // Laufumfang in Minuten fuer Dashboard und Widget
 assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
-// Urteil beachtet die Koerperwerte: zwei auffaellige Werte (HRV, Schlaf) kippen ein sonst gruenes Urteil
+// Erholungswerte: Basis = Median ohne heute, Krankheitstage zählen nicht zur Basis
 {
-  const bad = d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30, sleepHours: 5 } : w));
-  const rd = computeReadiness(bad, today, computeLoad(bad));
-  assert.equal(rd.body.hrv.cls, "warn"); // HRV ≥ 12 % unter Basis = gelb (Coaching-Regel)
-  assert.equal(rd.body.sleep.cls, "warn"); // ohne Schlaf-Score: unter 6 h
-  assert.equal(rd.verdict.cls, "bad"); // zwei gelbe Signale = rot
-  const one = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30 } : w)), today, computeLoad(d.wellness));
-  assert.equal(one.verdict.cls, "warn"); // ein Koerperwert allein = Vorsicht
-  assert.equal(one.body.hrvMedian, 48); // Median ohne heute
-  // 6,9 h Schlaf ist kein Signal (gelb erst unter 6 h bzw. Schlaf-Score < 80 an 2 Tagen)
-  const slight = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9 } : w)), today, computeLoad(d.wellness));
-  assert.equal(slight.body.sleep.cls, "ok");
-  assert.equal(slight.verdict.cls, "ok");
-  // Schlaf-Score unter 80 an zwei Tagen in Folge = gelb, an einem Tag nicht
-  const sc = (t, y) => d.wellness.map((w) => (w.date === today ? { ...w, sleepScore: t } : w.date === day(-1) ? { ...w, sleepScore: y } : w));
-  assert.equal(computeReadiness(sc(70, 75), today).body.sleep.cls, "warn");
-  assert.equal(computeReadiness(sc(70, 85), today).body.sleep.cls, "ok");
-  // Ruhepuls ≥ 8 über Basis = rot, ≥ 4 = gelb
-  const rhr = (v) => computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, restingHR: v } : w)), today);
-  const rb = rhr(null).body.restingMedian;
-  if (rb != null) {
-    assert.equal(rhr(rb + 8).verdict.cls, "bad");
-    assert.equal(rhr(rb + 6).body.resting.cls, "warn"); // ab 6 allein ein Signal
-    assert.equal(rhr(rb + 4).body.resting.cls, "ok"); // 4–5 allein: Einzelwert, kein Signal
-    assert.equal(rhr(rb + 4).body.resting.single, true);
-    assert.match(rhr(rb + 4).verdict.watch, /Einzelwert/);
-    assert.equal(rhr(rb + 3).body.resting.cls, "ok");
-  }
-  // Krankheit im Kalender übersteuert alles; Krankheitstage zählen nicht zur Basis
-  const sick = computeReadiness(d.wellness, today, null, { sickDays: [day(-1)] });
-  assert.equal(sick.verdict.cls, "bad"); assert.equal(sick.verdict.sick, true);
-  const hipR = computeReadiness(d.wellness, today, null, { hipFlags: [{ date: day(-1) }] });
-  // Hüfte/Leiste/Knie bremst nur das Laufen: kein Lauf, Rad und Schwimmen nach der Ampel
-  assert.equal(hipR.verdict.cls, d.summary.readiness.verdict.cls); assert.match(hipR.reasons ?? hipR.verdict.reasons.join(), /Hüfte/);
-  assert.equal(hipR.verdict.sports.run.cls, "bad"); assert.match(hipR.verdict.sports.run.text, /kein Lauf/);
-  assert.equal(hipR.verdict.sports.bike.cls, d.summary.readiness.verdict.cls);
-  // Trainingslast gehört nicht ins Erholungsurteil
-  assert.equal(computeReadiness(d.wellness, today, { tsb: -40 }).verdict.cls, d.summary.readiness.verdict.cls);
-  const two = computeReadiness(d.wellness.map((w) => (w.date === today ? { ...w, sleepHours: 6.9, hrv: 40 } : w)), today, computeLoad(d.wellness));
-  if (two.body.hrv.cls === "warn") assert.equal(two.verdict.cls, "warn");
+  const r = computeRecovery(d.wellness.map((w) => (w.date === today ? { ...w, hrv: 30 } : w)), today);
+  assert.equal(r.hrv, 30); assert.equal(r.body.hrvMedian, 48);
+  assert.equal(computeRecovery(d.wellness, today, { sickDays: [day(-1)] }).sick, true);
+  assert.equal(computeRecovery(d.wellness, today).sick, false);
 }
 // Cache: zweiter Abruf kommt aus KV, ?fresh=1 umgeht ihn
 {
@@ -240,24 +199,6 @@ assert.equal(buildWidgetTraining(d, { TRI_SPLIT_TARGET: "kaputt" }).split.target
 // Umfang der letzten 4 vollen Wochen und Entwicklung gegen die 4 davor: ohne 4 volle Vergleichswochen kein Trend, nie 0 erfunden
 for (const k of ["swim", "bike", "run"]) assert.equal(typeof trn.sports[k].min4, "number");
 assert.equal(trn.sports.run.trendPct, null);
-const wk = (load, runMin, o = {}) => ({ complete: true, load, runMin, plannedLoad: null, intensity: { easy: 100, mid: 0, hard: 0 }, bySport: Object.fromEntries(["run", "bike", "swim", "strength", "other"].map((s) => [s, { count: 1, load: 0, minutes: s === "run" ? runMin : 0, plannedLoad: null }])), ...o });
-const dd = (extra) => ({ today: "2026-09-30", weeks: [wk(100, 120), wk(100, 120), wk(100, 120), wk(100, 120), wk(250, 360), { ...wk(0, 0), complete: false }], daily: [{ date: "2026-09-29", load: 50 }, { date: "2026-09-30", load: 0 }], wellness: [], cravings: [], ...extra });
-const tf = trainingFindings(dd());
-assert.equal(tf[0].sev, 2); // steiler Anstieg der Belastung und des Laufumfangs
-assert.ok(tf[0].act && tf.some((f) => /Laufumfang/.test(f.short)));
-assert.deepEqual(trainingFindings({ ...dd(), weeks: [] }), []); // ohne volle Woche kein Befund
-assert.equal(topFinding(dd()).short.startsWith("Belastung letzte Woche +"), true);
-assert.equal(topFinding(dd()).tag, "Last");
-// Ernährung: Muster statt Einzeltage, "kein Tagebuch" an 4 von 6 Tagen ist eine Warnung
-const food = Array.from({ length: 7 }, (_, i) => ({ date: `2026-09-${24 + i}`, calories: i % 2 ? null : 1900, calorieGoal: 2100, protein: 40 }));
-const nf = nutritionFindings({ today: "2026-09-30", wellness: food, cravings: [] });
-assert.ok(nf.some((f) => /Kein Tagebuch an 3 von 6/.test(f.short)));
-assert.ok(nf.some((f) => /Eiweiß an 3 von 3/.test(f.short))); // 40 g * 4 / 1900 kcal = 8 %
-assert.equal(topFinding({ ...dd({ weeks: [] }), wellness: food }) != null, true);
-// Jeder Befund hat ein Stichwort fuer die Uhr, ein Wort
-for (const f of [...trainingFindings(dd()), ...nutritionFindings({ ...dd({ weeks: [] }), wellness: food })]) assert.match(f.tag ?? "", /^\p{L}+$/u, f.short);
-assert.equal(topFinding({ today: "2026-09-30", weeks: [], daily: [], wellness: [], cravings: [] }), null);
-assert.ok("focus" in buildWidget(d, env));
 for (const sh of [trn.intensity.week, trn.intensity.avg]) if (sh) assert.equal(sh.easy + sh.mid + sh.hard, 100);
 assert.ok(JSON.stringify(trn).length < 2500);
 assert.equal(/Bobingen|Schokolade|CSS/.test(JSON.stringify(trn)), false);
@@ -288,8 +229,8 @@ assert.equal(sm.sleep.days.length, 7);
 assert.equal(sm.sleep.days.at(-1).date, today);
 assert.equal(sm.sleep.days.at(-1).hours, 7.5);
 assert.equal(sm.sleep.medianHrv, 48);
-assert.equal(sm.sleep.medianHrv, d.summary.readiness.body.hrvMedian); // dieselben Mediane wie die Bereitschaft
-assert.deepEqual(sm.sleep.cls, { sleep: d.summary.readiness.body.sleep.cls, hrv: d.summary.readiness.body.hrv.cls, resting: d.summary.readiness.body.resting.cls });
+assert.equal(sm.sleep.medianHrv, d.summary.recovery.body.hrvMedian); // dieselben Mediane wie die Erholungswerte
+assert.equal("cls" in sm.sleep, false); // keine Ampel
 assert.equal(sm.goal.daysToGo, 3); // Rennziel kommt mit, kein Zweitabruf noetig
 assert.equal(sm.food.days.length, 7);
 assert.equal(sm.food.days.find((x) => x.date === day(-1)).calories, null); // 0 kcal = keine Daten
@@ -553,7 +494,6 @@ console.log("zones from intervals ok");
   assert.equal(w.t, today);
   assert.equal(w.ti, 2); // 30.09.2026 ist ein Mittwoch
   assert.equal(w.days.length, 7);
-  assert.equal(w.rd, d.summary.readiness.verdict.cls); // Bereitschaft wie im Dashboard
   assert.equal(w.wk, undefined); // Wochenbalken zeigt das Zifferblatt nicht mehr
   assert.deepEqual(w.kcal, { v: 1840, g: 2100 });
   assert.deepEqual(buildWidgetWatch(d, {}, { kcal: 2100, proteinG: 140 }, { energyKcal: 1840, proteinG: 95.4 }).pr, { v: 95, g: 140 });
@@ -588,12 +528,9 @@ console.log("zones from intervals ok");
     assert.deepEqual(ww.days[w.ti], { s: "strength", p: 0, s2: "run", p2: 1 });
     assert.deepEqual(ww.days[w.ti + 1], { s: "swim", p: 1, s2: "bike", p2: 1 });
   }
-  // Warnung: ACWR ueber dem Korridor hat Vorrang, sonst ein Hinweis aus "Was auffaellt", sonst nichts
-  const withLoad = (load) => ({ ...d, summary: { ...d.summary, load: { ...d.summary.load, ...load } } });
-  assert.deepEqual(buildWidgetWatch(withLoad({ acwr: 1.5234, acwrCls: "bad" })).w, { k: "acwr", v: 1.52 });
-  const calm = buildWidgetWatch(withLoad({ acwr: 1.0, acwrCls: "ok" })).w;
-  assert.ok(calm === null || calm.k === "hint");
-  if (calm) assert.equal(calm.t, topFinding(d).tag); // Stichwort fuer die Uhr statt nur "Hinweis"
+  // Kein eigenes Urteil auf der Uhr: keine Warnung, rd "none", co zeigt, ob der Coach heute geschrieben hat
+  assert.equal("w" in w, false); assert.equal(w.rd, "none"); assert.equal(w.co, 0);
+  assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, note: "x" } }).co, 1);
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).str, null); // ohne Block-Ziel keine Kraft
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).block, null);
   // Kraft-Ring: Saetze der laufenden Woche gegen das Wochenziel, nicht Wochen im Ziel (value/of)
@@ -658,14 +595,6 @@ console.log("zones from intervals ok");
   const none = buildWidgetWatch(d);
   assert.deepEqual([none.rz, none.rt], [null, null]);
   assert.ok(JSON.stringify(wt).length < 1500);
-  // Wochenrueckblick: TSS ueber der Obergrenze bei erreichter Zeit = zu intensiv (Warnung), zu wenig Zeit = Hinweis
-  const wkT = (run, bike) => ({ complete: true, load: run.load + bike.load, runMin: run.minutes, plannedLoad: 20, targetMin: 195, targetLoad: 160, intensity: { easy: 0, mid: 0, hard: 0 },
-    bySport: { run: { count: 3, plannedLoad: null, targetMin: 90, targetLoad: 85, ...run }, bike: { count: 2, plannedLoad: null, targetMin: 105, targetLoad: 75, ...bike }, swim: { count: 0, load: 0, minutes: 0, plannedLoad: null }, strength: { count: 2, load: 20, minutes: 60, plannedLoad: 20 }, other: { count: 0, load: 0, minutes: 0, plannedLoad: null } } });
-  const fT = trainingFindings({ today, daily: [], weeks: [wkT({ load: 110, minutes: 92 }, { load: 50, minutes: 60 })] });
-  assert.deepEqual(fT.filter((f) => f.tag === "TSS").map((f) => f.sev), [2]);
-  assert.ok(/zu intensiv/.test(fT.find((f) => f.tag === "TSS").text));
-  assert.ok(fT.some((f) => f.tag === "Zeit" && /Rad 60 von 105 min/.test(f.text)));
-  assert.equal(fT.some((f) => f.tag === "Plan"), false); // Plan-Load (nur Kraft) zaehlt mit Wochenzielen nicht
   console.log("week targets ok");
 }
 

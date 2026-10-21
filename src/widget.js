@@ -4,14 +4,12 @@ import { hasYazioCredentials, fetchYazioDailyGoals, fetchYazioDailyNutrition } f
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin } from "./date-utils.js";
 import { loadWidgetKraft } from "./egym-widget.js";
-import { topFinding } from "./findings.js";
 import { isFreshCoach } from "./coach-snapshot.js";
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
-// Gleiche Einschätzungen wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und
-// ohne Freitexte: Es gehen keine Kommentare, Beschreibungen oder Heißhunger-Einträge raus. Jede Ansicht
-// bringt alles mit, was sie zeichnet (ein Request je Widget), und liefert fertige Einschätzungen
-// (Rennphase, Körper-Ampeln), damit das Skript nur noch darstellt.
+// Gleiche Werte wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und ohne Freitexte: Es gehen keine
+// Kommentare, Beschreibungen oder Heißhunger-Einträge raus. Jede Ansicht bringt alles mit, was sie zeichnet (ein Request je
+// Widget). Ein Urteil über den Tag gibt es nur vom Coach (Morgen-Auswertung, save_coach), nicht aus eigenen Regeln.
 
 const firstLine = (s, max = 110) => {
   const line = String(s ?? "").split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? null;
@@ -100,7 +98,8 @@ export function buildWidget(d, env = {}) {
   // Die naechsten drei Tage fuer die Kacheln; ohne Kalender (Quelle ausgefallen) null statt "frei"
   const horizon = addDays(d.today, 3);
   const upcoming = d.sources.intervalsEvents?.ok === false ? null : d.planned.filter((p) => p.date > d.today && p.date <= horizon).map((p) => ({ date: p.date, name: stripKey(p.name), sport: p.sport, durationMin: p.durationMin, key: isKeySession(p) }));
-  const r = d.summary.readiness;
+  const r = d.summary.recovery;
+  const coach = isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? { note: d.coach.note, headline: d.coach.headline } : null;
   const wk = weeklyGoal(week, env);
   // Woche Mo bis So fuer die Kapseln im grossen Widget: erledigter Load je Sportart und die geplanten Einheiten des Tages
   const monday = addDays(d.today, -((new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7));
@@ -114,43 +113,23 @@ export function buildWidget(d, env = {}) {
     generatedAt: d.generatedAt,
     today: d.today,
     goal: goalOf(d),
-    readiness: { verdict: r.verdict, line: readinessLine(r.verdict), sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR, body: { sleep: r.body.sleep, hrv: r.body.hrv, resting: r.body.resting }, items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, cls: i.cls })) },
+    // Erholungswerte ohne Ampel. verdict traegt die Kopfzeile des Coaches (cls "coach"), sonst "none"; line bleibt null.
+    // Die Form (verdict, line, body.*) bleibt fuer aeltere Fassungen des Skripts erhalten.
+    readiness: {
+      verdict: coach ? { cls: "coach", text: coach.headline ?? coach.note } : { cls: "none", text: "Noch keine Coach-Auswertung" }, line: null,
+      sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR,
+      body: { sleep: { score: r.sleepScore, median: r.body.sleepMedian }, hrv: { median: r.body.hrvMedian }, resting: { median: r.body.restingMedian } },
+      items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, med: i.med ?? null })),
+    },
     // next.items: alle Einheiten des naechsten Tages mit Plan (z. B. Kraft und Rad am selben Tag)
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },
     // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt.
     // rings/open/daysLeft: Woche wie auf der Uhr (Ringe ZEIT und TSS, was noch offen ist), nur mit Zeitzielen
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week) },
-    // Wichtigster Befund aus "Was auffällt" (nur Warnungen) mit Konsequenz; null, wenn nichts auffällt
-    focus: topFinding(d),
-    // Montagsbilanz (week-review.js) von Montag bis Mittwoch: wie stark der Wochenrahmen steigen darf; danach null
-    review: reviewOf(d),
-    // Hinweis des Coaches, nur solange er frisch ist; hat im Widget Vorrang vor focus und dem allgemeinen Warum
-    coach: isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? { note: d.coach.note, headline: d.coach.headline } : null,
+    // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget das allgemeine Warum zur Einheit
+    coach,
     sourcesFailed: failedOf(d),
   };
-}
-
-// Eine Zeile unter dem Urteil: Umfang (bei Gelb/Rot) und die Laufsperre, die die Ampelfarbe allein nicht zeigt
-// (Hüfte/Leiste/Knie, Muskelkater). Krankheit und Grün ohne Laufbremse brauchen keine Zeile.
-const DOSE_SHORT = { warn: "Umfang −30 %, lange Einheit verschieben", bad: "frei oder 30 min locker Rad/Schwimmen" };
-export function readinessLine(v) {
-  if (!v || v.sick || v.missing) return null;
-  const run = v.sports?.run;
-  const runTxt = run && run.cls !== v.cls && (run.cls === "bad" || run.cls === "warn") ? (run.cls === "bad" ? run.text.replace(/^kein Lauf/, "Kein Lauf") : `Lauf ${run.text}`) : null;
-  const parts = [DOSE_SHORT[v.cls] ?? null, runTxt].filter(Boolean);
-  return parts.length ? parts.join(" · ") : null;
-}
-
-// Montagsbilanz fuers Widget: nur Montag bis Mittwoch (danach ist der Rahmen gesetzt), Stufe und Vorschlag (Minuten oder TSS)
-const SPORT_SHORT = { run: "Lauf", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
-export function reviewOf(d) {
-  const V = d.weekReview;
-  const dow = (new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7;
-  if (!V || dow > 2) return null;
-  const rng = (p) => (p.from === p.to ? p.from : `${p.from}–${p.to}`);
-  const plan = (V.proposal ?? []).map((p) => (p.unit === "tss" ? `${rng(p)} TSS gesamt` : `${SPORT_SHORT[p.sport] ?? p.sport} ${rng(p)} min`)).join(", ");
-  const text = [`Montagsbilanz: ${V.hasFrame === false ? "Woche" : "Rahmen"} ${V.text}.`, V.runText ? `Laufen ${V.runText}.` : null, plan ? `Vorschlag: ${plan}.` : null].filter(Boolean).join(" ");
-  return { level: V.level, runLevel: V.runLevel, cls: { up: "ok", hold: "warn", down: "bad", deload: "none" }[V.level], text };
 }
 
 // Zweite Widget-Ansicht ("detail", mittleres Widget): Form, Halbmarathon-Zeiten, VDOT/Paces und Schwellen.
@@ -304,7 +283,7 @@ function buildFitness(d, byDate) {
 export function buildWidgetSmall(d, goals = null, live = null) {
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
   const days = Array.from({ length: 7 }, (_, i) => addDays(d.today, -6 + i));
-  const body = d.summary.readiness.body;
+  const body = d.summary.recovery.body;
   const sleepDays = days.map((date) => ({ date, hours: byDate[date]?.sleepHours ?? null, hrv: byDate[date]?.hrv ?? null, restingHR: byDate[date]?.restingHR ?? null }));
   const foodDays = days.map((date) => {
     // Heute direkt aus Yazio (live), sonst waere der Stand bis zu 15 Min (Sync) plus 5 Min (Cache) alt
@@ -319,12 +298,10 @@ export function buildWidgetSmall(d, goals = null, live = null) {
     sleep: {
       days: sleepDays,
       latest: [...sleepDays].reverse().find((x) => x.hours != null) ?? null,
-      // Mediane der 14 Tage vor heute, dieselben wie in der Bereitschaft (heute zaehlt nicht mit)
+      // Mediane der 28 Tage vor heute, dieselben wie in den Erholungswerten (heute zaehlt nicht mit)
       medianHours: body.sleepMedian,
       medianHrv: body.hrvMedian,
       medianRestingHR: body.restingMedian,
-      // Einschaetzung von heute wie in der Bereitschaft (ok/warn/bad/none), nur fuer heute gueltig
-      cls: { sleep: body.sleep.cls, hrv: body.hrv.cls, resting: body.resting.cls },
     },
     food: { days: foodDays, latest, hasData: latest != null, goals },
     fitness: buildFitness(d, byDate),
@@ -345,12 +322,10 @@ export function buildWidgetBlock(d) {
       goals: (b.goals ?? []).map((g) => ({
         key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
-        // Kurs der Abschlussziele (season-block.js goalCourse): Trend, keine Entscheidung
-        course: g.course ? { state: g.course.state, label: g.course.label } : null,
+        // Verlauf der Abschlussziele (season-block.js goalCourse): Richtung besser/schlechter/gleich, keine Entscheidung
+        course: g.course && !g.course.open ? { dir: g.course.dir ?? null } : null,
         weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count, load: w.load !== false })) : undefined,
       })),
-      // Entscheidung zum Blockende (Woche 12): next = weiter, extend = Sportart verlaengern, cause = erst Ursache klaeren
-      decision: b.decision ? { week: b.decision.week, due: b.decision.due, state: b.decision.state, text: b.decision.text } : null,
     },
     sourcesFailed: failedOf(d),
   };
@@ -375,17 +350,10 @@ function watchDay(d, date) {
   return list.length > 1 ? { ...list[0], s2: list[1].s, p2: list[1].p } : list[0];
 }
 
-// rd = Bereitschaft wie im Dashboard (ok, warn, bad, none); w = Warnung: { k: "acwr", v } wenn der ACWR ueber dem Korridor liegt,
-// sonst { k: "hint", t } bei einer Warnung aus "Was auffaellt" mit Stichwort t (z. B. "Eiweiß"), ohne beides null.
+// co = 1, wenn der Coach heute schon seine Morgen-Auswertung geschrieben hat (rd bleibt fuer alte Zifferblaetter "none").
 // race.d = Tage bis zum Rennen; block = Trainingsblock (st Status, d Tage bis Start, w Woche von of) fuer die Zeile am unteren Rand.
 const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
 
-function watchWarning(d) {
-  const load = d.summary.load;
-  if (load?.acwrCls === "bad" && Number.isFinite(load.acwr)) return { k: "acwr", v: Math.round(load.acwr * 100) / 100 };
-  const f = topFinding(d);
-  return f ? { k: "hint", t: f.tag ?? null } : null;
-}
 
 // Kraft fuer den Ring: Saetze der laufenden Kalenderwoche (Mo–So, wie die Kraft-Karte im Dashboard) gegen das Wochenziel
 // (Standard 60, EGYM_WEEKLY_GOAL_SETS), nicht die Zahl der Wochen im Ziel (value/of des Block-Ziels) und nicht die
@@ -443,8 +411,10 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     next,
     race: d.goal ? { d: d.goal.daysToGo ?? null } : null,
     block: b ? { st: b.status, d: b.daysToStart ?? null, w: b.weekNo ?? null, of: b.weeks ?? null } : null,
-    rd: d.summary.readiness.verdict.cls,
-    w: watchWarning(d),
+    // Kein eigenes Urteil: rd bleibt "none" (aeltere Zifferblaetter zeigen dann "Ohne Eintrag"), co = 1, wenn der Coach heute
+    // schon geschrieben hat
+    rd: "none",
+    co: isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? 1 : 0,
     tss: total(week),
     ts: watchTssBySport(week),
     plan: week.plannedLoad > 0 && !targets.length ? week.plannedLoad : null,

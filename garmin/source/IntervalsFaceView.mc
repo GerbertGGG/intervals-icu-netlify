@@ -11,7 +11,7 @@ import Toybox.WatchUi;
 
 // Zifferblatt im Apple-Stil (mit Wochenzielen oben stattdessen die offenen Minuten je Sportart und Kraft): Weiß ist der Normalfall. Farbe heißt entweder erledigte Sportart (Woche, TSS) oder
 // "hier stimmt etwas nicht" (orange/rot), dazu Blau für Regen und gedämpftes Gold für die hellen Stunden. Geplantes, Grundringe und alles im Soll bleiben grau/weiß. Oben die Woche
-// als gerade Reihe, dann nächste Einheit, große Uhrzeit, Bereitschaft (mit Warnung), vier runde Komplikationen und
+// als gerade Reihe, dann nächste Einheit, große Uhrzeit, Coach-Zeile, vier runde Komplikationen und
 // unten Renn-Countdown und Blockwoche als gerade Zeile.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
@@ -26,6 +26,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
+    const ACCENT = 0x64A8FF; // Coach (wie im Widget)
     const KCAL_OVER = 150;   // so viele kcal über dem Ziel, bevor Essen orange wird
     const PROT_MIN = 0.8;    // Eiweiß-Anteil am Ziel, unter dem Essen ab PROT_HOUR orange wird
     const PROT_HOUR = 18;
@@ -340,37 +341,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawLine(dc, px(119), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
     }
 
-    // ---- Bereitschaft, dahinter die Warnung ------------------------------------------
-    // rd: ok, warn, bad, none (wie im Dashboard). w: { k: "acwr", v } oder { k: "hint", t: Stichwort }.
+    // ---- Coach: Hat die Morgen-Auswertung heute schon geschrieben? ------------------------------------------
+    // co: 1 = Aussage von heute da, 0 = noch nicht. Ein eigenes Urteil (Ampel) zeigt die Uhr nicht: das macht der Coach.
 
     private function drawReady(dc as Dc, data as Dictionary) as Void {
-        var rd = data.get("rd");
-        var word = "Ohne Eintrag";
-        var color = SEC;
-        if ("ok".equals(rd)) { word = "Bereit"; color = OK; }
-        else if ("warn".equals(rd)) { word = "Mit Vorsicht"; color = WARN; }
-        else if ("bad".equals(rd)) { word = "Ruhig angehen"; color = BAD; }
+        var co = numOrNull(data.get("co"));
+        var has = co != null && co.toNumber() == 1;
         // Älter als eine Stunde: alles grau mit "!"
         var stale = isStale(data);
-        // Ampel nicht nur über die Farbe: Kreis = bereit, Dreieck = mit Vorsicht, Quadrat = ruhig angehen (wie Dashboard und Widget)
-        var shape = stale || "ok".equals(rd) || !("warn".equals(rd) || "bad".equals(rd)) ? ["dot", px(7), stale ? TER : color] : ("warn".equals(rd) ? ["tri", px(17), color] : ["sq", px(14), color]);
-        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale ? SEC : FG, _small]] as Array<Array>;
-        var w = data.get("w") as Dictionary?;
-        if (w != null) {
-            // Stichwort aus "Was auffällt" (z. B. "Eiweiß"); ohne Stichwort (ältere Worker-Version) "Hinweis"
-            var tag = w.get("t");
-            var text = tag instanceof Lang.String && tag.length() > 0 ? tag : "Hinweis";
-            var v = numOrNull(w.get("v"));
-            if ("acwr".equals(w.get("k")) && v != null) {
-                text = "ACWR " + decimal(v, "%.2f");
-            }
-            items.add(["gap", px(14)]);
-            items.add(["bar", px(22), TER]);
-            items.add(["gap", px(14)]);
-            items.add(["tri", px(19), WARN]);
-            items.add(["gap", px(8)]);
-            items.add(["t", text, WARN, _small]);
-        }
+        var word = has ? "Coach hat geschrieben" : "Noch kein Coach";
+        var items = [["dot", px(7), stale ? TER : (has ? ACCENT : SEC)], ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale || !has ? SEC : FG, _small]] as Array<Array>;
         drawLine(dc, px(READY_Y), items);
     }
 

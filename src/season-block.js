@@ -169,10 +169,6 @@ export function parseBlockTargets(text) {
   const sets = t.match(/(\d+)\s*sätze/i);
   const ramp = t.match(/ramp\s*-?\s*rate[^\d\n]{0,40}(\d+(?:[.,]\d+)?)/i);
   const pause = t.match(/pause\s*(?:über|von mehr als|länger als|>)\s*(\d+)\s*tag/i);
-  // Entscheidung zum Blockende: eine Zeile, die mit "Woche 12" beginnt ("Woche 12: …" oder Ueberschrift "WOCHE 12" mit Absatz darunter).
-  // "Intensität ab Woche 2:" mitten in einer Zeile ist keine Entscheidung.
-  const decision = t.match(/^[ \t]*woche\s*(\d+)\b[^\n]*(?:\n(?![ \t]*\n)[^\n]*)*/im);
-  const ext = decision?.[0].match(/(\d+\s*[–-]\s*\d+|\d+)\s*wochen[^\n]{0,20}verlänger|verlänger[^\n]{0,40}?(\d+\s*[–-]\s*\d+|\d+)\s*wochen/i);
   return {
     ...sport,
     // Alte Form (nur Stichworte): Decoupling langer Laeufe, solange kein Lauf-Absatz mit vergleichbaren Laeufen da ist
@@ -185,9 +181,6 @@ export function parseBlockTargets(text) {
     // HF-Deckel fuer lockere Laeufe: "HF-Deckel 128", sonst die Zeile "Lauf-Grundlage unter HF 128", erst danach irgendein
     // "Grundlage… unter HF" (sonst gewinnt ein frueherer Satz wie "Grundlagenlauf ab 60 min unter HF 125 als Trend")
     hrCap: num1(t.match(/hf-?(?:deckel|obergrenze)\s*:?\s*(\d{3})/i) ?? t.match(/lauf-?grundlage[^\n]{0,40}?(?:unter|≤|<=|<)\s*hf\s*(\d{3})/i) ?? t.match(/grundlage[^\n]{0,40}?(?:unter|≤|<=|<)\s*hf\s*(\d{3})/i), null),
-    decision: decision ? { week: Number(decision[1]), extend: ext ? (ext[1] ?? ext[2]).replace(/\s*[–-]\s*/, "–") : "3–4" } : null,
-    // TSS einer Rad-Vergleichseinheit inkl. Einrollen ("Vergleichseinheit inkl. Einrollen ca. 70 min / ~48 TSS")
-    compareTss: num1(t.match(/vergleichseinheit[^\n]{0,60}?(\d{2,3})\s*tss/i), null),
   };
 }
 
@@ -273,7 +266,7 @@ function decouplingGoal({ key, sport, label, sessions, cfg, w, basis, comparable
     value: avg != null ? r1(avg) : null, count: comp.length, max: cfg.max, must, lastN: n, pace,
     series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(Number.isFinite(x.mainWatts ?? x.watts) ? { watts: Math.round(x.mainWatts ?? x.watts) } : {}), ...(Number.isFinite(x.mainHr) ? { hr: x.mainHr } : {}), ...(x.noWarmup ? { noWarmup: true } : {}) })),
     status,
-    // Fuer die Entscheidung in Woche 12 zaehlt das Muss-Kriterium (ohne Muss der Zielwert), ueber volle n Einheiten
+    // Ziel erfuellt: Muss-Kriterium (ohne Muss der Zielwert) ueber volle n Einheiten, Pace nicht langsamer
     pass: !w.baseline && comp.length >= n && (must != null ? avg <= must : decOk) && pace?.ok !== false,
     note: avg == null ? `Noch keine vergleichbare Einheit mit Decoupling-Wert.` : notes.join(" · "),
     hints: extraNotes.filter(Boolean),
@@ -492,23 +485,6 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
   return [base, stable];
 }
 
-// Entscheidung zum Blockende (Woche 12): alle Ziele und Leitplanken erfuellt -> naechster Block; eine Leitplanke gerissen ->
-// erst Ursache klaeren; sonst die betroffenen Sportarten verlaengern. Vor der Woche als "Stand heute".
-const SPORT_DE = { run: "Lauf", bike: "Rad", swim: "Schwimmen" };
-export function buildBlockDecision(block, targets, goals) {
-  if (!targets.decision || block.status === "upcoming") return null;
-  const ziele = goals.filter((g) => g.group === "ziel"), lp = goals.filter((g) => g.group === "leitplanke");
-  if (!ziele.length) return null;
-  const broken = lp.filter((g) => g.status === "bad");
-  const missing = ziele.filter((g) => !g.pass);
-  const state = broken.length ? "cause" : missing.length ? "extend" : "next";
-  const sports = [...new Set(missing.map((g) => SPORT_DE[g.sport] ?? g.label))];
-  const text = state === "next" ? `Weiter mit ${block.next?.name ?? "dem nächsten Block"}${block.next?.start ? ` (ab ${block.next.start.slice(8, 10)}.${block.next.start.slice(5, 7)}.)` : ""}.`
-    : state === "extend" ? `${sports.join(", ")} um ${targets.decision.extend} Wochen verlängern.`
-    : `Leitplanke gerissen (${broken.map((g) => g.label).join(", ")}): erst die Ursache klären, dann ${missing.length ? `${sports.join(", ")} verlängern` : "weiter"}.`;
-  return { week: targets.decision.week, due: block.status === "done" || (block.weekNo ?? 0) >= targets.decision.week, state, text, missing: [...new Set(missing.map((g) => g.sport))], broken: broken.map((g) => g.key) };
-}
-
 // input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}],
 //   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,mainWatts,noWarmup,vi,intensity,indoor,easy,hasHr}],
 //   im Blocktest-Modus runs zusaetzlich mit {id,name,analysis} (analyzeRunStreams),
@@ -633,23 +609,22 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   if (targets.pause) goals.push(pauseGoal(input.activityDays ?? [], input.plannedBreaks ?? [], targets.pause, w, basis, todayIso));
 
   for (const g of goals) if (g.group === "ziel") g.course = goalCourse(g, w);
-  return { goals, decision: buildBlockDecision(block, targets, goals) };
+  return { goals };
 }
 
-// Kurs der Abschlussziele: Erster Messwert → letzter → Ziel, dazu die Richtung. Das ist ausdrücklich ein Trend, keine
-// Entscheidung (die fällt in Woche 12). Hauptkurve ist die Leistung bei gleichem Puls bzw. der Puls bei gleicher Leistung:
-// Unter einem strengen HF-Deckel ist das Decoupling oft schon niedrig, der Fortschritt zeigt sich dann im Tempo (Lauf,
-// Pace 0–60 im HF-Band) bzw. im Puls bei fester Leistung (Rad). Das Decoupling bleibt das Abnahmekriterium.
-//   auf Kurs = Ziel schon erreicht · knapp = im Muss oder auf dem Weg dorthin · hinten = weder noch · offen = noch kein Vergleich
-const COURSE_TEXT = { on: "auf Kurs", close: "knapp", behind: "hinten", open: "offen" };
+// Kurs der Abschlussziele: Erster Messwert → letzter → Ziel, dazu die Richtung (besser/schlechter/gleich) und die nächste
+// Messung. Nur der Verlauf, keine Stufe und keine Entscheidung (die trifft der Coach). Hauptkurve ist die Leistung bei gleichem
+// Puls bzw. der Puls bei gleicher Leistung: Unter einem strengen HF-Deckel ist das Decoupling oft schon niedrig, der
+// Fortschritt zeigt sich dann im Tempo (Lauf, Pace 0–60 im HF-Band) bzw. im Puls bei fester Leistung (Rad).
+// open = noch kein Vergleich (unter 2 Messungen).
 function goalCourse(g, w) {
   const dirOf = (a, b, lowerBetter = true) => (a == null || b == null ? null : a === b ? "flat" : (b < a) === lowerBetter ? "better" : "worse");
-  const out = (state, extra) => ({ state, label: COURSE_TEXT[state], baseline: Boolean(w?.baseline), ...extra });
+  const out = (open, extra) => ({ open, baseline: Boolean(w?.baseline), ...extra });
   if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
     const s = g.series ?? [];
     const next = g.key === "runDecoupling" ? (g.nextTest ?? null) : null;
     const nextText = g.key === "runDecoupling" ? (g.nextTest ? `nächster Blocktest ${g.nextTest.slice(8, 10)}.${g.nextTest.slice(5, 7)}.` : g.tests ? null : "nächster langer Grundlagenlauf") : "nächste Rolle mit Messfenster";
-    if (!s.length) return out("open", { from: null, to: null, target: g.max, unit: "%", dir: null, main: null, next, nextText });
+    if (!s.length) return out(true, { from: null, to: null, target: g.max, unit: "%", dir: null, main: null, next, nextText });
     const first = s[0], last = s[s.length - 1];
     let main = null, mainDir = null;
     if (g.key === "runDecoupling" && g.tests?.length) {
@@ -659,23 +634,21 @@ function goalCourse(g, w) {
       const hs = s.filter((x) => Number.isFinite(x.hr));
       if (hs.length) { const a = hs[0], b = hs[hs.length - 1]; main = `Puls bei ${b.watts ?? "fester"} W ${a.hr} → ${b.hr}`; mainDir = a === b ? null : dirOf(a.hr, b.hr); }
     }
-    const must = g.must ?? g.max + 2;
     const dir = s.length > 1 ? dirOf(first.value, g.value) : null;
-    const state = s.length < 2 ? "open" : g.value <= g.max ? "on" : g.value <= must || dir === "better" || mainDir === "better" ? "close" : "behind";
-    return out(state, { from: first.value, to: g.value, target: g.max, unit: "%", dir, main, mainDir, next, nextText });
+    return out(s.length < 2, { from: first.value, to: g.value, target: g.max, unit: "%", dir, main, mainDir, next, nextText });
   }
   if (g.key === "runStable") {
     const n = g.tests?.length ?? 0;
     const nextText = g.nextTest ? `nächster Blocktest ${g.nextTest.slice(8, 10)}.${g.nextTest.slice(5, 7)}.` : null;
-    if (n < 2) return out("open", { from: g.baseValue ?? null, to: null, target: "länger als Basistest", unit: "min", dir: null, next: g.nextTest ?? null, nextText });
+    if (n < 2) return out(true, { from: g.baseValue ?? null, to: null, target: "länger als Basistest", unit: "min", dir: null, next: g.nextTest ?? null, nextText });
     const dir = dirOf(g.baseValue, g.value, false);
-    return out(g.value > g.baseValue ? "on" : g.value === g.baseValue ? "close" : "behind", { from: g.baseValue, to: g.value, target: "länger als Basistest", unit: "min", dir, next: g.nextTest ?? null, nextText });
+    return out(false, { from: g.baseValue, to: g.value, target: "länger als Basistest", unit: "min", dir, next: g.nextTest ?? null, nextText });
   }
   if (g.key === "swimTest") {
     const t = g.tests ?? [];
-    if (!t.length) return out("open", { from: null, to: null, target: g.maxSlowerPer100, unit: "s/100 m", dir: null, nextText: "nächster Schwimmtest" });
+    if (!t.length) return out(true, { from: null, to: null, target: g.maxSlowerPer100, unit: "s/100 m", dir: null, nextText: "nächster Schwimmtest" });
     const a = t[0], b = t[t.length - 1], dir = t.length > 1 ? dirOf(a.slowerPer100, b.slowerPer100) : null;
-    return out(b.pass ? "on" : dir === "better" || t.some((x) => x.pass) ? "close" : "behind", { from: a.slowerPer100, to: b.slowerPer100, target: g.maxSlowerPer100, unit: "s/100 m", dir, nextText: b.pass ? null : "nächster Schwimmtest" });
+    return out(false, { from: a.slowerPer100, to: b.slowerPer100, target: g.maxSlowerPer100, unit: "s/100 m", dir, nextText: b.pass ? null : "nächster Schwimmtest" });
   }
   return null;
 }
