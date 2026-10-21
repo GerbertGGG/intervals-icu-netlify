@@ -229,7 +229,7 @@ function renderCockpit(d) {
       ${capKpi}
       ${lastKpi}
     </div>`;
-  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${kpis}</div>`;
+  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}${kpis}</div>`;
 
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
@@ -1155,6 +1155,22 @@ function coachHead(d) {
     ${q}
     ${paras ? `<details class="bdet"><summary>Ganzer Bericht</summary><div class="desc" style="color:var(--text)">${paras}</div></details>` : ""}
     <div class="hero-why">Stand ${clock(c.fetchedAt)} Uhr</div>`;
+}
+/* Idee der Woche: freiwillige Anregung des Coaches (montags per save_coach, Feld idea). Ruhig unter der Coach-Karte, ohne
+   Abhaken und ohne Status. Älter als 8 Tage (Montag ausgelassen) wird sie ausgeblendet. */
+const IDEA_ICON = {
+  lauf: '<path d="M2.5 13.5V8l2.5 1 2-3.5h2.5l1.5 3 5 1.5a2 2 0 0 1 1.5 2v1.5zM2.5 16h15M9 8.5l1.5-.5M9.8 10l1.5-.5"/>',
+  rad: '<circle cx="5" cy="13" r="3.2"/><circle cx="15" cy="13" r="3.2"/><path d="M5 13l3-6h5l2 6M8 7h-2M10 13l3-6"/>',
+  schwimmen: '<path d="M2 8c2-1.5 3-1.5 4 0s2 1.5 4 0 3-1.5 4 0 2 1.5 4 0M2 13c2-1.5 3-1.5 4 0s2 1.5 4 0 3-1.5 4 0 2 1.5 4 0"/>',
+  kraft: '<path d="M6 6v8M14 6v8M3 8v4M17 8v4M6 10h8"/>',
+  alle: '<path d="M10 2.5a5 5 0 0 0-3 9V14h6v-2.5a5 5 0 0 0-3-9zM8 17h4"/>',
+};
+const IDEA_SPORT_LABEL = { lauf: "Laufen", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft", alle: "Alle Sportarten" };
+function ideaCard(d) {
+  const i = d.coach?.idea;
+  if (!i?.text || !i.createdAt || berlinDay(i.createdAt) < addDays(d.today, -8)) return "";
+  const icon = `<svg class="idea-ic" viewBox="0 0 20 20" aria-hidden="true">${IDEA_ICON[i.sport] ?? IDEA_ICON.alle}</svg>`;
+  return `<div class="idea" title="${IDEA_SPORT_LABEL[i.sport] ?? "Idee"}">${icon}<div><div class="hero-k">Idee der Woche</div><p>${esc(i.text)}</p></div></div>`;
 }
 // Werte von heute früh als Fakten: Körperwerte gegen die eigene Basis, Gefühlswerte (vor dem Training eingetragen) gegen das Übliche
 function factsLine(R, today) {

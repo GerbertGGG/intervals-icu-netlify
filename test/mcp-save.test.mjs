@@ -45,5 +45,23 @@ assert.equal(got.question, "Hüfte nach den Sprints, 0–10?");
 assert.equal(got.answer, null);
 r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: snap.fetchedAt, note: "Locker.", answer: "2" } });
 assert.equal(r.body.result.isError, true); // Antwort ohne Frage
+// Idee der Woche ueber save_coach / get_coach
+r = await rpc("tools/call", { name: "get_coach", arguments: {} });
+assert.equal(JSON.parse(r.body.result.content[0].text).idea, null); // aeltere Aussage ohne idea
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-19T05:00:00Z", note: "Montag.", idea: { text: "Schwimm 4 Bahnen nur mit Beinen", angle: 4, sport: "schwimmen" } } });
+assert.ok(!r.body.result.isError);
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-20T05:00:00Z", note: "Dienstag." } });
+assert.ok(!r.body.result.isError);
+r = await rpc("tools/call", { name: "get_coach", arguments: {} });
+const gi = JSON.parse(r.body.result.content[0].text);
+assert.equal(gi.note, "Dienstag.");
+assert.deepEqual(gi.idea, { text: "Schwimm 4 Bahnen nur mit Beinen", angle: 4, sport: "schwimmen", createdAt: "2026-10-19T05:00:00.000Z" });
+assert.deepEqual(gi.ideas, [{ date: "2026-10-19", text: "Schwimm 4 Bahnen nur mit Beinen", angle: 4, sport: "schwimmen" }]);
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-21T05:00:00Z", note: "Mittwoch.", idea: { text: "x".repeat(241) } } });
+assert.equal(r.body.result.isError, true);
+assert.match(r.body.result.content[0].text, /idea\.text länger als 240/);
+assert.equal(JSON.parse(kv.get("dashboard:coach")).note, "Dienstag."); // nichts geschrieben
+const schema = list.body.result.tools.find((t) => t.name === "save_coach").inputSchema.properties.idea;
+assert.deepEqual(schema.properties.sport.enum, ["lauf", "rad", "schwimmen", "kraft", "alle"]);
 console.log = log;
 console.log("mcp-save tests ok");
