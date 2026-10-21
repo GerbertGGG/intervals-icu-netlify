@@ -634,7 +634,7 @@ function buildWidget(res) {
   // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
   const wk = d.week || {};
   // Ohne Einheit heute ist unten Platz: darunter die naechsten drei Tage (nicht bei langem Hinweis)
-  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, true, nLines <= 3);
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, nLines <= 2, nLines <= 3);
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -687,7 +687,8 @@ function buildWidget(res) {
 
 // Ringe im Apple-Stil wie auf der Uhr: aussen Rad, Mitte Lauf, innen Schwimmen; Grundring in der Sportfarbe gedimmt,
 // Fortschritt ab 12 Uhr. Mit warn laeuft der Ueberschuss ueber der Vorgabe orange als zweite Runde weiter (TSS-Grenze).
-// rings: [[Sportart, erledigt, Vorgabe], ...]. Kreisboegen als Linienzug, DrawContext kennt keine Boegen.
+// rings: [[Sportart, erledigt, Vorgabe, Untergrenze?], ...]; die Untergrenze (TSS-Korridor) steht wie im Dashboard als
+// Querstrich auf dem Ring. Kreisboegen als Linienzug, DrawContext kennt keine Boegen.
 function ringsImage(S, rings, warn) {
   // Dicke Ringe mit schmaler Fuge wie auf der Uhr; der Grundring etwas kraeftiger, sonst wirkt Gelb auf Schwarz wie Oliv
   const dc = newCtx(S, S), c = S / 2, pen = Math.max(5, S * 0.11), step = pen * 1.12;
@@ -699,21 +700,26 @@ function ringsImage(S, rings, warn) {
     // runde Enden
     for (const q of f < 1 ? [pts[0], pts[pts.length - 1]] : []) { const e = new Path(); e.addEllipse(new Rect(q.x - pen / 2, q.y - pen / 2, pen, pen)); dc.addPath(e); dc.setFillColor(new Color(hex, a)); dc.fillPath(); }
   };
-  for (const [k, v, goal] of rings) {
+  for (const [k, v, goal, lo] of rings) {
     const r = R[k];
     if (r == null || !(goal > 0)) continue;
     const t = new Path(); t.addEllipse(new Rect(c - r, c - r, 2 * r, 2 * r)); dc.addPath(t); dc.setStrokeColor(new Color(sportHex(k), 0.28)); dc.setLineWidth(pen); dc.strokePath();
     const f = v / goal;
     if (f > 0) arc(r, Math.min(f, 1), sportHex(k));
     if (warn && f > 1) arc(r, Math.min(f - 1, 1), OVER_HEX);
+    if (lo > 0 && lo < goal) {
+      const a = -Math.PI / 2 + 2 * Math.PI * (lo / goal), d0 = r - pen / 2 - 1, d1 = r + pen / 2 + 1;
+      const m = new Path(); m.addLines([new Point(c + d0 * Math.cos(a), c + d0 * Math.sin(a)), new Point(c + d1 * Math.cos(a), c + d1 * Math.sin(a))]);
+      dc.addPath(m); dc.setStrokeColor(new Color("#ffffff", 0.9)); dc.setLineWidth(2); dc.strokePath();
+    }
   }
   return dc.getImage();
 }
 
-// Woche im grossen Widget mit Wochenzielen des Coaches: links ein Ring je Sportart (Zeit gegen das Ziel), rechts Minuten
-// gegen das Ziel, TSS gegen den Korridor (Untergrenze–Obergrenze; oder welche Sportart ueber der Obergrenze liegt) mit der Frische, darunter je Sportart eine
-// Kapsel mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Die Kapseln stehen neben dem
-// Ring statt darunter: so passt die Woche auch mit geplanter Einheit ins Widget. Ersetzt Wochenkreise und Tageskacheln.
+// Woche im grossen Widget mit Wochenzielen des Coaches wie im Dashboard: zwei Ringe ZEIT (gegen das Zeitziel) und TSS (gegen
+// die Obergrenze, Untergrenze als Querstrich), rechts Minuten gegen das Ziel, TSS gegen den Korridor (Untergrenze–Obergrenze;
+// oder welche Sportart ueber der Obergrenze liegt) und die Frische; darunter ueber die volle Breite je Sportart eine Kapsel
+// mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Ersetzt Wochenkreise und Tageskacheln.
 // TSS-Korridor als Text: "220–275", ohne Untergrenze "≤ 275"
 function tssRange(lo, hi) { return lo > 0 ? `${fmt(lo)}–${fmt(hi)}` : `≤ ${fmt(hi)}`; }
 function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = false) {
@@ -722,22 +728,36 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
   const over = tss.filter((x) => x[1] > x[2]);
   header(w, W, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, null);
   w.addSpacer(5);
-  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 12;
-  const RZ = withDays ? 88 : 78;
-  const iz = row.addImage(ringsImage(RZ, zeit, false)); iz.imageSize = new Size(RZ, RZ);
-  const RW = W - RZ - 12;
+  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 10;
+  const RZ = 64;
+  // Ring mit kleiner Beschriftung darunter (ZEIT, TSS) wie im Dashboard
+  const ringCol = (rings, warn, label) => {
+    const col = row.addStack(); col.layoutVertically();
+    const im = col.addImage(ringsImage(RZ, rings, warn)); im.imageSize = new Size(RZ, RZ);
+    col.addSpacer(2);
+    const lb = col.addStack(); lb.size = new Size(RZ, 0); lb.addSpacer(); text(lb, label, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); lb.addSpacer();
+  };
+  ringCol(zeit, false, "ZEIT");
+  if (tss.length) ringCol(tss, true, "TSS");
+  const RW = W - (tss.length ? 2 : 1) * (RZ + 10);
   const rc = row.addStack(); rc.layoutVertically(); rc.size = new Size(RW, 0);
   const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmt(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmt(sum(zeit, 2))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
-  const tsb = wk.tsb != null ? ` · TSB ${signed(wk.tsb)}` : "";
-  if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über TSS-Grenze${tsb}`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
-  else if (tss.length) text(rc, `TSS ${fmt(sum(tss, 1))} / ${tssRange(tss.reduce((a, x) => a + (x[3] || 0), 0), sum(tss, 2))}${tsb}`, FS.xs, { color: COL.muted, minScale: 0.6 });
-  else if (tsb) text(rc, tsb.slice(3), FS.xs, { color: COL.muted, minScale: 0.6 });
-  // Offen: eine Kapsel je Sportart in der Sportfarbe, Zahl = was noch fehlt
+  if (tss.length) {
+    // TSS gegen den Korridor: ueber der Obergrenze Warnfarbe, sonst neutral (unter der Untergrenze nur gedaempft)
+    const lo = tss.reduce((a, x) => a + (x[3] || 0), 0), under = !over.length && tss.some((x) => x[3] > 0 && x[1] < x[3]);
+    rc.addSpacer(2);
+    const l2 = rc.addStack(); l2.bottomAlignContent();
+    num(l2, fmt(sum(tss, 1)), FS.lg, { color: over.length ? COL.warn : under ? COL.muted : COL.text });
+    text(l2, ` / ${tssRange(lo, sum(tss, 2))} TSS`, FS.xs, { bold: true, color: COL.muted, minScale: 0.6 });
+    if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über Obergrenze`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
+  }
+  if (wk.tsb != null) text(rc, `TSB ${signed(wk.tsb)}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  // Offen: eine Kapsel je Sportart in der Sportfarbe ueber die volle Breite, Zahl = was noch fehlt
   const open = wk.open || [];
   if (open.length) {
-    rc.addSpacer(6);
-    const gap = 5, CW = Math.floor((RW - gap * (open.length - 1)) / open.length);
-    const chips = rc.addStack(); chips.spacing = gap;
+    w.addSpacer(8);
+    const gap = 6, CW = Math.floor((W - gap * (open.length - 1)) / open.length);
+    const chips = w.addStack(); chips.spacing = gap; chips.size = new Size(W, 0);
     for (const o of open) {
       const hex = sportHex(o.s), done = !(o.v > 0);
       const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
@@ -774,8 +794,8 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
 // Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Ziel (TSS-Obergrenze
-// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Der TSS-Korridor
-// (Untergrenze bis Obergrenze) liegt als etwas kraeftigeres, seitlich ueberstehendes Band dahinter und bleibt so auch neben der Saeule sichtbar. Ohne Ziel keine Flaeche, ohne
+// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Die Untergrenze des
+// TSS-Korridors steht wie im Dashboard als gestrichelte Linie quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne
 // Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
@@ -802,8 +822,6 @@ function weekImage(w, weeks, K) {
     const x = i * slot + (slot - bw) / 2, v = K.val(k), g = K.goal(k);
     const gy = g != null ? base - Math.max(2, (g / max) * h) : null;
     if (gy != null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.16)); dc.fillRect(new Rect(x, gy, bw, base - gy)); }
-    const fl = K.floor ? K.floor(k) : null;
-    if (gy != null && fl != null) { const fy = base - Math.max(2, (fl / max) * h); dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(x - 3, gy, bw + 6, fy - gy)); }
     // Saeule: je Sportart ein Abschnitt (groesster unten), ohne Luecken
     if (v != null && v > 0) {
       const ht = Math.max(2, (v / max) * h), top = base - ht;
@@ -819,6 +837,12 @@ function weekImage(w, weeks, K) {
     }
     // Ueber dem Ziel verdeckt die Saeule die Flaeche: dann markiert ein Strich die Zielhoehe
     if (gy != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, gy - 1.25, tick, 2.5)); }
+    const fl = K.floor ? K.floor(k) : null;
+    if (fl != null) {
+      const fy = base - Math.max(2, (fl / max) * h);
+      dc.setFillColor(new Color(INK_HEX));
+      for (let dx = 0; dx < tick; dx += 4) dc.fillRect(new Rect(x + bw / 2 - tick / 2 + dx, fy - 0.75, Math.min(2.5, tick - dx), 1.5));
+    }
   });
   return dc.getImage();
 }
