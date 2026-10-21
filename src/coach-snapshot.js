@@ -40,6 +40,10 @@ const IDEA_HINT = " (ohne idea speichern, um die Tagesaussage trotzdem zu sicher
 // undefined = Feld fehlt (Idee bleibt), null = leerer text (Idee entfernen), sonst die neue Idee.
 function validateIdea(idea) {
   if (idea == null) return { value: undefined };
+  // Clients mit veraltetem Tool-Schema schicken das Objekt als JSON-Text
+  if (typeof idea === "string" && idea.trim().startsWith("{")) {
+    try { idea = JSON.parse(idea); } catch { return { error: "idea ist kein gültiges JSON-Objekt" + IDEA_HINT }; }
+  }
   if (typeof idea !== "object" || Array.isArray(idea)) return { error: "idea muss ein Objekt { text, angle?, sport? } sein" + IDEA_HINT };
   if (idea.text != null && typeof idea.text !== "string") return { error: "idea.text muss ein Text sein" + IDEA_HINT };
   const text = (idea.text ?? "").trim();

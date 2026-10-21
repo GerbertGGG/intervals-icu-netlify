@@ -57,6 +57,8 @@ assert.match(validateCoach({ ...base, idea: { text: "i", angle: 9 } }).error, /a
 assert.match(validateCoach({ ...base, idea: { text: "i", angle: 2.5 } }).error, /angle/);
 assert.match(validateCoach({ ...base, idea: { text: "i", sport: "tennis" } }).error, /sport/);
 assert.ok(validateCoach({ ...base, idea: "Barfuß laufen" }).error);
+assert.deepEqual(validateCoach({ ...base, idea: '{"text":"Rad ohne Uhr","sport":"rad"}' }).value.idea, { text: "Rad ohne Uhr", angle: null, sport: "rad" }); // JSON-Text
+assert.ok(validateCoach({ ...base, idea: '{"text":' }).error);
 // mergeCoach: Update ohne idea laesst Idee und Historie stehen
 const v = (fetchedAt, idea) => validateCoach({ fetchedAt, note: "x", ...(idea !== undefined ? { idea } : {}) }).value;
 let m = mergeCoach(null, v("2026-10-12T05:00:00Z", { text: "Idee A", sport: "rad" }));
