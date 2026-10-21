@@ -593,6 +593,10 @@ console.log("zones from intervals ok");
   // Training-Ansicht: Zeitziel und TSS-Obergrenze je Disziplin
   const trn = buildWidgetTraining(dt).sports;
   assert.deepEqual([trn.run.targetMin, trn.run.targetLoad, trn.bike.targetMin], [90, 85, null]);
+  // Belastung (mittleres Widget): laufende Woche mit TSS-Obergrenze und Zeitziel des Coaches wie im Dashboard
+  const tw = buildWidgetDetail(dt).tssWeeks.at(-1);
+  assert.deepEqual([tw.goal, tw.cap, tw.minGoal], [cur.targetLoad, true, cur.targetMin]);
+  assert.equal(tw.min, Object.values(cur.bySport).reduce((a, s) => a + s.minutes, 0));
   // Uhr: Ringe aussen Rad, Mitte Lauf, innen Schwimmen; Zeit gegen Ziel, TSS gegen Obergrenze (Schwimmen ohne Grenze)
   const wt = buildWidgetWatch(dt);
   assert.deepEqual(wt.rz, [["run", run.min, 90], ["swim", tg.find((t) => t.s === "swim").min, 55]]);

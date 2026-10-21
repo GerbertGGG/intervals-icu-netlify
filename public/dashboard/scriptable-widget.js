@@ -769,10 +769,10 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 }
 
 /* ---------- Mittel: Belastung der letzten 6 Wochen (Parameter "form") ---------- */
-// Je Woche eine Kapsel: Umriss = Ziel (Plan oder Wochenziel), Fuellung = gemacht, gestapelt in Sportfarben (groesster Anteil
-// unten). Ohne Ziel kein Umriss, ohne Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte
-// darunter (tssLabels), weil Text im Bild feste Farben hat.
-const TSS_PLOT_H = 52;
+// Je Woche eine Kapsel: Umriss = TSS-Ziel (Obergrenze des Coaches oder Plan), Fuellung = gemacht, gestapelt in Sportfarben
+// (groesster Anteil unten). Ohne Ziel kein Umriss, ohne Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte
+// Widget-Texte darunter (tssLabels), weil Text im Bild feste Farben hat: TSS mit Ziel, Trainingszeit mit Zeitziel, Datum.
+const TSS_PLOT_H = 40;
 // Waagrechter Streifen (yTop bis yBot) aus einer senkrechten Kapsel als Pfad: so wird die Fuellung in Sportfarben geteilt
 function capsuleBand(x, y, w, h, yTop, yBot) {
   const r = Math.min(w / 2, h / 2), cx = x + w / 2;
@@ -818,7 +818,9 @@ function tssImage(w, weeks) {
   return dc.getImage();
 }
 
-// Je Woche eine Spalte unter der Saeule: TSS (fett), Ziel, Wochenanfang
+// TSS-Ziel als Text: Obergrenze des Coaches mit "≤", Plan ohne
+const tssGoalText = (k) => (k.goal != null ? `${k.cap ? "≤" : ""}${fmt(k.goal)}` : null);
+// Je Woche eine Spalte unter der Saeule: TSS (fett), TSS-Ziel, Minuten mit Zeitziel, Wochenanfang
 function tssLabels(parent, W, weeks) {
   const slot = Math.floor(W / weeks.length), row = parent.addStack();
   row.size = new Size(slot * weeks.length, 0);
@@ -827,7 +829,8 @@ function tssLabels(parent, W, weeks) {
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(slot, 0);
     const line = (fn) => { const r = col.addStack(); r.addSpacer(); fn(r); r.addSpacer(); };
     line((r) => num(r, k.tss != null ? fmt(k.tss) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
-    line((r) => text(r, k.goal != null ? `/${fmt(k.goal)}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
+    line((r) => text(r, k.goal != null ? `/${tssGoalText(k)}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
+    line((r) => text(r, k.min != null ? `${fmt(k.min)}${k.minGoal != null ? `/${fmt(k.minGoal)}` : ""}′` : k.minGoal != null ? `–/${fmt(k.minGoal)}′` : "–", FS.xs, { color: COL.text, align: "center", minScale: 0.6 }));
     line((r) => text(r, dateShort(k.weekStart), FS.xs, { bold: cur, color: cur ? COL.text : COL.muted, align: "center", minScale: 0.7 }));
   });
 }
@@ -837,8 +840,11 @@ function buildMedium(res) {
   const W = widgetInnerWidth();
   const w = baseWidget({ padV: 11 });
   const tw = d.tssWeeks || [], cur = tw[tw.length - 1];
-  header(w, W, "BELASTUNG · 6 WOCHEN", cur && cur.tss != null ? `${fmt(cur.tss)}${cur.goal ? ` / ${fmt(cur.goal)}` : ""} TSS diese Woche` : null);
-  w.addSpacer(5);
+  // Rechts die laufende Woche: TSS mit Ziel und Minuten mit Zeitziel (aeltere Daten ohne Minuten: nur TSS wie bisher)
+  const curTss = cur && cur.tss != null ? `${fmt(cur.tss)}${cur.goal ? `/${tssGoalText(cur)}` : ""} TSS` : null;
+  const curMin = cur && "min" in cur && (cur.min != null || cur.minGoal != null) ? `${cur.min != null ? fmt(cur.min) : "0"}${cur.minGoal ? `/${fmt(cur.minGoal)}` : ""} min` : null;
+  header(w, W, "BELASTUNG · 6 WOCHEN", [curTss, curMin].filter(Boolean).join(" · ") || null);
+  w.addSpacer(4);
   if (tw.some((k) => k.tss != null)) {
     const im = w.addImage(tssImage(W, tw)); im.imageSize = new Size(W, TSS_PLOT_H);
     w.addSpacer(3);
