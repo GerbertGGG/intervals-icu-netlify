@@ -771,8 +771,8 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 }
 
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
-// Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); Marke = Ziel (TSS-Obergrenze bzw.
-// Zeitziel des Coaches, sonst Plan) mit blasser Flaeche bis dorthin, die die Saeule fuellt. Ohne Ziel keine Marke, ohne
+// Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Ziel (TSS-Obergrenze
+// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Ohne Ziel keine Flaeche, ohne
 // Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
@@ -789,8 +789,8 @@ const WEEK_KINDS = {
   },
 };
 function weekImage(w, weeks, K) {
-  // Wie die Wochen-Charts im Dashboard: schmale Saeule, Ziel als waagrechte Marke. Bis zur Marke eine blasse Flaeche,
-  // die die Saeule fuellt; darueber waechst die Saeule aus der Flaeche heraus. 3 pt Rand oben fuer die Marke.
+  // Schmale Saeule, das Ziel als blasse Flaeche, die die Saeule fuellt. Ueber dem Ziel waechst die Saeule heraus und
+  // ein Strich markiert die Zielhoehe. 3 pt Rand oben fuer den Strich.
   const n = weeks.length, H = WEEK_PLOT_H, M = 3, h = H - M - 1, base = H - 1, dc = newCtx(w, H);
   const vals = weeks.flatMap((k) => [K.val(k), K.goal(k)]).filter((v) => v != null);
   const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(16, slot * 0.34), tick = bw + 12;
@@ -812,8 +812,8 @@ function weekImage(w, weeks, K) {
         yb = yt;
       });
     }
-    // Zielmarke zuletzt, damit sie auch ueber einer hoeheren Saeule sichtbar bleibt
-    if (gy != null) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, gy - 1.25, tick, 2.5)); }
+    // Ueber dem Ziel verdeckt die Saeule die Flaeche: dann markiert ein Strich die Zielhoehe
+    if (gy != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x + bw / 2 - tick / 2, gy - 1.25, tick, 2.5)); }
   });
   return dc.getImage();
 }
