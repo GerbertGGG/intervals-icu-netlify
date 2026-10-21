@@ -10,10 +10,10 @@ import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
 import { isValidAccessToken } from "./mcp-oauth.js";
 import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessRange } from "./intervals-client.js";
-import { hasKv, writeKvJson } from "./kv.js";
+import { hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
-import { COACH_KV_KEY, validateCoach, readCoach } from "./coach-snapshot.js";
+import { COACH_KV_KEY, validateCoach, mergeCoach, readCoach } from "./coach-snapshot.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -132,6 +132,17 @@ const TOOLS = [
         question: { type: "string", description: "Rückfrage an Gerbert, max. 300 Zeichen (optional). Steht im Dashboard mit Antwortfeld." },
         answer: { type: "string", description: "Seine Antwort auf question, max. 1000 Zeichen (optional, nur zusammen mit question, z. B. wenn er im Chat geantwortet hat)." },
         answeredAt: { type: "string", description: "Zeitpunkt der Antwort, ISO-8601 (optional, sonst jetzt)." },
+        idea: {
+          type: "object",
+          description:
+            "Idee der Woche, nur montags mitschicken: eine kreative, freiwillige Trainingsidee, steht als eigene kleine Karte im Dashboard (bis 8 Tage, ohne Abhaken). Weglassen = die gespeicherte Idee bleibt stehen. Leerer text = Idee entfernen. Vorher in get_coach unter ideas nachsehen, damit sie sich nicht wiederholt.",
+          properties: {
+            text: { type: "string", description: "Die Idee, 1-2 Sätze, max. 240 Zeichen, Du-Form." },
+            angle: { type: "integer", minimum: 1, maximum: 8, description: "Blickwinkel 1-8 (optional)." },
+            sport: { type: "string", enum: ["lauf", "rad", "schwimmen", "kraft", "alle"], description: "Sportart der Idee (optional, bestimmt das Icon)." },
+          },
+          required: ["text"],
+        },
       },
       required: ["fetchedAt", "note"],
     },
@@ -139,7 +150,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine) und die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -150,21 +161,23 @@ function resolveRange(args, { pastDefaultDays, futureDefaultDays }) {
   return { oldest, newest };
 }
 
-async function saveSnapshot(env, args, validate, kvKey) {
+async function saveSnapshot(env, args, validate, kvKey, merge) {
   if (!hasKv(env)) throw new Error("KV nicht verfügbar");
   const { value, error } = validate(args);
   if (error) throw new Error(error);
-  await writeKvJson(env, kvKey, value);
+  await writeKvJson(env, kvKey, merge ? merge(await readKvJson(env, kvKey), value) : value);
   return { ok: true, fetchedAt: value.fetchedAt };
 }
 
 async function callTool(env, name, args) {
   if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
   if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
-  if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY);
+  if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY, mergeCoach);
   if (name === "get_coach") {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
-    return (await readCoach(env)) ?? { none: true };
+    const coach = await readCoach(env);
+    // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
+    return coach ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [] } : { none: true, idea: null, ideas: [] };
   }
   if (name === "get_planned_workouts") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 0, futureDefaultDays: 14 });

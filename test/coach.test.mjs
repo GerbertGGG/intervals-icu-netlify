@@ -1,6 +1,6 @@
 // Testet src/coach-snapshot.js. Ausführen: node test/coach.test.mjs
 import assert from "node:assert/strict";
-import { validateCoach, isFreshCoach, handleCoachRequest, handleCoachAnswerRequest, applyAnswer } from "../src/coach-snapshot.js";
+import { validateCoach, mergeCoach, isFreshCoach, handleCoachRequest, handleCoachAnswerRequest, applyAnswer } from "../src/coach-snapshot.js";
 
 assert.ok(validateCoach({ fetchedAt: "kaputt", note: "x" }).error);
 assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "  " }).error);
@@ -46,4 +46,42 @@ assert.equal((await answer({ answer: "Hüfte ruhig, 1 von 10" })).status, 200);
 const saved = JSON.parse(kv.get("dashboard:coach"));
 assert.equal(saved.answer, "Hüfte ruhig, 1 von 10");
 assert.equal(saved.note, "Ruhe.");
+
+// Idee der Woche: Validierung
+const base = { fetchedAt: "2026-10-12T05:00:00Z", note: "x" };
+assert.equal("idea" in validateCoach(base).value, false); // Feld fehlt
+assert.equal(validateCoach({ ...base, idea: { text: "  " } }).value.idea, null); // leerer Text = entfernen
+assert.deepEqual(validateCoach({ ...base, idea: { text: " Barfuß 5 min auf Rasen ", angle: 3, sport: " Lauf " } }).value.idea, { text: "Barfuß 5 min auf Rasen", angle: 3, sport: "lauf" });
+assert.match(validateCoach({ ...base, idea: { text: "i".repeat(241) } }).error, /240.*ohne idea/);
+assert.match(validateCoach({ ...base, idea: { text: "i", angle: 9 } }).error, /angle/);
+assert.match(validateCoach({ ...base, idea: { text: "i", angle: 2.5 } }).error, /angle/);
+assert.match(validateCoach({ ...base, idea: { text: "i", sport: "tennis" } }).error, /sport/);
+assert.ok(validateCoach({ ...base, idea: "Barfuß laufen" }).error);
+// mergeCoach: Update ohne idea laesst Idee und Historie stehen
+const v = (fetchedAt, idea) => validateCoach({ fetchedAt, note: "x", ...(idea !== undefined ? { idea } : {}) }).value;
+let m = mergeCoach(null, v("2026-10-12T05:00:00Z", { text: "Idee A", sport: "rad" }));
+assert.deepEqual(m.idea, { text: "Idee A", angle: null, sport: "rad", createdAt: "2026-10-12T05:00:00.000Z" });
+assert.deepEqual(m.ideas, [{ date: "2026-10-12", text: "Idee A", angle: null, sport: "rad" }]);
+m = mergeCoach(m, v("2026-10-13T05:00:00Z"));
+assert.equal(m.idea.text, "Idee A"); assert.equal(m.ideas.length, 1); assert.equal(m.fetchedAt, "2026-10-13T05:00:00.000Z");
+// Gleicher Tag (Berlin) ersetzt den Historieneintrag; 23:30 UTC ist in Berlin schon der naechste Tag
+m = mergeCoach(m, v("2026-10-19T05:00:00Z", { text: "Idee B" }));
+m = mergeCoach(m, v("2026-10-19T09:00:00Z", { text: "Idee B korrigiert", angle: 2 }));
+assert.deepEqual(m.ideas.map((x) => x.text), ["Idee B korrigiert", "Idee A"]);
+assert.equal(m.idea.createdAt, "2026-10-19T09:00:00.000Z");
+m = mergeCoach(m, v("2026-10-19T23:30:00Z", { text: "Idee C" }));
+assert.equal(m.ideas[0].date, "2026-10-20"); assert.equal(m.ideas.length, 3);
+// Leerer Text entfernt die aktuelle Idee, die Historie bleibt
+m = mergeCoach(m, v("2026-10-21T05:00:00Z", { text: "" }));
+assert.equal(m.idea, null); assert.equal(m.ideas.length, 3);
+// Historie bei 12 gekappt, neueste zuerst
+for (let k = 0; k < 15; k++) m = mergeCoach(m, v(new Date(Date.parse("2026-11-02T05:00:00Z") + k * 7 * 86400_000).toISOString(), { text: `W${k}` }));
+assert.equal(m.ideas.length, 12); assert.equal(m.ideas[0].text, "W14"); assert.equal(m.ideas[11].text, "W3");
+// PUT /api/coach: auch hier bleibt die Idee ohne idea stehen, die Antwort aus dem Dashboard laesst sie in Ruhe
+assert.equal((await put({ fetchedAt: "2026-10-12T05:00:00Z", note: "a", idea: { text: "Rad ohne Uhr", sport: "rad" } })).status, 200);
+assert.equal((await put({ fetchedAt: "2026-10-13T05:00:00Z", note: "b", question: "Knie?" })).status, 200);
+assert.equal((await put({ fetchedAt: "2026-10-13T06:00:00Z", note: "b", idea: { text: "i", sport: "golf" } })).status, 400);
+assert.equal((await answer({ answer: "gut" })).status, 200);
+const kept = JSON.parse(kv.get("dashboard:coach"));
+assert.equal(kept.note, "b"); assert.equal(kept.idea.text, "Rad ohne Uhr"); assert.equal(kept.ideas.length, 1);
 console.log("coach tests ok");

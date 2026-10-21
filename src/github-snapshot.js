@@ -1,7 +1,7 @@
 import { readKvJson, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
-import { COACH_KV_KEY, validateCoach } from "./coach-snapshot.js";
+import { COACH_KV_KEY, validateCoach, mergeCoach } from "./coach-snapshot.js";
 
 // Fallback fuer PUT /api/runalyze, /api/studie und /api/coach: Der Coaching-Task erreicht den Worker nicht immer
 // (Egress-Policy), GitHub aber schon. Er committet die Snapshots deshalb als JSON auf den Branch
@@ -17,10 +17,11 @@ const MAX_BYTES = 60_000;
 const SOURCES = [
   { file: "runalyze.json", kvKey: RUNALYZE_KV_KEY, validate: validateSnapshot },
   { file: "studie.json", kvKey: STUDIE_KV_KEY, validate: validateStudie },
-  { file: "coach.json", kvKey: COACH_KV_KEY, validate: validateCoach },
+  // merge: die Idee der Woche bleibt stehen, wenn coach.json keine mitbringt
+  { file: "coach.json", kvKey: COACH_KV_KEY, validate: validateCoach, merge: mergeCoach },
 ];
 
-async function syncOne(env, { file, kvKey, validate }) {
+async function syncOne(env, { file, kvKey, validate, merge }) {
   const repo = env?.GITHUB_REPO || DEFAULT_REPO;
   const branch = env?.SNAPSHOT_BRANCH || DEFAULT_BRANCH;
   const headers = { "user-agent": "intervals-icu-worker" };
@@ -35,7 +36,7 @@ async function syncOne(env, { file, kvKey, validate }) {
   const current = await readKvJson(env, kvKey);
   // Nie einen neueren PUT-Snapshot mit einem aelteren Stand ueberschreiben.
   if (current?.fetchedAt && Date.parse(current.fetchedAt) >= Date.parse(value.fetchedAt)) return { file, status: "aktuell" };
-  await writeKvJson(env, kvKey, value);
+  await writeKvJson(env, kvKey, merge ? merge(current, value) : value);
   return { file, status: "übernommen" };
 }
 

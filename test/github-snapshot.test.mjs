@@ -35,4 +35,12 @@ console.error = origErr;
 assert.deepEqual(r.map((x) => x.status), ["Fehler", "übernommen", "keine Datei"]);
 assert.equal(JSON.parse(kv.get("dashboard:runalyze")).vdot, 41);
 assert.equal(JSON.parse(kv.get("dashboard:studie")).source, "Autor 2026");
+
+// coach.json ohne idea: die gespeicherte Idee der Woche bleibt stehen
+kv.set("dashboard:coach", JSON.stringify({ fetchedAt: "2026-10-19T05:00:00.000Z", note: "Mo", idea: { text: "Idee", angle: null, sport: null, createdAt: "2026-10-19T05:00:00.000Z" }, ideas: [{ date: "2026-10-19", text: "Idee", angle: null, sport: null }] }));
+files["coach.json"] = JSON.stringify({ fetchedAt: "2026-10-20T05:00:00Z", note: "Di" });
+r = await syncSnapshotsFromGithub(env);
+assert.equal(r[2].status, "übernommen");
+const c = JSON.parse(kv.get("dashboard:coach"));
+assert.equal(c.note, "Di"); assert.equal(c.idea.text, "Idee"); assert.equal(c.ideas.length, 1);
 console.log("github-snapshot tests ok");
