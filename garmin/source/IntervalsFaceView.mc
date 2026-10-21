@@ -27,13 +27,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const PROT_TRACK = 0x0F3A38;
     const STALE_SECS = 3600;
     const BAT_LOW = 20;      // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
-    const NUT_Y = 118;
-    const KCAL_X = 166;
-    const PROT_X = 284;
-    const DATE_Y = 160;
-    const TIME_Y = 227;
-    const OPEN_Y = 303;
-    const TAG_Y = 330;
+    const NUT_Y = 117;
+    const KCAL_X = 160;
+    const PROT_X = 292;
+    const DATE_Y = 161;
+    const TIME_Y = 226;
+    const OPEN_Y = 306;
+    const TAG_Y = 335;
     // Bögen: Radien von außen nach innen, Strichstärke und Länge; oben von 10 Grad über 9 Uhr bis 10 Grad über 3 Uhr,
     // unten von 10 Grad unter 3 Uhr bis 10 Grad unter 9 Uhr (Winkel ab 12 Uhr im Uhrzeigersinn)
     const ARC_R1 = 204;
@@ -55,7 +55,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Nunito (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
+        // Bitmap-Schriften aus Roboto Medium (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _open = WatchUi.loadResource(Rez.Fonts.Open) as Graphics.FontType;
         _cap = WatchUi.loadResource(Rez.Fonts.Cap) as Graphics.FontType;
@@ -144,7 +144,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             rd = null;
         }
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        var d = px(17);
+        var d = px(18);
         for (var i = -1; i <= 1; i += 2) {
             var cy = y + i * d;
             if ("warn".equals(rd)) {
@@ -239,10 +239,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 if (open > 0) {
                     dc.drawText(x, y, _open, open.toString() + "′", just);
                 } else {
-                    // Haken als Linien, die Bitmap-Schriften haben kein ✓
-                    dc.setPenWidth(px(5));
-                    dc.drawLine(x - px(12), y, x - px(4), y + px(8));
-                    dc.drawLine(x - px(4), y + px(8), x + px(13), y - px(9));
+                    drawCheck(dc, x, y, color);
                 }
             }
             dc.setColor(GREY, Graphics.COLOR_TRANSPARENT);
@@ -250,10 +247,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
+    // Haken als Linien um die Mitte x, y, die Bitmap-Schriften haben kein ✓
+    private function drawCheck(dc as Dc, x as Number, y as Number, color as Number) as Void {
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(5));
+        dc.drawLine(x - px(12), y, x - px(4), y + px(8));
+        dc.drawLine(x - px(4), y + px(8), x + px(13), y - px(9));
+    }
+
     // ---- Obere Bögen und Zahlen: Essen ------------------------------------------------
     // Außen Kalorien (weiß) gegen das Tagesziel, der Bogen füllt sich mit dem Gegessenen; innen Eiweiß (türkis) gegen das
-    // Yazio-Ziel. Darunter die übrigen kcal bis zum Ziel ("+N" darüber, ohne Ziel die gegessenen) mit kleinem grauem "kcal"
-    // und das gegessene Eiweiß in Gramm.
+    // Yazio-Ziel. Darunter, was noch übrig ist: kcal bis zum Ziel ("+N" darüber) mit kleinem grauem "kcal" und Eiweiß in Gramm
+    // mit "g Eiweiß" (Ziel erreicht: Haken). Ohne Ziel jeweils das Gegessene.
 
     private function drawNutrition(dc as Dc, data as Dictionary?) as Void {
         var kcal = null as Dictionary?;
@@ -276,7 +281,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var y = px(NUT_Y);
         drawLine(dc, px(KCAL_X), y, [["t", kText, FG, _open], ["t", " kcal", GREY, _tag]]);
-        drawLine(dc, px(PROT_X), y, [["t", pv != null ? pv.toNumber().toString() + " g" : "--", PROT, _open]]);
+        var pItem = ["t", pv != null ? pv.toNumber().toString() : "--", PROT, _open];
+        if (pv != null && pg != null && pg > 0) {
+            var left = (pg - pv).toNumber();
+            pItem = left > 0 ? ["t", left.toString(), PROT, _open] : ["check", px(24), PROT];
+        }
+        drawLine(dc, px(PROT_X), y, [pItem, ["t", " g Eiweiß", GREY, _tag]]);
     }
 
     // ---- Datum und Akku ------------------------------------------------------------
@@ -329,7 +339,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Zeile aus Text und Formen, als Ganzes um cx zentriert ---------------------------
-    // Elemente: ["t", Text, Farbe, Schrift], ["bat", Breite, Farbe, Prozent], ["gap", Breite]
+    // Elemente: ["t", Text, Farbe, Schrift], ["bat", Breite, Farbe, Prozent], ["check", Breite, Farbe], ["gap", Breite]
 
     private function drawLine(dc as Dc, cx as Number, y as Number, items as Array<Array>) as Void {
         var total = 0;
@@ -346,6 +356,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 dc.drawText(x, y, it[3] as Graphics.FontType, it[1] as String, Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER);
             } else if (kind.equals("bat")) {
                 drawBattery(dc, x, y, w, it[2] as Number, it[3] as Number);
+            } else if (kind.equals("check")) {
+                drawCheck(dc, x + w / 2, y, it[2] as Number);
             }
             x += w;
         }
