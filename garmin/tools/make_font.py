@@ -7,8 +7,8 @@ Die Schriften des Zifferblatts sind Roboto Medium (SIL Open Font License, fonts.
 als .ttf herunterladen:
   python3 garmin/tools/make_font.py Roboto-Medium.ttf 101 time digits
   python3 garmin/tools/make_font.py Roboto-Medium.ttf 31 open
-  python3 garmin/tools/make_font.py Roboto-Medium.ttf 19 cap
-  python3 garmin/tools/make_font.py Roboto-Medium.ttf 14 tag
+  python3 garmin/tools/make_font.py Roboto-Medium.ttf 22 cap
+  python3 garmin/tools/make_font.py Roboto-Medium.ttf 18 tag
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys

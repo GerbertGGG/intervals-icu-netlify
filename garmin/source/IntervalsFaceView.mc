@@ -33,7 +33,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const DATE_Y = 161;
     const TIME_Y = 226;
     const OPEN_Y = 306;
-    const TAG_Y = 335;
+    const TAG_Y = 337;
     // Bögen: Radien von außen nach innen, Strichstärke und Länge; oben von 10 Grad über 9 Uhr bis 10 Grad über 3 Uhr,
     // unten von 10 Grad unter 3 Uhr bis 10 Grad unter 9 Uhr (Winkel ab 12 Uhr im Uhrzeigersinn)
     const ARC_R1 = 204;
@@ -223,11 +223,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function drawOpen(dc as Dc, rz as Array?) as Void {
         var sports = ["run", "bike", "swim"];
-        var labels = ["LAUF", "RAD", "SCHWIMM."];
+        var labels = ["LAUF", "RAD", "SCHWIMM"];
         var just = Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER;
         var y = px(OPEN_Y);
         for (var k = 0; k < sports.size(); k++) {
-            var x = _cx + px(72 * (k - 1));
+            var x = _cx + px(80 * (k - 1));
             var color = sportColor(sports[k]);
             var e = goalOf(rz, sports[k]);
             if (e == null) {
@@ -258,7 +258,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     // ---- Obere Bögen und Zahlen: Essen ------------------------------------------------
     // Außen Kalorien (weiß) gegen das Tagesziel, der Bogen füllt sich mit dem Gegessenen; innen Eiweiß (türkis) gegen das
     // Yazio-Ziel. Darunter, was noch übrig ist: kcal bis zum Ziel ("+N" darüber) mit kleinem grauem "kcal" und Eiweiß in Gramm
-    // mit "g Eiweiß" (Ziel erreicht: Haken). Ohne Ziel jeweils das Gegessene.
+    // mit kleinem grauem "g" (Ziel erreicht: Haken). Ohne Ziel jeweils das Gegessene.
 
     private function drawNutrition(dc as Dc, data as Dictionary?) as Void {
         var kcal = null as Dictionary?;
@@ -286,7 +286,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var left = (pg - pv).toNumber();
             pItem = left > 0 ? ["t", left.toString(), PROT, _open] : ["check", px(24), PROT];
         }
-        drawLine(dc, px(PROT_X), y, [pItem, ["t", " g Eiweiß", GREY, _tag]]);
+        drawLine(dc, px(PROT_X), y, [pItem, ["t", " g", GREY, _tag]]);
     }
 
     // ---- Datum und Akku ------------------------------------------------------------
