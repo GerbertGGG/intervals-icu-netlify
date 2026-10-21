@@ -1,21 +1,23 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet. Von oben nach unten:
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C) im Apple-Stil: Schwarz und Weiß, Farbe nur, wo sie etwas bedeutet, und möglichst ohne Text, dafür große Zahlen. Von oben nach unten:
 
-- **Datum und Akku** ganz oben als kleine Zeile („DI 20. OKT“ und Akkusymbol mit Prozent): weiß, ab 20 % orange, ab 10 % rot, beim Laden grün. Kommt von der Uhr, steht also auch ohne Daten vom Worker.
-- **Woche** Mo bis So oben als gerade Reihe abgerundeter Quadrate: gefüllt in Sportfarbe (Laufen gelb, Rad grün, Schwimmen blau, Kraft orange) = erledigt, gedimmt gefüllt = geplant, dunkel = frei, weißer Rahmen = heute. Zwei Sportarten an einem Tag: geteiltes Feld, links die erste (erledigt vor geplant, sonst nach Belastung), rechts die zweite.
-- **Nächste Einheit**: Sportpunkt, Tag, Einheit mit Dauer ("HEUTE Lauf · 60′"). Heute bleibt eine geplante Einheit stehen, solange ihre Sportart heute noch nicht erledigt ist (Rad erledigt, Kraft offen → Kraft).
-- **Oben mit Wochenzielen des Coaches**: statt Wochenreihe und nächster Einheit je eine Kapsel mit dem, was diese Woche noch offen ist: Minuten bis zum Zeitziel für Lauf, Rad und Schwimmen, offene Sätze für Kraft (dunkel mit Zahl in Sportfarbe = offen, voll mit Haken = erreicht), darunter „OFFEN · NOCH N TAGE“ bis Sonntag.
-- **Uhrzeit**, groß.
-- **Coach**: das Urteil des Coaches für heute (Feld `go` in `save_coach`): grüner Kreis „Hart erlaubt“, oranges Dreieck „Nur locker“, rotes Quadrat „Frei“, dahinter ein gelbes Dreieck mit der Zahl seiner Blocker. Hat er geschrieben, aber kein Urteil gesetzt: blauer Punkt „Coach hat geschrieben“, sonst grau „Noch kein Coach“. Eine eigene Ampel hat die Uhr nicht.
-- **Vier Komplikationen**: Essen (in der Mitte die übrigen kcal bis zum Tagesziel, darüber „+N“; der Ring füllt sich mit dem Gegessenen), mit Wochenzielen des Coaches zwei gleiche Kreise im Apple-Stil, „ZEIT“ (Minuten gegen das Zeitziel) und „TSS“ (gegen die Obergrenze), je ein Ring pro Sportart: außen Rad, Mitte Lauf, innen Schwimmen (ohne TSS-Grenze kein Ring); in der Mitte die Summe; über der TSS-Grenze läuft der Überschuss orange als zweite Runde weiter und die Zahl wird orange. Ohne Wochenziele stattdessen TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`) und Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt in Gelb/Rot und zusätzlich mit Dreieck/Quadrat links neben „KRAFT“), Wetter (Temperatur und höchste Regenwahrscheinlichkeit der nächsten 12 Stunden, unter 30 % stattdessen die Uhrzeit des nächsten Sonnenauf- oder -untergangs; der Ring ist ein 12-Stunden-Zifferblatt: die hellen Stunden zwischen Sonnenauf- und -untergang in gedämpftem Gold, darüber jedes Stundensegment ab 30 % Regenwahrscheinlichkeit in Blau, je wahrscheinlicher, desto dunkler: sehr hell 30–49 %, hell 50–69 %, kräftig 70–84 %, dunkel ab 85 %; die Prozentzahl steht im Blau ihrer Stufe; ein weißer Strich markiert die aktuelle Uhrzeit).
-- **Unterer Rand**: Renn-Countdown (bis 100 Tage vorher) und Blockwoche als gerade Zeile.
+- **Akku** ganz oben: Akkusymbol mit Prozent, weiß, ab 20 % orange, ab 10 % rot, beim Laden grün. Kommt von der Uhr.
+- **Oben mit Wochenzielen des Coaches**: je eine Kapsel mit dem, was diese Woche noch offen ist: Minuten bis zum Zeitziel für Lauf, Rad und Schwimmen, offene Sätze für Kraft (dunkel mit Zahl in Sportfarbe = offen, voll mit Haken = erreicht). Sportfarben: Laufen gelb, Rad grün, Schwimmen blau, Kraft orange.
+- **Ohne Wochenziele** stattdessen die **Woche** Mo bis So als gerade Reihe abgerundeter Quadrate (gefüllt in Sportfarbe = erledigt, gedimmt = geplant, dunkel = frei, weißer Rahmen = heute; zwei Sportarten an einem Tag: geteiltes Feld) und darunter die **nächste Einheit** ("HEUTE Lauf · 60′").
+- **Uhrzeit**, groß. Der **Doppelpunkt** trägt das Urteil des Coaches für heute (Feld `go` in `save_coach`): grüne Kreise = hart erlaubt, orange Dreiecke = nur locker, rote Quadrate = frei, blaue Kreise = Coach hat geschrieben, aber kein Urteil, grau = noch nichts. Eine eigene Ampel hat die Uhr nicht.
+- **Datum** unter der Uhrzeit („DI 21. OKT“), dahinter ein oranges Dreieck mit der Zahl der Blocker des Coaches.
+- **Vier Ringe im Bogen**, ohne Überschriften, in der Mitte jeweils die Zahl groß:
+  - links außen **Essen**: übrige kcal bis zum Tagesziel (darüber „+N“), der weiße Ring füllt sich mit dem Gegessenen, innen lila das Eiweiß gegen das Yazio-Ziel. Orange bei mehr als 150 kcal über dem Ziel bzw. ab 18 Uhr unter 80 % Eiweiß.
+  - innen links **Zeit**: Minuten der Woche gegen die Summe der Zeitziele, ein Ring mit einem Abschnitt je Sportart in Sportfarbe.
+  - innen rechts **TSS**: gegen die Summe der TSS-Grenzen, ebenso je Sportart; die Zahl wird orange, wenn eine Sportart über ihrer Grenze liegt. Ohne Wochenziele stehen innen TSS der Woche gegen Plan (ohne Plan gegen `WEEKLY_TSS_GOAL`) und Kraft (Sätze gegen das Ziel aus dem Trainingsblock, knapp/verfehlt orange/rot).
+  - rechts außen **Wetter**: Temperatur, darunter die höchste Regenwahrscheinlichkeit der nächsten 12 Stunden (unter 30 % die Uhrzeit des nächsten Sonnenauf- oder -untergangs). Der Ring ist ein 12-Stunden-Zifferblatt: helle Stunden in gedämpftem Gold, jedes Stundensegment ab 30 % Regen in Blau, je wahrscheinlicher, desto dunkler (30–49 %, 50–69 %, 70–84 %, ab 85 %); ein weißer Strich markiert die aktuelle Uhrzeit.
 
-Farben: `COLORFUL` in `IntervalsFaceView.mc` (false = alle Ringe weiß wie im Mockup, true = jede Komplikation in eigener dezenter Farbe).
+Renn-Countdown und Blockwoche stehen nicht mehr auf der Uhr (Widget und Dashboard zeigen sie).
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Wetter und Akku kommen von der Uhr selbst.
 
-Ist der letzte Stand älter als eine Stunde, steht hinter der Coach-Zeile ein „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
+Ist der letzte Stand älter als eine Stunde, wird das Datum grau, der Doppelpunkt grau, und hinter dem Datum steht ein „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
 
 Stand: noch nicht auf einer Uhr getestet. Der Code ist nach dem Mockup geschrieben und wurde nicht mit dem Connect-IQ-Compiler gebaut. Beim ersten Build sind kleine Anpassungen möglich (z. B. Berechtigungen im Manifest, Typhinweise).
 
@@ -47,5 +49,4 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 - Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Nunito** (SIL Open Font License) in `resources/fonts/`, die Uhrzeit nur aus Ziffern und gleich breit. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die Nunito-Dateien von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
-- Ist der letzte Abruf älter als eine Stunde, wird die Coach-Zeile grau und bekommt ein `!`.
-- Die Zeile unten steht in der großen Schrift, wenn sie in die Breite des Kreises passt, sonst in der kleineren.
+- Ist der letzte Abruf älter als eine Stunde, werden Datum und Doppelpunkt grau und das Datum bekommt ein `!`.

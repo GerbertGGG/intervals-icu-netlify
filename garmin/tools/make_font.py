@@ -6,10 +6,10 @@ Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit spr
 Die Schriften des Zifferblatts sind Nunito (SIL Open Font License, fonts.google.com/specimen/Nunito),
 Bold und ExtraBold als .ttf herunterladen:
   python3 garmin/tools/make_font.py Nunito-Bold.ttf 138 time digits
+  python3 garmin/tools/make_font.py Nunito-ExtraBold.ttf 28 big
   python3 garmin/tools/make_font.py Nunito-Bold.ttf 25 small
   python3 garmin/tools/make_font.py Nunito-ExtraBold.ttf 22 mid
   python3 garmin/tools/make_font.py Nunito-Bold.ttf 18 cap
-  python3 garmin/tools/make_font.py Nunito-Bold.ttf 15 tiny
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys
