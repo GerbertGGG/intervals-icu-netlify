@@ -126,6 +126,8 @@ const TOOLS = [
         fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
         note: { type: "string", description: "Hinweis für heute, 1-2 Sätze, max. 160 Zeichen, Du-Form, mit Konsequenz (steht im Widget)." },
         headline: { type: "string", description: "Kurzurteil, max. 80 Zeichen (optional)." },
+        go: { type: "string", enum: ["hart", "locker", "frei"], description: "Dein Urteil für heute, steht groß in Dashboard, Widget und Uhr: hart = Qualität/Intensität erlaubt (draufhauen ok), locker = nur locker, frei = Ruhetag oder kein Training. Bei jedem Morgen-Update setzen." },
+        blockers: { type: "array", items: { type: "string" }, description: "Was heute gegen Intensität spricht, höchstens 3 Stichworte je max. 60 Zeichen (z. B. \"Hüfte zwickt\", \"HRV 20 % unter Basis\", \"Blocktest in 2 Tagen\"). Leer oder weglassen, wenn nichts dagegen spricht." },
         text: { type: "string", description: "Ganzer Bericht ohne Studien-Check, max. 8000 Zeichen (optional, fürs Dashboard)." },
         question: { type: "string", description: "Rückfrage an Gerbert, max. 300 Zeichen (optional). Steht im Dashboard mit Antwortfeld." },
         answer: { type: "string", description: "Seine Antwort auf question, max. 1000 Zeichen (optional, nur zusammen mit question, z. B. wenn er im Chat geantwortet hat)." },

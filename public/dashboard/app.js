@@ -1115,6 +1115,7 @@ function renderEgym(k) {
    Frisch heißt: von heute (Berlin). Ältere Aussagen stehen nur als Hinweis da, nie als Urteil für heute. */
 const berlinDay = (iso) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
 const clock = (iso) => new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+const GO_LABEL = { hart: ["Hart erlaubt", "ok"], locker: ["Nur locker", "warn"], frei: ["Frei", "bad"] };
 function coachHead(d) {
   const c = d.coach, fresh = c && berlinDay(c.fetchedAt) === d.today;
   const k = `<div class="hero-k">Coach · ${weekday(d.today)} ${fmtDate(d.today)}</div>`;
@@ -1128,7 +1129,10 @@ function coachHead(d) {
       ${c.answer ? `<div class="sub">Deine Antwort (${clock(c.answeredAt)}): ${esc(c.answer)}</div>` : ""}
       <textarea id="coach-answer" rows="2" maxlength="1000" placeholder="Antwort in ein, zwei Sätzen">${c.answer ? esc(c.answer) : ""}</textarea>
       <div class="coach-send"><button type="button" id="coach-send">${c.answer ? "Antwort ändern" : "Antworten"}</button><span class="sub" id="coach-msg">Der Coach liest sie morgen früh. Sofort reagiert er, wenn du im Chat der Morgen-Auswertung antwortest.</span></div></div>` : "";
-  return `${k}<div class="verdict coach"><span>${esc(c.headline ?? c.note)}</span></div>
+  // Urteil des Coaches (go): darf ich heute draufhauen? Dazu seine Blocker. Beides kommt nur von ihm.
+  const go = GO_LABEL[c.go];
+  const goHtml = go || c.blockers?.length ? `<div class="coach-go">${go ? `<span class="badge ${go[1]}">${go[0]}</span>` : ""}${(c.blockers ?? []).map((b) => `<span class="coach-bl">${esc(b)}</span>`).join("")}</div>` : "";
+  return `${k}${goHtml}<div class="verdict coach"><span>${esc(c.headline ?? c.note)}</span></div>
     ${c.headline ? `<p class="hero-sub">${esc(c.note)}</p>` : ""}
     ${q}
     ${paras ? `<details class="bdet"><summary>Ganzer Bericht</summary><div class="desc" style="color:var(--text)">${paras}</div></details>` : ""}

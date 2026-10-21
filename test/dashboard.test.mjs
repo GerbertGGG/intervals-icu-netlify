@@ -124,6 +124,9 @@ for (const gone of ["focus", "review"]) assert.equal(gone in wdg, false, gone);
   const withCoach = buildWidget({ ...d, coach: { fetchedAt: d.generatedAt, note: "Heute 45 min locker.", headline: "Locker laufen" } });
   assert.deepEqual(withCoach.readiness.verdict, { cls: "coach", text: "Locker laufen" });
   assert.equal(withCoach.coach.note, "Heute 45 min locker.");
+  // Urteil des Coaches (go) gibt die Farbe, Blocker gehen mit
+  const goCoach = buildWidget({ ...d, coach: { fetchedAt: d.generatedAt, note: "x", headline: "Heute nur locker", go: "locker", blockers: ["Hüfte zwickt"] } });
+  assert.equal(goCoach.readiness.verdict.cls, "warn"); assert.deepEqual(goCoach.coach.blockers, ["Hüfte zwickt"]); assert.equal(goCoach.coach.go, "locker");
 }
 assert.equal(wdg.goal.daysToGo, 3);
 assert.equal(wdg.goal.phase, "taper"); // Rennphase kommt fertig vom Server
@@ -528,9 +531,11 @@ console.log("zones from intervals ok");
     assert.deepEqual(ww.days[w.ti], { s: "strength", p: 0, s2: "run", p2: 1 });
     assert.deepEqual(ww.days[w.ti + 1], { s: "swim", p: 1, s2: "bike", p2: 1 });
   }
-  // Kein eigenes Urteil auf der Uhr: keine Warnung, rd "none", co zeigt, ob der Coach heute geschrieben hat
+  // Kein eigenes Urteil auf der Uhr: keine Warnung; ohne Coach rd "none", co zeigt, ob der Coach heute geschrieben hat
   assert.equal("w" in w, false); assert.equal(w.rd, "none"); assert.equal(w.co, 0);
   assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, note: "x" } }).co, 1);
+  const wg = buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, note: "x", go: "hart", blockers: ["a", "b"] } });
+  assert.deepEqual([wg.rd, wg.co, wg.bl], ["ok", 1, 2]); // Urteil des Coaches, nicht des Dashboards
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).str, null); // ohne Block-Ziel keine Kraft
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: null }).block, null);
   // Kraft-Ring: Saetze der laufenden Woche gegen das Wochenziel, nicht Wochen im Ziel (value/of)

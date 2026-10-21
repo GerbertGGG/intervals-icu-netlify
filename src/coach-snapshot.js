@@ -8,6 +8,8 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //         note: string (max 160, Hinweis fuer heute, steht im Widget),
 //         headline?: string (max 80, Kurzurteil),
 //         text?: string (max 8000, ganzer Bericht fuers Dashboard),
+//         go?: "hart" | "locker" | "frei" (Urteil des Coaches: Qualitaet erlaubt, nur locker, frei/Ruhetag),
+//         blockers?: string[] (max 3 je max 60, was heute dagegen spricht, z. B. "Hüfte zwickt", "Schlaf 5 h"),
 //         question?: string (max 300, Rueckfrage des Coaches an Gerbert),
 //         answer?: string (max 1000, seine Antwort), answeredAt?: ISO-Zeitstempel }
 // Die Antwort kommt entweder aus dem Dashboard (POST /api/coach/answer) oder aus dem Chat mit dem Coach (save_coach mit
@@ -21,6 +23,9 @@ const MAX_HEADLINE = 80;
 const MAX_TEXT = 8000;
 const MAX_QUESTION = 300;
 const MAX_ANSWER = 1000;
+export const COACH_GO = ["hart", "locker", "frei"];
+const MAX_BLOCKERS = 3;
+const MAX_BLOCKER = 60;
 
 export function validateCoach(body) {
   const fetchedAt = Date.parse(body?.fetchedAt);
@@ -32,6 +37,12 @@ export function validateCoach(body) {
   if (headline.length > MAX_HEADLINE) return { error: `headline länger als ${MAX_HEADLINE} Zeichen` };
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   if (text.length > MAX_TEXT) return { error: `text länger als ${MAX_TEXT} Zeichen` };
+  const go = body?.go == null || body.go === "" ? null : String(body.go).trim().toLowerCase();
+  if (go != null && !COACH_GO.includes(go)) return { error: `go muss ${COACH_GO.join(", ")} sein` };
+  if (body?.blockers != null && !Array.isArray(body.blockers)) return { error: "blockers muss eine Liste sein" };
+  const blockers = (body?.blockers ?? []).map((x) => String(x ?? "").trim()).filter(Boolean);
+  if (blockers.length > MAX_BLOCKERS) return { error: `höchstens ${MAX_BLOCKERS} blockers` };
+  if (blockers.some((x) => x.length > MAX_BLOCKER)) return { error: `blocker länger als ${MAX_BLOCKER} Zeichen` };
   const question = typeof body?.question === "string" ? body.question.trim() : "";
   if (question.length > MAX_QUESTION) return { error: `question länger als ${MAX_QUESTION} Zeichen` };
   const answer = typeof body?.answer === "string" ? body.answer.trim() : "";
@@ -39,7 +50,7 @@ export function validateCoach(body) {
   if (answer && !question) return { error: "answer ohne question" };
   const answeredMs = Date.parse(body?.answeredAt);
   const answeredAt = answer ? new Date(Number.isFinite(answeredMs) ? answeredMs : Date.now()).toISOString() : null;
-  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, text: text || null, question: question || null, answer: answer || null, answeredAt } };
+  return { value: { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, go, blockers, text: text || null, question: question || null, answer: answer || null, answeredAt } };
 }
 
 // Antwort aus dem Dashboard: haengt sie an die aktuelle Aussage, ohne Urteil und Bericht des Coaches zu veraendern.

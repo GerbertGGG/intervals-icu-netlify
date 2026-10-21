@@ -503,7 +503,7 @@ Gefühlswerte (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = 
 
 ### 6.3 Heute-Band
 
-Oben die Aussage des Coaches mit seiner Rückfrage (ohne Aussage von heute: „Heute noch keine Coach-Auswertung“), daneben die geplante bzw. letzte Einheit. Darunter als Fakten: Schlaf-Score (sonst Schlafdauer), **Laufen 7 Tage** (Laufminuten der letzten 7 Tage gegen den Wochenschnitt der 4 Wochen davor, als Zahl), Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest (`nextTest`: erster geplanter Test ab heute) bzw. Rennen. Der TSB steht unter der Formkurve.
+Oben die Aussage des Coaches mit seinem Urteil (`go`: Hart erlaubt / Nur locker / Frei) und seinen Blockern (beides aus `save_coach`), dazu seine Rückfrage (ohne Aussage von heute: „Heute noch keine Coach-Auswertung“), daneben die geplante bzw. letzte Einheit. Darunter als Fakten: Schlaf-Score (sonst Schlafdauer), **Laufen 7 Tage** (Laufminuten der letzten 7 Tage gegen den Wochenschnitt der 4 Wochen davor, als Zahl), Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest (`nextTest`: erster geplanter Test ab heute) bzw. Rennen. Der TSB steht unter der Formkurve.
 
 ### 6.4 Montagsbilanz (`week-review.js`, `buildWeekReview`)
 
@@ -661,8 +661,8 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 - **Wochenlast** (`buildWidget`, 47): Summe der Last über alle Sportarten der laufenden und der Vorwoche.
 - **Fitness (CTL)** (`buildFitness`, 138): sieben Wochenpunkte bei `heute − 42, −35, …, −7, heute`; der letzte Punkt wird durch den **letzten vorhandenen CTL** ersetzt; `delta = CTL_heute − erster vorhandener Wochenpunkt` (gerundet), mit der Anzahl Wochen dazwischen.
 - **Trainingsverteilung** (`buildWidgetTraining`, 108): Anteil je Sportart (Schwimmen/Rad/Lauf) = Minuten der **letzten bis zu vier abgeschlossenen Wochen** / Gesamtminuten, gerundet auf ganze Prozent; Soll nur, wenn `TRI_SPLIT_TARGET` gesetzt ist (Normierung auf 100 %). „Tage seit letzter Einheit“ aus der jüngsten Tagesaktivität der Sportart.
-- **Kopfzeile** (`readiness.verdict`): die Kopfzeile des Coaches von heute (`cls: "coach"`), sonst „Noch keine Coach-Auswertung“ (`cls: "none"`). Keine eigene Ampel, keine Montagsbilanz, kein Befund. Körper- und Gefühlswerte nur als Zahlen.
-- **Uhr** (`buildWidgetWatch`): `co = 1`, wenn der Coach heute geschrieben hat; `rd` bleibt für ältere Zifferblätter `"none"`, eine Warnung `w` gibt es nicht mehr.
+- **Kopfzeile** (`readiness.verdict`): die Kopfzeile des Coaches von heute, Farbe aus seinem Urteil `go` (hart → ok, locker → warn, frei → bad, ohne Urteil `cls: "coach"`), sonst „Noch keine Coach-Auswertung“ (`cls: "none"`). Seine Blocker (`coach.blockers`) und Rückfrage gehen mit. Keine eigene Ampel, keine Montagsbilanz, kein Befund. Körper- und Gefühlswerte nur als Zahlen.
+- **Uhr** (`buildWidgetWatch`): `rd` = Urteil des Coaches (`go`) als ok/warn/bad, ohne Urteil `"none"`; `co = 1`, wenn er heute geschrieben hat; `bl` = Zahl seiner Blocker. Eine eigene Warnung gibt es nicht.
 - **Block-Widget:** je Abschlussziel die Richtung des Verlaufs (7.9, `course.dir`), nicht bei Ausgangswerten. Keine Woche-12-Entscheidung.
 - **Cache:** das Dashboard wird 5 Minuten in KV gehalten (`CACHE_MS`), nur bei vollständigen Daten und gleichem Berliner Datum.
 

@@ -6,8 +6,15 @@ assert.ok(validateCoach({ fetchedAt: "kaputt", note: "x" }).error);
 assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "  " }).error);
 assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", headline: "y".repeat(81) }).error);
 const ok = validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: " Locker bleiben. " });
-assert.deepEqual(ok.value, { fetchedAt: "2026-10-11T05:00:00.000Z", note: "Locker bleiben.", headline: null, text: null, question: null, answer: null, answeredAt: null });
+assert.deepEqual(ok.value, { fetchedAt: "2026-10-11T05:00:00.000Z", note: "Locker bleiben.", headline: null, go: null, blockers: [], text: null, question: null, answer: null, answeredAt: null });
 assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", question: "q".repeat(301) }).error);
+// Urteil des Coaches: go (hart/locker/frei) und bis zu 3 kurze Blocker
+const g = validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", go: " Locker ", blockers: [" Hüfte zwickt ", "", "Schlaf 5 h"] }).value;
+assert.equal(g.go, "locker"); assert.deepEqual(g.blockers, ["Hüfte zwickt", "Schlaf 5 h"]);
+assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", go: "vollgas" }).error);
+assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", blockers: "Hüfte" }).error);
+assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", blockers: ["a", "b", "c", "d"] }).error);
+assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", blockers: ["b".repeat(61)] }).error);
 assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", answer: "ja" }).error);
 const qa = validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "x", question: " Knie? ", answer: " gut ", answeredAt: "2026-10-11T07:00:00Z" }).value;
 assert.equal(qa.question, "Knie?");
