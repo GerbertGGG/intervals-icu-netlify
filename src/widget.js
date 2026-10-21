@@ -66,8 +66,9 @@ function weeklyGoal(week, env) {
 }
 
 // Wochenziele des Coaches je Sportart (Intervals-Kalender, Kategorie TARGET, jeden Montag neu): Zeit ist das Ziel,
-// TSS die Obergrenze. Schwimmen meist nur mit Zeit. s Sportart, min erledigt, goal Ziel-Minuten, tss erledigt,
-// max TSS-Obergrenze (null = keine), over = ueber der Obergrenze. Ohne Ziele leer.
+// TSS ein Korridor. Schwimmen meist nur mit Zeit. s Sportart, min erledigt, goal Ziel-Minuten, tss erledigt,
+// max TSS-Obergrenze (null = keine), lo TSS-Untergrenze (null = keine), over = ueber der Obergrenze, under = unter der
+// Untergrenze. Ohne Ziele leer. (min ist hier die erledigte Zeit, deshalb heisst die Untergrenze lo.)
 const TARGET_SPORTS = ["run", "bike", "swim", "strength", "other"];
 const hasTargets = (week) => Boolean(week && (week.targetMin > 0 || week.targetLoad > 0));
 export function weekTargets(week) {
@@ -75,13 +76,13 @@ export function weekTargets(week) {
   return TARGET_SPORTS.map((k) => {
     const s = week.bySport[k];
     if (!s || !(s.targetMin > 0 || s.targetLoad > 0)) return null;
-    const max = s.targetLoad > 0 ? s.targetLoad : null;
-    return { s: k, min: Math.round(s.minutes), goal: s.targetMin > 0 ? s.targetMin : null, tss: Math.round(s.load), max, over: max != null && s.load > max };
+    const max = s.targetLoad > 0 ? s.targetLoad : null, lo = max != null && s.targetLoadMin > 0 ? s.targetLoadMin : null;
+    return { s: k, min: Math.round(s.minutes), goal: s.targetMin > 0 ? s.targetMin : null, tss: Math.round(s.load), max, lo, over: max != null && s.load > max, under: lo != null && s.load < lo };
   }).filter(Boolean);
 }
 
 // Woche fuer das grosse Widget wie auf der Uhr: Ringe ZEIT (Minuten gegen das Zeitziel) und TSS (gegen die Obergrenze),
-// je [Sportart, erledigt, Vorgabe] fuer Rad, Lauf, Schwimmen; open = was noch fehlt (Minuten je Sportart, Kraft in Saetzen
+// je [Sportart, erledigt, Vorgabe] fuer Rad, Lauf, Schwimmen, beim TSS-Ring als viertes Element die Untergrenze; open = was noch fehlt (Minuten je Sportart, Kraft in Saetzen
 // aus dem Block-Ziel), v = 0 heisst erreicht; daysLeft = Tage bis Sonntag inkl. heute. Ohne Zeitziele leer.
 function weekOpen(d, week) {
   const targets = weekTargets(week), zeit = watchRings(targets, "min", "goal");
@@ -89,7 +90,8 @@ function weekOpen(d, week) {
   const open = ["run", "bike", "swim"].map((k) => zeit.find((x) => x[0] === k)).filter(Boolean).map(([s, done, goal]) => ({ s, v: Math.max(0, goal - done), unit: "min" }));
   const st = strengthWeek(d.seasonBlock?.goals?.find((g) => g.key === "strength"));
   if (st) open.push({ s: "strength", v: Math.max(0, st.of - st.v), unit: "Sätze" });
-  return { rings: { zeit, tss: watchRings(targets, "tss", "max") }, open, daysLeft: 7 - dayIndex(d.today) };
+  const tss = watchRings(targets, "tss", "max").map((x) => [...x, targets.find((t) => t.s === x[0]).lo]);
+  return { rings: { zeit, tss }, open, daysLeft: 7 - dayIndex(d.today) };
 }
 
 export function buildWidget(d, env = {}) {
@@ -128,7 +130,7 @@ export function buildWidget(d, env = {}) {
     },
     // next.items: alle Einheiten des naechsten Tages mit Plan (z. B. Kraft und Rad am selben Tag)
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },
-    // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt.
+    // targets: Wochenziele des Coaches (Zeit + TSS-Korridor je Sportart); leer, wenn es keine gibt.
     // rings/open/daysLeft: Woche wie auf der Uhr (Ringe ZEIT und TSS, was noch offen ist), nur mit Zeitzielen
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week) },
     // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget der Zweck aus dem Plan
@@ -142,8 +144,8 @@ export function buildWidget(d, env = {}) {
 export function buildWidgetDetail(d, env = {}) {
   const from28 = addDays(d.today, -27);
   // Wochen-TSS und Trainingszeit (alle Sportarten) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig
-  // (complete: false). Ziele wie im Dashboard: TSS-Obergrenze bzw. Zeitziel des Coaches (cap: true), sonst der Plan aus dem
-  // Kalender; fuer die laufende Woche ohne beides WEEKLY_TSS_GOAL. Ohne Ziel null, nie 0.
+  // (complete: false). Ziele wie im Dashboard: TSS-Obergrenze bzw. Zeitziel des Coaches (cap: true, goalMin = Untergrenze
+  // des TSS-Korridors), sonst der Plan aus dem Kalender; fuer die laufende Woche ohne beides WEEKLY_TSS_GOAL. Ohne Ziel null, nie 0.
   const tssWeeks = d.weeks.slice(-6).map((w, i, arr) => {
     const hasData = Object.values(w.bySport).some((s) => s.count > 0);
     // TSS je Sportart fuer die Fuellung in Sportfarben (nur Sportarten mit Last)
@@ -154,6 +156,7 @@ export function buildWidgetDetail(d, env = {}) {
     const goal = cap ? w.targetLoad : i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 && !hasTargets(w) ? w.plannedLoad : null;
     return {
       weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, minSports, complete: w.complete, goal, cap,
+      goalMin: cap && w.targetLoadMin > 0 ? w.targetLoadMin : null,
       min: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.minutes, 0) : null, minGoal: w.targetMin > 0 ? w.targetMin : plannedMin > 0 ? plannedMin : null,
     };
   });
@@ -247,9 +250,10 @@ export function buildWidgetTraining(d, env = {}) {
       weekLoad: cur.bySport[k].load,
       plannedLoad: cur.bySport[k].plannedLoad,
       weekMinutes: cur.bySport[k].minutes,
-      // Wochenziel des Coaches: Minuten als Ziel, TSS als Obergrenze (je null ohne Eintrag)
+      // Wochenziel des Coaches: Minuten als Ziel, TSS als Korridor von targetLoadMin bis targetLoad (je null ohne Eintrag)
       targetMin: cur.bySport[k].targetMin ?? null,
       targetLoad: cur.bySport[k].targetLoad ?? null,
+      targetLoadMin: cur.bySport[k].targetLoadMin ?? null,
       daysSince: last ? dayDiff(last) : null,
     }];
   }));

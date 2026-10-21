@@ -174,7 +174,7 @@ export function sportOf(a) {
 }
 
 function emptySports() {
-  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null, plannedMin: null, targetMin: null, targetLoad: null }]));
+  return Object.fromEntries(SPORTS.map((k) => [k, { count: 0, minutes: 0, km: 0, load: 0, plannedLoad: null, plannedKm: null, plannedMin: null, targetMin: null, targetLoad: null, targetLoadMin: null }]));
 }
 
 // Intensitaetsverteilung aus den Zonenzeiten, die Intervals.icu je Einheit mitliefert: Rad nach Power-Zonen,
@@ -197,11 +197,23 @@ export function isWeekTarget(e) {
   return String(e?.category ?? "").toUpperCase() === "TARGET" && !isSeasonBlockEvent(e);
 }
 
+// TSS-Korridor des Wochenziels: load_target ist die Obergrenze, die Untergrenze TARGET_LOAD_FLOOR_SHARE davon. Steht in der
+// Beschreibung des TARGET-Eintrags eine eigene Untergrenze ("min 220", "mindestens 220", "Untergrenze 220"), gilt die,
+// höchstens bis zur Obergrenze. Ohne Obergrenze null.
+export const TARGET_LOAD_FLOOR_SHARE = 0.8;
+const FLOOR_RE = /(?:^|[^\p{L}\d])(?:min(?:destens)?|untergrenze)\.?\s*[:=]?\s*(\d{2,4})(?!\s*(?:min|minuten|h|std|km|m)\b)/iu;
+export function targetLoadFloor(e) {
+  const max = num(e?.load_target);
+  if (max == null || !(max > 0)) return null;
+  const m = String(e?.description ?? "").match(FLOOR_RE);
+  return m ? Math.min(Number(m[1]), max) : max * TARGET_LOAD_FLOOR_SHARE;
+}
+
 function buildWeeks(todayIso, activities, events) {
   const firstMonday = mondayOf(addDays(todayIso, -(HISTORY_DAYS - 1)));
   const weeks = new Map();
   for (let d = firstMonday; d <= todayIso; d = addDays(d, 7)) {
-    weeks.set(d, { weekStart: d, km: 0, runMin: 0, load: 0, runs: 0, plannedKm: null, plannedRunMin: null, plannedLoad: null, targetMin: null, targetLoad: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
+    weeks.set(d, { weekStart: d, km: 0, runMin: 0, load: 0, runs: 0, plannedKm: null, plannedRunMin: null, plannedLoad: null, targetMin: null, targetLoad: null, targetLoadMin: null, bySport: emptySports(), intensity: { easy: 0, mid: 0, hard: 0 }, complete: addDays(d, 6) < todayIso });
   }
   for (const a of activities) {
     const w = weeks.get(mondayOf(activityDay(a)));
@@ -225,12 +237,13 @@ function buildWeeks(todayIso, activities, events) {
     const day = String(e?.start_date_local || e?.start_date || "").slice(0, 10);
     const w = weeks.get(mondayOf(day));
     if (!w) continue;
-    // Wochenziel des Coaches ("Weekly", Kategorie TARGET, je Sportart): Zeit ist das Ziel, TSS die Obergrenze.
-    // Ein Trainingsblock kann ebenfalls TARGET sein ("Block …"), der zaehlt hier nicht.
+    // Wochenziel des Coaches ("Weekly", Kategorie TARGET, je Sportart): Zeit ist das Ziel, TSS ein Korridor
+    // (targetLoadMin bis targetLoad, siehe targetLoadFloor). Ein Trainingsblock kann ebenfalls TARGET sein ("Block …"), der zaehlt hier nicht.
     if (isWeekTarget(e)) {
-      const sp = w.bySport[sportOf(e)], secs = num(e?.time_target), load = num(e?.load_target);
+      const sp = w.bySport[sportOf(e)], secs = num(e?.time_target), load = num(e?.load_target), floor = targetLoadFloor(e);
       if (secs != null && secs > 0) { sp.targetMin = (sp.targetMin ?? 0) + secs / 60; w.targetMin = (w.targetMin ?? 0) + secs / 60; }
       if (load != null && load > 0) { sp.targetLoad = (sp.targetLoad ?? 0) + load; w.targetLoad = (w.targetLoad ?? 0) + load; }
+      if (floor != null) { sp.targetLoadMin = (sp.targetLoadMin ?? 0) + floor; w.targetLoadMin = (w.targetLoadMin ?? 0) + floor; }
       continue;
     }
     if (String(e?.category ?? "").toUpperCase() !== "WORKOUT") continue;
@@ -264,8 +277,9 @@ function buildWeeks(todayIso, activities, events) {
     plannedLoad: w.plannedLoad != null ? Math.round(w.plannedLoad) : null,
     targetMin: w.targetMin != null ? Math.round(w.targetMin) : null,
     targetLoad: w.targetLoad != null ? Math.round(w.targetLoad) : null,
+    targetLoadMin: w.targetLoadMin != null ? Math.round(w.targetLoadMin) : null,
     intensity: { easy: Math.round(w.intensity.easy), mid: Math.round(w.intensity.mid), hard: Math.round(w.intensity.hard) },
-    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null, plannedMin: v.plannedMin != null ? Math.round(v.plannedMin) : null, targetMin: v.targetMin != null ? Math.round(v.targetMin) : null, targetLoad: v.targetLoad != null ? Math.round(v.targetLoad) : null }])),
+    bySport: Object.fromEntries(Object.entries(w.bySport).map(([k, v]) => [k, { count: v.count, minutes: Math.round(v.minutes), km: r1(v.km), load: Math.round(v.load), plannedLoad: v.plannedLoad != null ? Math.round(v.plannedLoad) : null, plannedKm: v.plannedKm != null ? r1(v.plannedKm) : null, plannedMin: v.plannedMin != null ? Math.round(v.plannedMin) : null, targetMin: v.targetMin != null ? Math.round(v.targetMin) : null, targetLoad: v.targetLoad != null ? Math.round(v.targetLoad) : null, targetLoadMin: v.targetLoadMin != null ? Math.round(v.targetLoadMin) : null }])),
   }));
 }
 
@@ -359,10 +373,9 @@ function buildFormSeries(list, wellness) {
 }
 
 // Tageslast für die Prognose aus den Wochenzielen des Coaches (ohne Ziele null, dann gelten die geplanten Workouts).
-// Wochensumme = TARGET_LOAD_SHARE der TSS-Obergrenzen (es sind Grenzen, kein Soll) plus Sportarten mit Zeitziel, aber ohne
+// Wochensumme = Mitte der TSS-Korridore (Untergrenze bis Obergrenze, ohne Untergrenze die Obergrenze) plus Sportarten mit Zeitziel, aber ohne
 // Grenze (meist Schwimmen): Zielminuten × deren TSS je Minute der letzten vollen Wochen. Laufende Woche: Rest nach dem
 // bisher Erledigten gleichmäßig auf die Tage nach heute; spätere Wochen (noch ohne Ziel): dieselbe Woche wieder.
-const TARGET_LOAD_SHARE = 0.9;
 export function targetDailyLoad(weeks, todayIso) {
   const cur = weeks[weeks.length - 1];
   if (!cur || !(cur.targetLoad > 0 || cur.targetMin > 0)) return null;
@@ -370,7 +383,7 @@ export function targetDailyLoad(weeks, todayIso) {
   let total = 0;
   for (const k of Object.keys(cur.bySport)) {
     const b = cur.bySport[k];
-    if (b.targetLoad > 0) total += b.targetLoad * TARGET_LOAD_SHARE;
+    if (b.targetLoad > 0) total += (b.targetLoad + (b.targetLoadMin ?? b.targetLoad)) / 2;
     else if (b.targetMin > 0) {
       const min = past.reduce((a, w) => a + w.bySport[k].minutes, 0), load = past.reduce((a, w) => a + w.bySport[k].load, 0);
       if (min > 0) total += b.targetMin * (load / min);
