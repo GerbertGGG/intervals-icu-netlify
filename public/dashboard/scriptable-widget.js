@@ -7,7 +7,7 @@
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
 //     Gross:   Rennen-Countdown, Kopfzeile des Coaches (Morgen-Auswertung), Koerper- und Gefuehlswerte, Hinweis (Coach, sonst
-//              Warum zur Einheit), heutige Einheit,
+//              Zweck aus dem Plan), heutige Einheit,
 //              Woche Mo bis So als Kapseln mit Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, Schwellen;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
@@ -421,19 +421,11 @@ function usablePurpose(s) {
   if (/^[\d\-•*]/.test(t) || /\d\s*(%|x\b)|\bz[1-7]\b|\bbpm\b|\d+\s*min\b/i.test(t)) return null;
   return t;
 }
-// Warum: Plan-Zweck, sonst allgemein aus Rennphase (vom Worker) und Einheit
-function whyText(d, p) {
+// Ohne Coach-Notiz: der Zweck aus dem Plan (so wie er im Kalender steht), sonst nur der Hinweis, dass der Coach noch nicht
+// geschrieben hat. Keine eigenen Ratschlaege: die Einordnung macht der Coach.
+function whyText(p) {
   const pu = p && usablePurpose(p.purpose);
-  if (pu) return pu;
-  const g = d.goal, phase = g && g.phase;
-  if (g && g.daysToGo === 0) return "Renntag: gleichmäßig starten und das Tempo nicht überziehen.";
-  if (phase === "recovery") return "Nach dem Rennen zählt Erholung. Nur locker bewegen, nichts erzwingen.";
-  if (phase === "taper") return "Der Umfang sinkt vor dem Rennen. Die Beine sollen frisch werden, nicht müde. Locker bleiben.";
-  if (!p) return "Ruhetag: Erholung gehört zum Training. So kann der Reiz der letzten Tage wirken.";
-  if (p.key) return "Schlüsseleinheit: Hier entsteht der Trainingsreiz. Nur durchziehen, wenn Körper und Gefühl passen.";
-  if (p.sport === "strength") return "Kraft stützt Hüfte und Laufwirtschaftlichkeit. Sauber ausführen statt schwer.";
-  if (/locker|easy|ruhig|regen|recovery|grundlagen/i.test(p.name || "")) return "Locker halten: Der Reiz kommt aus dem Umfang, nicht aus dem Tempo.";
-  return "Gleichmäßig trainieren. Regelmäßigkeit bringt mehr als einzelne harte Tage.";
+  return pu || "Der Coach hat heute noch nicht geschrieben.";
 }
 
 // Kurzlabel unter der Dauer in den Tagekacheln
@@ -597,7 +589,7 @@ function buildWidget(res) {
   for (const [lab, short] of FEEL) line(feel, short, feelWord((r.items || []).find((i) => i.label === lab)));
   w.addSpacer(7);
 
-  // 3. Hinweis in einer grauen Kachel: Notiz des Coaches (Strich blau), sonst das allgemeine Warum zur Einheit (Strich grau)
+  // 3. Hinweis in einer grauen Kachel: Notiz des Coaches (Strich blau), sonst der Zweck aus dem Plan (Strich grau)
   const coachLine = d.coach && d.coach.note ? d.coach.note : null;
   const rawWhy = coachLine;
   // Nie abschneiden: ganze Saetze, solange sie in 3 Zeilen passen. Der erste Satz steht immer komplett da.
@@ -607,7 +599,7 @@ function buildWidget(res) {
     for (const x of parts.slice(1)) { if ((out + " " + x).length > 140) break; out += " " + x; }
     return out;
   };
-  const why = rawWhy ? sentences(rawWhy) : whyText(d, p);
+  const why = rawWhy ? sentences(rawWhy) : whyText(p);
   // Hoehe nach Textlaenge schaetzen (gut 6 pt je Zeichen bei 12 pt) und fest setzen: In einem Stack mit fester Hoehe und
   // fester Textbreite bricht Scriptable zuverlaessig um; ohne das blieb der Text einzeilig mit "...".
   const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 6.1));
@@ -1125,9 +1117,8 @@ function buildTraining(res) {
 
 /* ---------- Mittel: Intensitaet (Parameter "intensitaet") ---------- */
 // Zeitanteile locker (Z1-Z2), mittel (Z3-Z4), hart (Z5+) wie die Polarisation in Intervals: diese Woche und Schnitt der letzten 4 Wochen.
-// Mehr als 20 % hart gilt wie im Dashboard ("Was auffällt") als viel Intensitaet und bekommt das Warn-Dreieck.
+// Nur die Anteile, ohne Bewertung (die macht der Coach).
 const INT_HEX = { easy: "#5BA88A", mid: "#E0B454", hard: "#D9695F" };
-const HARD_SHARE = 20;
 
 function buildIntensity(res) {
   const d = res.data, W = widgetInnerWidth();
@@ -1139,8 +1130,7 @@ function buildIntensity(res) {
     const h = w.addStack(); h.centerAlignContent(); h.size = new Size(W, 0);
     text(h, title, FS.sm, { bold: true });
     h.addSpacer();
-    if (sh && sh.hard > HARD_SHARE) { text(h, `hart ${sh.hard} % `, FS.xs, { bold: true, color: COL.warn, minScale: 0.8 }); statusIcon(h, "warn", 11); }
-    else if (sh) text(h, `locker ${sh.easy} · mittel ${sh.mid} · hart ${sh.hard} %`, FS.xs, { color: COL.muted, minScale: 0.7 });
+    if (sh) text(h, `locker ${sh.easy} · mittel ${sh.mid} · hart ${sh.hard} %`, FS.xs, { color: COL.muted, minScale: 0.7 });
     w.addSpacer(4);
     if (sh) { const im = w.addImage(splitImage(W, 20, sh, null, ["easy", "mid", "hard"], (k) => INT_HEX[k])); im.imageSize = new Size(W, 24); }
     else text(w, "Noch keine Zonenzeiten.", FS.xs, { color: COL.muted });
