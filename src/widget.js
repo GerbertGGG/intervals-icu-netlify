@@ -49,6 +49,9 @@ export function racePhaseFor(goal, recentRace, todayIso) {
   }
   return racePhase(goal?.daysToGo, phaseDaysFor(goal));
 }
+// Urteil des Coaches (go) als Farbe: hart = gruen, locker = gelb, frei = rot; ohne Urteil keine Farbe
+const GO_CLS = { hart: "ok", locker: "warn", frei: "bad" };
+const freshCoach = (d) => (isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? d.coach : null);
 const goalOf = (d) => ({ name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs, runKm: d.goal.runKm ?? null, phase: racePhaseFor(d.goal, d.recentRace, d.today) });
 const failedOf = (d) => Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k);
 
@@ -99,7 +102,8 @@ export function buildWidget(d, env = {}) {
   const horizon = addDays(d.today, 3);
   const upcoming = d.sources.intervalsEvents?.ok === false ? null : d.planned.filter((p) => p.date > d.today && p.date <= horizon).map((p) => ({ date: p.date, name: stripKey(p.name), sport: p.sport, durationMin: p.durationMin, key: isKeySession(p) }));
   const r = d.summary.recovery;
-  const coach = isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? { note: d.coach.note, headline: d.coach.headline } : null;
+  const c = freshCoach(d);
+  const coach = c ? { note: c.note, headline: c.headline, go: c.go ?? null, blockers: c.blockers ?? [], question: c.question ?? null, answer: c.answer ? true : false } : null;
   const wk = weeklyGoal(week, env);
   // Woche Mo bis So fuer die Kapseln im grossen Widget: erledigter Load je Sportart und die geplanten Einheiten des Tages
   const monday = addDays(d.today, -((new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7));
@@ -113,10 +117,11 @@ export function buildWidget(d, env = {}) {
     generatedAt: d.generatedAt,
     today: d.today,
     goal: goalOf(d),
-    // Erholungswerte ohne Ampel. verdict traegt die Kopfzeile des Coaches (cls "coach"), sonst "none"; line bleibt null.
+    // Erholungswerte ohne eigene Ampel. verdict traegt die Kopfzeile des Coaches, die Farbe kommt aus seinem Urteil (go),
+    // ohne Urteil "coach", ohne Aussage von heute "none"; line bleibt null.
     // Die Form (verdict, line, body.*) bleibt fuer aeltere Fassungen des Skripts erhalten.
     readiness: {
-      verdict: coach ? { cls: "coach", text: coach.headline ?? coach.note } : { cls: "none", text: "Noch keine Coach-Auswertung" }, line: null,
+      verdict: coach ? { cls: GO_CLS[coach.go] ?? "coach", text: coach.headline ?? coach.note } : { cls: "none", text: "Noch keine Coach-Auswertung" }, line: null,
       sleepHours: r.sleepHours, hrv: r.hrv, restingHR: r.restingHR,
       body: { sleep: { score: r.sleepScore, median: r.body.sleepMedian }, hrv: { median: r.body.hrvMedian }, resting: { median: r.body.restingMedian } },
       items: r.items.map((i) => ({ label: i.label, v: i.v, max: i.max, med: i.med ?? null })),
@@ -350,7 +355,8 @@ function watchDay(d, date) {
   return list.length > 1 ? { ...list[0], s2: list[1].s, p2: list[1].p } : list[0];
 }
 
-// co = 1, wenn der Coach heute schon seine Morgen-Auswertung geschrieben hat (rd bleibt fuer alte Zifferblaetter "none").
+// co = 1, wenn der Coach heute schon seine Morgen-Auswertung geschrieben hat; rd = sein Urteil (go) als ok/warn/bad, sonst
+// "none" (aeltere Zifferblaetter zeigen das als Bereit / Mit Vorsicht / Ruhig angehen); bl = Zahl seiner Blocker.
 // race.d = Tage bis zum Rennen; block = Trainingsblock (st Status, d Tage bis Start, w Woche von of) fuer die Zeile am unteren Rand.
 const dayIndex = (iso) => (new Date(iso + "T00:00:00Z").getUTCDay() + 6) % 7;
 
@@ -411,10 +417,10 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     next,
     race: d.goal ? { d: d.goal.daysToGo ?? null } : null,
     block: b ? { st: b.status, d: b.daysToStart ?? null, w: b.weekNo ?? null, of: b.weeks ?? null } : null,
-    // Kein eigenes Urteil: rd bleibt "none" (aeltere Zifferblaetter zeigen dann "Ohne Eintrag"), co = 1, wenn der Coach heute
-    // schon geschrieben hat
-    rd: "none",
-    co: isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? 1 : 0,
+    // Kein eigenes Urteil: nur das des Coaches
+    rd: GO_CLS[freshCoach(d)?.go] ?? "none",
+    co: freshCoach(d) ? 1 : 0,
+    bl: freshCoach(d)?.blockers?.length ?? 0,
     tss: total(week),
     ts: watchTssBySport(week),
     plan: week.plannedLoad > 0 && !targets.length ? week.plannedLoad : null,

@@ -412,7 +412,9 @@ function ringProgressImage(size, ratio, hex, alpha = 1, center = null) {
 /* ---------- Grosses Widget ---------- */
 // Koerper und Gefuehl als Werte ohne Ampel (die Einordnung macht der Coach); Gefuehl als Zahl, 1 = bestmoeglich
 const feelWord = (it) => (it && it.v != null ? String(it.v) : MISSING);
-const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motivation"]];
+const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motiv."]];
+// Urteil des Coaches (go) als Text und Farbe
+const GO_TEXT = { hart: ["Hart erlaubt", "ok"], locker: ["Nur locker", "warn"], frei: ["Frei", "bad"] };
 
 // Zweck aus dem Plan nur, wenn er ein Satz ist und keine Intervall-/Zonenzeile
 function usablePurpose(s) {
@@ -568,25 +570,34 @@ function buildWidget(res) {
   if (g && g.daysToGo != null && g.daysToGo >= 0) pill(head, raceShort(g), COL.race, RACE_HEX);
   w.addSpacer(5);
 
-  // 2. Kopfzeile des Coaches (ohne Aussage von heute grau), darunter Koerper (objektiv) und Gefuehl (subjektiv) als Werte
-  const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 6;
-  statusIcon(vr, v.cls, 16);
-  num(vr, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), minScale: 0.7 });
+  // 2. Urteil des Coaches: Kapsel "Hart erlaubt" / "Nur locker" / "Frei" (Farbe aus seinem go), daneben seine Blocker.
+  // Ohne go seine Kopfzeile, ohne Aussage von heute grau. Kein eigenes Urteil des Widgets.
+  const c0 = d.coach, go = c0 && GO_TEXT[c0.go];
+  const vr = w.addStack(); vr.centerAlignContent(); vr.spacing = 6; vr.size = new Size(W, 0);
+  if (go) {
+    const gp = vr.addStack(); gp.cornerRadius = 11; gp.setPadding(3, 10, 3, 10); gp.backgroundColor = new Color(ZONE_RGB[go[1]] || NEUTRAL_HEX, 0.22);
+    text(gp, go[0], FS.md, { bold: true, color: colorFor(go[1]), minScale: 0.8 });
+    const bl = (c0.blockers || []).join(" · ");
+    if (bl) { symbol(vr, "exclamationmark.triangle.fill", 11, COL.warn); text(vr, bl, FS.xs, { bold: true, color: COL.warn, lines: 2, minScale: 0.7 }); }
+  } else {
+    statusIcon(vr, v.cls, 15);
+    text(vr, v.text, FS.md, { bold: true, color: v.cls === "none" ? COL.muted : COL.text, lines: 2, minScale: 0.7 });
+  }
+  vr.addSpacer();
   w.addSpacer(6);
-  const CW = Math.floor((W - 20) / 2);
-  const cols = w.addStack(); cols.size = new Size(W, 0); cols.spacing = 20;
-  const col = (title) => { const c = cols.addStack(); c.layoutVertically(); c.size = new Size(CW, 0); text(c, title, FS.xs, { bold: true, color: COL.muted, minScale: 1 }); c.addSpacer(1); return c; };
-  const line = (c, label, val) => {
-    const l = c.addStack(); l.centerAlignContent(); l.size = new Size(CW, 0);
-    text(l, label, FS.md, { minScale: 0.8 });
-    l.addSpacer();
-    text(l, val, FS.md, { bold: true, color: val === MISSING ? COL.muted : COL.text, align: "right", minScale: 0.8 });
-  };
-  const bodyCol = col("KÖRPER"), feel = col("GEFÜHL");
-  line(bodyCol, "Schlaf", r.sleepHours != null ? `${fmt(r.sleepHours, 1)} h` : MISSING);
-  line(bodyCol, "HRV", r.hrv != null ? fmt(r.hrv) : MISSING);
-  line(bodyCol, "Ruhepuls", fmt(r.restingHR));
-  for (const [lab, short] of FEEL) line(feel, short, feelWord((r.items || []).find((i) => i.label === lab)));
+
+  // Koerper und Gefuehl als eine kompakte Zeile: Wert gross, Kurzname klein darunter (Gefuehl 1 = bestmoeglich)
+  const vals = [
+    [r.sleepHours != null ? `${fmt(r.sleepHours, 1)}h` : MISSING, "Schlaf"], [r.hrv != null ? fmt(r.hrv) : MISSING, "HRV"], [fmt(r.restingHR), "Puls"],
+    ...FEEL.map(([lab, short]) => [feelWord((r.items || []).find((i) => i.label === lab)), short]),
+  ];
+  const vrow = w.addStack(); vrow.size = new Size(W, 0);
+  const VW = W / vals.length;
+  vals.forEach(([val, lab], i) => {
+    const cell = vrow.addStack(); cell.layoutVertically(); cell.size = new Size(VW, 0);
+    const a = cell.addStack(); a.addSpacer(); num(a, val, FS.md, { color: val === MISSING ? COL.muted : i < 3 ? COL.text : COL.muted, minScale: 0.6 }); a.addSpacer();
+    const b = cell.addStack(); b.addSpacer(); text(b, lab, FS.xs, { color: COL.muted, minScale: 0.6 }); b.addSpacer();
+  });
   w.addSpacer(7);
 
   // 3. Hinweis in einer grauen Kachel: Notiz des Coaches (Strich blau), sonst der Zweck aus dem Plan (Strich grau)
@@ -615,7 +626,8 @@ function buildWidget(res) {
   // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit.
   // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
   const wk = d.week || {};
-  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res);
+  // Ohne Einheit heute ist unten Platz: darunter die naechsten drei Tage (nicht bei langem Hinweis)
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, nLines <= 3);
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -695,7 +707,7 @@ function ringsImage(S, rings, warn) {
 // gegen das Ziel, TSS gegen die Grenze (oder welche Sportart darueber liegt) mit der Frische, darunter je Sportart eine
 // Kapsel mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). Die Kapseln stehen neben dem
 // Ring statt darunter: so passt die Woche auch mit geplanter Einheit ins Widget. Ersetzt Wochenkreise und Tageskacheln.
-function buildWeekTargets(w, W, d, wk, res) {
+function buildWeekTargets(w, W, d, wk, res, withDays = false) {
   const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
   const over = tss.filter((x) => x[1] > x[2]);
@@ -725,6 +737,20 @@ function buildWeekTargets(w, W, d, wk, res) {
       pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? `${fmt(o.v)}′` : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
       const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, SPORTS[o.s][0], FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
     }
+  }
+  // Unten, wenn Platz ist: die naechsten drei Tage, sofern dort etwas geplant ist (sonst stuende dreimal "Pause"),
+  // sonst die Rueckfrage des Coaches (beantworten im Dashboard)
+  const q = d.coach && d.coach.question;
+  if (withDays && (d.plan.upcoming || []).length) {
+    w.addSpacer(10);
+    const TW = Math.floor((W - 12) / 3);
+    const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
+    for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), d.goal, d.plan.upcoming);
+  } else if (withDays && q) {
+    w.addSpacer(10);
+    const qs = w.addStack(); qs.layoutVertically(); qs.size = new Size(W, 0);
+    text(qs, d.coach.answer ? "FRAGE DES COACHES · BEANTWORTET" : "FRAGE DES COACHES", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
+    text(qs, q, FS.sm, { lines: 3, minScale: 0.8 });
   }
   notice(w, res, d);
   w.addSpacer();

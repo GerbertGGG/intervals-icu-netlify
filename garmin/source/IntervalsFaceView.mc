@@ -341,16 +341,30 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawLine(dc, px(119), [["dot", px(6), sportColor(sport)], ["gap", px(9)], ["t", dayText, SEC, _cap], ["gap", px(10)], ["t", label, FG, _small]]);
     }
 
-    // ---- Coach: Hat die Morgen-Auswertung heute schon geschrieben? ------------------------------------------
-    // co: 1 = Aussage von heute da, 0 = noch nicht. Ein eigenes Urteil (Ampel) zeigt die Uhr nicht: das macht der Coach.
+    // ---- Coach: sein Urteil für heute ------------------------------------------------------------------
+    // rd: Urteil des Coaches (ok = hart erlaubt, warn = nur locker, bad = frei, none = kein Urteil), co: 1 = Aussage von heute da,
+    // bl: Zahl seiner Blocker. Form wie bisher: Kreis = hart erlaubt, Dreieck = nur locker, Quadrat = frei. Eigene Regeln gibt es nicht.
 
     private function drawReady(dc as Dc, data as Dictionary) as Void {
+        var rd = data.get("rd");
         var co = numOrNull(data.get("co"));
         var has = co != null && co.toNumber() == 1;
+        var word = has ? "Coach hat geschrieben" : "Noch kein Coach";
+        var color = has ? ACCENT : SEC;
+        if ("ok".equals(rd)) { word = "Hart erlaubt"; color = OK; }
+        else if ("warn".equals(rd)) { word = "Nur locker"; color = WARN; }
+        else if ("bad".equals(rd)) { word = "Frei"; color = BAD; }
         // Älter als eine Stunde: alles grau mit "!"
         var stale = isStale(data);
-        var word = has ? "Coach hat geschrieben" : "Noch kein Coach";
-        var items = [["dot", px(7), stale ? TER : (has ? ACCENT : SEC)], ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale || !has ? SEC : FG, _small]] as Array<Array>;
+        var shape = stale || !("warn".equals(rd) || "bad".equals(rd)) ? ["dot", px(7), stale ? TER : color] : ("warn".equals(rd) ? ["tri", px(17), color] : ["sq", px(14), color]);
+        var items = [shape, ["gap", px(9)], ["t", stale ? word + " !" + errSuffix() : word, stale || !has ? SEC : FG, _small]] as Array<Array>;
+        var bl = numOrNull(data.get("bl"));
+        if (!stale && bl != null && bl.toNumber() > 0) {
+            items.add(["gap", px(12)]);
+            items.add(["tri", px(15), WARN]);
+            items.add(["gap", px(6)]);
+            items.add(["t", bl.toNumber().toString(), WARN, _small]);
+        }
         drawLine(dc, px(READY_Y), items);
     }
 

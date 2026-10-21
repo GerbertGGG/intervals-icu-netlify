@@ -168,6 +168,9 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 /* Coach im Heute-Kopf: Akzentfarbe statt Ampel, die Aussage kommt vom Coach, nicht aus Regeln */
 .hero-status.coach { border-left-color: var(--accent); }
 .verdict.coach { color: var(--text); font-size: var(--fs-2xl); line-height: 1.2; }
+.coach-go { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 2px; }
+.coach-go .badge { font-size: var(--fs-s); }
+.coach-bl { font-size: var(--fs-xs); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); }
 .coach-q { border-left: 3px solid var(--accent); background: var(--inset); padding: 10px 12px; border-radius: 0 8px 8px 0; display: grid; gap: 6px; }
 .coach-q p { margin: 0; font-size: var(--fs-m); }
 .coach-q textarea { width: 100%; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 8px; resize: vertical; }
