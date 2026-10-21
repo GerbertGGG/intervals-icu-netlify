@@ -70,7 +70,7 @@ export const BODY_RULES = {
   baseDays: 28, minN: 5, thinN: 10, sickTail: 3,
   restingHR: { mild: 4, warn: 6, bad: 8 },
   hrvDrop: 0.88, hrvStrong: 0.8, hrvUp: 1.05,
-  trend: { days: 7, minN: 4, hrv: 0.93, resting: 3, hrvToday: 0.95, restingToday: 2 },
+  trend: { days: 7, minN: 4, hrv: 0.93, resting: 3, hrvToday: 0.95, restingToday: 2, recoverDays: 3 },
   sleepScore: 80, sleepHoursMin: 6,
   // Ausreißer bleiben aus der Basis (z. B. eine Krankheitsnacht ohne Kalendereintrag): HRV unter 70 % bzw. Ruhepuls über +8
   outlier: { hrv: 0.7, restingHR: 8 },
@@ -107,8 +107,13 @@ function computeBody(wellness, todayIso, sickDays = []) {
   const sleepCls = score != null
     ? (score < R.sleepScore && (yday?.sleepScore ?? 100) < R.sleepScore ? "warn" : "ok")
     : h == null ? "none" : h < R.sleepHoursMin ? "warn" : "ok";
-  const hrvTrend = hrv7 != null && hrv7 <= hrvT * T.hrv && (hrv == null || hrv <= hrvT * T.hrvToday);
-  const rhrTrend = rhr7 != null && rhr7 >= rhrT + T.resting && (rhr == null || rhr >= rhrT + T.restingToday);
+  // Erholung: Liegen die letzten 3 Tage schon besser als der 7-Tage-Schnitt, zieht nur ein vergangenes Tief den Schnitt
+  // herunter; dann zählt der Trend nicht mehr (z. B. HRV 37/38/38, danach 44/46/43)
+  const last3 = (key) => { const v = wellness.filter((w) => w.date > addDays(todayIso, -T.recoverDays) && w.date <= todayIso).map((w) => w[key]).filter((x) => x != null); return v.length >= 2 ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const hrv3 = last3("hrv"), rhr3 = last3("restingHR");
+  const hrvRecovering = hrv7 != null && hrv3 != null && hrv3 > hrv7, rhrRecovering = rhr7 != null && rhr3 != null && rhr3 < rhr7;
+  const hrvTrend = hrv7 != null && hrv7 <= hrvT * T.hrv && (hrv == null || hrv <= hrvT * T.hrvToday) && !hrvRecovering;
+  const rhrTrend = rhr7 != null && rhr7 >= rhrT + T.resting && (rhr == null || rhr >= rhrT + T.restingToday) && !rhrRecovering;
   const hrvMild = q != null && q <= R.hrvDrop, rhrMild = diff != null && diff >= R.restingHR.mild;
   // Bestätigung eines leichten Ausschlags: ein anderes Körpersignal oder ein Trend zeigt in dieselbe Richtung
   const hrvDay = (q != null && q <= R.hrvStrong) || (hrvMild && (rhrMild || rhrTrend || sleepCls === "warn"));
@@ -118,8 +123,8 @@ function computeBody(wellness, todayIso, sickDays = []) {
   const rhrCls = diff != null && diff >= R.restingHR.bad ? "bad" : rhrOk ? "warn" : diff == null && rhr7 == null ? "none" : "ok";
   return {
     sleep: { cls: sleepCls, score, hours: h },
-    hrv: { cls: hrvCls, trend: q == null ? null : q <= R.hrvDrop ? "down" : q > R.hrvUp ? "up" : "flat", mean7: hrv7, base7: hrvT, low7: hrvTrend, trendOnly: hrvTrend && !hrvDay, single: hrvMild && !hrvOk, thin: hrvB.n < R.thinN, n: hrvB.n },
-    resting: { cls: rhrCls, mean7: rhr7, base7: rhrT, high7: rhrTrend, trendOnly: rhrTrend && !rhrDay && rhrCls === "warn", single: rhrMild && rhrCls === "ok", thin: rhrB.n < R.thinN, n: rhrB.n },
+    hrv: { cls: hrvCls, trend: q == null ? null : q <= R.hrvDrop ? "down" : q > R.hrvUp ? "up" : "flat", mean7: hrv7, base7: hrvT, low7: hrvTrend, recovering: hrvRecovering, trendOnly: hrvTrend && !hrvDay, single: hrvMild && !hrvOk, thin: hrvB.n < R.thinN, n: hrvB.n },
+    resting: { cls: rhrCls, mean7: rhr7, base7: rhrT, high7: rhrTrend, recovering: rhrRecovering, trendOnly: rhrTrend && !rhrDay && rhrCls === "warn", single: rhrMild && rhrCls === "ok", thin: rhrB.n < R.thinN, n: rhrB.n },
     sleepMedian: sleepB.med, hrvMedian: hrvB.med, restingMedian: rhrB.med,
   };
 }
