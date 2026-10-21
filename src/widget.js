@@ -148,10 +148,12 @@ export function buildWidgetDetail(d, env = {}) {
     const hasData = Object.values(w.bySport).some((s) => s.count > 0);
     // TSS je Sportart fuer die Fuellung in Sportfarben (nur Sportarten mit Last)
     const sports = Object.fromEntries(Object.entries(w.bySport).filter(([, v]) => v.load > 0).map(([k, v]) => [k, Math.round(v.load)]));
+    // Minuten je Sportart fuer das Zeit-Widget (gleiche Fuellung in Sportfarben)
+    const minSports = Object.fromEntries(Object.entries(w.bySport).filter(([, v]) => v.minutes > 0).map(([k, v]) => [k, Math.round(v.minutes)]));
     const cap = w.targetLoad > 0, plannedMin = Object.values(w.bySport).reduce((a, s) => (s.plannedMin != null ? (a ?? 0) + s.plannedMin : a), null);
     const goal = cap ? w.targetLoad : i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 && !hasTargets(w) ? w.plannedLoad : null;
     return {
-      weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, complete: w.complete, goal, cap,
+      weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, minSports, complete: w.complete, goal, cap,
       min: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.minutes, 0) : null, minGoal: w.targetMin > 0 ? w.targetMin : plannedMin > 0 ? plannedMin : null,
     };
   });

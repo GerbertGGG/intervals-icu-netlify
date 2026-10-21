@@ -9,7 +9,8 @@
 //     Gross:   Rennen-Countdown, Kopfzeile des Coaches (Morgen-Auswertung), Koerper- und Gefuehlswerte, Hinweis (Coach, sonst
 //              Zweck aus dem Plan), heutige Einheit,
 //              Woche Mo bis So als Kapseln mit Wochenlast, die naechsten drei Tage.
-//     Mittel:  Ernaehrung heute (Standard). Parameter  form  = Wochen-TSS der letzten 6 Wochen gegen das Wochenziel, Schwellen;
+//     Mittel:  Ernaehrung heute (Standard). Parameter  form  (auch  tss) = Wochen-TSS der letzten 6 Wochen gegen das Ziel, Schwellen;
+//              Parameter  zeit  = Trainingszeit der letzten 6 Wochen gegen das Zeitziel, Minuten dieser Woche je Sportart;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
@@ -29,7 +30,8 @@ const KEY_TOKEN = "training-dashboard-token";
 // Widget-Groesse und Parameter bestimmen die Ansicht (Parameter = Anfang des Wortes reicht).
 const VIEWS = {
   main: { endpoint: "", build: (r) => buildWidget(r), size: "large", label: "Vorschau groß" },
-  detail: { endpoint: "detail", build: (r) => buildMedium(r), size: "medium", label: "Vorschau mittel: Form und Halbmarathon-Zeiten" },
+  detail: { endpoint: "detail", build: (r) => buildMedium(r, "tss"), size: "medium", label: "Vorschau mittel: TSS der letzten 6 Wochen" },
+  time: { endpoint: "detail", build: (r) => buildMedium(r, "time"), size: "medium", label: "Vorschau mittel: Trainingszeit der letzten 6 Wochen" },
   training: { endpoint: "training", build: (r) => buildTraining(r), size: "medium", label: "Vorschau mittel: Training (Disziplinen)" },
   intensity: { endpoint: "training", build: (r) => buildIntensity(r), size: "medium", label: "Vorschau mittel: Intensität" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
@@ -42,7 +44,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(form|zeit|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min)/, "time"], [/^(form|tss|belast|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -768,11 +770,25 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
   return w;
 }
 
-/* ---------- Mittel: Belastung der letzten 6 Wochen (Parameter "form") ---------- */
-// Je Woche eine Kapsel: Umriss = TSS-Ziel (Obergrenze des Coaches oder Plan), Fuellung = gemacht, gestapelt in Sportfarben
-// (groesster Anteil unten). Ohne Ziel kein Umriss, ohne Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte
-// Widget-Texte darunter (tssLabels), weil Text im Bild feste Farben hat: TSS mit Ziel, Trainingszeit mit Zeitziel, Datum.
-const TSS_PLOT_H = 40;
+/* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
+// Je Woche eine Kapsel: Umriss = Ziel (TSS-Obergrenze bzw. Zeitziel des Coaches, sonst Plan), die Fuellung = gemacht fuellt
+// ihn von unten, gestapelt in Sportfarben (groesster Anteil unten). Liegt der Wert ueber dem Ziel, waechst die Fuellung
+// aus dem Umriss heraus und ein Strich markiert das Ziel. Ohne Ziel kein Umriss, ohne Training keine Fuellung, nie ein
+// 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
+const WEEK_PLOT_H = 54;
+// Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
+const WEEK_KINDS = {
+  tss: {
+    title: "BELASTUNG · 6 WOCHEN", unit: "TSS",
+    val: (k) => k.tss, goal: (k) => k.goal, parts: (k) => k.sports,
+    goalText: (k) => (k.goal != null ? `${k.cap ? "≤" : ""}${fmt(k.goal)}` : null),
+  },
+  time: {
+    title: "ZEIT · 6 WOCHEN", unit: "min",
+    val: (k) => k.min, goal: (k) => k.minGoal, parts: (k) => k.minSports,
+    goalText: (k) => (k.minGoal != null ? fmt(k.minGoal) : null),
+  },
+};
 // Waagrechter Streifen (yTop bis yBot) aus einer senkrechten Kapsel als Pfad: so wird die Fuellung in Sportfarben geteilt
 function capsuleBand(x, y, w, h, yTop, yBot) {
   const r = Math.min(w / 2, h / 2), cx = x + w / 2;
@@ -787,76 +803,83 @@ function capsuleBand(x, y, w, h, yTop, yBot) {
   const p = new Path(); p.addLines(pts); p.closeSubpath();
   return p;
 }
-function tssImage(w, weeks) {
+function weekImage(w, weeks, K) {
   // 3 pt Rand oben und unten, damit der Ziel-Umriss nicht am Bildrand abgeschnitten wird
-  const n = weeks.length, H = TSS_PLOT_H, M = 3, h = H - 2 * M, base = H - M, dc = newCtx(w, H);
-  const vals = weeks.flatMap((k) => [k.tss, k.goal]).filter((v) => v != null);
+  const n = weeks.length, H = WEEK_PLOT_H, M = 3, h = H - 2 * M, base = H - M, dc = newCtx(w, H);
+  const vals = weeks.flatMap((k) => [K.val(k), K.goal(k)]).filter((v) => v != null);
   const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(24, slot * 0.46);
   weeks.forEach((k, i) => {
-    const x = i * slot + (slot - bw) / 2;
+    const x = i * slot + (slot - bw) / 2, v = K.val(k), g = K.goal(k);
+    // Umriss zuerst: das Ziel als leere Kapsel mit etwas Luft, die Fuellung kommt hinein
+    const gh = g != null ? Math.max(bw, (g / max) * h) + 3 : null;
+    if (gh != null) {
+      const p = new Path();
+      p.addRoundedRect(new Rect(x - 1.5, base + 1.5 - gh, bw + 3, gh), (bw + 3) / 2, (bw + 3) / 2);
+      dc.addPath(p); dc.setFillColor(new Color(NEUTRAL_HEX, 0.18)); dc.fillPath();
+      dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.6); dc.strokePath();
+    }
     // Fuellung: gemacht, je Sportart ein Streifen (groesster unten)
-    if (k.tss != null && k.tss > 0) {
-      const ht = Math.max(bw, (k.tss / max) * h), top = base - ht;
-      const parts = Object.entries(k.sports || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-      if (!parts.length) parts.push(["other", k.tss]);
-      const tot = parts.reduce((a, [, v]) => a + v, 0);
+    if (v != null && v > 0) {
+      const ht = Math.max(bw, (v / max) * h), top = base - ht;
+      const parts = Object.entries(K.parts(k) || {}).filter(([, pv]) => pv > 0).sort((a, b) => b[1] - a[1]);
+      if (!parts.length) parts.push(["other", v]);
+      const tot = parts.reduce((a, [, pv]) => a + pv, 0);
       let yb = base;
-      parts.forEach(([sp, v], j) => {
-        const last = j === parts.length - 1, yt = last ? top : Math.max(top, yb - (ht * v) / tot);
+      parts.forEach(([sp, pv], j) => {
+        const last = j === parts.length - 1, yt = last ? top : Math.max(top, yb - (ht * pv) / tot);
         dc.addPath(capsuleBand(x, top, bw, ht, yt + (last ? 0 : 0.6), yb - (j === 0 ? 0 : 0.6)));
         dc.setFillColor(new Color(sportHex(sp))); dc.fillPath();
         yb = yt;
       });
-    }
-    // Umriss: Ziel bzw. Plan der Woche, mit etwas Luft um die Fuellung
-    if (k.goal != null) {
-      const gh = Math.max(bw, (k.goal / max) * h) + 3, p = new Path();
-      p.addRoundedRect(new Rect(x - 1.5, base + 1.5 - gh, bw + 3, gh), (bw + 3) / 2, (bw + 3) / 2);
-      dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.6); dc.strokePath();
+      // Ueber dem Ziel: Strich auf Zielhoehe quer durch die Fuellung
+      if (gh != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x - 3, base + 1.5 - gh - 0.8, bw + 6, 1.6)); }
     }
   });
   return dc.getImage();
 }
 
-// TSS-Ziel als Text: Obergrenze des Coaches mit "≤", Plan ohne
-const tssGoalText = (k) => (k.goal != null ? `${k.cap ? "≤" : ""}${fmt(k.goal)}` : null);
-// Je Woche eine Spalte unter der Saeule: TSS (fett), TSS-Ziel, Minuten mit Zeitziel, Wochenanfang
-function tssLabels(parent, W, weeks) {
+// Je Woche eine Spalte unter der Kapsel: Wert (fett), Ziel, Wochenanfang
+function weekLabels(parent, W, weeks, K) {
   const slot = Math.floor(W / weeks.length), row = parent.addStack();
   row.size = new Size(slot * weeks.length, 0);
   weeks.forEach((k, i) => {
-    const cur = i === weeks.length - 1;
+    const cur = i === weeks.length - 1, v = K.val(k), gt = K.goalText(k);
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(slot, 0);
     const line = (fn) => { const r = col.addStack(); r.addSpacer(); fn(r); r.addSpacer(); };
-    line((r) => num(r, k.tss != null ? fmt(k.tss) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
-    line((r) => text(r, k.goal != null ? `/${tssGoalText(k)}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
-    line((r) => text(r, k.min != null ? `${fmt(k.min)}${k.minGoal != null ? `/${fmt(k.minGoal)}` : ""}′` : k.minGoal != null ? `–/${fmt(k.minGoal)}′` : "–", FS.xs, { color: COL.text, align: "center", minScale: 0.6 }));
+    line((r) => num(r, v != null ? fmt(v) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
+    line((r) => text(r, gt != null ? `/${gt}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
     line((r) => text(r, dateShort(k.weekStart), FS.xs, { bold: cur, color: cur ? COL.text : COL.muted, align: "center", minScale: 0.7 }));
   });
 }
 
-function buildMedium(res) {
-  const d = res.data;
+function buildMedium(res, kind = "tss") {
+  const d = res.data, K = WEEK_KINDS[kind];
   const W = widgetInnerWidth();
   const w = baseWidget({ padV: 11 });
   const tw = d.tssWeeks || [], cur = tw[tw.length - 1];
-  // Rechts die laufende Woche: TSS mit Ziel und Minuten mit Zeitziel (aeltere Daten ohne Minuten: nur TSS wie bisher)
-  const curTss = cur && cur.tss != null ? `${fmt(cur.tss)}${cur.goal ? `/${tssGoalText(cur)}` : ""} TSS` : null;
-  const curMin = cur && "min" in cur && (cur.min != null || cur.minGoal != null) ? `${cur.min != null ? fmt(cur.min) : "0"}${cur.minGoal ? `/${fmt(cur.minGoal)}` : ""} min` : null;
-  header(w, W, "BELASTUNG · 6 WOCHEN", [curTss, curMin].filter(Boolean).join(" · ") || null);
-  w.addSpacer(4);
-  if (tw.some((k) => k.tss != null)) {
-    const im = w.addImage(tssImage(W, tw)); im.imageSize = new Size(W, TSS_PLOT_H);
+  const cv = cur ? K.val(cur) : null, cg = cur ? K.goalText(cur) : null;
+  header(w, W, K.title, cur && (cv != null || cg != null) ? `${cv != null ? fmt(cv) : "0"}${cg ? `/${cg}` : ""} ${K.unit} diese Woche` : null);
+  w.addSpacer(5);
+  if (tw.some((k) => K.val(k) != null)) {
+    const im = w.addImage(weekImage(W, tw, K)); im.imageSize = new Size(W, WEEK_PLOT_H);
     w.addSpacer(3);
-    tssLabels(w, W, tw);
-  } else text(w, "Keine TSS-Werte", FS.xs, { color: COL.muted });
+    weekLabels(w, W, tw, K);
+  } else text(w, kind === "time" ? "Keine Trainingszeiten" : "Keine TSS-Werte", FS.xs, { color: COL.muted });
   w.addSpacer();
-  // Unten: Schwellen mit Sportsymbol
-  const T = d.thresholds, th = w.addStack(); th.centerAlignContent(); th.spacing = 4;
+  const th = w.addStack(); th.centerAlignContent(); th.spacing = 4;
   const item = (k, str) => { symbol(th, SPORT_SYMBOL[k], 11, new Color(sportHex(k))); text(th, str, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 }); th.addSpacer(8); };
-  item("run", T.run.thresholdPaceSecPerKm ? `${fmtPace(T.run.thresholdPaceSecPerKm)}/km` : MISSING);
-  item("bike", T.bike.ftp ? `FTP ${T.bike.ftp} W` : MISSING);
-  item("swim", T.swim.thresholdPaceSecPer100m ? `${fmtPace(T.swim.thresholdPaceSecPer100m)}/100 m` : MISSING);
+  if (kind === "time") {
+    // Unten: Minuten dieser Woche je Sportart (nur Sportarten mit Training)
+    const ms = Object.entries((cur && cur.minSports) || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    if (ms.length) ms.forEach(([k, v]) => item(k, `${fmt(v)} min`));
+    else text(th, "Diese Woche noch kein Training", FS.xs, { color: COL.muted });
+  } else {
+    // Unten: Schwellen mit Sportsymbol
+    const T = d.thresholds;
+    item("run", T.run.thresholdPaceSecPerKm ? `${fmtPace(T.run.thresholdPaceSecPerKm)}/km` : MISSING);
+    item("bike", T.bike.ftp ? `FTP ${T.bike.ftp} W` : MISSING);
+    item("swim", T.swim.thresholdPaceSecPer100m ? `${fmtPace(T.swim.thresholdPaceSecPer100m)}/100 m` : MISSING);
+  }
   notice(w, res, d);
   return w;
 }
