@@ -126,7 +126,7 @@ export function buildWidget(d, env = {}) {
     // targets: Wochenziele des Coaches (Zeit + TSS-Obergrenze je Sportart); leer, wenn es keine gibt.
     // rings/open/daysLeft: Woche wie auf der Uhr (Ringe ZEIT und TSS, was noch offen ist), nur mit Zeitzielen
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week) },
-    // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget das allgemeine Warum zur Einheit
+    // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget der Zweck aus dem Plan
     coach,
     sourcesFailed: failedOf(d),
   };
