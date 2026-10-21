@@ -771,9 +771,9 @@ function buildWeekTargets(w, W, d, wk, res, withDays = false, withQuestion = fal
 }
 
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
-// Je Woche eine Kapsel: Umriss = Ziel (TSS-Obergrenze bzw. Zeitziel des Coaches, sonst Plan), die Fuellung = gemacht fuellt
+// Je Woche eine Saeule: Rahmen = Ziel (TSS-Obergrenze bzw. Zeitziel des Coaches, sonst Plan), die Fuellung = gemacht fuellt
 // ihn von unten, gestapelt in Sportfarben (groesster Anteil unten). Liegt der Wert ueber dem Ziel, waechst die Fuellung
-// aus dem Umriss heraus und ein Strich markiert das Ziel. Ohne Ziel kein Umriss, ohne Training keine Fuellung, nie ein
+// aus dem Rahmen heraus und ein Strich markiert das Ziel. Ohne Ziel kein Rahmen, ohne Training keine Fuellung, nie ein
 // 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
@@ -789,56 +789,42 @@ const WEEK_KINDS = {
     goalText: (k) => (k.minGoal != null ? fmt(k.minGoal) : null),
   },
 };
-// Waagrechter Streifen (yTop bis yBot) aus einer senkrechten Kapsel als Pfad: so wird die Fuellung in Sportfarben geteilt
-function capsuleBand(x, y, w, h, yTop, yBot) {
-  const r = Math.min(w / 2, h / 2), cx = x + w / 2;
-  const half = (yy) => {
-    if (yy < y + r) { const d = y + r - yy; return Math.sqrt(Math.max(0, r * r - d * d)); }
-    if (yy > y + h - r) { const d = yy - (y + h - r); return Math.sqrt(Math.max(0, r * r - d * d)); }
-    return w / 2;
-  };
-  const n = Math.max(4, Math.ceil((yBot - yTop) * 2)), pts = [];
-  for (let k = 0; k <= n; k++) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx - half(yy), yy)); }
-  for (let k = n; k >= 0; k--) { const yy = yTop + ((yBot - yTop) * k) / n; pts.push(new Point(cx + half(yy), yy)); }
-  const p = new Path(); p.addLines(pts); p.closeSubpath();
-  return p;
-}
 function weekImage(w, weeks, K) {
-  // 3 pt Rand oben und unten, damit der Ziel-Umriss nicht am Bildrand abgeschnitten wird
+  // 3 pt Rand oben und unten, damit der Ziel-Rahmen nicht am Bildrand abgeschnitten wird
   const n = weeks.length, H = WEEK_PLOT_H, M = 3, h = H - 2 * M, base = H - M, dc = newCtx(w, H);
   const vals = weeks.flatMap((k) => [K.val(k), K.goal(k)]).filter((v) => v != null);
-  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(24, slot * 0.46);
+  const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(30, slot * 0.6);
   weeks.forEach((k, i) => {
     const x = i * slot + (slot - bw) / 2, v = K.val(k), g = K.goal(k);
-    // Umriss zuerst: das Ziel als leere Kapsel mit etwas Luft, die Fuellung kommt hinein
-    const gh = g != null ? Math.max(bw, (g / max) * h) + 3 : null;
-    if (gh != null) {
+    // Rahmen zuerst: das Ziel als leere Saeule, die Fuellung kommt hinein
+    const gy = g != null ? base - Math.max(2, (g / max) * h) : null;
+    if (gy != null) {
       const p = new Path();
-      p.addRoundedRect(new Rect(x - 1.5, base + 1.5 - gh, bw + 3, gh), (bw + 3) / 2, (bw + 3) / 2);
+      p.addRoundedRect(new Rect(x - 1.5, gy - 1.5, bw + 3, base + 1.5 - gy), 2, 2);
       dc.addPath(p); dc.setFillColor(new Color(NEUTRAL_HEX, 0.18)); dc.fillPath();
-      dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.6); dc.strokePath();
+      dc.addPath(p); dc.setStrokeColor(new Color(INK_HEX)); dc.setLineWidth(1.4); dc.strokePath();
     }
     // Fuellung: gemacht, je Sportart ein Streifen (groesster unten)
     if (v != null && v > 0) {
-      const ht = Math.max(bw, (v / max) * h), top = base - ht;
+      const ht = Math.max(2, (v / max) * h), top = base - ht;
       const parts = Object.entries(K.parts(k) || {}).filter(([, pv]) => pv > 0).sort((a, b) => b[1] - a[1]);
       if (!parts.length) parts.push(["other", v]);
       const tot = parts.reduce((a, [, pv]) => a + pv, 0);
       let yb = base;
       parts.forEach(([sp, pv], j) => {
         const last = j === parts.length - 1, yt = last ? top : Math.max(top, yb - (ht * pv) / tot);
-        dc.addPath(capsuleBand(x, top, bw, ht, yt + (last ? 0 : 0.6), yb - (j === 0 ? 0 : 0.6)));
-        dc.setFillColor(new Color(sportHex(sp))); dc.fillPath();
+        dc.setFillColor(new Color(sportHex(sp)));
+        dc.fillRect(new Rect(x, yt + (last ? 0 : 0.5), bw, Math.max(0.5, yb - yt - (last ? 0 : 0.5))));
         yb = yt;
       });
       // Ueber dem Ziel: Strich auf Zielhoehe quer durch die Fuellung
-      if (gh != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x - 3, base + 1.5 - gh - 0.8, bw + 6, 1.6)); }
+      if (gy != null && v > g) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(x - 3, gy - 0.7, bw + 6, 1.4)); }
     }
   });
   return dc.getImage();
 }
 
-// Je Woche eine Spalte unter der Kapsel: Wert (fett), Ziel, Wochenanfang
+// Je Woche eine Spalte unter der Saeule: Wert (fett), Ziel, Wochenanfang
 function weekLabels(parent, W, weeks, K) {
   const slot = Math.floor(W / weeks.length), row = parent.addStack();
   row.size = new Size(slot * weeks.length, 0);
