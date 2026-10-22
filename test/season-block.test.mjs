@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveSeasonBlock, parseBlockWeeks } from "../src/season-block.js";
+import { resolveSeasonBlock, parseBlockWeeks, parseStrengthSets, activeBlockStrengthSets } from "../src/season-block.js";
 
 const ev = { category: "SEASON_START", name: "Block Grundlage (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: "Ziel ist es Decoupling unter 8% zu druecken\n\nCheckpoint 3 / Blockabschluss nach Woche 12" };
 assert.equal(parseBlockWeeks(ev.name), 12);
@@ -256,3 +256,14 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
   assert.match(ramp.hints[0], /Bei CTL 20 erlaubt Ramp 5 etwa das 2,6-Fache der Erhaltungslast/);
 }
 console.log("block A calendar ok");
+
+// Satz-Ziel aus dem Blocktext: Zeile mit "Kraft", nur der laufende Block zählt (Kraft-Karte)
+assert.equal(parseStrengthSets("FIXPUNKTE\n- Lauf 3× pro Woche\n- Kraft ≥70 Sätze pro Woche"), 70);
+assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
+{
+  const ev = (start, desc) => ({ category: "SEASON_START", name: "Block B (8 Wochen)", start_date_local: start + "T00:00:00", description: desc });
+  assert.equal(activeBlockStrengthSets([ev("2026-10-05", "Ziel\n\nLEITPLANKEN\n- Kraft ≥75 Sätze in 7 von 8 Belastungswochen")], "2026-10-22"), 75);
+  assert.equal(activeBlockStrengthSets([ev("2026-11-02", "Ziel\n\n- Kraft ≥75 Sätze pro Woche")], "2026-10-22"), null);
+  const tg = parseBlockTargets("Ziel\n\n- Kraft ≥75 Sätze pro Woche");
+  assert.equal(tg.strength.sets, 75);
+}
