@@ -102,14 +102,17 @@ const numOf = (s) => Number(String(s).replace(",", "."));
 const num1 = (m, fb) => (m ? numOf(m[1]) : fb);
 // Termine der Blocktests aus dem Satz mit "Basistest"/"Blocktest" als "MM-DD" (Jahr ergibt sich aus dem Blockstart)
 export function parseTestDates(p) {
-  const m = String(p ?? "").match(/basistest\s*(\d{1,2}\.\d{1,2}\.[^)\n]*)/i);
+  const m = String(p ?? "").match(/basistest\s*(?:[a-z]{2}\.?\s*)?(\d{1,2}\.\d{1,2}\.[^)\n]*)/i);
   if (!m) return [];
   return [...m[1].matchAll(/(\d{1,2})\.(\d{1,2})\./g)].map((x) => `${x[2].padStart(2, "0")}-${x[1].padStart(2, "0")}`);
 }
 const LE = "(?:≤|<=|<|unter|max(?:imal)?)";
 function parseSportGoals(t) {
   const paras = t.split(/\n\s*\n|\n(?=\s*\d+\.\s)/);
-  const para = (...res) => paras.find((p) => res.every((re) => re.test(p))) ?? null;
+  // Nummerierte Punkte ("1. Lauf: …") reichen über Leerzeilen bis zum nächsten Punkt oder zur nächsten Überschrift in
+  // Großbuchstaben ("HF-DECKEL"); so stehen Überschrift und Absätze darunter (a), b), …) zusammen. Vor den Absätzen gesucht.
+  const sections = t.split(/\n(?=\s*\d+\.\s)/).slice(1).map((s) => s.split(/\n(?=\s*[A-ZÄÖÜ][A-ZÄÖÜ-]{3,}(?![a-zäöüß]))/)[0]);
+  const para = (...res) => [...sections, ...paras].find((p) => res.every((re) => re.test(p))) ?? null;
   const mustAll = t.match(/(\d+(?:[.,]\d+)?)\s*%[^\n]{0,50}muss/i);
   const mustOf = (p) => num1(p.match(new RegExp(`muss\\s*:?\\s*${LE}?\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), mustAll ? numOf(mustAll[1]) : null);
   const lastN = (p) => num1(p.match(/letzten\s*(\d+)/i), 3);
@@ -125,7 +128,7 @@ function parseSportGoals(t) {
     // Blocktest-Modus, sobald der Lauf-Absatz Blocktests nennt: Das Ziel wird nur an Laeufen gemessen, die der Nutzer als
     // "Blocktest"/"Basistest" benennt (Decoupling der ersten 60 min und stabile Dauer, laengstes Fenster 0–60, 0–75 … mit
     // Decoupling ≤ stableMax). Termine im Text ("Basistest 25.10., dann 08.11.") sind optional und nur Anzeige.
-    const tests = parseTestDates(runP);
+    const tests = parseTestDates(runP).length ? parseTestDates(runP) : parseTestDates(t); // Termine auch aus dem Ablauf
     if (tests.length || TEST_RE.test(runP)) {
       out.run.tests = tests;
       out.run.stableMax = num1(runP.match(new RegExp(`stabile\\s*dauer[^\\n]*?decoupling\\s*${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), 5);

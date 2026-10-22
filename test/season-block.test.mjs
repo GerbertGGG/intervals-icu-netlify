@@ -299,3 +299,18 @@ assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
   assert.match(g.target, /≥ 90 Sätze je 2 Wochen \(ab Blockstart\)/);
   assert.equal(g.note, "Dieser Abschnitt: 30 von 90 Sätzen");
 }
+
+// Abschlussziele mit Leerzeile nach der Überschrift ("1. Lauf: …\n\na) Basis: Decoupling …") und Terminen im Ablauf
+// ("Basistest So 25.10., dann So 08.11."): Lauf, Rad und Schwimmen werden trotzdem erkannt
+{
+  const txt = "ABLAUF\n\nBlocktests (langer Lauf, Sonntag vor der Entlastungswoche): Basistest So 25.10., dann So 08.11., So 06.12., So 03.01.\n\nABSCHLUSSZIELE\n\n1. Lauf: aerobe Stabilität und Haltbarkeit\n\na) Basis: Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min gegenüber dem Basistest mindestens stabil.\n\nb) Haltbarkeit: Die stabile Dauer (längstes Fenster 0–60, 0–75, 0–90 … mit Decoupling ≤5 %) ist im letzten Blocktest länger als im Basistest.\n\n2. Rad (Rolle): aerobe Stabilität\n\nDecoupling (Leistung zu Puls) im 60-min-Messfenster ≤5 % im Mittel der letzten 3 Vergleichseinheiten.\n\n3. Schwimmen: Dauer mit stabiler Technik\n\n2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.\n\nHF-DECKEL\n\nLauf-Grundlage unter HF 128.";
+  const tg = parseBlockTargets(txt);
+  assert.equal(tg.run.max, 5);
+  assert.equal(tg.run.must, 8);
+  assert.deepEqual(tg.run.tests, ["10-25", "11-08", "12-06", "01-03"]);
+  assert.equal(tg.bike.max, 5);
+  assert.equal(tg.bike.firstMin, 60);
+  assert.deepEqual(tg.swim, { reps: 2, distM: 500, maxPauseSec: 60, maxSlowerPer100: 5 });
+  assert.equal(tg.decoupling, null);
+  assert.equal(tg.hrCap, 128);
+}
