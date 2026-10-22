@@ -1,6 +1,8 @@
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin, mondayOnOrBefore } from "./date-utils.js";
 import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioAge } from "./egym-client.js";
+import { fetchIntervalsEvents } from "./intervals-client.js";
+import { activeBlockStrengthSets } from "./season-block.js";
 
 // Kraft-Widget (Ansicht "kraft", mittleres Widget, und Karte im Dashboard): Trainingszeit gegen Wochenziel, Einheiten,
 // Saetze und Volumen der letzten Wochen, Fortschritt aus den EGYM-Kraft-Tests (1RM je Geraet, Veraenderung zum
@@ -8,7 +10,8 @@ import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioA
 // Daten kommen aus der EGYM-App (siehe egym-client.js). Die Garmin-Tagesaktivitaet ("Daily routine") zaehlt nicht
 // als Krafttraining: Eine Kraft-Einheit ist ein Tag mit mindestens einer Uebung mit Saetzen (Wiederholungen und
 // Gewicht) oder an einem Geraet. Das Wochenziel sind Saetze: mindestens 60 Saetze Krafttraining pro Woche,
-// per EGYM_WEEKLY_GOAL_SETS aenderbar; goalSource sagt, was gilt. Die Minuten bleiben als Information.
+// aenderbar im Blocktext des laufenden Blocks in Intervals ("Kraft ≥70 Saetze ..."), sonst per EGYM_WEEKLY_GOAL_SETS;
+// goalSource sagt, was gilt ("block", "config", "default"). Die Minuten bleiben als Information.
 // Die Dauer eines Tages kommt aus den Angaben von EGYM (Dauer der Uebungen, sonst der Saetze); fehlen sie, ist es nur
 // die Spanne zwischen erster und letzter Uebung plus Zeit fuer die letzte Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
 // EGYM stempelt eine Uebung erst nach ihrem letzten Satz: Beim Zirkel deckt die Spanne so nur die letzte Runde ab. Die
@@ -234,14 +237,15 @@ function bioAgeOf(b) {
   };
 }
 
-export function goalOf(env) {
+export function goalOf(env, blockSets = null) {
+  if (Number.isFinite(blockSets) && blockSets > 0) return { goal: Math.floor(blockSets), source: "block" };
   const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_SETS));
   return Number.isFinite(n) && n > 0 ? { goal: n, source: "config" } : { goal: DEFAULT_WEEKLY_GOAL_SETS, source: "default" };
 }
 
 // Reine Funktion: Rohdaten der drei Endpunkte in die Widget-Daten (je Teil kann null sein, wenn der Abruf scheiterte)
-export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, generatedAt = new Date().toISOString(), failed = [] }) {
-  const { goal, source } = goalOf(env);
+export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, blockSets = null, generatedAt = new Date().toISOString(), failed = [] }) {
+  const { goal, source } = goalOf(env, blockSets);
   const days = strengthDays(workouts?.workouts ?? workouts ?? []);
   const monday = mondayOnOrBefore(today);
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) ?? 0), 0);
@@ -297,6 +301,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
 // EGYM-Abrufe sind langsam (Login, drei Endpunkte): das Ergebnis liegt kurz in KV
 const CACHE_KEY = "widget:egym-kraft";
 const KRAFT_CACHE_MS = 15 * 60 * 1000;
+const BLOCK_LOOKBACK_DAYS = 180; // Blockeintraege, die so weit zurueck beginnen, werden noch gefunden
 
 // Kraft-Tage aus dem Cache des Kraft-Widgets, ohne EGYM selbst abzufragen (das ist langsam und soll das Dashboard nicht
 // aufhalten). Fehlt der Cache oder stammt er aus der Zeit vor strengthDates, kommt null und der Aufrufer faellt zurueck.
@@ -321,13 +326,15 @@ export async function loadWidgetKraft(env, fresh = false) {
     return { workouts: all };
   };
   const settle = async (fn) => { try { return { v: await fn() }; } catch (e) { console.warn("egym fetch failed", String(e?.message ?? e)); return { v: null, e: true }; } };
-  const [w, s, b] = await Promise.all([
+  const [w, s, b, blk] = await Promise.all([
     settle(fetchWorkouts),
     settle(() => fetchEgymStrength(env, addDays(today, -365), today)),
     settle(() => fetchEgymBioAge(env)),
+    // Satz-Ziel aus dem Blocktext (best effort; ohne Intervals gilt EGYM_WEEKLY_GOAL_SETS bzw. das Standardziel)
+    settle(async () => activeBlockStrengthSets(await fetchIntervalsEvents(env, addDays(today, -BLOCK_LOOKBACK_DAYS), today), today)),
   ]);
   const failed = [["egymWorkouts", w], ["egymStrength", s], ["egymBioAge", b]].filter(([, r]) => r.e).map(([k]) => k);
-  const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, failed }) };
+  const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, blockSets: blk.v ?? null, failed }) };
   // Nur vollstaendige Staende cachen, ein Ausfall soll nicht eine Viertelstunde haengen bleiben
   if (!failed.length) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
   return data;

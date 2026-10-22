@@ -156,6 +156,21 @@ function parseSportGoals(t) {
   return out;
 }
 
+// Satz-Ziel Kraft aus dem Blocktext: Zahl vor "Sätze" in einer Zeile mit "Kraft" ("Kraft ≥70 Sätze pro Woche"),
+// sonst die erste "N Sätze" im Text; null, wenn keine dasteht. Gilt auch für die Kraft-Karte (egym-widget.js).
+export function parseStrengthSets(text) {
+  const t = String(text ?? "");
+  const m = t.match(/kraft[^\n]*?(\d+)\s*(?:sätze|saetze)/i) ?? t.match(/(\d+)\s*(?:sätze|saetze)/i);
+  const n = m ? Number(m[1]) : NaN;
+  return n > 0 ? n : null;
+}
+
+// Satz-Ziel des laufenden Blocks (nur aktiv, ein kommender Block gilt noch nicht)
+export function activeBlockStrengthSets(events, todayIso) {
+  const b = resolveSeasonBlock(events, todayIso);
+  return b?.status === "active" ? parseStrengthSets([b.goal, ...(b.notes ?? [])].filter(Boolean).join("\n\n")) : null;
+}
+
 export function parseBlockTargets(text) {
   const t = String(text ?? "");
   const has = (re) => re.test(t);
@@ -166,14 +181,14 @@ export function parseBlockTargets(text) {
   const intLine = t.match(/intensit(?:ä|ae|a)t[^\n]*?(\d+)\s*von\s*(\d+)\s*belastungswochen[^\n]*/i);
   const intFrom = intLine?.[0].match(/ab\s*woche\s*(\d+)/i);
   const intKinds = intLine ? [/hiit/i.test(intLine[0]) ? "bikeHiit" : null, /hügel|huegel|sprint/i.test(intLine[0]) ? "hillSprints" : null].filter(Boolean) : [];
-  const sets = t.match(/(\d+)\s*sätze/i);
+  const sets = parseStrengthSets(t);
   const ramp = t.match(/ramp\s*-?\s*rate[^\d\n]{0,40}(\d+(?:[.,]\d+)?)/i);
   const pause = t.match(/pause\s*(?:über|von mehr als|länger als|>)\s*(\d+)\s*tag/i);
   return {
     ...sport,
     // Alte Form (nur Stichworte): Decoupling langer Laeufe, solange kein Lauf-Absatz mit vergleichbaren Laeufen da ist
     decoupling: has(/decoupling/i) && !sport.run && !sport.bike ? { max: dec ? numOf(dec[1]) : 8 } : null,
-    strength: has(/kraft/i) ? (loadWeeks ? { need: Number(loadWeeks[1]), of: Number(loadWeeks[2]), sets: sets ? Number(sets[1]) : null } : { share: STRENGTH_WEEKS_SHARE }) : null,
+    strength: has(/kraft/i) ? (loadWeeks ? { need: Number(loadWeeks[1]), of: Number(loadWeeks[2]), sets } : { share: STRENGTH_WEEKS_SHARE, sets }) : null,
     acwr: has(/acwr/i) ? { ...ACWR_BAND, share: ACWR_DAYS_SHARE } : null,
     ramp: ramp ? { max: numOf(ramp[1]) } : null,
     pause: pause ? { maxDays: Number(pause[1]) } : null,
@@ -556,7 +571,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     // Leitplanke "8 von 9 Belastungswochen": Entlastungswochen (jede 4. Blockwoche) zählen nicht; es darf höchstens
     // (of − need) Belastungswochen ohne Ziel geben.
     const st = targets.strength, perLoad = st.need != null;
-    const goalSets = perLoad && st.sets ? st.sets : Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
+    const goalSets = st.sets ? st.sets : Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
     const setsMode = (input.strength ?? []).some((x) => Number.isFinite(x.sets));
     const need = setsMode ? goalSets : STRENGTH_DAYS_PER_WEEK;
     const weeks = weeksOf(block, w, todayIso).map((x) => {

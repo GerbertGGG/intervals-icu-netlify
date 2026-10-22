@@ -191,3 +191,9 @@ test("Von Hand geaenderte Dauer bleibt, vom Sync geschriebene wird nachgezogen",
   assert.deepEqual(nextWritten({ "egym-2026-09-01": 600 }, synced, built, durationFixes(synced, built, {}), "2026-10-12"), { "egym-2026-10-12": 900 });
   assert.deepEqual(nextWritten({ "egym-2026-10-12": 840 }, manual, built, [], "2026-10-12"), { "egym-2026-10-12": 840 });
 });
+
+test("Satz-Ziel aus dem Blocktext geht vor EGYM_WEEKLY_GOAL_SETS", () => {
+  const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-10-04", env: { EGYM_WEEKLY_GOAL_SETS: "90" }, blockSets: 70 });
+  assert.equal(d.week.goalSets, 70);
+  assert.equal(d.week.goalSource, "block");
+});
