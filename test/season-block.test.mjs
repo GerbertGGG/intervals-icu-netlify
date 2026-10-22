@@ -287,3 +287,15 @@ assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
   assert.equal(g.status, "bad");
   assert.deepEqual(g.calWeek, { start: "2026-11-02", end: "2026-11-15", count: 20 });
 }
+
+// "6 von 8 Belastungswochen" in der Intensitäts-Zeile gehört nicht zur Kraft (echter Block A: Kraft ≥90 Sätze in 2 Wochen)
+{
+  const txt = "LEITPLANKEN\nKraft ≥90 Sätze in 2 Wochen, d. h. 3× Krafttraining à 30 Sätze im 14-Tage-Fenster.\nRamp Rate (CTL) in Belastungswochen ≤5.\nIntensität: Rad-HIIT und Hügelsprints je 1× pro Woche in 6 von 8 Belastungswochen ab Woche 2. Krankheitswochen zählen nicht als verfehlt.";
+  const tk = parseBlockTargets(txt);
+  assert.deepEqual(tk.strength, { sets: 90, periodWeeks: 2 });
+  assert.equal(tk.intensity.need, 6);
+  const ev = { category: "SEASON_START", name: "Block A (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: txt };
+  const g = buildBlockGoals(resolveSeasonBlock([ev], "2026-10-22"), { strength: [{ date: "2026-10-20", sets: 30 }] }, "2026-10-22").find((x) => x.key === "strength");
+  assert.match(g.target, /≥ 90 Sätze je 2 Wochen \(ab Blockstart\)/);
+  assert.equal(g.note, "Dieser Abschnitt: 30 von 90 Sätzen");
+}

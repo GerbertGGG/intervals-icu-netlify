@@ -183,8 +183,9 @@ export function parseBlockTargets(text) {
   const has = (re) => re.test(t);
   const sport = parseSportGoals(t);
   const dec = t.match(/decoupling[^\d]{0,25}(\d+(?:[.,]\d+)?)\s*%/i);
-  // "x von y Belastungswochen" gibt es auch bei der Intensitaet: fuer Kraft zuerst die Zeile mit "Kraft"
-  const loadWeeks = t.match(/kraft[^\n]*?(\d+)\s*von\s*(\d+)\s*belastungswochen/i) ?? t.match(/(\d+)\s*von\s*(\d+)\s*belastungswochen/i);
+  // "x von y Belastungswochen" gibt es auch bei der Intensitaet: fuer Kraft zuerst die Zeile mit "Kraft", sonst eine Zeile
+  // ohne Intensitaet (die Zeile "Intensität: … 6 von 8 Belastungswochen" gehoert nicht zur Kraft)
+  const loadWeeks = t.match(/kraft[^\n]*?(\d+)\s*von\s*(\d+)\s*belastungswochen/i) ?? t.split("\n").filter((l) => !/intensit(?:ä|ae|a)t/i.test(l)).join("\n").match(/(\d+)\s*von\s*(\d+)\s*belastungswochen/i);
   const intLine = t.match(/intensit(?:ä|ae|a)t[^\n]*?(\d+)\s*von\s*(\d+)\s*belastungswochen[^\n]*/i);
   const intFrom = intLine?.[0].match(/ab\s*woche\s*(\d+)/i);
   const intKinds = intLine ? [/hiit/i.test(intLine[0]) ? "bikeHiit" : null, /hügel|huegel|sprint/i.test(intLine[0]) ? "hillSprints" : null].filter(Boolean) : [];
