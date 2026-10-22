@@ -87,5 +87,34 @@ assert.equal(r.body.result.isError, true); assert.match(r.body.result.content[0]
 r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-27T06:31:00Z", note: "Dienstag.", week_plan: {} } });
 assert.ok(!r.body.result.isError);
 assert.equal(JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text).week_plan, null);
+// Experiment und Profil: eigene Schreib-Tools, get_coach liefert beides mit (null, solange nichts gespeichert ist)
+assert.ok(["save_experiment", "save_profil"].every((n) => list.body.result.tools.some((t) => t.name === n)));
+assert.equal(gc.experiment, null); assert.equal(gc.profil, null);
+const experiment = { fetchedAt: "2026-10-26T06:30:00Z", title: "Trainingstage", hypothesis: "Fünf statt drei Trainingstage pro Woche verbessern die aerobe Basis in allen drei Sportarten.",
+  status: "läuft", startDate: "2026-10-19", minWeeks: 6, targetDaysPerWeek: 5,
+  metrics: [
+    { key: "lauf_hf130", label: "Lauf bei Puls 130", unit: "s/km", baseline: 412, baselineDate: "2026-10-15", current: 401, currentDate: "2026-10-25", better: "lower" },
+    { key: "rad_hf165w", label: "Ø-Puls bei 165 W", unit: "bpm", baseline: 138, baselineDate: "2026-10-14", current: null, currentDate: null, better: "lower" },
+    { key: "schwimm_amstueck", label: "Am Stück", unit: "m", baseline: 400, baselineDate: "2026-10-16", current: 500, currentDate: "2026-10-23", better: "higher" },
+    { key: "schwimm_100m", label: "100 m", unit: "s/100 m", baseline: 135, baselineDate: "2026-10-16", current: 138, currentDate: "2026-10-23", better: "lower" },
+  ], verdict: null };
+r = await rpc("tools/call", { name: "save_experiment", arguments: experiment });
+assert.ok(!r.body.result.isError, r.body.result.content[0].text);
+r = await rpc("tools/call", { name: "save_experiment", arguments: { ...experiment, hypothesis: "h".repeat(201) } });
+assert.equal(r.body.result.isError, true); assert.match(r.body.result.content[0].text, /hypothesis länger als 200/);
+r = await rpc("tools/call", { name: "save_experiment", arguments: { ...experiment, metrics: [{ key: "lauf_vo2", label: "x", unit: "x", better: "lower" }] } });
+assert.equal(r.body.result.isError, true);
+r = await rpc("tools/call", { name: "save_profil", arguments: { fetchedAt: "2026-10-26T06:30:00Z", updatedAt: "2026-10-26", highlights: [{ text: "Lange lockere Läufe senken die Pace bei Puls 130.", strength: "mittel" }, { text: "Krafttraining hilft der Hüfte.", strength: "schwach" }] } });
+assert.ok(!r.body.result.isError);
+r = await rpc("tools/call", { name: "save_profil", arguments: { fetchedAt: "2026-10-26T06:30:00Z", updatedAt: "2026-10-26", highlights: [{ text: "t".repeat(141), strength: "mittel" }] } });
+assert.equal(r.body.result.isError, true);
+gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
+assert.equal(gc.note, "Dienstag."); // Coach-Felder unverändert
+assert.deepEqual(gc.experiment, { ...experiment, fetchedAt: "2026-10-26T06:30:00.000Z" });
+assert.equal(gc.profil.highlights.length, 2); assert.equal(gc.profil.updatedAt, "2026-10-26");
+// Ueberschreiben statt mergen
+r = await rpc("tools/call", { name: "save_experiment", arguments: { ...experiment, fetchedAt: "2026-12-01T06:30:00Z", status: "ausgewertet", verdict: "stützt die Hypothese" } });
+assert.ok(!r.body.result.isError);
+assert.equal(JSON.parse(kv.get("dashboard:experiment")).verdict, "stützt die Hypothese");
 console.log = log;
 console.log("mcp-save tests ok");

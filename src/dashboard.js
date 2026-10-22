@@ -18,6 +18,7 @@ import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
+import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { buildWeekReview } from "./week-review.js";
 import { withActualToday } from "./live-load.js";
@@ -689,7 +690,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -705,6 +706,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     readRunalyzeHistory(env),
     readStudie(env),
     readCoach(env),
+    readExperiment(env),
+    readProfil(env),
   ]);
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
@@ -880,6 +883,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
     coach: coach ?? null,
+    // Experiment und Profil schreibt der Coach (save_experiment, save_profil); die Trainingstage rechnet der Worker live
+    experiment: experiment ?? null,
+    profil: profil ?? null,
+    trainingDays: activitiesR.ok ? computeTrainingDays(activities, todayIso) : null,
     plannedWeek: buildPlannedWeek(events, todayIso),
     planned: buildPlanned(events, todayIso, { paces: stepPaces, zonePct: thresholds.run.paceZonePct, thresholdSecPerKm: thresholds.run.thresholdPaceSecPerKm }),
   };

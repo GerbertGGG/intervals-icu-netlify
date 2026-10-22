@@ -52,7 +52,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
+  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderExperiment, renderProfil, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -1236,6 +1236,59 @@ function wireCoachAnswer() {
     } catch (e) { msg.textContent = "Nicht gespeichert: " + e.message; }
     btn.disabled = false;
   };
+}
+
+/* ---------- Experiment und Profil: beides schreibt der Coach (save_experiment, save_profil), die Trainingstage rechnet der
+   Worker live. Hier wird nur gezeigt: keine Ampel, kein Urteil über eine einzelne Woche. Das Fazit (verdict) kommt vom Coach. ---------- */
+const EXP_STATUS = { "vorgeschlagen": "Vorgeschlagen", "läuft": "Läuft", "ausgewertet": "Ausgewertet" };
+// Pace (Lauf) als m:ss/km, Schwimmen als m:ss/100 m, sonst Zahl mit der Einheit des Coaches
+const EXP_FMT = {
+  lauf_hf130: { v: (x) => `${paceLabel(Math.round(x))} <small>/km</small>`, d: (x) => `${paceLabel(Math.round(Math.abs(x)))} /km` },
+  schwimm_100m: { v: (x) => `${paceLabel(Math.round(x))} <small>/100 m</small>`, d: (x) => `${paceLabel(Math.round(Math.abs(x)))} /100 m` },
+};
+function expValue(m, x) {
+  const f = EXP_FMT[m.key];
+  return f ? f.v(x) : `${fmt(x, Number.isInteger(x) ? 0 : 1)}${m.unit ? ` <small>${esc(m.unit)}</small>` : ""}`;
+}
+function expChange(m) {
+  if (m.baseline == null || m.current == null) return "";
+  const dv = m.current - m.baseline;
+  if (Math.abs(dv) < 1e-9) return '<span class="exp-chg same">unverändert</span>';
+  const good = m.better === "lower" ? dv < 0 : dv > 0, f = EXP_FMT[m.key];
+  const txt = `${dv > 0 ? "+" : "−"}${f ? f.d(dv) : `${fmt(Math.abs(dv), Number.isInteger(dv) ? 0 : 1)}${m.unit ? " " + esc(m.unit) : ""}`}`;
+  return `<span class="exp-chg ${good ? "better" : "worse"}" title="${m.better === "lower" ? "niedriger ist besser" : "höher ist besser"}">${txt}</span>`;
+}
+function renderExperiment(d) {
+  const x = d.experiment, td = d.trainingDays;
+  const host = $("experiment-body");
+  let head;
+  if (!x) head = '<h3>Experiment</h3><div class="muted">Noch kein Experiment gespeichert. Der Coach legt es per save_experiment an.</div>';
+  else {
+    let weekTxt = "";
+    if (x.startDate && x.status !== "vorgeschlagen") {
+      const n = Math.floor(U.dayDiff(x.startDate, d.today) / 7) + 1;
+      weekTxt = n < 1 ? `startet am ${fmtDate(x.startDate)}` : `Woche ${n} von mindestens ${x.minWeeks}`;
+    } else if (x.status === "vorgeschlagen") weekTxt = `mindestens ${x.minWeeks} Wochen`;
+    head = `<div class="exp-head"><h3>${esc(x.title)}</h3><span class="badge exp-st">${EXP_STATUS[x.status] ?? esc(x.status)}</span>${weekTxt ? `<span class="muted">${weekTxt}${x.startDate && x.status !== "vorgeschlagen" ? ` · seit ${fmtDate(x.startDate)}` : ""}</span>` : ""}</div>
+      <p class="exp-hyp">${esc(x.hypothesis)}</p>`;
+  }
+  const chart = td?.length ? `<div class="hero-k" style="margin-top:12px">Trainingstage pro Woche</div><div id="exp-days"></div>
+    <div class="legend"><span><i style="background:var(--accent)"></i>Tage mit Training (alle Sportarten inkl. Kraft)</span>${x ? `<span><i style="background:var(--plan)"></i>Ziel ${x.targetDaysPerWeek} Tage</span>` : ""}<span><i style="background:var(--accent);opacity:.45"></i>laufende Woche</span></div>` : "";
+  const metrics = x?.metrics?.length ? `<table class="mini exp-m"><thead><tr><th>Messgröße</th><th>Ausgang</th><th>Aktuell</th><th>Veränderung</th></tr></thead><tbody>${x.metrics.map((m) => `<tr>
+      <td>${esc(m.label)}</td>
+      <td class="nw">${m.baseline != null ? `${expValue(m, m.baseline)}${m.baselineDate ? `<div class="muted">${fmtDate(m.baselineDate)}</div>` : ""}` : '<span class="muted">–</span>'}</td>
+      <td class="nw">${m.current != null ? `${expValue(m, m.current)}${m.currentDate ? `<div class="muted">${fmtDate(m.currentDate)}</div>` : ""}` : '<span class="muted">noch kein Wert</span>'}</td>
+      <td>${expChange(m)}</td></tr>`).join("")}</tbody></table>` : "";
+  const verdict = x?.verdict ? `<div class="studie-fazit" style="margin-top:12px"><div class="muted">Fazit des Coaches</div><div>${esc(x.verdict)}</div></div>` : "";
+  host.innerHTML = head + chart + metrics + verdict + (x ? `<div class="muted" style="margin-top:8px">Stand ${new Date(x.fetchedAt).toLocaleDateString("de-DE")}</div>` : "");
+  if (td?.length) C.dayBars($("exp-days"), td, { label: "Trainingstage pro Woche", target: x?.targetDaysPerWeek ?? null });
+}
+const PROFIL_STRENGTH = { mittel: "mittel belegt", schwach: "schwach belegt" };
+function renderProfil(d) {
+  const p = d.profil;
+  if (!p?.highlights?.length) { $("profil").innerHTML = '<div class="muted">Noch keine Profil-Punkte gespeichert. Der Coach legt sie per save_profil an.</div>'; return; }
+  $("profil").innerHTML = `<ul class="profil">${p.highlights.map((h) => `<li><span>${esc(h.text)}</span><span class="badge pf-${h.strength === "mittel" ? "m" : "s"}">${PROFIL_STRENGTH[h.strength] ?? esc(h.strength)}</span></li>`).join("")}</ul>
+    <div class="muted" style="margin-top:8px">Stand: ${fmtDate(p.updatedAt)}${p.updatedAt.slice(0, 4)}</div>`;
 }
 
 /* ---------- Studien-Check der Woche ---------- */
