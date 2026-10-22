@@ -1244,7 +1244,8 @@ function buildKraft(res) {
     text(w, "EGYM ist im Worker nicht eingerichtet (EGYM_USERNAME und EGYM_PASSWORD).", FS.sm, { color: COL.muted, lines: 4 });
     return w;
   }
-  const wk = d.week, sets = wk.sets || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
+  // Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): der Ring zeigt das gleitende Fenster bis heute
+  const wk = d.week, P = wk.periodWeeks > 1 ? wk.periodWeeks : 1, sets = (P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
   header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
   w.addSpacer(6);
   const row = w.addStack(); row.centerAlignContent(); row.spacing = 14;
@@ -1257,7 +1258,7 @@ function buildKraft(res) {
   ring.backgroundImage = ringProgressImage(RING, sets / goalSets, hex, 1);
   const cen = (fn) => { const x = ring.addStack(); x.addSpacer(); fn(x); x.addSpacer(); };
   cen((x) => num(x, String(sets), 24, { align: "center" }));
-  cen((x) => text(x, sets >= goalSets ? "Ziel erreicht" : `von ${goalSets}`, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }));
+  cen((x) => text(x, sets >= goalSets ? "Ziel erreicht" : `von ${goalSets}${P > 1 ? ` · ${P} Wo` : ""}`, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }));
   rs.addSpacer();
   lc.addSpacer(5);
   const dots = lc.addStack(); dots.centerAlignContent(); dots.size = new Size(LW, 0);
@@ -1348,8 +1349,9 @@ function buildBlock(res) {
     return `${fmt(g.value, g.key === "acwr" ? 0 : 1)} %`;
   };
   const capOf = (g) => {
-    if (g.status === "base") return g.key === "strength" && g.goalSets ? `Ausgangswert · Wochen mit ≥ ${g.goalSets} Sätzen` : "Ausgangswert";
-    if (g.key === "strength" && g.goalSets) return `Wochen mit ≥ ${g.goalSets} Sätzen`;
+    const per = g.periodWeeks > 1 ? ` in ${g.periodWeeks} Wo` : "";
+    if (g.status === "base") return g.key === "strength" && g.goalSets ? `Ausgangswert · Wochen mit ≥ ${g.goalSets} Sätzen${per}` : "Ausgangswert";
+    if (g.key === "strength" && g.goalSets) return `Wochen mit ≥ ${g.goalSets} Sätzen${per}`;
     if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}`;
     if (g.key === "swimTest") return g.value == null ? "2× 500 m noch offen" : "2. 500 m je 100 m";
     if (g.key === "runStable") return "länger als im Basistest";

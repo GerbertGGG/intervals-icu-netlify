@@ -192,6 +192,14 @@ test("Von Hand geaenderte Dauer bleibt, vom Sync geschriebene wird nachgezogen",
   assert.deepEqual(nextWritten({ "egym-2026-10-12": 840 }, manual, built, [], "2026-10-12"), { "egym-2026-10-12": 840 });
 });
 
+test("Blockziel über zwei Wochen zählt das gleitende Fenster", () => {
+  const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-10-22", blockSets: { sets: 90, weeks: 2 } });
+  assert.equal(d.week.goalSets, 90);
+  assert.equal(d.week.periodWeeks, 2);
+  assert.equal(d.week.windowSets, 0);
+  assert.equal(d.weeks.at(-1).windowSets, 0);
+});
+
 test("Satz-Ziel aus dem Blocktext geht vor EGYM_WEEKLY_GOAL_SETS", () => {
   const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-10-04", env: { EGYM_WEEKLY_GOAL_SETS: "90" }, blockSets: 70 });
   assert.equal(d.week.goalSets, 70);
