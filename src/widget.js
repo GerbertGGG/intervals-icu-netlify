@@ -2,7 +2,7 @@ import { json } from "./http-helpers.js";
 import { buildDashboard, isAuthorized, timingSafeEqual } from "./dashboard.js";
 import { hasYazioCredentials, fetchYazioDailyGoals, fetchYazioDailyNutrition } from "./yazio-client.js";
 import { readKvJson, writeKvJson } from "./kv.js";
-import { isoDateBerlin } from "./date-utils.js";
+import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { loadWidgetKraft } from "./egym-widget.js";
 import { isFreshCoach } from "./coach-snapshot.js";
 
@@ -348,6 +348,22 @@ export function buildWidgetBlock(d) {
   };
 }
 
+// Experiment-Widget (mittel, Parameter "experiment"): das vom Coach gespeicherte Experiment (save_experiment) und die live
+// gerechneten Trainingstage. Nur Werte, keine Bewertung; weekNo = Woche seit startDate (1 = erste Woche).
+export function buildWidgetExperiment(d) {
+  const x = d.experiment;
+  const weekNo = x?.startDate && x.status !== "vorgeschlagen" ? Math.floor(diffDays(x.startDate, d.today) / 7) + 1 : null;
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    experiment: x
+      ? { title: x.title, status: x.status, startDate: x.startDate, weekNo, minWeeks: x.minWeeks, targetDaysPerWeek: x.targetDaysPerWeek, verdict: x.verdict ?? null,
+          metrics: (x.metrics ?? []).map((m) => ({ key: m.key, label: m.label, unit: m.unit, baseline: m.baseline, current: m.current, better: m.better })) }
+      : null,
+    trainingDays: d.trainingDays ?? null,
+    sourcesFailed: failedOf(d),
+  };
+}
 
 // Garmin-Watchface (garmin/): eine einzige, kleine Ansicht ("watch"). Connect IQ erlaubt im Hintergrunddienst nur wenige KB
 // Antwort, deshalb kurze Schluessel und nur Zahlen, keine Freitexte. Wetter und Akku kommen von der Uhr selbst.
@@ -483,6 +499,6 @@ export async function handleWidgetRequest(req, env) {
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const live = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }

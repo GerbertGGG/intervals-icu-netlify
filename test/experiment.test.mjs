@@ -1,6 +1,7 @@
 // Testet src/experiment-snapshot.js (Experiment, Profil, Trainingstage). Ausführen: node test/experiment.test.mjs
 import assert from "node:assert/strict";
 import { validateExperiment, validateProfil, computeTrainingDays } from "../src/experiment-snapshot.js";
+import { buildWidgetExperiment } from "../src/widget.js";
 
 const base = { fetchedAt: "2026-10-22T06:00:00Z", title: " Trainingstage ", hypothesis: "Mehr Tage, gleiche Zeit.", status: "vorgeschlagen", startDate: null, minWeeks: 6, targetDaysPerWeek: 5, metrics: [], verdict: null };
 const ok = validateExperiment(base).value;
@@ -42,4 +43,14 @@ assert.deepEqual(td[6], { week: "2026-10-12", kw: 42, days: 5, complete: true })
 assert.deepEqual(td[7], { week: "2026-10-19", kw: 43, days: 2, complete: false });
 // Jahreswechsel: Mo 28.12.2026 ist KW 53, Mo 04.01.2027 KW 1
 assert.deepEqual(computeTrainingDays([], "2027-01-06").slice(-2).map((x) => x.kw), [53, 1]);
+// Widget (Parameter experiment): Woche seit Start, Messgroessen ohne Datum, ohne Experiment nur die Trainingstage
+const exp = { ...ok, status: "läuft", startDate: "2026-10-05", metrics: m, verdict: "stützt die Hypothese" };
+const wx = buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: exp, trainingDays: td, sources: {} });
+assert.equal(wx.experiment.weekNo, 3);
+assert.deepEqual(wx.experiment.metrics, [{ key: "schwimm_amstueck", label: "Am Stück", unit: "m", baseline: 400, current: null, better: "higher" }]);
+assert.equal(wx.experiment.verdict, "stützt die Hypothese"); assert.equal(wx.trainingDays.length, 8);
+assert.equal(buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: { ...exp, startDate: "2026-10-26" }, trainingDays: td, sources: {} }).experiment.weekNo, 0);
+assert.equal(buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: { ...exp, status: "vorgeschlagen" }, trainingDays: td, sources: {} }).experiment.weekNo, null);
+const none = buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: null, trainingDays: td, sources: {} });
+assert.equal(none.experiment, null); assert.equal(none.trainingDays.length, 8);
 console.log("experiment tests ok");

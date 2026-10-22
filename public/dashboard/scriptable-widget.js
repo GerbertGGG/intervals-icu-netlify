@@ -16,6 +16,8 @@
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
 //              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Verlauf und Leitplanken.
+//              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Trainingstage der letzten 8 Wochen gegen sein Ziel,
+//              Messgroessen mit Ausgangs- und aktuellem Wert, sein Fazit.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
@@ -36,6 +38,7 @@ const VIEWS = {
   intensity: { endpoint: "training", build: (r) => buildIntensity(r), size: "medium", label: "Vorschau mittel: Intensität" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
   block: { endpoint: "block", build: (r) => buildBlock(r), size: "medium", label: "Vorschau mittel: Trainingsblock und Ziele" },
+  experiment: { endpoint: "experiment", build: (r) => buildExperiment(r), size: "medium", label: "Vorschau mittel: Experiment" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
   sleep: { endpoint: "small", build: (r) => buildSleep(r), size: "small", label: "Vorschau klein: Schlaf" },
@@ -44,7 +47,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min)/, "time"], [/^(form|tss|belast|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min)/, "time"], [/^(form|tss|belast|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"], [/^(exp|versuch)/, "experiment"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -1398,6 +1401,75 @@ function buildBlock(res) {
       text(lr, (RAIL[g.key] || ((x) => x.label))(g), FS.xs, { bold: true, minScale: 0.7 });
     });
   }
+  notice(w, res, d);
+  return w;
+}
+
+/* ---------- Experiment (mittel): Werte des Coaches und die Trainingstage, ohne eigene Bewertung. Alle Säulen in der Wertfarbe,
+   auch unter dem Ziel; die laufende Woche blass. Veränderung grün = besser, orange = schlechter (Richtung setzt der Coach). ---------- */
+const EXP_STATUS = { "vorgeschlagen": "VORGESCHLAGEN", "läuft": "LÄUFT", "ausgewertet": "AUSGEWERTET" };
+const EXP_SHORT = { lauf_hf130: ["Lauf HF 130", "run"], rad_hf165w: ["Rad 165 W", "bike"], schwimm_amstueck: ["Am Stück", "swim"], schwimm_100m: ["100 m", "swim"] };
+const expVal = (m, v) => (v == null ? MISSING : m.key === "lauf_hf130" || m.key === "schwimm_100m" ? fmtPace(Math.round(v)) : fmt(v, Number.isInteger(v) ? 0 : 1));
+const expUnit = (m) => (m.key === "lauf_hf130" ? "/km" : m.key === "schwimm_100m" ? "/100 m" : m.unit || "");
+function dayBarsImage(W, H, weeks, target) {
+  const LH = 13, h = H - LH, dc = newCtx(W, H), slot = W / weeks.length, bw = Math.min(slot * 0.6, 22), y = (v) => h - (v / 7) * (h - 2);
+  dc.setTextAlignedCenter();
+  weeks.forEach((x, i) => {
+    const cx = i * slot + slot / 2;
+    if (x.days > 0) { const p = new Path(); p.addRoundedRect(new Rect(cx - bw / 2, y(x.days), bw, h - y(x.days)), 2.5, 2.5); dc.addPath(p); dc.setFillColor(new Color(ACCENT_HEX, x.complete ? 0.9 : 0.4)); dc.fillPath(); }
+    else { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(cx - bw / 2, h - 2, bw, 1.5)); }
+    dc.setTextColor(new Color(x.complete ? MUTED_HEX : ACCENT_HEX));
+    dc.setFont(x.complete ? Font.systemFont(FS.xs) : Font.boldSystemFont(FS.xs));
+    dc.drawTextInRect(String(x.days), new Rect(i * slot, h + 1, slot, LH - 1));
+  });
+  if (target) { dc.setFillColor(new Color(INK_HEX, 0.7)); for (let x = 0; x < W; x += 6) dc.fillRect(new Rect(x, y(target), 3, 1.2)); }
+  return dc.getImage();
+}
+function buildExperiment(res) {
+  const d = res.data, W = widgetInnerWidth(), x = d.experiment, td = d.trainingDays || [];
+  const w = baseWidget({ padV: 12 });
+  const when = !x ? null : x.weekNo == null ? (x.status === "vorgeschlagen" ? `mind. ${x.minWeeks} Wochen` : null) : x.weekNo < 1 ? `Start ${dateShort(x.startDate)}` : `Woche ${x.weekNo} von mind. ${x.minWeeks}`;
+  header(w, W, x ? `${String(x.title).toUpperCase()} · ${EXP_STATUS[x.status] || String(x.status).toUpperCase()}` : "EXPERIMENT", when);
+  w.addSpacer(4);
+  // Säulen links, diese Woche rechts
+  const top = w.addStack(); top.centerAlignContent();
+  const BW = Math.round(W * 0.62), cur = td[td.length - 1];
+  if (td.length) { const im = top.addImage(dayBarsImage(BW, 40, td, x?.targetDaysPerWeek)); im.imageSize = new Size(BW, 40); }
+  top.addSpacer();
+  const rc = top.addStack(); rc.layoutVertically();
+  text(rc, "DIESE WOCHE", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+  const vr = rc.addStack(); vr.bottomAlignContent(); vr.spacing = 3;
+  num(vr, cur ? String(cur.days) : MISSING, FS.xl);
+  text(vr, x ? `/ ${x.targetDaysPerWeek} Tage` : "Tage", FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
+  if (!x) {
+    w.addSpacer(6);
+    text(w, "Kein laufendes Experiment. Der Coach legt es per save_experiment an.", FS.sm, { color: COL.muted, lines: 2 });
+    notice(w, res, d);
+    return w;
+  }
+  w.addSpacer(4);
+  const metrics = (x.metrics || []).slice(0, x.verdict ? 3 : 4);
+  const C1 = Math.round(W * 0.32), C2 = Math.round(W * 0.44);
+  metrics.forEach((m) => {
+    const r = w.addStack(); r.centerAlignContent(); r.size = new Size(W, 0);
+    const a = r.addStack(); a.centerAlignContent(); a.spacing = 4; a.size = new Size(C1, 0);
+    const sh = EXP_SHORT[m.key] || [m.label, "other"];
+    symbol(a, SPORT_SYMBOL[sh[1]], 10, new Color(sportHex(sh[1])));
+    text(a, sh[0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+    a.addSpacer();
+    const b = r.addStack(); b.size = new Size(C2, 0);
+    text(b, m.current == null ? `${expVal(m, m.baseline)} → noch kein Wert` : `${expVal(m, m.baseline)} → ${expVal(m, m.current)} ${expUnit(m)}`, FS.sm, { color: m.current == null ? COL.muted : COL.text, minScale: 0.7 });
+    b.addSpacer();
+    r.addSpacer();
+    if (m.baseline != null && m.current != null) {
+      const dv = m.current - m.baseline, good = m.better === "lower" ? dv < 0 : dv > 0;
+      const pace = m.key === "lauf_hf130" || m.key === "schwimm_100m";
+      const t = dv === 0 ? "±0" : `${dv > 0 ? "+" : "−"}${pace ? fmtPace(Math.round(Math.abs(dv))) : fmt(Math.abs(dv), Number.isInteger(dv) ? 0 : 1)}`;
+      text(r, t, FS.sm, { bold: true, color: dv === 0 ? COL.muted : good ? COL.ok : COL.warn, minScale: 0.8 });
+    }
+    w.addSpacer(2);
+  });
+  if (x.verdict) { w.addSpacer(2); text(w, `Fazit: ${x.verdict}`, FS.sm, { bold: true, color: COL.accent, lines: 1, minScale: 0.7 }); }
   notice(w, res, d);
   return w;
 }
