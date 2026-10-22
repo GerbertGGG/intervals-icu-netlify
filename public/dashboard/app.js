@@ -52,7 +52,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderExperiment, renderProfil, renderStudie];
+  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderInsights, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -1238,58 +1238,50 @@ function wireCoachAnswer() {
   };
 }
 
-/* ---------- Experiment und Profil: beides schreibt der Coach (save_experiment, save_profil), die Trainingstage rechnet der
-   Worker live. Hier wird nur gezeigt: keine Ampel, kein Urteil über eine einzelne Woche. Das Fazit (verdict) kommt vom Coach. ---------- */
-const EXP_STATUS = { "vorgeschlagen": "Vorgeschlagen", "läuft": "Läuft", "ausgewertet": "Ausgewertet" };
-// Pace (Lauf) als m:ss/km, Schwimmen als m:ss/100 m, sonst Zahl mit der Einheit des Coaches
-const EXP_FMT = {
-  lauf_hf130: { v: (x) => `${paceLabel(Math.round(x))} <small>/km</small>`, d: (x) => `${paceLabel(Math.round(Math.abs(x)))} /km` },
-  schwimm_100m: { v: (x) => `${paceLabel(Math.round(x))} <small>/100 m</small>`, d: (x) => `${paceLabel(Math.round(Math.abs(x)))} /100 m` },
-};
-function expValue(m, x) {
-  const f = EXP_FMT[m.key];
-  return f ? f.v(x) : `${fmt(x, Number.isInteger(x) ? 0 : 1)}${m.unit ? ` <small>${esc(m.unit)}</small>` : ""}`;
+/* ---------- Erkenntnisse: Auffälligkeiten, die der Coach selbst findet und pflegt (save_insight, archive_insight). Das
+   Dashboard zeigt nur, was er schreibt: keine eigene Bewertung und keine Warnfarben, das ist Information, kein Alarm.
+   Antippen einer Karte klappt den Verlauf von Status und Stärke auf. ---------- */
+const INS_DISC = { lauf: "Laufen", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft", erholung: "Erholung", alle: "Alle" };
+const INS_ICON = { ...IDEA_ICON, erholung: '<path d="M15.5 12.5A6.5 6.5 0 0 1 7.5 4.5a6.5 6.5 0 1 0 8 8z"/>' };
+const INS_STRENGTH = { beobachtung: "Beobachtung", schwach: "schwach belegt", mittel: "mittel belegt", stark: "stark belegt" };
+const INS_STATUS = { neu: "neu", "bestätigt": "bestätigt", "abgeschwächt": "abgeschwächt", widerlegt: "widerlegt" };
+let insFilter = "alle";
+try { insFilter = localStorage.getItem("insight-filter") || "alle"; } catch {}
+function insightCard(x, i) {
+  const icon = `<svg class="idea-ic" viewBox="0 0 20 20" aria-hidden="true">${INS_ICON[x.discipline] ?? INS_ICON.alle}</svg>`;
+  const hist = (x.history ?? []).map((h) => `<li><span class="nw">${fmtDate(h.date)}${h.date.slice(0, 4)}</span> <span class="ins-b st-${esc(h.status)}">${INS_STATUS[h.status] ?? esc(h.status)}</span> <span class="ins-b sg-${esc(h.strength)}">${INS_STRENGTH[h.strength] ?? esc(h.strength)}</span></li>`).join("");
+  return `<details class="card ins${x.status === "widerlegt" ? " refuted" : ""}" data-disc="${esc(x.discipline)}">
+    <summary>
+      <div class="ins-top">${icon}<span class="muted">${INS_DISC[x.discipline] ?? esc(x.discipline)}</span><span class="ins-b st-${esc(x.status)}">${INS_STATUS[x.status] ?? esc(x.status)}</span><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span></div>
+      <h3 class="ins-t">${esc(x.title)}</h3>
+      <p class="ins-text">${esc(x.text)}</p>
+      ${x.action ? `<p class="ins-act">${esc(x.action)}</p>` : ""}
+      ${x.chart ? `<div class="ins-chart" data-i="${i}"></div>` : ""}
+      <div class="muted ins-ev">${esc(x.evidence)} · aktualisiert ${fmtDate(x.updatedAt.slice(0, 10))}<span class="ins-more"> · Verlauf</span></div>
+    </summary>
+    <div class="ins-hist"><div class="hero-k">Verlauf</div><ul>${hist || '<li class="muted">noch kein Verlauf</li>'}</ul>
+      <div class="muted">angelegt ${fmtDate(x.createdAt.slice(0, 10))}${x.createdAt.slice(0, 4)}${x.archivedAt ? ` · ausgeblendet ${fmtDate(x.archivedAt.slice(0, 10))}${x.archivedAt.slice(0, 4)}` : ""}</div></div>
+  </details>`;
 }
-function expChange(m) {
-  if (m.baseline == null || m.current == null) return "";
-  const dv = m.current - m.baseline;
-  if (Math.abs(dv) < 1e-9) return '<span class="exp-chg same">unverändert</span>';
-  const good = m.better === "lower" ? dv < 0 : dv > 0, f = EXP_FMT[m.key];
-  const txt = `${dv > 0 ? "+" : "−"}${f ? f.d(dv) : `${fmt(Math.abs(dv), Number.isInteger(dv) ? 0 : 1)}${m.unit ? " " + esc(m.unit) : ""}`}`;
-  return `<span class="exp-chg ${good ? "better" : "worse"}" title="${m.better === "lower" ? "niedriger ist besser" : "höher ist besser"}">${txt}</span>`;
+function renderInsights(d) {
+  const all = d.insights ?? { active: [], archived: [] };
+  const list = [...all.active, ...all.archived];
+  const discs = INS_DISC_ORDER.filter((k) => list.some((x) => x.discipline === k));
+  if (insFilter !== "alle" && !discs.includes(insFilter)) insFilter = "alle";
+  const draw = () => {
+    const keep = (x) => insFilter === "alle" || x.discipline === insFilter || x.discipline === "alle";
+    const act = all.active.filter(keep), arc = all.archived.filter(keep);
+    $("insight-filter").innerHTML = discs.length > 1 ? ["alle", ...discs.filter((k) => k !== "alle")].map((k) => `<button type="button" class="chip${k === insFilter ? " on" : ""}" data-f="${k}" aria-pressed="${k === insFilter}">${k === "alle" ? "Alle" : INS_DISC[k]}</button>`).join("") : "";
+    $("insights").innerHTML = act.length ? act.map((x) => insightCard(x, list.indexOf(x))).join("")
+      : `<div class="muted">${all.active.length ? "Keine Erkenntnis in dieser Disziplin." : "Noch keine Erkenntnisse. Der Coach legt sie per save_insight an, sobald ihm in deinen Daten etwas auffällt."}</div>`;
+    $("insights-old").hidden = !arc.length;
+    $("insights-old").innerHTML = arc.length ? `<summary>Ältere Erkenntnisse (${arc.length})</summary><div class="ins-grid">${arc.map((x) => insightCard(x, list.indexOf(x))).join("")}</div>` : "";
+    for (const host of document.querySelectorAll(".ins-chart")) C.insightChart(host, list[Number(host.dataset.i)].chart);
+    for (const b of document.querySelectorAll("#insight-filter .chip")) b.onclick = () => { insFilter = b.dataset.f; try { localStorage.setItem("insight-filter", insFilter); } catch {} draw(); };
+  };
+  draw();
 }
-function renderExperiment(d) {
-  const x = d.experiment, td = d.trainingDays;
-  const host = $("experiment-body");
-  let head;
-  if (!x) head = '<h3>Experiment</h3><div class="muted">Noch kein Experiment gespeichert. Der Coach legt es per save_experiment an.</div>';
-  else {
-    let weekTxt = "";
-    if (x.startDate && x.status !== "vorgeschlagen") {
-      const n = Math.floor(U.dayDiff(x.startDate, d.today) / 7) + 1;
-      weekTxt = n < 1 ? `startet am ${fmtDate(x.startDate)}` : `Woche ${n} von mindestens ${x.minWeeks}`;
-    } else if (x.status === "vorgeschlagen") weekTxt = `mindestens ${x.minWeeks} Wochen`;
-    head = `<div class="exp-head"><h3>${esc(x.title)}</h3><span class="badge exp-st">${EXP_STATUS[x.status] ?? esc(x.status)}</span>${weekTxt ? `<span class="muted">${weekTxt}${x.startDate && x.status !== "vorgeschlagen" ? ` · seit ${fmtDate(x.startDate)}` : ""}</span>` : ""}</div>
-      <p class="exp-hyp">${esc(x.hypothesis)}</p>`;
-  }
-  const chart = td?.length ? `<div class="hero-k" style="margin-top:12px">Trainingstage pro Woche</div><div id="exp-days"></div>
-    <div class="legend"><span><i style="background:var(--accent)"></i>Tage mit Training (alle Sportarten inkl. Kraft)</span>${x ? `<span><i style="background:var(--plan)"></i>Ziel ${x.targetDaysPerWeek} Tage</span>` : ""}<span><i style="background:var(--accent);opacity:.45"></i>laufende Woche</span></div>` : "";
-  const metrics = x?.metrics?.length ? `<table class="mini exp-m"><thead><tr><th>Messgröße</th><th>Ausgang</th><th>Aktuell</th><th>Veränderung</th></tr></thead><tbody>${x.metrics.map((m) => `<tr>
-      <td>${esc(m.label)}</td>
-      <td class="nw">${m.baseline != null ? `${expValue(m, m.baseline)}${m.baselineDate ? `<div class="muted">${fmtDate(m.baselineDate)}</div>` : ""}` : '<span class="muted">–</span>'}</td>
-      <td class="nw">${m.current != null ? `${expValue(m, m.current)}${m.currentDate ? `<div class="muted">${fmtDate(m.currentDate)}</div>` : ""}` : '<span class="muted">noch kein Wert</span>'}</td>
-      <td>${expChange(m)}</td></tr>`).join("")}</tbody></table>` : "";
-  const verdict = x?.verdict ? `<div class="studie-fazit" style="margin-top:12px"><div class="muted">Fazit des Coaches</div><div>${esc(x.verdict)}</div></div>` : "";
-  host.innerHTML = head + chart + metrics + verdict + (x ? `<div class="muted" style="margin-top:8px">Stand ${new Date(x.fetchedAt).toLocaleDateString("de-DE")}</div>` : "");
-  if (td?.length) C.dayBars($("exp-days"), td, { label: "Trainingstage pro Woche", target: x?.targetDaysPerWeek ?? null });
-}
-const PROFIL_STRENGTH = { mittel: "mittel belegt", schwach: "schwach belegt" };
-function renderProfil(d) {
-  const p = d.profil;
-  if (!p?.highlights?.length) { $("profil").innerHTML = '<div class="muted">Noch keine Profil-Punkte gespeichert. Der Coach legt sie per save_profil an.</div>'; return; }
-  $("profil").innerHTML = `<ul class="profil">${p.highlights.map((h) => `<li><span>${esc(h.text)}</span><span class="badge pf-${h.strength === "mittel" ? "m" : "s"}">${PROFIL_STRENGTH[h.strength] ?? esc(h.strength)}</span></li>`).join("")}</ul>
-    <div class="muted" style="margin-top:8px">Stand: ${fmtDate(p.updatedAt)}${p.updatedAt.slice(0, 4)}</div>`;
-}
+const INS_DISC_ORDER = ["lauf", "rad", "schwimmen", "kraft", "erholung", "alle"];
 
 /* ---------- Studien-Check der Woche ---------- */
 function renderStudie(d) {
