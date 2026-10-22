@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { resolveSeasonBlock, parseBlockWeeks, parseStrengthSets, activeBlockStrengthSets } from "../src/season-block.js";
+import { resolveSeasonBlock, parseBlockWeeks, parseStrengthSets, parseStrengthTarget, activeBlockStrengthSets, activeBlockStrengthTarget } from "../src/season-block.js";
 
 const ev = { category: "SEASON_START", name: "Block Grundlage (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: "Ziel ist es Decoupling unter 8% zu druecken\n\nCheckpoint 3 / Blockabschluss nach Woche 12" };
 assert.equal(parseBlockWeeks(ev.name), 12);
@@ -266,4 +266,23 @@ assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
   assert.equal(activeBlockStrengthSets([ev("2026-11-02", "Ziel\n\n- Kraft ≥75 Sätze pro Woche")], "2026-10-22"), null);
   const tg = parseBlockTargets("Ziel\n\n- Kraft ≥75 Sätze pro Woche");
   assert.equal(tg.strength.sets, 75);
+}
+// Leitplanke über zwei Wochen geht der Zahl aus den Standardregeln vor; Fenster gleitend (Block A)
+{
+  const txt = "Es gelten meine Standardregeln (Ruhetag, Kraft ≥60 Sätze).\n\nLEITPLANKEN\n- Kraft ≥90 Sätze in 2 Wochen\n- Ramp Rate (CTL) in Belastungswochen ≤5";
+  assert.deepEqual(parseStrengthTarget(txt), { sets: 90, weeks: 2 });
+  assert.equal(parseStrengthSets(txt), 90);
+  assert.deepEqual(parseStrengthTarget("Kraft ≥75 Sätze in 7 von 8 Belastungswochen"), { sets: 75, weeks: 1 });
+  const ev = { category: "SEASON_START", name: "Block A (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: txt };
+  assert.deepEqual(activeBlockStrengthTarget([ev], "2026-10-22"), { sets: 90, weeks: 2 });
+  const blkA = resolveSeasonBlock([ev], "2026-11-04");
+  const strength = [{ date: "2026-10-14", sets: 60 }, { date: "2026-10-21", sets: 30 }, { date: "2026-10-28", sets: 40 }, { date: "2026-11-03", sets: 20 }];
+  const g = buildBlockGoals(blkA, { strength }, "2026-11-04").find((x) => x.key === "strength");
+  assert.equal(g.group, "leitplanke");
+  assert.equal(g.periodWeeks, 2);
+  assert.equal(g.weekGoal, 90);
+  assert.match(g.target, /≥ 90 Sätze in je 2 Wochen/);
+  assert.deepEqual(g.weeks.map((w) => [w.start, w.count, w.hit]), [["2026-10-19", 90, true], ["2026-10-26", 70, false], ["2026-11-02", 60, false]]);
+  assert.equal(g.status, "bad");
+  assert.deepEqual(g.calWeek, { start: "2026-11-02", from: "2026-10-26", count: 60 });
 }

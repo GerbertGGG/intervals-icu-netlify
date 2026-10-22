@@ -2,7 +2,7 @@ import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin, mondayOnOrBefore } from "./date-utils.js";
 import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioAge } from "./egym-client.js";
 import { fetchIntervalsEvents } from "./intervals-client.js";
-import { activeBlockStrengthSets } from "./season-block.js";
+import { activeBlockStrengthTarget } from "./season-block.js";
 
 // Kraft-Widget (Ansicht "kraft", mittleres Widget, und Karte im Dashboard): Trainingszeit gegen Wochenziel, Einheiten,
 // Saetze und Volumen der letzten Wochen, Fortschritt aus den EGYM-Kraft-Tests (1RM je Geraet, Veraenderung zum
@@ -11,7 +11,8 @@ import { activeBlockStrengthSets } from "./season-block.js";
 // als Krafttraining: Eine Kraft-Einheit ist ein Tag mit mindestens einer Uebung mit Saetzen (Wiederholungen und
 // Gewicht) oder an einem Geraet. Das Wochenziel sind Saetze: mindestens 60 Saetze Krafttraining pro Woche,
 // aenderbar im Blocktext des laufenden Blocks in Intervals ("Kraft ≥70 Saetze ..."), sonst per EGYM_WEEKLY_GOAL_SETS;
-// goalSource sagt, was gilt ("block", "config", "default"). Die Minuten bleiben als Information.
+// goalSource sagt, was gilt ("block", "config", "default"). Ein Blockziel über mehrere Wochen ("Kraft ≥90 Sätze in 2 Wochen")
+// gilt für das gleitende Fenster: periodWeeks Wochen bis einschliesslich der jeweiligen Woche (windowSets). Die Minuten bleiben als Information.
 // Die Dauer eines Tages kommt aus den Angaben von EGYM (Dauer der Uebungen, sonst der Saetze); fehlen sie, ist es nur
 // die Spanne zwischen erster und letzter Uebung plus Zeit fuer die letzte Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
 // EGYM stempelt eine Uebung erst nach ihrem letzten Satz: Beim Zirkel deckt die Spanne so nur die letzte Runde ab. Die
@@ -237,15 +238,17 @@ function bioAgeOf(b) {
   };
 }
 
+// blockSets: Zahl (Sätze pro Woche) oder { sets, weeks } aus dem Blocktext
 export function goalOf(env, blockSets = null) {
-  if (Number.isFinite(blockSets) && blockSets > 0) return { goal: Math.floor(blockSets), source: "block" };
+  const bs = typeof blockSets === "number" ? { sets: blockSets, weeks: 1 } : blockSets;
+  if (Number.isFinite(bs?.sets) && bs.sets > 0) return { goal: Math.floor(bs.sets), source: "block", period: bs.weeks > 1 ? Math.floor(bs.weeks) : 1 };
   const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_SETS));
-  return Number.isFinite(n) && n > 0 ? { goal: n, source: "config" } : { goal: DEFAULT_WEEKLY_GOAL_SETS, source: "default" };
+  return Number.isFinite(n) && n > 0 ? { goal: n, source: "config", period: 1 } : { goal: DEFAULT_WEEKLY_GOAL_SETS, source: "default", period: 1 };
 }
 
 // Reine Funktion: Rohdaten der drei Endpunkte in die Widget-Daten (je Teil kann null sein, wenn der Abruf scheiterte)
 export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, blockSets = null, generatedAt = new Date().toISOString(), failed = [] }) {
-  const { goal, source } = goalOf(env, blockSets);
+  const { goal, source, period } = goalOf(env, blockSets);
   const days = strengthDays(workouts?.workouts ?? workouts ?? []);
   const monday = mondayOnOrBefore(today);
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) ?? 0), 0);
@@ -256,14 +259,16 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
     const end = addDays(start, 6);
     const inWeek = days.filter((d) => d.date >= start && d.date <= end);
     const src = sourceOf(inWeek);
-    return { start, sessions: inWeek.length, sets: sum(inWeek, (d) => d.sets), volumeKg: Math.round(sum(inWeek, (d) => d.volumeKg)), minutes: src ? sum(inWeek, (d) => d.minutes) : inWeek.length ? null : 0, minutesSource: src };
+    const inWindow = days.filter((d) => d.date >= addDays(start, -7 * (period - 1)) && d.date <= end);
+    return { start, sessions: inWeek.length, sets: sum(inWeek, (d) => d.sets), windowSets: sum(inWindow, (d) => d.sets), volumeKg: Math.round(sum(inWeek, (d) => d.volumeKg)), minutes: src ? sum(inWeek, (d) => d.minutes) : inWeek.length ? null : 0, minutesSource: src };
   });
   const cur = weeks[WEEKS - 1];
   const dayAt = (i) => days.find((d) => d.date === addDays(monday, i));
   const dayFlags = Array.from({ length: 7 }, (_, i) => Boolean(dayAt(i)));
   const dayMinutes = Array.from({ length: 7 }, (_, i) => dayAt(i)?.minutes ?? null);
-  const hit = (w) => w.sets >= goal;
+  const hit = (w) => w.windowSets >= goal;
   // Serie: aufeinanderfolgende abgeschlossene Wochen mit erreichtem Ziel; die laufende Woche zaehlt mit, sobald sie es erreicht
+  // (das Fenster der aeltesten Woche reicht in die Tage vor der Wochenliste, der Abruf deckt HISTORY_DAYS ab)
   let streak = 0;
   for (let i = WEEKS - 2; i >= 0 && hit(weeks[i]); i--) streak++;
   if (hit(cur)) streak++;
@@ -280,7 +285,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   return {
     generatedAt,
     today,
-    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
+    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, periodWeeks: period, windowSets: cur.windowSets, sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
     weeks,
     lastDay: last,
     strengthDates: days.map((d) => d.date), // alle Kraft-Tage der letzten 84 Tage (Block-Ziele im Dashboard)
@@ -331,7 +336,7 @@ export async function loadWidgetKraft(env, fresh = false) {
     settle(() => fetchEgymStrength(env, addDays(today, -365), today)),
     settle(() => fetchEgymBioAge(env)),
     // Satz-Ziel aus dem Blocktext (best effort; ohne Intervals gilt EGYM_WEEKLY_GOAL_SETS bzw. das Standardziel)
-    settle(async () => activeBlockStrengthSets(await fetchIntervalsEvents(env, addDays(today, -BLOCK_LOOKBACK_DAYS), today), today)),
+    settle(async () => activeBlockStrengthTarget(await fetchIntervalsEvents(env, addDays(today, -BLOCK_LOOKBACK_DAYS), today), today)),
   ]);
   const failed = [["egymWorkouts", w], ["egymStrength", s], ["egymBioAge", b]].filter(([, r]) => r.e).map(([k]) => k);
   const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, blockSets: blk.v ?? null, failed }) };
