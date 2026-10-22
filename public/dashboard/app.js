@@ -355,7 +355,9 @@ function renderTargetWeek(d, tile, cur, monday, days) {
 
 /* Montagsbilanz (Worker: week-review.js): Fakten zur letzten vollen Woche im Vergleich zu den bis zu 4 Wochen davor –
    Gefühlswerte (vor dem Training eingetragen), Session-RPE und Monotonie, Laufumfang, HF-Deckel, Wochenrahmen des Coaches,
-   Kraft, Krankheit und Beschwerden. Keine Stufe und kein Vorschlag: Wie es weitergeht, entscheidet der Coach. */
+   Kraft, Krankheit und Beschwerden. Keine eigene Stufe und kein Vorschlag: Die Ampel oben setzt der Coach (save_coach, Feld
+   week), das Dashboard zeigt sie nur – und nur, wenn sie nach dem Ende dieser Woche gesetzt wurde. */
+const WEEK_LIGHT = { gruen: ["Grün", "ok"], gelb: ["Gelb", "warn"], rot: ["Rot", "bad"] };
 function renderWeekReview(d, tile) {
   const V = d.weekReview;
   if (!V) return "";
@@ -364,7 +366,9 @@ function renderWeekReview(d, tile) {
   const feel = Object.values(V.feel).map((x) => `${x.label} ${f1(x.mean)}${x.ref != null ? ` (davor ${f1(x.ref)})` : ""}`).join(" · ");
   const R = V.rpe, U = V.run, st = V.strength;
   const days = (xs) => xs.map((x) => `${weekday(x)} ${fmtDate(x)}`).join(", ");
+  const wl = d.coach?.week, light = wl?.createdAt && berlinDay(wl.createdAt) > V.weekEnd ? WEEK_LIGHT[wl.light] : null;
   const rows = [
+    light ? row("Coach", `<span class="badge ${light[1]}">${light[0]}</span>`, wl.text ? esc(wl.text) : "") : "",
     feel ? row("Gefühl", feel, "Wochenschnitt, 1 = bestmöglich, vor dem Training eingetragen") : "",
     // Session-RPE nur bei genug RPE-Einträgen; sonst wäre die Summe gegen den Schnitt davor ein Zufallsvergleich
     R.basis === "rpe" ? row("Session-RPE", fmt(R.srpe), [R.ref != null ? `Ø davor ${fmt(R.ref)}` : null, `RPE bei ${fmt(R.coverage * 100)} % der Einheiten`, R.monotony != null ? `Monotonie ${f1(R.monotony)}` : null].filter(Boolean).join(" · "))
@@ -377,7 +381,7 @@ function renderWeekReview(d, tile) {
   ].join("");
   return `<div class="cockpit" style="margin-top:var(--gap)">${tile(`Montagsbilanz · Woche ab ${fmtDate(V.weekStart)}`,
     `<div class="rv-rows">${rows}</div>
-    <details class="info"><summary>Erklärung</summary><div>Fakten zur letzten vollen Woche, verglichen mit den bis zu 4 vollen Wochen davor. Session-RPE = RPE × Minuten (erst ab 70 % der Einheiten mit RPE), Monotonie = Tagesschnitt ÷ Standardabweichung über 7 Tage. Rahmen = Ist gegen die Zeitziele und TSS-Korridore (Untergrenze–Obergrenze) des Coaches. Wie die neue Woche aussieht, entscheidet der Coach.</div></details>`, "span4")}</div>`;
+    <details class="info"><summary>Erklärung</summary><div>Fakten zur letzten vollen Woche, verglichen mit den bis zu 4 vollen Wochen davor. Session-RPE = RPE × Minuten (erst ab 70 % der Einheiten mit RPE), Monotonie = Tagesschnitt ÷ Standardabweichung über 7 Tage. Rahmen = Ist gegen die Zeitziele und TSS-Korridore (Untergrenze–Obergrenze) des Coaches. Die Ampel („Coach“) ist das Urteil des Coaches zu dieser Woche, er setzt sie montags; das Dashboard berechnet sie nicht. Wie die neue Woche aussieht, entscheidet der Coach.</div></details>`, "span4")}</div>`;
 }
 
 /* Wochenvorschau Mo-So: je Tag die geplanten Einheiten mit Plan-Load neben dem Ist. Vergangene Tage zeigen, ob der Plan
