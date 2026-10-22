@@ -202,9 +202,6 @@ function renderCockpit(d) {
   const doneHtml = plan.length && doneToday?.load > 0 ? `<div class="hb-done">Erledigt: Load ${fmt(doneToday.load)} ${Object.keys(doneToday.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]}"></i>`).join("")}</div>` : "";
   const status = `<div class="hero-status coach">${coachHead(d)}${wellOk ? factsLine(R, d.today) : '<div class="hero-why">Wellness nicht abrufbar.</div>'}
     ${wellOk ? '<a class="more" href="#erholung">Erholungswerte im Detail →</a>' : ""}</div>`;
-  const today = `<div class="hero-plan"><div class="hero-k">${plan.length ? "Heute geplant" : "Letzte Einheit"}</div>${planHtml}${doneHtml}
-      ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}
-      ${plan.length && L ? `<div class="hero-k" style="margin-top:8px">Letzte Einheit</div>${lastHtml}` : ""}</div>`;
   const kpi = (label, value, badge, cls, sub = "") => `<div class="kpi"><span class="kpi-l">${label}</span><span class="kpi-v">${value}</span>${badge ? `<span class="badge ${cls}">${badge}</span>` : ""}${sub ? `<span class="sub">${sub}</span>` : ""}</div>`;
   const BR = d.baseRuns, T = d.nextTest;
   const sleepKpi = R.sleepScore != null
@@ -229,7 +226,11 @@ function renderCockpit(d) {
       ${capKpi}
       ${lastKpi}
     </div>`;
-  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}${kpis}</div>`;
+  // Die Kennzahlen stehen unten in der rechten Spalte: Die Coach-Spalte ist meist länger, so bleibt dort kein Leerraum.
+  const today = `<div class="hero-plan"><div class="hero-k">${plan.length ? "Heute geplant" : "Letzte Einheit"}</div>${planHtml}${doneHtml}
+      ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}
+      ${plan.length && L ? `<div class="hero-k" style="margin-top:8px">Letzte Einheit</div>${lastHtml}` : ""}${kpis}</div>`;
+  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}</div>`;
 
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
