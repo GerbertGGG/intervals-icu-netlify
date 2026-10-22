@@ -9,6 +9,7 @@
 
 - Die Steuerung kommt vom Coach (Skill `triathlon-coach`, jeden Morgen per geplantem Task, Aussage über `save_coach`). Dashboard, Widget und Uhr machen seine Aussage und die Daten sichtbar.
 - Keine neuen Bewertungsregeln einbauen: keine Ampeln, keine Tagesentscheidung, keine Steigern/Halten-Stufen, keine „Was auffällt“-Befunde mit Konsequenz, keine Vorschläge für Umfang oder Intensität. Werte, Vergleiche mit der eigenen Basis (auch farbig, z. B. Gefühlswerte gegen den eigenen üblichen Bereich) und Soll/Ist gegen Ziele, die der Coach selbst gesetzt hat, sind in Ordnung.
+- Ampeln oder Urteile, die der Coach selbst setzt (z. B. `go` für den Tag, `week` als Wochenampel in der Montagsbilanz), darf das Dashboard anzeigen – es berechnet sie nie selbst.
 - Wenn eine Auswertung nötig scheint, gehört sie in den Coach-Skill, nicht ins Dashboard.
 
 ## Wellness-Gefühlswerte
