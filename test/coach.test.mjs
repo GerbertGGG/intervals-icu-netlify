@@ -86,6 +86,16 @@ assert.equal((await put({ fetchedAt: "2026-10-13T06:00:00Z", note: "b", idea: { 
 assert.equal((await answer({ answer: "gut" })).status, 200);
 const kept = JSON.parse(kv.get("dashboard:coach"));
 assert.equal(kept.note, "b"); assert.equal(kept.idea.text, "Rad ohne Uhr"); assert.equal(kept.ideas.length, 1);
+// Antwort bleibt bei derselben question (zweites Update am Sonntag), verschwindet erst mit einer neuen
+const multi = "Mo 1 h\nMi 1,5 h abends\nDo weg\nSa 3 h";
+assert.equal((await put({ fetchedAt: "2026-10-25T06:00:00Z", note: "c", question: "Wie viel Zeit hast du nächste Woche?" })).status, 200);
+assert.equal((await answer({ answer: multi })).status, 200);
+assert.equal((await put({ fetchedAt: "2026-10-25T17:00:00Z", note: "d", question: "Wie viel Zeit hast du nächste Woche?" })).status, 200);
+const sunday = JSON.parse(kv.get("dashboard:coach"));
+assert.equal(sunday.note, "d"); assert.equal(sunday.answer, multi); assert.ok(sunday.answeredAt);
+assert.equal((await put({ fetchedAt: "2026-10-26T06:00:00Z", note: "e", question: "Wie lief der lange Lauf?" })).status, 200);
+const monday = JSON.parse(kv.get("dashboard:coach"));
+assert.equal(monday.answer, null); assert.equal(monday.answeredAt, null);
 console.log("coach tests ok");
 
 // Wochenampel: Validierung und Merge (bleibt ohne week stehen, leeres light entfernt sie)
@@ -104,3 +114,28 @@ mw = mergeCoach(mw, w("2026-10-20T05:00:00Z"));
 assert.equal(mw.week.light, "gelb");
 mw = mergeCoach(mw, w("2026-10-21T05:00:00Z", { light: "" }));
 assert.equal(mw.week, null);
+
+// Wochenvorschlag: nur montags, bleibt ohne week_plan stehen, {} entfernt ihn; deload füllt deloadWeeks
+const mon = { fetchedAt: "2026-10-26T06:00:00Z", note: "x" }; // Montag (Berlin)
+const plan = { week: "2026-10-26", basis: " ca. 5 h verfügbar ", deload: false, targets: [{ sport: "Lauf", time_min: 150, tss_max: 160 }, { sport: "schwimmen", time_min: 45 }], days: [{ day: "Mo", text: "Lauf locker 50 min" }] };
+assert.equal("week_plan" in validateCoach(mon).value, false);
+assert.deepEqual(validateCoach({ ...mon, week_plan: plan }).value.week_plan, { week: "2026-10-26", basis: "ca. 5 h verfügbar", deload: false, targets: [{ sport: "lauf", time_min: 150, tss_max: 160 }, { sport: "schwimmen", time_min: 45, tss_max: null }], days: [{ day: "Mo", text: "Lauf locker 50 min" }] });
+assert.equal(validateCoach({ ...mon, week_plan: {} }).value.week_plan, null);
+assert.equal(validateCoach({ ...mon, week_plan: { targets: [{ sport: "rad", time_min: 60 }] } }).value.week_plan.week, "2026-10-26"); // ohne week: heutiger Montag
+assert.match(validateCoach({ ...mon, fetchedAt: "2026-10-27T06:00:00Z", week_plan: plan }).error, /nur montags.*ohne week_plan/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, week: "2026-10-27" } }).error, /Montag/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, targets: [] } }).error, /targets/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, targets: [{ sport: "golf", time_min: 1 }] } }).error, /sport/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, targets: [{ sport: "rad", time_min: 1 }, { sport: "rad", time_min: 2 }] } }).error, /doppelt/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, targets: [{ sport: "rad" }] } }).error, /time_min/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, deload: "ja" } }).error, /deload/);
+assert.match(validateCoach({ ...mon, week_plan: { ...plan, days: [{ day: "Mo" }] } }).error, /days/);
+let mp = mergeCoach(null, validateCoach({ ...mon, week_plan: { ...plan, deload: true } }).value);
+assert.equal(mp.week_plan.createdAt, "2026-10-26T06:00:00.000Z"); assert.deepEqual(mp.deloadWeeks, ["2026-10-26"]);
+mp = mergeCoach(mp, validateCoach({ ...mon, fetchedAt: "2026-10-27T06:00:00Z" }).value);
+assert.equal(mp.week_plan.week, "2026-10-26"); assert.deepEqual(mp.deloadWeeks, ["2026-10-26"]); // Dienstag: bleibt stehen
+mp = mergeCoach(mp, validateCoach({ ...mon, fetchedAt: "2026-10-26T09:00:00Z", week_plan: plan }).value);
+assert.deepEqual(mp.deloadWeeks, []); // Korrektur am Montag: doch keine Entlastung
+mp = mergeCoach(mp, validateCoach({ ...mon, fetchedAt: "2026-10-28T06:00:00Z", week_plan: {} }).value);
+assert.equal(mp.week_plan, null);
+console.log("coach week_plan ok");

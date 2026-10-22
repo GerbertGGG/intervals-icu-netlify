@@ -77,7 +77,7 @@ const bA = resolveSeasonBlock([evA, evB], "2027-01-08"); // Woche 12
 assert.equal(bA.weekNo, 12); assert.deepEqual(bA.next, { name: "Block B", start: "2027-01-11" });
 const easyRun = (date, dec, pace, extra = {}) => ({ date, durationMin: 75, decoupling: dec, paceSecPerKm: pace, elevPerKm: 4, heat: false, easy: true, treadmill: false, ...extra });
 const ride = (date, dec, extra = {}) => ({ date, durationMin: 75, decoupling: dec, watts: 145, vi: 1.01, intensity: 62, indoor: true, easy: true, hasHr: true, tempC: 22, ...extra });
-// Kraft: 60 Sätze in allen Wochen ausser Woche 2 (Belastung) und den Entlastungswochen 4/8/12
+// Kraft: 60 Sätze in allen Wochen ausser Woche 2 (Belastung) und den Entlastungswochen 4/8/12 (vom Coach markiert, deloadWeeks)
 const strengthA = [];
 for (let i = 0; i < 12; i++) { const d = new Date(Date.parse("2026-10-20") + i * 7 * 86400000).toISOString().slice(0, 10); if (i !== 1 && (i + 1) % 4 !== 0) strengthA.push({ date: d, sets: 60 }); }
 const allDays = Array.from({ length: 81 }, (_, i) => new Date(Date.parse("2026-10-19") + i * 86400000).toISOString().slice(0, 10)).filter((_, i) => i % 3 === 0);
@@ -89,6 +89,7 @@ const inputA = {
   swimTests: [{ date: "2026-11-20", t1Sec: 600, t2Sec: 640, pauseSec: 50 }, { date: "2027-01-02", t1Sec: 580, t2Sec: 600, pauseSec: 55 }],
   ftpTest: { date: "2026-10-21" }, ftp: 240,
   strength: strengthA, weeklyGoalSets: 60, ctlDays, activityDays: allDays, plannedBreaks: [],
+  deloadWeeks: ["2026-11-09", "2026-12-07", "2027-01-04"],
 };
 const ra = buildBlockGoalsFull(bA, inputA, "2027-01-08");
 const ga = Object.fromEntries(ra.goals.map((x) => [x.key, x]));
@@ -149,16 +150,20 @@ const bL = resolveSeasonBlock([{ ...ev, description: lpText }, evB], "2027-01-08
 // Belastungswochen ab Woche 2: 2,3,5,6,7,9,10,11. Woche 3 nur HIIT (verfehlt), Woche 6 krank ohne Einheit (zählt nicht)
 const wk = (n) => addDaysT("2026-10-19", (n - 1) * 7);
 const addDaysT = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
+const deloadL = [wk(4), wk(8), wk(12)]; // vom Coach markierte Entlastungswochen
 const ints = [2, 3, 5, 7, 9, 10, 11].flatMap((n) => [{ date: wk(n), kind: "bikeHiit" }, ...(n === 3 ? [] : [{ date: addDaysT(wk(n), 2), kind: "hillSprints" }])]);
-let gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)] }, "2027-01-08").goals.find((x) => x.key === "intensity");
+let gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)], deloadWeeks: deloadL }, "2027-01-08").goals.find((x) => x.key === "intensity");
 assert.equal(gi.group, "leitplanke"); assert.equal(gi.of, 7); assert.equal(gi.value, 6); assert.equal(gi.status, "ok");
 assert.equal(gi.weeks.filter((x) => !x.load).length, 4); // Woche 1 und Entlastungswochen 4/8/12
 // ohne Krankmeldung zählt Woche 6 als verfehlt: 2 von 2 erlaubten Fehlwochen
-gi = buildBlockGoalsFull(bL, { intensity: ints }, "2027-01-08").goals.find((x) => x.key === "intensity");
+gi = buildBlockGoalsFull(bL, { intensity: ints, deloadWeeks: deloadL }, "2027-01-08").goals.find((x) => x.key === "intensity");
 assert.equal(gi.of, 8); assert.equal(gi.status, "warn");
 // drei Fehlwochen -> gerissen, Entscheidung "Ursache klären" nur mit Abschlusszielen; hier Status bad
-gi = buildBlockGoalsFull(bL, { intensity: ints.filter((x) => x.date !== wk(10)) }, "2027-01-08").goals.find((x) => x.key === "intensity");
+gi = buildBlockGoalsFull(bL, { intensity: ints.filter((x) => x.date !== wk(10)), deloadWeeks: deloadL }, "2027-01-08").goals.find((x) => x.key === "intensity");
 assert.equal(gi.status, "bad");
+// kein fester 3:1-Rhythmus: ohne Markierung des Coaches zählt nur Woche 1 nicht
+gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)] }, "2027-01-08").goals.find((x) => x.key === "intensity");
+assert.equal(gi.weeks.filter((x) => !x.load).length, 1);
 console.log("block intensity ok");
 // Woche 1 läuft: kein "offen", sondern der Grund, warum sie nicht zählt
 assert.match(buildBlockGoalsFull(resolveSeasonBlock([{ ...ev, description: lpText }], "2026-10-20"), {}, "2026-10-20").goals.find((x) => x.key === "intensity").note, /^Diese Woche: Woche 1, zählt erst ab Woche 2$/);

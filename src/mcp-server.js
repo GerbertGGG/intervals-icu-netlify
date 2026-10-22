@@ -153,6 +153,42 @@ const TOOLS = [
           },
           required: ["light"],
         },
+        week_plan: {
+          type: "object",
+          description:
+            "Dein Wochenvorschlag, nur montags mitschicken (an anderen Tagen Fehler): steht als Karte \"Wochenvorschlag\" im Dashboard bis zum nächsten Montag, ohne Abhaken und ohne Abgleich mit den Einheiten. Weglassen = der gespeicherte Vorschlag bleibt stehen. Leeres Objekt {} = Karte ausblenden. deload: true markiert die Woche als Entlastung; nur so markierte Wochen lassen die Leitplanken im Trainingsblock aus.",
+          properties: {
+            week: { type: "string", description: "Montag der Woche, YYYY-MM-DD (optional, sonst der heutige Montag)." },
+            basis: { type: "string", description: "Grundlage in einem kurzen Satz, max. 160 Zeichen, z. B. \"ca. 5 h verfügbar, Erholung grün → +8 %\"." },
+            deload: { type: "boolean", description: "true = Entlastungswoche (nach Bedarf, kein fester Rhythmus)." },
+            targets: {
+              type: "array",
+              description: "Wochenrahmen je Sportart (jede höchstens einmal).",
+              items: {
+                type: "object",
+                properties: {
+                  sport: { type: "string", enum: ["lauf", "rad", "schwimmen", "kraft"] },
+                  time_min: { type: "number", description: "Zeit in Minuten." },
+                  tss_max: { type: ["number", "null"], description: "TSS-Obergrenze (Untergrenze zeigt das Dashboard mit 80 %), null beim Schwimmen." },
+                },
+                required: ["sport", "time_min"],
+              },
+            },
+            days: {
+              type: "array",
+              description: "Verteilung auf Tage (optional), steht klein als Vorschlag unter den Zielen.",
+              items: {
+                type: "object",
+                properties: {
+                  day: { type: "string", description: "Tag, z. B. \"Mo\", max. 12 Zeichen." },
+                  text: { type: "string", description: "Einheit, z. B. \"Lauf locker 50 min\", max. 120 Zeichen." },
+                },
+                required: ["day", "text"],
+              },
+            },
+          },
+          required: ["targets"],
+        },
       },
       required: ["fetchedAt", "note"],
     },
@@ -160,7 +196,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine) und die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst) und die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -187,7 +223,9 @@ async function callTool(env, name, args) {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
     const coach = await readCoach(env);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    return coach ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null } : { none: true, idea: null, ideas: [], week: null };
+    return coach
+      ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [] }
+      : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [] };
   }
   if (name === "get_planned_workouts") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 0, futureDefaultDays: 14 });
