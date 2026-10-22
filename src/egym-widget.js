@@ -12,7 +12,7 @@ import { activeBlockStrengthTarget } from "./season-block.js";
 // Gewicht) oder an einem Geraet. Das Wochenziel sind Saetze: mindestens 60 Saetze Krafttraining pro Woche,
 // aenderbar im Blocktext des laufenden Blocks in Intervals ("Kraft ≥70 Saetze ..."), sonst per EGYM_WEEKLY_GOAL_SETS;
 // goalSource sagt, was gilt ("block", "config", "default"). Ein Blockziel über mehrere Wochen ("Kraft ≥90 Sätze in 2 Wochen")
-// gilt für das gleitende Fenster: periodWeeks Wochen bis einschliesslich der jeweiligen Woche (windowSets). Die Minuten bleiben als Information.
+// gilt je fester Abschnitt von periodWeeks Wochen ab Blockstart (periods; windowSets = laufender Abschnitt bis heute). Die Minuten bleiben als Information.
 // Die Dauer eines Tages kommt aus den Angaben von EGYM (Dauer der Uebungen, sonst der Saetze); fehlen sie, ist es nur
 // die Spanne zwischen erster und letzter Uebung plus Zeit fuer die letzte Uebung und als Schaetzung gekennzeichnet (durationSource), nie als EGYM-Wert.
 // EGYM stempelt eine Uebung erst nach ihrem letzten Satz: Beim Zirkel deckt die Spanne so nur die letzte Runde ab. Die
@@ -20,6 +20,7 @@ import { activeBlockStrengthTarget } from "./season-block.js";
 // haeufigste Satzzahl je Geraet (Rotary Torso mit 6 Saetzen, je Seite einer, bleibt so eine Station je Runde).
 const DEFAULT_WEEKLY_GOAL_SETS = 60;
 const WEEKS = 6;
+const PERIODS = 4; // Abschnitte bei einem Ziel über mehrere Wochen: der laufende und drei davor
 // Fuer Bestwerte reicht der Blick weiter zurueck als der Wochenverlauf; die API wird in Fenstern von 28 Tagen abgefragt
 const HISTORY_DAYS = 84;
 const WINDOW_DAYS = 28;
@@ -241,14 +242,14 @@ function bioAgeOf(b) {
 // blockSets: Zahl (Sätze pro Woche) oder { sets, weeks } aus dem Blocktext
 export function goalOf(env, blockSets = null) {
   const bs = typeof blockSets === "number" ? { sets: blockSets, weeks: 1 } : blockSets;
-  if (Number.isFinite(bs?.sets) && bs.sets > 0) return { goal: Math.floor(bs.sets), source: "block", period: bs.weeks > 1 ? Math.floor(bs.weeks) : 1 };
+  if (Number.isFinite(bs?.sets) && bs.sets > 0) return { goal: Math.floor(bs.sets), source: "block", period: bs.weeks > 1 ? Math.floor(bs.weeks) : 1, anchor: bs.start ?? null };
   const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_SETS));
   return Number.isFinite(n) && n > 0 ? { goal: n, source: "config", period: 1 } : { goal: DEFAULT_WEEKLY_GOAL_SETS, source: "default", period: 1 };
 }
 
 // Reine Funktion: Rohdaten der drei Endpunkte in die Widget-Daten (je Teil kann null sein, wenn der Abruf scheiterte)
 export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, blockSets = null, generatedAt = new Date().toISOString(), failed = [] }) {
-  const { goal, source, period } = goalOf(env, blockSets);
+  const { goal, source, period, anchor } = goalOf(env, blockSets);
   const days = strengthDays(workouts?.workouts ?? workouts ?? []);
   const monday = mondayOnOrBefore(today);
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) ?? 0), 0);
@@ -259,20 +260,28 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
     const end = addDays(start, 6);
     const inWeek = days.filter((d) => d.date >= start && d.date <= end);
     const src = sourceOf(inWeek);
-    const inWindow = days.filter((d) => d.date >= addDays(start, -7 * (period - 1)) && d.date <= end);
-    return { start, sessions: inWeek.length, sets: sum(inWeek, (d) => d.sets), windowSets: sum(inWindow, (d) => d.sets), volumeKg: Math.round(sum(inWeek, (d) => d.volumeKg)), minutes: src ? sum(inWeek, (d) => d.minutes) : inWeek.length ? null : 0, minutesSource: src };
+    return { start, sessions: inWeek.length, sets: sum(inWeek, (d) => d.sets), volumeKg: Math.round(sum(inWeek, (d) => d.volumeKg)), minutes: src ? sum(inWeek, (d) => d.minutes) : inWeek.length ? null : 0, minutesSource: src };
   });
   const cur = weeks[WEEKS - 1];
   const dayAt = (i) => days.find((d) => d.date === addDays(monday, i));
   const dayFlags = Array.from({ length: 7 }, (_, i) => Boolean(dayAt(i)));
   const dayMinutes = Array.from({ length: 7 }, (_, i) => dayAt(i)?.minutes ?? null);
-  const hit = (w) => w.windowSets >= goal;
-  // Serie: aufeinanderfolgende abgeschlossene Wochen mit erreichtem Ziel; die laufende Woche zaehlt mit, sobald sie es erreicht
-  // (das Fenster der aeltesten Woche reicht in die Tage vor der Wochenliste, der Abruf deckt HISTORY_DAYS ab)
+  const hit = (w) => w.sets >= goal;
+  // Ziel über mehrere Wochen: feste Abschnitte ab Blockstart (davor in gleichen Schritten zurück), je mit den Sätzen der Wochen
+  const span = 7 * period;
+  const curStart = period > 1 ? addDays(anchor ?? monday, span * Math.floor(Math.round((Date.parse(monday) - Date.parse(anchor ?? monday)) / 86400000) / span)) : null;
+  const periods = period > 1 ? Array.from({ length: PERIODS }, (_, i) => {
+    const start = addDays(curStart, -span * (PERIODS - 1 - i)), end = addDays(start, span - 1);
+    const inP = days.filter((d) => d.date >= start && d.date <= end);
+    const weekSets = Array.from({ length: period }, (_, k) => sum(inP.filter((d) => d.date >= addDays(start, 7 * k) && d.date <= addDays(start, 7 * k + 6)), (d) => d.sets));
+    return { start, end, sets: sum(inP, (d) => d.sets), sessions: inP.length, weekSets, done: end < today };
+  }) : null;
+  // Serie: aufeinanderfolgende abgeschlossene Wochen (bzw. Abschnitte) mit erreichtem Ziel; die laufende zaehlt mit, sobald sie es erreicht
+  const units = periods ?? weeks;
   let streak = 0;
-  for (let i = WEEKS - 2; i >= 0 && hit(weeks[i]); i--) streak++;
-  if (hit(cur)) streak++;
-  const done = weeks.slice(0, WEEKS - 1).slice(-4);
+  for (let i = units.length - 2; i >= 0 && hit(units[i]); i--) streak++;
+  if (hit(units[units.length - 1])) streak++;
+  const done = units.slice(0, units.length - 1).slice(-4);
   const withMin = done.filter((w) => w.minutes != null);
   const last = days.length ? days[days.length - 1].date : null;
   const dayDiff = (iso) => Math.round((Date.parse(today + "T00:00:00Z") - Date.parse(iso + "T00:00:00Z")) / 86400000);
@@ -285,8 +294,9 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   return {
     generatedAt,
     today,
-    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, periodWeeks: period, windowSets: cur.windowSets, sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
+    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, periodWeeks: period, ...(periods ? { windowSets: periods[PERIODS - 1].sets, periodStart: periods[PERIODS - 1].start, periodEnd: periods[PERIODS - 1].end } : {}), sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
     weeks,
+    periods,
     lastDay: last,
     strengthDates: days.map((d) => d.date), // alle Kraft-Tage der letzten 84 Tage (Block-Ziele im Dashboard)
     strengthSets: days.map((d) => ({ date: d.date, sets: d.sets })), // dasselbe mit Sätzen je Tag (Satz-Ziel im Block)

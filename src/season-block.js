@@ -173,7 +173,8 @@ export const parseStrengthSets = (text) => parseStrengthTarget(text)?.sets ?? nu
 // Satz-Ziel des laufenden Blocks (nur aktiv, ein kommender Block gilt noch nicht)
 export function activeBlockStrengthTarget(events, todayIso) {
   const b = resolveSeasonBlock(events, todayIso);
-  return b?.status === "active" ? parseStrengthTarget([b.goal, ...(b.notes ?? [])].filter(Boolean).join("\n\n")) : null;
+  const t = b?.status === "active" ? parseStrengthTarget([b.goal, ...(b.notes ?? [])].filter(Boolean).join("\n\n")) : null;
+  return t ? { ...t, start: b.start } : null;
 }
 export const activeBlockStrengthSets = (events, todayIso) => activeBlockStrengthTarget(events, todayIso)?.sets ?? null;
 
@@ -575,30 +576,35 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   if (targets.strength) {
     // Wochenziel in Sätzen (EGYM). Ohne Satzzahlen (kein EGYM) zählen Kraft-Tage, dann gilt STRENGTH_DAYS_PER_WEEK.
     // Leitplanke "8 von 9 Belastungswochen": Entlastungswochen (jede 4. Blockwoche) zählen nicht; es darf höchstens
-    // (of − need) Belastungswochen ohne Ziel geben. Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): jede Woche zählt die
-    // Sätze des gleitenden Fensters bis zu ihrem Ende (vor dem Blockstart mit den Wochen davor); jedes abgeschlossene Fenster
-    // muss das Ziel erreichen.
+    // (of − need) Belastungswochen ohne Ziel geben. Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): feste Abschnitte ab
+    // Blockstart (Woche 1–2, 3–4, …); weeks sind dann diese Abschnitte, und jeder abgeschlossene muss das Ziel erreichen.
     const st = targets.strength, perLoad = st.need != null, P = st.periodWeeks > 1 ? st.periodWeeks : 1;
     const goalSets = st.sets ? st.sets : Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
     const setsMode = (input.strength ?? []).some((x) => Number.isFinite(x.sets));
     const need = setsMode ? goalSets : STRENGTH_DAYS_PER_WEEK;
-    const weeks = weeksOf(block, w, todayIso).map((x) => {
-      const inWeek = (input.strength ?? []).filter((y) => y.date >= addDays(x.start, -7 * (P - 1)) && y.date <= x.end);
-      const count = setsMode ? inWeek.reduce((a, y) => a + (Number.isFinite(y.sets) ? y.sets : 0), 0) : new Set(inWeek.map((y) => y.date)).size;
-      return { start: x.start, count, done: x.done, hit: count >= need, load: perLoad ? x.load : true, ...(P > 1 ? { from: addDays(x.start, -7 * (P - 1)) } : {}) };
+    const countIn = (from, to) => {
+      const xs = (input.strength ?? []).filter((y) => y.date >= from && y.date <= to);
+      return setsMode ? xs.reduce((a, y) => a + (Number.isFinite(y.sets) ? y.sets : 0), 0) : new Set(xs.map((y) => y.date)).size;
+    };
+    const bw = weeksOf(block, w, todayIso);
+    const spans = P > 1 ? Array.from({ length: Math.ceil(bw.length / P) }, (_, i) => bw.slice(i * P, i * P + P)).map((c) => ({ start: c[0].start, end: addDays(c[0].start, 7 * P - 1), done: c.length === P && c[c.length - 1].done, load: true })) : bw;
+    const weeks = spans.map((x) => {
+      const count = countIn(x.start, x.end);
+      return { start: x.start, count, done: x.done, hit: count >= need, load: perLoad ? x.load : true, ...(P > 1 ? { end: x.end } : {}) };
     });
     const full = weeks.filter((x) => x.done && x.load);
     const hits = full.filter((x) => x.hit).length;
     const openWeek = weeks.find((x) => !x.done) ?? null;
     // Kalenderwoche (Mo–So) bis heute, wie die Kraft-Karte im Dashboard; die Blockwochen beginnen am Starttag des Blocks
     const monday = mondayOnOrBefore(todayIso);
-    const calInWeek = (input.strength ?? []).filter((y) => y.date >= addDays(monday, -7 * (P - 1)) && y.date <= todayIso);
-    const calWeek = { start: monday, ...(P > 1 ? { from: addDays(monday, -7 * (P - 1)) } : {}), count: setsMode ? calInWeek.reduce((a, y) => a + (Number.isFinite(y.sets) ? y.sets : 0), 0) : new Set(calInWeek.map((y) => y.date)).size };
+    // Mit Abschnitten: der laufende Abschnitt bis heute
+    const curSpan = P > 1 ? weeks.find((x) => x.start <= todayIso && todayIso <= x.end) : null;
+    const calWeek = curSpan ? { start: curSpan.start, end: curSpan.end, count: countIn(curSpan.start, todayIso) } : { start: monday, count: countIn(monday, todayIso) };
     const unit = setsMode ? "Sätze" : "× Kraft";
     const what = setsMode ? `≥ ${need} Sätze` : `${need}× Kraft`;
     let status, target;
     if (P > 1) {
-      target = `${what} in je ${P} Wochen (gleitend)`;
+      target = `${what} je ${P} Wochen (ab Blockstart)`;
       status = w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : hits === full.length ? "ok" : "bad";
     } else if (perLoad) {
       const allowed = Math.max(0, st.of - st.need), misses = full.length - hits;
@@ -614,7 +620,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
       ...(perLoad ? { needWeeks: st.need, ofWeeks: st.of } : {}), ...(P > 1 ? { periodWeeks: P } : {}),
       status,
       egym: Boolean(input.strengthSource?.egym), egymAt: input.strengthSource?.egymAt ?? null,
-      note: [openWeek ? `${P > 1 ? `Letzte ${P} Wochen bis heute` : "Diese Woche"}: ${openWeek.count} von ${need}${setsMode ? " Sätzen" : ""}${openWeek.load ? "" : " (Entlastungswoche)"}` : null, perLoad && full.length > hits ? `${full.length - hits} von ${Math.max(0, st.of - st.need)} erlaubten Fehlwochen` : null].filter(Boolean).join(" · ") || null,
+      note: [openWeek ? `${P > 1 ? "Dieser Abschnitt" : "Diese Woche"}: ${openWeek.count} von ${need}${setsMode ? " Sätzen" : ""}${openWeek.load ? "" : " (Entlastungswoche)"}` : null, perLoad && full.length > hits ? `${full.length - hits} von ${Math.max(0, st.of - st.need)} erlaubten Fehlwochen` : null].filter(Boolean).join(" · ") || null,
     });
   }
 
