@@ -13,13 +13,18 @@ import { isoDateBerlin } from "./date-utils.js";
 //         blockers?: string[] (max 3 je max 60, was heute dagegen spricht, z. B. "Hüfte zwickt", "Schlaf 5 h"),
 //         question?: string (max 300, Rueckfrage des Coaches an Gerbert),
 //         answer?: string (max 1000, seine Antwort), answeredAt?: ISO-Zeitstempel,
-//         idea?: { text: string (max 240), angle?: 1-8 (Blickwinkel), sport?: "lauf" | "rad" | "schwimmen" | "kraft" | "alle" } }
+//         idea?: { text: string (max 240), angle?: 1-8 (Blickwinkel), sport?: "lauf" | "rad" | "schwimmen" | "kraft" | "alle" },
+//         week?: { light: "gruen" | "gelb" | "rot", text?: string (max 160) } }
 // Die Antwort kommt entweder aus dem Dashboard (POST /api/coach/answer) oder aus dem Chat mit dem Coach (save_coach mit
 // answer). Der Coach liest sie am naechsten Morgen per MCP-Tool get_coach, bevor er die neue Aussage schreibt.
 //
 // Idee der Woche (idea): eine freiwillige Anregung, die der Coach montags mitschickt. Sie bleibt ueber die taeglichen
 // Updates stehen (mergeCoach): ohne idea unveraendert, leerer text entfernt sie. Jede neue Idee kommt vorn in die
 // Historie (ideas, max. 12, je Tag ein Eintrag), damit der Coach sich nicht wiederholt.
+//
+// Wochenampel (week): das Urteil des Coaches zur letzten vollen Woche, montags mitgeschickt. Das Dashboard zeigt sie in der
+// Montagsbilanz, rechnet sie aber nicht selbst. Sie bleibt wie die Idee ueber die taeglichen Updates stehen; leeres light
+// entfernt sie.
 
 export const COACH_KV_KEY = "dashboard:coach";
 export const COACH_MAX_AGE_HOURS = 36;
@@ -35,6 +40,8 @@ const MAX_BLOCKER = 60;
 const MAX_IDEA = 240;
 const MAX_IDEAS = 12;
 export const IDEA_SPORTS = ["lauf", "rad", "schwimmen", "kraft", "alle"];
+export const WEEK_LIGHTS = ["gruen", "gelb", "rot"];
+const MAX_WEEK_TEXT = 160;
 const IDEA_HINT = " (ohne idea speichern, um die Tagesaussage trotzdem zu sichern)";
 
 // undefined = Feld fehlt (Idee bleibt), null = leerer text (Idee entfernen), sonst die neue Idee.
@@ -54,6 +61,22 @@ function validateIdea(idea) {
   const sport = idea.sport == null || idea.sport === "" ? null : String(idea.sport).trim().toLowerCase();
   if (sport != null && !IDEA_SPORTS.includes(sport)) return { error: `idea.sport muss ${IDEA_SPORTS.join(", ")} sein` + IDEA_HINT };
   return { value: { text, angle, sport } };
+}
+
+// Wie validateIdea: undefined = Feld fehlt (Ampel bleibt), null = leeres light (entfernen), sonst die neue Ampel.
+function validateWeek(week) {
+  if (week == null) return { value: undefined };
+  if (typeof week === "string" && week.trim().startsWith("{")) {
+    try { week = JSON.parse(week); } catch { return { error: "week ist kein gültiges JSON-Objekt" }; }
+  }
+  if (typeof week !== "object" || Array.isArray(week)) return { error: "week muss ein Objekt { light, text? } sein" };
+  const light = week.light == null ? "" : String(week.light).trim().toLowerCase().replace("ü", "ue");
+  if (!light) return { value: null };
+  if (!WEEK_LIGHTS.includes(light)) return { error: `week.light muss ${WEEK_LIGHTS.join(", ")} sein` };
+  if (week.text != null && typeof week.text !== "string") return { error: "week.text muss ein Text sein" };
+  const text = (week.text ?? "").trim();
+  if (text.length > MAX_WEEK_TEXT) return { error: `week.text länger als ${MAX_WEEK_TEXT} Zeichen` };
+  return { value: { light, text: text || null } };
 }
 
 export function validateCoach(body) {
@@ -81,15 +104,19 @@ export function validateCoach(body) {
   const answeredAt = answer ? new Date(Number.isFinite(answeredMs) ? answeredMs : Date.now()).toISOString() : null;
   const idea = validateIdea(body?.idea);
   if (idea.error) return { error: idea.error };
+  const week = validateWeek(body?.week);
+  if (week.error) return { error: week.error };
   const value = { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, go, blockers, text: text || null, question: question || null, answer: answer || null, answeredAt };
   // idea nur, wenn mitgeschickt; mergeCoach unterscheidet so "fehlt" von "entfernen"
   if (idea.value !== undefined) value.idea = idea.value;
+  if (week.value !== undefined) value.week = week.value;
   return { value };
 }
 
-// Neue Tagesaussage auf die gespeicherte legen: Idee und Historie bleiben, solange kein idea mitkommt.
+// Neue Tagesaussage auf die gespeicherte legen: Idee, Historie und Wochenampel bleiben, solange sie nicht mitkommen.
 export function mergeCoach(prev, next) {
-  const { idea, ...rest } = next;
+  const { idea, week, ...rest } = next;
+  const weekLight = week === undefined ? (prev?.week ?? null) : week && { ...week, createdAt: next.fetchedAt };
   let current = prev?.idea ?? null;
   let ideas = Array.isArray(prev?.ideas) ? prev.ideas : [];
   if (idea === null) current = null;
@@ -99,7 +126,7 @@ export function mergeCoach(prev, next) {
     const date = isoDateBerlin(new Date(next.fetchedAt));
     ideas = [{ date, ...idea }, ...ideas.filter((x) => x?.date !== date)].slice(0, MAX_IDEAS);
   }
-  return { ...rest, idea: current, ideas };
+  return { ...rest, idea: current, ideas, week: weekLight };
 }
 
 // Antwort aus dem Dashboard: haengt sie an die aktuelle Aussage, ohne Urteil und Bericht des Coaches zu veraendern.

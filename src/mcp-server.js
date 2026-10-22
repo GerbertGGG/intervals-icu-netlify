@@ -143,6 +143,16 @@ const TOOLS = [
           },
           required: ["text"],
         },
+        week: {
+          type: "object",
+          description:
+            "Deine Wochenampel zur letzten vollen Woche, nur montags mitschicken: steht in der Montagsbilanz des Dashboards (bis die nächste Woche abgeschlossen ist). gruen = Woche passt, gelb = im Auge behalten, rot = Warnsignal. Weglassen = die gespeicherte Ampel bleibt stehen. Leeres light = Ampel entfernen.",
+          properties: {
+            light: { type: "string", enum: ["gruen", "gelb", "rot"], description: "Ampelfarbe." },
+            text: { type: "string", description: "Begründung in einem Satz, max. 160 Zeichen, Du-Form (optional)." },
+          },
+          required: ["light"],
+        },
       },
       required: ["fetchedAt", "note"],
     },
@@ -150,7 +160,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine) und die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine) und die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -177,7 +187,7 @@ async function callTool(env, name, args) {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
     const coach = await readCoach(env);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    return coach ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [] } : { none: true, idea: null, ideas: [] };
+    return coach ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null } : { none: true, idea: null, ideas: [], week: null };
   }
   if (name === "get_planned_workouts") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 0, futureDefaultDays: 14 });

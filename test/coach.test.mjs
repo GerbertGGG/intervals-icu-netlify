@@ -87,3 +87,20 @@ assert.equal((await answer({ answer: "gut" })).status, 200);
 const kept = JSON.parse(kv.get("dashboard:coach"));
 assert.equal(kept.note, "b"); assert.equal(kept.idea.text, "Rad ohne Uhr"); assert.equal(kept.ideas.length, 1);
 console.log("coach tests ok");
+
+// Wochenampel: Validierung und Merge (bleibt ohne week stehen, leeres light entfernt sie)
+assert.equal("week" in validateCoach(base).value, false);
+assert.deepEqual(validateCoach({ ...base, week: { light: " Grün ", text: " Woche passt " } }).value.week, { light: "gruen", text: "Woche passt" });
+assert.equal(validateCoach({ ...base, week: { light: "" } }).value.week, null);
+assert.match(validateCoach({ ...base, week: { light: "blau" } }).error, /light/);
+assert.match(validateCoach({ ...base, week: { light: "rot", text: "t".repeat(161) } }).error, /160/);
+assert.deepEqual(validateCoach({ ...base, week: '{"light":"gelb"}' }).value.week, { light: "gelb", text: null });
+const w = (fetchedAt, week) => validateCoach({ fetchedAt, note: "x", ...(week !== undefined ? { week } : {}) }).value;
+let mw = mergeCoach(null, w("2026-10-19T05:00:00Z"));
+assert.equal(mw.week, null);
+mw = mergeCoach(mw, w("2026-10-19T06:00:00Z", { light: "gelb", text: "Laufumfang stark eingebrochen" }));
+assert.deepEqual(mw.week, { light: "gelb", text: "Laufumfang stark eingebrochen", createdAt: "2026-10-19T06:00:00.000Z" });
+mw = mergeCoach(mw, w("2026-10-20T05:00:00Z"));
+assert.equal(mw.week.light, "gelb");
+mw = mergeCoach(mw, w("2026-10-21T05:00:00Z", { light: "" }));
+assert.equal(mw.week, null);
