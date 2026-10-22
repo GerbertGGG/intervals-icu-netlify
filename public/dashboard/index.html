@@ -371,6 +371,22 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .disc-stats .v { font-size: var(--fs-l); font-weight: 600; display: block; }
 .discbars { margin: 4px 0; }
 .agescale { font-size: var(--fs-xs); color: var(--muted); display: flex; justify-content: space-between; margin-left: calc(7.5em + 10px); margin-right: calc(2.5em + 10px); }
+/* ---------- Experiment und Profil (vom Coach): Veränderung nach Richtung gefärbt, nie als Warnung ---------- */
+.exp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.exp-head h3 { margin: 0; }
+.exp-st { background: var(--inset); color: var(--text); font-weight: 550; }
+.exp-hyp { margin: 6px 0 0; font-size: var(--fs-m); }
+.exp-m { margin-top: 12px; }
+.exp-chg { font-weight: 600; }
+.exp-chg.better { color: var(--ok); }
+.exp-chg.worse { color: var(--warn); }
+.exp-chg.same { color: var(--muted); font-weight: 500; }
+.profil { list-style: none; margin: 0; padding: 0; }
+.profil li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+.profil li:first-child { border-top: 0; }
+.profil .badge { font-size: var(--fs-xs); font-weight: 550; flex: none; }
+.pf-m { background: var(--inset); color: var(--text); }
+.pf-s { background: transparent; color: var(--muted); border: 1px dashed var(--line-2); }
 .studie-fazit { border-left: 3px solid var(--accent); background: var(--inset); padding: 10px 14px; border-radius: 0 8px 8px 0; }
 .studie-fazit > div:last-child { font-size: var(--fs-m); margin-top: 2px; }
 #studie .desc p { margin: 0 0 8px; }
@@ -445,7 +461,7 @@ td .badge { font-size: var(--fs-xs); }
   <div id="sources"></div>
 
   <nav class="jump" aria-label="Sprungmarken">
-    <a href="#cockpit-top">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
+    <a href="#cockpit-top">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#experiment">Experiment</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
   </nav>
 
   <h2 id="cockpit-top" class="sr-only">Cockpit</h2>
@@ -493,6 +509,12 @@ td .badge { font-size: var(--fs-xs); }
   <h3 id="disciplines-head" style="margin:16px 0 8px" hidden>Disziplinen: Umfang, letzte Einheit, Entwicklung</h3>
   <div class="grid wide" id="disciplines" hidden></div>
   <details class="info" style="margin:16px 0 8px"><summary><b>Schwellen</b> (Einstellungen aus Intervals.icu)</summary><div class="grid" id="thresholds" style="margin-top:8px"></div></details>
+
+  <h2 id="experiment">Experiment und Profil</h2>
+  <div class="grid half" style="align-items:start">
+    <div class="card" id="experiment-card"><div id="experiment-body"></div></div>
+    <div class="card" id="profil-card"><h3>Profil <span class="muted">was bei dir wirkt</span></h3><div id="profil"></div></div>
+  </div>
 
   <h2 id="erholung">Erholung</h2>
   <div class="grid wide" style="align-items:start">

@@ -4,7 +4,7 @@
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
-// save_studie und save_coach: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// save_studie, save_coach, save_experiment und save_profil: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
@@ -14,6 +14,7 @@ import { hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
 import { COACH_KV_KEY, validateCoach, mergeCoach, readCoach } from "./coach-snapshot.js";
+import { EXPERIMENT_KV_KEY, PROFIL_KV_KEY, validateExperiment, validateProfil, readExperiment, readProfil } from "./experiment-snapshot.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -194,9 +195,71 @@ const TOOLS = [
     },
   },
   {
+    name: "save_experiment",
+    description:
+      "Schreibt (überschreibt) das laufende Trainings-Experiment fürs Dashboard (Karte \"Experiment\"). Die Trainingstage je Woche rechnet der Worker selbst aus den Aktivitäten. fetchedAt = jetzt. Nur Messwerte übergeben, die es wirklich gibt; fehlt ein aktueller Wert, current und currentDate auf null setzen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+        title: { type: "string", description: "Name des Experiments, max. 80 Zeichen, z. B. \"Trainingstage\"." },
+        hypothesis: { type: "string", description: "Hypothese in einem Satz, max. 200 Zeichen." },
+        status: { type: "string", enum: ["vorgeschlagen", "läuft", "ausgewertet"] },
+        startDate: { type: ["string", "null"], description: "Start YYYY-MM-DD, null solange es nicht läuft." },
+        minWeeks: { type: "integer", minimum: 1, maximum: 52, description: "Mindestdauer in Wochen." },
+        targetDaysPerWeek: { type: "integer", minimum: 1, maximum: 7, description: "Ziel: Trainingstage pro Woche (Ziellinie im Balkendiagramm)." },
+        metrics: {
+          type: "array",
+          description:
+            "Messgrößen, jede höchstens einmal: lauf_hf130 (Sekunden pro km bei Puls 130, lower), rad_hf165w (Ø-Puls bei 165 W, lower), schwimm_amstueck (Meter am Stück, higher), schwimm_100m (Sekunden pro 100 m, lower).",
+          items: {
+            type: "object",
+            properties: {
+              key: { type: "string", enum: ["lauf_hf130", "rad_hf165w", "schwimm_amstueck", "schwimm_100m"] },
+              label: { type: "string", description: "Anzeigename, max. 60 Zeichen." },
+              unit: { type: "string", description: "Einheit, max. 20 Zeichen (z. B. s/km, bpm, m, s/100 m)." },
+              baseline: { type: ["number", "null"], description: "Ausgangswert." },
+              baselineDate: { type: ["string", "null"], description: "Datum des Ausgangswerts, YYYY-MM-DD." },
+              current: { type: ["number", "null"], description: "Aktueller Wert, null = noch keiner." },
+              currentDate: { type: ["string", "null"], description: "Datum des aktuellen Werts, YYYY-MM-DD." },
+              better: { type: "string", enum: ["lower", "higher"], description: "Welche Richtung besser ist." },
+            },
+            required: ["key", "label", "unit", "better"],
+          },
+        },
+        verdict: { type: ["string", "null"], description: "Dein Fazit, max. 200 Zeichen, z. B. \"stützt die Hypothese\" (null, solange offen)." },
+      },
+      required: ["fetchedAt", "title", "hypothesis", "status", "minWeeks", "targetDaysPerWeek", "metrics"],
+    },
+  },
+  {
+    name: "save_profil",
+    description: "Schreibt (überschreibt) die wichtigsten Punkte aus dem Athletenprofil fürs Dashboard (Bereich \"Profil\"). fetchedAt = jetzt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+        updatedAt: { type: "string", description: "Stand des Profils, YYYY-MM-DD." },
+        highlights: {
+          type: "array",
+          description: "Höchstens 5 Punkte.",
+          items: {
+            type: "object",
+            properties: {
+              text: { type: "string", description: "Der Punkt, max. 140 Zeichen." },
+              strength: { type: "string", enum: ["mittel", "schwach"], description: "Wie gut der Punkt belegt ist." },
+            },
+            required: ["text", "strength"],
+          },
+        },
+      },
+      required: ["fetchedAt", "updatedAt", "highlights"],
+    },
+  },
+  {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst) und die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins) und die Profil-Punkte (profil: updatedAt, highlights; null = keine). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -219,13 +282,16 @@ async function callTool(env, name, args) {
   if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
   if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
   if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY, mergeCoach);
+  if (name === "save_experiment") return saveSnapshot(env, args, validateExperiment, EXPERIMENT_KV_KEY);
+  if (name === "save_profil") return saveSnapshot(env, args, validateProfil, PROFIL_KV_KEY);
   if (name === "get_coach") {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
-    const coach = await readCoach(env);
+    const [coach, experiment, profil] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env)]);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
+    const extra = { experiment: experiment ?? null, profil: profil ?? null };
     return coach
-      ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [] }
-      : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [] };
+      ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
+      : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };
   }
   if (name === "get_planned_workouts") {
     const { oldest, newest } = resolveRange(args, { pastDefaultDays: 0, futureDefaultDays: 14 });

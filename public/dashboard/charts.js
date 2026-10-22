@@ -644,6 +644,29 @@
     mount(host, s);
   }
 
+  /* ---------- Trainingstage je Woche (Experiment): Skala 0–7 Tage, Ziellinie des Coaches gestrichelt. Alle Säulen in der
+     Wertfarbe, auch unter dem Ziel: eine einzelne Woche wird nie als Warnung gefärbt. Die laufende Woche ist blass und
+     gestrichelt umrandet, weil sie noch nicht vorbei ist. ---------- */
+  function dayBars(host, items, o) {
+    const W = fitW(host, 480), H = 170, L = 26, R = 8, T = 16, B = 34, max = 7;
+    const s = svg(W, H, o.label);
+    const y = (v) => T + (H - T - B) * (1 - v / max);
+    for (const v of [0, 2, 4, 6]) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, v));
+    const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.6, 40);
+    if (slot < 48) s.append(el("text", { x: 2, y: H - 18 }, "KW"));
+    items.forEach((w, i) => {
+      const x = L + slot * i + (slot - bw) / 2, cx = x + bw / 2;
+      const tip = `KW ${w.kw} (ab ${U.fmtDate(w.week)}): ${w.days} ${w.days === 1 ? "Tag" : "Tage"}${w.complete ? "" : " – laufende Woche, noch nicht vorbei"}`;
+      if (w.days > 0) s.append(title(el("rect", { x, y: y(w.days), width: bw, height: y(0) - y(w.days), rx: 2, fill: "var(--accent)", opacity: w.complete ? 1 : 0.45, stroke: w.complete ? null : "var(--accent)", "stroke-dasharray": w.complete ? null : "3 2" }), tip));
+      s.append(title(el("text", { x: cx, y: y(w.days) - 4, "text-anchor": "middle", style: "font-size:11px;font-weight:700;fill:var(--text)" }, w.days), tip));
+      s.append(el("text", { x: cx, y: H - 18, "text-anchor": "middle" }, slot >= 48 ? `KW ${w.kw}` : w.kw));
+      if (!w.complete) s.append(el("text", { x: cx, y: H - 5, "text-anchor": "middle", style: "font-size:10px" }, "läuft"));
+    });
+    if (o.target != null) s.append(title(el("line", { x1: L, x2: W - R, y1: y(o.target), y2: y(o.target), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), `Ziel: ${o.target} Tage pro Woche`));
+    mount(host, s);
+    refit(host, () => dayBars(host, items, o), W, 480);
+  }
+
   /* ---------- Kleine Linie über wenige Punkte (VDOT-Verlauf): Anfangs- und Endwert beschriftet ---------- */
   function trend(host, pts, o) {
     const W = 220, H = 62, L = 8, R = 36, T = 10, B = 16;
@@ -659,5 +682,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend, dayBars };
 })();
