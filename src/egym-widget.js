@@ -305,6 +305,8 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
 
 // EGYM-Abrufe sind langsam (Login, drei Endpunkte): das Ergebnis liegt kurz in KV
 const CACHE_KEY = "widget:egym-kraft";
+// Zuletzt gelesenes Satz-Ziel aus dem Blocktext: Rückfall, wenn Intervals beim Abruf nicht antwortet (sonst gälte still das Standardziel)
+const GOAL_KEY = "widget:egym-kraft-block-goal";
 const KRAFT_CACHE_MS = 15 * 60 * 1000;
 const BLOCK_LOOKBACK_DAYS = 180; // Blockeintraege, die so weit zurueck beginnen, werden noch gefunden
 
@@ -338,9 +340,14 @@ export async function loadWidgetKraft(env, fresh = false) {
     // Satz-Ziel aus dem Blocktext (best effort; ohne Intervals gilt EGYM_WEEKLY_GOAL_SETS bzw. das Standardziel)
     settle(async () => activeBlockStrengthTarget(await fetchIntervalsEvents(env, addDays(today, -BLOCK_LOOKBACK_DAYS), today), today)),
   ]);
-  const failed = [["egymWorkouts", w], ["egymStrength", s], ["egymBioAge", b]].filter(([, r]) => r.e).map(([k]) => k);
-  const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, blockSets: blk.v ?? null, failed }) };
-  // Nur vollstaendige Staende cachen, ein Ausfall soll nicht eine Viertelstunde haengen bleiben
+  let blockSets = blk.v ?? null;
+  if (blk.e) {
+    const g = await readKvJson(env, GOAL_KEY).catch(() => null);
+    blockSets = g?.today && g.today >= addDays(today, -7) ? g.target ?? null : null;
+  } else await writeKvJson(env, GOAL_KEY, { at: Date.now(), today, target: blockSets }).catch(() => {});
+  const failed = [["egymWorkouts", w], ["egymStrength", s], ["egymBioAge", b], ["intervalsBlock", blk]].filter(([, r]) => r.e).map(([k]) => k);
+  const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, blockSets, failed }) };
+  // Nur vollstaendige Staende cachen, ein Ausfall (auch des Blocktexts) soll nicht eine Viertelstunde haengen bleiben
   if (!failed.length) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
   return data;
 }
