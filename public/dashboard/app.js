@@ -1050,8 +1050,8 @@ async function loadEgym(token, dash) {
     if (!r.ok) return;
     const k = await r.json();
     if (k.configured === false) return; // ohne EGYM-Zugang bleibt die Karte weg
-    const nf = (k.sourcesFailed || []).length, at = new Date(k.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-    setSource("egym", "EGYM", nf >= 3 ? "bad" : nf ? "warn" : "ok", nf >= 3 ? "nicht erreichbar" : nf ? "teilweise · " + at : "live · " + at, nf ? `Nicht erreichbar: ${(k.sourcesFailed || []).join(", ")}` : "EGYM wird beim Öffnen abgefragt.");
+    const nf = (k.sourcesFailed || []).length, ne = (k.sourcesFailed || []).filter((x) => x.startsWith("egym")).length, at = new Date(k.generatedAt).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    setSource("egym", "EGYM", ne >= 3 ? "bad" : nf ? "warn" : "ok", ne >= 3 ? "nicht erreichbar" : nf ? "teilweise · " + at : "live · " + at, nf ? `Nicht erreichbar: ${(k.sourcesFailed || []).join(", ")}` : "EGYM wird beim Öffnen abgefragt.");
     renderEgym(k);
     refreshBlock(token, dash, k);
   } catch (e) { console.error("egym", e); setSource("egym", "EGYM", "bad", "Fehler", String(e?.message ?? e)); }
@@ -1073,7 +1073,7 @@ function renderEgym(k) {
   $("kraft").hidden = false;
   $("egym-card").hidden = false;
   const failed = k.sourcesFailed || [];
-  if (failed.length >= 3) { $("egym").innerHTML = '<div class="notice bad"><b>EGYM nicht erreichbar.</b> Login oder Abruf ist fehlgeschlagen.</div>'; return; }
+  if (failed.filter((x) => x.startsWith("egym")).length >= 3) { $("egym").innerHTML = '<div class="notice bad"><b>EGYM nicht erreichbar.</b> Login oder Abruf ist fehlgeschlagen.</div>'; return; }
   // Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): Kopf und Farbe nach dem gleitenden Fenster, die Balken bleiben
   // Sätze der Woche mit der Marke beim anteiligen Wochenwert (Ziel geteilt durch die Fensterlänge)
   const wk = k.week, goal = wk.goalSets, P = wk.periodWeeks > 1 ? wk.periodWeeks : 1, win = (w) => (P > 1 ? w.windowSets ?? w.sets : w.sets) || 0;
@@ -1097,7 +1097,7 @@ function renderEgym(k) {
   const vt = k.volumeTrend;
   // Karte "Krafttraining": EGYM als Umschalter "Sätze"; Muskelalter, Bestwerte und 1RM bleiben in der EGYM-Karte
   $("strength-card").hidden = false; $("kt-sets").hidden = false;
-  const src = wk.goalSource === "default" ? " (Standardziel)" : wk.goalSource === "block" ? " (aus dem Blocktext)" : "";
+  const src = wk.goalSource === "default" ? (failed.includes("intervalsBlock") ? " (Standardziel, Blocktext aus Intervals nicht abrufbar)" : " (Standardziel)") : wk.goalSource === "block" ? " (aus dem Blocktext)" : "";
   $("kp-sets").innerHTML = `<div class="big">${win(wk)} <small>von ${goal} Sätzen ${P > 1 ? `in ${P} Wochen (diese und ${P === 2 ? "letzte" : `die ${P - 1} davor`})` : "diese Woche"}</small> ${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div><div class="cbar" style="height:12px;margin:6px 0"><div class="cfill" style="width:${Math.min(100, (win(wk) / goal) * 100)}%;background:var(--s-strength)"></div></div><div class="muted">${P > 1 ? `${wk.sets || 0} Sätze · ` : ""}${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"} diese Woche · ${min == null ? "–" : est(wk.minutesSource) + fmt(min)} min</div>
     <div class="muted" style="margin:2px 0 10px">${P > 1 ? `Ziel ≥ ${goal} Sätze in je ${P} Wochen${src}, gleitend: erreicht bis ${k.weeksHit.hit} von ${k.weeksHit.of} abgeschlossenen Wochen${k.streakWeeks ? ` · Serie ${k.streakWeeks} ${k.streakWeeks === 1 ? "Woche" : "Wochen"}` : ""} · Balken = Sätze der Woche, grün = Ziel im Fenster bis zu dieser Woche erreicht, senkrechte Marke = ${fmt(mark)} Sätze (${goal} / ${P})` : `Satz-Ziel erreicht in ${k.weeksHit.hit} von ${k.weeksHit.of} abgeschlossenen Wochen${k.streakWeeks ? ` · Serie ${k.streakWeeks} ${k.streakWeeks === 1 ? "Woche" : "Wochen"}` : ""} · senkrechte Marke = ${goal} Sätze${src}`}</div>
     ${k.weeks.slice().reverse().map((w, i) => row(w, i === 0)).join("")}
