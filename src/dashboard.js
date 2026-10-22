@@ -807,6 +807,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       intensity,
       plannedTests,
       sickDays,
+      deloadWeeks: coach?.deloadWeeks ?? [],
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
     seasonBlock = { ...seasonBlock, goals, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };

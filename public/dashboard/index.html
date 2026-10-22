@@ -178,6 +178,14 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .idea { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border: 1px dashed var(--line-2); border-radius: var(--r); background: transparent; }
 .idea p { margin: 2px 0 0; font-size: var(--fs-m); color: var(--text); }
 .idea-ic { flex: none; width: 20px; height: 20px; margin-top: 2px; fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+/* Wochenvorschlag: wie die Idee leise, Ziele je Sportart als Liste, Tagesverteilung klein darunter */
+.wp > div { flex: 1; min-width: 0; }
+.wp-t { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; font-size: var(--fs-m); }
+.wp-t li { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.wp-s { display: inline-flex; gap: 6px; align-items: center; min-width: 7.5em; }
+.wp-s .idea-ic { width: 16px; height: 16px; margin: 0; }
+.wp .nw { white-space: nowrap; }
+.wp-days { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); display: grid; gap: 2px; font-size: var(--fs-s); color: var(--muted); }
 .coach-send { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .hero-facts { display: grid; gap: 4px; font-size: var(--fs-s); padding-top: 8px; border-top: 1px solid var(--line); }
 .hero-facts .hero-k { margin-right: 6px; }

@@ -1,6 +1,6 @@
 import { json } from "./http-helpers.js";
 import { readKvJson, writeKvJson } from "./kv.js";
-import { isoDateBerlin } from "./date-utils.js";
+import { isoDateBerlin, isIsoDate, mondayOnOrBefore } from "./date-utils.js";
 
 // Tagesaussage des Coaching-Tasks. Der Task schickt sie per PUT /api/coach (Bearer DASHBOARD_TOKEN), per MCP-Tool
 // save_coach oder als coach.json auf den GitHub-Branch; das Dashboard zeigt sie als Karte, das Widget als Hinweiszeile.
@@ -14,7 +14,10 @@ import { isoDateBerlin } from "./date-utils.js";
 //         question?: string (max 300, Rueckfrage des Coaches an Gerbert),
 //         answer?: string (max 1000, seine Antwort), answeredAt?: ISO-Zeitstempel,
 //         idea?: { text: string (max 240), angle?: 1-8 (Blickwinkel), sport?: "lauf" | "rad" | "schwimmen" | "kraft" | "alle" },
-//         week?: { light: "gruen" | "gelb" | "rot", text?: string (max 160) } }
+//         week?: { light: "gruen" | "gelb" | "rot", text?: string (max 160) },
+//         week_plan?: { week?: Montag YYYY-MM-DD, basis?: string (max 160), deload?: boolean,
+//                       targets: [{ sport: "lauf" | "rad" | "schwimmen" | "kraft", time_min: Zahl, tss_max?: Zahl | null }],
+//                       days?: [{ day: string (max 12), text: string (max 120) }] } }
 // Die Antwort kommt entweder aus dem Dashboard (POST /api/coach/answer) oder aus dem Chat mit dem Coach (save_coach mit
 // answer). Der Coach liest sie am naechsten Morgen per MCP-Tool get_coach, bevor er die neue Aussage schreibt.
 //
@@ -25,6 +28,11 @@ import { isoDateBerlin } from "./date-utils.js";
 // Wochenampel (week): das Urteil des Coaches zur letzten vollen Woche, montags mitgeschickt. Das Dashboard zeigt sie in der
 // Montagsbilanz, rechnet sie aber nicht selbst. Sie bleibt wie die Idee ueber die taeglichen Updates stehen; leeres light
 // entfernt sie.
+//
+// Wochenvorschlag (week_plan): der Wochenrahmen des Coaches, nur montags gespeichert (an anderen Tagen Fehler). Das Dashboard
+// zeigt ihn bis zum naechsten Montag, ohne Abhaken und ohne Abgleich mit den Einheiten. Er bleibt ueber die taeglichen Updates
+// stehen; {} entfernt ihn. deload: true markiert die Woche als Entlastung (deloadWeeks, max. 26 Montage): Nur diese Wochen
+// lassen die Leitplanken im Trainingsblock aus, einen festen Rhythmus gibt es nicht.
 
 export const COACH_KV_KEY = "dashboard:coach";
 export const COACH_MAX_AGE_HOURS = 36;
@@ -43,6 +51,15 @@ export const IDEA_SPORTS = ["lauf", "rad", "schwimmen", "kraft", "alle"];
 export const WEEK_LIGHTS = ["gruen", "gelb", "rot"];
 const MAX_WEEK_TEXT = 160;
 const IDEA_HINT = " (ohne idea speichern, um die Tagesaussage trotzdem zu sichern)";
+export const PLAN_SPORTS = ["lauf", "rad", "schwimmen", "kraft"];
+const MAX_PLAN_BASIS = 160;
+const MAX_PLAN_DAYS = 14;
+const MAX_PLAN_DAY = 12;
+const MAX_PLAN_DAY_TEXT = 120;
+const MAX_PLAN_MIN = 3000;
+const MAX_PLAN_TSS = 2000;
+const MAX_DELOAD_WEEKS = 26;
+const PLAN_HINT = " (ohne week_plan speichern, um die Tagesaussage trotzdem zu sichern)";
 
 // undefined = Feld fehlt (Idee bleibt), null = leerer text (Idee entfernen), sonst die neue Idee.
 function validateIdea(idea) {
@@ -79,6 +96,42 @@ function validateWeek(week) {
   return { value: { light, text: text || null } };
 }
 
+// Wie validateIdea: undefined = Feld fehlt (Vorschlag bleibt), null = {} (entfernen), sonst der neue Wochenvorschlag.
+function validateWeekPlan(plan, fetchedAt) {
+  if (plan == null) return { value: undefined };
+  if (typeof plan === "string" && plan.trim().startsWith("{")) {
+    try { plan = JSON.parse(plan); } catch { return { error: "week_plan ist kein gültiges JSON-Objekt" + PLAN_HINT }; }
+  }
+  if (typeof plan !== "object" || Array.isArray(plan)) return { error: "week_plan muss ein Objekt { week, basis, deload, targets, days? } sein" + PLAN_HINT };
+  if (!Object.keys(plan).length) return { value: null };
+  const today = isoDateBerlin(new Date(fetchedAt));
+  if (mondayOnOrBefore(today) !== today) return { error: "week_plan nur montags speichern" + PLAN_HINT };
+  const week = plan.week == null || plan.week === "" ? today : String(plan.week).trim();
+  if (!isIsoDate(week) || mondayOnOrBefore(week) !== week) return { error: "week_plan.week muss ein Montag (YYYY-MM-DD) sein" + PLAN_HINT };
+  if (plan.basis != null && typeof plan.basis !== "string") return { error: "week_plan.basis muss ein Text sein" + PLAN_HINT };
+  const basis = (plan.basis ?? "").trim();
+  if (basis.length > MAX_PLAN_BASIS) return { error: `week_plan.basis länger als ${MAX_PLAN_BASIS} Zeichen` + PLAN_HINT };
+  if (plan.deload != null && typeof plan.deload !== "boolean") return { error: "week_plan.deload muss true oder false sein" + PLAN_HINT };
+  if (!Array.isArray(plan.targets) || !plan.targets.length) return { error: "week_plan.targets muss eine Liste mit mind. einer Sportart sein" + PLAN_HINT };
+  const targets = [];
+  for (const t of plan.targets) {
+    const sport = String(t?.sport ?? "").trim().toLowerCase();
+    if (!PLAN_SPORTS.includes(sport)) return { error: `week_plan.targets.sport muss ${PLAN_SPORTS.join(", ")} sein` + PLAN_HINT };
+    if (targets.some((x) => x.sport === sport)) return { error: `week_plan.targets: ${sport} doppelt` + PLAN_HINT };
+    const time = Number(t.time_min);
+    if (t.time_min == null || !Number.isFinite(time) || time < 0 || time > MAX_PLAN_MIN) return { error: `week_plan.targets.time_min muss eine Zahl von 0 bis ${MAX_PLAN_MIN} sein` + PLAN_HINT };
+    const tss = t.tss_max == null || t.tss_max === "" ? null : Number(t.tss_max);
+    if (tss != null && !(Number.isFinite(tss) && tss >= 0 && tss <= MAX_PLAN_TSS)) return { error: `week_plan.targets.tss_max muss eine Zahl von 0 bis ${MAX_PLAN_TSS} oder null sein` + PLAN_HINT };
+    targets.push({ sport, time_min: Math.round(time), tss_max: tss == null ? null : Math.round(tss) });
+  }
+  if (plan.days != null && !Array.isArray(plan.days)) return { error: "week_plan.days muss eine Liste sein" + PLAN_HINT };
+  const days = (plan.days ?? []).map((x) => ({ day: String(x?.day ?? "").trim(), text: String(x?.text ?? "").trim() })).filter((x) => x.day || x.text);
+  if (days.length > MAX_PLAN_DAYS) return { error: `höchstens ${MAX_PLAN_DAYS} week_plan.days` + PLAN_HINT };
+  if (days.some((x) => !x.day || !x.text)) return { error: "week_plan.days braucht je day und text" + PLAN_HINT };
+  if (days.some((x) => x.day.length > MAX_PLAN_DAY || x.text.length > MAX_PLAN_DAY_TEXT)) return { error: `week_plan.days: day max. ${MAX_PLAN_DAY}, text max. ${MAX_PLAN_DAY_TEXT} Zeichen` + PLAN_HINT };
+  return { value: { week, basis: basis || null, deload: plan.deload === true, targets, days } };
+}
+
 export function validateCoach(body) {
   const fetchedAt = Date.parse(body?.fetchedAt);
   if (!Number.isFinite(fetchedAt)) return { error: "fetchedAt (ISO-Zeitstempel) fehlt" };
@@ -106,16 +159,26 @@ export function validateCoach(body) {
   if (idea.error) return { error: idea.error };
   const week = validateWeek(body?.week);
   if (week.error) return { error: week.error };
+  const weekPlan = validateWeekPlan(body?.week_plan, fetchedAt);
+  if (weekPlan.error) return { error: weekPlan.error };
   const value = { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, go, blockers, text: text || null, question: question || null, answer: answer || null, answeredAt };
   // idea nur, wenn mitgeschickt; mergeCoach unterscheidet so "fehlt" von "entfernen"
   if (idea.value !== undefined) value.idea = idea.value;
   if (week.value !== undefined) value.week = week.value;
+  if (weekPlan.value !== undefined) value.week_plan = weekPlan.value;
   return { value };
 }
 
-// Neue Tagesaussage auf die gespeicherte legen: Idee, Historie und Wochenampel bleiben, solange sie nicht mitkommen.
+// Neue Tagesaussage auf die gespeicherte legen: Idee, Historie, Wochenampel und Wochenvorschlag bleiben, solange sie nicht
+// mitkommen.
+// Die Antwort bleibt, solange der Coach dieselbe question noch einmal schickt (z. B. zweites Update am Sonntag); erst eine
+// neue question (oder keine mehr) entfernt sie.
 export function mergeCoach(prev, next) {
-  const { idea, week, ...rest } = next;
+  const { idea, week, week_plan: weekPlan, ...rest } = next;
+  if (!rest.answer && rest.question && rest.question === prev?.question && prev?.answer) {
+    rest.answer = prev.answer;
+    rest.answeredAt = prev.answeredAt ?? null;
+  }
   const weekLight = week === undefined ? (prev?.week ?? null) : week && { ...week, createdAt: next.fetchedAt };
   let current = prev?.idea ?? null;
   let ideas = Array.isArray(prev?.ideas) ? prev.ideas : [];
@@ -126,7 +189,11 @@ export function mergeCoach(prev, next) {
     const date = isoDateBerlin(new Date(next.fetchedAt));
     ideas = [{ date, ...idea }, ...ideas.filter((x) => x?.date !== date)].slice(0, MAX_IDEAS);
   }
-  return { ...rest, idea: current, ideas, week: weekLight };
+  // Entlastungswochen nur, wie der Coach sie markiert: ein neuer Vorschlag setzt oder streicht seine Woche
+  let deloadWeeks = Array.isArray(prev?.deloadWeeks) ? prev.deloadWeeks : [];
+  if (weekPlan) deloadWeeks = [...(weekPlan.deload ? [weekPlan.week] : []), ...deloadWeeks.filter((x) => x !== weekPlan.week)].slice(0, MAX_DELOAD_WEEKS);
+  const plan = weekPlan === undefined ? (prev?.week_plan ?? null) : weekPlan && { ...weekPlan, createdAt: next.fetchedAt };
+  return { ...rest, idea: current, ideas, week: weekLight, week_plan: plan, deloadWeeks };
 }
 
 // Antwort aus dem Dashboard: haengt sie an die aktuelle Aussage, ohne Urteil und Bericht des Coaches zu veraendern.

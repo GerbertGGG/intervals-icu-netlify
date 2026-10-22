@@ -246,7 +246,6 @@ export const HEAT_C = 22;
 const RIDE_MAX_VI = 1.05;
 const RIDE_MAX_IF = 80;
 const RIDE_MIN_SLACK = 5;
-const RECOVERY_EVERY = 4; // 3:1 – jede 4. Blockwoche ist Entlastung, die anderen sind Belastungswochen
 
 export function isComparableRun(r, cfg) {
   return Boolean(r.easy) && !r.treadmill && !r.heat && (r.durationMin ?? 0) >= cfg.minMin && (r.elevPerKm == null || r.elevPerKm <= FLAT_M_PER_KM);
@@ -348,11 +347,13 @@ function swimGoal(tests, cfg, w, basis) {
   };
 }
 
+// Entlastung gibt es nur nach Bedarf: Eine Blockwoche ist Entlastung, wenn der Coach ihren Montag im Wochenvorschlag mit
+// deload markiert hat (w.deloads, aus coach.deloadWeeks). Alle anderen sind Belastungswochen.
 const weeksOf = (block, w, todayIso) => {
   const out = [];
   for (let s = w.from, i = 0; s <= w.to; s = addDays(s, 7), i++) {
     const e = addDays(s, 6);
-    out.push({ start: s, end: e, idx: i, done: e <= w.to && e < todayIso, load: w.baseline || (i + 1) % RECOVERY_EVERY !== 0 });
+    out.push({ start: s, end: e, idx: i, done: e <= w.to && e < todayIso, load: w.baseline || !(w.deloads ?? []).some((d) => d >= s && d <= e) });
   }
   return out;
 };
@@ -515,14 +516,14 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
 //   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,mainWatts,noWarmup,vi,intensity,indoor,easy,hasHr}],
 //   im Blocktest-Modus runs zusaetzlich mit {id,name,analysis} (analyzeRunStreams),
 //   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}],
-//   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date] }
+//   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date], deloadWeeks:[Montag] (vom Coach markierte Entlastung) }
 export function buildBlockGoals(block, input, todayIso) {
   return buildBlockGoalsFull(block, input, todayIso).goals;
 }
 
 export function buildBlockGoalsFull(block, input, todayIso) {
   const targets = parseBlockTargets([block.goal, ...(block.notes ?? [])].filter(Boolean).join("\n\n"));
-  const w = windowOf(block, todayIso);
+  const w = { ...windowOf(block, todayIso), deloads: input.deloadWeeks ?? [] };
   const basis = w.baseline ? "letzte 8 Wochen" : "seit Blockstart";
   const goals = [];
 
@@ -579,7 +580,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
 
   if (targets.strength) {
     // Wochenziel in Sätzen (EGYM). Ohne Satzzahlen (kein EGYM) zählen Kraft-Tage, dann gilt STRENGTH_DAYS_PER_WEEK.
-    // Leitplanke "8 von 9 Belastungswochen": Entlastungswochen (jede 4. Blockwoche) zählen nicht; es darf höchstens
+    // Leitplanke "8 von 9 Belastungswochen": vom Coach markierte Entlastungswochen zählen nicht; es darf höchstens
     // (of − need) Belastungswochen ohne Ziel geben. Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): feste Abschnitte ab
     // Blockstart (Woche 1–2, 3–4, …); weeks sind dann diese Abschnitte, und jeder abgeschlossene muss das Ziel erreichen.
     const st = targets.strength, perLoad = st.need != null, P = st.periodWeeks > 1 ? st.periodWeeks : 1;

@@ -169,7 +169,7 @@ function renderCockpit(d) {
   // Renn-Kacheln nur mit kommendem Rennen im Kalender
   const raceTile = race ? tile(esc(g.name), `<div class="val">${g.daysToGo > 0 ? `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>` : "Heute!"}</div><div id="ck-countdown"></div><div class="sub">${weekday(g.date)} ${fmtDate(g.date)}${g.triathlon ? (g.totalTargetSecs ? ` · Ziel ${fmtTime(g.totalTargetSecs)}` : "") : g.targetTimeSecs ? ` · Ziel ${fmtTime(g.targetTimeSecs)} (${paceLabel(goalPace)} min/km)` : ""}</div>`, "span15", ["#rennplan", "Zielzeiten und Plan"]) : "";
   const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + (race ? `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>` : ""), "span15") : "";
-  const blockTile = renderBlock(d.seasonBlock);
+  const blockTile = renderBlock(d.seasonBlock, d.coach?.deloadWeeks ?? []);
   const prevWk = d.weeks[d.weeks.length - 2];
   const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.runMin / 60, 1) : "–"} h Laufen${prevWk ? `, Vorwoche ${fmt(prevWk.runMin / 60, 1)} h` : ""}. Steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gilt als Soll, nicht als Mangel.</div>`, "span4") : "";
   const R = S.recovery;
@@ -218,7 +218,7 @@ function renderCockpit(d) {
   const today = `<div class="hero-plan"><div class="hero-k">${plan.length ? "Heute geplant" : "Letzte Einheit"}</div>${planHtml}${doneHtml}
       ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}
       ${plan.length && L ? `<div class="hero-k" style="margin-top:8px">Letzte Einheit</div>${lastHtml}` : ""}${kpis}</div>`;
-  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}</div>`;
+  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}${weekPlanCard(d)}</div>`;
 
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
@@ -932,11 +932,13 @@ function renderNutritionWeek(d, map) {
 
 
 /* ---------- Trainingsblock: Zeitleiste und Fortschritt der Ziele ---------- */
-function renderBlock(SB) {
+// Entlastung in der Zeitleiste nur für Wochen, die der Coach im Wochenvorschlag markiert hat (deloadWeeks), kein fester Rhythmus
+function renderBlock(SB, deloads = []) {
   if (!SB) return "";
   const stLabel = { ok: "im Soll", warn: "knapp", bad: "unter Soll", base: "Basis", none: "keine Daten" };
   const head = SB.status === "active" ? `Woche ${SB.weekNo}${SB.weeks ? ` von ${SB.weeks}` : ""}` : SB.status === "upcoming" ? `Start in ${SB.daysToStart} Tag${SB.daysToStart === 1 ? "" : "en"}` : "beendet";
-  const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}${(i + 1) % 4 === 0 && SB.goals?.some((g) => g.group) ? " rec" : ""}" title="Woche ${i + 1}${(i + 1) % 4 === 0 && SB.goals?.some((g) => g.group) ? " · Entlastung" : ""}"></i>`).join("")}</div>` : "";
+  const rec = (i) => { const s = addDays(SB.start, 7 * i), e = addDays(s, 6); return deloads.some((x) => x >= s && x <= e); };
+  const timeline = SB.weeks ? `<div class="btl">${Array.from({ length: SB.weeks }, (_, i) => `<i class="${SB.status === "active" ? (i + 1 < SB.weekNo ? "past" : i + 1 === SB.weekNo ? "now" : "") : SB.status === "done" ? "past" : ""}${rec(i) ? " rec" : ""}" title="Woche ${i + 1}${rec(i) ? " · Entlastung" : ""}"></i>`).join("")}</div>` : "";
   // Saeulen mit Ziellinie (durchgezogen) und optional Muss-Linie (gestrichelt, grau)
   const bars = (pts, lim, must) => {
     if (!pts.length) return "";
@@ -1170,8 +1172,8 @@ function coachHead(d) {
   }
   const paras = String(c.text ?? "").split(/\n{2,}/).map((x) => x.trim()).filter(Boolean).map((x) => `<p>${esc(x)}</p>`).join("");
   const q = c.question ? `<div class="coach-q"><b>Frage an dich</b><p>${esc(c.question)}</p>
-      ${c.answer ? `<div class="sub">Deine Antwort (${clock(c.answeredAt)}): ${esc(c.answer)}</div>` : ""}
-      <textarea id="coach-answer" rows="2" maxlength="1000" placeholder="Antwort in ein, zwei Sätzen">${c.answer ? esc(c.answer) : ""}</textarea>
+      ${c.answer ? `<div class="sub" style="white-space:pre-line">Deine Antwort (${clock(c.answeredAt)}): ${esc(c.answer)}</div>` : ""}
+      <textarea id="coach-answer" rows="3" maxlength="1000" placeholder="Antwort in ein, zwei Sätzen oder mehrere Zeilen, z. B. Mo 1 h, Mi 1,5 h abends, Do weg, Sa 3 h">${c.answer ? esc(c.answer) : ""}</textarea>
       <div class="coach-send"><button type="button" id="coach-send">${c.answer ? "Antwort ändern" : "Antworten"}</button><span class="sub" id="coach-msg">Der Coach liest sie morgen früh. Sofort reagiert er, wenn du im Chat der Morgen-Auswertung antwortest.</span></div></div>` : "";
   // Urteil des Coaches (go): darf ich heute draufhauen? Dazu seine Blocker. Beides kommt nur von ihm.
   const go = GO_LABEL[c.go];
@@ -1197,6 +1199,17 @@ function ideaCard(d) {
   if (!i?.text || !i.createdAt || berlinDay(i.createdAt) < addDays(d.today, -8)) return "";
   const icon = `<svg class="idea-ic" viewBox="0 0 20 20" aria-hidden="true">${IDEA_ICON[i.sport] ?? IDEA_ICON.alle}</svg>`;
   return `<div class="idea" title="${IDEA_SPORT_LABEL[i.sport] ?? "Idee"}">${icon}<div><div class="hero-k">Idee der Woche</div><p>${esc(i.text)}</p></div></div>`;
+}
+/* Wochenvorschlag: Wochenrahmen des Coaches (montags per save_coach, Feld week_plan), steht bis zum nächsten Montag. Nur seine
+   Zahlen, ohne Abhaken, ohne Abgleich mit den Einheiten und ohne Ampel. Die TSS-Untergrenze ist seine Regel (80 % der Obergrenze). */
+const PLAN_SPORT_LABEL = { lauf: "Laufen", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft" };
+const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`);
+function weekPlanCard(d) {
+  const p = d.coach?.week_plan;
+  if (!p?.week || !p.targets?.length || d.today < p.week || d.today > addDays(p.week, 6)) return "";
+  const rows = p.targets.map((t) => `<li><span class="wp-s">${IDEA_ICON[t.sport] ? `<svg class="idea-ic" viewBox="0 0 20 20" aria-hidden="true">${IDEA_ICON[t.sport]}</svg>` : ""}${PLAN_SPORT_LABEL[t.sport] ?? esc(t.sport)}</span><b class="nw">${fmtMin(t.time_min)}</b>${t.tss_max != null ? `<span class="muted nw">TSS ${Math.round(t.tss_max * 0.8)}–${t.tss_max}</span>` : ""}</li>`).join("");
+  const days = p.days?.length ? `<div class="wp-days"><div class="hero-k">Vorschlag</div>${p.days.map((x) => `<div><b>${esc(x.day)}</b> ${esc(x.text)}</div>`).join("")}</div>` : "";
+  return `<div class="idea wp"><div><div class="hero-k">Wochenvorschlag · ab ${fmtDate(p.week)}${p.deload ? " · Entlastungswoche" : ""}</div>${p.basis ? `<p class="sub">${esc(p.basis)}</p>` : ""}<ul class="wp-t">${rows}</ul>${days}</div></div>`;
 }
 // Werte von heute früh als Fakten: Körperwerte gegen die eigene Basis, Gefühlswerte (vor dem Training eingetragen) gegen das Übliche
 function factsLine(R, today) {

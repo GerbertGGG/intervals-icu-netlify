@@ -63,5 +63,29 @@ assert.match(r.body.result.content[0].text, /idea\.text länger als 240/);
 assert.equal(JSON.parse(kv.get("dashboard:coach")).note, "Dienstag."); // nichts geschrieben
 const schema = list.body.result.tools.find((t) => t.name === "save_coach").inputSchema.properties.idea;
 assert.deepEqual(schema.properties.sport.enum, ["lauf", "rad", "schwimmen", "kraft", "alle"]);
+// Sonntag: Frage nach der Zeit, Antwort im Dashboard, zweites save_coach mit derselben Frage; Montag: Wochenvorschlag
+const q = "Wie viel Zeit hast du nächste Woche (gern mit Tagen)?";
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-25T06:30:00Z", note: "Sonntag.", question: q } });
+assert.ok(!r.body.result.isError);
+kv.set("dashboard:coach", JSON.stringify({ ...JSON.parse(kv.get("dashboard:coach")), answer: "Mo 1 h, Mi 1,5 h abends, Do weg, Sa 3 h", answeredAt: "2026-10-25T18:00:00Z" }));
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-25T19:00:00Z", note: "Sonntag Abend.", question: q } });
+assert.ok(!r.body.result.isError);
+r = await rpc("tools/call", { name: "get_coach", arguments: {} });
+let gc = JSON.parse(r.body.result.content[0].text);
+assert.equal(gc.answer, "Mo 1 h, Mi 1,5 h abends, Do weg, Sa 3 h"); assert.equal(gc.week_plan, null); assert.deepEqual(gc.deloadWeeks, []);
+const weekPlan = { week: "2026-10-26", basis: "ca. 5 h verfügbar, Erholung grün → +8 %", deload: false,
+  targets: [{ sport: "lauf", time_min: 150, tss_max: 160 }, { sport: "rad", time_min: 90, tss_max: 80 }, { sport: "schwimmen", time_min: 45, tss_max: null }],
+  days: [{ day: "Mo", text: "Lauf locker 50 min" }, { day: "Sa", text: "Langer Lauf 100 min" }] };
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-26T06:30:00Z", note: "Montag.", question: "Wie lief der lange Lauf?", week_plan: weekPlan } });
+assert.ok(!r.body.result.isError);
+r = await rpc("tools/call", { name: "get_coach", arguments: {} });
+gc = JSON.parse(r.body.result.content[0].text);
+assert.equal(gc.answer, null); // neue Frage
+assert.deepEqual(gc.week_plan, { ...weekPlan, createdAt: "2026-10-26T06:30:00.000Z" });
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-27T06:30:00Z", note: "Dienstag.", week_plan: weekPlan } });
+assert.equal(r.body.result.isError, true); assert.match(r.body.result.content[0].text, /nur montags/);
+r = await rpc("tools/call", { name: "save_coach", arguments: { fetchedAt: "2026-10-27T06:31:00Z", note: "Dienstag.", week_plan: {} } });
+assert.ok(!r.body.result.isError);
+assert.equal(JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text).week_plan, null);
 console.log = log;
 console.log("mcp-save tests ok");
