@@ -4,7 +4,7 @@
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
-// save_studie, save_coach, save_experiment und save_profil: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// save_studie, save_coach, save_experiment, save_profil, save_insight und archive_insight: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
@@ -15,6 +15,7 @@ import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
 import { COACH_KV_KEY, validateCoach, mergeCoach, readCoach } from "./coach-snapshot.js";
 import { EXPERIMENT_KV_KEY, PROFIL_KV_KEY, validateExperiment, validateProfil, readExperiment, readProfil } from "./experiment-snapshot.js";
+import { INSIGHTS_KV_KEY, validateInsight, validateArchive, upsertInsight, archiveInsight, insightsForCoach, readInsights } from "./insight-snapshot.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -257,9 +258,46 @@ const TOOLS = [
     },
   },
   {
+    name: "save_insight",
+    description:
+      "Legt eine Erkenntnis an oder aktualisiert sie (Upsert über id): eine Auffälligkeit, die du selbst in Gerberts Daten gefunden hast. Steht als Karte im Dashboard-Bereich \"Erkenntnisse\". Dieselbe id für dieselbe Erkenntnis verwenden, damit Status und Stärke ihren Verlauf behalten; vorher in get_coach unter insights nachsehen. fetchedAt = jetzt. Eine archivierte Erkenntnis wird durch Speichern wieder aktiv.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Stabile id in kebab-case, max. 60 Zeichen, z. B. \"trainingstage-vs-umfang\"." },
+        title: { type: "string", description: "Titel, max. 60 Zeichen." },
+        text: { type: "string", description: "Was auffällt und warum es zählt, Du-Form, max. 280 Zeichen." },
+        action: { type: ["string", "null"], description: "Konsequenz oder Rat, max. 160 Zeichen (optional)." },
+        strength: { type: "string", enum: ["beobachtung", "schwach", "mittel", "stark"], description: "Wie gut die Erkenntnis belegt ist." },
+        status: { type: "string", enum: ["neu", "bestätigt", "abgeschwächt", "widerlegt"] },
+        discipline: { type: "string", enum: ["lauf", "rad", "schwimmen", "kraft", "erholung", "alle"] },
+        evidence: { type: "string", description: "Datengrundlage, max. 200 Zeichen, z. B. \"107 Läufe, Jan 2025–Okt 2026\"." },
+        chart: {
+          type: ["object", "null"],
+          description: "Kleine Grafik zur Erkenntnis (optional).",
+          properties: {
+            type: { type: "string", enum: ["line", "bar"] },
+            unit: { type: "string", description: "Einheit, max. 20 Zeichen." },
+            points: { type: "array", description: "1–30 Punkte, x = Beschriftung (max. 20 Zeichen, z. B. \"KW 42\" oder \"2026-10\").", items: { type: "object", properties: { x: { type: "string" }, y: { type: "number" } }, required: ["x", "y"] } },
+            refLine: { type: ["number", "null"], description: "Referenzlinie (optional)." },
+            better: { type: "string", enum: ["higher", "lower"] },
+          },
+          required: ["type", "unit", "points", "better"],
+        },
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+      },
+      required: ["id", "title", "text", "strength", "status", "discipline", "evidence", "fetchedAt"],
+    },
+  },
+  {
+    name: "archive_insight",
+    description: "Blendet eine Erkenntnis aus (wird nicht gelöscht, steht im Dashboard unter \"Ältere Erkenntnisse\").",
+    inputSchema: { type: "object", properties: { id: { type: "string", description: "id der Erkenntnis." } }, required: ["id"] },
+  },
+  {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins) und die Profil-Punkte (profil: updatedAt, highlights; null = keine). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine) und die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -284,11 +322,29 @@ async function callTool(env, name, args) {
   if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY, mergeCoach);
   if (name === "save_experiment") return saveSnapshot(env, args, validateExperiment, EXPERIMENT_KV_KEY);
   if (name === "save_profil") return saveSnapshot(env, args, validateProfil, PROFIL_KV_KEY);
+  if (name === "save_insight") {
+    if (!hasKv(env)) throw new Error("KV nicht verfügbar");
+    const { value, error } = validateInsight(args);
+    if (error) throw new Error(error);
+    const stored = upsertInsight(await readInsights(env), value);
+    await writeKvJson(env, INSIGHTS_KV_KEY, stored);
+    const saved = stored.items[0];
+    return { ok: true, id: saved.id, createdAt: saved.createdAt, updatedAt: saved.updatedAt, history: saved.history };
+  }
+  if (name === "archive_insight") {
+    if (!hasKv(env)) throw new Error("KV nicht verfügbar");
+    const id = validateArchive(args);
+    if (id.error) throw new Error(id.error);
+    const r = archiveInsight(await readInsights(env), id.value);
+    if (r.error) throw new Error(r.error);
+    if (!r.already) await writeKvJson(env, INSIGHTS_KV_KEY, r.value);
+    return { ok: true, id: id.value, archived: true };
+  }
   if (name === "get_coach") {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
-    const [coach, experiment, profil] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env)]);
+    const [coach, experiment, profil, insights] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env), readInsights(env)]);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    const extra = { experiment: experiment ?? null, profil: profil ?? null };
+    const extra = { experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights) };
     return coach
       ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
       : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };

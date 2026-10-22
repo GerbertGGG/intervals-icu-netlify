@@ -644,27 +644,37 @@
     mount(host, s);
   }
 
-  /* ---------- Trainingstage je Woche (Experiment): Skala 0–7 Tage, Ziellinie des Coaches gestrichelt. Alle Säulen in der
-     Wertfarbe, auch unter dem Ziel: eine einzelne Woche wird nie als Warnung gefärbt. Die laufende Woche ist blass und
-     gestrichelt umrandet, weil sie noch nicht vorbei ist. ---------- */
-  function dayBars(host, items, o) {
-    const W = fitW(host, 480), H = 170, L = 26, R = 8, T = 16, B = 34, max = 7;
-    const s = svg(W, H, o.label);
-    const y = (v) => T + (H - T - B) * (1 - v / max);
-    for (const v of [0, 2, 4, 6]) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, v));
-    const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.6, 40);
-    if (slot < 48) s.append(el("text", { x: 2, y: H - 18 }, "KW"));
-    items.forEach((w, i) => {
-      const x = L + slot * i + (slot - bw) / 2, cx = x + bw / 2;
-      const tip = `KW ${w.kw} (ab ${U.fmtDate(w.week)}): ${w.days} ${w.days === 1 ? "Tag" : "Tage"}${w.complete ? "" : " – laufende Woche, noch nicht vorbei"}`;
-      if (w.days > 0) s.append(title(el("rect", { x, y: y(w.days), width: bw, height: y(0) - y(w.days), rx: 2, fill: "var(--accent)", opacity: w.complete ? 1 : 0.45, stroke: w.complete ? null : "var(--accent)", "stroke-dasharray": w.complete ? null : "3 2" }), tip));
-      s.append(title(el("text", { x: cx, y: y(w.days) - 4, "text-anchor": "middle", style: "font-size:11px;font-weight:700;fill:var(--text)" }, w.days), tip));
-      s.append(el("text", { x: cx, y: H - 18, "text-anchor": "middle" }, slot >= 48 ? `KW ${w.kw}` : w.kw));
-      if (!w.complete) s.append(el("text", { x: cx, y: H - 5, "text-anchor": "middle", style: "font-size:10px" }, "läuft"));
-    });
-    if (o.target != null) s.append(title(el("line", { x1: L, x2: W - R, y1: y(o.target), y2: y(o.target), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), `Ziel: ${o.target} Tage pro Woche`));
+  /* ---------- Kleine Grafik einer Erkenntnis (vom Coach): Linie oder Säulen in der Wertfarbe, optionale Referenzlinie gestrichelt.
+     Keine Ampel: "better" steht nur als Lesehilfe unten rechts. ---------- */
+  function insightChart(host, c) {
+    const W = fitW(host, 420, 260), H = 120, L = 34, R = 6, T = 22, B = 20, pts = c.points;
+    const s = svg(W, H, `Verlauf in ${c.unit}`);
+    const vals = [...pts.map((p) => p.y), ...(c.refLine != null ? [c.refLine] : [])];
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (c.type === "bar") { lo = Math.min(0, lo); hi = Math.max(0, hi); }
+    if (hi === lo) { hi += 1; lo -= c.type === "bar" ? 0 : 1; }
+    const pad = c.type === "bar" ? 0 : (hi - lo) * 0.12; lo -= pad; hi += pad;
+    const y = (v) => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+    const dec = hi - lo < 10 ? 1 : 0;
+    for (const v of [lo + pad, hi - pad]) s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "grid-l" }), el("text", { x: L - 5, y: y(v) + 4, "text-anchor": "end" }, U.fmt(v, dec)));
+    const slot = (W - L - R) / pts.length, cx = (i) => L + slot * i + slot / 2;
+    if (c.type === "bar") {
+      const bw = Math.min(slot * 0.62, 26), y0 = y(Math.max(lo, Math.min(hi, 0)));
+      pts.forEach((p, i) => s.append(title(el("rect", { x: cx(i) - bw / 2, y: Math.min(y(p.y), y0), width: bw, height: Math.max(1, Math.abs(y0 - y(p.y))), rx: 2, fill: "var(--accent)" }), `${p.x}: ${U.fmt(p.y, dec)} ${c.unit}`)));
+    } else {
+      s.append(el("path", { d: pts.map((p, i) => `${i ? "L" : "M"}${cx(i).toFixed(1)},${y(p.y).toFixed(1)}`).join(""), fill: "none", stroke: "var(--accent)", "stroke-width": 2 }));
+      pts.forEach((p, i) => s.append(title(el("circle", { cx: cx(i), cy: y(p.y), r: pts.length > 15 ? 1.8 : 2.6, fill: "var(--accent)" }), `${p.x}: ${U.fmt(p.y, dec)} ${c.unit}`)));
+    }
+    if (c.refLine != null) s.append(title(el("line", { x1: L, x2: W - R, y1: y(c.refLine), y2: y(c.refLine), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "5 3" }), `Referenz: ${U.fmt(c.refLine, dec)} ${c.unit}`));
+    // x-Beschriftung: alle, wenn Platz ist (wenige Säulen/Punkte), sonst nur erster und letzter
+    if (slot >= 44) pts.forEach((p, i) => s.append(el("text", { x: cx(i), y: H - 5, "text-anchor": "middle" }, p.x)));
+    else {
+      s.append(el("text", { x: cx(0), y: H - 5, "text-anchor": "start" }, pts[0].x));
+      s.append(el("text", { x: cx(pts.length - 1), y: H - 5, "text-anchor": "end" }, pts[pts.length - 1].x));
+    }
+    s.append(el("text", { x: 4, y: 9 }, `${c.unit}${c.better === "lower" ? " · niedriger ist besser" : " · höher ist besser"}`));
     mount(host, s);
-    refit(host, () => dayBars(host, items, o), W, 480);
+    refit(host, () => insightChart(host, c), W, 420, 260);
   }
 
   /* ---------- Kleine Linie über wenige Punkte (VDOT-Verlauf): Anfangs- und Endwert beschriftet ---------- */
@@ -682,5 +692,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend, dayBars };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend, insightChart };
 })();

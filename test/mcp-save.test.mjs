@@ -116,5 +116,25 @@ assert.equal(gc.profil.highlights.length, 2); assert.equal(gc.profil.updatedAt, 
 r = await rpc("tools/call", { name: "save_experiment", arguments: { ...experiment, fetchedAt: "2026-12-01T06:30:00Z", status: "ausgewertet", verdict: "stützt die Hypothese" } });
 assert.ok(!r.body.result.isError);
 assert.equal(JSON.parse(kv.get("dashboard:experiment")).verdict, "stützt die Hypothese");
+// Erkenntnisse: save_insight (Upsert), archive_insight, get_coach.insights
+assert.ok(["save_insight", "archive_insight"].every((n) => list.body.result.tools.some((t) => t.name === n)));
+assert.deepEqual(gc.insights, []);
+const ins = { id: "trainingstage-vs-umfang", title: "Mehr Tage, nicht mehr Minuten", text: "Fünf kurze Tage bringen dir mehr als drei lange.", action: null, strength: "schwach", status: "neu", discipline: "lauf", evidence: "107 Läufe", chart: null, fetchedAt: "2026-12-01T06:30:00Z" };
+r = await rpc("tools/call", { name: "save_insight", arguments: ins });
+assert.ok(!r.body.result.isError, r.body.result.content[0].text);
+r = await rpc("tools/call", { name: "save_insight", arguments: { ...ins, status: "bestätigt", fetchedAt: "2026-12-08T06:30:00Z" } });
+assert.equal(JSON.parse(r.body.result.content[0].text).history.length, 2);
+r = await rpc("tools/call", { name: "save_insight", arguments: { ...ins, title: "t".repeat(61) } });
+assert.equal(r.body.result.isError, true); assert.match(r.body.result.content[0].text, /title länger als 60/);
+gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
+assert.deepEqual(gc.insights.map((x) => [x.id, x.status]), [["trainingstage-vs-umfang", "bestätigt"]]);
+assert.ok(gc.experiment); // bestehende Felder bleiben
+r = await rpc("tools/call", { name: "archive_insight", arguments: { id: "trainingstage-vs-umfang" } });
+assert.ok(!r.body.result.isError);
+assert.equal(JSON.parse(kv.get("dashboard:insights")).items.length, 1); // nicht geloescht
+gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
+assert.deepEqual(gc.insights, []);
+r = await rpc("tools/call", { name: "archive_insight", arguments: { id: "gibt-es-nicht" } });
+assert.equal(r.body.result.isError, true);
 console.log = log;
 console.log("mcp-save tests ok");
