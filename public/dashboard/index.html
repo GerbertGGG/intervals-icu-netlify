@@ -362,11 +362,11 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .disc-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 6px 0; }
 .disc-stats .v { font-size: var(--fs-l); font-weight: 600; display: block; }
 .discbars { margin: 4px 0; }
-.agescale { font-size: var(--fs-xs); color: var(--muted); display: flex; justify-content: space-between; margin-left: 98px; margin-right: 48px; }
+.agescale { font-size: var(--fs-xs); color: var(--muted); display: flex; justify-content: space-between; margin-left: calc(7.5em + 10px); margin-right: calc(2.5em + 10px); }
 .studie-fazit { border-left: 3px solid var(--accent); background: var(--inset); padding: 10px 14px; border-radius: 0 8px 8px 0; }
 .studie-fazit > div:last-child { font-size: var(--fs-m); margin-top: 2px; }
 #studie .desc p { margin: 0 0 8px; }
-.mini { width: 100%; border-collapse: collapse; font-size: var(--fs-s); } .mini td { white-space: normal; } .mini th { text-align: left; font-weight: 500; color: var(--muted); font-size: var(--fs-xs); padding: 2px 6px 4px 0; } .mini td { padding: 6px 6px 6px 0; border-top: 1px solid var(--line); }
+.mini { width: 100%; border-collapse: collapse; font-size: var(--fs-s); } .mini td { white-space: normal; } .mini .nw { white-space: nowrap; } .mini th { text-align: left; font-weight: 500; color: var(--muted); font-size: var(--fs-xs); padding: 2px 6px 4px 0; } .mini td { padding: 6px 6px 6px 0; border-top: 1px solid var(--line); }
 .crow, .prow { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--line); }
 .crow.chead { flex-direction: row; justify-content: space-between; color: var(--accent); font-size: var(--fs-m); }
 .ctop { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -388,8 +388,20 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .kraft-grid #strength-card, .kraft-grid #hip-card { flex: 1 1 min(480px, 100%); min-width: 0; }
 .kraft-grid #egym-card { flex: 1 1 100%; min-width: 0; }
 .kraft-grid #strength-card[hidden], .kraft-grid #hip-card[hidden], .kraft-grid #egym-card[hidden] { display: none; }
-.egym-cols { display: grid; gap: 0 28px; grid-template-columns: minmax(0, 1fr); }
+.egym-cols { display: grid; gap: 16px 28px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 1000px) { .egym-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.egym-cols h3, #egym h3 { margin: 0 0 6px; }
+.kr-now { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.kr-bar { height: 12px; margin: 8px 0 4px; }
+.kr-h { margin: 16px 0 6px; }
+.kr-row { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 4.5em; gap: 10px; align-items: center; padding: 4px 0; font-size: var(--fs-s); }
+.kr-row b { text-align: right; white-space: nowrap; }
+.kr-row.rec { opacity: .7; }
+.kr-ok { color: var(--ok); }
+.kr-age { display: grid; grid-template-columns: 7.5em minmax(0, 1fr) 2.5em; gap: 10px; align-items: center; padding: 4px 0; }
+.kr-age .cbar { height: 10px; }
+.kr-age b { text-align: right; }
+button.lnk { border: 0; background: none; padding: 0; color: var(--accent); font-size: var(--fs-s); text-decoration: underline; text-underline-offset: 2px; }
 
 /* Erholung */
 .ready-grid { margin-top: 10px; }
@@ -445,15 +457,16 @@ td .badge { font-size: var(--fs-xs); }
     <details class="info"><summary>Erklärung</summary><div>CTL = Fitness, ATL = Ermüdung. Die Säulen darunter zeigen die Frische (TSB). Die Zonen rechnen wie Intervals.icu in Prozent der aktuellen Fitness: unter −30 % hohes Risiko (rot), −30 bis +25 % normaler Trainingsbereich – ein negativer TSB in Belastungswochen ist gewollt. Rechts von „heute“ steht die Prognose für die nächsten 30 Tage (gestrichelt): gibt es Wochenziele des Coaches, rechnet sie mit 90 % der TSS-Obergrenzen (Schwimmen aus den Zielminuten und deinen bisherigen TSS je Minute), verteilt den Rest der Woche gleichmäßig und nimmt für die Wochen danach dieselbe Woche an. Ohne Wochenziele rechnet sie die geplanten Workouts aus dem Kalender fort, Tage ohne Plan zählen als Ruhetag.</div></details></div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Trainingszeit pro Woche (Minuten, alle Sportarten)</h3><div id="chart-km"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel (früher Plan)</span></div></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Zeitziel des Coaches (ältere Wochen: Plan)</span></div>
+      <details class="info"><summary>Erklärung</summary><div id="plan-note-km"></div></details></div>
     <div class="card"><h3>TSS pro Woche (alle Sportarten)</h3><div id="chart-tss"></div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>Korridor: Obergrenze, gestrichelt Untergrenze (früher Plan)</span></div></div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Ist</span><span><i style="background:var(--plan)"></i>TSS-Korridor: Obergrenze, gestrichelt Untergrenze (ältere Wochen: Plan)</span></div>
+      <details class="info"><summary>Erklärung</summary><div id="plan-note-tss"></div></details></div>
   </div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Grundlagenläufe ab 60 min</h3><div id="longruns"></div></div>
     <div class="card" id="intervals-card" hidden><h3>Intervall-Splits (4 Wochen)</h3><div id="interval-splits"></div></div>
   </div>
-  <div class="muted" id="plan-note" style="margin-top:6px"></div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
     <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
@@ -497,11 +510,8 @@ td .badge { font-size: var(--fs-xs); }
   <section id="kraft" hidden>
     <h2>Kraft</h2>
     <div class="grid half kraft-grid" style="align-items:start">
-      <div class="card" id="strength-card" hidden>
-        <div class="kh"><h3>Krafttraining</h3>
-          <div class="seg" role="group" aria-label="Ansicht"><button type="button" data-k="sets" id="kt-sets" class="on" aria-pressed="true" hidden>Sätze (EGYM)</button><button type="button" data-k="weeks" id="kt-weeks" hidden>Wochen mit 2×</button></div></div>
-        <div id="kp-sets"></div><div id="kp-weeks" hidden></div></div>
-      <div class="card" id="egym-card" hidden><h3>EGYM: Muskelalter und Fortschritt</h3><div id="egym"></div></div>
+      <div class="card" id="strength-card" hidden><div id="strength"></div></div>
+      <div class="card" id="egym-card" hidden><div class="kh"><h3>Kraftwerte</h3><span class="muted">aus EGYM</span></div><div id="egym"></div></div>
       <div class="card" id="hip-card" hidden><h3>Hüfte, Leiste, Knie</h3><div id="hip"></div></div>
     </div>
   </section>

@@ -52,7 +52,6 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
-  initKraftTabs();
   const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
@@ -72,19 +71,6 @@ function initNav() {
   };
   addEventListener("scroll", mark, { passive: true });
   mark();
-}
-
-/* Kraft-Karte: ein Umschalter statt drei Boxen (Sätze, Wochen mit 2×) */
-function initKraftTabs() {
-  const card = $("strength-card");
-  if (card.dataset.ready) return;
-  card.dataset.ready = "1";
-  card.querySelector(".seg").addEventListener("click", (ev) => {
-    const b = ev.target.closest("button[data-k]");
-    if (!b) return;
-    for (const x of card.querySelectorAll(".seg button")) { x.classList.toggle("on", x === b); x.setAttribute("aria-pressed", x === b); }
-    for (const k of ["sets", "weeks"]) $(`kp-${k}`).hidden = k !== b.dataset.k;
-  });
 }
 
 /* ---------- Quellen-Status: letzter Stand je Quelle, leere Box und hängende Quelle unterscheiden ---------- */
@@ -213,7 +199,9 @@ function renderCockpit(d) {
   const lastKpi = race
     ? kpi(esc(g.name), g.daysToGo === 0 ? "Heute" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(g.date)} ${fmtDate(g.date)}${taper ? " · Taper" : ""}`)
     : T ? kpi("Blocktest", T.daysToGo === 0 ? "Heute" : `${T.daysToGo} <small>Tag${T.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(T.date)} ${fmtDate(T.date)}`)
-    : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "");
+    // CTL steht schon in der Deckel-Kachel, wenn es keinen HF-Deckel gibt: dann hier die Frische statt derselben Zahl zweimal
+    : BR?.cap != null ? kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "")
+    : kpi("Frische TSB", tsb != null ? fmt(tsb) : "–", "", "", w.tsbPct != null ? `${w.tsbPct > 0 ? "+" : ""}${fmt(w.tsbPct)} % der CTL · ${esc(TSB_ZONE_TEXT[w.tsbZone] ?? "–")}` : "");
   // Laufen getrennt von der Gesamt-TSS (Stoßbelastung, Hüfte/Leiste/Knie): Minuten der letzten 7 Tage gegen den Wochenschnitt
   // der 4 Wochen davor, als Zahl ohne Urteil.
   const runSum = (a, b) => d.daily.filter((x) => x.date >= a && x.date <= b).reduce((n, x) => n + (x.minutes?.run ?? 0), 0);
@@ -309,7 +297,7 @@ function weekRings(vals, warn) {
 // Tempo-Hinweis: was pro verbleibendem Tag (heute mitgezählt) noch ansteht; je Sportart nur der eigene Rest,
 // Überschuss in einer Sportart gleicht keine andere aus. TSS: solange eine Sportart unter ihrer Untergrenze liegt, die Summe
 // der Reste bis zu den Untergrenzen, sonst die Summe der Spielräume bis zu den Obergrenzen.
-function weekPace(cur, st, left) {
+function weekPace(cur, st, left, today) {
   const ks = SPORT_ORDER.filter((k) => cur.bySport[k]);
   const restMin = ks.reduce((n, k) => n + (cur.bySport[k].targetMin > 0 ? Math.max(0, cur.bySport[k].targetMin - cur.bySport[k].minutes) : 0), 0);
   const capped = ks.filter((k) => cur.bySport[k].targetLoad > 0);
@@ -319,7 +307,7 @@ function weekPace(cur, st, left) {
   const line = (v, txt) => `<div><b>≈ ${fmt(v)}</b> ${txt}</div>`;
   const lines = [
     restMin > 0 ? line(restMin / left, "min Training") : '<div class="ok">✓ Zeitziele erreicht</div>',
-    restSets ? line(restSets / left, `${st.countUnit ?? "Sätze"} Kraft`) : "",
+    restSets ? line(restSets / (st.calWeek.end ? Math.max(1, U.dayDiff(today, st.calWeek.end) + 1) : left), `${st.countUnit ?? "Sätze"} Kraft`) : "",
     capped.length ? (restFloor > 0 ? line(restFloor / left, "TSS bis Untergrenze") : restTss > 0 ? line(restTss / left, "TSS Spielraum bis Obergrenze") : '<div class="over">TSS-Obergrenze erreicht</div>') : "",
   ];
   return `<div class="wk-pace"><span>${left <= 1 ? "Heute noch" : "Pro Resttag"}</span>${lines.join("")}</div>`;
@@ -353,7 +341,7 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const over = Object.values(tss).some((v) => v[0] > v[1]), under = !over && Object.values(tss).some((v) => v[2] > 0 && v[0] < v[2]);
   const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
     + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : under ? ' style="color:var(--muted)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ${tssRange(sum(tss, 2), sum(tss, 1))} TSS</small>`)}`
-    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${d.seasonBlock?.status === "active" && d.seasonBlock.rules?.length ? blockRules(d.seasonBlock, d) : weekPace(cur, st, left)}</div>`;
+    + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${d.seasonBlock?.status === "active" && d.seasonBlock.rules?.length ? blockRules(d.seasonBlock, d) : weekPace(cur, st, left, d.today)}</div>`;
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cell = (x) => {
     const a = actual[x], isToday = x === d.today, past = x < d.today;
@@ -546,7 +534,8 @@ function renderHistory(d) {
     return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load ?? 0, plan: cap ? w.targetLoad : w.plannedLoad, cap, floor: cap && w.targetLoadMin > 0 ? w.targetLoadMin : undefined, capValue: cap ? capOf(w) ?? 0 : undefined, partial: !w.complete };
   }), { unit: "TSS", label: "TSS pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   const noPlan = d.weeks.every((w) => timePlan(w) == null);
-  $("plan-note").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb. Trainingszeit = Bewegungszeit aller Sportarten in Minuten. TSS: Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan), dünne Marke = Summe der Untergrenzen; die Säule enthält alle Sportarten, „drüber“ und „unter“ zählen nur die Sportarten mit Korridor (Schwimmen hat keinen).";
+  $("plan-note-km").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Trainingszeit = Bewegungszeit aller Sportarten in Minuten. Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb.";
+  $("plan-note-tss").textContent = "Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan), dünne Marke = Summe der Untergrenzen. Die Säule enthält alle Sportarten; „drüber“ und „unter“ zählen nur die Sportarten mit Korridor (Schwimmen hat keinen).";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   // Zonen in % der aktuellen Fitness wie Intervals.icu: unter −30 % hohes Risiko, sonst normaler Trainingsbereich
@@ -953,7 +942,8 @@ function renderBlock(SB) {
   };
   const valOf = (g) => {
     if (g.value == null) return "–";
-    if (g.key === "strength" || g.key === "intensity") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungsw." : "Wochen"}</small>`;
+    if (g.key === "strength" && g.periodWeeks > 1) return `${g.value}<small> von ${g.of} Abschnitten mit Ziel</small>`;
+    if (g.key === "strength" || g.key === "intensity") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungswochen" : "Wochen"} mit Ziel</small>`;
     if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)}<small> s/100 m</small>`;
     if (g.key === "ramp") return `${fmt(g.value, 1)}<small> max./Woche</small>`;
     if (g.key === "pause") return `${g.value}<small> Tag${g.value === 1 ? "" : "e"} längste Lücke</small>`;
@@ -1000,7 +990,7 @@ function renderBlock(SB) {
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    const legend = g.key === "intensity" ? "Jedes Kästchen = eine Woche, grün = beides erledigt, hell = zählt nicht (Woche 1, Entlastung oder krank)" : g.key === "strength" ? `Jedes Kästchen = eine Woche, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze${g.periodWeeks > 1 ? ` (ein Kästchen = ${g.periodWeeks * 7} Tage)` : ""}` : "Ziel erreicht"}${g.group ? ", hell = Entlastungswoche" : ""}` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
+    const legend = g.key === "intensity" ? "Jedes Kästchen = eine Woche, grün = beides erledigt, hell = zählt nicht (Woche 1, Entlastung oder krank)" : g.key === "strength" ? `Jedes Kästchen = ${g.periodWeeks > 1 ? `ein Abschnitt von ${g.periodWeeks * 7} Tagen` : "eine Woche"}, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group && !(g.periodWeeks > 1) ? ", hell = Entlastungswoche" : ""} · Verlauf im Bereich Kraft` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
     const sub = [g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ");
     const lines = [`Ziel: ${esc(g.target)}`, vis && legend ? esc(legend) : null, sub || null].filter(Boolean);
     return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div>${g.value != null ? `<div class="val">${valOf(g)}</div>` : ""}${vis}${courseOf(g)}${lines.map((t) => `<div class="sub">${t}</div>`).join("")}${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}${nextOf(g)}</div>`;
@@ -1020,18 +1010,44 @@ function renderBlock(SB) {
 }
 
 /* ---------- 6 · Kraft und Hüfte: nur sichtbar, wenn es etwas zu zeigen gibt ---------- */
+/* Kraft-Karte in drei Stufen: oben der laufende Zeitraum gegen das Satz-Ziel (die eine Zahl, auf die es ankommt), darunter die
+   Woche in Zahlen, dann die früheren Zeiträume als Balken mit Zielmarke. Quelle ist EGYM live (renderEgym); solange das fehlt
+   oder nicht eingerichtet ist, die Kraft-Leitplanke des Blocks. m: { goal, unit, goalText, cur: { count, label }, past: [{ range,
+   count, hit, rec?, tip? }], pastLabel, stats?: [[Wert, Beschriftung]], statsLabel?, foot?: [Zeilen], info: Erklärtext } */
+function strengthCard(m) {
+  const hit = m.cur.count >= m.goal;
+  const max = Math.max(m.goal * 1.25, ...m.past.map((p) => p.count));
+  const done = m.past.filter((p) => !p.rec), hits = done.filter((p) => p.hit).length;
+  const row = (p) => `<div class="kr-row${p.rec ? " rec" : ""}"${p.tip ? ` title="${esc(p.tip)}"` : ""}><span class="muted">${p.range}</span><div class="cbar"><div class="cfill" style="width:${(p.count / max) * 100}%;background:var(--${p.rec ? "line-2" : p.hit ? "ok" : "s-strength"})"></div><i style="left:${(m.goal / max) * 100}%"></i></div><b>${p.rec ? '<span class="muted">Entl.</span> ' : p.hit ? '<span class="kr-ok">✓</span> ' : ""}${fmt(p.count)}</b></div>`;
+  return `<div class="kh"><h3>Krafttraining</h3><span class="muted">${esc(m.goalText)}</span></div>
+    <div class="kr-now"><span class="big">${fmt(m.cur.count)} <small>/ ${fmt(m.goal)} ${m.unit}</small></span>${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div>
+    <div class="cbar kr-bar"><div class="cfill" style="width:${Math.min(100, (m.cur.count / m.goal) * 100)}%;background:var(--${hit ? "ok" : "s-strength"})"></div></div>
+    <div class="muted">${m.cur.label}</div>
+    ${m.stats?.length ? `<div class="bgh kr-h">${m.statsLabel}</div><div class="lstats">${m.stats.map(([v, l]) => `<div class="ls"><span class="ls-v">${v}</span><span class="ls-l">${l}</span></div>`).join("")}</div>` : ""}
+    ${m.past.length ? `<div class="bgh kr-h">${m.pastLabel}${done.length ? ` · Ziel in ${hits} von ${done.length} erreicht` : ""}</div>${[...m.past].reverse().map(row).join("")}` : ""}
+    ${(m.foot ?? []).map((t) => `<div class="muted" style="margin-top:6px">${t}</div>`).join("")}
+    <details class="info"><summary>Erklärung</summary><div>${m.info}</div></details>`;
+}
+const spanTxt = (a, b) => `${fmtDate(a)}–${fmtDate(b)}`;
+const daysLeftTo = (end, today) => U.dayDiff(today, end) + 1;
+const leftTxt = (n) => (n <= 1 ? "letzter Tag" : `noch ${n} Tage`);
+
 function renderStrength(d) {
   const has = d.sources.intervalsActivities.ok && d.weeks.some((w) => w.bySport.strength.minutes > 0);
   if (has || d.hipFlags.length) $("kraft").hidden = false;
-  // Wochen mit mindestens zwei Kraft-Einheiten: kommt aus dem Trainingsblock (zählt EGYM mit, wenn vorhanden)
+  // Bis EGYM nachkommt (oder ohne EGYM): Sätze bzw. Kraft-Tage aus der Kraft-Leitplanke des Blocks
   const bg = d.seasonBlock?.goals?.find((x) => x.key === "strength");
-  if (bg?.weeks?.length) {
+  if (bg?.weeks?.length && bg.calWeek) {
     $("strength-card").hidden = false; $("kraft").hidden = false;
-    $("kt-weeks").hidden = false;
-    $("kp-weeks").innerHTML = `<div class="big">${bg.value ?? "–"} <small>von ${bg.of} ${bg.periodWeeks > 1 ? `abgeschlossenen ${bg.periodWeeks * 7}-Tage-Abschnitten` : "Wochen"} mit Ziel erreicht</small></div>
-      <div class="muted" style="margin:2px 0 10px">Ziel: ${esc(bg.target)}${bg.egym ? "" : " · ohne EGYM-Daten gezählt"}</div>
-      ${[...bg.weeks].reverse().map((w) => `<div style="display:grid;grid-template-columns:${w.end ? "110px" : "64px"} 1fr 64px;gap:8px;align-items:center;padding:3px 0;${w.done ? "" : "opacity:.75"}"><span class="muted">${fmtDate(w.start)}${w.end ? `–${fmtDate(w.end)}` : ""}${w.done ? "" : " ·&nbsp;jetzt"}</span><div class="bsq">${bg.goalSets ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, (w.count / bg.goalSets) * 100)}%;background:var(--${w.hit ? "ok" : "muted"})"></div></div>` : Array.from({ length: Math.max(2, w.count) }, (_, i) => `<i class="${i < w.count ? (w.hit ? "ok" : "off") : "open"}"></i>`).join("")}</div><b style="text-align:right">${w.count}${bg.goalSets ? "" : "×"}</b></div>`).join("")}
-      <div class="muted" style="margin-top:6px">${bg.goalSets && bg.periodWeeks > 1 ? `Balken = Sätze im Abschnitt, grün = mind. ${bg.goalSets} Sätze.` : bg.goalSets ? `Balken = Sätze der Woche, grün = mind. ${bg.goalSets} Sätze.` : "Jedes Kästchen = eine Kraft-Einheit, grün = Wochenziel erreicht."}</div>`;
+    const P = bg.periodWeeks > 1 ? bg.periodWeeks : 1, cw = bg.calWeek;
+    const unit = bg.goalSets ? "Sätze" : "Kraft-Tage";
+    $("strength").innerHTML = strengthCard({
+      goal: bg.weekGoal, unit, goalText: `Ziel ${bg.target}`,
+      cur: { count: cw.count, label: P > 1 ? `Abschnitt ${spanTxt(cw.start, cw.end)} · ${leftTxt(daysLeftTo(cw.end, d.today))}` : `Woche ab Mo ${fmtDate(cw.start)} · ${leftTxt(daysLeftTo(addDays(cw.start, 6), d.today))}` },
+      past: bg.weeks.filter((w) => w.done).map((w) => ({ range: spanTxt(w.start, w.end ?? addDays(w.start, 6)), count: w.count, hit: w.hit, rec: w.load === false })),
+      pastLabel: P > 1 ? `Abschnitte im Block (je ${7 * P} Tage)` : "Wochen im Block",
+      info: `Gezählt aus dem Trainingsblock${bg.egym ? " (EGYM-Sätze)" : ", ohne EGYM-Daten: ein Tag mit Kraft-Einheit ab 20 min zählt einmal"}. Grün mit ✓ = Ziel erreicht, Strich = Ziel${bg.group ? ", grau = Entlastungswoche (zählt nicht)" : ""}.`,
+    });
   }
   if (!d.hipFlags.length) return; // Eine Textsuche ohne Treffer ist keine Aussage
   $("hip-card").hidden = false;
@@ -1074,40 +1090,29 @@ function renderEgym(k) {
   $("egym-card").hidden = false;
   const failed = k.sourcesFailed || [];
   if (failed.filter((x) => x.startsWith("egym")).length >= 3) { $("egym").innerHTML = '<div class="notice bad"><b>EGYM nicht erreichbar.</b> Login oder Abruf ist fehlgeschlagen.</div>'; return; }
-  // Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): feste Abschnitte ab Blockstart, je eine Zeile mit Haken bei erreichtem Ziel
-  const wk = k.week, goal = wk.goalSets, P = wk.periodWeeks > 1 && k.periods ? wk.periodWeeks : 1, win = (w) => (P > 1 ? w.windowSets ?? w.sets : w.sets) || 0;
-  const min = wk.minutes, hit = win(wk) >= goal;
+  // Karte "Krafttraining": laufender Zeitraum gegen das Satz-Ziel; Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen") in festen Abschnitten ab Blockstart
+  const wk = k.week, goal = wk.goalSets, P = wk.periodWeeks > 1 && k.periods ? wk.periodWeeks : 1;
   const est = (src) => (src === "estimate" ? "≈" : "");
-  const vol = (kg) => (kg >= 1000 ? fmt(kg / 1000, 1) + " t" : fmt(kg) + " kg");
-  const max = Math.max(goal, ...k.weeks.map((w) => w.sets || 0)) * 1.1;
-  const row = (w, last) => { const m = w.minutes, ok = (w.sets || 0) >= goal; const det = [m ? est(w.minutesSource) + fmt(m) + " min" : "", w.volumeKg ? vol(w.volumeKg) : ""].filter(Boolean).join(" · "); return `<div style="display:grid;grid-template-columns:64px 1fr 76px;gap:0 8px;align-items:center;padding:4px 0;${last ? "" : "opacity:.85"}"><span class="muted">${fmtDate(w.start)}${last ? " ·&nbsp;jetzt" : ""}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${((w.sets || 0) / max) * 100}%;background:${ok ? "var(--ok)" : "var(--s-strength)"}${w.minutesSource === "estimate" ? ";opacity:.6" : ""}"></div><i style="left:${(goal / max) * 100}%"></i></div><b style="text-align:right;white-space:nowrap">${w.sets ? w.sets + " Sätze" : "–"}</b>${det ? `<span class="muted" style="grid-column:2/4;font-size:.8rem;padding-top:1px">${det}</span>` : ""}</div>`; };
-  const stat = (v, l) => `<div><div class="mval">${v}</div><div class="muted">${l}</div></div>`;
-  const since = k.daysSince == null ? "–" : k.daysSince === 0 ? "heute" : `vor ${k.daysSince} T`;
-  const p = k.progress, items = p ? p.items : [];
-  const delta = (i) => (i.diffKg == null ? '<span class="muted">–</span>' : `<span class="badge ${i.diffKg > 0 ? "ok" : i.diffKg < 0 ? "bad" : "none"}">${i.diffKg > 0 ? "+" : i.diffKg < 0 ? "−" : ""}${fmt(Math.abs(i.diffKg), 1)} kg</span>`);
-  const b = k.bioAge, rg = k.regions;
-  const regionRows = ["UPPER", "CORE", "LOWER"].map((key) => ({ label: REGION_LABEL[key], age: b ? { UPPER: b.upper, CORE: b.core, LOWER: b.lower }[key] : null, share: rg ? rg[key] : null }));
-  const worstAge = Math.max(...regionRows.map((r) => r.age ?? 0));
-  const bio = b && b.muscle != null ? `<h3 style="margin-top:14px">Muskelalter <span style="color:var(--s-strength);font-size:1.6rem">${b.muscle}</span> <span class="muted" style="font-weight:400">Jahre${b.total != null ? ` · gesamt ${b.total}` : ""}</span></h3>
-    ${regionRows.map((r) => `<div style="display:grid;grid-template-columns:90px 1fr 40px;gap:8px;align-items:center;padding:4px 0"><span>${r.label}</span><div class="cbar" style="height:10px">${r.age != null ? `<div class="cfill" style="width:${Math.min(100, (r.age / 60) * 100)}%;background:${r.age === worstAge ? "var(--bad)" : "var(--s-strength)"}"></div>` : ""}</div><b style="text-align:right">${r.age ?? "–"}</b></div>`).join("")}
-    ${rg ? `<div class="muted" style="margin-top:2px">Volumenanteil 4 Wochen: ${regionRows.map((r) => `${r.label} ${r.share} %`).join(" · ")}</div>` : ""}` : "";
-  const recs = k.records || [];
-  const records = recs.length ? `<h3 style="margin-top:14px">Bestwerte diese Woche</h3><ul class="runs">${recs.map((r) => `<li><b>${esc(r.label)}</b> · ${fmt(r.kg, r.kg % 1 ? 1 : 0)} kg × ${r.reps} <span class="badge ok">+${fmt(r.diffKg, 1)} kg · +${fmt(r.pct, 1)} %</span><br><span class="muted">geschätzter 1RM ${fmt(r.e1rm, 1)} kg gegen ${fmt(r.prevE1rm, 1)} kg vorher (bester Satz nach Epley, höchstens 12 Wiederholungen angesetzt)</span></li>`).join("")}</ul>` : `<div class="muted" style="margin-top:12px">Noch kein Bestwert diese Woche: Ein Bestwert ist ein Satz mit höherem geschätzten 1RM als alle früheren Einheiten der letzten 12 Wochen am selben Gerät.</div>`;
+  const vol = (kg) => (kg >= 1000 ? `${fmt(kg / 1000, 1)} <small>t</small>` : `${fmt(kg)} <small>kg</small>`);
+  const since = k.daysSince == null ? "–" : k.daysSince === 0 ? "heute" : k.daysSince === 1 ? "gestern" : `vor ${k.daysSince} Tagen`;
+  const src = wk.goalSource === "block" ? "aus dem Blocktext" : failed.includes("intervalsBlock") ? "Standardziel, Blocktext aus Intervals nicht abrufbar" : wk.goalSource === "config" ? "Einstellung im Worker" : "Standardziel";
+  const curEnd = P > 1 ? wk.periodEnd : addDays(wk.start, 6);
+  const past = P > 1
+    ? k.periods.slice(0, -1).map((p) => ({ range: spanTxt(p.start, p.end), count: p.sets || 0, hit: (p.sets || 0) >= goal, tip: p.weekSets.map((n, j) => `Woche ${j + 1}: ${n} Sätze`).join(" · ") }))
+    : k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(w.start, addDays(w.start, 6)), count: w.sets || 0, hit: (w.sets || 0) >= goal, tip: [`${w.sessions} Einheiten`, w.minutes ? `${est(w.minutesSource)}${fmt(w.minutes)} min` : "", w.volumeKg ? `${fmt(w.volumeKg)} kg` : ""].filter(Boolean).join(" · ") }));
   const vt = k.volumeTrend;
-  // Karte "Krafttraining": EGYM als Umschalter "Sätze"; Muskelalter, Bestwerte und 1RM bleiben in der EGYM-Karte
-  $("strength-card").hidden = false; $("kt-sets").hidden = false;
-  const src = wk.goalSource === "default" ? (failed.includes("intervalsBlock") ? " (Standardziel, Blocktext aus Intervals nicht abrufbar)" : " (Standardziel)") : wk.goalSource === "block" ? " (aus dem Blocktext)" : "";
-  const range = (p) => `${fmtDate(p.start)}–${fmtDate(p.end)}`;
-  const pMax = P > 1 ? Math.max(goal, ...k.periods.map((p) => p.sets || 0)) * 1.1 : 0;
-  const prow = (p, last) => { const ok = (p.sets || 0) >= goal; return `<div style="display:grid;grid-template-columns:110px 1fr 96px;gap:0 8px;align-items:center;padding:5px 0;${last ? "" : "opacity:.85"}"><span class="muted">${range(p)}${last ? "<br>läuft" : ""}</span><div class="cbar" style="height:12px"><div class="cfill" style="width:${((p.sets || 0) / pMax) * 100}%;background:${ok ? "var(--ok)" : "var(--s-strength)"}"></div><i style="left:${(goal / pMax) * 100}%"></i></div><b style="text-align:right;white-space:nowrap">${ok ? `<span style="color:var(--ok)">✓</span> ${p.sets}` : `${p.sets || 0} / ${goal}`}</b><span class="muted" style="grid-column:2/4;font-size:.8rem;padding-top:1px">${p.weekSets.map((n, j) => `Woche ${j + 1}: ${n ? n + " Sätze" : "–"}`).join(" · ")}</span></div>`; };
-  const daysLeft = P > 1 ? Math.round((Date.parse(wk.periodEnd) - Date.parse(k.today)) / 86400000) + 1 : 0;
-  $("kp-sets").innerHTML = `<div class="big">${win(wk)} <small>von ${goal} Sätzen ${P > 1 ? `in diesen ${7 * P} Tagen (${range({ start: wk.periodStart, end: wk.periodEnd })}, noch ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tage"})` : "diese Woche"}</small> ${hit ? '<span class="badge ok">Ziel erreicht</span>' : ""}</div><div class="cbar" style="height:12px;margin:6px 0"><div class="cfill" style="width:${Math.min(100, (win(wk) / goal) * 100)}%;background:var(--s-strength)"></div></div><div class="muted">${P > 1 ? `${wk.sets || 0} Sätze · ` : ""}${wk.sessions} ${wk.sessions === 1 ? "Einheit" : "Einheiten"} diese Woche · ${min == null ? "–" : est(wk.minutesSource) + fmt(min)} min</div>
-    <div class="muted" style="margin:2px 0 10px">${P > 1 ? `Ziel: ≥ ${goal} Sätze je ${7 * P} Tage${src} · ✓ = erreicht · senkrechte Marke = ${goal} Sätze` : `Satz-Ziel erreicht in ${k.weeksHit.hit} von ${k.weeksHit.of} abgeschlossenen Wochen${k.streakWeeks ? ` · Serie ${k.streakWeeks} ${k.streakWeeks === 1 ? "Woche" : "Wochen"}` : ""} · senkrechte Marke = ${goal} Sätze${src}`}</div>
-    ${P > 1 ? k.periods.slice().reverse().map((p, i) => prow(p, i === 0)).join("") : k.weeks.slice().reverse().map((w, i) => row(w, i === 0)).join("")}
-    <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">${stat(wk.sessions, "Einheiten")}${stat(wk.sets || "–", "Sätze")}${stat(wk.volumeKg ? (wk.volumeKg >= 1000 ? fmt(wk.volumeKg / 1000, 1) + " t" : fmt(wk.volumeKg) + " kg") : "–", "Volumen")}${stat(since, "zuletzt")}</div>
-    ${vt ? `<div class="muted" style="margin-top:8px">Volumen letzte Woche gegen die davor: ${vt.pct > 0 ? "+" : vt.pct < 0 ? "−" : ""}${fmt(Math.abs(vt.pct), 1)} % (${fmt(vt.lastKg)} kg gegen ${fmt(vt.prevKg)} kg)</div>` : ""}
-    <div style="margin-top:10px"><button id="egym-sync" type="button">Jetzt nach Intervals schreiben</button> <span id="egym-sync-msg" class="muted"></span></div>
-    <div class="muted" style="margin-top:8px">„≈“ und blasse Balken: Dauer nur aus der Spanne der Übungen geschätzt, EGYM lieferte keine.</div>`;
+  $("strength-card").hidden = false;
+  $("strength").innerHTML = strengthCard({
+    goal, unit: "Sätze", goalText: `Ziel ≥ ${goal} Sätze ${P > 1 ? `je ${7 * P} Tage` : "pro Woche"} · ${src}`,
+    cur: { count: (P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, label: `${P > 1 ? `Abschnitt ${spanTxt(wk.periodStart, wk.periodEnd)}` : `Woche ab Mo ${fmtDate(wk.start)}`} · ${leftTxt(daysLeftTo(curEnd, k.today))}` },
+    statsLabel: `Diese Woche · ab Mo ${fmtDate(wk.start)}`,
+    // Sätze der Woche nur bei Abschnitten: im Wochenmodus stehen sie schon oben
+    stats: [[fmt(wk.sessions), wk.sessions === 1 ? "Einheit" : "Einheiten"], P > 1 ? [fmt(wk.sets || 0), "Sätze"] : null, [wk.minutes == null ? "–" : `${est(wk.minutesSource)}${fmt(wk.minutes)} <small>min</small>`, "Dauer"], [wk.volumeKg ? vol(wk.volumeKg) : "–", "Volumen"], [since, "zuletzt"]].filter(Boolean),
+    past, pastLabel: P > 1 ? `Frühere Abschnitte (je ${7 * P} Tage)` : "Frühere Wochen",
+    foot: [vt ? `Volumen Vorwoche ${vt.pct > 0 ? "+" : vt.pct < 0 ? "−" : "±"}${fmt(Math.abs(vt.pct), 1)} % gegen die Woche davor (${fmt(vt.lastKg)} kg gegen ${fmt(vt.prevKg)} kg)` : null,
+      `<button id="egym-sync" type="button" class="lnk">EGYM jetzt nach Intervals schreiben</button> <span id="egym-sync-msg"></span>`].filter(Boolean),
+    info: `Sätze aus EGYM. Eine Kraft-Einheit ist ein Tag mit Satz-Übungen oder Geräten, die Garmin-Tagesaktivität zählt nicht. ${P > 1 ? `Das Ziel gilt je fester Abschnitt von ${7 * P} Tagen ab Blockstart; beim Darüberfahren steht die Aufteilung auf die Wochen.` : "Beim Darüberfahren stehen Einheiten, Dauer und Volumen der Woche."} Grün mit ✓ = Ziel erreicht, Strich = Ziel. „≈“ = Dauer nur aus der Spanne der Übungen geschätzt, EGYM lieferte keine.`,
+  });
   const syncBtn = $("egym-sync");
   if (syncBtn) syncBtn.onclick = async () => {
     const msg = $("egym-sync-msg");
@@ -1120,20 +1125,29 @@ function renderEgym(k) {
       msg.textContent = j.ok ? (j.skipped ? "übersprungen: EGYM- oder Intervals-Zugang fehlt im Worker" : `${j.count} Einheit(en) übertragen${j.count ? extra : ""}`) : "Fehler: " + j.error;
     } catch (e) { msg.textContent = "Fehler: " + (e.message || e); }
   };
-  // Muskelalter mit Skala: Balken von 20 bis 60 Jahren, Gesamtalter als eigene Zeile
+
+  // Karte "Kraftwerte": Muskelalter, Krafttest je Gerät (EGYM-Messung) und Trainings-Bestwerte der Woche (geschätzter 1RM)
+  const p = k.progress, items = p ? p.items : [];
+  const delta = (v, unit = "kg") => (v == null ? '<span class="muted">–</span>' : `<span class="badge ${v > 0 ? "ok" : v < 0 ? "bad" : "none"}">${v > 0 ? "+" : v < 0 ? "−" : "±"}${fmt(Math.abs(v), 1)} ${unit}</span>`);
+  const b = k.bioAge, rg = k.regions;
+  const regionRows = ["UPPER", "CORE", "LOWER"].map((key) => ({ label: REGION_LABEL[key], age: b ? { UPPER: b.upper, CORE: b.core, LOWER: b.lower }[key] : null, share: rg ? rg[key] : null }));
+  const worstAge = Math.max(...regionRows.map((r) => r.age ?? 0));
+  // Muskelalter mit Skala: Balken von 20 bis 60 Jahren; der älteste Bereich ist beschriftet, nicht rot (kein Urteil)
   const AGE = { lo: 20, hi: 60 }, ageW = (a) => `${Math.max(0, Math.min(100, ((a - AGE.lo) / (AGE.hi - AGE.lo)) * 100))}%`;
-  const bio2 = b && b.muscle != null ? `<h3 style="margin-top:0">Muskelalter</h3><div class="big" style="color:var(--s-strength)">${b.muscle} <small>Jahre${b.total != null ? ` · EGYM-Gesamtalter ${b.total}` : ""}</small></div>
-    <div class="muted" style="margin-bottom:6px">Niedriger ist besser. Die Balken zeigen das Alter je Körperbereich auf einer Skala von ${AGE.lo} bis ${AGE.hi} Jahren; der rötliche Balken ist der älteste Bereich.${b.total != null ? " Das Gesamtalter ist ein eigener EGYM-Wert und wird hier nicht nachgerechnet." : ""}</div>
-    ${regionRows.map((r) => `<div style="display:grid;grid-template-columns:90px 1fr 40px;gap:8px;align-items:center;padding:4px 0"><span>${r.label}</span><div class="cbar" style="height:10px">${r.age != null ? `<div class="cfill" style="width:${ageW(r.age)};background:${r.age === worstAge ? "var(--bad)" : "var(--s-strength)"}"></div>` : ""}</div><b style="text-align:right">${r.age ?? "–"}</b></div>`).join("")}
+  const bio = b && b.muscle != null ? `<h3>Muskelalter</h3><div class="big">${b.muscle} <small>Jahre${b.total != null ? ` · EGYM-Gesamtalter ${b.total}` : ""} · niedriger ist besser</small></div>
+    ${regionRows.map((r) => `<div class="kr-age"><span>${r.label}${r.age === worstAge && r.age ? ' <small class="muted">ältester</small>' : ""}</span><div class="cbar">${r.age != null ? `<div class="cfill" style="width:${ageW(r.age)};background:var(--s-strength)"></div>` : ""}</div><b>${r.age ?? "–"}</b></div>`).join("")}
     <div class="agescale"><span>${AGE.lo}</span><span>${(AGE.lo + AGE.hi) / 2}</span><span>${AGE.hi} Jahre</span></div>
-    ${rg ? `<div class="muted" style="margin-top:2px">Volumenanteil 4 Wochen: ${regionRows.map((r) => `${r.label} ${r.share} %`).join(" · ")}</div>` : ""}` : "";
+    ${rg ? `<div class="muted" style="margin-top:6px">Volumenanteil 4 Wochen: ${regionRows.map((r) => `${r.label} ${r.share} %`).join(" · ")}</div>` : ""}` : "";
   // Tabelle nur mit Spalten, die Inhalt haben (Vorher/Veränderung erst ab dem zweiten Test je Gerät)
   const cmp = items.some((i) => i.prevKg != null);
+  const tests = items.length ? `<h3>Krafttest je Gerät <span class="muted">(EGYM-Messung)</span></h3><div class="scroll"><table class="mini"><thead><tr><th>Gerät</th><th>1RM</th>${cmp ? "<th>Veränderung</th>" : ""}<th>Test</th></tr></thead><tbody>${items.map((i) => `<tr><td>${esc(i.label)} <small class="muted">${esc(REGION_LABEL[i.region] || "")}</small></td><td class="nw"><b>${fmt(i.kg)} kg</b></td>${cmp ? `<td title="${i.prevKg != null ? `vorher ${fmt(i.prevKg)} kg am ${fmtDate(i.prevAt)}` : "erster Test"}">${delta(i.diffKg)}</td>` : ""}<td class="muted">${fmtDate(i.at)}</td></tr>`).join("")}</tbody></table></div>
+    <div class="muted" style="margin-top:6px">${cmp && p.improved + p.same + p.declined > 0 ? `${p.improved} besser · ${p.same} gleich · ${p.declined} schwächer gegen den vorherigen Test` : "Veränderung erscheint, sobald ein Gerät zwei Tests hat"}</div>` : "";
+  const recs = k.records || [];
+  const records = `<h3>Trainings-Bestwerte diese Woche <span class="muted">(geschätzter 1RM)</span></h3>${recs.length ? `<div class="scroll"><table class="mini"><thead><tr><th>Gerät</th><th>bester Satz</th><th>1RM geschätzt</th><th>gegen vorher</th></tr></thead><tbody>${recs.map((r) => `<tr><td>${esc(r.label)}</td><td class="nw">${fmt(r.kg, r.kg % 1 ? 1 : 0)} kg × ${r.reps}</td><td><b class="nw">${fmt(r.e1rm, 1)} kg</b> <small class="muted">vorher ${fmt(r.prevE1rm, 1)}</small></td><td>${delta(r.diffKg)} <small class="muted">+${fmt(r.pct, 1)} %</small></td></tr>`).join("")}</tbody></table></div>` : '<div class="muted">Diese Woche noch kein Bestwert.</div>'}`;
   $("egym").innerHTML = `${failed.length ? `<div class="notice bad" style="margin-bottom:8px">Teilweise nicht erreichbar: ${esc(failed.join(", "))}</div>` : ""}
-    <div class="egym-cols"><div>${bio2}${records}</div><div>
-    ${items.length ? `<h3>Fortschritt: 1RM je Gerät</h3><div style="overflow-x:auto"><table><thead><tr><th>Gerät</th><th>Bereich</th><th>1RM</th>${cmp ? "<th>Vorher</th><th>Veränderung</th>" : ""}<th>Test</th></tr></thead><tbody>${items.map((i) => `<tr><td>${esc(i.label)}</td><td class="muted">${esc(REGION_LABEL[i.region] || i.region || "–")}</td><td><b>${fmt(i.kg)} kg</b></td>${cmp ? `<td class="muted">${i.prevKg != null ? fmt(i.prevKg) + " kg" : "–"}</td><td>${delta(i)}</td>` : ""}<td class="muted">${fmtDate(i.at)}</td></tr>`).join("")}</tbody></table></div>
-      ${cmp && p.improved + p.same + p.declined > 0 ? `<div class="muted" style="margin-top:6px">${p.improved} besser · ${p.same} gleich · ${p.declined} schwächer gegen den vorherigen Test.</div>` : '<div class="muted" style="margin-top:6px">Ein Vergleich (Vorher, Veränderung) erscheint, sobald ein Gerät mindestens zwei Tests hat.</div>'}` : ""}
-    <div class="muted" style="margin-top:8px">Kraft-Einheit = Tag mit Satz-Übungen oder Geräten (Garmin-Tagesaktivität zählt nicht).</div></div></div>`;
+    <div class="egym-cols"><div>${bio}</div><div>${tests}</div></div>
+    <div style="margin-top:16px">${records}</div>
+    <details class="info"><summary>Erklärung</summary><div>Muskelalter und Krafttest sind EGYM-Messungen (Muskelalter: Balken auf einer Skala von ${AGE.lo} bis ${AGE.hi} Jahren; das Gesamtalter ist ein eigener EGYM-Wert und wird hier nicht nachgerechnet). Bestwerte kommen aus dem Training: Ein Bestwert ist ein Satz, dessen geschätzter 1RM (Epley, höchstens 12 Wiederholungen angesetzt) höher ist als in allen früheren Einheiten der letzten 12 Wochen am selben Gerät.</div></details>`;
 }
 
 /* ---------- Coach: Tagesaussage des Coaching-Tasks (das Widget zeigt nur den Hinweis, solange er frisch ist) ---------- */
