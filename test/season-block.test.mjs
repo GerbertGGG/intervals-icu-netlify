@@ -274,15 +274,16 @@ assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
   assert.equal(parseStrengthSets(txt), 90);
   assert.deepEqual(parseStrengthTarget("Kraft ≥75 Sätze in 7 von 8 Belastungswochen"), { sets: 75, weeks: 1 });
   const ev = { category: "SEASON_START", name: "Block A (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: txt };
-  assert.deepEqual(activeBlockStrengthTarget([ev], "2026-10-22"), { sets: 90, weeks: 2 });
+  assert.deepEqual(activeBlockStrengthTarget([ev], "2026-10-22"), { sets: 90, weeks: 2, start: "2026-10-19" });
   const blkA = resolveSeasonBlock([ev], "2026-11-04");
   const strength = [{ date: "2026-10-14", sets: 60 }, { date: "2026-10-21", sets: 30 }, { date: "2026-10-28", sets: 40 }, { date: "2026-11-03", sets: 20 }];
   const g = buildBlockGoals(blkA, { strength }, "2026-11-04").find((x) => x.key === "strength");
   assert.equal(g.group, "leitplanke");
   assert.equal(g.periodWeeks, 2);
   assert.equal(g.weekGoal, 90);
-  assert.match(g.target, /≥ 90 Sätze in je 2 Wochen/);
-  assert.deepEqual(g.weeks.map((w) => [w.start, w.count, w.hit]), [["2026-10-19", 90, true], ["2026-10-26", 70, false], ["2026-11-02", 60, false]]);
+  assert.match(g.target, /≥ 90 Sätze je 2 Wochen \(ab Blockstart\)/);
+  // Feste Abschnitte ab Blockstart: 19.10.–01.11. (30 + 40), 02.11.–15.11. (läuft); die Woche vor dem Block zählt nicht
+  assert.deepEqual(g.weeks.map((w) => [w.start, w.end, w.count, w.done, w.hit]), [["2026-10-19", "2026-11-01", 70, true, false], ["2026-11-02", "2026-11-15", 20, false, false]]);
   assert.equal(g.status, "bad");
-  assert.deepEqual(g.calWeek, { start: "2026-11-02", from: "2026-10-26", count: 60 });
+  assert.deepEqual(g.calWeek, { start: "2026-11-02", end: "2026-11-15", count: 20 });
 }

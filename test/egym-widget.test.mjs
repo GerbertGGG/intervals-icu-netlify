@@ -192,12 +192,16 @@ test("Von Hand geaenderte Dauer bleibt, vom Sync geschriebene wird nachgezogen",
   assert.deepEqual(nextWritten({ "egym-2026-10-12": 840 }, manual, built, [], "2026-10-12"), { "egym-2026-10-12": 840 });
 });
 
-test("Blockziel über zwei Wochen zählt das gleitende Fenster", () => {
-  const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-10-22", blockSets: { sets: 90, weeks: 2 } });
+test("Blockziel über zwei Wochen zählt feste Abschnitte ab Blockstart", () => {
+  const d = buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-11-04", blockSets: { sets: 90, weeks: 2, start: "2026-10-19" } });
   assert.equal(d.week.goalSets, 90);
   assert.equal(d.week.periodWeeks, 2);
   assert.equal(d.week.windowSets, 0);
-  assert.equal(d.weeks.at(-1).windowSets, 0);
+  assert.deepEqual([d.week.periodStart, d.week.periodEnd], ["2026-11-02", "2026-11-15"]);
+  assert.deepEqual(d.periods.map((p) => [p.start, p.end, p.done]), [["2026-09-21", "2026-10-04", true], ["2026-10-05", "2026-10-18", true], ["2026-10-19", "2026-11-01", true], ["2026-11-02", "2026-11-15", false]]);
+  assert.deepEqual(d.periods[0].weekSets, [0, 0]);
+  assert.deepEqual(d.weeksHit, { hit: 0, of: 3 });
+  assert.equal(buildWidgetKraft({ workouts: null, strength: null, bioAge: null, today: "2026-11-04" }).periods, null);
 });
 
 test("Satz-Ziel aus dem Blocktext geht vor EGYM_WEEKLY_GOAL_SETS", () => {
