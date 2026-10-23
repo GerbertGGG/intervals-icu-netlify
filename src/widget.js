@@ -485,6 +485,43 @@ function watchRings(targets, done, goal) {
   return RING_SPORTS.map((k) => targets.find((t) => t.s === k)).filter((t) => t && t[goal] > 0).map((t) => [t.s, t[done], t[goal]]);
 }
 
+// Zifferblatt nach Tageszeit (garmin/README.md): morgens Schlaf und HRV, tagsueber die Woche Tag fuer Tag, nach einer Einheit
+// deren Werte. Die Uhr waehlt selbst, welche Karte sie zeigt; der Worker liefert alle drei.
+const WEEK_SPORTS = ["run", "bike", "swim"];
+const hm = (secs) => `${Math.floor(secs / 3600)}:${String(Math.floor((secs % 3600) / 60)).padStart(2, "0")}`;
+const ms = (secs) => { const t = Math.round(secs); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
+
+// Woche Mo bis So fuer die Wochenkarte: je Tag [Sportart, Minuten, 1 = geplant / 0 = erledigt] fuer Lauf, Rad, Schwimmen.
+// Erledigt bis heute aus den Tagesminuten, geplant ab heute, wenn die Sportart an dem Tag noch nicht erledigt ist.
+function watchWeekDays(d) {
+  const monday = addDays(d.today, -dayIndex(d.today));
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(monday, i);
+    const mins = date <= d.today ? d.daily.find((x) => x.date === date)?.minutes ?? {} : {};
+    const done = WEEK_SPORTS.filter((k) => mins[k] > 0).map((k) => [k, mins[k], 0]);
+    const plan = date >= d.today
+      ? WEEK_SPORTS.filter((k) => !(mins[k] > 0)).map((k) => [k, (d.plannedWeek ?? []).filter((p) => p.date === date && p.sport === k).reduce((a, p) => a + (p.durationMin ?? 0), 0), 1]).filter((x) => x[1] > 0)
+      : [];
+    return [...done, ...plan];
+  });
+}
+
+// Letzte Einheit, nur wenn sie von heute ist: s Sportart, t Startzeit, e Ende (Sekunden seit 1970), c bis zu vier Werte
+// [Text, Beschriftung], lw = Wochen seit der letzten mindestens so langen Einheit derselben Sportart (erst ab 2 Wochen).
+// Puls nur, wenn das Dashboard ihn fuer die Einheit zeigt (Pulsregel, avgHr).
+function watchLast(d) {
+  const L = d.lastActivity;
+  if (!L || L.date !== d.today) return null;
+  const c = [];
+  if (L.distanceKm > 0) c.push(L.sport === "swim" ? [String(Math.round(L.distanceKm * 1000)), "M"] : [String(L.distanceKm).replace(".", ","), "KM"]);
+  if (L.movingSecs > 0) c.push([hm(L.movingSecs), "ZEIT"]);
+  if (L.paceSecPerKm > 0) c.push([ms(L.paceSecPerKm), "/KM"]);
+  if (L.paceSecPer100m > 0) c.push([ms(L.paceSecPer100m), "/100M"]);
+  if (L.watts > 0) c.push([String(Math.round(L.watts)), "WATT"]);
+  if (L.avgHr > 0) c.push([String(Math.round(L.avgHr)), "HF"]);
+  return { s: L.sport, t: L.start ?? null, e: L.endAt ?? null, c: c.slice(0, 4), lw: L.longerAgoDays >= 14 ? Math.floor(L.longerAgoDays / 7) : null };
+}
+
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
@@ -526,6 +563,16 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
     pr: { v: protein, g: goals?.proteinG ?? null },
     failed: failedOf(d).length,
+    // Zifferblatt nach Tageszeit: sl Schlaf (h), hv HRV der letzten 7 Tage (heute zuletzt, ohne Wert null), hm deren Basis
+    // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute, wd Woche (watchWeekDays), wm Ausdauer der Woche
+    // [Minuten, Ziel-Minuten], la letzte Einheit von heute (watchLast)
+    sl: d.summary?.recovery?.sleepHours ?? null,
+    hv: Array.from({ length: 7 }, (_, i) => (byDate[addDays(d.today, i - 6)]?.hrv != null ? Math.round(byDate[addDays(d.today, i - 6)].hrv) : null)),
+    hm: d.summary?.recovery?.body?.hrvMedian != null ? Math.round(d.summary.recovery.body.hrvMedian) : null,
+    cl: firstLine(freshCoach(d)?.headline ?? freshCoach(d)?.note, 30),
+    wd: watchWeekDays(d),
+    wm: weekGoals(d) ? [Math.round(weekGoals(d).min), weekGoals(d).goalMin] : null,
+    la: watchLast(d),
   };
 }
 

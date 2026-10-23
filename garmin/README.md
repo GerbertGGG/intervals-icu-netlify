@@ -1,24 +1,26 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Regenbogen“ (Mockup 5d): schmale Bögen am Rand, oben Essen, unten Sport, innen große Zahlen. Sportfarben: Laufen gelb, Rad grün, Schwimmen blau.
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Modular“: schwarz, große Uhrzeit, eine Karte in der Mitte, die mit der Tageszeit wechselt. Sportfarben: Laufen gelb, Rad grün, Schwimmen blau.
 
-- **Obere Bögen (Essen)**: außen Kalorien (weiß) gegen das Tagesziel, der Bogen füllt sich mit dem Gegessenen; innen Eiweiß (türkis) gegen das Yazio-Ziel.
-- **Untere Bögen (Sport)**: außen Lauf, dann Rad, innen Schwimmen, jeweils die Minuten der Woche gegen das Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender); voller Bogen = Ziel erreicht. Ohne Ziel bleibt nur der Grundbogen in gedämpfter Sportfarbe.
+Fest von oben nach unten:
 
-Innen von oben nach unten:
+- **Kopfzeile**: Datum („DO 23. OKT“), Akku in Prozent (grau, ab 20 % orange, ab 10 % rot, beim Laden grün) und das Urteil des Coaches für heute als Wort (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage nichts. Eine eigene Ampel hat die Uhr nicht.
+- **Uhrzeit**, groß, ohne führende Null.
+- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender), groß in Sportfarbe, darunter ein Balken, der sich zum Ziel füllt. Ziel erreicht: Haken, ohne Ziel „--“.
 
-- **Kalorien und Eiweiß**: was heute noch übrig ist, kcal bis zum Tagesziel (darüber „+N“) mit kleinem grauem „kcal“ und Eiweiß bis zum Yazio-Ziel mit kleinem grauem „g“ (erreicht: Haken). Ohne Ziel jeweils das Gegessene.
-- **Datum** („MI 21. OKT“) in Grau, dahinter der **Akku** als Symbol mit Prozentzahl, weiß, ab 20 % orange, ab 10 % rot, beim Laden grün.
-- **Uhrzeit**, groß. Der **Doppelpunkt** trägt das Urteil des Coaches für heute (Feld `go` in `save_coach`): grüne Kreise = hart erlaubt, orange Dreiecke = nur locker, rote Quadrate = frei, blaue Kreise = Coach hat geschrieben, aber kein Urteil, grau = noch nichts. Eine eigene Ampel hat die Uhr nicht.
-- **Offene Minuten** je Sportart bis zum Zeitziel, groß in Sportfarbe, darunter klein und grau LAUF, RAD, SCHWIMM Ziel erreicht: Haken in Sportfarbe, ohne Ziel „--“.
+Die **Karte in der Mitte** und die Zeile ganz unten wechseln:
 
-Wetter, TSS, Kraft, Wochenreihe, nächste Einheit und Blocker stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt die Felder weiter, die Uhr nutzt davon `rz`, `kcal`, `pr`, `rd` und `co`.
+- **Morgens bis 12 Uhr**: Schlaf (lila) und HRV von heute mit der eigenen Basis (Ø), darunter die HRV der letzten 7 Tage als Balken, heute grün, wenn über der Basis, die Basis gestrichelt. Unten die Kopfzeile des Coaches von heute (ohne sie die nächste Einheit).
+- **Bis 3 Stunden nach einer Einheit** (von heute): Sportart mit Startzeit, Strecke, Zeit (h:mm), Pace oder Watt und Puls (nur, wenn das Dashboard ihn für die Einheit zeigt). Rechts oben „LÄNGSTE SEIT N WO.“, wenn die letzte mindestens so lange Einheit derselben Sportart zwei Wochen oder länger zurückliegt. Unten die nächste Einheit.
+- **Sonst (tagsüber)**: die Woche Mo bis So, je Tag die Minuten je Sportart übereinander, erledigt gefüllt, geplant als Umriss; oben rechts die Ausdauer der Woche gegen das Ziel des Coaches. Unten die nächste Einheit („Heute noch: Lauf 45 min“, „Morgen: Rad 60 min“).
+
+Essen, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `ti`, `sl`, `hv`, `hm`, `cl`, `wd`, `wm` und `la`.
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Der Akku kommt von der Uhr selbst.
 
-Ist der letzte Stand älter als eine Stunde, wird der Doppelpunkt grau, und hinter dem Datum steht ein oranges „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
+Ist der letzte Stand älter als eine Stunde, steht in der Kopfzeile statt des Coach-Urteils ein oranges „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
 
-Stand: noch nicht auf einer Uhr getestet. Der Code ist nach dem Mockup 5d geschrieben und wurde nicht mit dem Connect-IQ-Compiler gebaut. Beim ersten Build sind kleine Anpassungen möglich (z. B. Berechtigungen im Manifest, Typhinweise).
+Stand: noch nicht auf einer Uhr getestet. Der Code ist nach dem Mockup „Modular“ geschrieben (Layout mit den Bitmap-Schriften in Python nachgestellt) und wurde nicht mit dem Connect-IQ-Compiler gebaut. Beim ersten Build sind kleine Anpassungen möglich (z. B. Berechtigungen im Manifest, Typhinweise).
 
 ## 1. Worker
 
@@ -46,6 +48,6 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 ## Hinweise
 
-- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Roboto Medium** (SIL Open Font License) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit), `open` (offene Minuten, Kalorien, Eiweiß), `cap` (Datum, Akku), `tag` (Beschriftung unter den Minuten, „kcal“). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und Roboto von Google Fonts).
+- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter Tight** (SIL Open Font License) in `resources/fonts/`: `time` (Uhrzeit, fett, nur Ziffern und gleich breit), `val` (Werte in Karte und unterer Reihe), `cap` (Kopfzeile, Zeile unten), `tag` (Beschriftungen). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter Tight von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
-- Ist der letzte Abruf älter als eine Stunde, wird der Doppelpunkt grau und das Datum bekommt ein `!`.
+- Ist der letzte Abruf älter als eine Stunde, steht in der Kopfzeile ein `!` statt des Coach-Urteils.

@@ -546,7 +546,18 @@ console.log("zones from intervals ok");
   assert.equal(buildWidgetWatch({ ...d, seasonBlock: { ...sb, goals: [{ ...sb.goals[0], weeks: [{ done: true, count: 40 }] }] } }).str, null);
   assert.deepEqual(buildWidgetWatch({ ...d, seasonBlock: { status: "active", weekNo: 3, weeks: 6, daysToStart: -14, goals: [] } }).block, { st: "active", d: -14, w: 3, of: 6 });
   assert.equal(w.race?.d ?? null, d.goal?.daysToGo ?? null); // Renn-Countdown fuer den unteren Rand
-  assert.ok(JSON.stringify(w).length < 1500, "Antwort fuer den Hintergrunddienst der Uhr klein halten");
+  // Zifferblatt nach Tageszeit: HRV der letzten 7 Tage (heute zuletzt), Woche Mo–So, letzte Einheit nur, wenn sie von heute ist
+  assert.equal(w.hv.length, 7); assert.equal(w.hv[6], 48); assert.equal(w.hm, 48); assert.equal(w.sl, 7.5);
+  assert.equal(w.wd.length, 7);
+  assert.deepEqual(w.wd.slice(0, 4), [[["swim", 45, 0]], [["run", 48, 0]], [], [["swim", 50, 1]]]); // heute nur "other" geplant, morgen Schwimmen
+  assert.equal(w.la, null); // letzte Einheit war gestern
+  assert.equal(w.cl, null);
+  assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, headline: "45 min locker, Wade vom Dienstag im Blick" } }).cl, "45 min locker, Wade vom Diens…");
+  const la = buildWidgetWatch({ ...d, lastActivity: { date: today, sport: "run", distanceKm: 10.2, movingSecs: 3161, paceSecPerKm: 310, avgHr: 142, start: "17:25", endAt: 1790000000, longerAgoDays: 36 } }).la;
+  assert.deepEqual(la, { s: "run", t: "17:25", e: 1790000000, c: [["10,2", "KM"], ["0:52", "ZEIT"], ["5:10", "/KM"], ["142", "HF"]], lw: 5 });
+  const swim = buildWidgetWatch({ ...d, lastActivity: { date: today, sport: "swim", distanceKm: 1.5, movingSecs: 2700, paceSecPer100m: 180, longerAgoDays: 6 } }).la;
+  assert.deepEqual([swim.c, swim.lw], [[["1500", "M"], ["0:45", "ZEIT"], ["3:00", "/100M"]], null]);
+  assert.ok(JSON.stringify(w).length < 2000, "Antwort fuer den Hintergrunddienst der Uhr klein halten");
   const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   const envW = { ...env, WATCH_TOKEN: "uhr" };
   assert.equal((await handleWidgetRequest(req("watch", "uhr"), envW)).status, 200);
@@ -656,7 +667,11 @@ console.log("zones from intervals ok");
 {
   const la = buildLastActivity([act(3, { name: "Alt", moving_time: 1800 }), act(1, { name: "Lauf locker", moving_time: 3000, distance: 9050 }), act(-1, { name: "Zukunft", moving_time: 600 })], today);
   // Art unklar ("locker" ist kein Grundlagen-Stichwort): Pace, RPE, Gefühl, aber kein Puls und kein Decoupling (Pulsregel)
-  assert.deepEqual(la, { date: day(-1), sport: "run", durationMin: 50, distanceKm: 9.1, load: 50, paceSecPerKm: 331, rpe: 5, feel: 2 });
+  // Startzeit fuer die Uhr; ohne start_date in UTC kein Ende, ohne laengere Einheit im Verlauf kein longerAgoDays
+  assert.deepEqual(la, { date: day(-1), sport: "run", durationMin: 50, distanceKm: 9.1, load: 50, paceSecPerKm: 331, rpe: 5, feel: 2, movingSecs: 3000, start: "10:00" });
+  // Ende = Start (UTC) + Gesamtzeit; letzter mindestens so langer Lauf vor 15 Tagen (der kuerzere vor 3 Tagen zaehlt nicht)
+  const lw = buildLastActivity([act(16, { distance: 12000, moving_time: 4000 }), act(3, { distance: 5000, moving_time: 1800 }), act(0, { start_date_local: today + "T17:25:00", start_date: today + "T15:25:00Z", distance: 10200, moving_time: 3161, elapsed_time: 3300 })], today);
+  assert.deepEqual([lw.start, lw.endAt, lw.longerAgoDays], ["17:25", Date.parse(today + "T15:25:00Z") / 1000 + 3300, 16]);
   assert.equal(buildLastActivity([], today), null);
   const base = buildLastActivity([act(1, { name: "Grundlagenlauf", moving_time: 3000, distance: 9050 })], today);
   // Decoupling beim Laufen nie von Intervals (dort aus Leistung), nur der Runalyze-Wert desselben Laufs

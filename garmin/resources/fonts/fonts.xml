@@ -1,6 +1,6 @@
 <fonts>
   <font id="Time" filename="time.fnt" antialias="true"/>
-  <font id="Open" filename="open.fnt" antialias="true"/>
+  <font id="Val" filename="val.fnt" antialias="true"/>
   <font id="Cap" filename="cap.fnt" antialias="true"/>
   <font id="Tag" filename="tag.fnt" antialias="true"/>
 </fonts>
