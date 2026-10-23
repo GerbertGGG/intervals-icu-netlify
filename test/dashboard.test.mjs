@@ -616,6 +616,7 @@ console.log("zones from intervals ok");
   assert.deepEqual([tw.goal, tw.goalMin, tw.cap, tw.minGoal], [cur.targetLoad, cur.targetLoadMin, true, cur.targetMin]);
   assert.equal(buildWidgetDetail(dt).tssWeeks.at(-2).goalMin, null); // Woche ohne TSS-Ziel
   assert.equal(tw.min, dt.weekTotals.weeks.at(-1).enduranceMin); // Ausdauer ohne Kraft, wie die Woche-Karte
+  assert.equal(tw.minFrame, Math.round(dt.weekTotals.weeks.at(-1).goalHours * 60)); // Rahmen (save_targets) als Linie im Zeit-Widget
   // Grosses Widget: Zeile "Ausdauer h:mm/Ziel · Kraft Saetze/Ziel" aus derselben Rechnung wie die Karte "Woche"
   const cw = dt.weekTotals.weeks.at(-1);
   assert.deepEqual(buildWidget(dt).week.goals, { min: cw.enduranceMin, goalMin: 300, sets2w: cw.strengthSets2w, goalSets2w: 90 });

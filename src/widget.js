@@ -171,6 +171,8 @@ export function buildWidgetDetail(d, env = {}) {
       weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, minSports, complete: w.complete, goal, cap,
       goalMin: cap && w.targetLoadMin > 0 ? w.targetLoadMin : null,
       min: et && hasData ? et.enduranceMin : null, minGoal: targetMin > 0 ? targetMin : plannedMin > 0 ? plannedMin : null,
+      // Ausdauerstunden aus dem Rahmen des Coaches (save_targets), der in dieser Woche galt; als Linie im Zeit-Widget
+      minFrame: et?.goalHours > 0 ? Math.round(et.goalHours * 60) : null,
     };
   });
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));
