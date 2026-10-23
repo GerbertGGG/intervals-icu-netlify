@@ -1,8 +1,9 @@
 // Testet src/week-totals.js (Ausdauerstunden ohne Kraft, Kraftsätze in 2 Wochen). Ausführen: node test/week-totals.test.mjs
 import assert from "node:assert/strict";
-import { computeWeekTotals, currentWeekTotals, enduranceDiscipline, strengthSetsOf, WEEK_GOALS, weekTotalsOldest } from "../src/week-totals.js";
+import { computeWeekTotals, currentWeekTotals, enduranceDiscipline, strengthSetsOf, weekTotalsOldest } from "../src/week-totals.js";
+import { DEFAULT_TARGET, appendTarget, targetOn, targetHistory, targetsView, validateTargets } from "../src/targets-snapshot.js";
 
-assert.deepEqual(WEEK_GOALS, { enduranceHours: 5, strengthSets2w: 90, streakHours: 4.5 });
+const GOALS = { enduranceHours: 5, strengthSets2w: 90, streakThresholdPct: 90 }; // Startwert ohne gespeicherte Ziele
 assert.deepEqual(["Run", "VirtualRun", "TrailRun", "Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "Swim", "OpenWaterSwim"].map((type) => enduranceDiscipline({ type })),
   ["lauf", "lauf", "lauf", "rad", "rad", "rad", "rad", "schwimmen", "schwimmen"]);
 assert.deepEqual(["WeightTraining", "Yoga", "Workout", "Walk", "", undefined].map((type) => enduranceDiscipline({ type })), [null, null, null, null, null, null]);
@@ -36,7 +37,7 @@ assert.deepEqual(cur.byDiscipline, { lauf: 0.57, rad: 1.75, schwimmen: 0 });
 assert.deepEqual([cur.strengthSets, cur.strengthSets2w, prev.strengthSets], [0, 60, 60]);
 assert.equal(prev.enduranceMin, 55); // Kraft (2 × 32 min) taucht nicht in den Stunden auf
 assert.equal(t.streakWeeksAbove4_5, 0);
-assert.deepEqual(currentWeekTotals(t), { week: "2026-10-19", enduranceHours: 2.32, byDiscipline: { lauf: 0.57, rad: 1.75, schwimmen: 0 }, strengthSets: 0, strengthSets2w: 60, streakWeeksAbove4_5: 0, goals: WEEK_GOALS });
+assert.deepEqual(currentWeekTotals(t), { week: "2026-10-19", enduranceHours: 2.32, byDiscipline: { lauf: 0.57, rad: 1.75, schwimmen: 0 }, strengthSets: 0, strengthSets2w: 60, streakWeeksAbove4_5: 0, streakWeeks: 0, goals: GOALS });
 assert.equal(weekTotalsOldest("2026-10-23"), "2026-08-24");
 
 // Serie: volle Wochen ab 4,5 h bis zur letzten vollen Woche, die laufende zählt erst, wenn sie die Schwelle erreicht
@@ -45,4 +46,39 @@ const s = computeWeekTotals([ride("2026-10-05", 4.5), ride("2026-10-12", 5), rid
 assert.deepEqual([s.streakWeeksAbove4_5, s.streakCapped], [2, false]);
 assert.equal(computeWeekTotals([ride("2026-10-05", 4.5), ride("2026-10-12", 5), ride("2026-10-19", 4.6)], "2026-10-23").streakWeeksAbove4_5, 3);
 assert.equal(computeWeekTotals([ride("2026-10-05", 5)], "2026-10-23").streakWeeksAbove4_5, 0); // Lücke in der Vorwoche
+
+// save_targets: Prüfung der Eingaben
+const T0 = "2026-10-23", at = "2026-10-23T06:00:00Z";
+const ok = validateTargets({ fetchedAt: at, enduranceHoursPerWeek: 5.5, strengthSets2w: 100, reason: "6 Wochen ohne gelbe Signale" }, T0).value;
+assert.deepEqual(ok, { enduranceHoursPerWeek: 5.5, strengthSets2w: 100, streakThresholdPct: 90, reason: "6 Wochen ohne gelbe Signale", validFrom: "2026-10-19", fetchedAt: "2026-10-23T06:00:00.000Z" }); // Standard: Montag der laufenden Woche
+for (const bad of [{ enduranceHoursPerWeek: 5.3 }, { enduranceHoursPerWeek: 0.75 }, { enduranceHoursPerWeek: 20.25 }, { strengthSets2w: 301 }, { strengthSets2w: 2.5 }, { reason: "" }, { reason: "r".repeat(201) },
+  { validFrom: "2.11.2026" }, { streakThresholdPct: 40 }, { fetchedAt: "kaputt" }]) assert.ok(validateTargets({ fetchedAt: at, enduranceHoursPerWeek: 5, strengthSets2w: 90, reason: "x", ...bad }, T0).error, JSON.stringify(bad));
+assert.equal(validateTargets({ fetchedAt: at, enduranceHoursPerWeek: "5,25", strengthSets2w: 0, reason: "x", streakThresholdPct: 80 }, T0).value.enduranceHoursPerWeek, 5.25);
+
+// Ohne Eintrag gilt der Startwert, auch für Tage davor
+assert.equal(targetOn(targetHistory(null), "2026-09-01"), DEFAULT_TARGET);
+assert.deepEqual([targetsView(null, T0).current.enduranceHoursPerWeek, targetsView(null, T0).current.reason, targetsView(null, T0).previous], [5, "Startwert Block A", null]);
+
+// Ziel 5 -> 5,5 h ab Montag 02.11. (in der Zukunft): heute und alle vergangenen Wochen bleiben bei 5 h
+const base = [...acts, ride("2026-10-05", 4.6), ride("2026-09-28", 4.8)]; // zwei Wochen ab 4,5 h vor der Vorwoche
+const before = computeWeekTotals(base, T0);
+const future = appendTarget(null, { ...ok, validFrom: "2026-11-02" });
+const after = computeWeekTotals(base, T0, future);
+assert.deepEqual(after, before); // nichts ändert sich vor dem 02.11.
+assert.deepEqual(after.weeks.map((w) => w.goalHours), [5, 5, 5, 5, 5, 5, 5, 5]);
+const v = targetsView(future, T0);
+assert.deepEqual([v.current.enduranceHoursPerWeek, v.upcoming.map((t) => [t.validFrom, t.enduranceHoursPerWeek])], [5, [["2026-11-02", 5.5]]]);
+// ... zwei Wochen später: KW 45 zählt gegen 5,5 h (Schwelle 4:57), die Wochen davor behalten 5 h
+const later = [...base, ride("2026-10-26", 4.6), ride("2026-11-02", 4.6)];
+const w2 = computeWeekTotals(later, "2026-11-08", future);
+assert.deepEqual(w2.weeks.map((w) => [w.week, w.goalHours, w.streakMin, w.streakMet]).slice(-3), [
+  ["2026-10-19", 5, 270, false], ["2026-10-26", 5, 270, true], ["2026-11-02", 5.5, 297, false]]); // 08.11. ist Sonntag
+assert.equal(computeWeekTotals(later, "2026-11-08").weeks.at(-1).streakMet, true); // mit 5 h wäre KW 45 dabei gewesen
+assert.equal(targetsView(future, "2026-11-08").previous.enduranceHoursPerWeek, 5);
+// Schwelle je Eintrag: 80 % von 5,5 h = 4:24 -> die 4:36 aus KW 45 zählen
+assert.equal(computeWeekTotals(later, "2026-11-08", appendTarget(null, { ...ok, validFrom: "2026-11-02", streakThresholdPct: 80 })).weeks.at(-1).streakMet, true);
+// Neuester Eintrag gewinnt; ein späterer mit älterem validFrom überdeckt den früheren
+const two = appendTarget(future, { ...ok, enduranceHoursPerWeek: 6, validFrom: "2026-10-19", reason: "korrigiert" });
+assert.equal(targetOn(targetHistory(two), "2026-11-10").enduranceHoursPerWeek, 6);
+assert.deepEqual(targetsView(two, T0).history.map((t) => t.enduranceHoursPerWeek), [6, 5.5, 5]); // neueste zuerst, Startwert zuletzt
 console.log("week-totals tests ok");

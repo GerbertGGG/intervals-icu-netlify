@@ -137,5 +137,19 @@ gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).
 assert.deepEqual(gc.insights, []);
 r = await rpc("tools/call", { name: "archive_insight", arguments: { id: "gibt-es-nicht" } });
 assert.equal(r.body.result.isError, true);
+// Wochenziele: save_targets hängt an (überschreibt nicht), get_coach liefert targets mit Historie (max. 10, neueste zuerst)
+assert.ok(list.body.result.tools.some((t) => t.name === "save_targets"));
+gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
+assert.deepEqual([gc.targets.current.enduranceHoursPerWeek, gc.targets.current.default, gc.targets.history.length], [5, true, 1]); // Startwert
+const tgt = { fetchedAt: "2026-10-23T06:00:00Z", enduranceHoursPerWeek: 5.5, strengthSets2w: 90, reason: "6 Wochen ohne gelbe Signale", validFrom: "2099-11-02" };
+r = await rpc("tools/call", { name: "save_targets", arguments: tgt });
+assert.ok(!r.body.result.isError, r.body.result.content[0].text);
+r = await rpc("tools/call", { name: "save_targets", arguments: { ...tgt, enduranceHoursPerWeek: 5.3 } });
+assert.equal(r.body.result.isError, true); assert.match(r.body.result.content[0].text, /Schritten von 0,25/);
+for (let i = 0; i < 11; i++) await rpc("tools/call", { name: "save_targets", arguments: { ...tgt, reason: `r${i}`, validFrom: "2026-10-19", enduranceHoursPerWeek: 5 } });
+assert.equal(JSON.parse(kv.get("dashboard:targets")).items.length, 12); // nichts überschrieben
+gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
+assert.equal(gc.targets.history.length, 10); assert.equal(gc.targets.history[0].reason, "r10");
+assert.deepEqual([gc.targets.current.reason, gc.targets.upcoming.length], ["r10", 0]); // neuester Eintrag mit validFrom <= heute
 console.log = log;
 console.log("mcp-save tests ok");

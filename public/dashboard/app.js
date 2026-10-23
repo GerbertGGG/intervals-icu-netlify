@@ -362,10 +362,19 @@ function renderTargetWeek(d, tile, cur, monday, days) {
 }
 
 /* Karte "Woche" (Worker: week-totals.js): Ausdauerstunden der ISO-Woche (Laufen, Rad, Schwimmen; Kraft zählt nicht) gegen das
-   Wochenziel, Kraftsätze der laufenden Woche plus Vorwoche gegen das 2-Wochen-Ziel, Verlauf der letzten 8 Wochen. Die Ziele kommen
-   aus dem Worker (WEEK_GOALS). Nur Ist gegen Ziel: Unter dem Ziel bleibt alles neutral, nie rot. */
+   Wochenziel, Kraftsätze der laufenden Woche plus Vorwoche gegen das 2-Wochen-Ziel, Verlauf der letzten 8 Wochen, je Woche mit dem
+   Ziel, das in ihr galt. Die Ziele setzt der Coach (save_targets); darunter steht, seit wann das Ziel gilt und warum, aufklappbar
+   die ganze Historie. Nur Ist gegen Ziel: Unter dem Ziel bleibt alles neutral, nie rot. */
 const DISC_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim" };
 const hmm = (min) => { const t = Math.max(0, Math.round(min ?? 0)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
+function targetsLine(TG) {
+  if (!TG?.current) return "";
+  const c = TG.current, p = TG.previous, set = (t) => `${hmm(t.enduranceHoursPerWeek * 60)} h · ${fmt(t.strengthSets2w)} Sätze/2 Wo`;
+  const head = `Ziel seit ${fmtDate(c.validFrom)}: ${hmm(c.enduranceHoursPerWeek * 60)} h${p ? ` · vorher ${hmm(p.enduranceHoursPerWeek * 60)} h` : ""} – ${esc(c.reason)}`;
+  const next = (TG.upcoming ?? []).map((t) => `<div class="sub">geplant ab ${fmtDate(t.validFrom)}: ${set(t)} – ${esc(t.reason)}</div>`).join("");
+  const rows = (TG.history ?? []).map((t) => `<li><b>ab ${fmtDate(t.validFrom)}</b> ${set(t)} · Serie ab ${fmt(t.streakThresholdPct)} %<div class="sub">${esc(t.reason)}${t.savedAt ? ` · gespeichert ${fmtDate(t.savedAt.slice(0, 10))}` : t.default ? " · Startwert" : ""}</div></li>`).join("");
+  return `<details class="info wg-targets"><summary>${head}</summary>${next}<ol class="wg-thist">${rows}</ol></details>`;
+}
 function renderWeekGoals(d, tile) {
   const T = d.weekTotals;
   if (!T?.weeks?.length) return "";
@@ -376,22 +385,21 @@ function renderWeekGoals(d, tile) {
   const legend = `<div class="dots">${segs.map((x) => `<span><i style="background:var(--s-${x.sp})"></i>${SPORT_LABEL[x.sp]} ${hmm(x.min)}</span>`).join("")}</div>`;
   const setsGoal = G.strengthSets2w, sets = cur.strengthSets2w;
   const kraft = `<div class="wg-kraft"><div class="wg-l"><b>Kraft: ${fmt(sets)} / ${fmt(setsGoal)} Sätze</b> <span class="muted">(2 Wochen)</span></div>
-    <div class="cbar"><div class="cfill" style="width:${Math.min(100, (sets / setsGoal) * 100)}%;background:var(--s-strength)"></div></div>
+    <div class="cbar"><div class="cfill" style="width:${setsGoal > 0 ? Math.min(100, (sets / setsGoal) * 100) : sets > 0 ? 100 : 0}%;background:var(--s-strength)"></div></div>
     <div class="sub">diese Woche ${fmt(cur.strengthSets)} · Vorwoche ${fmt(prev?.strengthSets ?? 0)}</div></div>`;
-  const n = T.streakWeeksAbove4_5, th = fmt(G.streakHours, 1);
-  const streak = `<div class="sub">${T.streakCapped ? "mindestens " : ""}<b>${n}</b> Woche${n === 1 ? "" : "n"} in Folge ab ${th} h${T.streakCapped ? ` (so weit reicht der Verlauf)` : ""}</div>`;
+  const n = T.streakWeeksAbove4_5;
+  const streak = `<div class="sub">${T.streakCapped ? "mindestens " : ""}<b>${n}</b> Woche${n === 1 ? "" : "n"} in Folge ab ${fmt(G.streakThresholdPct)} % des Wochenziels (diese Woche ab ${hmm(cur.streakMin)} h)${T.streakCapped ? " – so weit reicht der Verlauf" : ""}</div>`;
   const body = `<div class="wg">
     <div class="wg-main"><div class="wg-l"><b>Ausdauer: ${hmm(cur.enduranceMin)} / ${hmm(goalMin)} h</b> <span class="muted wg-kw">KW ${cur.kw} · ab ${fmtDate(cur.week)}</span></div>${bar}${legend}</div>
     ${kraft}
-    <div class="wg-hist"><div id="wg-chart"></div>${streak}</div></div>`;
+    <div class="wg-hist"><div id="wg-chart"></div>${streak}${targetsLine(T.targets)}</div></div>`;
   return tile("Woche", body, "span4");
 }
 function drawWeekGoals(d) {
   const T = d.weekTotals;
   if (!T?.weeks?.length || !$("wg-chart")) return;
-  const sports = Object.values(DISC_SPORT);
-  C.weekHours($("wg-chart"), T.weeks.map((w) => ({ label: fmtDate(w.week), tip: `Woche ab ${fmtDate(w.week)}`, partial: !w.complete, by: Object.fromEntries(Object.entries(DISC_SPORT).map(([k, sp]) => [sp, w.byDisciplineMin[k]])) })),
-    { sports, names: SPORT_LABEL, goalMin: T.goals.enduranceHours * 60, fmtV: hmm, label: "Ausdauerstunden der letzten 8 Wochen nach Sportart" });
+  C.weekHours($("wg-chart"), T.weeks.map((w) => ({ label: fmtDate(w.week), tip: `Woche ab ${fmtDate(w.week)}`, partial: !w.complete, goalMin: w.goalHours * 60, by: Object.fromEntries(Object.entries(DISC_SPORT).map(([k, sp]) => [sp, w.byDisciplineMin[k]])) })),
+    { sports: Object.values(DISC_SPORT), names: SPORT_LABEL, fmtV: hmm, label: "Ausdauerstunden der letzten 8 Wochen nach Sportart, je Woche mit ihrem Ziel" });
 }
 
 /* Montagsbilanz (Worker: week-review.js): Fakten zur letzten vollen Woche im Vergleich zu den bis zu 4 Wochen davor –

@@ -634,17 +634,25 @@
     refit(host, draw, fitW(host, 560), 560, 340);
   }
 
-  /* ---------- Ausdauerstunden je Woche (Karte "Woche"): gestapelt nach Laufen, Rad, Schwimmen in Sportfarben, Ziellinie
-     gestrichelt; die laufende Woche heller und schraffiert (unvollständig). Kein Rot unter dem Ziel. ---------- */
+  /* ---------- Ausdauerstunden je Woche (Karte "Woche"): gestapelt nach Laufen, Rad, Schwimmen in Sportfarben; Ziellinie je Woche
+     gestrichelt (das Ziel, das in der Woche galt, als Stufe); die laufende Woche heller und schraffiert (unvollständig). Kein Rot. ---------- */
   function weekHours(host, items, o) {
     const draw = () => {
       const W = fitW(host, 1100, 300), H = 170, L = 30, R = 8, T = 18, B = 22;
-      const goalH = o.goalMin / 60, top = Math.max(goalH, ...items.map((w) => o.sports.reduce((a, k) => a + (w.by[k] ?? 0), 0) / 60));
+      const top = Math.max(...items.map((w) => Math.max(w.goalMin ?? 0, o.sports.reduce((a, k) => a + (w.by[k] ?? 0), 0)) / 60));
       const max = Math.max(1, Math.ceil(top + 0.4)), y = (h) => T + (H - T - B) * (1 - h / max);
       const s = svg(W, H, o.label);
       hatch(s);
       for (let h = 0; h <= max; h += max > 6 ? 2 : 1) s.append(el("line", { x1: L, x2: W - R, y1: y(h), y2: y(h), class: h ? "grid-l" : "axis" }), el("text", { x: L - 5, y: y(h) + 4, "text-anchor": "end" }, `${h}h`));
       const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.58, 40);
+      // Ziellinie als Stufe: je Woche über den ganzen Platz, Sprung nur, wo sich das Ziel ändert; Beschriftung bei jedem neuen Wert
+      let path = "";
+      items.forEach((w, i) => {
+        if (w.goalMin == null) return;
+        const gy = y(w.goalMin / 60), x0 = L + slot * i, x1 = x0 + slot, prev = items[i - 1]?.goalMin;
+        path += `${prev == null ? "M" : "L"}${x0},${prev == null ? gy : y(prev / 60)} ${prev != null && prev !== w.goalMin ? `L${x0},${gy} ` : ""}L${x1},${gy} `;
+        if (prev !== w.goalMin) s.append(el("text", { x: i === items.length - 1 ? x1 : x0 + 2, y: gy - 4, "text-anchor": i === items.length - 1 ? "end" : "start", style: "font-size:10px;font-weight:600" }, `Ziel ${o.fmtV(w.goalMin)} h`));
+      });
       items.forEach((w, i) => {
         const x = L + slot * i + (slot - bw) / 2;
         let acc = 0;
@@ -655,10 +663,10 @@
           acc += v;
         }
         if (w.partial && acc > 0) s.append(el("rect", { x, y: y(acc), width: bw, height: Math.max(0, y(0) - y(acc)), fill: "url(#hatch)" }));
-        s.append(title(el("text", { x: x + bw / 2, y: y(acc) - 4, "text-anchor": "middle", style: "font-size:10.5px;font-weight:700;fill:var(--text)" }, acc > 0 ? o.fmtV(acc * 60) : "–"), `${w.tip}: Ausdauer ${o.fmtV(acc * 60)}${w.partial ? " (laufende Woche, unvollständig)" : ""}`));
+        s.append(title(el("text", { x: x + bw / 2, y: y(acc) - 4, "text-anchor": "middle", style: "font-size:10.5px;font-weight:700;fill:var(--text)" }, acc > 0 ? o.fmtV(acc * 60) : "–"), `${w.tip}: Ausdauer ${o.fmtV(acc * 60)}${w.goalMin != null ? ` von ${o.fmtV(w.goalMin)} h` : ""}${w.partial ? " (laufende Woche, unvollständig)" : ""}`));
         if (slot >= 34 || i % 2 === (items.length - 1) % 2) s.append(el("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle", style: "font-size:10px" }, w.partial ? "läuft" : w.label));
       });
-      s.append(el("line", { x1: L, x2: W - R, y1: y(goalH), y2: y(goalH), stroke: "var(--text)", "stroke-width": 1.5, "stroke-dasharray": "5 3", opacity: 0.7 }), el("text", { x: W - R, y: y(goalH) - 4, "text-anchor": "end", style: "font-size:10px;font-weight:600" }, `Ziel ${o.fmtV(o.goalMin)} h`));
+      if (path) s.append(el("path", { d: path, fill: "none", stroke: "var(--text)", "stroke-width": 1.5, "stroke-dasharray": "5 3", opacity: 0.7 }));
       mount(host, s);
     };
     draw();

@@ -1,12 +1,10 @@
 import { isIsoDate, isoDate, isoDateBerlin, isoWeekNumber, mondayOnOrBefore } from "./date-utils.js";
 import { activityDay } from "./activity-utils.js";
 
-// Wochenziele, wie Gerbert sie festgelegt hat. Hier aendern, alles andere (Dashboard, get_coach) liest diese Werte.
-// enduranceHours: Ausdauerstunden je ISO-Woche (Laufen, Rad, Schwimmen; Kraft zaehlt nicht)
-// strengthSets2w: Kraftsaetze in 2 Wochen, rollierend (laufende Woche plus Vorwoche)
-// streakHours: Schwelle fuer "X Wochen in Folge ab 4,5 h"
-export const WEEK_GOALS = { enduranceHours: 5, strengthSets2w: 90, streakHours: 4.5 };
-// So viele Wochen (inkl. der laufenden) zeigt der Verlauf; die Serie zaehlt nur innerhalb dieses Fensters
+import { DEFAULT_TARGET, targetHistory, targetOn } from "./targets-snapshot.js";
+
+// Die Wochenziele setzt der Coach (save_targets, targets-snapshot.js); hier wird nur Ist gegen das Ziel der jeweiligen Woche
+// gerechnet. So viele Wochen (inkl. der laufenden) zeigt der Verlauf; die Serie zaehlt nur innerhalb dieses Fensters
 export const WEEK_TOTALS_WEEKS = 8;
 
 export const DISCIPLINES = ["lauf", "rad", "schwimmen"];
@@ -40,9 +38,13 @@ const hours = (sec) => Math.round((sec / 3600) * 100) / 100;
 
 // Wochensummen je ISO-Woche (Mo–So nach dem lokalen Startdatum der Aktivitaet, bei Gerbert Europe/Berlin), aelteste zuerst,
 // die laufende zuletzt (complete: false). Ausdauer aus moving_time, Kraft in Saetzen; icu_ignore_time zaehlt nicht.
-// streak = volle Wochen in Folge ab streakHours bis zur letzten vollen Woche, die laufende zaehlt mit, sobald sie die
-// Schwelle erreicht. Innerhalb des Fensters (streakCapped: true, wenn die Serie bis an dessen Anfang reicht).
-export function computeWeekTotals(activities, todayIso = isoDateBerlin(), weeks = WEEK_TOTALS_WEEKS, goals = WEEK_GOALS) {
+// Jede Woche traegt das Ziel, das in ihr galt (Eintrag am Sonntag bzw. heute, siehe targetOn): goalHours, goalSets2w und
+// streakMin (= streakThresholdPct % des Wochenziels in Minuten). Steigt das Ziel, bleiben vergangene Wochen beim alten.
+// streak = volle Wochen in Folge mit Ausdauer >= streakMin bis zur letzten vollen Woche, die laufende zaehlt mit, sobald
+// sie ihre Schwelle erreicht. Innerhalb des Fensters (streakCapped: true, wenn die Serie bis an dessen Anfang reicht).
+// stored = gespeicherte Ziele (KV, readTargets); ohne gilt der Startwert.
+export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored = null, weeks = WEEK_TOTALS_WEEKS) {
+  const history = targetHistory(stored);
   const thisMonday = mondayOnOrBefore(todayIso);
   const mondays = Array.from({ length: weeks + 1 }, (_, i) => addDays(thisMonday, -7 * (weeks - i))); // eine Woche mehr fuer die 2 Wochen Kraft
   const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0 }]));
@@ -61,32 +63,40 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), weeks 
   }
   const list = mondays.slice(1).map((week, i) => {
     const w = acc.get(week), prev = acc.get(mondays[i]);
+    const end = addDays(week, 6), tg = targetOn(history, end < todayIso ? end : todayIso);
+    const pct = tg.streakThresholdPct ?? DEFAULT_TARGET.streakThresholdPct, enduranceMin = Math.round(w.sec / 60);
+    const streakMin = Math.round(tg.enduranceHoursPerWeek * 60 * pct) / 100;
     return {
       week,
       kw: isoWeekNumber(week),
       complete: week !== thisMonday,
-      enduranceMin: Math.round(w.sec / 60),
+      enduranceMin,
       enduranceHours: hours(w.sec),
       byDiscipline: Object.fromEntries(DISCIPLINES.map((k) => [k, hours(w.by[k])])),
       byDisciplineMin: Object.fromEntries(DISCIPLINES.map((k) => [k, Math.round(w.by[k] / 60)])),
       strengthSets: w.sets,
       strengthSets2w: w.sets + prev.sets,
-      _sec: w.sec,
+      goalHours: tg.enduranceHoursPerWeek,
+      goalSets2w: tg.strengthSets2w,
+      streakThresholdPct: pct,
+      streakMin,
+      streakMet: w.sec >= streakMin * 60,
     };
   });
-  const min = goals.streakHours * 3600;
   let streak = 0, i = list.length - 2;
-  while (i >= 0 && list[i]._sec >= min) { streak++; i--; }
+  while (i >= 0 && list[i].streakMet) { streak++; i--; }
   const cur = list[list.length - 1];
-  if (cur._sec >= min) streak++;
-  return { goals: { ...goals }, weeks: list.map(({ _sec, ...w }) => w), streakWeeksAbove4_5: streak, streakCapped: streak > 0 && i < 0 };
+  if (cur.streakMet) streak++;
+  // goals: das heute geltende Ziel (Form wie bisher, die Werte kommen jetzt vom Coach)
+  return { goals: { enduranceHours: cur.goalHours, strengthSets2w: cur.goalSets2w, streakThresholdPct: cur.streakThresholdPct }, weeks: list, streakWeeksAbove4_5: streak, streakCapped: streak > 0 && i < 0 };
 }
 
-// Die Form fuer get_coach (week_totals): die laufende Woche
+// Die Form fuer get_coach (week_totals): die laufende Woche. streakWeeksAbove4_5 heisst aus Kompatibilitaet so, zaehlt aber
+// gegen streakThresholdPct % des Ziels der jeweiligen Woche (beim Startwert 90 % von 5 h = 4,5 h); streakWeeks ist dasselbe.
 export function currentWeekTotals(t) {
   const c = t?.weeks?.[t.weeks.length - 1];
   if (!c) return null;
-  return { week: c.week, enduranceHours: c.enduranceHours, byDiscipline: c.byDiscipline, strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, goals: t.goals };
+  return { week: c.week, enduranceHours: c.enduranceHours, byDiscipline: c.byDiscipline, strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
 }
 
 // Aktivitaeten fuer das ganze Fenster (inkl. Vorwoche fuer die 2 Wochen Kraft)
