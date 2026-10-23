@@ -10,7 +10,7 @@
 //              Zweck aus dem Plan), heutige Einheit,
 //              Woche Mo bis So als Kapseln mit Wochenlast, die naechsten drei Tage.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  (auch  tss) = Wochen-TSS der letzten 6 Wochen gegen das Ziel, Schwellen;
-//              Parameter  zeit  = Trainingszeit der letzten 6 Wochen gegen das Zeitziel, Minuten dieser Woche je Sportart;
+//              Parameter  zeit  = Trainingszeit der letzten 6 Wochen gegen das Zeitziel, Rahmen (Ausdauerstunden) gestrichelt, Minuten dieser Woche je Sportart;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
 //              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
@@ -18,7 +18,7 @@
 //              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Verlauf und Leitplanken.
 //              Parameter  rahmen  = aktueller Rahmen des Coaches: Intensitaet je Sportart mit Stand dieser Woche, Nicht erlaubt,
 //              Leitplanken, naechster Blocktest; Ramp Rate/ACWR nur als Hinweis, wenn hoch.
-//              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Ausdauerstunden dieser Woche gegen das Wochenziel (Tage, Kraft, Serie klein),
+//              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Ausdauerstunden dieser Woche gegen das Wochenziel (Tage, Serie klein),
 //              Messgroessen mit Ausgangs- und aktuellem Wert, sein Fazit.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
@@ -828,7 +828,7 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
 /* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
 // Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Ziel (TSS-Obergrenze
 // bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Die Untergrenze des
-// TSS-Korridors steht wie im Dashboard als gestrichelte Linie quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne
+// TSS-Korridors bzw. der Rahmen des Coaches (Ausdauerstunden) steht als gestrichelte Linie quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne
 // Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
 // Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
@@ -840,7 +840,7 @@ const WEEK_KINDS = {
   },
   time: {
     title: "ZEIT · 6 WOCHEN", unit: null, fmtVal: fmtHm,
-    val: (k) => k.min, goal: (k) => k.minGoal, parts: (k) => k.minSports,
+    val: (k) => k.min, goal: (k) => k.minGoal, floor: (k) => k.minFrame ?? null, parts: (k) => k.minSports,
     goalText: (k) => (k.minGoal != null ? fmtHm(k.minGoal) : null),
   },
 };
@@ -848,7 +848,7 @@ function weekImage(w, weeks, K) {
   // Schmale Saeule, das Ziel als blasse Flaeche, die die Saeule fuellt. Ueber dem Ziel waechst die Saeule heraus und
   // ein Strich markiert die Zielhoehe. 3 pt Rand oben fuer den Strich.
   const n = weeks.length, H = WEEK_PLOT_H, M = 3, h = H - M - 1, base = H - 1, dc = newCtx(w, H);
-  const vals = weeks.flatMap((k) => [K.val(k), K.goal(k)]).filter((v) => v != null);
+  const vals = weeks.flatMap((k) => [K.val(k), K.goal(k), K.floor ? K.floor(k) : null]).filter((v) => v != null);
   const max = Math.max(50, ...vals), slot = w / n, bw = Math.min(16, slot * 0.34), tick = bw + 12;
   dc.setFillColor(new Color(NEUTRAL_HEX, 0.35)); dc.fillRect(new Rect(0, base, w, 1)); // Grundlinie
   weeks.forEach((k, i) => {
@@ -916,6 +916,8 @@ function buildMedium(res, kind = "tss") {
     const ms = Object.entries((cur && cur.minSports) || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
     if (ms.length) ms.forEach(([k, v]) => item(k, fmtHm(v)));
     else text(th, "Diese Woche noch kein Training", FS.xs, { color: COL.muted });
+    // Rahmen des Coaches (gestrichelte Linie in den Saeulen)
+    if (cur && cur.minFrame) { th.addSpacer(); text(th, `┄ Rahmen ${fmtHm(cur.minFrame)}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 }); }
   } else {
     // Unten: Schwellen mit Sportsymbol
     const T = d.thresholds;
@@ -1477,8 +1479,8 @@ function buildRahmen(res) {
 }
 
 /* ---------- Experiment (mittel): Werte des Coaches. Oben eine Zeile „diese Woche“: Ausdauerstunden (Laufen, Rad, Schwimmen,
-   Kraft zählt nicht) gegen das Wochenziel, daneben klein Trainingstage, Kraft in 2 Wochen und die Serie. Den Verlauf der Wochen
-   zeigt das Widget „zeit“, darum hier keine Säulen. Keine eigene Bewertung, unter dem Ziel nichts rot. Veränderung grün = besser,
+   Kraft zählt nicht) gegen das Wochenziel, daneben klein Trainingstage und die Serie. Den Verlauf der Wochen
+   zeigt das Widget „zeit“, darum hier keine Säulen, Kraft steht im Block-Widget. Keine eigene Bewertung, unter dem Ziel nichts rot. Veränderung grün = besser,
    orange = schlechter (Richtung setzt der Coach); markiert der Coach einen Wert als vorläufig (provisional), steht er grau mit
    „vorläufig“ statt der Veränderung. Ältere Worker ohne endurance: nur die Trainingstage dieser Woche. ---------- */
 const EXP_STATUS = { "vorgeschlagen": "VORGESCHLAGEN", "läuft": "LÄUFT", "ausgewertet": "AUSGEWERTET" };
@@ -1500,8 +1502,8 @@ function buildExperiment(res) {
   if (ec) {
     num(vr, hmShort(ec.min), FS.xl);
     text(vr, `/ ${hmShort(ec.goalMin)} h diese Woche`, FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
-    // Trainingstage (Ziel des Experiments), Kraft in 2 Wochen, Serie gegen das Ziel der jeweiligen Woche
-    rc([`${cur ? cur.days : MISSING}${x ? `/${x.targetDaysPerWeek}` : ""} Tage · Kraft ${fmt(E.sets2w)}/${fmt(E.goalSets2w)}`, `${E.streak} Wo in Folge ab ${fmt(E.streakPct)} %`]);
+    // Trainingstage (Ziel des Experiments), Serie gegen das Ziel der jeweiligen Woche; Kraft steht im Block-Widget
+    rc([`${cur ? cur.days : MISSING}${x ? `/${x.targetDaysPerWeek}` : ""} Tage`, `${E.streak} Wo in Folge ab ${fmt(E.streakPct)} %`]);
   } else {
     num(vr, cur ? String(cur.days) : MISSING, FS.xl);
     text(vr, `${x ? `/ ${x.targetDaysPerWeek} ` : ""}Tage diese Woche`, FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
