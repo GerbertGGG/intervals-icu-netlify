@@ -1,19 +1,19 @@
 import { readKvJson, writeKvJson, hasKv } from "./kv.js";
 import { fetchIntervalsActivityIntervals, fetchIntervalsActivityStreams } from "./intervals-client.js";
 import { activityDay, isBike } from "./activity-utils.js";
-import { FLAT_M_PER_KM, HEAT_C, RIDE_WARMUP_MIN_SEC, swimTestFromIntervals, swimTestFromText } from "./season-block.js";
+import { FLAT_M_PER_KM, HEAT_C, swimTestFromIntervals, swimTestFromText } from "./season-block.js";
+import { TEST_RULES, TEST_FALLBACK, classifyRuns, classifyRide, rideWindowOf, rideWindowStats, isTestRide } from "./session-tests.js";
 
 // Eingaben fuer die Abschlussziele des Trainingsblocks (season-block.js): lockere Laeufe und Rollen-Einheiten mit
 // Decoupling, Schwimmtests, FTP-Test. Welche Einheit vergleichbar ist, entscheidet season-block.js; hier werden nur
 // die Rohwerte gesammelt. Decoupling Laufen: Runalyze (lange Laeufe) vor eigener Rechnung aus den Zeitreihen (Intervals
-// nie, s. decouplingOf); Rad: Intervals vor eigener Rechnung.
+// nie, s. decouplingOf). Blocktest, Trendlauf und Rad-Vergleichseinheit erkennt session-tests.js (category, testReason).
 
 const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
 const MAX_FETCH = 6; // je Aufruf hoechstens so viele Einheiten nachladen (Rest beim naechsten Mal, Ergebnis in KV)
 const DEC_CACHE = "icu:decoupling:v2:"; // v2: Auf-/Abwaermzeit aus Intervals bleibt draussen
 const SWIM_CACHE = "icu:swimtest:v1:";
 const EASY_NAME = /long\s*slow|\blsr\b|\blit\b|locker|grundlage|langer\s*lauf|\bz2\b|ga\s*1|ausdauer|endurance/i;
-const HARD_NAME = /\b(hit|hiit|sit|vo2|ftp|test|sprint|pyramid|sweet\s*spot|schwelle|threshold|tempo|intervall|fatmax|eb)\b/i;
 const HEAT_TEXT = /hitze|heiß|heiss|\bhot\b/i;
 
 // Aerobe Entkopplung (Pa:HR bzw. Pw:HR): Effizienz (Tempo bzw. Leistung je Herzschlag) der ersten gegen die zweite Haelfte.
@@ -90,28 +90,6 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
   };
 }
 
-// Rad-Messfenster: windowMin Minuten ab Ende des Einrollens (warmupMin). Fehlt das Einrollen (Einheit zu kurz dafuer),
-// beginnt das Fenster bei 0 (noWarmup). Leistung zu Puls wie decouplingFromStreams, dazu mittlere Leistung und mittlerer Puls
-// im Fenster (sinkt der Puls bei gleicher Leistung, wird die Grundlage besser, auch wenn das Decoupling schon niedrig ist).
-// startSec: Fensterbeginn fest vorgegeben (Ende des Warmup-Blocks aus Intervals), dann zaehlt warmupMin nicht.
-export function rideWindowFromStreams(streams, { warmupMin = 0, windowMin = 60, durationSec = null, startSec = null } = {}) {
-  const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
-  const w = get("watts"), time = get("time"), hr = get("heartrate");
-  if (!Array.isArray(w)) return null;
-  const dur = durationSec ?? (Array.isArray(time) ? time[time.length - 1] : w.length);
-  const start = startSec != null ? startSec : warmupMin > 0 && dur >= (warmupMin + windowMin - 2) * 60 ? warmupMin * 60 : 0;
-  const end = start + windowMin * 60;
-  const tOf = (i) => (Array.isArray(time) && Number.isFinite(time[i]) ? time[i] : i);
-  const ws = [], hs = [];
-  for (let i = 0; i < w.length; i++) { const t = tOf(i); if (t >= start && t < end && w[i] >= 10) { ws.push(w[i]); if (Array.isArray(hr) && hr[i] > 40) hs.push(hr[i]); } }
-  return {
-    decoupling: decouplingFromStreams(streams, "watts", end, { warmupSec: start }),
-    mainWatts: ws.length ? Math.round(ws.reduce((a, b) => a + b, 0) / ws.length) : null,
-    mainHr: hs.length >= 60 ? Math.round(hs.reduce((a, b) => a + b, 0) / hs.length) : null,
-    noWarmup: startSec != null ? startSec === 0 : warmupMin > 0 && start === 0,
-  };
-}
-
 async function cached(env, key, budget, load) {
   if (hasKv(env)) {
     const hit = await readKvJson(env, key).catch(() => null);
@@ -155,16 +133,17 @@ const heatOf = (a) => {
 };
 
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
-// bike: Radziel aus parseBlockTargets (minMin, firstMin) – Decoupling nur fuer Rollen-Einheiten, die lang genug sind
 const RUN_CACHE = "icu:runanalysis:v2:"; // v2: EF Minute 5–35
-const RIDE_CACHE = "icu:ridewindow:v3:"; // v3: Fenster ab Ende des Warmup-Blocks (icu_warmup_time)
+const RIDE_TEST_CACHE = "icu:ridetest:v1:"; // Messfenster der Rad-Vergleichseinheit (session-tests.js)
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
-// testIds: Aktivitaeten, die der Nutzer als Blocktest benannt hat (Name/Beschreibung der Einheit oder des gekoppelten Workouts)
-export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null, run = null, hrCap = null, testIds = null }) {
+// testCfg: Termine, HF-Deckel und Vergleichsleistung fuer die Test-Erkennung (testConfigOf); jede Einheit bekommt category und testReason
+export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, run = null, hrCap = null, testCfg = null }) {
+  const tcfg = testCfg ?? { ...TEST_FALLBACK };
   const budget = { left: MAX_FETCH };
   const byId = new Map(acts.map((a) => [a?.id, a]));
   const rzDec = new Map((rzRuns ?? []).filter((r) => Number.isFinite(r.decouplingPct)).map((r) => [r.date, r.decouplingPct]));
   const inWin = (d) => d >= from && d <= to;
+  const runClass = classifyRuns(acts.filter((a) => inWin(activityDay(a))), tcfg);
 
   const runOut = [];
   for (const r of [...runs].filter((x) => inWin(x.date)).sort((x, y) => y.date.localeCompare(x.date))) {
@@ -177,9 +156,12 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     // Lockere Laeufe (Pulsregel) bekommen die Auswertung aus den Zeitreihen: EF Minute 5–35, Minuten ueber dem HF-Deckel,
     // Fenster und stabile Dauer – im Blocktest-Modus immer, sonst wenn der Block einen HF-Deckel hat. Im Blocktest-Modus
     // wird das Decoupling ueber den ganzen Lauf nicht mehr gebraucht; sonst hat es Vorrang beim Abrufbudget (Blockziel).
-    rec.id = a.id; rec.name = a.name ?? null; rec.test = Boolean(testIds?.has(a.id));
+    const cls = runClass.get(a.id);
+    rec.id = a.id; rec.name = a.name ?? null; rec.category = cls?.category ?? null; rec.testReason = cls?.testReason ?? null;
+    if (cls?.testDate) rec.testDate = cls.testDate;
+    rec.test = rec.category === "runBlocktest";
     const analyse = async () => {
-      if (!easy || !hasHrOf(a) || a.id == null || (rec.durationMin ?? 0) < STREAM_MIN) return;
+      if (!(easy || rec.category) || !hasHrOf(a) || a.id == null || (rec.durationMin ?? 0) < STREAM_MIN) return;
       const opts = { capHr: hrCap, stableMax: run?.stableMax ?? 5 };
       const v = await cached(env, `${RUN_CACHE}${a.id}:${hrCap ?? "-"}:${opts.stableMax}`, budget, async () => analyzeRunStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "distance", "velocity_smooth"]), opts));
       if (v) rec.analysis = v;
@@ -198,27 +180,19 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
   const rides = [];
   for (const a of acts.filter((x) => isBike(x) && inWin(activityDay(x))).sort((x, y) => activityDay(y).localeCompare(activityDay(x)))) {
     const indoor = a.trainer === true || /virtual/i.test(String(a.type ?? ""));
-    const name = `${a.name ?? ""}`;
     const rec = {
       date: activityDay(a), durationMin: Math.round((num(a.moving_time) ?? 0) / 60), watts: num(a.icu_average_watts) ?? num(a.average_watts),
-      vi: num(a.icu_variability_index), intensity: num(a.icu_intensity), indoor, easy: !HARD_NAME.test(name), hasHr: hasHrOf(a), decoupling: null,
+      vi: num(a.icu_variability_index), intensity: num(a.icu_intensity), indoor, hasHr: hasHrOf(a), decoupling: null,
     };
-    if (indoor && rec.easy && rec.durationMin >= (bike?.minMin ?? 75) - 5) {
-      if (bike?.warmupMin != null && bike?.firstMin && hasHrOf(a) && a.id != null) {
-        // Einrollen = Warmup-Block der Fahrt in Intervals (icu_warmup_time); Messfenster danach bis zum Cooldown, gerechnet werden
-        // hoechstens firstMin Minuten (der Intervals-Wert umfasst bei laengeren Fahrten den Rest der Fahrt). Ohne Warmup-Block
-        // (unter RIDE_WARMUP_MIN_SEC) beginnt das Fenster bei 0, die Fahrt ist dann nur Orientierung (season-block.js).
-        const moving = num(a.moving_time) ?? 0, warm = num(a.icu_warmup_time) ?? 0, cool = num(a.icu_cooldown_time) ?? 0;
-        const startSec = warm >= RIDE_WARMUP_MIN_SEC ? warm : 0;
-        const winSec = Math.max(0, moving - startSec - (startSec ? cool : 0));
-        Object.assign(rec, { warmupSec: warm, windowMin: Math.round(winSec / 60), noWarmup: startSec === 0 });
-        const opts = { startSec, windowMin: Math.min(bike.firstMin, Math.ceil(winSec / 60)), durationSec: moving };
-        const v = await cached(env, `${RIDE_CACHE}${a.id}:${opts.startSec}:${opts.windowMin}`, budget, async () => rideWindowFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"]), opts));
-        if (v) Object.assign(rec, { decoupling: v.decoupling, mainWatts: v.mainWatts, mainHr: v.mainHr ?? null });
-        // Ohne Einrollen und nicht laenger als das Messfenster: der Intervals-Wert ueber die ganze Fahrt (Orientierung, z. B. 19.10.: 9,8 %)
-        if (!startSec && num(a.decoupling) != null && moving <= (bike.firstMin + 1) * 60) rec.decoupling = num(a.decoupling);
-      } else rec.decoupling = await decouplingOf(env, a, "watts", budget, bike?.firstMin ?? null);
+    // Rad-Vergleichseinheit (nur Ride/VirtualRide): Messfenster nach dem Einrollen aus den Zeitreihen, nur wenn der Hauptteil lang genug ist
+    const win = rideWindowOf(a);
+    let stats = null;
+    if (isTestRide(a) && (win.forced || win.mainSec >= TEST_RULES.bikeWindowMin * 60 - TEST_RULES.bikeMainSlackSec) && a.id != null) {
+      stats = await cached(env, `${RIDE_TEST_CACHE}${a.id}:${win.warmSec}`, budget, async () => rideWindowStats(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"]), win.warmSec, TEST_RULES.bikeWindowMin * 60)) ?? null;
     }
+    const c = classifyRide(a, stats, tcfg);
+    rec.category = c?.category ?? null; rec.testReason = c?.testReason ?? `${a.type ?? "Rad"}: keine Vergleichseinheit (nur Ride/VirtualRide)`;
+    if (c?.category) Object.assign(rec, { baseline: c.baseline, decoupling: c.decoupling, decSource: c.decSource, mainWatts: c.mainWatts, mainHr: c.mainHr ?? null, vi: c.vi, noWarmup: c.noWarmup, mainMin: c.mainMin });
     rides.push(rec);
   }
   const ftpAct = acts.filter((x) => isBike(x) && inWin(activityDay(x)) && /\bftp\b/i.test(String(x.name ?? ""))).sort((x, y) => activityDay(x).localeCompare(activityDay(y)))[0];

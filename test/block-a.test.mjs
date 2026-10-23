@@ -15,16 +15,18 @@ const run = (id, n, o) => ({ id, start_date_local: day(-n) + "T10:00:00", type: 
 const activities = [
   run("r1", 26), run("r2", 19), run("r3", 12), run("r4", 5), run("r5", 4, { name: "Grundlagenlauf", total_elevation_gain: 300 }),
   { id: "b1", start_date_local: day(-30) + "T12:00:00", type: "VirtualRide", name: "FTP / Vo2Max Test", moving_time: 1500, trainer: true, icu_average_watts: 200 },
-  { id: "b2", start_date_local: day(-8) + "T12:00:00", type: "VirtualRide", name: "LIT", moving_time: 4560, trainer: true, icu_average_watts: 150, icu_variability_index: 1.01, icu_intensity: 63, average_heartrate: 125, has_heartrate: true, average_temp: 23 },
-  { id: "b3", start_date_local: day(-1) + "T12:00:00", type: "VirtualRide", name: "LIT", moving_time: 4560, trainer: true, icu_average_watts: 148, icu_variability_index: 1.01, icu_intensity: 62, average_temp: 24 },
+  { id: "b2", start_date_local: day(-8) + "T12:00:00", type: "VirtualRide", name: "LIT", moving_time: 4560, icu_warmup_time: 600, trainer: true, icu_average_watts: 160, icu_variability_index: 1.01, icu_intensity: 63, average_heartrate: 125, has_heartrate: true, average_temp: 23 },
+  { id: "b3", start_date_local: day(-1) + "T12:00:00", type: "VirtualRide", name: "LIT", moving_time: 4560, icu_warmup_time: 600, trainer: true, icu_average_watts: 160, icu_variability_index: 1.01, icu_intensity: 62, average_temp: 24 },
   { id: "s1", start_date_local: day(-3) + "T07:00:00", type: "Swim", name: "Schwimmen", distance: 1500, moving_time: 2400, description: "2x500: 9:40 / 9:55, Pause 50 s" },
 ];
 let streamCalls = 0;
+// Rolle (ohne Vergleichsleistung im Text gilt der Fallback 165 W): 10 min Warmup-Block, dann 60 min 165 W, Puls ab Minute 40 höher
+const rideStream = (hr) => { const time = Array.from({ length: 4560 }, (_, i) => i); return [{ type: "time", data: time }, { type: "watts", data: time.map((t) => (t < 600 ? 120 : 165)) }, ...(hr ? [{ type: "heartrate", data: time.map((t) => (t < 2400 ? 130 : 136.5)) }] : [])]; };
 const stream = (hr2, field, v) => { const n = 1800; return [{ type: "heartrate", data: Array.from({ length: 2 * n }, (_, i) => (i < n ? 130 : hr2)) }, { type: field, data: Array(2 * n).fill(v) }]; };
 globalThis.fetch = async (url) => {
   const u = String(url);
   let body = null;
-  if (u.includes("/streams")) { streamCalls++; body = u.includes("/activity/b2/") ? stream(136.5, "watts", 150) : stream(134, "velocity_smooth", 2.45); }
+  if (u.includes("/streams")) { streamCalls++; body = u.includes("/activity/b2/") ? rideStream(true) : u.includes("/activity/b3/") ? rideStream(false) : stream(134, "velocity_smooth", 2.45); }
   else if (u.includes("/sport-settings")) body = [{ types: ["Ride", "VirtualRide"], ftp: 240 }];
   else if (u.includes("/wellness")) body = Array.from({ length: 70 }, (_, i) => ({ id: day(-69 + i), ctl: 20 + i * 0.3, atl: 22 }));
   else if (u.includes("/activities")) body = activities;
@@ -39,11 +41,12 @@ assert.equal(sb.weekNo, 5); assert.equal(sb.next.name, "Block B");
 const g = Object.fromEntries(sb.goals.map((x) => [x.key, x]));
 assert.equal(g.runDecoupling.count, 4); assert.equal(g.runDecoupling.value, 3); assert.equal(g.runDecoupling.status, "ok");
 assert.match(g.runDecoupling.hints.join(), /nicht flach/);
-assert.equal(g.bikeDecoupling.count, 1); assert.equal(g.bikeDecoupling.value, 4.8);
+assert.equal(g.bikeDecoupling.count, 1); assert.equal(g.bikeDecoupling.value, 5); // (165/130) / (165/136,5) − 1, selbst gerechnet
+assert.match(g.bikeDecoupling.series[0].reason, /Hauptteil 66 min, 165 W, VI 1.*Einrollen 10 min.*selbst gerechnet/);
 assert.ok(g.bikeDecoupling.hints.some((h) => /ohne Puls/.test(h))); assert.ok(g.bikeDecoupling.hints.some((h) => /FTP-Test am 21\.10\..*240 W/.test(h)));
 assert.equal(g.swimTest.status, "ok"); assert.equal(g.swimTest.value, 3);
 assert.equal("decision" in sb, false); // keine Woche-12-Entscheidung: die trifft der Coach
-assert.equal(streamCalls, 6); // 4 flache Läufe + 1 Rad mit Puls (der hügelige Lauf und das Rad ohne Puls brauchen keine) + Profil der letzten Einheit
+assert.equal(streamCalls, 7); // 4 flache Läufe + 2 Rad-Messfenster (auch ohne Puls: Leistung und VI) + Profil der letzten Einheit
 // zweiter Aufruf: alles aus dem KV-Cache
 streamCalls = 0;
 await buildDashboard(env, today);

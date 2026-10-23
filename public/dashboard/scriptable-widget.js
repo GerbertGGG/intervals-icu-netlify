@@ -1376,7 +1376,7 @@ function buildBlock(res) {
     const per = g.periodWeeks > 1 ? ` je ${g.periodWeeks * 7} Tage` : "";
     if (g.status === "base") return g.key === "strength" && g.goalSets ? `Ausgangswert · Wochen mit ≥ ${g.goalSets} Sätzen${per}` : "Ausgangswert";
     if (g.key === "strength" && g.goalSets) return g.periodWeeks > 1 ? `Abschnitte mit ≥ ${g.goalSets} Sätzen${per}` : `Wochen mit ≥ ${g.goalSets} Sätzen`;
-    if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.value != null && g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}${g.value == null && g.orientation ? ` · ohne Einrollen ${fmt(g.orientation.value, 1)} %` : ""}`;
+    if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.value != null && g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}${g.value == null && g.orientation ? ` · Ausgangswert ${fmt(g.orientation.value, 1)} %` : ""}`;
     if (g.key === "swimTest") return g.value == null ? "2× 500 m noch offen" : "2. 500 m je 100 m";
     if (g.key === "runStable") return "länger als im Basistest";
     return g.target;

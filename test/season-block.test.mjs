@@ -230,23 +230,23 @@ console.log("block intensity week 1 ok");
 }
 
 // ---------- Block A wie im Kalender (Stand 20.10.2026): Blocktests, Rad-Messfenster, Woche-12-Entscheidung ----------
-import { analyzeRunStreams, rideWindowFromStreams } from "../src/block-inputs.js";
+import { analyzeRunStreams } from "../src/block-inputs.js";
 const real = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nABSCHLUSSZIELE\n\n1. Lauf: aerobe Stabilität\na) Basis: Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min nicht langsamer als im Basistest.\nb) Haltbarkeit: Stabile Dauer im letzten Blocktest länger als im Basistest.\nStabile Dauer = längstes Fenster ab Start (0–60, 0–75, 0–90 min … in 15-min-Schritten) mit Decoupling ≤5 %.\nBlocktest = langer Lauf am Sonntag der 3. Belastungswoche (Basistest 25.10., dann 08.11., 06.12., 03.01.). Volle geplante Länge, HF-Band 120–125, gleiche flache Runde in Bobingen.\nZusätzlich zählt jeder Grundlagenlauf ab 60 min unter HF 125 als Trend (nicht fürs Ziel).\n\n2. Rad (Rolle): aerobe Stabilität\nDecoupling (Leistung zu Puls) im 60-min-Messfenster ≤5 % im Mittel der letzten 3 Vergleichseinheiten.\nVergleichseinheit = 10 min Einrollen (ca. 5 min 110–130 W, 5 min 140–160 W), danach mindestens 60 min bei fester Leistung 165 W = Messfenster.\n\n3. Schwimmen: Dauer mit sauberer Technik\n2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.\n\nLAUFREGELN\n- Nie an zwei Tagen hintereinander laufen.\n\nFIXPUNKTE (meine Zusagen)\n- Mindestens 1 Ruhetag pro Woche, kein fester Wochentag.\n- Lauf-Grundlage unter HF 125, Gehpausen erlaubt\n- Intensität ab Woche 2:\n  Rad-HIIT 1× pro Woche (30/30 oder 3–4× 4 min)\n  Kein HIIT und keine Sprints in den 2 Tagen vor einem Blocktest.\n\nLEITPLANKEN\n- Kraft ≥60 Sätze in 8 von 9 Belastungswochen\n- Ramp Rate (CTL) in Belastungswochen ≤5\n- Intensität: Rad-HIIT und Hügelsprints je 1× pro Woche in 6 von 8 Belastungswochen ab Woche 2 (Krankheitswochen zählen nicht als verfehlt)\n\nWOCHE 12\nAlle Ziele und Leitplanken erfüllt: weiter mit Block B. Fehlt ein Ziel: betroffene Sportart um 3–4 Wochen verlängern. Leitplanken gerissen: erst Ursache klären, dann verlängern.";
 const tr = parseBlockTargets(real);
 assert.equal(tr.bike.minMin, 60); assert.equal(tr.bike.firstMin, 60); assert.equal(tr.bike.warmupMin, 10); assert.equal(tr.bike.watts, 165);
 assert.deepEqual(tr.run.tests, ["10-25", "11-08", "12-06", "01-03"]); assert.equal(tr.hrCap, 125);
 const evR = { category: "SEASON_START", name: "Block Grundlage (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: real };
-// Blocktests legt der Nutzer fest: nur als "Blocktest"/"Basistest" benannte Läufe (r.test aus dem gekoppelten Workout oder
-// der Name) zählen fürs Ziel – auch ein langer Lauf am Termin nicht automatisch; andere Grundlagenläufe nur als Trend
+// Blocktests und Trendläufe kommen klassifiziert an (category aus session-tests.js); nur Blocktests zählen fürs Ziel
 const an = (dec60, stableMin, pace60, extra = {}) => ({ dec60, stableMin, pace60, windows: [{ min: 60, value: dec60 }], overCapMin: 0, ...extra });
 const lr = (date, dur, a, extra = {}) => ({ date, durationMin: dur, easy: true, treadmill: false, heat: false, elevPerKm: 3, name: "Langer Lauf", analysis: a, ...extra });
-const runsR = [lr("2026-10-25", 95, an(6, 0, 430), { name: "Basistest" }), lr("2026-10-29", 70, an(3, 70, 425)), lr("2026-11-09", 105, an(5, 75, 428), { test: true }), lr("2026-11-08", 50, an(1, 60, 400)), lr("2026-11-01", 100, an(9, 0, 420))];
+const bt = (testDate) => ({ category: "runBlocktest", testDate, testReason: "Run am Blocktest-Termin" }), trd = { category: "runTrend", testReason: "Run ≥60 min" };
+const runsR = [lr("2026-10-25", 95, an(6, 0, 430), bt("2026-10-25")), lr("2026-10-29", 70, an(3, 70, 425), trd), lr("2026-11-09", 105, an(5, 75, 428), bt("2026-11-08")), lr("2026-11-08", 50, an(1, 60, 400), { category: null }), lr("2026-11-01", 100, an(9, 0, 420), trd)];
 const bR = resolveSeasonBlock([evR], "2026-11-12");
 const gR = Object.fromEntries(buildBlockGoalsFull(bR, { runs: runsR }, "2026-11-12").goals.map((x) => [x.key, x]));
-assert.deepEqual(gR.runDecoupling.tests.map((t) => [t.date, t.label]), [["2026-10-25", "Basistest"], ["2026-11-09", "Test 1"]]); // der Lauf am Termin 08.11. ist nicht benannt
+assert.deepEqual(gR.runDecoupling.tests.map((t) => [t.date, t.planned, t.label]), [["2026-10-25", "2026-10-25", "Basistest"], ["2026-11-09", "2026-11-08", "Test 1"]]); // Termin 08.11. einen Tag später gelaufen
 assert.equal(gR.runDecoupling.value, 5.5); assert.equal(gR.runDecoupling.pass, false); assert.match(gR.runDecoupling.note, /erst 2 von 3 Tests.*nächster Test 06\.12\./);
 assert.equal(gR.runDecoupling.pace.ok, true); // 428 vs 430: nicht langsamer
-assert.match(gR.runDecoupling.hints[0], /Trend.*2 Grundlagenläufe ab 60 min.*6 %/); // 29.10. (3 %) und der unbenannte lange Lauf 01.11. (9 %)
+assert.match(gR.runDecoupling.hints[0], /Trend.*2 Trendläufe ab 60 min.*6 %/); // 29.10. (3 %) und 01.11. (9 %)
 assert.equal(gR.runStable.value, 75); assert.equal(gR.runStable.baseValue, 0); assert.equal(gR.runStable.status, "ok");
 // Verlauf (Trend, keine Stufe): Decoupling 6 → Ø 5,5; Hauptkurve Pace 0–60 im HF-Band
 assert.deepEqual([gR.runDecoupling.course.open, gR.runDecoupling.course.from, gR.runDecoupling.course.to, gR.runDecoupling.course.dir], [false, 6, 5.5, "better"]);
@@ -266,7 +266,12 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
 // Fahrt ohne Einrollen (Protokoll verlangt 10 min): zählt nicht fürs Ziel, nur als Orientierung
 const gnw = buildBlockGoalsFull(bR, { rides: [{ ...rides[0], date: "2026-10-19", decoupling: 9.8, noWarmup: true }, rides[0]] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
 assert.equal(gnw.count, 1); assert.equal(gnw.value, 4); assert.deepEqual(gnw.orientation, { date: "2026-10-19", value: 9.8 });
-assert.ok(gnw.hints.some((h) => /1× ohne Einrollen, zählt nicht fürs Ziel \(zuletzt 19\.10\.: 9,8 %\)/.test(h)));
+assert.ok(gnw.hints.some((h) => /1× Ausgangswert, zählt nicht fürs Ziel \(zuletzt 19\.10\.: 9,8 %\)/.test(h)));
+// Klassifizierte Ausgangswerte (baseline): angezeigt, nicht im Mittel – auch mit Einrollen, wenn so benannt
+const cr = (date, dec, o = {}) => ({ date, durationMin: 70, decoupling: dec, mainWatts: 165, hasHr: true, category: "bikeCompare", baseline: false, testReason: "Ride", ...o });
+const gbl = buildBlockGoalsFull(bR, { rides: [cr("2026-10-19", 9.8, { baseline: true, noWarmup: true }), cr("2026-10-26", 4), cr("2026-11-02", 12, { baseline: true }), cr("2026-11-09", 3)] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
+assert.deepEqual([gbl.count, gbl.value, gbl.series.map((x) => x.date)], [2, 3.5, ["2026-10-26", "2026-11-09"]]);
+assert.deepEqual(gbl.baselines.map((x) => [x.date, x.value]), [["2026-10-19", 9.8], ["2026-11-02", 12]]);
 // Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 0–60 stabil, 0–75 ok, 0–90 drüber
 {
   const n = 100 * 60, time = Array.from({ length: n }, (_, i) => i), velocity_smooth = Array(n).fill(2.5);
@@ -281,17 +286,6 @@ assert.ok(gnw.hints.some((h) => /1× ohne Einrollen, zählt nicht fürs Ziel \(z
   assert.equal(short.efToMin, 20); // kürzer als 35 min: Minute 5 bis Ende
   assert.equal(analyzeRunStreams([{ type: "time", data: time.slice(0, 14 * 60) }, { type: "heartrate", data: heartrate.slice(0, 14 * 60) }, { type: "velocity_smooth", data: velocity_smooth.slice(0, 14 * 60) }]).ef, null);
 }
-// Zeitreihen Rad: 10 min Einrollen bei 130 W, dann 60 min 165 W mit 5 % mehr Puls in der zweiten Hälfte
-{
-  const n = 70 * 60, time = Array.from({ length: n }, (_, i) => i);
-  const watts = time.map((t) => (t < 600 ? 130 : 165)), heartrate = time.map((t) => (t < 600 ? 100 : t < 600 + 1800 ? 130 : 136.5));
-  const st = [{ type: "time", data: time }, { type: "watts", data: watts }, { type: "heartrate", data: heartrate }];
-  assert.deepEqual(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: n }), { decoupling: 4.8, mainWatts: 165, mainHr: 133, noWarmup: false }); // Puls im Fenster: Hälfte 130, Hälfte 136,5
-  assert.equal(rideWindowFromStreams(st, { warmupMin: 10, windowMin: 60, durationSec: 3600 }).noWarmup, true); // 60-min-Fahrt ohne Einrollen
-  // Fensterbeginn aus dem Warmup-Block in Intervals (icu_warmup_time): wie 10 min Einrollen; startSec 0 = ohne Einrollen
-  assert.deepEqual(rideWindowFromStreams(st, { startSec: 600, windowMin: 60, durationSec: n }), { decoupling: 4.8, mainWatts: 165, mainHr: 133, noWarmup: false });
-  assert.equal(rideWindowFromStreams(st, { startSec: 0, windowMin: 60, durationSec: n }).noWarmup, true);
-}
 // Block-Eintrag prüfen: was gelesen wurde und Widersprüche (Deckel, Testband, fehlende Testtermine)
 {
   const chk = checkBlockText(real);
@@ -301,7 +295,6 @@ assert.ok(gnw.hints.some((h) => /1× ohne Einrollen, zählt nicht fürs Ziel \(z
   assert.deepEqual(c2.band, [120, 128]); assert.equal(c2.tests.length, 0);
   assert.ok(c2.hints.some((h) => /Verschiedene HF-Grenzen im Text: 125, 128/.test(h)));
   assert.ok(c2.hints.some((h) => /Testband 120–128 reicht über den HF-Deckel 125/.test(h)));
-  assert.equal(c2.testsByName, true); // ohne Termine: Tests werden über den Namen erkannt, keine Warnung
   assert.equal(c2.hints.length, 2);
   // Deckel aus der Zeile "Lauf-Grundlage unter HF …", nicht aus dem früheren Trend-Satz "Grundlagenlauf … unter HF 125"
   const c128 = real.replace("Lauf-Grundlage unter HF 125", "Lauf-Grundlage unter HF 128");

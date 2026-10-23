@@ -353,7 +353,7 @@ export function buildWidgetBlock(d) {
       goals: (b.goals ?? []).filter((g) => g.key !== "ramp" && g.key !== "acwr").map((g) => ({
         key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
-        // Rad: letzte Fahrt ohne Einrollen, zaehlt nicht fuers Ziel, nur Orientierung
+        // Rad: letzter Ausgangswert (baseline), zaehlt nicht fuers Ziel, nur Orientierung
         orientation: g.orientation ?? null,
         // Verlauf der Abschlussziele (season-block.js goalCourse): Richtung besser/schlechter/gleich, keine Entscheidung
         course: g.course && !g.course.open ? { dir: g.course.dir ?? null } : null,

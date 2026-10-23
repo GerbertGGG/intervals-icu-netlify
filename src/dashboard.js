@@ -6,8 +6,9 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, intensityFromFrame, testDatesOf, checkBlockText, TEST_RE } from "./season-block.js";
+import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, intensityFromFrame, checkBlockText, TEST_RE } from "./season-block.js";
 import { buildBaseTrend } from "./base-trend.js";
+import { testConfigOf, TEST_RULES } from "./session-tests.js";
 import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
@@ -573,21 +574,21 @@ function buildFitness(runs, snapshot, todayIso) {
 }
 
 // Grundlagenlaeufe aus den Zeitreihen (Blocktest-Modus, block-inputs.js): HF-Deckel-Einhaltung der laufenden Woche und
-// die Laeufe ab 60 min mit Decoupling 0–60, stabiler Dauer und DFA alpha1 (Runalyze, gleicher Tag). Blocktests sind markiert.
+// die Blocktests und Trendlaeufe (category aus session-tests.js) mit Decoupling 0–60, stabiler Dauer, DFA alpha1 (Runalyze,
+// gleicher Tag) und testReason.
 function buildBaseRuns(runs, snapshot, targets, block, todayIso) {
   const cap = targets?.hrCap ?? null;
-  const analysed = runs.filter((r) => r.easy && r.analysis);
+  const analysed = runs.filter((r) => (r.easy || r.category) && r.analysis);
   if (!analysed.length && cap == null) return null;
   const dow = (new Date(todayIso + "T00:00:00Z").getUTCDay() + 6) % 7, monday = addDays(todayIso, -dow);
   const wk = analysed.filter((r) => r.date >= monday && r.date <= todayIso && r.analysis.overCapMin != null);
-  const isTest = (r) => r.test || TEST_RE.test(r.name ?? "");
   const dfa = new Map((snapshot?.runs ?? []).filter((x) => x.dfaAlpha1 != null).map((x) => [x.date, x.dfaAlpha1]));
   return {
     cap,
     week: { runs: wk.length, minutes: wk.reduce((a, r) => a + (r.durationMin ?? 0), 0), overMin: wk.reduce((a, r) => a + r.analysis.overCapMin, 0) },
-    recent: analysed.filter((r) => (r.durationMin ?? 0) >= 55).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((r) => ({
+    recent: analysed.filter((r) => r.category === "runBlocktest" || r.category === "runTrend").sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((r) => ({
       date: r.date, durationMin: r.durationMin, dec60: r.analysis.dec60, stableMin: r.analysis.stableMin, windows: r.analysis.windows,
-      pace60: r.analysis.pace60 != null ? formatPace(r.analysis.pace60) : null, overCapMin: r.analysis.overCapMin, dfa: dfa.get(r.date) ?? null, test: isTest(r),
+      pace60: r.analysis.pace60 != null ? formatPace(r.analysis.pace60) : null, overCapMin: r.analysis.overCapMin, dfa: dfa.get(r.date) ?? null, test: r.category === "runBlocktest", category: r.category, testReason: r.testReason ?? null,
     })),
   };
 }
@@ -771,8 +772,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const insights = buildInsights(wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [], activities);
   // Langzeitbasis der Erholungswerte (180 Tage Wellness aus der Formkurve)
   const longWellness = fitnessR.ok && Array.isArray(fitnessR.value) ? buildWellness(fitnessR.value).map((w) => ({ date: w.date, hrv: w.hrv, restingHR: w.restingHR })) : [];
-  let blockTargets = null, blockSessions = {}, intensity = [], plannedTests = [];
-  // Name/Beschreibung der Einheit und des gekoppelten Workouts (Intensitaet, Blocktest)
+  let blockTargets = null, blockSessions = {}, intensity = [], plannedTests = [], testCfg = null;
+  // Name/Beschreibung der Einheit und des gekoppelten Workouts (Intensitaet)
   const evById = new Map(events.map((e) => [String(e?.id), e]));
   const textOf = (a) => { const e = evById.get(String(a?.paired_event_id)); return [a?.name, a?.description, e?.name, e?.description].filter(Boolean).join(" "); };
 
@@ -811,18 +812,19 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ...[...new Set(blockActs.filter((a) => sportOf(a) === "strength" && (num(a?.moving_time) ?? 0) >= 20 * 60 && !/mobil|stretch|dehn|yoga/i.test(String(a?.name ?? ""))).map((a) => activityDay(a)))].filter((date) => !egymSet.has(date)).map((date) => ({ date })),
     ];
     // Abschlussziele (Lauf/Rad vergleichbar, Schwimmtest): Rohwerte je Einheit, Decoupling notfalls aus den Zeitreihen (best effort)
-    const tg = parseBlockTargets([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"));
+    const blockText = [seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n");
+    const tg = parseBlockTargets(blockText);
     blockTargets = tg;
     const win = windowOf(seasonBlock, todayIso);
-    // Blocktests legt der Nutzer selbst fest: als Test zaehlt ein Lauf mit "Blocktest"/"Basistest" in Name oder Beschreibung
-    // (auch des gekoppelten Workouts); geplante Tests = Lauf-Workouts im Kalender mit diesem Namen, dazu Termine aus dem Text
-    const testIds = new Set(blockActs.filter((a) => isRun(a) && TEST_RE.test(textOf(a))).map((a) => a.id));
+    // Tests erkennt session-tests.js aus der absolvierten Aktivitaet: Termine, HF-Deckel und Vergleichsleistung aus dem
+    // Block-Eintrag (sonst Fallback mit Warnung). Geplante Tests = Termine aus dem Text, dazu Lauf-Workouts "Blocktest" (nur Anzeige)
+    testCfg = testConfigOf(blockText, seasonBlock.start, tg, seasonBlock);
     plannedTests = [...new Set([
       ...events.filter((e) => /WORKOUT/i.test(String(e?.category ?? "")) && /run/i.test(String(e?.type ?? "")) && TEST_RE.test(`${e?.name ?? ""} ${e?.description ?? ""}`)).map((e) => eventDayOf(e)),
-      ...testDatesOf(seasonBlock, tg.run?.tests),
+      ...(tg.run?.tests ? testCfg.testDates : []),
     ])].filter(Boolean).sort();
     const sessions = tg.run || tg.bike || tg.swim
-      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, bike: tg.bike ?? null, run: tg.run ?? null, hrCap: tg.hrCap ?? null, testIds }).catch((err) => { console.warn("block sessions", err); return {}; })
+      ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, run: tg.run ?? null, hrCap: tg.hrCap ?? null, testCfg }).catch((err) => { console.warn("block sessions", err); return {}; })
       : {};
     const dayOfWell = (x) => String(x?.id ?? x?.date ?? "").slice(0, 10);
     // Intensitaets-Leitplanke: Rad-HIIT und Huegelsprints aus Name/Beschreibung der Einheit und des gekoppelten Workouts;
@@ -855,7 +857,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       weekVolumes: enduranceWeeks(blockActs, actsCover, todayIso),
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
-    seasonBlock = { ...seasonBlock, goals, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };
+    seasonBlock = { ...seasonBlock, goals, check: { ...checkBlockText(blockText, tg), testConfig: { ...testCfg, rules: TEST_RULES } } };
   }
 
   const summary = buildSummary(wellness, todayIso, { sickDays, longWellness });
@@ -863,8 +865,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const daily = buildDaily(todayIso, activities);
   const weeks = buildWeeks(todayIso, activities, events);
   const baseRuns = buildBaseRuns(blockSessions.runs ?? [], snapshot, blockTargets, seasonBlock, todayIso);
-  // Naechster Blocktest (Termin aus dem Block-Eintrag oder geplantes Workout "Blocktest") fuer Heute-Band und Grundlagenlaeufe
-  const nextTest = plannedTests.find((x) => x >= todayIso) ?? null;
+  // Naechster Blocktest (Termin aus dem Block-Eintrag oder geplantes Workout "Blocktest") fuer Heute-Band und Grundlagenlaeufe;
+  // ein Termin, zu dem schon ein Blocktest erkannt ist (auch verschoben, ±2 Tage), ist erledigt
+  const doneTests = (blockSessions.runs ?? []).filter((r) => r.category === "runBlocktest");
+  const nextTest = plannedTests.find((x) => x >= todayIso && !doneTests.some((r) => r.testDate === x || r.date === x)) ?? null;
   // Kraft der letzten vollen Woche (Blockwoche mit gleichem Start) für die Montagsbilanz; Entlastungswochen zählen nicht
   const strengthGoal = seasonBlock?.goals?.find((g) => g.key === "strength");
   const strengthWeek = strengthGoal?.weeks?.find((x) => x.start === addDays(mondayOf(todayIso), -7) && x.load !== false);
