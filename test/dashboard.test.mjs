@@ -552,7 +552,7 @@ console.log("zones from intervals ok");
   assert.deepEqual(w.wd.slice(0, 4), [[["swim", 45, 0]], [["run", 48, 0]], [], [["swim", 50, 1]]]); // heute nur "other" geplant, morgen Schwimmen
   assert.equal(w.la, null); // letzte Einheit war gestern
   assert.equal(w.cl, null);
-  assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, headline: "45 min locker, Wade vom Dienstag im Blick" } }).cl, "45 min locker, Wade vom Diens…");
+  assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, headline: "45 min locker, Wade vom Dienstag im Blick" } }).cl, "45 min locker, Wade…");
   const la = buildWidgetWatch({ ...d, lastActivity: { date: today, sport: "run", distanceKm: 10.2, movingSecs: 3161, paceSecPerKm: 310, avgHr: 142, start: "17:25", endAt: 1790000000, longerAgoDays: 36 } }).la;
   assert.deepEqual(la, { s: "run", t: "17:25", e: 1790000000, c: [["10,2", "KM"], ["0:52", "ZEIT"], ["5:10", "/KM"], ["142", "HF"]], lw: 5 });
   const swim = buildWidgetWatch({ ...d, lastActivity: { date: today, sport: "swim", distanceKm: 1.5, movingSecs: 2700, paceSecPer100m: 180, longerAgoDays: 6 } }).la;
