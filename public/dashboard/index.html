@@ -300,6 +300,14 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .wg-targets summary { font-size: var(--fs-s); }
 .wg-thist { margin: 6px 0 0; padding-left: 18px; font-size: var(--fs-s); display: grid; gap: 4px; }
 @media (max-width: 640px) { .wg { grid-template-columns: 1fr; } }
+.fr { display: grid; gap: 10px; }
+.fr-goal { font-size: var(--fs-m); }
+.fr-sec .bgh { margin: 0 0 4px; }
+.fr-list { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: var(--fs-s); }
+.fr-int { list-style: none; padding-left: 0; }
+.fr-s { display: inline-block; min-width: 5.5em; font-weight: 600; margin-right: 6px; }
+.fr-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 24px; }
+@media (max-width: 640px) { .fr-two { grid-template-columns: 1fr; } }
 .wk-bar { height: 6px; }
 .wk-top { display: grid; grid-template-columns: auto auto auto minmax(0, 1fr); gap: 12px 26px; align-items: center; margin-bottom: 12px; }
 .wk-ring { text-align: center; } .wk-ring b { display: block; font-size: var(--fs-xs); color: var(--muted); letter-spacing: .06em; }
