@@ -38,7 +38,8 @@ for c in codes:
     l, t, r, b = font.getbbox(ch, anchor="la")
     w, h = max(r - l, 0), max(b - t, 0)
     if h == 0:
-        w = 0  # Leerzeichen: nur Vorschub
+        # Leerzeichen: ein leeres Pixel statt Breite 0, sonst lässt die Uhr das Zeichen samt Vorschub weg ("FR23.")
+        w, h = 1, 1
     glyphs.append((c, ch, l, t, w, h, int(round(font.getlength(ch))) + track))
 xoff, top, line_h, base = {}, 0, ascent + descent, ascent
 if digits:
