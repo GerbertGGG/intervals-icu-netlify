@@ -75,7 +75,7 @@ h1 { font-size: var(--fs-l); font-weight: 650; letter-spacing: -.01em; margin: 0
 .jump a:hover { color: var(--text); }
 .jump a.active { color: var(--text); border-bottom-color: var(--accent); }
 h2 { font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.015em; margin: 40px 0 12px; padding-top: 20px; border-top: 1px solid var(--line); }
-h2, #cockpit, #cockpit-top, #erkenntnisse { scroll-margin-top: 48px; }
+h2, #cockpit, #cockpit-top { scroll-margin-top: 48px; }
 h3 { font-size: var(--fs-m); font-weight: 600; margin: 0 0 8px; letter-spacing: -.005em; }
 h3 .muted { font-weight: 400; }
 
@@ -475,7 +475,7 @@ td .badge { font-size: var(--fs-xs); }
   <div id="sources"></div>
 
   <nav class="jump" aria-label="Sprungmarken">
-    <a href="#cockpit-top">Cockpit</a><a href="#erkenntnisse">Erkenntnisse</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
+    <a href="#cockpit-top">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erkenntnisse">Erkenntnisse</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
   </nav>
 
   <h2 id="cockpit-top" class="sr-only">Cockpit</h2>
@@ -523,6 +523,11 @@ td .badge { font-size: var(--fs-xs); }
   <h3 id="disciplines-head" style="margin:16px 0 8px" hidden>Disziplinen: Umfang, letzte Einheit, Entwicklung</h3>
   <div class="grid wide" id="disciplines" hidden></div>
   <details class="info" style="margin:16px 0 8px"><summary><b>Schwellen</b> (Einstellungen aus Intervals.icu)</summary><div class="grid" id="thresholds" style="margin-top:8px"></div></details>
+
+  <h2 id="erkenntnisse">Erkenntnisse</h2>
+  <div class="ins-filter" id="insight-filter" role="group" aria-label="Filter nach Disziplin"></div>
+  <div class="ins-grid" id="insights"></div>
+  <details class="info ins-old" id="insights-old" hidden></details>
 
   <h2 id="erholung">Erholung</h2>
   <div class="grid wide" style="align-items:start">
