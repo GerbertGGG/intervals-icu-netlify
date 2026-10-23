@@ -206,8 +206,12 @@ console.log("block intensity week 1 ok");
   assert.deepEqual([wr.frame.notAllowed[0], wr.frame.guardrails.length, wr.frame.maxIncreasePct, wr.nextTest.daysToGo, wr.loadHint], ["Sweet Spot", 3, 10, 3, null]);
   // Entlastungswoche: zählt nicht; ohne Block kein Wochenstand, Rahmen trotzdem da
   const dD = { ...dW, today: "2026-12-09", seasonBlock: { ...bW, goals: buildBlockGoalsFull(bW, { intensity: ints, deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2026-12-09").goals } }; // Woche 8 = Entlastung
-  assert.deepEqual(buildWidgetRahmen(dD).frame.intensity.map((x) => x.week.skip), ["Entlastungswoche, zählt nicht", "Entlastungswoche, zählt nicht"]);
+  assert.deepEqual(buildWidgetRahmen(dD).frame.intensity.map((x) => x.week.skip), ["Entlastung", "Entlastung"]);
   assert.deepEqual(buildWidgetRahmen({ ...dW, seasonBlock: null }).frame.intensity.map((x) => x.week), [null, null]);
+  assert.equal(wr.next, null);
+  // geplanter Rahmen (validFrom in der Zukunft): ab wann und warum, ohne Vorspann
+  const up = { ...dW, targets: { ...dW.targets, upcoming: [{ validFrom: "2026-11-30", reason: "Gerberts Entscheidung im Chat am 23.10.2026: erst Umfang, dann Intensität." }] } };
+  assert.deepEqual(buildWidgetRahmen(up).next, { validFrom: "2026-11-30", reason: "erst Umfang, dann Intensität." });
   console.log("widget rahmen ok");
 }
 
@@ -245,6 +249,10 @@ const rides = [{ date: "2026-10-26", durationMin: 72, decoupling: 4, mainWatts: 
 const gb = buildBlockGoalsFull(bR, { rides }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
 assert.equal(gb.count, 1); assert.equal(gb.value, 4); assert.equal(gb.course.open, true); assert.ok(gb.hints.some((h) => /Messfenster: 60 min nach 10 min Einrollen, Leistung 165 W/.test(h)));
 assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
+// Fahrt ohne Einrollen (Protokoll verlangt 10 min): zählt nicht fürs Ziel, nur als Orientierung
+const gnw = buildBlockGoalsFull(bR, { rides: [{ ...rides[0], date: "2026-10-19", decoupling: 9.8, noWarmup: true }, rides[0]] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
+assert.equal(gnw.count, 1); assert.equal(gnw.value, 4); assert.deepEqual(gnw.orientation, { date: "2026-10-19", value: 9.8 });
+assert.ok(gnw.hints.some((h) => /1× ohne Einrollen, zählt nicht fürs Ziel \(zuletzt 19\.10\.: 9,8 %\)/.test(h)));
 // Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 0–60 stabil, 0–75 ok, 0–90 drüber
 {
   const n = 100 * 60, time = Array.from({ length: n }, (_, i) => i), velocity_smooth = Array(n).fill(2.5);

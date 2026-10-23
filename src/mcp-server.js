@@ -226,6 +226,7 @@ const TOOLS = [
               current: { type: ["number", "null"], description: "Aktueller Wert, null = noch keiner." },
               currentDate: { type: ["string", "null"], description: "Datum des aktuellen Werts, YYYY-MM-DD." },
               better: { type: "string", enum: ["lower", "higher"], description: "Welche Richtung besser ist." },
+              provisional: { type: "boolean", description: "true = aktueller Wert ist noch nicht bewertbar (z. B. Quartal mit zu wenigen Läufen, direkt nach Krankheit). Das Dashboard zeigt ihn dann grau als „vorläufig“ statt die Veränderung grün/orange." },
             },
             required: ["key", "label", "unit", "better"],
           },

@@ -1376,7 +1376,7 @@ function buildBlock(res) {
     const per = g.periodWeeks > 1 ? ` je ${g.periodWeeks * 7} Tage` : "";
     if (g.status === "base") return g.key === "strength" && g.goalSets ? `Ausgangswert · Wochen mit ≥ ${g.goalSets} Sätzen${per}` : "Ausgangswert";
     if (g.key === "strength" && g.goalSets) return g.periodWeeks > 1 ? `Abschnitte mit ≥ ${g.goalSets} Sätzen${per}` : `Wochen mit ≥ ${g.goalSets} Sätzen`;
-    if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}`;
+    if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}${g.value == null && g.orientation ? ` · ohne Einrollen ${fmt(g.orientation.value, 1)} %` : ""}`;
     if (g.key === "swimTest") return g.value == null ? "2× 500 m noch offen" : "2. 500 m je 100 m";
     if (g.key === "runStable") return "länger als im Basistest";
     return g.target;
@@ -1414,7 +1414,7 @@ function buildBlock(res) {
   if (rails.length) {
     w.addSpacer(6);
     const lr = w.addStack(); lr.centerAlignContent();
-    const RAIL = { strength: (g) => `Kraft ${g.value ?? MISSING}/${g.of ?? MISSING}`, ramp: (g) => `Ramp ${g.value != null ? fmt(g.value, 1) : MISSING}`, pause: (g) => `Pause ${g.value ?? MISSING} T` };
+    const RAIL = { strength: (g) => { const o = g.goalSets ? (g.weeks || []).find((x) => !x.done) : null; return o ? `Kraft ${o.count ?? 0}/${g.goalSets} Sätze` : `Kraft ${g.value ?? MISSING}/${g.of ?? MISSING}`; }, ramp: (g) => `Ramp ${g.value != null ? fmt(g.value, 1) : MISSING}`, pause: (g) => `Pause ${g.value ?? MISSING} T` };
     rails.forEach((g, i) => {
       if (i) lr.addSpacer(12);
       statusMark(lr, STATUS_CLS(g.status));
@@ -1446,7 +1446,7 @@ function buildRahmen(res) {
     r.addSpacer();
     const wk = x.week;
     if (!wk) return;
-    if (wk.skip) text(r, "zählt nicht", FS.xs, { color: COL.muted, minScale: 1 });
+    if (wk.skip) text(r, wk.skip.length > 14 ? "zählt nicht" : wk.skip, FS.xs, { color: COL.muted, minScale: 1 });
     else if (wk.count > 0) symbol(r, "checkmark.circle.fill", 13, COL.ok);
     else text(r, "offen", FS.xs, { bold: true, color: COL.muted, minScale: 1 });
   });
@@ -1460,6 +1460,9 @@ function buildRahmen(res) {
   };
   line("NICHT ERLAUBT", f.notAllowed, 2);
   line("LEITPLANKEN", f.guardrails, H ? 1 : 2);
+  // geplanter Rahmen des Coaches (validFrom in der Zukunft): ab wann und warum
+  const N = res.data.next;
+  if (N && N.reason) line(`AB ${dateShort(N.validFrom)}`, [N.reason], 2);
   if (H) {
     w.addSpacer(4);
     text(w, [H.ramp != null ? `Ramp ${H.ramp > 0 ? "+" : ""}${fmt(H.ramp, 1)} (über ${H.rampMax})` : null, H.acwrDays != null ? `ACWR ${H.acwrDays}× über ${fmt(H.acwrMax, 1)} in ${H.days} Tagen` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.7 });
@@ -1471,7 +1474,8 @@ function buildRahmen(res) {
 
 /* ---------- Experiment (mittel): Werte des Coaches, Ausdauerstunden je Woche (Laufen, Rad, Schwimmen gestapelt in Sportfarben,
    Kraft zählt nicht) mit dem Ziel der jeweiligen Woche als gestrichelte Stufe, die laufende Woche blass; Trainingstage klein daneben.
-   Keine eigene Bewertung, unter dem Ziel nichts rot. Veränderung grün = besser, orange = schlechter (Richtung setzt der Coach).
+   Keine eigene Bewertung, unter dem Ziel nichts rot. Veränderung grün = besser, orange = schlechter (Richtung setzt der Coach);
+   markiert der Coach einen Wert als vorläufig (provisional), steht er grau mit „vorläufig“ statt der Veränderung.
    Ältere Worker ohne endurance: Säulen der Trainingstage wie bisher. ---------- */
 const EXP_STATUS = { "vorgeschlagen": "VORGESCHLAGEN", "läuft": "LÄUFT", "ausgewertet": "AUSGEWERTET" };
 const EXP_SHORT = { lauf_hf130: ["Lauf HF 130", "run"], rad_hf165w: ["Rad 165 W", "bike"], schwimm_amstueck: ["Am Stück", "swim"], schwimm_100m: ["100 m", "swim"] };
@@ -1556,10 +1560,11 @@ function buildExperiment(res) {
     text(a, sh[0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
     a.addSpacer();
     const b = r.addStack(); b.size = new Size(C2, 0);
-    text(b, m.current == null ? `${expVal(m, m.baseline)} → noch kein Wert` : `${expVal(m, m.baseline)} → ${expVal(m, m.current)} ${expUnit(m)}`, FS.sm, { color: m.current == null ? COL.muted : COL.text, minScale: 0.7 });
+    text(b, m.current == null ? `${expVal(m, m.baseline)} → noch kein Wert` : `${expVal(m, m.baseline)} → ${expVal(m, m.current)} ${expUnit(m)}`, FS.sm, { color: m.current == null || m.provisional ? COL.muted : COL.text, minScale: 0.7 });
     b.addSpacer();
     r.addSpacer();
-    if (m.baseline != null && m.current != null) {
+    if (m.provisional && m.current != null) text(r, "vorläufig", FS.xs, { color: COL.muted, minScale: 0.8 });
+    else if (m.baseline != null && m.current != null) {
       const dv = m.current - m.baseline, good = m.better === "lower" ? dv < 0 : dv > 0;
       const pace = m.key === "lauf_hf130" || m.key === "schwimm_100m";
       const t = dv === 0 ? "±0" : `${dv > 0 ? "+" : "−"}${pace ? fmtPace(Math.round(Math.abs(dv))) : fmt(Math.abs(dv), Number.isInteger(dv) ? 0 : 1)}`;

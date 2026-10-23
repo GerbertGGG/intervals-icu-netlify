@@ -353,6 +353,8 @@ export function buildWidgetBlock(d) {
       goals: (b.goals ?? []).filter((g) => g.key !== "ramp" && g.key !== "acwr").map((g) => ({
         key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
+        // Rad: letzte Fahrt ohne Einrollen, zaehlt nicht fuers Ziel, nur Orientierung
+        orientation: g.orientation ?? null,
         // Verlauf der Abschlussziele (season-block.js goalCourse): Richtung besser/schlechter/gleich, keine Entscheidung
         course: g.course && !g.course.open ? { dir: g.course.dir ?? null } : null,
         weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count, load: w.load !== false })) : undefined,
@@ -366,12 +368,16 @@ export function buildWidgetBlock(d) {
 // Stand der laufenden Blockwoche (aus der Intensitaets-Leitplanke, season-block.js), Leitplanken, Nicht erlaubt, naechster
 // Blocktest und der stille Hinweis zu Ramp Rate/ACWR (loadHint, nur wenn hoch). Nur Anzeige, keine eigene Bewertung.
 const INT_KIND_SPORT = { bikeHiit: "rad", hillSprints: "lauf" };
+// kurzer Grund, warum die Woche nicht zaehlt: "Woche 1, zählt erst ab Woche 2" -> "ab Woche 2", Entlastung -> "Entlastung"
+const skipShort = (t) => { const m = /ab\s*woche\s*(\d+)/i.exec(t ?? ""); return m ? `ab Woche ${m[1]}` : /entlast/i.test(t ?? "") ? "Entlastung" : "zählt nicht"; };
 export function buildWidgetRahmen(d) {
   const c = d.targets?.current ?? null;
   const g = d.seasonBlock?.goals?.find((x) => x.key === "intensity") ?? null;
   const open = g?.weeks?.find((x) => !x.done) ?? null;
   // je Sportart: diese Woche schon gemacht (count), oder warum die Woche nicht zaehlt (skip); null ohne Leitplanke
-  const week = g && open ? Object.fromEntries(g.kinds.map((k) => [INT_KIND_SPORT[k], { count: open.has?.[k] ?? 0, skip: open.load === false ? (open.skip ?? "zählt nicht") : null }])) : null;
+  const week = g && open ? Object.fromEntries(g.kinds.map((k) => [INT_KIND_SPORT[k], { count: open.has?.[k] ?? 0, skip: open.load === false ? skipShort(open.skip) : null }])) : null;
+  // naechster geplanter Rahmen (save_targets mit validFrom in der Zukunft): ab wann und warum, ohne den Vorspann "Gerberts Entscheidung … am …:"
+  const nx = d.targets?.upcoming?.[0] ?? null;
   return {
     generatedAt: d.generatedAt,
     today: d.today,
@@ -380,6 +386,7 @@ export function buildWidgetRahmen(d) {
       intensity: (c.intensity ?? []).map((x) => ({ ...x, week: week?.[x.sport] ?? null })),
       guardrails: c.guardrails ?? [], notAllowed: c.notAllowed ?? [], reason: c.reason, savedAt: c.savedAt ?? null, validFrom: c.validFrom,
     } : null,
+    next: nx ? { validFrom: nx.validFrom, reason: String(nx.reason ?? "").replace(/^[^:]{0,80}\bam\s*\d{1,2}\.\d{1,2}\.(?:\d{2,4})?\s*:\s*/, "") } : null,
     nextTest: d.nextTest ?? null,
     loadHint: d.loadHint ?? null,
     sourcesFailed: failedOf(d),
@@ -396,7 +403,7 @@ export function buildWidgetExperiment(d) {
     today: d.today,
     experiment: x
       ? { title: x.title, status: x.status, startDate: x.startDate, weekNo, minWeeks: x.minWeeks, targetDaysPerWeek: x.targetDaysPerWeek, verdict: x.verdict ?? null,
-          metrics: (x.metrics ?? []).map((m) => ({ key: m.key, label: m.label, unit: m.unit, baseline: m.baseline, current: m.current, better: m.better })) }
+          metrics: (x.metrics ?? []).map((m) => ({ key: m.key, label: m.label, unit: m.unit, baseline: m.baseline, current: m.current, better: m.better, ...(m.provisional ? { provisional: true } : {}) })) }
       : null,
     trainingDays: d.trainingDays ?? null,
     // Ausdauer je Woche wie die Karte "Woche" (week-totals.js): Minuten ohne Kraft je Sportart, Ziel der jeweiligen Woche
