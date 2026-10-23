@@ -11,7 +11,7 @@ import { activityDay } from "./activity-utils.js";
 //               minWeeks: 1-52, targetDaysPerWeek: 1-7,
 //               metrics: [{ key: lauf_hf130 | rad_hf165w | schwimm_amstueck | schwimm_100m, label (max 60), unit (max 20),
 //                           baseline, baselineDate, current, currentDate (Zahl bzw. YYYY-MM-DD oder null),
-//                           better: "lower" | "higher" }],
+//                           better: "lower" | "higher", provisional: true = aktueller Wert nur vorlaeufig (z. B. zu wenige Laeufe) }],
 //               verdict: string (max 200) | null }
 // Profil: { fetchedAt, updatedAt: YYYY-MM-DD, highlights: [{ text (max 140), strength: "mittel" | "schwach" }] (max 5) }
 //
@@ -81,6 +81,7 @@ function validateMetric(m, seen) {
     out[f] = n.value;
     out[`${f}Date`] = d.value;
   }
+  if (m.provisional === true || m.provisional === "true") out.provisional = true;
   return { value: out };
 }
 

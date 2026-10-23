@@ -571,11 +571,16 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     const cfg = targets.bike;
     const cand = (input.rides ?? []).filter((r) => inWin(r.date, w) && isComparableRide(r, cfg));
     const noHr = cand.filter((r) => !Number.isFinite(r.decoupling) && r.hasHr === false).length;
+    // Verlangt das Protokoll Einrollen, zaehlt eine Fahrt ohne Einrollen (Fenster ab Minute 0) nicht fuers Ziel, die letzte steht
+    // nur als Orientierung da (z. B. die erste Fahrt 19.10.2026 ohne Einrollen)
+    const unwarmed = cfg.warmupMin ? cand.filter((r) => r.noWarmup && Number.isFinite(r.decoupling)).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    const lastUnwarmed = unwarmed[unwarmed.length - 1];
     const g = decouplingGoal({
       key: "bikeDecoupling", sport: "bike", label: "Rad (Rolle): aerobe Stabilität", sessions: input.rides ?? [], cfg, w, basis,
-      comparable: (r) => isComparableRide(r, cfg),
-      extraNotes: [noHr ? `${noHr}× ohne Puls – ohne Pulsgurt gibt es kein Decoupling` : null],
-      extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null },
+      comparable: (r) => isComparableRide(r, cfg) && !(cfg.warmupMin && r.noWarmup),
+      extraNotes: [noHr ? `${noHr}× ohne Puls – ohne Pulsgurt gibt es kein Decoupling` : null,
+        unwarmed.length ? `${unwarmed.length}× ohne Einrollen, zählt nicht fürs Ziel (zuletzt ${lastUnwarmed.date.slice(8, 10)}.${lastUnwarmed.date.slice(5, 7)}.: ${String(r1(lastUnwarmed.decoupling)).replace(".", ",")} %)` : null],
+      extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null, orientation: lastUnwarmed ? { date: lastUnwarmed.date, value: r1(lastUnwarmed.decoupling) } : null },
     });
     const last = g.series.slice(-g.lastN);
     // Temperatur des Radcomputers bleibt draussen: der Sensor misst Koerperwaerme mit
@@ -584,7 +589,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     if (watts.length) g.hints.unshift(`Leistung im Messfenster ${span(watts, "W")}`);
     if (cfg.firstMin && cfg.warmupMin) g.hints.push(`Messfenster: ${cfg.firstMin} min nach ${cfg.warmupMin} min Einrollen${cfg.watts ? `, Leistung ${cfg.watts} W ±${Math.round(RIDE_WATTS_TOL * 100)} %` : ""}`);
     const noWarm = last.filter((x) => x.noWarmup).length;
-    if (noWarm) g.hints.push(`${noWarm}× ohne Einrollen gemessen (Fenster ab Minute 0)`);
+    if (noWarm) g.hints.push(`${noWarm}× ohne Einrollen gemessen (Fenster ab Minute 0)`); // nur ohne Einrollen im Protokoll
     if (cfg.ftpTest && !w.baseline) g.hints.push(input.ftpTest ? `FTP-Test am ${input.ftpTest.date.slice(8, 10)}.${input.ftpTest.date.slice(5, 7)}.${input.ftp ? ` · FTP ${input.ftp} W` : ""}` : (block.weekNo ?? 1) > 1 || block.status === "done" ? "Kein FTP-Test in Woche 1 gefunden." : "FTP-Test in Woche 1 steht an.");
     goals.push(g);
   }
