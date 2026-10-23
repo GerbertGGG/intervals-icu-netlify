@@ -530,7 +530,7 @@ function buildWidget(res) {
   text(head, ` · ${clock(d.generatedAt)}`, FS.xs, { color: COL.muted, minScale: 1 });
   head.addSpacer();
   if (g && g.daysToGo != null && g.daysToGo >= 0) pill(head, raceShort(g), COL.race, RACE_HEX);
-  w.addSpacer(5);
+  w.addSpacer(8);
 
   // 2. Urteil des Coaches: Kapsel "Hart erlaubt" / "Nur locker" / "Frei" (Farbe aus seinem go), daneben seine Blocker.
   // Ohne go keine Zeile (seine Notiz steht unten in der Kachel, die Kopfzeile wuerde dasselbe noch einmal sagen), ohne
@@ -548,7 +548,7 @@ function buildWidget(res) {
     text(vr, v.text, FS.md, { bold: true, color: v.cls === "none" ? COL.muted : COL.text, lines: 2, minScale: 0.7 });
   }
   vr.addSpacer();
-  w.addSpacer(6);
+  w.addSpacer(8);
   } else w.addSpacer(2);
 
   // Koerper und Gefuehl als eine kompakte Zeile: Wert gross, Kurzname klein darunter (Gefuehl 1 = bestmoeglich). Gefuehl in
@@ -561,10 +561,10 @@ function buildWidget(res) {
   const VW = W / vals.length;
   vals.forEach(([val, lab, col]) => {
     const cell = vrow.addStack(); cell.layoutVertically(); cell.size = new Size(VW, 0);
-    const a = cell.addStack(); a.addSpacer(); num(a, val, FS.md, { color: val === MISSING ? COL.muted : col || COL.text, minScale: 0.6 }); a.addSpacer();
+    const a = cell.addStack(); a.addSpacer(); num(a, val, FS.lg, { color: val === MISSING ? COL.muted : col || COL.text, minScale: 0.6 }); a.addSpacer();
     const b = cell.addStack(); b.addSpacer(); text(b, lab, FS.xs, { color: COL.muted, minScale: 0.6 }); b.addSpacer();
   });
-  w.addSpacer(7);
+  w.addSpacer(10);
 
   // 3. Hinweis in einer grauen Kachel: Notiz des Coaches (Strich blau), sonst der Zweck aus dem Plan (Strich grau)
   const coachLine = d.coach && d.coach.note ? d.coach.note : null;
@@ -577,18 +577,19 @@ function buildWidget(res) {
     return out;
   };
   const why = rawWhy ? sentences(rawWhy) : whyText(p);
-  // Hoehe nach Textlaenge schaetzen (gut 6 pt je Zeichen bei 12 pt) und fest setzen: In einem Stack mit fester Hoehe und
-  // fester Textbreite bricht Scriptable zuverlaessig um; ohne das blieb der Text einzeilig mit "...".
-  // 5,7 pt je Zeichen (gemessen: 48 Zeichen fuellen eine Zeile); 6,1 hat eine Zeile zu viel geschaetzt
-  const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 5.7));
+  // Hoehe nach Textlaenge schaetzen und fest setzen: In einem Stack mit fester Hoehe und fester Textbreite bricht
+  // Scriptable zuverlaessig um; ohne das blieb der Text einzeilig mit "...".
+  // Schrift 13 pt: 6,2 pt je Zeichen (bei 12 pt gemessen 5,7: 48 Zeichen fuellen eine Zeile), Zeilenhoehe 17 pt
+  const NOTE_FS = 13, LINE_H = 17;
+  const TXW = W - 9 - 3 - 9 - 10, perLine = Math.max(20, Math.floor(TXW / 6.2));
   const nLines = Math.max(1, Math.ceil(why.length / perLine));
-  const ct = w.addStack(); ct.size = new Size(W, nLines * 16 + 12); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
-  const bar = ct.addStack(); bar.size = new Size(3, nLines * 16); bar.cornerRadius = 1.5;
+  const ct = w.addStack(); ct.size = new Size(W, nLines * LINE_H + 12); ct.backgroundColor = COL.tile; ct.cornerRadius = 12; ct.setPadding(6, 9, 6, 10); ct.centerAlignContent();
+  const bar = ct.addStack(); bar.size = new Size(3, nLines * LINE_H); bar.cornerRadius = 1.5;
   bar.backgroundColor = coachLine ? COL.accent : COL.muted;
   ct.addSpacer(9);
   const tx = ct.addStack(); tx.layoutVertically(); tx.size = new Size(TXW, 0);
-  text(tx, why, FS.sm, { lines: nLines + 1, minScale: 0.85 });
-  w.addSpacer(10);
+  text(tx, why, NOTE_FS, { lines: nLines + 1, minScale: 0.85 });
+  w.addSpacer(12);
 
   // 4. Heute: Sportsymbol, Einheit, darunter Dauer, Distanz und RPE; ohne Einheit Ruhetag und die naechste Einheit.
   // Mit Wochenzielen und ohne geplante Einheit entfaellt die Zeile: Was zu tun ist, steht unten unter "offen".
@@ -596,7 +597,8 @@ function buildWidget(res) {
   // Ohne Einheit heute ist unten Platz: darunter die naechsten drei Tage (nicht bei langem Hinweis)
   // Platz unter der Woche (Punkte), geschaetzt aus dem, was darueber steht: gemessen frei sind 60 pt im grossen Widget
   // (Hoehe 354) bei drei Zeilen Hinweis, ohne Urteils-Zeile, ohne Einheit heute und ohne Quellen-Hinweis
-  const room = (extra) => 60 + (widgetSize().large - 354) + 16 * (3 - nLines) - (go || !c0 ? 27 : 0) - (res.stale || (d.sourcesFailed || []).length ? 18 : 0) - extra;
+  // Groessere Schrift und Abstaende (Werte 17 pt, Hinweis 13 pt) kosten gegenueber der Messung gut 18 pt
+  const room = (extra) => 60 - 18 + (widgetSize().large - 354) + LINE_H * (3 - nLines) - (go || !c0 ? 27 : 0) - (res.stale || (d.sourcesFailed || []).length ? 18 : 0) - extra;
   // Mit Zeitzielen steht die Woche als ein Balken da (Ziel und Rahmen als Marken), ohne eigene Zeile fuer die Wochenziele
   if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, room(0));
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
@@ -618,7 +620,7 @@ function buildWidget(res) {
   const structured = !!(p && p.steps && p.steps.some((x) => (x.pct ?? 0) >= 80));
   const showProfile = !!(p && p.steps && p.steps.length) && (!wk.rings || (structured && nLines <= 2));
   if (showProfile) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
-  w.addSpacer(10);
+  w.addSpacer(12);
 
   if (wk.rings) return buildWeekTargets(w, W, d, wk, res, room(42 + (showProfile ? 30 : 0)));
   goalsLine(w, W, wk.goals);
@@ -685,17 +687,14 @@ function weekBarImage(W, H, v, goal, frame) {
 }
 function buildWeekTargets(w, W, d, wk, res, room = 0) {
   const zeit = wk.rings.zeit;
-  // Unten, was in den Platz passt: die naechsten drei Tage, sofern dort etwas geplant ist (sonst stuende dreimal "Pause"),
-  // sonst die Woche Mo bis So (Kreise so gross, wie Breite und Platz erlauben), danach die Rueckfrage des Coaches.
-  // Der Balken ist niedriger als die frueheren Ringe; gemessen (iPhone, 23.10., Blocker zweizeilig, drei Zeilen Hinweis,
-  // Einheit heute) blieben mit +40 unten gut 40 pt frei, deshalb +60: dann passen die naechsten drei Tage.
-  const q = d.coach && d.coach.question, upcoming = (d.plan.upcoming || []).length > 0;
+  // Unten keine Tageskacheln (die stehen im Plan): der freie Platz geht an die Rueckfrage des Coaches, wenn sie passt,
+  // sonst an Abstand und hoehere Kapseln. Der Balken ist niedriger als die frueheren Ringe; gemessen (iPhone, 23.10.,
+  // Blocker zweizeilig, drei Zeilen Hinweis, Einheit heute) passt mit +60 die Schaetzung.
+  const q = d.coach && d.coach.question;
   let left = room - 2 + 60;
-  const TILE_H = 36, Q_H = 54, KH = Math.min(Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7), left - 10 - CAPS_PAD - 2 - CAPS_LABEL_H);
-  const showTiles = upcoming && left >= TILE_H; if (showTiles) left -= TILE_H;
-  const showDays = !showTiles && wk.days && KH >= 22; if (showDays) left -= 10 + CAPS_PAD + KH + 2 + CAPS_LABEL_H;
+  const Q_H = 54;
   const showQ = !!q && left >= Q_H; if (showQ) left -= Q_H;
-  const grow = Math.max(0, Math.min(12, left)); // Rest: Kapseln hoeher, Abstand groesser
+  const grow = Math.max(0, Math.min(20, left)); // Rest: Kapseln hoeher, Abstand groesser
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
   const doneMin = sum(zeit, 1), goal = sum(zeit, 2), frame = wk.goals && wk.goals.goalMin > 0 ? wk.goals.goalMin : null;
   const row = w.addStack(); row.bottomAlignContent(); row.size = new Size(W, 0);
@@ -703,7 +702,7 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
   row.addSpacer();
   num(row, fmtHm(doneMin), FS.lg);
   text(row, `  Ziel ${fmtHm(goal)}${frame ? ` · Rahmen ${fmtHm(frame)}` : ""}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-  w.addSpacer(4);
+  w.addSpacer(6);
   const im = w.addImage(weekBarImage(W, 14, doneMin, goal, frame)); im.imageSize = new Size(W, 14);
   // Offen: eine Kapsel je Sportart in der Sportfarbe ueber die volle Breite, Zahl = was noch fehlt
   const open = wk.open || [];
@@ -716,19 +715,9 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
       const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
       const pill = c.addStack(); pill.size = new Size(CW, PH); pill.cornerRadius = PH / 2; pill.centerAlignContent();
       pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
-      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? fmtHm(o.v) : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
+      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? fmtHm(o.v) : fmt(o.v), FS.lg, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
       const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, o.unit === "min" ? SPORTS[o.s][0] : `${SPORTS[o.s][0]} · ${o.unit}`, FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
     }
-  }
-  if (showTiles) {
-    w.addSpacer(10);
-    const TW = Math.floor((W - 12) / 3);
-    const tiles = w.addStack(); tiles.size = new Size(W, 0); tiles.spacing = 6;
-    for (let i = 1; i <= 3; i++) dayTile(tiles, TW, addIso(d.today, i), d.goal, d.plan.upcoming);
-  } else if (showDays) {
-    // Sonst die Woche Mo bis So: was an welchem Tag gemacht wurde (Kreise in Sportfarbe), heute umrandet
-    w.addSpacer(10);
-    const im = w.addImage(capsImage(W, KH, wk.days, d.today)); im.imageSize = new Size(W, CAPS_PAD + KH + 2 + CAPS_LABEL_H);
   }
   if (showQ) {
     w.addSpacer(10);
