@@ -14,6 +14,8 @@ const hm = (secs) => (secs < 3600 ? fmtTime(secs) : fmtTime(Math.round(secs / 60
 // Frische in % der Fitness (CTL), Zonen wie Intervals.icu (Worker: dashboard-summary.js)
 const TSB_ZONE_TEXT = { risk: "hohes Risiko", optimal: "produktiv belastet", neutral: "neutral", fresh: "frisch", transition: "Übergang: Fitness sinkt" };
 const fmtStable = (m) => (m == null ? "–" : m === 0 ? "unter 1h" : fmtHm(m));
+// GPS-Korrektur der Laufauswertung (Worker: cleanRunDistance), nur wenn Meter entfernt wurden
+const gpsNote = (g) => (g?.correctedM > 0 ? `<div class="muted" style="font-size:11px">GPS korrigiert: −${fmt(g.correctedM / 1000, 2)} km</div>` : "");
 
 /* ---------- Laden ---------- */
 async function load() {
@@ -146,7 +148,7 @@ function lastStats(L) {
     L.avgHr != null && st("Ø Puls", `${fmt(L.avgHr)} <small>bpm</small>`),
     L.overCapMin != null && st(`über HF ${fmt(L.capHr)}`, `${fmt(L.overCapMin)} <small>min</small>`),
     L.intensity != null && st("Intensität", `${fmt(L.intensity)} <small>%</small>`),
-    L.dec60 != null && st("Decoupling 0–60", `${fmt(L.dec60, 1)} <small>%</small>`),
+    L.dec60 != null && st("Decoupling 5–60", `${fmt(L.dec60, 1)} <small>%</small>`),
     L.stableMin != null && st("stabile Dauer", fmtStable(L.stableMin)),
     L.decoupling != null && st("Decoupling", `${fmt(L.decoupling, 1)} <small>%</small>`),
     L.rpe != null && st("RPE", fmt(L.rpe)),
@@ -579,9 +581,9 @@ function renderLongruns(d) {
   const decCls = (v) => (v == null ? "none" : v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
   const next = d.nextTest?.date;
   if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Blocktest oder Trendlauf (ab 60 min unter dem HF-Deckel) mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
-  const rows = B.recent.map((r) => `<tr title="${esc(r.testReason ?? "")}"><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ' <span class="badge none">Trend</span>'}</td><td>${fmtHm(r.durationMin)}</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? fmtHm(r.overCapMin) : "–"}</td></tr>`).join("");
-  host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 0–60</th><th>stabil</th><th>Pace 0–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 steht hier nicht mehr: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts. Blocktest = Lauf ab 60 min am Testtermin aus dem Block-Eintrag (±2 Tage, mehrere: der längste); Trend = Lauf ab 60 min mit Ø-HF unter ${B.cap != null ? fmt(B.cap) : "dem Deckel"}. Der Grund steht beim Darüberfahren. Nur die Blocktests zählen fürs Blockziel; den Trend zwischen den Tests zeigt „Greift die Grundlage?“.</div></details>`;
+  const rows = B.recent.map((r) => `<tr title="${esc(r.testReason ?? "")}"><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ' <span class="badge none">Trend</span>'}${gpsNote(r.gps)}</td><td>${fmtHm(r.durationMin)}</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `5–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? fmtHm(r.overCapMin) : "–"}</td></tr>`).join("");
+  host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 5–60</th><th>stabil</th><th>Pace 5–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <details class="info"><summary>Erklärung</summary><div>Decoupling 5–60: Pace je Herzschlag in Minute 5–32,5 gegen 32,5–60 (die ersten 5 min mit dem Pulsanstieg aus dem Stand bleiben draußen), ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Minute 5 (5–60, 5–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Pace 5–60: bereinigte Distanz in Minute 5–60 auf der Bewegungszeit. GPS korrigiert: Distanzsprünge über 4 m/s sind durch das Tempo davor und danach ersetzt, die Zahl sagt, um wie viel der Lauf kürzer ist. Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 steht hier nicht mehr: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts. Blocktest = Lauf ab 60 min am Testtermin aus dem Block-Eintrag (±2 Tage, mehrere: der längste); Trend = Lauf ab 60 min mit Ø-HF unter ${B.cap != null ? fmt(B.cap) : "dem Deckel"}. Der Grund steht beim Darüberfahren. Nur die Blocktests zählen fürs Blockziel; den Trend zwischen den Tests zeigt „Greift die Grundlage?“.</div></details>`;
 }
 
 /* ---------- 3 · Form: Intervall-Splits ---------- */
@@ -1052,9 +1054,9 @@ function renderBlock(SB, deloads = []) {
     if (g.key === "decoupling") {
       vis = bars(g.series.slice(-10).map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %` })), g.max, g.max + 2);
     } else if (g.key === "runDecoupling" && g.tests) {
-      // Blocktests: eine Zeile je Test (Decoupling 0–60, Pace 0–60, stabile Dauer, Fensterreihe beim Darüberfahren)
+      // Blocktests: eine Zeile je Test (Decoupling 5–60, Pace 5–60, stabile Dauer, GPS-Korrektur, Fensterreihe beim Darüberfahren)
       vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}` })), g.max, g.must)
-        + (g.tests.length ? `<div class="scroll"><table class="mini tests" style="margin-top:6px"><thead><tr><th>Test</th><th>0–60</th><th>Pace</th><th>stabil</th></tr></thead><tbody>${g.tests.map((t) => `<tr title="${esc(`${t.label}, ${fmt(t.durationMin)} min${t.date !== t.planned ? `, geplant ${fmtDate(t.planned)}` : ""}${t.testReason ? ` · ${t.testReason}` : ""} · ${t.windows.map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · ")}`)}"><td>${fmtDate(t.date)}</td><td>${fmt(t.dec60, 1)}&nbsp;%</td><td>${t.pace60 ?? "–"}</td><td>${t.stableMin === 0 ? "&lt;&nbsp;60" : `${fmt(t.stableMin)}&nbsp;min`}</td></tr>`).join("")}</tbody></table></div>` : "");
+        + (g.tests.length ? `<div class="scroll"><table class="mini tests" style="margin-top:6px"><thead><tr><th>Test</th><th>5–60</th><th>Pace</th><th>stabil</th></tr></thead><tbody>${g.tests.map((t) => `<tr title="${esc(`${t.label}, ${fmt(t.durationMin)} min${t.date !== t.planned ? `, geplant ${fmtDate(t.planned)}` : ""}${t.testReason ? ` · ${t.testReason}` : ""} · ${t.windows.map((x) => `5–${x.min}: ${fmt(x.value, 1)} %`).join(" · ")}`)}"><td>${fmtDate(t.date)}${gpsNote(t.gps)}</td><td>${fmt(t.dec60, 1)}&nbsp;%</td><td>${t.pace60 ?? "–"}</td><td>${t.stableMin === 0 ? "&lt;&nbsp;60" : `${fmt(t.stableMin)}&nbsp;min`}</td></tr>`).join("")}</tbody></table></div>` : "");
     } else if (g.key === "runStable") {
       vis = g.tests.length ? `<div class="sub">${g.tests.map((t) => `${esc(t.label)} ${fmtDate(t.date)}: ${fmtStable(t.stableMin)}`).join(" · ")}</div>` : "";
     } else if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {

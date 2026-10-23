@@ -574,7 +574,7 @@ function buildFitness(runs, snapshot, todayIso) {
 }
 
 // Grundlagenlaeufe aus den Zeitreihen (Blocktest-Modus, block-inputs.js): HF-Deckel-Einhaltung der laufenden Woche und
-// die Blocktests und Trendlaeufe (category aus session-tests.js) mit Decoupling 0–60, stabiler Dauer, DFA alpha1 (Runalyze,
+// die Blocktests und Trendlaeufe (category aus session-tests.js) mit Decoupling 5–60, stabiler Dauer, GPS-Korrektur, DFA alpha1 (Runalyze,
 // gleicher Tag) und testReason.
 function buildBaseRuns(runs, snapshot, targets, block, todayIso) {
   const cap = targets?.hrCap ?? null;
@@ -587,7 +587,7 @@ function buildBaseRuns(runs, snapshot, targets, block, todayIso) {
     cap,
     week: { runs: wk.length, minutes: wk.reduce((a, r) => a + (r.durationMin ?? 0), 0), overMin: wk.reduce((a, r) => a + r.analysis.overCapMin, 0) },
     recent: analysed.filter((r) => r.category === "runBlocktest" || r.category === "runTrend").sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8).map((r) => ({
-      date: r.date, durationMin: r.durationMin, dec60: r.analysis.dec60, stableMin: r.analysis.stableMin, windows: r.analysis.windows,
+      date: r.date, durationMin: r.durationMin, dec60: r.analysis.dec60, stableMin: r.analysis.stableMin, windows: r.analysis.windows, gps: r.analysis.gps ?? null,
       pace60: r.analysis.pace60 != null ? formatPace(r.analysis.pace60) : null, overCapMin: r.analysis.overCapMin, dfa: dfa.get(r.date) ?? null, test: r.category === "runBlocktest", category: r.category, testReason: r.testReason ?? null,
     })),
   };
@@ -888,7 +888,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     const profile = await loadSessionProfile(env, lastRaw, lastActivity.sport, lastActivityHrAllowed(lastRaw, runCtx));
     if (profile) lastActivity.profile = profile;
   }
-  // Letzte Einheit: im Blocktest-Modus kein Decoupling ueber den ganzen Lauf (waechst mit der Laenge), sondern 0–60 min,
+  // Letzte Einheit: im Blocktest-Modus kein Decoupling ueber den ganzen Lauf (waechst mit der Laenge), sondern Minute 5–60,
   // stabile Dauer und Minuten ueber dem HF-Deckel aus den Zeitreihen
   if (lastActivity?.sport === "run" && blockTargets?.run?.tests) {
     const ra = (blockSessions.runs ?? []).find((r) => r.id != null && r.id === lastRaw?.id)?.analysis;

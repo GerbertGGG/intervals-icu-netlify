@@ -251,7 +251,7 @@ assert.equal(gR.runStable.value, 75); assert.equal(gR.runStable.baseValue, 0); a
 // Verlauf (Trend, keine Stufe): Decoupling 6 → Ø 5,5; Hauptkurve Pace 0–60 im HF-Band
 assert.deepEqual([gR.runDecoupling.course.open, gR.runDecoupling.course.from, gR.runDecoupling.course.to, gR.runDecoupling.course.dir], [false, 6, 5.5, "better"]);
 assert.equal("state" in gR.runDecoupling.course, false);
-assert.equal(gR.runDecoupling.course.main, "Pace 0–60 7:10 → 7:08 /km"); assert.equal(gR.runDecoupling.course.mainDir, "better");
+assert.equal(gR.runDecoupling.course.main, "Pace 5–60 7:10 → 7:08 /km"); assert.equal(gR.runDecoupling.course.mainDir, "better");
 assert.equal(gR.runDecoupling.course.nextText, "nächster Blocktest 06.12.");
 assert.deepEqual([gR.runStable.course.from, gR.runStable.course.to, gR.runStable.course.dir], [0, 75, "better"]);
 assert.equal(buildBlockGoalsFull(bR, { runs: runsR.slice(0, 1) }, "2026-11-12").goals.find((x) => x.key === "runDecoupling").course.open, true); // nur der Basistest
@@ -272,7 +272,7 @@ const cr = (date, dec, o = {}) => ({ date, durationMin: 70, decoupling: dec, mai
 const gbl = buildBlockGoalsFull(bR, { rides: [cr("2026-10-19", 9.8, { baseline: true, noWarmup: true }), cr("2026-10-26", 4), cr("2026-11-02", 12, { baseline: true }), cr("2026-11-09", 3)] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
 assert.deepEqual([gbl.count, gbl.value, gbl.series.map((x) => x.date)], [2, 3.5, ["2026-10-26", "2026-11-09"]]);
 assert.deepEqual(gbl.baselines.map((x) => [x.date, x.value]), [["2026-10-19", 9.8], ["2026-11-02", 12]]);
-// Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 0–60 stabil, 0–75 ok, 0–90 drüber
+// Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 5–60 stabil, 5–75 ok, 5–90 drüber
 {
   const n = 100 * 60, time = Array.from({ length: n }, (_, i) => i), velocity_smooth = Array(n).fill(2.5);
   const heartrate = time.map((t) => (t < 70 * 60 ? 122 : 122 + (t - 70 * 60) / 60 * 1.5));
