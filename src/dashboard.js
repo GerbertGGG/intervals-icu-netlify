@@ -19,7 +19,7 @@ import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
-import { computeWeekTotals } from "./week-totals.js";
+import { computeWeekTotals, enduranceWeeks } from "./week-totals.js";
 import { readTargets, targetsView } from "./targets-snapshot.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
@@ -33,6 +33,9 @@ import { readRunalyzeHistory, historyEntryFromSnapshot, upsertHistory } from "./
 // Zugriff nur mit DASHBOARD_TOKEN (Header "Authorization: Bearer <token>").
 
 const HISTORY_DAYS = 56;
+// Wochen vor Blockstart, die fuer die Referenzwoche der ersten Blockwochen mitgeladen werden (Mittel aus 3 Wochen, leichte Wochen
+// brauchen ihre eigene Referenz)
+const BLOCK_LEAD_WEEKS = 6;
 const LONGRUN_MIN_KM = 15;
 // Formkurve (CTL/ATL) zeigt einen längeren Verlauf, damit die Tagesschwankungen wie in Intervals sichtbar werden
 const FORM_DAYS = 180;
@@ -778,10 +781,20 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   let seasonBlock = resolveSeasonBlock([...(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : []), ...events], todayIso);
   if (seasonBlock) {
     let blockActs = activities, blockWell = wellnessR.ok && Array.isArray(wellnessR.value) ? wellnessR.value : [];
-    if (seasonBlock.status === "active" && seasonBlock.start < oldest) {
+    // Aktivitaeten ab BLOCK_LEAD_WEEKS vor Blockstart: Referenzwoche der ersten Blockwochen (Intensitaets-Kachel)
+    const actsFrom = addDays(seasonBlock.start, -7 * BLOCK_LEAD_WEEKS);
+    let actsCover = oldest;
+    if (seasonBlock.status === "active" && actsFrom < oldest) {
       const till = addDays(oldest, -1);
-      const [xa, xw] = await Promise.all([settle("blockActivities", () => fetchIntervalsActivities(env, seasonBlock.start, till)), settle("blockWellness", () => fetchIntervalsWellnessRange(env, seasonBlock.start, till))]);
-      if (xa.ok && Array.isArray(xa.value)) blockActs = [...xa.value, ...activities];
+      const [xa, xw] = await Promise.all([
+        settle("blockActivities", () => fetchIntervalsActivities(env, actsFrom, till)),
+        seasonBlock.start < oldest ? settle("blockWellness", () => fetchIntervalsWellnessRange(env, seasonBlock.start, till)) : { ok: false },
+      ]);
+      if (xa.ok && Array.isArray(xa.value)) {
+        const have = new Set(activities.map((x) => x?.id));
+        blockActs = [...xa.value.filter((x) => !have.has(x?.id)), ...activities];
+        actsCover = actsFrom;
+      }
       if (xw.ok && Array.isArray(xw.value)) blockWell = [...xw.value, ...blockWell];
     }
     const blockRuns = blockActs === activities ? runs : blockActs.filter(isRun).map((a) => buildRunRecord(a, runCtx));
@@ -837,6 +850,9 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       sickDays,
       deloadWeeks: coach?.deloadWeeks ?? [],
       frame,
+      // Intensitaet je Woche gegen den damaligen Rahmen und den Umfang gegen die Referenzwoche (week-totals.js)
+      frames: targets.history,
+      weekVolumes: enduranceWeeks(blockActs, actsCover, todayIso),
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
     seasonBlock = { ...seasonBlock, goals, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };

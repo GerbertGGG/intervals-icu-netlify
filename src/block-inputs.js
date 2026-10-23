@@ -1,7 +1,7 @@
 import { readKvJson, writeKvJson, hasKv } from "./kv.js";
 import { fetchIntervalsActivityIntervals, fetchIntervalsActivityStreams } from "./intervals-client.js";
 import { activityDay, isBike } from "./activity-utils.js";
-import { FLAT_M_PER_KM, HEAT_C, swimTestFromIntervals, swimTestFromText } from "./season-block.js";
+import { FLAT_M_PER_KM, HEAT_C, RIDE_WARMUP_MIN_SEC, swimTestFromIntervals, swimTestFromText } from "./season-block.js";
 
 // Eingaben fuer die Abschlussziele des Trainingsblocks (season-block.js): lockere Laeufe und Rollen-Einheiten mit
 // Decoupling, Schwimmtests, FTP-Test. Welche Einheit vergleichbar ist, entscheidet season-block.js; hier werden nur
@@ -93,12 +93,13 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
 // Rad-Messfenster: windowMin Minuten ab Ende des Einrollens (warmupMin). Fehlt das Einrollen (Einheit zu kurz dafuer),
 // beginnt das Fenster bei 0 (noWarmup). Leistung zu Puls wie decouplingFromStreams, dazu mittlere Leistung und mittlerer Puls
 // im Fenster (sinkt der Puls bei gleicher Leistung, wird die Grundlage besser, auch wenn das Decoupling schon niedrig ist).
-export function rideWindowFromStreams(streams, { warmupMin = 0, windowMin = 60, durationSec = null } = {}) {
+// startSec: Fensterbeginn fest vorgegeben (Ende des Warmup-Blocks aus Intervals), dann zaehlt warmupMin nicht.
+export function rideWindowFromStreams(streams, { warmupMin = 0, windowMin = 60, durationSec = null, startSec = null } = {}) {
   const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
   const w = get("watts"), time = get("time"), hr = get("heartrate");
   if (!Array.isArray(w)) return null;
   const dur = durationSec ?? (Array.isArray(time) ? time[time.length - 1] : w.length);
-  const start = warmupMin > 0 && dur >= (warmupMin + windowMin - 2) * 60 ? warmupMin * 60 : 0;
+  const start = startSec != null ? startSec : warmupMin > 0 && dur >= (warmupMin + windowMin - 2) * 60 ? warmupMin * 60 : 0;
   const end = start + windowMin * 60;
   const tOf = (i) => (Array.isArray(time) && Number.isFinite(time[i]) ? time[i] : i);
   const ws = [], hs = [];
@@ -107,7 +108,7 @@ export function rideWindowFromStreams(streams, { warmupMin = 0, windowMin = 60, 
     decoupling: decouplingFromStreams(streams, "watts", end, { warmupSec: start }),
     mainWatts: ws.length ? Math.round(ws.reduce((a, b) => a + b, 0) / ws.length) : null,
     mainHr: hs.length >= 60 ? Math.round(hs.reduce((a, b) => a + b, 0) / hs.length) : null,
-    noWarmup: warmupMin > 0 && start === 0,
+    noWarmup: startSec != null ? startSec === 0 : warmupMin > 0 && start === 0,
   };
 }
 
@@ -156,7 +157,7 @@ const heatOf = (a) => {
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
 // bike: Radziel aus parseBlockTargets (minMin, firstMin) – Decoupling nur fuer Rollen-Einheiten, die lang genug sind
 const RUN_CACHE = "icu:runanalysis:v2:"; // v2: EF Minute 5–35
-const RIDE_CACHE = "icu:ridewindow:v2:"; // v2: mittlerer Puls im Messfenster (Kurs: Puls bei fester Leistung)
+const RIDE_CACHE = "icu:ridewindow:v3:"; // v3: Fenster ab Ende des Warmup-Blocks (icu_warmup_time)
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
 // testIds: Aktivitaeten, die der Nutzer als Blocktest benannt hat (Name/Beschreibung der Einheit oder des gekoppelten Workouts)
 export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, bike = null, run = null, hrCap = null, testIds = null }) {
@@ -204,10 +205,18 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     };
     if (indoor && rec.easy && rec.durationMin >= (bike?.minMin ?? 75) - 5) {
       if (bike?.warmupMin != null && bike?.firstMin && hasHrOf(a) && a.id != null) {
-        // Messfenster nach dem Einrollen selbst rechnen (der Intervals-Wert umfasst bei laengeren Fahrten den Rest der Fahrt)
-        const opts = { warmupMin: bike.warmupMin, windowMin: bike.firstMin, durationSec: num(a.moving_time) };
-        const v = await cached(env, `${RIDE_CACHE}${a.id}:${opts.warmupMin}:${opts.windowMin}`, budget, async () => rideWindowFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"]), opts));
-        if (v) Object.assign(rec, { decoupling: v.decoupling, mainWatts: v.mainWatts, mainHr: v.mainHr ?? null, noWarmup: v.noWarmup });
+        // Einrollen = Warmup-Block der Fahrt in Intervals (icu_warmup_time); Messfenster danach bis zum Cooldown, gerechnet werden
+        // hoechstens firstMin Minuten (der Intervals-Wert umfasst bei laengeren Fahrten den Rest der Fahrt). Ohne Warmup-Block
+        // (unter RIDE_WARMUP_MIN_SEC) beginnt das Fenster bei 0, die Fahrt ist dann nur Orientierung (season-block.js).
+        const moving = num(a.moving_time) ?? 0, warm = num(a.icu_warmup_time) ?? 0, cool = num(a.icu_cooldown_time) ?? 0;
+        const startSec = warm >= RIDE_WARMUP_MIN_SEC ? warm : 0;
+        const winSec = Math.max(0, moving - startSec - (startSec ? cool : 0));
+        Object.assign(rec, { warmupSec: warm, windowMin: Math.round(winSec / 60), noWarmup: startSec === 0 });
+        const opts = { startSec, windowMin: Math.min(bike.firstMin, Math.ceil(winSec / 60)), durationSec: moving };
+        const v = await cached(env, `${RIDE_CACHE}${a.id}:${opts.startSec}:${opts.windowMin}`, budget, async () => rideWindowFromStreams(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"]), opts));
+        if (v) Object.assign(rec, { decoupling: v.decoupling, mainWatts: v.mainWatts, mainHr: v.mainHr ?? null });
+        // Ohne Einrollen und nicht laenger als das Messfenster: der Intervals-Wert ueber die ganze Fahrt (Orientierung, z. B. 19.10.: 9,8 %)
+        if (!startSec && num(a.decoupling) != null && moving <= (bike.firstMin + 1) * 60) rec.decoupling = num(a.decoupling);
       } else rec.decoupling = await decouplingOf(env, a, "watts", budget, bike?.firstMin ?? null);
     }
     rides.push(rec);
