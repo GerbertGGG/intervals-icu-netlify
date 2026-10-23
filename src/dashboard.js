@@ -19,6 +19,8 @@ import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
+import { computeWeekTotals } from "./week-totals.js";
+import { readTargets, targetsView } from "./targets-snapshot.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { buildWeekReview } from "./week-review.js";
@@ -691,7 +693,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil, coachInsights] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil, coachInsights, storedTargets] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -710,6 +712,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     readExperiment(env),
     readProfil(env),
     readInsights(env),
+    readTargets(env),
   ]);
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
@@ -890,6 +893,9 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     experiment: experiment ?? null,
     profil: profil ?? null,
     trainingDays: activitiesR.ok ? computeTrainingDays(activities, todayIso) : null,
+    // Wochenziele (week-totals.js): Ausdauerstunden ohne Kraft und Kraftsätze in 2 Wochen, letzte 8 Wochen, je Woche gegen das
+    // Ziel, das der Coach für sie gesetzt hat (save_targets); dieselbe Rechnung wie get_coach. targets: geltendes Ziel und Historie
+    weekTotals: activitiesR.ok ? { ...computeWeekTotals(activities, todayIso, storedTargets), targets: targetsView(storedTargets, todayIso) } : null,
     // Erkenntnisse des Coaches (save_insight, archive_insight): aktive und archivierte, jeweils neueste zuerst
     insights: splitInsights(coachInsights),
     plannedWeek: buildPlannedWeek(events, todayIso),

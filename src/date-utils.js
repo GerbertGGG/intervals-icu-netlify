@@ -38,3 +38,10 @@ export function mondayOnOrBefore(dayIso) {
   const diffDaysToMonday = dow === 0 ? 6 : dow - 1;
   return isoDate(new Date(d.getTime() - diffDaysToMonday * 86400000));
 }
+
+// ISO-Kalenderwoche eines Montags (YYYY-MM-DD)
+export function isoWeekNumber(monday) {
+  const thu = new Date(Date.parse(monday + "T00:00:00Z") + 3 * 86400000);
+  const jan1 = Date.UTC(thu.getUTCFullYear(), 0, 1);
+  return Math.floor((thu.getTime() - jan1) / 86400000 / 7) + 1;
+}

@@ -597,6 +597,17 @@ Schwellen aus den Sport-Settings (`buildThresholds`, `dashboard.js:186`): `thres
 
 Zielmarke 60 min/Woche Kraft; „erreicht“ = abgeschlossene Wochen mit ≥ 60 min.
 
+### 7.7a Wochenziele: Ausdauerstunden und Kraftsätze (`week-totals.js`)
+
+Eine Rechnung für Dashboard-Karte „Woche“, Diagramm „Ausdauerzeit pro Woche“, Zeit-Widget und `get_coach` (`week_totals`).
+
+- Ziele setzt der Coach per MCP-Tool `save_targets` (`targets-snapshot.js`, KV `dashboard:targets`): `enduranceHoursPerWeek` (1–20, 0,25er-Schritte), `strengthSets2w` (0–300), `streakThresholdPct` (Standard 90), `reason`, `validFrom` (Standard: Montag der laufenden Woche). Jeder Aufruf hängt an die Historie an. Für einen Tag gilt der zuletzt gespeicherte Eintrag mit `validFrom` ≤ Tag, sonst der Startwert `DEFAULT_TARGET` (5 h, 90 Sätze, 90 %, ab 19.10.2026, „Startwert Block A“).
+- Jede Woche trägt das Ziel, das an ihrem Sonntag galt (laufende Woche: heute). Steigt das Ziel, bleiben vergangene Wochen beim alten.
+- Ausdauer = Lauf-, Rad- und Schwimm-Typen (`enduranceDiscipline`: `swim` → schwimmen; `ride|bike|cycl|velomobile|handcycle` → rad; `run|treadmill` → lauf). WeightTraining, Yoga, Workout, Walk und Unbekanntes zählen nicht. Summe aus `moving_time`, Aktivitäten mit `icu_ignore_time` fallen weg.
+- Woche = ISO-Woche Mo–So nach dem lokalen Startdatum (`start_date_local`, Europe/Berlin).
+- Kraftsätze: Zahl vor „Sätze“ in der Beschreibung, sonst je „Wdh × kg“ in den Übungszeilen ein Satz. `strengthSets2w` = laufende Woche + Vorwoche (rollierend).
+- Serie: volle Wochen in Folge mit Ausdauer ≥ `streakThresholdPct` % des Ziels der jeweiligen Woche (beim Startwert 4,5 h) bis zur letzten vollen Woche; die laufende zählt mit, sobald sie ihre Schwelle erreicht. Nur innerhalb der 8 gezeigten Wochen. Das Feld heißt aus Kompatibilität weiter `streakWeeksAbove4_5`.
+
 ### 7.8 Verlauf der HM-Prognose (`runalyze-history.js`, `app.js:348`)
 
 Je Tag ein Eintrag (VDOT-Rechnung, Runalyze-Prognosen für 5 km, 10 km, HM; Zuordnung der Prognose zur Distanz mit ≤ 1 % Abweichung), max. 400 Einträge. Veränderung = `Prognose_jetzt − Prognose_früher` (negativ = schneller). Eine Prognose „vor 7 Tagen“ = jüngster Eintrag, der ≥ 7 Tage älter ist.
