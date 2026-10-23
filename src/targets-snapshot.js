@@ -11,7 +11,7 @@ import { isIsoDate, isoDateBerlin, mondayOnOrBefore } from "./date-utils.js";
 // aendert. intensity wird je Sportart ersetzt (text "" streicht die Sportart), guardrails und notAllowed als ganze Liste.
 //
 // Eintrag: { enduranceHoursPerWeek: 1-20 in 0,25er-Schritten, strengthSets2w: 0-300 (ganze Zahl), streakThresholdPct: 50-100
-//            (Standard 90), maxIncreasePct: 0-50 (Standard 10), intensity: [{ sport: lauf|rad|schwimmen|kraft, text (max 160) }]
+//            (Standard 90), maxIncreasePct: 0-50 (Standard 10), intensity: [{ sport: lauf|rad|schwimmen|kraft, text (max 160), short (optional, max 40: Kurzfassung fuers Widget) }]
 //            (max 6), guardrails: [Text (max 160)] (max 8), notAllowed: [Text (max 80)] (max 8), changed: [geaenderte Felder],
 //            reason (max 200), validFrom: YYYY-MM-DD (Standard: Montag der laufenden Woche, Berlin), fetchedAt: ISO-Zeitstempel }
 // KV: { items: [Eintrag], aelteste zuerst, max MAX_ITEMS }
@@ -30,7 +30,7 @@ export const DEFAULT_TARGET = {
 };
 export const INTENSITY_SPORTS = ["lauf", "rad", "schwimmen", "kraft"];
 const FIELDS = ["enduranceHoursPerWeek", "strengthSets2w", "streakThresholdPct", "maxIncreasePct", "intensity", "guardrails", "notAllowed"];
-const MAX_REASON = 200, MAX_INTENSITY = 6, MAX_INTENSITY_TEXT = 160, MAX_GUARDRAILS = 8, MAX_GUARDRAIL_TEXT = 160, MAX_NOT_ALLOWED = 8, MAX_NOT_ALLOWED_TEXT = 80;
+const MAX_REASON = 200, MAX_INTENSITY = 6, MAX_INTENSITY_TEXT = 160, MAX_INTENSITY_SHORT = 40, MAX_GUARDRAILS = 8, MAX_GUARDRAIL_TEXT = 160, MAX_NOT_ALLOWED = 8, MAX_NOT_ALLOWED_TEXT = 80;
 const MAX_ITEMS = 100;
 export const COACH_HISTORY = 10;
 
@@ -65,7 +65,9 @@ function mergeIntensity(v, base) {
     if (!INTENSITY_SPORTS.includes(sport)) return { error: `intensity.sport muss ${INTENSITY_SPORTS.join(", ")} sein` };
     const text = typeof x?.text === "string" ? x.text.trim() : "";
     if (text.length > MAX_INTENSITY_TEXT) return { error: `intensity.text länger als ${MAX_INTENSITY_TEXT} Zeichen` };
-    sent.push({ sport, text });
+    const short = typeof x?.short === "string" ? x.short.trim() : "";
+    if (short.length > MAX_INTENSITY_SHORT) return { error: `intensity.short länger als ${MAX_INTENSITY_SHORT} Zeichen` };
+    sent.push(short ? { sport, text, short } : { sport, text });
   }
   const sports = new Set(sent.map((x) => x.sport));
   const out = sortIntensity([...(base ?? []).filter((x) => !sports.has(x.sport)), ...sent.filter((x) => x.text)]);

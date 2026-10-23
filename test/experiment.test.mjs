@@ -1,7 +1,7 @@
 // Testet src/experiment-snapshot.js (Experiment, Profil, Trainingstage). Ausführen: node test/experiment.test.mjs
 import assert from "node:assert/strict";
 import { validateExperiment, validateProfil, computeTrainingDays } from "../src/experiment-snapshot.js";
-import { buildWidgetExperiment } from "../src/widget.js";
+import { buildWidgetExperiment, buildWidgetKompass } from "../src/widget.js";
 
 const base = { fetchedAt: "2026-10-22T06:00:00Z", title: " Trainingstage ", hypothesis: "Mehr Tage, gleiche Zeit.", status: "vorgeschlagen", startDate: null, minWeeks: 6, targetDaysPerWeek: 5, metrics: [], verdict: null };
 const ok = validateExperiment(base).value;
@@ -64,3 +64,12 @@ assert.equal(none.experiment, null); assert.equal(none.trainingDays.length, 8);
   assert.equal(buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: exp, trainingDays: td, sources: {} }).endurance, null);
 }
 console.log("experiment tests ok");
+
+// Block-Widget (view=kompass): Block, Rahmen und Experiment in einer Antwort
+{
+  const k = buildWidgetKompass({ generatedAt: "t", today: "2026-10-22", experiment: exp, trainingDays: td, seasonBlock: null, targets: null, sources: {} });
+  assert.equal(k.block, null);
+  assert.equal(k.frame, null);
+  assert.equal(k.experiment.title, exp.title);
+  assert.ok("nextTest" in k && "endurance" in k);
+}
