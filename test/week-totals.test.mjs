@@ -1,6 +1,6 @@
 // Testet src/week-totals.js (Ausdauerstunden ohne Kraft, Kraftsätze in 2 Wochen). Ausführen: node test/week-totals.test.mjs
 import assert from "node:assert/strict";
-import { computeWeekTotals, currentWeekTotals, enduranceDiscipline, strengthSetsOf, weekTotalsOldest } from "../src/week-totals.js";
+import { computeWeekTotals, currentWeekTotals, enduranceDiscipline, enduranceWeeks, strengthSetsOf, weekTotalsOldest, withReference } from "../src/week-totals.js";
 import { DEFAULT_TARGET, appendTarget, targetOn, targetHistory, targetsView, validateTargets } from "../src/targets-snapshot.js";
 
 const GOALS = { enduranceHours: 5, strengthSets2w: 90, streakThresholdPct: 90 }; // Startwert ohne gespeicherte Ziele
@@ -37,8 +37,20 @@ assert.deepEqual(cur.byDiscipline, { lauf: 0.57, rad: 1.75, schwimmen: 0 });
 assert.deepEqual([cur.strengthSets, cur.strengthSets2w, prev.strengthSets], [0, 60, 60]);
 assert.equal(prev.enduranceMin, 55); // Kraft (2 × 32 min) taucht nicht in den Stunden auf
 assert.equal(t.streakWeeksAbove4_5, 0);
-assert.deepEqual(currentWeekTotals(t), { week: "2026-10-19", enduranceHours: 2.32, byDiscipline: { lauf: 0.57, rad: 1.75, schwimmen: 0 }, strengthSets: 0, strengthSets2w: 60, streakWeeksAbove4_5: 0, streakWeeks: 0, goals: GOALS });
+assert.deepEqual(currentWeekTotals(t), { week: "2026-10-19", enduranceHours: 2.32, referenceHours: 0.3, byDiscipline: { lauf: 0.57, rad: 1.75, schwimmen: 0 }, strengthSets: 0, strengthSets2w: 60, streakWeeksAbove4_5: 0, streakWeeks: 0, goals: GOALS });
 assert.equal(weekTotalsOldest("2026-10-23"), "2026-08-24");
+// Referenzwoche: Mittel der letzten 3 Wochen (12.10.: 55 min, davor nichts) = 18 min
+assert.equal(cur.referenceMin, 18);
+{
+  // ohne leichte Wochen (unter 70 % ihrer eigenen Referenz): 300, 300, 150 (leicht), 300 -> Referenz der 5. Woche (300+300)/2 bzw. ohne 150
+  const r = withReference([300, 300, 300, 150, 300, 330].map((enduranceMin) => ({ enduranceMin })));
+  assert.deepEqual(r.map((x) => [x.referenceMin, x.light]), [[null, false], [300, false], [300, false], [300, true], [300, false], [300, false]]);
+  // alle drei leicht: Mittel aller drei
+  assert.equal(withReference([600, 600, 600, 100, 100, 100, 100].map((enduranceMin) => ({ enduranceMin })))[6].referenceMin, 100);
+  // Wochen ab dem ersten vollen Montag ab Ladebeginn, mit Referenz
+  const ew = enduranceWeeks(acts, "2026-10-08", "2026-10-23");
+  assert.deepEqual(ew.map((x) => [x.week, x.enduranceMin, x.referenceMin]), [["2026-10-12", 55, null], ["2026-10-19", 139, 55]]);
+}
 
 // Serie: volle Wochen ab 4,5 h bis zur letzten vollen Woche, die laufende zählt erst, wenn sie die Schwelle erreicht
 const ride = (date, h) => ({ start_date_local: date + "T10:00:00", type: "Ride", moving_time: h * 3600 });

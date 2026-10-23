@@ -152,45 +152,59 @@ const wk = (n) => addDaysT("2026-10-19", (n - 1) * 7);
 const addDaysT = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
 const deloadL = [wk(4), wk(8), wk(12)]; // vom Coach markierte Entlastungswochen
 const ints = [2, 3, 5, 7, 9, 10, 11].flatMap((n) => [{ date: wk(n), kind: "bikeHiit" }, ...(n === 3 ? [] : [{ date: addDaysT(wk(n), 2), kind: "hillSprints" }])]);
+// Keine Pflichtquote mehr: je Woche nur der Stand, kein "unter Soll" und kein Rot. Ohne Wochenumfang (Referenz) zählt die Intensität.
 let gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)], deloadWeeks: deloadL }, "2027-01-08").goals.find((x) => x.key === "intensity");
-assert.equal(gi.group, "leitplanke"); assert.equal(gi.of, 7); assert.equal(gi.value, 6); assert.equal(gi.status, "ok");
-assert.equal(gi.weeks.filter((x) => !x.load).length, 4); // Woche 1 und Entlastungswochen 4/8/12
-// ohne Krankmeldung zählt Woche 6 als verfehlt: 2 von 2 erlaubten Fehlwochen
+assert.equal(gi.group, "leitplanke"); assert.equal(gi.status, "info"); assert.equal(gi.source, "blocktext");
+// Woche 1 vor der Startwoche, 3 nur HIIT (zählt: eine Einheit reicht), 4/8/12 Entlastung, 6 krank ohne Einheit
+assert.deepEqual(gi.weeks.map((x) => x.state), ["early", "done", "done", "deload", "done", "sick", "done", "deload", "done", "done", "done", "open"]);
+assert.deepEqual([gi.value, gi.of, gi.withoutWeeks, gi.volumeWeeks], [7, 11, 0, 0]);
+assert.equal(gi.target, "Rad-HIIT: 1× pro Woche · Hügelsprints: 1× pro Woche");
+// Ohne Krankmeldung: Woche 6 "ohne Intensität" (grau), trotzdem kein Rot
 gi = buildBlockGoalsFull(bL, { intensity: ints, deloadWeeks: deloadL }, "2027-01-08").goals.find((x) => x.key === "intensity");
-assert.equal(gi.of, 8); assert.equal(gi.status, "warn");
-// drei Fehlwochen -> gerissen, Entscheidung "Ursache klären" nur mit Abschlusszielen; hier Status bad
-gi = buildBlockGoalsFull(bL, { intensity: ints.filter((x) => x.date !== wk(10)), deloadWeeks: deloadL }, "2027-01-08").goals.find((x) => x.key === "intensity");
-assert.equal(gi.status, "bad");
-// kein fester 3:1-Rhythmus: ohne Markierung des Coaches zählt nur Woche 1 nicht
-gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)] }, "2027-01-08").goals.find((x) => x.key === "intensity");
-assert.equal(gi.weeks.filter((x) => !x.load).length, 1);
+assert.equal(gi.weeks[5].state, "none"); assert.equal(gi.status, "info"); assert.equal(gi.withoutWeeks, 1);
 console.log("block intensity ok");
 // Woche 1 läuft: kein "offen", sondern der Grund, warum sie nicht zählt
 assert.match(buildBlockGoalsFull(resolveSeasonBlock([{ ...ev, description: lpText }], "2026-10-20"), {}, "2026-10-20").goals.find((x) => x.key === "intensity").note, /^Diese Woche: Woche 1, zählt erst ab Woche 2$/);
 console.log("block intensity week 1 ok");
 
-// Intensität aus dem Rahmen des Coaches (save_targets) statt aus dem Blocktext
+// Intensität aus dem Rahmen des Coaches (save_targets): je Woche der Rahmen, der in ihr galt; Umfang gegen die Referenzwoche
 {
   const { intensityFromFrame } = await import("../src/season-block.js");
   const { DEFAULT_TARGET } = await import("../src/targets-snapshot.js");
-  // Startwert: Rad-HIIT ab Woche 2, Hügelsprints; Leitplanke "Krankheitswochen zählen nicht" -> sickOk; Quote aus dem Blocktext
-  assert.deepEqual(intensityFromFrame(DEFAULT_TARGET, tl.intensity), { need: 6, of: 8, fromWeek: 2, kinds: ["bikeHiit", "hillSprints"], sickOk: true, source: "rahmen" });
+  // Startwert: Rad-HIIT ab Woche 2, Hügelsprints; Leitplanke "Krankheitswochen zählen nicht" -> sickOk; keine Quote mehr
+  assert.deepEqual(intensityFromFrame(DEFAULT_TARGET, tl.intensity), { fromWeek: 2, kinds: ["bikeHiit", "hillSprints"], sickOk: true, source: "rahmen" });
   assert.equal(intensityFromFrame(null, tl.intensity), tl.intensity); // ohne Rahmen: Blocktext
-  // Rahmen nur noch mit Rad-HIIT, ab Woche 3, ohne Krankheitsregel: der Blocktext (Hügelsprints, ab Woche 2) zählt nicht mehr
   const onlyBike = { intensity: [{ sport: "rad", text: "1× HIIT pro Woche ab Woche 3, z. B. 2× 8× 30/30" }, { sport: "lauf", text: "nur locker" }], guardrails: [] };
-  assert.deepEqual(intensityFromFrame(onlyBike, tl.intensity), { need: 6, of: 8, fromWeek: 3, kinds: ["bikeHiit"], sickOk: false, source: "rahmen" });
-  assert.equal(intensityFromFrame({ intensity: [{ sport: "lauf", text: "nur locker" }], guardrails: [] }, tl.intensity), null); // keine Art -> keine Leitplanke
-  // Im Block: Woche 3 (nur HIIT) zählt jetzt als erfüllt, Woche 2 zählt noch nicht
-  gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)], deloadWeeks: deloadL, frame: onlyBike }, "2027-01-08").goals.find((x) => x.key === "intensity");
-  assert.deepEqual([gi.kinds, gi.of, gi.value, gi.status, gi.source, gi.target], [["bikeHiit"], 7, 6, "ok", "rahmen", "Rad-HIIT je 1× in 6 von 8 Belastungswochen ab Woche 3"]); // Woche 6 krank ohne Ausnahme -> verfehlt
-  // Mit dem Startwert-Rahmen dasselbe Ergebnis wie aus dem Blocktext
-  gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)], deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2027-01-08").goals.find((x) => x.key === "intensity");
-  assert.deepEqual([gi.of, gi.value, gi.status], [7, 6, "ok"]);
-  // Blocktext ohne Intensitäts-Zeile: Leitplanke kommt aus dem Rahmen, ohne Quote nur der Stand (Status "info")
+  assert.deepEqual(intensityFromFrame(onlyBike, tl.intensity), { fromWeek: 3, kinds: ["bikeHiit"], sickOk: false, source: "rahmen" });
+  assert.equal(intensityFromFrame({ intensity: [{ sport: "lauf", text: "nur locker" }], guardrails: [] }, tl.intensity), null); // keine Art -> keine Kachel
+  // Rahmen ab 26.10. (Woche 2): "Erst Umfang, dann Intensität", Rad frühestens ab Woche 3
+  const fr2 = { ...DEFAULT_TARGET, default: undefined, validFrom: "2026-10-26",
+    intensity: [{ sport: "lauf", text: "Erst wenn der Umfang steht: 1× Hügelsprints am Ende eines lockeren Laufs" }, { sport: "rad", text: "Erst wenn der Umfang steht: 1× HIIT pro Woche, frühestens ab Woche 3, z. B. 2× 8× 30/30" }],
+    guardrails: ["Erst Umfang, dann Intensität: nie in derselben Woche Umfang steigern und Intensität einführen oder erhöhen", "Kein HIIT/Sprints 2 Tage vor Blocktest", "Krankheitswochen zählen nicht als verfehlt"] };
+  const frames = [fr2, DEFAULT_TARGET]; // neueste zuerst wie targetsView().history
+  // Umfang je Woche: Woche 3 +10 % (Umfangswoche, auch mit HIIT), Woche 5 +3 % (gehalten), Woche 7 −20 %, Rest gleich
+  const vols = Array.from({ length: 12 }, (_, i) => ({ week: wk(i + 1), enduranceMin: i === 2 ? 330 : i === 4 ? 309 : i === 6 ? 240 : 300, referenceMin: 300 }));
+  const dB = (today) => resolveSeasonBlock([{ ...ev, description: "Block A\n\nLEITPLANKEN\n- Ramp Rate ≤5" }, evB], today);
+  gi = buildBlockGoalsFull(dB("2026-12-23"), { intensity: ints, deloadWeeks: deloadL, frame: fr2, frames, weekVolumes: vols, plannedTests: ["2026-11-08"], sickDays: [addDaysT(wk(6), 1)] }, "2026-12-23").goals.find((x) => x.key === "intensity");
+  // Woche 2: Rahmen ab 26.10. (Rad frühestens ab Woche 3), Hügelsprints gemacht -> erledigt; Woche 3: Umfangswoche (trotz HIIT);
+  // Woche 4 (Test 08.11.) ist Entlastung
+  assert.deepEqual(gi.weeks.map((x) => x.state), ["early", "done", "volume", "deload", "done", "sick", "done", "deload", "done", "open"]);
+  assert.deepEqual(gi.weeks.map((x) => x.frameFrom).slice(0, 2), ["2026-10-19", "2026-10-26"]);
+  assert.deepEqual([gi.weeks[2].volumePct, gi.weeks[4].volumePct, gi.weeks[6].volumePct], [10, 3, -20]);
+  assert.deepEqual([gi.status, gi.value, gi.of, gi.volumeWeeks, gi.source], ["info", 4, 9, 1, "rahmen"]);
+  // Zieltext komplett aus dem Rahmen: Intensität je Sportart plus die Leitplanke, kein "ab Woche 2" aus dem Code
+  assert.deepEqual(gi.targetLines.map((l) => l.label), ["Lauf", "Rad", "Leitplanke"]);
+  assert.match(gi.target, /^Lauf: Erst wenn der Umfang steht: 1× Hügelsprints.* · Rad: Erst wenn .* · Leitplanke: Erst Umfang, dann Intensität: nie in derselben Woche/);
+  assert.equal(/Belastungswochen|unter Soll/.test(JSON.stringify(gi)), false);
+  // Testwoche ohne Intensität: zählt nicht (hell); ohne Krankmeldung, Woche 6 mit Test
+  gi = buildBlockGoalsFull(dB("2026-12-23"), { intensity: ints, deloadWeeks: deloadL, frame: fr2, frames, weekVolumes: vols, plannedTests: [addDaysT(wk(6), 6)] }, "2026-12-23").goals.find((x) => x.key === "intensity");
+  assert.equal(gi.weeks[5].state, "test"); assert.equal(gi.weeks[5].test, true);
+  // Blocktext ohne Intensitäts-Zeile und ohne Rahmen: keine Kachel
   const bN = resolveSeasonBlock([{ ...ev, description: "Block A\n\nLEITPLANKEN\n- Ramp Rate ≤5" }, evB], "2027-01-08");
   assert.equal(buildBlockGoalsFull(bN, { intensity: ints }, "2027-01-08").goals.find((x) => x.key === "intensity"), undefined);
   gi = buildBlockGoalsFull(bN, { intensity: ints, deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2027-01-08").goals.find((x) => x.key === "intensity");
-  assert.deepEqual([gi.status, gi.target, gi.value, gi.of, gi.note], ["info", "Rad-HIIT und Hügelsprints je 1× pro Belastungswoche ab Woche 2", 6, 8, "Diese Woche: Entlastungswoche, zählt nicht · 2 Wochen ohne beides"]);
+  assert.deepEqual([gi.status, gi.value, gi.of, gi.withoutWeeks, gi.note], ["info", 7, 11, 1, "Diese Woche: Entlastungswoche, zählt nicht"]);
+  assert.match(gi.target, /^Lauf: 1× Hügelsprints .* · Rad: 1× HIIT pro Woche ab Woche 2/); // Startwert-Rahmen, ohne Leitplanke zur Intensität
   console.log("block intensity from frame ok");
 
   // Widgets: Rahmen (Parameter "rahmen") mit dem Stand der laufenden Blockwoche; Block-Widget ohne Ramp Rate/ACWR
@@ -382,4 +396,35 @@ assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
   // Heute (23.10.): 60 Sätze aus der Vorwoche, diese Woche noch keine
   const now = buildBlockGoals(resolveSeasonBlock([ev], "2026-10-23"), { strength: strength.slice(0, 1), frame: { strengthSets2w: 90 } }, "2026-10-23").find((x) => x.key === "strength");
   assert.equal(now.note, "Diese Woche und Vorwoche: 60 von 90 Sätzen");
+}
+
+// Block-Eintrag Stand 23.10.2026: Testband im Abschnitt BLOCKTEST LAUF, Einrollen und 165 W im Abschnitt RAD-VERGLEICHSEINHEIT.
+// Rad zählt nur mit Warmup-Block (icu_warmup_time ≥ 300 s) und Messfenster ≥ 55 min bei 160–170 W; 19.10. ohne Einrollen = Orientierung
+{
+  const { rideMeasureIssue } = await import("../src/season-block.js");
+  const txt = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nWochenziel, Steigerung, Intensität und Leitplanken stehen im aktuellen Rahmen im Dashboard. Sie ändern sich nur nach Absprache mit dem Coach, mit Grund. Hier stehen nur die festen Teile: Ziele, Tests, Protokolle.\n\nABLAUF\nBlocktests (langer Lauf): Basistest Fr 23.10., dann So 08.11., So 06.12., So 03.01. Termine fest, unabhängig von Entlastungswochen.\nTypische Woche: 2× Rad, 2× Lauf, 1× Schwimmen (meist Mittwoch), Kraft. Ein zweites Schwimmen ist Bonus.\n\nABSCHLUSSZIELE\nLauf: aerobe Stabilität und Haltbarkeit\na) Basis: Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min gegenüber dem Basistest mindestens stabil bzw. kein klar negativer Trend.\nb) Haltbarkeit: Die stabile Dauer (längstes Fenster 0–60, 0–75, 0–90 … mit Decoupling ≤5 %) ist im letzten Blocktest länger als im Basistest.\nJeder Grundlagenlauf ab 60 min unter HF 128 zählt als Trendindikator, nicht direkt für das Abschlussziel.\n\nRad (Rolle): aerobe Stabilität\nDecoupling (Leistung zu Puls) im 60-min-Messfenster ≤5 % im Mittel der letzten 3 Vergleichseinheiten.\nReferenz: FTP 252 W (Rampentest 12.10.). Erster Wert 19.10. (ohne Einrollen, nach Krankheit): 9,8 %, nur Orientierung.\n\nSchwimmen: Dauer mit stabiler Technik\n2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.\n\nHF-DECKEL\nLauf-Grundlage unter HF 128.\n\nBLOCKTEST LAUF (Protokoll)\nLanger Lauf in der vollen geplanten Länge, ruhig anlaufen, kein separates Einlaufen. Die ganze Zeit HF-Band 120–128.\nGleiche flache Runde in Bobingen, gleiche Tageszeit, gleiche Schuhe, gleiche Mahlzeit vorher, kein Alkohol am Vorabend, kein Hitzetag.\nAmpel rot oder krank: 1–2 Tage verschieben. Ampel gelb: laufen und notieren.\n\nRAD-VERGLEICHSEINHEIT (Protokoll)\n10 min Einrollen (ca. 5 min 110–130 W, 5 min 140–160 W) als „Warmup“, danach mindestens 60 min bei 165 W als „Main Set“ = Messfenster. Danach frei.\nVentilator von Beginn an gleiche Stufe, gleiche Raumtemperatur, ähnliche Tageszeit. 165 W bleibt im ganzen Block. Nicht direkt nach Krankheit.\n\nWOCHE 12\nAlle Kernziele erreicht: Block B ab 11.01.2027.\nKnapp verfehlt, aber klar positive Entwicklung: Block B kann beginnen, die Fähigkeit wird weiter beobachtet.\nDeutlich verfehlt oder keine positive Entwicklung: Grundlage der betroffenen Sportart um 3–4 Wochen verlängern, dann neu bewerten.\n\nAUSBLICK BLOCK B\nLauf-Haltbarkeit: stabile Dauer ≥90 min. Erstmals Sweet Spot/Schwelle und Koppelläufe.";
+  const t23 = parseBlockTargets(txt);
+  assert.deepEqual(t23.run.band, [120, 128]); assert.equal(t23.hrCap, 128);
+  assert.deepEqual(checkBlockText(txt).band, [120, 128]); assert.deepEqual(checkBlockText(txt).hints, []);
+  assert.deepEqual([t23.bike.warmupMin, t23.bike.watts, t23.bike.firstMin], [10, 165, 60]);
+  // "Testband" und Bindestrich gehen auch
+  assert.deepEqual(parseBlockTargets(txt.replace("HF-Band 120–128", "Testband 118-126")).run.band, [118, 126]);
+  const cfg = t23.bike;
+  const r19 = { date: "2026-10-19", durationMin: 60, decoupling: 9.803871, watts: 165, mainWatts: 165, warmupSec: 0, windowMin: 60, noWarmup: true, vi: 1, intensity: 65, indoor: true, easy: true, hasHr: true };
+  const ok = { ...r19, date: "2026-10-26", durationMin: 72, decoupling: 4.2, warmupSec: 600, windowMin: 62, noWarmup: false };
+  assert.equal(rideMeasureIssue(r19, cfg), "ohne Einrollen");
+  assert.equal(rideMeasureIssue(ok, cfg), null);
+  assert.equal(rideMeasureIssue({ ...ok, windowMin: 50 }, cfg), "Messfenster unter 55 min");
+  assert.equal(rideMeasureIssue({ ...ok, mainWatts: 172 }, cfg), "nicht 160–170 W");
+  assert.equal(rideMeasureIssue({ ...ok, warmupSec: 240, noWarmup: false }, cfg), "ohne Einrollen");
+  const b23 = resolveSeasonBlock([{ category: "SEASON_START", name: "Block Grundlage (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: txt }], "2026-10-23");
+  let gb = buildBlockGoalsFull(b23, { rides: [r19] }, "2026-10-23").goals.find((x) => x.key === "bikeDecoupling");
+  assert.deepEqual([gb.value, gb.count, gb.status, gb.orientation], [null, 0, "none", { date: "2026-10-19", value: 9.8 }]);
+  assert.equal(gb.note, "Noch keine Vergleichseinheit mit Einrollen – bewertet wird ab der ersten.");
+  assert.equal(/von 3/.test(JSON.stringify(gb)), false);
+  // ab der ersten echten Vergleichseinheit wird bewertet
+  gb = buildBlockGoalsFull(b23, { rides: [r19, ok, { ...ok, date: "2026-10-28", windowMin: 45, decoupling: 1 }] }, "2026-10-30").goals.find((x) => x.key === "bikeDecoupling");
+  assert.deepEqual([gb.value, gb.count, gb.status], [4.2, 1, "ok"]); assert.match(gb.note, /erst 1 von 3/);
+  assert.ok(gb.hints.some((h) => /nicht vergleichbar: 1× Messfenster unter 55 min/.test(h)));
+  console.log("block A 23.10. ok");
 }

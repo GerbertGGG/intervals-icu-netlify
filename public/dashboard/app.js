@@ -1025,7 +1025,9 @@ function renderBlock(SB, deloads = []) {
   const valOf = (g) => {
     if (g.value == null) return "–";
     if (g.key === "strength" && g.periodWeeks > 1) return `${g.value}<small> von ${g.of} Abschnitten mit Ziel</small>`;
-    if (g.key === "strength" || g.key === "intensity") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungswochen" : "Wochen"} mit Ziel</small>`;
+    if (g.key === "strength") return `${g.value}<small> von ${g.of} ${g.group ? "Belastungswochen" : "Wochen"} mit Ziel</small>`;
+    // Intensität: keine Quote, nur wie viele Wochen mit Intensität bzw. mit Umfangssteigerung
+    if (g.key === "intensity") return `${g.value}<small> Woche${g.value === 1 ? "" : "n"} mit Intensität${g.volumeWeeks ? ` · ${g.volumeWeeks} Umfangswoche${g.volumeWeeks === 1 ? "" : "n"}` : ""}</small>`;
     if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)}<small> s/100 m</small>`;
     if (g.key === "ramp") return `${fmt(g.value, 1)}<small> max./Woche</small>`;
     if (g.key === "pause") return `${g.value}<small> Tag${g.value === 1 ? "" : "e"} längste Lücke</small>`;
@@ -1068,15 +1070,23 @@ function renderBlock(SB, deloads = []) {
     } else if (g.key === "strength") {
       vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : w.done ? (w.hit ? "ok" : g.status === "base" ? "off" : "bad") : "open"}" title="${w.end ? `${fmtDate(w.start)}–${fmtDate(w.end)}` : g.rollWeeks > 1 ? `Woche ab ${fmtDate(w.start)} mit Vorwoche` : `ab ${fmtDate(w.start)}`}: ${w.count}${g.goalSets ? " Sätze" : "× Kraft"}${w.load === false ? " (Entlastungswoche, zählt nicht)" : ""}"></i>`).join("")}</div>`;
     } else if (g.key === "intensity") {
+      // Je Woche der Stand gegen den Rahmen, der in ihr galt: grün = Intensität bei gehaltenem Umfang, hell mit Pfeil = Umfangswoche,
+      // grau = ohne Intensität, hell = zählt nicht. Kein Rot, keine Quote.
       const kd = { bikeHiit: "Rad-HIIT", hillSprints: "Hügelsprints" };
-      vis = `<div class="bsq">${g.weeks.map((w) => `<i class="${w.load === false ? "rec" : !w.done ? "open" : w.hit ? "ok" : w.sick ? "rec" : g.status === "base" || g.status === "info" ? "off" : "bad"}" title="ab ${fmtDate(w.start)}: ${g.kinds.map((k) => `${kd[k]} ${w.has[k] ?? 0}×`).join(", ")}${w.load === false ? " (zählt nicht)" : w.sick ? " (krank)" : ""}"></i>`).join("")}</div>`;
+      const ST = { done: ["ok", "Intensität erledigt"], volume: ["vol", "Umfang gesteigert – Intensität bewusst nicht"], none: ["off", "ohne Intensität"], deload: ["rec", "Entlastung, zählt nicht"], early: ["rec", "vor der Startwoche laut Rahmen, zählt nicht"], sick: ["rec", "krank, zählt nicht"], test: ["rec", "Testwoche ohne Intensität, zählt nicht"], open: ["open", "läuft"] };
+      const pct = (w) => (w.volumePct == null ? "" : ` · Ausdauer ${fmtHm(w.enduranceMin)} gegen Referenzwoche ${fmtHm(w.referenceMin)} (${w.volumePct > 0 ? "+" : ""}${fmt(w.volumePct, 1)} %)`);
+      vis = `<div class="bsq">${g.weeks.map((w) => { const [cls, txt] = ST[w.state] ?? ["rec", ""]; return `<i class="${cls}" title="${esc(`ab ${fmtDate(w.start)}: ${txt}${pct(w)} · ${(w.kinds?.length ? w.kinds : g.kinds).map((k) => `${kd[k]} ${w.has[k] ?? 0}×`).join(", ")}${w.frameFrom ? ` · Rahmen ab ${fmtDate(w.frameFrom)}` : ""}`)}"></i>`; }).join("")}</div>`;
     } else if (g.key === "acwr") {
       vis = g.value != null ? `<div class="cbar"><div class="cfill" style="width:${Math.min(100, g.value)}%;background:var(--${g.status === "base" ? "muted" : g.status === "none" ? "muted" : g.status})"></div><i style="left:80%"></i></div>` : "";
     }
-    const legend = g.key === "intensity" ? `Jedes Kästchen = eine Woche, grün = ${g.kinds.length > 1 ? "beides" : ""} erledigt, hell = zählt nicht (${g.weeks.some((w) => w.skip?.startsWith("Woche")) ? "vor der Startwoche, " : ""}Entlastung oder krank)`.replace("=  ", "= ") : g.key === "strength" ? `Jedes Kästchen = ${g.periodWeeks > 1 ? `ein Abschnitt von ${g.periodWeeks * 7} Tagen` : g.rollWeeks > 1 ? "eine Woche mit ihrer Vorwoche" : "eine Woche"}, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group && !(g.periodWeeks > 1) ? ", hell = Entlastungswoche" : ""}${g.source === "rahmen" ? " · Ziel aus dem aktuellen Rahmen des Coaches" : ""} · Verlauf im Bereich Kraft` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
+    const legend = g.key === "intensity" ? "Jedes Kästchen = eine Woche: grün = Intensität bei gehaltenem Umfang (±3 %), hell mit Pfeil = Umfangswoche (mehr als 3 % über der Referenzwoche), grau = ohne Intensität, hell = zählt nicht (Entlastung, krank, Testwoche ohne Intensität)" : g.key === "strength" ? `Jedes Kästchen = ${g.periodWeeks > 1 ? `ein Abschnitt von ${g.periodWeeks * 7} Tagen` : g.rollWeeks > 1 ? "eine Woche mit ihrer Vorwoche" : "eine Woche"}, grün = ${g.goalSets ? `mind. ${g.goalSets} Sätze` : "Ziel erreicht"}${g.group && !(g.periodWeeks > 1) ? ", hell = Entlastungswoche" : ""}${g.source === "rahmen" ? " · Ziel aus dem aktuellen Rahmen des Coaches" : ""} · Verlauf im Bereich Kraft` : g.must != null && g.must > g.max ? `durchgezogen = Ziel ${g.max} %, gestrichelt = Muss ${g.must} %` : null;
     const sub = [g.note, g.key === "strength" && !g.egym ? "ohne EGYM-Daten" : null, g.basis ? (g.status === "base" ? "Ausgangswert: " : "") + g.basis : null].filter(Boolean).map(esc).join(" · ");
-    const lines = [`Ziel: ${esc(g.target)}`, vis && legend ? esc(legend) : null, sub || null].filter(Boolean);
-    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" || g.status === "info" ? "none" : g.status}">${stLabel[g.status]}</span></div>${g.value != null ? `<div class="val">${valOf(g)}</div>` : ""}${vis}${courseOf(g)}${lines.map((t) => `<div class="sub">${t}</div>`).join("")}${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}${nextOf(g)}</div>`;
+    // Intensität: Zieltext komplett aus dem Rahmen des Coaches (Intensität je Sportart und die Leitplanke)
+    const goalTxt = g.targetLines?.length ? `Rahmen: ${g.targetLines.map((l) => `<b>${esc(l.label)}</b> ${esc(l.text)}`).join("<br>")}` : `Ziel: ${esc(g.target)}`;
+    const lines = [goalTxt, vis && legend ? esc(legend) : null, sub || null].filter(Boolean);
+    const orient = g.value == null && g.orientation;
+    const val = g.value != null ? `<div class="val">${valOf(g)}</div>` : orient ? `<div class="val" style="color:var(--muted)">Orientierung ${fmt(g.orientation.value, 1)}<small> % · ${fmtDate(g.orientation.date)}</small></div>` : "";
+    return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" || g.status === "info" ? "none" : g.status}">${orient ? "Orientierung" : stLabel[g.status]}</span></div>${val}${vis}${courseOf(g)}${lines.map((t) => `<div class="sub">${t}</div>`).join("")}${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}${nextOf(g)}</div>`;
   };
   // Ramp Rate und ACWR keine eigenen Kacheln mehr: nur als stiller Hinweis in "Aktueller Rahmen", wenn sie hoch sind
   const list = (SB.goals ?? []).filter((g) => g.key !== "ramp" && g.key !== "acwr");
