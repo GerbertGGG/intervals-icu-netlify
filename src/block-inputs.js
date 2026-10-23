@@ -42,24 +42,99 @@ export function decouplingFromStreams(streams, field, maxSec = null, { warmupSec
   return e1 > 0 ? Math.round(((e1 - e2) / e1) * 1000) / 10 : null;
 }
 
-// Lauf-Auswertung aus den Zeitreihen (Methode wie im Coaching vereinbart): Fenster 0–T ab Start, in zwei Haelften nach Zeit
-// geteilt; Effizienz je Haelfte = (Distanzzuwachs / Zeit) / mittlere HF (nur Proben mit HF). Decoupling % = (Eff1 / Eff2 − 1) × 100.
-// Gehpausen und Stopps bleiben drin (sie gehoeren zur Einheit). Fenster 60, 75, 90 … min bis zur Gesamtdauer; stabile Dauer =
-// laengstes Fenster mit Decoupling ≤ stableMax (0 = schon 0–60 darueber). Dazu Pace 0–60 und Minuten ueber dem HF-Deckel.
+// Lauf-Auswertung aus den Zeitreihen (Methode wie im Coaching vereinbart), in drei Schritten:
+// 1. Zeitachse = Bewegungszeit (runMovingAxis): Intervals liefert "time" als vergangene Zeit. Pausen (Luecke > PAUSE_GAP_S)
+//    zaehlen 1 s, Stehen (≥ STOP_MIN_S am Stueck unter STOP_SPEED) zaehlt nicht. Kurze Gehpausen bleiben drin.
+// 2. GPS-Plausibilitaet (cleanRunDistance): Ausreisser in der Distanz ersetzen, bevor irgendetwas gerechnet wird.
+// 3. Fenster ab Minute 5 (DECOUPLING_SKIP_START_S, Pulsanstieg aus dem Stand bleibt draussen): 5–T, T = 60, 75, 90 … min bis
+//    zur Gesamtdauer, in zwei Haelften nach Zeit geteilt; Effizienz je Haelfte = (Distanzzuwachs / Zeit) / mittlere HF (nur
+//    Proben mit HF). Decoupling % = (Eff1 / Eff2 − 1) × 100. Stabile Dauer = laengstes Fenster mit Decoupling ≤ stableMax
+//    (0 = schon 5–60 darueber). Pace Basis = Pace im Fenster 5–60, dazu Minuten ueber dem HF-Deckel.
+// Nur Laufen; die Rad-Auswertung (rideWindowStats, decouplingFromStreams) bleibt unberuehrt.
+export const RUN_RULES = {
+  GPS_MAX_RUN_SPEED: 4.0, // m/s, darueber ist ein Distanzzuwachs verdaechtig
+  GPS_MAX_JUMP_M: 15, // Einzelsprung in hoechstens 1 s
+  GPS_BRIDGE_S: 5, // verdaechtige Proben mit Luecken bis 5 s bilden ein Segment
+  GPS_REF_S: 60, // Median-Tempo aus je 60 s vor und nach dem Segment
+  DECOUPLING_SKIP_START_S: 300, // Startausblendung: Basisfenster 5–60
+  PAUSE_GAP_S: 5, // Luecke im Zeitstrahl darueber = Pause (Auto-Pause)
+  STOP_SPEED: 0.5, // m/s, darunter steht der Laeufer
+  STOP_MIN_S: 5, // Stehen erst ab so vielen Sekunden am Stueck
+};
+
+// Bewegungszeit je Probe aus vergangener Zeit und Distanz (beides gleich lang)
+export function runMovingAxis(time, dist, rules = RUN_RULES) {
+  const n = dist.length, step = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) { const dt = time[i] - time[i - 1]; step[i] = dt <= 0 ? 0 : dt > rules.PAUSE_GAP_S ? 1 : dt; }
+  // Stehen: zusammenhaengende Proben unter STOP_SPEED, zusammen mindestens STOP_MIN_S
+  for (let i = 1; i < n;) {
+    const slow = (k) => step[k] > 0 && (dist[k] - dist[k - 1]) / step[k] < rules.STOP_SPEED;
+    if (!slow(i)) { i++; continue; }
+    let j = i, secs = 0;
+    while (j < n && slow(j)) secs += step[j++];
+    if (secs >= rules.STOP_MIN_S) for (let k = i; k < j; k++) step[k] = 0;
+    i = j;
+  }
+  const mt = [0];
+  for (let i = 1; i < n; i++) mt.push(mt[i - 1] + step[i]);
+  return mt;
+}
+
+// GPS-Ausreisser: Zuwachs > GPS_MAX_RUN_SPEED × Δt oder > GPS_MAX_JUMP_M in hoechstens 1 s ist verdaechtig. Verdaechtige
+// Proben mit Luecken ≤ GPS_BRIDGE_S bilden ein Segment; dessen Zuwaechse werden durch Median-Tempo der GPS_REF_S davor und
+// danach × Δt ersetzt, danach wird die kumulierte Distanz neu aufgebaut. correctedM = entfernte Meter (positiv = kuerzer).
+export function cleanRunDistance(t, dist, rules = RUN_RULES) {
+  const n = dist.length, inc = [0];
+  for (let i = 1; i < n; i++) inc.push((Number(dist[i]) || 0) - (Number(dist[i - 1]) || 0));
+  const dt = (i) => t[i] - t[i - 1];
+  const sus = [];
+  for (let i = 1; i < n; i++) {
+    const d = dt(i);
+    if ((d > 0 ? inc[i] / d > rules.GPS_MAX_RUN_SPEED : inc[i] > rules.GPS_MAX_JUMP_M) || (d <= 1 && inc[i] > rules.GPS_MAX_JUMP_M)) sus.push(i);
+  }
+  const segs = [];
+  for (const i of sus) {
+    const last = segs[segs.length - 1];
+    if (last && t[i] - t[last[1]] <= rules.GPS_BRIDGE_S) last[1] = i; else segs.push([i, i]);
+  }
+  const inSeg = (k) => segs.some(([a, b]) => k >= a && k <= b);
+  let correctedM = 0;
+  for (const [a, b] of segs) {
+    const from = t[a - 1], to = t[b], ref = [];
+    for (let k = 1; k < n; k++) {
+      if (inSeg(k) || dt(k) <= 0) continue;
+      if ((t[k] <= from && t[k] > from - rules.GPS_REF_S) || (t[k - 1] >= to && t[k] <= to + rules.GPS_REF_S)) ref.push(inc[k] / dt(k));
+    }
+    const v = ref.length ? median(ref) : null;
+    for (let k = a; k <= b; k++) {
+      const repl = v != null ? v * Math.max(0, dt(k)) : Math.min(inc[k], rules.GPS_MAX_RUN_SPEED * Math.max(0, dt(k)));
+      correctedM += inc[k] - repl; inc[k] = repl;
+    }
+  }
+  const out = [Number(dist[0]) || 0];
+  for (let i = 1; i < n; i++) out.push(out[i - 1] + inc[i]);
+  return { dist: out, gps: { segments: segs.length, correctedM: Math.round(correctedM) } };
+}
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
 const EF_WINDOW = [5, 35]; // Minuten
 const EF_MIN_SEC = 15 * 60;
-export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstMin = 60, stepMin = 15 } = {}) {
+export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstMin = 60, stepMin = 15, rules = RUN_RULES } = {}) {
   const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
   const hr = get("heartrate"), time = get("time"), vel = get("velocity_smooth");
-  let dist = get("distance");
+  let rawDist = get("distance");
   if (!Array.isArray(hr) || !hr.length) return null;
   const n = hr.length;
-  const tOf = (i) => (Array.isArray(time) && Number.isFinite(time[i]) ? time[i] : i);
-  if (!Array.isArray(dist) || dist.length < n) {
+  const elapsed = Array.from({ length: n }, (_, i) => (Array.isArray(time) && Number.isFinite(time[i]) ? time[i] : i));
+  if (!Array.isArray(rawDist) || rawDist.length < n) {
     if (!Array.isArray(vel)) return null;
-    dist = [0];
-    for (let i = 1; i < n; i++) dist.push(dist[i - 1] + (Number(vel[i]) || 0) * Math.max(0, tOf(i) - tOf(i - 1)));
+    rawDist = [0];
+    for (let i = 1; i < n; i++) rawDist.push(rawDist[i - 1] + (Number(vel[i]) || 0) * Math.max(0, elapsed[i] - elapsed[i - 1]));
   }
+  rawDist = rawDist.slice(0, n).map((x) => Number(x) || 0);
+  const mt = runMovingAxis(elapsed, rawDist, rules);
+  const { dist, gps } = cleanRunDistance(mt, rawDist, rules);
+  const tOf = (i) => mt[i];
   const durSec = tOf(n - 1);
   let over = 0;
   if (capHr != null) for (let i = 1; i < n; i++) if (hr[i] > capHr) over += Math.min(10, Math.max(0, tOf(i) - tOf(i - 1)));
@@ -70,12 +145,13 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
     if (secs <= 0 || hs.length < 60) return null;
     return ((dist[j] - dist[i]) / secs) / (hs.reduce((x, y) => x + y, 0) / hs.length);
   };
-  const decAt = (T) => { const e1 = half(0, T / 2), e2 = half(T / 2, T); return e1 && e2 ? Math.round((e1 / e2 - 1) * 1000) / 10 : null; };
+  const skip = rules.DECOUPLING_SKIP_START_S;
+  const decAt = (T) => { const mid = (skip + T) / 2, e1 = half(skip, mid), e2 = half(mid, T); return e1 && e2 ? Math.round((e1 / e2 - 1) * 1000) / 10 : null; };
   const windows = [];
   for (let m = firstMin; m * 60 <= durSec + 30; m += stepMin) { const v = decAt(Math.min(m * 60, durSec)); if (v != null) windows.push({ min: m, value: v }); }
   const dec60 = windows.find((x) => x.min === firstMin)?.value ?? null;
   const ok = windows.filter((x) => x.value <= stableMax);
-  const d60 = dist[idxAt(firstMin * 60)];
+  const i60 = idxAt(firstMin * 60), i5 = idxAt(skip), d60 = dist[i60] - dist[i5], s60 = tOf(i60) - tOf(i5);
   // Aerobe Effizienz (EF) im Standardfenster Minute 5–35, kuerzere Laeufe Minute 5 bis Ende (mind. 15 min):
   // Tempo in m/min je Herzschlag, ohne den Pulsanstieg aus dem Stand. Trend der Grundlage zwischen den Blocktests.
   const efEnd = Math.min(EF_WINDOW[1] * 60, durSec);
@@ -83,9 +159,11 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
   return {
     ef: efRaw ? Math.round(efRaw * 60 * 1000) / 1000 : null, efToMin: efRaw ? Math.round(efEnd / 60) : null,
     durationMin: Math.round(durSec / 60),
-    dec60, windows,
+    fromMin: skip / 60, dec60, windows,
     stableMin: dec60 == null ? null : dec60 > stableMax ? 0 : Math.max(...ok.map((x) => x.min)),
-    pace60: durSec >= firstMin * 60 - 30 && d60 > 0 ? Math.round(firstMin * 60 / (d60 / 1000)) : null,
+    // Pace Basis = Pace im Fenster 5–60: bereinigte Distanz / Bewegungszeit des Fensters
+    pace60: durSec >= firstMin * 60 - 30 && d60 > 0 && s60 > 0 ? Math.round(s60 / (d60 / 1000)) : null,
+    distKm: Math.round(dist[n - 1]) / 1000, gps,
     capHr, overCapMin: capHr != null ? Math.round(over / 60) : null,
   };
 }
@@ -133,7 +211,7 @@ const heatOf = (a) => {
 };
 
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
-const RUN_CACHE = "icu:runanalysis:v2:"; // v2: EF Minute 5–35
+const RUN_CACHE = "icu:runanalysis:v3:"; // v3: Bewegungszeit, GPS-Filter, Fenster ab Minute 5
 const RIDE_TEST_CACHE = "icu:ridetest:v1:"; // Messfenster der Rad-Vergleichseinheit (session-tests.js)
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
 // testCfg: Termine, HF-Deckel und Vergleichsleistung fuer die Test-Erkennung (testConfigOf); jede Einheit bekommt category und testReason

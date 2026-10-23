@@ -127,7 +127,7 @@ function parseSportGoals(t) {
     const max = decMax(runP), must = mustOf(runP);
     out.run = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(runP), minMin: num1(runP.match(/(?:≥|>=|ab|mind(?:estens)?\.?)\s*(\d+)\s*min/i), 60), pace: /pace/i.test(runP) };
     // Blocktest-Modus, sobald der Lauf-Absatz Blocktests nennt: Das Ziel wird nur an Laeufen gemessen, die der Nutzer als
-    // "Blocktest"/"Basistest" benennt (Decoupling der ersten 60 min und stabile Dauer, laengstes Fenster 0–60, 0–75 … mit
+    // "Blocktest"/"Basistest" benennt (Decoupling Minute 5–60 und stabile Dauer, laengstes Fenster 5–60, 5–75 … mit
     // Decoupling ≤ stableMax). Termine im Text ("Basistest 25.10., dann 08.11.") sind optional und nur Anzeige.
     const tests = parseTestDates(runP).length ? parseTestDates(runP) : parseTestDates(t); // Termine auch aus dem Ablauf
     if (tests.length || TEST_RE.test(runP)) {
@@ -525,11 +525,11 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso, { fra
   };
 }
 
-// ---------- Lauf mit Blocktests: Basis (Decoupling 0–60 min) und Haltbarkeit (stabile Dauer) ----------
+// ---------- Lauf mit Blocktests: Basis (Decoupling 5–60 min) und Haltbarkeit (stabile Dauer) ----------
 // Welcher Lauf ein Blocktest bzw. Trendlauf ist, steht in r.category (session-tests.js: Termin aus dem Block-Eintrag ±2 Tage
 // und ≥60 min bzw. ≥60 min unter dem HF-Deckel; Name nur als Override). Der erste Test im Block ist der Basistest.
-// Jeder Lauf traegt seine Auswertung aus den Zeitreihen (analysis, siehe block-inputs.js): dec60, pace60, windows
-// [{min, value}], stableMin (0 = unter 60 min). Trendlaeufe zaehlen nicht fuers Ziel.
+// Jeder Lauf traegt seine Auswertung aus den Zeitreihen (analysis, siehe block-inputs.js): dec60, pace60 (Fenster
+// 5–60, Startausblendung), windows [{min, value}] (5–min), stableMin (0 = unter 60 min), gps {segments, correctedM}. Trendlaeufe zaehlen nicht fuers Ziel.
 // planned: kommende Testtage (Termine aus dem Block-Text, geplante Workouts "Blocktest" im Kalender) – nur Anzeige.
 export const TEST_RE = /blocktest|basistest/i;
 const PACE_NOISE_SEC = 5; // Pace-Unterschiede unter 5 s/km sind Rauschen
@@ -544,7 +544,7 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
   const marked = usable.filter((r) => r.category === "runBlocktest").sort((a, b) => a.date.localeCompare(b.date));
   const tests = marked.map((r, i) => {
     const a = r.analysis;
-    return { date: r.date, planned: r.testDate ?? r.date, testReason: r.testReason ?? null, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
+    return { date: r.date, planned: r.testDate ?? r.date, testReason: r.testReason ?? null, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, gps: a.gps ?? null, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
   });
   const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.planned === p || t.date === p)) ?? null;
   const n = cfg.lastN, last = tests.slice(-n), baseT = tests[0] ?? null, lastT = tests[tests.length - 1] ?? null;
@@ -557,14 +557,14 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
   const conds = tests.filter((t) => t.heat || t.hilly).map((t) => `${t.date.slice(8, 10)}.${t.date.slice(5, 7)}. ${t.heat ? "Hitze" : "nicht flach"}`);
   const shared = { group: "ziel", sport: "run", basis, tests, nextTest, count: tests.length, lastN: n };
   const base = {
-    key: "runDecoupling", ...shared, label: "Lauf: Basis (0–60 min)", unit: "%",
-    target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · Decoupling 0–60 min der letzten ${n} Blocktests · Pace 0–60 nicht langsamer als im Basistest`,
+    key: "runDecoupling", ...shared, label: "Lauf: Basis (5–60 min)", unit: "%",
+    target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · Decoupling 5–60 min der letzten ${n} Blocktests · Pace 5–60 nicht langsamer als im Basistest`,
     value: avg != null ? r1(avg) : null, max: cfg.max, must, pace: paceOk == null ? null : { first: baseT.pace60Sec, last: lastT.pace60Sec, ok: paceOk },
     series: tests.map((t) => ({ date: t.date, value: r1(t.dec60), ...(t.pace60 ? { pace: t.pace60 } : {}) })),
     status: avg == null ? "none" : w.baseline ? "base" : paceOk === false ? (decMust ? "warn" : "bad") : statusOf(decOk, decMust),
     pass: !w.baseline && tests.length >= n && (must != null ? avg <= must : decOk) && paceOk !== false,
-    note: avg == null ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : [tests.length < n ? `erst ${tests.length} von ${n} Tests` : `Ø der letzten ${n} Tests`, paceOk === false ? `Pace 0–60 ${lastT.pace60} statt ${baseT.pace60} /km – langsamer als im Basistest` : null, nextTxt].filter(Boolean).join(" · "),
-    hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Trendl${trend.length === 1 ? "auf" : "äufe"} ab 60 min unter dem HF-Deckel, Ø Decoupling 0–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
+    note: avg == null ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : [tests.length < n ? `erst ${tests.length} von ${n} Tests` : `Ø der letzten ${n} Tests`, paceOk === false ? `Pace 5–60 ${lastT.pace60} statt ${baseT.pace60} /km – langsamer als im Basistest` : null, nextTxt].filter(Boolean).join(" · "),
+    hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Trendl${trend.length === 1 ? "auf" : "äufe"} ab 60 min unter dem HF-Deckel, Ø Decoupling 5–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
   };
   // Was der naechste Test fuers Ziel braucht: gemessen wird das Mittel der letzten n Tests
   if (tests.length) {
@@ -579,7 +579,7 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
   const grow = baseT && lastT && lastT !== baseT ? lastT.stableMin > baseT.stableMin : null;
   const stable = {
     key: "runStable", ...shared, label: "Lauf: stabile Dauer", unit: "min", stableMax: cfg.stableMax,
-    target: `im letzten Blocktest länger als im Basistest · längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ ${cfg.stableMax} %`,
+    target: `im letzten Blocktest länger als im Basistest · längstes Fenster ab Minute 5 (5–60, 5–75 …) mit Decoupling ≤ ${cfg.stableMax} %`,
     value: lastT ? lastT.stableMin : null, baseValue: baseT ? baseT.stableMin : null,
     status: !lastT ? "none" : w.baseline ? "base" : grow == null ? "none" : grow ? "ok" : lastT.stableMin === baseT.stableMin ? "warn" : "bad",
     pass: !w.baseline && grow === true,
@@ -760,7 +760,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
 // Kurs der Abschlussziele: Erster Messwert → letzter → Ziel, dazu die Richtung (besser/schlechter/gleich) und die nächste
 // Messung. Nur der Verlauf, keine Stufe und keine Entscheidung (die trifft der Coach). Hauptkurve ist die Leistung bei gleichem
 // Puls bzw. der Puls bei gleicher Leistung: Unter einem strengen HF-Deckel ist das Decoupling oft schon niedrig, der
-// Fortschritt zeigt sich dann im Tempo (Lauf, Pace 0–60 im HF-Band) bzw. im Puls bei fester Leistung (Rad).
+// Fortschritt zeigt sich dann im Tempo (Lauf, Pace 5–60 im HF-Band) bzw. im Puls bei fester Leistung (Rad).
 // open = noch kein Vergleich (unter 2 Messungen).
 function goalCourse(g, w) {
   const dirOf = (a, b, lowerBetter = true) => (a == null || b == null ? null : a === b ? "flat" : (b < a) === lowerBetter ? "better" : "worse");
@@ -774,7 +774,7 @@ function goalCourse(g, w) {
     let main = null, mainDir = null;
     if (g.key === "runDecoupling" && g.tests?.length) {
       const a = g.tests[0], b = g.tests[g.tests.length - 1];
-      if (a.pace60 && b.pace60) { main = `Pace 0–60 ${a.pace60} → ${b.pace60} /km`; mainDir = a === b ? null : dirOf(a.pace60Sec, b.pace60Sec); }
+      if (a.pace60 && b.pace60) { main = `Pace 5–60 ${a.pace60} → ${b.pace60} /km`; mainDir = a === b ? null : dirOf(a.pace60Sec, b.pace60Sec); }
     } else if (g.key === "bikeDecoupling") {
       const hs = s.filter((x) => Number.isFinite(x.hr));
       if (hs.length) { const a = hs[0], b = hs[hs.length - 1]; main = `Puls bei ${b.watts ?? "fester"} W ${a.hr} → ${b.hr}`; mainDir = a === b ? null : dirOf(a.hr, b.hr); }
