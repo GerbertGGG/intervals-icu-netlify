@@ -220,15 +220,20 @@ function renderCockpit(d) {
       ${plan.length && L ? `<div class="hero-k" style="margin-top:8px">Letzte Einheit</div>${lastHtml}` : ""}${kpis}</div>`;
   const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}${weekPlanCard(d)}</div>`;
 
+  // Erkenntnisse direkt unter den Zielen des Trainingsblocks; renderInsights füllt die Plätze danach
+  const formTiles = [renderBaseTrend(d, tile),
+    raceTile || supportTile ? `<div class="cockpit flow" style="margin-top:var(--gap)">${raceTile}${supportTile}</div>` : "",
+    taperTile ? `<div class="cockpit" style="margin-top:var(--gap)">${taperTile}</div>` : ""].join("");
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
     ${weekTile}
     ${renderWeekReview(d, tile)}
-    <div class="cockpit-group">${race ? "Rennen, Block und Form" : "Block und Form"}</div>
-    ${blockTile}
-    ${renderBaseTrend(d, tile)}
-    ${raceTile || supportTile ? `<div class="cockpit flow" style="margin-top:var(--gap)">${raceTile}${supportTile}</div>` : ""}
-    ${taperTile ? `<div class="cockpit" style="margin-top:var(--gap)">${taperTile}</div>` : ""}`;
+    ${blockTile ? `<div class="cockpit-group">Ziele</div>${blockTile}` : ""}
+    <div class="cockpit-group" id="erkenntnisse">Erkenntnisse</div>
+    <div class="ins-filter" id="insight-filter" role="group" aria-label="Filter nach Disziplin"></div>
+    <div class="ins-grid" id="insights"></div>
+    <details class="info ins-old" id="insights-old" hidden></details>
+    ${formTiles ? `<div class="cockpit-group">${race ? "Rennen und Form" : "Form"}</div>${formTiles}` : ""}`;
 
   drawBaseTrend(d);
   wireCoachAnswer();
