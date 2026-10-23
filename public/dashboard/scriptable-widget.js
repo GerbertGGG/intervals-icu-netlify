@@ -850,7 +850,9 @@ function buildFitness(res) {
   return w;
 }
 
-// Ernaehrung (klein): Protein gross, darunter Kohlenhydrate und Fett mit duennem Balken, unten Energie. Ziele immer aus Yazio.
+// Ernaehrung (klein) wie das mittlere Widget, nur kompakt: oben gross die uebrigen Kalorien (Ziel - gegessen, darueber gelb
+// "drüber"), darunter Protein, Kohlenhydrate und Fett als drei gleiche Zeilen mit Wert / Ziel und duennem Balken
+// (Strich = Soll bis jetzt). Ziele immer aus Yazio; ueber dem Ziel die Zahl gelb.
 function buildFoodCard(res) {
   const d = res.data, f = d.food, IW = smallInnerWidth();
   const hasVals = (x) => x && [x.calories, x.protein, x.carbs, x.fat].some((v) => v != null);
@@ -862,26 +864,24 @@ function buildFoodCard(res) {
   const w = smallWidget(), dim = !has;
   header(w, IW, "ERNÄHRUNG", prev ? (prev === f.days[f.days.length - 2] ? "gestern" : dateShort(prev.date)) : clock(d.generatedAt));
   w.addSpacer(3);
-  valueUnit(w, show && td.protein != null ? fmt(td.protein) : MISSING, "g Protein", 30, { color: dim ? COL.muted : COL.text });
-  if (yg.proteinG) text(w, `Ziel ${fmt(yg.proteinG)} g`, FS.xs, { color: COL.muted });
-  // Kohlenhydrate und Fett als Zeilen mit duennem Balken gegen das Yazio-Ziel (ueber dem Ziel die Zahl gelb, wie im mittleren Widget)
+  const left = show && td.calories != null && kcalGoal ? kcalGoal - td.calories : null;
+  const top = w.addStack(); top.bottomAlignContent(); top.spacing = 4;
+  num(top, left != null ? fmt(Math.abs(left)) : show && td.calories != null ? fmt(td.calories) : MISSING, 30, { color: dim ? COL.muted : left != null && left < 0 ? new Color(OVER_HEX) : COL.text });
+  const u = top.addStack(); u.layoutVertically();
+  text(u, left == null ? "kcal" : left < 0 ? "kcal drüber" : "kcal übrig", FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
+  u.addSpacer(4);
   const soll = has ? dayFraction() : null;
-  for (const [label, v, goal, hex] of [["Kohlenhydrate", td.carbs, yg.carbsG, NUT_HEX.carbs], ["Fett", td.fat, yg.fatG, NUT_HEX.fat]]) {
+  for (const [label, v, goal, hex] of [["Protein", td.protein, yg.proteinG, NUT_HEX.protein], ["Kohlenh.", td.carbs, yg.carbsG, NUT_HEX.carbs], ["Fett", td.fat, yg.fatG, NUT_HEX.fat]]) {
     w.addSpacer();
     const r = w.addStack(); r.bottomAlignContent(); r.size = new Size(IW, 0);
-    text(r, label, FS.xs, { color: COL.muted, minScale: 0.8 });
+    text(r, label, FS.xs, { color: COL.muted, minScale: 0.9 });
     r.addSpacer();
     const over = show && v != null && goal && v > goal;
     num(r, show && v != null ? fmt(v) : MISSING, FS.sm, { color: dim ? COL.muted : over ? new Color(OVER_HEX) : COL.text, minScale: 0.8 });
     text(r, goal ? ` / ${fmt(goal)} g` : " g", FS.xs, { color: COL.muted, minScale: 0.8 });
-    if (goal) { w.addSpacer(2); progressBar(w, IW, show && v != null ? v / goal : 0, hex, dim ? 0.5 : 1, { overHex: OVER_HEX, mark: soll }); }
+    w.addSpacer(2);
+    progressBar(w, IW, show && v != null && goal ? v / goal : 0, hex, dim ? 0.5 : 1, { overHex: OVER_HEX, mark: soll });
   }
-  w.addSpacer();
-  const k = w.addStack(); k.bottomAlignContent();
-  if (show && td.calories != null) { num(k, fmt(td.calories), FS.md, { color: dim ? COL.muted : COL.text }); text(k, kcalGoal ? ` / ${fmt(kcalGoal)} kcal` : " kcal", FS.xs, { color: COL.muted, minScale: 0.8 }); }
-  else text(k, kcalGoal ? `Ziel ${fmt(kcalGoal)} kcal` : "kcal –", FS.xs, { bold: true, color: COL.muted });
-  w.addSpacer(5);
-  progressBar(w, IW, show && td.calories != null && kcalGoal ? td.calories / kcalGoal : 0, NUT_HEX.kcal, dim ? 0.5 : 1, { overHex: OVER_HEX, mark: has && kcalGoal ? dayFraction() : null });
   if (!has) { w.addSpacer(3); text(w, prev ? "Yazio heute noch nicht synchron" : "Yazio noch nicht synchron", FS.xs, { bold: true, color: COL.warn, minScale: 0.7 }); }
   else notice(w, res, d);
   return w;
