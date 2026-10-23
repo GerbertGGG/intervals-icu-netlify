@@ -361,8 +361,8 @@ export function buildWidgetBlock(d) {
   };
 }
 
-// Experiment-Widget (mittel, Parameter "experiment"): das vom Coach gespeicherte Experiment (save_experiment) und die live
-// gerechneten Trainingstage. Nur Werte, keine Bewertung; weekNo = Woche seit startDate (1 = erste Woche).
+// Experiment-Widget (mittel, Parameter "experiment"): das vom Coach gespeicherte Experiment (save_experiment), die Ausdauerstunden
+// je Woche gegen das Wochenziel und die live gerechneten Trainingstage. Nur Werte, keine Bewertung; weekNo = Woche seit startDate (1 = erste Woche).
 export function buildWidgetExperiment(d) {
   const x = d.experiment;
   const weekNo = x?.startDate && x.status !== "vorgeschlagen" ? Math.floor(diffDays(x.startDate, d.today) / 7) + 1 : null;
@@ -374,7 +374,20 @@ export function buildWidgetExperiment(d) {
           metrics: (x.metrics ?? []).map((m) => ({ key: m.key, label: m.label, unit: m.unit, baseline: m.baseline, current: m.current, better: m.better })) }
       : null,
     trainingDays: d.trainingDays ?? null,
+    // Ausdauer je Woche wie die Karte "Woche" (week-totals.js): Minuten ohne Kraft je Sportart, Ziel der jeweiligen Woche
+    // (save_targets), Serie ab streakThresholdPct %; dazu Kraftsaetze in 2 Wochen. Ohne Aktivitaeten null
+    endurance: enduranceWeeks(d.weekTotals),
     sourcesFailed: failedOf(d),
+  };
+}
+
+function enduranceWeeks(T) {
+  if (!T?.weeks?.length) return null;
+  const c = T.weeks[T.weeks.length - 1];
+  return {
+    weeks: T.weeks.map((w) => ({ week: w.week, complete: w.complete, min: w.enduranceMin, goalMin: Math.round(w.goalHours * 60),
+      by: Object.fromEntries(Object.entries(w.byDisciplineMin).map(([k, v]) => [DISC_SPORT[k], v])) })),
+    streak: T.streakWeeksAbove4_5, streakPct: T.goals.streakThresholdPct, sets2w: c.strengthSets2w, goalSets2w: T.goals.strengthSets2w,
   };
 }
 

@@ -16,7 +16,7 @@
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
 //              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Verlauf und Leitplanken.
-//              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Trainingstage der letzten 8 Wochen gegen sein Ziel,
+//              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Ausdauerstunden der letzten 8 Wochen gegen das Wochenziel (Trainingstage klein),
 //              Messgroessen mit Ausgangs- und aktuellem Wert, sein Fazit.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
@@ -1423,8 +1423,10 @@ function buildBlock(res) {
   return w;
 }
 
-/* ---------- Experiment (mittel): Werte des Coaches und die Trainingstage, ohne eigene Bewertung. Alle Säulen in der Wertfarbe,
-   auch unter dem Ziel; die laufende Woche blass. Veränderung grün = besser, orange = schlechter (Richtung setzt der Coach). ---------- */
+/* ---------- Experiment (mittel): Werte des Coaches, Ausdauerstunden je Woche (Laufen, Rad, Schwimmen gestapelt in Sportfarben,
+   Kraft zählt nicht) mit dem Ziel der jeweiligen Woche als gestrichelte Stufe, die laufende Woche blass; Trainingstage klein daneben.
+   Keine eigene Bewertung, unter dem Ziel nichts rot. Veränderung grün = besser, orange = schlechter (Richtung setzt der Coach).
+   Ältere Worker ohne endurance: Säulen der Trainingstage wie bisher. ---------- */
 const EXP_STATUS = { "vorgeschlagen": "VORGESCHLAGEN", "läuft": "LÄUFT", "ausgewertet": "AUSGEWERTET" };
 const EXP_SHORT = { lauf_hf130: ["Lauf HF 130", "run"], rad_hf165w: ["Rad 165 W", "bike"], schwimm_amstueck: ["Am Stück", "swim"], schwimm_100m: ["100 m", "swim"] };
 const expVal = (m, v) => (v == null ? MISSING : m.key === "lauf_hf130" || m.key === "schwimm_100m" ? fmtPace(Math.round(v)) : fmt(v, Number.isInteger(v) ? 0 : 1));
@@ -1443,6 +1445,29 @@ function dayBarsImage(W, H, weeks, target) {
   if (target) { dc.setFillColor(new Color(INK_HEX, 0.7)); for (let x = 0; x < W; x += 6) dc.fillRect(new Rect(x, y(target), 3, 1.2)); }
   return dc.getImage();
 }
+const hmShort = (m) => `${Math.floor(Math.max(0, m) / 60)}:${String(Math.round(Math.max(0, m)) % 60).padStart(2, "0")}`;
+function hourBarsImage(W, H, weeks) {
+  const LH = 13, h = H - LH, dc = newCtx(W, H), slot = W / weeks.length, bw = Math.min(slot * 0.6, 22);
+  const top = Math.max(60, ...weeks.map((x) => Math.max(x.min, x.goalMin || 0))) * 1.08, y = (m) => h - (m / top) * (h - 2);
+  dc.setTextAlignedCenter();
+  weeks.forEach((x, i) => {
+    const cx = i * slot + slot / 2;
+    let acc = 0;
+    for (const k of ["run", "bike", "swim"]) {
+      const v = (x.by && x.by[k]) || 0;
+      if (!(v > 0)) continue;
+      dc.setFillColor(new Color(sportHex(k), x.complete ? 0.95 : 0.45)); dc.fillRect(new Rect(cx - bw / 2, y(acc + v), bw, y(acc) - y(acc + v)));
+      acc += v;
+    }
+    if (!(acc > 0)) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(cx - bw / 2, h - 2, bw, 1.5)); }
+    // Ziel der Woche als gestrichelter Strich ueber den ganzen Platz der Woche
+    if (x.goalMin > 0) { dc.setFillColor(new Color(INK_HEX, 0.7)); for (let gx = i * slot; gx < (i + 1) * slot; gx += 6) dc.fillRect(new Rect(gx, y(x.goalMin), Math.min(3, (i + 1) * slot - gx), 1.2)); }
+    dc.setTextColor(new Color(x.complete ? MUTED_HEX : ACCENT_HEX));
+    dc.setFont(x.complete ? Font.systemFont(FS.xs - 1) : Font.boldSystemFont(FS.xs - 1));
+    dc.drawTextInRect(acc > 0 ? hmShort(x.min) : "–", new Rect(i * slot, h + 1, slot, LH - 1));
+  });
+  return dc.getImage();
+}
 function buildExperiment(res) {
   const d = res.data, W = widgetInnerWidth(), x = d.experiment, td = d.trainingDays || [];
   const w = baseWidget({ padV: 12 });
@@ -1451,14 +1476,23 @@ function buildExperiment(res) {
   w.addSpacer(4);
   // Säulen links, diese Woche rechts
   const top = w.addStack(); top.centerAlignContent();
-  const BW = Math.round(W * 0.62), cur = td[td.length - 1];
-  if (td.length) { const im = top.addImage(dayBarsImage(BW, 40, td, x?.targetDaysPerWeek)); im.imageSize = new Size(BW, 40); }
+  const BW = Math.round(W * 0.62), cur = td[td.length - 1], E = d.endurance, ec = E && E.weeks[E.weeks.length - 1];
+  if (E) { const im = top.addImage(hourBarsImage(BW, 44, E.weeks)); im.imageSize = new Size(BW, 44); }
+  else if (td.length) { const im = top.addImage(dayBarsImage(BW, 40, td, x?.targetDaysPerWeek)); im.imageSize = new Size(BW, 40); }
   top.addSpacer();
   const rc = top.addStack(); rc.layoutVertically();
   text(rc, "DIESE WOCHE", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
   const vr = rc.addStack(); vr.bottomAlignContent(); vr.spacing = 3;
-  num(vr, cur ? String(cur.days) : MISSING, FS.xl);
-  text(vr, x ? `/ ${x.targetDaysPerWeek} Tage` : "Tage", FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
+  if (ec) {
+    num(vr, hmShort(ec.min), FS.xl);
+    text(vr, `/ ${hmShort(ec.goalMin)} h`, FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
+    // klein darunter: Trainingstage (Ziel des Experiments), Kraft in 2 Wochen, Serie gegen das Ziel der jeweiligen Woche
+    text(rc, `${cur ? cur.days : MISSING}${x ? `/${x.targetDaysPerWeek}` : ""} Tage · Kraft ${fmt(E.sets2w)}/${fmt(E.goalSets2w)}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+    text(rc, `${E.streak} Wo in Folge ab ${fmt(E.streakPct)} %`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  } else {
+    num(vr, cur ? String(cur.days) : MISSING, FS.xl);
+    text(vr, x ? `/ ${x.targetDaysPerWeek} Tage` : "Tage", FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
+  }
   if (!x) {
     w.addSpacer(6);
     text(w, "Kein laufendes Experiment. Der Coach legt es per save_experiment an.", FS.sm, { color: COL.muted, lines: 2 });
