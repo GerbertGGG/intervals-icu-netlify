@@ -8,7 +8,8 @@
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
 //     Gross:   Rennen-Countdown, Kopfzeile des Coaches (Morgen-Auswertung), Koerper- und Gefuehlswerte, Hinweis (Coach, sonst
 //              Zweck aus dem Plan), heutige Einheit,
-//              Woche Mo bis So als Kapseln mit Wochenlast, die naechsten drei Tage.
+//              Woche als ein Balken (Zeit gegen Wochenziel und Rahmen des Coaches), offene Minuten je Sportart und Kraftsaetze,
+//              die naechsten drei Tage. Zeiten in allen Widgets als h:mm.
 //     Mittel:  Ernaehrung heute (Standard). Parameter  form  (auch  tss) = Wochen-TSS der letzten 6 Wochen gegen das Ziel, Schwellen;
 //              Parameter  zeit  = Trainingszeit der letzten 6 Wochen gegen das Zeitziel, Rahmen (Ausdauerstunden) gestrichelt, Minuten dieser Woche je Sportart;
 //              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
@@ -219,8 +220,8 @@ async function loadData() {
 const fmt = (n, d = 0) => (n == null || !Number.isFinite(Number(n)) ? MISSING : Number(n).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d }));
 const fmtTime = (s) => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = Math.round(s % 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`; };
 const fmtPace = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
-// Dauer aus Minuten: ab 60 min als 1h20m (volle Stunden 2h, Minuten zweistellig 1h05m), darunter 45m
-const fmtHm = (min) => { if (min == null || !Number.isFinite(Number(min))) return MISSING; const t = Math.round(Number(min)), h = Math.floor(t / 60), m = t % 60; return h ? `${h}h${m ? String(m).padStart(2, "0") + "m" : ""}` : `${m}m`; };
+// Dauer aus Minuten, in allen Widgets gleich als h:mm (1:20, 2:00, 0:45)
+const fmtHm = (min) => { if (min == null || !Number.isFinite(Number(min))) return MISSING; const t = Math.round(Number(min)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const dateShort = (iso) => { const [, m, d] = iso.split("-"); return `${d}.${m}.`; };
 const DAY_FULL = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
 const DAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -645,9 +646,8 @@ function buildWidget(res) {
   // Platz unter der Woche (Punkte), geschaetzt aus dem, was darueber steht: gemessen frei sind 60 pt im grossen Widget
   // (Hoehe 354) bei drei Zeilen Hinweis, ohne Urteils-Zeile, ohne Einheit heute und ohne Quellen-Hinweis
   const room = (extra) => 60 + (widgetSize().large - 354) + 16 * (3 - nLines) - (go || !c0 ? 27 : 0) - (res.stale || (d.sourcesFailed || []).length ? 18 : 0) - extra;
-  // Wochenziele des Coaches als eine Zeile ueber der Woche ("Ausdauer 2:19/5:00 · Kraft 60/90"), ohne Wertung
-  const GL = wk.goals ? 18 : 0;
-  if (wk.rings && !p) { goalsLine(w, W, wk.goals); return buildWeekTargets(w, W, d, wk, res, room(GL)); }
+  // Mit Zeitzielen steht die Woche als ein Balken da (Ziel und Rahmen als Marken), ohne eigene Zeile fuer die Wochenziele
+  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, room(0));
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -669,8 +669,8 @@ function buildWidget(res) {
   if (showProfile) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
   w.addSpacer(10);
 
+  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, room(42 + (showProfile ? 30 : 0)));
   goalsLine(w, W, wk.goals);
-  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, room(GL + 42 + (showProfile ? 30 : 0)));
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
@@ -711,84 +711,48 @@ function goalsLine(w, W, g) {
   w.addSpacer(6);
 }
 
-// Ringe im Apple-Stil wie auf der Uhr: aussen Rad, Mitte Lauf, innen Schwimmen; Grundring in der Sportfarbe gedimmt,
-// Fortschritt ab 12 Uhr. Mit warn laeuft der Ueberschuss ueber der Vorgabe orange als zweite Runde weiter (TSS-Grenze).
-// rings: [[Sportart, erledigt, Vorgabe, Untergrenze?], ...]; die Untergrenze (TSS-Korridor) steht wie im Dashboard als
-// Querstrich auf dem Ring. Kreisboegen als Linienzug, DrawContext kennt keine Boegen.
-function ringsImage(S, rings, warn) {
-  // Dicke Ringe mit schmaler Fuge wie auf der Uhr; der Grundring etwas kraeftiger, sonst wirkt Gelb auf Schwarz wie Oliv
-  const dc = newCtx(S, S), c = S / 2, pen = Math.max(5, S * 0.11), step = pen * 1.12;
-  const R = { bike: c - pen / 2 - 1, run: c - pen / 2 - 1 - step, swim: c - pen / 2 - 1 - 2 * step };
-  const arc = (r, f, hex, a = 1) => {
-    const n = Math.max(2, Math.ceil(f * 180)), pts = [];
-    for (let i = 0; i <= n; i++) { const t = -Math.PI / 2 + (2 * Math.PI * f * i) / n; pts.push(new Point(c + r * Math.cos(t), c + r * Math.sin(t))); }
-    const p = new Path(); p.addLines(pts); dc.addPath(p); dc.setStrokeColor(new Color(hex, a)); dc.setLineWidth(pen); dc.strokePath();
-    // runde Enden
-    for (const q of f < 1 ? [pts[0], pts[pts.length - 1]] : []) { const e = new Path(); e.addEllipse(new Rect(q.x - pen / 2, q.y - pen / 2, pen, pen)); dc.addPath(e); dc.setFillColor(new Color(hex, a)); dc.fillPath(); }
-  };
-  for (const [k, v, goal, lo] of rings) {
-    const r = R[k];
-    if (r == null || !(goal > 0)) continue;
-    const t = new Path(); t.addEllipse(new Rect(c - r, c - r, 2 * r, 2 * r)); dc.addPath(t); dc.setStrokeColor(new Color(sportHex(k), 0.28)); dc.setLineWidth(pen); dc.strokePath();
-    const f = v / goal;
-    if (f > 0) arc(r, Math.min(f, 1), sportHex(k));
-    if (warn && f > 1) arc(r, Math.min(f - 1, 1), OVER_HEX);
-    if (lo > 0 && lo < goal) {
-      const a = -Math.PI / 2 + 2 * Math.PI * (lo / goal), d0 = r - pen / 2 - 1, d1 = r + pen / 2 + 1;
-      const m = new Path(); m.addLines([new Point(c + d0 * Math.cos(a), c + d0 * Math.sin(a)), new Point(c + d1 * Math.cos(a), c + d1 * Math.sin(a))]);
-      dc.addPath(m); dc.setStrokeColor(new Color("#ffffff", 0.9)); dc.setLineWidth(2); dc.strokePath();
-    }
-  }
-  return dc.getImage();
-}
-
-// Woche im grossen Widget mit Wochenzielen des Coaches wie im Dashboard: zwei Ringe ZEIT (gegen das Zeitziel) und TSS (gegen
-// die Obergrenze, Untergrenze als Querstrich), rechts Minuten gegen das Ziel, TSS gegen den Korridor (Untergrenze–Obergrenze;
-// oder welche Sportart ueber der Obergrenze liegt) und die Frische; darunter ueber die volle Breite je Sportart eine Kapsel
-// mit dem, was noch offen ist (Minuten, Kraft in Saetzen; voll mit Haken = erreicht). room = freier Platz darunter (pt):
-// er fuellt sich mit den naechsten drei Tagen (wenn dort etwas geplant ist) bzw. der Woche Mo bis So, der Rueckfrage des
-// Coaches und zuletzt mit hoeheren Kapseln, damit das Widget bis unten genutzt ist.
+// Woche im grossen Widget mit Wochenzielen des Coaches: eine Zeile mit der Zeit dieser Woche, dem Wochenziel (Summe der
+// Zeitziele je Sportart) und dem Rahmen (Ausdauerstunden, week.goals), darunter ein Balken mit beiden als Marken: Ziel
+// durchgezogen, Rahmen gestrichelt. TSS und Frische stehen im Widget "Woche" (Parameter training), nicht hier.
+// Darunter ueber die volle Breite je Sportart eine Kapsel mit dem, was noch offen ist (Minuten, Kraft in Saetzen;
+// voll mit Haken = erreicht). room = freier Platz darunter (pt): er fuellt sich mit den naechsten drei Tagen (wenn dort
+// etwas geplant ist) bzw. der Woche Mo bis So, der Rueckfrage des Coaches und zuletzt mit hoeheren Kapseln.
 // TSS-Korridor als Text: "220–275", ohne Untergrenze "≤ 275"
 function tssRange(lo, hi) { return lo > 0 ? `${fmt(lo)}–${fmt(hi)}` : `≤ ${fmt(hi)}`; }
+// Balken: Fuellung = erledigt, Strich = Ziel, gestrichelter Strich = Rahmen; Massstab = das Groesste der drei
+function weekBarImage(W, H, v, goal, frame) {
+  const dc = newCtx(W, H), BH = 8, y = (H - BH) / 2, top = Math.max(v, goal || 0, frame || 0) || 1, x = (m) => Math.min(W - 1, Math.max(1, (m / top) * W));
+  const track = new Path(); track.addRoundedRect(new Rect(0, y, W, BH), BH / 2, BH / 2); dc.addPath(track); dc.setFillColor(new Color(NEUTRAL_HEX, 0.25)); dc.fillPath();
+  if (v > 0) { const f = new Path(); f.addRoundedRect(new Rect(0, y, Math.max(BH, (v / top) * W), BH), BH / 2, BH / 2); dc.addPath(f); dc.setFillColor(new Color(ACCENT_HEX)); dc.fillPath(); }
+  const tick = (m, dashed) => {
+    const px = x(m) - 1;
+    for (let t = 0; t < H; t += dashed ? 4 : H) { dc.setFillColor(new Color(INK_HEX)); dc.fillRect(new Rect(px, t, 2, dashed ? 2 : H)); }
+  };
+  if (goal > 0) tick(goal, false);
+  if (frame > 0 && frame !== goal) tick(frame, true);
+  return dc.getImage();
+}
 function buildWeekTargets(w, W, d, wk, res, room = 0) {
-  const zeit = wk.rings.zeit, tss = wk.rings.tss || [];
+  const zeit = wk.rings.zeit;
   // Unten, was in den Platz passt: die naechsten drei Tage, sofern dort etwas geplant ist (sonst stuende dreimal "Pause"),
-  // sonst die Woche Mo bis So (Kreise so gross, wie Breite und Platz erlauben), danach die Rueckfrage des Coaches
+  // sonst die Woche Mo bis So (Kreise so gross, wie Breite und Platz erlauben), danach die Rueckfrage des Coaches.
+  // Der Balken ist rund 40 pt niedriger als die frueheren Ringe; der Platz kommt unten dazu.
   const q = d.coach && d.coach.question, upcoming = (d.plan.upcoming || []).length > 0;
-  let left = room - 2;
+  let left = room - 2 + 40;
   const TILE_H = 36, Q_H = 54, KH = Math.min(Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7), left - 10 - CAPS_PAD - 2 - CAPS_LABEL_H);
   const showTiles = upcoming && left >= TILE_H; if (showTiles) left -= TILE_H;
   const showDays = !showTiles && wk.days && KH >= 22; if (showDays) left -= 10 + CAPS_PAD + KH + 2 + CAPS_LABEL_H;
   const showQ = !!q && left >= Q_H; if (showQ) left -= Q_H;
   const grow = Math.max(0, Math.min(12, left)); // Rest: Kapseln hoeher, Abstand groesser
   const sum = (xs, i) => xs.reduce((a, x) => a + x[i], 0);
-  const over = tss.filter((x) => x[1] > x[2]);
-  header(w, W, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, null);
-  w.addSpacer(5);
-  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0); row.spacing = 10;
-  const RZ = 64;
-  // Ring mit kleiner Beschriftung darunter (ZEIT, TSS) wie im Dashboard
-  const ringCol = (rings, warn, label) => {
-    const col = row.addStack(); col.layoutVertically();
-    const im = col.addImage(ringsImage(RZ, rings, warn)); im.imageSize = new Size(RZ, RZ);
-    col.addSpacer(2);
-    const lb = col.addStack(); lb.size = new Size(RZ, 0); lb.addSpacer(); text(lb, label, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); lb.addSpacer();
-  };
-  ringCol(zeit, false, "ZEIT");
-  if (tss.length) ringCol(tss, true, "TSS");
-  const RW = W - (tss.length ? 2 : 1) * (RZ + 10);
-  const rc = row.addStack(); rc.layoutVertically(); rc.size = new Size(RW, 0);
-  const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmtHm(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmtHm(sum(zeit, 2))}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
-  if (tss.length) {
-    // TSS gegen den Korridor: ueber der Obergrenze Warnfarbe, sonst neutral (unter der Untergrenze nur gedaempft)
-    const lo = tss.reduce((a, x) => a + (x[3] || 0), 0), under = !over.length && tss.some((x) => x[3] > 0 && x[1] < x[3]);
-    rc.addSpacer(2);
-    const l2 = rc.addStack(); l2.bottomAlignContent();
-    num(l2, fmt(sum(tss, 1)), FS.lg, { color: over.length ? COL.warn : under ? COL.muted : COL.text });
-    text(l2, ` / ${tssRange(lo, sum(tss, 2))} TSS`, FS.xs, { bold: true, color: COL.muted, minScale: 0.6 });
-    if (over.length) text(rc, `${over.map((x) => SPORTS[x[0]][0]).join(", ")} über Obergrenze`, FS.xs, { bold: true, color: COL.warn, minScale: 0.6 });
-  }
-  if (wk.tsb != null) text(rc, `TSB ${signed(wk.tsb)}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+  const doneMin = sum(zeit, 1), goal = sum(zeit, 2), frame = wk.goals && wk.goals.goalMin > 0 ? wk.goals.goalMin : null;
+  const row = w.addStack(); row.bottomAlignContent(); row.size = new Size(W, 0);
+  text(row, `WOCHE · ${wk.daysLeft <= 1 ? "NUR NOCH HEUTE" : `NOCH ${wk.daysLeft} TAGE`}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
+  row.addSpacer();
+  num(row, fmtHm(doneMin), FS.lg);
+  text(row, `  Ziel ${fmtHm(goal)}${frame ? ` · Rahmen ${fmtHm(frame)}` : ""}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+  w.addSpacer(4);
+  const im = w.addImage(weekBarImage(W, 14, doneMin, goal, frame)); im.imageSize = new Size(W, 14);
   // Offen: eine Kapsel je Sportart in der Sportfarbe ueber die volle Breite, Zahl = was noch fehlt
   const open = wk.open || [];
   if (open.length) {
@@ -801,7 +765,7 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
       const pill = c.addStack(); pill.size = new Size(CW, PH); pill.cornerRadius = PH / 2; pill.centerAlignContent();
       pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
       pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? fmtHm(o.v) : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
-      const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, SPORTS[o.s][0], FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
+      const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, o.unit === "min" ? SPORTS[o.s][0] : `${SPORTS[o.s][0]} · ${o.unit}`, FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
     }
   }
   if (showTiles) {
