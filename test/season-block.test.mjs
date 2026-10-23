@@ -169,6 +169,31 @@ console.log("block intensity ok");
 assert.match(buildBlockGoalsFull(resolveSeasonBlock([{ ...ev, description: lpText }], "2026-10-20"), {}, "2026-10-20").goals.find((x) => x.key === "intensity").note, /^Diese Woche: Woche 1, zählt erst ab Woche 2$/);
 console.log("block intensity week 1 ok");
 
+// Intensität aus dem Rahmen des Coaches (save_targets) statt aus dem Blocktext
+{
+  const { intensityFromFrame } = await import("../src/season-block.js");
+  const { DEFAULT_TARGET } = await import("../src/targets-snapshot.js");
+  // Startwert: Rad-HIIT ab Woche 2, Hügelsprints; Leitplanke "Krankheitswochen zählen nicht" -> sickOk; Quote aus dem Blocktext
+  assert.deepEqual(intensityFromFrame(DEFAULT_TARGET, tl.intensity), { need: 6, of: 8, fromWeek: 2, kinds: ["bikeHiit", "hillSprints"], sickOk: true, source: "rahmen" });
+  assert.equal(intensityFromFrame(null, tl.intensity), tl.intensity); // ohne Rahmen: Blocktext
+  // Rahmen nur noch mit Rad-HIIT, ab Woche 3, ohne Krankheitsregel: der Blocktext (Hügelsprints, ab Woche 2) zählt nicht mehr
+  const onlyBike = { intensity: [{ sport: "rad", text: "1× HIIT pro Woche ab Woche 3, z. B. 2× 8× 30/30" }, { sport: "lauf", text: "nur locker" }], guardrails: [] };
+  assert.deepEqual(intensityFromFrame(onlyBike, tl.intensity), { need: 6, of: 8, fromWeek: 3, kinds: ["bikeHiit"], sickOk: false, source: "rahmen" });
+  assert.equal(intensityFromFrame({ intensity: [{ sport: "lauf", text: "nur locker" }], guardrails: [] }, tl.intensity), null); // keine Art -> keine Leitplanke
+  // Im Block: Woche 3 (nur HIIT) zählt jetzt als erfüllt, Woche 2 zählt noch nicht
+  gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)], deloadWeeks: deloadL, frame: onlyBike }, "2027-01-08").goals.find((x) => x.key === "intensity");
+  assert.deepEqual([gi.kinds, gi.of, gi.value, gi.status, gi.source, gi.target], [["bikeHiit"], 7, 6, "ok", "rahmen", "Rad-HIIT je 1× in 6 von 8 Belastungswochen ab Woche 3"]); // Woche 6 krank ohne Ausnahme -> verfehlt
+  // Mit dem Startwert-Rahmen dasselbe Ergebnis wie aus dem Blocktext
+  gi = buildBlockGoalsFull(bL, { intensity: ints, sickDays: [addDaysT(wk(6), 1)], deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2027-01-08").goals.find((x) => x.key === "intensity");
+  assert.deepEqual([gi.of, gi.value, gi.status], [7, 6, "ok"]);
+  // Blocktext ohne Intensitäts-Zeile: Leitplanke kommt aus dem Rahmen, ohne Quote nur der Stand (Status "info")
+  const bN = resolveSeasonBlock([{ ...ev, description: "Block A\n\nLEITPLANKEN\n- Ramp Rate ≤5" }, evB], "2027-01-08");
+  assert.equal(buildBlockGoalsFull(bN, { intensity: ints }, "2027-01-08").goals.find((x) => x.key === "intensity"), undefined);
+  gi = buildBlockGoalsFull(bN, { intensity: ints, deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2027-01-08").goals.find((x) => x.key === "intensity");
+  assert.deepEqual([gi.status, gi.target, gi.value, gi.of, gi.note], ["info", "Rad-HIIT und Hügelsprints je 1× pro Belastungswoche ab Woche 2", 6, 8, "Diese Woche: Entlastungswoche, zählt nicht · 2 Wochen ohne beides"]);
+  console.log("block intensity from frame ok");
+}
+
 // ---------- Block A wie im Kalender (Stand 20.10.2026): Blocktests, Rad-Messfenster, Woche-12-Entscheidung ----------
 import { analyzeRunStreams, rideWindowFromStreams } from "../src/block-inputs.js";
 const real = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nABSCHLUSSZIELE\n\n1. Lauf: aerobe Stabilität\na) Basis: Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %. Pace der ersten 60 min nicht langsamer als im Basistest.\nb) Haltbarkeit: Stabile Dauer im letzten Blocktest länger als im Basistest.\nStabile Dauer = längstes Fenster ab Start (0–60, 0–75, 0–90 min … in 15-min-Schritten) mit Decoupling ≤5 %.\nBlocktest = langer Lauf am Sonntag der 3. Belastungswoche (Basistest 25.10., dann 08.11., 06.12., 03.01.). Volle geplante Länge, HF-Band 120–125, gleiche flache Runde in Bobingen.\nZusätzlich zählt jeder Grundlagenlauf ab 60 min unter HF 125 als Trend (nicht fürs Ziel).\n\n2. Rad (Rolle): aerobe Stabilität\nDecoupling (Leistung zu Puls) im 60-min-Messfenster ≤5 % im Mittel der letzten 3 Vergleichseinheiten.\nVergleichseinheit = 10 min Einrollen (ca. 5 min 110–130 W, 5 min 140–160 W), danach mindestens 60 min bei fester Leistung 165 W = Messfenster.\n\n3. Schwimmen: Dauer mit sauberer Technik\n2× 500 m mit maximal 1 min Pause. Die zweiten 500 m höchstens 5 s pro 100 m langsamer als die ersten.\n\nLAUFREGELN\n- Nie an zwei Tagen hintereinander laufen.\n\nFIXPUNKTE (meine Zusagen)\n- Mindestens 1 Ruhetag pro Woche, kein fester Wochentag.\n- Lauf-Grundlage unter HF 125, Gehpausen erlaubt\n- Intensität ab Woche 2:\n  Rad-HIIT 1× pro Woche (30/30 oder 3–4× 4 min)\n  Kein HIIT und keine Sprints in den 2 Tagen vor einem Blocktest.\n\nLEITPLANKEN\n- Kraft ≥60 Sätze in 8 von 9 Belastungswochen\n- Ramp Rate (CTL) in Belastungswochen ≤5\n- Intensität: Rad-HIIT und Hügelsprints je 1× pro Woche in 6 von 8 Belastungswochen ab Woche 2 (Krankheitswochen zählen nicht als verfehlt)\n\nWOCHE 12\nAlle Ziele und Leitplanken erfüllt: weiter mit Block B. Fehlt ein Ziel: betroffene Sportart um 3–4 Wochen verlängern. Leitplanken gerissen: erst Ursache klären, dann verlängern.";

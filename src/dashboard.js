@@ -6,7 +6,7 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsSportSett
 import { resolveActiveGoalRace, DISTANCE_LABELS, DISTANCE_KM } from "./goal-race.js";
 import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
-import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, testDatesOf, checkBlockText, TEST_RE } from "./season-block.js";
+import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, intensityFromFrame, testDatesOf, checkBlockText, TEST_RE } from "./season-block.js";
 import { buildBaseTrend } from "./base-trend.js";
 import { loadBlockSessionInputs } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
@@ -734,6 +734,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
+  // Aktueller Rahmen des Coaches (save_targets): Karte "Aktueller Rahmen" und was als Intensitaet im Block zaehlt
+  const targets = targetsView(storedTargets, todayIso), frame = targets.current;
   const wellness = wellnessR.ok ? withActualToday(buildWellness(wellnessR.value), activities, todayIso) : [];
   const fitnessR = await settle("fitness", () => fetchIntervalsWellnessRange(env, addDays(todayIso, -(FORM_DAYS - 1)), todayIso));
   const formSeries = buildFormSeries(fitnessR.ok && Array.isArray(fitnessR.value) ? fitnessR.value : [], wellness);
@@ -810,9 +812,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       ? await loadBlockSessionInputs(env, { acts: blockActs, runs: blockRuns, rzRuns: snapshot?.runs ?? [], from: win.from, to: win.to, swimDistM: tg.swim?.distM ?? 500, bike: tg.bike ?? null, run: tg.run ?? null, hrCap: tg.hrCap ?? null, testIds }).catch((err) => { console.warn("block sessions", err); return {}; })
       : {};
     const dayOfWell = (x) => String(x?.id ?? x?.date ?? "").slice(0, 10);
-    // Intensitaets-Leitplanke: Rad-HIIT und Huegelsprints aus Name/Beschreibung der Einheit und des gekoppelten Workouts
+    // Intensitaets-Leitplanke: Rad-HIIT und Huegelsprints aus Name/Beschreibung der Einheit und des gekoppelten Workouts;
+    // was zaehlt, steht im Rahmen des Coaches (save_targets), sonst im Blocktext
     blockSessions = sessions;
-    intensity = tg.intensity
+    intensity = intensityFromFrame(frame, tg.intensity)
       ? blockActs.map((a) => {
           const sport = isBike(a) ? "bike" : isRun(a) ? "run" : null;
           const z5 = Array.isArray(a?.icu_zone_times) ? num(a.icu_zone_times.find((z) => z?.id === "Z5")?.secs) : null;
@@ -833,6 +836,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       plannedTests,
       sickDays,
       deloadWeeks: coach?.deloadWeeks ?? [],
+      frame,
       plannedBreaks: events.filter((e) => /NOTE|HOLIDAY/i.test(String(e?.category ?? "")) && (/HOLIDAY/i.test(String(e?.category)) || /pause|urlaub/i.test(String(e?.name ?? "")))).map((e) => ({ from: String(e.start_date_local ?? "").slice(0, 10), to: String(e.end_date_local ?? e.start_date_local ?? "").slice(0, 10) })),
     }, todayIso);
     seasonBlock = { ...seasonBlock, goals, check: checkBlockText([seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n"), tg) };
@@ -912,10 +916,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     trainingDays: activitiesR.ok ? computeTrainingDays(activities, todayIso) : null,
     // Wochenziele (week-totals.js): Ausdauerstunden ohne Kraft und Kraftsätze in 2 Wochen, letzte 8 Wochen, je Woche gegen das
     // Ziel, das der Coach für sie gesetzt hat (save_targets); dieselbe Rechnung wie get_coach. targets: geltendes Ziel und Historie
-    weekTotals: activitiesR.ok ? { ...computeWeekTotals(activities, todayIso, storedTargets), targets: targetsView(storedTargets, todayIso) } : null,
+    weekTotals: activitiesR.ok ? { ...computeWeekTotals(activities, todayIso, storedTargets), targets } : null,
     // Aktueller Rahmen des Coaches (save_targets): Wochenziel, Steigerung, Intensität je Sportart, Leitplanken, Nicht erlaubt, Historie.
     // loadHint: Ramp Rate / ACWR nur, wenn auffällig hoch (sonst null)
-    targets: targetsView(storedTargets, todayIso),
+    targets,
     loadHint: buildLoadHint(wellness, todayIso),
     // Erkenntnisse des Coaches (save_insight, archive_insight): aktive und archivierte, jeweils neueste zuerst
     insights: splitInsights(coachInsights),
