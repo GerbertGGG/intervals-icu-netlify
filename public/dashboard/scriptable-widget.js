@@ -216,6 +216,8 @@ async function loadData() {
 const fmt = (n, d = 0) => (n == null || !Number.isFinite(Number(n)) ? MISSING : Number(n).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d }));
 const fmtTime = (s) => { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = Math.round(s % 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`; };
 const fmtPace = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+// Dauer aus Minuten: ab 60 min als 1h20m (volle Stunden 2h, Minuten zweistellig 1h05m), darunter 45m
+const fmtHm = (min) => { if (min == null || !Number.isFinite(Number(min))) return MISSING; const t = Math.round(Number(min)), h = Math.floor(t / 60), m = t % 60; return h ? `${h}h${m ? String(m).padStart(2, "0") + "m" : ""}` : `${m}m`; };
 const dateShort = (iso) => { const [, m, d] = iso.split("-"); return `${d}.${m}.`; };
 const DAY_FULL = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
 const DAY_SHORT = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -466,7 +468,7 @@ function dayTile(row, TW, iso, g, upcoming) {
   if (race) main = "Rennen";
   else if (!items) main = MISSING;
   else if (!items.length) main = "Pause";
-  else { const mins = items.reduce((a, e) => a + (e.durationMin || 0), 0); main = mins ? `${mins} min` : shortLabel(items[0]); }
+  else { const mins = items.reduce((a, e) => a + (e.durationMin || 0), 0); main = mins ? fmtHm(mins) : shortLabel(items[0]); }
   text(t, dayShort(iso), FS.xs, { bold: true, color: race ? COL.race : COL.muted, minScale: 1 });
   t.addSpacer(5);
   text(t, main, FS.sm, { bold: true, color: race ? COL.race : items && !items.length ? COL.muted : COL.text, minScale: 0.7 });
@@ -647,7 +649,7 @@ function buildWidget(res) {
   const tc = tr.addStack(); tc.layoutVertically();
   if (p) {
     text(tc, p.name || "Einheit", FS.lg, { bold: true, minScale: 0.7 });
-    const meta = [p.durationMin ? `${p.durationMin} min` : p.distanceKm && `${fmt(p.distanceKm, 1)} km`, p.rpe && `RPE ${p.rpe}`].filter(Boolean).join(" · ");
+    const meta = [p.durationMin ? fmtHm(p.durationMin) : p.distanceKm && `${fmt(p.distanceKm, 1)} km`, p.rpe && `RPE ${p.rpe}`].filter(Boolean).join(" · ");
     if (meta) text(tc, meta, FS.xs, { color: COL.muted });
   } else {
     text(tc, "Keine Einheit geplant", FS.lg, { bold: true, minScale: 0.7 });
@@ -758,7 +760,7 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
   if (tss.length) ringCol(tss, true, "TSS");
   const RW = W - (tss.length ? 2 : 1) * (RZ + 10);
   const rc = row.addStack(); rc.layoutVertically(); rc.size = new Size(RW, 0);
-  const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmt(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmt(sum(zeit, 2))} min`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
+  const l1 = rc.addStack(); l1.bottomAlignContent(); num(l1, fmtHm(sum(zeit, 1)), FS.xl); text(l1, ` / ${fmtHm(sum(zeit, 2))}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
   if (tss.length) {
     // TSS gegen den Korridor: ueber der Obergrenze Warnfarbe, sonst neutral (unter der Untergrenze nur gedaempft)
     const lo = tss.reduce((a, x) => a + (x[3] || 0), 0), under = !over.length && tss.some((x) => x[3] > 0 && x[1] < x[3]);
@@ -780,7 +782,7 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
       const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
       const pill = c.addStack(); pill.size = new Size(CW, PH); pill.cornerRadius = PH / 2; pill.centerAlignContent();
       pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
-      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? `${fmt(o.v)}′` : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
+      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? fmtHm(o.v) : fmt(o.v), FS.md, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
       const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, SPORTS[o.s][0], FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
     }
   }
@@ -819,9 +821,9 @@ const WEEK_KINDS = {
     goalText: (k) => (k.goal == null ? null : k.cap ? tssRange(k.goalMin, k.goal).replace(" ", "") : fmt(k.goal)),
   },
   time: {
-    title: "ZEIT · 6 WOCHEN", unit: "min",
+    title: "ZEIT · 6 WOCHEN", unit: null, fmtVal: fmtHm,
     val: (k) => k.min, goal: (k) => k.minGoal, parts: (k) => k.minSports,
-    goalText: (k) => (k.minGoal != null ? fmt(k.minGoal) : null),
+    goalText: (k) => (k.minGoal != null ? fmtHm(k.minGoal) : null),
   },
 };
 function weekImage(w, weeks, K) {
@@ -868,7 +870,7 @@ function weekLabels(parent, W, weeks, K) {
     const cur = i === weeks.length - 1, v = K.val(k), gt = K.goalText(k);
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(slot, 0);
     const line = (fn) => { const r = col.addStack(); r.addSpacer(); fn(r); r.addSpacer(); };
-    line((r) => num(r, v != null ? fmt(v) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
+    line((r) => num(r, v != null ? (K.fmtVal || fmt)(v) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
     line((r) => text(r, gt != null ? `/${gt}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
     line((r) => text(r, dateShort(k.weekStart), FS.xs, { bold: cur, color: cur ? COL.text : COL.muted, align: "center", minScale: 0.7 }));
   });
@@ -880,7 +882,8 @@ function buildMedium(res, kind = "tss") {
   const w = baseWidget({ padV: 11 });
   const tw = d.tssWeeks || [], cur = tw[tw.length - 1];
   const cv = cur ? K.val(cur) : null, cg = cur ? K.goalText(cur) : null;
-  header(w, W, K.title, cur && (cv != null || cg != null) ? `${cv != null ? fmt(cv) : "0"}${cg ? `/${cg}` : ""} ${K.unit} diese Woche` : null);
+  const fv = K.fmtVal || fmt;
+  header(w, W, K.title, cur && (cv != null || cg != null) ? `${cv != null ? fv(cv) : fv(0)}${cg ? `/${cg}` : ""}${K.unit ? ` ${K.unit}` : ""} diese Woche` : null);
   w.addSpacer(5);
   if (tw.some((k) => K.val(k) != null)) {
     const im = w.addImage(weekImage(W, tw, K)); im.imageSize = new Size(W, WEEK_PLOT_H);
@@ -893,7 +896,7 @@ function buildMedium(res, kind = "tss") {
   if (kind === "time") {
     // Unten: Minuten dieser Woche je Sportart (nur Sportarten mit Training)
     const ms = Object.entries((cur && cur.minSports) || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    if (ms.length) ms.forEach(([k, v]) => item(k, `${fmt(v)} min`));
+    if (ms.length) ms.forEach(([k, v]) => item(k, fmtHm(v)));
     else text(th, "Diese Woche noch kein Training", FS.xs, { color: COL.muted });
   } else {
     // Unten: Schwellen mit Sportsymbol
@@ -1172,8 +1175,8 @@ function buildTraining(res) {
     const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
     if (s.targetMin || s.targetLoad) {
       // Wochenziel des Coaches: Minuten gegen das Zeitziel, darunter TSS gegen den Korridor (Warnfarbe ueber der Obergrenze)
-      num(vl, `${Math.round(s.weekMinutes || 0)}`, FS.xl);
-      text(vl, s.targetMin ? `/ ${Math.round(s.targetMin)} min` : "min", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
+      num(vl, fmtHm(s.weekMinutes || 0), FS.xl);
+      text(vl, s.targetMin ? `/ ${fmtHm(s.targetMin)}` : "", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
       c.addSpacer(4);
       progressBar(c, CW, s.targetMin ? (s.weekMinutes || 0) / s.targetMin : 0, hex);
       c.addSpacer(3);
@@ -1190,7 +1193,7 @@ function buildTraining(res) {
     // Umfang (Stunden) der letzten 4 Wochen und Entwicklung gegen die 4 davor
     if (s.min4 != null) {
       const tr = s.trendPct == null ? "" : ` ${s.trendPct > 0 ? "▲" : s.trendPct < 0 ? "▼" : "="}${Math.abs(s.trendPct)} %`;
-      text(c, `4 W ${fmt(s.min4 / 60, 1)} h${tr}`, FS.xs, { color: COL.muted, minScale: 0.6 });
+      text(c, `4 W ${fmtHm(s.min4)}${tr}`, FS.xs, { color: COL.muted, minScale: 0.6 });
     }
   }
   w.addSpacer();
@@ -1348,7 +1351,7 @@ function buildBlock(res) {
     if (g.value == null) return MISSING;
     if (g.key === "strength") return `${g.value} von ${g.of}`;
     if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)} s`;
-    if (g.key === "runStable") return g.value === 0 ? "< 60 min" : `${g.value} min`;
+    if (g.key === "runStable") return g.value === 0 ? "< 1h" : fmtHm(g.value);
     return `${fmt(g.value, g.key === "acwr" ? 0 : 1)} %`;
   };
   const capOf = (g) => {
