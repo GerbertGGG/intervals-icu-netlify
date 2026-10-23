@@ -97,6 +97,11 @@ function weekOpen(d, week) {
   return { rings: { zeit, tss }, open, daysLeft: 7 - dayIndex(d.today) };
 }
 
+function weekGoals(d) {
+  const T = d.weekTotals, c = T?.weeks?.[T.weeks.length - 1];
+  return c ? { min: c.enduranceMin, goalMin: Math.round(T.goals.enduranceHours * 60), sets2w: c.strengthSets2w, goalSets2w: T.goals.strengthSets2w } : null;
+}
+
 export function buildWidget(d, env = {}) {
   const week = d.weeks[d.weeks.length - 1];
   const lastWeek = d.weeks.length > 1 ? d.weeks[d.weeks.length - 2] : null;
@@ -135,7 +140,9 @@ export function buildWidget(d, env = {}) {
     plan: { today: todayPlan, next: next ? { date: next.date, name: next.name, items: d.planned.filter((p) => p.date === next.date).map((p) => ({ name: stripKey(p.name), sport: p.sport, key: isKeySession(p) })) } : null, upcoming },
     // targets: Wochenziele des Coaches (Zeit + TSS-Korridor je Sportart); leer, wenn es keine gibt.
     // rings/open/daysLeft: Woche wie auf der Uhr (Ringe ZEIT und TSS, was noch offen ist), nur mit Zeitzielen
-    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week) },
+    // goals: Wochenziele des Coaches wie die Karte "Woche" (week-totals.js, save_targets): Ausdauerminuten ohne Kraft gegen das
+    // Wochenziel, Kraftsaetze laufende Woche plus Vorwoche gegen das 2-Wochen-Ziel; ohne Aktivitaeten null
+    week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week), goals: weekGoals(d) },
     // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget der Zweck aus dem Plan
     coach,
     sourcesFailed: failedOf(d),
