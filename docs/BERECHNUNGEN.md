@@ -693,6 +693,8 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 - **Kopfzeile** (`readiness.verdict`): die Kopfzeile des Coaches von heute, Farbe aus seinem Urteil `go` (hart → ok, locker → warn, frei → bad, ohne Urteil `cls: "coach"`), sonst „Noch keine Coach-Auswertung“ (`cls: "none"`). Seine Blocker (`coach.blockers`) und Rückfrage gehen mit. Keine eigene Ampel, keine Montagsbilanz, kein Befund. Körper- und Gefühlswerte nur als Zahlen.
 - **Uhr** (`buildWidgetWatch`): `rd` = Urteil des Coaches (`go`) als ok/warn/bad, ohne Urteil `"none"`; `co = 1`, wenn er heute geschrieben hat; `bl` = Zahl seiner Blocker. Eine eigene Warnung gibt es nicht.
 - **Block-Widget:** je Abschlussziel die Richtung des Verlaufs (7.9, `course.dir`), nicht bei Ausgangswerten. Keine Woche-12-Entscheidung.
+- **Block-Widget neu** (`buildWidgetKompass`, `view=kompass`): Block, Rahmen und Experiment in einer Antwort, nur zusammengesetzt aus `buildWidgetBlock`, `buildWidgetRahmen` und `buildWidgetExperiment`. Die Intensität des Rahmens steht dort in Kurzform: `intensity[].short` vom Coach (`save_targets`, max. 40 Zeichen), sonst der Text bis zum ersten Komma, Semikolon oder „z. B.“. Die Einzelansichten bleiben für ältere Skripte.
+- **Scriptable-Aufteilung** (`public/dashboard/scriptable-widget.js`): Groß = Heute (Woche als ein Balken: Zeit gegen die Summe der Zeitziele, Rahmen gestrichelt), Mittel = Woche je Sportart (mit Zonenzeit), 6 Wochen (Zeit und TSS), Block, Ernährung, Kraft, VDOT; Klein = Schlaf und Form, Ernährung, Fitness. Alte Parameter führen auf die zusammengelegten Ansichten.
 - **Cache:** das Dashboard wird 5 Minuten in KV gehalten (`CACHE_MS`), nur bei vollständigen Daten und gleichem Berliner Datum.
 
 ---

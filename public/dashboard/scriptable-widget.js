@@ -6,22 +6,19 @@
 //     (https://....workers.dev, ohne Pfad) und dem Dashboard-Token. Beides landet im Schluesselbund
 //     dieses iPhones, nicht im Skript.
 //  3. Widget auf den Home-Bildschirm legen: Scriptable, Groesse waehlen, Skript auswaehlen.
-//     Gross:   Rennen-Countdown, Kopfzeile des Coaches (Morgen-Auswertung), Koerper- und Gefuehlswerte, Hinweis (Coach, sonst
-//              Zweck aus dem Plan), heutige Einheit,
-//              Woche als ein Balken (Zeit gegen Wochenziel und Rahmen des Coaches), offene Minuten je Sportart und Kraftsaetze,
-//              die naechsten drei Tage. Zeiten in allen Widgets als h:mm.
-//     Mittel:  Ernaehrung heute (Standard). Parameter  form  (auch  tss) = Wochen-TSS der letzten 6 Wochen gegen das Ziel, Schwellen;
-//              Parameter  zeit  = Trainingszeit der letzten 6 Wochen gegen das Zeitziel, Rahmen (Ausdauerstunden) gestrichelt, Minuten dieser Woche je Sportart;
-//              Parameter  training  = je Disziplin Wochenvolumen gegen Plan, Umfang der letzten 4 Wochen mit Entwicklung und Zeitverteilung.
-//              Parameter  intensitaet  = Zonenzeit locker / mittel / hart: diese Woche und Schnitt der letzten 4 Wochen.
-//              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
-//              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
-//              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Verlauf und Leitplanken.
-//              Parameter  rahmen  = aktueller Rahmen des Coaches: Intensitaet je Sportart mit Stand dieser Woche, Nicht erlaubt,
-//              Leitplanken, naechster Blocktest; Ramp Rate/ACWR nur als Hinweis, wenn hoch.
-//              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Ausdauerstunden dieser Woche gegen das Wochenziel (Tage, Serie klein),
-//              Messgroessen mit Ausgangs- und aktuellem Wert, sein Fazit.
-//     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
+//     Empfohlene Aufteilung: Bildschirm 1 = Gross (Heute) und zwei kleine (Ernaehrung, Schlaf und Form);
+//     Bildschirm 2 = Mittel  woche,  6wochen,  block, darunter ein Smart Stack mit Ernaehrung, Kraft und VDOT.
+//     Gross:   Heute. Rennen-Countdown, Kopfzeile des Coaches, Koerper- und Gefuehlswerte, Hinweis (Coach, sonst Zweck aus
+//              dem Plan), heutige Einheit, Woche als ein Balken (Zeit gegen Wochenziel und Rahmen des Coaches), offene Minuten
+//              je Sportart und Kraftsaetze, die naechsten drei Tage.
+//     Mittel:  Ernaehrung heute (Standard).
+//              Parameter  woche  (auch  training, intensitaet) = je Sportart Zeit gegen Ziel, TSS der Woche, Zonenzeit.
+//              Parameter  6wochen  (auch  zeit, form, tss) = Trainingszeit und TSS der letzten 6 Wochen, Rahmen gestrichelt.
+//              Parameter  block  (auch  rahmen, experiment) = Block Woche x von N, naechster Test, was erlaubt ist und was
+//              nicht, Messwerte des Experiments, Abschlussziele.
+//              Parameter  kraft  = Krafttraining aus EGYM.  Parameter  vdot  = VDOT und Trainingsbereiche.
+//     Klein:   Schlaf und Form (Standard, auch  schlaf, bereit). Parameter  ernaehrung  oder  fitness.
+//     Zeiten stehen in allen Widgets als h:mm.
 // Schluesseleinheiten kennzeichnest du im Intervals-Kalender mit dem Stichwort (Tag) #key am Workout.
 // CTL, TSB und TSS sind sportartuebergreifend. Fehlende Werte stehen als "–", nie als 0.
 // Zugangsdaten spaeter aendern: Skript in Scriptable ausfuehren und "Zugangsdaten setzen" waehlen.
@@ -34,25 +31,22 @@ const KEY_TOKEN = "training-dashboard-token";
 // Jede Ansicht: Endpunkt (view=...), Zeichenfunktion, Groesse fuer die Vorschau, Name im Menue.
 // Widget-Groesse und Parameter bestimmen die Ansicht (Parameter = Anfang des Wortes reicht).
 const VIEWS = {
-  main: { endpoint: "", build: (r) => buildWidget(r), size: "large", label: "Vorschau groß" },
-  detail: { endpoint: "detail", build: (r) => buildMedium(r, "tss"), size: "medium", label: "Vorschau mittel: TSS der letzten 6 Wochen" },
-  time: { endpoint: "detail", build: (r) => buildMedium(r, "time"), size: "medium", label: "Vorschau mittel: Trainingszeit der letzten 6 Wochen" },
-  training: { endpoint: "training", build: (r) => buildTraining(r), size: "medium", label: "Vorschau mittel: Training (Disziplinen)" },
-  intensity: { endpoint: "training", build: (r) => buildIntensity(r), size: "medium", label: "Vorschau mittel: Intensität" },
-  kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
-  block: { endpoint: "block", build: (r) => buildBlock(r), size: "medium", label: "Vorschau mittel: Trainingsblock und Ziele" },
-  rahmen: { endpoint: "rahmen", build: (r) => buildRahmen(r), size: "medium", label: "Vorschau mittel: Aktueller Rahmen" },
-  experiment: { endpoint: "experiment", build: (r) => buildExperiment(r), size: "medium", label: "Vorschau mittel: Experiment" },
-  vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
+  main: { endpoint: "", build: (r) => buildWidget(r), size: "large", label: "Vorschau groß: Heute" },
+  training: { endpoint: "training", build: (r) => buildWoche(r), size: "medium", label: "Vorschau mittel: Woche je Sportart" },
+  time: { endpoint: "detail", build: (r) => buildSixWeeks(r), size: "medium", label: "Vorschau mittel: 6 Wochen" },
+  block: { endpoint: "kompass", build: (r) => buildKompass(r), size: "medium", label: "Vorschau mittel: Block" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
-  sleep: { endpoint: "small", build: (r) => buildSleep(r), size: "small", label: "Vorschau klein: Schlaf" },
+  kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
+  vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
+  schlafform: { endpoint: "small", build: (r) => buildSchlafForm(r), size: "small", label: "Vorschau klein: Schlaf und Form" },
   food: { endpoint: "small", build: (r) => buildFoodCard(r), size: "small", label: "Vorschau klein: Ernährung" },
   fitness: { endpoint: "small", build: (r) => buildFitness(r), size: "small", label: "Vorschau klein: Fitness (CTL)" },
-  ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
+// Alte Parameter fuehren auf die zusammengelegten Ansichten: form/tss -> 6 Wochen, intensitaet -> Woche,
+// rahmen/experiment -> Block, schlaf/bereit -> Schlaf und Form
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min)/, "time"], [/^(form|tss|belast|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"], [/^(exp|versuch)/, "experiment"], [/^(rahmen|frame|leit|regel)/, "rahmen"]] },
-  small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min|form|tss|belast|hm|detail|6)/, "time"], [/^(woche|week|intens|polar|train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season|exp|versuch|rahmen|frame|leit|regel|kompass)/, "block"], [/^(ern|food|essen|kcal)/, "foodmedium"]] },
+  small: { fallback: "schlafform", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(fit|ctl)/, "fitness"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
 function viewFromWidget() {
@@ -62,8 +56,8 @@ function viewFromWidget() {
   return hit ? hit[1] : set.fallback;
 }
 let VIEW = typeof config !== "undefined" && config.runsInWidget ? viewFromWidget() : "main";
-// "main" und "ready" lesen dieselben Daten; der Cache haengt am Endpunkt, nicht an der Ansicht
-const endpointOf = () => (VIEWS[VIEW].endpoint === "main" ? "" : VIEWS[VIEW].endpoint);
+// Der Cache haengt am Endpunkt, nicht an der Ansicht
+const endpointOf = () => VIEWS[VIEW].endpoint;
 const cacheFile = () => `training-widget${endpointOf() ? "-" + endpointOf() : ""}-cache.json`;
 
 /* ---------- Design ---------- */
@@ -95,9 +89,8 @@ const FS = { xs: 11, sm: 12, md: 14, lg: 17, xl: 22, xxl: 30 };
 const MISSING = "–";
 const colorFor = (cls) => (cls === "coach" ? COL.accent : COL[cls] || COL.none);
 // Ampel nie nur ueber die Farbe: jede Stufe hat eine eigene Form (SF Symbols), dazu steht immer ein Text.
-// Urteil: Kreis mit Haken / Dreieck mit Ausrufezeichen / Quadrat mit Kreuz. Einzelwerte: Kreis / Dreieck / Quadrat, ohne Wert gestrichelt.
+// Urteil: Kreis mit Haken / Dreieck mit Ausrufezeichen / Quadrat mit Kreuz, ohne Urteil gestrichelt.
 const STATUS_SYMBOL = { ok: "checkmark.circle.fill", warn: "exclamationmark.triangle.fill", bad: "xmark.square.fill", none: "circle.dashed", coach: "text.bubble.fill" };
-const MARK_SYMBOL = { ok: "circle.fill", warn: "triangle.fill", bad: "square.fill", none: "circle.dashed" };
 function symbol(parent, name, size, color) {
   const sym = typeof SFSymbol !== "undefined" ? SFSymbol.named(name) : null;
   if (!sym) return text(parent, "●", size, { color, minScale: 1 }); // aeltere Systeme ohne das Symbol
@@ -109,7 +102,6 @@ function symbol(parent, name, size, color) {
   return im;
 }
 const statusIcon = (parent, cls, size) => symbol(parent, STATUS_SYMBOL[cls] || STATUS_SYMBOL.none, size, colorFor(cls));
-const statusMark = (parent, cls, size = 9) => symbol(parent, MARK_SYMBOL[cls] || MARK_SYMBOL.none, size, colorFor(cls));
 // Zahlen in der runden Systemschrift (wie die Apple-Widgets), Einheit klein und gedaempft dahinter
 function num(parent, str, size, opts = {}) {
   const t = text(parent, str, size, { minScale: 0.6, ...opts });
@@ -243,17 +235,6 @@ function text(parent, str, size, { bold = false, color = COL.text, lines = 1, al
   return t;
 }
 
-// Graue Kachel mit fester Breite zum Gruppieren (z. B. die Ziele im Block)
-function card(parent, width, pad = 8, radius = 12) {
-  const s = parent.addStack();
-  s.layoutVertically();
-  s.backgroundColor = COL.tile;
-  s.cornerRadius = radius;
-  s.setPadding(pad, pad + 2, pad, pad + 2);
-  s.size = new Size(width, 0);
-  return s;
-}
-
 function newCtx(w, h) {
   const dc = new DrawContext();
   w = Math.max(1, Math.round(w) || 1); h = Math.max(1, Math.round(h) || 1);
@@ -309,7 +290,8 @@ function progressBar(w, IW, ratio, hex, alpha = 1, opts = {}) {
 function dayFraction() { const n = new Date(), h = n.getHours() + n.getMinutes() / 60; return Math.max(0, Math.min(1, (h - 6) / 16)); }
 // Feste Farbe je Ernährungsgröße, passend zur Seite (Kalorien Rad-Grün, Eiweiß Schwimm-Blau, Kohlenhydrate Lauf-Gelb, Fett Kraft-Orange)
 const OVER_HEX = "#f0b95a"; // Wert ueber dem Ziel: gelb (Warnung); Rot bleibt Alarmen vorbehalten
-const NUT_HEX = { kcal: SPORTS.bike[1], protein: SPORTS.swim[1], carbs: SPORTS.run[1], fat: SPORTS.strength[1] };
+// Ernaehrung in eigenen Farben, nicht in Sportfarben (Gelb heisst sonst Laufen)
+const NUT_HEX = { kcal: "#40c8e0", protein: "#bf5af2", carbs: "#ac8e68", fat: "#ff6482" };
 
 // Mini-Kurve ueber die Breite: Luecken (null) bleiben offen, Punkt am Ende
 function sparkImage(w, h, values, hex, { dot = false, second = null } = {}) {
@@ -354,37 +336,6 @@ function sparkImage(w, h, values, hex, { dot = false, second = null } = {}) {
   dc.addPath(p);
   dc.strokePath();
   if (dot) { const [i, v] = pts[pts.length - 1]; dc.setFillColor(new Color(hex)); dc.fillEllipse(new Rect(X(i) - 3.5, Y(v) - 3.5, 7, 7)); }
-  return dc.getImage();
-}
-
-// Saeulen der letzten 7 Tage; fehlende Tage sind nur ein kurzer Strich, nie ein Wert. Optional Ziel-Marken und Referenzlinie.
-const DAY_LABEL_H = 15;
-function barsImage(w, h, values, todayIso, dates, goals, refLine, hex = ACCENT_HEX) {
-  h -= DAY_LABEL_H; // Platz fuer die Wochentags-Kuerzel darunter
-  const dc = newCtx(w, h + DAY_LABEL_H), slot = w / values.length, bw = slot * 0.6;
-  dc.setTextAlignedCenter();
-  dates.forEach((dt, i) => {
-    dc.setTextColor(new Color(dt === todayIso ? ACCENT_HEX : MUTED_HEX));
-    dc.setFont(dt === todayIso ? Font.boldSystemFont(FS.xs) : Font.systemFont(FS.xs));
-    dc.drawTextInRect(dayShort(dt), new Rect(i * slot, h + 2, slot, DAY_LABEL_H - 2));
-  });
-  const max = Math.max(1, ...values.filter((v) => v != null), ...(goals || []).filter((v) => v != null), refLine ?? 0);
-  values.forEach((v, i) => {
-    const cx = i * slot + slot / 2;
-    if (v == null) { dc.setFillColor(new Color(NEUTRAL_HEX, 0.3)); dc.fillRect(new Rect(cx - bw / 2, h - 2, bw, 1.5)); return; }
-    const bh = Math.max(2, (v / max) * (h - 3)), p = new Path();
-    p.addRoundedRect(new Rect(cx - bw / 2, h - bh, bw, bh), 2.5, 2.5);
-    dc.addPath(p);
-    dc.setFillColor(new Color(hex, dates[i] === todayIso ? 1 : 0.55));
-    dc.fillPath();
-    if (goals && goals[i] != null) { dc.setFillColor(new Color(INK_HEX, 0.85)); dc.fillRect(new Rect(cx - bw / 2 - 1, h - (goals[i] / max) * (h - 3) - 1, bw + 2, 1.5)); }
-  });
-  if (refLine) {
-    // Referenzlinie (z. B. 8 h Schlaf) gestrichelt ueber den Saeulen
-    const y = h - (refLine / max) * (h - 3);
-    dc.setFillColor(new Color(INK_HEX, 0.5));
-    for (let x = 0; x < w; x += 6) dc.fillRect(new Rect(x, y, 3, 1));
-  }
   return dc.getImage();
 }
 
@@ -789,23 +740,16 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
   return w;
 }
 
-/* ---------- Mittel: TSS (Parameter "form" / "tss") und Trainingszeit (Parameter "zeit") der letzten 6 Wochen ---------- */
-// Je Woche eine Saeule = gemacht, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Ziel (TSS-Obergrenze
-// bzw. Zeitziel des Coaches, sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Die Untergrenze des
-// TSS-Korridors bzw. der Rahmen des Coaches (Ausdauerstunden) steht als gestrichelte Linie quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne
-// Training keine Fuellung, nie ein 0-Balken. Die Zahlen stehen als echte Widget-Texte darunter (weekLabels), weil Text im Bild feste Farben hat.
+/* ---------- Mittel: 6 Wochen (Parameter "zeit", auch "form" / "tss") ---------- */
+// Je Woche eine Saeule = Trainingszeit, gestapelt in Sportfarben (groesster Anteil unten); blasse Flaeche = Zeitziel des
+// Coaches (sonst Plan), die die Saeule fuellt, Strich nur ueber dem Ziel. Der Rahmen des Coaches (Ausdauerstunden) steht als
+// gestrichelte Linie quer ueber der Saeule. Ohne Ziel keine Flaeche, ohne Training keine Fuellung, nie ein 0-Balken.
+// Darunter je Woche die Zeit, die TSS und der Wochenanfang als echte Widget-Texte (weekLabels), weil Text im Bild feste Farben hat.
 const WEEK_PLOT_H = 54;
-// Was ein Widget zeigt: Wert, Ziel, Anteile je Sportart und Texte
 const WEEK_KINDS = {
-  tss: {
-    title: "BELASTUNG · 6 WOCHEN", unit: "TSS",
-    val: (k) => k.tss, goal: (k) => k.goal, floor: (k) => (k.cap && k.goalMin > 0 ? k.goalMin : null), parts: (k) => k.sports,
-    goalText: (k) => (k.goal == null ? null : k.cap ? tssRange(k.goalMin, k.goal).replace(" ", "") : fmt(k.goal)),
-  },
   time: {
-    title: "ZEIT · 6 WOCHEN", unit: null, fmtVal: fmtHm,
     val: (k) => k.min, goal: (k) => k.minGoal, floor: (k) => k.minFrame ?? null, parts: (k) => k.minSports,
-    goalText: (k) => (k.minGoal != null ? fmtHm(k.minGoal) : null),
+    sub: (k) => (k.tss != null ? `TSS ${fmt(k.tss)}` : MISSING),
   },
 };
 function weekImage(w, weeks, K) {
@@ -844,115 +788,45 @@ function weekImage(w, weeks, K) {
   return dc.getImage();
 }
 
-// Je Woche eine Spalte unter der Saeule: Wert (fett), Ziel, Wochenanfang
+// Je Woche eine Spalte unter der Saeule: Zeit (fett), TSS, Wochenanfang
 function weekLabels(parent, W, weeks, K) {
   const slot = Math.floor(W / weeks.length), row = parent.addStack();
   row.size = new Size(slot * weeks.length, 0);
   weeks.forEach((k, i) => {
-    const cur = i === weeks.length - 1, v = K.val(k), gt = K.goalText(k);
+    const cur = i === weeks.length - 1, v = K.val(k);
     const col = row.addStack(); col.layoutVertically(); col.size = new Size(slot, 0);
     const line = (fn) => { const r = col.addStack(); r.addSpacer(); fn(r); r.addSpacer(); };
-    line((r) => num(r, v != null ? (K.fmtVal || fmt)(v) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
-    line((r) => text(r, gt != null ? `/${gt}` : "–", FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
+    line((r) => num(r, v != null ? fmtHm(v) : MISSING, FS.md, { align: "center", minScale: 0.7 }));
+    line((r) => text(r, K.sub(k), FS.xs, { color: COL.muted, align: "center", minScale: 0.7 }));
     line((r) => text(r, dateShort(k.weekStart), FS.xs, { bold: cur, color: cur ? COL.text : COL.muted, align: "center", minScale: 0.7 }));
   });
 }
 
-function buildMedium(res, kind = "tss") {
-  const d = res.data, K = WEEK_KINDS[kind];
+function buildSixWeeks(res) {
+  const d = res.data, K = WEEK_KINDS.time;
   const W = widgetInnerWidth();
   const w = baseWidget({ padV: 11 });
   const tw = d.tssWeeks || [], cur = tw[tw.length - 1];
-  const cv = cur ? K.val(cur) : null, cg = cur ? K.goalText(cur) : null;
-  const fv = K.fmtVal || fmt;
-  header(w, W, K.title, cur && (cv != null || cg != null) ? `${cv != null ? fv(cv) : fv(0)}${cg ? `/${cg}` : ""}${K.unit ? ` ${K.unit}` : ""} diese Woche` : null);
+  header(w, W, "6 WOCHEN", cur ? `diese Woche ${fmtHm(K.val(cur) || 0)}${cur.tss != null ? ` · TSS ${fmt(cur.tss)}` : ""}` : null);
   w.addSpacer(5);
   if (tw.some((k) => K.val(k) != null)) {
     const im = w.addImage(weekImage(W, tw, K)); im.imageSize = new Size(W, WEEK_PLOT_H);
     w.addSpacer(3);
     weekLabels(w, W, tw, K);
-  } else text(w, kind === "time" ? "Keine Trainingszeiten" : "Keine TSS-Werte", FS.xs, { color: COL.muted });
+  } else text(w, "Keine Trainingszeiten", FS.xs, { color: COL.muted });
   w.addSpacer();
   const th = w.addStack(); th.centerAlignContent(); th.spacing = 4;
-  const item = (k, str) => { symbol(th, SPORT_SYMBOL[k], 11, new Color(sportHex(k))); text(th, str, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 }); th.addSpacer(8); };
-  if (kind === "time") {
-    // Unten: Minuten dieser Woche je Sportart (nur Sportarten mit Training)
-    const ms = Object.entries((cur && cur.minSports) || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    if (ms.length) ms.forEach(([k, v]) => item(k, fmtHm(v)));
-    else text(th, "Diese Woche noch kein Training", FS.xs, { color: COL.muted });
-    // Rahmen des Coaches (gestrichelte Linie in den Saeulen)
-    if (cur && cur.minFrame) { th.addSpacer(); text(th, `┄ Rahmen ${fmtHm(cur.minFrame)}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 }); }
-  } else {
-    // Unten: Schwellen mit Sportsymbol
-    const T = d.thresholds;
-    item("run", T.run.thresholdPaceSecPerKm ? `${fmtPace(T.run.thresholdPaceSecPerKm)}/km` : MISSING);
-    item("bike", T.bike.ftp ? `FTP ${T.bike.ftp} W` : MISSING);
-    item("swim", T.swim.thresholdPaceSecPer100m ? `${fmtPace(T.swim.thresholdPaceSecPer100m)}/100 m` : MISSING);
-  }
+  // Unten: Zeit dieser Woche je Sportart (nur Sportarten mit Training), rechts der Rahmen des Coaches (gestrichelte Linie)
+  const ms = Object.entries((cur && cur.minSports) || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+  if (ms.length) ms.forEach(([k, v]) => { symbol(th, SPORT_SYMBOL[k], 11, new Color(sportHex(k))); text(th, fmtHm(v), FS.xs, { bold: true, color: COL.muted, minScale: 0.7 }); th.addSpacer(8); });
+  else text(th, "Diese Woche noch kein Training", FS.xs, { color: COL.muted });
+  if (cur && cur.minFrame) { th.addSpacer(); text(th, `┄ Rahmen ${fmtHm(cur.minFrame)}`, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 }); }
   notice(w, res, d);
   return w;
 }
 
 /* ---------- Schlaf und Erholung, Ernaehrung, Fitness (klein) ---------- */
 function smallWidget() { return baseWidget({ padV: 12 }); }
-
-function buildSleep(res) {
-  const d = res.data, s = d.sleep, IW = smallInnerWidth();
-  const w = smallWidget();
-  const last = s.latest, isToday = last && last.date === d.today;
-  header(w, IW, "SCHLAF", last ? (isToday ? "heute" : dateShort(last.date)) : null);
-  w.addSpacer(2);
-  const top = w.addStack(); top.centerAlignContent(); top.size = new Size(IW, 0);
-  valueUnit(top, last ? fmt(last.hours, 1) : MISSING, "h", 32, { color: last ? COL.sleep : COL.muted });
-  top.addSpacer();
-  const t = s.days[s.days.length - 1];
-  const vital = (label, val, med) => {
-    const r = w.addStack(); r.centerAlignContent(); r.size = new Size(IW, 0);
-    text(r, label, FS.xs, { minScale: 0.8 });
-    r.addSpacer();
-    text(r, fmt(val), FS.xs, { bold: true, minScale: 0.8 });
-    if (med != null) text(r, ` Ø ${fmt(med)}`, FS.xs, { color: COL.muted, minScale: 0.8 });
-  };
-  vital("HRV", t.hrv, s.medianHrv);
-  vital("Ruhepuls", t.restingHR, s.medianRestingHR);
-  w.addSpacer(4);
-  const missing = s.days.filter((x) => x.hours == null);
-  if (missing.length >= 3 && s.days.length - missing.length <= 1) {
-    // Mehrere Tage ohne Daten: eine Zeile statt lauter leerer Striche
-    text(w, `keine Daten ${dayShort(missing[0].date)}–${dayShort(missing[missing.length - 1].date)}`, FS.xs, { bold: true, color: COL.warn, minScale: 0.8 });
-  } else {
-    const bh = 20 + DAY_LABEL_H;
-    const im = w.addImage(barsImage(IW, bh, s.days.map((x) => x.hours), d.today, s.days.map((x) => x.date), null, 8, SLEEP_HEX)); im.imageSize = new Size(IW, bh);
-  }
-  w.addSpacer();
-  notice(w, res, d);
-  return w;
-}
-
-// Bereit (klein): Kopfzeile des Coaches gross, darunter die fuenf Gefuehlswerte als Zahl (1 = bestmoeglich) mit Kurzname.
-// Ohne Coach-Aussage von heute grau. Daten wie im grossen Widget.
-function buildReady(res) {
-  const d = res.data, r = d.readiness, v = r.verdict, IW = smallInnerWidth();
-  const w = smallWidget();
-  refreshSoonIfPending(w, r);
-  header(w, IW, "HEUTE", null);
-  w.addSpacer(7);
-  statusIcon(w, v.cls, 26);
-  w.addSpacer(5);
-  num(w, v.text, FS.lg, { color: v.cls === "none" ? COL.muted : colorFor(v.cls), lines: 3, minScale: 0.6 });
-  w.addSpacer();
-  const short = { Schlaf: "Schlaf", Ermüdung: "Ermüd.", Muskelkater: "Musk.", Stimmung: "Stimm.", Motivation: "Motiv." };
-  const row = w.addStack(); row.size = new Size(IW, 0);
-  const cw = IW / Math.max(1, r.items.length);
-  for (const it of r.items) {
-    const c = row.addStack(); c.layoutVertically(); c.size = new Size(cw, 0);
-    const m = c.addStack(); m.addSpacer(); text(m, feelWord(it), FS.sm, { bold: true, color: it.v == null ? COL.muted : ["ok", "warn", "bad"].includes(it.cls) ? colorFor(it.cls) : COL.text, align: "center", minScale: 0.7 }); m.addSpacer();
-    c.addSpacer(2);
-    const l = c.addStack(); l.addSpacer(); text(l, short[it.label] || it.label, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }); l.addSpacer();
-  }
-  notice(w, res, d);
-  return w;
-}
 
 // Fitness (CTL): Wert gross, Veraenderung als Zahl, Wochenkurve (CTL blau, TSB grau dahinter)
 function buildFitness(res) {
@@ -1119,7 +993,6 @@ function buildVdot(res) {
   return w;
 }
 
-/* ---------- Mittel: Disziplinen (Parameter "training") ---------- */
 // Anteile an der Trainingszeit als ein Balken (Prozent nur bei Platz), Soll als Striche
 function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf = sportHex) {
   const dc = newCtx(w, h + 4), tot = keys.reduce((a, k) => a + share[k], 0) || 1;
@@ -1140,86 +1013,6 @@ function splitImage(w, h, share, target, keys = ["swim", "bike", "run"], hexOf =
     for (const at of [target.swim, target.swim + target.bike]) dc.fillRect(new Rect((at / 100) * w - 1, 0, 2, h + 4));
   }
   return dc.getImage();
-}
-
-function buildTraining(res) {
-  const d = res.data, W = widgetInnerWidth();
-  const w = baseWidget({ padV: 11 });
-  header(w, W, "TRAINING · DIESE WOCHE", null);
-  w.addSpacer(6);
-  const row = w.addStack(); row.spacing = 14;
-  const CW = Math.floor((W - 28) / 3);
-  for (const k of ["swim", "bike", "run"]) {
-    const s = d.sports[k], hex = sportHex(k);
-    const c = row.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
-    const nl = c.addStack(); nl.centerAlignContent(); nl.spacing = 5;
-    sportBadge(nl, k, 20);
-    text(nl, SPORTS[k][0], FS.sm, { bold: true, minScale: 0.7 });
-    c.addSpacer(4);
-    const vl = c.addStack(); vl.bottomAlignContent(); vl.spacing = 3;
-    if (s.targetMin || s.targetLoad) {
-      // Wochenziel des Coaches: Minuten gegen das Zeitziel, darunter TSS gegen den Korridor (Warnfarbe ueber der Obergrenze)
-      num(vl, fmtHm(s.weekMinutes || 0), FS.xl);
-      text(vl, s.targetMin ? `/ ${fmtHm(s.targetMin)}` : "", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-      c.addSpacer(4);
-      progressBar(c, CW, s.targetMin ? (s.weekMinutes || 0) / s.targetMin : 0, hex);
-      c.addSpacer(3);
-      const over = s.targetLoad && s.weekLoad > s.targetLoad;
-      text(c, s.targetLoad ? `TSS ${Math.round(s.weekLoad || 0)} / ${tssRange(s.targetLoadMin, s.targetLoad)}` : `TSS ${Math.round(s.weekLoad || 0)}`, FS.xs, { bold: !!over, color: over ? COL.warn : COL.muted, minScale: 0.6 });
-    } else {
-      // Wochenlast: TSS gegen Plan (Plan nur, wenn im Kalender Last steht)
-      num(vl, `${Math.round(s.weekLoad || 0)}`, FS.xl);
-      text(vl, s.plannedLoad ? `/ ${Math.round(s.plannedLoad)} TSS` : "TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-      c.addSpacer(4);
-      progressBar(c, CW, s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
-    }
-    c.addSpacer(4);
-    // Umfang (Stunden) der letzten 4 Wochen und Entwicklung gegen die 4 davor
-    if (s.min4 != null) {
-      const tr = s.trendPct == null ? "" : ` ${s.trendPct > 0 ? "▲" : s.trendPct < 0 ? "▼" : "="}${Math.abs(s.trendPct)} %`;
-      text(c, `4 W ${fmtHm(s.min4)}${tr}`, FS.xs, { color: COL.muted, minScale: 0.6 });
-    }
-  }
-  w.addSpacer();
-  const sp = d.split;
-  header(w, W, `ZEIT · ${sp.weeks} WOCHEN`, sp.target ? `Soll S ${sp.target.swim} · R ${sp.target.bike} · L ${sp.target.run} %` : null);
-  w.addSpacer(3);
-  if (sp.share) { const im = w.addImage(splitImage(W, 10, sp.share, sp.target)); im.imageSize = new Size(W, 14); }
-  else text(w, "Noch keine abgeschlossene Woche mit Training.", FS.xs, { color: COL.muted });
-  notice(w, res, d);
-  return w;
-}
-
-/* ---------- Mittel: Intensitaet (Parameter "intensitaet") ---------- */
-// Zeitanteile locker (Z1-Z2), mittel (Z3-Z4), hart (Z5+) wie die Polarisation in Intervals: diese Woche und Schnitt der letzten 4 Wochen.
-// Nur die Anteile, ohne Bewertung (die macht der Coach).
-const INT_HEX = { easy: "#5BA88A", mid: "#E0B454", hard: "#D9695F" };
-
-function buildIntensity(res) {
-  const d = res.data, W = widgetInnerWidth();
-  const w = baseWidget({ padV: 12 });
-  header(w, W, "INTENSITÄT · ZONENZEIT", null);
-  const it = d.intensity || {};
-  const block = (title, sh) => {
-    w.addSpacer(7);
-    const h = w.addStack(); h.centerAlignContent(); h.size = new Size(W, 0);
-    text(h, title, FS.sm, { bold: true });
-    h.addSpacer();
-    if (sh) text(h, `locker ${sh.easy} · mittel ${sh.mid} · hart ${sh.hard} %`, FS.xs, { color: COL.muted, minScale: 0.7 });
-    w.addSpacer(4);
-    if (sh) { const im = w.addImage(splitImage(W, 20, sh, null, ["easy", "mid", "hard"], (k) => INT_HEX[k])); im.imageSize = new Size(W, 24); }
-    else text(w, "Noch keine Zonenzeiten.", FS.xs, { color: COL.muted });
-  };
-  block("Diese Woche", it.week);
-  block("Ø 4 Wochen", it.avg);
-  w.addSpacer();
-  const lg = w.addStack(); lg.centerAlignContent(); lg.spacing = 4;
-  for (const [k, l] of [["easy", "locker Z1–2"], ["mid", "mittel Z3–4"], ["hard", "hart Z5+"]]) {
-    const sq = lg.addStack(); sq.size = new Size(8, 8); sq.cornerRadius = 2; sq.backgroundColor = new Color(INT_HEX[k]);
-    text(lg, l, FS.xs, { color: COL.muted, minScale: 0.8 }); lg.addSpacer(8);
-  }
-  notice(w, res, d);
-  return w;
 }
 
 /* ---------- Mittel: Kraft aus EGYM (Parameter "kraft") ---------- */
@@ -1284,12 +1077,7 @@ function buildKraft(res) {
   return w;
 }
 
-/* ---------- Mittel: Trainingsblock und Ziele (Parameter "block") ---------- */
-// Oben Blockname und Woche x von N mit Wochenleiste, darunter je Ziel eine graue Kachel: Sport, Wert mit Status-Form, Ziel.
-const STATUS_HEX = (st) => ZONE_RGB[st] || NEUTRAL_HEX;
-const STATUS_CLS = (st) => (st === "ok" || st === "warn" || st === "bad" ? st : "none");
-const GOAL_SPORT = { runDecoupling: "run", bikeDecoupling: "bike", swimTest: "swim", strength: "strength", decoupling: "run" };
-
+// Wochenleiste des Blocks: je Woche ein Abschnitt, laufende Woche kraeftig, vergangene blass
 function weekStrip(w, IW, total, nowIdx, pastAll) {
   const H = 5, gap = 3, seg = (IW - gap * (total - 1)) / total, dc = newCtx(IW, H);
   for (let i = 0; i < total; i++) {
@@ -1302,206 +1090,130 @@ function weekStrip(w, IW, total, nowIdx, pastAll) {
   const im = w.addImage(dc.getImage()); im.imageSize = new Size(IW, H);
 }
 
-function buildBlock(res) {
-  const d = res.data, W = widgetInnerWidth();
+/* ---------- Mittel: Woche je Sportart (Parameter "training", auch "intensitaet") ---------- */
+// Je Sportart eine Zeile: Zeit gegen das Zeitziel des Coaches (ohne Zeitziel TSS gegen den Plan), oben rechts die TSS der Woche
+// gegen den Korridor. Darunter die Zonenzeit dieser Woche als ein Balken und der Schnitt der letzten 4 Wochen als Zahl.
+// Zonen in Blautoenen statt Gruen/Gelb/Rot: das sind Anteile, keine Ampel.
+const INT_HEX = { easy: "#9cc3f0", mid: "#5a8fd6", hard: "#2f5fa8" };
+function buildWoche(res) {
+  const d = res.data, W = widgetInnerWidth(), S = d.sports || {};
   const w = baseWidget({ padV: 12 });
-  const b = d.block;
-  if (!b) {
-    header(w, W, "TRAININGSBLOCK", null);
-    w.addSpacer(6);
-    text(w, "Kein Block im Intervals-Kalender gefunden (Eintrag der Kategorie Saison, Name mit „Block“).", FS.sm, { color: COL.muted, lines: 4 });
-    notice(w, res, d);
-    return w;
-  }
-  const when = b.status === "active" ? `Woche ${b.weekNo}${b.weeks ? ` von ${b.weeks}` : ""}` : b.status === "upcoming" ? `Start in ${b.daysToStart} ${b.daysToStart === 1 ? "Tag" : "Tagen"}` : "beendet";
-  header(w, W, `BLOCK · ${String(b.name).replace(/^block\s+/i, "").toUpperCase()}`, when);
-  w.addSpacer(5);
-  if (b.weeks) weekStrip(w, W, b.weeks, b.weekNo || 0, b.status === "done");
-  const all = b.goals || [];
-  if (!all.some((g) => g.group)) {
-    w.addSpacer(3);
-    text(w, `${dateShort(b.start)} – ${b.end ? dateShort(b.end) : MISSING}${b.daysLeft != null ? ` · noch ${b.daysLeft} Tage` : ""}`, FS.xs, { color: COL.muted });
-  }
+  const keys = ["swim", "bike", "run"].filter((k) => S[k]);
+  const all = Object.values(S), tss = all.reduce((a, s) => a + (s.weekLoad || 0), 0);
+  const hi = all.reduce((a, s) => a + (s.targetLoad || 0), 0), lo = all.reduce((a, s) => a + (s.targetLoadMin || 0), 0);
+  header(w, W, "WOCHE · JE SPORTART", `TSS ${Math.round(tss)}${hi ? ` / ${tssRange(lo, hi)}` : ""}`);
   w.addSpacer(7);
-  if (!all.length) { text(w, "Im Eintrag stehen keine erkennbaren Ziele.", FS.sm, { color: COL.muted, lines: 2 }); notice(w, res, d); return w; }
-  // Block mit Abschlusszielen: je Sportart eine Kachel, darunter die Leitplanken als eine Zeile
-  const grouped = all.some((g) => g.group);
-  const goals = grouped ? all.filter((g) => g.group === "ziel") : all;
-  const rails = grouped ? all.filter((g) => g.group === "leitplanke") : [];
-  const gap = 6, CW = Math.floor((W - gap * (goals.length - 1)) / goals.length), IW = CW - 18;
-  const row = w.addStack(); row.spacing = gap;
-  const SHORT = { decoupling: "DECOUPLING", strength: "KRAFT", acwr: "ACWR", runDecoupling: "LAUF", runStable: "LAUF STABIL", bikeDecoupling: "RAD", swimTest: "SCHWIMMEN" };
-  const valOf = (g) => {
-    if (g.value == null) return MISSING;
-    if (g.key === "strength") return `${g.value} von ${g.of}`;
-    if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)} s`;
-    if (g.key === "runStable") return g.value === 0 ? "< 1h" : fmtHm(g.value);
-    return `${fmt(g.value, g.key === "acwr" ? 0 : 1)} %`;
-  };
-  const capOf = (g) => {
-    const per = g.periodWeeks > 1 ? ` je ${g.periodWeeks * 7} Tage` : "";
-    if (g.status === "base") return g.key === "strength" && g.goalSets ? `Ausgangswert · Wochen mit ≥ ${g.goalSets} Sätzen${per}` : "Ausgangswert";
-    if (g.key === "strength" && g.goalSets) return g.periodWeeks > 1 ? `Abschnitte mit ≥ ${g.goalSets} Sätzen${per}` : `Wochen mit ≥ ${g.goalSets} Sätzen`;
-    if (g.key === "runDecoupling" || g.key === "bikeDecoupling") return `Ziel ≤ ${g.max} %${g.must > g.max ? ` · Muss ≤ ${g.must}` : ""}${g.value != null && g.count != null && g.lastN && g.count < g.lastN ? ` · ${g.count}/${g.lastN}` : ""}${g.value == null && g.orientation ? ` · Ausgangswert ${fmt(g.orientation.value, 1)} %` : ""}`;
-    if (g.key === "swimTest") return g.value == null ? "2× 500 m noch offen" : "2. 500 m je 100 m";
-    if (g.key === "runStable") return "länger als im Basistest";
-    return g.target;
-  };
-  goals.forEach((g) => {
-    const c = card(row, CW, 8);
-    const t = c.addStack(); t.centerAlignContent(); t.spacing = 4;
-    if (GOAL_SPORT[g.key]) symbol(t, SPORT_SYMBOL[GOAL_SPORT[g.key]], 10, new Color(sportHex(GOAL_SPORT[g.key])));
-    text(t, SHORT[g.key] || g.label, FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    c.addSpacer(3);
-    const vr = c.addStack(); vr.centerAlignContent(); vr.spacing = 5;
-    statusMark(vr, STATUS_CLS(g.status), 8);
-    num(vr, valOf(g), FS.lg, { color: g.value == null ? COL.muted : COL.text, minScale: 0.6 });
-    c.addSpacer(3);
-    if (g.key === "acwr" && g.value != null) { progressBar(c, IW, g.value / 100, STATUS_HEX(g.status)); c.addSpacer(3); }
-    else if (g.key === "strength") {
-      // erreicht = Kreis, verfehlt = Quadrat, offen = leerer Kreis; Entlastungswochen und Ausgangswerte blass
-      const dots = c.addStack(); dots.centerAlignContent();
-      (g.weeks || []).forEach((x, i) => {
-        if (i) dots.addSpacer(2);
-        const cls = x.done && x.load !== false ? (x.hit ? "ok" : g.status === "base" ? "none" : "bad") : "none";
-        const name = !x.done ? "circle" : x.hit ? "circle.fill" : "square.fill";
-        symbol(dots, name, 8, cls === "none" ? new Color(NEUTRAL_HEX, x.load === false || x.done ? 0.45 : 0.8) : colorFor(cls));
-      });
-      c.addSpacer(3);
-    } else if ((g.key === "runDecoupling" || g.key === "bikeDecoupling") && g.value != null && g.must) { progressBar(c, IW, Math.min(1, g.value / (g.must * 1.25)), STATUS_HEX(g.status)); c.addSpacer(3); }
-    text(c, capOf(g), FS.xs, { color: COL.muted, lines: 2, minScale: 0.7 });
-    // Verlauf seit der ersten Messung (Trend, keine Entscheidung)
-    const dirTxt = g.course && g.status !== "base" ? { better: "besser", worse: "schlechter", flat: "gleich" }[g.course.dir] : null;
-    if (dirTxt) {
-      c.addSpacer(2);
-      text(c, `Verlauf: ${dirTxt}`, FS.xs, { bold: true, color: COL.muted, lines: 1, minScale: 0.7 });
-    }
+  const NW = 92, VW = 86, BW = W - NW - VW - 8;
+  keys.forEach((k, i) => {
+    if (i) w.addSpacer(6);
+    const s = S[k], hex = sportHex(k), byTime = !!s.targetMin;
+    const r = w.addStack(); r.centerAlignContent(); r.size = new Size(W, 0);
+    const n = r.addStack(); n.centerAlignContent(); n.spacing = 5; n.size = new Size(NW, 0);
+    symbol(n, SPORT_SYMBOL[k], 12, new Color(hex)); text(n, SPORTS[k][0], FS.sm, { bold: true, minScale: 0.8 }); n.addSpacer();
+    const b = r.addStack(); b.size = new Size(BW, 0);
+    progressBar(b, BW, byTime ? (s.weekMinutes || 0) / s.targetMin : s.plannedLoad ? (s.weekLoad || 0) / s.plannedLoad : 0, hex);
+    r.addSpacer(8);
+    const v = r.addStack(); v.bottomAlignContent(); v.size = new Size(VW, 0); v.addSpacer();
+    num(v, byTime ? fmtHm(s.weekMinutes || 0) : String(Math.round(s.weekLoad || 0)), FS.md);
+    text(v, byTime ? ` / ${fmtHm(s.targetMin)}` : s.plannedLoad ? ` / ${Math.round(s.plannedLoad)} TSS` : " TSS", FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
   });
-  if (rails.length) {
-    w.addSpacer(6);
-    const lr = w.addStack(); lr.centerAlignContent();
-    const RAIL = { strength: (g) => { const o = g.goalSets ? (g.weeks || []).find((x) => !x.done) : null; return o ? `Kraft ${o.count ?? 0}/${g.goalSets} Sätze` : `Kraft ${g.value ?? MISSING}/${g.of ?? MISSING}`; }, ramp: (g) => `Ramp ${g.value != null ? fmt(g.value, 1) : MISSING}`, pause: (g) => `Pause ${g.value ?? MISSING} T` };
-    rails.forEach((g, i) => {
-      if (i) lr.addSpacer(12);
-      statusMark(lr, STATUS_CLS(g.status));
-      lr.addSpacer(4);
-      text(lr, (RAIL[g.key] || ((x) => x.label))(g), FS.xs, { bold: true, minScale: 0.7 });
-    });
-  }
+  w.addSpacer();
+  const it = d.intensity || {}, sh = it.week, avg = it.avg;
+  const zh = w.addStack(); zh.centerAlignContent(); zh.size = new Size(W, 0);
+  text(zh, "ZONENZEIT", FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
+  zh.addSpacer();
+  text(zh, sh ? `locker ${sh.easy} · mittel ${sh.mid} · hart ${sh.hard} %` : "noch keine Zonenzeiten", FS.xs, { color: COL.muted, minScale: 0.7 });
+  w.addSpacer(3);
+  if (sh) { const im = w.addImage(splitImage(W, 10, sh, null, ["easy", "mid", "hard"], (k) => INT_HEX[k])); im.imageSize = new Size(W, 14); }
+  if (avg) { w.addSpacer(2); text(w, `Ø 4 Wochen: locker ${avg.easy} · mittel ${avg.mid} · hart ${avg.hard} %`, FS.xs, { color: COL.muted, minScale: 0.7 }); }
   notice(w, res, d);
   return w;
 }
 
-/* ---------- Aktueller Rahmen (mittel): was der Coach als Rahmen gesetzt hat (save_targets). Je Sportart die Intensitaet mit dem
-   Stand der laufenden Blockwoche (✓ erledigt, offen, oder warum die Woche nicht zaehlt), darunter Nicht erlaubt und Leitplanken,
-   rechts oben der naechste Blocktest. Ramp Rate/ACWR nur als stille Zeile, wenn der Worker sie meldet (loadHint). ---------- */
-const FRAME_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim", kraft: "strength" };
-function buildRahmen(res) {
-  const d = res.data, W = widgetInnerWidth(), f = d.frame, T = d.nextTest, H = d.loadHint;
-  const w = baseWidget({ padV: 10 });
-  const test = T ? (T.daysToGo === 0 ? "Blocktest heute" : `Blocktest in ${T.daysToGo} ${T.daysToGo === 1 ? "Tag" : "Tagen"}`) : null;
-  header(w, W, `RAHMEN${f ? ` · SEIT ${dateShort((f.savedAt || f.validFrom).slice(0, 10))}` : ""}`, test, COL.race);
-  if (!f) { w.addSpacer(6); text(w, "Kein Rahmen vom Coach.", FS.sm, { color: COL.muted }); notice(w, res, d); return w; }
-  // Intensitaet bis zu zwei Zeilen, Status oben rechts: die volle Vorgabe statt abgeschnitten nach einer Zeile
-  w.addSpacer(6);
-  (f.intensity || []).slice(0, 3).forEach((x, i) => {
-    if (i) w.addSpacer(4);
-    const r = w.addStack(); r.topAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
-    const k = FRAME_SPORT[x.sport] || "other";
-    symbol(r, SPORT_SYMBOL[k], 13, new Color(sportHex(k)));
-    text(r, x.text, FS.md, { lines: 2, minScale: 0.8 });
-    r.addSpacer();
-    const wk = x.week;
-    if (!wk) return;
-    if (wk.skip) text(r, wk.skip.length > 14 ? "zählt nicht" : wk.skip, FS.xs, { color: COL.muted, minScale: 1 });
-    else if (wk.count > 0) symbol(r, "checkmark.circle.fill", 13, COL.ok);
-    else text(r, "offen", FS.xs, { bold: true, color: COL.muted, minScale: 1 });
-  });
-  // Bezeichnung in fester Spalte, Text daneben in derselben Groesse wie die Intensitaet; Leitplanken bekommen den Rest der Hoehe
-  const N = res.data.next, more = !!(H || (N && N.reason));
-  const line = (label, items, lines) => {
-    if (!items || !items.length) return;
-    w.addSpacer(6);
-    const r = w.addStack(); r.topAlignContent(); r.size = new Size(W, 0);
-    const l = r.addStack(); l.size = new Size(92, 0); l.setPadding(2, 0, 0, 0);
-    text(l, label, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
-    l.addSpacer();
-    text(r, items.join(" · "), FS.sm, { lines, minScale: 0.8 });
-    r.addSpacer();
-  };
-  line("NICHT ERLAUBT", f.notAllowed, 2);
-  line("LEITPLANKEN", f.guardrails, more ? 2 : 3);
-  // geplanter Rahmen des Coaches (validFrom in der Zukunft): ab wann und warum
-  if (N && N.reason) line(`AB ${dateShort(N.validFrom)}`, [N.reason], 2);
-  if (H) {
+/* ---------- Mittel: Block (Parameter "block", auch "rahmen", "experiment") ---------- */
+// Alles, was im laufenden Block gilt, in einem Widget (Worker: view=kompass): Block mit Woche x von N und naechstem Test,
+// darunter je eine Zeile Erlaubt (Intensitaet des Coaches mit Stand dieser Woche), Nicht erlaubt, Messung (Experiment:
+// Ausgangswert -> aktueller Wert) und Ziele (Abschlussziele des Blocks als Werte). Leitplanken und lange Texte stehen im
+// Dashboard. Je Zeile eine Textzeile (Erlaubt: bis zu zwei Sportarten), damit das mittlere Widget nicht ueberlaeuft.
+// Nichts wird bewertet; Werte und Ziele kommen fertig vom Worker.
+const GOAL_SHORT = { decoupling: "Drift", strength: "Kraft", runDecoupling: "Lauf", runStable: "Lauf stabil", bikeDecoupling: "Rad", swimTest: "Schwimmen" };
+function goalValue(g) {
+  if (g.value == null) return g.key === "swimTest" ? "offen" : MISSING;
+  if (g.key === "strength") return `${g.value}/${g.of}`;
+  if (g.key === "swimTest") return `${g.value > 0 ? "+" : ""}${fmt(g.value, 1)} s`;
+  if (g.key === "runStable") return g.value === 0 ? "< 1:00" : fmtHm(g.value);
+  return `${fmt(g.value, 1)} %`;
+}
+// Kurzfassung einer Intensitaets-Vorgabe: short vom Coach, sonst der Text bis zum ersten Komma, Semikolon oder "z. B."
+const intensityShort = (x) => x.short || String(x.text).split(/[,;]|\s+z\.\s*B\./)[0].trim();
+function buildKompass(res) {
+  const d = res.data, W = widgetInnerWidth(), b = d.block, f = d.frame, T = d.nextTest, x = d.experiment;
+  const w = baseWidget({ padV: 12 });
+  const name = b ? String(b.name).replace(/^block\s+/i, "").toUpperCase() : null;
+  const when = !b ? null : b.status === "active" ? ` · WOCHE ${b.weekNo}${b.weeks ? `/${b.weeks}` : ""}` : b.status === "upcoming" ? ` · START IN ${b.daysToStart} T` : " · BEENDET";
+  const test = T ? (T.daysToGo === 0 ? "Test heute" : `Test in ${T.daysToGo} ${T.daysToGo === 1 ? "Tag" : "Tagen"}`) : null;
+  header(w, W, b ? `BLOCK ${name}${when}` : "BLOCK", test, COL.race);
+  w.addSpacer(5);
+  if (b && b.weeks) { weekStrip(w, W, b.weeks, b.weekNo || 0, b.status === "done"); w.addSpacer(4); }
+  const LW = 64;
+  const line = (label, build) => {
     w.addSpacer(4);
-    text(w, [H.ramp != null ? `Ramp ${H.ramp > 0 ? "+" : ""}${fmt(H.ramp, 1)} (über ${H.rampMax})` : null, H.acwrDays != null ? `ACWR ${H.acwrDays}× über ${fmt(H.acwrMax, 1)} in ${H.days} Tagen` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.7 });
-  }
+    const r = w.addStack(); r.topAlignContent(); r.size = new Size(W, 0);
+    const l = r.addStack(); l.size = new Size(LW, 0); l.setPadding(1, 0, 0, 0);
+    text(l, label, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); l.addSpacer();
+    const c = r.addStack(); c.layoutVertically(); c.size = new Size(W - LW, 0);
+    build(c);
+  };
+  const intens = (f && f.intensity) || [];
+  if (intens.length) line("ERLAUBT", (c) => intens.slice(0, 2).forEach((it) => {
+    const r = c.addStack(); r.centerAlignContent(); r.spacing = 5;
+    const k = FRAME_SPORT[it.sport] || "other";
+    symbol(r, SPORT_SYMBOL[k], 11, new Color(sportHex(k)));
+    text(r, intensityShort(it), FS.sm, { minScale: 0.75 });
+    const wk = it.week;
+    if (wk && wk.skip) text(r, wk.skip, FS.xs, { color: COL.muted, minScale: 0.8 });
+    else if (wk && wk.count > 0) symbol(r, "checkmark.circle.fill", 11, COL.ok);
+    else if (wk) text(r, "offen", FS.xs, { color: COL.muted, minScale: 0.8 });
+  }));
+  if (f && f.notAllowed && f.notAllowed.length) line("NICHT", (c) => text(c, f.notAllowed.join(" · "), FS.sm, { minScale: 0.7 }));
+  const ms = ((x && x.metrics) || []).filter((m) => m.baseline != null);
+  if (ms.length) line("MESSUNG", (c) => {
+    const parts = ms.slice(0, 3).map((m) => `${(EXP_SHORT[m.key] || [m.label])[0]} ${expVal(m, m.baseline)}→${m.current == null ? "?" : expVal(m, m.current)}${m.provisional ? "*" : ""}`);
+    text(c, parts.join(" · "), FS.sm, { minScale: 0.65 });
+  });
+  const goals = b ? (b.goals || []).filter((g) => !g.group || g.group === "ziel") : [];
+  if (goals.length) line("ZIELE", (c) => text(c, goals.map((g) => `${GOAL_SHORT[g.key] || g.label} ${goalValue(g)}`).join(" · "), FS.sm, { minScale: 0.7 }));
+  if (!b && !f && !x) { w.addSpacer(6); text(w, "Kein Block, kein Rahmen und kein Experiment vom Coach.", FS.sm, { color: COL.muted, lines: 2 }); }
   w.addSpacer();
   notice(w, res, d);
   return w;
 }
-
-/* ---------- Experiment (mittel): Werte des Coaches. Oben eine Zeile „diese Woche“: Ausdauerstunden (Laufen, Rad, Schwimmen,
-   Kraft zählt nicht) gegen das Wochenziel, daneben klein Trainingstage und die Serie. Den Verlauf der Wochen
-   zeigt das Widget „zeit“, darum hier keine Säulen, Kraft steht im Block-Widget. Keine eigene Bewertung, unter dem Ziel nichts rot. Veränderung grün = besser,
-   orange = schlechter (Richtung setzt der Coach); markiert der Coach einen Wert als vorläufig (provisional), steht er grau mit
-   „vorläufig“ statt der Veränderung. Ältere Worker ohne endurance: nur die Trainingstage dieser Woche. ---------- */
-const EXP_STATUS = { "vorgeschlagen": "VORGESCHLAGEN", "läuft": "LÄUFT", "ausgewertet": "AUSGEWERTET" };
+const FRAME_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim", kraft: "strength" };
 const EXP_SHORT = { lauf_hf130: ["Lauf HF 130", "run"], rad_hf165w: ["Rad 165 W", "bike"], schwimm_amstueck: ["Am Stück", "swim"], schwimm_100m: ["100 m", "swim"] };
 const expVal = (m, v) => (v == null ? MISSING : m.key === "lauf_hf130" || m.key === "schwimm_100m" ? fmtPace(Math.round(v)) : fmt(v, Number.isInteger(v) ? 0 : 1));
-const expUnit = (m) => (m.key === "lauf_hf130" ? "/km" : m.key === "schwimm_100m" ? "/100 m" : m.unit || "");
-const hmShort = (m) => `${Math.floor(Math.max(0, m) / 60)}:${String(Math.round(Math.max(0, m)) % 60).padStart(2, "0")}`;
-function buildExperiment(res) {
-  const d = res.data, W = widgetInnerWidth(), x = d.experiment, td = d.trainingDays || [];
-  const w = baseWidget({ padV: 12 });
-  const when = !x ? null : x.weekNo == null ? (x.status === "vorgeschlagen" ? `mind. ${x.minWeeks} Wochen` : null) : x.weekNo < 1 ? `Start ${dateShort(x.startDate)}` : `Woche ${x.weekNo} von mind. ${x.minWeeks}`;
-  header(w, W, x ? `${String(x.title).toUpperCase()} · ${EXP_STATUS[x.status] || String(x.status).toUpperCase()}` : "EXPERIMENT", when);
-  w.addSpacer(4);
-  // Diese Woche: Stunden gegen das Ziel gross links, Tage, Kraft und Serie klein rechts
-  const top = w.addStack(); top.centerAlignContent(); top.size = new Size(W, 0);
-  const cur = td[td.length - 1], E = d.endurance, ec = E && E.weeks[E.weeks.length - 1];
-  const vr = top.addStack(); vr.bottomAlignContent(); vr.spacing = 3;
-  const rc = (lines) => { top.addSpacer(); const c = top.addStack(); c.layoutVertically(); lines.forEach((l) => { const r = c.addStack(); r.addSpacer(); text(r, l, FS.xs, { color: COL.muted, minScale: 0.6 }); }); };
-  if (ec) {
-    num(vr, hmShort(ec.min), FS.xl);
-    text(vr, `/ ${hmShort(ec.goalMin)} h diese Woche`, FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
-    // Trainingstage (Ziel des Experiments), Serie gegen das Ziel der jeweiligen Woche; Kraft steht im Block-Widget
-    rc([`${cur ? cur.days : MISSING}${x ? `/${x.targetDaysPerWeek}` : ""} Tage`, `${E.streak} Wo in Folge ab ${fmt(E.streakPct)} %`]);
-  } else {
-    num(vr, cur ? String(cur.days) : MISSING, FS.xl);
-    text(vr, `${x ? `/ ${x.targetDaysPerWeek} ` : ""}Tage diese Woche`, FS.sm, { bold: true, color: COL.muted, minScale: 0.8 });
-  }
-  if (!x) {
-    w.addSpacer(6);
-    text(w, "Kein laufendes Experiment. Der Coach legt es per save_experiment an.", FS.sm, { color: COL.muted, lines: 2 });
-    notice(w, res, d);
-    return w;
-  }
-  w.addSpacer(4);
-  const metrics = (x.metrics || []).slice(0, 4);
-  const C1 = Math.round(W * 0.32), C2 = Math.round(W * 0.44);
-  metrics.forEach((m) => {
-    const r = w.addStack(); r.centerAlignContent(); r.size = new Size(W, 0);
-    const a = r.addStack(); a.centerAlignContent(); a.spacing = 4; a.size = new Size(C1, 0);
-    const sh = EXP_SHORT[m.key] || [m.label, "other"];
-    symbol(a, SPORT_SYMBOL[sh[1]], 10, new Color(sportHex(sh[1])));
-    text(a, sh[0], FS.xs, { bold: true, color: COL.muted, minScale: 0.7 });
-    a.addSpacer();
-    const b = r.addStack(); b.size = new Size(C2, 0);
-    text(b, m.current == null ? `${expVal(m, m.baseline)} → noch kein Wert` : `${expVal(m, m.baseline)} → ${expVal(m, m.current)} ${expUnit(m)}`, FS.sm, { color: m.current == null || m.provisional ? COL.muted : COL.text, minScale: 0.7 });
-    b.addSpacer();
+
+/* ---------- Klein: Schlaf und Form (Standard, auch "schlaf", "bereit") ---------- */
+// Schlaf der letzten Nacht gross, HRV und Ruhepuls mit dem eigenen Median, unten Fitness (CTL) und Frische (TSB)
+function buildSchlafForm(res) {
+  const d = res.data, s = d.sleep || { days: [] }, f = d.fitness || {}, IW = smallInnerWidth();
+  const w = smallWidget();
+  const last = s.latest, isToday = last && last.date === d.today;
+  header(w, IW, "SCHLAF · FORM", last ? (isToday ? "heute" : dateShort(last.date)) : null);
+  w.addSpacer(2);
+  valueUnit(w, last ? fmt(last.hours, 1) : MISSING, "h", 32, { color: last ? COL.sleep : COL.muted });
+  w.addSpacer();
+  const t = s.days[s.days.length - 1] || {};
+  const row = (label, val, extra) => {
+    const r = w.addStack(); r.centerAlignContent(); r.size = new Size(IW, 0);
+    text(r, label, FS.xs, { color: COL.muted, minScale: 0.8 });
     r.addSpacer();
-    if (m.provisional && m.current != null) text(r, "vorläufig", FS.xs, { color: COL.muted, minScale: 0.8 });
-    else if (m.baseline != null && m.current != null) {
-      const dv = m.current - m.baseline, good = m.better === "lower" ? dv < 0 : dv > 0;
-      const pace = m.key === "lauf_hf130" || m.key === "schwimm_100m";
-      const t = dv === 0 ? "±0" : `${dv > 0 ? "+" : "−"}${pace ? fmtPace(Math.round(Math.abs(dv))) : fmt(Math.abs(dv), Number.isInteger(dv) ? 0 : 1)}`;
-      text(r, t, FS.sm, { bold: true, color: dv === 0 ? COL.muted : good ? COL.ok : COL.warn, minScale: 0.8 });
-    }
-    w.addSpacer(2);
-  });
-  if (x.verdict) { w.addSpacer(2); text(w, `Fazit: ${x.verdict}`, FS.sm, { bold: true, color: COL.accent, lines: 1, minScale: 0.7 }); }
+    num(r, val, FS.sm, { minScale: 0.8 });
+    if (extra) text(r, ` ${extra}`, FS.xs, { color: COL.muted, minScale: 0.8 });
+  };
+  row("HRV", fmt(t.hrv), s.medianHrv != null ? `Ø ${fmt(s.medianHrv)}` : null);
+  row("Ruhepuls", fmt(t.restingHR), s.medianRestingHR != null ? `Ø ${fmt(s.medianRestingHR)}` : null);
+  w.addSpacer(3);
+  row("Fitness", f.ctl != null ? fmt(f.ctl) : MISSING, f.tsb != null ? `TSB ${signed(f.tsb)}` : null);
   notice(w, res, d);
   return w;
 }

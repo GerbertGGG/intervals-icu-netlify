@@ -98,6 +98,9 @@ assert.deepEqual([radView.current.reason, radView.current.changed, radView.curre
 // text "" streicht eine Sportart, Listen ersetzen als Ganzes, Schwimmen kommt dazu (Sortierung lauf, rad, schwimmen, kraft)
 const edit = validateTargets({ fetchedAt: at, intensity: [{ sport: "lauf", text: "" }, { sport: "schwimmen", text: "1× 10× 100 m" }], notAllowed: ["Sweet Spot"], guardrails: [], reason: "x" }, T0, firstSave).value;
 assert.deepEqual([edit.intensity.map((x) => x.sport), edit.notAllowed, edit.guardrails, edit.changed], [["rad", "schwimmen"], ["Sweet Spot"], [], ["intensity", "guardrails", "notAllowed"]]);
+// short (Kurzfassung fürs Widget) wird mitgespeichert, zu lang ist ein Fehler
+assert.deepEqual(validateTargets({ fetchedAt: at, intensity: [{ ...rad, short: " 1× HIIT ab Woche 2 " }], reason: "x" }, T0, firstSave).value.intensity[1], { ...rad, short: "1× HIIT ab Woche 2" });
+assert.ok(validateTargets({ fetchedAt: at, intensity: [{ ...rad, short: "x".repeat(41) }], reason: "x" }, T0, firstSave).error);
 // Ein gleicher Wert zählt nicht als geändert
 assert.deepEqual(validateTargets({ fetchedAt: at, maxIncreasePct: 10, reason: "x" }, T0).value.changed, []);
 // Alte Einträge ohne die neuen Felder (vor dieser Änderung gespeichert) erben sie

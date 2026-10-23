@@ -320,6 +320,7 @@ const TOOLS = [
             properties: {
               sport: { type: "string", enum: ["lauf", "rad", "schwimmen", "kraft"] },
               text: { type: "string", description: "Max. 160 Zeichen." },
+              short: { type: "string", description: "Optional: Kurzfassung für das iPhone-Widget, max. 40 Zeichen (z. B. \"1× HIIT ab Woche 2\"). Ohne short zeigt das Widget den Anfang von text." },
             },
             required: ["sport", "text"],
           },

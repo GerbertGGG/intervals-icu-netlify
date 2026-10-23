@@ -395,6 +395,12 @@ export function buildWidgetRahmen(d) {
   };
 }
 
+// Block-Widget neu (mittel, view=kompass): Block, Rahmen und Experiment in einer Antwort, damit ein Widget alles zeigt,
+// was im laufenden Block gilt. Nur zusammengesetzt, keine eigene Auswertung; die Einzelansichten bleiben fuer aeltere Skripte.
+export function buildWidgetKompass(d) {
+  return { ...buildWidgetExperiment(d), ...buildWidgetRahmen(d), ...buildWidgetBlock(d) };
+}
+
 // Experiment-Widget (mittel, Parameter "experiment"): das vom Coach gespeicherte Experiment (save_experiment), die Ausdauerstunden
 // je Woche gegen das Wochenziel und die live gerechneten Trainingstage. Nur Werte, keine Bewertung; weekNo = Woche seit startDate (1 = erste Woche).
 export function buildWidgetExperiment(d) {
@@ -559,6 +565,6 @@ export async function handleWidgetRequest(req, env) {
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const live = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "kompass" ? buildWidgetKompass(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }
