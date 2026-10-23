@@ -349,7 +349,8 @@ export function buildWidgetBlock(d) {
     today: d.today,
     block: {
       name: b.name, status: b.status, start: b.start, end: b.end, weeks: b.weeks, weekNo: b.weekNo, daysToStart: b.daysToStart, daysLeft: b.daysLeft,
-      goals: (b.goals ?? []).map((g) => ({
+      // Ramp Rate und ACWR nicht als eigene Ziele (wie im Dashboard): nur als Hinweis im Rahmen-Widget, wenn sie hoch sind
+      goals: (b.goals ?? []).filter((g) => g.key !== "ramp" && g.key !== "acwr").map((g) => ({
         key: g.key, group: g.group ?? null, sport: g.sport ?? null, label: g.label, status: g.status, value: g.value ?? null, of: g.of ?? null, target: g.target, note: g.note ?? null, basis: g.basis ?? null, goalSets: g.goalSets ?? null,
         max: g.max ?? null, must: g.must ?? null, count: g.count ?? null, lastN: g.lastN ?? null,
         // Verlauf der Abschlussziele (season-block.js goalCourse): Richtung besser/schlechter/gleich, keine Entscheidung
@@ -357,6 +358,30 @@ export function buildWidgetBlock(d) {
         weeks: g.key === "strength" ? (g.weeks ?? []).slice(-6).map((w) => ({ done: w.done, hit: w.hit, count: w.count, load: w.load !== false })) : undefined,
       })),
     },
+    sourcesFailed: failedOf(d),
+  };
+}
+
+// Rahmen-Widget (mittel, Parameter "rahmen"): der aktuelle Rahmen des Coaches (save_targets) – Intensitaet je Sportart mit dem
+// Stand der laufenden Blockwoche (aus der Intensitaets-Leitplanke, season-block.js), Leitplanken, Nicht erlaubt, naechster
+// Blocktest und der stille Hinweis zu Ramp Rate/ACWR (loadHint, nur wenn hoch). Nur Anzeige, keine eigene Bewertung.
+const INT_KIND_SPORT = { bikeHiit: "rad", hillSprints: "lauf" };
+export function buildWidgetRahmen(d) {
+  const c = d.targets?.current ?? null;
+  const g = d.seasonBlock?.goals?.find((x) => x.key === "intensity") ?? null;
+  const open = g?.weeks?.find((x) => !x.done) ?? null;
+  // je Sportart: diese Woche schon gemacht (count), oder warum die Woche nicht zaehlt (skip); null ohne Leitplanke
+  const week = g && open ? Object.fromEntries(g.kinds.map((k) => [INT_KIND_SPORT[k], { count: open.has?.[k] ?? 0, skip: open.load === false ? (open.skip ?? "zählt nicht") : null }])) : null;
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    frame: c ? {
+      enduranceHoursPerWeek: c.enduranceHoursPerWeek, strengthSets2w: c.strengthSets2w, maxIncreasePct: c.maxIncreasePct,
+      intensity: (c.intensity ?? []).map((x) => ({ ...x, week: week?.[x.sport] ?? null })),
+      guardrails: c.guardrails ?? [], notAllowed: c.notAllowed ?? [], reason: c.reason, savedAt: c.savedAt ?? null, validFrom: c.validFrom,
+    } : null,
+    nextTest: d.nextTest ?? null,
+    loadHint: d.loadHint ?? null,
     sourcesFailed: failedOf(d),
   };
 }
@@ -525,6 +550,6 @@ export async function handleWidgetRequest(req, env) {
   // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
   const goals = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const live = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }

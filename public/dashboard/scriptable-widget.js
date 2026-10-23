@@ -16,6 +16,8 @@
 //              Parameter  vdot  = VDOT (Runalyze) mit Verlauf und die Trainingsbereiche (Paces).
 //              Parameter  kraft  = Krafttraining aus EGYM: Saetze gegen Wochenziel (60), bewegtes Gewicht, Bestwerte, Muskelalter.
 //              Parameter  block  (auch  ziele)  = Trainingsblock aus dem Intervals-Kalender: Woche x von N, Abschlussziele je Sportart mit Verlauf und Leitplanken.
+//              Parameter  rahmen  = aktueller Rahmen des Coaches: Intensitaet je Sportart mit Stand dieser Woche, Nicht erlaubt,
+//              Leitplanken, naechster Blocktest; Ramp Rate/ACWR nur als Hinweis, wenn hoch.
 //              Parameter  experiment  = laufendes Trainings-Experiment des Coaches: Ausdauerstunden der letzten 8 Wochen gegen das Wochenziel (Trainingstage klein),
 //              Messgroessen mit Ausgangs- und aktuellem Wert, sein Fazit.
 //     Klein:   Fitness (CTL, Standard). Parameter  ernaehrung,  bereit  (Coach und Gefuehlswerte) oder  schlaf.
@@ -38,6 +40,7 @@ const VIEWS = {
   intensity: { endpoint: "training", build: (r) => buildIntensity(r), size: "medium", label: "Vorschau mittel: Intensität" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
   block: { endpoint: "block", build: (r) => buildBlock(r), size: "medium", label: "Vorschau mittel: Trainingsblock und Ziele" },
+  rahmen: { endpoint: "rahmen", build: (r) => buildRahmen(r), size: "medium", label: "Vorschau mittel: Aktueller Rahmen" },
   experiment: { endpoint: "experiment", build: (r) => buildExperiment(r), size: "medium", label: "Vorschau mittel: Experiment" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
@@ -47,7 +50,7 @@ const VIEWS = {
   ready: { endpoint: "main", build: (r) => buildReady(r), size: "small", label: "Vorschau klein: Bereitschaft" },
 };
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min)/, "time"], [/^(form|tss|belast|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"], [/^(exp|versuch)/, "experiment"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min)/, "time"], [/^(form|tss|belast|hm|detail)/, "detail"], [/^(intens|polar)/, "intensity"], [/^(train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season)/, "block"], [/^(exp|versuch)/, "experiment"], [/^(rahmen|frame|leit|regel)/, "rahmen"]] },
   small: { fallback: "fitness", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(schlaf|sleep|erhol)/, "sleep"], [/^(bereit|ready)/, "ready"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -1419,6 +1422,49 @@ function buildBlock(res) {
       text(lr, (RAIL[g.key] || ((x) => x.label))(g), FS.xs, { bold: true, minScale: 0.7 });
     });
   }
+  notice(w, res, d);
+  return w;
+}
+
+/* ---------- Aktueller Rahmen (mittel): was der Coach als Rahmen gesetzt hat (save_targets). Je Sportart die Intensitaet mit dem
+   Stand der laufenden Blockwoche (✓ erledigt, offen, oder warum die Woche nicht zaehlt), darunter Nicht erlaubt und Leitplanken,
+   rechts oben der naechste Blocktest. Ramp Rate/ACWR nur als stille Zeile, wenn der Worker sie meldet (loadHint). ---------- */
+const FRAME_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim", kraft: "strength" };
+function buildRahmen(res) {
+  const d = res.data, W = widgetInnerWidth(), f = d.frame, T = d.nextTest, H = d.loadHint;
+  const w = baseWidget({ padV: 12 });
+  const test = T ? (T.daysToGo === 0 ? "Blocktest heute" : `Blocktest in ${T.daysToGo} ${T.daysToGo === 1 ? "Tag" : "Tagen"}`) : null;
+  header(w, W, `RAHMEN${f ? ` · SEIT ${dateShort((f.savedAt || f.validFrom).slice(0, 10))}` : ""}`, test, COL.race);
+  if (!f) { w.addSpacer(6); text(w, "Kein Rahmen vom Coach.", FS.sm, { color: COL.muted }); notice(w, res, d); return w; }
+  w.addSpacer(5);
+  (f.intensity || []).slice(0, 3).forEach((x, i) => {
+    if (i) w.addSpacer(3);
+    const r = w.addStack(); r.centerAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
+    const k = FRAME_SPORT[x.sport] || "other";
+    symbol(r, SPORT_SYMBOL[k], 12, new Color(sportHex(k)));
+    text(r, x.text, FS.sm, { lines: 1, minScale: 0.7 });
+    r.addSpacer();
+    const wk = x.week;
+    if (!wk) return;
+    if (wk.skip) text(r, "zählt nicht", FS.xs, { color: COL.muted, minScale: 1 });
+    else if (wk.count > 0) symbol(r, "checkmark.circle.fill", 13, COL.ok);
+    else text(r, "offen", FS.xs, { bold: true, color: COL.muted, minScale: 1 });
+  });
+  const line = (label, items, lines) => {
+    if (!items || !items.length) return;
+    w.addSpacer(5);
+    const r = w.addStack(); r.size = new Size(W, 0);
+    text(r, `${label}  `, FS.xs, { bold: true, color: COL.muted, minScale: 1 });
+    text(r, items.join(" · "), FS.xs, { lines, minScale: 0.75 });
+    r.addSpacer();
+  };
+  line("NICHT ERLAUBT", f.notAllowed, 2);
+  line("LEITPLANKEN", f.guardrails, H ? 1 : 2);
+  if (H) {
+    w.addSpacer(4);
+    text(w, [H.ramp != null ? `Ramp ${H.ramp > 0 ? "+" : ""}${fmt(H.ramp, 1)} (über ${H.rampMax})` : null, H.acwrDays != null ? `ACWR ${H.acwrDays}× über ${fmt(H.acwrMax, 1)} in ${H.days} Tagen` : null].filter(Boolean).join(" · "), FS.xs, { color: COL.muted, minScale: 0.7 });
+  }
+  w.addSpacer();
   notice(w, res, d);
   return w;
 }
