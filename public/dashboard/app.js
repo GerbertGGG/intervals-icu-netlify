@@ -223,6 +223,7 @@ function renderCockpit(d) {
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
     ${renderWeekGoals(d, tile)}
+    ${renderFrame(d, tile)}
     ${weekTile}
     ${renderWeekReview(d, tile)}
     <div class="cockpit-group">${race ? "Rennen, Block und Form" : "Block und Form"}</div>
@@ -389,6 +390,34 @@ function renderWeekGoals(d, tile) {
     ${kraft}
     <div class="wg-hist"><div id="wg-chart"></div>${streak}${targetsLine(T.targets)}</div></div>`;
   return tile("Woche", body, "span4");
+}
+/* Karte "Aktueller Rahmen" (Worker: targets-snapshot.js): was der Coach per save_targets als Rahmen gesetzt hat – Wochenziel,
+   erlaubte Steigerung, Intensität je Sportart, Leitplanken, Nicht erlaubt. Darunter wann und warum zuletzt geändert, antippen zeigt
+   die Historie. Das Dashboard zeigt nur, es prüft den Rahmen nicht. Ramp Rate und ACWR stehen nur als stiller Hinweis da, wenn sie
+   hoch sind (loadHint, Worker: buildLoadHint). */
+const FRAME_FIELD = { enduranceHoursPerWeek: "Wochenziel", strengthSets2w: "Kraftsätze", streakThresholdPct: "Serie", maxIncreasePct: "Steigerung", intensity: "Intensität", guardrails: "Leitplanken", notAllowed: "Nicht erlaubt" };
+function renderFrame(d, tile) {
+  const c = d.targets?.current;
+  if (!c) return "";
+  const sec = (title, body) => (body ? `<div class="fr-sec"><div class="bgh">${title}</div>${body}</div>` : "");
+  const ul = (items) => (items.length ? `<ul class="fr-list">${items.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : "");
+  const goal = `<div class="fr-goal"><b>${hmm(c.enduranceHoursPerWeek * 60)} h</b> Ausdauer/Woche · <b>${fmt(c.strengthSets2w)}</b> Kraftsätze/2 Wo · Steigerung max. <b>+${fmt(c.maxIncreasePct, c.maxIncreasePct % 1 ? 1 : 0)} %</b> gegenüber Referenzwoche</div>`;
+  const intensity = c.intensity.length ? `<ul class="fr-list fr-int">${c.intensity.map((x) => `<li><span class="fr-s">${PLAN_SPORT_LABEL[x.sport] ?? esc(x.sport)}</span>${esc(x.text)}</li>`).join("")}</ul>` : "";
+  const H = d.loadHint;
+  const hint = H ? `<div class="sub muted fr-hint">${[H.ramp != null ? `Ramp Rate zuletzt ${H.ramp > 0 ? "+" : ""}${fmt(H.ramp, 1)} CTL/Woche (über ${fmt(H.rampMax)})` : null, H.acwrDays != null ? `ACWR an ${H.acwrDays} der letzten ${H.days} Tage über ${fmt(H.acwrMax, 1)} (höchstens ${fmt(H.acwrPeak, 2)})` : null].filter(Boolean).join(" · ")}</div>` : "";
+  const when = c.savedAt ? fmtDate(c.savedAt.slice(0, 10)) : `${fmtDate(c.validFrom)} (Startwert)`;
+  const what = (t) => (t.changed?.length ? ` · geändert: ${t.changed.map((k) => FRAME_FIELD[k] ?? k).join(", ")}` : "");
+  const val = (t, k) => k === "enduranceHoursPerWeek" ? `${hmm(t[k] * 60)} h` : k === "strengthSets2w" ? `${fmt(t[k])} Sätze` : k === "streakThresholdPct" || k === "maxIncreasePct" ? `${fmt(t[k])} %`
+    : k === "intensity" ? t[k].map((x) => `${PLAN_SPORT_LABEL[x.sport] ?? x.sport}: ${x.text}`).join(" | ") || "–" : t[k].join(" | ") || "–";
+  const detail = (t) => (t.changed?.length ? t.changed.map((k) => `<div class="sub">${FRAME_FIELD[k] ?? esc(k)}: ${esc(val(t, k))}</div>`).join("") : "");
+  const next = (d.targets.upcoming ?? []).map((t) => `<li><b>geplant ab ${fmtDate(t.validFrom)}</b>${what(t)}<div class="sub">${esc(t.reason)}</div>${detail(t)}</li>`).join("");
+  const rows = (d.targets.history ?? []).map((t) => `<li><b>${t.savedAt ? fmtDate(t.savedAt.slice(0, 10)) : "Startwert"}</b> · gilt ab ${fmtDate(t.validFrom)}${what(t)}<div class="sub">${esc(t.reason)}</div>${detail(t)}</li>`).join("");
+  const body = `<div class="fr">${goal}
+    ${sec("Intensität", intensity)}
+    <div class="fr-two">${sec("Leitplanken", ul(c.guardrails))}${sec("Nicht erlaubt", ul(c.notAllowed))}</div>
+    ${hint}
+    <details class="info wg-targets"><summary>Geändert am ${when} – ${esc(c.reason)}</summary><ol class="wg-thist">${next}${rows}</ol></details></div>`;
+  return tile("Aktueller Rahmen", body, "span4");
 }
 function drawWeekGoals(d) {
   const T = d.weekTotals;
@@ -1048,7 +1077,8 @@ function renderBlock(SB, deloads = []) {
     const lines = [`Ziel: ${esc(g.target)}`, vis && legend ? esc(legend) : null, sub || null].filter(Boolean);
     return `<div class="bgoal"><div class="bg-top"><span class="bg-label" style="min-width:0">${esc(g.label)}</span><span class="badge ${g.key === "pause" && g.status === "base" && g.value > g.max ? "bad" : g.status === "base" || g.status === "none" ? "none" : g.status}">${stLabel[g.status]}</span></div>${g.value != null ? `<div class="val">${valOf(g)}</div>` : ""}${vis}${courseOf(g)}${lines.map((t) => `<div class="sub">${t}</div>`).join("")}${(g.hints ?? []).map((h) => `<div class="sub muted">${esc(h)}</div>`).join("")}${nextOf(g)}</div>`;
   };
-  const list = SB.goals ?? [];
+  // Ramp Rate und ACWR keine eigenen Kacheln mehr: nur als stiller Hinweis in "Aktueller Rahmen", wenn sie hoch sind
+  const list = (SB.goals ?? []).filter((g) => g.key !== "ramp" && g.key !== "acwr");
   const grouped = list.some((g) => g.group);
   const section = (title, gs) => (gs.length ? `${title ? `<h4 class="bgh">${title}</h4>` : ""}<div class="bgoals">${gs.map(goalCard).join("")}</div>` : "");
   const goals = grouped

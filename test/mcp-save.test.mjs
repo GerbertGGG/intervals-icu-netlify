@@ -151,5 +151,16 @@ assert.equal(JSON.parse(kv.get("dashboard:targets")).items.length, 12); // nicht
 gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
 assert.equal(gc.targets.history.length, 10); assert.equal(gc.targets.history[0].reason, "r10");
 assert.deepEqual([gc.targets.current.reason, gc.targets.upcoming.length], ["r10", 0]); // neuester Eintrag mit validFrom <= heute
+// Nur intensity rad schicken: Stunden, Sätze, Leitplanken, Nicht-erlaubt und Lauf-Intensität bleiben
+const st = gc.targets.current;
+r = await rpc("tools/call", { name: "save_targets", arguments: { fetchedAt: "2026-10-23T07:00:00Z", reason: "Rad-HIIT kürzer", validFrom: "2026-10-19", intensity: [{ sport: "rad", text: "1× HIIT pro Woche, z. B. 2× 8× 30/30" }] } });
+assert.ok(!r.body.result.isError, r.body.result.content[0].text);
+gc = JSON.parse((await rpc("tools/call", { name: "get_coach", arguments: {} })).body.result.content[0].text);
+const nc = gc.targets.current;
+assert.deepEqual(nc.intensity, [st.intensity.find((x) => x.sport === "lauf"), { sport: "rad", text: "1× HIIT pro Woche, z. B. 2× 8× 30/30" }]);
+for (const k of ["enduranceHoursPerWeek", "strengthSets2w", "streakThresholdPct", "maxIncreasePct", "guardrails", "notAllowed"]) assert.deepEqual(nc[k], st[k], k);
+assert.deepEqual([nc.reason, nc.changed, nc.guardrails.length, nc.notAllowed[0]], ["Rad-HIIT kürzer", ["intensity"], 3, "Sweet Spot"]);
+r = await rpc("tools/call", { name: "save_targets", arguments: { fetchedAt: "2026-10-23T07:00:00Z", reason: "x", intensity: [{ sport: "rudern", text: "x" }] } });
+assert.equal(r.body.result.isError, true);
 console.log = log;
 console.log("mcp-save tests ok");

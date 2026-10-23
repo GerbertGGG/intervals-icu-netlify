@@ -299,7 +299,7 @@ const TOOLS = [
   {
     name: "save_targets",
     description:
-      "Setzt Gerberts Wochenziele fürs Dashboard (Karte \"Woche\") und get_coach: Ausdauerstunden je ISO-Woche (Laufen, Rad, Schwimmen; Kraft zählt nicht) und Kraftsätze in 2 Wochen (laufende Woche plus Vorwoche). Jeder Aufruf hängt einen Eintrag an die Historie an, nichts wird überschrieben; es gilt immer der zuletzt gespeicherte Eintrag mit validFrom <= heute, vergangene Wochen behalten ihr damaliges Ziel. fetchedAt = jetzt.",
+      "Setzt Gerberts aktuellen Rahmen fürs Dashboard (Karten \"Woche\" und \"Aktueller Rahmen\") und get_coach: Ausdauerstunden je ISO-Woche (Laufen, Rad, Schwimmen; Kraft zählt nicht), Kraftsätze in 2 Wochen (laufende Woche plus Vorwoche), erlaubte Steigerung gegenüber der Referenzwoche, Intensität je Sportart, Leitplanken und was nicht erlaubt ist. Nur nach Gerberts Zustimmung ändern. Nur schicken, was sich ändert: Fehlende Felder werden vom bisher geltenden Eintrag übernommen; intensity ersetzt nur die geschickten Sportarten (text \"\" streicht eine), guardrails und notAllowed ersetzen die ganze Liste. Jeder Aufruf hängt einen Eintrag an die Historie an, nichts wird überschrieben; es gilt immer der zuletzt gespeicherte Eintrag mit validFrom <= heute, vergangene Wochen behalten ihr damaliges Ziel. fetchedAt = jetzt.",
     inputSchema: {
       type: "object",
       properties: {
@@ -309,14 +309,30 @@ const TOOLS = [
         reason: { type: "string", description: "Warum geändert, max. 200 Zeichen (steht im Dashboard)." },
         validFrom: { type: "string", description: "Gilt ab YYYY-MM-DD. Standard: Montag der laufenden Woche." },
         streakThresholdPct: { type: "number", description: "Für \"Wochen in Folge\": zählt eine Woche ab diesem Anteil ihres Ziels, 50 bis 100. Standard 90." },
+        maxIncreasePct: { type: "number", description: "Erlaubte Steigerung gegenüber der Referenzwoche in Prozent, 0 bis 50. Standard 10." },
+        intensity: {
+          type: "array",
+          maxItems: 6,
+          description: "Intensität je Sportart, max. 6 Einträge. Ersetzt nur die geschickten Sportarten; text \"\" streicht eine. Beispiel: [{ sport: \"rad\", text: \"1× HIIT pro Woche, z. B. 2× 8× 30/30\" }].",
+          items: {
+            type: "object",
+            properties: {
+              sport: { type: "string", enum: ["lauf", "rad", "schwimmen", "kraft"] },
+              text: { type: "string", description: "Max. 160 Zeichen." },
+            },
+            required: ["sport", "text"],
+          },
+        },
+        guardrails: { type: "array", maxItems: 8, items: { type: "string" }, description: "Leitplanken, max. 8, je max. 160 Zeichen (z. B. \"Kein HIIT/Sprints 2 Tage vor Blocktest\"). Ersetzt die ganze Liste." },
+        notAllowed: { type: "array", maxItems: 8, items: { type: "string" }, description: "Nicht erlaubt, max. 8, je max. 80 Zeichen (z. B. \"Sweet Spot\"). Ersetzt die ganze Liste." },
       },
-      required: ["fetchedAt", "enduranceHoursPerWeek", "strengthSets2w", "reason"],
+      required: ["fetchedAt", "reason"],
     },
   },
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, byDiscipline { lauf, rad, schwimmen } in Stunden, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und die Wochenziele (targets: current, upcoming = geplante mit validFrom in der Zukunft, history = letzte 10 Einträge aus save_targets mit reason, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, byDiscipline { lauf, rad, schwimmen } in Stunden, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -344,9 +360,10 @@ async function callTool(env, name, args) {
   if (name === "save_targets") {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
     const today = isoDateBerlin();
-    const { value, error } = validateTargets(args, today);
+    const prev = await readTargets(env);
+    const { value, error } = validateTargets(args, today, prev);
     if (error) throw new Error(error);
-    const stored = appendTarget(await readTargets(env), value);
+    const stored = appendTarget(prev, value);
     await writeKvJson(env, TARGETS_KV_KEY, stored);
     return { ok: true, saved: value, ...targetsView(stored, today, COACH_HISTORY) };
   }

@@ -455,6 +455,23 @@ function buildWellness(list) {
 
 // Tageswerte der Belastung für die Kalender-Heatmap (leere Tage = 0, keine Lücken).
 
+// Stiller Hinweis in der Karte "Aktueller Rahmen" statt eigener Kachel: nur, wenn die Ramp Rate (CTL-Anstieg je Woche, Intervals)
+// zuletzt über 5 lag oder der ACWR (ATL/CTL) an mind. 3 der letzten 7 Tage über 1,3. Nur Werte, keine Bewertung; sonst null.
+export const LOAD_HINT = { rampMax: 5, acwrMax: 1.3, acwrMinDays: 3, days: 7 };
+export function buildLoadHint(wellness, todayIso) {
+  const from = addDays(todayIso, -(LOAD_HINT.days - 1));
+  const recent = (wellness ?? []).filter((w) => w.date >= from && w.date <= todayIso);
+  const ramp = [...recent].reverse().find((w) => w.rampRate != null)?.rampRate ?? null;
+  const acwr = recent.filter((w) => w.ctl > 0 && w.atl != null).map((w) => ({ date: w.date, acwr: Math.round((w.atl / w.ctl) * 100) / 100 })).filter((x) => x.acwr > LOAD_HINT.acwrMax);
+  const rampHit = ramp != null && ramp > LOAD_HINT.rampMax, acwrHit = acwr.length >= LOAD_HINT.acwrMinDays;
+  if (!rampHit && !acwrHit) return null;
+  return {
+    ramp: rampHit ? Math.round(ramp * 10) / 10 : null,
+    acwrDays: acwrHit ? acwr.length : null, acwrPeak: acwrHit ? Math.max(...acwr.map((x) => x.acwr)) : null,
+    ...LOAD_HINT,
+  };
+}
+
 function buildDaily(todayIso, activities) {
   const out = [];
   for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {} });
@@ -896,6 +913,10 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     // Wochenziele (week-totals.js): Ausdauerstunden ohne Kraft und Kraftsätze in 2 Wochen, letzte 8 Wochen, je Woche gegen das
     // Ziel, das der Coach für sie gesetzt hat (save_targets); dieselbe Rechnung wie get_coach. targets: geltendes Ziel und Historie
     weekTotals: activitiesR.ok ? { ...computeWeekTotals(activities, todayIso, storedTargets), targets: targetsView(storedTargets, todayIso) } : null,
+    // Aktueller Rahmen des Coaches (save_targets): Wochenziel, Steigerung, Intensität je Sportart, Leitplanken, Nicht erlaubt, Historie.
+    // loadHint: Ramp Rate / ACWR nur, wenn auffällig hoch (sonst null)
+    targets: targetsView(storedTargets, todayIso),
+    loadHint: buildLoadHint(wellness, todayIso),
     // Erkenntnisse des Coaches (save_insight, archive_insight): aktive und archivierte, jeweils neueste zuerst
     insights: splitInsights(coachInsights),
     plannedWeek: buildPlannedWeek(events, todayIso),
