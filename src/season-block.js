@@ -419,6 +419,30 @@ export function intensityKindOf(sport, text, z5Secs = null) {
   return null;
 }
 
+// Was als Intensitaet zaehlt, steht im aktuellen Rahmen des Coaches (save_targets, frame = targetsView().current), nicht mehr
+// im Kalendertext: Rad-Eintrag mit HIIT -> Rad-HIIT, Lauf-Eintrag mit Huegelsprints -> Huegelsprints; "ab Woche N" in einem
+// der Texte (bei mehreren die spaeteste); Krankheitswochen ausgenommen, wenn eine Leitplanke "krank" nennt. Die Quote
+// ("6 von 8 Belastungswochen") gibt es im Rahmen nicht: Steht sie im Blocktext, gilt sie weiter, sonst nur der Stand ohne Status.
+// Ohne Rahmen (frame null) bleibt alles beim Blocktext; ohne passende Art im Rahmen gibt es keine Intensitaets-Leitplanke.
+const INT_KIND_ORDER = ["bikeHiit", "hillSprints"];
+export function intensityFromFrame(frame, fromText = null) {
+  if (!Array.isArray(frame?.intensity)) return fromText;
+  const kinds = new Set();
+  let fromWeek = 1;
+  for (const x of frame.intensity) {
+    const kind = x.sport === "rad" && BIKE_HIIT.test(x.text) ? "bikeHiit" : x.sport === "lauf" && HILL_SPRINT.test(x.text) ? "hillSprints" : null;
+    if (!kind) continue;
+    kinds.add(kind);
+    const m = x.text.match(/ab\s*woche\s*(\d+)/i);
+    if (m) fromWeek = Math.max(fromWeek, Number(m[1]));
+  }
+  if (!kinds.size) return null;
+  return {
+    need: fromText?.need ?? null, of: fromText?.of ?? null, fromWeek, kinds: INT_KIND_ORDER.filter((k) => kinds.has(k)),
+    sickOk: (frame.guardrails ?? []).some((g) => /krank/i.test(g)), source: "rahmen",
+  };
+}
+
 function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
   const sick = new Set(sickDays);
   const weeks = weeksOf(block, w, todayIso).map((x) => {
@@ -433,16 +457,18 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
   // Krankheitswoche ohne Ziel faellt heraus; mit Ziel zaehlt sie normal
   const full = weeks.filter((x) => x.done && x.load && (x.hit || !(cfg.sickOk && x.sick)));
   const hits = full.filter((x) => x.hit).length;
-  const allowed = Math.max(0, cfg.of - cfg.need), misses = full.length - hits;
+  // Ohne Quote (nur Rahmen, kein "x von y Belastungswochen" im Blocktext) kein Status, nur der Stand
+  const quota = cfg.need != null && cfg.of != null;
+  const allowed = quota ? Math.max(0, cfg.of - cfg.need) : null, misses = full.length - hits;
   const open = weeks.find((x) => !x.done) ?? null;
   const what = cfg.kinds.map((k) => INT_KIND_DE[k]).join(" und ");
   return {
     key: "intensity", group: "leitplanke", label: "Intensität", unit: "Wochen", basis,
-    target: `${what} je 1× in ${cfg.need} von ${cfg.of} Belastungswochen${cfg.fromWeek > 1 ? ` ab Woche ${cfg.fromWeek}` : ""}`,
-    value: full.length ? hits : null, of: full.length, needWeeks: cfg.need, ofWeeks: cfg.of, kinds: cfg.kinds, weeks: weeks.slice(-12),
-    status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : misses > allowed ? "bad" : misses === allowed && allowed > 0 ? "warn" : "ok",
-    note: [open ? (open.skip ? `Diese Woche: ${open.skip}` : `Diese Woche: ${cfg.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k] ? "✓" : "offen"}`).join(", ")}`) : null, misses ? `${misses} von ${allowed} erlaubten Fehlwochen` : null, weeks.some((x) => x.done && x.sick && !x.hit && cfg.sickOk) ? "Krankheitswoche ausgenommen" : null].filter(Boolean).join(" · ") || null,
-    hints: cfg.sickOk ? ["Krankheit als Kalendereintrag „Krank“ (oder Kategorie Krankheit/Verletzung) eintragen, dann zählt die Woche nicht als verfehlt."] : [],
+    target: `${what} je 1× ${quota ? `in ${cfg.need} von ${cfg.of} Belastungswochen` : "pro Belastungswoche"}${cfg.fromWeek > 1 ? ` ab Woche ${cfg.fromWeek}` : ""}`,
+    value: full.length ? hits : null, of: full.length, needWeeks: cfg.need, ofWeeks: cfg.of, kinds: cfg.kinds, weeks: weeks.slice(-12), source: cfg.source ?? "blocktext",
+    status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : !quota ? "info" : misses > allowed ? "bad" : misses === allowed && allowed > 0 ? "warn" : "ok",
+    note: [open ? (open.skip ? `Diese Woche: ${open.skip}` : `Diese Woche: ${cfg.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k] ? "✓" : "offen"}`).join(", ")}`) : null, misses ? (quota ? `${misses} von ${allowed} erlaubten Fehlwochen` : `${misses} Woche${misses === 1 ? "" : "n"} ohne ${cfg.kinds.length > 1 ? "beides" : what}`) : null, weeks.some((x) => x.done && x.sick && !x.hit && cfg.sickOk) ? "Krankheitswoche ausgenommen" : null].filter(Boolean).join(" · ") || null,
+    hints: [cfg.source === "rahmen" ? "Arten, Startwoche und Krankheitsregel aus dem aktuellen Rahmen des Coaches." : null, cfg.sickOk ? "Krankheit als Kalendereintrag „Krank“ (oder Kategorie Krankheit/Verletzung) eintragen, dann zählt die Woche nicht als verfehlt." : null].filter(Boolean),
   };
 }
 
@@ -516,7 +542,8 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
 //   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,mainWatts,noWarmup,vi,intensity,indoor,easy,hasHr}],
 //   im Blocktest-Modus runs zusaetzlich mit {id,name,analysis} (analyzeRunStreams),
 //   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}],
-//   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date], deloadWeeks:[Montag] (vom Coach markierte Entlastung) }
+//   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date], deloadWeeks:[Montag] (vom Coach markierte Entlastung),
+//   frame: aktueller Rahmen des Coaches (targetsView().current; Intensitaet) }
 export function buildBlockGoals(block, input, todayIso) {
   return buildBlockGoalsFull(block, input, todayIso).goals;
 }
@@ -642,7 +669,9 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   }
 
   if (targets.ramp) goals.push(rampGoal(input.ctlDays ?? [], targets.ramp, block, w, basis, todayIso));
-  if (targets.intensity) goals.push(intensityGoal(input.intensity ?? [], input.sickDays ?? [], targets.intensity, block, w, basis, todayIso));
+  // Intensitaet: Arten, Startwoche und Krankheitsregel aus dem Rahmen des Coaches (input.frame), sonst aus dem Blocktext
+  const intCfg = intensityFromFrame(input.frame ?? null, targets.intensity);
+  if (intCfg) goals.push(intensityGoal(input.intensity ?? [], input.sickDays ?? [], intCfg, block, w, basis, todayIso));
   if (targets.pause) goals.push(pauseGoal(input.activityDays ?? [], input.plannedBreaks ?? [], targets.pause, w, basis, todayIso));
 
   for (const g of goals) if (g.group === "ziel") g.course = goalCourse(g, w);
