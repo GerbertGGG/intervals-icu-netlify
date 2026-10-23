@@ -849,7 +849,7 @@ function buildFitness(res) {
   return w;
 }
 
-// Ernaehrung (klein): Protein gross, darunter Energie mit Balken. Ziele immer aus Yazio.
+// Ernaehrung (klein): Protein gross, darunter Kohlenhydrate und Fett mit duennem Balken, unten Energie. Ziele immer aus Yazio.
 function buildFoodCard(res) {
   const d = res.data, f = d.food, IW = smallInnerWidth();
   const hasVals = (x) => x && [x.calories, x.protein, x.carbs, x.fat].some((v) => v != null);
@@ -861,8 +861,20 @@ function buildFoodCard(res) {
   const w = smallWidget(), dim = !has;
   header(w, IW, "ERNÄHRUNG", prev ? (prev === f.days[f.days.length - 2] ? "gestern" : dateShort(prev.date)) : clock(d.generatedAt));
   w.addSpacer(3);
-  valueUnit(w, show && td.protein != null ? fmt(td.protein) : MISSING, "g Protein", 34, { color: dim ? COL.muted : COL.text });
+  valueUnit(w, show && td.protein != null ? fmt(td.protein) : MISSING, "g Protein", 30, { color: dim ? COL.muted : COL.text });
   if (yg.proteinG) text(w, `Ziel ${fmt(yg.proteinG)} g`, FS.xs, { color: COL.muted });
+  // Kohlenhydrate und Fett als Zeilen mit duennem Balken gegen das Yazio-Ziel (ueber dem Ziel die Zahl gelb, wie im mittleren Widget)
+  const soll = has ? dayFraction() : null;
+  for (const [label, v, goal, hex] of [["Kohlenhydrate", td.carbs, yg.carbsG, NUT_HEX.carbs], ["Fett", td.fat, yg.fatG, NUT_HEX.fat]]) {
+    w.addSpacer();
+    const r = w.addStack(); r.bottomAlignContent(); r.size = new Size(IW, 0);
+    text(r, label, FS.xs, { color: COL.muted, minScale: 0.8 });
+    r.addSpacer();
+    const over = show && v != null && goal && v > goal;
+    num(r, show && v != null ? fmt(v) : MISSING, FS.sm, { color: dim ? COL.muted : over ? new Color(OVER_HEX) : COL.text, minScale: 0.8 });
+    text(r, goal ? ` / ${fmt(goal)} g` : " g", FS.xs, { color: COL.muted, minScale: 0.8 });
+    if (goal) { w.addSpacer(2); progressBar(w, IW, show && v != null ? v / goal : 0, hex, dim ? 0.5 : 1, { overHex: OVER_HEX, mark: soll }); }
+  }
   w.addSpacer();
   const k = w.addStack(); k.bottomAlignContent();
   if (show && td.calories != null) { num(k, fmt(td.calories), FS.md, { color: dim ? COL.muted : COL.text }); text(k, kcalGoal ? ` / ${fmt(kcalGoal)} kcal` : " kcal", FS.xs, { color: COL.muted, minScale: 0.8 }); }
@@ -1134,7 +1146,8 @@ function buildWoche(res) {
 // Alles, was im laufenden Block gilt, in einem Widget (Worker: view=kompass): Block mit Woche x von N und naechstem Test,
 // darunter je eine Zeile Erlaubt (Intensitaet des Coaches mit Stand dieser Woche), Nicht erlaubt, Messung (Experiment:
 // Ausgangswert -> aktueller Wert) und Ziele (Abschlussziele des Blocks als Werte). Leitplanken und lange Texte stehen im
-// Dashboard. Je Zeile eine Textzeile (Erlaubt: bis zu zwei Sportarten), damit das mittlere Widget nicht ueberlaeuft.
+// Dashboard. Nicht erlaubt darf zweizeilig sein, alles andere eine Zeile (Erlaubt: bis zu zwei Sportarten); mehr passt im
+// mittleren Widget nicht. Lange Intensitaets-Texte kuerzt der Coach mit short.
 // Nichts wird bewertet; Werte und Ziele kommen fertig vom Worker.
 const GOAL_SHORT = { decoupling: "Drift", strength: "Kraft", runDecoupling: "Lauf", runStable: "Lauf stabil", bikeDecoupling: "Rad", swimTest: "Schwimmen" };
 function goalValue(g) {
@@ -1157,7 +1170,7 @@ function buildKompass(res) {
   if (b && b.weeks) { weekStrip(w, W, b.weeks, b.weekNo || 0, b.status === "done"); w.addSpacer(4); }
   const LW = 64;
   const line = (label, build) => {
-    w.addSpacer(4);
+    w.addSpacer(5);
     const r = w.addStack(); r.topAlignContent(); r.size = new Size(W, 0);
     const l = r.addStack(); l.size = new Size(LW, 0); l.setPadding(1, 0, 0, 0);
     text(l, label, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 }); l.addSpacer();
@@ -1166,23 +1179,24 @@ function buildKompass(res) {
   };
   const intens = (f && f.intensity) || [];
   if (intens.length) line("ERLAUBT", (c) => intens.slice(0, 2).forEach((it) => {
-    const r = c.addStack(); r.centerAlignContent(); r.spacing = 5;
+    const r = c.addStack(); r.topAlignContent(); r.spacing = 5; r.size = new Size(W - LW, 0);
     const k = FRAME_SPORT[it.sport] || "other";
     symbol(r, SPORT_SYMBOL[k], 11, new Color(sportHex(k)));
-    text(r, intensityShort(it), FS.sm, { minScale: 0.75 });
+    text(r, intensityShort(it), FS.sm, { minScale: 0.9 });
+    r.addSpacer();
     const wk = it.week;
     if (wk && wk.skip) text(r, wk.skip, FS.xs, { color: COL.muted, minScale: 0.8 });
     else if (wk && wk.count > 0) symbol(r, "checkmark.circle.fill", 11, COL.ok);
     else if (wk) text(r, "offen", FS.xs, { color: COL.muted, minScale: 0.8 });
   }));
-  if (f && f.notAllowed && f.notAllowed.length) line("NICHT", (c) => text(c, f.notAllowed.join(" · "), FS.sm, { minScale: 0.7 }));
+  if (f && f.notAllowed && f.notAllowed.length) line("NICHT", (c) => text(c, f.notAllowed.join(" · "), FS.sm, { lines: 2, minScale: 0.9 }));
   const ms = ((x && x.metrics) || []).filter((m) => m.baseline != null);
   if (ms.length) line("MESSUNG", (c) => {
     const parts = ms.slice(0, 3).map((m) => `${(EXP_SHORT[m.key] || [m.label])[0]} ${expVal(m, m.baseline)}→${m.current == null ? "?" : expVal(m, m.current)}${m.provisional ? "*" : ""}`);
-    text(c, parts.join(" · "), FS.sm, { minScale: 0.65 });
+    text(c, parts.join(" · "), FS.sm, { minScale: 0.8 });
   });
   const goals = b ? (b.goals || []).filter((g) => !g.group || g.group === "ziel") : [];
-  if (goals.length) line("ZIELE", (c) => text(c, goals.map((g) => `${GOAL_SHORT[g.key] || g.label} ${goalValue(g)}`).join(" · "), FS.sm, { minScale: 0.7 }));
+  if (goals.length) line("ZIELE", (c) => text(c, goals.map((g) => `${GOAL_SHORT[g.key] || g.label} ${goalValue(g)}`).join(" · "), FS.sm, { minScale: 0.8 }));
   if (!b && !f && !x) { w.addSpacer(6); text(w, "Kein Block, kein Rahmen und kein Experiment vom Coach.", FS.sm, { color: COL.muted, lines: 2 }); }
   w.addSpacer();
   notice(w, res, d);
