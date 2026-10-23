@@ -192,7 +192,7 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     }
     const c = classifyRide(a, stats, tcfg);
     rec.category = c?.category ?? null; rec.testReason = c?.testReason ?? `${a.type ?? "Rad"}: keine Vergleichseinheit (nur Ride/VirtualRide)`;
-    if (c?.category) Object.assign(rec, { baseline: c.baseline, decoupling: c.decoupling, decSource: c.decSource, mainWatts: c.mainWatts, mainHr: c.mainHr ?? null, vi: c.vi, noWarmup: c.noWarmup, warmupAssumed: c.warmupAssumed, mainMin: c.mainMin });
+    if (c?.category) Object.assign(rec, { baseline: c.baseline, decoupling: c.decoupling, decSource: c.decSource, mainWatts: c.mainWatts, mainHr: c.mainHr ?? null, vi: c.vi, noWarmup: c.noWarmup, mainMin: c.mainMin });
     rides.push(rec);
   }
   const ftpAct = acts.filter((x) => isBike(x) && inWin(activityDay(x)) && /\bftp\b/i.test(String(x.name ?? ""))).sort((x, y) => activityDay(x).localeCompare(activityDay(y)))[0];

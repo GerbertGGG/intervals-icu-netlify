@@ -1,7 +1,8 @@
 // Test-Erkennung aus der tatsaechlich absolvierten Aktivitaet (nicht aus dem Namen oder dem geplanten Workout):
 //   runBlocktest – Run am Blocktest-Termin (±testDateTolDays), mindestens runMinMin; mehrere im Fenster: der laengste.
 //   runTrend     – Run, Bewegungszeit ≥ runMinMin, Ø-HF unter dem HF-Deckel des Blocks, kein Blocktest.
-//   bikeCompare  – Ride/VirtualRide: Einrollen (icu_warmup_time, sonst angenommen), danach Messfenster bikeWindowMin mit
+//   bikeCompare  – Ride/VirtualRide: Einrollen = Warmup-Block in Intervals (icu_warmup_time ≥ bikeMinWarmupSec, sonst Fenster
+//                  ab Minute 0 und baseline), danach Messfenster bikeWindowMin mit
 //                  Ø-Leistung = Vergleichsleistung ± bikeWattsTol und VI ≤ bikeMaxVi. Intervalle/HIIT fallen ueber VI und
 //                  Leistung heraus. Beim Rad gibt es keine Blocktests.
 // Termine, HF-Deckel und Vergleichsleistung kommen aus dem SEASON_START-Eintrag (testConfigOf), sonst aus TEST_FALLBACK.
@@ -19,7 +20,7 @@ export const TEST_RULES = {
   testDateTolDays: 2, // Blocktest verschoben (Ampel rot, krank)
   runMinMin: 60, // Blocktest und Trendlauf
   bikeWindowMin: 60, // Messfenster nach dem Einrollen
-  bikeAssumedWarmupSec: 600, // icu_warmup_time = 0: die ersten 10 min gelten als Einrollen
+  bikeMinWarmupSec: 300, // Warmup-Block in Intervals; kuerzer: ohne Einrollen (Fenster ab 0, nur Ausgangswert)
   bikeMainSlackSec: 60, // Messtoleranz der Bewegungszeit beim Hauptteil
   bikeWattsTol: 5, // W um die Vergleichsleistung
   bikeMaxVi: 1.05,
@@ -136,16 +137,14 @@ export function rideWindowStats(streams, startSec, windowSec) {
   };
 }
 
-// Einrollen und Messfenster einer Fahrt (ohne Zeitreihen). Mit Override "Vergleich" und zu kurzem Hauptteil (z. B. 60 min ohne
-// Einrollen wie am 19.10.2026) beginnt das Fenster bei 0 (noWarmup).
+// Einrollen und Messfenster einer Fahrt (ohne Zeitreihen). Ohne Warmup-Block in Intervals (icu_warmup_time < bikeMinWarmupSec,
+// z. B. 19.10.2026) beginnt das Fenster bei 0 (noWarmup); die Fahrt kann dann nur Ausgangswert (baseline) sein.
 export function rideWindowOf(a, rules = TEST_RULES) {
   const icuWarm = num(a?.icu_warmup_time) ?? 0;
   const total = num(a?.moving_time) ?? 0, cool = num(a?.icu_cooldown_time) ?? 0;
   const forced = nameOverride(a?.name) === "bikeCompare";
-  let warmSec = icuWarm > 0 ? icuWarm : rules.bikeAssumedWarmupSec, assumed = !(icuWarm > 0), noWarmup = false;
-  let mainSec = total - warmSec - cool;
-  if (forced && mainSec < rules.bikeWindowMin * 60 - rules.bikeMainSlackSec && icuWarm === 0) { warmSec = 0; assumed = false; noWarmup = true; mainSec = total - cool; }
-  return { warmSec, assumed, noWarmup, mainSec, totalSec: total, forced };
+  const noWarmup = icuWarm < rules.bikeMinWarmupSec, warmSec = noWarmup ? 0 : icuWarm;
+  return { warmSec, noWarmup, mainSec: total - warmSec - cool, totalSec: total, forced };
 }
 
 // Rad klassifizieren. stats: rideWindowStats fuer das Fenster aus rideWindowOf (null = Zeitreihen fehlen).
@@ -155,8 +154,8 @@ export function classifyRide(a, stats, cfg, rules = TEST_RULES) {
   if (ov === "exclude") return { category: null, testReason: "Name „kein Test“: ausgeschlossen" };
   const win = rideWindowOf(a, rules);
   const mainMin = Math.round(win.mainSec / 60);
-  const warmTxt = win.noWarmup ? "ohne Einrollen" : win.assumed ? "Einrollen 10 min angenommen (icu_warmup_time 0)" : `Einrollen ${Math.round(win.warmSec / 60)} min`;
-  const base = { warmupSec: win.warmSec, warmupAssumed: win.assumed, noWarmup: win.noWarmup, mainMin };
+  const warmTxt = win.noWarmup ? `ohne Einrollen (icu_warmup_time ${Math.round(num(a?.icu_warmup_time) ?? 0)} s)` : `Einrollen ${Math.round(win.warmSec / 60)} min`;
+  const base = { warmupSec: win.warmSec, noWarmup: win.noWarmup, mainMin };
   const longEnough = win.mainSec >= rules.bikeWindowMin * 60 - rules.bikeMainSlackSec;
   if (!win.forced && !longEnough) return { ...base, category: null, testReason: `Ride: Hauptteil ${mainMin} min < ${rules.bikeWindowMin} min (${warmTxt})` };
   if (!stats) return { ...base, category: null, testReason: "Ride: Zeitreihen noch nicht geladen" };

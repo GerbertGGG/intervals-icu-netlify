@@ -651,7 +651,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     // Was als Vergleichseinheit zaehlt: klassifiziert nach session-tests.js (TEST_RULES), sonst nach rideMeasureIssue
     const R = TEST_RULES, anyClassified = (input.rides ?? []).some(classified);
     if (cfg.firstMin && cfg.warmupMin) g.hints.push(`Messfenster: ${cfg.firstMin} min nach ${cfg.warmupMin} min Einrollen${cfg.watts ? `, Leistung ${cfg.watts} W` : ""} · ${anyClassified
-      ? `zählt mit Einrollen (Warmup-Block in Intervals, sonst die ersten ${R.bikeAssumedWarmupSec / 60} min) und danach ≥ ${R.bikeWindowMin} min bei ±${R.bikeWattsTol} W, VI ≤ ${String(R.bikeMaxVi).replace(".", ",")}`
+      ? `zählt mit Warmup-Block (≥ ${R.bikeMinWarmupSec / 60} min, sonst nur Ausgangswert) und danach ≥ ${R.bikeWindowMin} min bei ±${R.bikeWattsTol} W, VI ≤ ${String(R.bikeMaxVi).replace(".", ",")}`
       : `zählt mit Warmup-Block (≥ ${RIDE_WARMUP_MIN_SEC / 60} min) und Messfenster ≥ ${RIDE_WINDOW_MIN} min${cfg.watts ? ` bei ${cfg.watts - RIDE_WATTS_BAND}–${cfg.watts + RIDE_WATTS_BAND} W` : ""}`}`);
     const noWarm = last.filter((x) => x.noWarmup).length;
     if (noWarm) g.hints.push(`${noWarm}× ohne Einrollen gemessen (Fenster ab Minute 0)`); // nur ohne Einrollen im Protokoll
