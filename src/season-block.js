@@ -141,8 +141,10 @@ function parseSportGoals(t) {
     const max = decMax(bikeP), must = mustOf(bikeP);
     // Messfenster ("60-min-Messfenster") nach dem Einrollen ("10 min Einrollen") bei fester Leistung ("fester Leistung 165 W")
     const win = num1(bikeP.match(/(\d+)\s*-?\s*min\s*-?\s*messfenster/i), null);
-    const warm = num1(bikeP.match(/(\d+)\s*min\s*einrollen/i), null);
-    const watts = num1(bikeP.match(/fest(?:e|er|en)?\s*leistung\s*(?:von\s*)?(\d{2,3})\s*w\b/i), null);
+    // Stehen Einrollen und Leistung nicht im Ziel-Absatz, dann im Protokoll ("RAD-VERGLEICHSEINHEIT … mindestens 60 min bei 165 W")
+    const warmRe = /(\d+)\s*min\s*einrollen/i, wattsRe = [/vergleichsleistung\s*:?\s*(\d{2,3})\s*w\b/i, /fest(?:e|er|en)?\s*leistung\s*(?:von\s*)?(\d{2,3})\s*w\b/i, /mind(?:estens)?\.?\s*\d+\s*min\s*bei\s*(\d{2,3})\s*w\b/i];
+    const warm = num1(bikeP.match(warmRe) ?? t.match(warmRe), null);
+    const watts = num1([bikeP, t].flatMap((x) => wattsRe.map((re) => x.match(re))).find(Boolean), null);
     // FTP-Test nur, wenn er im Block ansteht ("FTP-Test in Woche 1"); eine Referenz wie "FTP 252 W (Rampentest 12.10.)" nicht
     out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: win ?? num1(bikeP.match(/(\d+)\s*min\b/i), 75), firstMin: win ?? num1(bikeP.match(/ersten\s*(\d+)\s*min/i), null), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
     if (warm != null) out.bike.warmupMin = warm;
@@ -219,7 +221,7 @@ export function checkBlockText(text, targets = parseBlockTargets(text)) {
   if (limits.length > 1) hints.push(`Verschiedene HF-Grenzen im Text: ${limits.join(", ")} – als Deckel gezählt wird ${targets.hrCap ?? "keine"} (Zeile „Lauf-Grundlage unter HF …“).`);
   const band = targets.run?.band ?? null;
   if (band && targets.hrCap != null && band[1] > targets.hrCap) hints.push(`Testband ${band[0]}–${band[1]} reicht über den HF-Deckel ${targets.hrCap}.`);
-  return { hrCap: targets.hrCap ?? null, band, tests: targets.run?.tests ?? [], testsByName: Array.isArray(targets.run?.tests), hints };
+  return { hrCap: targets.hrCap ?? null, band, tests: targets.run?.tests ?? [], hints };
 }
 
 // Fenster: laeuft der Block, ab Blockstart. Davor (oder bei Block-Ende) zaehlt der "Ausgangswert" der letzten 8 Wochen.
@@ -256,6 +258,8 @@ export function isComparableRide(r, cfg) {
   const wattsOk = !cfg.watts || !Number.isFinite(w) || Math.abs(w - cfg.watts) <= cfg.watts * RIDE_WATTS_TOL;
   return Boolean(r.easy) && Boolean(r.indoor) && wattsOk && (r.durationMin ?? 0) >= cfg.minMin - RIDE_MIN_SLACK && (r.vi == null || r.vi <= RIDE_MAX_VI) && (r.intensity == null || r.intensity <= RIDE_MAX_IF);
 }
+// Rad-Vergleichseinheit: klassifiziert (category aus session-tests.js), sonst die alte Pruefung ueber die ganze Fahrt
+export const isBikeCompare = (r, cfg) => (r.category !== undefined ? r.category === "bikeCompare" : isComparableRide(r, cfg));
 // Warum ein lockerer Lauf nicht zaehlt (fuer den Hinweis): erster Grund
 function runExclusion(r, cfg) {
   if (r.treadmill) return "Laufband";
@@ -289,7 +293,7 @@ function decouplingGoal({ key, sport, label, sessions, cfg, w, basis, comparable
     key, group: "ziel", sport, label, unit: "%", basis,
     target: `Ø ≤ ${cfg.max} %${must != null && must > cfg.max ? ` (Muss ≤ ${must} %)` : ""} · letzte ${n} vergleichbare${cfg.pace ? " · Pace nicht langsamer" : ""}`,
     value: avg != null ? r1(avg) : null, count: comp.length, max: cfg.max, must, lastN: n, pace,
-    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(Number.isFinite(x.mainWatts ?? x.watts) ? { watts: Math.round(x.mainWatts ?? x.watts) } : {}), ...(Number.isFinite(x.mainHr) ? { hr: x.mainHr } : {}), ...(x.noWarmup ? { noWarmup: true } : {}) })),
+    series: comp.slice(-10).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(x.paceSecPerKm ? { pace: fmtSecs(x.paceSecPerKm) } : {}), ...(Number.isFinite(x.mainWatts ?? x.watts) ? { watts: Math.round(x.mainWatts ?? x.watts) } : {}), ...(Number.isFinite(x.mainHr) ? { hr: x.mainHr } : {}), ...(x.noWarmup ? { noWarmup: true } : {}), ...(x.testReason ? { reason: x.testReason } : {}) })),
     status,
     // Ziel erfuellt: Muss-Kriterium (ohne Muss der Zielwert) ueber volle n Einheiten, Pace nicht langsamer
     pass: !w.baseline && comp.length >= n && (must != null ? avg <= must : decOk) && pace?.ok !== false,
@@ -473,12 +477,11 @@ function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
 }
 
 // ---------- Lauf mit Blocktests: Basis (Decoupling 0–60 min) und Haltbarkeit (stabile Dauer) ----------
-// Wann ein Blocktest ist, entscheidet der Nutzer: Ein Lauf zaehlt nur als Test, wenn er so heisst ("Blocktest"/"Basistest"
-// im Namen oder in der Beschreibung der Einheit bzw. des gekoppelten Workouts, r.test aus dashboard.js). Ein langer Lauf
-// ist nicht automatisch ein Test, auch nicht an einem im Text genannten Termin. Der erste Test im Block ist der Basistest.
+// Welcher Lauf ein Blocktest bzw. Trendlauf ist, steht in r.category (session-tests.js: Termin aus dem Block-Eintrag ±2 Tage
+// und ≥60 min bzw. ≥60 min unter dem HF-Deckel; Name nur als Override). Der erste Test im Block ist der Basistest.
 // Jeder Lauf traegt seine Auswertung aus den Zeitreihen (analysis, siehe block-inputs.js): dec60, pace60, windows
-// [{min, value}], stableMin (0 = unter 60 min). Grundlagenlaeufe ab 60 min ausserhalb der Tests sind nur Trend, nicht Ziel.
-// planned: kommende Testtage (geplante Workouts "Blocktest" im Kalender, sonst Termine aus dem Block-Text) – nur Anzeige.
+// [{min, value}], stableMin (0 = unter 60 min). Trendlaeufe zaehlen nicht fuers Ziel.
+// planned: kommende Testtage (Termine aus dem Block-Text, geplante Workouts "Blocktest" im Kalender) – nur Anzeige.
 export const TEST_RE = /blocktest|basistest/i;
 const PACE_NOISE_SEC = 5; // Pace-Unterschiede unter 5 s/km sind Rauschen
 export function testDatesOf(block, tests) {
@@ -488,20 +491,19 @@ export function testDatesOf(block, tests) {
 const fmtMin = (m) => (m == null ? "–" : m === 0 ? "unter 60 min" : `${m} min`);
 function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = []) {
   const planned = [...new Set([...plannedTests, ...testDatesOf(block, cfg.tests)])].sort();
-  const usable = runs.filter((r) => inWin(r.date, w) && r.easy && !r.treadmill && Number.isFinite(r.analysis?.dec60));
-  const marked = usable.filter((r) => r.test || TEST_RE.test(r.name ?? "")).sort((a, b) => a.date.localeCompare(b.date));
-  const used = new Set(marked);
+  const usable = runs.filter((r) => inWin(r.date, w) && Number.isFinite(r.analysis?.dec60));
+  const marked = usable.filter((r) => r.category === "runBlocktest").sort((a, b) => a.date.localeCompare(b.date));
   const tests = marked.map((r, i) => {
     const a = r.analysis;
-    return { date: r.date, planned: r.date, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
+    return { date: r.date, planned: r.testDate ?? r.date, testReason: r.testReason ?? null, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
   });
-  const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.date === p)) ?? null;
+  const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.planned === p || t.date === p)) ?? null;
   const n = cfg.lastN, last = tests.slice(-n), baseT = tests[0] ?? null, lastT = tests[tests.length - 1] ?? null;
   const avg = mean(last.map((t) => t.dec60));
   const must = cfg.must ?? null;
   const paceOk = baseT && lastT && lastT !== baseT && baseT.pace60Sec != null && lastT.pace60Sec != null ? lastT.pace60Sec <= baseT.pace60Sec + PACE_NOISE_SEC : null;
   const decOk = avg != null && avg <= cfg.max, decMust = avg != null && (must != null ? avg <= must : avg <= cfg.max + 2);
-  const trend = usable.filter((r) => !used.has(r) && (r.durationMin ?? 0) >= cfg.minMin);
+  const trend = usable.filter((r) => r.category === "runTrend");
   const nextTxt = nextTest ? `nächster Test ${nextTest.slice(8, 10)}.${nextTest.slice(5, 7)}.` : null;
   const conds = tests.filter((t) => t.heat || t.hilly).map((t) => `${t.date.slice(8, 10)}.${t.date.slice(5, 7)}. ${t.heat ? "Hitze" : "nicht flach"}`);
   const shared = { group: "ziel", sport: "run", basis, tests, nextTest, count: tests.length, lastN: n };
@@ -513,7 +515,7 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
     status: avg == null ? "none" : w.baseline ? "base" : paceOk === false ? (decMust ? "warn" : "bad") : statusOf(decOk, decMust),
     pass: !w.baseline && tests.length >= n && (must != null ? avg <= must : decOk) && paceOk !== false,
     note: avg == null ? `Noch kein Blocktest${nextTxt ? ` – ${nextTxt}` : "."}` : [tests.length < n ? `erst ${tests.length} von ${n} Tests` : `Ø der letzten ${n} Tests`, paceOk === false ? `Pace 0–60 ${lastT.pace60} statt ${baseT.pace60} /km – langsamer als im Basistest` : null, nextTxt].filter(Boolean).join(" · "),
-    hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Grundlagenl${trend.length === 1 ? "auf" : "äufe"} ab ${cfg.minMin} min, Ø Decoupling 0–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
+    hints: [trend.length ? `Trend (zählt nicht fürs Ziel): ${trend.length} Trendl${trend.length === 1 ? "auf" : "äufe"} ab 60 min unter dem HF-Deckel, Ø Decoupling 0–60 ${String(r1(mean(trend.map((r) => r.analysis.dec60)))).replace(".", ",")} %` : null, conds.length ? `Bedingungen: ${conds.join(", ")}` : null].filter(Boolean),
   };
   // Was der naechste Test fuers Ziel braucht: gemessen wird das Mittel der letzten n Tests
   if (tests.length) {
@@ -569,7 +571,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
 
   if (targets.bike) {
     const cfg = targets.bike;
-    const cand = (input.rides ?? []).filter((r) => inWin(r.date, w) && isComparableRide(r, cfg));
+    const cand = (input.rides ?? []).filter((r) => inWin(r.date, w) && isBikeCompare(r, cfg));
     const noHr = cand.filter((r) => !Number.isFinite(r.decoupling) && r.hasHr === false).length;
     // Verlangt das Protokoll Einrollen, zaehlt eine Fahrt ohne Einrollen (Fenster ab Minute 0) nicht fuers Ziel, die letzte steht
     // nur als Orientierung da (z. B. die erste Fahrt 19.10.2026 ohne Einrollen)
@@ -577,7 +579,7 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     const lastUnwarmed = unwarmed[unwarmed.length - 1];
     const g = decouplingGoal({
       key: "bikeDecoupling", sport: "bike", label: "Rad (Rolle): aerobe Stabilität", sessions: input.rides ?? [], cfg, w, basis,
-      comparable: (r) => isComparableRide(r, cfg) && !(cfg.warmupMin && r.noWarmup),
+      comparable: (r) => isBikeCompare(r, cfg) && !(cfg.warmupMin && r.noWarmup),
       extraNotes: [noHr ? `${noHr}× ohne Puls – ohne Pulsgurt gibt es kein Decoupling` : null,
         unwarmed.length ? `${unwarmed.length}× ohne Einrollen, zählt nicht fürs Ziel (zuletzt ${lastUnwarmed.date.slice(8, 10)}.${lastUnwarmed.date.slice(5, 7)}.: ${String(r1(lastUnwarmed.decoupling)).replace(".", ",")} %)` : null],
       extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null, orientation: lastUnwarmed ? { date: lastUnwarmed.date, value: r1(lastUnwarmed.decoupling) } : null },

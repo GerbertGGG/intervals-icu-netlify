@@ -572,16 +572,16 @@ function renderRennplan(d) {
 /* ---------- 3 · Form: Grundlagenläufe ab 60 min ----------
    Aus den Zeitreihen (Worker: block-inputs.js): Dauer statt km (der lange Lauf wächst in Minuten, die Pace ist durch den
    HF-Deckel bewusst langsamer), Decoupling der ersten 60 min, stabile Dauer, Minuten über dem Deckel und DFA alpha1 (Runalyze, nur Hinweis ohne Ampel, nicht validiert).
-   Blocktests sind markiert; nur sie zählen fürs Blockziel, die anderen sind Trend. */
+   Nur Blocktests und Trendläufe (Worker: session-tests.js), Blocktests markiert; nur sie zählen fürs Blockziel. testReason beim Darüberfahren. */
 function renderLongruns(d) {
   const host = $("longruns"), B = d.baseRuns;
   if (!d.sources.intervalsActivities.ok) { host.innerHTML = '<div class="muted">Aktivitäten nicht abrufbar.</div>'; return; }
   const decCls = (v) => (v == null ? "none" : v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
   const next = d.nextTest?.date;
-  if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Grundlagenlauf ab 60 min mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
-  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmtHm(r.durationMin)}</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? fmtHm(r.overCapMin) : "–"}</td></tr>`).join("");
+  if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Blocktest oder Trendlauf (ab 60 min unter dem HF-Deckel) mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
+  const rows = B.recent.map((r) => `<tr title="${esc(r.testReason ?? "")}"><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ' <span class="badge none">Trend</span>'}</td><td>${fmtHm(r.durationMin)}</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? fmtHm(r.overCapMin) : "–"}</td></tr>`).join("");
   host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 0–60</th><th>stabil</th><th>Pace 0–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 steht hier nicht mehr: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts. Nur die Blocktests zählen fürs Blockziel; den Trend zwischen den Tests zeigt „Greift die Grundlage?“.</div></details>`;
+    <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 steht hier nicht mehr: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts. Blocktest = Lauf ab 60 min am Testtermin aus dem Block-Eintrag (±2 Tage, mehrere: der längste); Trend = Lauf ab 60 min mit Ø-HF unter ${B.cap != null ? fmt(B.cap) : "dem Deckel"}. Der Grund steht beim Darüberfahren. Nur die Blocktests zählen fürs Blockziel; den Trend zwischen den Tests zeigt „Greift die Grundlage?“.</div></details>`;
 }
 
 /* ---------- 3 · Form: Intervall-Splits ---------- */
@@ -1052,11 +1052,11 @@ function renderBlock(SB, deloads = []) {
     } else if (g.key === "runDecoupling" && g.tests) {
       // Blocktests: eine Zeile je Test (Decoupling 0–60, Pace 0–60, stabile Dauer, Fensterreihe beim Darüberfahren)
       vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}` })), g.max, g.must)
-        + (g.tests.length ? `<div class="scroll"><table class="mini tests" style="margin-top:6px"><thead><tr><th>Test</th><th>0–60</th><th>Pace</th><th>stabil</th></tr></thead><tbody>${g.tests.map((t) => `<tr title="${esc(`${t.label}, ${fmt(t.durationMin)} min${t.date !== t.planned ? `, geplant ${fmtDate(t.planned)}` : ""} · ${t.windows.map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · ")}`)}"><td>${fmtDate(t.date)}</td><td>${fmt(t.dec60, 1)}&nbsp;%</td><td>${t.pace60 ?? "–"}</td><td>${t.stableMin === 0 ? "&lt;&nbsp;60" : `${fmt(t.stableMin)}&nbsp;min`}</td></tr>`).join("")}</tbody></table></div>` : "");
+        + (g.tests.length ? `<div class="scroll"><table class="mini tests" style="margin-top:6px"><thead><tr><th>Test</th><th>0–60</th><th>Pace</th><th>stabil</th></tr></thead><tbody>${g.tests.map((t) => `<tr title="${esc(`${t.label}, ${fmt(t.durationMin)} min${t.date !== t.planned ? `, geplant ${fmtDate(t.planned)}` : ""}${t.testReason ? ` · ${t.testReason}` : ""} · ${t.windows.map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · ")}`)}"><td>${fmtDate(t.date)}</td><td>${fmt(t.dec60, 1)}&nbsp;%</td><td>${t.pace60 ?? "–"}</td><td>${t.stableMin === 0 ? "&lt;&nbsp;60" : `${fmt(t.stableMin)}&nbsp;min`}</td></tr>`).join("")}</tbody></table></div>` : "");
     } else if (g.key === "runStable") {
       vis = g.tests.length ? `<div class="sub">${g.tests.map((t) => `${esc(t.label)} ${fmtDate(t.date)}: ${fmtStable(t.stableMin)}`).join(" · ")}</div>` : "";
     } else if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
-      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.noWarmup ? " · ohne Einrollen" : ""}` })), g.max, g.must);
+      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.noWarmup ? " · ohne Einrollen" : ""}${x.reason ? ` · ${x.reason}` : ""}` })), g.max, g.must);
     } else if (g.key === "swimTest") {
       vis = g.tests.length ? bars(g.tests.map((x) => ({ v: x.slowerPer100, t: `${fmtDate(x.date)}: ${x.t1} / ${x.t2}${x.pauseSec != null ? ` · Pause ${x.pauseSec} s` : ""}` })), g.maxSlowerPer100) : "";
     } else if (g.key === "ramp") {
@@ -1087,8 +1087,8 @@ function renderBlock(SB, deloads = []) {
   const text = [SB.goal, ...(SB.notes ?? [])].filter(Boolean);
   // Was aus dem Block-Eintrag gelesen wurde (Deckel, Testband, wie Blocktests erkannt werden) und Widersprüche darin – ein Tippfehler im Text
   // verfälscht sonst still die Auswertung
-  const CK = SB.check;
-  const check = CK ? `<div class="sub muted" style="margin-top:6px">Gelesen aus dem Block-Eintrag: HF-Deckel ${CK.hrCap ?? "–"} · Testband ${CK.band ? CK.band.join("–") : "–"} · Blocktests ${CK.testsByName ? "= Läufe mit „Blocktest“/„Basistest“ im Namen (du legst sie fest)" : "keine"}</div>${CK.hints.map((h) => `<div class="notice" style="margin-top:6px">${esc(h)}</div>`).join("")}` : "";
+  const CK = SB.check, TC = CK?.testConfig;
+  const check = CK ? `<div class="sub muted" style="margin-top:6px">Gelesen aus dem Block-Eintrag: HF-Deckel ${CK.hrCap ?? "–"} · Testband ${CK.band ? CK.band.join("–") : "–"} ${TC ? ` · Blocktest-Termine ${TC.testDates.map(fmtDate).join(", ") || "keine"} (±${TC.rules.testDateTolDays} Tage${TC.testSource === "fallback" ? ", Fallback" : ""}) · Rad-Vergleich ${TC.bikeWatts} W ±${TC.rules.bikeWattsTol}, VI ≤ ${fmt(TC.rules.bikeMaxVi, 2)}` : ""}</div>${[...(TC?.warnings ?? []), ...CK.hints].map((h) => `<div class="notice" style="margin-top:6px">${esc(h)}</div>`).join("")}` : "";
   return `<div class="cockpit" id="block-card"><div class="tile block"><div class="bhead"><div><h3>Trainingsblock</h3><div class="val">${esc(SB.name)}</div></div><div class="bmeta"><span class="badge ok">${head}</span><div class="sub">${fmtDate(SB.start)}${SB.end ? ` – ${fmtDate(SB.end)}` : ""}${SB.daysLeft != null ? ` · noch ${SB.daysLeft} Tag${SB.daysLeft === 1 ? "" : "e"}` : ""}</div></div></div>${timeline}${check}${goals}${text.length ? `<details class="bdet"><summary>Ziel und Checkpoint</summary>${text.map((t) => `<p class="sub" style="white-space:pre-line">${esc(t)}</p>`).join("")}</details>` : ""}</div></div>`;
 }
 
