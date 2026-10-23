@@ -615,7 +615,7 @@ console.log("zones from intervals ok");
   const tw = buildWidgetDetail(dt).tssWeeks.at(-1);
   assert.deepEqual([tw.goal, tw.goalMin, tw.cap, tw.minGoal], [cur.targetLoad, cur.targetLoadMin, true, cur.targetMin]);
   assert.equal(buildWidgetDetail(dt).tssWeeks.at(-2).goalMin, null); // Woche ohne TSS-Ziel
-  assert.equal(tw.min, Object.values(cur.bySport).reduce((a, s) => a + s.minutes, 0));
+  assert.equal(tw.min, dt.weekTotals.weeks.at(-1).enduranceMin); // Ausdauer ohne Kraft, wie die Woche-Karte
   assert.equal(Object.values(tw.minSports).reduce((a, b) => a + b, 0), tw.min);
   // Uhr: Ringe aussen Rad, Mitte Lauf, innen Schwimmen; Zeit gegen Ziel, TSS gegen Obergrenze (Schwimmen ohne Grenze)
   const wt = buildWidgetWatch(dt);

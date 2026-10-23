@@ -7,7 +7,7 @@
 // save_studie, save_coach, save_experiment, save_profil, save_insight und archive_insight: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
-import { isIsoDate, isoDate, listIsoDaysInclusive } from "./date-utils.js";
+import { isIsoDate, isoDate, isoDateBerlin, listIsoDaysInclusive } from "./date-utils.js";
 import { isValidAccessToken } from "./mcp-oauth.js";
 import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessRange } from "./intervals-client.js";
 import { hasKv, readKvJson, writeKvJson } from "./kv.js";
@@ -16,6 +16,7 @@ import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
 import { COACH_KV_KEY, validateCoach, mergeCoach, readCoach } from "./coach-snapshot.js";
 import { EXPERIMENT_KV_KEY, PROFIL_KV_KEY, validateExperiment, validateProfil, readExperiment, readProfil } from "./experiment-snapshot.js";
 import { INSIGHTS_KV_KEY, validateInsight, validateArchive, upsertInsight, archiveInsight, insightsForCoach, readInsights } from "./insight-snapshot.js";
+import { computeWeekTotals, currentWeekTotals, weekTotalsOldest } from "./week-totals.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -297,7 +298,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine) und die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine) die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst) und die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, byDiscipline { lauf, rad, schwimmen } in Stunden, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5, goals; null = Intervals nicht erreichbar). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -342,9 +343,12 @@ async function callTool(env, name, args) {
   }
   if (name === "get_coach") {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
-    const [coach, experiment, profil, insights] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env), readInsights(env)]);
+    // week_totals: Ausdauerstunden und Kraftsätze der laufenden Woche, gleiche Rechnung wie das Dashboard (null, wenn Intervals ausfällt)
+    const today = isoDateBerlin();
+    const weekTotals = (async () => currentWeekTotals(computeWeekTotals(await fetchIntervalsActivities(env, weekTotalsOldest(today), today), today)))().catch(() => null);
+    const [coach, experiment, profil, insights, week_totals] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env), readInsights(env), weekTotals]);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    const extra = { experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights) };
+    const extra = { experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals };
     return coach
       ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
       : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };

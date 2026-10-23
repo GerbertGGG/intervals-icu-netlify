@@ -5,6 +5,9 @@ import { readKvJson, writeKvJson } from "./kv.js";
 import { diffDays, isoDateBerlin } from "./date-utils.js";
 import { loadWidgetKraft } from "./egym-widget.js";
 import { isFreshCoach } from "./coach-snapshot.js";
+import { DISC_SPORT } from "./week-totals.js";
+
+const ENDURANCE_SPORTS = ["run", "bike", "swim"];
 
 // Kompakte Sicht auf das Dashboard für das iOS-Widget (Scriptable, public/dashboard/scriptable-widget.js).
 // Gleiche Werte wie die Seite (siehe dashboard-summary.js), aber nur das Wichtigste und ohne Freitexte: Es gehen keine
@@ -143,21 +146,24 @@ export function buildWidget(d, env = {}) {
 // Ernaehrung hat ein eigenes Widget (small), Heisshunger bleibt auf der Dashboard-Seite. Wieder ohne Freitexte.
 export function buildWidgetDetail(d, env = {}) {
   const from28 = addDays(d.today, -27);
-  // Wochen-TSS und Trainingszeit (alle Sportarten) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig
+  // Wochen-TSS (alle Sportarten) und Ausdauerzeit (ohne Kraft) der letzten 6 Wochen, aelteste zuerst; die laufende Woche ist unvollstaendig
   // (complete: false). Ziele wie im Dashboard: TSS-Obergrenze bzw. Zeitziel des Coaches (cap: true, goalMin = Untergrenze
   // des TSS-Korridors), sonst der Plan aus dem Kalender; fuer die laufende Woche ohne beides WEEKLY_TSS_GOAL. Ohne Ziel null, nie 0.
   const tssWeeks = d.weeks.slice(-6).map((w, i, arr) => {
     const hasData = Object.values(w.bySport).some((s) => s.count > 0);
     // TSS je Sportart fuer die Fuellung in Sportfarben (nur Sportarten mit Last)
     const sports = Object.fromEntries(Object.entries(w.bySport).filter(([, v]) => v.load > 0).map(([k, v]) => [k, Math.round(v.load)]));
-    // Minuten je Sportart fuer das Zeit-Widget (gleiche Fuellung in Sportfarben)
-    const minSports = Object.fromEntries(Object.entries(w.bySport).filter(([, v]) => v.minutes > 0).map(([k, v]) => [k, Math.round(v.minutes)]));
-    const cap = w.targetLoad > 0, plannedMin = Object.values(w.bySport).reduce((a, s) => (s.plannedMin != null ? (a ?? 0) + s.plannedMin : a), null);
+    // Ausdauerminuten je Sportart fuer das Zeit-Widget (gleiche Fuellung in Sportfarben): Laufen, Rad, Schwimmen aus der
+    // Wochenrechnung (week-totals.js), Kraft zaehlt nicht; Ziel = Zeitziele bzw. Plan nur dieser drei Sportarten
+    const et = (d.weekTotals?.weeks ?? []).find((x) => x.week === w.weekStart);
+    const minSports = et ? Object.fromEntries(Object.entries(et.byDisciplineMin).filter(([, v]) => v > 0).map(([k, v]) => [DISC_SPORT[k], v])) : {};
+    const endSum = (f) => ENDURANCE_SPORTS.reduce((a, k) => (w.bySport[k][f] > 0 ? (a ?? 0) + w.bySport[k][f] : a), null);
+    const cap = w.targetLoad > 0, plannedMin = endSum("plannedMin"), targetMin = endSum("targetMin");
     const goal = cap ? w.targetLoad : i === arr.length - 1 ? weeklyGoal(w, env).goal : w.plannedLoad > 0 && !hasTargets(w) ? w.plannedLoad : null;
     return {
       weekStart: w.weekStart, tss: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.load, 0) : null, sports, minSports, complete: w.complete, goal, cap,
       goalMin: cap && w.targetLoadMin > 0 ? w.targetLoadMin : null,
-      min: hasData ? Object.values(w.bySport).reduce((a, s) => a + s.minutes, 0) : null, minGoal: w.targetMin > 0 ? w.targetMin : plannedMin > 0 ? plannedMin : null,
+      min: et && hasData ? et.enduranceMin : null, minGoal: targetMin > 0 ? targetMin : plannedMin > 0 ? plannedMin : null,
     };
   });
   const byDate = Object.fromEntries(d.wellness.map((w) => [w.date, w]));

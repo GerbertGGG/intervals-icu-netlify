@@ -597,6 +597,16 @@ Schwellen aus den Sport-Settings (`buildThresholds`, `dashboard.js:186`): `thres
 
 Zielmarke 60 min/Woche Kraft; „erreicht“ = abgeschlossene Wochen mit ≥ 60 min.
 
+### 7.7a Wochenziele: Ausdauerstunden und Kraftsätze (`week-totals.js`)
+
+Eine Rechnung für Dashboard-Karte „Woche“, Diagramm „Ausdauerzeit pro Woche“, Zeit-Widget und `get_coach` (`week_totals`).
+
+- Ziele an einer Stelle: `WEEK_GOALS = { enduranceHours: 5, strengthSets2w: 90, streakHours: 4.5 }`.
+- Ausdauer = Lauf-, Rad- und Schwimm-Typen (`enduranceDiscipline`: `swim` → schwimmen; `ride|bike|cycl|velomobile|handcycle` → rad; `run|treadmill` → lauf). WeightTraining, Yoga, Workout, Walk und Unbekanntes zählen nicht. Summe aus `moving_time`, Aktivitäten mit `icu_ignore_time` fallen weg.
+- Woche = ISO-Woche Mo–So nach dem lokalen Startdatum (`start_date_local`, Europe/Berlin).
+- Kraftsätze: Zahl vor „Sätze“ in der Beschreibung, sonst je „Wdh × kg“ in den Übungszeilen ein Satz. `strengthSets2w` = laufende Woche + Vorwoche (rollierend).
+- Serie: volle Wochen in Folge ab 4,5 h bis zur letzten vollen Woche; die laufende zählt mit, sobald sie 4,5 h erreicht. Nur innerhalb der 8 gezeigten Wochen.
+
 ### 7.8 Verlauf der HM-Prognose (`runalyze-history.js`, `app.js:348`)
 
 Je Tag ein Eintrag (VDOT-Rechnung, Runalyze-Prognosen für 5 km, 10 km, HM; Zuordnung der Prognose zur Distanz mit ≤ 1 % Abweichung), max. 400 Einträge. Veränderung = `Prognose_jetzt − Prognose_früher` (negativ = schneller). Eine Prognose „vor 7 Tagen“ = jüngster Eintrag, der ≥ 7 Tage älter ist.

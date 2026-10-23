@@ -19,6 +19,7 @@ import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
+import { computeWeekTotals } from "./week-totals.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
 import { buildWeekReview } from "./week-review.js";
@@ -890,6 +891,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     experiment: experiment ?? null,
     profil: profil ?? null,
     trainingDays: activitiesR.ok ? computeTrainingDays(activities, todayIso) : null,
+    // Wochenziele (week-totals.js): Ausdauerstunden ohne Kraft und Kraftsätze in 2 Wochen, letzte 8 Wochen; dieselbe Rechnung wie get_coach
+    weekTotals: activitiesR.ok ? computeWeekTotals(activities, todayIso) : null,
     // Erkenntnisse des Coaches (save_insight, archive_insight): aktive und archivierte, jeweils neueste zuerst
     insights: splitInsights(coachInsights),
     plannedWeek: buildPlannedWeek(events, todayIso),

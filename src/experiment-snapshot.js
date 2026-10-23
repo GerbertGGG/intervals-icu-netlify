@@ -1,5 +1,5 @@
 import { readKvJson } from "./kv.js";
-import { isIsoDate, isoDate, mondayOnOrBefore } from "./date-utils.js";
+import { isIsoDate, isoDate, isoWeekNumber, mondayOnOrBefore } from "./date-utils.js";
 import { activityDay } from "./activity-utils.js";
 
 // Laufendes Trainings-Experiment und die wichtigsten Punkte aus dem Athletenprofil. Der Coach schreibt beides per MCP-Tool
@@ -141,13 +141,6 @@ export async function readExperiment(env) {
 
 export async function readProfil(env) {
   return readKvJson(env, PROFIL_KV_KEY).catch(() => null);
-}
-
-// ISO-Kalenderwoche eines Montags (YYYY-MM-DD)
-function isoWeekNumber(monday) {
-  const thu = new Date(Date.parse(monday + "T00:00:00Z") + 3 * 86400000);
-  const jan1 = Date.UTC(thu.getUTCFullYear(), 0, 1);
-  return Math.floor((thu.getTime() - jan1) / 86400000 / 7) + 1;
 }
 
 // Trainingstage je ISO-Woche (letzte 8 Wochen inkl. der laufenden): Anzahl der Tage mit mindestens einer Aktivitaet,

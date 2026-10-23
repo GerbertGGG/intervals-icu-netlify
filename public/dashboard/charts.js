@@ -634,6 +634,37 @@
     refit(host, draw, fitW(host, 560), 560, 340);
   }
 
+  /* ---------- Ausdauerstunden je Woche (Karte "Woche"): gestapelt nach Laufen, Rad, Schwimmen in Sportfarben, Ziellinie
+     gestrichelt; die laufende Woche heller und schraffiert (unvollständig). Kein Rot unter dem Ziel. ---------- */
+  function weekHours(host, items, o) {
+    const draw = () => {
+      const W = fitW(host, 1100, 300), H = 170, L = 30, R = 8, T = 18, B = 22;
+      const goalH = o.goalMin / 60, top = Math.max(goalH, ...items.map((w) => o.sports.reduce((a, k) => a + (w.by[k] ?? 0), 0) / 60));
+      const max = Math.max(1, Math.ceil(top + 0.4)), y = (h) => T + (H - T - B) * (1 - h / max);
+      const s = svg(W, H, o.label);
+      hatch(s);
+      for (let h = 0; h <= max; h += max > 6 ? 2 : 1) s.append(el("line", { x1: L, x2: W - R, y1: y(h), y2: y(h), class: h ? "grid-l" : "axis" }), el("text", { x: L - 5, y: y(h) + 4, "text-anchor": "end" }, `${h}h`));
+      const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.58, 40);
+      items.forEach((w, i) => {
+        const x = L + slot * i + (slot - bw) / 2;
+        let acc = 0;
+        for (const k of o.sports) {
+          const v = (w.by[k] ?? 0) / 60;
+          if (!(v > 0)) continue;
+          s.append(title(el("rect", { x, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v)), fill: `var(--s-${k})`, opacity: w.partial ? 0.5 : 1 }), `${w.tip}: ${o.names[k]} ${o.fmtV(w.by[k])}`));
+          acc += v;
+        }
+        if (w.partial && acc > 0) s.append(el("rect", { x, y: y(acc), width: bw, height: Math.max(0, y(0) - y(acc)), fill: "url(#hatch)" }));
+        s.append(title(el("text", { x: x + bw / 2, y: y(acc) - 4, "text-anchor": "middle", style: "font-size:10.5px;font-weight:700;fill:var(--text)" }, acc > 0 ? o.fmtV(acc * 60) : "–"), `${w.tip}: Ausdauer ${o.fmtV(acc * 60)}${w.partial ? " (laufende Woche, unvollständig)" : ""}`));
+        if (slot >= 34 || i % 2 === (items.length - 1) % 2) s.append(el("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle", style: "font-size:10px" }, w.partial ? "läuft" : w.label));
+      });
+      s.append(el("line", { x1: L, x2: W - R, y1: y(goalH), y2: y(goalH), stroke: "var(--text)", "stroke-width": 1.5, "stroke-dasharray": "5 3", opacity: 0.7 }), el("text", { x: W - R, y: y(goalH) - 4, "text-anchor": "end", style: "font-size:10px;font-weight:600" }, `Ziel ${o.fmtV(o.goalMin)} h`));
+      mount(host, s);
+    };
+    draw();
+    refit(host, draw, fitW(host, 1100, 300), 1100, 300);
+  }
+
   /* ---------- Kleine Säulen je Woche (Disziplin-Sicht): Wert über jeder Säule, laufende Woche heller ---------- */
   function miniBars(host, items, o) {
     const W = 360, H = 120, L = 6, R = 6, T = 20, B = 20;
@@ -698,5 +729,5 @@
   }
 
   window.U = U;
-  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend, insightChart };
+  window.C = { gauge, strip, bars, stacked, shares, form, calendar, corridor, deltaTrend, paceRuler, wellnessHeat, gapLine, strength, nutrition, cravings, countdown, hatch, spark, meter, workout, session, miniBars, trend, insightChart, weekHours };
 })();

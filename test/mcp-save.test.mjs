@@ -90,6 +90,7 @@ assert.equal(JSON.parse((await rpc("tools/call", { name: "get_coach", arguments:
 // Experiment und Profil: eigene Schreib-Tools, get_coach liefert beides mit (null, solange nichts gespeichert ist)
 assert.ok(["save_experiment", "save_profil"].every((n) => list.body.result.tools.some((t) => t.name === n)));
 assert.equal(gc.experiment, null); assert.equal(gc.profil, null);
+assert.equal(gc.week_totals, null); // ohne Intervals-Zugang keine Wochensummen, get_coach klappt trotzdem
 const experiment = { fetchedAt: "2026-10-26T06:30:00Z", title: "Trainingstage", hypothesis: "Fünf statt drei Trainingstage pro Woche verbessern die aerobe Basis in allen drei Sportarten.",
   status: "läuft", startDate: "2026-10-19", minWeeks: 6, targetDaysPerWeek: 5,
   metrics: [
