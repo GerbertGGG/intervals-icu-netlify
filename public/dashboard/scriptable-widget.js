@@ -290,8 +290,8 @@ function progressBar(w, IW, ratio, hex, alpha = 1, opts = {}) {
 function dayFraction() { const n = new Date(), h = n.getHours() + n.getMinutes() / 60; return Math.max(0, Math.min(1, (h - 6) / 16)); }
 // Feste Farbe je Ernährungsgröße, passend zur Seite (Kalorien Rad-Grün, Eiweiß Schwimm-Blau, Kohlenhydrate Lauf-Gelb, Fett Kraft-Orange)
 const OVER_HEX = "#f0b95a"; // Wert ueber dem Ziel: gelb (Warnung); Rot bleibt Alarmen vorbehalten
-// Ernaehrung in eigenen Farben, nicht in Sportfarben (Gelb heisst sonst Laufen)
-const NUT_HEX = { kcal: "#40c8e0", protein: "#bf5af2", carbs: "#ac8e68", fat: "#ff6482" };
+// Ernaehrung einheitlich in Blau (keine Sportfarben, kein Farbmix); ueber dem Ziel gelb (OVER_HEX)
+const NUT_HEX = { kcal: ACCENT_HEX, protein: ACCENT_HEX, carbs: ACCENT_HEX, fat: ACCENT_HEX };
 
 // Mini-Kurve ueber die Breite: Luecken (null) bleiben offen, Punkt am Ende
 function sparkImage(w, h, values, hex, { dot = false, second = null } = {}) {
@@ -708,15 +708,17 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
   const open = wk.open || [];
   if (open.length) {
     w.addSpacer(8 + Math.floor(grow / 3));
-    const gap = 6, CW = Math.floor((W - gap * (open.length - 1)) / open.length), PH = 24 + grow - Math.floor(grow / 3);
+    const gap = 6, CW = Math.floor((W - gap * (open.length - 1)) / open.length), PH = 30 + grow - Math.floor(grow / 3); // ohne Beschriftung darunter etwas hoeher
     const chips = w.addStack(); chips.spacing = gap; chips.size = new Size(W, 0);
     for (const o of open) {
       const hex = sportHex(o.s), done = !(o.v > 0);
       const c = chips.addStack(); c.layoutVertically(); c.size = new Size(CW, 0);
       const pill = c.addStack(); pill.size = new Size(CW, PH); pill.cornerRadius = PH / 2; pill.centerAlignContent();
       pill.backgroundColor = done ? new Color(hex) : new Color(hex, 0.22);
-      pill.addSpacer(); text(pill, done ? "✓" : o.unit === "min" ? fmtHm(o.v) : fmt(o.v), FS.lg, { bold: true, color: done ? new Color("#000000") : new Color(hex), minScale: 0.6 }); pill.addSpacer();
-      const lb = c.addStack(); lb.size = new Size(CW, 0); lb.addSpacer(); text(lb, o.unit === "min" ? SPORTS[o.s][0] : `${SPORTS[o.s][0]} · ${o.unit}`, FS.xs, { color: COL.muted, minScale: 0.6 }); lb.addSpacer();
+      // Sportsymbol statt Beschriftung darunter; Kraft zaehlt Saetze, Ausdauer Minuten
+      const fg = done ? new Color("#000000") : new Color(hex);
+      pill.addSpacer(); symbol(pill, SPORT_SYMBOL[o.s] || SPORT_SYMBOL.other, 15, fg); pill.addSpacer(6);
+      text(pill, done ? "✓" : o.unit === "min" ? fmtHm(o.v) : fmt(o.v), FS.lg, { bold: true, color: fg, minScale: 0.6 }); pill.addSpacer();
     }
   }
   if (showQ) {
