@@ -44,7 +44,7 @@ console.log("block goals ok");
 
 import { buildWidgetBlock } from "../src/widget.js";
 const wd = buildWidgetBlock({ generatedAt: "t", today: "2026-11-16", seasonBlock: { ...blk, goals: Object.values(g) }, sources: {} });
-assert.equal(wd.block.status, "active"); assert.equal(wd.block.weekNo, 5); assert.equal(wd.block.goals.length, 3);
+assert.equal(wd.block.status, "active"); assert.equal(wd.block.weekNo, 5); assert.deepEqual(wd.block.goals.map((x) => x.key), ["decoupling", "strength"]); // ACWR nur noch als Hinweis im Rahmen-Widget
 assert.equal(wd.block.goals.find((x) => x.key === "strength").weeks.length <= 6, true);
 assert.equal(buildWidgetBlock({ generatedAt: "t", today: "2026-11-16", seasonBlock: null, sources: {} }).block, null);
 console.log("block widget ok");
@@ -192,6 +192,23 @@ console.log("block intensity week 1 ok");
   gi = buildBlockGoalsFull(bN, { intensity: ints, deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2027-01-08").goals.find((x) => x.key === "intensity");
   assert.deepEqual([gi.status, gi.target, gi.value, gi.of, gi.note], ["info", "Rad-HIIT und Hügelsprints je 1× pro Belastungswoche ab Woche 2", 6, 8, "Diese Woche: Entlastungswoche, zählt nicht · 2 Wochen ohne beides"]);
   console.log("block intensity from frame ok");
+
+  // Widgets: Rahmen (Parameter "rahmen") mit dem Stand der laufenden Blockwoche; Block-Widget ohne Ramp Rate/ACWR
+  const { buildWidgetRahmen, buildWidgetBlock: wBlock } = await import("../src/widget.js");
+  const { targetsView } = await import("../src/targets-snapshot.js");
+  const bW = resolveSeasonBlock([{ ...ev, description: lpText }, evB], "2026-11-25"); // Woche 6, Mittwoch
+  const dW = { generatedAt: "t", today: "2026-11-25", sources: {}, targets: targetsView(null, "2026-11-25"), nextTest: { date: "2026-11-28", daysToGo: 3 }, loadHint: null,
+    seasonBlock: { ...bW, goals: buildBlockGoalsFull(bW, { intensity: [...ints, { date: "2026-11-24", kind: "bikeHiit" }], deloadWeeks: deloadL, frame: DEFAULT_TARGET, ctlDays: [] }, "2026-11-25").goals } };
+  assert.ok(dW.seasonBlock.goals.some((x) => x.key === "ramp")); // im Dashboard-JSON noch da …
+  assert.equal(wBlock(dW).block.goals.some((x) => x.key === "ramp" || x.key === "acwr"), false); // … im Widget nicht
+  const wr = buildWidgetRahmen(dW);
+  assert.deepEqual(wr.frame.intensity.map((x) => [x.sport, x.week]), [["lauf", { count: 0, skip: null }], ["rad", { count: 1, skip: null }]]);
+  assert.deepEqual([wr.frame.notAllowed[0], wr.frame.guardrails.length, wr.frame.maxIncreasePct, wr.nextTest.daysToGo, wr.loadHint], ["Sweet Spot", 3, 10, 3, null]);
+  // Entlastungswoche: zählt nicht; ohne Block kein Wochenstand, Rahmen trotzdem da
+  const dD = { ...dW, today: "2026-12-09", seasonBlock: { ...bW, goals: buildBlockGoalsFull(bW, { intensity: ints, deloadWeeks: deloadL, frame: DEFAULT_TARGET }, "2026-12-09").goals } }; // Woche 8 = Entlastung
+  assert.deepEqual(buildWidgetRahmen(dD).frame.intensity.map((x) => x.week.skip), ["Entlastungswoche, zählt nicht", "Entlastungswoche, zählt nicht"]);
+  assert.deepEqual(buildWidgetRahmen({ ...dW, seasonBlock: null }).frame.intensity.map((x) => x.week), [null, null]);
+  console.log("widget rahmen ok");
 }
 
 // ---------- Block A wie im Kalender (Stand 20.10.2026): Blocktests, Rad-Messfenster, Woche-12-Entscheidung ----------
