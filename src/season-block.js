@@ -133,16 +133,21 @@ function parseSportGoals(t) {
       out.run.tests = tests;
       out.run.stableMax = num1(runP.match(new RegExp(`stabile\\s*dauer[^\\n]*?decoupling\\s*${LE}\\s*(\\d+(?:[.,]\\d+)?)\\s*%`, "i")), 5);
     }
-    // HF-Band des Blocktests, auch ohne Termine (fuer die Pruefung des Block-Eintrags)
-    const band = runP.match(/hf-?band\s*(\d{2,3})\s*[–-]\s*(\d{2,3})/i);
+    // HF-Band des Blocktests, auch ohne Termine (fuer die Pruefung des Block-Eintrags): "HF-Band 120–128" oder "Testband 120-128",
+    // im Lauf-Absatz oder in einem eigenen Abschnitt (z. B. "BLOCKTEST LAUF (Protokoll)")
+    const BAND = /(?:hf-?band|testband)\s*:?\s*(\d{2,3})\s*[–—-]\s*(\d{2,3})/i;
+    const band = runP.match(BAND) ?? t.match(BAND);
     if (band) out.run.band = [Number(band[1]), Number(band[2])];
   }
   if (bikeP) {
     const max = decMax(bikeP), must = mustOf(bikeP);
     // Messfenster ("60-min-Messfenster") nach dem Einrollen ("10 min Einrollen") bei fester Leistung ("fester Leistung 165 W")
+    // Einrollen und Leistung stehen im Rad-Absatz oder im Protokoll-Abschnitt ("RAD-VERGLEICHSEINHEIT (Protokoll)": "10 min Einrollen …,
+    // danach mindestens 60 min bei 165 W")
+    const WATTS = /(?:fest(?:e|er|en)?\s*leistung\s*(?:von\s*)?|mindestens\s*\d+\s*min\s*bei\s*)(\d{2,3})\s*w\b/i;
     const win = num1(bikeP.match(/(\d+)\s*-?\s*min\s*-?\s*messfenster/i), null);
-    const warm = num1(bikeP.match(/(\d+)\s*min\s*einrollen/i), null);
-    const watts = num1(bikeP.match(/fest(?:e|er|en)?\s*leistung\s*(?:von\s*)?(\d{2,3})\s*w\b/i), null);
+    const warm = num1(bikeP.match(/(\d+)\s*min\s*einrollen/i) ?? t.match(/(\d+)\s*min\s*einrollen/i), null);
+    const watts = num1(bikeP.match(WATTS) ?? t.match(WATTS), null);
     // FTP-Test nur, wenn er im Block ansteht ("FTP-Test in Woche 1"); eine Referenz wie "FTP 252 W (Rampentest 12.10.)" nicht
     out.bike = { max, must: must != null ? Math.max(max, must) : null, lastN: lastN(bikeP), minMin: win ?? num1(bikeP.match(/(\d+)\s*min\b/i), 75), firstMin: win ?? num1(bikeP.match(/ersten\s*(\d+)\s*min/i), null), ftpTest: /ftp-?test[^\n]{0,30}woche/i.test(bikeP) };
     if (warm != null) out.bike.warmupMin = warm;
@@ -255,6 +260,20 @@ export function isComparableRide(r, cfg) {
   const w = r.mainWatts ?? r.watts;
   const wattsOk = !cfg.watts || !Number.isFinite(w) || Math.abs(w - cfg.watts) <= cfg.watts * RIDE_WATTS_TOL;
   return Boolean(r.easy) && Boolean(r.indoor) && wattsOk && (r.durationMin ?? 0) >= cfg.minMin - RIDE_MIN_SLACK && (r.vi == null || r.vi <= RIDE_MAX_VI) && (r.intensity == null || r.intensity <= RIDE_MAX_IF);
+}
+// Verlangt das Protokoll Einrollen (cfg.warmupMin), zaehlt als Vergleichseinheit nur eine Fahrt mit Warmup-Block in Intervals
+// (icu_warmup_time ≥ 5 min, r.warmupSec) und danach einem Messfenster von mindestens 55 min (r.windowMin) bei der festen Leistung
+// ±5 W (165 W -> 160–170 W). Grund, warum eine Fahrt nicht zaehlt, sonst null. Fahrten ohne Einrollen sind nur Orientierung.
+export const RIDE_WARMUP_MIN_SEC = 300;
+const RIDE_WINDOW_MIN = 55;
+const RIDE_WATTS_BAND = 5;
+export function rideMeasureIssue(r, cfg) {
+  if (!cfg?.warmupMin) return null;
+  if (r.noWarmup || (Number.isFinite(r.warmupSec) && r.warmupSec < RIDE_WARMUP_MIN_SEC)) return "ohne Einrollen";
+  if ((r.windowMin ?? r.durationMin ?? 0) < RIDE_WINDOW_MIN) return `Messfenster unter ${RIDE_WINDOW_MIN} min`;
+  const w = r.mainWatts ?? r.watts;
+  if (cfg.watts && Number.isFinite(w) && Math.abs(w - cfg.watts) > RIDE_WATTS_BAND) return `nicht ${cfg.watts - RIDE_WATTS_BAND}–${cfg.watts + RIDE_WATTS_BAND} W`;
+  return null;
 }
 // Warum ein lockerer Lauf nicht zaehlt (fuer den Hinweis): erster Grund
 function runExclusion(r, cfg) {
@@ -407,23 +426,28 @@ function pauseGoal(activityDays, breaks, cfg, w, basis, todayIso) {
   };
 }
 
-// Intensitaets-Leitplanke: je Belastungswoche ab fromWeek muessen alle Arten (Rad-HIIT, Huegelsprints) mind. 1× vorkommen,
-// in need von of Wochen. Wochen mit Krankheit (Kalender) zaehlen nicht als verfehlt, wenn der Zieltext das sagt.
+// Intensitaet im Block: keine Pflichtquote. Regel im Rahmen des Coaches: "Erst Umfang, dann Intensität" – nie in derselben Woche
+// Umfang steigern und Intensitaet einfuehren oder erhoehen. Das Dashboard zeigt je Woche nur, was war, gegen den Rahmen, der in
+// dieser Woche galt; es gibt kein "unter Soll" und kein Rot.
+//
+// Erkennungsregeln (die einzige Stelle dafuer; dashboard.js liefert Text und Z5-Zeit, intensityFromFrame liest damit den Rahmen):
+// - Rad: Titel/Beschreibung (auch des gekoppelten Workouts) mit HIIT, 30/30, VO2 oder 3–4× 4 min, oder mind. 4 min in Zone 5
+//   (kein FTP-/Rampentest).
+// - Lauf: "Sprint" oder "Hügel" (auch Hill, Bergsprint) in Titel oder Beschreibung.
 const BIKE_HIIT = /hiit|\bhit\b|30\s*\/\s*30|\b\d\s*[x×]\s*4\s*min|vo2/i;
-const HILL_SPRINT = /hügel|huegel|\bhill|berg\s*-?sprint|\bsprints?\b/i;
+const HILL_SPRINT = /hügel|huegel|\bhill|berg\s*-?sprint|sprints?\b/i;
+const BIKE_Z5_MIN_SEC = 240;
 const INT_KIND_DE = { bikeHiit: "Rad-HIIT", hillSprints: "Hügelsprints" };
-// sport "bike"/"run", text: Name/Beschreibung der Einheit samt geplantem Workout. Rad ohne Stichwort: mind. 4 min in Z5 (kein Test).
+// sport "bike"/"run", text: Name/Beschreibung der Einheit samt geplantem Workout, z5Secs: Zeit in Leistungszone 5
 export function intensityKindOf(sport, text, z5Secs = null) {
-  if (sport === "bike" && (BIKE_HIIT.test(text) || (z5Secs != null && z5Secs >= 240 && !/ftp|rampe|test/i.test(text)))) return "bikeHiit";
+  if (sport === "bike" && (BIKE_HIIT.test(text) || (z5Secs != null && z5Secs >= BIKE_Z5_MIN_SEC && !/ftp|rampe|test/i.test(text)))) return "bikeHiit";
   if (sport === "run" && HILL_SPRINT.test(text)) return "hillSprints";
   return null;
 }
 
-// Was als Intensitaet zaehlt, steht im aktuellen Rahmen des Coaches (save_targets, frame = targetsView().current), nicht mehr
-// im Kalendertext: Rad-Eintrag mit HIIT -> Rad-HIIT, Lauf-Eintrag mit Huegelsprints -> Huegelsprints; "ab Woche N" in einem
-// der Texte (bei mehreren die spaeteste); Krankheitswochen ausgenommen, wenn eine Leitplanke "krank" nennt. Die Quote
-// ("6 von 8 Belastungswochen") gibt es im Rahmen nicht: Steht sie im Blocktext, gilt sie weiter, sonst nur der Stand ohne Status.
-// Ohne Rahmen (frame null) bleibt alles beim Blocktext; ohne passende Art im Rahmen gibt es keine Intensitaets-Leitplanke.
+// Was als Intensitaet zaehlt, steht im Rahmen des Coaches (save_targets): Rad-Eintrag mit HIIT -> Rad-HIIT, Lauf-Eintrag mit
+// Huegelsprints -> Huegelsprints; "ab Woche N" in einem der Texte (bei mehreren die spaeteste). Ohne Rahmen (frame null) gilt der
+// Blocktext; ohne passende Art im Rahmen gibt es keine Intensitaets-Kachel.
 const INT_KIND_ORDER = ["bikeHiit", "hillSprints"];
 export function intensityFromFrame(frame, fromText = null) {
   if (!Array.isArray(frame?.intensity)) return fromText;
@@ -437,38 +461,64 @@ export function intensityFromFrame(frame, fromText = null) {
     if (m) fromWeek = Math.max(fromWeek, Number(m[1]));
   }
   if (!kinds.size) return null;
-  return {
-    need: fromText?.need ?? null, of: fromText?.of ?? null, fromWeek, kinds: INT_KIND_ORDER.filter((k) => kinds.has(k)),
-    sickOk: (frame.guardrails ?? []).some((g) => /krank/i.test(g)), source: "rahmen",
-  };
+  return { fromWeek, kinds: INT_KIND_ORDER.filter((k) => kinds.has(k)), sickOk: (frame.guardrails ?? []).some((g) => /krank/i.test(g)), source: "rahmen" };
 }
 
-function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso) {
+// Umfang gehalten heisst: Ausdauer der Woche hoechstens 3 % ueber der Referenzwoche (week-totals.js, referenceMin)
+export const VOLUME_UP_PCT = 3;
+const PLAN_SPORT_DE = { lauf: "Lauf", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft" };
+// Leitplanke des Rahmens zur Intensitaet ("Erst Umfang, dann Intensität: …")
+const isIntensityRule = (t) => /umfang/i.test(t) && /intensit/i.test(t);
+// Zieltext komplett aus dem Rahmen: Intensitaet je Sportart plus die Leitplanke; ohne Rahmen aus den Arten des Blocktexts
+export function intensityTargetLines(frame, kinds = []) {
+  if (!Array.isArray(frame?.intensity)) return kinds.map((k) => ({ label: INT_KIND_DE[k], text: "1× pro Woche" }));
+  return [...frame.intensity.map((x) => ({ label: PLAN_SPORT_DE[x.sport] ?? x.sport, text: x.text })), ...(frame.guardrails ?? []).filter(isIntensityRule).map((t) => ({ label: "Leitplanke", text: t }))];
+}
+
+// Je Blockwoche: state "volume" (Ausdauer mehr als 3 % ueber der Referenz: Umfangswoche, Intensitaet bewusst nicht), "done"
+// (Umfang gehalten und mind. eine Intensitaetseinheit laut Rahmen der Woche), "none" (Umfang gehalten, keine Intensitaet),
+// "deload"/"early"/"sick"/"test" (Entlastung, vor der Startwoche laut Rahmen, Krankheit, Testwoche ohne Intensitaet: zaehlt nicht),
+// "open" (laufende Woche). frames: Rahmen-Historie (targetsView().history, neueste zuerst), volumes: [{ week, enduranceMin,
+// referenceMin }] je Montag, testDays: Tage mit Blocktest.
+function intensityGoal(sessions, sickDays, cfg, block, w, basis, todayIso, { frames = null, current = null, volumes = [], testDays = [] } = {}) {
   const sick = new Set(sickDays);
+  const frameAt = (day) => (frames?.length ? frames.find((f) => f.validFrom <= day) ?? frames[frames.length - 1] : null);
   const weeks = weeksOf(block, w, todayIso).map((x) => {
+    const fr = frameAt(x.end < todayIso ? x.end : todayIso);
+    const wc = fr ? intensityFromFrame(fr) : cfg;
+    const kinds = wc?.kinds ?? [];
     const inWeek = sessions.filter((y) => y.date >= x.start && y.date <= x.end);
-    const has = Object.fromEntries(cfg.kinds.map((k) => [k, inWeek.filter((y) => y.kind === k).length]));
-    const hit = cfg.kinds.every((k) => has[k] > 0);
+    const has = Object.fromEntries(INT_KIND_ORDER.map((k) => [k, inWeek.filter((y) => y.kind === k).length]));
+    const hit = kinds.some((k) => has[k] > 0);
     let ill = false;
     for (let d = x.start; d <= x.end; d = addDays(d, 1)) if (sick.has(d)) ill = true;
-    const early = !w.baseline && x.idx + 1 < cfg.fromWeek;
-    return { start: x.start, done: x.done, load: x.load && !early, skip: early ? `Woche ${x.idx + 1}, zählt erst ab Woche ${cfg.fromWeek}` : x.load ? null : "Entlastungswoche, zählt nicht", has, hit, sick: ill };
+    const test = testDays.some((d) => d >= x.start && d <= x.end);
+    const early = !w.baseline && x.idx + 1 < (wc?.fromWeek ?? 1);
+    const vol = volumes.find((v) => v.week === x.start) ?? null;
+    const volumePct = vol?.referenceMin > 0 ? r1((vol.enduranceMin / vol.referenceMin - 1) * 100) : null;
+    const state = !x.done ? "open" : !x.load ? "deload" : volumePct != null && volumePct > VOLUME_UP_PCT ? "volume" : hit ? "done" : early ? "early" : ill ? "sick" : test ? "test" : "none";
+    return {
+      start: x.start, done: x.done, load: x.load && !early, skip: early ? `Woche ${x.idx + 1}, zählt erst ab Woche ${wc.fromWeek}` : x.load ? null : "Entlastungswoche, zählt nicht",
+      has, hit, sick: ill, test, state, kinds, enduranceMin: vol?.enduranceMin ?? null, referenceMin: vol?.referenceMin ?? null, volumePct, frameFrom: fr?.validFrom ?? null,
+    };
   });
-  // Krankheitswoche ohne Ziel faellt heraus; mit Ziel zaehlt sie normal
-  const full = weeks.filter((x) => x.done && x.load && (x.hit || !(cfg.sickOk && x.sick)));
-  const hits = full.filter((x) => x.hit).length;
-  // Ohne Quote (nur Rahmen, kein "x von y Belastungswochen" im Blocktext) kein Status, nur der Stand
-  const quota = cfg.need != null && cfg.of != null;
-  const allowed = quota ? Math.max(0, cfg.of - cfg.need) : null, misses = full.length - hits;
+  const count = (st) => weeks.filter((x) => x.state === st).length;
+  const done = weeks.filter((x) => x.done);
   const open = weeks.find((x) => !x.done) ?? null;
-  const what = cfg.kinds.map((k) => INT_KIND_DE[k]).join(" und ");
+  const fr = current ?? frameAt(todayIso);
+  const kinds = (fr ? intensityFromFrame(fr) : cfg)?.kinds ?? cfg.kinds;
+  const lines = intensityTargetLines(fr, kinds);
+  const hm = (m) => `${Math.floor(m / 60)}:${String(Math.round(m % 60)).padStart(2, "0")} h`;
   return {
     key: "intensity", group: "leitplanke", label: "Intensität", unit: "Wochen", basis,
-    target: `${what} je 1× ${quota ? `in ${cfg.need} von ${cfg.of} Belastungswochen` : "pro Belastungswoche"}${cfg.fromWeek > 1 ? ` ab Woche ${cfg.fromWeek}` : ""}`,
-    value: full.length ? hits : null, of: full.length, needWeeks: cfg.need, ofWeeks: cfg.of, kinds: cfg.kinds, weeks: weeks.slice(-12), source: cfg.source ?? "blocktext",
-    status: w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : !quota ? "info" : misses > allowed ? "bad" : misses === allowed && allowed > 0 ? "warn" : "ok",
-    note: [open ? (open.skip ? `Diese Woche: ${open.skip}` : `Diese Woche: ${cfg.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k] ? "✓" : "offen"}`).join(", ")}`) : null, misses ? (quota ? `${misses} von ${allowed} erlaubten Fehlwochen` : `${misses} Woche${misses === 1 ? "" : "n"} ohne ${cfg.kinds.length > 1 ? "beides" : what}`) : null, weeks.some((x) => x.done && x.sick && !x.hit && cfg.sickOk) ? "Krankheitswoche ausgenommen" : null].filter(Boolean).join(" · ") || null,
-    hints: [cfg.source === "rahmen" ? "Arten, Startwoche und Krankheitsregel aus dem aktuellen Rahmen des Coaches." : null, cfg.sickOk ? "Krankheit als Kalendereintrag „Krank“ (oder Kategorie Krankheit/Verletzung) eintragen, dann zählt die Woche nicht als verfehlt." : null].filter(Boolean),
+    target: lines.map((l) => `${l.label}: ${l.text}`).join(" · "), targetLines: lines,
+    value: done.length ? count("done") : null, of: done.length, volumeWeeks: count("volume"), withoutWeeks: count("none"), kinds, weeks: weeks.slice(-12), source: fr ? "rahmen" : "blocktext",
+    status: w.baseline ? (done.length ? "base" : "none") : done.length ? "info" : "none",
+    note: [open ? (open.skip ? `Diese Woche: ${open.skip}` : `Diese Woche: ${open.kinds.map((k) => `${INT_KIND_DE[k]} ${open.has[k]}×`).join(", ")}`) : null,
+      open?.enduranceMin != null && open.referenceMin ? `Ausdauer bisher ${hm(open.enduranceMin)} (Referenzwoche ${hm(open.referenceMin)})` : null].filter(Boolean).join(" · ") || null,
+    hints: [fr ? "Text und Arten aus dem Rahmen des Coaches, der in der jeweiligen Woche galt." : null,
+      volumes.length ? `Umfangswoche = Ausdauer mehr als ${VOLUME_UP_PCT} % über der Referenzwoche (Mittel der letzten 3 Wochen ohne leichte Wochen).` : null,
+      "Krankheit als Kalendereintrag „Krank“ (oder Kategorie Krankheit/Verletzung) eintragen, dann zählt die Woche nicht."].filter(Boolean),
   };
 }
 
@@ -539,11 +589,13 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
 }
 
 // input: { longRuns:[{date,decoupling}], strength:[{date,sets?}] (Kraft-Tage, mit Sätzen wenn bekannt), weeklyGoalSets, strengthSource:{egym,egymAt}, acwrDays:[{date,acwr}],
-//   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,mainWatts,noWarmup,vi,intensity,indoor,easy,hasHr}],
+//   runs:[{date,durationMin,decoupling,paceSecPerKm,elevPerKm,heat,easy,treadmill}], rides:[{date,durationMin,decoupling,watts,mainWatts,noWarmup,warmupSec,windowMin,vi,intensity,indoor,easy,hasHr}],
 //   im Blocktest-Modus runs zusaetzlich mit {id,name,analysis} (analyzeRunStreams),
 //   swimTests:[{date,t1Sec,t2Sec,pauseSec}], ftpTest:{date}|null, ftp, ctlDays:[{date,ctl}], activityDays:[date], plannedBreaks:[{from,to}],
 //   intensity:[{date,kind}] (kind aus intensityKindOf), sickDays:[date], deloadWeeks:[Montag] (vom Coach markierte Entlastung),
-//   frame: aktueller Rahmen des Coaches (targetsView().current; Intensitaet, Kraft-Saetze in 2 Wochen) }
+//   frame: aktueller Rahmen des Coaches (targetsView().current; Intensitaet, Kraft-Saetze in 2 Wochen),
+//   frames: Rahmen-Historie (targetsView().history, neueste zuerst; je Woche gilt der damalige), weekVolumes:[{week,enduranceMin,referenceMin}]
+//   (week-totals.js enduranceWeeks), plannedTests:[date] }
 export function buildBlockGoals(block, input, todayIso) {
   return buildBlockGoalsFull(block, input, todayIso).goals;
 }
@@ -571,23 +623,27 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     const cfg = targets.bike;
     const cand = (input.rides ?? []).filter((r) => inWin(r.date, w) && isComparableRide(r, cfg));
     const noHr = cand.filter((r) => !Number.isFinite(r.decoupling) && r.hasHr === false).length;
-    // Verlangt das Protokoll Einrollen, zaehlt eine Fahrt ohne Einrollen (Fenster ab Minute 0) nicht fuers Ziel, die letzte steht
-    // nur als Orientierung da (z. B. die erste Fahrt 19.10.2026 ohne Einrollen)
-    const unwarmed = cfg.warmupMin ? cand.filter((r) => r.noWarmup && Number.isFinite(r.decoupling)).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    // Verlangt das Protokoll Einrollen, zaehlt eine Fahrt ohne Warmup-Block nicht fuers Ziel, die letzte steht nur als Orientierung
+    // da (z. B. die erste Fahrt 19.10.2026 ohne Einrollen); bewertet wird erst ab der ersten echten Vergleichseinheit
+    const issueOf = (r) => rideMeasureIssue(r, cfg);
+    const unwarmed = cand.filter((r) => issueOf(r) === "ohne Einrollen" && Number.isFinite(r.decoupling)).sort((a, b) => a.date.localeCompare(b.date));
     const lastUnwarmed = unwarmed[unwarmed.length - 1];
+    const otherIssues = cand.map(issueOf).filter((x) => x && x !== "ohne Einrollen");
     const g = decouplingGoal({
       key: "bikeDecoupling", sport: "bike", label: "Rad (Rolle): aerobe Stabilität", sessions: input.rides ?? [], cfg, w, basis,
-      comparable: (r) => isComparableRide(r, cfg) && !(cfg.warmupMin && r.noWarmup),
+      comparable: (r) => isComparableRide(r, cfg) && !issueOf(r),
       extraNotes: [noHr ? `${noHr}× ohne Puls – ohne Pulsgurt gibt es kein Decoupling` : null,
-        unwarmed.length ? `${unwarmed.length}× ohne Einrollen, zählt nicht fürs Ziel (zuletzt ${lastUnwarmed.date.slice(8, 10)}.${lastUnwarmed.date.slice(5, 7)}.: ${String(r1(lastUnwarmed.decoupling)).replace(".", ",")} %)` : null],
+        unwarmed.length ? `${unwarmed.length}× ohne Einrollen, zählt nicht fürs Ziel (zuletzt ${lastUnwarmed.date.slice(8, 10)}.${lastUnwarmed.date.slice(5, 7)}.: ${String(r1(lastUnwarmed.decoupling)).replace(".", ",")} %)` : null,
+        otherIssues.length ? `nicht vergleichbar: ${countBy(otherIssues)}` : null],
       extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null, orientation: lastUnwarmed ? { date: lastUnwarmed.date, value: r1(lastUnwarmed.decoupling) } : null },
     });
+    if (g.value == null && g.orientation) g.note = "Noch keine Vergleichseinheit mit Einrollen – bewertet wird ab der ersten.";
     const last = g.series.slice(-g.lastN);
     // Temperatur des Radcomputers bleibt draussen: der Sensor misst Koerperwaerme mit
     const watts = last.map((x) => x.watts).filter(Number.isFinite);
     const span = (xs, u) => (xs.length ? (Math.min(...xs) === Math.max(...xs) ? `${Math.min(...xs)} ${u}` : `${Math.min(...xs)}–${Math.max(...xs)} ${u}`) : null);
     if (watts.length) g.hints.unshift(`Leistung im Messfenster ${span(watts, "W")}`);
-    if (cfg.firstMin && cfg.warmupMin) g.hints.push(`Messfenster: ${cfg.firstMin} min nach ${cfg.warmupMin} min Einrollen${cfg.watts ? `, Leistung ${cfg.watts} W ±${Math.round(RIDE_WATTS_TOL * 100)} %` : ""}`);
+    if (cfg.firstMin && cfg.warmupMin) g.hints.push(`Messfenster: ${cfg.firstMin} min nach ${cfg.warmupMin} min Einrollen${cfg.watts ? `, Leistung ${cfg.watts} W` : ""} · zählt mit Warmup-Block (≥ ${RIDE_WARMUP_MIN_SEC / 60} min) und Messfenster ≥ ${RIDE_WINDOW_MIN} min${cfg.watts ? ` bei ${cfg.watts - RIDE_WATTS_BAND}–${cfg.watts + RIDE_WATTS_BAND} W` : ""}`);
     const noWarm = last.filter((x) => x.noWarmup).length;
     if (noWarm) g.hints.push(`${noWarm}× ohne Einrollen gemessen (Fenster ab Minute 0)`); // nur ohne Einrollen im Protokoll
     if (cfg.ftpTest && !w.baseline) g.hints.push(input.ftpTest ? `FTP-Test am ${input.ftpTest.date.slice(8, 10)}.${input.ftpTest.date.slice(5, 7)}.${input.ftp ? ` · FTP ${input.ftp} W` : ""}` : (block.weekNo ?? 1) > 1 || block.status === "done" ? "Kein FTP-Test in Woche 1 gefunden." : "FTP-Test in Woche 1 steht an.");
@@ -682,7 +738,10 @@ export function buildBlockGoalsFull(block, input, todayIso) {
   if (targets.ramp) goals.push(rampGoal(input.ctlDays ?? [], targets.ramp, block, w, basis, todayIso));
   // Intensitaet: Arten, Startwoche und Krankheitsregel aus dem Rahmen des Coaches (input.frame), sonst aus dem Blocktext
   const intCfg = intensityFromFrame(input.frame ?? null, targets.intensity);
-  if (intCfg) goals.push(intensityGoal(input.intensity ?? [], input.sickDays ?? [], intCfg, block, w, basis, todayIso));
+  if (intCfg) {
+    const testDays = [...(input.plannedTests ?? []), ...(input.runs ?? []).filter((r) => r.test || TEST_RE.test(r.name ?? "")).map((r) => r.date)].filter((d) => d <= todayIso);
+    goals.push(intensityGoal(input.intensity ?? [], input.sickDays ?? [], intCfg, block, w, basis, todayIso, { frames: input.frames ?? (input.frame ? [input.frame] : null), current: input.frame ?? null, volumes: input.weekVolumes ?? [], testDays }));
+  }
   if (targets.pause) goals.push(pauseGoal(input.activityDays ?? [], input.plannedBreaks ?? [], targets.pause, w, basis, todayIso));
 
   for (const g of goals) if (g.group === "ziel") g.course = goalCourse(g, w);

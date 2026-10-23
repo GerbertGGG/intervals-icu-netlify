@@ -36,6 +36,41 @@ export function strengthSetsOf(a) {
 const addDays = (iso, n) => isoDate(new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000));
 const hours = (sec) => Math.round((sec / 3600) * 100) / 100;
 
+// Referenzwoche (wie im Coach-Skill, Abschnitt "Steigerung und Referenzwoche"): Mittel der Ausdauerzeit der letzten 3 vollen Wochen
+// ohne leichte Wochen (unter 70 % ihrer eigenen Referenz). Sind alle drei leicht, das Mittel aller drei. list: [{ enduranceMin }],
+// aufeinanderfolgende Wochen, aelteste zuerst; vor dem Anfang der Liste ist nichts bekannt (erste Woche: Referenz null).
+export const REFERENCE_WEEKS = 3;
+export const LIGHT_WEEK_SHARE = 0.7;
+export function withReference(list) {
+  const out = [];
+  for (const w of list) {
+    const prev = out.slice(-REFERENCE_WEEKS);
+    const normal = prev.filter((x) => !x.light);
+    const base = normal.length ? normal : prev;
+    const referenceMin = base.length ? Math.round(base.reduce((a, x) => a + x.enduranceMin, 0) / base.length) : null;
+    out.push({ ...w, referenceMin, light: referenceMin > 0 && w.enduranceMin < referenceMin * LIGHT_WEEK_SHARE });
+  }
+  return out;
+}
+
+// Ausdauersekunden einer Aktivitaet (Laufen, Rad, Schwimmen; icu_ignore_time zaehlt nicht), sonst 0
+const enduranceSecOf = (a) => (a?.icu_ignore_time || !enduranceDiscipline(a) ? 0 : Number(a?.moving_time) || 0);
+
+// Ausdauerminuten je ISO-Woche ab der ersten vollen Woche ab fromIso bis zur laufenden, mit Referenzwoche (withReference).
+// Fuer die Intensitaets-Kachel im Trainingsblock (season-block.js); fromIso = ab wann Aktivitaeten geladen sind.
+export function enduranceWeeks(activities, fromIso, todayIso = isoDateBerlin()) {
+  const first = mondayOnOrBefore(fromIso) === fromIso ? fromIso : addDays(mondayOnOrBefore(fromIso), 7);
+  const acc = new Map();
+  for (let m = first; m <= todayIso; m = addDays(m, 7)) acc.set(m, 0);
+  for (const a of activities ?? []) {
+    const day = activityDay(a);
+    if (!isIsoDate(day) || day > todayIso) continue;
+    const k = mondayOnOrBefore(day);
+    if (acc.has(k)) acc.set(k, acc.get(k) + enduranceSecOf(a));
+  }
+  return withReference([...acc].map(([week, sec]) => ({ week, enduranceMin: Math.round(sec / 60) })));
+}
+
 // Wochensummen je ISO-Woche (Mo–So nach dem lokalen Startdatum der Aktivitaet, bei Gerbert Europe/Berlin), aelteste zuerst,
 // die laufende zuletzt (complete: false). Ausdauer aus moving_time, Kraft in Saetzen; icu_ignore_time zaehlt nicht.
 // Jede Woche traegt das Ziel, das in ihr galt (Eintrag am Sonntag bzw. heute, siehe targetOn): goalHours, goalSets2w und
@@ -61,6 +96,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
       w.by[disc] += sec;
     } else if (isStrengthActivity(a)) w.sets += strengthSetsOf(a);
   }
+  const refs = withReference(mondays.map((m) => ({ enduranceMin: Math.round(acc.get(m).sec / 60) })));
   const list = mondays.slice(1).map((week, i) => {
     const w = acc.get(week), prev = acc.get(mondays[i]);
     const end = addDays(week, 6), tg = targetOn(history, end < todayIso ? end : todayIso);
@@ -72,6 +108,8 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
       complete: week !== thisMonday,
       enduranceMin,
       enduranceHours: hours(w.sec),
+      // Referenzwoche (withReference) aus den Wochen davor im Fenster; null ohne Vorwoche
+      referenceMin: refs[i + 1].referenceMin,
       byDiscipline: Object.fromEntries(DISCIPLINES.map((k) => [k, hours(w.by[k])])),
       byDisciplineMin: Object.fromEntries(DISCIPLINES.map((k) => [k, Math.round(w.by[k] / 60)])),
       strengthSets: w.sets,
@@ -96,7 +134,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
 export function currentWeekTotals(t) {
   const c = t?.weeks?.[t.weeks.length - 1];
   if (!c) return null;
-  return { week: c.week, enduranceHours: c.enduranceHours, byDiscipline: c.byDiscipline, strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
+  return { week: c.week, enduranceHours: c.enduranceHours, referenceHours: c.referenceMin != null ? hours(c.referenceMin * 60) : null, byDiscipline: c.byDiscipline, strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
 }
 
 // Aktivitaeten fuer das ganze Fenster (inkl. Vorwoche fuer die 2 Wochen Kraft)

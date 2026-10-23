@@ -271,6 +271,9 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .bsq i.ok::after, .bsq i.bad::after { content: ""; position: absolute; inset: 2px; background: var(--card); -webkit-mask: var(--ic-check) center / contain no-repeat; mask: var(--ic-check) center / contain no-repeat; }
 .bsq i.bad::after { -webkit-mask-image: var(--ic-x); mask-image: var(--ic-x); }
 .bsq i.rec { background: var(--line); opacity: .45; }
+/* Umfangswoche (Intensität bewusst nicht): hell wie "zählt nicht", mit Pfeil nach oben */
+.bsq i.vol { background: color-mix(in srgb, var(--line) 45%, transparent); }
+.bsq i.vol::after { content: "↑"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; line-height: 1; color: var(--muted); }
 .btl i.rec { opacity: .35; } .btl i.past.rec, .btl i.now.rec { opacity: .3; }
 .bbars > u.aim { border-top-style: solid; } .bbars > u.must { border-top: 2px dashed var(--muted); }
 .bgh { margin: 4px 0 -2px; }
