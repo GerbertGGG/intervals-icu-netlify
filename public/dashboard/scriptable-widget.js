@@ -687,9 +687,10 @@ function buildWeekTargets(w, W, d, wk, res, room = 0) {
   const zeit = wk.rings.zeit;
   // Unten, was in den Platz passt: die naechsten drei Tage, sofern dort etwas geplant ist (sonst stuende dreimal "Pause"),
   // sonst die Woche Mo bis So (Kreise so gross, wie Breite und Platz erlauben), danach die Rueckfrage des Coaches.
-  // Der Balken ist rund 40 pt niedriger als die frueheren Ringe; der Platz kommt unten dazu.
+  // Der Balken ist niedriger als die frueheren Ringe; gemessen (iPhone, 23.10., Blocker zweizeilig, drei Zeilen Hinweis,
+  // Einheit heute) blieben mit +40 unten gut 40 pt frei, deshalb +60: dann passen die naechsten drei Tage.
   const q = d.coach && d.coach.question, upcoming = (d.plan.upcoming || []).length > 0;
-  let left = room - 2 + 40;
+  let left = room - 2 + 60;
   const TILE_H = 36, Q_H = 54, KH = Math.min(Math.floor((W - 2 * CAPS_PAD - 6 * 14) / 7), left - 10 - CAPS_PAD - 2 - CAPS_LABEL_H);
   const showTiles = upcoming && left >= TILE_H; if (showTiles) left -= TILE_H;
   const showDays = !showTiles && wk.days && KH >= 22; if (showDays) left -= 10 + CAPS_PAD + KH + 2 + CAPS_LABEL_H;
