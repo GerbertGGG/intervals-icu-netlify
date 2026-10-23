@@ -1,7 +1,7 @@
 "use strict";
 /* Trainings-Dashboard: Laden der Daten vom Worker und Aufbau der Bereiche. Diagramme: charts.js. */
 const $ = (id) => document.getElementById(id);
-const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange } = U;
+const { esc, fmt, fmtDate, weekday, fmtTime, pace: paceLabel, addDays, dayRange, hm: fmtHm } = U;
 
 const SPORT_LABEL = { run: "Laufen", bike: "Rad", swim: "Schwimmen", strength: "Kraft", other: "Sonstiges" };
 const SPORT_ORDER = ["run", "bike", "swim", "strength", "other"];
@@ -13,7 +13,7 @@ const hasRace = (g) => Boolean(g) && !g.none && g.daysToGo >= 0;
 const hm = (secs) => (secs < 3600 ? fmtTime(secs) : fmtTime(Math.round(secs / 60) * 60).replace(/:00$/, "")); // ab 1 h als h:mm, darunter m:ss
 // Frische in % der Fitness (CTL), Zonen wie Intervals.icu (Worker: dashboard-summary.js)
 const TSB_ZONE_TEXT = { risk: "hohes Risiko", optimal: "produktiv belastet", neutral: "neutral", fresh: "frisch", transition: "Übergang: Fitness sinkt" };
-const fmtStable = (m) => (m == null ? "–" : m === 0 ? "unter 60 min" : `${m} min`);
+const fmtStable = (m) => (m == null ? "–" : m === 0 ? "unter 1h" : fmtHm(m));
 
 /* ---------- Laden ---------- */
 async function load() {
@@ -171,14 +171,14 @@ function renderCockpit(d) {
   const supportTile = (d.supportRaces ?? []).length ? tile("Vorbereitungsrennen (B)", d.supportRaces.slice(0, 3).map((r) => `<div class="mrow"><div class="mhead"><b>${esc(r.name)}</b><span class="mval">${r.daysToGo > 0 ? `${r.daysToGo} <small>Tage</small>` : r.daysToGo === 0 ? "Heute!" : "vorbei"}</span></div><div class="sub">${weekday(r.date)} ${fmtDate(r.date)}${r.runKm ? ` · Lauf ${fmt(r.runKm, 1)} km` : ""}${r.targetTimeSecs ? ` · Ziel ${fmtTime(r.targetTimeSecs)}` : ""}</div></div>`).join("") + (race ? `<div class="sub">Zwischenziel auf dem Weg zu: ${esc(g.name)}</div>` : ""), "span15") : "";
   const blockTile = renderBlock(d.seasonBlock, d.coach?.deloadWeeks ?? []);
   const prevWk = d.weeks[d.weeks.length - 2];
-  const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmt(cur.runMin / 60, 1) : "–"} h Laufen${prevWk ? `, Vorwoche ${fmt(prevWk.runMin / 60, 1)} h` : ""}. Steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gilt als Soll, nicht als Mangel.</div>`, "span4") : "";
+  const taperTile = taper ? tile("Taper-Status", `<div class="val">Taper-Phase · noch ${g.daysToGo} Tag${g.daysToGo === 1 ? "" : "e"}</div><div class="sub">Weniger Umfang ist jetzt gewollt: Diese Woche ${cur ? fmtHm(cur.runMin) : "–"} Laufen${prevWk ? `, Vorwoche ${fmtHm(prevWk.runMin)}` : ""}. Steigende Frische (TSB${tsb != null ? ` ${fmt(tsb)}` : ""}) gilt als Soll, nicht als Mangel.</div>`, "span4") : "";
   const R = S.recovery;
 
   // Heute oben: 1. die Aussage des Coaches (Morgen-Auswertung, save_coach) mit seiner Rückfrage, 2. was heute ansteht bzw. die
   // letzte Einheit, 3. Kennzahlen als Fakten ohne Bewertung. Das Dashboard urteilt nicht selbst: Ohne frische Coach-Aussage stehen
   // oben nur die Werte.
   const doneToday = d.daily.find((x) => x.date === d.today);
-  const meta = (p) => [p.durationMin ? p.durationMin + " min" : p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
+  const meta = (p) => [p.durationMin ? fmtHm(p.durationMin) : p.distanceKm && fmt(p.distanceKm, 1) + " km", p.load && "Load " + fmt(p.load)].filter(Boolean).join(" · ");
   const L = d.lastActivity;
   const lastHtml = L ? `<div class="hb-item"><i style="background:var(--s-${L.sport})"></i><div><b>${SPORT_LABEL[L.sport] || "Einheit"}</b><span class="sub">${[L.date === d.today ? "heute" : `${weekday(L.date)} ${fmtDate(L.date)}`, meta(L), L.distanceKm && L.durationMin ? fmt(L.distanceKm, 1) + " km" : ""].filter(Boolean).join(" · ")}</span></div></div>${lastStats(L)}` : "";
   const planHtml = plan.length
@@ -194,7 +194,7 @@ function renderCockpit(d) {
     ? kpi("Schlaf-Score", fmt(R.sleepScore), "", "", R.sleepHours != null ? `${fmt(R.sleepHours, 1)} h` : "")
     : kpi("Schlaf", R.sleepHours != null ? `${fmt(R.sleepHours, 1)} <small>h</small>` : "–", "", "");
   const capKpi = BR?.cap != null
-    ? kpi(`HF-Deckel ${fmt(BR.cap)}`, BR.week.runs ? `${fmt(BR.week.overMin)} <small>min drüber</small>` : "–", "", "", BR.week.runs ? `diese Woche · ${BR.week.runs} Grundlagenl${BR.week.runs === 1 ? "auf" : "äufe"}, ${fmt(BR.week.minutes)} min` : "diese Woche noch kein Grundlagenlauf")
+    ? kpi(`HF-Deckel ${fmt(BR.cap)}`, BR.week.runs ? `${fmtHm(BR.week.overMin)} <small>drüber</small>` : "–", "", "", BR.week.runs ? `diese Woche · ${BR.week.runs} Grundlagenl${BR.week.runs === 1 ? "auf" : "äufe"}, ${fmtHm(BR.week.minutes)}` : "diese Woche noch kein Grundlagenlauf")
     : kpi("Fitness CTL", ctl != null ? fmt(ctl) : "–", "", "", atl != null ? `Ermüdung ATL ${fmt(atl)}` : "");
   const lastKpi = race
     ? kpi(esc(g.name), g.daysToGo === 0 ? "Heute" : `${g.daysToGo} <small>Tag${g.daysToGo === 1 ? "" : "e"}</small>`, "", "", `${weekday(g.date)} ${fmtDate(g.date)}${taper ? " · Taper" : ""}`)
@@ -207,7 +207,7 @@ function renderCockpit(d) {
   const runSum = (a, b) => d.daily.filter((x) => x.date >= a && x.date <= b).reduce((n, x) => n + (x.minutes?.run ?? 0), 0);
   const run7 = runSum(addDays(d.today, -6), d.today), runRef = runSum(addDays(d.today, -34), addDays(d.today, -7)) / 4;
   const runQ = runRef > 0 ? run7 / runRef : null;
-  const runKpi = kpi("Laufen 7 Tage", `${fmt(run7)} <small>min</small>`, "", "", runRef > 0 ? `Ø 4 Wochen davor ${fmt(runRef)} min · ${runQ >= 1 ? "+" : ""}${fmt((runQ - 1) * 100)} %` : "kein Vergleich");
+  const runKpi = kpi("Laufen 7 Tage", fmtHm(run7), "", "", runRef > 0 ? `Ø 4 Wochen davor ${fmtHm(runRef)} · ${runQ >= 1 ? "+" : ""}${fmt((runQ - 1) * 100)} %` : "kein Vergleich");
   const kpis = `<div class="kpis">
       ${sleepKpi}
       ${runKpi}
@@ -314,7 +314,7 @@ function weekPace(cur, st, left, today) {
 }
 // Regeln des Coaches aus dem Block-Eintrag (Abschnitt "Regeln"); sie ersetzen den Tempo-Hinweis, solange der Block läuft
 function blockRules(SB, d) {
-  const B = d?.baseRuns, cap = B?.cap != null && B.week.runs ? `<div class="${B.week.overMin <= 2 ? "ok" : "over"}">HF-Deckel ${fmt(B.cap)}: ${fmt(B.week.overMin)} min drüber in ${B.week.runs} Grundlagenl${B.week.runs === 1 ? "auf" : "äufen"}</div>` : "";
+  const B = d?.baseRuns, cap = B?.cap != null && B.week.runs ? `<div class="${B.week.overMin <= 2 ? "ok" : "over"}">HF-Deckel ${fmt(B.cap)}: ${fmtHm(B.week.overMin)} drüber in ${B.week.runs} Grundlagenl${B.week.runs === 1 ? "auf" : "äufen"}</div>` : "";
   return `<div class="wk-pace wk-rules"><span>Regeln · ${esc(SB.name)}</span>${cap}<ul>${SB.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></div>`;
 }
 function renderTargetWeek(d, tile, cur, monday, days) {
@@ -329,7 +329,7 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   const capOf = (b) => ({ over: b.targetLoad > 0 && b.load > b.targetLoad, under: b.targetLoadMin > 0 && b.load < b.targetLoadMin, html: b.targetLoad > 0 ? [fmt(b.load), `/ ${tssRange(b.targetLoadMin, b.targetLoad)} TSS`] : ["", ""] });
   const rows = ks.map((k) => {
     const b = cur.bySport[k], rest = b.targetMin > 0 ? b.targetMin - b.minutes : null;
-    return row(k, rest == null ? "" : rest > 0 ? `noch ${fmt(rest)} min` : "✓ Ziel", [fmt(b.minutes), b.targetMin > 0 ? `/ ${fmt(b.targetMin)} min` : "min"], capOf(b));
+    return row(k, rest == null ? "" : rest > 0 ? `noch ${fmtHm(rest)}` : "✓ Ziel", [fmtHm(b.minutes), b.targetMin > 0 ? `/ ${fmtHm(b.targetMin)}` : ""], capOf(b));
   });
   // Kraft: Sätze der Kalenderwoche gegen das Wochenziel des Blocks (wie Uhr und Kraft-Karte), sonst Minuten
   const st = d.seasonBlock?.goals?.find((g) => g.key === "strength"), sb = cur.bySport.strength;
@@ -339,14 +339,14 @@ function renderTargetWeek(d, tile, cur, monday, days) {
   }
   const ring = (label, vals, warn, cap) => `<div class="wk-ring"><b>${label}</b>${weekRings(vals, warn)}<div>${cap}</div></div>`;
   const over = Object.values(tss).some((v) => v[0] > v[1]), under = !over && Object.values(tss).some((v) => v[2] > 0 && v[0] < v[2]);
-  const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmt(sum(zeit, 0))} <small>/ ${fmt(sum(zeit, 1))} min</small>`)}`
+  const top = `<div class="wk-top">${ring("ZEIT", zeit, false, `${fmtHm(sum(zeit, 0))} <small>/ ${fmtHm(sum(zeit, 1))}</small>`)}`
     + `${ring("TSS", tss, true, `<span${over ? ' style="color:var(--bad)"' : under ? ' style="color:var(--muted)"' : ""}>${fmt(sum(tss, 0))}</span> <small>/ ${tssRange(sum(tss, 2), sum(tss, 1))} TSS</small>`)}`
     + `<div class="wk-open"><b>Offen · ${left <= 1 ? "nur noch heute" : `noch ${left} Tage`}</b>${rows.join("")}</div>${d.seasonBlock?.status === "active" && d.seasonBlock.rules?.length ? blockRules(d.seasonBlock, d) : weekPace(cur, st, left, d.today)}</div>`;
   const actual = Object.fromEntries(d.daily.map((x) => [x.date, x]));
   const cell = (x) => {
     const a = actual[x], isToday = x === d.today, past = x < d.today;
     const ks2 = SPORT_ORDER.filter((k) => (a?.minutes?.[k] ?? 0) > 0 || (a?.sports?.[k] ?? 0) > 0);
-    const body = ks2.length ? ks2.map((k) => `<div class="wk-did"><i style="background:var(--s-${k})"></i><span>${SPORT_LABEL[k]} ${a.minutes?.[k] ? `${fmt(a.minutes[k])} min` : `${fmt(a.sports[k])} TSS`}</span></div>`).join("")
+    const body = ks2.length ? ks2.map((k) => `<div class="wk-did"><i style="background:var(--s-${k})"></i><span>${SPORT_LABEL[k]} ${a.minutes?.[k] ? fmtHm(a.minutes[k]) : `${fmt(a.sports[k])} TSS`}</span></div>`).join("")
       : `<span class="wk-rest">${past ? "Ruhetag" : isToday ? "heute" : ""}</span>`;
     return `<div class="wk-day${isToday ? " now" : ""}${past ? " past" : ""}"><div class="wk-h"><b>${weekday(x)}</b> <span>${fmtDate(x)}</span></div><div class="wk-plan">${body}</div></div>`;
   };
@@ -373,8 +373,8 @@ function renderWeekReview(d, tile) {
     // Session-RPE nur bei genug RPE-Einträgen; sonst wäre die Summe gegen den Schnitt davor ein Zufallsvergleich
     R.basis === "rpe" ? row("Session-RPE", fmt(R.srpe), [R.ref != null ? `Ø davor ${fmt(R.ref)}` : null, `RPE bei ${fmt(R.coverage * 100)} % der Einheiten`, R.monotony != null ? `Monotonie ${f1(R.monotony)}` : null].filter(Boolean).join(" · "))
       : R.monotony != null ? row("Monotonie", f1(R.monotony), `aus dem Tages-TSS${R.coverage != null ? ` (RPE nur bei ${fmt(R.coverage * 100)} % der Einheiten)` : ""}`) : "",
-    row("Laufen", `${fmt(U.minutes)} min`, [U.ref != null ? `Ø 4 Wochen ${fmt(U.ref)} min${U.ratio != null ? ` (${U.ratio >= 1 ? "+" : ""}${fmt((U.ratio - 1) * 100)} %)` : ""}` : null, U.longest ? `längster ${fmt(U.longest)} min${U.longestRef ? ` (davor ${fmt(U.longestRef)})` : ""}` : null, U.capOver != null ? `${fmt(U.capOver)} min über HF-Deckel` : null].filter(Boolean).join(" · ")),
-    V.frameShare != null ? row("Rahmen", `${fmt(V.frameShare * 100)} %`, V.frame.map((x) => `${SPORT_LABEL[x.sport]} ${fmt(x.minutes)}${x.targetMin ? `/${fmt(x.targetMin)}` : ""} min${x.targetLoad ? ` · ${fmt(x.load)}/${tssRange(x.targetLoadMin, x.targetLoad)} TSS` : ""}`).join(" · ")) : "",
+    row("Laufen", fmtHm(U.minutes), [U.ref != null ? `Ø 4 Wochen ${fmtHm(U.ref)}${U.ratio != null ? ` (${U.ratio >= 1 ? "+" : ""}${fmt((U.ratio - 1) * 100)} %)` : ""}` : null, U.longest ? `längster ${fmtHm(U.longest)}${U.longestRef ? ` (davor ${fmtHm(U.longestRef)})` : ""}` : null, U.capOver != null ? `${fmtHm(U.capOver)} über HF-Deckel` : null].filter(Boolean).join(" · ")),
+    V.frameShare != null ? row("Rahmen", `${fmt(V.frameShare * 100)} %`, V.frame.map((x) => `${SPORT_LABEL[x.sport]} ${fmtHm(x.minutes)}${x.targetMin ? `/${fmtHm(x.targetMin)}` : ""}${x.targetLoad ? ` · ${fmt(x.load)}/${tssRange(x.targetLoadMin, x.targetLoad)} TSS` : ""}`).join(" · ")) : "",
     st ? row("Kraft", `${fmt(st.count)} <small>von ${fmt(st.goal)}</small>`, st.unit ?? "") : "",
     V.sickDays.length ? row("Krank", `${V.sickDays.length} Tag${V.sickDays.length === 1 ? "" : "e"}`, days(V.sickDays)) : "",
     V.hipDays.length ? row("Beschwerden", "Hüfte/Leiste/Knie", days(V.hipDays)) : "",
@@ -398,7 +398,7 @@ function renderWeekPreview(d, tile) {
     const items = planned.filter((p) => p.date === x), isToday = x === d.today, past = x < d.today, a = actual[x];
     const planLoad = items.reduce((n, p) => n + (p.load ?? 0), 0), ist = a?.load ?? 0;
     const state = !past ? "" : planLoad > 0 ? (ist >= planLoad * WEEK_HIT ? "hit" : "miss") : ist > 0 ? "extra" : "";
-    const lines = items.map((p) => `<div class="wk-item"><i style="background:var(--s-${p.sport})"></i><span>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}<small>${p.durationMin ? p.durationMin + " min" : p.distanceKm ? fmt(p.distanceKm, 1) + " km" : ""}</small></span></div>`).join("");
+    const lines = items.map((p) => `<div class="wk-item"><i style="background:var(--s-${p.sport})"></i><span>${esc(p.name || SPORT_LABEL[p.sport] || "Einheit")}<small>${p.durationMin ? fmtHm(p.durationMin) : p.distanceKm ? fmt(p.distanceKm, 1) + " km" : ""}</small></span></div>`).join("");
     const done = Object.keys(a?.sports ?? {}).map((k) => `<i style="background:var(--s-${k})" title="${SPORT_LABEL[k]} ${fmt(a.sports[k])} Load"></i>`).join("");
     const istTxt = isToday || past ? (ist > 0 ? `<b>${fmt(ist)}</b>` : "–") : "";
     const verdict = { hit: "erfüllt", miss: planLoad > 0 && ist === 0 ? "ausgefallen" : "unter Plan", extra: "ungeplant" }[state];
@@ -407,7 +407,7 @@ function renderWeekPreview(d, tile) {
   const planSum = cur?.plannedLoad ?? planned.reduce((n, p) => n + (p.load ?? 0), 0);
   const parts = cur ? SPORT_ORDER.filter((k) => cur.bySport[k].load > 0) : [];
   const pct = cur && planSum ? Math.min(100, (cur.load / planSum) * 100) : 0;
-  const head = cur ? `<div class="wk-head"><div class="val">${fmt(cur.load)} <small>Load${planSum ? ` von ${fmt(planSum)} geplant` : ""}</small></div>${planSum ? `<div class="cbar wk-bar"><div class="cfill" style="width:${pct}%;background:var(--accent)"></div></div>` : ""}<div class="dots">${parts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}<span class="sub">${fmt(SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0) / 60, 1)} h${cur.runMin ? ` · Laufen ${fmt(cur.runMin / 60, 1)} h` : ""}</span></div></div>` : "";
+  const head = cur ? `<div class="wk-head"><div class="val">${fmt(cur.load)} <small>Load${planSum ? ` von ${fmt(planSum)} geplant` : ""}</small></div>${planSum ? `<div class="cbar wk-bar"><div class="cfill" style="width:${pct}%;background:var(--accent)"></div></div>` : ""}<div class="dots">${parts.map((k) => `<span><i style="background:var(--s-${k})"></i>${SPORT_LABEL[k]} ${fmt(cur.bySport[k].load)}</span>`).join("") || '<span class="sub">noch nichts trainiert</span>'}<span class="sub">${fmtHm(SPORT_ORDER.reduce((n, k) => n + cur.bySport[k].minutes, 0))}${cur.runMin ? ` · Laufen ${fmtHm(cur.runMin)}` : ""}</span></div></div>` : "";
   return tile(`Woche ab ${fmtDate(monday)}`, `${head}<div class="wk-grid">${days.map(cell).join("")}</div>`, "span4", ["#form", "Wochenverlauf und Vergleich"]);
 }
 
@@ -506,7 +506,7 @@ function renderLongruns(d) {
   const decCls = (v) => (v == null ? "none" : v <= 5 ? "ok" : v <= 8 ? "warn" : "bad");
   const next = d.nextTest?.date;
   if (!B?.recent?.length) { host.innerHTML = `<div class="muted">Noch kein Grundlagenlauf ab 60 min mit Pulsdaten im Block${next ? ` – nächster Blocktest ${weekday(next)} ${fmtDate(next)}` : "."}</div>`; return; }
-  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmt(r.durationMin)} min</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? `${fmt(r.overCapMin)} min` : "–"}</td></tr>`).join("");
+  const rows = B.recent.map((r) => `<tr><td>${fmtDate(r.date)}${r.test ? ' <span class="badge ok">Test</span>' : ""}</td><td>${fmtHm(r.durationMin)}</td><td>${r.dec60 != null ? `<span class="badge ${decCls(r.dec60)}">${fmt(r.dec60, 1)} %</span>` : "–"}</td><td title="${esc((r.windows ?? []).map((x) => `0–${x.min}: ${fmt(x.value, 1)} %`).join(" · "))}">${fmtStable(r.stableMin)}</td><td>${r.pace60 ?? "–"}</td><td>${r.overCapMin != null ? fmtHm(r.overCapMin) : "–"}</td></tr>`).join("");
   host.innerHTML = `<div class="scroll"><table class="mini tests"><thead><tr><th>Datum</th><th>Dauer</th><th>Dec. 0–60</th><th>stabil</th><th>Pace 0–60</th><th>über ${B.cap != null ? fmt(B.cap) : "Deckel"}</th></tr></thead><tbody>${rows}</tbody></table></div>
     <details class="info"><summary>Erklärung</summary><div>Decoupling 0–60: Pace je Herzschlag der ersten gegen die zweite halbe Stunde, ab 5 % driftet der Puls, ab 8 % deutlich. Stabil: längstes Fenster ab Start (0–60, 0–75 …) mit Decoupling ≤ 5 % (Fensterreihe beim Darüberfahren). Über ${B.cap != null ? fmt(B.cap) : "dem Deckel"}: Minuten über dem HF-Deckel (Hügelsprints dürfen kurz darüber). DFA α1 steht hier nicht mehr: Der Wert passt bei dir nicht (0,5 bei HF 125, obwohl du dort locker redest) und entscheidet nichts. Nur die Blocktests zählen fürs Blockziel; den Trend zwischen den Tests zeigt „Greift die Grundlage?“.</div></details>`;
 }
@@ -530,7 +530,7 @@ function renderHistory(d) {
   // Trainingszeit aller Sportarten gegen die Zeitziele des Coaches, wo es welche gibt, sonst gegen die geplanten Workouts
   const sumMin = (w, f) => SPORT_ORDER.reduce((a, k) => (w.bySport[k][f] != null ? (a ?? 0) + w.bySport[k][f] : a), null);
   const timePlan = (w) => w.targetMin ?? sumMin(w, "plannedMin");
-  C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: sumMin(w, "minutes") ?? 0, plan: timePlan(w), partial: !w.complete })), { unit: "min", label: "Trainingszeit pro Woche (Minuten)", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
+  C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: sumMin(w, "minutes") ?? 0, plan: timePlan(w), partial: !w.complete })), { unit: "min", fmtV: fmtHm, label: "Trainingszeit pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   // TSS daneben: Korridor des Coaches (Summe der Unter- und Obergrenzen), in älteren Wochen der Plan aus geplanten Workouts
   const capOf = (w) => SPORT_ORDER.reduce((a, k) => (w.bySport[k].targetLoad > 0 ? (a ?? 0) + w.bySport[k].load : a), null);
   C.bars($("chart-tss"), d.weeks.map((w) => {
@@ -538,7 +538,7 @@ function renderHistory(d) {
     return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load ?? 0, plan: cap ? w.targetLoad : w.plannedLoad, cap, floor: cap && w.targetLoadMin > 0 ? w.targetLoadMin : undefined, capValue: cap ? capOf(w) ?? 0 : undefined, partial: !w.complete };
   }), { unit: "TSS", label: "TSS pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   const noPlan = d.weeks.every((w) => timePlan(w) == null);
-  $("plan-note-km").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Trainingszeit = Bewegungszeit aller Sportarten in Minuten. Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb.";
+  $("plan-note-km").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Trainingszeit = Bewegungszeit aller Sportarten. Marke = Zeitziel des Coaches (Summe der Zeitziele aller Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb.";
   $("plan-note-tss").textContent = "Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan), dünne Marke = Summe der Untergrenzen. Die Säule enthält alle Sportarten; „drüber“ und „unter“ zählen nur die Sportarten mit Korridor (Schwimmen hat keinen).";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
@@ -604,26 +604,26 @@ function renderSport(d) {
   // Spalte "Ziel": Wochenziel des Coaches (Zeit, TSS-Obergrenze); ohne Ziel der Plan-Load der geplanten Workouts
   const goalCell = (b, hasTg) => {
     if (!hasTg) return b.plannedLoad != null ? fmt(b.plannedLoad) : "–";
-    const parts = [b.targetMin > 0 ? `${fmt(b.targetMin)} min` : null, b.targetLoad > 0 ? `${tssRange(b.targetLoadMin, b.targetLoad)} TSS` : null].filter(Boolean);
+    const parts = [b.targetMin > 0 ? fmtHm(b.targetMin) : null, b.targetLoad > 0 ? `${tssRange(b.targetLoadMin, b.targetLoad)} TSS` : null].filter(Boolean);
     return parts.length ? parts.join(" · ") : "–";
   };
   const rows = (w, ref) => {
     const hasTg = w.targetMin != null || w.targetLoad != null;
     return SPORT_ORDER.filter((k) => w.bySport[k].count > 0 || (ref && ref.bySport[k].count > 0) || w.bySport[k].plannedLoad != null || w.bySport[k].targetMin != null || w.bySport[k].targetLoad != null).map((k) => {
       const b = w.bySport[k], r = ref ? ref.bySport[k] : null, over = b.targetLoad > 0 && b.load > b.targetLoad, under = b.targetLoadMin > 0 && b.load < b.targetLoadMin;
-      return `<tr><td>${SPORT_LABEL[k]}</td><td>${b.count}</td><td>${fmt(b.minutes / 60, 1)} h</td><td><b${over ? ' style="color:var(--bad)"' : under ? ' style="color:var(--muted)"' : ""}>${fmt(b.load)}</b></td><td class="muted">${r ? fmt(r.load) : "–"}</td><td class="muted">${goalCell(b, hasTg)}</td></tr>`;
+      return `<tr><td>${SPORT_LABEL[k]}</td><td>${b.count}</td><td>${fmtHm(b.minutes)}</td><td><b${over ? ' style="color:var(--bad)"' : under ? ' style="color:var(--muted)"' : ""}>${fmt(b.load)}</b></td><td class="muted">${r ? fmt(r.load) : "–"}</td><td class="muted">${goalCell(b, hasTg)}</td></tr>`;
     }).join("");
   };
   const tgOf = (w) => w.targetMin != null || w.targetLoad != null;
   const table = (w, ref, title) => {
     if (!w) return "";
     const sum = (x) => SPORT_ORDER.reduce((a, k) => a + x.bySport[k].load, 0), body = rows(w, ref);
-    return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>TSS</th><th>Vorwoche</th><th>${tgOf(w) ? "Ziel" : "Plan"}</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td><b>${fmt(SPORT_ORDER.reduce((a, k) => a + w.bySport[k].minutes, 0) / 60, 1)} h</b></td><td><b>${fmt(sum(w))}</b></td><td class="muted">${ref ? fmt(sum(ref)) : "–"}</td><td class="muted">${tgOf(w) ? (w.targetMin ? `${fmt(w.targetMin)} min` : "–") : w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
+    return `<h3>${title} <span class="muted">ab ${fmtDate(w.weekStart)}</span></h3>` + (body ? `<table><thead><tr><th>Sport</th><th>Einh.</th><th>Zeit</th><th>TSS</th><th>Vorwoche</th><th>${tgOf(w) ? "Ziel" : "Plan"}</th></tr></thead><tbody>${body}<tr><td><b>Gesamt</b></td><td></td><td><b>${fmtHm(SPORT_ORDER.reduce((a, k) => a + w.bySport[k].minutes, 0))}</b></td><td><b>${fmt(sum(w))}</b></td><td class="muted">${ref ? fmt(sum(ref)) : "–"}</td><td class="muted">${tgOf(w) ? (w.targetMin ? fmtHm(w.targetMin) : "–") : w.plannedLoad != null ? fmt(w.plannedLoad) : "–"}</td></tr></tbody></table>` : '<div class="muted">Keine Einheiten in dieser Woche.</div>');
   };
   // Laufende Woche ohne Einheit: eine Zeile statt einer Tabelle voller Nullen
   const curEmpty = cur && cur !== done && SPORT_ORDER.every((k) => cur.bySport[k].count === 0);
   const curHtml = curEmpty
-    ? `<h3>Laufende Woche <span class="muted">ab ${fmtDate(cur.weekStart)}</span></h3><div class="muted">Woche läuft – noch keine Einheit${cur.targetMin ? `, Ziel ${fmt(cur.targetMin)} min` : cur.plannedLoad != null ? `, ${fmt(cur.plannedLoad)} TSS geplant` : ""}.</div>`
+    ? `<h3>Laufende Woche <span class="muted">ab ${fmtDate(cur.weekStart)}</span></h3><div class="muted">Woche läuft – noch keine Einheit${cur.targetMin ? `, Ziel ${fmtHm(cur.targetMin)}` : cur.plannedLoad != null ? `, ${fmt(cur.plannedLoad)} TSS geplant` : ""}.</div>`
     : table(cur, done, "Laufende Woche");
   $("week-report").innerHTML = table(done, prev, "Letzte volle Woche") + '<div style="height:12px"></div>' + curHtml;
 }
@@ -738,7 +738,7 @@ function renderDisciplines(d) {
     const lastTxt = lastDay ? `${weekday(lastDay.date)} ${fmtDate(lastDay.date)} · ${ago === 0 ? "heute" : `vor ${ago} Tag${ago === 1 ? "" : "en"}`} · ${fmt(lastDay.sports[k])} TSS` : "keine Einheit in den letzten 8 Wochen";
     const stale = tri && (ago == null || ago > 14);
     return `<div class="card"><h3>${cfg.label}</h3>
-      <div class="disc-stats"><div><div class="muted">4 Wochen</div><b class="v">${fmt(minutes4 / 60, 1)} h</b><div class="muted">${n4} Einh.</div></div>
+      <div class="disc-stats"><div><div class="muted">4 Wochen</div><b class="v">${fmtHm(minutes4)}</b><div class="muted">${n4} Einh.</div></div>
       <div><div class="muted">Zuletzt</div><b class="v">${lastDay ? (ago === 0 ? "heute" : `vor ${ago} T`) : "–"}</b><div class="muted">${stale ? '<span style="color:var(--warn)">lange her</span>' : "&nbsp;"}</div></div></div>
       <div class="discbars" id="disc-${k}"></div>
       <div class="muted">Letzte Einheit: ${lastTxt}</div><div class="muted">${thr}${tgt ? ` · ${tgt}` : ""}</div></div>`;
@@ -1105,7 +1105,7 @@ function renderEgym(k) {
   const curEnd = P > 1 ? wk.periodEnd : addDays(wk.start, 6);
   const past = P > 1
     ? k.periods.slice(0, -1).map((p) => ({ range: spanTxt(p.start, p.end), count: p.sets || 0, hit: (p.sets || 0) >= goal, tip: p.weekSets.map((n, j) => `Woche ${j + 1}: ${n} Sätze`).join(" · ") }))
-    : k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(w.start, addDays(w.start, 6)), count: w.sets || 0, hit: (w.sets || 0) >= goal, tip: [`${w.sessions} Einheiten`, w.minutes ? `${est(w.minutesSource)}${fmt(w.minutes)} min` : "", w.volumeKg ? `${fmt(w.volumeKg)} kg` : ""].filter(Boolean).join(" · ") }));
+    : k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(w.start, addDays(w.start, 6)), count: w.sets || 0, hit: (w.sets || 0) >= goal, tip: [`${w.sessions} Einheiten`, w.minutes ? `${est(w.minutesSource)}${fmtHm(w.minutes)}` : "", w.volumeKg ? `${fmt(w.volumeKg)} kg` : ""].filter(Boolean).join(" · ") }));
   const vt = k.volumeTrend;
   $("strength-card").hidden = false;
   $("strength").innerHTML = strengthCard({
@@ -1126,7 +1126,7 @@ function renderEgym(k) {
     try {
       const r = await fetch("/api/egym-sync", { method: "POST", headers: { Authorization: "Bearer " + localStorage.getItem("dashboard-token") } });
       const j = await r.json();
-      const mins = j.minutes ? " · Dauer " + Object.entries(j.minutes).map(([d, m]) => `${fmtDate(d)} ${m} min`).join(", ") : "";
+      const mins = j.minutes ? " · Dauer " + Object.entries(j.minutes).map(([d, m]) => `${fmtDate(d)} ${fmtHm(m)}`).join(", ") : "";
       const extra = j.reconcileError ? ` · Nachziehen fehlgeschlagen: ${j.reconcileError}` : ` · ${j.updated ?? 0} korrigiert, ${j.paired ?? 0} gekoppelt${mins}`;
       msg.textContent = j.ok ? (j.skipped ? "übersprungen: EGYM- oder Intervals-Zugang fehlt im Worker" : `${j.count} Einheit(en) übertragen${j.count ? extra : ""}`) : "Fehler: " + j.error;
     } catch (e) { msg.textContent = "Fehler: " + (e.message || e); }
@@ -1203,7 +1203,7 @@ function ideaCard(d) {
 /* Wochenvorschlag: Wochenrahmen des Coaches (montags per save_coach, Feld week_plan), steht bis zum nächsten Montag. Nur seine
    Zahlen, ohne Abhaken, ohne Abgleich mit den Einheiten und ohne Ampel. Die TSS-Untergrenze ist seine Regel (80 % der Obergrenze). */
 const PLAN_SPORT_LABEL = { lauf: "Laufen", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft" };
-const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}` : `${m} min`);
+const fmtMin = fmtHm;
 function weekPlanCard(d) {
   const p = d.coach?.week_plan;
   if (!p?.week || !p.targets?.length || d.today < p.week || d.today > addDays(p.week, 6)) return "";

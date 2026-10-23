@@ -13,6 +13,8 @@
     weekday: (iso) => new Date(iso + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short" }),
     fmtTime: (secs) => { const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = Math.round(secs % 60); return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`; },
     pace: (sec) => `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, "0")}`,
+    // Dauer aus Minuten: ab 60 min als 1h20m (volle Stunden 2h, Minuten zweistellig 1h05m), darunter 45m
+    hm: (min) => { if (min == null || !Number.isFinite(Number(min))) return "–"; const t = Math.round(Number(min)), sg = t < 0 ? "−" : "", a = Math.abs(t), h = Math.floor(a / 60), m = a % 60; return h ? `${sg}${h}h${m ? String(m).padStart(2, "0") + "m" : ""}` : `${sg}${m}m`; },
     addDays: (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10),
     dayDiff: (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000),
     dayRange: (from, to) => { const out = []; for (let d = from; d <= to; d = U.addDays(d, 1)) out.push(d); return out; },
@@ -90,41 +92,45 @@
   function bars(host, items, o) {
     const hasDev = o.valueLabels && items.some((w) => w.plan != null && w.value != null);
     const W = fitW(host, 480), H = hasDev ? 250 : 230, L = 44, R = 8, T = 24, B = hasDev ? 62 : 42;
-    const max = U.niceMax(Math.max(1, ...items.flatMap((w) => [w.value, w.plan]).filter((v) => v != null)));
+    const top = Math.max(1, ...items.flatMap((w) => [w.value, w.plan]).filter((v) => v != null));
+    // Dauer (fmtV): Achse in vollen Stunden, vier gleiche Schritte
+    const max = o.fmtV ? Math.ceil(Math.ceil(top / 60) / 4) * 4 * 60 : U.niceMax(top);
     const s = svg(W, H, o.label);
     const y = (v) => T + (H - T - B) * (1 - v / max);
-    for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, U.fmt(v, max < 10 ? 1 : 0))); }
-    s.append(el("text", { x: 4, y: 11 }, o.unit));
+    // fmtV: eigene Schreibweise der Werte (z. B. Dauer als 1h20m), dann ohne Einheit dahinter
+    const F = o.fmtV ? (v) => o.fmtV(v) : U.fmt, UN = o.fmtV ? "" : ` ${o.unit}`;
+    for (let i = 0; i <= 4; i++) { const v = (max / 4) * i; s.append(el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: i ? "grid-l" : "axis" }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, F(v, max < 10 ? 1 : 0))); }
+    if (!o.fmtV) s.append(el("text", { x: 4, y: 11 }, o.unit));
     const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.55, 46);
     items.forEach((w, i) => {
       const x = L + slot * i + (slot - bw) / 2;
-      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${U.fmt(w.value, max < 10 ? 1 : 0)} ${o.unit}${w.plan != null ? ` (${w.cap ? (w.floor ? `Korridor ${U.fmt(w.floor, o.dec ?? 0)}–` : "Obergrenze ") : "Ziel "}${U.fmt(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
+      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${F(w.value, max < 10 ? 1 : 0)}${UN}${w.plan != null ? ` (${w.cap ? (w.floor ? `Korridor ${F(w.floor, o.dec ?? 0)}–` : "Obergrenze ") : "Ziel "}${F(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
       // floor: Untergrenze des TSS-Korridors als dünne Marke unter der Obergrenze
-      if (w.floor != null) s.append(title(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.floor), y2: y(w.floor), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }), `Untergrenze: ${U.fmt(w.floor, o.dec ?? 0)} ${o.unit}`));
+      if (w.floor != null) s.append(title(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.floor), y2: y(w.floor), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }), `Untergrenze: ${F(w.floor, o.dec ?? 0)}${UN}`));
       if (o.valueLabels && w.partial && w.plan != null && w.plan > 0) {
         // Laufende Woche: Ist ist noch unvollständig, über dem Plan-Strich steht die Wochenplanung (Ziel bzw. Obergrenze),
         // der bisherige Wert nur über der Säule, wenn er Platz hat; unten, was noch offen ist
-        const d0 = o.dec ?? (w.cap ? 0 : 1), kind = w.cap ? (w.floor ? "Korridor" : "Obergrenze") : "Wochenziel", planTxt = `${w.floor ? `${U.fmt(w.floor, d0)}–` : ""}${U.fmt(w.plan, d0)}`;
-        s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, planTxt), `${kind}: ${planTxt} ${o.unit}`));
-        if (w.value && y(w.value) - y(w.plan) > 18) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, d0)));
+        const d0 = o.dec ?? (w.cap ? 0 : 1), kind = w.cap ? (w.floor ? "Korridor" : "Obergrenze") : "Wochenziel", planTxt = `${w.floor ? `${F(w.floor, d0)}–` : ""}${F(w.plan, d0)}`;
+        s.append(title(el("text", { x: x + bw / 2, y: y(w.plan) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--muted);font-size:11.5px" }, planTxt), `${kind}: ${planTxt}${UN}`));
+        if (w.value && y(w.value) - y(w.plan) > 18) s.append(el("text", { x: x + bw / 2, y: y(w.value) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, F(w.value, d0)));
         // capValue: nur die Sportarten mit Obergrenze (Schwimmen hat keine TSS-Grenze, steckt aber in der Säule)
         const dev = (w.capValue ?? w.value ?? 0) - w.plan, toFloor = w.floor ? w.floor - (w.capValue ?? w.value ?? 0) : 0;
-        const txt = w.cap ? (dev > 0 ? `+${U.fmt(dev, d0)} drüber` : toFloor > 0 ? `noch ${U.fmt(toFloor, d0)} bis Untergr.` : `bis ${U.fmt(-dev, d0)}`) : dev < 0 ? `noch ${U.fmt(-dev, d0)}` : "✓";
-        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${w.cap && dev > 0 ? "bad" : "muted"})` }, txt), `bisher ${U.fmt(w.capValue ?? w.value ?? 0, d0)} von ${w.cap ? "höchstens " : ""}${U.fmt(w.plan, d0)} ${o.unit}`));
+        const txt = w.cap ? (dev > 0 ? `+${F(dev, d0)} drüber` : toFloor > 0 ? `noch ${F(toFloor, d0)} bis Untergr.` : `bis ${F(-dev, d0)}`) : dev < 0 ? `noch ${F(-dev, d0)}` : "✓";
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${w.cap && dev > 0 ? "bad" : "muted"})` }, txt), `bisher ${F(w.capValue ?? w.value ?? 0, d0)} von ${w.cap ? "höchstens " : ""}${F(w.plan, d0)}${UN}`));
       } else if (o.valueLabels && w.cap && w.plan != null && w.plan > 0) {
         // Korridor bzw. Obergrenze statt Ziel (Wochenziele des Coaches, TSS): darüber rot, unter der Untergrenze gedämpft, dazwischen ✓
-        const d0 = o.dec ?? 0, range = `${w.floor ? `${U.fmt(w.floor, d0)}–` : "höchstens "}${U.fmt(w.plan, d0)}`;
-        s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value ?? 0, d0)), `${w.floor ? "Korridor" : "Obergrenze"}: ${range} ${o.unit}`));
+        const d0 = o.dec ?? 0, range = `${w.floor ? `${F(w.floor, d0)}–` : "höchstens "}${F(w.plan, d0)}`;
+        s.append(title(el("text", { x: x + bw / 2, y: y(Math.max(w.plan, w.value ?? 0)) - 8, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, F(w.value ?? 0, d0)), `${w.floor ? "Korridor" : "Obergrenze"}: ${range}${UN}`));
         const v = w.capValue ?? w.value ?? 0, dev = v - w.plan, under = w.floor ? w.floor - v : 0;
-        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : under > 0 ? "muted" : "ok"})` }, dev > 0 ? `+${U.fmt(dev, d0)} drüber` : under > 0 ? `−${U.fmt(under, d0)} unter` : "✓"), `${U.fmt(v, d0)} von ${range} ${o.unit}`));
+        s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${dev > 0 ? "bad" : under > 0 ? "muted" : "ok"})` }, dev > 0 ? `+${F(dev, d0)} drüber` : under > 0 ? `−${F(under, d0)} unter` : "✓"), `${F(v, d0)} von ${range}${UN}`));
       } else if (o.valueLabels && w.value != null) {
         // Zahl über Säule und Plan-Marke, damit der Plan-Strich sie nie schneidet
-        s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, U.fmt(w.value, o.dec ?? 1)));
+        s.append(el("text", { x: x + bw / 2, y: y(Math.max(w.value, w.plan ?? 0)) - 6, "text-anchor": "middle", style: "font-weight:700;fill:var(--text);font-size:11.5px" }, F(w.value, o.dec ?? 1)));
         // Abweichung zum Plan in einer eigenen Zeile unter dem Datum: grün bis 15 %, sonst gelb
         if (w.plan != null && w.plan > 0) {
           const dev = w.value - w.plan, off = Math.abs(dev) / w.plan > 0.15;
-          s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${off ? "warn" : "ok"})` }, `${dev > 0 ? "+" : dev < 0 ? "−" : "±"}${U.fmt(Math.abs(dev), o.dec ?? 1)}`), `Abweichung zum Plan (${U.fmt(w.plan, o.dec ?? 1)}): ${dev > 0 ? "+" : "−"}${U.fmt(Math.abs(dev), o.dec ?? 1)} ${o.unit}`));
+          s.append(title(el("text", { x: x + bw / 2, y: H - 24, "text-anchor": "middle", style: `font-size:11px;font-weight:600;fill:var(--${off ? "warn" : "ok"})` }, `${dev > 0 ? "+" : dev < 0 ? "−" : "±"}${F(Math.abs(dev), o.dec ?? 1)}`), `Abweichung zum Plan (${F(w.plan, o.dec ?? 1)}): ${dev > 0 ? "+" : "−"}${F(Math.abs(dev), o.dec ?? 1)}${UN}`));
         }
       }
       // schmal: nur jede zweite Woche beschriften (die laufende immer), damit die Daten nicht ineinanderlaufen
@@ -173,7 +179,7 @@
       for (const k of sports) {
         const v = w.by[k]; if (!v) continue;
         const bw = ((W - L - R) * v) / total;
-        s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--${o.prefix ?? "s"}-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${U.fmt(v)} ${unit})`));
+        s.append(title(el("rect", { x: L + ((W - L - R) * acc) / total, y, width: bw, height: 14, fill: `var(--${o.prefix ?? "s"}-${k})` }), `${names[k]}: ${Math.round((100 * v) / total)} % (${unit === "min" ? U.hm(v) : `${U.fmt(v)} ${unit}`})`));
         const pct = Math.round((100 * v) / total);
         if (bw >= 26) s.append(el("text", { x: L + ((W - L - R) * acc) / total + bw / 2, y: y + 11, "text-anchor": "middle", style: "fill:#1c2430;font-weight:700;font-size:10px;pointer-events:none" }, `${pct} %`));
         acc += v;
@@ -466,7 +472,7 @@
     const slot = (W - L - R) / weeks.length, bw = slot * 0.6;
     weeks.forEach((w, i) => {
       const cx = L + slot * i + slot / 2, m = Math.round(w.minutes);
-      if (m > 0) s.append(title(el("rect", { x: cx - bw / 2, y: y(m), width: bw, height: y(0) - y(m), rx: 3, fill: "var(--s-strength)", opacity: w.partial ? 0.55 : 1 }), `Woche ab ${U.fmtDate(w.weekStart)}: ${m} min Krafttraining${w.partial ? " – laufende Woche" : ""}`));
+      if (m > 0) s.append(title(el("rect", { x: cx - bw / 2, y: y(m), width: bw, height: y(0) - y(m), rx: 3, fill: "var(--s-strength)", opacity: w.partial ? 0.55 : 1 }), `Woche ab ${U.fmtDate(w.weekStart)}: ${U.hm(m)} Krafttraining${w.partial ? " – laufende Woche" : ""}`));
       s.append(el("text", { x: cx, y: (m > 0 ? y(m) : y(0)) - 6, "text-anchor": "middle" }, m));
       s.append(el("text", { x: cx, y: H - 22, "text-anchor": "middle" }, w.label));
     });
@@ -573,10 +579,10 @@
     for (const b of steps) {
       const h = Math.max(0.15, Math.min(1, ((b.pct ?? 70) - 40) / 90)) * (H - T - B);
       const x0 = x(t), w = Math.max(1, x(t + b.secs) - x0 - 1);
-      s.append(title(el("rect", { x: x0, y: H - B - h, width: w, height: h, rx: 2, fill: col(b.pct) }), `${U.fmt(b.secs / 60, b.secs % 60 ? 1 : 0)} min${b.pct != null ? ` · ${U.fmt(b.pct)} % (${lvl(b.pct)})` : ""}`));
+      s.append(title(el("rect", { x: x0, y: H - B - h, width: w, height: h, rx: 2, fill: col(b.pct) }), `${U.hm(b.secs / 60)}${b.pct != null ? ` · ${U.fmt(b.pct)} % (${lvl(b.pct)})` : ""}`));
       t += b.secs;
     }
-    s.append(el("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, `${U.fmt(total / 60)} min`));
+    s.append(el("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, U.hm(total / 60)));
     mount(host, s);
   }
 
@@ -619,8 +625,8 @@
       }
       // Tooltips: unsichtbare Streifen je Abschnitt
       const bw = (W - L - R) / pts.length;
-      for (const q of pts) s.append(title(el("rect", { x: x(q[0]), y: T, width: Math.max(1, bw), height: H - T - B, fill: "transparent" }), [`${U.fmt(q[0])} min`, q[1] != null ? (isPace ? `${U.pace(q[1])} /km` : `${U.fmt(q[1])} W`) : null, q[2] != null ? `${U.fmt(q[2])} bpm` : null].filter(Boolean).join(" · ")));
-      s.append(el("line", { x1: L, x2: W - R, y1: base, y2: base, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, `${U.fmt(tMax)} min`));
+      for (const q of pts) s.append(title(el("rect", { x: x(q[0]), y: T, width: Math.max(1, bw), height: H - T - B, fill: "transparent" }), [U.hm(q[0]), q[1] != null ? (isPace ? `${U.pace(q[1])} /km` : `${U.fmt(q[1])} W`) : null, q[2] != null ? `${U.fmt(q[2])} bpm` : null].filter(Boolean).join(" · ")));
+      s.append(el("line", { x1: L, x2: W - R, y1: base, y2: base, class: "axis" }), el("text", { x: L, y: H - 3 }, "0"), el("text", { x: W - R, y: H - 3, "text-anchor": "end" }, U.hm(tMax)));
       if (p.hr && hs.length) s.append(el("text", { x: (L + W - R) / 2, y: H - 3, "text-anchor": "middle", style: "fill:var(--hr)" }, "Puls (bpm) rechts"));
       mount(host, s);
     };
