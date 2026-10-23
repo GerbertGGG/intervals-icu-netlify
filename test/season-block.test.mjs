@@ -344,3 +344,21 @@ assert.equal(parseStrengthSets("Kraft 2× pro Woche"), null);
   assert.equal(tg.decoupling, null);
   assert.equal(tg.hrCap, 128);
 }
+
+// Satz-Ziel aus dem Rahmen des Coaches (strengthSets2w): laufende Woche plus Vorwoche, geht dem Blocktext vor
+{
+  const ev = { category: "SEASON_START", name: "Block A (12 Wochen)", start_date_local: "2026-10-19T00:00:00", description: "Standardregeln (Kraft ≥60 Sätze)" };
+  const blkA = resolveSeasonBlock([ev], "2026-11-04");
+  const strength = [{ date: "2026-10-14", sets: 60 }, { date: "2026-10-21", sets: 30 }, { date: "2026-10-28", sets: 40 }, { date: "2026-11-03", sets: 20 }];
+  const g = buildBlockGoals(blkA, { strength, frame: { strengthSets2w: 90 } }, "2026-11-04").find((x) => x.key === "strength");
+  assert.equal(g.label, "Kraft"); assert.equal(g.weekGoal, 90); assert.equal(g.source, "rahmen"); assert.equal(g.rollWeeks, 2);
+  assert.match(g.target, /≥ 90 Sätze in 2 Wochen/);
+  // Woche 19.10. mit Vorwoche: 60 + 30, Woche 26.10.: 30 + 40, Woche 02.11. (läuft): 40 + 20
+  assert.deepEqual(g.weeks.map((w) => [w.start, w.count, w.done, w.hit]), [["2026-10-19", 90, true, true], ["2026-10-26", 70, true, false], ["2026-11-02", 60, false, false]]);
+  assert.equal(g.status, "bad");
+  assert.deepEqual(g.calWeek, { start: "2026-10-26", end: "2026-11-08", count: 60 });
+  assert.match(g.note, /Diese Woche und Vorwoche: 60 von 90 Sätzen/);
+  // Heute (23.10.): 60 Sätze aus der Vorwoche, diese Woche noch keine
+  const now = buildBlockGoals(resolveSeasonBlock([ev], "2026-10-23"), { strength: strength.slice(0, 1), frame: { strengthSets2w: 90 } }, "2026-10-23").find((x) => x.key === "strength");
+  assert.equal(now.note, "Diese Woche und Vorwoche: 60 von 90 Sätzen");
+}
