@@ -53,4 +53,14 @@ assert.equal(buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", expe
 assert.equal(buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: { ...exp, status: "vorgeschlagen" }, trainingDays: td, sources: {} }).experiment.weekNo, null);
 const none = buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: null, trainingDays: td, sources: {} });
 assert.equal(none.experiment, null); assert.equal(none.trainingDays.length, 8);
+// Ausdauer im Experiment-Widget: dieselben Wochen wie die Karte "Woche", Sportarten auf run/bike/swim, Ziel je Woche
+{
+  const { computeWeekTotals } = await import("../src/week-totals.js");
+  const wt = computeWeekTotals([{ start_date_local: "2026-10-20T10:00:00", type: "Run", moving_time: 3600 }, { start_date_local: "2026-10-21T10:00:00", type: "WeightTraining", moving_time: 1800, description: "30 Sätze" }], "2026-10-22");
+  const e = buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: exp, trainingDays: td, weekTotals: wt, sources: {} }).endurance;
+  assert.equal(e.weeks.length, 8);
+  assert.deepEqual(e.weeks.at(-1), { week: "2026-10-19", complete: false, min: 60, goalMin: 300, by: { run: 60, bike: 0, swim: 0 } });
+  assert.deepEqual([e.streak, e.streakPct, e.sets2w, e.goalSets2w], [0, 90, 30, 90]);
+  assert.equal(buildWidgetExperiment({ generatedAt: "t", today: "2026-10-22", experiment: exp, trainingDays: td, sources: {} }).endurance, null);
+}
 console.log("experiment tests ok");
