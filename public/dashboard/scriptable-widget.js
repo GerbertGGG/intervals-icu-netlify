@@ -642,7 +642,9 @@ function buildWidget(res) {
   // Platz unter der Woche (Punkte), geschaetzt aus dem, was darueber steht: gemessen frei sind 60 pt im grossen Widget
   // (Hoehe 354) bei drei Zeilen Hinweis, ohne Urteils-Zeile, ohne Einheit heute und ohne Quellen-Hinweis
   const room = (extra) => 60 + (widgetSize().large - 354) + 16 * (3 - nLines) - (go || !c0 ? 27 : 0) - (res.stale || (d.sourcesFailed || []).length ? 18 : 0) - extra;
-  if (wk.rings && !p) return buildWeekTargets(w, W, d, wk, res, room(0));
+  // Wochenziele des Coaches als eine Zeile ueber der Woche ("Ausdauer 2:19/5:00 · Kraft 60/90"), ohne Wertung
+  const GL = wk.goals ? 18 : 0;
+  if (wk.rings && !p) { goalsLine(w, W, wk.goals); return buildWeekTargets(w, W, d, wk, res, room(GL)); }
   const tr = w.addStack(); tr.centerAlignContent(); tr.spacing = 9; tr.size = new Size(W, 0);
   if (p) sportBadge(tr, p.sport, 32);
   else { const c = tr.addStack(); c.size = new Size(32, 32); c.cornerRadius = 16; c.backgroundColor = COL.tile; c.centerAlignContent(); c.addSpacer(); symbol(c, "bed.double.fill", 16, COL.muted); c.addSpacer(); }
@@ -664,7 +666,8 @@ function buildWidget(res) {
   if (showProfile) { w.addSpacer(8); const im = w.addImage(profileImage(W, 22, p.steps, p.sport)); im.imageSize = new Size(W, 22); }
   w.addSpacer(10);
 
-  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, room(42 + (showProfile ? 30 : 0)));
+  goalsLine(w, W, wk.goals);
+  if (wk.rings) return buildWeekTargets(w, W, d, wk, res, room(GL + 42 + (showProfile ? 30 : 0)));
 
   // 5. Woche: Kapseln Mo bis So, rechts TSS bisher (gegen Wochenziel oder Vorwoche) und die Frische als kleine Zeile
   const wr = w.addStack(); wr.bottomAlignContent(); wr.size = new Size(W, 0); wr.spacing = 8;
@@ -691,6 +694,18 @@ function buildWidget(res) {
   notice(w, res, d);
   w.addSpacer();
   return w;
+}
+
+// Zeile mit den Wochenzielen des Coaches (Worker: week.goals): Ausdauer h:mm gegen das Wochenziel, Kraftsaetze in 2 Wochen.
+// Werte in Textfarbe, Ziele gedaempft; kein Rot unter dem Ziel. Ohne Daten (alter Worker) keine Zeile.
+function goalsLine(w, W, g) {
+  if (!g) return;
+  const hm = (m) => `${Math.floor(Math.max(0, m) / 60)}:${String(Math.round(Math.max(0, m)) % 60).padStart(2, "0")}`;
+  const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0);
+  text(row, "Ausdauer ", FS.xs, { color: COL.muted, minScale: 0.7 }); text(row, hm(g.min), FS.xs, { bold: true, minScale: 0.7 }); text(row, `/${hm(g.goalMin)}`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  text(row, " · Kraft ", FS.xs, { color: COL.muted, minScale: 0.7 }); text(row, fmt(g.sets2w), FS.xs, { bold: true, minScale: 0.7 }); text(row, `/${fmt(g.goalSets2w)}`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  row.addSpacer();
+  w.addSpacer(6);
 }
 
 // Ringe im Apple-Stil wie auf der Uhr: aussen Rad, Mitte Lauf, innen Schwimmen; Grundring in der Sportfarbe gedimmt,
