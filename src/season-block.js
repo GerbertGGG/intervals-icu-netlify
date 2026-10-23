@@ -573,16 +573,19 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     const cfg = targets.bike;
     const cand = (input.rides ?? []).filter((r) => inWin(r.date, w) && isBikeCompare(r, cfg));
     const noHr = cand.filter((r) => !Number.isFinite(r.decoupling) && r.hasHr === false).length;
-    // Verlangt das Protokoll Einrollen, zaehlt eine Fahrt ohne Einrollen (Fenster ab Minute 0) nicht fuers Ziel, die letzte steht
-    // nur als Orientierung da (z. B. die erste Fahrt 19.10.2026 ohne Einrollen)
-    const unwarmed = cfg.warmupMin ? cand.filter((r) => r.noWarmup && Number.isFinite(r.decoupling)).sort((a, b) => a.date.localeCompare(b.date)) : [];
+    // Ausgangswerte (baseline, session-tests.js: ohne Einrollen oder "Ausgangswert" im Namen, z. B. 19.10.2026) zaehlen nicht
+    // ins Mittel fuers Ziel; sie stehen als baselines (Anzeige) und die letzte als Orientierung da. Ohne Klassifizierung: Fahrt
+    // ohne Einrollen, wenn das Protokoll Einrollen verlangt
+    const isBase = (r) => Boolean(r.baseline) || Boolean(cfg.warmupMin && r.noWarmup);
+    const unwarmed = cand.filter((r) => isBase(r) && Number.isFinite(r.decoupling)).sort((a, b) => a.date.localeCompare(b.date));
     const lastUnwarmed = unwarmed[unwarmed.length - 1];
     const g = decouplingGoal({
       key: "bikeDecoupling", sport: "bike", label: "Rad (Rolle): aerobe Stabilität", sessions: input.rides ?? [], cfg, w, basis,
-      comparable: (r) => isBikeCompare(r, cfg) && !(cfg.warmupMin && r.noWarmup),
+      comparable: (r) => isBikeCompare(r, cfg) && !isBase(r),
       extraNotes: [noHr ? `${noHr}× ohne Puls – ohne Pulsgurt gibt es kein Decoupling` : null,
-        unwarmed.length ? `${unwarmed.length}× ohne Einrollen, zählt nicht fürs Ziel (zuletzt ${lastUnwarmed.date.slice(8, 10)}.${lastUnwarmed.date.slice(5, 7)}.: ${String(r1(lastUnwarmed.decoupling)).replace(".", ",")} %)` : null],
-      extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null, orientation: lastUnwarmed ? { date: lastUnwarmed.date, value: r1(lastUnwarmed.decoupling) } : null },
+        unwarmed.length ? `${unwarmed.length}× Ausgangswert, zählt nicht fürs Ziel (zuletzt ${lastUnwarmed.date.slice(8, 10)}.${lastUnwarmed.date.slice(5, 7)}.: ${String(r1(lastUnwarmed.decoupling)).replace(".", ",")} %)` : null],
+      extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null, orientation: lastUnwarmed ? { date: lastUnwarmed.date, value: r1(lastUnwarmed.decoupling) } : null,
+        baselines: unwarmed.slice(-3).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(Number.isFinite(x.mainWatts) ? { watts: Math.round(x.mainWatts) } : {}), ...(x.noWarmup ? { noWarmup: true } : {}), ...(x.testReason ? { reason: x.testReason } : {}) })) },
     });
     const last = g.series.slice(-g.lastN);
     // Temperatur des Radcomputers bleibt draussen: der Sensor misst Koerperwaerme mit

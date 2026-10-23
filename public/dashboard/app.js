@@ -1056,7 +1056,8 @@ function renderBlock(SB, deloads = []) {
     } else if (g.key === "runStable") {
       vis = g.tests.length ? `<div class="sub">${g.tests.map((t) => `${esc(t.label)} ${fmtDate(t.date)}: ${fmtStable(t.stableMin)}`).join(" · ")}</div>` : "";
     } else if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
-      vis = bars(g.series.map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.noWarmup ? " · ohne Einrollen" : ""}${x.reason ? ` · ${x.reason}` : ""}` })), g.max, g.must);
+      // Ausgangswerte (baseline) hell vorne: angezeigt, aber nicht im Mittel fürs Ziel
+      vis = bars([...(g.baselines ?? []).map((x) => ({ ...x, muted: true, base: true })), ...g.series].map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.noWarmup ? " · ohne Einrollen" : ""}${x.reason ? ` · ${x.reason}` : ""}${x.base ? " · Ausgangswert, zählt nicht fürs Ziel" : ""}`, muted: x.muted })), g.max, g.must);
     } else if (g.key === "swimTest") {
       vis = g.tests.length ? bars(g.tests.map((x) => ({ v: x.slowerPer100, t: `${fmtDate(x.date)}: ${x.t1} / ${x.t2}${x.pauseSec != null ? ` · Pause ${x.pauseSec} s` : ""}` })), g.maxSlowerPer100) : "";
     } else if (g.key === "ramp") {

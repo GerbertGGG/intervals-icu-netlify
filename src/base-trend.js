@@ -32,10 +32,10 @@ export function buildBaseTrend(sessions, bike = null) {
     ? (sessions?.rides ?? [])
       .filter((r) => Number.isFinite(r.mainHr) && isBikeCompare(r, bike))
       .sort((a, b) => a.date.localeCompare(b.date))
-      .map((r) => ({ date: r.date, hr: r.mainHr, watts: r.mainWatts ?? null, decoupling: r.decoupling ?? null, noWarmup: Boolean(r.noWarmup) }))
+      .map((r) => ({ date: r.date, hr: r.mainHr, watts: r.mainWatts ?? null, decoupling: r.decoupling ?? null, noWarmup: Boolean(r.noWarmup), baseline: Boolean(r.baseline) }))
     : [];
-  // Fahrten ohne Einrollen verschieben den Puls im Fenster: im Vergleich nur die mit Einrollen
-  const warm = rides.filter((r) => !r.noWarmup);
+  // Fahrten ohne Einrollen verschieben den Puls im Fenster, Ausgangswerte (baseline) zaehlen nicht: im Vergleich nur die anderen
+  const warm = rides.filter((r) => !r.noWarmup && !r.baseline);
   if (!runs.length && !rides.length) return null;
   return {
     runs: runs.slice(-T.keep), runTrend: compare(runs.filter((r) => !r.heat).map((r) => r.ef), "up", T.efNoisePct, true),

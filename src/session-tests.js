@@ -6,6 +6,8 @@
 //                  Leistung heraus. Beim Rad gibt es keine Blocktests.
 // Termine, HF-Deckel und Vergleichsleistung kommen aus dem SEASON_START-Eintrag (testConfigOf), sonst aus TEST_FALLBACK.
 // Der Name wirkt nur als Override fuer Grenzfaelle (nameOverride). Jede Einheit traegt testReason.
+// baseline (nur Rad): Ausgangswert, wird angezeigt, zaehlt aber nicht ins Mittel fuers Blockziel – Fahrt ohne Einrollen
+// (z. B. 19.10.2026 nach Krankheit, "nur Orientierung") oder "Ausgangswert" im Namen.
 
 const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
 const addDays = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
@@ -28,14 +30,15 @@ export const TEST_FALLBACK = { testDates: ["2026-10-23", "2026-11-08", "2026-12-
 export const TEST_CATEGORY_DE = { runBlocktest: "Lauf-Blocktest", runTrend: "Lauf-Trend", bikeCompare: "Rad-Vergleich" };
 
 // Override ueber den Namen: "kein Test" schliesst aus, "Blocktest"/"Basistest" erzwingt den Lauf-Blocktest, "Vergleich" den
-// Rad-Vergleich. Gilt nur fuer die passende Sportart (ein Rad heisst nie Blocktest).
+// Rad-Vergleich, "Ausgangswert" den Rad-Vergleich als baseline. Gilt nur fuer die passende Sportart (ein Rad heisst nie Blocktest).
 export function nameOverride(name) {
   const n = String(name ?? "");
   if (/kein\s*test/i.test(n)) return "exclude";
   if (/blocktest|basistest/i.test(n)) return "runBlocktest";
-  if (/vergleich/i.test(n)) return "bikeCompare";
+  if (/vergleich|ausgangswert/i.test(n)) return "bikeCompare";
   return null;
 }
+export const isBaselineName = (name) => /ausgangswert/i.test(String(name ?? "")) && !/kein\s*test/i.test(String(name ?? ""));
 export const isTestRun = (a) => String(a?.type ?? "").toLowerCase() === "run";
 export const isTestRide = (a) => /^(ride|virtualride)$/i.test(String(a?.type ?? ""));
 
@@ -170,8 +173,9 @@ export function classifyRide(a, stats, cfg, rules = TEST_RULES) {
   const decoupling = useIcu ? Math.round(icuDec * 10) / 10 : stats.decoupling;
   const decSource = decoupling == null ? null : useIcu ? "intervals" : "streams";
   const decTxt = decSource === "intervals" ? "Decoupling von Intervals" : decSource === "streams" ? "Decoupling selbst gerechnet" : "kein Decoupling (Puls fehlt)";
+  const baseline = win.noWarmup || isBaselineName(a?.name);
   return {
-    ...base, category: "bikeCompare", mainWatts: stats.avgWatts, mainHr: stats.hr, vi: stats.vi, decoupling, decSource,
-    testReason: `Ride${win.forced ? `, Name „${String(a.name).trim()}“ (Override)` : ""}: ${facts}, ${warmTxt}, ${decTxt}`,
+    ...base, category: "bikeCompare", baseline, mainWatts: stats.avgWatts, mainHr: stats.hr, vi: stats.vi, decoupling, decSource,
+    testReason: `Ride${win.forced ? `, Name „${String(a.name).trim()}“ (Override)` : ""}: ${facts}, ${warmTxt}, ${decTxt}${baseline ? ", Ausgangswert (baseline, zählt nicht fürs Ziel)" : ""}`,
   };
 }

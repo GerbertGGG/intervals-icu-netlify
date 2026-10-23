@@ -19,7 +19,7 @@ assert.deepEqual([cfg.testSource, cfg.hrCap, cfg.bikeWatts, cfg.warnings], ["tex
 console.log("test config ok");
 
 assert.equal(nameOverride("Vergleichstest"), "bikeCompare"); assert.equal(nameOverride("Basistest"), "runBlocktest");
-assert.equal(nameOverride("Blocktest – kein Test"), "exclude"); assert.equal(nameOverride("LIT"), null);
+assert.equal(nameOverride("Blocktest – kein Test"), "exclude"); assert.equal(nameOverride("Ausgangswert"), "bikeCompare"); assert.equal(nameOverride("LIT"), null);
 
 // ---------- Laufen ----------
 const run = (id, date, min, hr, o = {}) => ({ id, type: "Run", start_date_local: `${date}T09:00:00`, moving_time: min * 60, average_heartrate: hr, name: "Bobingen Laufen", ...o });
@@ -54,7 +54,11 @@ const statsOf = (a, st) => { const w = rideWindowOf(a); return rideWindowStats(s
   const t = secs(4200), st = streams(t.map((x) => (x < 600 ? 125 : 166)), t.map((x) => (x < 2400 ? 120 : 124)));
   const a = ride({});
   const c = classifyRide(a, statsOf(a, st), cfg);
-  assert.deepEqual([c.category, c.decSource, c.decoupling, c.mainWatts, c.vi, c.mainMin], ["bikeCompare", "intervals", 3.1, 166, 1, 60]);
+  assert.deepEqual([c.category, c.baseline, c.decSource, c.decoupling, c.mainWatts, c.vi, c.mainMin], ["bikeCompare", false, "intervals", 3.1, 166, 1, 60]);
+  // "Ausgangswert" im Namen: Rad-Vergleich als baseline, auch mit Einrollen und anderer Leistung
+  const cb = classifyRide({ ...a, name: "Ausgangswert Rolle" }, statsOf(a, streams(t.map(() => 150), t.map(() => 120))), cfg);
+  assert.deepEqual([cb.category, cb.baseline], ["bikeCompare", true]); assert.match(cb.testReason, /Ausgangswert \(baseline, zählt nicht fürs Ziel\)$/);
+  assert.equal(classifyRide({ ...a, name: "Ausgangswert kein Test" }, null, cfg).category, null);
   assert.equal(c.testReason, "Ride: Hauptteil 60 min, 166 W, VI 1, Einrollen 10 min, Decoupling von Intervals");
   // 90 min Fahrt (danach frei): Intervals-Wert umfasst mehr als das Messfenster, selbst gerechnet: 124/120 − 1 = 3,3 %
   const t2 = secs(5400), st2 = streams(t2.map((x) => (x < 600 ? 125 : x < 4200 ? 166 : 120)), t2.map((x) => (x < 2400 ? 120 : 124)));
@@ -93,8 +97,8 @@ const statsOf = (a, st) => { const w = rideWindowOf(a); return rideWindowStats(s
   const a = { id: "i198960592", type: "VirtualRide", name: "Vergleichstest", moving_time: 3600, icu_warmup_time: 0, icu_cooldown_time: 0, decoupling: 9.803871 };
   const t = secs(3600), st = streams(t.map(() => 165), t.map((x) => (x < 1800 ? 96 : 106)));
   const c = classifyRide(a, statsOf(a, st), cfg);
-  assert.deepEqual([c.category, c.noWarmup, c.decSource, c.decoupling, c.mainMin], ["bikeCompare", true, "intervals", 9.8, 60]);
-  assert.equal(c.testReason, "Ride, Name „Vergleichstest“ (Override): Hauptteil 60 min, 165 W, VI 1, ohne Einrollen, Decoupling von Intervals");
+  assert.deepEqual([c.category, c.baseline, c.noWarmup, c.decSource, c.decoupling, c.mainMin], ["bikeCompare", true, true, "intervals", 9.8, 60]);
+  assert.equal(c.testReason, "Ride, Name „Vergleichstest“ (Override): Hauptteil 60 min, 165 W, VI 1, ohne Einrollen, Decoupling von Intervals, Ausgangswert (baseline, zählt nicht fürs Ziel)");
   // "kein Test" schließt aus, auch die Sportart Ride ohne Leistung im Namen
   assert.equal(classifyRide({ ...a, name: "Vergleich kein Test" }, null, cfg).category, null);
   assert.equal(classifyRide({ type: "Run" }, null, cfg), null);

@@ -252,7 +252,12 @@ assert.equal(/°C|Temperatur/.test(JSON.stringify(gb)), false);
 // Fahrt ohne Einrollen (Protokoll verlangt 10 min): zählt nicht fürs Ziel, nur als Orientierung
 const gnw = buildBlockGoalsFull(bR, { rides: [{ ...rides[0], date: "2026-10-19", decoupling: 9.8, noWarmup: true }, rides[0]] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
 assert.equal(gnw.count, 1); assert.equal(gnw.value, 4); assert.deepEqual(gnw.orientation, { date: "2026-10-19", value: 9.8 });
-assert.ok(gnw.hints.some((h) => /1× ohne Einrollen, zählt nicht fürs Ziel \(zuletzt 19\.10\.: 9,8 %\)/.test(h)));
+assert.ok(gnw.hints.some((h) => /1× Ausgangswert, zählt nicht fürs Ziel \(zuletzt 19\.10\.: 9,8 %\)/.test(h)));
+// Klassifizierte Ausgangswerte (baseline): angezeigt, nicht im Mittel – auch mit Einrollen, wenn so benannt
+const cr = (date, dec, o = {}) => ({ date, durationMin: 70, decoupling: dec, mainWatts: 165, hasHr: true, category: "bikeCompare", baseline: false, testReason: "Ride", ...o });
+const gbl = buildBlockGoalsFull(bR, { rides: [cr("2026-10-19", 9.8, { baseline: true, noWarmup: true }), cr("2026-10-26", 4), cr("2026-11-02", 12, { baseline: true }), cr("2026-11-09", 3)] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
+assert.deepEqual([gbl.count, gbl.value, gbl.series.map((x) => x.date)], [2, 3.5, ["2026-10-26", "2026-11-09"]]);
+assert.deepEqual(gbl.baselines.map((x) => [x.date, x.value]), [["2026-10-19", 9.8], ["2026-11-02", 12]]);
 // Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 0–60 stabil, 0–75 ok, 0–90 drüber
 {
   const n = 100 * 60, time = Array.from({ length: n }, (_, i) => i), velocity_smooth = Array(n).fill(2.5);
