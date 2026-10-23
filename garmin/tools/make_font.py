@@ -7,10 +7,10 @@ wght=N setzt bei variablen Schriften die Stärke (z. B. 700), track=N ändert de
 (negativ = enger, wie letter-spacing).
 Die Schriften des Zifferblatts sind Inter Tight (SIL Open Font License, fonts.google.com/specimen/Inter+Tight),
 die variable .ttf herunterladen (InterTight[wght].ttf):
-  python3 garmin/tools/make_font.py InterTight.ttf 110 time digits wght=700 track=-4
-  python3 garmin/tools/make_font.py InterTight.ttf 22 val wght=700
-  python3 garmin/tools/make_font.py InterTight.ttf 14 cap wght=600
-  python3 garmin/tools/make_font.py InterTight.ttf 12 tag wght=700
+  python3 garmin/tools/make_font.py InterTight.ttf 100 time digits wght=700 track=-4
+  python3 garmin/tools/make_font.py InterTight.ttf 30 val wght=700
+  python3 garmin/tools/make_font.py InterTight.ttf 21 cap wght=600
+  python3 garmin/tools/make_font.py InterTight.ttf 17 tag wght=700
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys

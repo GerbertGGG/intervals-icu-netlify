@@ -4,15 +4,15 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Modular�
 
 Fest von oben nach unten:
 
-- **Kopfzeile**: Datum („DO 23. OKT“), Akku in Prozent (grau, ab 20 % orange, ab 10 % rot, beim Laden grün) und das Urteil des Coaches für heute als Wort (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage nichts. Eine eigene Ampel hat die Uhr nicht.
+- **Kopfzeile**: Datum („DO 23.“), Akku in Prozent (grau, ab 20 % orange, ab 10 % rot, beim Laden grün) und das Urteil des Coaches für heute als Wort (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage nichts. Eine eigene Ampel hat die Uhr nicht.
 - **Uhrzeit**, groß, ohne führende Null.
-- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender), groß in Sportfarbe, darunter ein Balken, der sich zum Ziel füllt. Ziel erreicht: Haken, ohne Ziel „--“.
+- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender), groß in Sportfarbe mit Minutenzeichen (95'), darunter ein Balken, der sich zum Ziel füllt. Ziel erreicht: Haken, ohne Ziel „--“.
 
 Die **Karte in der Mitte** und die Zeile ganz unten wechseln:
 
-- **Morgens bis 12 Uhr**: Schlaf (lila) und HRV von heute mit der eigenen Basis (Ø), darunter die HRV der letzten 7 Tage als Balken, heute grün, wenn über der Basis, die Basis gestrichelt. Unten die Kopfzeile des Coaches von heute (ohne sie die nächste Einheit).
+- **Morgens bis 12 Uhr**: Schlaf (lila) und HRV von heute mit der eigenen Basis (Ø), darunter die HRV der letzten 7 Tage als Balken, heute grün, wenn über der Basis, die Basis gestrichelt. Unten die Kopfzeile des Coaches von heute in Blau, auf 20 Zeichen gekürzt (ohne sie die nächste Einheit).
 - **Bis 3 Stunden nach einer Einheit** (von heute): Sportart mit Startzeit, Strecke, Zeit (h:mm), Pace oder Watt und Puls (nur, wenn das Dashboard ihn für die Einheit zeigt). Rechts oben „LÄNGSTE SEIT N WO.“, wenn die letzte mindestens so lange Einheit derselben Sportart zwei Wochen oder länger zurückliegt. Unten die nächste Einheit.
-- **Sonst (tagsüber)**: die Woche Mo bis So, je Tag die Minuten je Sportart übereinander, erledigt gefüllt, geplant als Umriss; oben rechts die Ausdauer der Woche gegen das Ziel des Coaches. Unten die nächste Einheit („Heute noch: Lauf 45 min“, „Morgen: Rad 60 min“).
+- **Sonst (tagsüber)**: die Woche Mo bis So, je Tag die Minuten je Sportart übereinander, erledigt gefüllt, geplant als Umriss; oben rechts die Ausdauer der Woche gegen das Ziel des Coaches. Unten die nächste Einheit („Heute Lauf 45'“, „Morgen Rad 60'“).
 
 Essen, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `ti`, `sl`, `hv`, `hm`, `cl`, `wd`, `wm` und `la`.
 
@@ -48,6 +48,6 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 ## Hinweise
 
-- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter Tight** (SIL Open Font License) in `resources/fonts/`: `time` (Uhrzeit, fett, nur Ziffern und gleich breit), `val` (Werte in Karte und unterer Reihe), `cap` (Kopfzeile, Zeile unten), `tag` (Beschriftungen). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt, Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter Tight von Google Fonts).
+- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter Tight** (SIL Open Font License) in `resources/fonts/`: `time` (Uhrzeit, fett, nur Ziffern und gleich breit), `val` (Werte in Karte und unterer Reihe), `cap` (Kopfzeile, Zeile unten), `tag` (Beschriftungen). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt (Beschriftungen 17, Kopf- und Fußzeile 21, Werte 30, Uhrzeit 100 Pixel; kleiner ist auf der Uhr schlecht lesbar), Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter Tight von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, steht in der Kopfzeile ein `!` statt des Coach-Urteils.

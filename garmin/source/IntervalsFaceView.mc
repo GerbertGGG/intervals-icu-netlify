@@ -31,24 +31,24 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const MORNING_END = 12;      // bis zu dieser Stunde die Morgenkarte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
-    const TOP_Y = 58;
-    const TIME_Y = 124;
-    const CARD_X = 46;
-    const CARD_Y = 196;
-    const CARD_W = 362;
-    const CARD_H = 112;
-    const PAD = 18;
-    const HEAD_Y = 222;
-    const BARS_TOP = 236;
-    const BARS_BOTTOM = 280;
-    const DAYS_Y = 298;
-    const CELL_Y = 258;
-    const CELL_TAG_Y = 276;
-    const ROW_TAG_Y = 330;
-    const ROW_VAL_Y = 354;
-    const ROW_BAR_Y = 362;
-    const ROW_DX = 103;
-    const NEXT_Y = 404;
+    const TOP_Y = 76;
+    const TIME_Y = 140;
+    const CARD_X = 40;
+    const CARD_Y = 194;
+    const CARD_W = 374;
+    const CARD_H = 128;
+    const PAD = 20;
+    const HEAD_Y = 226;
+    const BARS_TOP = 238;
+    const BARS_BOTTOM = 288;
+    const DAYS_Y = 312;
+    const CELL_Y = 272;
+    const CELL_TAG_Y = 300;
+    const ROW_TAG_Y = 346;
+    const ROW_VAL_Y = 378;
+    const ROW_BAR_Y = 386;
+    const ROW_DX = 108;
+    const NEXT_Y = 420;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -61,7 +61,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Inter Tight (erzeugt mit tools/make_font.py, Größen für 416 Pixel)
+        // Bitmap-Schriften aus Inter Tight (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter
+        // 17 Pixel, sonst auf der Uhr schlecht lesbar)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _val = WatchUi.loadResource(Rez.Fonts.Val) as Graphics.FontType;
         _cap = WatchUi.loadResource(Rez.Fonts.Cap) as Graphics.FontType;
@@ -134,15 +135,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Oben: Datum, Akku, Urteil des Coaches ---------------------------------------------
-    // "DO 23. OKT · 78 % · LOCKER": Akku grau (orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden), das Urteil (go aus
+    // "DO 23. · 78 % · LOCKER": Akku grau (orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden), das Urteil (go aus
     // save_coach) als Wort in seiner Farbe. Eine eigene Ampel hat die Uhr nicht. Daten älter als eine Stunde: statt des Urteils
     // ein oranges "!" mit dem Fehlercode des letzten Abrufs.
 
     private function drawTopLine(dc as Dc, data as Dictionary?) as Void {
         var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
         var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
-        var months = ["JAN", "FEB", "MÄR", "APR", "MAI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ"];
-        var items = [["t", days[(info.day_of_week as Number) - 1] + " " + info.day + ". " + months[(info.month as Number) - 1], FG, _cap]] as Array<Array>;
+        var items = [["t", days[(info.day_of_week as Number) - 1] + " " + info.day + ".", FG, _cap]] as Array<Array>;
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
@@ -178,10 +178,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var today = hv != null && hv.size() > 0 ? numOrNull(hv[hv.size() - 1]) : null;
         var hi = today != null && hm != null && today >= hm ? OK : FG;
         var y = px(HEAD_Y);
-        drawItems(dc, px(CARD_X + PAD), y, [["t", "SCHLAF ", SEC, _tag], ["t", sl != null ? hours((sl * 60).toNumber()) + " h" : "--", SLEEP, _cap]], -1);
+        drawItems(dc, px(CARD_X + PAD), y, [["t", "SCHLAF ", SEC, _tag], ["t", sl != null ? hours((sl * 60).toNumber()) : "--", SLEEP, _cap]], -1);
         var right = [["t", "HRV ", SEC, _tag], ["t", today != null ? today.toNumber().toString() : "--", hi, _cap]] as Array<Array>;
         if (hm != null) {
-            right.add(["t", " · Ø " + hm.toNumber().toString(), SEC, _tag]);
+            right.add(["t", " Ø " + hm.toNumber().toString(), SEC, _tag]);
         }
         drawItems(dc, px(CARD_X + CARD_W - PAD), y, right, 1);
         if (hv == null || hv.size() == 0) {
@@ -230,9 +230,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawItems(dc, px(CARD_X + PAD), y, [["t", "WOCHE", SEC, _tag]], -1);
         var wm = data.get("wm") as Array?;
         if (wm != null && wm.size() == 2 && numOrNull(wm[0]) != null) {
-            var right = [["t", hours((wm[0] as Numeric).toNumber()), FG, _val]] as Array<Array>;
+            var right = [["t", hours((wm[0] as Numeric).toNumber()), FG, _cap]] as Array<Array>;
             if (numOrNull(wm[1]) != null && (wm[1] as Numeric) > 0) {
-                right.add(["t", " / " + hours((wm[1] as Numeric).toNumber()) + " h", SEC, _tag]);
+                right.add(["t", " / " + hours((wm[1] as Numeric).toNumber()), SEC, _tag]);
             }
             drawItems(dc, px(CARD_X + CARD_W - PAD), y, right, 1);
         }
@@ -299,7 +299,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawCard(dc, blend(CARD, color, 0.08));
         var y = px(HEAD_Y);
         var t = la.get("t");
-        var head = sportName(la.get("s")).toUpper() + (t instanceof Lang.String ? " · " + t : "");
+        var head = sportName(la.get("s")).toUpper() + (t instanceof Lang.String ? " " + t : "");
         drawItems(dc, px(CARD_X + PAD), y, [["t", head, color, _tag]], -1);
         var lw = numOrNull(la.get("lw"));
         if (lw != null) {
@@ -338,12 +338,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var goal = (e[2] as Numeric).toNumber();
             var open = goal - done;
             if (open > 0) {
-                drawItems(dc, x, px(ROW_VAL_Y), [["t", open.toString(), color, _val], ["t", " min", SEC, _tag]], 0);
+                drawItems(dc, x, px(ROW_VAL_Y), [["t", open.toString(), color, _val], ["t", "'", SEC, _val]], 0);
             } else {
                 drawCheck(dc, x, px(ROW_VAL_Y) - px(8), color);
             }
             var bw = px(64);
-            var bh = px(4) > 2 ? px(4) : 2;
+            var bh = px(5) > 2 ? px(5) : 2;
             dc.setColor(BAR, Graphics.COLOR_TRANSPARENT);
             dc.fillRoundedRectangle(x - bw / 2, px(ROW_BAR_Y), bw, bh, bh / 2);
             var fw = (bw * frac(done, goal)).toNumber();
@@ -355,38 +355,38 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Zeile ganz unten ----------------------------------------------------------------------
-    // Morgens die Kopfzeile des Coaches (cl), ohne sie die nächste Einheit.
+    // Morgens die Kopfzeile des Coaches (cl) in Blau, ohne sie die nächste Einheit.
 
     private function drawCoachLine(dc as Dc, data as Dictionary) as Void {
         var cl = data.get("cl");
         if (cl instanceof Lang.String && cl.length() > 0) {
-            drawItems(dc, _cx, px(NEXT_Y), [["t", "Coach: ", SEC, _cap], ["t", cl, FG, _cap]], 0);
+            drawItems(dc, _cx, px(NEXT_Y), [["t", cl, ACCENT, _cap]], 0);
         } else {
             drawNext(dc, data);
         }
     }
 
-    // Nächste Einheit (next: d Tage ab heute, s Sportart, m Minuten, km): "Heute noch: Lauf 45 min", "Morgen: Rad 60 min",
-    // sonst mit Wochentag
+    // Nächste Einheit (next: d Tage ab heute, s Sportart, m Minuten, km): "Heute Lauf 45'", "Morgen Rad 60'", sonst mit
+    // Wochentag ("Sa Rad 90'")
     private function drawNext(dc as Dc, data as Dictionary) as Void {
         var nx = data.get("next") as Dictionary?;
         if (nx == null) {
             return;
         }
         var d = numOrNull(nx.get("d"));
-        var when = "Heute noch: ";
+        var when = "Heute ";
         if (d != null && d.toNumber() == 1) {
-            when = "Morgen: ";
+            when = "Morgen ";
         } else if (d != null && d.toNumber() > 1) {
             var names = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
             var dow = (Gregorian.info(Time.now(), Time.FORMAT_SHORT).day_of_week as Number) - 1;
-            when = names[(dow + d.toNumber()) % 7] + ": ";
+            when = names[(dow + d.toNumber()) % 7] + " ";
         }
         var what = sportName(nx.get("s"));
         var m = numOrNull(nx.get("m"));
         var km = numOrNull(nx.get("km"));
         if (m != null) {
-            what += " " + m.toNumber().toString() + " min";
+            what += " " + m.toNumber().toString() + "'";
         } else if (km != null) {
             what += " " + km.format("%.1f") + " km";
         }

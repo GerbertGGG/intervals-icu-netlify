@@ -564,12 +564,12 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     pr: { v: protein, g: goals?.proteinG ?? null },
     failed: failedOf(d).length,
     // Zifferblatt nach Tageszeit: sl Schlaf (h), hv HRV der letzten 7 Tage (heute zuletzt, ohne Wert null), hm deren Basis
-    // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute, wd Woche (watchWeekDays), wm Ausdauer der Woche
+    // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute (gekürzt, passt in die unterste Zeile), wd Woche (watchWeekDays), wm Ausdauer der Woche
     // [Minuten, Ziel-Minuten], la letzte Einheit von heute (watchLast)
     sl: d.summary?.recovery?.sleepHours ?? null,
     hv: Array.from({ length: 7 }, (_, i) => (byDate[addDays(d.today, i - 6)]?.hrv != null ? Math.round(byDate[addDays(d.today, i - 6)].hrv) : null)),
     hm: d.summary?.recovery?.body?.hrvMedian != null ? Math.round(d.summary.recovery.body.hrvMedian) : null,
-    cl: firstLine(freshCoach(d)?.headline ?? freshCoach(d)?.note, 30),
+    cl: firstLine(freshCoach(d)?.headline ?? freshCoach(d)?.note, 20),
     wd: watchWeekDays(d),
     wm: weekGoals(d) ? [Math.round(weekGoals(d).min), weekGoals(d).goalMin] : null,
     la: watchLast(d),
