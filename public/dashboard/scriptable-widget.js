@@ -1432,17 +1432,18 @@ function buildBlock(res) {
 const FRAME_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim", kraft: "strength" };
 function buildRahmen(res) {
   const d = res.data, W = widgetInnerWidth(), f = d.frame, T = d.nextTest, H = d.loadHint;
-  const w = baseWidget({ padV: 12 });
+  const w = baseWidget({ padV: 10 });
   const test = T ? (T.daysToGo === 0 ? "Blocktest heute" : `Blocktest in ${T.daysToGo} ${T.daysToGo === 1 ? "Tag" : "Tagen"}`) : null;
   header(w, W, `RAHMEN${f ? ` · SEIT ${dateShort((f.savedAt || f.validFrom).slice(0, 10))}` : ""}`, test, COL.race);
   if (!f) { w.addSpacer(6); text(w, "Kein Rahmen vom Coach.", FS.sm, { color: COL.muted }); notice(w, res, d); return w; }
-  w.addSpacer(5);
+  // Intensitaet bis zu zwei Zeilen, Status oben rechts: die volle Vorgabe statt abgeschnitten nach einer Zeile
+  w.addSpacer(6);
   (f.intensity || []).slice(0, 3).forEach((x, i) => {
-    if (i) w.addSpacer(3);
-    const r = w.addStack(); r.centerAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
+    if (i) w.addSpacer(4);
+    const r = w.addStack(); r.topAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
     const k = FRAME_SPORT[x.sport] || "other";
-    symbol(r, SPORT_SYMBOL[k], 12, new Color(sportHex(k)));
-    text(r, x.text, FS.sm, { lines: 1, minScale: 0.7 });
+    symbol(r, SPORT_SYMBOL[k], 13, new Color(sportHex(k)));
+    text(r, x.text, FS.md, { lines: 2, minScale: 0.8 });
     r.addSpacer();
     const wk = x.week;
     if (!wk) return;
@@ -1450,18 +1451,21 @@ function buildRahmen(res) {
     else if (wk.count > 0) symbol(r, "checkmark.circle.fill", 13, COL.ok);
     else text(r, "offen", FS.xs, { bold: true, color: COL.muted, minScale: 1 });
   });
+  // Bezeichnung in fester Spalte, Text daneben in derselben Groesse wie die Intensitaet; Leitplanken bekommen den Rest der Hoehe
+  const N = res.data.next, more = !!(H || (N && N.reason));
   const line = (label, items, lines) => {
     if (!items || !items.length) return;
-    w.addSpacer(5);
-    const r = w.addStack(); r.size = new Size(W, 0);
-    text(r, `${label}  `, FS.xs, { bold: true, color: COL.muted, minScale: 1 });
-    text(r, items.join(" · "), FS.xs, { lines, minScale: 0.75 });
+    w.addSpacer(6);
+    const r = w.addStack(); r.topAlignContent(); r.size = new Size(W, 0);
+    const l = r.addStack(); l.size = new Size(92, 0); l.setPadding(2, 0, 0, 0);
+    text(l, label, FS.xs, { bold: true, color: COL.muted, minScale: 0.8 });
+    l.addSpacer();
+    text(r, items.join(" · "), FS.sm, { lines, minScale: 0.8 });
     r.addSpacer();
   };
   line("NICHT ERLAUBT", f.notAllowed, 2);
-  line("LEITPLANKEN", f.guardrails, H ? 1 : 2);
+  line("LEITPLANKEN", f.guardrails, more ? 2 : 3);
   // geplanter Rahmen des Coaches (validFrom in der Zukunft): ab wann und warum
-  const N = res.data.next;
   if (N && N.reason) line(`AB ${dateShort(N.validFrom)}`, [N.reason], 2);
   if (H) {
     w.addSpacer(4);
