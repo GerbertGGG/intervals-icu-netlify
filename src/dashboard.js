@@ -509,6 +509,12 @@ export function buildLastActivity(activities, todayIso, ctx = null) {
   const sport = sportOf(a), km = (num(a?.distance) ?? 0) / 1000, secs = num(a?.moving_time) ?? 0;
   const base = { date: activityDay(a), sport, durationMin: secs > 0 ? Math.round(secs / 60) : null, distanceKm: km > 0 ? Math.round(km * 10) / 10 : null, load: sessionLoad(a) ? Math.round(sessionLoad(a)) : null };
   const hr = lastActivityHrAllowed(a, ctx);
+  // Fuer die Uhr: Startzeit (Ortszeit), Ende in Sekunden seit 1970 (aus start_date in UTC) und wie viele Tage die letzte
+  // mindestens so lange Einheit derselben Sportart zurueckliegt (nur im geladenen Verlauf; ohne Treffer kein Wert)
+  const start = String(a?.start_date_local ?? "").match(/T(\d{2}:\d{2})/)?.[1] ?? null;
+  const startUtc = /Z$|[+-]\d{2}:?\d{2}$/.test(String(a?.start_date ?? "")) ? Date.parse(a.start_date) : NaN;
+  const endAt = Number.isFinite(startUtc) && secs > 0 ? Math.round(startUtc / 1000 + (num(a?.elapsed_time) ?? secs)) : null;
+  const longer = km > 0 ? activities.filter((x) => x !== a && sportOf(x) === sport && activityDay(x) < base.date && (num(x?.distance) ?? 0) / 1000 >= km).map(activityDay).sort().pop() : null;
   const pace = km > 0 && secs > 0 && (sport === "run" || sport === "swim") ? Math.round(sport === "swim" ? secs / (km * 10) : secs / km) : null;
   const extra = {
     paceSecPerKm: sport === "run" ? pace : null,
@@ -520,6 +526,10 @@ export function buildLastActivity(activities, todayIso, ctx = null) {
     decoupling: hr ? runalyzeDecoupling(a, ctx) : null,
     rpe: num(a?.icu_rpe),
     feel: num(a?.feel),
+    movingSecs: secs > 0 ? Math.round(secs) : null,
+    start,
+    endAt,
+    longerAgoDays: longer ? diffDays(longer, base.date) : null,
   };
   return { ...base, ...Object.fromEntries(Object.entries(extra).filter(([, v]) => v != null)) };
 }

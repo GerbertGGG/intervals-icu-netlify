@@ -1,14 +1,16 @@
 """Erzeugt Bitmap-Schriften (BMFont-Textformat) für das Watchface.
 
-Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel] [Name] [digits]
+Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel] [Name] [digits] [wght=N] [track=N]
 Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmäßig "small")
 Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit springt nicht).
-Die Schriften des Zifferblatts sind Roboto Medium (SIL Open Font License, fonts.google.com/specimen/Roboto),
-als .ttf herunterladen:
-  python3 garmin/tools/make_font.py Roboto-Medium.ttf 101 time digits
-  python3 garmin/tools/make_font.py Roboto-Medium.ttf 31 open
-  python3 garmin/tools/make_font.py Roboto-Medium.ttf 22 cap
-  python3 garmin/tools/make_font.py Roboto-Medium.ttf 18 tag
+wght=N setzt bei variablen Schriften die Stärke (z. B. 700), track=N ändert den Vorschub jedes Zeichens um N Pixel
+(negativ = enger, wie letter-spacing).
+Die Schriften des Zifferblatts sind Inter Tight (SIL Open Font License, fonts.google.com/specimen/Inter+Tight),
+die variable .ttf herunterladen (InterTight[wght].ttf):
+  python3 garmin/tools/make_font.py InterTight.ttf 110 time digits wght=700 track=-4
+  python3 garmin/tools/make_font.py InterTight.ttf 22 val wght=700
+  python3 garmin/tools/make_font.py InterTight.ttf 14 cap wght=600
+  python3 garmin/tools/make_font.py InterTight.ttf 12 tag wght=700
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys
@@ -18,12 +20,17 @@ from PIL import Image, ImageDraw, ImageFont
 ttf = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 size = int(sys.argv[2]) if len(sys.argv) > 2 else 18
 name = sys.argv[3] if len(sys.argv) > 3 else "small"
-digits = len(sys.argv) > 4 and sys.argv[4] == "digits"
+flags = sys.argv[4:]
+digits = "digits" in flags
+opt = dict(f.split("=", 1) for f in flags if "=" in f)
+track = int(opt.get("track", 0))
 out = Path(__file__).resolve().parent.parent / "resources" / "fonts"
 font = ImageFont.truetype(ttf, size)
+if "wght" in opt:
+    font.set_variation_by_axes([int(opt["wght"])])
 ascent, descent = font.getmetrics()
-# ASCII, Grad, Mittelpunkt, Umlaute, Minutenzeichen (′)
-codes = [ord(c) for c in "0123456789:"] if digits else list(range(32, 127)) + [0xB0, 0xB7, 0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC, 0xDF, 0x2032]
+# ASCII, Grad, Mittelpunkt, Umlaute, Ø, Minutenzeichen (′), Gedankenstrich, Auslassung, Minus
+codes = [ord(c) for c in "0123456789:"] if digits else list(range(32, 127)) + [0xB0, 0xB7, 0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC, 0xDF, 0xD8, 0x2032, 0x2013, 0x2026, 0x2212]
 
 glyphs = []
 for c in codes:
@@ -32,7 +39,7 @@ for c in codes:
     w, h = max(r - l, 0), max(b - t, 0)
     if h == 0:
         w = 0  # Leerzeichen: nur Vorschub
-    glyphs.append((c, ch, l, t, w, h, int(round(font.getlength(ch)))))
+    glyphs.append((c, ch, l, t, w, h, int(round(font.getlength(ch))) + track))
 xoff, top, line_h, base = {}, 0, ascent + descent, ascent
 if digits:
     # Gleiche Breite für alle Ziffern, Glyphe mittig im Vorschub
