@@ -6,7 +6,7 @@ Fest von oben nach unten:
 
 - **Kopfzeile**: Datum („DO 23.“), Akku in Prozent (grau, ab 20 % orange, ab 10 % rot, beim Laden grün) und das Urteil des Coaches für heute als Wort (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage nichts. Eine eigene Ampel hat die Uhr nicht.
 - **Uhrzeit**, groß, ohne führende Null.
-- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender), groß in Sportfarbe mit Minutenzeichen (95'), darunter ein Balken, der sich zum Ziel füllt. Ziel erreicht: Haken, ohne Ziel „--“.
+- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender), groß in Sportfarbe mit Minutenzeichen (95'), darunter ein Balken, der sich zum Ziel füllt. Ohne Beschriftung: von links Lauf, Rad, Schwimmen, die Farbe sagt die Sportart. Ziel erreicht: Haken, ohne Ziel „--“.
 
 Die **Karte in der Mitte** und die Zeile ganz unten wechseln:
 

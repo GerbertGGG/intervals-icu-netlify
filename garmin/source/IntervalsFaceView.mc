@@ -31,24 +31,23 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const MORNING_END = 12;      // bis zu dieser Stunde die Morgenkarte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
-    const TOP_Y = 76;
-    const TIME_Y = 140;
+    const TOP_Y = 70;
+    const TIME_Y = 128;
     const CARD_X = 40;
-    const CARD_Y = 194;
+    const CARD_Y = 180;
     const CARD_W = 374;
     const CARD_H = 128;
     const PAD = 20;
-    const HEAD_Y = 226;
-    const BARS_TOP = 238;
-    const BARS_BOTTOM = 288;
-    const DAYS_Y = 312;
-    const CELL_Y = 272;
-    const CELL_TAG_Y = 300;
-    const ROW_TAG_Y = 346;
-    const ROW_VAL_Y = 378;
-    const ROW_BAR_Y = 386;
+    const HEAD_Y = 212;
+    const BARS_TOP = 224;
+    const BARS_BOTTOM = 274;
+    const DAYS_Y = 298;
+    const CELL_Y = 258;
+    const CELL_TAG_Y = 286;
+    const ROW_VAL_Y = 352;
+    const ROW_BAR_Y = 362;
     const ROW_DX = 108;
-    const NEXT_Y = 420;
+    const NEXT_Y = 400;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -319,16 +318,15 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Untere Reihe: offene Wochenminuten -----------------------------------------------------
-    // Je Sportart groß in Sportfarbe die Minuten bis zum Zeitziel des Coaches (rz: [[Sportart, erledigt, Ziel], ...]),
-    // darunter ein Balken, der sich zum Ziel füllt. Ziel erreicht: Haken; ohne Ziel "--" in Grau.
+    // Je Sportart groß in Sportfarbe die Minuten bis zum Zeitziel des Coaches (rz: [[Sportart, erledigt, Ziel], ...]), darunter
+    // ein Balken, der sich zum Ziel füllt. Keine Beschriftung, die Farbe sagt die Sportart (Lauf, Rad, Schwimmen von links).
+    // Ziel erreicht: Haken; ohne Ziel "--" in Grau.
 
     private function drawWeekRow(dc as Dc, rz as Array?) as Void {
         var sports = ["run", "bike", "swim"];
-        var labels = ["LAUF", "RAD", "SCHWIMM"];
         for (var k = 0; k < sports.size(); k++) {
             var x = _cx + px(ROW_DX * (k - 1));
             var color = sportColor(sports[k]);
-            drawItems(dc, x, px(ROW_TAG_Y), [["t", labels[k] as String, SEC, _tag]], 0);
             var e = goalOf(rz, sports[k]);
             if (e == null) {
                 drawItems(dc, x, px(ROW_VAL_Y), [["t", "--", TER, _val]], 0);
