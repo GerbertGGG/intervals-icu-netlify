@@ -620,9 +620,33 @@ async function dashboardCached(env, fresh, ctx = null, stale = false) {
         ctx.waitUntil(rebuildDashboardCache(env, today).catch(() => {}));
         return last.data;
       }
+      // Gar kein Stand von heute: nicht bis zum Abbruch der Uhr warten, sondern nach WATCH_WAIT_MS mit 503 antworten
+      // (die Uhr zeigt dann "! 503" statt "! -300"), der Neuaufbau laeuft im Hintergrund weiter
+      const build = rebuildDashboardCache(env, today);
+      ctx.waitUntil(build.catch(() => {}));
+      return Promise.race([build, new Promise((_, reject) => setTimeout(() => reject(new WatchBusy()), WATCH_WAIT_MS))]);
     }
   }
   return rebuildDashboardCache(env, today);
+}
+
+const WATCH_WAIT_MS = 6000;
+class WatchBusy extends Error {}
+
+// Protokoll der Uhr-Abrufe (Zeit, Status, Dauer), damit man ohne Token sieht, ob Anfragen der Uhr ankommen und wie schnell
+// sie beantwortet werden. Erfolgreiche Abrufe nur alle 15 Minuten schreiben, sonst kostet jeder 5-Minuten-Abruf einen KV-Schreibvorgang.
+const WATCH_LOG_KEY = "widget:watch-log";
+async function logWatchRequest(env, entry) {
+  const prev = await readKvJson(env, WATCH_LOG_KEY).catch(() => null);
+  if (entry.status === 200 && prev?.status === 200 && entry.at - prev.at < 15 * 60 * 1000) return;
+  await writeKvJson(env, WATCH_LOG_KEY, entry);
+}
+
+// Oeffentlich, ohne Token: nur Zeitstempel, Statuscodes und Namen ausgefallener Quellen, keine Trainingsdaten
+export async function handleWatchStatusRequest(env) {
+  const [watch, cache, last] = await Promise.all([WATCH_LOG_KEY, CACHE_KEY, LAST_KEY].map((k) => readKvJson(env, k).catch(() => null)));
+  const meta = (c) => (c ? { at: new Date(c.at).toISOString(), today: c.data?.today ?? null, failed: c.data ? failedOf(c.data) : null } : null);
+  return json({ now: new Date().toISOString(), watch: watch ? { ...watch, at: new Date(watch.at).toISOString() } : null, cache: meta(cache), last: meta(last) }, 200, { "cache-control": "no-store" });
 }
 
 async function rebuildDashboardCache(env, today = isoDateBerlin()) {
@@ -646,6 +670,22 @@ function isWatchAuthorized(req, env) {
 }
 
 export async function handleWidgetRequest(req, env, ctx = null) {
+  if (new URL(req.url).searchParams.get("view") !== "watch") return widgetResponse(req, env, ctx);
+  const start = Date.now();
+  let res;
+  try {
+    res = await widgetResponse(req, env, ctx);
+  } catch (e) {
+    if (!(e instanceof WatchBusy)) throw e;
+    res = json({ ok: false, error: "Neuaufbau laeuft" }, 503, { "cache-control": "no-store" });
+  }
+  const log = logWatchRequest(env, { at: start, status: res.status, ms: Date.now() - start }).catch(() => {});
+  if (ctx) ctx.waitUntil(log);
+  else await log;
+  return res;
+}
+
+async function widgetResponse(req, env, ctx) {
   const headers = { "cache-control": "no-store" };
   const view0 = new URL(req.url).searchParams.get("view");
   if (!env?.DASHBOARD_TOKEN && !env?.WATCH_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
