@@ -9,8 +9,8 @@ import Toybox.WatchUi;
 
 // Zifferblatt nach Tageszeit (Mockup "Modular", schwarz mit Sportfarben). Fest: oben Datum, Akku und das Urteil des Coaches
 // als Wort, darunter die große Uhrzeit, unten die offenen Wochenminuten je Sportart mit Balken. Dazwischen eine Karte, die
-// mit dem Tag wechselt: morgens (bis 12 Uhr) Schlaf, HRV und Ruhepuls und darunter der Coach-Kommentar, tagsüber die Woche Tag
-// für Tag, bis 3 Stunden nach einer Einheit deren Werte. Ganz unten die nächste Einheit.
+// mit dem Tag wechselt: morgens (bis 12 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche Tag für Tag, bis 3 Stunden nach
+// einer Einheit deren Werte. Ganz unten die nächste Einheit.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
@@ -46,18 +46,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const ROW_BAR_Y = 362;
     const ROW_DX = 108;
     const NEXT_Y = 400;
-    // Morgenkarte (höher und schmaler, damit die unteren Ecken im runden Display bleiben)
-    const M_X = 52;
-    const M_W = 350;
-    const M_H = 204;
+    // Morgenkarte
     const M_DX = 110;
-    const M_TAG_Y = 206;
-    const M_VAL_Y = 242;
-    const M_BASE_Y = 264;
-    const M_LINE_Y = 278;
-    const M_TEXT_Y = 286;
-    const M_TEXT_H = 92;
-    const M_NEXT_Y = 410;
+    const M_TAG_Y = 218;
+    const M_VAL_Y = 260;
+    const M_BASE_Y = 288;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -123,8 +116,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             drawNext(dc, data, NEXT_Y);
         } else if (clock.hour < MORNING_END) {
             drawMorningCard(dc, data);
-            drawNext(dc, data, M_NEXT_Y);
-            return;
+            drawNext(dc, data, NEXT_Y);
         } else {
             drawWeekCard(dc, data);
             drawNext(dc, data, NEXT_Y);
@@ -176,16 +168,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawItems(dc, _cx, px(TOP_Y), items, 0);
     }
 
-    // ---- Karte morgens: Erholung und Coach ---------------------------------------------------
+    // ---- Karte morgens: Erholung --------------------------------------------------------------
     // Oben Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich], ...]), jeder Wert in der Farbe seines Vergleichs
     // mit dem eigenen üblichen Bereich (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen),
-    // darunter klein die Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches in der Kopfzeile. Darunter
-    // die Kopfzeile des Coaches von heute (cl), über bis zu drei Zeilen umbrochen. Die Karte ist höher, die Wochenreihe
-    // entfällt morgens.
+    // darunter klein die Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches in der Kopfzeile. Den Text
+    // des Coaches zeigt die Uhr nicht (zu klein und abgeschnitten), dafür stehen Widget und Dashboard.
 
     private function drawMorningCard(dc as Dc, data as Dictionary) as Void {
-        dc.setColor(CARD, Graphics.COLOR_TRANSPARENT);
-        dc.fillRoundedRectangle(px(M_X), px(CARD_Y), px(M_W), px(M_H), px(40));
+        drawCard(dc, CARD);
         var rv = data.get("rv") as Array?;
         var labels = ["SCHLAF", "HRV", "RUHEPULS"];
         for (var k = 0; k < 3; k++) {
@@ -204,18 +194,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             if (base != null) {
                 drawItems(dc, x, px(M_BASE_Y), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), SEC, _tag]], 0);
             }
-        }
-        dc.setColor(BAR, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
-        dc.drawLine(px(M_X + PAD), px(M_LINE_Y), px(M_X + M_W - PAD), px(M_LINE_Y));
-        var cl = data.get("cl");
-        if (cl instanceof Lang.String && cl.length() > 0) {
-            var w = px(M_W - 2 * PAD);
-            var text = Graphics.fitTextToArea(cl, _cap, w, px(M_TEXT_H), true);
-            dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cx, px(M_TEXT_Y), _cap, text, Graphics.TEXT_JUSTIFY_CENTER);
-        } else {
-            drawItems(dc, _cx, px(M_TEXT_Y + 30), [["t", "Noch kein Coach", SEC, _cap]], 0);
         }
     }
 
