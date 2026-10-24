@@ -70,7 +70,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Inter Tight (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter
+        // Bitmap-Schriften aus Inter, normale Stärke (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter
         // 17 Pixel, sonst auf der Uhr schlecht lesbar)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _val = WatchUi.loadResource(Rez.Fonts.Val) as Graphics.FontType;
