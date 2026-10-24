@@ -9,8 +9,8 @@ import Toybox.WatchUi;
 
 // Zifferblatt nach Tageszeit (Mockup "Modular", schwarz mit Sportfarben). Fest: oben Datum, Akku und das Urteil des Coaches
 // als Wort, darunter die große Uhrzeit, unten die offenen Wochenminuten je Sportart mit Balken. Dazwischen eine Karte, die
-// mit dem Tag wechselt: morgens (bis 12 Uhr) Schlaf und HRV der letzten 7 Tage, tagsüber die Woche Tag für Tag, bis 3 Stunden
-// nach einer Einheit deren Werte. Ganz unten eine Zeile: morgens der Coach, sonst die nächste Einheit.
+// mit dem Tag wechselt: morgens (bis 12 Uhr) Schlaf, HRV und Ruhepuls und darunter der Coach-Kommentar, tagsüber die Woche Tag
+// für Tag, bis 3 Stunden nach einer Einheit deren Werte. Ganz unten die nächste Einheit.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
@@ -20,12 +20,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
     const BAR = 0x3A3A3C;
-    const DASH = 0x636366;
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
     const ACCENT = 0x64A8FF; // Coach ohne Urteil (wie im Widget)
-    const SLEEP = 0x7D7AFF;
     const STALE_SECS = 3600;
     const AFTER_SECS = 3 * 3600; // so lange nach dem Ende einer Einheit steht ihre Karte
     const MORNING_END = 12;      // bis zu dieser Stunde die Morgenkarte
@@ -48,6 +46,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const ROW_BAR_Y = 362;
     const ROW_DX = 108;
     const NEXT_Y = 400;
+    // Morgenkarte (höher und schmaler, damit die unteren Ecken im runden Display bleiben)
+    const M_X = 52;
+    const M_W = 350;
+    const M_H = 204;
+    const M_DX = 110;
+    const M_TAG_Y = 206;
+    const M_VAL_Y = 242;
+    const M_BASE_Y = 264;
+    const M_LINE_Y = 278;
+    const M_TEXT_Y = 286;
+    const M_TEXT_H = 92;
+    const M_NEXT_Y = 410;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -110,13 +120,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var since = end != null ? Time.now().value() - end.toNumber() : -1;
         if (la != null && since >= 0 && since < AFTER_SECS) {
             drawLastCard(dc, la);
-            drawNext(dc, data);
+            drawNext(dc, data, NEXT_Y);
         } else if (clock.hour < MORNING_END) {
             drawMorningCard(dc, data);
-            drawCoachLine(dc, data);
+            drawNext(dc, data, M_NEXT_Y);
+            return;
         } else {
             drawWeekCard(dc, data);
-            drawNext(dc, data);
+            drawNext(dc, data, NEXT_Y);
         }
         drawWeekRow(dc, data.get("rz") as Array?);
     }
@@ -165,57 +176,46 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawItems(dc, _cx, px(TOP_Y), items, 0);
     }
 
-    // ---- Karte morgens: Schlaf und HRV -----------------------------------------------------
-    // Kopf: Schlaf in Stunden (lila), HRV heute mit der eigenen Basis (Ø). Darunter die HRV der letzten 7 Tage als Balken,
-    // heute hervorgehoben (grün, wenn über der Basis), die Basis als gestrichelte Linie. Vergleich nur mit der eigenen Basis.
+    // ---- Karte morgens: Erholung und Coach ---------------------------------------------------
+    // Oben Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich], ...]), jeder Wert in der Farbe seines Vergleichs
+    // mit dem eigenen üblichen Bereich (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen),
+    // darunter klein die Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches in der Kopfzeile. Darunter
+    // die Kopfzeile des Coaches von heute (cl), über bis zu drei Zeilen umbrochen. Die Karte ist höher, die Wochenreihe
+    // entfällt morgens.
 
     private function drawMorningCard(dc as Dc, data as Dictionary) as Void {
-        drawCard(dc, CARD);
-        var sl = numOrNull(data.get("sl"));
-        var hv = data.get("hv") as Array?;
-        var hm = numOrNull(data.get("hm"));
-        var today = hv != null && hv.size() > 0 ? numOrNull(hv[hv.size() - 1]) : null;
-        var hi = today != null && hm != null && today >= hm ? OK : FG;
-        var y = px(HEAD_Y);
-        drawItems(dc, px(CARD_X + PAD), y, [["t", "SCHLAF ", SEC, _tag], ["t", sl != null ? hours((sl * 60).toNumber()) : "--", SLEEP, _cap]], -1);
-        var right = [["t", "HRV ", SEC, _tag], ["t", today != null ? today.toNumber().toString() : "--", hi, _cap]] as Array<Array>;
-        if (hm != null) {
-            right.add(["t", " Ø " + hm.toNumber().toString(), SEC, _tag]);
-        }
-        drawItems(dc, px(CARD_X + CARD_W - PAD), y, right, 1);
-        if (hv == null || hv.size() == 0) {
-            return;
-        }
-        // Skala: vom 0,7-Fachen des kleinsten Werts bis zum größten (Basis eingeschlossen), damit Unterschiede sichtbar sind
-        var lo = null;
-        var top = hm;
-        for (var i = 0; i < hv.size(); i++) {
-            var v = numOrNull(hv[i]);
-            if (v != null) {
-                lo = lo == null || v < lo ? v : lo;
-                top = top == null || v > top ? v : top;
+        dc.setColor(CARD, Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(px(M_X), px(CARD_Y), px(M_W), px(M_H), px(40));
+        var rv = data.get("rv") as Array?;
+        var labels = ["SCHLAF", "HRV", "RUHEPULS"];
+        for (var k = 0; k < 3; k++) {
+            var x = _cx + px(M_DX * (k - 1));
+            drawItems(dc, x, px(M_TAG_Y), [["t", labels[k] as String, SEC, _tag]], 0);
+            var e = rv != null && rv.size() > k ? rv[k] as Array : null;
+            var v = e != null ? numOrNull(e[0]) : null;
+            var base = e != null ? numOrNull(e[1]) : null;
+            var cls = e != null ? numOrNull(e[2]) : null;
+            var color = FG;
+            if (cls != null && cls.toNumber() == 1) { color = OK; }
+            else if (cls != null && cls.toNumber() == 2) { color = WARN; }
+            else if (cls != null && cls.toNumber() == 3) { color = BAD; }
+            var text = v == null ? "--" : (k == 0 ? hours((v * 60).toNumber()) : v.toNumber().toString());
+            drawItems(dc, x, px(M_VAL_Y), [["t", text, v == null ? TER : color, _val]], 0);
+            if (base != null) {
+                drawItems(dc, x, px(M_BASE_Y), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), SEC, _tag]], 0);
             }
         }
-        if (lo == null || top == null) {
-            return;
-        }
-        var base = lo * 0.7;
-        var span = top - base > 0 ? (top - base).toFloat() : 1.0;
-        var n = hv.size();
-        for (var i = 0; i < n; i++) {
-            var v = numOrNull(hv[i]);
-            if (v != null) {
-                bar(dc, i, n, ((v - base) / span).toFloat(), i == n - 1 ? hi : BAR);
-            }
-        }
-        if (hm != null) {
-            dashLine(dc, px(BARS_BOTTOM) - ((px(BARS_BOTTOM) - px(BARS_TOP)) * ((hm - base) / span)).toNumber());
-        }
-        // Wochentage der letzten 7 Tage, heute zuletzt
-        var dow = (Gregorian.info(Time.now(), Time.FORMAT_SHORT).day_of_week as Number) - 1;
-        var names = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
-        for (var i = 0; i < n; i++) {
-            dayLabel(dc, i, n, names[(dow - (n - 1 - i) + 70) % 7] as String, i == n - 1);
+        dc.setColor(BAR, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+        dc.drawLine(px(M_X + PAD), px(M_LINE_Y), px(M_X + M_W - PAD), px(M_LINE_Y));
+        var cl = data.get("cl");
+        if (cl instanceof Lang.String && cl.length() > 0) {
+            var w = px(M_W - 2 * PAD);
+            var text = Graphics.fitTextToArea(cl, _cap, w, px(M_TEXT_H), true);
+            dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(_cx, px(M_TEXT_Y), _cap, text, Graphics.TEXT_JUSTIFY_CENTER);
+        } else {
+            drawItems(dc, _cx, px(M_TEXT_Y + 30), [["t", "Noch kein Coach", SEC, _cap]], 0);
         }
     }
 
@@ -353,20 +353,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Zeile ganz unten ----------------------------------------------------------------------
-    // Morgens die Kopfzeile des Coaches (cl) in Blau, ohne sie die nächste Einheit.
-
-    private function drawCoachLine(dc as Dc, data as Dictionary) as Void {
-        var cl = data.get("cl");
-        if (cl instanceof Lang.String && cl.length() > 0) {
-            drawItems(dc, _cx, px(NEXT_Y), [["t", cl, ACCENT, _cap]], 0);
-        } else {
-            drawNext(dc, data);
-        }
-    }
 
     // Nächste Einheit (next: d Tage ab heute, s Sportart, m Minuten, km): "Heute Lauf 45'", "Morgen Rad 60'", sonst mit
     // Wochentag ("Sa Rad 90'")
-    private function drawNext(dc as Dc, data as Dictionary) as Void {
+    private function drawNext(dc as Dc, data as Dictionary, y as Number) as Void {
         var nx = data.get("next") as Dictionary?;
         if (nx == null) {
             return;
@@ -388,7 +378,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         } else if (km != null) {
             what += " " + km.format("%.1f") + " km";
         }
-        drawItems(dc, _cx, px(NEXT_Y), [["t", when, SEC, _cap], ["t", what, sportColor(nx.get("s")), _cap]], 0);
+        drawItems(dc, _cx, px(y), [["t", when, SEC, _cap], ["t", what, sportColor(nx.get("s")), _cap]], 0);
     }
 
     // ---- Bausteine ------------------------------------------------------------------------------
@@ -396,14 +386,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private function drawCard(dc as Dc, color as Number) as Void {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.fillRoundedRectangle(px(CARD_X), px(CARD_Y), px(CARD_W), px(CARD_H), px(24));
-    }
-
-    // Balken i von n in der Karte, f = Höhe als Anteil (0 bis 1)
-    private function bar(dc as Dc, i as Number, n as Number, f as Float, color as Number) as Void {
-        var h = ((px(BARS_BOTTOM) - px(BARS_TOP)) * clamp01(f)).toNumber();
-        h = h < px(4) ? px(4) : h;
-        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.fillRoundedRectangle(barX(i, n), px(BARS_BOTTOM) - h, barW(n), h, px(4));
     }
 
     private function barW(n as Number) as Number {
@@ -416,17 +398,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function dayLabel(dc as Dc, i as Number, n as Number, text as String, today as Boolean) as Void {
         drawItems(dc, barX(i, n) + barW(n) / 2, px(DAYS_Y), [["t", text, today ? FG : SEC, _tag]], 0);
-    }
-
-    // Gestrichelte Linie quer über die Balken (Basis der HRV)
-    private function dashLine(dc as Dc, y as Number) as Void {
-        dc.setColor(DASH, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
-        var x0 = px(CARD_X + PAD);
-        var x1 = px(CARD_X + CARD_W - PAD);
-        for (var x = x0; x < x1; x += px(8)) {
-            dc.drawLine(x, y, x + px(4) < x1 ? x + px(4) : x1, y);
-        }
     }
 
     // Haken als Linien um die Mitte x, y, die Bitmap-Schriften haben kein ✓

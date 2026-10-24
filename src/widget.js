@@ -522,6 +522,26 @@ function watchLast(d) {
   return { s: L.sport, t: L.start ?? null, e: L.endAt ?? null, c: c.slice(0, 4), lw: L.longerAgoDays >= 14 ? Math.floor(L.longerAgoDays / 7) : null };
 }
 
+// Erholungswerte fuer die Morgenkarte: Schlaf (h), HRV, Ruhepuls von heute je [Wert, Basis, Vergleich]. Der Vergleich ist nur
+// der mit dem eigenen ueblichen Bereich (body.band, dieselben Basistage wie die Basis): 1 = im Bereich oder besser, 2 = schlechter
+// als der Bereich (25/75-%-Quantil), 3 = schlechter als 9 von 10 Basistagen (10/90-%-Quantil), 0 = ohne Wert oder Bereich.
+// Ein Gesamturteil gibt es nicht, das setzt der Coach (go).
+function bandCls(v, b, higherBetter) {
+  if (v == null || !b) return 0;
+  const [p10, p25, p75, p90] = b;
+  return higherBetter ? (v >= p25 ? 1 : v >= p10 ? 2 : 3) : (v <= p75 ? 1 : v <= p90 ? 2 : 3);
+}
+function watchRecovery(d) {
+  const r = d.summary?.recovery, b = r?.body;
+  if (!r) return null;
+  const one = (v) => (v == null ? null : Math.round(v * 10) / 10);
+  return [
+    [one(r.sleepHours), one(b?.sleepMedian), bandCls(r.sleepHours, b?.band?.sleep, true)],
+    [r.hrv != null ? Math.round(r.hrv) : null, b?.hrvMedian != null ? Math.round(b.hrvMedian) : null, bandCls(r.hrv, b?.band?.hrv, true)],
+    [r.restingHR != null ? Math.round(r.restingHR) : null, b?.restingMedian != null ? Math.round(b.restingMedian) : null, bandCls(r.restingHR, b?.band?.resting, false)],
+  ];
+}
+
 export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   const week = d.weeks[d.weeks.length - 1];
   const total = (w) => Object.values(w.bySport).reduce((a, s) => a + s.load, 0);
@@ -564,12 +584,14 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     pr: { v: protein, g: goals?.proteinG ?? null },
     failed: failedOf(d).length,
     // Zifferblatt nach Tageszeit: sl Schlaf (h), hv HRV der letzten 7 Tage (heute zuletzt, ohne Wert null), hm deren Basis
-    // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute (gekürzt, passt in die unterste Zeile), wd Woche (watchWeekDays), wm Ausdauer der Woche
+    // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute (bis 90 Zeichen, die Uhr bricht sie um), rv Erholungswerte
+    // (watchRecovery), wd Woche (watchWeekDays), wm Ausdauer der Woche
     // [Minuten, Ziel-Minuten], la letzte Einheit von heute (watchLast)
     sl: d.summary?.recovery?.sleepHours ?? null,
     hv: Array.from({ length: 7 }, (_, i) => (byDate[addDays(d.today, i - 6)]?.hrv != null ? Math.round(byDate[addDays(d.today, i - 6)].hrv) : null)),
     hm: d.summary?.recovery?.body?.hrvMedian != null ? Math.round(d.summary.recovery.body.hrvMedian) : null,
-    cl: firstLine(freshCoach(d)?.headline ?? freshCoach(d)?.note, 20),
+    cl: firstLine(freshCoach(d)?.headline ?? freshCoach(d)?.note, 90),
+    rv: watchRecovery(d),
     wd: watchWeekDays(d),
     wm: weekGoals(d) ? [Math.round(weekGoals(d).min), weekGoals(d).goalMin] : null,
     la: watchLast(d),
