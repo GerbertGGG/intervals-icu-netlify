@@ -27,7 +27,17 @@ track = int(opt.get("track", 0))
 out = Path(__file__).resolve().parent.parent / "resources" / "fonts"
 font = ImageFont.truetype(ttf, size)
 if "wght" in opt:
-    font.set_variation_by_axes([int(opt["wght"])])
+    # Variable Schriften: Stärke setzen, optische Größe (falls vorhanden) passend zur Pixelgröße, andere Achsen auf Standard
+    axes = []
+    for ax in font.get_variation_axes():
+        nm = ax["name"].decode() if isinstance(ax["name"], bytes) else str(ax["name"])
+        if nm == "Weight":
+            axes.append(int(opt["wght"]))
+        elif nm == "Optical size":
+            axes.append(min(max(size, ax["minimum"]), ax["maximum"]))
+        else:
+            axes.append(ax["default"])
+    font.set_variation_by_axes(axes)
 ascent, descent = font.getmetrics()
 # ASCII, Grad, Mittelpunkt, Umlaute, Ø, Minutenzeichen (′), Gedankenstrich, Auslassung, Minus
 codes = [ord(c) for c in "0123456789:"] if digits else list(range(32, 127)) + [0xB0, 0xB7, 0xC4, 0xD6, 0xDC, 0xE4, 0xF6, 0xFC, 0xDF, 0xD8, 0x2032, 0x2013, 0x2026, 0x2212]
