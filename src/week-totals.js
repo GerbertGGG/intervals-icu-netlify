@@ -2,6 +2,7 @@ import { isIsoDate, isoDate, isoDateBerlin, isoWeekNumber, mondayOnOrBefore } fr
 import { activityDay } from "./activity-utils.js";
 
 import { DEFAULT_TARGET, targetHistory, targetOn } from "./targets-snapshot.js";
+import { swimTimeOf } from "./swim-time.js";
 
 // Die Wochenziele setzt der Coach (save_targets, targets-snapshot.js); hier wird nur Ist gegen das Ziel der jeweiligen Woche
 // gerechnet. So viele Wochen (inkl. der laufenden) zeigt der Verlauf; die Serie zaehlt nur innerhalb dieses Fensters
@@ -53,8 +54,13 @@ export function withReference(list) {
   return out;
 }
 
-// Ausdauersekunden einer Aktivitaet (Laufen, Rad, Schwimmen; icu_ignore_time zaehlt nicht), sonst 0
-const enduranceSecOf = (a) => (a?.icu_ignore_time || !enduranceDiscipline(a) ? 0 : Number(a?.moving_time) || 0);
+// Ausdauersekunden einer Aktivitaet (Laufen und Rad: moving_time; Schwimmen: Bewegungszeit ohne Pausen, swimTimeOf;
+// icu_ignore_time zaehlt nicht), sonst 0
+const enduranceSecOf = (a) => {
+  const disc = a?.icu_ignore_time ? null : enduranceDiscipline(a);
+  if (!disc) return 0;
+  return disc === "schwimmen" ? swimTimeOf(a).sec : Number(a?.moving_time) || 0;
+};
 
 // Ausdauerminuten je ISO-Woche ab der ersten vollen Woche ab fromIso bis zur laufenden, mit Referenzwoche (withReference).
 // Fuer die Intensitaets-Kachel im Trainingsblock (season-block.js); fromIso = ab wann Aktivitaeten geladen sind.
@@ -72,7 +78,9 @@ export function enduranceWeeks(activities, fromIso, todayIso = isoDateBerlin()) 
 }
 
 // Wochensummen je ISO-Woche (Mo–So nach dem lokalen Startdatum der Aktivitaet, bei Gerbert Europe/Berlin), aelteste zuerst,
-// die laufende zuletzt (complete: false). Ausdauer aus moving_time, Kraft in Saetzen; icu_ignore_time zaehlt nicht.
+// die laufende zuletzt (complete: false). Ausdauer aus moving_time, beim Schwimmen nur die Bewegungszeit (swimTimeOf), Kraft in
+// Saetzen; icu_ignore_time zaehlt nicht. Schwimmen zusaetzlich: swimMovingHours (zaehlt), swimElapsedHours (nur Info),
+// swimRestShare (Pausenanteil in %, null ohne Schwimmen) und swimSessions je Einheit (swimTimeEstimated: nur elapsed_time da).
 // Jede Woche traegt das Ziel, das in ihr galt (Eintrag am Sonntag bzw. heute, siehe targetOn): goalHours, goalSets2w und
 // streakMin (= streakThresholdPct % des Wochenziels in Minuten). Steigt das Ziel, bleiben vergangene Wochen beim alten.
 // streak = volle Wochen in Folge mit Ausdauer >= streakMin bis zur letzten vollen Woche, die laufende zaehlt mit, sobald
@@ -82,7 +90,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
   const history = targetHistory(stored);
   const thisMonday = mondayOnOrBefore(todayIso);
   const mondays = Array.from({ length: weeks + 1 }, (_, i) => addDays(thisMonday, -7 * (weeks - i))); // eine Woche mehr fuer die 2 Wochen Kraft
-  const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0 }]));
+  const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0, swimElapsed: 0, swims: [] }]));
   for (const a of activities ?? []) {
     if (a?.icu_ignore_time) continue;
     const day = activityDay(a);
@@ -91,9 +99,14 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
     if (!w) continue;
     const disc = enduranceDiscipline(a);
     if (disc) {
-      const sec = Number(a?.moving_time) || 0;
+      const sec = enduranceSecOf(a);
       w.sec += sec;
       w.by[disc] += sec;
+      if (disc === "schwimmen") {
+        const st = swimTimeOf(a);
+        w.swimElapsed += st.elapsedSec;
+        w.swims.push({ id: a?.id ?? null, date: day, movingMin: Math.round(st.sec / 60), elapsedMin: Math.round(st.elapsedSec / 60), source: st.source, swimTimeEstimated: st.estimated });
+      }
     } else if (isStrengthActivity(a)) w.sets += strengthSetsOf(a);
   }
   const refs = withReference(mondays.map((m) => ({ enduranceMin: Math.round(acc.get(m).sec / 60) })));
@@ -112,6 +125,10 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
       referenceMin: refs[i + 1].referenceMin,
       byDiscipline: Object.fromEntries(DISCIPLINES.map((k) => [k, hours(w.by[k])])),
       byDisciplineMin: Object.fromEntries(DISCIPLINES.map((k) => [k, Math.round(w.by[k] / 60)])),
+      swimMovingHours: hours(w.by.schwimmen),
+      swimElapsedHours: hours(w.swimElapsed),
+      swimRestShare: w.swimElapsed > 0 ? Math.max(0, Math.round((1 - w.by.schwimmen / w.swimElapsed) * 100)) : null,
+      swimSessions: w.swims,
       strengthSets: w.sets,
       strengthSets2w: w.sets + prev.sets,
       goalHours: tg.enduranceHoursPerWeek,
@@ -134,7 +151,8 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
 export function currentWeekTotals(t) {
   const c = t?.weeks?.[t.weeks.length - 1];
   if (!c) return null;
-  return { week: c.week, enduranceHours: c.enduranceHours, referenceHours: c.referenceMin != null ? hours(c.referenceMin * 60) : null, byDiscipline: c.byDiscipline, strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
+  return { week: c.week, enduranceHours: c.enduranceHours, referenceHours: c.referenceMin != null ? hours(c.referenceMin * 60) : null, byDiscipline: c.byDiscipline, swimMovingHours: c.swimMovingHours, swimElapsedHours: c.swimElapsedHours, swimRestShare: c.swimRestShare,
+    ...(c.swimSessions.some((x) => x.swimTimeEstimated) ? { swimTimeEstimated: true } : {}), strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
 }
 
 // Aktivitaeten fuer das ganze Fenster (inkl. Vorwoche fuer die 2 Wochen Kraft)

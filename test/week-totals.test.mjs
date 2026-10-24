@@ -37,7 +37,7 @@ assert.deepEqual(cur.byDiscipline, { lauf: 0.57, rad: 1.75, schwimmen: 0 });
 assert.deepEqual([cur.strengthSets, cur.strengthSets2w, prev.strengthSets], [0, 60, 60]);
 assert.equal(prev.enduranceMin, 55); // Kraft (2 × 32 min) taucht nicht in den Stunden auf
 assert.equal(t.streakWeeksAbove4_5, 0);
-assert.deepEqual(currentWeekTotals(t), { week: "2026-10-19", enduranceHours: 2.32, referenceHours: 0.3, byDiscipline: { lauf: 0.57, rad: 1.75, schwimmen: 0 }, strengthSets: 0, strengthSets2w: 60, streakWeeksAbove4_5: 0, streakWeeks: 0, goals: GOALS });
+assert.deepEqual(currentWeekTotals(t), { week: "2026-10-19", enduranceHours: 2.32, referenceHours: 0.3, byDiscipline: { lauf: 0.57, rad: 1.75, schwimmen: 0 }, swimMovingHours: 0, swimElapsedHours: 0, swimRestShare: null, strengthSets: 0, strengthSets2w: 60, streakWeeksAbove4_5: 0, streakWeeks: 0, goals: GOALS });
 assert.equal(weekTotalsOldest("2026-10-23"), "2026-08-24");
 // Referenzwoche: Mittel der letzten 3 Wochen (12.10.: 55 min, davor nichts) = 18 min
 assert.equal(cur.referenceMin, 18);
@@ -131,6 +131,62 @@ assert.equal(computeWeekTotals(later, "2026-11-08", appendTarget(null, { ...ok, 
 const two = appendTarget(future, { ...ok, enduranceHoursPerWeek: 6, validFrom: "2026-10-19", reason: "korrigiert" });
 assert.equal(targetOn(targetHistory(two), "2026-11-10").enduranceHoursPerWeek, 6);
 assert.deepEqual(targetsView(two, T0).history.map((t) => t.enduranceHoursPerWeek), [6, 5.5, 5]); // neueste zuerst, Startwert zuletzt
+// Schwimmen: nur die Bewegungszeit zählt, Pausen am Beckenrand nicht. Echte Einheit vom 26.08.2026 (50-m-Becken, 600 m):
+// elapsed_time 1241 s, moving_time 735 s, 9 Garmin-Laps mit Strecke = 739 s; die Ruhe-Laps (0 m) füllen den Rest (502 s)
+const { swimActiveSec, swimTimeOf, withSwimIntervals } = await import("../src/swim-time.js");
+const lap = (sec, m = 50, type = "WORK") => ({ type, distance: m, moving_time: sec, elapsed_time: sec });
+const rest = (sec) => ({ type: "RECOVERY", distance: 0, moving_time: 0, elapsed_time: sec });
+const swimLaps = [lap(192, 150), rest(60), lap(57), lap(65), rest(45), lap(57), lap(58), rest(90), lap(57), lap(60), rest(120), lap(131, 100), rest(100), lap(62), rest(87)];
+const swim = { id: "i180003911", start_date_local: "2026-10-21T13:46:05", type: "Swim", moving_time: 735, elapsed_time: 1241, icu_intervals: swimLaps };
+assert.equal(swimActiveSec(swimLaps), 739);
+assert.equal(swimActiveSec([]), null);
+assert.deepEqual(swimTimeOf(swim), { sec: 735, elapsedSec: 1241, source: "moving_time", estimated: false }); // 0,5 % Abweichung: moving_time stimmt
+// Uhr ohne Auto-Pause (moving_time = Gesamtzeit): Summe der Nicht-Ruhe-Intervalle
+assert.deepEqual(swimTimeOf({ ...swim, moving_time: 1241 }), { sec: 739, elapsedSec: 1241, source: "intervals", estimated: false });
+// Ein Ruhe-Lap ohne Typ, nur an 0 m erkannt, zählt ebenfalls nicht
+assert.equal(swimActiveSec([lap(100), { type: "WORK", distance: 0, moving_time: 40, elapsed_time: 40 }]), 100);
+{
+  const sw = computeWeekTotals([...acts, swim], "2026-10-23").weeks.at(-1);
+  assert.deepEqual([sw.enduranceMin, sw.byDisciplineMin.schwimmen, sw.swimMovingHours, sw.swimElapsedHours, sw.swimRestShare], [151, 12, 0.2, 0.34, 41]);
+  assert.deepEqual(sw.swimSessions, [{ id: "i180003911", date: "2026-10-21", movingMin: 12, elapsedMin: 21, source: "moving_time", swimTimeEstimated: false }]);
+  // Lauf und Rad verschieben sich durch die Schwimmregel nicht, in keiner Woche
+  const plain = computeWeekTotals(acts, "2026-10-23"), withSwims = computeWeekTotals([...acts, swim, { ...swim, start_date_local: "2026-10-14T12:00:00", moving_time: 1800 }], "2026-10-23");
+  assert.deepEqual(withSwims.weeks.map((w) => [w.week, w.byDisciplineMin.lauf, w.byDisciplineMin.rad, w.byDiscipline.lauf, w.byDiscipline.rad]), plain.weeks.map((w) => [w.week, w.byDisciplineMin.lauf, w.byDisciplineMin.rad, w.byDiscipline.lauf, w.byDiscipline.rad]));
+  // nur Schwimmen kommt dazu: 12.10. 3323 s + 739 s = 68 min, 19.10. 8346 s + 735 s = 151 min, die übrigen Wochen unverändert
+  assert.deepEqual(withSwims.weeks.map((w) => w.enduranceMin), plain.weeks.map((w) => w.enduranceMin).slice(0, -2).concat([68, 151]));
+  assert.equal(withSwims.weeks.at(-2).byDisciplineMin.schwimmen, 12); // moving_time 1800 passt nicht zu 739 s Laps: die Laps zählen
+  const c = currentWeekTotals(computeWeekTotals([...acts, swim], "2026-10-23"));
+  assert.deepEqual([c.swimMovingHours, c.swimElapsedHours, c.swimRestShare, c.swimTimeEstimated], [0.2, 0.34, 41, undefined]);
+}
+// Fallback ohne Intervalle: moving_time; fehlt auch das, elapsed_time und swimTimeEstimated
+{
+  const noLaps = { ...swim, icu_intervals: undefined };
+  assert.deepEqual(swimTimeOf(noLaps), { sec: 735, elapsedSec: 1241, source: "moving_time", estimated: false });
+  assert.deepEqual(swimTimeOf({ ...noLaps, moving_time: null }), { sec: 1241, elapsedSec: 1241, source: "elapsed_time", estimated: true });
+  const est = computeWeekTotals([...acts, { ...noLaps, moving_time: null }], "2026-10-23");
+  const ew = est.weeks.at(-1);
+  assert.deepEqual([ew.byDisciplineMin.schwimmen, ew.swimRestShare, ew.swimSessions[0].swimTimeEstimated, ew.swimSessions[0].source], [21, 0, true, "elapsed_time"]);
+  assert.equal(currentWeekTotals(est).swimTimeEstimated, true);
+  // Season-Block (enduranceWeeks) zählt dieselbe Schwimmzeit
+  assert.equal(enduranceWeeks([...acts, swim], "2026-10-12", "2026-10-23").at(-1).enduranceMin, 151);
+}
+// Laps holen: nur für Schwimmeinheiten, KV-Cache je Aktivität und Analyse-Stand, ein Fehler lässt die Einheit ohne Laps
+{
+  const f = globalThis.fetch, calls = [];
+  const kv = new Map(), env = { INTERVALS_API_KEY: "k", KV: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => kv.set(k, v) } };
+  globalThis.fetch = async (url) => (calls.push(String(url)), String(url).includes("bad") ? new Response("nope", { status: 404 })
+    : new Response(JSON.stringify({ icu_intervals: swimLaps.map((x) => ({ ...x, average_heartrate: 120 })) }), { status: 200 }));
+  const list = [{ ...swim, icu_intervals: undefined, analyzed: "2026-08-26T12:20:30" }, { ...swim, id: "bad", icu_intervals: undefined }, acts[0]];
+  const out = await withSwimIntervals(env, list);
+  assert.deepEqual(calls.map((u) => u.split("/api/v1")[1]), ["/activity/i180003911/intervals", "/activity/bad/intervals"]);
+  assert.equal(swimActiveSec(out[0].icu_intervals), 739);
+  assert.deepEqual(Object.keys(out[0].icu_intervals[0]), ["type", "distance", "moving_time", "elapsed_time"]);
+  assert.equal(out[1].icu_intervals, undefined);
+  assert.equal(out[2], acts[0]);
+  await withSwimIntervals(env, [list[0]]);
+  assert.equal(calls.length, 2); // aus dem Cache
+  globalThis.fetch = f;
+}
 console.log("week-totals tests ok");
 
 // Stiller Hinweis Ramp Rate / ACWR (Karte "Aktueller Rahmen"): nur bei Ramp > 5 oder ACWR an mind. 3 der letzten 7 Tage > 1,3

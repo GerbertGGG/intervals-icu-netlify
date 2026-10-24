@@ -21,6 +21,7 @@ import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
 import { computeWeekTotals, enduranceWeeks } from "./week-totals.js";
+import { withSwimIntervals } from "./swim-time.js";
 import { readTargets, targetsView } from "./targets-snapshot.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
@@ -906,6 +907,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     if (ra?.dec60 != null) Object.assign(lastActivity, { dec60: ra.dec60, stableMin: ra.stableMin });
     if (ra?.overCapMin != null) Object.assign(lastActivity, { overCapMin: ra.overCapMin, capHr: ra.capHr });
   }
+  // Schwimmeinheiten mit ihren Laps fuer die Wochensummen (Bewegungszeit ohne Pausen, swim-time.js)
+  const weekActs = activitiesR.ok ? await withSwimIntervals(env, activities) : activities;
   return {
     generatedAt: new Date().toISOString(),
     today: todayIso,
@@ -946,7 +949,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     trainingDays: activitiesR.ok ? computeTrainingDays(activities, todayIso) : null,
     // Wochenziele (week-totals.js): Ausdauerstunden ohne Kraft und Kraftsätze in 2 Wochen, letzte 8 Wochen, je Woche gegen das
     // Ziel, das der Coach für sie gesetzt hat (save_targets); dieselbe Rechnung wie get_coach. targets: geltendes Ziel und Historie
-    weekTotals: activitiesR.ok ? { ...computeWeekTotals(activities, todayIso, storedTargets), targets } : null,
+    weekTotals: activitiesR.ok ? { ...computeWeekTotals(weekActs, todayIso, storedTargets), targets } : null,
     // Aktueller Rahmen des Coaches (save_targets): Wochenziel, Steigerung, Intensität je Sportart, Leitplanken, Nicht erlaubt, Historie.
     // loadHint: Ramp Rate / ACWR nur, wenn auffällig hoch (sonst null)
     targets,
