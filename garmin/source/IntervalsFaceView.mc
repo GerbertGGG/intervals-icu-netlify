@@ -9,7 +9,7 @@ import Toybox.WatchUi;
 
 // Zifferblatt nach Tageszeit (Mockup "Modular", schwarz mit Sportfarben). Fest: oben Datum, Akku und das Urteil des Coaches
 // als Wort, darunter die große Uhrzeit, unten die offenen Wochenminuten je Sportart mit Balken. Dazwischen eine Karte, die
-// mit dem Tag wechselt: morgens (bis 12 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche Tag für Tag, bis 3 Stunden nach
+// mit dem Tag wechselt: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche Tag für Tag, bis 3 Stunden nach
 // einer Einheit deren Werte. Ganz unten die nächste Einheit.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
@@ -26,7 +26,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const ACCENT = 0x64A8FF; // Coach ohne Urteil (wie im Widget)
     const STALE_SECS = 3600;
     const AFTER_SECS = 3 * 3600; // so lange nach dem Ende einer Einheit steht ihre Karte
-    const MORNING_END = 12;      // bis zu dieser Stunde die Morgenkarte
+    const MORNING_END = 10;      // bis zu dieser Stunde die Morgenkarte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
     const TOP_Y = 70;
