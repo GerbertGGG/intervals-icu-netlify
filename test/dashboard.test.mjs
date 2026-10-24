@@ -200,6 +200,12 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
   assert.equal(waits.length, 1);
   await Promise.all(waits); assert.ok(n > 0);
   assert.ok(JSON.parse(kv.get("widget:dashboard-cache")).at > c.at); // Cache erneuert
+  // Uhr: Ohne vollstaendigen Stand von heute (eine Quelle faellt aus) kommt der letzte unvollstaendige Stand sofort
+  kv.set("widget:dashboard-last", kv.get("widget:dashboard-cache")); kv.delete("widget:dashboard-cache");
+  const waits2 = []; n = 0;
+  const res2 = await handleWidgetRequest(new Request("https://x/api/widget?view=watch", { headers: { authorization: "Bearer uhr" } }), watchEnv, { waitUntil: (p) => waits2.push(p) });
+  assert.equal(res2.status, 200); assert.equal(waits2.length, 1); // Neuaufbau nur im Hintergrund
+  await Promise.all(waits2);
   globalThis.fetch = f;
 }
 // Training-Ansicht (mittleres Widget)
