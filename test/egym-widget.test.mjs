@@ -209,3 +209,14 @@ test("Satz-Ziel aus dem Blocktext geht vor EGYM_WEEKLY_GOAL_SETS", () => {
   assert.equal(d.week.goalSets, 70);
   assert.equal(d.week.goalSource, "block");
 });
+
+test("Rahmen des Coaches (Sätze in 2 Wochen) geht dem Blocktext vor und zählt Woche plus Vorwoche", () => {
+  const day = (iso, n) => gym(iso, iso + "T16:00:00Z", Array.from({ length: n }, () => set(10, 50)));
+  const w = [day("2026-10-01", 10), day("2026-10-08", 30), day("2026-10-14", 30), day("2026-10-16", 30), day("2026-10-24", 30)];
+  const d = buildWidgetKraft({ workouts: w, today: "2026-10-24", blockSets: 60, frameSets2w: 90 });
+  assert.deepEqual([d.week.goalSets, d.week.goalSource, d.week.rollWeeks, d.week.sets, d.week.windowSets], [90, "coach", 2, 30, 90]);
+  assert.deepEqual(d.weeks.map((x) => [x.sets, x.rollSets]), [[0, 0], [0, 0], [10, 10], [30, 40], [60, 90], [30, 90]]);
+  assert.deepEqual(d.weeksHit, { hit: 1, of: 4 });
+  assert.equal(d.streakWeeks, 2);
+  assert.equal(buildWidgetKraft({ workouts: w, today: "2026-10-24", blockSets: 60 }).week.goalSource, "block");
+});
