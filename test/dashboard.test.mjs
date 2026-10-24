@@ -124,6 +124,11 @@ for (const gone of ["focus", "review"]) assert.equal(gone in wdg, false, gone);
   const withCoach = buildWidget({ ...d, coach: { fetchedAt: d.generatedAt, note: "Heute 45 min locker.", headline: "Locker laufen" } });
   assert.deepEqual(withCoach.readiness.verdict, { cls: "coach", text: "Locker laufen" });
   assert.equal(withCoach.coach.note, "Heute 45 min locker.");
+  // coach.today: Aussage von heute (Berliner Datum); die von gestern Abend ist noch frisch, aber nicht von heute
+  const at = (fetchedAt) => buildWidget({ ...d, generatedAt: `${today}T08:00:00Z`, coach: { fetchedAt, note: "x" } }).coach.today;
+  assert.equal(at(`${today}T06:30:00Z`), true);
+  assert.equal(at(`2026-09-29T18:00:00Z`), false);
+  assert.equal(at(`2026-09-29T22:30:00Z`), true); // 0:30 Uhr in Berlin zaehlt schon als heute
   // Urteil des Coaches (go) gibt die Farbe, Blocker gehen mit
   const goCoach = buildWidget({ ...d, coach: { fetchedAt: d.generatedAt, note: "x", headline: "Heute nur locker", go: "locker", blockers: ["Hüfte zwickt"] } });
   assert.equal(goCoach.readiness.verdict.cls, "warn"); assert.deepEqual(goCoach.coach.blockers, ["Hüfte zwickt"]); assert.equal(goCoach.coach.go, "locker");

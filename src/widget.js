@@ -113,7 +113,7 @@ export function buildWidget(d, env = {}) {
   const upcoming = d.sources.intervalsEvents?.ok === false ? null : d.planned.filter((p) => p.date > d.today && p.date <= horizon).map((p) => ({ date: p.date, name: stripKey(p.name), sport: p.sport, durationMin: p.durationMin, key: isKeySession(p) }));
   const r = d.summary.recovery;
   const c = freshCoach(d);
-  const coach = c ? { note: c.note, headline: c.headline, go: c.go ?? null, blockers: c.blockers ?? [], question: c.question ?? null, answer: c.answer ? true : false } : null;
+  const coach = c ? { note: c.note, headline: c.headline, go: c.go ?? null, blockers: c.blockers ?? [], question: c.question ?? null, answer: c.answer ? true : false, today: isoDateBerlin(new Date(c.fetchedAt)) === d.today } : null;
   const wk = weeklyGoal(week, env);
   // Woche Mo bis So fuer die Kapseln im grossen Widget: erledigter Load je Sportart und die geplanten Einheiten des Tages
   const monday = addDays(d.today, -((new Date(d.today + "T00:00:00Z").getUTCDay() + 6) % 7));
@@ -143,7 +143,8 @@ export function buildWidget(d, env = {}) {
     // goals: Wochenziele des Coaches wie die Karte "Woche" (week-totals.js, save_targets): Ausdauerminuten ohne Kraft gegen das
     // Wochenziel, Kraftsaetze laufende Woche plus Vorwoche gegen das 2-Wochen-Ziel; ohne Aktivitaeten null
     week: { total: total(week), lastTotal: total(lastWeek), goal: wk.goal, goalSource: wk.source, tsb: d.summary.load.tsb, days: weekDays, targets: weekTargets(week), ...weekOpen(d, week), goals: weekGoals(d) },
-    // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget der Zweck aus dem Plan
+    // Hinweis des Coaches, nur solange er frisch ist; sonst steht im Widget der Zweck aus dem Plan.
+    // coach.today: Aussage stammt von heute (sonst laedt das Widget morgens frueher nach)
     coach,
     sourcesFailed: failedOf(d),
   };
