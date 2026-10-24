@@ -20,7 +20,7 @@ import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
-import { computeWeekTotals, enduranceWeeks } from "./week-totals.js";
+import { computeWeekTotals, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
 import { withSwimIntervals } from "./swim-time.js";
 import { readTargets, targetsView } from "./targets-snapshot.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
@@ -172,6 +172,22 @@ export function buildRunRecord(a, ctx = null) {
 }
 
 const SPORTS = ["run", "bike", "swim", "strength", "other"];
+
+// Kraft-Tage fuer das Block-Ziel: EGYM-Tage aus dem Cache, dazu Kraft-Einheiten aus Intervals von mind. 20 min an Tagen,
+// die der Cache nicht kennt (Mobility, Dehnen, Yoga zaehlen nicht). Ist der Cache aelter als der Abgleich nach Intervals,
+// kommt die heutige EGYM-Einheit nur ueber Intervals: Ihre Saetze stehen in der Beschreibung ("30 Saetze ..."), sonst
+// zaehlte der Tag im Satz-Modus mit 0.
+export function mergeStrengthDays(egymEntries, acts) {
+  const egymSet = new Set(egymEntries.map((x) => x.date));
+  const byDay = new Map();
+  for (const a of acts ?? []) {
+    if (sportOf(a) !== "strength" || (num(a?.moving_time) ?? 0) < 20 * 60 || /mobil|stretch|dehn|yoga/i.test(String(a?.name ?? ""))) continue;
+    const date = activityDay(a);
+    if (!date || egymSet.has(date)) continue;
+    byDay.set(date, (byDay.get(date) ?? 0) + strengthSetsOf(a));
+  }
+  return [...egymEntries, ...[...byDay].map(([date, sets]) => (sets > 0 ? { date, sets } : { date }))];
+}
 
 export function sportOf(a) {
   const t = String(a?.type ?? "").toLowerCase();
@@ -817,11 +833,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     // Kraft-Tag = Tag mit EGYM-Training oder einer Kraft-Einheit aus Intervals von mind. 20 min (Mobility, Dehnen, Yoga zaehlen nicht)
     const egymDays = await readEgymStrengthDates(env).catch(() => null);
     const egymEntries = egymDays?.days ?? (egymDays?.dates ?? []).map((date) => ({ date }));
-    const egymSet = new Set(egymEntries.map((x) => x.date));
-    const strengthDays = [
-      ...egymEntries,
-      ...[...new Set(blockActs.filter((a) => sportOf(a) === "strength" && (num(a?.moving_time) ?? 0) >= 20 * 60 && !/mobil|stretch|dehn|yoga/i.test(String(a?.name ?? ""))).map((a) => activityDay(a)))].filter((date) => !egymSet.has(date)).map((date) => ({ date })),
-    ];
+    const strengthDays = mergeStrengthDays(egymEntries, blockActs);
     // Abschlussziele (Lauf/Rad vergleichbar, Schwimmtest): Rohwerte je Einheit, Decoupling notfalls aus den Zeitreihen (best effort)
     const blockText = [seasonBlock.goal, ...(seasonBlock.notes ?? [])].filter(Boolean).join("\n\n");
     const tg = parseBlockTargets(blockText);

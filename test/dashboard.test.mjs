@@ -8,7 +8,7 @@ import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
 import { validateSnapshot, bestForDistance } from "../src/runalyze-snapshot.js";
 import { buildSessionProfile } from "../src/session-profile.js";
-import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun, buildLastActivity } from "../src/dashboard.js";
+import { sportOf, buildDashboard, buildRunRecord, handleDashboardRequest, classifyRun, buildLastActivity, mergeStrengthDays } from "../src/dashboard.js";
 
 const today = "2026-09-30";
 const day = (n) => new Date(Date.parse(today + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -714,4 +714,17 @@ console.log("zones from intervals ok");
   const run = buildSessionProfile([{ type: "velocity_smooth", data: Array.from({ length: n }, (_, i) => (i >= 600 && i < 660 ? 0 : 3)) }], "pace", false);
   assert.equal(run.points[0][1], 333); assert.equal(run.points[20][1], null); assert.equal(run.points[20][2], null);
   assert.equal(buildSessionProfile([{ type: "watts", data: [100, 120] }], "watts", false), null);
+}
+
+// Kraft-Tage: Ist der EGYM-Cache aelter als der Abgleich, zaehlen die Saetze der Intervals-Einheit aus der Beschreibung
+{
+  const egym = [{ date: "2026-10-20", sets: 30 }, { date: "2026-10-22", sets: 30 }];
+  const acts = [
+    { start_date_local: "2026-10-24T16:55:21", type: "WeightTraining", name: "Krafttraining (EGYM)", moving_time: 1920, description: "30 Sätze · 24,8 t Volumen\n\nLeg Press: 20 × 100 kg" },
+    { start_date_local: "2026-10-22T17:00:00", type: "WeightTraining", name: "Krafttraining (EGYM)", moving_time: 1800, description: "30 Sätze" },
+    { start_date_local: "2026-10-23T08:00:00", type: "WeightTraining", name: "Kraft", moving_time: 1500 },
+    { start_date_local: "2026-10-21T08:00:00", type: "WeightTraining", name: "Mobility", moving_time: 1500, description: "10 Sätze" },
+  ];
+  assert.deepEqual(mergeStrengthDays(egym, acts), [...egym, { date: "2026-10-24", sets: 30 }, { date: "2026-10-23" }]);
+  assert.deepEqual(mergeStrengthDays([], [acts[2]]), [{ date: "2026-10-23" }]);
 }
