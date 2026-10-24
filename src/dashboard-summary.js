@@ -75,6 +75,7 @@ function computeBody(wellness, todayIso, sickDays = []) {
     if (keep[key] && v.length >= R.minN) { const m = median(v); v = v.filter((x) => keep[key](x, m)); }
     return v.length >= R.minN ? median(v) : null;
   };
+  const band = (key) => { const v = past.map((w) => w[key]).filter((x) => x != null); return v.length >= R.minN ? [0.1, 0.25, 0.75, 0.9].map((q) => quantile(v, q)) : null; };
   const prior = wellness.filter((w) => w.date >= addDays(todayIso, -(R.trendDays - 1) - R.baseDays) && w.date <= addDays(todayIso, -R.trendDays) && !skip.has(w.date));
   const recent = wellness.filter((w) => w.date > addDays(todayIso, -R.trendDays) && w.date <= todayIso);
   const mean7 = (key) => { const v = recent.map((w) => w[key]).filter((x) => x != null); return v.length >= R.trendMinN ? v.reduce((a, b) => a + b, 0) / v.length : null; };
@@ -82,6 +83,8 @@ function computeBody(wellness, todayIso, sickDays = []) {
     hrv: { mean7: mean7("hrv"), base7: base("hrv", prior) },
     resting: { mean7: mean7("restingHR"), base7: base("restingHR", prior) },
     sleepMedian: base("sleepHours"), hrvMedian: base("hrv"), restingMedian: base("restingHR"),
+    // Ueblicher Bereich der Basistage (10/25/75/90-%-Quantil, ab minN Werten) fuer den farbigen Vergleich auf der Uhr
+    band: { sleep: band("sleepHours"), hrv: band("hrv"), resting: band("restingHR") },
   };
 }
 

@@ -10,11 +10,11 @@ Fest von oben nach unten:
 
 Die **Karte in der Mitte** und die Zeile ganz unten wechseln:
 
-- **Morgens bis 12 Uhr**: Schlaf (lila) und HRV von heute mit der eigenen Basis (Ø), darunter die HRV der letzten 7 Tage als Balken, heute grün, wenn über der Basis, die Basis gestrichelt. Unten die Kopfzeile des Coaches von heute in Blau, auf 20 Zeichen gekürzt (ohne sie die nächste Einheit).
+- **Morgens bis 12 Uhr** (größere Karte, ohne Wochenreihe): Schlaf, HRV und Ruhepuls von heute, jeder Wert in der Farbe seines Vergleichs mit dem eigenen üblichen Bereich der Basistage (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen), darunter die Basis (Ø). Eine Gesamtampel gibt es nicht, das Urteil ist das Wort des Coaches in der Kopfzeile. Darunter die Kopfzeile des Coaches von heute über bis zu drei Zeilen (ohne Aussage „Noch kein Coach“). Unten die nächste Einheit.
 - **Bis 3 Stunden nach einer Einheit** (von heute): Sportart mit Startzeit, Strecke, Zeit (h:mm), Pace oder Watt und Puls (nur, wenn das Dashboard ihn für die Einheit zeigt). Rechts oben „LÄNGSTE SEIT N WO.“, wenn die letzte mindestens so lange Einheit derselben Sportart zwei Wochen oder länger zurückliegt. Unten die nächste Einheit.
 - **Sonst (tagsüber)**: die Woche Mo bis So, je Tag die Minuten je Sportart übereinander, erledigt gefüllt, geplant als Umriss; oben rechts die Ausdauer der Woche gegen das Ziel des Coaches. Unten die nächste Einheit („Heute Lauf 45'“, „Morgen Rad 60'“).
 
-Essen, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `ti`, `sl`, `hv`, `hm`, `cl`, `wd`, `wm` und `la`.
+Essen, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `ti`, `rv`, `cl`, `wd`, `wm` und `la`.
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Der Akku kommt von der Uhr selbst.
 
