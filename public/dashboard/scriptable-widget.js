@@ -152,10 +152,12 @@ function baseWidget({ flat = true, padV = 12 } = {}) {
   return w;
 }
 
-// Morgens kommen die Uhrwerte in Etappen (erst ein vorlaeufiger Ruhepuls, Schlaf und HRV einige Minuten spaeter).
-// Fehlt bis 11 Uhr noch Schlaf oder HRV, frueher nachladen, damit die Werte nicht auf dem Zwischenstand stehen bleiben.
-function refreshSoonIfPending(w, r) {
-  const pending = r && (r.hrv == null || (r.sleepHours == null && !(r.body && r.body.sleep && r.body.sleep.score != null)));
+// Morgens kommen die Uhrwerte in Etappen (erst ein vorlaeufiger Ruhepuls, Schlaf und HRV einige Minuten spaeter),
+// das Morgen-Update des Coaches kommt irgendwann nach 8 Uhr. Fehlt bis 11 Uhr noch Schlaf, HRV oder die Coach-Aussage
+// von heute, frueher nachladen, damit nichts auf dem Stand von gestern stehen bleibt.
+function refreshSoonIfPending(w, r, coach) {
+  const coachPending = !coach || coach.today === false;
+  const pending = coachPending || (r && (r.hrv == null || (r.sleepHours == null && !(r.body && r.body.sleep && r.body.sleep.score != null))));
   if (pending && new Date().getHours() < 11) w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);
 }
 
@@ -521,7 +523,7 @@ function buildWidget(res) {
   const g = d.goal;
   const r = d.readiness, v = r.verdict, p = d.plan.today[0];
   const w = baseWidget({ padV: 12 });
-  refreshSoonIfPending(w, r);
+  refreshSoonIfPending(w, r, d.coach);
 
   // 1. Kopf: Wochentag und Datum wie im Kalender-Widget, Abrufzeit, Rennen als Kapsel (nur bis zum Renntag)
   const head = w.addStack(); head.centerAlignContent(); head.size = new Size(W, 0);
