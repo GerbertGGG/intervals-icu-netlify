@@ -4,12 +4,12 @@ main = "src/index.js"
 compatibility_date = "2025-11-11"
 workers_dev = true
 
-# Erster Eintrag: alle 15 Minuten (UTC 05:00-22:45, deckt 07:00-23:45 Berlin in Sommer- und
-# Winterzeit ab). Jeder Tick synct Yazio fuer heute (Ernaehrung ueber den Tag verfolgen)
-# und holt die Snapshots aus GitHub (index.js).
+# Erster Eintrag: alle 15 Minuten (UTC 03:00-22:45, ab 04:00/05:00 Berlin). Jeder Tick holt die
+# Snapshots aus GitHub und baut den Dashboard-Cache neu (fuer die Uhr, die sonst in den Abbruch laeuft);
+# von 07:00 bis 23:45 Berlin synct er ausserdem Yazio fuer heute (index.js).
 # Zweiter Eintrag: Minute 58 in den UTC-Stunden 21 und 22, damit einer der beiden Ticks
 # unabhaengig von Sommer-/Winterzeit auf 23:58 Berlin faellt: letzter Yazio-Sync des Tages.
-triggers = { crons = ["*/15 5-22 * * *", "58 21-22 * * *"] }
+triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *"] }
 
 [[kv_namespaces]]
 binding = "KV"

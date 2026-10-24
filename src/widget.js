@@ -603,16 +603,32 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
 // wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
 const CACHE_KEY = "widget:dashboard-cache";
 const CACHE_MS = 5 * 60 * 1000;
-async function dashboardCached(env, fresh) {
+// stale: Die Uhr (view=watch) bricht nach wenigen Sekunden ab (Fehler -300), ein voller Neuaufbau aus allen Quellen dauert
+// laenger. Mit stale bekommt sie sofort den letzten Stand von heute, auch wenn er aelter ist, und der Neuaufbau laeuft per
+// ctx.waitUntil im Hintergrund fuer den naechsten Abruf.
+async function dashboardCached(env, fresh, ctx = null, stale = false) {
   const today = isoDateBerlin();
   if (!fresh) {
     const c = await readKvJson(env, CACHE_KEY).catch(() => null);
     if (c?.data && c.data.today === today && Date.now() - c.at < CACHE_MS) return c.data;
+    if (stale && ctx && c?.data && c.data.today === today) {
+      ctx.waitUntil(rebuildDashboardCache(env, today).catch(() => {}));
+      return c.data;
+    }
   }
+  return rebuildDashboardCache(env, today);
+}
+
+async function rebuildDashboardCache(env, today = isoDateBerlin()) {
   const data = await buildDashboard(env, today);
   // Nur vollstaendige Staende cachen: Ein Ausfall soll nicht fuenf Minuten lang haengen bleiben
   if (failedOf(data).length === 0) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
   return data;
+}
+
+// Vom Cron alle 15 Minuten: haelt den Cache warm, damit die Uhr nie auf einen Neuaufbau warten muss
+export async function warmDashboardCache(env) {
+  await rebuildDashboardCache(env);
 }
 
 // Die Uhr bekommt ein eigenes Token (WATCH_TOKEN), das nur die Ansicht "watch" oeffnet: Es steht im Klartext in den
@@ -622,7 +638,7 @@ function isWatchAuthorized(req, env) {
   return Boolean(env?.WATCH_TOKEN) && given.length > 0 && timingSafeEqual(given, env.WATCH_TOKEN);
 }
 
-export async function handleWidgetRequest(req, env) {
+export async function handleWidgetRequest(req, env, ctx = null) {
   const headers = { "cache-control": "no-store" };
   const view0 = new URL(req.url).searchParams.get("view");
   if (!env?.DASHBOARD_TOKEN && !env?.WATCH_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
@@ -631,10 +647,11 @@ export async function handleWidgetRequest(req, env) {
   const view = params.get("view");
   // Kraft kommt allein aus EGYM, ohne das Dashboard (Intervals, Yazio, Runalyze) zu laden
   if (view === "kraft") return json(await loadWidgetKraft(env, params.get("fresh") === "1"), 200, headers);
-  const dashboard = await dashboardCached(env, params.get("fresh") === "1");
-  // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null)
-  const goals = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  const live = (view === "small" || view === "watch") && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
+  const dashboard = await dashboardCached(env, params.get("fresh") === "1", ctx, view === "watch");
+  // Tagesziele der Ernaehrung kommen aus Yazio (best effort: fehlt der Zugang oder scheitert die Abfrage, bleibt es null).
+  // Nicht fuer die Uhr: Sie zeigt kein Essen, und die zwei Yazio-Abrufe kosten Zeit bis zum Abbruch (-300).
+  const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
+  const live = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
   const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "kompass" ? buildWidgetKompass(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }

@@ -16,7 +16,7 @@ Die **Karte in der Mitte** und die Zeile ganz unten wechseln:
 
 Essen, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `ti`, `rv`, `wd`, `wm` und `la`.
 
-Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Der Akku kommt von der Uhr selbst.
+Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Der Worker antwortet dabei sofort aus dem Cache von heute, auch wenn er älter als 5 Minuten ist, und baut ihn im Hintergrund neu; der Cron hält ihn alle 15 Minuten warm. Ein voller Neuaufbau aus allen Quellen dauert länger, als die Uhr wartet (`-300`). Der Akku kommt von der Uhr selbst.
 
 Ist der letzte Stand älter als eine Stunde, steht in der Kopfzeile statt des Coach-Urteils ein oranges „!“ und, wenn der letzte Abruf gescheitert ist, dessen Fehlercode: `-104` keine Bluetooth-Verbindung zum Handy, `-2`/`-300` Zeitüberschreitung, `401` falsches Uhr-Token, `404` falsche Worker-Adresse, `-400`/`-402`/`-403` Antwort unlesbar oder zu groß, `5xx` Fehler im Worker.
 
