@@ -11,6 +11,7 @@ import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest, warmDashboardCache } from "./widget.js";
 import { syncEgymToIntervals } from "./egym-intervals-sync.js";
+import { loadWidgetKraft } from "./egym-widget.js";
 
 async function withWorkerErrorBoundary(fn) {
   try {
@@ -95,9 +96,16 @@ export default {
     const today = isoDate(new Date());
     // Der erste Tick des Tages holt auch gestern nach (Eintraege nach dem 23:58-Lauf).
     const from = hour === 7 ? isoDate(new Date(Date.now() - 86400000)) : today;
-    // EGYM-Krafteinheiten einmal pro Stunde nach Intervals schreiben (EGYM-Abruf ist langsam, der Abgleich ist wiederholbar)
+    // EGYM-Krafteinheiten einmal pro Stunde nach Intervals schreiben (EGYM-Abruf ist langsam, der Abgleich ist wiederholbar).
+    // Danach den EGYM-Cache neu fuellen: aus ihm zaehlen Dashboard, Widget und Uhr die Kraft-Saetze der Woche, und sonst
+    // frischt ihn nur ein Abruf des Kraft-Widgets auf (ohne den blieb eine erledigte Einheit dort offen).
     if (new Date(Number(event?.scheduledTime)).getUTCMinutes() < 15) {
-      ctx.waitUntil(syncEgymToIntervals(env).catch((e) => console.error("egym to intervals failed", String(e?.message ?? e))));
+      ctx.waitUntil(
+        syncEgymToIntervals(env)
+          .catch((e) => console.error("egym to intervals failed", String(e?.message ?? e)))
+          .then(() => loadWidgetKraft(env, true))
+          .catch((e) => console.error("egym cache refresh failed", String(e?.message ?? e))),
+      );
     }
     ctx.waitUntil(
       syncYazioRange(env, from, today).catch((e) => console.error("yazio sync failed", String(e?.message ?? e))),
