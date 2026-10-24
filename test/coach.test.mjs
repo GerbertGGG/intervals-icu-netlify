@@ -27,7 +27,8 @@ assert.deepEqual(applyAnswer({ note: "x", question: "q" }, { answer: " a " }, Da
 const at = "2026-10-11T05:00:00Z", t0 = Date.parse(at);
 assert.equal(isFreshCoach({ fetchedAt: at }, t0 + 35 * 3600_000), true);
 assert.equal(isFreshCoach({ fetchedAt: at }, t0 + 37 * 3600_000), false);
-assert.equal(isFreshCoach({ fetchedAt: at }, t0 - 1000), false);
+assert.equal(isFreshCoach({ fetchedAt: at }, t0 - 25 * 60_000), true); // Zeitstempel etwas in der Zukunft zaehlt schon
+assert.equal(isFreshCoach({ fetchedAt: at }, t0 - 4 * 3600_000), false);
 assert.equal(isFreshCoach(null, t0), false);
 
 const kv = new Map();

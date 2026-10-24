@@ -210,9 +210,12 @@ export async function readCoach(env) {
 }
 
 // Das Widget zeigt nur eine frische Aussage; eine von gestern Mittag wuerde heute falsch wirken.
+// Etwas Vorlauf erlaubt: Der Coach setzt fetchedAt selbst und liegt dabei schon mal in der Zukunft (z. B. Ortszeit
+// mit "Z"). Ohne Vorlauf gaelte seine Aussage bis dahin nicht als frisch und es stuende "Noch keine Coach-Auswertung" da.
+const COACH_MAX_AHEAD_HOURS = 3;
 export function isFreshCoach(coach, nowMs) {
   const at = Date.parse(coach?.fetchedAt);
-  return Number.isFinite(at) && Number.isFinite(nowMs) && nowMs - at >= 0 && nowMs - at <= COACH_MAX_AGE_HOURS * 3600_000;
+  return Number.isFinite(at) && Number.isFinite(nowMs) && nowMs - at >= -COACH_MAX_AHEAD_HOURS * 3600_000 && nowMs - at <= COACH_MAX_AGE_HOURS * 3600_000;
 }
 
 export async function handleCoachAnswerRequest(req, env, isAuthorized) {
