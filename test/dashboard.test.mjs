@@ -2,7 +2,7 @@
 // nichts davon geht in den Livebetrieb). Ausführen: node test/dashboard.test.mjs
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { buildWidget, buildWidgetDetail, buildWidgetVdot, buildWidgetSmall, buildWidgetTraining, handleWidgetRequest } from "../src/widget.js";
+import { buildWidget, buildWidgetDetail, buildWidgetVdot, buildWidgetSmall, buildWidgetTraining, handleWidgetRequest, handleWatchStatusRequest } from "../src/widget.js";
 import { computeRecovery, computeLoad } from "../src/dashboard-summary.js";
 import { parseCravings, findHipFlags, parseWorkoutSteps } from "../src/dashboard-parse.js";
 import { validateStudie, handleStudieRequest } from "../src/studie-snapshot.js";
@@ -197,15 +197,27 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
   const watchEnv = { ...env, WATCH_TOKEN: "uhr" };
   const res = await handleWidgetRequest(new Request("https://x/api/widget?view=watch", { headers: { authorization: "Bearer uhr" } }), watchEnv, { waitUntil: (p) => waits.push(p) });
   assert.equal(res.status, 200);
-  assert.equal(waits.length, 1);
+  assert.equal(waits.length, 2); // Neuaufbau und Protokoll
   await Promise.all(waits); assert.ok(n > 0);
   assert.ok(JSON.parse(kv.get("widget:dashboard-cache")).at > c.at); // Cache erneuert
   // Uhr: Ohne vollstaendigen Stand von heute (eine Quelle faellt aus) kommt der letzte unvollstaendige Stand sofort
   kv.set("widget:dashboard-last", kv.get("widget:dashboard-cache")); kv.delete("widget:dashboard-cache");
   const waits2 = []; n = 0;
   const res2 = await handleWidgetRequest(new Request("https://x/api/widget?view=watch", { headers: { authorization: "Bearer uhr" } }), watchEnv, { waitUntil: (p) => waits2.push(p) });
-  assert.equal(res2.status, 200); assert.equal(waits2.length, 1); // Neuaufbau nur im Hintergrund
+  assert.equal(res2.status, 200); assert.equal(waits2.length, 2); // Neuaufbau nur im Hintergrund, dazu das Protokoll
   await Promise.all(waits2);
+  // Protokoll: der Abruf der Uhr steht mit Status und Dauer in watch-status, ein falscher Token als 401
+  let st = await (await handleWatchStatusRequest(watchEnv)).json();
+  assert.equal(st.watch.status, 200); assert.ok(st.watch.ms >= 0); assert.ok(st.cache.at);
+  await handleWidgetRequest(new Request("https://x/api/widget?view=watch", { headers: { authorization: "Bearer falsch" } }), watchEnv);
+  st = await (await handleWatchStatusRequest(watchEnv)).json();
+  assert.equal(st.watch.status, 401);
+  // Uhr ohne jeden Stand von heute: haengt der Neuaufbau, kommt nach kurzer Wartezeit 503 statt Abbruch
+  kv.delete("widget:dashboard-cache"); kv.delete("widget:dashboard-last");
+  globalThis.fetch = () => new Promise(() => {});
+  const t0 = Date.now();
+  const res3 = await handleWidgetRequest(new Request("https://x/api/widget?view=watch", { headers: { authorization: "Bearer uhr" } }), watchEnv, { waitUntil: () => {} });
+  assert.equal(res3.status, 503); assert.ok(Date.now() - t0 < 10000);
   globalThis.fetch = f;
 }
 // Training-Ansicht (mittleres Widget)

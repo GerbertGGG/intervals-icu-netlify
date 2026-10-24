@@ -9,7 +9,7 @@ import { handleStudieRequest } from "./studie-snapshot.js";
 import { handleCoachRequest, handleCoachAnswerRequest } from "./coach-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
-import { handleWidgetRequest, warmDashboardCache } from "./widget.js";
+import { handleWidgetRequest, handleWatchStatusRequest, warmDashboardCache } from "./widget.js";
 import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 import { loadWidgetKraft } from "./egym-widget.js";
 
@@ -41,6 +41,9 @@ export default {
       // Kompakte Daten fuer das iOS-Widget (Scriptable), siehe widget.js.
       case "/api/widget":
         return route(() => handleWidgetRequest(req, env, ctx));
+      // Abrufe der Uhr und Alter des Caches, ohne Token (siehe handleWatchStatusRequest)
+      case "/api/watch-status":
+        return route(() => handleWatchStatusRequest(env));
       // EGYM-Kraft nach Intervals schreiben, von Hand ausloesbar (Token-geschuetzt); liefert Ergebnis oder die genaue Fehlermeldung.
       case "/api/egym-sync":
         return route(async () => {
