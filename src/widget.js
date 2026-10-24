@@ -603,6 +603,9 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
 // wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
 const CACHE_KEY = "widget:dashboard-cache";
 const CACHE_MS = 5 * 60 * 1000;
+// Letzter Stand auch mit ausgefallener Quelle, nur fuer die Uhr: Faellt eine Quelle laenger aus, gibt es sonst keinen
+// Stand von heute im Cache, und jeder Abruf der Uhr wartet auf einen vollen Neuaufbau (-300).
+const LAST_KEY = "widget:dashboard-last";
 // stale: Die Uhr (view=watch) bricht nach wenigen Sekunden ab (Fehler -300), ein voller Neuaufbau aus allen Quellen dauert
 // laenger. Mit stale bekommt sie sofort den letzten Stand von heute, auch wenn er aelter ist, und der Neuaufbau laeuft per
 // ctx.waitUntil im Hintergrund fuer den naechsten Abruf.
@@ -611,9 +614,12 @@ async function dashboardCached(env, fresh, ctx = null, stale = false) {
   if (!fresh) {
     const c = await readKvJson(env, CACHE_KEY).catch(() => null);
     if (c?.data && c.data.today === today && Date.now() - c.at < CACHE_MS) return c.data;
-    if (stale && ctx && c?.data && c.data.today === today) {
-      ctx.waitUntil(rebuildDashboardCache(env, today).catch(() => {}));
-      return c.data;
+    if (stale && ctx) {
+      const last = c?.data?.today === today ? c : await readKvJson(env, LAST_KEY).catch(() => null);
+      if (last?.data?.today === today) {
+        ctx.waitUntil(rebuildDashboardCache(env, today).catch(() => {}));
+        return last.data;
+      }
     }
   }
   return rebuildDashboardCache(env, today);
@@ -623,6 +629,7 @@ async function rebuildDashboardCache(env, today = isoDateBerlin()) {
   const data = await buildDashboard(env, today);
   // Nur vollstaendige Staende cachen: Ein Ausfall soll nicht fuenf Minuten lang haengen bleiben
   if (failedOf(data).length === 0) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
+  else await writeKvJson(env, LAST_KEY, { at: Date.now(), data }).catch(() => {});
   return data;
 }
 
