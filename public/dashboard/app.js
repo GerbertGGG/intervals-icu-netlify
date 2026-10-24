@@ -1187,27 +1187,30 @@ function renderEgym(k) {
   const failed = k.sourcesFailed || [];
   if (failed.filter((x) => x.startsWith("egym")).length >= 3) { $("egym").innerHTML = '<div class="notice bad"><b>EGYM nicht erreichbar.</b> Login oder Abruf ist fehlgeschlagen.</div>'; return; }
   // Karte "Krafttraining": laufender Zeitraum gegen das Satz-Ziel; Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen") in festen Abschnitten ab Blockstart
-  const wk = k.week, goal = wk.goalSets, P = wk.periodWeeks > 1 && k.periods ? wk.periodWeeks : 1;
+  // Rahmen des Coaches: Sätze der Woche plus Vorwoche (R = 2), jede Zeile = Woche mit ihrer Vorwoche
+  const wk = k.week, goal = wk.goalSets, P = wk.periodWeeks > 1 && k.periods ? wk.periodWeeks : 1, R = wk.rollWeeks > 1 ? wk.rollWeeks : 1;
   const est = (src) => (src === "estimate" ? "≈" : "");
   const vol = (kg) => (kg >= 1000 ? `${fmt(kg / 1000, 1)} <small>t</small>` : `${fmt(kg)} <small>kg</small>`);
   const since = k.daysSince == null ? "–" : k.daysSince === 0 ? "heute" : k.daysSince === 1 ? "gestern" : `vor ${k.daysSince} Tagen`;
-  const src = wk.goalSource === "block" ? "aus dem Blocktext" : failed.includes("intervalsBlock") ? "Standardziel, Blocktext aus Intervals nicht abrufbar" : wk.goalSource === "config" ? "Einstellung im Worker" : "Standardziel";
+  const src = wk.goalSource === "coach" ? "Rahmen des Coaches" : wk.goalSource === "block" ? "aus dem Blocktext" : failed.includes("intervalsBlock") ? "Standardziel, Blocktext aus Intervals nicht abrufbar" : wk.goalSource === "config" ? "Einstellung im Worker" : "Standardziel";
   const curEnd = P > 1 ? wk.periodEnd : addDays(wk.start, 6);
   const past = P > 1
     ? k.periods.slice(0, -1).map((p) => ({ range: spanTxt(p.start, p.end), count: p.sets || 0, hit: (p.sets || 0) >= goal, tip: p.weekSets.map((n, j) => `Woche ${j + 1}: ${n} Sätze`).join(" · ") }))
+    : R > 1
+    ? k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(addDays(w.start, -7 * (R - 1)), addDays(w.start, 6)), count: w.rollSets || 0, hit: (w.rollSets || 0) >= goal, tip: `Woche ab ${fmtDate(w.start)}: ${w.sets || 0} Sätze · Vorwoche: ${(w.rollSets || 0) - (w.sets || 0)} Sätze` }))
     : k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(w.start, addDays(w.start, 6)), count: w.sets || 0, hit: (w.sets || 0) >= goal, tip: [`${w.sessions} Einheiten`, w.minutes ? `${est(w.minutesSource)}${fmtHm(w.minutes)}` : "", w.volumeKg ? `${fmt(w.volumeKg)} kg` : ""].filter(Boolean).join(" · ") }));
   const vt = k.volumeTrend;
   $("strength-card").hidden = false;
   $("strength").innerHTML = strengthCard({
-    goal, unit: "Sätze", goalText: `Ziel ≥ ${goal} Sätze ${P > 1 ? `je ${7 * P} Tage` : "pro Woche"} · ${src}`,
-    cur: { count: (P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, label: `${P > 1 ? `Abschnitt ${spanTxt(wk.periodStart, wk.periodEnd)}` : `Woche ab Mo ${fmtDate(wk.start)}`} · ${leftTxt(daysLeftTo(curEnd, k.today))}` },
+    goal, unit: "Sätze", goalText: `Ziel ≥ ${goal} Sätze ${P > 1 ? `je ${7 * P} Tage` : R > 1 ? `in ${R} Wochen (laufende Woche + Vorwoche)` : "pro Woche"} · ${src}`,
+    cur: { count: (P > 1 || R > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, label: `${P > 1 ? `Abschnitt ${spanTxt(wk.periodStart, wk.periodEnd)}` : R > 1 ? `${spanTxt(addDays(wk.start, -7 * (R - 1)), addDays(wk.start, 6))} · diese Woche ${fmt(wk.sets || 0)}` : `Woche ab Mo ${fmtDate(wk.start)}`} · ${leftTxt(daysLeftTo(curEnd, k.today))}` },
     statsLabel: `Diese Woche · ab Mo ${fmtDate(wk.start)}`,
     // Sätze der Woche nur bei Abschnitten: im Wochenmodus stehen sie schon oben
     stats: [[fmt(wk.sessions), wk.sessions === 1 ? "Einheit" : "Einheiten"], P > 1 ? [fmt(wk.sets || 0), "Sätze"] : null, [wk.minutes == null ? "–" : `${est(wk.minutesSource)}${fmt(wk.minutes)} <small>min</small>`, "Dauer"], [wk.volumeKg ? vol(wk.volumeKg) : "–", "Volumen"], [since, "zuletzt"]].filter(Boolean),
-    past, pastLabel: P > 1 ? `Frühere Abschnitte (je ${7 * P} Tage)` : "Frühere Wochen",
+    past, pastLabel: P > 1 ? `Frühere Abschnitte (je ${7 * P} Tage)` : R > 1 ? "Frühere Wochen (je mit Vorwoche)" : "Frühere Wochen",
     foot: [vt ? `Volumen Vorwoche ${vt.pct > 0 ? "+" : vt.pct < 0 ? "−" : "±"}${fmt(Math.abs(vt.pct), 1)} % gegen die Woche davor (${fmt(vt.lastKg)} kg gegen ${fmt(vt.prevKg)} kg)` : null,
       `<button id="egym-sync" type="button" class="lnk">EGYM jetzt nach Intervals schreiben</button> <span id="egym-sync-msg"></span>`].filter(Boolean),
-    info: `Sätze aus EGYM. Eine Kraft-Einheit ist ein Tag mit Satz-Übungen oder Geräten, die Garmin-Tagesaktivität zählt nicht. ${P > 1 ? `Das Ziel gilt je fester Abschnitt von ${7 * P} Tagen ab Blockstart; beim Darüberfahren steht die Aufteilung auf die Wochen.` : "Beim Darüberfahren stehen Einheiten, Dauer und Volumen der Woche."} Grün mit ✓ = Ziel erreicht, Strich = Ziel. „≈“ = Dauer nur aus der Spanne der Übungen geschätzt, EGYM lieferte keine.`,
+    info: `Sätze aus EGYM. Eine Kraft-Einheit ist ein Tag mit Satz-Übungen oder Geräten, die Garmin-Tagesaktivität zählt nicht. ${R > 1 ? `Das Ziel aus dem Rahmen des Coaches gilt für die laufende Woche plus Vorwoche; jede frühere Zeile zeigt eine Woche mit ihrer Vorwoche, beim Darüberfahren steht die Aufteilung.` : P > 1 ? `Das Ziel gilt je fester Abschnitt von ${7 * P} Tagen ab Blockstart; beim Darüberfahren steht die Aufteilung auf die Wochen.` : "Beim Darüberfahren stehen Einheiten, Dauer und Volumen der Woche."} Grün mit ✓ = Ziel erreicht, Strich = Ziel. „≈“ = Dauer nur aus der Spanne der Übungen geschätzt, EGYM lieferte keine.`,
   });
   const syncBtn = $("egym-sync");
   if (syncBtn) syncBtn.onclick = async () => {

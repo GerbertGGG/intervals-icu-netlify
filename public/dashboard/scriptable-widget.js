@@ -1034,7 +1034,7 @@ function buildKraft(res) {
     return w;
   }
   // Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): der Ring zeigt den laufenden Abschnitt ab Blockstart
-  const wk = d.week, P = wk.periodWeeks > 1 ? wk.periodWeeks : 1, sets = (P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
+  const wk = d.week, P = wk.periodWeeks > 1 ? wk.periodWeeks : wk.rollWeeks > 1 ? wk.rollWeeks : 1, sets = (P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
   header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
   w.addSpacer(6);
   const row = w.addStack(); row.centerAlignContent(); row.spacing = 14;
