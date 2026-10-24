@@ -377,8 +377,8 @@ function ringProgressImage(size, ratio, hex, alpha = 1, center = null) {
 // Koerper und Gefuehl als Werte ohne Ampel (die Einordnung macht der Coach); Gefuehl als Zahl, 1 = bestmoeglich
 const feelWord = (it) => (it && it.v != null ? String(it.v) : MISSING);
 const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motiv."]];
-// Urteil des Coaches (go) als Text und Farbe
-const GO_TEXT = { hart: ["Hart erlaubt", "ok"], locker: ["Nur locker", "warn"], frei: ["Frei", "bad"] };
+// Urteil des Coaches (go) als Text und Farbe; "locker" ist ein geplanter ruhiger Tag und steht neutral (graue Kapsel), nicht als Warnung
+const GO_TEXT = { hart: ["Hart erlaubt", "ok"], locker: ["Locker geplant", "text"], frei: ["Frei", "bad"] };
 
 // Zweck aus dem Plan nur, wenn er ein Satz ist und keine Intervall-/Zonenzeile
 function usablePurpose(s) {
@@ -534,7 +534,7 @@ function buildWidget(res) {
   if (g && g.daysToGo != null && g.daysToGo >= 0) pill(head, raceShort(g), COL.race, RACE_HEX);
   w.addSpacer(8);
 
-  // 2. Urteil des Coaches: Kapsel "Hart erlaubt" / "Nur locker" / "Frei" (Farbe aus seinem go), daneben seine Blocker.
+  // 2. Urteil des Coaches: Kapsel "Hart erlaubt" / "Locker geplant" / "Frei" (Farbe aus seinem go), daneben seine Blocker.
   // Ohne go keine Zeile (seine Notiz steht unten in der Kachel, die Kopfzeile wuerde dasselbe noch einmal sagen), ohne
   // Aussage von heute grau "Noch keine Coach-Auswertung". Kein eigenes Urteil des Widgets.
   const c0 = d.coach, go = c0 && GO_TEXT[c0.go];
