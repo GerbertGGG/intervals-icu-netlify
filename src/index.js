@@ -9,7 +9,7 @@ import { handleStudieRequest } from "./studie-snapshot.js";
 import { handleCoachRequest, handleCoachAnswerRequest } from "./coach-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
-import { handleWidgetRequest } from "./widget.js";
+import { handleWidgetRequest, warmDashboardCache } from "./widget.js";
 import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 
 async function withWorkerErrorBoundary(fn) {
@@ -27,7 +27,7 @@ function berlinHour(event) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const route = (fn) => withWorkerErrorBoundary(fn);
 
@@ -39,7 +39,7 @@ export default {
         return route(() => handleDashboardRequest(req, env));
       // Kompakte Daten fuer das iOS-Widget (Scriptable), siehe widget.js.
       case "/api/widget":
-        return route(() => handleWidgetRequest(req, env));
+        return route(() => handleWidgetRequest(req, env, ctx));
       // EGYM-Kraft nach Intervals schreiben, von Hand ausloesbar (Token-geschuetzt); liefert Ergebnis oder die genaue Fehlermeldung.
       case "/api/egym-sync":
         return route(async () => {
@@ -84,6 +84,9 @@ export default {
         .then(() => recordRunalyzeHistory(env))
         .catch((e) => console.error("snapshot sync failed", String(e?.message ?? e))),
     );
+
+    // Dashboard-Cache warm halten, damit die Uhr sofort eine Antwort bekommt (siehe dashboardCached in widget.js)
+    ctx.waitUntil(warmDashboardCache(env).catch((e) => console.error("dashboard cache failed", String(e?.message ?? e))));
 
     // Yazio alle 15 Minuten von 07:00 bis 23:59 Berlin (der Eintrag "58 21-22" in wrangler.toml
     // liefert den Tagesabschluss um 23:58, unabhaengig von Sommer-/Winterzeit).

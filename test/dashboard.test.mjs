@@ -191,6 +191,15 @@ assert.equal(d.daily.find((x) => x.date === day(-2)).sports.swim, 40);
   const f = globalThis.fetch; let n = 0; globalThis.fetch = async (...a) => (n++, f(...a));
   await get(); assert.equal(n, 0); // aus dem Cache
   await get("?fresh=1"); assert.ok(n > 0); // frisch geladen
+  // Uhr: abgelaufener Cache von heute kommt sofort, der Neuaufbau laeuft im Hintergrund (waitUntil)
+  const c = JSON.parse(kv.get("widget:dashboard-cache")); c.at -= 60 * 60 * 1000; kv.set("widget:dashboard-cache", JSON.stringify(c));
+  const waits = []; n = 0;
+  const watchEnv = { ...env, WATCH_TOKEN: "uhr" };
+  const res = await handleWidgetRequest(new Request("https://x/api/widget?view=watch", { headers: { authorization: "Bearer uhr" } }), watchEnv, { waitUntil: (p) => waits.push(p) });
+  assert.equal(res.status, 200);
+  assert.equal(waits.length, 1);
+  await Promise.all(waits); assert.ok(n > 0);
+  assert.ok(JSON.parse(kv.get("widget:dashboard-cache")).at > c.at); // Cache erneuert
   globalThis.fetch = f;
 }
 // Training-Ansicht (mittleres Widget)
