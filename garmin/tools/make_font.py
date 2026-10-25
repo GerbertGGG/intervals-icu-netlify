@@ -5,12 +5,12 @@ Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmä
 Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit springt nicht).
 wght=N setzt bei variablen Schriften die Stärke (z. B. 700), track=N ändert den Vorschub jedes Zeichens um N Pixel
 (negativ = enger, wie letter-spacing).
-Die Schriften des Zifferblatts sind Inter in normaler Stärke (SIL Open Font License, fonts.google.com/specimen/Inter),
-die variable .ttf herunterladen (Inter[opsz,wght].ttf). Fettere oder enger gesetzte Schriften laufen auf dem AMOLED zusammen:
-  python3 garmin/tools/make_font.py Inter.ttf 100 time digits wght=400 track=-2
+Die Schriften des Zifferblatts sind Inter Medium (SIL Open Font License, fonts.google.com/specimen/Inter), angelehnt an
+Apples SF Pro; die variable .ttf herunterladen (Inter[opsz,wght].ttf). Fett (700) lief auf dem AMOLED zusammen:
+  python3 garmin/tools/make_font.py Inter.ttf 112 time digits wght=500 track=-3
   python3 garmin/tools/make_font.py Inter.ttf 30 val wght=500
-  python3 garmin/tools/make_font.py Inter.ttf 21 cap wght=400
-  python3 garmin/tools/make_font.py Inter.ttf 17 tag wght=500
+  python3 garmin/tools/make_font.py Inter.ttf 21 cap wght=500
+  python3 garmin/tools/make_font.py Inter.ttf 17 tag wght=500 track=1
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys

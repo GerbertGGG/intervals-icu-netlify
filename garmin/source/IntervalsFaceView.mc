@@ -7,8 +7,9 @@ import Toybox.Time;
 import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
-// Zifferblatt nach Tageszeit (Mockup "Modular", schwarz mit Sportfarben). Fest: oben Datum, Akku und das Urteil des Coaches
-// als Wort, darunter die große Uhrzeit, unten die offenen Wochenminuten je Sportart mit Balken. Dazwischen eine Karte, die
+// Zifferblatt nach Tageszeit (angelehnt an Apples "Modular", schwarz mit Sportfarben). Fest: ganz oben klein der Akku, darunter
+// Datum und das Urteil des Coaches als Wort, die große Uhrzeit, unten drei runde Anzeigen mit den offenen Wochenminuten je
+// Sportart und einem Ring, der sich zum Ziel füllt. Dazwischen eine Karte, die
 // mit dem Tag wechselt: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche Tag für Tag, bis 3 Stunden nach
 // einer Einheit deren Werte. Ganz unten die nächste Einheit.
 // Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
@@ -20,6 +21,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
     const BAR = 0x3A3A3C;
+    const RING_BG = 0x2C2C2E; // Spur der Ringe unten
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
@@ -29,28 +31,32 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const MORNING_END = 10;      // bis zu dieser Stunde die Morgenkarte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
-    const TOP_Y = 70;
-    const TIME_Y = 128;
+    const BAT_Y = 44;
+    const TOP_Y = 80;
+    const TIME_Y = 144;
     const CARD_X = 40;
-    const CARD_Y = 180;
+    const CARD_Y = 204;
     const CARD_W = 374;
-    const CARD_H = 128;
-    const PAD = 20;
-    const HEAD_Y = 212;
-    const BARS_TOP = 224;
-    const BARS_BOTTOM = 274;
-    const DAYS_Y = 298;
-    const CELL_Y = 258;
-    const CELL_TAG_Y = 286;
-    const ROW_VAL_Y = 352;
-    const ROW_BAR_Y = 362;
-    const ROW_DX = 108;
-    const NEXT_Y = 400;
+    const CARD_H = 118;
+    const CARD_R = 28;
+    const PAD = 22;
+    const HEAD_Y = 236;
+    const BARS_TOP = 244;
+    const BARS_BOTTOM = 290;
+    const DAYS_Y = 312;
+    const CELL_Y = 280;
+    const CELL_TAG_Y = 306;
+    // Runde Anzeigen unten (Mitte, Abstand, Radius, Ringstärke)
+    const RING_Y = 372;
+    const RING_DX = 102;
+    const RING_R = 42;
+    const RING_W = 7;
+    const NEXT_Y = 440;
     // Morgenkarte
-    const M_DX = 110;
-    const M_TAG_Y = 218;
-    const M_VAL_Y = 260;
-    const M_BASE_Y = 288;
+    const M_DX = 112;
+    const M_TAG_Y = 236;
+    const M_VAL_Y = 280;
+    const M_BASE_Y = 308;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -63,7 +69,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Inter, normale Stärke (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter
+        // Bitmap-Schriften aus Inter Medium (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter
         // 17 Pixel, sonst auf der Uhr schlecht lesbar)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _val = WatchUi.loadResource(Rez.Fonts.Val) as Graphics.FontType;
@@ -136,22 +142,24 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return h.toString() + ":" + clock.min.format("%02d");
     }
 
-    // ---- Oben: Datum, Akku, Urteil des Coaches ---------------------------------------------
-    // "DO 23. · 78 % · LOCKER": Akku grau (orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden), das Urteil (go aus
-    // save_coach) als Wort in seiner Farbe. Eine eigene Ampel hat die Uhr nicht. Daten älter als eine Stunde: statt des Urteils
-    // ein oranges "!" mit dem Fehlercode des letzten Abrufs.
+    // ---- Oben: Akku, Datum, Urteil des Coaches -----------------------------------------------
+    // Ganz oben klein der Akku (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden), darunter wie bei Apple
+    // "SO. 25. OKT." und das Urteil (go aus save_coach) als Wort in seiner Farbe. Eine eigene Ampel hat die Uhr nicht. Daten
+    // älter als eine Stunde: statt des Urteils ein oranges "!" mit dem Fehlercode des letzten Abrufs.
 
     private function drawTopLine(dc as Dc, data as Dictionary?) as Void {
-        var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
-        var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
-        var items = [["t", days[(info.day_of_week as Number) - 1] + " " + info.day + ".", FG, _cap]] as Array<Array>;
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
-        items.add(["t", " · ", SEC, _cap]);
-        items.add(["t", pct.toString() + " %", bat, _cap]);
+        drawItems(dc, _cx, px(BAT_Y), [["t", pct.toString() + " %", bat, _tag]], 0);
+
+        var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
+        var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
+        var months = ["JAN", "FEB", "MÄRZ", "APR", "MAI", "JUNI", "JULI", "AUG", "SEPT", "OKT", "NOV", "DEZ"];
+        var date = days[(info.day_of_week as Number) - 1] + ". " + info.day + ". " + months[(info.month as Number) - 1] + ".";
+        var items = [["t", date, FG, _cap]] as Array<Array>;
         if (data != null && isStale(data)) {
-            items.add(["t", " · !" + errSuffix(), WARN, _cap]);
+            items.add(["t", "  !" + errSuffix(), WARN, _cap]);
         } else if (data != null) {
             var rd = data.get("rd");
             var word = null;
@@ -161,8 +169,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             else if ("bad".equals(rd)) { word = "FREI"; color = BAD; }
             else if (numOrNull(data.get("co")) != null && (data.get("co") as Number) == 1) { word = "COACH"; color = ACCENT; }
             if (word != null) {
-                items.add(["t", " · ", SEC, _cap]);
-                items.add(["t", word, color, _cap]);
+                items.add(["t", "  " + word, color, _cap]);
             }
         }
         drawItems(dc, _cx, px(TOP_Y), items, 0);
@@ -296,38 +303,56 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Untere Reihe: offene Wochenminuten -----------------------------------------------------
-    // Je Sportart groß in Sportfarbe die Minuten bis zum Zeitziel des Coaches (rz: [[Sportart, erledigt, Ziel], ...]), darunter
-    // ein Balken, der sich zum Ziel füllt. Keine Beschriftung, die Farbe sagt die Sportart (Lauf, Rad, Schwimmen von links).
-    // Ziel erreicht: Haken; ohne Ziel "--" in Grau.
+    // Drei runde Anzeigen wie bei Apple: je Sportart in der Mitte groß in Sportfarbe die Minuten bis zum Zeitziel des Coaches
+    // (rz: [[Sportart, erledigt, Ziel], ...]), außen ein Ring mit Lücke unten, der sich zum Ziel füllt. Keine Beschriftung, die
+    // Farbe sagt die Sportart (Lauf, Rad, Schwimmen von links). Ziel erreicht: Haken; ohne Ziel "--" in Grau.
 
     private function drawWeekRow(dc as Dc, rz as Array?) as Void {
         var sports = ["run", "bike", "swim"];
+        var y = px(RING_Y);
+        var r = px(RING_R);
+        var pen = px(RING_W) > 2 ? px(RING_W) : 2;
+        var rr = r - pen / 2 - px(3); // Mitte des Rings, innen im Kreis
         for (var k = 0; k < sports.size(); k++) {
-            var x = _cx + px(ROW_DX * (k - 1));
+            var x = _cx + px(RING_DX * (k - 1));
             var color = sportColor(sports[k]);
+            dc.setColor(CARD, Graphics.COLOR_TRANSPARENT);
+            dc.fillCircle(x, y, r);
+            drawGauge(dc, x, y, rr, pen, RING_BG, 1.0);
             var e = goalOf(rz, sports[k]);
             if (e == null) {
-                drawItems(dc, x, px(ROW_VAL_Y), [["t", "--", TER, _val]], 0);
+                drawItems(dc, x, y + px(11), [["t", "--", TER, _val]], 0);
                 continue;
             }
             var done = (e[1] as Numeric).toNumber();
             var goal = (e[2] as Numeric).toNumber();
             var open = goal - done;
+            drawGauge(dc, x, y, rr, pen, color, frac(done, goal));
             if (open > 0) {
-                drawItems(dc, x, px(ROW_VAL_Y), [["t", open.toString(), color, _val], ["t", "'", SEC, _val]], 0);
+                drawItems(dc, x, y + px(11), [["t", open.toString(), color, _val]], 0);
             } else {
-                drawCheck(dc, x, px(ROW_VAL_Y) - px(8), color);
-            }
-            var bw = px(64);
-            var bh = px(5) > 2 ? px(5) : 2;
-            dc.setColor(BAR, Graphics.COLOR_TRANSPARENT);
-            dc.fillRoundedRectangle(x - bw / 2, px(ROW_BAR_Y), bw, bh, bh / 2);
-            var fw = (bw * frac(done, goal)).toNumber();
-            if (fw > 0) {
-                dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-                dc.fillRoundedRectangle(x - bw / 2, px(ROW_BAR_Y), fw, bh, bh / 2);
+                drawCheck(dc, x, y, color);
             }
         }
+    }
+
+    // Ring mit Lücke unten (270 Grad, im Uhrzeigersinn von links unten), zum Anteil f gefüllt, mit runden Enden
+    private function drawGauge(dc as Dc, x as Number, y as Number, r as Number, pen as Number, color as Number, f as Float) as Void {
+        if (f <= 0.0) {
+            return;
+        }
+        var start = 225;
+        var sweep = (270 * f).toNumber();
+        var stop = start - sweep;
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(pen);
+        if (sweep > 0) {
+            dc.drawArc(x, y, r, Graphics.ARC_CLOCKWISE, start, stop < 0 ? stop + 360 : stop);
+        }
+        var a1 = Math.toRadians(start);
+        var a2 = Math.toRadians(stop);
+        dc.fillCircle(x + (r * Math.cos(a1)).toNumber(), y - (r * Math.sin(a1)).toNumber(), pen / 2);
+        dc.fillCircle(x + (r * Math.cos(a2)).toNumber(), y - (r * Math.sin(a2)).toNumber(), pen / 2);
     }
 
     // ---- Zeile ganz unten ----------------------------------------------------------------------
@@ -363,7 +388,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     private function drawCard(dc as Dc, color as Number) as Void {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.fillRoundedRectangle(px(CARD_X), px(CARD_Y), px(CARD_W), px(CARD_H), px(24));
+        dc.fillRoundedRectangle(px(CARD_X), px(CARD_Y), px(CARD_W), px(CARD_H), px(CARD_R));
     }
 
     private function barW(n as Number) as Number {
@@ -382,8 +407,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private function drawCheck(dc as Dc, x as Number, y as Number, color as Number) as Void {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(5));
-        dc.drawLine(x - px(12), y, x - px(4), y + px(8));
-        dc.drawLine(x - px(4), y + px(8), x + px(13), y - px(9));
+        dc.drawLine(x - px(11), y + px(1), x - px(3), y + px(9));
+        dc.drawLine(x - px(3), y + px(9), x + px(13), y - px(8));
     }
 
     // Eintrag [Sportart, erledigt, Ziel] aus rz, ohne Ziel null
