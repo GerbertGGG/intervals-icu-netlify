@@ -49,6 +49,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const G_TOP = 244;
     const G_BOTTOM = 312;
     const DAYS_Y = 334;
+    const GRAD = 8;           // Streifen für den Verlauf der Fläche
     // Werte morgens und nach einer Einheit
     const V_Y = 278;
     const V_TAG_Y = 302;
@@ -176,14 +177,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Oben: Datum, Urteil des Coaches ----------------------------------------------------
-    // "SO. 25. OKT.", darunter das Urteil (go aus save_coach) als Wort in einer Kapsel seiner Farbe. Eine eigene Ampel hat die Uhr
+    // "SO, 25. OKT.", darunter das Urteil (go aus save_coach) als Wort in einer Kapsel seiner Farbe. Eine eigene Ampel hat die Uhr
     // nicht. Daten älter als eine Stunde: statt des Urteils ein oranges "!" mit dem Fehlercode des letzten Abrufs.
 
     private function drawTopLine(dc as Dc, data as Dictionary?) as Void {
         var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
         var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
         var months = ["JAN", "FEB", "MÄRZ", "APR", "MAI", "JUNI", "JULI", "AUG", "SEPT", "OKT", "NOV", "DEZ"];
-        var date = days[(info.day_of_week as Number) - 1] + ". " + info.day + ". " + months[(info.month as Number) - 1] + ".";
+        var date = days[(info.day_of_week as Number) - 1] + ", " + info.day + ". " + months[(info.month as Number) - 1] + ".";
         drawItems(dc, _cx, px(DATE_Y), [["t", date, FG, _tag]], 0);
         if (data == null) {
             return;
@@ -294,16 +295,24 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             }
             drawItems(dc, x1 + px(6), y + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
         }
-        // Diese Woche: Fläche bis heute
+        // Diese Woche: Fläche bis heute, nach unten ausblendend (Verlauf in GRAD Streifen, je Streifen die Fläche beschnitten)
         if (today > 0) {
             var poly = new [today + 3];
+            var top = yb;
             for (var i = 0; i <= today; i++) {
-                poly[i] = [gx(i, x0, x1), yb - (h * (cur[i] as Number) / most).toNumber()];
+                var y = yb - (h * (cur[i] as Number) / most).toNumber();
+                poly[i] = [gx(i, x0, x1), y];
+                top = y < top ? y : top;
             }
             poly[today + 1] = [gx(today, x0, x1), yb];
             poly[today + 2] = [x0, yb];
-            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.28), Graphics.COLOR_TRANSPARENT);
-            dc.fillPolygon(poly);
+            var band = (yb - top) / GRAD + 1;
+            for (var k = 0; k < GRAD; k++) {
+                dc.setClip(x0, top + k * band, x1 - x0 + 1, band);
+                dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.42 - 0.36 * k / (GRAD - 1)), Graphics.COLOR_TRANSPARENT);
+                dc.fillPolygon(poly);
+            }
+            dc.clearClip();
         }
         // Vorwoche grau, darüber diese Woche
         dc.setColor(0x78787D, Graphics.COLOR_TRANSPARENT);
@@ -318,10 +327,15 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var tx = gx(today, x0, x1);
         var ty = yb - (h * now / most).toNumber();
-        dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(8));
-        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(4));
+        // Punkt auf heute mit Schein
+        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.25), Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(13));
+        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.5), Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(10));
+        dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(7));
+        dc.setColor(blend(ACCENT, FG, 0.6), Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(3));
         var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
         for (var i = 0; i < 7; i++) {
             drawItems(dc, gx(i, x0, x1), px(DAYS_Y), [["t", names[i] as String, i == today ? FG : SEC, _tag]], 0);
