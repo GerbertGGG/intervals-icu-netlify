@@ -1,12 +1,12 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Ultra“ nach Apples Modular Ultra: schwarz, große Uhrzeit in einer Zeile, Skalen am Rand, eine Akzentfarbe (Cyan) für die Woche. Sportfarben nur in den runden Anzeigen: Laufen gelb, Rad grün, Schwimmen blau.
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Ultra“ nach Apples Modular Ultra: schwarz, große Uhrzeit in einer Zeile, Skalen am Rand, eine Akzentfarbe (Cyan) für die Woche, Lila für die Kalorien. Sportfarben nur in den runden Anzeigen: Laufen gelb, Rad grün, Schwimmen blau.
 
 Fest von oben nach unten:
 
 - **Kopf**: Datum wie bei Apple („SO. 25. OKT.“), darunter das Urteil des Coaches für heute als Wort in einer Kapsel seiner Farbe (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage keine Kapsel. Eine eigene Ampel hat die Uhr nicht.
 - **Uhrzeit**, groß und schlank, ohne führende Null.
-- **Skalen am Rand** wie beim Ultra (je 25 Striche): links die Ausdauer der Woche gegen das Zeitziel des Coaches (`wm`), von unten in Cyan gefüllt; rechts der Akku (grau, ab 20 % orange, ab 10 % rot, beim Laden grün).
+- **Skalen am Rand** wie beim Ultra (je 25 Striche): links die Kalorien von heute gegen das Tagesziel (`kcal`, live aus Yazio), von unten in Lila gefüllt, über dem Ziel voll, ohne Ziel leer; rechts der Akku (grau, ab 20 % orange, ab 10 % rot, beim Laden grün).
 - **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender) als drei runde Anzeigen: in der Mitte die Minuten in Sportfarbe, außen ein Ring mit Lücke unten, der sich zum Ziel füllt. Ohne Beschriftung: von links Lauf, Rad, Schwimmen. Ziel erreicht: Haken, ohne Ziel „--“.
 - **Ganz unten** die nächste Einheit („Heute Lauf 45'“, „Morgen Rad 60'“).
 
@@ -16,7 +16,7 @@ Der **Bereich unter der Uhrzeit** wechselt:
 - **Bis 3 Stunden nach einer Einheit** (von heute): Sportart mit Startzeit in Sportfarbe, daneben „LÄNGSTE SEIT N WO.“, wenn die letzte mindestens so lange Einheit derselben Sportart zwei Wochen oder länger zurückliegt. Darunter nebeneinander Strecke, Zeit (h:mm), Pace oder Watt und Puls (nur, wenn das Dashboard ihn für die Einheit zeigt).
 - **Sonst (tagsüber)**: der Wochenvergleich. Oben der Stand der Woche und der Abstand zur Vorwoche am selben Wochentag („4:05  +1:25 ZUR VORWOCHE“), darunter die Ausdauerminuten Mo bis So aufsummiert: diese Woche als Fläche mit Linie in Cyan bis zum Punkt auf heute, die Vorwoche als graue Linie, das Zeitziel des Coaches gestrichelt mit seinem Wert. Ausdauer zählt wie in den Wochenzielen (Lauf, Rad, Schwimmen ohne Pausen).
 
-Essen, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `rv`, `wm`, `wv` und `la`.
+Eiweiß, Wetter, TSS und Kraft stehen nicht auf der Uhr (Widget und Dashboard zeigen sie). Der Worker schickt ältere Felder weiter, die Uhr nutzt `rd`, `co`, `rz`, `next`, `rv`, `wm`, `wv`, `kcal` und `la`.
 
 Die Daten holt die Uhr alle 5 Minuten von `GET /api/widget?view=watch` (siehe `buildWidgetWatch` in `src/widget.js`). Der Worker antwortet dabei sofort aus dem Cache von heute, auch wenn er älter als 5 Minuten ist, und baut ihn im Hintergrund neu; der Cron hält ihn alle 15 Minuten warm. Ein voller Neuaufbau aus allen Quellen dauert länger, als die Uhr wartet (`-300`). Der Akku kommt von der Uhr selbst.
 
