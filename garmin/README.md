@@ -1,12 +1,13 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Modular“: schwarz, große Uhrzeit, eine Karte in der Mitte, die mit der Tageszeit wechselt. Sportfarben: Laufen gelb, Rad grün, Schwimmen blau.
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), angelehnt an Apples „Modular“: schwarz, große Uhrzeit, eine Karte mit runden Ecken in der Mitte, die mit der Tageszeit wechselt, darunter drei runde Anzeigen. Sportfarben: Laufen gelb, Rad grün, Schwimmen blau.
 
 Fest von oben nach unten:
 
-- **Kopfzeile**: Datum („DO 23.“), Akku in Prozent (grau, ab 20 % orange, ab 10 % rot, beim Laden grün) und das Urteil des Coaches für heute als Wort (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage nichts. Eine eigene Ampel hat die Uhr nicht.
+- **Ganz oben** klein der Akku in Prozent (grau, ab 20 % orange, ab 10 % rot, beim Laden grün).
+- **Kopfzeile**: Datum wie bei Apple („SO. 25. OKT.“) und das Urteil des Coaches für heute als Wort (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage nichts. Eine eigene Ampel hat die Uhr nicht.
 - **Uhrzeit**, groß, ohne führende Null.
-- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender), groß in Sportfarbe mit Minutenzeichen (95'), darunter ein Balken, der sich zum Ziel füllt. Ohne Beschriftung: von links Lauf, Rad, Schwimmen, die Farbe sagt die Sportart. Ziel erreicht: Haken, ohne Ziel „--“.
+- **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender) als runde Anzeige wie Apples Komplikationen: in der Mitte die Minuten groß in Sportfarbe, außen ein Ring mit Lücke unten, der sich zum Ziel füllt. Ohne Beschriftung: von links Lauf, Rad, Schwimmen, die Farbe sagt die Sportart. Ziel erreicht: Haken, ohne Ziel „--“.
 
 Die **Karte in der Mitte** und die Zeile ganz unten wechseln:
 
@@ -48,6 +49,6 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 ## Hinweise
 
-- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter** in normaler Stärke (SIL Open Font License; Inter Tight fett lief auf dem AMOLED zusammen) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit), `val` (Werte in Karte und unterer Reihe), `cap` (Kopfzeile, Zeile unten), `tag` (Beschriftungen). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt (Beschriftungen 17, Kopf- und Fußzeile 21, Werte 30, Uhrzeit 100 Pixel; kleiner ist auf der Uhr schlecht lesbar), die Deckkraft steht in allen vier Kanälen des PNG (nur im Alpha wurden die Kanten auf der Uhr gezackt), Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter von Google Fonts).
+- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter** (SIL Open Font License; kommt SF Pro am nächsten; Inter Tight fett lief auf dem AMOLED zusammen) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit), `val` (Werte in Karte und runden Anzeigen), `cap` (Kopfzeile, Zeile unten), `tag` (Akku, Beschriftungen, leicht gesperrt wie bei Apple). Stärke 500 (Medium) wie Apples Uhrzeit, die Uhrzeit etwas enger gesetzt. Die Größen sind für 416 Pixel (Forerunner 265) erzeugt (Beschriftungen 17, Kopf- und Fußzeile 21, Werte 30, Uhrzeit 112 Pixel; kleiner ist auf der Uhr schlecht lesbar), die Deckkraft steht in allen vier Kanälen des PNG (nur im Alpha wurden die Kanten auf der Uhr gezackt), Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, steht in der Kopfzeile ein `!` statt des Coach-Urteils.
