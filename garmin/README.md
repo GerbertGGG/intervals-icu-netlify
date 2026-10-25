@@ -5,7 +5,7 @@ Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Ultra“ 
 Fest von oben nach unten:
 
 - **Kopf**: Datum wie bei Apple („SO, 25. OKT.“), darunter das Urteil des Coaches für heute als Wort in einer Kapsel seiner Farbe (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage keine Kapsel. Eine eigene Ampel hat die Uhr nicht.
-- **Uhrzeit**, groß und schlank, ohne führende Null.
+- **Uhrzeit**, groß und halbfett, ohne führende Null.
 - **Skalen am Rand** wie beim Ultra (je 25 Striche): links die Kalorien von heute gegen das Tagesziel (`kcal`, live aus Yazio), von unten in Cyan gefüllt, über dem Ziel voll, ohne Ziel leer; rechts der Akku (grau, ab 20 % orange, ab 10 % rot, beim Laden grün).
 - **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender) als drei runde Anzeigen: in der Mitte die Minuten in Sportfarbe, außen ein Ring mit Lücke unten, der sich zum Ziel füllt. Ohne Beschriftung: von links Lauf, Rad, Schwimmen. Ziel erreicht: Haken, ohne Ziel „--“.
 - **Ganz unten** die nächste Einheit („Heute Lauf 45'“, „Morgen Rad 60'“).
@@ -50,6 +50,6 @@ Gebaut wird für die Forerunner 265 (416 × 416 Pixel, AMOLED, rund; `manifest.x
 
 ## Hinweise
 
-- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter** (SIL Open Font License; kommt SF Pro am nächsten; Inter Tight fett lief auf dem AMOLED zusammen) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit, normale Stärke wie die schlanke Zeit des Ultra), `val` (Werte, Medium), `cap` (Wochenstand, Zahlen in den runden Anzeigen, Halbfett), `tag` (Datum, Kapsel, Beschriftungen, Zeile unten; Halbfett und leicht gesperrt wie Apples Beschriftungen). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt (Beschriftungen 17, `cap` 21, Werte 30, Uhrzeit 100 Pixel; kleiner ist auf der Uhr schlecht lesbar), die Deckkraft steht in allen vier Kanälen des PNG (nur im Alpha wurden die Kanten auf der Uhr gezackt), Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter von Google Fonts).
+- Schrift: Apples SF Pro darf nicht auf die Uhr. Alle Schriften sind Bitmap-Schriften aus **Inter** (SIL Open Font License; kommt SF Pro am nächsten; Inter Tight fett lief auf dem AMOLED zusammen) in `resources/fonts/`: `time` (Uhrzeit, nur Ziffern und gleich breit, Halbfett), `val` (Werte, Medium), `cap` (Wochenstand, Zahlen in den runden Anzeigen, Halbfett), `tag` (Datum, Kapsel, Beschriftungen, Zeile unten; Halbfett und leicht gesperrt wie Apples Beschriftungen). Die Größen sind für 416 Pixel (Forerunner 265) erzeugt (Beschriftungen 17, `cap` 21, Werte 30, Uhrzeit 100 Pixel; kleiner ist auf der Uhr schlecht lesbar), die Deckkraft steht in allen vier Kanälen des PNG (nur im Alpha wurden die Kanten auf der Uhr gezackt), Bitmap-Schriften skalieren nicht mit. Neu erzeugen: siehe Kopf von `tools/make_font.py` (braucht Pillow und die variable Inter von Google Fonts).
 - Always-on-Modus: Es wird nur die Uhrzeit gezeichnet, grau in der eingebauten Schrift (AMOLED schonen).
 - Ist der letzte Abruf älter als eine Stunde, steht in der Kopfzeile ein `!` statt des Coach-Urteils.
