@@ -7,12 +7,12 @@ import Toybox.Time;
 import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
-// Zifferblatt nach Tageszeit (angelehnt an Apples "Modular", schwarz mit Sportfarben). Fest: ganz oben klein der Akku, darunter
-// Datum und das Urteil des Coaches als Wort, die große Uhrzeit, unten drei runde Anzeigen mit den offenen Wochenminuten je
-// Sportart und einem Ring, der sich zum Ziel füllt. Dazwischen eine Karte, die
-// mit dem Tag wechselt: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche Tag für Tag, bis 3 Stunden nach
-// einer Einheit deren Werte. Ganz unten die nächste Einheit.
-// Alle Maße stammen aus dem Mockup (454 x 454) und werden mit _s auf die Displaygröße skaliert.
+// Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
+// große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Ausdauer der Woche gegen das Ziel des Coaches, rechts der Akku),
+// unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
+// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche als Kurve, bis 3 Stunden
+// nach einer Einheit deren Werte.
+// Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
 
@@ -20,43 +20,47 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SEC = 0x8E8E93;
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
-    const BAR = 0x3A3A3C;
+    const GRID = 0x262628;    // Tageslinien hinter der Kurve
+    const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
+    const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche), wie beim Ultra
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
-    const ACCENT = 0x64A8FF; // Coach ohne Urteil (wie im Widget)
+    const COACH = 0x64A8FF;   // Coach ohne Urteil (wie im Widget)
     const STALE_SECS = 3600;
-    const AFTER_SECS = 3 * 3600; // so lange nach dem Ende einer Einheit steht ihre Karte
-    const MORNING_END = 10;      // bis zu dieser Stunde die Morgenkarte
+    const AFTER_SECS = 3 * 3600; // so lange nach dem Ende einer Einheit stehen ihre Werte
+    const MORNING_END = 10;      // bis zu dieser Stunde die Erholungswerte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
-    const BAT_Y = 44;
-    const TOP_Y = 80;
-    const TIME_Y = 144;
-    const CARD_X = 40;
-    const CARD_Y = 204;
-    const CARD_W = 374;
-    const CARD_H = 118;
-    const CARD_R = 28;
-    const PAD = 22;
-    const HEAD_Y = 236;
-    const BARS_TOP = 244;
-    const BARS_BOTTOM = 290;
-    const DAYS_Y = 312;
-    const CELL_Y = 280;
-    const CELL_TAG_Y = 306;
+    const DATE_Y = 66;
+    const PILL_Y = 76;
+    const PILL_H = 24;
+    const TIME_Y = 155;
+    const HEAD_Y = 224;
+    // Skalen am Rand: Radius außen, Länge der langen und kurzen Striche, Winkel (Grad gegen den Uhrzeigersinn ab 3 Uhr)
+    const SCALE_R = 218;
+    const SCALE_LONG = 17;
+    const SCALE_SHORT = 10;
+    const SCALE_N = 25;
+    // Wochenkurve
+    const G_X0 = 94;
+    const G_X1 = 360;
+    const G_TOP = 244;
+    const G_BOTTOM = 312;
+    const G_STEPS = 6;        // Zwischenpunkte je Tag für die weiche Kurve
+    const DAYS_Y = 334;
+    // Werte morgens und nach einer Einheit
+    const V_Y = 278;
+    const V_TAG_Y = 302;
+    const V_BASE_Y = 322;
+    const V_DX = 112;
     // Runde Anzeigen unten (Mitte, Abstand, Radius, Ringstärke)
-    const RING_Y = 372;
-    const RING_DX = 102;
-    const RING_R = 42;
-    const RING_W = 7;
-    const NEXT_Y = 440;
-    // Morgenkarte
-    const M_DX = 112;
-    const M_TAG_Y = 236;
-    const M_VAL_Y = 280;
-    const M_BASE_Y = 308;
+    const RING_Y = 378;
+    const RING_DX = 82;
+    const RING_R = 34;
+    const RING_W = 6;
+    const NEXT_Y = 436;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -69,8 +73,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     function initialize() {
         WatchFace.initialize();
-        // Bitmap-Schriften aus Inter Medium (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter
-        // 17 Pixel, sonst auf der Uhr schlecht lesbar)
+        // Bitmap-Schriften aus Inter (erzeugt mit tools/make_font.py, Größen für 416 Pixel; Beschriftungen nicht unter 17 Pixel,
+        // sonst auf der Uhr schlecht lesbar)
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
         _val = WatchUi.loadResource(Rez.Fonts.Val) as Graphics.FontType;
         _cap = WatchUi.loadResource(Rez.Fonts.Cap) as Graphics.FontType;
@@ -105,12 +109,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             return;
         }
         var data = Application.Storage.getValue("d") as Dictionary?;
+        drawScales(dc, data);
         drawTopLine(dc, data);
         dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx, px(TIME_Y), _time, timeText(clock), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         if (data == null) {
             dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cx, px(CARD_Y + CARD_H / 2), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(_cx, px(V_Y), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             return;
         }
 
@@ -118,16 +123,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var end = la != null ? numOrNull(la.get("e")) : null;
         var since = end != null ? Time.now().value() - end.toNumber() : -1;
         if (la != null && since >= 0 && since < AFTER_SECS) {
-            drawLastCard(dc, la);
-            drawNext(dc, data, NEXT_Y);
+            drawLast(dc, la);
         } else if (clock.hour < MORNING_END) {
-            drawMorningCard(dc, data);
-            drawNext(dc, data, NEXT_Y);
+            drawMorning(dc, data);
         } else {
-            drawWeekCard(dc, data);
-            drawNext(dc, data, NEXT_Y);
+            drawWeek(dc, data);
         }
         drawWeekRow(dc, data.get("rz") as Array?);
+        drawNext(dc, data, NEXT_Y);
     }
 
     // Uhrzeit ohne führende Null bei den Stunden ("6:48"), im 12-Stunden-Modus 1 bis 12
@@ -142,52 +145,87 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return h.toString() + ":" + clock.min.format("%02d");
     }
 
-    // ---- Oben: Akku, Datum, Urteil des Coaches -----------------------------------------------
-    // Ganz oben klein der Akku (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden), darunter wie bei Apple
-    // "SO. 25. OKT." und das Urteil (go aus save_coach) als Wort in seiner Farbe. Eine eigene Ampel hat die Uhr nicht. Daten
-    // älter als eine Stunde: statt des Urteils ein oranges "!" mit dem Fehlercode des letzten Abrufs.
+    // ---- Skalen am Rand ----------------------------------------------------------------------
+    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links die Ausdauer der Woche gegen das Zeitziel des
+    // Coaches (wm: [erledigt, Ziel] in Minuten), von unten gefüllt in der Akzentfarbe; ohne Ziel bleibt sie leer. Rechts der Akku
+    // (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
 
-    private function drawTopLine(dc as Dc, data as Dictionary?) as Void {
+    private function drawScales(dc as Dc, data as Dictionary?) as Void {
+        var wm = data != null ? data.get("wm") as Array? : null;
+        var week = 0.0;
+        if (wm != null && wm.size() == 2) {
+            week = frac(numOrNull(wm[0]), numOrNull(wm[1]));
+        }
+        drawScale(dc, 215, 145, week, ACCENT);
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
-        drawItems(dc, _cx, px(BAT_Y), [["t", pct.toString() + " %", bat, _tag]], 0);
+        drawScale(dc, 325, 395, pct / 100.0, bat);
+    }
 
+    // Striche von Winkel a0 (unten) nach a1 (oben), bis zum Anteil f in color
+    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number) as Void {
+        var r1 = px(SCALE_R);
+        for (var i = 0; i < SCALE_N; i++) {
+            var a = Math.toRadians(a0 + (a1 - a0) * i / (SCALE_N - 1.0));
+            var long = i % 6 == 0;
+            var r2 = r1 - px(long ? SCALE_LONG : SCALE_SHORT);
+            var on = f > 0 && i <= Math.round(f * (SCALE_N - 1));
+            dc.setColor(on ? color : (long ? TER : TICK), Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(long ? px(3) : px(2));
+            var c = Math.cos(a);
+            var sn = Math.sin(a);
+            dc.drawLine(_cx + (r1 * c).toNumber(), _cy - (r1 * sn).toNumber(), _cx + (r2 * c).toNumber(), _cy - (r2 * sn).toNumber());
+        }
+    }
+
+    // ---- Oben: Datum, Urteil des Coaches ----------------------------------------------------
+    // "SO. 25. OKT.", darunter das Urteil (go aus save_coach) als Wort in einer Kapsel seiner Farbe. Eine eigene Ampel hat die Uhr
+    // nicht. Daten älter als eine Stunde: statt des Urteils ein oranges "!" mit dem Fehlercode des letzten Abrufs.
+
+    private function drawTopLine(dc as Dc, data as Dictionary?) as Void {
         var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
         var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
         var months = ["JAN", "FEB", "MÄRZ", "APR", "MAI", "JUNI", "JULI", "AUG", "SEPT", "OKT", "NOV", "DEZ"];
         var date = days[(info.day_of_week as Number) - 1] + ". " + info.day + ". " + months[(info.month as Number) - 1] + ".";
-        var items = [["t", date, FG, _cap]] as Array<Array>;
-        if (data != null && isStale(data)) {
-            items.add(["t", "  !" + errSuffix(), WARN, _cap]);
-        } else if (data != null) {
+        drawItems(dc, _cx, px(DATE_Y), [["t", date, FG, _tag]], 0);
+        if (data == null) {
+            return;
+        }
+        var word = null;
+        var color = SEC;
+        if (isStale(data)) {
+            word = "!" + errSuffix();
+            color = WARN;
+        } else {
             var rd = data.get("rd");
-            var word = null;
-            var color = SEC;
             if ("ok".equals(rd)) { word = "HART"; color = OK; }
             else if ("warn".equals(rd)) { word = "LOCKER"; color = WARN; }
             else if ("bad".equals(rd)) { word = "FREI"; color = BAD; }
-            else if (numOrNull(data.get("co")) != null && (data.get("co") as Number) == 1) { word = "COACH"; color = ACCENT; }
-            if (word != null) {
-                items.add(["t", "  " + word, color, _cap]);
-            }
+            else if (numOrNull(data.get("co")) != null && (data.get("co") as Number) == 1) { word = "COACH"; color = COACH; }
         }
-        drawItems(dc, _cx, px(TOP_Y), items, 0);
+        if (word == null) {
+            return;
+        }
+        var w = dc.getTextWidthInPixels(word, _tag) + px(20);
+        var h = px(PILL_H);
+        dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.28), Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(_cx - w / 2, px(PILL_Y), w, h, h / 2);
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.drawText(_cx, px(PILL_Y) + h / 2, _tag, word, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
     }
 
-    // ---- Karte morgens: Erholung --------------------------------------------------------------
-    // Oben Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich], ...]), jeder Wert in der Farbe seines Vergleichs
-    // mit dem eigenen üblichen Bereich (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen),
-    // darunter klein die Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches in der Kopfzeile. Den Text
-    // des Coaches zeigt die Uhr nicht (zu klein und abgeschnitten), dafür stehen Widget und Dashboard.
+    // ---- Morgens: Erholung --------------------------------------------------------------------
+    // Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich], ...]), jeder Wert in der Farbe seines Vergleichs mit dem
+    // eigenen üblichen Bereich (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen), darunter die
+    // Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches oben.
 
-    private function drawMorningCard(dc as Dc, data as Dictionary) as Void {
-        drawCard(dc, CARD);
+    private function drawMorning(dc as Dc, data as Dictionary) as Void {
+        drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
         var labels = ["SCHLAF", "HRV", "RUHEPULS"];
         for (var k = 0; k < 3; k++) {
-            var x = _cx + px(M_DX * (k - 1));
-            drawItems(dc, x, px(M_TAG_Y), [["t", labels[k] as String, SEC, _tag]], 0);
+            var x = _cx + px(V_DX * (k - 1));
             var e = rv != null && rv.size() > k ? rv[k] as Array : null;
             var v = e != null ? numOrNull(e[0]) : null;
             var base = e != null ? numOrNull(e[1]) : null;
@@ -197,108 +235,135 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             else if (cls != null && cls.toNumber() == 2) { color = WARN; }
             else if (cls != null && cls.toNumber() == 3) { color = BAD; }
             var text = v == null ? "--" : (k == 0 ? hours((v * 60).toNumber()) : v.toNumber().toString());
-            drawItems(dc, x, px(M_VAL_Y), [["t", text, v == null ? TER : color, _val]], 0);
+            drawItems(dc, x, px(V_Y), [["t", text, v == null ? TER : color, _val]], 0);
+            drawItems(dc, x, px(V_TAG_Y), [["t", labels[k] as String, SEC, _tag]], 0);
             if (base != null) {
-                drawItems(dc, x, px(M_BASE_Y), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), SEC, _tag]], 0);
+                drawItems(dc, x, px(V_BASE_Y), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), TER, _tag]], 0);
             }
         }
     }
 
-    // ---- Karte tagsüber: die Woche Tag für Tag --------------------------------------------------
-    // Kopf: Ausdauer der Woche gegen das Ziel des Coaches (wm). Je Tag Mo bis So die Minuten je Sportart übereinander,
-    // erledigt gefüllt, geplant als Umriss in gedämpfter Sportfarbe (wd: [[Sportart, Minuten, 1 = geplant], ...]).
+    // ---- Tagsüber: die Woche als Kurve ------------------------------------------------------------
+    // Kopf: Ausdauer der Woche gegen das Ziel des Coaches (wm). Darunter wie die Gezeitenkurve des Ultra die Minuten je Tag Mo bis
+    // So (wd: [[Sportart, Minuten, 1 = geplant], ...]): bis heute das Erledigte als Fläche mit Linie, ab heute das Geplante
+    // gestrichelt, ein Punkt auf heute (ti).
 
-    private function drawWeekCard(dc as Dc, data as Dictionary) as Void {
-        drawCard(dc, CARD);
-        var y = px(HEAD_Y);
-        drawItems(dc, px(CARD_X + PAD), y, [["t", "WOCHE", SEC, _tag]], -1);
+    private function drawWeek(dc as Dc, data as Dictionary) as Void {
         var wm = data.get("wm") as Array?;
         if (wm != null && wm.size() == 2 && numOrNull(wm[0]) != null) {
-            var right = [["t", hours((wm[0] as Numeric).toNumber()), FG, _cap]] as Array<Array>;
+            var head = [["t", hours((wm[0] as Numeric).toNumber()), ACCENT, _cap]] as Array<Array>;
             if (numOrNull(wm[1]) != null && (wm[1] as Numeric) > 0) {
-                right.add(["t", " / " + hours((wm[1] as Numeric).toNumber()), SEC, _tag]);
+                head.add(["t", " / " + hours((wm[1] as Numeric).toNumber()), SEC, _cap]);
             }
-            drawItems(dc, px(CARD_X + CARD_W - PAD), y, right, 1);
+            head.add(["t", "  WOCHE", SEC, _tag]);
+            drawItems(dc, _cx, px(HEAD_Y), head, 0);
         }
         var wd = data.get("wd") as Array?;
-        if (wd == null || wd.size() == 0) {
+        if (wd == null || wd.size() != 7) {
             return;
         }
-        var n = wd.size();
-        var most = 60;
-        for (var i = 0; i < n; i++) {
-            var t = dayTotal(wd[i] as Array);
-            most = t > most ? t : most;
-        }
-        var h = px(BARS_BOTTOM) - px(BARS_TOP);
-        var gap = px(2) > 1 ? px(2) : 1;
-        for (var i = 0; i < n; i++) {
-            var x = barX(i, n);
-            var w = barW(n);
-            var yb = px(BARS_BOTTOM);
-            var segs = wd[i] as Array;
-            if (segs.size() == 0) {
-                // Freier Tag: dünne Linie am Boden
-                dc.setColor(BAR, Graphics.COLOR_TRANSPARENT);
-                dc.fillRectangle(x, yb - px(3), w, px(3) > 1 ? px(3) : 1);
-            }
-            for (var k = 0; k < segs.size(); k++) {
-                var e = segs[k] as Array;
-                var sh = (h * (e[1] as Numeric).toFloat() / most).toNumber();
-                sh = sh < px(4) ? px(4) : sh;
-                var color = sportColor(e[0]);
-                if ((e[2] as Numeric).toNumber() == 1) {
-                    dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.55), Graphics.COLOR_TRANSPARENT);
-                    dc.setPenWidth(px(2) > 1 ? px(2) : 1);
-                    dc.drawRoundedRectangle(x, yb - sh, w, sh, px(4));
-                } else {
-                    dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-                    dc.fillRoundedRectangle(x, yb - sh, w, sh, px(4));
-                }
-                yb -= sh + gap;
-            }
-        }
-        var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
         var ti = data.get("ti");
-        for (var i = 0; i < n && i < 7; i++) {
-            dayLabel(dc, i, n, names[i] as String, ti instanceof Lang.Number && i == (ti as Number));
+        var today = ti instanceof Lang.Number ? ti as Number : 6;
+        // Minuten je Tag: bis heute erledigt, danach geplant
+        var mins = new [7];
+        var most = 60;
+        for (var i = 0; i < 7; i++) {
+            var m = dayMinutes(wd[i] as Array, i > today);
+            mins[i] = m;
+            most = m > most ? m : most;
+        }
+        var x0 = px(G_X0);
+        var x1 = px(G_X1);
+        var yb = px(G_BOTTOM);
+        var h = yb - px(G_TOP);
+        dc.setColor(GRID, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(1);
+        for (var i = 0; i < 7; i++) {
+            var x = x0 + (x1 - x0) * i / 6;
+            dc.drawLine(x, px(G_TOP) - px(6), x, yb);
+        }
+        // Weiche Kurve: zwischen zwei Tagen mit Kosinus übergeblendet
+        var n = 6 * G_STEPS + 1;
+        var xs = new [n];
+        var ys = new [n];
+        for (var k = 0; k < n; k++) {
+            var i = k / G_STEPS;
+            var t = (k % G_STEPS) / G_STEPS.toFloat();
+            var a = mins[i] as Number;
+            var b = i < 6 ? mins[i + 1] as Number : a;
+            var m = a + (b - a) * (1 - Math.cos(Math.PI * t)) / 2;
+            xs[k] = x0 + (x1 - x0) * k / (n - 1);
+            ys[k] = yb - (h * m / most).toNumber();
+        }
+        var cut = today * G_STEPS;
+        if (cut > 0) {
+            var poly = new [cut + 3];
+            for (var k = 0; k <= cut; k++) {
+                poly[k] = [xs[k], ys[k]];
+            }
+            poly[cut + 1] = [xs[cut], yb];
+            poly[cut + 2] = [x0, yb];
+            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.28), Graphics.COLOR_TRANSPARENT);
+            dc.fillPolygon(poly);
+            dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(px(3));
+            for (var k = 0; k < cut; k++) {
+                dc.drawLine(xs[k], ys[k], xs[k + 1], ys[k + 1]);
+            }
+        }
+        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.5), Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(2));
+        for (var k = cut; k < n - 1; k += 2) {
+            dc.drawLine(xs[k], ys[k], xs[k + 1], ys[k + 1]);
+        }
+        var tx = xs[cut] as Number;
+        var ty = ys[cut] as Number;
+        dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(8));
+        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(4));
+        var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
+        for (var i = 0; i < 7; i++) {
+            drawItems(dc, x0 + (x1 - x0) * i / 6, px(DAYS_Y), [["t", names[i] as String, i == today ? FG : SEC, _tag]], 0);
         }
     }
 
-    // Minuten eines Tages (erledigt und geplant)
-    private function dayTotal(segs as Array) as Number {
+    // Minuten eines Tages, erledigt (planned false) oder geplant (planned true)
+    private function dayMinutes(segs as Array, planned as Boolean) as Number {
         var t = 0;
         for (var k = 0; k < segs.size(); k++) {
-            t += ((segs[k] as Array)[1] as Numeric).toNumber();
+            var e = segs[k] as Array;
+            if (((e[2] as Numeric).toNumber() == 1) == planned) {
+                t += (e[1] as Numeric).toNumber();
+            }
         }
         return t;
     }
 
-    // ---- Karte nach einer Einheit -----------------------------------------------------------
-    // Kopf in Sportfarbe: Sportart mit Startzeit, rechts "LÄNGSTE SEIT N WO." (Vergleich mit den eigenen Einheiten derselben
-    // Sportart). Darunter bis zu vier Werte (c: [[Text, Beschriftung], ...]), die Karte leicht in Sportfarbe getönt.
+    // ---- Nach einer Einheit -------------------------------------------------------------------
+    // Kopf in Sportfarbe: Sportart mit Startzeit, daneben "LÄNGSTE SEIT N WO." (Vergleich mit den eigenen Einheiten derselben
+    // Sportart). Darunter bis zu vier Werte (c: [[Text, Beschriftung], ...]) nebeneinander.
 
-    private function drawLastCard(dc as Dc, la as Dictionary) as Void {
+    private function drawLast(dc as Dc, la as Dictionary) as Void {
         var color = sportColor(la.get("s"));
-        drawCard(dc, blend(CARD, color, 0.08));
-        var y = px(HEAD_Y);
         var t = la.get("t");
-        var head = sportName(la.get("s")).toUpper() + (t instanceof Lang.String ? " " + t : "");
-        drawItems(dc, px(CARD_X + PAD), y, [["t", head, color, _tag]], -1);
+        var head = [["t", sportName(la.get("s")).toUpper() + (t instanceof Lang.String ? " " + t : ""), color, _tag]] as Array<Array>;
         var lw = numOrNull(la.get("lw"));
         if (lw != null) {
-            drawItems(dc, px(CARD_X + CARD_W - PAD), y, [["t", "LÄNGSTE SEIT " + lw.toNumber().toString() + " WO.", color, _tag]], 1);
+            head.add(["t", "  LÄNGSTE SEIT " + lw.toNumber().toString() + " WO.", SEC, _tag]);
         }
+        drawItems(dc, _cx, px(HEAD_Y), head, 0);
         var c = la.get("c") as Array?;
         if (c == null) {
             return;
         }
-        var colW = px(CARD_W - 2 * PAD) / 4;
-        for (var i = 0; i < c.size() && i < 4; i++) {
+        var n = c.size() < 4 ? c.size() : 4;
+        var dx = n == 4 ? 92 : V_DX;
+        for (var i = 0; i < n; i++) {
             var cell = c[i] as Array;
-            var x = px(CARD_X + PAD) + i * colW;
-            drawItems(dc, x, px(CELL_Y), [["t", cell[0] as String, FG, _val]], -1);
-            drawItems(dc, x, px(CELL_TAG_Y), [["t", cell[1] as String, SEC, _tag]], -1);
+            var x = _cx + px(dx * (2 * i - (n - 1)) / 2);
+            drawItems(dc, x, px(V_Y), [["t", cell[0] as String, FG, _val]], 0);
+            drawItems(dc, x, px(V_TAG_Y), [["t", (cell[1] as String).toUpper(), SEC, _tag]], 0);
         }
     }
 
@@ -321,7 +386,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             drawGauge(dc, x, y, rr, pen, RING_BG, 1.0);
             var e = goalOf(rz, sports[k]);
             if (e == null) {
-                drawItems(dc, x, y + px(11), [["t", "--", TER, _val]], 0);
+                drawItems(dc, x, y + px(8), [["t", "--", TER, _cap]], 0);
                 continue;
             }
             var done = (e[1] as Numeric).toNumber();
@@ -329,7 +394,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var open = goal - done;
             drawGauge(dc, x, y, rr, pen, color, frac(done, goal));
             if (open > 0) {
-                drawItems(dc, x, y + px(11), [["t", open.toString(), color, _val]], 0);
+                drawItems(dc, x, y + px(8), [["t", open.toString(), color, _cap]], 0);
             } else {
                 drawCheck(dc, x, y, color);
             }
@@ -381,34 +446,17 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         } else if (km != null) {
             what += " " + km.format("%.1f") + " km";
         }
-        drawItems(dc, _cx, px(y), [["t", when, SEC, _cap], ["t", what, sportColor(nx.get("s")), _cap]], 0);
+        drawItems(dc, _cx, px(y), [["t", when, SEC, _tag], ["t", what, sportColor(nx.get("s")), _tag]], 0);
     }
 
     // ---- Bausteine ------------------------------------------------------------------------------
 
-    private function drawCard(dc as Dc, color as Number) as Void {
-        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.fillRoundedRectangle(px(CARD_X), px(CARD_Y), px(CARD_W), px(CARD_H), px(CARD_R));
-    }
-
-    private function barW(n as Number) as Number {
-        return (px(CARD_W - 2 * PAD) - (n - 1) * px(7)) / n;
-    }
-
-    private function barX(i as Number, n as Number) as Number {
-        return px(CARD_X + PAD) + i * (barW(n) + px(7));
-    }
-
-    private function dayLabel(dc as Dc, i as Number, n as Number, text as String, today as Boolean) as Void {
-        drawItems(dc, barX(i, n) + barW(n) / 2, px(DAYS_Y), [["t", text, today ? FG : SEC, _tag]], 0);
-    }
-
     // Haken als Linien um die Mitte x, y, die Bitmap-Schriften haben kein ✓
     private function drawCheck(dc as Dc, x as Number, y as Number, color as Number) as Void {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(px(5));
-        dc.drawLine(x - px(11), y + px(1), x - px(3), y + px(9));
-        dc.drawLine(x - px(3), y + px(9), x + px(13), y - px(8));
+        dc.setPenWidth(px(4));
+        dc.drawLine(x - px(9), y + px(1), x - px(2), y + px(8));
+        dc.drawLine(x - px(2), y + px(8), x + px(11), y - px(7));
     }
 
     // Eintrag [Sportart, erledigt, Ziel] aus rz, ohne Ziel null
