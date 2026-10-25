@@ -17,10 +17,10 @@ import Toybox.WatchUi;
 class IntervalsFaceView extends WatchUi.WatchFace {
 
     const FG = 0xF5F5F7;
-    const SEC = 0x8E8E93;
+    const SEC = 0xA1A1A6;     // Grau für Beschriftungen, heller als bei Apple: auf dem AMOLED sonst matt
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
-    const GRID = 0x262628;    // Tageslinien hinter der Kurve
+    const GRID = 0x2C2C2E;    // Tageslinien hinter der Kurve
     const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
     const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche, Kalorien), wie beim Ultra
@@ -315,7 +315,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dc.clearClip();
         }
         // Vorwoche grau, darüber diese Woche
-        dc.setColor(0x78787D, Graphics.COLOR_TRANSPARENT);
+        dc.setColor(0x8E8E93, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(2));
         for (var i = 0; i < 6; i++) {
             dc.drawLine(gx(i, x0, x1), yb - (h * (last[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (last[i + 1] as Number) / most).toNumber());
