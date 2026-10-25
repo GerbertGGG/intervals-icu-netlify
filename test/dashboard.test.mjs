@@ -601,6 +601,11 @@ console.log("zones from intervals ok");
   const swim = buildWidgetWatch({ ...d, lastActivity: { date: today, sport: "swim", distanceKm: 1.5, movingSecs: 2700, paceSecPer100m: 180, longerAgoDays: 6 } }).la;
   assert.deepEqual([swim.c, swim.lw], [[["1500", "M"], ["0:45", "ZEIT"], ["3:00", "/100M"]], null]);
   assert.ok(JSON.stringify(w).length < 2000, "Antwort fuer den Hintergrunddienst der Uhr klein halten");
+  // An die Uhr gehen nur die Felder, die das Zifferblatt nutzt
+  const { watchPayload } = await import("../src/widget.js");
+  const slim = watchPayload(w);
+  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "la", "next", "rd", "rv", "rz", "wm", "wv"].filter((k) => k in w).sort());
+  assert.ok(JSON.stringify(slim).length < 700, "schlanke Antwort fuer die Uhr");
   const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   const envW = { ...env, WATCH_TOKEN: "uhr" };
   assert.equal((await handleWidgetRequest(req("watch", "uhr"), envW)).status, 200);
