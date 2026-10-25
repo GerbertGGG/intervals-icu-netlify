@@ -8,7 +8,7 @@ import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
-// große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Ausdauer der Woche gegen das Ziel des Coaches, rechts der Akku),
+// große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Kalorien von heute gegen das Tagesziel, rechts der Akku),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
 // der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber der Wochenvergleich, bis 3 Stunden
 // nach einer Einheit deren Werte.
@@ -23,7 +23,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const GRID = 0x262628;    // Tageslinien hinter der Kurve
     const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
-    const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche), wie beim Ultra
+    const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche, Kalorien), wie beim Ultra
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
@@ -145,17 +145,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Skalen am Rand ----------------------------------------------------------------------
-    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links die Ausdauer der Woche gegen das Zeitziel des
-    // Coaches (wm: [erledigt, Ziel] in Minuten), von unten gefüllt in der Akzentfarbe; ohne Ziel bleibt sie leer. Rechts der Akku
+    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links die Kalorien von heute gegen das Tagesziel
+    // (kcal: {v, g}, live aus Yazio), von unten gefüllt in der Akzentfarbe, über dem Ziel voll; ohne Ziel bleibt sie leer. Rechts der Akku
     // (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
 
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
-        var wm = data != null ? data.get("wm") as Array? : null;
-        var week = 0.0;
-        if (wm != null && wm.size() == 2) {
-            week = frac(numOrNull(wm[0]), numOrNull(wm[1]));
-        }
-        drawScale(dc, 215, 145, week, ACCENT);
+        var kcal = data != null ? data.get("kcal") as Dictionary? : null;
+        var food = kcal != null ? frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g"))) : 0.0;
+        drawScale(dc, 215, 145, food, ACCENT);
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
