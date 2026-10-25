@@ -1,12 +1,12 @@
 # Garmin-Watchface "Intervals"
 
-Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Ultra“ nach Apples Modular Ultra: schwarz, große Uhrzeit in einer Zeile, Skalen am Rand, eine Akzentfarbe (Cyan) für die Woche, Lila für die Kalorien. Sportfarben nur in den runden Anzeigen: Laufen gelb, Rad grün, Schwimmen blau.
+Zifferblatt für runde Garmin-Uhren (Connect IQ, Monkey C), Entwurf „Ultra“ nach Apples Modular Ultra: schwarz, große Uhrzeit in einer Zeile, Skalen am Rand, eine Akzentfarbe (Cyan) für die Woche, auch für die Kalorien. Sportfarben nur in den runden Anzeigen: Laufen gelb, Rad grün, Schwimmen blau.
 
 Fest von oben nach unten:
 
 - **Kopf**: Datum wie bei Apple („SO. 25. OKT.“), darunter das Urteil des Coaches für heute als Wort in einer Kapsel seiner Farbe (Feld `go` in `save_coach`): HART grün, LOCKER orange, FREI rot, COACH blau = Coach hat geschrieben, aber kein Urteil, ohne Aussage keine Kapsel. Eine eigene Ampel hat die Uhr nicht.
 - **Uhrzeit**, groß und schlank, ohne führende Null.
-- **Skalen am Rand** wie beim Ultra (je 25 Striche): links die Kalorien von heute gegen das Tagesziel (`kcal`, live aus Yazio), von unten in Lila gefüllt, über dem Ziel voll, ohne Ziel leer; rechts der Akku (grau, ab 20 % orange, ab 10 % rot, beim Laden grün).
+- **Skalen am Rand** wie beim Ultra (je 25 Striche): links die Kalorien von heute gegen das Tagesziel (`kcal`, live aus Yazio), von unten in Cyan gefüllt, über dem Ziel voll, ohne Ziel leer; rechts der Akku (grau, ab 20 % orange, ab 10 % rot, beim Laden grün).
 - **Offene Wochenminuten** je Sportart bis zum Zeitziel des Coaches (Einträge der Kategorie „Target“ im Intervals-Kalender) als drei runde Anzeigen: in der Mitte die Minuten in Sportfarbe, außen ein Ring mit Lücke unten, der sich zum Ziel füllt. Ohne Beschriftung: von links Lauf, Rad, Schwimmen. Ziel erreicht: Haken, ohne Ziel „--“.
 - **Ganz unten** die nächste Einheit („Heute Lauf 45'“, „Morgen Rad 60'“).
 

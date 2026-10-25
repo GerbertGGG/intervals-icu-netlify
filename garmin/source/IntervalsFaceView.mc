@@ -23,8 +23,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const GRID = 0x262628;    // Tageslinien hinter der Kurve
     const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
-    const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche), wie beim Ultra
-    const FOOD = 0xBF5AF2;    // Kalorien (Skala links)
+    const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche, Kalorien), wie beim Ultra
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
@@ -147,13 +146,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // ---- Skalen am Rand ----------------------------------------------------------------------
     // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links die Kalorien von heute gegen das Tagesziel
-    // (kcal: {v, g}, live aus Yazio), von unten gefüllt in Lila, über dem Ziel voll; ohne Ziel bleibt sie leer. Rechts der Akku
+    // (kcal: {v, g}, live aus Yazio), von unten gefüllt in der Akzentfarbe, über dem Ziel voll; ohne Ziel bleibt sie leer. Rechts der Akku
     // (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
 
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
         var kcal = data != null ? data.get("kcal") as Dictionary? : null;
         var food = kcal != null ? frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g"))) : 0.0;
-        drawScale(dc, 215, 145, food, FOOD);
+        drawScale(dc, 215, 145, food, ACCENT);
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
