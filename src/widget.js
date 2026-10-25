@@ -507,6 +507,21 @@ function watchWeekDays(d) {
   });
 }
 
+// Wochenvergleich fuer das Zifferblatt: Ausdauerminuten je Tag, [diese Woche Mo bis heute, Vorwoche Mo bis So]. Die Uhr
+// summiert sie auf und zeichnet beide Kurven mit dem Ziel des Coaches (wm). Ohne Ausdauerwert des Tages (aeltere Daten) die
+// Minuten von Lauf, Rad und Schwimmen.
+function watchWeekCompare(d) {
+  const monday = addDays(d.today, -dayIndex(d.today));
+  const minOf = (date) => {
+    const x = d.daily.find((y) => y.date === date);
+    return x?.endurance ?? WEEK_SPORTS.reduce((a, k) => a + (x?.minutes?.[k] ?? 0), 0);
+  };
+  return [
+    Array.from({ length: dayIndex(d.today) + 1 }, (_, i) => minOf(addDays(monday, i))),
+    Array.from({ length: 7 }, (_, i) => minOf(addDays(monday, i - 7))),
+  ];
+}
+
 // Letzte Einheit, nur wenn sie von heute ist: s Sportart, t Startzeit, e Ende (Sekunden seit 1970), c bis zu vier Werte
 // [Text, Beschriftung], lw = Wochen seit der letzten mindestens so langen Einheit derselben Sportart (erst ab 2 Wochen).
 // Puls nur, wenn das Dashboard ihn fuer die Einheit zeigt (Pulsregel, avgHr).
@@ -587,7 +602,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     // Zifferblatt nach Tageszeit: sl Schlaf (h), hv HRV der letzten 7 Tage (heute zuletzt, ohne Wert null), hm deren Basis
     // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute (bis 90 Zeichen, die Uhr bricht sie um), rv Erholungswerte
     // (watchRecovery), wd Woche (watchWeekDays), wm Ausdauer der Woche
-    // [Minuten, Ziel-Minuten], la letzte Einheit von heute (watchLast)
+    // [Minuten, Ziel-Minuten], wv Wochenvergleich (watchWeekCompare), la letzte Einheit von heute (watchLast)
     sl: d.summary?.recovery?.sleepHours ?? null,
     hv: Array.from({ length: 7 }, (_, i) => (byDate[addDays(d.today, i - 6)]?.hrv != null ? Math.round(byDate[addDays(d.today, i - 6)].hrv) : null)),
     hm: d.summary?.recovery?.body?.hrvMedian != null ? Math.round(d.summary.recovery.body.hrvMedian) : null,
@@ -595,6 +610,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     rv: watchRecovery(d),
     wd: watchWeekDays(d),
     wm: weekGoals(d) ? [Math.round(weekGoals(d).min), weekGoals(d).goalMin] : null,
+    wv: watchWeekCompare(d),
     la: watchLast(d),
   };
 }

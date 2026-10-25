@@ -56,7 +56,7 @@ export function withReference(list) {
 
 // Ausdauersekunden einer Aktivitaet (Laufen und Rad: moving_time; Schwimmen: Bewegungszeit ohne Pausen, swimTimeOf;
 // icu_ignore_time zaehlt nicht), sonst 0
-const enduranceSecOf = (a) => {
+export const enduranceSecOf = (a) => {
   const disc = a?.icu_ignore_time ? null : enduranceDiscipline(a);
   if (!disc) return 0;
   return disc === "schwimmen" ? swimTimeOf(a).sec : Number(a?.moving_time) || 0;

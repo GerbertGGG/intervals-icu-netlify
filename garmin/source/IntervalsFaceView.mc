@@ -10,7 +10,7 @@ import Toybox.WatchUi;
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
 // große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Ausdauer der Woche gegen das Ziel des Coaches, rechts der Akku),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
-// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber die Woche als Kurve, bis 3 Stunden
+// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber der Wochenvergleich, bis 3 Stunden
 // nach einer Einheit deren Werte.
 // Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
@@ -48,7 +48,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const G_X1 = 360;
     const G_TOP = 244;
     const G_BOTTOM = 312;
-    const G_STEPS = 6;        // Zwischenpunkte je Tag für die weiche Kurve
     const DAYS_Y = 334;
     // Werte morgens und nach einer Einheit
     const V_Y = 278;
@@ -243,35 +242,41 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // ---- Tagsüber: die Woche als Kurve ------------------------------------------------------------
-    // Kopf: Ausdauer der Woche gegen das Ziel des Coaches (wm). Darunter wie die Gezeitenkurve des Ultra die Minuten je Tag Mo bis
-    // So (wd: [[Sportart, Minuten, 1 = geplant], ...]): bis heute das Erledigte als Fläche mit Linie, ab heute das Geplante
-    // gestrichelt, ein Punkt auf heute (ti).
+    // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------
+    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche], Minuten je Tag): diese Woche als Fläche mit
+    // Linie in der Akzentfarbe bis zum Punkt auf heute, die Vorwoche als graue Linie, das Zeitziel des Coaches (wm[1])
+    // gestrichelt. Kopf: Stand der Woche und der Abstand zur Vorwoche am selben Wochentag. Ein Urteil ist das nicht.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
+        var wv = data.get("wv") as Array?;
         var wm = data.get("wm") as Array?;
-        if (wm != null && wm.size() == 2 && numOrNull(wm[0]) != null) {
-            var head = [["t", hours((wm[0] as Numeric).toNumber()), ACCENT, _cap]] as Array<Array>;
-            if (numOrNull(wm[1]) != null && (wm[1] as Numeric) > 0) {
-                head.add(["t", " / " + hours((wm[1] as Numeric).toNumber()), SEC, _cap]);
-            }
-            head.add(["t", "  WOCHE", SEC, _tag]);
-            drawItems(dc, _cx, px(HEAD_Y), head, 0);
-        }
-        var wd = data.get("wd") as Array?;
-        if (wd == null || wd.size() != 7) {
+        if (wv == null || wv.size() != 2) {
             return;
         }
-        var ti = data.get("ti");
-        var today = ti instanceof Lang.Number ? ti as Number : 6;
-        // Minuten je Tag: bis heute erledigt, danach geplant
-        var mins = new [7];
-        var most = 60;
-        for (var i = 0; i < 7; i++) {
-            var m = dayMinutes(wd[i] as Array, i > today);
-            mins[i] = m;
-            most = m > most ? m : most;
+        var cur = cumulate(wv[0] as Array);
+        var last = cumulate(wv[1] as Array);
+        var today = cur.size() - 1;
+        if (today < 0 || last.size() != 7) {
+            return;
         }
+        var goal = wm != null && wm.size() == 2 ? numOrNull(wm[1]) : null;
+        var now = cur[today] as Number;
+        var diff = now - (last[today < 6 ? today : 6] as Number);
+        drawItems(dc, _cx, px(HEAD_Y), [
+            ["t", hours(now), ACCENT, _cap],
+            ["t", "  " + (diff < 0 ? "−" : "+") + hours(diff < 0 ? -diff : diff), FG, _cap],
+            ["t", "  ZUR VORWOCHE", SEC, _tag]
+        ], 0);
+
+        var most = 60.0;
+        for (var i = 0; i < 7; i++) {
+            most = (last[i] as Number) > most ? (last[i] as Number).toFloat() : most;
+        }
+        most = now > most ? now.toFloat() : most;
+        if (goal != null && goal > most) {
+            most = goal.toFloat();
+        }
+        most *= 1.05;
         var x0 = px(G_X0);
         var x1 = px(G_X1);
         var yb = px(G_BOTTOM);
@@ -279,65 +284,68 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(GRID, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(1);
         for (var i = 0; i < 7; i++) {
-            var x = x0 + (x1 - x0) * i / 6;
+            var x = gx(i, x0, x1);
             dc.drawLine(x, px(G_TOP) - px(6), x, yb);
         }
-        // Weiche Kurve: zwischen zwei Tagen mit Kosinus übergeblendet
-        var n = 6 * G_STEPS + 1;
-        var xs = new [n];
-        var ys = new [n];
-        for (var k = 0; k < n; k++) {
-            var i = k / G_STEPS;
-            var t = (k % G_STEPS) / G_STEPS.toFloat();
-            var a = mins[i] as Number;
-            var b = i < 6 ? mins[i + 1] as Number : a;
-            var m = a + (b - a) * (1 - Math.cos(Math.PI * t)) / 2;
-            xs[k] = x0 + (x1 - x0) * k / (n - 1);
-            ys[k] = yb - (h * m / most).toNumber();
-        }
-        var cut = today * G_STEPS;
-        if (cut > 0) {
-            var poly = new [cut + 3];
-            for (var k = 0; k <= cut; k++) {
-                poly[k] = [xs[k], ys[k]];
+        // Ziel des Coaches gestrichelt, rechts daneben der Wert
+        if (goal != null && goal > 0) {
+            var y = yb - (h * goal / most).toNumber();
+            dc.setColor(0x6E6E73, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(px(2));
+            for (var x = x0; x < x1; x += px(9)) {
+                dc.drawLine(x, y, (x + px(5) < x1 ? x + px(5) : x1), y);
             }
-            poly[cut + 1] = [xs[cut], yb];
-            poly[cut + 2] = [x0, yb];
+            drawItems(dc, x1 + px(6), y + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
+        }
+        // Diese Woche: Fläche bis heute
+        if (today > 0) {
+            var poly = new [today + 3];
+            for (var i = 0; i <= today; i++) {
+                poly[i] = [gx(i, x0, x1), yb - (h * (cur[i] as Number) / most).toNumber()];
+            }
+            poly[today + 1] = [gx(today, x0, x1), yb];
+            poly[today + 2] = [x0, yb];
             dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.28), Graphics.COLOR_TRANSPARENT);
             dc.fillPolygon(poly);
-            dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(px(3));
-            for (var k = 0; k < cut; k++) {
-                dc.drawLine(xs[k], ys[k], xs[k + 1], ys[k + 1]);
-            }
         }
-        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.5), Graphics.COLOR_TRANSPARENT);
+        // Vorwoche grau, darüber diese Woche
+        dc.setColor(0x78787D, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(2));
-        for (var k = cut; k < n - 1; k += 2) {
-            dc.drawLine(xs[k], ys[k], xs[k + 1], ys[k + 1]);
+        for (var i = 0; i < 6; i++) {
+            dc.drawLine(gx(i, x0, x1), yb - (h * (last[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (last[i + 1] as Number) / most).toNumber());
         }
-        var tx = xs[cut] as Number;
-        var ty = ys[cut] as Number;
+        dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(3));
+        for (var i = 0; i < today; i++) {
+            dc.drawLine(gx(i, x0, x1), yb - (h * (cur[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (cur[i + 1] as Number) / most).toNumber());
+        }
+        var tx = gx(today, x0, x1);
+        var ty = yb - (h * now / most).toNumber();
         dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(tx, ty, px(8));
         dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(tx, ty, px(4));
         var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
         for (var i = 0; i < 7; i++) {
-            drawItems(dc, x0 + (x1 - x0) * i / 6, px(DAYS_Y), [["t", names[i] as String, i == today ? FG : SEC, _tag]], 0);
+            drawItems(dc, gx(i, x0, x1), px(DAYS_Y), [["t", names[i] as String, i == today ? FG : SEC, _tag]], 0);
         }
     }
 
-    // Minuten eines Tages, erledigt (planned false) oder geplant (planned true)
-    private function dayMinutes(segs as Array, planned as Boolean) as Number {
-        var t = 0;
-        for (var k = 0; k < segs.size(); k++) {
-            var e = segs[k] as Array;
-            if (((e[2] as Numeric).toNumber() == 1) == planned) {
-                t += (e[1] as Numeric).toNumber();
-            }
+    // x des Tages i zwischen x0 und x1
+    private function gx(i as Number, x0 as Number, x1 as Number) as Number {
+        return x0 + (x1 - x0) * i / 6;
+    }
+
+    // Minuten je Tag aufsummiert ([45, 0, 30] -> [45, 45, 75])
+    private function cumulate(mins as Array) as Array<Number> {
+        var out = [] as Array<Number>;
+        var sum = 0;
+        for (var i = 0; i < mins.size() && i < 7; i++) {
+            var v = numOrNull(mins[i]);
+            sum += v != null ? v.toNumber() : 0;
+            out.add(sum);
         }
-        return t;
+        return out;
     }
 
     // ---- Nach einer Einheit -------------------------------------------------------------------
