@@ -33,7 +33,12 @@ class SyncDelegate extends System.ServiceDelegate {
 
     function onReceive(code as Number, data as Dictionary or String or Null) as Void {
         if (code == 200 && data instanceof Lang.Dictionary) {
-            Background.exit(data);
+            // Zu große Antwort: Background.exit wirft, das Zifferblatt bekäme nichts und zeigte nur "!". Dann -900 melden.
+            try {
+                Background.exit(data);
+            } catch (e instanceof Background.ExitDataSizeLimitException) {
+                Background.exit({ "err" => -900 });
+            }
         } else {
             // Fehlercode an die App melden (z. B. -104 = keine Verbindung zum Handy, 401 = Token, 404 = Adresse)
             Background.exit({ "err" => code });

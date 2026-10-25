@@ -615,6 +615,11 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
   };
 }
 
+// Felder, die das Zifferblatt nutzt (garmin/README.md). Nur sie gehen an die Uhr: Der Hintergrunddienst darf nur wenig Daten an
+// das Zifferblatt uebergeben (Background.exit), eine groessere Antwort kommt dort nicht an, und die Uhr zeigt nur "!".
+const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal", "la"];
+export const watchPayload = (w) => Object.fromEntries(WATCH_KEYS.filter((k) => w[k] !== undefined).map((k) => [k, w[k]]));
+
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
 // wuerde jedes Widget alle Quellen neu laden. Mit ?fresh=1 wird der Cache uebergangen.
 const CACHE_KEY = "widget:dashboard-cache";
@@ -715,6 +720,6 @@ async function widgetResponse(req, env, ctx) {
   // Nicht fuer die Uhr: Sie zeigt kein Essen, und die zwei Yazio-Abrufe kosten Zeit bis zum Abbruch (-300).
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const live = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "kompass" ? buildWidgetKompass(dashboard) : view === "watch" ? buildWidgetWatch(dashboard, env, goals, live) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "kompass" ? buildWidgetKompass(dashboard) : view === "watch" ? watchPayload(buildWidgetWatch(dashboard, env, goals, live)) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }
