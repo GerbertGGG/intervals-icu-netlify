@@ -1,16 +1,16 @@
 """Erzeugt Bitmap-Schriften (BMFont-Textformat) für das Watchface.
 
-Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel] [Name] [digits] [wght=N] [track=N]
+Aufruf: python3 garmin/tools/make_font.py [Pfad zur .ttf/.otf] [Größe in Pixel] [Name] [digits] [wght=N] [track=N] [edge=N]
 Ergebnis: garmin/resources/fonts/<Name>.fnt und <Name>.png (Name ist standardmäßig "small")
 Mit "digits" nur Ziffern und Doppelpunkt, alle Ziffern gleich breit (Uhrzeit springt nicht).
 wght=N setzt bei variablen Schriften die Stärke (z. B. 700), track=N ändert den Vorschub jedes Zeichens um N Pixel
 (negativ = enger, wie letter-spacing).
 Die Schriften des Zifferblatts sind Inter (SIL Open Font License, fonts.google.com/specimen/Inter), angelehnt an Apples
 SF Pro; die variable .ttf herunterladen (Inter[opsz,wght].ttf). Fett (700) lief auf dem AMOLED zusammen:
-  python3 garmin/tools/make_font.py Inter.ttf 100 time digits wght=600 track=-2
-  python3 garmin/tools/make_font.py Inter.ttf 30 val wght=500
-  python3 garmin/tools/make_font.py Inter.ttf 21 cap wght=600
-  python3 garmin/tools/make_font.py Inter.ttf 17 tag wght=600 track=1
+  python3 garmin/tools/make_font.py Inter.ttf 100 time digits wght=600 track=-2 edge=60
+  python3 garmin/tools/make_font.py Inter.ttf 30 val wght=500 edge=50
+  python3 garmin/tools/make_font.py Inter.ttf 21 cap wght=600 edge=50
+  python3 garmin/tools/make_font.py Inter.ttf 17 tag wght=600 track=1 edge=40
 Die Größen sind für 416 Pixel (Forerunner 265); Bitmap-Schriften skalieren nicht mit.
 """
 import sys
@@ -24,6 +24,9 @@ flags = sys.argv[4:]
 digits = "digits" in flags
 opt = dict(f.split("=", 1) for f in flags if "=" in f)
 track = int(opt.get("track", 0))
+# edge=N (0 bis 100): härtere Kanten. Die Deckkraft der Randpixel wird gestreckt, ganz schwache fallen weg, fast volle werden voll.
+# Auf dem AMOLED wirken weiche Kanten sonst unscharf (Lichthof um helle Schrift auf Schwarz).
+edge = int(opt.get("edge", 0))
 out = Path(__file__).resolve().parent.parent / "resources" / "fonts"
 font = ImageFont.truetype(ttf, size)
 if "wght" in opt:
@@ -84,6 +87,9 @@ for c, ch, l, t, w, h, adv, px, py in placed:
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).text((-l, -t), ch, font=font, fill=255, anchor="la")
     cov.paste(mask, (px, py))
+if edge:
+    lo, hi = 255 * edge / 400, 255 - 255 * edge / 400
+    cov = cov.point(lambda v: 0 if v <= lo else (255 if v >= hi else round((v - lo) * 255 / (hi - lo))))
 Image.merge("RGBA", (cov, cov, cov, cov)).save(out / f"{name}.png")
 
 lines = [
