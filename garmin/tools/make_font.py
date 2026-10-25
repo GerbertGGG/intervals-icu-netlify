@@ -75,15 +75,16 @@ H = 1
 while H < y + row_h + 1:
     H *= 2
 
-# Weiß mit Alpha: die Deckkraft trägt die Glyphenform
-img = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+# Deckkraft in allen vier Kanälen (chnl=15): weiß auf schwarz und gleich als Alpha. Nur Alpha bei durchgehend weißem RGB
+# las der Garmin-Compiler als volle Deckung jedes Randpixels, die Kanten wurden gezackt.
+cov = Image.new("L", (W, H), 0)
 for c, ch, l, t, w, h, adv, px, py in placed:
     if w == 0 or h == 0:
         continue
     mask = Image.new("L", (w, h), 0)
     ImageDraw.Draw(mask).text((-l, -t), ch, font=font, fill=255, anchor="la")
-    img.paste((255, 255, 255, 255), (px, py), mask)
-img.save(out / f"{name}.png")
+    cov.paste(mask, (px, py))
+Image.merge("RGBA", (cov, cov, cov, cov)).save(out / f"{name}.png")
 
 lines = [
     f'info face="{Path(ttf).stem}" size={size} bold=1 italic=0 charset="" unicode=1 stretchH=100 smooth=1 aa=1 padding=0,0,0,0 spacing=1,1',
