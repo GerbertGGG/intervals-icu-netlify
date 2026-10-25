@@ -20,7 +20,7 @@ import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readCoach } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
-import { computeWeekTotals, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
+import { computeWeekTotals, enduranceSecOf, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
 import { withSwimIntervals } from "./swim-time.js";
 import { readTargets, targetsView } from "./targets-snapshot.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
@@ -495,7 +495,7 @@ export function buildLoadHint(wellness, todayIso) {
 
 function buildDaily(todayIso, activities) {
   const out = [];
-  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {} });
+  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {}, endurance: 0 });
   const byDate = new Map(out.map((x) => [x.date, x]));
   for (const a of activities) {
     const day = byDate.get(activityDay(a));
@@ -505,9 +505,11 @@ function buildDaily(todayIso, activities) {
     if (load) day.sports[sportOf(a)] = (day.sports[sportOf(a)] ?? 0) + load;
     // Minuten je Sportart (auch ohne Load, z. B. Kraft) fuer die Wochenkarte
     if (secs > 0) day.minutes[sportOf(a)] = (day.minutes[sportOf(a)] ?? 0) + secs / 60;
+    // Ausdauerminuten wie in den Wochenzielen (week-totals.js, Schwimmen ohne Pausen) fuer den Wochenvergleich der Uhr
+    day.endurance += enduranceSecOf(a) / 60;
   }
   const round = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
-  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes) }));
+  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes), endurance: Math.round(x.endurance) }));
 }
 
 // Letzte erledigte Einheit fürs Heute-Band, wenn nichts geplant ist (Namen verlassen den Worker nicht).

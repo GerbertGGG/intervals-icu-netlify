@@ -582,6 +582,11 @@ console.log("zones from intervals ok");
   assert.equal(w.hv.length, 7); assert.equal(w.hv[6], 48); assert.equal(w.hm, 48); assert.equal(w.sl, 7.5);
   assert.equal(w.wd.length, 7);
   assert.deepEqual(w.wd.slice(0, 4), [[["swim", 45, 0]], [["run", 48, 0]], [], [["swim", 50, 1]]]); // heute nur "other" geplant, morgen Schwimmen
+  // Wochenvergleich: diese Woche Mo bis heute, Vorwoche Mo bis So; ohne Ausdauerwert die Minuten von Lauf, Rad, Schwimmen
+  assert.deepEqual([w.wv[0].length, w.wv[1].length], [w.ti + 1, 7]);
+  assert.deepEqual(w.wv[0].slice(0, 2), [45, 48]);
+  const wv = buildWidgetWatch({ ...d, daily: d.daily.map((x) => (x.date === today ? { ...x, minutes: { run: 30, strength: 20 }, endurance: 28 } : x)) }).wv;
+  assert.equal(wv[0][w.ti], 28); // Ausdauer wie in den Wochenzielen, Kraft zaehlt nicht
   assert.equal(w.la, null); // letzte Einheit war gestern
   assert.equal(w.cl, null);
   assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, headline: "45 min locker, Wade vom Dienstag im Blick" } }).cl, "45 min locker, Wade vom Dienstag im Blick");
