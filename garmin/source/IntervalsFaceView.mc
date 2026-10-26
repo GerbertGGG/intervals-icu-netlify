@@ -278,9 +278,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------
-    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche], Minuten je Tag): diese Woche als Fläche mit
-    // Linie in der Akzentfarbe bis zum Punkt auf heute, die Vorwoche als graue Linie, das Zeitziel des Coaches (wm[1])
-    // gestrichelt. Kopf: Stand der Woche und der Abstand zur Vorwoche am selben Wochentag. Ein Urteil ist das nicht.
+    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche, geplant], Minuten je Tag): diese Woche als
+    // Fläche mit Linie in der Akzentfarbe bis zum Punkt auf heute, ab dort gestrichelt die geplanten Einheiten bis Sonntag, die
+    // Vorwoche als graue Linie, das Zeitziel des Coaches (wm[1]) als waagerechte gestrichelte Linie. Kopf: Stand der Woche und
+    // der Abstand zur Vorwoche am selben Wochentag. Ein Urteil ist das nicht.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
         var wv = data.get("wv") as Array?;
@@ -303,11 +304,23 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             ["t", "  ZUR VORWOCHE", SEC, _tag]
         ], 0);
 
+        // Geplant ab heute: heutiger Rest und die folgenden Tage, aufsummiert auf den heutigen Stand
+        var plan = wv.size() > 2 && wv[2] instanceof Lang.Array ? wv[2] as Array : null;
+        var planned = 0;
+        if (plan != null && plan.size() == 7) {
+            for (var i = today; i < 7; i++) {
+                var pv = numOrNull(plan[i]);
+                planned += pv != null ? pv.toNumber() : 0;
+            }
+        } else {
+            plan = null;
+        }
         var most = 60.0;
         for (var i = 0; i < 7; i++) {
             most = (last[i] as Number) > most ? (last[i] as Number).toFloat() : most;
         }
         most = now > most ? now.toFloat() : most;
+        most = now + planned > most ? (now + planned).toFloat() : most;
         if (goal != null && goal > most) {
             most = goal.toFloat();
         }
@@ -364,6 +377,24 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var tx = gx(today, x0, x1);
         var ty = yb - (h * now / most).toNumber();
+        if (plan != null && today < 6) {
+            // Geplanter Rest gestrichelt: der heutige Rest kommt zum nächsten Tag dazu
+            var p0 = numOrNull(plan[today]);
+            var acc = now + (p0 != null ? p0.toNumber() : 0);
+            var px0 = tx;
+            var py0 = ty;
+            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.85), Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(px(2));
+            for (var i = today + 1; i < 7; i++) {
+                var pv = numOrNull(plan[i]);
+                acc += pv != null ? pv.toNumber() : 0;
+                var px1 = gx(i, x0, x1);
+                var py1 = yb - (h * acc / most).toNumber();
+                drawDashed(dc, px0, py0, px1, py1);
+                px0 = px1;
+                py0 = py1;
+            }
+        }
         // Punkt auf heute mit Schein
         dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.25), Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(tx, ty, px(13));
@@ -376,6 +407,22 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
         for (var i = 0; i < 7; i++) {
             drawItems(dc, gx(i, x0, x1), px(DAYS_Y), [["t", names[i] as String, i == today ? FG : SEC, _tag]], 0);
+        }
+    }
+
+    // Gestrichelte Linie von (xa, ya) nach (xb, yb): Striche von 6, Lücken von 4 Mockup-Pixeln
+    private function drawDashed(dc as Dc, xa as Number, ya as Number, xb as Number, yb as Number) as Void {
+        var dx = (xb - xa).toFloat();
+        var dy = (yb - ya).toFloat();
+        var len = Math.sqrt(dx * dx + dy * dy);
+        var dash = px(6) > 2 ? px(6) : 2;
+        var gap = px(4) > 2 ? px(4) : 2;
+        if (len < 1) {
+            return;
+        }
+        for (var t = 0.0; t < len; t += dash + gap) {
+            var t2 = t + dash < len ? t + dash : len;
+            dc.drawLine(xa + (dx * t / len).toNumber(), ya + (dy * t / len).toNumber(), xa + (dx * t2 / len).toNumber(), ya + (dy * t2 / len).toNumber());
         }
     }
 
