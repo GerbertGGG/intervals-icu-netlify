@@ -305,9 +305,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
 
     // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------
     // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche], Minuten je Tag): diese Woche als
-    // Fläche mit Linie in der Akzentfarbe bis zum Punkt auf heute, die Vorwoche als graue Linie, dazu gestrichelt die gerade Soll-
-    // Linie von 0 bis zum Zeitziel des Coaches (wm[1]). Kopf: Stand der Woche und der Abstand zur Vorwoche am selben Wochentag.
-    // Ein Urteil ist das nicht.
+    // Fläche mit Linie in der Akzentfarbe bis zum Punkt auf heute, dazu gestrichelt die gerade Soll-Linie von 0 bis zum Zeitziel
+    // des Coaches (wm[1]). Liegt der Punkt über der gestrichelten Linie, ist die Woche vor dem Soll. Kopf: Stand der Woche und der
+    // Abstand zur Soll-Linie heute. Ein Urteil ist das nicht.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
         var wv = data.get("wv") as Array?;
@@ -316,24 +316,21 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             return;
         }
         var cur = cumulate(wv[0] as Array);
-        var last = cumulate(wv[1] as Array);
         var today = cur.size() - 1;
-        if (today < 0 || last.size() != 7) {
+        if (today < 0) {
             return;
         }
         var goal = wm != null && wm.size() == 2 ? numOrNull(wm[1]) : null;
         var now = cur[today] as Number;
-        var diff = now - (last[today < 6 ? today : 6] as Number);
-        drawItems(dc, _cx, px(HEAD_Y), [
-            ["t", hours(now), ACCENT, _cap],
-            ["t", "  " + (diff < 0 ? "−" : "+") + hours(diff < 0 ? -diff : diff), FG, _cap],
-            ["t", "  ZUR VORWOCHE", SEC, _tag]
-        ], 0);
+        var items = [["t", hours(now), ACCENT, _cap]] as Array<Array>;
+        if (goal != null && goal > 0) {
+            var diff = now - (goal * (today < 6 ? today : 6) / 6).toNumber();
+            items.add(["t", "  " + (diff < 0 ? "−" : "+") + hours(diff < 0 ? -diff : diff), FG, _cap]);
+            items.add(["t", "  ZUM SOLL", SEC, _tag]);
+        }
+        drawItems(dc, _cx, px(HEAD_Y), items, 0);
 
         var most = 60.0;
-        for (var i = 0; i < 7; i++) {
-            most = (last[i] as Number) > most ? (last[i] as Number).toFloat() : most;
-        }
         most = now > most ? now.toFloat() : most;
         if (goal != null && goal > most) {
             most = goal.toFloat();
@@ -376,12 +373,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             }
             dc.clearClip();
         }
-        // Vorwoche grau, darüber diese Woche
-        dc.setColor(0x8E8E93, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(px(2));
-        for (var i = 0; i < 6; i++) {
-            dc.drawLine(gx(i, x0, x1), yb - (h * (last[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (last[i + 1] as Number) / most).toNumber());
-        }
+        // Diese Woche als durchgezogene Linie
         dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(3));
         for (var i = 0; i < today; i++) {
