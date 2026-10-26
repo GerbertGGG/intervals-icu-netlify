@@ -591,7 +591,9 @@ console.log("zones from intervals ok");
   assert.equal(w.cl, null);
   assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, headline: "45 min locker, Wade vom Dienstag im Blick" } }).cl, "45 min locker, Wade vom Dienstag im Blick");
   // Erholungswerte: Wert, Basis, Vergleich mit dem eigenen ueblichen Bereich (1 im Bereich oder besser, 3 schlechter als 9 von 10 Tagen)
-  assert.deepEqual(w.rv[1], [48, 48, 1]);
+  assert.deepEqual(w.rv[1].slice(0, 3), [48, 48, 1]);
+  assert.equal(w.rv[1].length, 4); // vierter Eintrag: ueblicher Bereich [p10, p25, p75, p90] oder null
+  assert.equal(buildWidgetWatch({ ...d, summary: { ...d.summary, recovery: { ...d.summary.recovery, body: { ...d.summary.recovery.body, band: null } } } }).rv[1][3], null);
   const rec = d.summary.recovery;
   const low = buildWidgetWatch({ ...d, summary: { ...d.summary, recovery: { ...rec, hrv: 30, restingHR: 70 } } }).rv;
   assert.deepEqual([low[1][2], low[2][2]], [3, 3]);
@@ -604,7 +606,10 @@ console.log("zones from intervals ok");
   // An die Uhr gehen nur die Felder, die das Zifferblatt nutzt
   const { watchPayload } = await import("../src/widget.js");
   const slim = watchPayload(w);
-  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "la", "next", "rd", "rv", "rz", "wm", "wv"].filter((k) => k in w).sort());
+  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "next", "pr", "rd", "rv", "rz", "wm", "wv"].filter((k) => k in w).sort());
+  // Eiweissziel aus Yazio (nutritionGoals im zwischengespeicherten Dashboard), sonst null
+  assert.equal(w.pr.g, null);
+  assert.deepEqual(buildWidgetWatch({ ...d, nutritionGoals: { kcal: 2400, proteinG: 150 } }).pr.g, 150);
   assert.ok(JSON.stringify(slim).length < 700, "schlanke Antwort fuer die Uhr");
   const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   const envW = { ...env, WATCH_TOKEN: "uhr" };

@@ -8,10 +8,9 @@ import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
-// große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Kalorien von heute gegen das Tagesziel, rechts der Akku),
+// große Uhrzeit in einer Zeile, am Rand Skalen (links außen die Kalorien von heute, innen das Eiweiß, je gegen das Tagesziel, rechts der Akku),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
-// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber der Wochenvergleich, bis 3 Stunden
-// nach einer Einheit deren Werte.
+// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, sonst der Wochenvergleich.
 // Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
@@ -24,12 +23,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
     const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche, Kalorien), wie beim Ultra
+    const PROTEIN = 0xC4F0FF; // Eiweiß: helleres Cyan, innere Skala links
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
     const COACH = 0x64A8FF;   // Coach ohne Urteil (wie im Widget)
     const STALE_SECS = 3600;
-    const AFTER_SECS = 3 * 3600; // so lange nach dem Ende einer Einheit stehen ihre Werte
     const MORNING_END = 10;      // bis zu dieser Stunde die Erholungswerte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
@@ -50,11 +49,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const G_BOTTOM = 312;
     const DAYS_Y = 334;
     const GRAD = 8;           // Streifen für den Verlauf der Fläche
-    // Werte morgens und nach einer Einheit
-    const V_Y = 278;
-    const V_TAG_Y = 302;
-    const V_BASE_Y = 322;
-    const V_DX = 112;
+    // Kacheln morgens (Oberkante, Höhe, Breite, Abstand der Mitten, Eckenradius) und Grundlinien darin ab Oberkante
+    const K_Y = 234;
+    const K_H = 106;
+    const K_W = 108;
+    const K_DX = 112;
+    const K_R = 20;
+    const K_TAG = 25;
+    const K_VAL = 67;
+    const K_BAND = 79;
+    const K_BASE = 101;
     // Runde Anzeigen unten (Mitte, Abstand, Radius, Ringstärke)
     const RING_Y = 378;
     const RING_DX = 82;
@@ -115,16 +119,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.drawText(_cx, px(TIME_Y), _time, timeText(clock), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         if (data == null) {
             dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cx, px(V_Y), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(_cx, px(K_Y + K_H / 2), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             return;
         }
 
-        var la = data.get("la") as Dictionary?;
-        var end = la != null ? numOrNull(la.get("e")) : null;
-        var since = end != null ? Time.now().value() - end.toNumber() : -1;
-        if (la != null && since >= 0 && since < AFTER_SECS) {
-            drawLast(dc, la);
-        } else if (clock.hour < MORNING_END) {
+        if (clock.hour < MORNING_END) {
             drawMorning(dc, data);
         } else {
             drawWeek(dc, data);
@@ -146,27 +145,29 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Skalen am Rand ----------------------------------------------------------------------
-    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links die Kalorien von heute gegen das Tagesziel
-    // (kcal: {v, g}, live aus Yazio), von unten gefüllt in der Akzentfarbe, über dem Ziel voll; ohne Ziel bleibt sie leer. Rechts der Akku
-    // (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
+    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links außen die Kalorien von heute gegen das Tagesziel
+    // (kcal: {v, g}), darin etwas kürzer das Eiweiß gegen sein Ziel (pr: {v, g}, Ziel aus Yazio), von unten gefüllt, über dem Ziel
+    // voll; ohne Ziel bleibt die Skala leer. Rechts der Akku (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
 
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
         var kcal = data != null ? data.get("kcal") as Dictionary? : null;
         var food = kcal != null ? frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g"))) : 0.0;
-        drawScale(dc, 215, 145, food, ACCENT);
+        drawScale(dc, 215, 145, food, ACCENT, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+        var pr = data != null ? data.get("pr") as Dictionary? : null;
+        var protein = pr != null ? frac(numOrNull(pr.get("v")), numOrNull(pr.get("g"))) : 0.0;
+        drawScale(dc, 210, 150, protein, PROTEIN, px(SCALE_R - SCALE_LONG - 6), 11, 6);
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
-        drawScale(dc, 325, 395, pct / 100.0, bat);
+        drawScale(dc, 325, 395, pct / 100.0, bat, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
     }
 
-    // Striche von Winkel a0 (unten) nach a1 (oben), bis zum Anteil f in color
-    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number) as Void {
-        var r1 = px(SCALE_R);
+    // Striche von Winkel a0 (unten) nach a1 (oben) ab Radius r1 nach innen, bis zum Anteil f in color
+    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
         for (var i = 0; i < SCALE_N; i++) {
             var a = Math.toRadians(a0 + (a1 - a0) * i / (SCALE_N - 1.0));
             var long = i % 6 == 0;
-            var r2 = r1 - px(long ? SCALE_LONG : SCALE_SHORT);
+            var r2 = r1 - px(long ? longLen : shortLen);
             var on = f > 0 && i <= Math.round(f * (SCALE_N - 1));
             dc.setColor(on ? color : (long ? TER : TICK), Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(long ? px(3) : px(2));
@@ -213,31 +214,67 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Morgens: Erholung --------------------------------------------------------------------
-    // Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich], ...]), jeder Wert in der Farbe seines Vergleichs mit dem
-    // eigenen üblichen Bereich (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen), darunter die
-    // Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches oben.
+    // Drei Kacheln mit Rahmen: Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich, [p10, p25, p75, p90]], ...]).
+    // Rahmen, Tönung und Wert in der Farbe des Vergleichs mit dem eigenen üblichen Bereich (grün im Bereich oder besser, orange
+    // schlechter, rot schlechter als 9 von 10 Tagen). Darunter ein Band: heller Streifen = dein üblicher Bereich (p25 bis p75),
+    // Punkt = heute; ganz unten die Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches oben.
 
     private function drawMorning(dc as Dc, data as Dictionary) as Void {
         drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
-        var labels = ["SCHLAF", "HRV", "RUHEPULS"];
+        var labels = ["SCHLAF", "HRV", "PULS"]; // Ruhepuls, kürzer, damit es in die Kachel passt
         for (var k = 0; k < 3; k++) {
-            var x = _cx + px(V_DX * (k - 1));
+            var mid = _cx + px(K_DX * (k - 1));
             var e = rv != null && rv.size() > k ? rv[k] as Array : null;
             var v = e != null ? numOrNull(e[0]) : null;
             var base = e != null ? numOrNull(e[1]) : null;
             var cls = e != null ? numOrNull(e[2]) : null;
-            var color = FG;
+            var band = e != null && e.size() > 3 && e[3] instanceof Lang.Array ? e[3] as Array : null;
+            var color = SEC;
             if (cls != null && cls.toNumber() == 1) { color = OK; }
             else if (cls != null && cls.toNumber() == 2) { color = WARN; }
             else if (cls != null && cls.toNumber() == 3) { color = BAD; }
+            var x = mid - px(K_W) / 2;
+            var y = px(K_Y);
+            var w = px(K_W);
+            var h = px(K_H);
+            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.1), Graphics.COLOR_TRANSPARENT);
+            dc.fillRoundedRectangle(x, y, w, h, px(K_R));
+            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.55), Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+            dc.drawRoundedRectangle(x, y, w, h, px(K_R));
+            drawItems(dc, mid, y + px(K_TAG), [["t", labels[k] as String, SEC, _tag]], 0);
             var text = v == null ? "--" : (k == 0 ? hours((v * 60).toNumber()) : v.toNumber().toString());
-            drawItems(dc, x, px(V_Y), [["t", text, v == null ? TER : color, _val]], 0);
-            drawItems(dc, x, px(V_TAG_Y), [["t", labels[k] as String, SEC, _tag]], 0);
+            drawItems(dc, mid, y + px(K_VAL), [["t", text, v == null ? TER : (color == SEC ? FG : color), _val]], 0);
+            if (v != null && band != null && band.size() == 4) {
+                drawBand(dc, x + px(14), x + w - px(14), y + px(K_BAND), v, band, color);
+            }
             if (base != null) {
-                drawItems(dc, x, px(V_BASE_Y), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), TER, _tag]], 0);
+                drawItems(dc, mid, y + px(K_BASE), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), SEC, _tag]], 0);
             }
         }
+    }
+
+    // Band von x0 bis x1: Spur von p10 bis p90, darauf der übliche Bereich (p25 bis p75) heller, der Punkt für v (am Rand begrenzt)
+    private function drawBand(dc as Dc, x0 as Number, x1 as Number, y as Number, v as Numeric, band as Array, color as Number) as Void {
+        var p10 = numOrNull(band[0]);
+        var p25 = numOrNull(band[1]);
+        var p75 = numOrNull(band[2]);
+        var p90 = numOrNull(band[3]);
+        if (p10 == null || p25 == null || p75 == null || p90 == null || p90 <= p10) {
+            return;
+        }
+        var h = px(5) > 2 ? px(5) : 2;
+        var w = x1 - x0;
+        dc.setColor(RING_BG, Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(x0, y, w, h, h / 2);
+        var a = x0 + (w * frac(p25 - p10, p90 - p10)).toNumber();
+        var b = x0 + (w * frac(p75 - p10, p90 - p10)).toNumber();
+        dc.setColor(blend(RING_BG, color, 0.5), Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(a, y, b - a > h ? b - a : h, h, h / 2);
+        var dx = x0 + (w * frac(v - p10, p90 - p10)).toNumber();
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(dx, y + h / 2, px(6));
     }
 
     // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------
@@ -357,33 +394,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             out.add(sum);
         }
         return out;
-    }
-
-    // ---- Nach einer Einheit -------------------------------------------------------------------
-    // Kopf in Sportfarbe: Sportart mit Startzeit, daneben "LÄNGSTE SEIT N WO." (Vergleich mit den eigenen Einheiten derselben
-    // Sportart). Darunter bis zu vier Werte (c: [[Text, Beschriftung], ...]) nebeneinander.
-
-    private function drawLast(dc as Dc, la as Dictionary) as Void {
-        var color = sportColor(la.get("s"));
-        var t = la.get("t");
-        var head = [["t", sportName(la.get("s")).toUpper() + (t instanceof Lang.String ? " " + t : ""), color, _tag]] as Array<Array>;
-        var lw = numOrNull(la.get("lw"));
-        if (lw != null) {
-            head.add(["t", "  LÄNGSTE SEIT " + lw.toNumber().toString() + " WO.", SEC, _tag]);
-        }
-        drawItems(dc, _cx, px(HEAD_Y), head, 0);
-        var c = la.get("c") as Array?;
-        if (c == null) {
-            return;
-        }
-        var n = c.size() < 4 ? c.size() : 4;
-        var dx = n == 4 ? 92 : V_DX;
-        for (var i = 0; i < n; i++) {
-            var cell = c[i] as Array;
-            var x = _cx + px(dx * (2 * i - (n - 1)) / 2);
-            drawItems(dc, x, px(V_Y), [["t", cell[0] as String, FG, _val]], 0);
-            drawItems(dc, x, px(V_TAG_Y), [["t", (cell[1] as String).toUpper(), SEC, _tag]], 0);
-        }
     }
 
     // ---- Untere Reihe: offene Wochenminuten -----------------------------------------------------

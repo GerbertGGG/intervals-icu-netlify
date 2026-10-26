@@ -551,10 +551,12 @@ function watchRecovery(d) {
   const r = d.summary?.recovery, b = r?.body;
   if (!r) return null;
   const one = (v) => (v == null ? null : Math.round(v * 10) / 10);
+  // Vierter Eintrag: der uebliche Bereich [p10, p25, p75, p90] fuer das Band unter dem Wert (null ohne Bereich)
+  const band = (x) => (Array.isArray(x) && x.length === 4 ? x.map(one) : null);
   return [
-    [one(r.sleepHours), one(b?.sleepMedian), bandCls(r.sleepHours, b?.band?.sleep, true)],
-    [r.hrv != null ? Math.round(r.hrv) : null, b?.hrvMedian != null ? Math.round(b.hrvMedian) : null, bandCls(r.hrv, b?.band?.hrv, true)],
-    [r.restingHR != null ? Math.round(r.restingHR) : null, b?.restingMedian != null ? Math.round(b.restingMedian) : null, bandCls(r.restingHR, b?.band?.resting, false)],
+    [one(r.sleepHours), one(b?.sleepMedian), bandCls(r.sleepHours, b?.band?.sleep, true), band(b?.band?.sleep)],
+    [r.hrv != null ? Math.round(r.hrv) : null, b?.hrvMedian != null ? Math.round(b.hrvMedian) : null, bandCls(r.hrv, b?.band?.hrv, true), band(b?.band?.hrv)],
+    [r.restingHR != null ? Math.round(r.restingHR) : null, b?.restingMedian != null ? Math.round(b.restingMedian) : null, bandCls(r.restingHR, b?.band?.resting, false), band(b?.band?.resting)],
   ];
 }
 
@@ -596,8 +598,8 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     rt: rz.length && rt.length ? rt : null,
     goal: Number.isFinite(cfg) && cfg > 0 ? Math.round(cfg) : null,
     str: strengthWeek(strength),
-    kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? null },
-    pr: { v: protein, g: goals?.proteinG ?? null },
+    kcal: { v: kcal, g: goals?.kcal ?? today?.calorieGoal ?? d.nutritionGoals?.kcal ?? null },
+    pr: { v: protein, g: goals?.proteinG ?? d.nutritionGoals?.proteinG ?? null },
     failed: failedOf(d).length,
     // Zifferblatt nach Tageszeit: sl Schlaf (h), hv HRV der letzten 7 Tage (heute zuletzt, ohne Wert null), hm deren Basis
     // (Median wie im Dashboard), cl Kopfzeile des Coaches von heute (bis 90 Zeichen, die Uhr bricht sie um), rv Erholungswerte
@@ -617,7 +619,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
 
 // Felder, die das Zifferblatt nutzt (garmin/README.md). Nur sie gehen an die Uhr: Der Hintergrunddienst darf nur wenig Daten an
 // das Zifferblatt uebergeben (Background.exit), eine groessere Antwort kommt dort nicht an, und die Uhr zeigt nur "!".
-const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal", "la"];
+const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal", "pr"];
 export const watchPayload = (w) => Object.fromEntries(WATCH_KEYS.filter((k) => w[k] !== undefined).map((k) => [k, w[k]]));
 
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
@@ -670,8 +672,18 @@ export async function handleWatchStatusRequest(env) {
   return json({ now: new Date().toISOString(), watch: watch ? { ...watch, at: new Date(watch.at).toISOString() } : null, cache: meta(cache), last: meta(last) }, 200, { "cache-control": "no-store" });
 }
 
+// Tagesziele aus Yazio fuer die Uhr (Eiweissziel der Skala): best effort und mit Zeitgrenze, damit ein langsames Yazio den
+// Neuaufbau nicht aufhaelt; die Ziele liegen in KV (fetchYazioDailyGoals) und kommen beim naechsten Neuaufbau nach.
+const GOALS_WAIT_MS = 3000;
+function watchGoals(env, today) {
+  if (!hasYazioCredentials(env)) return Promise.resolve(null);
+  const goals = fetchYazioDailyGoals(env, today).catch(() => null);
+  return Promise.race([goals, new Promise((resolve) => setTimeout(() => resolve(null), GOALS_WAIT_MS))]);
+}
+
 async function rebuildDashboardCache(env, today = isoDateBerlin()) {
-  const data = await buildDashboard(env, today);
+  const [built, nutritionGoals] = await Promise.all([buildDashboard(env, today), watchGoals(env, today)]);
+  const data = { ...built, nutritionGoals };
   // Nur vollstaendige Staende cachen: Ein Ausfall soll nicht fuenf Minuten lang haengen bleiben
   if (failedOf(data).length === 0) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
   else await writeKvJson(env, LAST_KEY, { at: Date.now(), data }).catch(() => {});
