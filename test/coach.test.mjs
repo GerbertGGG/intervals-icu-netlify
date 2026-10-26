@@ -140,3 +140,18 @@ assert.deepEqual(mp.deloadWeeks, []); // Korrektur am Montag: doch keine Entlast
 mp = mergeCoach(mp, validateCoach({ ...mon, fetchedAt: "2026-10-28T06:00:00Z", week_plan: {} }).value);
 assert.equal(mp.week_plan, null);
 console.log("coach week_plan ok");
+
+{
+  const { applyPlanEdit } = await import("../src/coach-snapshot.js");
+  const coach = { note: "x", week_plan: { week: "2026-10-26", targets: [{ sport: "lauf", time_min: 180, tss_max: 200 }, { sport: "rad", time_min: 120 }] } };
+  assert.ok(applyPlanEdit({ note: "x" }, { targets: [{ sport: "lauf", time_min: 60 }] }).error);
+  assert.ok(applyPlanEdit(coach, { targets: [{ sport: "swim", time_min: 60 }] }).error);
+  assert.ok(applyPlanEdit(coach, { targets: [{ sport: "lauf", time_min: -5 }] }).error);
+  const r = applyPlanEdit(coach, { targets: [{ sport: "lauf", time_min: "150" }] }, 0);
+  assert.equal(r.value.week_plan.targets[0].time_min, 150);
+  assert.equal(r.value.week_plan.targets[0].tss_max, 200);
+  assert.equal(r.value.week_plan.targets[1].time_min, 120);
+  assert.equal(r.value.week_plan.original[0].time_min, 180);
+  const r2 = applyPlanEdit(r.value, { targets: [{ sport: "lauf", time_min: 100 }] }, 0);
+  assert.equal(r2.value.week_plan.original[0].time_min, 180);
+}
