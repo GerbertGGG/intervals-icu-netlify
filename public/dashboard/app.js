@@ -1299,6 +1299,7 @@ function ideaCard(d) {
    Zahlen, ohne Abhaken, ohne Abgleich mit den Einheiten und ohne Ampel. Die TSS-Untergrenze ist seine Regel (80 % der Obergrenze). */
 const PLAN_SPORT_LABEL = { lauf: "Laufen", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft" };
 const fmtMin = fmtHm;
+const planEndurance = (targets) => targets.filter((t) => t.sport !== "kraft").reduce((a, t) => a + (Number(t.time_min) || 0), 0);
 function weekPlanCard(d) {
   const p = d.coach?.week_plan;
   if (!p?.week || !p.targets?.length || d.today < p.week || d.today > addDays(p.week, 6)) return "";
@@ -1307,7 +1308,7 @@ function weekPlanCard(d) {
   const rows = p.targets.map((t) => `<li data-sport="${esc(t.sport)}"><span class="wp-s">${icon(t)}${PLAN_SPORT_LABEL[t.sport] ?? esc(t.sport)}</span><b class="nw wp-v">${fmtMin(t.time_min)}</b><input class="wp-in" type="number" min="0" max="3000" step="5" value="${Math.round(t.time_min)}" aria-label="Minuten ${PLAN_SPORT_LABEL[t.sport] ?? esc(t.sport)}" hidden><span class="muted nw wp-u" hidden>min</span>${orig.has(t.sport) && orig.get(t.sport) !== t.time_min ? `<span class="muted nw wp-o">Coach: ${fmtMin(orig.get(t.sport))}</span>` : ""}${t.tss_max != null ? `<span class="muted nw">TSS ${Math.round(t.tss_max * 0.8)}–${t.tss_max}</span>` : ""}</li>`).join("");
   const days = p.days?.length ? `<div class="wp-days"><div class="hero-k">Vorschlag</div>${p.days.map((x) => `<div><b>${esc(x.day)}</b> ${esc(x.text)}</div>`).join("")}</div>` : "";
   const edited = p.editedAt ? ` · von dir angepasst ${fmtDate(berlinDay(p.editedAt))}` : "";
-  return `<div class="idea wp"><div><div class="hero-k">Wochenvorschlag · ab ${fmtDate(p.week)}${p.deload ? " · Entlastungswoche" : ""}${edited}</div>${p.basis ? `<p class="sub">${esc(p.basis)}</p>` : ""}<ul class="wp-t">${rows}</ul>
+  return `<div class="idea wp"><div><div class="hero-k">Wochenvorschlag · ab ${fmtDate(p.week)}${p.deload ? " · Entlastungswoche" : ""}${edited}</div>${p.basis ? `<p class="sub">${esc(p.basis)}</p>` : ""}<ul class="wp-t">${rows}<li class="wp-sum"><span class="wp-s">Ausdauer gesamt</span><b class="nw" id="wp-sum">${fmtMin(planEndurance(p.targets))}</b><span class="muted nw">ohne Kraft</span></li></ul>
     <div class="wp-edit"><button type="button" id="wp-edit" class="btn-s">Zeiten anpassen</button> <button type="button" id="wp-save" class="btn-s" hidden>Speichern</button> <button type="button" id="wp-cancel" class="btn-s" hidden>Abbrechen</button> <span id="wp-msg" class="muted"></span></div>${days}</div></div>`;
 }
 function wireWeekPlanEdit() {
@@ -1318,8 +1319,13 @@ function wireWeekPlanEdit() {
     document.querySelectorAll(".wp-t .wp-v").forEach((e) => { e.hidden = on; });
     edit.hidden = on;
   };
+  const sum = () => {
+    const rows = [...document.querySelectorAll(".wp-t li[data-sport]")].map((li) => ({ sport: li.dataset.sport, time_min: li.querySelector(".wp-in").value }));
+    $("wp-sum").textContent = fmtMin(planEndurance(rows));
+  };
+  document.querySelectorAll(".wp-t .wp-in").forEach((i) => i.addEventListener("input", sum));
   edit.onclick = () => { $("wp-msg").textContent = ""; show(true); };
-  $("wp-cancel").onclick = () => show(false);
+  $("wp-cancel").onclick = () => { document.querySelectorAll(".wp-t .wp-in").forEach((i) => { i.value = i.defaultValue; }); sum(); show(false); };
   $("wp-save").onclick = async () => {
     const targets = [...document.querySelectorAll(".wp-t li[data-sport]")].map((li) => ({ sport: li.dataset.sport, time_min: li.querySelector(".wp-in").value }));
     const msg = $("wp-msg"), btn = $("wp-save");
@@ -1332,6 +1338,8 @@ function wireWeekPlanEdit() {
       if (r.ok) {
         targets.forEach((t) => { const li = document.querySelector(`.wp-t li[data-sport="${t.sport}"] .wp-v`); if (li) li.textContent = fmtMin(Number(t.time_min)); });
         msg.textContent = "Gespeichert. Der Coach liest es morgen früh.";
+        document.querySelectorAll(".wp-t .wp-in").forEach((i) => { i.defaultValue = i.value; });
+        sum();
         show(false);
       } else msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`;
     } catch (e) { msg.textContent = "Nicht gespeichert: " + e.message; }
