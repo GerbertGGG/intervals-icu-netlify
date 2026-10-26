@@ -8,7 +8,7 @@ import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
-// große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Kalorien von heute gegen das Tagesziel, rechts der Akku),
+// große Uhrzeit in einer Zeile, am Rand Skalen (links außen die Kalorien von heute, innen das Eiweiß, je gegen das Tagesziel, rechts der Akku),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
 // der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, sonst der Wochenvergleich.
 // Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
@@ -23,6 +23,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
     const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche, Kalorien), wie beim Ultra
+    const PROTEIN = 0xC4F0FF; // Eiweiß: helleres Cyan, innere Skala links
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
@@ -144,27 +145,29 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Skalen am Rand ----------------------------------------------------------------------
-    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links die Kalorien von heute gegen das Tagesziel
-    // (kcal: {v, g}, live aus Yazio), von unten gefüllt in der Akzentfarbe, über dem Ziel voll; ohne Ziel bleibt sie leer. Rechts der Akku
-    // (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
+    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links außen die Kalorien von heute gegen das Tagesziel
+    // (kcal: {v, g}), darin etwas kürzer das Eiweiß gegen sein Ziel (pr: {v, g}, Ziel aus Yazio), von unten gefüllt, über dem Ziel
+    // voll; ohne Ziel bleibt die Skala leer. Rechts der Akku (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
 
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
         var kcal = data != null ? data.get("kcal") as Dictionary? : null;
         var food = kcal != null ? frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g"))) : 0.0;
-        drawScale(dc, 215, 145, food, ACCENT);
+        drawScale(dc, 215, 145, food, ACCENT, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+        var pr = data != null ? data.get("pr") as Dictionary? : null;
+        var protein = pr != null ? frac(numOrNull(pr.get("v")), numOrNull(pr.get("g"))) : 0.0;
+        drawScale(dc, 210, 150, protein, PROTEIN, px(SCALE_R - SCALE_LONG - 6), 11, 6);
         var stats = System.getSystemStats();
         var pct = Math.round(stats.battery).toNumber();
         var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
-        drawScale(dc, 325, 395, pct / 100.0, bat);
+        drawScale(dc, 325, 395, pct / 100.0, bat, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
     }
 
-    // Striche von Winkel a0 (unten) nach a1 (oben), bis zum Anteil f in color
-    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number) as Void {
-        var r1 = px(SCALE_R);
+    // Striche von Winkel a0 (unten) nach a1 (oben) ab Radius r1 nach innen, bis zum Anteil f in color
+    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
         for (var i = 0; i < SCALE_N; i++) {
             var a = Math.toRadians(a0 + (a1 - a0) * i / (SCALE_N - 1.0));
             var long = i % 6 == 0;
-            var r2 = r1 - px(long ? SCALE_LONG : SCALE_SHORT);
+            var r2 = r1 - px(long ? longLen : shortLen);
             var on = f > 0 && i <= Math.round(f * (SCALE_N - 1));
             dc.setColor(on ? color : (long ? TER : TICK), Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(long ? px(3) : px(2));
@@ -219,7 +222,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private function drawMorning(dc as Dc, data as Dictionary) as Void {
         drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
-        var labels = ["SCHLAF", "HRV", "RUHEPULS"];
+        var labels = ["SCHLAF", "HRV", "PULS"]; // Ruhepuls, kürzer, damit es in die Kachel passt
         for (var k = 0; k < 3; k++) {
             var mid = _cx + px(K_DX * (k - 1));
             var e = rv != null && rv.size() > k ? rv[k] as Array : null;
