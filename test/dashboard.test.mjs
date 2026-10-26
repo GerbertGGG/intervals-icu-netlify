@@ -583,7 +583,14 @@ console.log("zones from intervals ok");
   assert.equal(w.wd.length, 7);
   assert.deepEqual(w.wd.slice(0, 4), [[["swim", 45, 0]], [["run", 48, 0]], [], [["swim", 50, 1]]]); // heute nur "other" geplant, morgen Schwimmen
   // Wochenvergleich: diese Woche Mo bis heute, Vorwoche Mo bis So; ohne Ausdauerwert die Minuten von Lauf, Rad, Schwimmen
-  assert.deepEqual([w.wv[0].length, w.wv[1].length], [w.ti + 1, 7]);
+  assert.deepEqual([w.wv[0].length, w.wv[1].length, w.wv[2].length], [w.ti + 1, 7, 7]);
+  // Geplant: nur Ausdauer aus dem Kalender ab heute, davor 0; heute nur Sportarten, die heute noch nicht gemacht sind
+  assert.deepEqual(w.wv[2].slice(0, w.ti), Array(w.ti).fill(0));
+  const mondayP = new Date(Date.parse(today + "T00:00:00Z") - w.ti * 86400000).toISOString().slice(0, 10);
+  const plannedWeek = [{ date: today, sport: "run", durationMin: 40 }, { date: today, sport: "strength", durationMin: 30 }, { date: new Date(Date.parse(today + "T00:00:00Z") + 86400000).toISOString().slice(0, 10), sport: "bike", durationMin: 60 }];
+  const wp = buildWidgetWatch({ ...d, plannedWeek }).wv[2];
+  assert.deepEqual([wp[w.ti], wp[w.ti + 1]], [40, 60]); // Kraft zaehlt nicht
+  assert.equal(wp[0], w.ti === 0 ? 40 : 0); assert.ok(mondayP <= today);
   assert.deepEqual(w.wv[0].slice(0, 2), [45, 48]);
   const wv = buildWidgetWatch({ ...d, daily: d.daily.map((x) => (x.date === today ? { ...x, minutes: { run: 30, strength: 20 }, endurance: 28 } : x)) }).wv;
   assert.equal(wv[0][w.ti], 28); // Ausdauer wie in den Wochenzielen, Kraft zaehlt nicht

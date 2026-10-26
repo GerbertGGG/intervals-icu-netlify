@@ -507,18 +507,26 @@ function watchWeekDays(d) {
   });
 }
 
-// Wochenvergleich fuer das Zifferblatt: Ausdauerminuten je Tag, [diese Woche Mo bis heute, Vorwoche Mo bis So]. Die Uhr
-// summiert sie auf und zeichnet beide Kurven mit dem Ziel des Coaches (wm). Ohne Ausdauerwert des Tages (aeltere Daten) die
-// Minuten von Lauf, Rad und Schwimmen.
+// Wochenvergleich fuer das Zifferblatt: Ausdauerminuten je Tag, [diese Woche Mo bis heute, Vorwoche Mo bis So, geplant Mo bis So].
+// Die Uhr summiert sie auf und zeichnet die Linien mit dem Ziel des Coaches (wm). Geplant sind die Ausdauereinheiten aus dem
+// Kalender ab heute (heute nur Sportarten, die heute noch nicht gemacht sind, wie in watchWeekDays), davor 0. Ohne Ausdauerwert
+// des Tages (aeltere Daten) die Minuten von Lauf, Rad und Schwimmen.
 function watchWeekCompare(d) {
   const monday = addDays(d.today, -dayIndex(d.today));
+  const dayOf = (date) => d.daily.find((y) => y.date === date);
   const minOf = (date) => {
-    const x = d.daily.find((y) => y.date === date);
+    const x = dayOf(date);
     return x?.endurance ?? WEEK_SPORTS.reduce((a, k) => a + (x?.minutes?.[k] ?? 0), 0);
+  };
+  const planOf = (date) => {
+    if (date < d.today) return 0;
+    const done = date === d.today ? dayOf(date)?.minutes ?? {} : {};
+    return Math.round(WEEK_SPORTS.filter((k) => !(done[k] > 0)).reduce((a, k) => a + (d.plannedWeek ?? []).filter((p) => p.date === date && p.sport === k).reduce((n, p) => n + (p.durationMin ?? 0), 0), 0));
   };
   return [
     Array.from({ length: dayIndex(d.today) + 1 }, (_, i) => minOf(addDays(monday, i))),
     Array.from({ length: 7 }, (_, i) => minOf(addDays(monday, i - 7))),
+    Array.from({ length: 7 }, (_, i) => planOf(addDays(monday, i))),
   ];
 }
 
