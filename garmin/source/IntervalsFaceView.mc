@@ -7,59 +7,52 @@ import Toybox.Time;
 import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
-// Zifferblatt "Intervals Ultimate & Readiness"
-// Angepasst für 454x454 Displays. Symmetrisch, mit Glow-Effekten & optimiertem Readiness-Bereich.
 class IntervalsFaceView extends WatchUi.WatchFace {
 
     const FG = 0xF5F5F7;
-    const SEC = 0xA1A1A6;     // Grau für Beschriftungen
+    const SEC = 0xA1A1A6;     
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
-    const GRID = 0x2C2C2E;    // Rasterlinien
-    const TICK = 0x323234;    
-    const RING_BG = 0x2C2C2E; // Inaktive Ringbahnen
+    const GRID = 0x303034;
+    const TICK = 0x444446;    
+    const RING_BG = 0x2C2C2E; 
     
-    // Leuchtende/Glow-Farben
     const ACCENT = 0x64D2FF;  // Cyan (Woche)
-    const PROTEIN = 0xC4F0FF; // Kalorien und Eiweiß in derselben hellen Cyan-Farbe!
-    const OK = 0x30D158;      // Leuchtendes Grün
-    const WARN = 0xFF9F0A;     // Orange/Gelb
-    const BAD = 0xFF453A;      // Rot
-    const COACH = 0x64A8FF;   // Blau
+    const PROTEIN = 0xC4F0FF; // Cyan für Kalorien & Protein
+    const OK = 0x30D158;      
+    const WARN = 0xFF9F0A;     
+    const BAD = 0xFF453A;      
+    const COACH = 0x64A8FF;   
     
     const STALE_SECS = 3600;
-    const MORNING_END = 10;   // Ab 10 Uhr wird zum Wochenverlauf gewechselt
+    const MORNING_END = 10;   
     const BAT_LOW = 20;
 
-    // Koordinaten-Skalierungen (basierend auf 454x454)
     const DATE_Y = 66;
     const PILL_Y = 76;
     const PILL_H = 24;
-    const TIME_Y = 145;       // Uhrzeit
-    const HEAD_Y = 224;       // Bereichs-Kopf
+    const TIME_Y = 145;       
+    const HEAD_Y = 224;       
 
-    // Neue Readiness-Kacheln (Morgens)
     const K_Y = 236;
-    const K_H = 92;           // Kompakter
-    const K_W = 112;          // Breiter für Pillen-Optik
-    const K_DX = 120;         // Abstand
-    const K_R = 18;           // Eckenradius
+    const K_H = 92;           
+    const K_W = 112;          
+    const K_DX = 120;         
+    const K_R = 18;           
 
-    // Skalen
     const SCALE_R = 218;
     const SCALE_LONG = 17;
     const SCALE_SHORT = 10;
     const SCALE_N = 25;
 
-    // Wochenverlauf (Tagsüber)
+    // Wochenverlauf Graph
     const G_X0 = 94;
     const G_X1 = 360;
-    const G_TOP = 240;
+    const G_TOP = 216;
     const G_BOTTOM = 308;
     const DAYS_Y = 328;
     const GRAD = 6;
 
-    // Ringe unten
     const RING_Y = 378;
     const RING_DX = 82;
     const RING_R = 34;
@@ -71,7 +64,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private var _cy as Number = 0;
     private var _sleep as Boolean = false;
 
-    // Fonts
     private var _time as Graphics.FontType = Graphics.FONT_NUMBER_HOT;
     private var _val as Graphics.FontType = Graphics.FONT_SMALL;
     private var _cap as Graphics.FontType = Graphics.FONT_XTINY;
@@ -113,10 +105,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
 
         var data = Application.Storage.getValue("d") as Dictionary?;
+        
+        // 1. Randskalen (Stabilisiert)
         drawScales(dc, data);
+        
+        // 2. Datum & Coach
         drawTopLine(dc, data);
         
-        // Glimmen / Leuchten der Uhrzeit (simulierter Schattenwurf über 2 kleine Offset-Zeichnungen)
+        // 3. Uhrzeit
         dc.setColor(blend(Graphics.COLOR_BLACK, FG, 0.15), Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx, px(TIME_Y) + 1, _time, timeText(clock), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
@@ -128,11 +124,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             return;
         }
 
+        // 4. Mitte (Morgens Erholung / Tagsüber erweiterter Graph)
         if (clock.hour < MORNING_END) {
             drawMorningReady(dc, data);
         } else {
             drawWeekGraph(dc, data);
         }
+
+        // 5. Unten (Sportart-Ringe & Nächste Einheit)
         drawWeekRow(dc, data.get("rz") as Array?);
         drawNext(dc, data, NEXT_Y);
     }
@@ -146,25 +145,60 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return h.toString() + ":" + clock.min.format("%02d");
     }
 
-    // ---- Skalen am Rand (Jetzt BEIDE in PROTEIN/Cyan-Farbe!) -------------------------------
+    // ---- Skalen am Rand ---------------------------------------------------------------
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
         var kcal = data != null ? data.get("kcal") as Dictionary? : null;
         var food = kcal != null ? frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g"))) : 0.0;
-        // Kalorien-Anzeige auf PROTEIN (helles Cyan) geändert
-        drawScale(dc, 215, 145, food, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
         
         var pr = data != null ? data.get("pr") as Dictionary? : null;
         var protein = pr != null ? frac(numOrNull(pr.get("v")), numOrNull(pr.get("g"))) : 0.0;
-        drawScale(dc, 325, 395, protein, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+
+        // Links: Kalorien (von 215° bis 145° im Uhrzeigersinn)
+        drawGlowScale(dc, 215, 145, food, ACCENT, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+        // Rechts: Protein (von 325° bis 35° im Gegenuhrzeigersinn)
+        drawGlowScale(dc, 325, 35, protein, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
     }
 
-    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
+    private function drawGlowScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
+        var arcR = r1 - px(8);
+        var penW = px(18);
+
+        // Bestimmen der Bogenrichtung
+        var dir = (a0 == 215) ? Graphics.ARC_CLOCKWISE : Graphics.ARC_COUNTER_CLOCKWISE;
+
+        // 1. Dunkle Hintergrund-Kapselbahn
+        dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.15), Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(penW);
+        dc.drawArc(_cx, _cy, arcR, dir, a0, a1);
+
+        // 2. FÜLLUNG (Vermeidung von Vollkreis-Bugs)
+        if (f > 0.05) {
+            var diff = (a0 == 215) ? (a1 - a0) : 70; // 70 Grad Gesamtwinkel
+            var currentAngle = a0 + (diff * f).toNumber();
+            if (a0 != 215) {
+                currentAngle = (a0 + Math.round(70 * f).toNumber()) % 360;
+            }
+            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.45), Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(penW - px(2));
+            dc.drawArc(_cx, _cy, arcR, dir, a0, currentAngle.toNumber());
+        }
+
+        // 3. Kapsel-Ränder
+        dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.5), Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(1);
+        dc.drawArc(_cx, _cy, arcR + penW/2, dir, a0, a1);
+        dc.drawArc(_cx, _cy, arcR - penW/2, dir, a0, a1);
+
+        // 4. Einzelne Skalenstriche drüber zeichnen
+        var angleSpan = (a0 == 215) ? (a1 - a0) : 70;
         for (var i = 0; i < SCALE_N; i++) {
-            var a = Math.toRadians(a0 + (a1 - a0) * i / (SCALE_N - 1.0));
+            var currDeg = a0 + angleSpan * i / (SCALE_N - 1.0);
+            var a = Math.toRadians(currDeg);
             var long = i % 6 == 0;
             var r2 = r1 - px(long ? longLen : shortLen);
             var on = f > 0 && i <= Math.round(f * (SCALE_N - 1));
-            dc.setColor(on ? color : (long ? TER : TICK), Graphics.COLOR_TRANSPARENT);
+            
+            dc.setColor(on ? color : (long ? blend(color, 0x000000, 0.5) : TICK), Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(long ? px(3) : px(2));
             var c = Math.cos(a);
             var sn = Math.sin(a);
@@ -172,7 +206,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // ---- Oben: Datum & Coach ----------------------------------------------------
     private function drawTopLine(dc as Dc, data as Dictionary?) as Void {
         var info = Gregorian.info(Time.now(), Time.FORMAT_SHORT);
         var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
@@ -200,7 +233,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.28), Graphics.COLOR_TRANSPARENT);
         dc.fillRoundedRectangle(_cx - w / 2, px(PILL_Y), w, h, h / 2);
         
-        // Simulierter Glow-Rand
         dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.6), Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(1);
         dc.drawRoundedRectangle(_cx - w / 2, px(PILL_Y), w, h, h / 2);
@@ -237,12 +269,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawItems(dc, ix + iconW + px(6), base, [["t", text, color, _tag]], -1);
     }
 
-    // ---- NEU: Readiness / Erholung am Morgen im eleganten Glow-Layout -----------------------
+    // ---- Readiness Kacheln (Morgens) ---------------------------------------------------
     private function drawMorningReady(dc as Dc, data as Dictionary) as Void {
         drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
         var labels = ["SCHLAF", "HRV", "PULS"];
-        var symbols = ["S", "H", "P"]; // ☾ Schlaf als "S", "H" für HRV, "P" für Puls
+        var symbols = ["S", "H", "P"];
         
         for (var k = 0; k < 3; k++) {
             var mid = _cx + px(K_DX * (k - 1));
@@ -262,29 +294,23 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var w = px(K_W);
             var h = px(K_H);
 
-            // Subtiler, tönender Glassmorphism & Glow im Hintergrund
             dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.08), Graphics.COLOR_TRANSPARENT);
             dc.fillRoundedRectangle(x, y, w, h, px(K_R));
             
-            // Leuchtender Rahmen
             dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.45), Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(px(2) > 1 ? px(2) : 1);
             dc.drawRoundedRectangle(x, y, w, h, px(K_R));
 
-            // Name & Symbol
             var subColor = blend(color, FG, 0.5);
             drawItems(dc, mid, y + px(22), [["t", symbols[k] + " " + labels[k], subColor, _tag]], 0);
 
-            // Wert-Text
             var text = v == null ? "--" : (k == 0 ? hoursReady((v * 60).toNumber()) : v.toNumber().toString() + (k == 1 ? " ms" : ""));
             drawItems(dc, mid, y + px(50), [["t", text, v == null ? TER : color, _val]], 0);
 
-            // Werteband / Schieberegler (nur für HRV & Ruhepuls (k > 0) sowie Schlaf bei vorhandenen Daten)
             if (v != null && band != null && band.size() == 4) {
                 drawCompactBand(dc, x + px(10), x + w - px(10), y + px(65), v, band, color);
             }
 
-            // Durchschnitt (Ø)
             if (base != null) {
                 var baseText = "Ø " + (k == 0 ? hoursReady((base * 60).toNumber()) : base.toNumber().toString());
                 drawItems(dc, mid, y + px(80), [["t", baseText, SEC, _tag]], 0);
@@ -292,12 +318,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Wandelt Minuten in kompaktes "7h 45m" für Readiness-Ansicht um
     private function hoursReady(min as Number) as String {
         return (min / 60).toString() + "h " + (min % 60).format("%02d") + "m";
     }
 
-    // Reduziertes, feines Band mit Glow-Punkt für die Erholungs-Pillen
     private function drawCompactBand(dc as Dc, x0 as Number, x1 as Number, y as Number, v as Numeric, band as Array, color as Number) as Void {
         var p10 = numOrNull(band[0]);
         var p25 = numOrNull(band[1]);
@@ -315,7 +339,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(blend(RING_BG, color, 0.4), Graphics.COLOR_TRANSPARENT);
         dc.fillRoundedRectangle(a, y, b - a > h ? b - a : h, h, h / 2);
         
-        // Glow-Punkt
         var dx = x0 + (w * frac(v - p10, p90 - p10)).toNumber();
         dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.3), Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(dx, y + h / 2, px(5));
@@ -323,7 +346,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(dx, y + h / 2, px(3));
     }
 
-    // ---- Wochenverlauf (Behobener "Leere Tage"-Look durch Schattenvorlauf) ---------------------
+    // ---- Wochenverlauf Graph -----------------------------------------------------------
     private function drawWeekGraph(dc as Dc, data as Dictionary) as Void {
         var wv = data.get("wv") as Array?;
         var wm = data.get("wm") as Array?;
@@ -335,14 +358,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         
         var goal = wm != null && wm.size() == 2 ? numOrNull(wm[1]) : null;
         var now = cur[today] as Number;
-        var items = [["t", hours(now), ACCENT, _cap]] as Array<Array>;
-        
-        if (goal != null && goal > 0) {
-            var diff = now - (goal * (today < 6 ? today : 6) / 6).toNumber();
-            items.add(["t", "  " + (diff < 0 ? "−" : "+") + hours(diff < 0 ? -diff : diff), FG, _cap]);
-            items.add(["t", "  ZUM SOLL", SEC, _tag]);
-        }
-        drawItems(dc, _cx, px(HEAD_Y), items, 0);
 
         var most = 60.0;
         most = now > most ? now.toFloat() : most;
@@ -353,49 +368,21 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var x1 = px(G_X1);
         var yb = px(G_BOTTOM);
         var h = yb - px(G_TOP);
-        
-        dc.setColor(GRID, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(1);
-        for (var i = 0; i < 7; i++) {
-            var x = gx(i, x0, x1);
-            dc.drawLine(x, px(G_TOP) - px(6), x, yb);
-        }
 
-        // 1. NEU: Schattierte Schattenvorlauf-/Zielzone im Hintergrund, damit Mo/Di nicht leer aussehen
+        // 1. Soll-Hintergrundfläche
         if (goal != null && goal > 0) {
             var ghostPoly = new [9];
             for (var i = 0; i < 7; i++) {
-                // Ein theoretischer linearer Verlauf zum Ziel als Hintergrundfüllung
                 var gVal = (goal * i / 6.0).toNumber();
                 ghostPoly[i] = [gx(i, x0, x1), yb - (h * gVal / most).toNumber()];
             }
             ghostPoly[7] = [x1, yb];
             ghostPoly[8] = [x0, yb];
-            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.05), Graphics.COLOR_TRANSPARENT);
+            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.12), Graphics.COLOR_TRANSPARENT);
             dc.fillPolygon(ghostPoly);
-            
-            // Faint dotted target outline
-            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.15), Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(1);
-            for (var i = 0; i < 6; i++) {
-                var xa = gx(i, x0, x1);
-                var ya = yb - (h * (goal * i / 6.0) / most).toNumber();
-                var xb = gx(i+1, x0, x1);
-                var yb_t = yb - (h * (goal * (i+1) / 6.0) / most).toNumber();
-                dc.drawLine(xa, ya, xb, yb_t);
-            }
         }
 
-        // Soll gestrichelt zum Sonntag
-        if (goal != null && goal > 0) {
-            var yg = yb - (h * goal / most).toNumber();
-            dc.setColor(0x8E8E93, Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(px(2));
-            drawDashed(dc, x0, yb, x1, yg);
-            drawItems(dc, x1 + px(6), yg + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
-        }
-
-        // Aktivitäts-Gradient bis heute
+        // 2. Erreichte Wochenstunden als Fläche
         if (today > 0) {
             var poly = new [today + 3];
             var top = yb;
@@ -409,28 +396,45 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var band = (yb - top) / GRAD + 1;
             for (var k = 0; k < GRAD; k++) {
                 dc.setClip(x0, top + k * band, x1 - x0 + 1, band);
-                dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.40 - 0.33 * k / (GRAD - 1)), Graphics.COLOR_TRANSPARENT);
+                dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.45 - 0.35 * k / (GRAD - 1)), Graphics.COLOR_TRANSPARENT);
                 dc.fillPolygon(poly);
             }
             dc.clearClip();
         }
 
-        // Aktive Woche als dicke, glühende Linie
+        // 3. GRID (Vertikale Gitterlinien)
+        dc.setColor(GRID, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+        for (var i = 0; i < 7; i++) {
+            var x = gx(i, x0, x1);
+            dc.drawLine(x, px(G_TOP) - px(4), x, yb);
+        }
+
+        // 4. Soll-Linie (gestrichelt)
+        if (goal != null && goal > 0) {
+            var yg = yb - (h * goal / most).toNumber();
+            dc.setColor(0x8E8E93, Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(px(2));
+            drawDashed(dc, x0, yb, x1, yg);
+            drawItems(dc, x1 + px(6), yg + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
+        }
+
+        // 5. Hauptlinie der absolvierten Einheiten
         dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(3));
         for (var i = 0; i < today; i++) {
             dc.drawLine(gx(i, x0, x1), yb - (h * (cur[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (cur[i + 1] as Number) / most).toNumber());
         }
 
-        // Glow-Punkt auf heute
+        // 6. Glow-Punkt für heute
         var tx = gx(today, x0, x1);
         var ty = yb - (h * now / most).toNumber();
-        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.25), Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(13));
+        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.3), Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(12));
         dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(7));
-        dc.setColor(blend(ACCENT, FG, 0.7), Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(3));
+        dc.fillCircle(tx, ty, px(6));
+        dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(2));
 
         var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
         for (var i = 0; i < 7; i++) {
@@ -466,7 +470,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return out;
     }
 
-    // ---- Untere Reihe: offene Wochenminuten ----------------------------------------
+    // ---- Untere Sportart-Ringe --------------------------------------------------------
     private function drawWeekRow(dc as Dc, rz as Array?) as Void {
         var sports = ["run", "bike", "swim"];
         var y = px(RING_Y);
@@ -517,7 +521,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(x + (r * Math.cos(a2)).toNumber(), y - (r * Math.sin(a2)).toNumber(), pen / 2);
     }
 
-    // ---- Zeile ganz unten ----------------------------------------------------------------------
+    // ---- Unterste Zeile ----------------------------------------------------------------------
     private function drawNext(dc as Dc, data as Dictionary, y as Number) as Void {
         var nx = data.get("next") as Dictionary?;
         if (nx == null) { return; }
@@ -542,7 +546,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawItems(dc, _cx, px(y), [["t", when, SEC, _tag], ["t", what, sportColor(nx.get("s")), _tag]], 0);
     }
 
-    // ---- Haken-Zeichnung ----------------------------------------------------------------------
     private function drawCheck(dc as Dc, x as Number, y as Number, color as Number) as Void {
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(4));
@@ -560,9 +563,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     private function sportColor(sport) as Number {
-        if ("run".equals(sport)) { return 0xFFD60A; }        // Gelb
-        if ("bike".equals(sport)) { return 0x30D158; }       // Grün
-        if ("swim".equals(sport)) { return 0x409CFF; }       // Blau
+        if ("run".equals(sport)) { return 0xFFD60A; }        
+        if ("bike".equals(sport)) { return 0x30D158; }       
+        if ("swim".equals(sport)) { return 0x409CFF; }       
         return FG;
     }
 
