@@ -4,7 +4,7 @@
 //   bikeCompare  – Ride/VirtualRide: Einrollen = Warmup-Block in Intervals (icu_warmup_time ≥ bikeMinWarmupSec, sonst Fenster
 //                  ab Minute 0 und baseline), danach Messfenster bikeWindowMin mit
 //                  Ø-Leistung = Vergleichsleistung ± bikeWattsTol und VI ≤ bikeMaxVi. Intervalle/HIIT fallen ueber VI und
-//                  Leistung heraus. Beim Rad gibt es keine Blocktests.
+//                  Leistung heraus. Beim Rad zaehlt "Blocktest" im Namen wie "Vergleich" (Override); fehlt der Warmup-Block, gilt das erste Intervall aus interval_summary als Einrollen.
 // Termine, HF-Deckel und Vergleichsleistung kommen aus dem SEASON_START-Eintrag (testConfigOf), sonst aus TEST_FALLBACK.
 // Der Name wirkt nur als Override fuer Grenzfaelle (nameOverride). Jede Einheit traegt testReason.
 // baseline (nur Rad): Ausgangswert, wird angezeigt, zaehlt aber nicht ins Mittel fuers Blockziel – Fahrt ohne Einrollen
@@ -31,7 +31,7 @@ export const TEST_FALLBACK = { testDates: ["2026-10-23", "2026-11-08", "2026-12-
 export const TEST_CATEGORY_DE = { runBlocktest: "Lauf-Blocktest", runTrend: "Lauf-Trend", bikeCompare: "Rad-Vergleich" };
 
 // Override ueber den Namen: "kein Test" schliesst aus, "Blocktest"/"Basistest" erzwingt den Lauf-Blocktest, "Vergleich" den
-// Rad-Vergleich, "Ausgangswert" den Rad-Vergleich als baseline. Gilt nur fuer die passende Sportart (ein Rad heisst nie Blocktest).
+// Rad-Vergleich, "Ausgangswert" den Rad-Vergleich als baseline. Gilt nur fuer die passende Sportart (beim Rad erzwingt auch "Blocktest" den Rad-Vergleich).
 export function nameOverride(name) {
   const n = String(name ?? "");
   if (/kein\s*test/i.test(n)) return "exclude";
@@ -39,6 +39,11 @@ export function nameOverride(name) {
   if (/vergleich|ausgangswert/i.test(n)) return "bikeCompare";
   return null;
 }
+// Intervals-Dauer aus interval_summary ("1x 10m1s 132w", "1x 1h 164w") in Sekunden
+const summarySecs = (line) => {
+  const m = String(line ?? "").match(/^\s*\d+x\s+(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+)s)?/i);
+  return m ? (Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0)) : 0;
+};
 export const isBaselineName = (name) => /ausgangswert/i.test(String(name ?? "")) && !/kein\s*test/i.test(String(name ?? ""));
 export const isTestRun = (a) => String(a?.type ?? "").toLowerCase() === "run";
 export const isTestRide = (a) => /^(ride|virtualride)$/i.test(String(a?.type ?? ""));
@@ -142,8 +147,16 @@ export function rideWindowStats(streams, startSec, windowSec) {
 export function rideWindowOf(a, rules = TEST_RULES) {
   const icuWarm = num(a?.icu_warmup_time) ?? 0;
   const total = num(a?.moving_time) ?? 0, cool = num(a?.icu_cooldown_time) ?? 0;
-  const forced = nameOverride(a?.name) === "bikeCompare";
-  const noWarmup = icuWarm < rules.bikeMinWarmupSec, warmSec = noWarmup ? 0 : icuWarm;
+  const ov = nameOverride(a?.name);
+  const forced = ov === "bikeCompare" || ov === "runBlocktest"; // beim Rad zaehlt auch "Blocktest" im Namen
+  // Hat Intervals keinen Warmup-Block erkannt (Einheit am Geraet gefahren), steht das Einrollen als erstes Intervall vor dem
+  // Hauptteil in interval_summary – nur fuer benannte Tests
+  let warmFromSummary = 0;
+  if (forced && icuWarm < rules.bikeMinWarmupSec && Array.isArray(a?.interval_summary)) {
+    const secs = a.interval_summary.map(summarySecs);
+    if (secs.length > 1 && secs[0] >= rules.bikeMinWarmupSec && secs.slice(1).some((x) => x >= rules.bikeWindowMin * 60 - rules.bikeMainSlackSec)) warmFromSummary = secs[0];
+  }
+  const noWarmup = icuWarm < rules.bikeMinWarmupSec && !warmFromSummary, warmSec = noWarmup ? 0 : warmFromSummary || icuWarm;
   return { warmSec, noWarmup, mainSec: total - warmSec - cool, totalSec: total, forced };
 }
 

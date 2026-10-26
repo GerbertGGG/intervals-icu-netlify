@@ -32,7 +32,7 @@ const runs = [
   run("g", "2026-12-04", 90, 121, { name: "Lauf – kein Test" }), run("h", "2026-12-06", 80, 123), // ausgeschlossen: der nächste zählt
   run("i", "2026-12-10", 45, 140, { name: "Basistest" }), // Override
   run("j", "2026-12-12", 75, 120, { type: "VirtualRun" }), // keine Sportart Run
-  { id: "k", type: "Ride", start_date_local: "2026-11-08T09:00:00", moving_time: 7200, average_heartrate: 110, name: "Blocktest" }, // Rad nie Blocktest
+  { id: "k", type: "Ride", start_date_local: "2026-11-08T09:00:00", moving_time: 7200, average_heartrate: 110, name: "Blocktest" }, // Rad zählt nicht als Lauf-Blocktest (classifyRuns), siehe Rad-Test unten
 ];
 const rc = classifyRuns(runs, cfg);
 const cat = (id) => rc.get(id)?.category ?? null;
@@ -108,3 +108,15 @@ const statsOf = (a, st) => { const w = rideWindowOf(a); return rideWindowStats(s
   assert.equal(classifyRide({ type: "Run" }, null, cfg), null);
 }
 console.log("test rides ok");
+
+// 26.10.2026 "Blocktest" auf der Rolle: kein icu_warmup_time, Einrollen steht als erstes Intervall in interval_summary
+{
+  const a = { id: "i201785523", type: "VirtualRide", name: "Blocktest", moving_time: 4205, icu_warmup_time: 0, icu_cooldown_time: 0, interval_summary: ["1x 10m1s 132w", "1x 1h 164w", "1x 5s 97w"] };
+  const w = rideWindowOf(a);
+  assert.equal(w.forced, true); assert.equal(w.noWarmup, false); assert.equal(w.warmSec, 601);
+  const t = Array.from({ length: 4205 }, (_, i) => i);
+  const st = rideWindowStats([{ type: "time", data: t }, { type: "watts", data: t.map((x) => (x < 601 ? 132 : 164)) }, { type: "heartrate", data: t.map(() => 115) }], w.warmSec, TEST_RULES.bikeWindowMin * 60);
+  const c = classifyRide(a, st, cfg);
+  assert.equal(c.category, "bikeCompare"); assert.equal(c.baseline, false);
+}
+console.log("ok blocktest rolle");
