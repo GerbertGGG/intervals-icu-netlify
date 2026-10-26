@@ -606,7 +606,7 @@ console.log("zones from intervals ok");
   // An die Uhr gehen nur die Felder, die das Zifferblatt nutzt
   const { watchPayload } = await import("../src/widget.js");
   const slim = watchPayload(w);
-  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "la", "next", "rd", "rv", "rz", "wm", "wv"].filter((k) => k in w).sort());
+  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "next", "rd", "rv", "rz", "wm", "wv"].filter((k) => k in w).sort());
   assert.ok(JSON.stringify(slim).length < 700, "schlanke Antwort fuer die Uhr");
   const req = (view, token) => new Request(`https://x/api/widget?view=${view}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
   const envW = { ...env, WATCH_TOKEN: "uhr" };

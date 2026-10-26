@@ -619,7 +619,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
 
 // Felder, die das Zifferblatt nutzt (garmin/README.md). Nur sie gehen an die Uhr: Der Hintergrunddienst darf nur wenig Daten an
 // das Zifferblatt uebergeben (Background.exit), eine groessere Antwort kommt dort nicht an, und die Uhr zeigt nur "!".
-const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal", "la"];
+const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal"];
 export const watchPayload = (w) => Object.fromEntries(WATCH_KEYS.filter((k) => w[k] !== undefined).map((k) => [k, w[k]]));
 
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache

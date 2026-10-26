@@ -10,8 +10,7 @@ import Toybox.WatchUi;
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
 // große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Kalorien von heute gegen das Tagesziel, rechts der Akku),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
-// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber der Wochenvergleich, bis 2 Stunden
-// nach einer Einheit (2 Stunden) deren Werte.
+// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, sonst der Wochenvergleich.
 // Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
@@ -29,7 +28,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const BAD = 0xFF453A;
     const COACH = 0x64A8FF;   // Coach ohne Urteil (wie im Widget)
     const STALE_SECS = 3600;
-    const AFTER_SECS = 2 * 3600; // so lange nach dem Ende einer Einheit stehen ihre Werte
     const MORNING_END = 10;      // bis zu dieser Stunde die Erholungswerte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
@@ -50,10 +48,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const G_BOTTOM = 312;
     const DAYS_Y = 334;
     const GRAD = 8;           // Streifen für den Verlauf der Fläche
-    // Werte nach einer Einheit
-    const V_Y = 278;
-    const V_TAG_Y = 302;
-    const V_DX = 112;
     // Kacheln morgens (Oberkante, Höhe, Breite, Abstand der Mitten, Eckenradius) und Grundlinien darin ab Oberkante
     const K_Y = 234;
     const K_H = 106;
@@ -124,16 +118,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.drawText(_cx, px(TIME_Y), _time, timeText(clock), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         if (data == null) {
             dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cx, px(V_Y), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+            dc.drawText(_cx, px(K_Y + K_H / 2), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             return;
         }
 
-        var la = data.get("la") as Dictionary?;
-        var end = la != null ? numOrNull(la.get("e")) : null;
-        var since = end != null ? Time.now().value() - end.toNumber() : -1;
-        if (la != null && since >= 0 && since < AFTER_SECS) {
-            drawLast(dc, la);
-        } else if (clock.hour < MORNING_END) {
+        if (clock.hour < MORNING_END) {
             drawMorning(dc, data);
         } else {
             drawWeek(dc, data);
@@ -402,33 +391,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             out.add(sum);
         }
         return out;
-    }
-
-    // ---- Nach einer Einheit -------------------------------------------------------------------
-    // Kopf in Sportfarbe: Sportart mit Startzeit, daneben "LÄNGSTE SEIT N WO." (Vergleich mit den eigenen Einheiten derselben
-    // Sportart). Darunter bis zu vier Werte (c: [[Text, Beschriftung], ...]) nebeneinander.
-
-    private function drawLast(dc as Dc, la as Dictionary) as Void {
-        var color = sportColor(la.get("s"));
-        var t = la.get("t");
-        var head = [["t", sportName(la.get("s")).toUpper() + (t instanceof Lang.String ? " " + t : ""), color, _tag]] as Array<Array>;
-        var lw = numOrNull(la.get("lw"));
-        if (lw != null) {
-            head.add(["t", "  LÄNGSTE SEIT " + lw.toNumber().toString() + " WO.", SEC, _tag]);
-        }
-        drawItems(dc, _cx, px(HEAD_Y), head, 0);
-        var c = la.get("c") as Array?;
-        if (c == null) {
-            return;
-        }
-        var n = c.size() < 4 ? c.size() : 4;
-        var dx = n == 4 ? 92 : V_DX;
-        for (var i = 0; i < n; i++) {
-            var cell = c[i] as Array;
-            var x = _cx + px(dx * (2 * i - (n - 1)) / 2);
-            drawItems(dc, x, px(V_Y), [["t", cell[0] as String, FG, _val]], 0);
-            drawItems(dc, x, px(V_TAG_Y), [["t", (cell[1] as String).toUpper(), SEC, _tag]], 0);
-        }
     }
 
     // ---- Untere Reihe: offene Wochenminuten -----------------------------------------------------
