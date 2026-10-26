@@ -551,10 +551,12 @@ function watchRecovery(d) {
   const r = d.summary?.recovery, b = r?.body;
   if (!r) return null;
   const one = (v) => (v == null ? null : Math.round(v * 10) / 10);
+  // Vierter Eintrag: der uebliche Bereich [p10, p25, p75, p90] fuer das Band unter dem Wert (null ohne Bereich)
+  const band = (x) => (Array.isArray(x) && x.length === 4 ? x.map(one) : null);
   return [
-    [one(r.sleepHours), one(b?.sleepMedian), bandCls(r.sleepHours, b?.band?.sleep, true)],
-    [r.hrv != null ? Math.round(r.hrv) : null, b?.hrvMedian != null ? Math.round(b.hrvMedian) : null, bandCls(r.hrv, b?.band?.hrv, true)],
-    [r.restingHR != null ? Math.round(r.restingHR) : null, b?.restingMedian != null ? Math.round(b.restingMedian) : null, bandCls(r.restingHR, b?.band?.resting, false)],
+    [one(r.sleepHours), one(b?.sleepMedian), bandCls(r.sleepHours, b?.band?.sleep, true), band(b?.band?.sleep)],
+    [r.hrv != null ? Math.round(r.hrv) : null, b?.hrvMedian != null ? Math.round(b.hrvMedian) : null, bandCls(r.hrv, b?.band?.hrv, true), band(b?.band?.hrv)],
+    [r.restingHR != null ? Math.round(r.restingHR) : null, b?.restingMedian != null ? Math.round(b.restingMedian) : null, bandCls(r.restingHR, b?.band?.resting, false), band(b?.band?.resting)],
   ];
 }
 

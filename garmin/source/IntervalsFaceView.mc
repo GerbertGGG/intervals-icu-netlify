@@ -10,8 +10,8 @@ import Toybox.WatchUi;
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
 // große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Kalorien von heute gegen das Tagesziel, rechts der Akku),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
-// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber der Wochenvergleich, bis 3 Stunden
-// nach einer Einheit deren Werte.
+// der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, tagsüber der Wochenvergleich, bis 2 Stunden
+// nach einer Einheit (2 Stunden) deren Werte.
 // Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
 // Daten kommen aus dem Speicher (vom Hintergrunddienst geschrieben), gezeichnet wird nur.
 class IntervalsFaceView extends WatchUi.WatchFace {
@@ -29,7 +29,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const BAD = 0xFF453A;
     const COACH = 0x64A8FF;   // Coach ohne Urteil (wie im Widget)
     const STALE_SECS = 3600;
-    const AFTER_SECS = 3 * 3600; // so lange nach dem Ende einer Einheit stehen ihre Werte
+    const AFTER_SECS = 2 * 3600; // so lange nach dem Ende einer Einheit stehen ihre Werte
     const MORNING_END = 10;      // bis zu dieser Stunde die Erholungswerte
     const BAT_LOW = 20;          // Akku in Prozent, ab dem er orange wird (ab der Hälfte davon rot)
     // Grundlinien und Mitten (Mockup-Pixel)
@@ -50,11 +50,20 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const G_BOTTOM = 312;
     const DAYS_Y = 334;
     const GRAD = 8;           // Streifen für den Verlauf der Fläche
-    // Werte morgens und nach einer Einheit
+    // Werte nach einer Einheit
     const V_Y = 278;
     const V_TAG_Y = 302;
-    const V_BASE_Y = 322;
     const V_DX = 112;
+    // Kacheln morgens (Oberkante, Höhe, Breite, Abstand der Mitten, Eckenradius) und Grundlinien darin ab Oberkante
+    const K_Y = 234;
+    const K_H = 106;
+    const K_W = 108;
+    const K_DX = 112;
+    const K_R = 20;
+    const K_TAG = 25;
+    const K_VAL = 67;
+    const K_BAND = 79;
+    const K_BASE = 101;
     // Runde Anzeigen unten (Mitte, Abstand, Radius, Ringstärke)
     const RING_Y = 378;
     const RING_DX = 82;
@@ -213,31 +222,67 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Morgens: Erholung --------------------------------------------------------------------
-    // Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich], ...]), jeder Wert in der Farbe seines Vergleichs mit dem
-    // eigenen üblichen Bereich (grün im Bereich oder besser, orange schlechter, rot schlechter als 9 von 10 Tagen), darunter die
-    // Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches oben.
+    // Drei Kacheln mit Rahmen: Schlaf, HRV und Ruhepuls von heute (rv: [[Wert, Basis, Vergleich, [p10, p25, p75, p90]], ...]).
+    // Rahmen, Tönung und Wert in der Farbe des Vergleichs mit dem eigenen üblichen Bereich (grün im Bereich oder besser, orange
+    // schlechter, rot schlechter als 9 von 10 Tagen). Darunter ein Band: heller Streifen = dein üblicher Bereich (p25 bis p75),
+    // Punkt = heute; ganz unten die Basis (Ø). Ein Gesamturteil gibt es nicht, das ist das Wort des Coaches oben.
 
     private function drawMorning(dc as Dc, data as Dictionary) as Void {
         drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
         var labels = ["SCHLAF", "HRV", "RUHEPULS"];
         for (var k = 0; k < 3; k++) {
-            var x = _cx + px(V_DX * (k - 1));
+            var mid = _cx + px(K_DX * (k - 1));
             var e = rv != null && rv.size() > k ? rv[k] as Array : null;
             var v = e != null ? numOrNull(e[0]) : null;
             var base = e != null ? numOrNull(e[1]) : null;
             var cls = e != null ? numOrNull(e[2]) : null;
-            var color = FG;
+            var band = e != null && e.size() > 3 && e[3] instanceof Lang.Array ? e[3] as Array : null;
+            var color = SEC;
             if (cls != null && cls.toNumber() == 1) { color = OK; }
             else if (cls != null && cls.toNumber() == 2) { color = WARN; }
             else if (cls != null && cls.toNumber() == 3) { color = BAD; }
+            var x = mid - px(K_W) / 2;
+            var y = px(K_Y);
+            var w = px(K_W);
+            var h = px(K_H);
+            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.1), Graphics.COLOR_TRANSPARENT);
+            dc.fillRoundedRectangle(x, y, w, h, px(K_R));
+            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.55), Graphics.COLOR_TRANSPARENT);
+            dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+            dc.drawRoundedRectangle(x, y, w, h, px(K_R));
+            drawItems(dc, mid, y + px(K_TAG), [["t", labels[k] as String, SEC, _tag]], 0);
             var text = v == null ? "--" : (k == 0 ? hours((v * 60).toNumber()) : v.toNumber().toString());
-            drawItems(dc, x, px(V_Y), [["t", text, v == null ? TER : color, _val]], 0);
-            drawItems(dc, x, px(V_TAG_Y), [["t", labels[k] as String, SEC, _tag]], 0);
+            drawItems(dc, mid, y + px(K_VAL), [["t", text, v == null ? TER : (color == SEC ? FG : color), _val]], 0);
+            if (v != null && band != null && band.size() == 4) {
+                drawBand(dc, x + px(14), x + w - px(14), y + px(K_BAND), v, band, color);
+            }
             if (base != null) {
-                drawItems(dc, x, px(V_BASE_Y), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), TER, _tag]], 0);
+                drawItems(dc, mid, y + px(K_BASE), [["t", "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString()), SEC, _tag]], 0);
             }
         }
+    }
+
+    // Band von x0 bis x1: Spur von p10 bis p90, darauf der übliche Bereich (p25 bis p75) heller, der Punkt für v (am Rand begrenzt)
+    private function drawBand(dc as Dc, x0 as Number, x1 as Number, y as Number, v as Numeric, band as Array, color as Number) as Void {
+        var p10 = numOrNull(band[0]);
+        var p25 = numOrNull(band[1]);
+        var p75 = numOrNull(band[2]);
+        var p90 = numOrNull(band[3]);
+        if (p10 == null || p25 == null || p75 == null || p90 == null || p90 <= p10) {
+            return;
+        }
+        var h = px(5) > 2 ? px(5) : 2;
+        var w = x1 - x0;
+        dc.setColor(RING_BG, Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(x0, y, w, h, h / 2);
+        var a = x0 + (w * frac(p25 - p10, p90 - p10)).toNumber();
+        var b = x0 + (w * frac(p75 - p10, p90 - p10)).toNumber();
+        dc.setColor(blend(RING_BG, color, 0.5), Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(a, y, b - a > h ? b - a : h, h, h / 2);
+        var dx = x0 + (w * frac(v - p10, p90 - p10)).toNumber();
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(dx, y + h / 2, px(6));
     }
 
     // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------

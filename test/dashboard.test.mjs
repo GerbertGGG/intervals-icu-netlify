@@ -591,7 +591,9 @@ console.log("zones from intervals ok");
   assert.equal(w.cl, null);
   assert.equal(buildWidgetWatch({ ...d, coach: { fetchedAt: d.generatedAt, headline: "45 min locker, Wade vom Dienstag im Blick" } }).cl, "45 min locker, Wade vom Dienstag im Blick");
   // Erholungswerte: Wert, Basis, Vergleich mit dem eigenen ueblichen Bereich (1 im Bereich oder besser, 3 schlechter als 9 von 10 Tagen)
-  assert.deepEqual(w.rv[1], [48, 48, 1]);
+  assert.deepEqual(w.rv[1].slice(0, 3), [48, 48, 1]);
+  assert.equal(w.rv[1].length, 4); // vierter Eintrag: ueblicher Bereich [p10, p25, p75, p90] oder null
+  assert.equal(buildWidgetWatch({ ...d, summary: { ...d.summary, recovery: { ...d.summary.recovery, body: { ...d.summary.recovery.body, band: null } } } }).rv[1][3], null);
   const rec = d.summary.recovery;
   const low = buildWidgetWatch({ ...d, summary: { ...d.summary, recovery: { ...rec, hrv: 30, restingHR: 70 } } }).rv;
   assert.deepEqual([low[1][2], low[2][2]], [3, 3]);
