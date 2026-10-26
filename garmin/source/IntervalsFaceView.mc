@@ -8,7 +8,7 @@ import Toybox.Time.Gregorian;
 import Toybox.WatchUi;
 
 // Zifferblatt "Ultra" nach Apples Modular Ultra, rund umgesetzt. Fest: oben Datum und das Urteil des Coaches als Kapsel, die
-// große Uhrzeit in einer Zeile, am Rand Skalen (links außen die Kalorien von heute, innen das Eiweiß, je gegen das Tagesziel, rechts der Akku),
+// große Uhrzeit in einer Zeile, am Rand zwei Skalen (links die Kalorien, rechts das Eiweiß, je gegen das Tagesziel; der Akku steht neben dem Datum),
 // unten drei runde Anzeigen mit den offenen Wochenminuten je Sportart und ganz unten die nächste Einheit. Der Bereich unter
 // der Uhrzeit wechselt mit dem Tag: morgens (bis 10 Uhr) Schlaf, HRV und Ruhepuls, sonst der Wochenvergleich.
 // Alle Maße sind Mockup-Pixel (454 x 454) und werden mit _s auf die Displaygröße skaliert.
@@ -23,7 +23,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const TICK = 0x323234;    // kurze Striche der Skalen
     const RING_BG = 0x2C2C2E; // Spur der Ringe unten
     const ACCENT = 0x64D2FF;  // die eine Akzentfarbe (Woche, Kalorien), wie beim Ultra
-    const PROTEIN = 0xC4F0FF; // Eiweiß: helleres Cyan, innere Skala links
+    const PROTEIN = 0xC4F0FF; // Eiweiß: helleres Cyan, Skala rechts
     const OK = 0x30D158;
     const WARN = 0xFF9F0A;
     const BAD = 0xFF453A;
@@ -145,9 +145,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Skalen am Rand ----------------------------------------------------------------------
-    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang. Links außen die Kalorien von heute gegen das Tagesziel
-    // (kcal: {v, g}), darin etwas kürzer das Eiweiß gegen sein Ziel (pr: {v, g}, Ziel aus Yazio), von unten gefüllt, über dem Ziel
-    // voll; ohne Ziel bleibt die Skala leer. Rechts der Akku (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden).
+    // Wie die Seitenskalen des Ultra: je 25 Striche, jeder sechste lang, von unten gefüllt, über dem Ziel voll, ohne Ziel leer.
+    // Links die Kalorien von heute gegen das Tagesziel (kcal: {v, g}), rechts das Eiweiß gegen sein Ziel (pr: {v, g}, Ziel aus
+    // Yazio), in etwas hellerem Cyan. Der Akku steht oben neben dem Datum.
 
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
         var kcal = data != null ? data.get("kcal") as Dictionary? : null;
@@ -155,11 +155,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawScale(dc, 215, 145, food, ACCENT, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
         var pr = data != null ? data.get("pr") as Dictionary? : null;
         var protein = pr != null ? frac(numOrNull(pr.get("v")), numOrNull(pr.get("g"))) : 0.0;
-        drawScale(dc, 210, 150, protein, PROTEIN, px(SCALE_R - SCALE_LONG - 6), 11, 6);
-        var stats = System.getSystemStats();
-        var pct = Math.round(stats.battery).toNumber();
-        var bat = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
-        drawScale(dc, 325, 395, pct / 100.0, bat, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+        drawScale(dc, 325, 395, protein, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
     }
 
     // Striche von Winkel a0 (unten) nach a1 (oben) ab Radius r1 nach innen, bis zum Anteil f in color
@@ -186,7 +182,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var days = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
         var months = ["JAN", "FEB", "MÄRZ", "APR", "MAI", "JUNI", "JULI", "AUG", "SEPT", "OKT", "NOV", "DEZ"];
         var date = days[(info.day_of_week as Number) - 1] + ", " + info.day + ". " + months[(info.month as Number) - 1] + ".";
-        drawItems(dc, _cx, px(DATE_Y), [["t", date, FG, _tag]], 0);
+        drawDateAndBattery(dc, date);
         if (data == null) {
             return;
         }
@@ -211,6 +207,36 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillRoundedRectangle(_cx - w / 2, px(PILL_Y), w, h, h / 2);
         dc.setColor(color, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx, px(PILL_Y) + h / 2, _tag, word, Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
+    }
+
+    // Datum, daneben der Akku als Symbol mit Prozent (grau, orange ab BAT_LOW, rot ab der Hälfte davon, grün beim Laden), als Zeile
+    // um die Mitte zentriert
+    private function drawDateAndBattery(dc as Dc, date as String) as Void {
+        var stats = System.getSystemStats();
+        var pct = Math.round(stats.battery).toNumber();
+        var color = stats.charging ? OK : (pct <= BAT_LOW / 2 ? BAD : (pct <= BAT_LOW ? WARN : SEC));
+        var text = pct.toString() + " %";
+        var dateW = dc.getTextWidthInPixels(date, _tag);
+        var textW = dc.getTextWidthInPixels(text, _tag);
+        var iconW = px(26);
+        var iconH = px(13);
+        var gap = px(10);
+        var total = dateW + gap + iconW + px(6) + textW;
+        var x = _cx - total / 2;
+        var base = px(DATE_Y);
+        drawItems(dc, x, base, [["t", date, FG, _tag]], -1);
+        // Akku: Rahmen, Füllung nach Stand, kleine Nase rechts
+        var ix = x + dateW + gap;
+        var iy = base - iconH - px(1);
+        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+        dc.drawRoundedRectangle(ix, iy, iconW, iconH, px(3));
+        var inner = (iconW - px(6)) * pct / 100;
+        if (inner > 0) {
+            dc.fillRectangle(ix + px(3), iy + px(3), inner, iconH - px(6));
+        }
+        dc.fillRectangle(ix + iconW + 1, iy + iconH / 4, px(2), iconH / 2);
+        drawItems(dc, ix + iconW + px(6), base, [["t", text, color, _tag]], -1);
     }
 
     // ---- Morgens: Erholung --------------------------------------------------------------------
@@ -278,10 +304,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------
-    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche], wp: geplant, Minuten je Tag): diese Woche als
-    // Fläche mit Linie in der Akzentfarbe bis zum Punkt auf heute, ab dort gestrichelt die geplanten Einheiten bis Sonntag, die
-    // Vorwoche als graue Linie, das Zeitziel des Coaches (wm[1]) als waagerechte gestrichelte Linie. Kopf: Stand der Woche und
-    // der Abstand zur Vorwoche am selben Wochentag. Ein Urteil ist das nicht.
+    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche], Minuten je Tag): diese Woche als
+    // Fläche mit Linie in der Akzentfarbe bis zum Punkt auf heute, die Vorwoche als graue Linie, dazu gestrichelt die gerade Soll-
+    // Linie von 0 bis zum Zeitziel des Coaches (wm[1]). Kopf: Stand der Woche und der Abstand zur Vorwoche am selben Wochentag.
+    // Ein Urteil ist das nicht.
 
     private function drawWeek(dc as Dc, data as Dictionary) as Void {
         var wv = data.get("wv") as Array?;
@@ -304,24 +330,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             ["t", "  ZUR VORWOCHE", SEC, _tag]
         ], 0);
 
-        // Geplant ab heute: heutiger Rest und die folgenden Tage, aufsummiert auf den heutigen Stand
-        var wp = data.get("wp");
-        var plan = wp instanceof Lang.Array ? wp as Array : null;
-        var planned = 0;
-        if (plan != null && plan.size() == 7) {
-            for (var i = today; i < 7; i++) {
-                var pv = numOrNull(plan[i]);
-                planned += pv != null ? pv.toNumber() : 0;
-            }
-        } else {
-            plan = null;
-        }
         var most = 60.0;
         for (var i = 0; i < 7; i++) {
             most = (last[i] as Number) > most ? (last[i] as Number).toFloat() : most;
         }
         most = now > most ? now.toFloat() : most;
-        most = now + planned > most ? (now + planned).toFloat() : most;
         if (goal != null && goal > most) {
             most = goal.toFloat();
         }
@@ -336,15 +349,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var x = gx(i, x0, x1);
             dc.drawLine(x, px(G_TOP) - px(6), x, yb);
         }
-        // Ziel des Coaches gestrichelt, rechts daneben der Wert
+        // Soll: gerade Linie von 0 am Montag bis zum Wochenziel des Coaches am Sonntag, gestrichelt, am Ende der Zielwert
         if (goal != null && goal > 0) {
-            var y = yb - (h * goal / most).toNumber();
-            dc.setColor(0x6E6E73, Graphics.COLOR_TRANSPARENT);
+            var yg = yb - (h * goal / most).toNumber();
+            dc.setColor(0x8E8E93, Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(px(2));
-            for (var x = x0; x < x1; x += px(9)) {
-                dc.drawLine(x, y, (x + px(5) < x1 ? x + px(5) : x1), y);
-            }
-            drawItems(dc, x1 + px(6), y + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
+            drawDashed(dc, x0, yb, x1, yg);
+            drawItems(dc, x1 + px(6), yg + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
         }
         // Diese Woche: Fläche bis heute, nach unten ausblendend (Verlauf in GRAD Streifen, je Streifen die Fläche beschnitten)
         if (today > 0) {
@@ -378,24 +389,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         var tx = gx(today, x0, x1);
         var ty = yb - (h * now / most).toNumber();
-        if (plan != null && today < 6) {
-            // Geplanter Rest gestrichelt: der heutige Rest kommt zum nächsten Tag dazu
-            var p0 = numOrNull(plan[today]);
-            var acc = now + (p0 != null ? p0.toNumber() : 0);
-            var px0 = tx;
-            var py0 = ty;
-            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.85), Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(px(2));
-            for (var i = today + 1; i < 7; i++) {
-                var pv = numOrNull(plan[i]);
-                acc += pv != null ? pv.toNumber() : 0;
-                var px1 = gx(i, x0, x1);
-                var py1 = yb - (h * acc / most).toNumber();
-                drawDashed(dc, px0, py0, px1, py1);
-                px0 = px1;
-                py0 = py1;
-            }
-        }
         // Punkt auf heute mit Schein
         dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.25), Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(tx, ty, px(13));
