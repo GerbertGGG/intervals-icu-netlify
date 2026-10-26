@@ -13,7 +13,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SEC = 0xA1A1A6;     
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
-    const GRID = 0x303034;
+    const GRID = 0x55555A;
     const TICK = 0x444446;    
     const RING_BG = 0x2C2C2E; 
     
@@ -408,6 +408,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         for (var i = 0; i < 7; i++) {
             var x = gx(i, x0, x1);
             dc.drawLine(x, px(G_TOP) - px(4), x, yb);
+        }
+        var hour = 60;
+        while (hour < most) {
+            var y = yb - (h * hour / most).toNumber();
+            dc.drawLine(x0, y, x1, y);
+            hour += 60;
         }
 
         // 4. Soll-Linie (gestrichelt)
