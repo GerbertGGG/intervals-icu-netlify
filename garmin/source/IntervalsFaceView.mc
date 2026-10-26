@@ -278,7 +278,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     // ---- Tagsüber: Wochenvergleich -------------------------------------------------------------
-    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche, geplant], Minuten je Tag): diese Woche als
+    // Ausdauerminuten aufsummiert Mo bis So (wv: [diese Woche bis heute, Vorwoche], wp: geplant, Minuten je Tag): diese Woche als
     // Fläche mit Linie in der Akzentfarbe bis zum Punkt auf heute, ab dort gestrichelt die geplanten Einheiten bis Sonntag, die
     // Vorwoche als graue Linie, das Zeitziel des Coaches (wm[1]) als waagerechte gestrichelte Linie. Kopf: Stand der Woche und
     // der Abstand zur Vorwoche am selben Wochentag. Ein Urteil ist das nicht.
@@ -305,7 +305,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         ], 0);
 
         // Geplant ab heute: heutiger Rest und die folgenden Tage, aufsummiert auf den heutigen Stand
-        var plan = wv.size() > 2 && wv[2] instanceof Lang.Array ? wv[2] as Array : null;
+        var wp = data.get("wp");
+        var plan = wp instanceof Lang.Array ? wp as Array : null;
         var planned = 0;
         if (plan != null && plan.size() == 7) {
             for (var i = today; i < 7; i++) {

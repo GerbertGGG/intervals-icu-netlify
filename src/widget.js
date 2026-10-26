@@ -507,7 +507,8 @@ function watchWeekDays(d) {
   });
 }
 
-// Wochenvergleich fuer das Zifferblatt: Ausdauerminuten je Tag, [diese Woche Mo bis heute, Vorwoche Mo bis So, geplant Mo bis So].
+// Wochenvergleich fuer das Zifferblatt: Ausdauerminuten je Tag. wv = [diese Woche Mo bis heute, Vorwoche Mo bis So] (genau zwei
+// Eintraege: aeltere Staende der Uhr pruefen das), wp = geplant Mo bis So (eigenes Feld, aeltere Staende ignorieren es).
 // Die Uhr summiert sie auf und zeichnet die Linien mit dem Ziel des Coaches (wm). Geplant sind die Ausdauereinheiten aus dem
 // Kalender ab heute (heute nur Sportarten, die heute noch nicht gemacht sind, wie in watchWeekDays), davor 0. Ohne Ausdauerwert
 // des Tages (aeltere Daten) die Minuten von Lauf, Rad und Schwimmen.
@@ -523,11 +524,13 @@ function watchWeekCompare(d) {
     const done = date === d.today ? dayOf(date)?.minutes ?? {} : {};
     return Math.round(WEEK_SPORTS.filter((k) => !(done[k] > 0)).reduce((a, k) => a + (d.plannedWeek ?? []).filter((p) => p.date === date && p.sport === k).reduce((n, p) => n + (p.durationMin ?? 0), 0), 0));
   };
-  return [
-    Array.from({ length: dayIndex(d.today) + 1 }, (_, i) => minOf(addDays(monday, i))),
-    Array.from({ length: 7 }, (_, i) => minOf(addDays(monday, i - 7))),
-    Array.from({ length: 7 }, (_, i) => planOf(addDays(monday, i))),
-  ];
+  return {
+    wv: [
+      Array.from({ length: dayIndex(d.today) + 1 }, (_, i) => minOf(addDays(monday, i))),
+      Array.from({ length: 7 }, (_, i) => minOf(addDays(monday, i - 7))),
+    ],
+    wp: Array.from({ length: 7 }, (_, i) => planOf(addDays(monday, i))),
+  };
 }
 
 // Letzte Einheit, nur wenn sie von heute ist: s Sportart, t Startzeit, e Ende (Sekunden seit 1970), c bis zu vier Werte
@@ -620,14 +623,14 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     rv: watchRecovery(d),
     wd: watchWeekDays(d),
     wm: weekGoals(d) ? [Math.round(weekGoals(d).min), weekGoals(d).goalMin] : null,
-    wv: watchWeekCompare(d),
+    ...watchWeekCompare(d),
     la: watchLast(d),
   };
 }
 
 // Felder, die das Zifferblatt nutzt (garmin/README.md). Nur sie gehen an die Uhr: Der Hintergrunddienst darf nur wenig Daten an
 // das Zifferblatt uebergeben (Background.exit), eine groessere Antwort kommt dort nicht an, und die Uhr zeigt nur "!".
-const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal", "pr"];
+const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "wp", "kcal", "pr"];
 export const watchPayload = (w) => Object.fromEntries(WATCH_KEYS.filter((k) => w[k] !== undefined).map((k) => [k, w[k]]));
 
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache
