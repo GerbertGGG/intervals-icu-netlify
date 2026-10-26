@@ -205,6 +205,47 @@ export function applyAnswer(coach, body, nowMs = Date.now()) {
   return { value: { ...coach, answer, answeredAt: new Date(nowMs).toISOString() } };
 }
 
+// Zeiten des Wochenvorschlags aus dem Dashboard anpassen (Minuten je Sportart). Nur vorhandene Sportarten, nur time_min; Basis,
+// Tage und TSS bleiben. Die Zahlen des Coaches bleiben in original (nur beim ersten Anpassen gesetzt), editedAt zeigt die Änderung.
+// Der naechste week_plan des Coaches ersetzt alles.
+export function applyPlanEdit(coach, body, nowMs = Date.now()) {
+  const plan = coach?.week_plan;
+  if (!plan?.targets?.length) return { error: "Kein Wochenvorschlag vorhanden" };
+  if (!Array.isArray(body?.targets) || !body.targets.length) return { error: "targets muss eine Liste { sport, time_min } sein" };
+  const sent = new Map();
+  for (const x of body.targets) {
+    const sport = typeof x?.sport === "string" ? x.sport.trim().toLowerCase() : "";
+    if (!plan.targets.some((t) => t.sport === sport)) return { error: `${sport || "sport"} steht nicht im Wochenvorschlag` };
+    if (sent.has(sport)) return { error: `${sport} doppelt` };
+    const min = typeof x.time_min === "string" ? Number(x.time_min.replace(",", ".")) : x.time_min;
+    if (x.time_min == null || x.time_min === "" || !Number.isFinite(min) || min < 0 || min > MAX_PLAN_MIN) return { error: `time_min muss eine Zahl von 0 bis ${MAX_PLAN_MIN} sein` };
+    sent.set(sport, Math.round(min));
+  }
+  const original = plan.original ?? plan.targets.map(({ sport, time_min }) => ({ sport, time_min }));
+  const targets = plan.targets.map((t) => (sent.has(t.sport) ? { ...t, time_min: sent.get(t.sport) } : t));
+  return { value: { ...coach, week_plan: { ...plan, targets, original, editedAt: new Date(nowMs).toISOString() } } };
+}
+
+export async function handleCoachPlanRequest(req, env, isAuthorized) {
+  const headers = { "cache-control": "no-store" };
+  if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
+  if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
+  if (req.method !== "POST") return json({ ok: false, error: "Nur POST erlaubt" }, 405, { ...headers, allow: "POST" });
+  if (!env?.KV) return json({ ok: false, error: "KV nicht verfügbar" }, 503, headers);
+  const text = await req.text();
+  if (text.length > MAX_BODY_BYTES) return json({ ok: false, error: "Body zu groß" }, 413, headers);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ ok: false, error: "Kein gültiges JSON" }, 400, headers);
+  }
+  const { value, error } = applyPlanEdit(await readCoach(env), body);
+  if (error) return json({ ok: false, error }, 409, headers);
+  await writeKvJson(env, COACH_KV_KEY, value);
+  return json({ ok: true, editedAt: value.week_plan.editedAt }, 200, headers);
+}
+
 export async function readCoach(env) {
   return readKvJson(env, COACH_KV_KEY).catch(() => null);
 }
