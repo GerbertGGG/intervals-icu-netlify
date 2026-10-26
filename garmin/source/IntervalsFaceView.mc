@@ -13,12 +13,13 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SEC = 0xA1A1A6;     
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
-    const GRID = 0x55555A;
+    const GRID = 0x55555A;    
     const TICK = 0x444446;    
     const RING_BG = 0x2C2C2E; 
     
-    const ACCENT = 0x64D2FF;  // Cyan (Woche)
-    const PROTEIN = 0xC4F0FF; // Cyan für Kalorien & Protein
+    const ACCENT = 0x64D2FF;  
+    const PROTEIN = 0xC4F0FF; 
+    const GOAL_COLOR = 0x8E8E93; 
     const OK = 0x30D158;      
     const WARN = 0xFF9F0A;     
     const BAD = 0xFF453A;      
@@ -105,33 +106,29 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
 
         var data = Application.Storage.getValue("d") as Dictionary?;
+        if (data == null) {
+            data = {
+                "wv" => [[0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0]],
+                "wm" => [300, 300],
+                "kcal" => {"v" => 1500, "g" => 2500},
+                "pr" => {"v" => 100, "g" => 160}
+            };
+        }
         
-        // 1. Randskalen (Stabilisiert)
         drawScales(dc, data);
-        
-        // 2. Datum & Coach
         drawTopLine(dc, data);
         
-        // 3. Uhrzeit
         dc.setColor(blend(Graphics.COLOR_BLACK, FG, 0.15), Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx, px(TIME_Y) + 1, _time, timeText(clock), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
         dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
         dc.drawText(_cx, px(TIME_Y), _time, timeText(clock), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
 
-        if (data == null) {
-            dc.setColor(SEC, Graphics.COLOR_TRANSPARENT);
-            dc.drawText(_cx, px(K_Y + K_H / 2), _cap, "Keine Daten" + errSuffix(), Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
-            return;
-        }
-
-        // 4. Mitte (Morgens Erholung / Tagsüber erweiterter Graph)
         if (clock.hour < MORNING_END) {
             drawMorningReady(dc, data);
         } else {
             drawWeekGraph(dc, data);
         }
 
-        // 5. Unten (Sportart-Ringe & Nächste Einheit)
         drawWeekRow(dc, data.get("rz") as Array?);
         drawNext(dc, data, NEXT_Y);
     }
@@ -145,35 +142,34 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return h.toString() + ":" + clock.min.format("%02d");
     }
 
-    // ---- Skalen am Rand ---------------------------------------------------------------
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
-        var kcal = data != null ? data.get("kcal") as Dictionary? : null;
-        var food = kcal != null ? frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g"))) : 0.0;
-        
-        var pr = data != null ? data.get("pr") as Dictionary? : null;
-        var protein = pr != null ? frac(numOrNull(pr.get("v")), numOrNull(pr.get("g"))) : 0.0;
-
-        // Links: Kalorien (von 215° bis 145° im Uhrzeigersinn)
-        drawGlowScale(dc, 215, 145, food, ACCENT, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
-        // Rechts: Protein (von 325° bis 35° im Gegenuhrzeigersinn)
+        var food = 0.0;
+        var protein = 0.0;
+        if (data != null) {
+            var kcal = data.get("kcal");
+            if (kcal instanceof Dictionary) {
+                food = frac(numOrNull(kcal.get("v")), numOrNull(kcal.get("g")));
+            }
+            var pr = data.get("pr");
+            if (pr instanceof Dictionary) {
+                protein = frac(numOrNull(pr.get("v")), numOrNull(pr.get("g")));
+            }
+        }
+        drawGlowScale(dc, 215, 145, food, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
         drawGlowScale(dc, 325, 35, protein, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
     }
 
     private function drawGlowScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
         var arcR = r1 - px(8);
         var penW = px(18);
-
-        // Bestimmen der Bogenrichtung
         var dir = (a0 == 215) ? Graphics.ARC_CLOCKWISE : Graphics.ARC_COUNTER_CLOCKWISE;
 
-        // 1. Dunkle Hintergrund-Kapselbahn
         dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.15), Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(penW);
         dc.drawArc(_cx, _cy, arcR, dir, a0, a1);
 
-        // 2. FÜLLUNG (Vermeidung von Vollkreis-Bugs)
         if (f > 0.05) {
-            var diff = (a0 == 215) ? (a1 - a0) : 70; // 70 Grad Gesamtwinkel
+            var diff = (a0 == 215) ? (a1 - a0) : 70;
             var currentAngle = a0 + (diff * f).toNumber();
             if (a0 != 215) {
                 currentAngle = (a0 + Math.round(70 * f).toNumber()) % 360;
@@ -183,13 +179,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dc.drawArc(_cx, _cy, arcR, dir, a0, currentAngle.toNumber());
         }
 
-        // 3. Kapsel-Ränder
         dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.5), Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(1);
         dc.drawArc(_cx, _cy, arcR + penW/2, dir, a0, a1);
         dc.drawArc(_cx, _cy, arcR - penW/2, dir, a0, a1);
 
-        // 4. Einzelne Skalenstriche drüber zeichnen
         var angleSpan = (a0 == 215) ? (a1 - a0) : 70;
         for (var i = 0; i < SCALE_N; i++) {
             var currDeg = a0 + angleSpan * i / (SCALE_N - 1.0);
@@ -269,7 +263,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         drawItems(dc, ix + iconW + px(6), base, [["t", text, color, _tag]], -1);
     }
 
-    // ---- Readiness Kacheln (Morgens) ---------------------------------------------------
     private function drawMorningReady(dc as Dc, data as Dictionary) as Void {
         drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
@@ -346,13 +339,14 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(dx, y + h / 2, px(3));
     }
 
-    // ---- Wochenverlauf Graph -----------------------------------------------------------
+    // ---- Wochenverlauf Graph mit exaktem Ziel-Korridor und Glow-Effekt ------------------
     private function drawWeekGraph(dc as Dc, data as Dictionary) as Void {
         var wv = data.get("wv") as Array?;
         var wm = data.get("wm") as Array?;
-        if (wv == null || wv.size() != 2) { return; }
+        if (wv == null || wv.size() < 1) { return; }
         
-        var cur = cumulate(wv[0] as Array);
+        var curArr = wv[0] instanceof Array ? wv[0] as Array : [0,0,0,0,0,0,0];
+        var cur = cumulate(curArr);
         var today = cur.size() - 1;
         if (today < 0) { return; }
         
@@ -369,7 +363,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var yb = px(G_BOTTOM);
         var h = yb - px(G_TOP);
 
-        // 1. Soll-Hintergrundfläche
+        // 1. Exakter Ziel-Korridor im Hintergrund
         if (goal != null && goal > 0) {
             var ghostPoly = new [9];
             for (var i = 0; i < 7; i++) {
@@ -378,11 +372,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             }
             ghostPoly[7] = [x1, yb];
             ghostPoly[8] = [x0, yb];
-            dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.12), Graphics.COLOR_TRANSPARENT);
+            dc.setColor(blend(Graphics.COLOR_BLACK, GOAL_COLOR, 0.22), Graphics.COLOR_TRANSPARENT);
             dc.fillPolygon(ghostPoly);
         }
 
-        // 2. Erreichte Wochenstunden als Fläche
+        // 2. Erreichte Wochenstunden als kräftiger Cyan-Verlauf (Glow-Fläche)
         if (today > 0) {
             var poly = new [today + 3];
             var top = yb;
@@ -396,49 +390,48 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var band = (yb - top) / GRAD + 1;
             for (var k = 0; k < GRAD; k++) {
                 dc.setClip(x0, top + k * band, x1 - x0 + 1, band);
-                dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.45 - 0.35 * k / (GRAD - 1)), Graphics.COLOR_TRANSPARENT);
+                dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.65 - 0.45 * k / (GRAD - 1)), Graphics.COLOR_TRANSPARENT);
                 dc.fillPolygon(poly);
             }
             dc.clearClip();
         }
 
-        // 3. GRID (Vertikale Gitterlinien)
+        // 3. GRID (Gitterlinien)
         dc.setColor(GRID, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(2) > 1 ? px(2) : 1);
         for (var i = 0; i < 7; i++) {
             var x = gx(i, x0, x1);
             dc.drawLine(x, px(G_TOP) - px(4), x, yb);
         }
-        var hour = 60;
-        while (hour < most) {
-            var y = yb - (h * hour / most).toNumber();
-            dc.drawLine(x0, y, x1, y);
-            hour += 60;
-        }
 
-        // 4. Soll-Linie (gestrichelt)
+        // 4. Soll-Linie
         if (goal != null && goal > 0) {
             var yg = yb - (h * goal / most).toNumber();
-            dc.setColor(0x8E8E93, Graphics.COLOR_TRANSPARENT);
+            dc.setColor(GOAL_COLOR, Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(px(2));
             drawDashed(dc, x0, yb, x1, yg);
-            drawItems(dc, x1 + px(6), yg + px(6), [["t", hours(goal.toNumber()), SEC, _tag]], -1);
         }
 
-        // 5. Hauptlinie der absolvierten Einheiten
+        // 5. Hauptlinie der absolvierten Einheiten (Cyan)
         dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
         dc.setPenWidth(px(3));
         for (var i = 0; i < today; i++) {
             dc.drawLine(gx(i, x0, x1), yb - (h * (cur[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (cur[i + 1] as Number) / most).toNumber());
         }
 
-        // 6. Glow-Punkt für heute
+        // 6. ECHTER GLOW-PUNKT (Gestaffelter Neon-Effekt)
         var tx = gx(today, x0, x1);
         var ty = yb - (h * now / most).toNumber();
-        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.3), Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(12));
+        
+        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.2), Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(16));
+        
+        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.5), Graphics.COLOR_TRANSPARENT);
+        dc.fillCircle(tx, ty, px(10));
+        
         dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(tx, ty, px(6));
+        
         dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
         dc.fillCircle(tx, ty, px(2));
 
@@ -465,8 +458,9 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return x0 + (x1 - x0) * i / 6;
     }
 
-    private function cumulate(mins as Array) as Array<Number> {
+    private function cumulate(mins as Array?) as Array<Number> {
         var out = [] as Array<Number>;
+        if (mins == null) { return out; }
         var sum = 0;
         for (var i = 0; i < mins.size() && i < 7; i++) {
             var v = numOrNull(mins[i]);
@@ -476,7 +470,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return out;
     }
 
-    // ---- Untere Sportart-Ringe --------------------------------------------------------
     private function drawWeekRow(dc as Dc, rz as Array?) as Void {
         var sports = ["run", "bike", "swim"];
         var y = px(RING_Y);
@@ -527,7 +520,6 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(x + (r * Math.cos(a2)).toNumber(), y - (r * Math.sin(a2)).toNumber(), pen / 2);
     }
 
-    // ---- Unterste Zeile ----------------------------------------------------------------------
     private function drawNext(dc as Dc, data as Dictionary, y as Number) as Void {
         var nx = data.get("next") as Dictionary?;
         if (nx == null) { return; }
