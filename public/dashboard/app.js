@@ -607,7 +607,10 @@ function renderHistory(d) {
   // drei Sportarten, wo es welche gibt, sonst gegen die geplanten Workouts
   const END = ["run", "bike", "swim"];
   const sumMin = (w, f) => END.reduce((a, k) => (w.bySport[k][f] != null ? (a ?? 0) + w.bySport[k][f] : a), null);
-  const timePlan = (w) => sumMin(w, "targetMin") ?? sumMin(w, "plannedMin");
+  // Hat der Nutzer den Wochenvorschlag angepasst (editedAt), ist seine Summe das Ziel der Woche
+  const wp = d.coach?.week_plan;
+  const editedMin = wp?.editedAt && wp.targets?.length ? planEndurance(wp.targets) : null;
+  const timePlan = (w) => (editedMin != null && w.weekStart === wp.week ? editedMin : sumMin(w, "targetMin") ?? sumMin(w, "plannedMin"));
   const endMin = Object.fromEntries((d.weekTotals?.weeks ?? []).map((x) => [x.week, x.enduranceMin]));
   C.bars($("chart-km"), d.weeks.map((w) => ({ label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: endMin[w.weekStart] ?? sumMin(w, "minutes") ?? 0, plan: timePlan(w), partial: !w.complete })), { unit: "min", fmtV: fmtHm, label: "Ausdauerzeit pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   // TSS daneben: Korridor des Coaches (Summe der Unter- und Obergrenzen), in älteren Wochen der Plan aus geplanten Workouts
@@ -617,7 +620,7 @@ function renderHistory(d) {
     return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load ?? 0, plan: cap ? w.targetLoad : w.plannedLoad, cap, floor: cap && w.targetLoadMin > 0 ? w.targetLoadMin : undefined, capValue: cap ? capOf(w) ?? 0 : undefined, partial: !w.complete };
   }), { unit: "TSS", label: "TSS pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   const noPlan = d.weeks.every((w) => timePlan(w) == null);
-  $("plan-note-km").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Ausdauerzeit = Bewegungszeit von Laufen, Rad und Schwimmen (Kraft zählt nicht). Marke = Zeitziel des Coaches (Summe der Zeitziele dieser drei Sportarten), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb.";
+  $("plan-note-km").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Ausdauerzeit = Bewegungszeit von Laufen, Rad und Schwimmen (Kraft zählt nicht). Marke = Zeitziel des Coaches (Summe der Zeitziele dieser drei Sportarten; von dir angepasste Wochenzeiten gelten als Ziel), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb.";
   $("plan-note-tss").textContent = "Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan), dünne Marke = Summe der Untergrenzen. Die Säule enthält alle Sportarten; „drüber“ und „unter“ zählen nur die Sportarten mit Korridor (Schwimmen hat keinen).";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
