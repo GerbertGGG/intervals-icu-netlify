@@ -1,5 +1,7 @@
 <fonts>
   <font id="Time" filename="time.fnt" antialias="true"/>
+  <font id="Big" filename="big.fnt" antialias="true"/>
+  <font id="Icons" filename="icons.fnt" antialias="true"/>
   <font id="Val" filename="val.fnt" antialias="true"/>
   <font id="Cap" filename="cap.fnt" antialias="true"/>
   <font id="Tag" filename="tag.fnt" antialias="true"/>
