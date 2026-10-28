@@ -31,12 +31,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const PILL_Y = 76;
     const PILL_H = 24;
     const TIME_Y = 170;
-    const HEAD_Y = 246;
 
-    const K_Y = 256;
-    const K_H = 90;
-    const K_W = 112;          
-    const K_DX = 120;         
+    const K_Y = 236;
+    const K_H = 96;
+    const K_W = 106;
+    const K_DX = 114;
     const K_R = 18;           
 
     const SCALE_R = 218;
@@ -45,18 +44,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SCALE_N = 25;
 
     // Woche gegen Plan (tagsüber): Seitenwerte, Zeile mit Stand, Balken
-    const SIDE_Y = 238;
-    const WEEK_Y = 298;
+    const SIDE_Y = 246;
+    const WEEK_Y = 302;
     const BAR_X = 82;
     const BAR_W = 290;
-    const BAR_Y = 314;
+    const BAR_Y = 318;
     const BAR_H = 14;
 
     // Untere Reihe: Symbol, offene Zeit, Trennstriche
-    const ICON_Y = 368;
-    const OPEN_Y = 404;
+    const ICON_Y = 370;
+    const OPEN_Y = 406;
     const ICON_DX = 86;
-    const NEXT_Y = 432;
+    const NEXT_Y = 434;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -244,10 +243,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     }
 
     private function drawMorningReady(dc as Dc, data as Dictionary) as Void {
-        drawItems(dc, _cx, px(HEAD_Y), [["t", "ERHOLUNG", SEC, _tag]], 0);
         var rv = data.get("rv") as Array?;
         var labels = ["SCHLAF", "HRV", "PULS"];
-        var symbols = ["S", "H", "P"];
         
         for (var k = 0; k < 3; k++) {
             var mid = _cx + px(K_DX * (k - 1));
@@ -275,24 +272,20 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             dc.drawRoundedRectangle(x, y, w, h, px(K_R));
 
             var subColor = blend(color, FG, 0.5);
-            drawItems(dc, mid, y + px(22), [["t", symbols[k] + " " + labels[k], subColor, _tag]], 0);
+            drawItems(dc, mid, y + px(20), [["t", labels[k], subColor, _tag]], 0);
 
-            var text = v == null ? "--" : (k == 0 ? hoursReady((v * 60).toNumber()) : v.toNumber().toString() + (k == 1 ? " ms" : ""));
-            drawItems(dc, mid, y + px(50), [["t", text, v == null ? TER : color, _val]], 0);
+            var text = v == null ? "--" : (k == 0 ? hours((v * 60).toNumber()) : v.toNumber().toString());
+            drawItems(dc, mid, y + px(52), [["t", text, v == null ? TER : color, _val]], 0);
 
             if (v != null && band != null && band.size() == 4) {
-                drawCompactBand(dc, x + px(10), x + w - px(10), y + px(65), v, band, color);
+                drawCompactBand(dc, x + px(12), x + w - px(12), y + px(62), v, band, color);
             }
 
             if (base != null) {
-                var baseText = "Ø " + (k == 0 ? hoursReady((base * 60).toNumber()) : base.toNumber().toString());
-                drawItems(dc, mid, y + px(80), [["t", baseText, SEC, _tag]], 0);
+                var baseText = "Ø " + (k == 0 ? hours((base * 60).toNumber()) : base.toNumber().toString());
+                drawItems(dc, mid, y + px(86), [["t", baseText, SEC, _tag]], 0);
             }
         }
-    }
-
-    private function hoursReady(min as Number) as String {
-        return (min / 60).toString() + "h " + (min % 60).format("%02d") + "m";
     }
 
     private function drawCompactBand(dc as Dc, x0 as Number, x1 as Number, y as Number, v as Numeric, band as Array, color as Number) as Void {
@@ -404,35 +397,46 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillRoundedRectangle(x0, y, w, h, r);
 
         var sports = ["run", "bike", "swim"];
-        var acc = 0;
-        var lastColor = RING_BG;
-        var first = true;
+        // Anteile in Pixel: gefüllt wird von x0 bis xt, die Enden sind Halbkreise, dazwischen Rechtecke je Sportart
+        var done = 0;
         for (var k = 0; k < sports.size(); k++) {
             var e = goalOf(rz, sports[k]);
-            var m = e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
-            if (m <= 0 || acc >= goal) { continue; }
-            var end = acc + m > goal ? goal : acc + m;
-            var xs = x0 + w * acc / goal;
-            var xe = x0 + w * end / goal;
-            var color = sportColor(sports[k]);
-            dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-            if (first) {
-                dc.fillCircle(x0 + r, y + r, r);
-                xs = x0 + r;
-            }
-            dc.fillRectangle(xs, y, xe - xs, h);
-            if (!first) {
-                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
-                dc.fillRectangle(xs - 1, y, px(2) > 1 ? px(2) : 1, h);
-            }
-            first = false;
-            lastColor = color;
-            acc = end;
+            done += e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
         }
-        if (!first && acc < goal) {
-            var xt = x0 + w * acc / goal;
+        done = done > goal ? goal : done;
+        if (done > 0) {
+            var xt = x0 + w * done / goal;
+            var lo = x0 + r;
+            var hi = xt - r > lo ? xt - r : lo;
+            var acc = 0;
+            var firstColor = RING_BG;
+            var lastColor = RING_BG;
+            for (var k = 0; k < sports.size(); k++) {
+                var e = goalOf(rz, sports[k]);
+                var m = e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
+                if (m <= 0 || acc >= goal) { continue; }
+                var end = acc + m > goal ? goal : acc + m;
+                var xs = x0 + w * acc / goal;
+                var xe = x0 + w * end / goal;
+                xs = xs < lo ? lo : xs;
+                xe = xe > hi ? hi : xe;
+                var color = sportColor(sports[k]);
+                if (firstColor == RING_BG) { firstColor = color; }
+                lastColor = color;
+                if (xe > xs) {
+                    dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+                    dc.fillRectangle(xs, y, xe - xs, h);
+                    if (acc > 0) {
+                        dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+                        dc.fillRectangle(xs - 1, y, px(2) > 1 ? px(2) : 1, h);
+                    }
+                }
+                acc = end;
+            }
+            dc.setColor(firstColor, Graphics.COLOR_TRANSPARENT);
+            dc.fillCircle(lo, y + r, r);
             dc.setColor(lastColor, Graphics.COLOR_TRANSPARENT);
-            dc.fillCircle(xt - r, y + r, r);
+            dc.fillCircle(hi, y + r, r);
         }
 
         var mx = x0 + w * d / 6;
