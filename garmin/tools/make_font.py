@@ -7,7 +7,8 @@ wght=N setzt bei variablen Schriften die Stärke (z. B. 700), track=N ändert de
 (negativ = enger, wie letter-spacing).
 Die Schriften des Zifferblatts sind Inter (SIL Open Font License, fonts.google.com/specimen/Inter), angelehnt an Apples
 SF Pro; die variable .ttf herunterladen (Inter[opsz,wght].ttf). Fett (700) lief auf dem AMOLED zusammen:
-  python3 garmin/tools/make_font.py Inter.ttf 100 time digits wght=600 track=-2 edge=60
+  python3 garmin/tools/make_font.py Inter.ttf 114 time digits wght=600 track=-3 edge=60
+  python3 garmin/tools/make_font.py Inter.ttf 44 big digits wght=600 track=-1 edge=50
   python3 garmin/tools/make_font.py Inter.ttf 30 val wght=500 edge=50
   python3 garmin/tools/make_font.py Inter.ttf 21 cap wght=600 edge=50
   python3 garmin/tools/make_font.py Inter.ttf 17 tag wght=600 track=1 edge=40

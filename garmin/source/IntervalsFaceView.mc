@@ -13,13 +13,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SEC = 0xA1A1A6;     
     const TER = 0x48484A;
     const CARD = 0x1C1C1E;
-    const GRID = 0x55555A;    
     const TICK = 0x444446;    
     const RING_BG = 0x2C2C2E; 
     
     const ACCENT = 0x64D2FF;  
     const PROTEIN = 0xC4F0FF; 
-    const GOAL_COLOR = 0x8E8E93; 
     const OK = 0x30D158;      
     const WARN = 0xFF9F0A;     
     const BAD = 0xFF453A;      
@@ -32,11 +30,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const DATE_Y = 66;
     const PILL_Y = 76;
     const PILL_H = 24;
-    const TIME_Y = 145;       
-    const HEAD_Y = 224;       
+    const TIME_Y = 170;
+    const HEAD_Y = 246;
 
-    const K_Y = 236;
-    const K_H = 92;           
+    const K_Y = 256;
+    const K_H = 90;
     const K_W = 112;          
     const K_DX = 120;         
     const K_R = 18;           
@@ -46,19 +44,19 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const SCALE_SHORT = 10;
     const SCALE_N = 25;
 
-    // Wochenverlauf Graph
-    const G_X0 = 94;
-    const G_X1 = 360;
-    const G_TOP = 216;
-    const G_BOTTOM = 308;
-    const DAYS_Y = 328;
-    const GRAD = 6;
+    // Woche gegen Plan (tagsüber): Seitenwerte, Zeile mit Stand, Balken
+    const SIDE_Y = 238;
+    const WEEK_Y = 298;
+    const BAR_X = 82;
+    const BAR_W = 290;
+    const BAR_Y = 314;
+    const BAR_H = 14;
 
-    const RING_Y = 378;
-    const RING_DX = 82;
-    const RING_R = 34;
-    const RING_W = 6;
-    const NEXT_Y = 434;
+    // Untere Reihe: Symbol, offene Zeit, Trennstriche
+    const ICON_Y = 372;
+    const OPEN_Y = 408;
+    const ICON_DX = 86;
+    const NEXT_Y = 440;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -66,6 +64,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     private var _sleep as Boolean = false;
 
     private var _time as Graphics.FontType = Graphics.FONT_NUMBER_HOT;
+    private var _big as Graphics.FontType = Graphics.FONT_MEDIUM;
+    private var _icons as Graphics.FontType = Graphics.FONT_XTINY;
     private var _val as Graphics.FontType = Graphics.FONT_SMALL;
     private var _cap as Graphics.FontType = Graphics.FONT_XTINY;
     private var _tag as Graphics.FontType = Graphics.FONT_XTINY;
@@ -73,6 +73,8 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     function initialize() {
         WatchFace.initialize();
         _time = WatchUi.loadResource(Rez.Fonts.Time) as Graphics.FontType;
+        _big = WatchUi.loadResource(Rez.Fonts.Big) as Graphics.FontType;
+        _icons = WatchUi.loadResource(Rez.Fonts.Icons) as Graphics.FontType;
         _val = WatchUi.loadResource(Rez.Fonts.Val) as Graphics.FontType;
         _cap = WatchUi.loadResource(Rez.Fonts.Cap) as Graphics.FontType;
         _tag = WatchUi.loadResource(Rez.Fonts.Tag) as Graphics.FontType;
@@ -126,7 +128,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         if (clock.hour < MORNING_END) {
             drawMorningReady(dc, data);
         } else {
-            drawWeekGraph(dc, data);
+            drawWeek(dc, data, data.get("rz") as Array?);
         }
 
         drawWeekRow(dc, data.get("rz") as Array?);
@@ -339,123 +341,115 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.fillCircle(dx, y + h / 2, px(3));
     }
 
-    // ---- Wochenverlauf Graph mit exaktem Ziel-Korridor und Glow-Effekt ------------------
-    private function drawWeekGraph(dc as Dc, data as Dictionary) as Void {
+    // ---- Tagsüber: Woche gegen Plan ---------------------------------------------------------------
+    // Ausdauerzeit der Woche (wm[0], sonst aus wv aufsummiert) von ihrem Ziel (wm[1], das Zeitziel des Coaches), dahinter der
+    // Abstand zur geraden Soll-Linie von heute (Ziel mal vergangene Tage / 6). Darunter ein Balken über das Wochenziel,
+    // farbig nach Sportart (rz), die weiße Marke ist das Soll von heute. Seitlich Kalorien und Eiweiß. Ein Urteil ist das nicht.
+
+    private function drawWeek(dc as Dc, data as Dictionary, rz as Array?) as Void {
         var wv = data.get("wv") as Array?;
         var wm = data.get("wm") as Array?;
-        if (wv == null || wv.size() < 1) { return; }
-        
-        var curArr = wv[0] instanceof Array ? wv[0] as Array : [0,0,0,0,0,0,0];
-        var cur = cumulate(curArr);
-        var today = cur.size() - 1;
-        if (today < 0) { return; }
-        
-        var goal = wm != null && wm.size() == 2 ? numOrNull(wm[1]) : null;
-        var now = cur[today] as Number;
+        var cur = wv != null && wv.size() > 0 && wv[0] instanceof Array ? cumulate(wv[0] as Array) : [] as Array<Number>;
+        var d = cur.size() - 1;
+        d = d < 0 ? 0 : (d > 6 ? 6 : d);
+        var now = cur.size() > 0 ? cur[cur.size() - 1] as Number : 0;
+        var goal = 0;
+        if (wm != null && wm.size() == 2) {
+            var w0 = numOrNull(wm[0]);
+            var w1 = numOrNull(wm[1]);
+            now = w0 != null ? w0.toNumber() : now;
+            goal = w1 != null ? w1.toNumber() : 0;
+        }
+        if (goal <= 0) {
+            goal = goalSum(rz);
+        }
 
-        var most = 60.0;
-        most = now > most ? now.toFloat() : most;
-        if (goal != null && goal > most) { most = goal.toFloat(); }
-        most *= 1.05;
-        
-        var x0 = px(G_X0);
-        var x1 = px(G_X1);
-        var yb = px(G_BOTTOM);
-        var h = yb - px(G_TOP);
+        drawSideValues(dc, data);
+        var items = [["t", hours(now), ACCENT, _big]] as Array<Array>;
+        if (goal > 0) {
+            var diff = now - goal * d / 6;
+            items.add(["t", " von " + hours(goal) + "   ", SEC, _cap]);
+            items.add(["t", (diff < 0 ? "−" : "+") + hours(diff < 0 ? -diff : diff), FG, _cap]);
+            items.add(["t", " SOLL", SEC, _tag]);
+        }
+        drawItems(dc, _cx, px(WEEK_Y), items, 0);
+        if (goal > 0) {
+            drawWeekBar(dc, rz, goal, d);
+        }
+    }
 
-        // 1. Exakter Ziel-Korridor im Hintergrund
-        if (goal != null && goal > 0) {
-            var ghostPoly = new [9];
-            for (var i = 0; i < 7; i++) {
-                var gVal = (goal * i / 6.0).toNumber();
-                ghostPoly[i] = [gx(i, x0, x1), yb - (h * gVal / most).toNumber()];
+    // Kalorien links, Eiweiß rechts als Zahl, neben den Skalen
+    private function drawSideValues(dc as Dc, data as Dictionary) as Void {
+        var kcal = data.get("kcal");
+        var kv = kcal instanceof Dictionary ? numOrNull(kcal.get("v")) : null;
+        if (kv != null) {
+            drawItems(dc, px(56), px(SIDE_Y), [["t", kv.toNumber().toString(), PROTEIN, _tag], ["t", " kcal", SEC, _tag]], -1);
+        }
+        var pr = data.get("pr");
+        var pv = pr instanceof Dictionary ? numOrNull(pr.get("v")) : null;
+        if (pv != null) {
+            drawItems(dc, px(398), px(SIDE_Y), [["t", pv.toNumber().toString(), PROTEIN, _tag], ["t", " g", SEC, _tag]], 1);
+        }
+    }
+
+    // Summe der Wochenziele (rz) in Minuten, falls der Coach kein Gesamtziel (wm) gesetzt hat
+    private function goalSum(rz as Array?) as Number {
+        var sum = 0;
+        if (rz == null) { return 0; }
+        for (var i = 0; i < rz.size(); i++) {
+            var e = rz[i] as Array;
+            var g = numOrNull(e[2]);
+            sum += g != null ? g.toNumber() : 0;
+        }
+        return sum;
+    }
+
+    // Balken von BAR_X, Länge = Wochenziel, gefüllt mit den erledigten Minuten je Sportart (Lauf, Rad, Schwimmen von links),
+    // abgerundete Enden, dünne Trennlinien zwischen den Sportarten, weiße Marke bei Tag d von 6
+    private function drawWeekBar(dc as Dc, rz as Array?, goal as Number, d as Number) as Void {
+        var x0 = px(BAR_X);
+        var w = px(BAR_W);
+        var y = px(BAR_Y);
+        var h = px(BAR_H);
+        var r = h / 2;
+        dc.setColor(RING_BG, Graphics.COLOR_TRANSPARENT);
+        dc.fillRoundedRectangle(x0, y, w, h, r);
+
+        var sports = ["run", "bike", "swim"];
+        var acc = 0;
+        var lastColor = RING_BG;
+        var first = true;
+        for (var k = 0; k < sports.size(); k++) {
+            var e = goalOf(rz, sports[k]);
+            var m = e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
+            if (m <= 0 || acc >= goal) { continue; }
+            var end = acc + m > goal ? goal : acc + m;
+            var xs = x0 + w * acc / goal;
+            var xe = x0 + w * end / goal;
+            var color = sportColor(sports[k]);
+            dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+            if (first) {
+                dc.fillCircle(x0 + r, y + r, r);
+                xs = x0 + r;
             }
-            ghostPoly[7] = [x1, yb];
-            ghostPoly[8] = [x0, yb];
-            dc.setColor(blend(Graphics.COLOR_BLACK, GOAL_COLOR, 0.22), Graphics.COLOR_TRANSPARENT);
-            dc.fillPolygon(ghostPoly);
-        }
-
-        // 2. Erreichte Wochenstunden als kräftiger Cyan-Verlauf (Glow-Fläche)
-        if (today > 0) {
-            var poly = new [today + 3];
-            var top = yb;
-            for (var i = 0; i <= today; i++) {
-                var y = yb - (h * (cur[i] as Number) / most).toNumber();
-                poly[i] = [gx(i, x0, x1), y];
-                top = y < top ? y : top;
+            dc.fillRectangle(xs, y, xe - xs, h);
+            if (!first) {
+                dc.setColor(Graphics.COLOR_BLACK, Graphics.COLOR_TRANSPARENT);
+                dc.fillRectangle(xs - 1, y, px(2) > 1 ? px(2) : 1, h);
             }
-            poly[today + 1] = [gx(today, x0, x1), yb];
-            poly[today + 2] = [x0, yb];
-            var band = (yb - top) / GRAD + 1;
-            for (var k = 0; k < GRAD; k++) {
-                dc.setClip(x0, top + k * band, x1 - x0 + 1, band);
-                dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.65 - 0.45 * k / (GRAD - 1)), Graphics.COLOR_TRANSPARENT);
-                dc.fillPolygon(poly);
-            }
-            dc.clearClip();
+            first = false;
+            lastColor = color;
+            acc = end;
+        }
+        if (!first && acc < goal) {
+            var xt = x0 + w * acc / goal;
+            dc.setColor(lastColor, Graphics.COLOR_TRANSPARENT);
+            dc.fillCircle(xt - r, y + r, r);
         }
 
-        // 3. GRID (Gitterlinien)
-        dc.setColor(GRID, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
-        for (var i = 0; i < 7; i++) {
-            var x = gx(i, x0, x1);
-            dc.drawLine(x, px(G_TOP) - px(4), x, yb);
-        }
-
-        // 4. Soll-Linie
-        if (goal != null && goal > 0) {
-            var yg = yb - (h * goal / most).toNumber();
-            dc.setColor(GOAL_COLOR, Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(px(2));
-            drawDashed(dc, x0, yb, x1, yg);
-        }
-
-        // 5. Hauptlinie der absolvierten Einheiten (Cyan)
-        dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(px(3));
-        for (var i = 0; i < today; i++) {
-            dc.drawLine(gx(i, x0, x1), yb - (h * (cur[i] as Number) / most).toNumber(), gx(i + 1, x0, x1), yb - (h * (cur[i + 1] as Number) / most).toNumber());
-        }
-
-        // 6. ECHTER GLOW-PUNKT (Gestaffelter Neon-Effekt)
-        var tx = gx(today, x0, x1);
-        var ty = yb - (h * now / most).toNumber();
-        
-        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.2), Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(16));
-        
-        dc.setColor(blend(Graphics.COLOR_BLACK, ACCENT, 0.5), Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(10));
-        
-        dc.setColor(ACCENT, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(6));
-        
+        var mx = x0 + w * d / 6;
         dc.setColor(FG, Graphics.COLOR_TRANSPARENT);
-        dc.fillCircle(tx, ty, px(2));
-
-        var names = ["MO", "DI", "MI", "DO", "FR", "SA", "SO"];
-        for (var i = 0; i < 7; i++) {
-            drawItems(dc, gx(i, x0, x1), px(DAYS_Y), [["t", names[i] as String, i == today ? FG : SEC, _tag]], 0);
-        }
-    }
-
-    private function drawDashed(dc as Dc, xa as Number, ya as Number, xb as Number, yb as Number) as Void {
-        var dx = (xb - xa).toFloat();
-        var dy = (yb - ya).toFloat();
-        var len = Math.sqrt(dx * dx + dy * dy);
-        var dash = px(6) > 2 ? px(6) : 2;
-        var gap = px(4) > 2 ? px(4) : 2;
-        if (len < 1) { return; }
-        for (var t = 0.0; t < len; t += dash + gap) {
-            var t2 = t + dash < len ? t + dash : len;
-            dc.drawLine(xa + (dx * t / len).toNumber(), ya + (dy * t / len).toNumber(), xa + (dx * t2 / len).toNumber(), ya + (dy * t2 / len).toNumber());
-        }
-    }
-
-    private function gx(i as Number, x0 as Number, x1 as Number) as Number {
-        return x0 + (x1 - x0) * i / 6;
+        dc.fillRoundedRectangle(mx - px(2), y - px(5), px(3), h + px(10), px(1));
     }
 
     private function cumulate(mins as Array?) as Array<Number> {
@@ -470,54 +464,36 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return out;
     }
 
+    // ---- Untere Reihe: offene Zeit je Sportart -------------------------------------------------
+    // Symbol in Sportfarbe (Laufen, Rad, Schwimmen von links) und darunter die Zeit, die diese Woche noch offen ist (Ziel des
+    // Coaches minus erledigt, h:mm). Ziel erreicht: Haken, ohne Ziel "--".
+
     private function drawWeekRow(dc as Dc, rz as Array?) as Void {
         var sports = ["run", "bike", "swim"];
-        var y = px(RING_Y);
-        var r = px(RING_R);
-        var pen = px(RING_W) > 2 ? px(RING_W) : 2;
-        var rr = r - pen / 2 - px(3); 
-        
+        var glyphs = ["r", "b", "s"];
+        var y = px(ICON_Y);
         for (var k = 0; k < sports.size(); k++) {
-            var x = _cx + px(RING_DX * (k - 1));
+            var x = _cx + px(ICON_DX * (k - 1));
             var color = sportColor(sports[k]);
-            
-            dc.setColor(CARD, Graphics.COLOR_TRANSPARENT);
-            dc.fillCircle(x, y, r);
-            drawGauge(dc, x, y, rr, pen, RING_BG, 1.0);
-            
+            dc.setColor(color, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(x, y, _icons, glyphs[k], Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER);
             var e = goalOf(rz, sports[k]);
+            var done = e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
+            var goal = e != null && numOrNull(e[2]) != null ? (e[2] as Numeric).toNumber() : 0;
             if (e == null) {
-                drawItems(dc, x, y + px(8), [["t", "--", TER, _cap]], 0);
-                continue;
-            }
-            var done = (e[1] as Numeric).toNumber();
-            var goal = (e[2] as Numeric).toNumber();
-            var open = goal - done;
-            
-            drawGauge(dc, x, y, rr, pen, color, frac(done, goal));
-            
-            if (open > 0) {
-                drawItems(dc, x, y + px(8), [["t", open.toString(), color, _cap]], 0);
+                drawItems(dc, x, px(OPEN_Y), [["t", "--", TER, _cap]], 0);
+            } else if (goal - done > 0) {
+                drawItems(dc, x, px(OPEN_Y), [["t", hours(goal - done), FG, _cap]], 0);
             } else {
-                drawCheck(dc, x, y, color);
+                drawCheck(dc, x, px(OPEN_Y) - px(9), color);
             }
         }
-    }
-
-    private function drawGauge(dc as Dc, x as Number, y as Number, r as Number, pen as Number, color as Number, f as Float) as Void {
-        if (f <= 0.0) { return; }
-        var start = 225;
-        var sweep = (270 * f).toNumber();
-        var stop = start - sweep;
-        dc.setColor(color, Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(pen);
-        if (sweep > 0) {
-            dc.drawArc(x, y, r, Graphics.ARC_CLOCKWISE, start, stop < 0 ? stop + 360 : stop);
+        dc.setColor(RING_BG, Graphics.COLOR_TRANSPARENT);
+        dc.setPenWidth(px(2) > 1 ? px(2) : 1);
+        for (var k = 0; k < 2; k++) {
+            var lx = _cx + px(ICON_DX * (k - 1) + ICON_DX / 2);
+            dc.drawLine(lx, px(ICON_Y - 22), lx, px(OPEN_Y + 12));
         }
-        var a1 = Math.toRadians(start);
-        var a2 = Math.toRadians(stop);
-        dc.fillCircle(x + (r * Math.cos(a1)).toNumber(), y - (r * Math.sin(a1)).toNumber(), pen / 2);
-        dc.fillCircle(x + (r * Math.cos(a2)).toNumber(), y - (r * Math.sin(a2)).toNumber(), pen / 2);
     }
 
     private function drawNext(dc as Dc, data as Dictionary, y as Number) as Void {
