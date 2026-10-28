@@ -53,10 +53,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
     const BAR_H = 14;
 
     // Untere Reihe: Symbol, offene Zeit, Trennstriche
-    const ICON_Y = 372;
-    const OPEN_Y = 408;
+    const ICON_Y = 368;
+    const OPEN_Y = 404;
     const ICON_DX = 86;
-    const NEXT_Y = 440;
+    const NEXT_Y = 432;
 
     private var _s as Float = 1.0;
     private var _cx as Number = 0;
@@ -144,6 +144,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return h.toString() + ":" + clock.min.format("%02d");
     }
 
+    // Skalen am Rand wie bei der Apple Ultra: je 25 feine Striche, jeder sechste länger, von unten nach oben gefüllt mit dem, was
+    // heute schon gegessen ist (kcal, pr: {v, g}), über dem Ziel voll, ohne Ziel leer. Links Kalorien in Cyan, rechts Eiweiß in
+    // hellerem Cyan. Die Zahlen daneben zeigen, was bis zum Tagesziel noch fehlt (drawSideValues).
+
     private function drawScales(dc as Dc, data as Dictionary?) as Void {
         var food = 0.0;
         var protein = 0.0;
@@ -157,44 +161,18 @@ class IntervalsFaceView extends WatchUi.WatchFace {
                 protein = frac(numOrNull(pr.get("v")), numOrNull(pr.get("g")));
             }
         }
-        drawGlowScale(dc, 215, 145, food, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
-        drawGlowScale(dc, 325, 35, protein, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+        drawScale(dc, 215, 145, food, ACCENT, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
+        drawScale(dc, 325, 395, protein, PROTEIN, px(SCALE_R), SCALE_LONG, SCALE_SHORT);
     }
 
-    private function drawGlowScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
-        var arcR = r1 - px(8);
-        var penW = px(18);
-        var dir = (a0 == 215) ? Graphics.ARC_CLOCKWISE : Graphics.ARC_COUNTER_CLOCKWISE;
-
-        dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.15), Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(penW);
-        dc.drawArc(_cx, _cy, arcR, dir, a0, a1);
-
-        if (f > 0.05) {
-            var diff = (a0 == 215) ? (a1 - a0) : 70;
-            var currentAngle = a0 + (diff * f).toNumber();
-            if (a0 != 215) {
-                currentAngle = (a0 + Math.round(70 * f).toNumber()) % 360;
-            }
-            dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.45), Graphics.COLOR_TRANSPARENT);
-            dc.setPenWidth(penW - px(2));
-            dc.drawArc(_cx, _cy, arcR, dir, a0, currentAngle.toNumber());
-        }
-
-        dc.setColor(blend(Graphics.COLOR_BLACK, color, 0.5), Graphics.COLOR_TRANSPARENT);
-        dc.setPenWidth(1);
-        dc.drawArc(_cx, _cy, arcR + penW/2, dir, a0, a1);
-        dc.drawArc(_cx, _cy, arcR - penW/2, dir, a0, a1);
-
-        var angleSpan = (a0 == 215) ? (a1 - a0) : 70;
+    // Striche von Winkel a0 (unten) nach a1 (oben) ab Radius r1 nach innen, bis zum Anteil f in color
+    private function drawScale(dc as Dc, a0 as Number, a1 as Number, f as Float, color as Number, r1 as Number, longLen as Number, shortLen as Number) as Void {
         for (var i = 0; i < SCALE_N; i++) {
-            var currDeg = a0 + angleSpan * i / (SCALE_N - 1.0);
-            var a = Math.toRadians(currDeg);
+            var a = Math.toRadians(a0 + (a1 - a0) * i / (SCALE_N - 1.0));
             var long = i % 6 == 0;
             var r2 = r1 - px(long ? longLen : shortLen);
             var on = f > 0 && i <= Math.round(f * (SCALE_N - 1));
-            
-            dc.setColor(on ? color : (long ? blend(color, 0x000000, 0.5) : TICK), Graphics.COLOR_TRANSPARENT);
+            dc.setColor(on ? color : (long ? TER : TICK), Graphics.COLOR_TRANSPARENT);
             dc.setPenWidth(long ? px(3) : px(2));
             var c = Math.cos(a);
             var sn = Math.sin(a);
@@ -378,18 +356,28 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
     }
 
-    // Kalorien links, Eiweiß rechts als Zahl, neben den Skalen
+    // Was bis zum Tagesziel noch fehlt: links die Kalorien, die heute noch übrig sind, rechts das Eiweiß, das noch fehlt (ohne
+    // Ziel keine Zahl, über dem Ziel 0)
     private function drawSideValues(dc as Dc, data as Dictionary) as Void {
         var kcal = data.get("kcal");
-        var kv = kcal instanceof Dictionary ? numOrNull(kcal.get("v")) : null;
-        if (kv != null) {
-            drawItems(dc, px(56), px(SIDE_Y), [["t", kv.toNumber().toString(), PROTEIN, _tag], ["t", " kcal", SEC, _tag]], -1);
+        var kLeft = kcal instanceof Dictionary ? remaining(kcal) : null;
+        if (kLeft != null) {
+            drawItems(dc, px(56), px(SIDE_Y), [["t", kLeft.toString(), ACCENT, _tag], ["t", " kcal übrig", SEC, _tag]], -1);
         }
         var pr = data.get("pr");
-        var pv = pr instanceof Dictionary ? numOrNull(pr.get("v")) : null;
-        if (pv != null) {
-            drawItems(dc, px(398), px(SIDE_Y), [["t", pv.toNumber().toString(), PROTEIN, _tag], ["t", " g", SEC, _tag]], 1);
+        var pLeft = pr instanceof Dictionary ? remaining(pr) : null;
+        if (pLeft != null) {
+            drawItems(dc, px(398), px(SIDE_Y), [["t", pLeft.toString() + " g", PROTEIN, _tag], ["t", " noch", SEC, _tag]], 1);
         }
+    }
+
+    // Ziel minus Stand eines {v, g}-Eintrags, mindestens 0; ohne Ziel null
+    private function remaining(e as Dictionary) as Number? {
+        var v = numOrNull(e.get("v"));
+        var g = numOrNull(e.get("g"));
+        if (g == null || g <= 0) { return null; }
+        var left = g.toNumber() - (v != null ? v.toNumber() : 0);
+        return left < 0 ? 0 : left;
     }
 
     // Summe der Wochenziele (rz) in Minuten, falls der Coach kein Gesamtziel (wm) gesetzt hat
