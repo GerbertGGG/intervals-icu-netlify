@@ -376,7 +376,8 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .nsoll { position: absolute; top: -3px; height: 18px; border-left: 2px dashed var(--accent); }
 .nbar .muted { font-size: var(--fs-xs); }
 .nempty { margin: 6px 0 10px; padding: 12px 14px; border-radius: 8px; background: var(--inset); color: var(--muted); }
-.wt-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.wt-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px; padding: 10px 12px; background: var(--inset); border-radius: 8px; }
+.wt-top .num-l { font-size: var(--fs-l); }
 
 /* ---------- Leistung, Rennplan ---------- */
 .tri-row { padding: 10px 0; border-top: 1px solid var(--line); }
@@ -389,7 +390,7 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .tri-detail { color: var(--muted); font-size: var(--fs-s); margin-top: 2px; }
 .tri-total .tri-time { color: var(--accent); }
 .hm2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 16px; margin-bottom: 6px; }
-#weight svg { max-width: 720px; }
+#weight svg, #ern-weight svg { max-width: 640px; max-height: 190px; margin: 0 auto; }
 #vdot-spark svg { max-width: 240px; }
 #calendar svg { max-width: 440px; }
 .kh { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; margin-bottom: 8px; }
@@ -667,9 +668,11 @@ details.info > summary:hover { background: var(--inset); }
   </div>
 
   <h2 id="ernaehrung">Ernährung</h2>
-  <div class="card" id="ern-card" hidden style="margin-bottom:12px"><h3>Ernährung &amp; Gewicht</h3><div id="ern"></div></div>
+  <div class="grid half" style="margin-bottom:12px;align-items:start">
+    <div class="card" id="ern-card" hidden><h3>Ernährung &amp; Gewicht</h3><div id="ern"></div></div>
+    <div class="card" id="weight-card" hidden><h3>Gewichtstrend</h3><div id="weight"></div></div>
+  </div>
   <div id="nutrition"></div>
-  <div class="card" id="weight-card" hidden style="margin-top:12px"><h3>Gewichtstrend</h3><div id="weight"></div></div>
   <div class="grid half" style="margin-top:12px;align-items:start">
     <div class="card" id="cravings-card" hidden><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div><div id="cravings-list"></div></div>
   </div>

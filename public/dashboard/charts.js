@@ -437,7 +437,7 @@
 
   /* ---------- Linie mit Lücken (Ruhepuls) ---------- */
   function gapLine(host, days, values, o) {
-    const W = fitW(host, 480), H = 190, L = 40, R = o.last ? 46 : 10, T = 24, B = 34;
+    const W = fitW(host, 640), H = 170, L = 40, R = o.last ? 46 : 10, T = 22, B = 30;
     const v = days.map((d) => values[d]).filter((x) => x != null);
     const second = o.line2 ? days.map((d) => o.line2.values[d]).filter((x) => x != null) : [];
     const lo = Math.floor(Math.min(...v, ...second, o.band?.lo ?? Infinity, o.ref?.value ?? Infinity) - 2), hi = Math.ceil(Math.max(...v, ...second, o.band?.hi ?? -Infinity, o.ref?.value ?? -Infinity) + 2);
