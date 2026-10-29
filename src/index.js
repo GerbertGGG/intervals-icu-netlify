@@ -67,7 +67,12 @@ export default {
         return route(() => handleCoachAnswerRequest(req, env, isAuthorized));
       // Zeiten des Wochenvorschlags anpassen, aus dem Dashboard
       case "/api/coach/plan":
-        return route(() => handleCoachPlanRequest(req, env, isAuthorized));
+        return route(async () => {
+          const res = await handleCoachPlanRequest(req, env, isAuthorized);
+          // Widgets und Uhr lesen den Cache: nach einer Anpassung sofort neu aufbauen, damit die neuen Zeiten dort stehen
+          if (res.ok && ctx) ctx.waitUntil(warmDashboardCache(env).catch(() => {}));
+          return res;
+        });
       // MCP-Connector (mcp-oauth.js, mcp-server.js): Claude liest Intervals/Yazio und schreibt die Snapshots.
       case "/.well-known/oauth-authorization-server":
         return handleAuthServerMetadata(url);
