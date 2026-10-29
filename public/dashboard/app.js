@@ -1344,6 +1344,7 @@ function wireWeekPlanEdit() {
         document.querySelectorAll(".wp-t .wp-in").forEach((i) => { i.defaultValue = i.value; });
         sum();
         show(false);
+        load();
       } else msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`;
     } catch (e) { msg.textContent = "Nicht gespeichert: " + e.message; }
     btn.disabled = false;

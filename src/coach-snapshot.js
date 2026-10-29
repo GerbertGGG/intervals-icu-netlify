@@ -226,6 +226,31 @@ export function applyPlanEdit(coach, body, nowMs = Date.now()) {
   return { value: { ...coach, week_plan: { ...plan, targets, original, editedAt: new Date(nowMs).toISOString() } } };
 }
 
+// Vom Nutzer angepasste Zeiten des Wochenvorschlags (editedAt) gelten als Zeitziel der Woche im ganzen Dashboard: Wochenkarte, Ringe,
+// Resttag-Tempo, Widget und Wochensummen. Ohne Anpassung bleibt das Ziel aus dem Kalender. TSS und Kraft bleiben beim Coach.
+const PLAN_TO_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim" };
+const PLAN_TO_DISC = { lauf: "lauf", rad: "rad", schwimmen: "schwimmen" };
+export function applyEditedPlan(weeks, weekTotals, plan) {
+  if (!plan?.editedAt || !plan.week || !plan.targets?.length) return { weeks, weekTotals };
+  const endur = plan.targets.filter((t) => PLAN_TO_SPORT[t.sport] && Number.isFinite(Number(t.time_min)));
+  if (!endur.length) return { weeks, weekTotals };
+  const newWeeks = weeks.map((w) => {
+    if (w.weekStart !== plan.week) return w;
+    const bySport = { ...w.bySport };
+    for (const t of endur) bySport[PLAN_TO_SPORT[t.sport]] = { ...bySport[PLAN_TO_SPORT[t.sport]], targetMin: Math.round(Number(t.time_min)) || null };
+    const targetMin = Object.values(bySport).reduce((a, b) => a + (b.targetMin ?? 0), 0);
+    return { ...w, bySport, targetMin: targetMin || null };
+  });
+  const total = plan.targets.filter((t) => PLAN_TO_DISC[t.sport]).reduce((a, t) => a + (Number(t.time_min) || 0), 0);
+  let totals = weekTotals;
+  if (weekTotals?.weeks?.some((x) => x.week === plan.week)) {
+    const list = weekTotals.weeks.map((x) => (x.week === plan.week ? { ...x, goalHours: Math.round((total / 60) * 100) / 100 } : x));
+    const cur = list[list.length - 1];
+    totals = { ...weekTotals, weeks: list, goals: cur.week === plan.week ? { ...weekTotals.goals, enduranceHours: cur.goalHours } : weekTotals.goals };
+  }
+  return { weeks: newWeeks, weekTotals: totals };
+}
+
 export async function handleCoachPlanRequest(req, env, isAuthorized) {
   const headers = { "cache-control": "no-store" };
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
