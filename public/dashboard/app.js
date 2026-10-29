@@ -54,7 +54,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderStrength, renderInsights, renderStudie];
+  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderErnaehrung, renderStrength, renderInsights, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -890,6 +890,7 @@ function renderWellness(d) {
    Beides steht nebeneinander, ohne Umrechnung: Das Yazio-Ziel ist kein Verbrauch, die Bilanz gegen das Ziel ist deshalb
    kein Energiedefizit im strengen Sinn. */
 const WEIGHT_WINDOW = 28;
+const WEIGHT_DAYS = 90;
 function renderWeight(d) {
   const wv = d.wellness.filter((w) => w.weight != null);
   const card = $("weight-card");
@@ -912,6 +913,53 @@ function renderWeight(d) {
     <div><div class="muted">Gewicht, ${dKg != null ? `seit ${fmtDate(before)}` : "Verlauf"}</div><b class="num-l">${dKg != null ? sgn(dKg, 1) + " kg" : "–"}</b></div>
     <div><div class="muted">Kalorien gegen Ziel${both.length ? `, ${both.length} Tage` : ""}</div><b class="num-l">${bal != null ? sgn(bal) + " kcal" : "–"}</b></div></div>`);
   $("weight").insertAdjacentHTML("beforeend", '<details class="info"><summary>Erklärung</summary><div>Dünne Linie = Tageswert, dicke Linie = 7-Tage-Schnitt. Kalorien gegen das Yazio-Ziel nur an Tagen mit Eintrag und ohne heute; das Ziel ist kein Verbrauch, die Zahl also keine exakte Energiebilanz.</div></details>');
+}
+
+/* ---------- Karte "Ernährung & Gewicht": Gewichtsverlauf, Kalorien je Tag gegen Yazio-Ziel, Aussage des Coaches ----------
+   Das Dashboard zeigt nur Werte und die Aussage des Coaches (save_ernaehrung); es bewertet nichts. Tage ohne Eintrag (0 kcal)
+   sind "nicht eingetragen", keine Null. */
+function renderErnaehrung(d) {
+  const e = d.ernaehrung, card = $("ern-card");
+  const weight = e?.weight ?? [], coach = e?.coach ?? null;
+  const map = (key) => Object.fromEntries(d.wellness.map((w) => [w.date, w[key]]));
+  const kcal = map("calories"), goal = map("calorieGoal");
+  const days = dayRange(addDays(d.today, -13), d.today);
+  const hasKcal = days.some((x) => kcal[x] != null);
+  if (!weight.length && !coach && !hasKcal) { card.hidden = true; return; }
+  card.hidden = false;
+  $("ern").innerHTML = `<div id="ern-weight"></div><div id="ern-kcal" style="margin-top:12px"></div><div id="ern-week" class="muted" style="margin-top:6px"></div><div id="ern-coach" style="margin-top:12px"></div>`;
+
+  // Gewicht: Einzelwerte hell, 7-Tage-Mittel kräftig, Zielgewicht als Linie
+  const wDays = dayRange(addDays(d.today, -(WEIGHT_DAYS - 1)), d.today);
+  if (weight.length) {
+    const raw = Object.fromEntries(weight.map((w) => [w.date, w.kg]));
+    const avg = Object.fromEntries((e.weightTrend7d ?? []).map((w) => [w.date, w.kg]));
+    const lastDay = [...wDays].reverse().find((x) => avg[x] != null);
+    const g = coach?.goal;
+    const first = weight[0].date;
+    const shown = wDays.slice(Math.max(0, wDays.indexOf(first)));
+    C.gapLine($("ern-weight"), shown.length > 1 ? shown : wDays, raw, { unit: "kg", label: "Gewicht", dec: 1, line2: { values: avg, color: "var(--text)" }, last: lastDay ? { date: lastDay, value: avg[lastDay] } : undefined, ref: g ? { value: g.targetKg, label: `Ziel ${fmt(g.targetKg, 1)} kg bis ${fmtDate(g.byDate)}` } : undefined });
+    const src = e.weightSource === "yazio" ? "Yazio" : "Intervals-Wellness";
+    $("ern-weight").insertAdjacentHTML("beforeend", `<div class="muted">Dünne Linie = Einzelwerte, dicke Linie = 7-Tage-Mittel · Quelle ${src}${g ? ` · Ziel ${fmt(g.targetKg, 1)} kg bis ${fmtDate(g.byDate)}` : ""}</div>`);
+  } else $("ern-weight").innerHTML = '<div class="muted">Noch keine Gewichtseinträge.</div>';
+
+  // Kalorien je Tag gegen das Yazio-Ziel (inkl. Sport); leere Tage schraffiert
+  if (hasKcal) {
+    const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
+    const gm = Object.fromEntries(days.map((x) => [x, goal[x] ?? d.nutritionGoals?.kcal ?? null]).filter(([, v]) => v != null));
+    C.nutrition($("ern-kcal"), days, { values: kcal, goal: gm, training, unit: "kcal", label: "Kalorien je Tag", legend: "Marke = Yazio-Ziel inkl. Sport · gelb = drüber · schraffiert = nicht eingetragen", color: "var(--n-kcal)" });
+    const done = days.slice(-8, -1).filter((x) => kcal[x] != null);
+    const gd = done.filter((x) => gm[x] != null);
+    if (done.length) {
+      const avgK = done.reduce((a, x) => a + kcal[x], 0) / done.length;
+      $("ern-week").textContent = `Wochenschnitt (${done.length} Tage mit Eintrag, ohne heute): ${fmt(avgK)} kcal${gd.length ? ` gegen Ziel ${fmt(gd.reduce((a, x) => a + gm[x], 0) / gd.length)} kcal` : ""}`;
+    } else $("ern-week").textContent = "Noch kein abgeschlossener Tag mit Eintrag in den letzten 7 Tagen.";
+  } else $("ern-kcal").innerHTML = '<div class="muted">Keine Kalorien eingetragen.</div>';
+
+  // Aussage des Coaches
+  $("ern-coach").innerHTML = coach && (coach.headline || coach.text || coach.weekLine)
+    ? `${coach.headline ? `<b>${esc(coach.headline)}</b>` : ""}${coach.text ? `<p style="margin:4px 0;white-space:pre-line">${esc(coach.text)}</p>` : ""}${coach.weekLine ? `<p class="muted" style="margin:4px 0">${esc(coach.weekLine)}</p>` : ""}<div class="muted"><small>Coach, Stand ${new Date(coach.fetchedAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}</small></div>`
+    : '<div class="muted">Noch keine Aussage des Coaches zu Ernährung und Gewicht.</div>';
 }
 
 /* ---------- 6 · Ernährung ---------- */

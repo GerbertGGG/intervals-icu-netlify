@@ -767,3 +767,10 @@ Sortiert nach Gewicht. „Beleg“ nennt, wie ich es festgestellt habe.
 ## Anhang: Wie ich die Beispiele erzeugt habe
 
 `node` mit direktem Import der Funktionen `computeVdotFromRaceTime`, `paceTargetsFromVdot`, `predictRaceTimesFromVdot` (aus `src/vdot.js`) sowie `getPeakLongRunKm` und `buildLongRunProgressionWeeks` (aus `src/long-run-plan.js`). Keine Netzwerkzugriffe, keine Änderung am Code.
+
+## Gewicht und Ernährung (ernaehrung.js)
+
+- `ernaehrung.weight`: Gewichtseinträge `{date, kg}` der letzten 90 Tage, neueste zuletzt. Quelle ist Yazio (Sync in `yazio-sync.js`, KV `yazio:weight`); gibt es dort keine, das `weight`-Feld aus Intervals-Wellness (`weightSource`: `yazio` oder `intervals`).
+- `ernaehrung.weightTrend7d`: je Tag das Mittel aller Einträge der 7 Kalendertage bis einschließlich diesem Tag, vom ersten bis zum letzten Eintrag; Tage ohne Eintrag im Fenster fehlen. Reine Rechnung, keine Bewertung.
+- `ernaehrung.coach`: Aussage aus `save_ernaehrung` (`headline`, `text`, `weekLine`, `goal`), das Ziel bleibt bei Updates ohne `goal` stehen. Das Dashboard zeigt sie nur an.
+- Die Kalorienbalken der Karte kommen aus den Wellness-Feldern `Calories`/`CalorieGoal` (derselbe Yazio-Sync wie bei `get_nutrition`); 0 kcal gilt als „nicht eingetragen“.

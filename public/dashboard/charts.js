@@ -440,7 +440,7 @@
     const W = fitW(host, 480), H = 190, L = 40, R = o.last ? 46 : 10, T = 24, B = 34;
     const v = days.map((d) => values[d]).filter((x) => x != null);
     const second = o.line2 ? days.map((d) => o.line2.values[d]).filter((x) => x != null) : [];
-    const lo = Math.floor(Math.min(...v, ...second, o.band?.lo ?? Infinity) - 2), hi = Math.ceil(Math.max(...v, ...second, o.band?.hi ?? -Infinity) + 2);
+    const lo = Math.floor(Math.min(...v, ...second, o.band?.lo ?? Infinity, o.ref?.value ?? Infinity) - 2), hi = Math.ceil(Math.max(...v, ...second, o.band?.hi ?? -Infinity, o.ref?.value ?? -Infinity) + 2);
     const s = svg(W, H, o.label);
     const x = (i) => L + (W - L - R) * (i / Math.max(1, days.length - 1)), y = (val) => T + (H - T - B) * (1 - (val - lo) / (hi - lo));
     // Persönliches Band (üblicher Bereich) als grauer Streifen hinter der Linie
@@ -448,6 +448,8 @@
     for (const t of [lo, (lo + hi) / 2, hi]) s.append(el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), class: "grid-l" }), el("text", { x: L - 6, y: y(t) + 4, "text-anchor": "end" }, U.fmt(t, o.dec ?? (hi - lo < 6 ? 1 : 0))));
     s.append(el("text", { x: 4, y: 12 }, o.unit));
     const path = (vals) => { let d = "", pen = false; days.forEach((day, i) => { const val = vals[day]; if (val == null) { pen = false; return; } d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(val).toFixed(1)}`; pen = true; }); return d; };
+    // Zielwert als gestrichelte Linie mit Beschriftung (vom Coach gesetzt)
+    if (o.ref) s.append(title(el("line", { x1: L, x2: W - R, y1: y(o.ref.value), y2: y(o.ref.value), stroke: "var(--ok)", "stroke-width": 1.5, "stroke-dasharray": "5 4" }), o.ref.tip ?? o.ref.label), el("text", { x: L + 4, y: y(o.ref.value) - 4, style: "fill:var(--ok);font-size:10px" }, o.ref.label));
     if (o.line2) s.append(el("path", { d: path(o.line2.values), fill: "none", stroke: o.line2.color ?? "var(--text)", "stroke-width": 2.4, opacity: 0.85 }));
     s.append(el("path", { d: path(values), fill: "none", stroke: "var(--accent)", "stroke-width": o.line2 ? 1.2 : 2, opacity: o.line2 ? 0.55 : 1 }));
     days.forEach((day, i) => { const val = values[day]; if (val != null) s.append(title(el("circle", { cx: x(i), cy: y(val), r: o.line2 ? 2 : 2.5, fill: "var(--accent)" }), `${U.fmtDate(day)}: ${U.fmt(val, o.dec ?? 0)} ${o.unit}`)); });

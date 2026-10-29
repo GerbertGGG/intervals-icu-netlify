@@ -4,7 +4,7 @@
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
-// save_studie, save_coach, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// save_studie, save_coach, save_ernaehrung, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, isoDateBerlin, listIsoDaysInclusive } from "./date-utils.js";
@@ -19,6 +19,7 @@ import { INSIGHTS_KV_KEY, validateInsight, validateArchive, upsertInsight, archi
 import { computeWeekTotals, currentWeekTotals, weekTotalsOldest } from "./week-totals.js";
 import { withSwimIntervals } from "./swim-time.js";
 import { TARGETS_KV_KEY, COACH_HISTORY, validateTargets, appendTarget, readTargets, targetsView } from "./targets-snapshot.js";
+import { ERNAEHRUNG_KV_KEY, validateErnaehrung, mergeErnaehrung, buildErnaehrung, WEIGHT_DAYS } from "./ernaehrung.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 
 // get_nutrition fetches one Yazio API round-trip per day in the range (Yazio has
@@ -199,6 +200,30 @@ const TOOLS = [
     },
   },
   {
+    name: "save_ernaehrung",
+    description:
+      "Schreibt die Ernährungs- und Gewichtsaussage des Coaches fürs Dashboard (Karte \"Ernährung & Gewicht\"); get_coach liefert sie unter ernaehrung.coach. fetchedAt = jetzt. Mindestens eines von headline, text, weekLine oder goal. Das Ziel (goal) bleibt gespeichert, wenn es fehlt; goal null entfernt es.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
+        headline: { type: "string", description: "Kurzaussage, max. 80 Zeichen (optional)." },
+        text: { type: "string", description: "Tagesaussage, max. 2000 Zeichen (optional)." },
+        weekLine: { type: "string", description: "Wochenzeile, max. 300 Zeichen (optional)." },
+        goal: {
+          type: ["object", "null"],
+          description: "Gewichtsziel (optional). Weglassen = das gespeicherte Ziel bleibt, null = Ziel entfernen.",
+          properties: {
+            targetKg: { type: "number", description: "Zielgewicht in kg, 30 bis 300." },
+            byDate: { type: "string", description: "Bis wann, YYYY-MM-DD." },
+          },
+          required: ["targetKg", "byDate"],
+        },
+      },
+      required: ["fetchedAt"],
+    },
+  },
+  {
     name: "save_experiment",
     description:
       "Schreibt (überschreibt) das laufende Trainings-Experiment fürs Dashboard (Karte \"Experiment\"). Die Trainingstage je Woche rechnet der Worker selbst aus den Aktivitäten. fetchedAt = jetzt. Nur Messwerte übergeben, die es wirklich gibt; fehlt ein aktueller Wert, current und currentDate auf null setzen.",
@@ -335,7 +360,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, referenceHours = Referenzwoche (Mittel der Ausdauerzeit der letzten 3 Wochen ohne leichte Wochen unter 70 %; null ohne Vorwochen), byDiscipline { lauf, rad, schwimmen } in Stunden (Schwimmen nur Bewegungszeit ohne Pausen am Beckenrand), swimMovingHours = gezählte Schwimmzeit, swimElapsedHours = Gesamtzeit inkl. Pausen (nur Info), swimRestShare = Pausenanteil in % (null ohne Schwimmen), swimTimeEstimated: true nur, wenn eine Einheit ohne Bewegungszeit und Laps mit der Gesamtzeit zählt, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, referenceHours = Referenzwoche (Mittel der Ausdauerzeit der letzten 3 Wochen ohne leichte Wochen unter 70 %; null ohne Vorwochen), byDiscipline { lauf, rad, schwimmen } in Stunden (Schwimmen nur Bewegungszeit ohne Pausen am Beckenrand), swimMovingHours = gezählte Schwimmzeit, swimElapsedHours = Gesamtzeit inkl. Pausen (nur Info), swimRestShare = Pausenanteil in % (null ohne Schwimmen), swimTimeEstimated: true nur, wenn eine Einheit ohne Bewegungszeit und Laps mit der Gesamtzeit zählt, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und die Ernährung (ernaehrung: coach = Aussage aus save_ernaehrung mit headline, text, weekLine, goal {targetKg, byDate}; weight = Gewichtseinträge {date, kg} der letzten 90 Tage, neueste zuletzt; weightTrend7d = 7-Tage-Mittel pro Tag; weightSource = yazio oder intervals; null = nicht abrufbar) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -358,6 +383,7 @@ async function callTool(env, name, args) {
   if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
   if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
   if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY, mergeCoach);
+  if (name === "save_ernaehrung") return saveSnapshot(env, args, validateErnaehrung, ERNAEHRUNG_KV_KEY, mergeErnaehrung);
   if (name === "save_experiment") return saveSnapshot(env, args, validateExperiment, EXPERIMENT_KV_KEY);
   if (name === "save_profil") return saveSnapshot(env, args, validateProfil, PROFIL_KV_KEY);
   if (name === "save_targets") {
@@ -394,11 +420,13 @@ async function callTool(env, name, args) {
     const today = isoDateBerlin();
     const stored = await readTargets(env);
     const weekTotals = (async () => currentWeekTotals(computeWeekTotals(await withSwimIntervals(env, await fetchIntervalsActivities(env, weekTotalsOldest(today), today)), today, stored)))().catch(() => null);
-    const [coach, experiment, profil, insights, week_totals] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env), readInsights(env), weekTotals]);
+    // ernaehrung: Coach-Aussage und Gewicht (Yazio, sonst Intervals-Wellness); Fehler machen daraus null, nie einen Fehler in get_coach
+    const ernaehrung = buildErnaehrung(env, today, () => fetchIntervalsWellnessRange(env, isoDate(new Date(Date.parse(today) - (WEIGHT_DAYS - 1) * 86400000)), today)).catch(() => null);
+    const [coach, experiment, profil, insights, week_totals, ernaehrungView] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env), readInsights(env), weekTotals, ernaehrung]);
     // targets: heute geltendes Wochenziel, geplante Änderungen und die letzten Einträge (save_targets), neueste zuerst
     const { current, upcoming, history } = targetsView(stored, today, COACH_HISTORY);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    const extra = { experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals, targets: { current, upcoming, history } };
+    const extra = { experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals, ernaehrung: ernaehrungView, targets: { current, upcoming, history } };
     return coach
       ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
       : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };

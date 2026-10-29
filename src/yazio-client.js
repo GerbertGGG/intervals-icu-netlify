@@ -109,6 +109,30 @@ function describeRawShape(raw) {
   return { shape: typeof raw };
 }
 
+// Koerpergewicht-Eintraege (Datum, kg). Der Endpunkt ist inoffiziell und hier NICHT gegen ein echtes Konto geprueft:
+// bekannt ist /user/bodyvalues/weight, die genaue Form (Bereichsabfrage, Feldnamen) ist geraten. Deshalb werden mehrere
+// Pfade der Reihe nach probiert und verschiedene Antwortformen akzeptiert; liefert keiner brauchbare Eintraege, gibt die
+// Funktion [] zurueck (der Aufrufer faellt dann auf das Intervals-Gewicht zurueck). Geloggt wird nie ein Token oder Antworttext.
+function weightEntriesFrom(data) {
+  const list = Array.isArray(data) ? data : Array.isArray(data?.weights) ? data.weights : Array.isArray(data?.values) ? data.values : data && typeof data === "object" ? [data] : [];
+  return list
+    .map((e) => ({ date: String(e?.date ?? e?.day ?? "").slice(0, 10), kg: Number(e?.value ?? e?.weight ?? e?.kg) }))
+    .filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(e.date) && Number.isFinite(e.kg) && e.kg > 0);
+}
+
+export async function fetchYazioWeights(env, fromIso, toIso) {
+  const paths = [`/user/bodyvalues/weight?start=${fromIso}&end=${toIso}`, `/user/bodyvalues/weight?date=${toIso}`, "/user/bodyvalues/weight/last"];
+  for (const path of paths) {
+    try {
+      const entries = weightEntriesFrom(await yazioGet(env, path));
+      if (entries.length) return entries;
+    } catch (e) {
+      console.warn("yazio weight fetch failed", { path: path.split("?")[0], status: String(e?.message ?? e).match(/\b[45]\d\d\b/)?.[0] ?? "error" });
+    }
+  }
+  return [];
+}
+
 // The athlete's own diet goal from the Yazio app (e.g. a deficit for weight loss).
 // Used as the floor for CalorieGoal - see fetchYazioDailyNutrition's caller in sync.js.
 export async function fetchYazioDailyGoalKcal(env, dateIso) {
