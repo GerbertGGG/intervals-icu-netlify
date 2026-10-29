@@ -915,7 +915,7 @@ function renderWeight(d) {
   $("weight").insertAdjacentHTML("beforeend", '<details class="info"><summary>Erklärung</summary><div>Dünne Linie = Tageswert, dicke Linie = 7-Tage-Schnitt. Kalorien gegen das Yazio-Ziel nur an Tagen mit Eintrag und ohne heute; das Ziel ist kein Verbrauch, die Zahl also keine exakte Energiebilanz.</div></details>');
 }
 
-/* ---------- Karte "Ernährung & Gewicht": Gewichtsverlauf, Kalorien je Tag gegen Yazio-Ziel, Aussage des Coaches ----------
+/* ---------- Karte "Ernährung & Gewicht": Gewichtsverlauf, Wochenschnitt kcal gegen Yazio-Ziel, Aussage des Coaches ----------
    Das Dashboard zeigt nur Werte und die Aussage des Coaches (save_ernaehrung); es bewertet nichts. Tage ohne Eintrag (0 kcal)
    sind "nicht eingetragen", keine Null. */
 function renderErnaehrung(d) {
@@ -927,7 +927,7 @@ function renderErnaehrung(d) {
   const hasKcal = days.some((x) => kcal[x] != null);
   if (!weight.length && !coach && !hasKcal) { card.hidden = true; return; }
   card.hidden = false;
-  $("ern").innerHTML = `<div id="ern-weight"></div><div id="ern-kcal" style="margin-top:12px"></div><div id="ern-week" class="muted" style="margin-top:6px"></div><div id="ern-coach" style="margin-top:12px"></div>`;
+  $("ern").innerHTML = `<div id="ern-weight"></div><div id="ern-week" class="muted" style="margin-top:6px"></div><div id="ern-coach" style="margin-top:12px"></div>`;
 
   // Gewicht: Einzelwerte hell, 7-Tage-Mittel kräftig, Zielgewicht als Linie
   const wDays = dayRange(addDays(d.today, -(WEIGHT_DAYS - 1)), d.today);
@@ -943,18 +943,16 @@ function renderErnaehrung(d) {
     $("ern-weight").insertAdjacentHTML("beforeend", `<div class="muted">Dünne Linie = Einzelwerte, dicke Linie = 7-Tage-Mittel · Quelle ${src}${g ? ` · Ziel ${fmt(g.targetKg, 1)} kg bis ${fmtDate(g.byDate)}` : ""}</div>`);
   } else $("ern-weight").innerHTML = '<div class="muted">Noch keine Gewichtseinträge.</div>';
 
-  // Kalorien je Tag gegen das Yazio-Ziel (inkl. Sport); leere Tage schraffiert
+  // Kalorien: nur der Wochenschnitt als Zeile, das Tagesdiagramm steht darunter ("Kalorien gegen Ziel")
   if (hasKcal) {
-    const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
     const gm = Object.fromEntries(days.map((x) => [x, goal[x] ?? d.nutritionGoals?.kcal ?? null]).filter(([, v]) => v != null));
-    C.nutrition($("ern-kcal"), days, { values: kcal, goal: gm, training, unit: "kcal", label: "Kalorien je Tag", legend: "Marke = Yazio-Ziel inkl. Sport · gelb = drüber · schraffiert = nicht eingetragen", color: "var(--n-kcal)" });
     const done = days.slice(-8, -1).filter((x) => kcal[x] != null);
     const gd = done.filter((x) => gm[x] != null);
     if (done.length) {
       const avgK = done.reduce((a, x) => a + kcal[x], 0) / done.length;
       $("ern-week").textContent = `Wochenschnitt (${done.length} Tage mit Eintrag, ohne heute): ${fmt(avgK)} kcal${gd.length ? ` gegen Ziel ${fmt(gd.reduce((a, x) => a + gm[x], 0) / gd.length)} kcal` : ""}`;
     } else $("ern-week").textContent = "Noch kein abgeschlossener Tag mit Eintrag in den letzten 7 Tagen.";
-  } else $("ern-kcal").innerHTML = '<div class="muted">Keine Kalorien eingetragen.</div>';
+  }
 
   // Aussage des Coaches
   $("ern-coach").innerHTML = coach && (coach.headline || coach.text || coach.weekLine)
