@@ -1,5 +1,6 @@
 import { putWellnessDay } from "./intervals-client.js";
-import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
+import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal, fetchYazioWeights } from "./yazio-client.js";
+import { storeWeights, WEIGHT_DAYS } from "./ernaehrung.js";
 import { listIsoDaysInclusive } from "./date-utils.js";
 
 // Schreibt die Yazio-Tageswerte als Zusatzfelder in den Intervals-Wellness-Eintrag;
@@ -28,5 +29,17 @@ export async function syncYazioRange(env, oldest, newest) {
       console.warn("yazio calorie goal sync failed", { day, error: String(e?.message ?? e) });
     }
     if (Object.keys(patch).length > 0) await putWellnessDay(env, day, patch);
+  }
+  await syncYazioWeights(env, newest);
+}
+
+// Gewichtseintraege der letzten 90 Tage in den KV (best effort; ohne Eintraege bleibt der Speicher unveraendert).
+async function syncYazioWeights(env, today) {
+  try {
+    const from = new Date(Date.parse(today) - (WEIGHT_DAYS - 1) * 86400000).toISOString().slice(0, 10);
+    const entries = await fetchYazioWeights(env, from, today);
+    if (entries.length) await storeWeights(env, entries, today);
+  } catch (e) {
+    console.warn("yazio weight sync failed", String(e?.message ?? e));
   }
 }

@@ -18,6 +18,7 @@ import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-pars
 import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
+import { buildErnaehrung } from "./ernaehrung.js";
 import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
 import { computeWeekTotals, enduranceSecOf, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
@@ -982,5 +983,7 @@ export async function handleDashboardRequest(req, env) {
   const dashboard = await buildDashboard(env);
   // Tagesziele der Ernährung aus Yazio (best effort, in KV gecacht): fehlt der Zugang oder scheitert die Abfrage, bleibt es null.
   const nutritionGoals = hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
-  return json({ ...dashboard, nutritionGoals }, 200, headers);
+  // Ernährung & Gewicht (ernaehrung.js): Coach-Aussage, Gewichtsverlauf; bei Fehler null, das Dashboard bleibt heil.
+  const ernaehrung = await buildErnaehrung(env, dashboard.today, dashboard.wellness).catch(() => null);
+  return json({ ...dashboard, nutritionGoals, ernaehrung }, 200, headers);
 }
