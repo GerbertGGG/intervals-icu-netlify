@@ -154,4 +154,13 @@ console.log("coach week_plan ok");
   assert.equal(r.value.week_plan.original[0].time_min, 180);
   const r2 = applyPlanEdit(r.value, { targets: [{ sport: "lauf", time_min: 100 }] }, 0);
   assert.equal(r2.value.week_plan.original[0].time_min, 180);
+  // Angepasste Zeiten gelten als Wochenziel im Dashboard
+  const { applyEditedPlan } = await import("../src/coach-snapshot.js");
+  const wk = [{ weekStart: "2026-10-26", targetMin: 100, bySport: { run: { targetMin: 100 }, bike: { targetMin: 100 }, swim: { targetMin: null }, strength: {} } }];
+  const plan = { week: "2026-10-26", editedAt: "x", targets: [{ sport: "lauf", time_min: 60 }, { sport: "rad", time_min: 175 }, { sport: "kraft", time_min: 60 }] };
+  const e = applyEditedPlan(wk, { goals: {}, weeks: [{ week: "2026-10-26", goalHours: 3 }] }, plan);
+  assert.equal(e.weeks[0].bySport.bike.targetMin, 175);
+  assert.equal(e.weeks[0].targetMin, 235);
+  assert.equal(e.weekTotals.weeks[0].goalHours, 3.92);
+  assert.equal(applyEditedPlan(wk, null, { ...plan, editedAt: null }).weeks, wk);
 }

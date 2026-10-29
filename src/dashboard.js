@@ -18,7 +18,7 @@ import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-pars
 import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
-import { readCoach } from "./coach-snapshot.js";
+import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
 import { computeWeekTotals, enduranceSecOf, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
 import { withSwimIntervals } from "./swim-time.js";
@@ -888,7 +888,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const summary = buildSummary(wellness, todayIso, { sickDays, longWellness });
 
   const daily = buildDaily(todayIso, activities);
-  const weeks = buildWeeks(todayIso, activities, events);
+  const weeks = applyEditedPlan(buildWeeks(todayIso, activities, events), null, coach?.week_plan).weeks;
   const baseRuns = buildBaseRuns(blockSessions.runs ?? [], snapshot, blockTargets, seasonBlock, todayIso);
   // Naechster Blocktest (Termin aus dem Block-Eintrag oder geplantes Workout "Blocktest") fuer Heute-Band und Grundlagenlaeufe;
   // ein Termin, zu dem schon ein Blocktest erkannt ist (auch verschoben, ±2 Tage), ist erledigt
@@ -963,7 +963,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     trainingDays: activitiesR.ok ? computeTrainingDays(activities, todayIso) : null,
     // Wochenziele (week-totals.js): Ausdauerstunden ohne Kraft und Kraftsätze in 2 Wochen, letzte 8 Wochen, je Woche gegen das
     // Ziel, das der Coach für sie gesetzt hat (save_targets); dieselbe Rechnung wie get_coach. targets: geltendes Ziel und Historie
-    weekTotals: activitiesR.ok ? { ...computeWeekTotals(weekActs, todayIso, storedTargets), targets } : null,
+    weekTotals: activitiesR.ok ? { ...applyEditedPlan([], computeWeekTotals(weekActs, todayIso, storedTargets), coach?.week_plan).weekTotals, targets } : null,
     // Aktueller Rahmen des Coaches (save_targets): Wochenziel, Steigerung, Intensität je Sportart, Leitplanken, Nicht erlaubt, Historie.
     // loadHint: Ramp Rate / ACWR nur, wenn auffällig hoch (sonst null)
     targets,
