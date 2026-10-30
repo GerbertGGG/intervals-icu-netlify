@@ -587,6 +587,41 @@ details.info > summary:hover { background: var(--inset); }
 @media (min-width: 760px) { .kpi:nth-child(n) { border-top: 0; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } html { scroll-behavior: auto; } }
 @media print { .jump { display: none; } .card, .tile, .hero { box-shadow: none; border: 1px solid var(--line); } }
+
+/* ---------- Überarbeitung: ruhigere Flächen, getrennte Karten, klare Abschnitte (nur Darstellung, Inhalte unverändert) ---------- */
+:root { --r: 14px; --coach-bg: #e6eef6; --coach-line: #cfdceb; --bg: #eef0f3; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --coach-bg: #172230; --coach-line: #243448; --bg: #0d0f12; } }
+:root[data-theme="dark"] { --coach-bg: #172230; --coach-line: #243448; --bg: #0d0f12; }
+main { padding-top: 20px; }
+header { padding-bottom: 8px; }
+h1 { font-size: var(--fs-xl); font-weight: 700; letter-spacing: -.02em; }
+.srcbar { gap: 6px; margin-top: 8px; }
+.srcbar > * { background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 3px 10px; }
+.jump { gap: 4px; margin: 14px 0 0; padding: 4px; top: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+.jump a { padding: 8px 14px; border-bottom: 0; border-radius: 8px; }
+.jump a:hover { background: var(--inset); color: var(--text); }
+.jump a.active { background: var(--accent); color: var(--on-accent); border-bottom-color: transparent; }
+h2 { border-top: 0; padding-top: 0; margin: 48px 0 14px; display: flex; align-items: center; gap: 14px; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; }
+h2:not(.sr-only)::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
+.cockpit-group { display: flex; align-items: center; gap: 12px; margin: 36px 0 12px; }
+.cockpit-group::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
+.card, .tile { box-shadow: 0 1px 2px rgba(20,23,26,.04); }
+.card { padding: 18px; }
+.tile { padding: 16px 18px; }
+/* Heute: Coach-Karte und Tagesplan als zwei getrennte Karten */
+.hero { background: none; border: 0; border-radius: 0; overflow: visible; gap: var(--gap); }
+.hero > div { border: 1px solid var(--line); border-radius: var(--r); background: var(--card); padding: 20px; box-shadow: 0 1px 2px rgba(20,23,26,.04); }
+.hero > div + div { border-top: 1px solid var(--line); }
+.hero > .hero-status, .hero-status.coach { background: var(--coach-bg); border-color: var(--coach-line); border-left: 1px solid var(--coach-line); }
+.hero-status.coach .hero-k, .hero-status.coach .cockpit-group { color: var(--accent); }
+.coach-q { background: var(--card); border-left-color: var(--accent); }
+.hero-facts { border-top-color: var(--coach-line); }
+.hero-status .badge.plain, .hero-status .coach-bl { background: var(--card); }
+/* Kennzahlen als einzelne Kacheln statt eines Rasters mit Haarlinien */
+.kpis { gap: 8px; background: none; border: 0; border-radius: 0; overflow: visible; }
+.kpi { background: var(--inset); border-radius: 10px; padding: 12px 14px; }
+.hero-plan > .kpis .kpi { background: var(--inset); }
+.coach-q textarea { min-height: 44px; }
 </style>
 </head>
 <body>
