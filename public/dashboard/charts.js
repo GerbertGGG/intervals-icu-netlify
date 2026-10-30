@@ -658,10 +658,12 @@
       items.forEach((w, i) => {
         const x = L + slot * i + (slot - bw) / 2;
         let acc = 0;
-        for (const k of o.sports) {
-          const v = (w.by[k] ?? 0) / 60;
+        // Segmente in der Reihenfolge der Einheiten (gelb-grün-gelb), ohne Reihenfolge feste Sportreihenfolge
+        const segs = w.segs?.length ? w.segs : o.sports.map((k) => [k, w.by[k] ?? 0]);
+        for (const [k, min] of segs) {
+          const v = min / 60;
           if (!(v > 0)) continue;
-          s.append(title(el("rect", { x, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v)), fill: `var(--s-${k})`, opacity: w.partial ? 0.5 : 1 }), `${w.tip}: ${o.names[k]} ${o.fmtV(w.by[k])}`));
+          s.append(title(el("rect", { x, y: y(acc + v), width: bw, height: Math.max(0, y(acc) - y(acc + v)), fill: `var(--s-${k})`, opacity: w.partial ? 0.5 : 1 }), `${w.tip}: ${o.names[k]} ${o.fmtV(min)}`));
           acc += v;
         }
         if (w.partial && acc > 0) s.append(el("rect", { x, y: y(acc), width: bw, height: Math.max(0, y(0) - y(acc)), fill: "url(#hatch)" }));
