@@ -605,7 +605,7 @@ console.log("zones from intervals ok");
   // An die Uhr gehen nur die Felder, die das Zifferblatt nutzt
   const { watchPayload } = await import("../src/widget.js");
   const slim = watchPayload(w);
-  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "next", "pr", "rd", "rv", "rz", "wm", "wv"].filter((k) => k in w).sort());
+  assert.deepEqual(Object.keys(slim).sort(), ["co", "kcal", "next", "pr", "rd", "rv", "rz", "wb", "wm", "wv"].filter((k) => k in w).sort());
   // Eiweissziel aus Yazio (nutritionGoals im zwischengespeicherten Dashboard), sonst null
   assert.equal(w.pr.g, null);
   assert.deepEqual(buildWidgetWatch({ ...d, nutritionGoals: { kcal: 2400, proteinG: 150 } }).pr.g, 150);
