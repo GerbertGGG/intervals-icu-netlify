@@ -380,7 +380,7 @@ function renderWeekGoals(d, tile) {
   const G = T.goals, cur = T.weeks[T.weeks.length - 1], prev = T.weeks[T.weeks.length - 2];
   const goalMin = G.enduranceHours * 60, scale = Math.max(goalMin, cur.enduranceMin) || 1;
   const segs = Object.entries(DISC_SPORT).map(([k, sp]) => ({ k, sp, min: cur.byDisciplineMin[k] }));
-  const bar = `<div class="cbar wg-bar"><div class="wg-segs">${segs.filter((x) => x.min > 0).map((x) => `<span style="width:${(x.min / scale) * 100}%;background:var(--s-${x.sp})" title="${SPORT_LABEL[x.sp]} ${hmm(x.min)} h"></span>`).join("")}</div>${cur.enduranceMin > goalMin ? `<i style="left:${(goalMin / scale) * 100}%" title="Ziel ${hmm(goalMin)} h"></i>` : ""}</div>`;
+  const bar = `<div class="cbar wg-bar"><div class="wg-segs">${(cur.segments ?? []).filter((x) => x.min > 0).map((x) => `<span style="width:${(x.min / scale) * 100}%;background:var(--s-${DISC_SPORT[x.disc]})" title="${SPORT_LABEL[DISC_SPORT[x.disc]]} ${hmm(x.min)} h"></span>`).join("")}</div>${cur.enduranceMin > goalMin ? `<i style="left:${(goalMin / scale) * 100}%" title="Ziel ${hmm(goalMin)} h"></i>` : ""}</div>`;
   const legend = `<div class="dots">${segs.map((x) => `<span><i style="background:var(--s-${x.sp})"></i>${SPORT_LABEL[x.sp]} ${hmm(x.min)}</span>`).join("")}</div>`;
   const setsGoal = G.strengthSets2w, sets = cur.strengthSets2w;
   const kraft = `<div class="wg-kraft"><div class="wg-l"><b>Kraft: ${fmt(sets)} / ${fmt(setsGoal)} Sätze</b> <span class="muted">(2 Wochen)</span></div>
