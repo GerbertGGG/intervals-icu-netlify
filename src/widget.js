@@ -507,6 +507,20 @@ function watchWeekDays(d) {
   });
 }
 
+// Wochenbalken der Uhr in der Reihenfolge der Einheiten (Mo bis heute): [Sportart, Minuten], aufeinanderfolgende Einheiten
+// derselben Sportart zusammengefasst. Die Uhr haengt jedes Stueck in der Sportfarbe hinten an.
+function watchWeekBar(d) {
+  const monday = addDays(d.today, -dayIndex(d.today));
+  const out = [];
+  for (let i = 0; i <= dayIndex(d.today); i++) {
+    for (const [k, m] of d.daily.find((x) => x.date === addDays(monday, i))?.segs ?? []) {
+      if (out.length && out[out.length - 1][0] === k) out[out.length - 1][1] += m;
+      else out.push([k, m]);
+    }
+  }
+  return out;
+}
+
 // Wochenvergleich fuer das Zifferblatt: Ausdauerminuten je Tag, wv = [diese Woche Mo bis heute, Vorwoche Mo bis So]. Die Uhr
 // summiert sie auf und zeichnet beide Kurven mit der geraden Soll-Linie von 0 bis zum Ziel des Coaches (wm). Ohne Ausdauerwert
 // des Tages (aeltere Daten) die Minuten von Lauf, Rad und Schwimmen.
@@ -613,13 +627,14 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     wd: watchWeekDays(d),
     wm: weekGoals(d) ? [Math.round(weekGoals(d).min), weekGoals(d).goalMin] : null,
     wv: watchWeekCompare(d),
+    wb: watchWeekBar(d),
     la: watchLast(d),
   };
 }
 
 // Felder, die das Zifferblatt nutzt (garmin/README.md). Nur sie gehen an die Uhr: Der Hintergrunddienst darf nur wenig Daten an
 // das Zifferblatt uebergeben (Background.exit), eine groessere Antwort kommt dort nicht an, und die Uhr zeigt nur "!".
-const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "kcal", "pr"];
+const WATCH_KEYS = ["rd", "co", "rz", "next", "rv", "wm", "wv", "wb", "kcal", "pr"];
 export const watchPayload = (w) => Object.fromEntries(WATCH_KEYS.filter((k) => w[k] !== undefined).map((k) => [k, w[k]]));
 
 // Das Dashboard wird fuer alle Widgets kurz in KV gehalten: Jede Ansicht ruft den Worker einzeln ab, ohne Cache

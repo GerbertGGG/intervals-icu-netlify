@@ -345,8 +345,22 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         }
         drawItems(dc, _cx, px(WEEK_Y), items, 0);
         if (goal > 0) {
-            drawWeekBar(dc, rz, goal, d);
+            drawWeekBar(dc, weekSegments(data.get("wb") as Array?, rz), goal, d);
         }
+    }
+
+    // Stücke des Wochenbalkens [Sportart, Minuten]: in der Reihenfolge der Einheiten (wb); ohne wb (älterer Worker) je Sportart
+    // aus den erledigten Minuten in rz (Lauf, Rad, Schwimmen)
+    private function weekSegments(wb as Array?, rz as Array?) as Array {
+        if (wb != null && wb.size() > 0) { return wb; }
+        var out = [] as Array;
+        var sports = ["run", "bike", "swim"];
+        for (var k = 0; k < sports.size(); k++) {
+            var e = goalOf(rz, sports[k]);
+            var m = e != null ? numOrNull(e[1]) : null;
+            if (m != null && m > 0) { out.add([sports[k], m]); }
+        }
+        return out;
     }
 
     // Was bis zum Tagesziel noch fehlt: links die Kalorien, die heute noch übrig sind, rechts das Eiweiß, das noch fehlt (ohne
@@ -355,12 +369,12 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         var kcal = data.get("kcal");
         var kLeft = kcal instanceof Dictionary ? remaining(kcal) : null;
         if (kLeft != null) {
-            drawItems(dc, px(56), px(SIDE_Y), [["t", kLeft.toString(), ACCENT, _tag], ["t", " kcal übrig", SEC, _tag]], -1);
+            drawItems(dc, px(56), px(SIDE_Y), [["t", kLeft.toString(), ACCENT, _tag]], -1);
         }
         var pr = data.get("pr");
         var pLeft = pr instanceof Dictionary ? remaining(pr) : null;
         if (pLeft != null) {
-            drawItems(dc, px(398), px(SIDE_Y), [["t", pLeft.toString() + " g", PROTEIN, _tag], ["t", " noch", SEC, _tag]], 1);
+            drawItems(dc, px(398), px(SIDE_Y), [["t", pLeft.toString() + " g", PROTEIN, _tag]], 1);
         }
     }
 
@@ -385,9 +399,10 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         return sum;
     }
 
-    // Balken von BAR_X, Länge = Wochenziel, gefüllt mit den erledigten Minuten je Sportart (Lauf, Rad, Schwimmen von links),
-    // abgerundete Enden, dünne Trennlinien zwischen den Sportarten, weiße Marke bei Tag d von 6
-    private function drawWeekBar(dc as Dc, rz as Array?, goal as Number, d as Number) as Void {
+    // Balken von BAR_X, Länge = Wochenziel, gefüllt mit den erledigten Einheiten der Woche in zeitlicher Reihenfolge, je in
+    // der Farbe der Sportart (segs = [Sportart, Minuten]), abgerundete Enden, dünne Trennlinien zwischen den Stücken,
+    // weiße Marke bei Tag d von 6
+    private function drawWeekBar(dc as Dc, segs as Array, goal as Number, d as Number) as Void {
         var x0 = px(BAR_X);
         var w = px(BAR_W);
         var y = px(BAR_Y);
@@ -396,12 +411,11 @@ class IntervalsFaceView extends WatchUi.WatchFace {
         dc.setColor(RING_BG, Graphics.COLOR_TRANSPARENT);
         dc.fillRoundedRectangle(x0, y, w, h, r);
 
-        var sports = ["run", "bike", "swim"];
-        // Anteile in Pixel: gefüllt wird von x0 bis xt, die Enden sind Halbkreise, dazwischen Rechtecke je Sportart
+        // Anteile in Pixel: gefüllt wird von x0 bis xt, die Enden sind Halbkreise, dazwischen Rechtecke je Stück
         var done = 0;
-        for (var k = 0; k < sports.size(); k++) {
-            var e = goalOf(rz, sports[k]);
-            done += e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
+        for (var k = 0; k < segs.size(); k++) {
+            var e = segs[k] as Array;
+            done += numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
         }
         done = done > goal ? goal : done;
         if (done > 0) {
@@ -411,16 +425,16 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var acc = 0;
             var firstColor = RING_BG;
             var lastColor = RING_BG;
-            for (var k = 0; k < sports.size(); k++) {
-                var e = goalOf(rz, sports[k]);
-                var m = e != null && numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
+            for (var k = 0; k < segs.size(); k++) {
+                var e = segs[k] as Array;
+                var m = numOrNull(e[1]) != null ? (e[1] as Numeric).toNumber() : 0;
                 if (m <= 0 || acc >= goal) { continue; }
                 var end = acc + m > goal ? goal : acc + m;
                 var xs = x0 + w * acc / goal;
                 var xe = x0 + w * end / goal;
                 xs = xs < lo ? lo : xs;
                 xe = xe > hi ? hi : xe;
-                var color = sportColor(sports[k]);
+                var color = sportColor(e[0]);
                 if (firstColor == RING_BG) { firstColor = color; }
                 lastColor = color;
                 if (xe > xs) {

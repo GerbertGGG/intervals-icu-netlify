@@ -496,9 +496,11 @@ export function buildLoadHint(wellness, todayIso) {
 
 function buildDaily(todayIso, activities) {
   const out = [];
-  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {}, endurance: 0 });
+  for (let d = addDays(todayIso, -(HISTORY_DAYS - 1)); d <= todayIso; d = addDays(d, 1)) out.push({ date: d, load: 0, sports: {}, minutes: {}, endurance: 0, segs: [] });
   const byDate = new Map(out.map((x) => [x.date, x]));
-  for (const a of activities) {
+  // Reihenfolge der Einheiten eines Tages nach Startzeit, fuer den Wochenbalken der Uhr
+  const startOf = (a) => String(a?.start_date_local ?? a?.start_date ?? "");
+  for (const a of [...activities].sort((x, y) => startOf(x).localeCompare(startOf(y)))) {
     const day = byDate.get(activityDay(a));
     if (!day) continue;
     const load = sessionLoad(a), secs = num(a?.moving_time) ?? 0;
@@ -507,10 +509,12 @@ function buildDaily(todayIso, activities) {
     // Minuten je Sportart (auch ohne Load, z. B. Kraft) fuer die Wochenkarte
     if (secs > 0) day.minutes[sportOf(a)] = (day.minutes[sportOf(a)] ?? 0) + secs / 60;
     // Ausdauerminuten wie in den Wochenzielen (week-totals.js, Schwimmen ohne Pausen) fuer den Wochenvergleich der Uhr
-    day.endurance += enduranceSecOf(a) / 60;
+    const endSecs = enduranceSecOf(a);
+    day.endurance += endSecs / 60;
+    if (endSecs > 0 && ["run", "bike", "swim"].includes(sportOf(a))) day.segs.push([sportOf(a), endSecs / 60]);
   }
   const round = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Math.round(v)]));
-  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes), endurance: Math.round(x.endurance) }));
+  return out.map((x) => ({ ...x, load: Math.round(x.load), sports: round(x.sports), minutes: round(x.minutes), endurance: Math.round(x.endurance), segs: x.segs.map(([k, m]) => [k, Math.round(m)]) }));
 }
 
 // Letzte erledigte Einheit fürs Heute-Band, wenn nichts geplant ist (Namen verlassen den Worker nicht).
