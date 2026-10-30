@@ -34,6 +34,16 @@ export function strengthSetsOf(a) {
   return (text.match(/\d+\s*[×x]\s*\d+(?:[.,]\d+)?\s*kg\b/gi) ?? []).length;
 }
 
+function segmentsOf(parts) {
+  const out = [];
+  for (const p of [...parts].sort((a, b) => a.at.localeCompare(b.at))) {
+    const last = out[out.length - 1];
+    if (last && last.disc === p.disc) last.min += p.sec / 60;
+    else out.push({ disc: p.disc, min: p.sec / 60 });
+  }
+  return out.map((x) => ({ disc: x.disc, min: Math.round(x.min * 10) / 10 }));
+}
+
 const addDays = (iso, n) => isoDate(new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000));
 const hours = (sec) => Math.round((sec / 3600) * 100) / 100;
 
@@ -90,7 +100,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
   const history = targetHistory(stored);
   const thisMonday = mondayOnOrBefore(todayIso);
   const mondays = Array.from({ length: weeks + 1 }, (_, i) => addDays(thisMonday, -7 * (weeks - i))); // eine Woche mehr fuer die 2 Wochen Kraft
-  const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0, swimElapsed: 0, swims: [] }]));
+  const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0, swimElapsed: 0, swims: [], parts: [] }]));
   for (const a of activities ?? []) {
     if (a?.icu_ignore_time) continue;
     const day = activityDay(a);
@@ -102,6 +112,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
       const sec = enduranceSecOf(a);
       w.sec += sec;
       w.by[disc] += sec;
+      if (sec > 0) w.parts.push({ at: String(a?.start_date_local || a?.start_date || ""), disc, sec });
       if (disc === "schwimmen") {
         const st = swimTimeOf(a);
         w.swimElapsed += st.elapsedSec;
@@ -124,6 +135,8 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
       // Referenzwoche (withReference) aus den Wochen davor im Fenster; null ohne Vorwoche
       referenceMin: refs[i + 1].referenceMin,
       byDiscipline: Object.fromEntries(DISCIPLINES.map((k) => [k, hours(w.by[k])])),
+      // Einheiten in der Reihenfolge, wie sie trainiert wurden (aufeinanderfolgende gleiche Sportart zusammengefasst), fuer den Wochenchart
+      segments: segmentsOf(w.parts),
       byDisciplineMin: Object.fromEntries(DISCIPLINES.map((k) => [k, Math.round(w.by[k] / 60)])),
       swimMovingHours: hours(w.by.schwimmen),
       swimElapsedHours: hours(w.swimElapsed),

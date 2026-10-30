@@ -425,7 +425,7 @@ function renderFrame(d, tile) {
 function drawWeekGoals(d) {
   const T = d.weekTotals;
   if (!T?.weeks?.length || !$("wg-chart")) return;
-  C.weekHours($("wg-chart"), T.weeks.map((w) => ({ label: fmtDate(w.week), tip: `Woche ab ${fmtDate(w.week)}`, partial: !w.complete, goalMin: w.goalHours * 60, by: Object.fromEntries(Object.entries(DISC_SPORT).map(([k, sp]) => [sp, w.byDisciplineMin[k]])) })),
+  C.weekHours($("wg-chart"), T.weeks.map((w) => ({ label: fmtDate(w.week), tip: `Woche ab ${fmtDate(w.week)}`, partial: !w.complete, goalMin: w.goalHours * 60, segs: (w.segments ?? []).map((x) => [DISC_SPORT[x.disc], x.min]), by: Object.fromEntries(Object.entries(DISC_SPORT).map(([k, sp]) => [sp, w.byDisciplineMin[k]])) })),
     { sports: Object.values(DISC_SPORT), names: SPORT_LABEL, fmtV: hmm, label: "Ausdauerstunden der letzten 8 Wochen nach Sportart, je Woche mit ihrem Ziel" });
 }
 
