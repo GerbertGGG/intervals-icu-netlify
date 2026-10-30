@@ -16,7 +16,8 @@ class SyncDelegate extends System.ServiceDelegate {
         var base = setting("BaseUrl", Config.BASE_URL);
         var token = setting("Token", Config.TOKEN);
         if (base.length() == 0 || token.length() == 0) {
-            Background.exit(null);
+            // BaseUrl oder Token fehlt: -1 neben dem "!" anzeigen statt stiller Abbruch
+            Background.exit({ "err" => -1 });
             return;
         }
         // Schrägstrich am Ende der Adresse abschneiden
