@@ -143,6 +143,7 @@ assert.equal(swimActiveSec([]), null);
 assert.deepEqual(swimTimeOf(swim), { sec: 735, elapsedSec: 1241, source: "moving_time", estimated: false }); // 0,5 % Abweichung: moving_time stimmt
 // Uhr ohne Auto-Pause (moving_time = Gesamtzeit): Summe der Nicht-Ruhe-Intervalle
 assert.deepEqual(swimTimeOf({ ...swim, moving_time: 1241 }), { sec: 739, elapsedSec: 1241, source: "intervals", estimated: false });
+assert.deepEqual(swimTimeOf({ ...swim, moving_time: 600 }), { sec: 600, elapsedSec: 1241, source: "moving_time", estimated: false }); // Intervall-Summe ueber moving_time: moving_time gilt
 // Ein Ruhe-Lap ohne Typ, nur an 0 m erkannt, zählt ebenfalls nicht
 assert.equal(swimActiveSec([lap(100), { type: "WORK", distance: 0, moving_time: 40, elapsed_time: 40 }]), 100);
 {
