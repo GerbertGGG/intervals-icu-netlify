@@ -22,7 +22,7 @@ import { buildErnaehrung } from "./ernaehrung.js";
 import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
 import { computeWeekTotals, enduranceSecOf, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
-import { withSwimIntervals } from "./swim-time.js";
+import { withSwimIntervals, swimTimeOf } from "./swim-time.js";
 import { readTargets, targetsView } from "./targets-snapshot.js";
 import { readInsights, splitInsights } from "./insight-snapshot.js";
 import { buildSummary } from "./dashboard-summary.js";
@@ -248,7 +248,8 @@ function buildWeeks(todayIso, activities, events) {
     const sp = w.bySport[sportOf(a)];
     sp.count += 1;
     sp.load += load;
-    sp.minutes += (num(a?.moving_time) ?? 0) / 60;
+    // Schwimmen: nur Bewegungszeit ohne Pausen (wie die Wochensummen, swim-time.js)
+    sp.minutes += (sportOf(a) === "swim" ? swimTimeOf(a).sec : (num(a?.moving_time) ?? 0)) / 60;
     sp.km += (num(a?.distance) ?? 0) / 1000;
     const zt = zoneBuckets(a);
     if (zt) for (const k of Object.keys(zt)) w.intensity[k] += zt[k] / 60;
@@ -893,7 +894,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const summary = buildSummary(wellness, todayIso, { sickDays, longWellness });
 
   const daily = buildDaily(todayIso, activities);
-  const weeks = applyEditedPlan(buildWeeks(todayIso, activities, events), null, coach?.week_plan).weeks;
+  const weekActs = activitiesR.ok ? await withSwimIntervals(env, activities) : activities;
+  const weeks = applyEditedPlan(buildWeeks(todayIso, weekActs, events), null, coach?.week_plan).weeks;
   const baseRuns = buildBaseRuns(blockSessions.runs ?? [], snapshot, blockTargets, seasonBlock, todayIso);
   // Naechster Blocktest (Termin aus dem Block-Eintrag oder geplantes Workout "Blocktest") fuer Heute-Band und Grundlagenlaeufe;
   // ein Termin, zu dem schon ein Blocktest erkannt ist (auch verschoben, ±2 Tage), ist erledigt
@@ -926,8 +928,6 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     if (ra?.dec60 != null) Object.assign(lastActivity, { dec60: ra.dec60, stableMin: ra.stableMin });
     if (ra?.overCapMin != null) Object.assign(lastActivity, { overCapMin: ra.overCapMin, capHr: ra.capHr });
   }
-  // Schwimmeinheiten mit ihren Laps fuer die Wochensummen (Bewegungszeit ohne Pausen, swim-time.js)
-  const weekActs = activitiesR.ok ? await withSwimIntervals(env, activities) : activities;
   return {
     generatedAt: new Date().toISOString(),
     today: todayIso,
