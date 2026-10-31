@@ -20,13 +20,14 @@ export function swimActiveSec(intervals) {
 }
 
 // Gezaehlte Schwimmsekunden einer Aktivitaet: moving_time, wenn es zur Summe der Nicht-Ruhe-Intervalle passt (< 5 %),
-// sonst diese Summe. Ohne Intervalle moving_time, fehlt auch das elapsed_time (estimated: true).
+// sonst diese Summe (nie mehr als moving_time). Ohne Intervalle moving_time, fehlt auch das elapsed_time (estimated: true).
 // source: "moving_time" | "intervals" | "elapsed_time"; elapsedSec fuer den Pausenanteil (ohne elapsed_time = sec).
 export function swimTimeOf(a) {
   const moving = num(a?.moving_time) > 0 ? num(a.moving_time) : null, elapsed = num(a?.elapsed_time) > 0 ? num(a.elapsed_time) : null;
   const active = swimActiveSec(a?.icu_intervals);
   let sec, source;
-  if (active > 0 && (moving == null || Math.abs(moving - active) / active >= SWIM_MOVING_TOLERANCE)) [sec, source] = [active, "intervals"];
+  // Die Intervall-Summe dient nur dazu, eine zu hohe moving_time (mit Pausen) zu senken; liegt sie darueber, gilt moving_time
+  if (active > 0 && (moving == null || (moving > active && (moving - active) / active >= SWIM_MOVING_TOLERANCE))) [sec, source] = [active, "intervals"];
   else if (moving != null) [sec, source] = [moving, "moving_time"];
   else [sec, source] = [elapsed ?? 0, "elapsed_time"];
   return { sec, elapsedSec: elapsed ?? sec, source, estimated: source === "elapsed_time" };
