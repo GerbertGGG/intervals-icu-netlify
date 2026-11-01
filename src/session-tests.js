@@ -1,8 +1,11 @@
 // Test-Erkennung aus der tatsaechlich absolvierten Aktivitaet (nicht aus dem Namen oder dem geplanten Workout):
 //   runBlocktest – Run am Blocktest-Termin (±testDateTolDays), mindestens runMinMin; mehrere im Fenster: der laengste.
+//   runBlocktest – auch jeder andere Run ab runAutoMin (65 min): zaehlt automatisch als Test, ohne vorherige Entscheidung
+//                  (5 min Einlaufen, Messfenster Minute 5–65, s. RUN_RULES in block-inputs.js).
 //   runTrend     – Run, Bewegungszeit ≥ runMinMin, Ø-HF unter dem HF-Deckel des Blocks, kein Blocktest.
-//   bikeCompare  – Ride/VirtualRide: Einrollen = Warmup-Block in Intervals (icu_warmup_time ≥ bikeMinWarmupSec, sonst Fenster
-//                  ab Minute 0 und baseline), danach Messfenster bikeWindowMin mit
+//   bikeCompare  – Ride/VirtualRide laenger als Einrollen + Messfenster (bikeAutoWarmupSec + bikeWindowMin, minus Toleranz):
+//                  die ersten 10 min sind automatisch das Einrollen (egal ob Intervals einen Warmup-Block erkennt), danach
+//                  Messfenster bikeWindowMin mit
 //                  Ø-Leistung = Vergleichsleistung ± bikeWattsTol und VI ≤ bikeMaxVi. Intervalle/HIIT fallen ueber VI und
 //                  Leistung heraus. Beim Rad zaehlt "Blocktest" im Namen wie "Vergleich" (Override); fehlt der Warmup-Block, gilt das erste Intervall aus interval_summary als Einrollen.
 // Termine, HF-Deckel und Vergleichsleistung kommen aus dem SEASON_START-Eintrag (testConfigOf), sonst aus TEST_FALLBACK.
@@ -20,7 +23,9 @@ export const TEST_RULES = {
   testDateTolDays: 2, // Blocktest verschoben (Ampel rot, krank)
   runMinMin: 60, // Blocktest und Trendlauf
   bikeWindowMin: 60, // Messfenster nach dem Einrollen
-  bikeMinWarmupSec: 300, // Warmup-Block in Intervals; kuerzer: ohne Einrollen (Fenster ab 0, nur Ausgangswert)
+  runAutoMin: 65, // Run ab 65 min (5 min Einlaufen + 60 min Messfenster): zaehlt automatisch als Blocktest
+  bikeAutoWarmupSec: 600, // Rad: die ersten 10 min sind das Einrollen, sobald die Fahrt fuers Messfenster lang genug ist
+  bikeMinWarmupSec: 300, // Warmup-Block in Intervals bei benannten Tests; kuerzer: ohne Einrollen (Fenster ab 0, nur Ausgangswert)
   bikeMainSlackSec: 60, // Messtoleranz der Bewegungszeit beim Hauptteil
   bikeWattsTol: 5, // W um die Vergleichsleistung
   bikeMaxVi: 1.05,
@@ -103,6 +108,7 @@ export function classifyRuns(acts, cfg, rules = TEST_RULES) {
   for (const a of eligible) {
     if (out.has(a.id)) continue;
     const hr = num(a.average_heartrate), m = minOf(a);
+    if (m >= rules.runAutoMin) { out.set(a.id, { category: "runBlocktest", testDate: dayOf(a), testReason: `Run ab ${rules.runAutoMin} min (${Math.round(m)} min): zählt automatisch als Test` }); continue; }
     if (m >= rules.runMinMin && hr != null && hr < cfg.hrCap) out.set(a.id, { category: "runTrend", testReason: `Run ≥${rules.runMinMin} min (${Math.round(m)} min), Ø-HF ${Math.round(hr)} < ${cfg.hrCap}` });
   }
   return out;
@@ -149,6 +155,9 @@ export function rideWindowOf(a, rules = TEST_RULES) {
   const total = num(a?.moving_time) ?? 0, cool = num(a?.icu_cooldown_time) ?? 0;
   const ov = nameOverride(a?.name);
   const forced = ov === "bikeCompare" || ov === "runBlocktest"; // beim Rad zaehlt auch "Blocktest" im Namen
+  // Lang genug fuer Einrollen + Messfenster: die ersten bikeAutoWarmupSec sind automatisch das Einrollen, ohne Namen und
+  // ohne Warmup-Block in Intervals. Benannte Tests mit erkanntem Warmup behalten dessen Dauer.
+  const autoLong = total - cool >= rules.bikeAutoWarmupSec + rules.bikeWindowMin * 60 - rules.bikeMainSlackSec;
   // Hat Intervals keinen Warmup-Block erkannt (Einheit am Geraet gefahren), steht das Einrollen als erstes Intervall vor dem
   // Hauptteil in interval_summary – nur fuer benannte Tests
   let warmFromSummary = 0;
@@ -156,8 +165,10 @@ export function rideWindowOf(a, rules = TEST_RULES) {
     const secs = a.interval_summary.map(summarySecs);
     if (secs.length > 1 && secs[0] >= rules.bikeMinWarmupSec && secs.slice(1).some((x) => x >= rules.bikeWindowMin * 60 - rules.bikeMainSlackSec)) warmFromSummary = secs[0];
   }
-  const noWarmup = icuWarm < rules.bikeMinWarmupSec && !warmFromSummary, warmSec = noWarmup ? 0 : warmFromSummary || icuWarm;
-  return { warmSec, noWarmup, mainSec: total - warmSec - cool, totalSec: total, forced };
+  const detected = warmFromSummary || (icuWarm >= rules.bikeMinWarmupSec ? icuWarm : 0);
+  const auto = autoLong && !(forced && detected);
+  const noWarmup = !auto && !detected, warmSec = auto ? rules.bikeAutoWarmupSec : detected;
+  return { warmSec, noWarmup, auto, mainSec: total - warmSec - cool, totalSec: total, forced };
 }
 
 // Rad klassifizieren. stats: rideWindowStats fuer das Fenster aus rideWindowOf (null = Zeitreihen fehlen).
@@ -167,7 +178,7 @@ export function classifyRide(a, stats, cfg, rules = TEST_RULES) {
   if (ov === "exclude") return { category: null, testReason: "Name „kein Test“: ausgeschlossen" };
   const win = rideWindowOf(a, rules);
   const mainMin = Math.round(win.mainSec / 60);
-  const warmTxt = win.noWarmup ? `ohne Einrollen (icu_warmup_time ${Math.round(num(a?.icu_warmup_time) ?? 0)} s)` : `Einrollen ${Math.round(win.warmSec / 60)} min`;
+  const warmTxt = win.noWarmup ? `ohne Einrollen (icu_warmup_time ${Math.round(num(a?.icu_warmup_time) ?? 0)} s)` : `Einrollen ${Math.round(win.warmSec / 60)} min${win.auto ? " (automatisch, erste 10 min)" : ""}`;
   const base = { warmupSec: win.warmSec, noWarmup: win.noWarmup, mainMin };
   const longEnough = win.mainSec >= rules.bikeWindowMin * 60 - rules.bikeMainSlackSec;
   if (!win.forced && !longEnough) return { ...base, category: null, testReason: `Ride: Hauptteil ${mainMin} min < ${rules.bikeWindowMin} min (${warmTxt})` };

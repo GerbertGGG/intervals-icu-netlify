@@ -609,7 +609,7 @@ function buildFitness(runs, snapshot, todayIso) {
 }
 
 // Grundlagenlaeufe aus den Zeitreihen (Blocktest-Modus, block-inputs.js): HF-Deckel-Einhaltung der laufenden Woche und
-// die Blocktests und Trendlaeufe (category aus session-tests.js) mit Decoupling 5–60, stabiler Dauer, GPS-Korrektur, DFA alpha1 (Runalyze,
+// die Blocktests und Trendlaeufe (category aus session-tests.js) mit Decoupling 5–65, stabiler Dauer, GPS-Korrektur, DFA alpha1 (Runalyze,
 // gleicher Tag) und testReason.
 function buildBaseRuns(runs, snapshot, targets, block, todayIso) {
   const cap = targets?.hrCap ?? null;
@@ -920,7 +920,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     const profile = await loadSessionProfile(env, lastRaw, lastActivity.sport, lastActivityHrAllowed(lastRaw, runCtx));
     if (profile) lastActivity.profile = profile;
   }
-  // Letzte Einheit: im Blocktest-Modus kein Decoupling ueber den ganzen Lauf (waechst mit der Laenge), sondern Minute 5–60,
+  // Letzte Einheit: im Blocktest-Modus kein Decoupling ueber den ganzen Lauf (waechst mit der Laenge), sondern Minute 5–65,
   // stabile Dauer und Minuten ueber dem HF-Deckel aus den Zeitreihen
   if (lastActivity?.sport === "run" && blockTargets?.run?.tests) {
     const ra = (blockSessions.runs ?? []).find((r) => r.id != null && r.id === lastRaw?.id)?.analysis;
