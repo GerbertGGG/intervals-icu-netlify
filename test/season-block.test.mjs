@@ -251,7 +251,7 @@ assert.equal(gR.runStable.value, 75); assert.equal(gR.runStable.baseValue, 0); a
 // Verlauf (Trend, keine Stufe): Decoupling 6 → Ø 5,5; Hauptkurve Pace 0–60 im HF-Band
 assert.deepEqual([gR.runDecoupling.course.open, gR.runDecoupling.course.from, gR.runDecoupling.course.to, gR.runDecoupling.course.dir], [false, 6, 5.5, "better"]);
 assert.equal("state" in gR.runDecoupling.course, false);
-assert.equal(gR.runDecoupling.course.main, "Pace 5–60 7:10 → 7:08 /km"); assert.equal(gR.runDecoupling.course.mainDir, "better");
+assert.equal(gR.runDecoupling.course.main, "Pace 5–65 7:10 → 7:08 /km"); assert.equal(gR.runDecoupling.course.mainDir, "better");
 assert.equal(gR.runDecoupling.course.nextText, "nächster Blocktest 06.12.");
 assert.deepEqual([gR.runStable.course.from, gR.runStable.course.to, gR.runStable.course.dir], [0, 75, "better"]);
 assert.equal(buildBlockGoalsFull(bR, { runs: runsR.slice(0, 1) }, "2026-11-12").goals.find((x) => x.key === "runDecoupling").course.open, true); // nur der Basistest
@@ -278,8 +278,8 @@ assert.deepEqual(gbl.baselines.map((x) => [x.date, x.value]), [["2026-10-19", 9.
   const heartrate = time.map((t) => (t < 70 * 60 ? 122 : 122 + (t - 70 * 60) / 60 * 1.5));
   const a = analyzeRunStreams([{ type: "time", data: time }, { type: "heartrate", data: heartrate }, { type: "velocity_smooth", data: velocity_smooth }], { capHr: 125 });
   assert.equal(a.dec60, 0); assert.equal(a.pace60, 400); assert.equal(a.durationMin, 100);
-  assert.deepEqual(a.windows.map((x) => x.min), [60, 75, 90]);
-  assert.ok(a.windows[2].value > 5 && a.windows[1].value <= 5); assert.equal(a.stableMin, 75);
+  assert.deepEqual(a.windows.map((x) => x.min), [65, 80, 95]);
+  assert.ok(a.windows[2].value > 5 && a.windows[1].value <= 5); assert.equal(a.stableMin, 80);
   assert.equal(a.overCapMin, 28); // ab Minute 72 über 125
   assert.deepEqual([a.ef, a.efToMin], [1.23, 35]); // EF Minute 5–35: 150 m/min ÷ 122
   const short = analyzeRunStreams([{ type: "time", data: time.slice(0, 20 * 60) }, { type: "heartrate", data: heartrate.slice(0, 20 * 60) }, { type: "velocity_smooth", data: velocity_smooth.slice(0, 20 * 60) }]);

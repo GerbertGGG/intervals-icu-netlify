@@ -32,13 +32,13 @@ const at = (f, dist, sec) => dist[f.time.indexOf(sec)];
   const old = analyzeRunStreams(run23, { capHr: 128, rules: OLD });
   assert.equal(a.fromMin, 5);
   assert.deepEqual(a.gps, { segments: 3, correctedM: a.gps.correctedM });
-  assert.ok(a.dec60 > 0 && a.dec60 < 12, `Decoupling 5–60 ${a.dec60} %`); // einstellig bis knapp zweistellig
+  assert.ok(a.dec60 > 0 && a.dec60 < 12, `Decoupling 5–65 ${a.dec60} %`); // einstellig bis knapp zweistellig
   assert.equal(old.dec60, 18); // ohne Filter und ab Minute 0
   // Pace Basis = bereinigte Distanz 5–60 / 3300 s Bewegungszeit
   const { dist } = cleanRunDistance(run23.time, run23.distance);
   assert.equal(a.pace60, Math.round(3300 / ((at(run23, dist, 3600) - at(run23, dist, 300)) / 1000)));
   assert.deepEqual([a.durationMin, a.distKm], [60, Math.round(dist.at(-1)) / 1000]);
-  console.log(`23.10.: Decoupling 5–60 ${a.dec60} % (alt 0–60 ungefiltert ${old.dec60} %), Pace 5–60 ${Math.floor(a.pace60 / 60)}:${String(a.pace60 % 60).padStart(2, "0")} /km, stabile Dauer ${a.stableMin} min`);
+  console.log(`23.10.: Decoupling 5–65 ${a.dec60} % (alt 0–60 ungefiltert ${old.dec60} %), Pace 5–60 ${Math.floor(a.pace60 / 60)}:${String(a.pace60 % 60).padStart(2, "0")} /km, stabile Dauer ${a.stableMin} min`);
 }
 
 // ---------- Pace auf der Bewegungszeit: dieselbe Einheit mit vergangener Zeit (Intervals) ----------
@@ -88,7 +88,7 @@ const at = (f, dist, sec) => dist[f.time.indexOf(sec)];
   const a = analyzeRunStreams(st), raw = analyzeRunStreams(st, { rules: RAW }), old = analyzeRunStreams(st, { rules: OLD });
   assert.deepEqual(a.gps, { segments: 0, correctedM: 0 });
   assert.deepEqual(a, raw);
-  assert.deepEqual(a.windows.map((x) => x.min), [60, 75, 90]);
-  assert.ok(old.dec60 > a.dec60 + 1 && Math.abs(a.dec60) < 1.5, `0–60 ${old.dec60} %, 5–60 ${a.dec60} %`); // Kaltstart: niedriger Puls in Hälfte 1 treibt 0–60 hoch
+  assert.deepEqual(a.windows.map((x) => x.min), [65, 80]);
+  assert.ok(old.dec60 > a.dec60 + 1 && Math.abs(a.dec60) < 1.5, `0–60 ${old.dec60} %, 5–65 ${a.dec60} %`); // Kaltstart: niedriger Puls in Hälfte 1 treibt 0–60 hoch
 }
 console.log("run analysis ok");

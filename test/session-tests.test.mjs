@@ -25,9 +25,9 @@ assert.equal(nameOverride("Blocktest – kein Test"), "exclude"); assert.equal(n
 const run = (id, date, min, hr, o = {}) => ({ id, type: "Run", start_date_local: `${date}T09:00:00`, moving_time: min * 60, average_heartrate: hr, name: "Bobingen Laufen", ...o });
 const runs = [
   run("a", "2026-10-20", 34, 125), // kurz: nichts
-  run("b", "2026-10-24", 95, 124), run("c", "2026-10-25", 70, 122), // Termin 23.10. verschoben: der längere zählt, der andere ist Trend
-  run("d", "2026-10-29", 72, 130), // länger als 70 min: zählt automatisch als Test, auch über dem Deckel
-  run("e", "2026-11-01", 65, 125.6),
+  run("b", "2026-10-24", 95, 124), run("c", "2026-10-25", 70, 122), // Termin 23.10. verschoben: der längere zählt, der andere ab 65 min automatisch
+  run("d", "2026-10-29", 72, 130), // ab 65 min: zählt automatisch als Test, auch über dem Deckel
+  run("e", "2026-11-01", 62, 125.6), // 60–64 min unter dem Deckel: Trend
   run("f", "2026-11-08", 50, 120), // am Termin, aber unter 60 min
   run("g", "2026-12-04", 90, 121, { name: "Lauf – kein Test" }), run("h", "2026-12-06", 80, 123), // ausgeschlossen: der nächste zählt
   run("i", "2026-12-10", 45, 140, { name: "Basistest" }), // Override
@@ -36,11 +36,11 @@ const runs = [
 ];
 const rc = classifyRuns(runs, cfg);
 const cat = (id) => rc.get(id)?.category ?? null;
-assert.deepEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"].map(cat), [null, "runBlocktest", "runTrend", "runBlocktest", "runTrend", null, null, "runBlocktest", "runBlocktest", null, null]);
+assert.deepEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"].map(cat), [null, "runBlocktest", "runBlocktest", "runBlocktest", "runTrend", null, null, "runBlocktest", "runBlocktest", null, null]);
 assert.equal(rc.get("b").testDate, "2026-10-23");
 assert.equal(rc.get("b").testReason, "Run am Blocktest-Termin 23.10. (±2 Tage, 24.10. statt 23.10.), 95 min, längster von 2");
-assert.equal(rc.get("e").testReason, "Run ≥60 min (65 min), Ø-HF 126 < 128");
-assert.equal(rc.get("d").testReason, "Run länger als 70 min (72 min): zählt automatisch als Test"); assert.equal(rc.get("d").testDate, "2026-10-29");
+assert.equal(rc.get("e").testReason, "Run ≥60 min (62 min), Ø-HF 126 < 128");
+assert.equal(rc.get("d").testReason, "Run ab 65 min (72 min): zählt automatisch als Test"); assert.equal(rc.get("d").testDate, "2026-10-29");
 assert.match(rc.get("g").testReason, /kein Test/);
 assert.equal(rc.get("i").testReason, "Run, Name „Basistest“ (Override), 45 min");
 console.log("test runs ok");

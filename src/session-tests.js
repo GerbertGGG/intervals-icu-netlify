@@ -1,7 +1,7 @@
 // Test-Erkennung aus der tatsaechlich absolvierten Aktivitaet (nicht aus dem Namen oder dem geplanten Workout):
 //   runBlocktest – Run am Blocktest-Termin (±testDateTolDays), mindestens runMinMin; mehrere im Fenster: der laengste.
-//   runBlocktest – auch jeder andere Run laenger als runAutoMin (70 min): zaehlt automatisch als Test, ohne vorherige Entscheidung
-//                  (Auswertefenster bleibt Minute 5–60, s. RUN_RULES in block-inputs.js).
+//   runBlocktest – auch jeder andere Run ab runAutoMin (65 min): zaehlt automatisch als Test, ohne vorherige Entscheidung
+//                  (5 min Einlaufen, Messfenster Minute 5–65, s. RUN_RULES in block-inputs.js).
 //   runTrend     – Run, Bewegungszeit ≥ runMinMin, Ø-HF unter dem HF-Deckel des Blocks, kein Blocktest.
 //   bikeCompare  – Ride/VirtualRide laenger als Einrollen + Messfenster (bikeAutoWarmupSec + bikeWindowMin, minus Toleranz):
 //                  die ersten 10 min sind automatisch das Einrollen (egal ob Intervals einen Warmup-Block erkennt), danach
@@ -23,7 +23,7 @@ export const TEST_RULES = {
   testDateTolDays: 2, // Blocktest verschoben (Ampel rot, krank)
   runMinMin: 60, // Blocktest und Trendlauf
   bikeWindowMin: 60, // Messfenster nach dem Einrollen
-  runAutoMin: 70, // Run laenger: zaehlt automatisch als Blocktest
+  runAutoMin: 65, // Run ab 65 min (5 min Einlaufen + 60 min Messfenster): zaehlt automatisch als Blocktest
   bikeAutoWarmupSec: 600, // Rad: die ersten 10 min sind das Einrollen, sobald die Fahrt fuers Messfenster lang genug ist
   bikeMinWarmupSec: 300, // Warmup-Block in Intervals bei benannten Tests; kuerzer: ohne Einrollen (Fenster ab 0, nur Ausgangswert)
   bikeMainSlackSec: 60, // Messtoleranz der Bewegungszeit beim Hauptteil
@@ -108,7 +108,7 @@ export function classifyRuns(acts, cfg, rules = TEST_RULES) {
   for (const a of eligible) {
     if (out.has(a.id)) continue;
     const hr = num(a.average_heartrate), m = minOf(a);
-    if (m > rules.runAutoMin) { out.set(a.id, { category: "runBlocktest", testDate: dayOf(a), testReason: `Run länger als ${rules.runAutoMin} min (${Math.round(m)} min): zählt automatisch als Test` }); continue; }
+    if (m >= rules.runAutoMin) { out.set(a.id, { category: "runBlocktest", testDate: dayOf(a), testReason: `Run ab ${rules.runAutoMin} min (${Math.round(m)} min): zählt automatisch als Test` }); continue; }
     if (m >= rules.runMinMin && hr != null && hr < cfg.hrCap) out.set(a.id, { category: "runTrend", testReason: `Run ≥${rules.runMinMin} min (${Math.round(m)} min), Ø-HF ${Math.round(hr)} < ${cfg.hrCap}` });
   }
   return out;
