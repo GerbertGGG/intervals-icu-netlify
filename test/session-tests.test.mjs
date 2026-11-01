@@ -26,7 +26,7 @@ const run = (id, date, min, hr, o = {}) => ({ id, type: "Run", start_date_local:
 const runs = [
   run("a", "2026-10-20", 34, 125), // kurz: nichts
   run("b", "2026-10-24", 95, 124), run("c", "2026-10-25", 70, 122), // Termin 23.10. verschoben: der längere zählt, der andere ist Trend
-  run("d", "2026-10-29", 72, 130), // über dem Deckel: nichts
+  run("d", "2026-10-29", 72, 130), // länger als 70 min: zählt automatisch als Test, auch über dem Deckel
   run("e", "2026-11-01", 65, 125.6),
   run("f", "2026-11-08", 50, 120), // am Termin, aber unter 60 min
   run("g", "2026-12-04", 90, 121, { name: "Lauf – kein Test" }), run("h", "2026-12-06", 80, 123), // ausgeschlossen: der nächste zählt
@@ -36,10 +36,11 @@ const runs = [
 ];
 const rc = classifyRuns(runs, cfg);
 const cat = (id) => rc.get(id)?.category ?? null;
-assert.deepEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"].map(cat), [null, "runBlocktest", "runTrend", null, "runTrend", null, null, "runBlocktest", "runBlocktest", null, null]);
+assert.deepEqual(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"].map(cat), [null, "runBlocktest", "runTrend", "runBlocktest", "runTrend", null, null, "runBlocktest", "runBlocktest", null, null]);
 assert.equal(rc.get("b").testDate, "2026-10-23");
 assert.equal(rc.get("b").testReason, "Run am Blocktest-Termin 23.10. (±2 Tage, 24.10. statt 23.10.), 95 min, längster von 2");
 assert.equal(rc.get("e").testReason, "Run ≥60 min (65 min), Ø-HF 126 < 128");
+assert.equal(rc.get("d").testReason, "Run länger als 70 min (72 min): zählt automatisch als Test"); assert.equal(rc.get("d").testDate, "2026-10-29");
 assert.match(rc.get("g").testReason, /kein Test/);
 assert.equal(rc.get("i").testReason, "Run, Name „Basistest“ (Override), 45 min");
 console.log("test runs ok");
@@ -59,7 +60,7 @@ const statsOf = (a, st) => { const w = rideWindowOf(a); return rideWindowStats(s
   const cb = classifyRide({ ...a, name: "Ausgangswert Rolle" }, statsOf(a, streams(t.map(() => 150), t.map(() => 120))), cfg);
   assert.deepEqual([cb.category, cb.baseline], ["bikeCompare", true]); assert.match(cb.testReason, /Ausgangswert \(baseline, zählt nicht fürs Ziel\)$/);
   assert.equal(classifyRide({ ...a, name: "Ausgangswert kein Test" }, null, cfg).category, null);
-  assert.equal(c.testReason, "Ride: Hauptteil 60 min, 166 W, VI 1, Einrollen 10 min, Decoupling von Intervals");
+  assert.equal(c.testReason, "Ride: Hauptteil 60 min, 166 W, VI 1, Einrollen 10 min (automatisch, erste 10 min), Decoupling von Intervals");
   // 90 min Fahrt (danach frei): Intervals-Wert umfasst mehr als das Messfenster, selbst gerechnet: 124/120 − 1 = 3,3 %
   const t2 = secs(5400), st2 = streams(t2.map((x) => (x < 600 ? 125 : x < 4200 ? 166 : 120)), t2.map((x) => (x < 2400 ? 120 : 124)));
   const a2 = ride({ moving_time: 5400 });
@@ -67,17 +68,23 @@ const statsOf = (a, st) => { const w = rideWindowOf(a); return rideWindowStats(s
   assert.deepEqual([c2.category, c2.decSource, c2.decoupling, c2.mainMin], ["bikeCompare", "streams", 3.3, 80]);
   assert.match(c2.testReason, /Decoupling selbst gerechnet/);
 }
-// Ohne Warmup-Block in Intervals (icu_warmup_time < 300 s): Fenster ab Minute 0, höchstens Ausgangswert
+// Ohne Warmup-Block in Intervals: die ersten 10 min zählen trotzdem automatisch als Einrollen, sobald die Fahrt lang genug ist
 {
   const t = secs(4320);
   const a = ride({ moving_time: 4320, icu_warmup_time: 0, decoupling: 7 });
-  // 10 min locker, dann 165 W: im Fenster 0–60 im Mittel 159 W, keine Vergleichseinheit
+  // 10 min locker, dann 165 W: Messfenster 10–70 min mit 165 W = Vergleichseinheit, zählt fürs Ziel
   const c = classifyRide(a, statsOf(a, streams(t.map((x) => (x < 600 ? 130 : 165)), t.map(() => 118))), cfg);
-  assert.equal(c.category, null); assert.equal(c.testReason, "Ride: 159 W nicht 165 ±5 W (Hauptteil 72 min, 159 W, VI 1,01)");
-  // durchgehend 165 W: Rad-Vergleich als baseline, Decoupling selbst gerechnet
+  assert.deepEqual([c.category, c.baseline, c.noWarmup, c.warmupSec, c.mainWatts, c.decSource], ["bikeCompare", false, false, 600, 165, "streams"]);
+  assert.match(c.testReason, /Einrollen 10 min \(automatisch, erste 10 min\)/);
+  // durchgehend 165 W, auch mit zu kurzem Warmup-Block in Intervals (240 s): ebenfalls Test mit 10 min Einrollen
   const c2 = classifyRide({ ...a, icu_warmup_time: 240 }, statsOf(a, streams(t.map(() => 165), t.map(() => 118))), cfg);
-  assert.deepEqual([c2.category, c2.baseline, c2.noWarmup, c2.decSource, c2.decoupling], ["bikeCompare", true, true, "streams", 0]);
-  assert.equal(c2.testReason, "Ride: Hauptteil 72 min, 165 W, VI 1, ohne Einrollen (icu_warmup_time 240 s), Decoupling selbst gerechnet, Ausgangswert (baseline, zählt nicht fürs Ziel)");
+  assert.deepEqual([c2.category, c2.baseline, c2.noWarmup, c2.decSource, c2.decoupling], ["bikeCompare", false, false, "streams", 0]);
+  // Warmup-Block länger als 10 min: trotzdem nur die ersten 10 min als Einrollen
+  assert.equal(rideWindowOf(ride({ moving_time: 4800, icu_warmup_time: 900 })).warmSec, 600);
+  // Zu kurz fürs Fenster (65 min): wie bisher ohne Einrollen, höchstens Ausgangswert
+  const t3 = secs(3900), a3 = ride({ moving_time: 3900, icu_warmup_time: 0 });
+  const c3 = classifyRide(a3, statsOf(a3, streams(t3.map(() => 165), t3.map(() => 118))), cfg);
+  assert.deepEqual([c3.category, c3.baseline, c3.noWarmup], ["bikeCompare", true, true]);
 }
 // HIIT fällt heraus: 30/30 (300/100 W) und 4× 4 min über 165 W
 {
