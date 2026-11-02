@@ -382,8 +382,13 @@ function renderWeekGoals(d, tile) {
   const segs = Object.entries(DISC_SPORT).map(([k, sp]) => ({ k, sp, min: cur.byDisciplineMin[k] }));
   const bar = `<div class="cbar wg-bar"><div class="wg-segs">${(cur.segments ?? []).filter((x) => x.min > 0).map((x) => `<span style="width:${(x.min / scale) * 100}%;background:var(--s-${DISC_SPORT[x.disc]})" title="${SPORT_LABEL[DISC_SPORT[x.disc]]} ${hmm(x.min)} h"></span>`).join("")}</div>${cur.enduranceMin > goalMin ? `<i style="left:${(goalMin / scale) * 100}%" title="Ziel ${hmm(goalMin)} h"></i>` : ""}</div>`;
   const legend = `<div class="dots">${segs.map((x) => `<span><i style="background:var(--s-${x.sp})"></i>${SPORT_LABEL[x.sp]} ${hmm(x.min)}</span>`).join("")}</div>`;
-  const setsGoal = G.strengthSets2w, sets = cur.strengthSets2w;
-  const kraft = `<div class="wg-kraft"><div class="wg-l"><b>Kraft: ${fmt(sets)} / ${fmt(setsGoal)} Sätze</b> <span class="muted">(2 Wochen)</span></div>
+  const setsGoal = G.strengthSets2w, sets = cur.strengthSets2w, kg = G.kraft;
+  // Ziel des Coaches in Einheiten (z. B. min. 1× pro Woche): Einheiten der Woche gegen die Mindestzahl, sonst Sätze über 2 Wochen
+  const kraft = kg?.min > 0
+    ? `<div class="wg-kraft"><div class="wg-l"><b>Kraft: ${fmt(cur.strengthSessions)} / ${fmt(kg.min)} ×</b> <span class="muted">(diese Woche)</span></div>
+    <div class="cbar"><div class="cfill" style="width:${Math.min(100, (cur.strengthSessions / kg.min) * 100)}%;background:var(--s-strength)"></div></div>
+    <div class="sub">Sätze: diese Woche ${fmt(cur.strengthSets)} · Vorwoche ${fmt(prev?.strengthSets ?? 0)}</div></div>`
+    : `<div class="wg-kraft"><div class="wg-l"><b>Kraft: ${fmt(sets)} / ${fmt(setsGoal)} Sätze</b> <span class="muted">(2 Wochen)</span></div>
     <div class="cbar"><div class="cfill" style="width:${setsGoal > 0 ? Math.min(100, (sets / setsGoal) * 100) : sets > 0 ? 100 : 0}%;background:var(--s-strength)"></div></div>
     <div class="sub">diese Woche ${fmt(cur.strengthSets)} · Vorwoche ${fmt(prev?.strengthSets ?? 0)}</div></div>`;
   const n = T.streakWeeksAbove4_5;
