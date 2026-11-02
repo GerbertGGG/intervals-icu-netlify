@@ -1,5 +1,6 @@
 import { diffDays, mondayOnOrBefore } from "./date-utils.js";
 import { TEST_RULES } from "./session-tests.js";
+import { kraftSessionGoal } from "./targets-snapshot.js";
 
 const addDays = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
 
@@ -675,7 +676,9 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     });
   }
 
-  if (targets.strength) {
+  // Ziel des Coaches in Einheiten (strengthSets2w 0 + Kraft-Zeile der Intensität "N× pro Woche"): geht dem Blocktext vor, gezählt werden Kraft-Tage
+  const sess = kraftSessionGoal(input.frame);
+  if (targets.strength || sess) {
     // Wochenziel in Sätzen (EGYM). Ohne Satzzahlen (kein EGYM) zählen Kraft-Tage, dann gilt STRENGTH_DAYS_PER_WEEK.
     // Leitplanke "8 von 9 Belastungswochen": vom Coach markierte Entlastungswochen zählen nicht; es darf höchstens
     // (of − need) Belastungswochen ohne Ziel geben. Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): feste Abschnitte ab
@@ -683,10 +686,10 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     // Satz-Ziel aus dem Rahmen des Coaches (save_targets, strengthSets2w): laufende Woche plus Vorwoche, wie get_coach und die
     // Wochenziele; jede Blockwoche zaehlt mit ihrer Vorwoche (auch der vor Blockstart). Geht dem Blocktext vor.
     const roll = Number(input.frame?.strengthSets2w) > 0 ? 2 : 1;
-    const st = roll > 1 ? { sets: Number(input.frame.strengthSets2w) } : targets.strength, perLoad = st.need != null, P = st.periodWeeks > 1 ? st.periodWeeks : 1;
+    const st = sess ? {} : roll > 1 ? { sets: Number(input.frame.strengthSets2w) } : targets.strength, perLoad = st.need != null, P = st.periodWeeks > 1 ? st.periodWeeks : 1;
     const goalSets = st.sets ? st.sets : Number.isFinite(input.weeklyGoalSets) && input.weeklyGoalSets > 0 ? input.weeklyGoalSets : DEFAULT_WEEKLY_SETS;
-    const setsMode = (input.strength ?? []).some((x) => Number.isFinite(x.sets));
-    const need = setsMode ? goalSets : STRENGTH_DAYS_PER_WEEK;
+    const setsMode = !sess && (input.strength ?? []).some((x) => Number.isFinite(x.sets));
+    const need = sess ? sess.min : setsMode ? goalSets : STRENGTH_DAYS_PER_WEEK;
     const countIn = (from, to) => {
       const xs = (input.strength ?? []).filter((y) => y.date >= from && y.date <= to);
       return setsMode ? xs.reduce((a, y) => a + (Number.isFinite(y.sets) ? y.sets : 0), 0) : new Set(xs.map((y) => y.date)).size;
@@ -708,7 +711,10 @@ export function buildBlockGoalsFull(block, input, todayIso) {
     const unit = setsMode ? "Sätze" : "× Kraft";
     const what = setsMode ? `≥ ${need} Sätze` : `${need}× Kraft`;
     let status, target;
-    if (roll > 1) {
+    if (sess) {
+      target = `${sess.text} (${need}× pro Woche)`;
+      status = w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : hits === full.length ? "ok" : "bad";
+    } else if (roll > 1) {
       target = `${what} in 2 Wochen (laufende Woche plus Vorwoche)`;
       status = w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : hits === full.length ? "ok" : "bad";
     } else if (P > 1) {
@@ -723,9 +729,9 @@ export function buildBlockGoalsFull(block, input, todayIso) {
       status = w.baseline ? (full.length ? "base" : "none") : !full.length ? "none" : statusOf(hits / full.length >= st.share, hits / full.length >= st.share - 0.15);
     }
     goals.push({
-      key: "strength", ...(perLoad || P > 1 || roll > 1 ? { group: "leitplanke" } : {}), label: perLoad || P > 1 || roll > 1 ? "Kraft" : "Kraft-Konsistenz", target, unit: "Wochen",
+      key: "strength", ...(perLoad || P > 1 || roll > 1 || sess ? { group: "leitplanke" } : {}), label: perLoad || P > 1 || roll > 1 || sess ? "Kraft" : "Kraft-Konsistenz", target, unit: "Wochen",
       value: full.length ? hits : null, of: full.length, basis, weeks: weeks.slice(-12), calWeek, goalSets: setsMode ? need : null, weekGoal: need, countUnit: unit,
-      ...(perLoad ? { needWeeks: st.need, ofWeeks: st.of } : {}), ...(P > 1 ? { periodWeeks: P } : {}), ...(roll > 1 ? { rollWeeks: roll, source: "rahmen" } : {}),
+      ...(perLoad ? { needWeeks: st.need, ofWeeks: st.of } : {}), ...(P > 1 ? { periodWeeks: P } : {}), ...(roll > 1 && !sess ? { rollWeeks: roll, source: "rahmen" } : sess ? { source: "rahmen" } : {}),
       status,
       egym: Boolean(input.strengthSource?.egym), egymAt: input.strengthSource?.egymAt ?? null,
       note: [openWeek ? `${P > 1 ? "Dieser Abschnitt" : roll > 1 ? "Diese Woche und Vorwoche" : "Diese Woche"}: ${openWeek.count} von ${need}${setsMode ? " Sätzen" : ""}${openWeek.load ? "" : " (Entlastungswoche)"}` : null, perLoad && full.length > hits ? `${full.length - hits} von ${Math.max(0, st.of - st.need)} erlaubten Fehlwochen` : null].filter(Boolean).join(" · ") || null,
