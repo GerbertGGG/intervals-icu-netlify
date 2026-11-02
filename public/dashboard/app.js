@@ -1117,6 +1117,9 @@ function renderBlock(SB, deloads = []) {
     } else if (g.key === "runDecoupling" || g.key === "bikeDecoupling") {
       // Ausgangswerte (baseline) hell vorne: angezeigt, aber nicht im Mittel fürs Ziel
       vis = bars([...(g.baselines ?? []).map((x) => ({ ...x, muted: true, base: true })), ...g.series].map((x) => ({ v: x.value, t: `${fmtDate(x.date)}: ${fmt(x.value, 1)} %${x.pace ? ` · ${x.pace} /km` : ""}${x.watts ? ` · ${x.watts} W` : ""}${x.noWarmup ? " · ohne Einrollen" : ""}${x.reason ? ` · ${x.reason}` : ""}${x.base ? " · Ausgangswert, zählt nicht fürs Ziel" : ""}`, muted: x.muted })), g.max, g.must);
+      // Einzelwerte sichtbar (Tooltips gibt es am Handy nicht): Datum, Wert, Ausgangswerte gekennzeichnet
+      const pts = [...(g.baselines ?? []).map((x) => ({ ...x, base: true })), ...g.series];
+      if (pts.length) vis += `<div class="sub">Einzelwerte: ${pts.map((x) => `${x.base ? "<span class=\"muted\">" : ""}${esc(fmtDate(x.date))} <b>${fmt(x.value, 1)}&nbsp;%</b>${x.base ? " (Ausgang)</span>" : ""}`).join(" · ")}</div>`;
     } else if (g.key === "swimTest") {
       vis = g.tests.length ? bars(g.tests.map((x) => ({ v: x.slowerPer100, t: `${fmtDate(x.date)}: ${x.t1} / ${x.t2}${x.pauseSec != null ? ` · Pause ${x.pauseSec} s` : ""}` })), g.maxSlowerPer100) : "";
     } else if (g.key === "ramp") {
