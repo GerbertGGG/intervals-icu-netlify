@@ -1,0 +1,50 @@
+# Export fuer die Langzeitanalyse (DOKUMENTATION.md, Teil B 13): rechnet Laeufe und Tage aus Intervals und schreibt sie nach
+# D1; der Worker liest sie nur. Laeuft hier statt im Worker, weil die Auswertung der Zeitreihen die 10 ms CPU des kostenlosen
+# Cloudflare-Plans sprengt.
+# Taeglich: die letzten 30 Tage (Nachtraege, Wetter, geaenderte Wellness). Von Hand ("Run workflow"): ganze Historie
+# (full) oder ein eigener Bereich.
+# Repo-Secrets: INTERVALS_API_KEY, ATHLETE_ID, CLOUDFLARE_API_TOKEN (D1 Edit + Workers KV Storage Read), CLOUDFLARE_ACCOUNT_ID.
+name: Export nach D1
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # 03:17 UTC = 04:17/05:17 Berlin, vor dem Coaching-Task am Morgen
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Ganze Historie nachrechnen"
+        type: boolean
+        default: false
+      from:
+        description: "Startdatum YYYY-MM-DD (leer = Standard)"
+        required: false
+      to:
+        description: "Enddatum YYYY-MM-DD (leer = gestern)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: export-d1
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Export rechnen und nach D1 schreiben
+        run: node scripts/export-to-d1.mjs
+        env:
+          INTERVALS_API_KEY: ${{ secrets.INTERVALS_API_KEY }}
+          ATHLETE_ID: ${{ secrets.ATHLETE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPORT_FULL: ${{ inputs.full }}
+          EXPORT_FROM: ${{ inputs.from }}
+          EXPORT_TO: ${{ inputs.to }}

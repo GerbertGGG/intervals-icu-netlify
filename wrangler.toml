@@ -3,30 +3,26 @@ name = "intervals-icu-netlify"
 main = "src/index.js"
 compatibility_date = "2025-11-11"
 workers_dev = true
-# Variablen aus dem Cloudflare-Dashboard bei jedem Deploy behalten (sonst ersetzt der [vars]-Block unten sie)
-keep_vars = true
 
 # Erster Eintrag: alle 15 Minuten (UTC 03:00-22:45, ab 04:00/05:00 Berlin). Jeder Tick holt die
 # Snapshots aus GitHub und baut den Dashboard-Cache neu (fuer die Uhr, die sonst in den Abbruch laeuft);
 # von 07:00 bis 23:45 Berlin synct er ausserdem Yazio fuer heute (index.js).
 # Zweiter Eintrag: Minute 58 in den UTC-Stunden 21 und 22, damit einer der beiden Ticks
 # unabhaengig von Sommer-/Winterzeit auf 23:58 Berlin faellt: letzter Yazio-Sync des Tages.
-# Dritter Eintrag: eigener Aufruf nur fuer den Export (export.js, backfillRunExport), damit er seine eigenen 10 ms CPU des
-# kostenlosen Plans hat und seine CPU-Zeit in den Logs getrennt steht. Rund um die Uhr, versetzt zu den anderen Ticks.
-triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *", "7,22,37,52 * * * *"] }
+triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *"] }
 
-# Grenzen des Exports (src/export.js) fuer den kostenlosen Plan: 10 ms CPU und 50 Subrequests je Aufruf.
-# Beim Wechsel auf den bezahlten Plan (30 s CPU, 1000 Subrequests) hier hochsetzen, z. B. 12 / 12 / 40 / 40 / 24.
-[vars]
-EXPORT_RUNS_PER_CALL = "2"      # Laeufe mit Zeitreihen je Export-Abruf (get_run_export, /api/export/runs); Rest ueber pending/Cron; ≈ 10 ms
-EXPORT_RUNS_PER_TICK = "1"      # dasselbe je Export-Tick (eigener Cron-Eintrag oben); 2 Laeufe messen ≈ 10–14 ms, 1 ≈ 5 ms
-EXPORT_FETCHES_PER_CALL = "30"  # Abrufe je Export-Abruf (Aktivitaetsscheiben + je Lauf bis zu 3)
-EXPORT_FETCHES_PER_TICK = "8"   # Abrufe je Export-Tick (1 Scheibe + bis zu 2 Laeufe x 3)
-EXPORT_SLICES_PER_CALL = "12"   # 60-Tage-Scheiben der Aktivitaetsliste je Export-Abruf
-
-# Workers Logs: speichert die Logzeilen mit der CPU-Zeit je Aufruf (cpuTimeMs), z. B. fuer "run export backfill".
+# Workers Logs: speichert die Logzeilen mit der CPU-Zeit je Aufruf (cpuTimeMs).
 [observability]
 enabled = true
+
+# Export fuer die Langzeitanalyse (src/export.js liest, scripts/export-sync.mjs in GitHub Actions schreibt), D1 im kostenlosen
+# Plan. Einmalig anlegen: "npx wrangler d1 create training-export", die ausgegebene database_id hier eintragen und die vier
+# Zeilen einkommentieren. Das Skript liest die database_id ebenfalls von hier. Ohne Binding antworten die Export-Routen mit
+# einer Fehlermeldung, der Rest des Workers laeuft normal.
+# [[d1_databases]]
+# binding = "EXPORT_DB"
+# database_name = "training-export"
+# database_id = "<id aus wrangler d1 create>"
 
 [[kv_namespaces]]
 binding = "KV"
@@ -46,8 +42,6 @@ directory = "./public"
 #   EGYM_USERNAME, EGYM_PASSWORD   Login der EGYM-App
 #   EGYM_BRAND (optional)          Studio-Kennung (Host <brand>.netpulse.com); ohne Wert wird der Host aus der E-Mail ermittelt
 #   EGYM_WEEKLY_GOAL_SETS (optional) Wochenziel Krafttraining in Saetzen (Kraft-Widget, Parameter "kraft", und Dashboard); ohne Wert 60
-#
-# Export (src/export.js): Grenzen im [vars]-Block oben.
 #
 # Garmin-Watchface (garmin/) - als Secret setzen:
 #   WATCH_TOKEN   eigenes Token der Uhr; oeffnet nur /api/widget?view=watch (nicht das Dashboard)

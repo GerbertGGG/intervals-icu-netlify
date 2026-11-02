@@ -12,10 +12,7 @@ import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest, handleWatchStatusRequest, warmDashboardCache } from "./widget.js";
 import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 import { loadWidgetKraft } from "./egym-widget.js";
-import { handleExportRequest, backfillRunExport } from "./export.js";
-
-// Cron-Ausdruck des Export-Triggers, muss genau so in wrangler.toml stehen
-const EXPORT_CRON = "7,22,37,52 * * * *";
+import { handleExportRequest } from "./export.js";
 
 async function withWorkerErrorBoundary(fn) {
   try {
@@ -59,7 +56,7 @@ export default {
             return json({ ok: false, error: String(e?.message ?? e) }, 502);
           }
         });
-      // Export fuer die Langzeitanalyse (export.js): eine Zeile pro Lauf bzw. Tag, Bearer DASHBOARD_TOKEN, optional format=csv
+      // Export fuer die Langzeitanalyse (export.js): liest nur aus D1 (gefuellt von GitHub Actions), Bearer DASHBOARD_TOKEN, optional format=csv
       case "/api/export/runs":
         return route(() => handleExportRequest(req, env, "runs"));
       case "/api/export/days":
@@ -99,12 +96,6 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    // Eigener Trigger fuer den Export (wrangler.toml): nur offene Laeufe nachrechnen, sonst nichts, damit dieser Aufruf seine
-    // eigene CPU-Zeit hat (kostenloser Plan: 10 ms). Fehler nur loggen.
-    if (event?.cron === EXPORT_CRON) {
-      ctx.waitUntil(backfillRunExport(env).catch((e) => console.error("run export backfill failed", String(e?.message ?? e))));
-      return;
-    }
     // Runalyze-/Studien-/Coach-Snapshots, die der Coaching-Task per GitHub-Branch liefert, danach der Tageseintrag im Zeitverlauf.
     ctx.waitUntil(
       syncSnapshotsFromGithub(env)

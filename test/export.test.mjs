@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { analyzeExportStreams, streamSkipOf, runRow, buildRunExport, backfillRunExport, buildDayRows, sickDaysFromEvents, toCsv, RUN_COLUMNS, DAY_COLUMNS, METHOD_VERSION } from "../src/export.js";
+import { DatabaseSync } from "node:sqlite";
+import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, METHOD_VERSION } from "../src/export-calc.js";
+import { RUN_COLUMNS, DAY_COLUMNS, encodeRow, decodeRow } from "../src/export-schema.js";
+import { buildRunExport, buildDayExport, toCsv, toTable } from "../src/export.js";
+import { syncExport, sqlLiteral } from "../scripts/export-sync.mjs";
 import { pickOpenMeteoValues, averageNativeWeather, extractStartLatLng } from "../src/weather.js";
 
 // Kuenstliche Zeitreihe: 1 Probe je Sekunde, speed(t) in m/s, hr(t), alt(t) optional
@@ -150,100 +154,114 @@ assert.equal(analyzeExportStreams([{ type: "time", data: [0, 1] }, { type: "dist
 // ---------- CSV ----------
 assert.equal(toCsv([{ a: 'x,"y"', b: null, c: ["t1", "t2"] }], ["a", "b", "c"]), 'a,b,c\n"x,""y""",,t1|t2\n');
 
-// ---------- Lauf-Export und Cron mit Budget, Scheiben, Cache und 404 (Intervals und KV gestubbt) ----------
+// ---------- SQL-Literale und Zeilen-Kodierung ----------
+assert.equal(sqlLiteral("O'Brien\0"), "'O''Brien'");
+assert.equal(sqlLiteral(null), "NULL");
+assert.equal(sqlLiteral(NaN), "NULL");
+assert.equal(sqlLiteral(true), "1");
 {
-  const kv = new Map();
-  const env = { INTERVALS_API_KEY: "k", ATHLETE_ID: "i1", KV: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => { kv.set(k, v); } } };
+  const row = { ...Object.fromEntries(RUN_COLUMNS.map((c) => [c, null])), id: "i1", tags: ["#a", "b"], treadmill: true, race: false, distKm: 9.12 };
+  assert.deepEqual(decodeRow(Object.fromEntries(RUN_COLUMNS.map((c, i) => [c, encodeRow(row, RUN_COLUMNS)[i]])), RUN_COLUMNS), { ...row, tags: ["#a", "b"] });
+}
+
+// ---------- GitHub Action -> D1 -> Worker (Intervals gestubbt, D1 = node:sqlite) ----------
+{
+  const db = new DatabaseSync(":memory:");
+  const d1 = async (sql, params = []) => { const st = db.prepare(sql); return /^\s*(SELECT|PRAGMA)/i.test(sql) ? st.all(...params) : (st.run(...params), []); };
+  // D1-Binding des Workers (prepare().bind().all()) ueber dieselbe Datenbank
+  const EXPORT_DB = { prepare: (sql) => ({ bind: (...p) => ({ all: async () => ({ results: db.prepare(sql).all(...p) }) }) }) };
   const ago = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
-  const run = (id, day, extra = {}) => ({ id, type: "Run", start_date_local: `${day}T08:00:00`, moving_time: 3600, distance: 9000, has_heartrate: true, average_heartrate: 130, ...extra });
+  const today = ago(0);
+  const run = (id, day, extra = {}) => ({ id, type: "Run", start_date_local: `${day}T08:00:00`, moving_time: 3600, distance: 9000, has_heartrate: true, average_heartrate: 130, icu_training_load: 40, ...extra });
   const D = [ago(40), ago(39), ago(38), ago(37), ago(36)];
-  let acts = [run("a1", D[0]), run("a2", D[1]), run("a3", D[2], { type: "VirtualRun" }), run("a4", D[3]), run("a5", D[4], { name: "5x1000" })];
+  let acts = [run("a1", D[0]), run("a2", D[1]), run("a3", D[2], { type: "VirtualRun" }), run("a4", D[3]), run("a5", D[4], { name: "5x1000" }), { id: "r1", type: "Ride", start_date_local: `${D[0]}T18:00:00`, moving_time: 3600, icu_training_load: 50 }];
   const calls = [];
-  const realFetch = globalThis.fetch, realLog = console.log;
-  console.log = () => {}; // Logzeilen der Rechnung (export runs / run export backfill) im Test stumm
+  let streamsFail = false;
+  const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     calls.push(u);
     const ok = (body) => new Response(JSON.stringify(body), { status: 200 });
-    if (u.includes("/activities?")) {
-      const q = new URL(u).searchParams, lo = q.get("oldest"), hi = q.get("newest");
-      return ok(acts.filter((a) => a.start_date_local.slice(0, 10) >= lo && a.start_date_local.slice(0, 10) <= hi));
-    }
+    const range = () => { const q = new URL(u).searchParams; return [q.get("oldest"), q.get("newest")]; };
+    if (u.includes("/activities?")) { const [lo, hi] = range(); return ok(acts.filter((a) => a.start_date_local.slice(0, 10) >= lo && a.start_date_local.slice(0, 10) <= hi)); }
+    if (u.includes("/wellness?")) return ok([{ id: D[0], ctl: 21.6, atl: 27.6, restingHR: 45, sleepSecs: 30000 }]);
+    if (u.includes("/events?")) return ok([{ category: "SICK", start_date_local: `${D[2]}T00:00:00`, end_date_local: `${D[3]}T00:00:00` }]);
     if (u.includes("/map")) return ok({ latlngs: [[52.5, 13.4]], weather: null });
     if (u.includes("open-meteo")) return ok({ hourly: { time: [`${D[0]}T08:00`], temperature_2m: [9.5], relative_humidity_2m: [88], wind_speed_10m: [2.2] } });
     if (u.includes("/activity/a4/streams")) return new Response("not found", { status: 404 });
-    if (u.includes("/streams")) return ok(synth(3600));
+    if (u.includes("/streams")) return streamsFail ? new Response("boom", { status: 400 }) : ok(synth(3600));
     throw new Error("unerwartet " + u);
   };
+  const env = { INTERVALS_API_KEY: "k", ATHLETE_ID: "i1" };
+  const quiet = () => {};
   try {
-    const range = { from: D[0], to: D[4] };
-    // Ohne Variable: 2 Laeufe mit Zeitreihen je Abruf (CPU), der dritte (a4) bleibt pending; Laufband ohne Abruf
-    const r1 = await buildRunExport(env, { ...range, limit: 4 });
-    assert.equal(r1.methodVersion, METHOD_VERSION);
-    assert.equal(r1.count, 4);
-    assert.equal(r1.rows[0].streamStatus, "ok");
-    assert.equal(r1.rows[0].paceBand125_135, 400);
-    assert.deepEqual([r1.rows[0].tempC, r1.rows[0].humidity, r1.rows[0].windMs, r1.rows[0].weatherSrc], [9.5, 88, 2.2, "openmeteo"]);
-    assert.deepEqual(r1.rows.map((r) => r.streamStatus), ["ok", "ok", "skip", "pending"]);
-    assert.equal(r1.pending, 1);
-    assert.equal(r1.nextCursor, `${D[3]}T08:00:00|a4`);
-    assert.equal(calls.filter((u) => u.includes("/streams")).length, 2);
-
-    // Folgeseite: a5 Intervall ohne Zeitreihen
-    const r2 = await buildRunExport(env, { ...range, cursor: r1.nextCursor, limit: 10 });
-    assert.deepEqual(r2.rows.map((r) => [r.id, r.streamStatus, r.streamSkip]), [["a5", "skip", "interval"]]);
-    assert.equal(r2.nextCursor, null);
-
-    // Variable aus wrangler.toml: EXPORT_RUNS_PER_CALL = 0 rechnet nichts neu, 1 holt a4 nach (404 -> none)
-    const r3a = await buildRunExport({ ...env, EXPORT_RUNS_PER_CALL: "0" }, { ...range, limit: 5 });
-    assert.equal(r3a.rows[3].streamStatus, "pending");
-    const r3 = await buildRunExport({ ...env, EXPORT_RUNS_PER_CALL: "1" }, { ...range, limit: 5 });
-    assert.deepEqual(r3.rows.map((r) => r.streamStatus), ["ok", "ok", "skip", "none", "skip"]);
-    assert.equal(r3.pending, 0);
+    // Erster Lauf der Action: alles neu
+    const s1 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([s1.runs, s1.computed, s1.reused, s1.pending, s1.runsWritten, s1.days, s1.daysWritten], [5, 5, 0, 0, 5, 5, 5]);
+    assert.equal(calls.filter((u) => u.includes("/streams")).length, 3); // a1, a2, a4 (404)
+    // Worker liest nur aus D1
     const before = calls.length;
-    const r4 = await buildRunExport(env, { ...range, limit: 1 });
-    assert.equal(r4.rows[0].paceBand125_135, 400);
-    assert.equal(calls.length - before, 1);
-    assert.ok([...kv.keys()].includes(`icu:export:v${METHOD_VERSION}:a1`));
+    const r1 = await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[4], limit: 2 });
+    assert.equal(calls.length, before); // kein Abruf von Intervals im Worker
+    assert.deepEqual([r1.total, r1.count, r1.pending, r1.methodVersion], [5, 2, 0, METHOD_VERSION]);
+    assert.equal(r1.rows[0].paceBand125_135, 400);
+    assert.deepEqual([r1.rows[0].tempC, r1.rows[0].humidity, r1.rows[0].windMs, r1.rows[0].weatherSrc, r1.rows[0].methodVersion], [9.5, 88, 2.2, "openmeteo", METHOD_VERSION]);
+    assert.equal(r1.rows[0].treadmill, false);
+    assert.deepEqual(r1.rows[0].tags, []);
+    assert.equal(r1.syncedFrom, D[0]);
+    assert.ok(r1.syncedAt);
+    assert.equal(r1.nextCursor, `${D[1]}T08:00:00|a2`);
+    const r2 = await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[4], cursor: r1.nextCursor });
+    assert.deepEqual(r2.rows.map((r) => [r.id, r.streamStatus, r.streamSkip]), [["a3", "skip", "treadmill"], ["a4", "none", null], ["a5", "skip", "interval"]]);
+    assert.equal(r2.nextCursor, null);
+    assert.deepEqual(Object.keys(r2.rows[0]), RUN_COLUMNS);
+    const t = toTable(r2, RUN_COLUMNS);
+    assert.equal(t.rows[0].length, RUN_COLUMNS.length);
+    // Standardbereich: erster Tag in D1 bis gestern
+    const r3 = await buildRunExport({ EXPORT_DB }, {});
+    assert.equal(r3.from, D[0]);
+    assert.equal(r3.total, 5);
 
-    // Scheiben: ein Lauf 300 Tage vor den anderen, dazwischen leer -> beide gefunden; zu langer leerer Bereich -> nextCursor
-    acts = [run("old", ago(340)), ...acts];
-    const r5 = await buildRunExport(env, { from: ago(345), to: D[4], limit: 10 });
-    assert.deepEqual(r5.rows.map((r) => r.id), ["old", "a1", "a2", "a3", "a4", "a5"]);
-    assert.equal(r5.nextCursor, null);
-    const r6 = await buildRunExport(env, { from: ago(2000), to: ago(1000), limit: 10 }); // EXPORT_SLICES_PER_CALL 12
-    assert.equal(r6.count, 0);
-    assert.match(r6.nextCursor, /^\d{4}-\d{2}-\d{2}T~\|$/); // 12 Scheiben = 720 Tage durchsucht, Rest auf der naechsten Seite
-    const r7 = await buildRunExport(env, { from: ago(2000), to: ago(1000), cursor: r6.nextCursor, limit: 10 });
-    assert.equal(r7.nextCursor, null);
+    const days = await buildDayExport({ EXPORT_DB }, { from: D[0], to: D[4], limit: 3 });
+    assert.deepEqual(Object.keys(days.rows[0]), DAY_COLUMNS);
+    assert.deepEqual([days.rows[0].ctl, days.rows[0].loadRun, days.rows[0].loadBike, days.rows[0].sleepH], [21.6, 40, 50, 8.3]);
+    assert.deepEqual(days.rows.map((r) => r.sick), [false, false, true]);
+    assert.equal(days.nextCursor, D[3]);
+    assert.equal((await buildDayExport({ EXPORT_DB }, { from: D[0], to: D[4], cursor: days.nextCursor })).count, 2);
 
-    // Cron Phase 1: erster Tag rueckwaerts in Scheiben, fertig nach 6 leeren Scheiben
-    kv.clear();
-    acts = acts.filter((a) => a.id !== "old");
-    let res;
-    for (let i = 0; i < 7; i++) res = await backfillRunExport(env);
-    assert.deepEqual(res, { phase: "firstDay", firstDay: D[0] });
-    // Phase 2 mit EXPORT_RUNS_PER_TICK = 2 (8 Abrufe), aelteste zuerst
-    const env2 = { ...env, EXPORT_RUNS_PER_TICK: "2" };
-    res = await backfillRunExport(env2);
-    assert.equal(res.phase, "runs");
-    assert.equal(res.processed, 2); // a1, a2
-    assert.equal(res.doneThrough, D[2]); // a4 ist der aelteste offene
-    res = await backfillRunExport(env2);
-    assert.equal(res.processed, 2); // a4 (404) und a5 (Intervall, nur Wetter)
-    assert.equal(res.pendingInSlice, 0);
-    res = await backfillRunExport(env);
-    assert.deepEqual(res, { phase: "runs", processed: 0, pending: 0 }); // alles bis gestern fertig
-    // ohne Variable 1 Lauf je Tick -> genau ein Zeitreihen-Abruf
-    kv.set(`icu:export:v${METHOD_VERSION}:state`, JSON.stringify({}));
-    kv.delete(`icu:export:v${METHOD_VERSION}:done`);
-    for (const id of ["a1", "a2", "a4", "a5"]) kv.delete(`icu:export:v${METHOD_VERSION}:${id}`);
-    const streamsBefore = calls.filter((u) => u.includes("/streams")).length;
-    await backfillRunExport(env, {});
-    assert.equal(calls.filter((u) => u.includes("/streams")).length - streamsBefore, 1);
+    // Zweiter Lauf ohne Aenderung: nichts neu gerechnet, nichts geschrieben
+    const streams1 = calls.filter((u) => u.includes("/streams")).length;
+    const s2 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([s2.computed, s2.reused, s2.runsWritten, s2.daysWritten], [0, 5, 0, 0]);
+    assert.equal(calls.filter((u) => u.includes("/streams")).length, streams1);
+
+    // Umbenennung zum Rennen: Zeitreihen-Kennzahlen fallen weg (neu gerechnet), geloeschte Aktivitaet verschwindet aus D1
+    acts = acts.map((a) => (a.id === "a2" ? { ...a, name: "Wettkampf Stadtlauf" } : a)).filter((a) => a.id !== "a4");
+    const s3 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([s3.computed, s3.runsWritten, s3.runsDeleted], [1, 1, 1]);
+    const a2 = (await buildRunExport({ EXPORT_DB }, { from: D[1], to: D[1] })).rows[0];
+    assert.deepEqual([a2.race, a2.streamSkip, a2.paceBand125_135], [true, "race", null]);
+    assert.equal((await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[4] })).total, 4);
+
+    // Neuer Lauf, Zeitreihen nicht abrufbar -> pending, beim naechsten Lauf der Action nachgerechnet
+    acts.push(run("a6", D[4], { start_date_local: `${D[4]}T18:00:00` }));
+    streamsFail = true;
+    const s4 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.equal(s4.pending, 1);
+    assert.equal((await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[4] })).pending, 1);
+    streamsFail = false;
+    const s5 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([s5.computed, s5.pending, s5.runsWritten], [1, 0, 1]);
+
+    // methodVersion: aeltere Zeilen werden neu gerechnet
+    db.prepare(`UPDATE runs SET "methodVersion" = 0, "hash" = 'x' WHERE "id" = 'a1'`).run();
+    const s6 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([s6.computed, s6.runsWritten], [1, 1]);
+
+    // ohne D1-Binding: klare Fehlermeldung
+    await assert.rejects(buildRunExport({}, {}), /EXPORT_DB/);
   } finally {
     globalThis.fetch = realFetch;
-    console.log = realLog;
   }
 }
 

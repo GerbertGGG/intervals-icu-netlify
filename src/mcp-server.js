@@ -3,7 +3,7 @@
 // tools so a Claude chat can be added as a custom connector against this Worker,
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
-// get_run_export/get_day_export liefern den Export fuer die Langzeitanalyse (export.js).
+// get_run_export/get_day_export liefern den Export fuer die Langzeitanalyse aus D1 (export.js, gefuellt von GitHub Actions).
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
 // save_studie, save_coach, save_ernaehrung, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
@@ -34,7 +34,7 @@ const PROTOCOL_VERSION = "2025-06-18";
 const EXPORT_ARGS = {
       type: "object",
       properties: {
-        from: { type: "string", description: "Startdatum YYYY-MM-DD, Standard: erster Tag mit Aktivität in Intervals (solange der Cron ihn sucht: frühester bisher gefundener Tag, sonst vor einem Jahr; siehe firstDayKnown)." },
+        from: { type: "string", description: "Startdatum YYYY-MM-DD, Standard: erster Tag in der Datenbank." },
         to: { type: "string", description: "Enddatum YYYY-MM-DD, Standard: gestern." },
         cursor: { type: "string", description: "nextCursor der vorigen Antwort, um weiterzublättern." },
         limit: { type: "number", description: `Zeilen je Seite, Standard ${DEFAULT_LIMIT}, max. ${MAX_LIMIT}.` },
@@ -373,21 +373,21 @@ const TOOLS = [
   {
     name: "get_run_export",
     description:
-      "Export für die Langzeitanalyse: eine Zeile pro Lauf (alle Läufe, älteste zuerst), nur Rohwerte und Kennzahlen, keine Bewertung. Antwort: methodVersion, from, to, count, pending (Zeilen dieser Seite, deren Zeitreihen-Kennzahlen noch nicht berechnet sind; sie kommen mit streamStatus pending), backfillDoneThrough (bis zu diesem Tag hat der Cron alles berechnet), firstDayKnown (false = Standard-from ist noch nicht der erste Tag, die Suche läuft), nextCursor (null = letzte Seite, auch bei 0 Zeilen weiterblättern, solange nextCursor gesetzt ist), columns, rows. Je Aufruf werden höchstens 2 Läufe neu aus den Zeitreihen gerechnet (CPU-Limit, EXPORT_RUNS_PER_CALL), den Rest rechnet ein eigener Cron nach (etwa 4 pro Stunde); später erneut abrufen. " +
+      "Export für die Langzeitanalyse: eine Zeile pro Lauf (alle Läufe, älteste zuerst), nur Rohwerte und Kennzahlen, keine Bewertung. Liest aus der Export-Datenbank (D1), die eine GitHub Action täglich gegen 04:17/05:17 Berlin für die letzten 30 Tage nachführt; ganz neue Läufe von heute fehlen also noch. Antwort: methodVersion (aktuelle Methode), from, to, total (Läufe im Zeitraum), count, pending (Läufe im Zeitraum, deren Zeitreihen beim letzten Lauf der Action nicht abrufbar waren), syncedAt / syncedFrom / syncedTo (letzte Synchronisation), nextCursor (null = letzte Seite), columns, rows. " +
       "Spalten: id, date, startLocal (lokale Startzeit), type, name, tags, treadmill, race, interval (Intervall-Tag oder Textsignal wie 5x1000), runClass (base|long|intensity|race|unknown, Einheitsart des Dashboards), distKm, movingMin (Bewegungszeit), elevPerKm (Hm/km), avgHr, maxHr, rpe (1–10), feel (1 stark … 5 schwach), load (Intervals-Load). " +
       "Wetter: tempC, humidity (%), windMs (m/s, nur aus Open-Meteo), weatherSrc (intervals|openmeteo|null). Nie die Temperatur der Uhr; Laufband ohne Wetter. " +
       "streamStatus: ok | pending | none (keine Zeitreihen/kein Puls) | skip; streamSkip: treadmill | race | interval | short (unter 20 min) | noHr. Kennzahlen nur bei ok, sonst null: " +
       "Zeitachse Bewegungszeit, GPS bereinigt, erste 5 min ausgelassen, gleitende 30-s-Fenster (5-s-Schritt) ohne Pause/Stehen. " +
       "paceBand125_135 / paceBand120_128 = Median-Pace in s/km der Fenster mit Ø-HF im Band (null unter 300 s im Band), secBand125_135 / secBand120_128 = Sekunden im Band, paceBand…Flat = dasselbe nur aus flachen Fenstern (Steigung < 2 %, null ohne Höhendaten). " +
       "effAt130 = vorhergesagte Geschwindigkeit in m/min bei HF 130 aus der Regression Geschwindigkeit gegen HF (Fenster mit HF 110–150), effSlope = m/min je Schlag, effR2, effN = Zahl der Fenster (unter 20: Regression null). " +
-      "decoup = Pa:HR-Decoupling in % (Minute 5 bis Ende, erste gegen zweite Hälfte, positiv = zweite Hälfte schlechter). hrDriftBpm = Ø-HF letztes minus erstes Drittel, nur wenn die Pace beider Drittel < 3 % abweicht. gradeShareFlat = Anteil der Fenster mit Steigung < 2 % (0–1). gpsCorrectedM = durch die GPS-Bereinigung entfernte Meter.",
+      "decoup = Pa:HR-Decoupling in % (Minute 5 bis Ende, erste gegen zweite Hälfte, positiv = zweite Hälfte schlechter). hrDriftBpm = Ø-HF letztes minus erstes Drittel, nur wenn die Pace beider Drittel < 3 % abweicht. gradeShareFlat = Anteil der Fenster mit Steigung < 2 % (0–1). gpsCorrectedM = durch die GPS-Bereinigung entfernte Meter. methodVersion = Methode, mit der die Zeile gerechnet wurde.",
     inputSchema: EXPORT_ARGS,
   },
   {
     name: "get_day_export",
     description:
-      "Export für die Langzeitanalyse: eine Zeile pro Kalendertag (auch Tage ohne Daten), nur Rohwerte, keine Basislinien und Bewertungen. Antwort: methodVersion, from, to, count, pending (immer 0), firstDayKnown, nextCursor (nächster Tag, null = letzte Seite), columns, rows. " +
-      "Spalten: date, ctl, atl, rampRate (Intervals), loadRun, loadBike, loadSwim, loadStrength (Summe Load je Sportart, Rad mit power_load wie im Wochenrahmen), minRun, minBike, minSwim (Bewegungszeit in min, Schwimmen ohne Pausen soweit bekannt), strengthSets (Kraftsätze aus der Beschreibung), hrv, restHr, sleepH, sleepScore, sleepQuality (1 gut … 4 schlecht), fatigue, soreness, mood, motivation (Intervals-Skalen 1–4, vor dem Training eingetragen), sick (Kalender SICK/INJURED oder Notiz „krank“), weightKg (Yazio, sonst Intervals), kcal, kcalGoal, protein, carbs (g, aus Yazio über die Intervals-Wellness). Fehlende Werte sind null, Load/Minuten/Sätze ohne Training 0.",
+      "Export für die Langzeitanalyse: eine Zeile pro Kalendertag (auch Tage ohne Daten), nur Rohwerte, keine Basislinien und Bewertungen. Liest aus der Export-Datenbank (D1), täglich von einer GitHub Action nachgeführt. Antwort: methodVersion, from, to, total, count, pending (immer 0), syncedAt / syncedFrom / syncedTo, nextCursor (nächster Tag, null = letzte Seite), columns, rows. " +
+      "Spalten: date, ctl, atl, rampRate (Intervals), loadRun, loadBike, loadSwim, loadStrength (Summe Load je Sportart, Rad mit power_load wie im Wochenrahmen), minRun, minBike, minSwim (Bewegungszeit in min, Schwimmen ohne Pausen soweit bekannt), strengthSets (Kraftsätze aus der Beschreibung), hrv, restHr, sleepH, sleepScore, sleepQuality (1 gut … 4 schlecht), fatigue, soreness, mood, motivation (Intervals-Skalen 1–4, vor dem Training eingetragen), sick (Kalender SICK/INJURED oder Notiz „krank“), weightKg (Yazio, sonst Intervals), kcal, kcalGoal, protein, carbs (g, aus Yazio über die Intervals-Wellness), methodVersion. Fehlende Werte sind null, Load/Minuten/Sätze ohne Training 0.",
     inputSchema: EXPORT_ARGS,
   },
   {
