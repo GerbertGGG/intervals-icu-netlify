@@ -201,3 +201,13 @@ assert.deepEqual([hi.ramp, hi.acwrDays, hi.acwrPeak], [5.6, null, null]); // 15.
 const both = buildLoadHint([...calm.slice(0, 4), wd("2026-10-21", 40, 54), wd("2026-10-22", 40, 54), wd("2026-10-23", 40, 56, 6)], T0);
 assert.deepEqual([both.ramp, both.acwrDays, both.acwrPeak], [6, 3, 1.4]);
 console.log("load-hint tests ok");
+
+// Coach-Kraftziel in Einheiten (strengthSets2w 0 + Kraft-Zeile der Intensität)
+{
+  const stored = { items: [{ validFrom: "2026-11-02", enduranceHoursPerWeek: 5, strengthSets2w: 0, intensity: [{ sport: "kraft", text: "Mindestens 1× pro Woche Kraft", short: "Min. 1× Kraft pro Woche" }] }] };
+  const t = computeWeekTotals([], "2026-11-04", stored);
+  assert.deepEqual(t.goals.kraft, { min: 1, text: "Min. 1× Kraft pro Woche" });
+  assert.equal(t.weeks.at(-1).strengthSessions, 0);
+  assert.equal(computeWeekTotals([], "2026-11-04", null).goals.kraft, undefined);
+  console.log("kraft-einheiten tests ok");
+}

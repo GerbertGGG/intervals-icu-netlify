@@ -99,7 +99,7 @@ function weekOpen(d, week) {
 
 function weekGoals(d) {
   const T = d.weekTotals, c = T?.weeks?.[T.weeks.length - 1];
-  return c ? { min: c.enduranceMin, goalMin: Math.round(T.goals.enduranceHours * 60), sets2w: c.strengthSets2w, goalSets2w: T.goals.strengthSets2w } : null;
+  return c ? { min: c.enduranceMin, goalMin: Math.round(T.goals.enduranceHours * 60), sets2w: c.strengthSets2w, goalSets2w: T.goals.strengthSets2w, ...(T.goals.kraft ? { kraft: { n: c.strengthSessions, goal: T.goals.kraft.min, text: T.goals.kraft.text } } : {}) } : null;
 }
 
 export function buildWidget(d, env = {}) {
@@ -429,6 +429,7 @@ function enduranceWeeks(T) {
     weeks: T.weeks.map((w) => ({ week: w.week, complete: w.complete, min: w.enduranceMin, goalMin: Math.round(w.goalHours * 60),
       by: Object.fromEntries(Object.entries(w.byDisciplineMin).map(([k, v]) => [DISC_SPORT[k], v])) })),
     streak: T.streakWeeksAbove4_5, streakPct: T.goals.streakThresholdPct, sets2w: c.strengthSets2w, goalSets2w: T.goals.strengthSets2w,
+    ...(T.goals.kraft ? { kraft: { n: c.strengthSessions, goal: T.goals.kraft.min, text: T.goals.kraft.text } } : {}),
   };
 }
 
