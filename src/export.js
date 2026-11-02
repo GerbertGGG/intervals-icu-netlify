@@ -37,22 +37,27 @@ export const EXPORT_RULES = {
   MIN_HR: 40,
 };
 
-// Grenzen des kostenlosen Cloudflare-Plans (Commit 08d6aec: "[limits]" entfernt "for free-plan deploys"):
-// 50 Subrequests und 10 ms CPU je Aufruf (Anfrage oder Cron-Tick). Gemessen (DOKUMENTATION.md 13.4): Zeitreihen eines
-// 60-min-Laufs parsen + auswerten ≈ 4 ms warm, ≈ 13 ms beim ersten Aufruf im frischen Isolate. Darum je Aufruf hoechstens
-// RUNS_PER_* Laeufe mit Zeitreihen (Variablen EXPORT_RUNS_PER_CALL / EXPORT_RUNS_PER_TICK, Tick hoechstens 2) und die
-// Aktivitaeten in 60-Tage-Scheiben statt der ganzen Historie (2500 Aktivitaeten parsen ≈ 29 ms).
-// Abrufe: ein Lauf kostet hoechstens 3 (Karte, Zeitreihen, Open-Meteo); Laeufe ohne Zeitreihen (Rennen, Intervall ...) nur
-// Karte und Wetter, die zaehlen nicht gegen RUNS_PER_*.
-export const API_FETCH_BUDGET = 30;
-export const CRON_FETCH_BUDGET = 8;
-export const RUNS_PER_CALL = 1;
-export const RUNS_PER_TICK = 1;
-export const MAX_RUNS_PER_TICK = 2;
+// Grenzen des kostenlosen Cloudflare-Plans (Commit 08d6aec: "[limits]" entfernt "for free-plan deploys"): 50 Subrequests und
+// 10 ms CPU je Aufruf, und zwar fuer den GANZEN Aufruf (Anfrage bzw. Cron-Tick). Gemessen (DOKUMENTATION.md 13.4): Zeitreihen
+// eines 60-min-Laufs parsen + auswerten ≈ 4 ms warm, ≈ 12 ms im frischen Isolate. Die Grenzen stehen als Variablen in
+// wrangler.toml ([vars], beim Planwechsel hochsetzen); die Werte hier gelten nur, wenn eine Variable fehlt:
+//   EXPORT_RUNS_PER_CALL / EXPORT_RUNS_PER_TICK       Laeufe mit Zeitreihen je Export-Abruf bzw. Export-Tick
+//   EXPORT_FETCHES_PER_CALL / EXPORT_FETCHES_PER_TICK Abrufe (Subrequests) je Export-Abruf bzw. Export-Tick
+//   EXPORT_SLICES_PER_CALL                            60-Tage-Scheiben der Aktivitaetsliste je Export-Abruf
+// Ein Lauf kostet hoechstens 3 Abrufe (Karte, Zeitreihen, Open-Meteo); Laeufe ohne Zeitreihen (Rennen, Intervall ...) nur
+// Karte und Wetter, die zaehlen nicht gegen EXPORT_RUNS_PER_*.
+export const LIMIT_DEFAULTS = {
+  EXPORT_RUNS_PER_CALL: 2, EXPORT_RUNS_PER_TICK: 1,
+  EXPORT_FETCHES_PER_CALL: 30, EXPORT_FETCHES_PER_TICK: 8,
+  EXPORT_SLICES_PER_CALL: 12,
+};
+export function exportLimit(env, name) {
+  const v = num(env?.[name]);
+  return v != null && v >= 0 ? Math.floor(v) : LIMIT_DEFAULTS[name];
+}
 export const SLICE_DAYS = 60; // Aktivitaetsliste in Scheiben (≈ 80 Aktivitaeten ≈ 1 ms parsen)
-const MAX_SLICES_PER_CALL = 12; // Export-Seite: hoechstens 2 Jahre durchsuchen, dann nextCursor
 const FIRST_DAY_EMPTY_SLICES = 6; // erster Tag: nach 6 leeren Scheiben (ein Jahr ohne Aktivitaet) gilt die Suche als fertig
-const runsPer = (v, def, max = Infinity) => { const n = Math.floor(num(v) ?? def); return Math.max(0, Math.min(max, n)); };
+
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 500;
 const WEATHER_RETRY_DAYS = 14; // Open-Meteo-Archiv hinkt hinterher: fehlendes Wetter so lange beim Lesen erneut fragen
@@ -257,7 +262,7 @@ export async function resolveRunEntry(env, a, budget, today = isoDateBerlin()) {
   }
   const skip = streamSkipOf(a);
   if (budget.left < (skip ? 2 : 3)) return undefined;
-  if (!skip && budget.runs != null && budget.runs <= 0) return undefined; // CPU: Zeitreihen nur fuer RUNS_PER_* Laeufe
+  if (!skip && budget.runs != null && budget.runs <= 0) return undefined; // CPU: Zeitreihen nur fuer EXPORT_RUNS_PER_* Laeufe
   if (!skip && budget.runs != null) budget.runs--;
   try {
     budget.left--;
@@ -324,13 +329,13 @@ export async function resolveExportArgs(env, args = {}) {
   return { from, to, limit, cursor: args.cursor ? String(args.cursor) : null, firstDayKnown: first ? first.known : null };
 }
 
-// Laeufe ab dem Cursor in 60-Tage-Scheiben einsammeln, bis limit + 1 Laeufe da sind, to erreicht ist oder MAX_SLICES_PER_CALL
+// Laeufe ab dem Cursor in 60-Tage-Scheiben einsammeln, bis limit + 1 Laeufe da sind, to erreicht ist oder EXPORT_SLICES_PER_CALL
 // Scheiben gelesen sind. scannedTo = letzter durchsuchter Tag.
-async function collectRuns(env, from, to, cursor, limit) {
+async function collectRuns(env, from, to, cursor, limit, maxSlices) {
   const cursorDay = cursor && isIsoDate(cursor.slice(0, 10)) ? cursor.slice(0, 10) : null;
   let day = cursorDay && cursorDay > from ? cursorDay : from, scannedTo = addDays(day, -1), slices = 0;
   const runs = [];
-  while (day <= to && runs.length <= limit && slices < MAX_SLICES_PER_CALL) {
+  while (day <= to && runs.length <= limit && slices < maxSlices) {
     const end = addDays(day, SLICE_DAYS - 1) < to ? addDays(day, SLICE_DAYS - 1) : to;
     const acts = sortRuns(await fetchIntervalsActivities(env, day, end));
     slices++;
@@ -343,8 +348,8 @@ async function collectRuns(env, from, to, cursor, limit) {
 
 export async function buildRunExport(env, args = {}, { budget = null } = {}) {
   const { from, to, limit, cursor, firstDayKnown } = await resolveExportArgs(env, args);
-  budget = budget ?? { left: API_FETCH_BUDGET, runs: runsPer(env?.EXPORT_RUNS_PER_CALL, RUNS_PER_CALL) };
-  const { runs, scannedTo, slices } = await collectRuns(env, from, to, cursor, limit);
+  budget = budget ?? { left: exportLimit(env, "EXPORT_FETCHES_PER_CALL"), runs: exportLimit(env, "EXPORT_RUNS_PER_CALL"), log: [] };
+  const { runs, scannedTo, slices } = await collectRuns(env, from, to, cursor, limit, Math.max(1, exportLimit(env, "EXPORT_SLICES_PER_CALL")));
   const page = runs.slice(0, limit);
   const done = await readDone(env), before = done.size;
   const today = isoDateBerlin();
@@ -370,11 +375,11 @@ export async function buildRunExport(env, args = {}, { budget = null } = {}) {
 }
 
 // Cron (eigener Trigger, siehe index.js): Phase 1 sucht den ersten Tag rueckwaerts in 60-Tage-Scheiben (eine je Tick), Phase 2
-// rechnet offene Laeufe nach, aelteste zuerst, hoechstens RUNS_PER_TICK Laeufe mit Zeitreihen je Tick. doneThrough merkt sich,
+// rechnet offene Laeufe nach, aelteste zuerst, hoechstens EXPORT_RUNS_PER_TICK Laeufe mit Zeitreihen je Tick. doneThrough merkt sich,
 // bis wohin alles fertig ist. Jede Runde schreibt eine Logzeile; die CPU-Zeit des Aufrufs steht in Workers Logs (cpuTimeMs).
 export async function backfillRunExport(env, { budget = null, maxChecks = 100 } = {}) {
   if (!hasKv(env)) return { skipped: "no kv" };
-  budget = budget ?? { left: CRON_FETCH_BUDGET, runs: runsPer(env?.EXPORT_RUNS_PER_TICK, RUNS_PER_TICK, MAX_RUNS_PER_TICK), log: [] };
+  budget = budget ?? { left: exportLimit(env, "EXPORT_FETCHES_PER_TICK"), runs: exportLimit(env, "EXPORT_RUNS_PER_TICK"), log: [] };
   const state = await readState(env);
   const today = isoDateBerlin(), yesterday = addDays(today, -1);
   const cachedFirst = await readKvJson(env, FIRST_DAY_KEY).catch(() => null);

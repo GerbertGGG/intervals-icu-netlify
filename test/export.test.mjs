@@ -177,27 +177,29 @@ assert.equal(toCsv([{ a: 'x,"y"', b: null, c: ["t1", "t2"] }], ["a", "b", "c"]),
   };
   try {
     const range = { from: D[0], to: D[4] };
-    // Standard: 1 Lauf mit Zeitreihen je Abruf (CPU), der zweite bleibt pending
-    const r1 = await buildRunExport(env, { ...range, limit: 2 });
+    // Ohne Variable: 2 Laeufe mit Zeitreihen je Abruf (CPU), der dritte (a4) bleibt pending; Laufband ohne Abruf
+    const r1 = await buildRunExport(env, { ...range, limit: 4 });
     assert.equal(r1.methodVersion, METHOD_VERSION);
-    assert.equal(r1.count, 2);
+    assert.equal(r1.count, 4);
     assert.equal(r1.rows[0].streamStatus, "ok");
     assert.equal(r1.rows[0].paceBand125_135, 400);
     assert.deepEqual([r1.rows[0].tempC, r1.rows[0].humidity, r1.rows[0].windMs, r1.rows[0].weatherSrc], [9.5, 88, 2.2, "openmeteo"]);
-    assert.equal(r1.rows[1].streamStatus, "pending");
+    assert.deepEqual(r1.rows.map((r) => r.streamStatus), ["ok", "ok", "skip", "pending"]);
     assert.equal(r1.pending, 1);
-    assert.equal(r1.nextCursor, `${D[1]}T08:00:00|a2`);
-    assert.equal(calls.filter((u) => u.includes("/streams")).length, 1);
+    assert.equal(r1.nextCursor, `${D[3]}T08:00:00|a4`);
+    assert.equal(calls.filter((u) => u.includes("/streams")).length, 2);
 
-    // Folgeseite: Laufband ohne Abruf, a4 404 -> none (der eine Lauf mit Zeitreihen), Intervall ohne Zeitreihen
+    // Folgeseite: a5 Intervall ohne Zeitreihen
     const r2 = await buildRunExport(env, { ...range, cursor: r1.nextCursor, limit: 10 });
-    assert.deepEqual(r2.rows.map((r) => [r.id, r.streamStatus, r.streamSkip]), [["a3", "skip", "treadmill"], ["a4", "none", null], ["a5", "skip", "interval"]]);
+    assert.deepEqual(r2.rows.map((r) => [r.id, r.streamStatus, r.streamSkip]), [["a5", "skip", "interval"]]);
     assert.equal(r2.nextCursor, null);
-    assert.equal(r2.pending, 0);
 
-    // EXPORT_RUNS_PER_CALL hebt die Grenze; Cache-Treffer kosten nur die Aktivitaetsliste
-    const r3 = await buildRunExport({ ...env, EXPORT_RUNS_PER_CALL: "3" }, { ...range, limit: 5 });
-    assert.equal(r3.rows[1].streamStatus, "ok");
+    // Variable aus wrangler.toml: EXPORT_RUNS_PER_CALL = 0 rechnet nichts neu, 1 holt a4 nach (404 -> none)
+    const r3a = await buildRunExport({ ...env, EXPORT_RUNS_PER_CALL: "0" }, { ...range, limit: 5 });
+    assert.equal(r3a.rows[3].streamStatus, "pending");
+    const r3 = await buildRunExport({ ...env, EXPORT_RUNS_PER_CALL: "1" }, { ...range, limit: 5 });
+    assert.deepEqual(r3.rows.map((r) => r.streamStatus), ["ok", "ok", "skip", "none", "skip"]);
+    assert.equal(r3.pending, 0);
     const before = calls.length;
     const r4 = await buildRunExport(env, { ...range, limit: 1 });
     assert.equal(r4.rows[0].paceBand125_135, 400);
@@ -209,7 +211,7 @@ assert.equal(toCsv([{ a: 'x,"y"', b: null, c: ["t1", "t2"] }], ["a", "b", "c"]),
     const r5 = await buildRunExport(env, { from: ago(345), to: D[4], limit: 10 });
     assert.deepEqual(r5.rows.map((r) => r.id), ["old", "a1", "a2", "a3", "a4", "a5"]);
     assert.equal(r5.nextCursor, null);
-    const r6 = await buildRunExport(env, { from: ago(2000), to: ago(1000), limit: 10 });
+    const r6 = await buildRunExport(env, { from: ago(2000), to: ago(1000), limit: 10 }); // EXPORT_SLICES_PER_CALL 12
     assert.equal(r6.count, 0);
     assert.match(r6.nextCursor, /^\d{4}-\d{2}-\d{2}T~\|$/); // 12 Scheiben = 720 Tage durchsucht, Rest auf der naechsten Seite
     const r7 = await buildRunExport(env, { from: ago(2000), to: ago(1000), cursor: r6.nextCursor, limit: 10 });
@@ -221,25 +223,24 @@ assert.equal(toCsv([{ a: 'x,"y"', b: null, c: ["t1", "t2"] }], ["a", "b", "c"]),
     let res;
     for (let i = 0; i < 7; i++) res = await backfillRunExport(env);
     assert.deepEqual(res, { phase: "firstDay", firstDay: D[0] });
-    // Phase 2: 1 Lauf mit Zeitreihen je Tick, Laeufe ohne Zeitreihen laufen mit; aelteste zuerst
-    res = await backfillRunExport(env);
+    // Phase 2 mit EXPORT_RUNS_PER_TICK = 2 (8 Abrufe), aelteste zuerst
+    const env2 = { ...env, EXPORT_RUNS_PER_TICK: "2" };
+    res = await backfillRunExport(env2);
     assert.equal(res.phase, "runs");
-    assert.equal(res.processed, 2); // a1 (Zeitreihen) und a5 (Intervall, nur Wetter)
-    assert.equal(res.doneThrough, D[0]); // a2 ist der aelteste offene
-    res = await backfillRunExport(env);
-    assert.equal(res.processed, 1); // a2
-    res = await backfillRunExport(env);
-    assert.equal(res.processed, 1); // a4 (404)
+    assert.equal(res.processed, 2); // a1, a2
+    assert.equal(res.doneThrough, D[2]); // a4 ist der aelteste offene
+    res = await backfillRunExport(env2);
+    assert.equal(res.processed, 2); // a4 (404) und a5 (Intervall, nur Wetter)
     assert.equal(res.pendingInSlice, 0);
     res = await backfillRunExport(env);
     assert.deepEqual(res, { phase: "runs", processed: 0, pending: 0 }); // alles bis gestern fertig
-    // EXPORT_RUNS_PER_TICK hoechstens 2
+    // ohne Variable 1 Lauf je Tick -> genau ein Zeitreihen-Abruf
     kv.set(`icu:export:v${METHOD_VERSION}:state`, JSON.stringify({}));
     kv.delete(`icu:export:v${METHOD_VERSION}:done`);
     for (const id of ["a1", "a2", "a4", "a5"]) kv.delete(`icu:export:v${METHOD_VERSION}:${id}`);
     const streamsBefore = calls.filter((u) => u.includes("/streams")).length;
-    await backfillRunExport({ ...env, EXPORT_RUNS_PER_TICK: "9" }, {});
-    assert.ok(calls.filter((u) => u.includes("/streams")).length - streamsBefore <= 2);
+    await backfillRunExport(env, {});
+    assert.equal(calls.filter((u) => u.includes("/streams")).length - streamsBefore, 1);
   } finally {
     globalThis.fetch = realFetch;
     console.log = realLog;
