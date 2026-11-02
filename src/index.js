@@ -12,6 +12,7 @@ import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest, handleWatchStatusRequest, warmDashboardCache } from "./widget.js";
 import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 import { loadWidgetKraft } from "./egym-widget.js";
+import { handleExportRequest, backfillRunExport } from "./export.js";
 
 async function withWorkerErrorBoundary(fn) {
   try {
@@ -55,6 +56,11 @@ export default {
             return json({ ok: false, error: String(e?.message ?? e) }, 502);
           }
         });
+      // Export fuer die Langzeitanalyse (export.js): eine Zeile pro Lauf bzw. Tag, Bearer DASHBOARD_TOKEN, optional format=csv
+      case "/api/export/runs":
+        return route(() => handleExportRequest(req, env, "runs"));
+      case "/api/export/days":
+        return route(() => handleExportRequest(req, env, "days"));
       // Runalyze-Snapshot, Studien-Check und Coach-Aussage, geschrieben aus einer Coaching-Sitzung.
       case "/api/runalyze":
         return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
@@ -99,6 +105,12 @@ export default {
 
     // Dashboard-Cache warm halten, damit die Uhr sofort eine Antwort bekommt (siehe dashboardCached in widget.js)
     ctx.waitUntil(warmDashboardCache(env).catch((e) => console.error("dashboard cache failed", String(e?.message ?? e))));
+
+    // Export: offene Laeufe nachrechnen (Zeitreihen-Kennzahlen, Wetter), aelteste zuerst, in den Ticks ohne EGYM-Abgleich
+    // (Minute >= 15) und rund um die Uhr im Cron-Fenster. Fehler nur loggen.
+    if (new Date(Number(event?.scheduledTime)).getUTCMinutes() >= 15) {
+      ctx.waitUntil(backfillRunExport(env).catch((e) => console.error("run export backfill failed", String(e?.message ?? e))));
+    }
 
     // Yazio alle 15 Minuten von 07:00 bis 23:59 Berlin (der Eintrag "58 21-22" in wrangler.toml
     // liefert den Tagesabschluss um 23:58, unabhaengig von Sommer-/Winterzeit).

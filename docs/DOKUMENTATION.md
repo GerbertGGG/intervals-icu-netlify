@@ -69,6 +69,15 @@ Drei Wege, wie ein Snapshot ins KV kommt (je nach dem, was die Coaching-Sitzung 
 
 Der Coach liest vor jedem Update mit `get_coach` den gesamten Stand zurück (letzte Aussage, Antwort auf die Rückfrage, Wochensummen, Rahmen, Ernährung …).
 
+**Export für die Langzeitanalyse** (lesend, kein Snapshot; Details in Teil B, Abschnitt 13):
+
+| MCP-Tool | HTTP | Inhalt |
+|---|---|---|
+| `get_run_export` | `GET /api/export/runs` | eine Zeile pro Lauf: Stammdaten, Wetter, Kennzahlen aus den Zeitreihen |
+| `get_day_export` | `GET /api/export/days` | eine Zeile pro Tag: CTL/ATL, Load und Minuten je Sportart, Wellness, Gewicht, Ernährung |
+
+Beide nehmen `from`, `to`, `cursor`, `limit` (Standard 200, max. 500) und `format` (MCP: `table` als Standard, `json`, `csv`; HTTP: JSON-Objekte als Standard, `table`, `csv`). Die MCP-Tools sind der Hauptweg, weil die Coaching-Sitzung den Worker per HTTP oft nicht erreicht; HTTP braucht `Authorization: Bearer <DASHBOARD_TOKEN>`.
+
 ### A2.5 Antworten aus dem Dashboard
 
 Das Dashboard schreibt zwei Dinge zurück: die **Antwort auf die Rückfrage** des Coaches (`POST /api/coach/answer`) und **angepasste Zeiten im Wochenvorschlag** (`POST /api/coach/plan`, baut danach den Cache sofort neu). Der Coach liest beides am nächsten Morgen.
@@ -92,6 +101,7 @@ Jeder Tick macht:
 | Dashboard-Cache warm halten | jeder Tick | `warmDashboardCache`: baut den Stand aus allen Quellen neu auf, damit die Uhr sofort antwortet |
 | Yazio → Intervals | 07:00–23:59 Berlin | `syncYazioRange` für heute; der erste Tick um 07:xx holt zusätzlich gestern nach |
 | EGYM → Intervals, danach EGYM-Cache | 1× pro Stunde (Tick mit Minute < 15) im selben Fenster | `syncEgymToIntervals`, dann `loadWidgetKraft(env, true)` |
+| Export nachbefüllen | Ticks mit Minute ≥ 15 (03:15–22:58 UTC) | `backfillRunExport`: rechnet offene Läufe nach, älteste zuerst, höchstens 10 Abrufe je Tick (Teil B 13.4) |
 
 Fehler werden geloggt und stoppen die anderen Schritte nicht.
 
@@ -169,6 +179,7 @@ Alle Zahlenbeispiele wurden mit dem echten Code ausgeführt (`node`), nicht von 
 10. Wetter (`src/weather.js`)
 11. Freitext-Parser (Heißhunger, Hüfte, Workout-Schritte)
 12. Prüfhinweise (Auffälligkeiten)
+13. Export für die Langzeitanalyse (`src/export.js`)
 
 ---
 
@@ -179,9 +190,9 @@ Alle Zahlenbeispiele wurden mit dem echten Code ausgeführt (`node`), nicht von 
 | Funktion | Regel |
 |---|---|
 | `isRun` (10) | `type` (klein geschrieben) ist `run`/`running` oder **enthält** `run`, `laufen`, `treadmill` |
-| `isTreadmill` (21) | `type == "virtualrun"` oder enthält `treadmill` |
+| `isTreadmill` (31) | `type == "virtualrun"`, enthält `treadmill` oder `trainer == true`; seit dem Export wieder im Code (nur `export.js`) |
 | `isBike` (28) | `type` enthält `ride`, `bike`, `cycling`, `rad`, `velo` |
-| `isRaceActivity` (37) | Tag beginnt mit `race:` **oder** `category` ∈ {`RACE`,`RACE_A`,`A_RACE`} **oder** Name/Titel enthält als ganzes Wort `race`, `wettkampf`, `competition` **[P9]** |
+| `isRaceActivity` (38) | Tag beginnt mit `race:` **oder** `category` ∈ {`RACE`,`RACE_A`,`A_RACE`} **oder** `sub_type == "RACE"`/`race == true` **oder** Name/Titel enthält als ganzes Wort `race`, `wettkampf`, `competition` **[P9]**; nur `export.js` |
 | `isIntervalActivity` (65) | irgendein Tag beginnt (ohne führendes `#`) mit `interval` |
 | `hasIntervalTextSignal` (83) | Name+Beschreibung enthält Wort `intervall`/`interval` **oder** Muster `\d+\s*[x×]\s*\d+` (z. B. „5x1000“) |
 | `isVdotExcluded` (104) | Tag ist (ohne `#`) genau `novdot` |
@@ -844,9 +855,12 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 
 ## 10. Wetter (`src/weather.js`)
 
+Mit #976 entfernt, für den Export (13) wiederhergestellt; nur `export.js` nutzt es.
+
 - Bevorzugt Intervals-Wetter aus den Kartenpunkten: **Mittelwert** aller Temperatur- und Feuchtewerte über alle Zeitproben, auf 0,1 gerundet; beide Größen müssen vorhanden sein.
 - Fallback Open-Meteo-Archiv am GPS-Startpunkt: Stundenwert zur lokalen Startstunde (`start_date_local`), sonst Tagesmittel aller Stunden. Koordinaten auf 3 Nachkommastellen (~111 m) gerundet.
-- Laufband: kein Wetter. Ergebnisse werden je Aktivität dauerhaft in KV gecacht.
+- Laufband: kein Wetter. Ergebnisse werden je Aktivität dauerhaft in KV gecacht (im Export-Eintrag, 13.4).
+- Wind (`windMs`) nur aus Open-Meteo (`wind_speed_10m`, `wind_speed_unit=ms`); die Kartenpunkte von Intervals liefern keinen, dann `null`. Tageswerte im KV unter `weather:v2:<lat>:<lng>:<Datum>` (`openMeteoDay`, 61), nur gespeichert, wenn das Archiv schon Werte hat (es hinkt einige Tage hinterher).
 
 ---
 
@@ -903,6 +917,88 @@ Sortiert nach Gewicht. „Beleg“ nennt, wie ich es festgestellt habe.
 **P19 – Toter Code:** die Plausibilitätsprüfung in `computeWeeksToEvent` rechnet denselben Wert neu.
 **P20 – Heutiger Lauf braucht 1 Lauf, das Fenster 2** (2.9 vs. 2.5).
 **P21 – Wochenvergleich mischt Sportarten:** `distanceKm` im Bericht summiert Schwimmen, Rad und Laufen (`weekly-progress.js:48–70`), während `runSessionCount` nur Läufe zählt.
+
+---
+
+## 13. Export für die Langzeitanalyse (`src/export.js`)
+
+Der Coach soll über die ganze Trainingshistorie rechnen können. Der Export liefert dafür **eine Zeile pro Lauf** und **eine Zeile pro Tag**, nur Rohwerte und Kennzahlen, keine Bewertung (Grundsatz aus `CLAUDE.md`). Zugänge siehe A2.4: MCP `get_run_export`/`get_day_export` (`mcp-server.js`), HTTP `/api/export/runs|days` (`index.js:60`, `handleExportRequest`, 445).
+
+### 13.1 Parameter und Antwort (`resolveExportArgs`, `buildRunExport` 307, `buildDayExport` 411)
+
+- `from`/`to` (ISO-Datum): Standard erster Tag mit einer Aktivität in Intervals (`firstExportDay`, einmal gesucht, KV `icu:export:firstDay`) bis gestern (Berlin).
+- `limit`: Standard 200, höchstens 500. `cursor`: Läufe `<start_date_local>|<id>` der letzten Zeile, Tage das nächste Datum. `nextCursor = null` heißt letzte Seite.
+- Antwort: `methodVersion`, `from`, `to`, `count`, `pending`, `nextCursor`, `rows` (bei Läufen zusätzlich `total`). `format=table` liefert `columns` einmal und die Zeilen als Arrays, `csv` eine Kopfzeile (HTTP: `nextCursor`, `pending`, `methodVersion` in den Headern `x-next-cursor`, `x-pending`, `x-method-version`; MCP: in einer ersten Textzeile).
+- Zahlen gerundet, fehlende Werte `null`.
+
+### 13.2 Zeile pro Lauf (`runRow`, `baseRunRow` 199)
+
+Alle Aktivitäten mit `isRun`, älteste zuerst.
+
+| Spalte | Quelle |
+|---|---|
+| `id`, `date`, `startLocal`, `type`, `name`, `tags` | Intervals (`date` = `activityDay`, `startLocal` = `start_date_local`) |
+| `treadmill` | `isTreadmill` |
+| `race` | `isRaceActivity` oder `classifyRun` = `race` (ohne Kalender-/Runalyze-Kontext, also nur über Name/`sub_type`/`race`) |
+| `interval` | `isIntervalActivity` oder `hasIntervalTextSignal` |
+| `runClass` | `classifyRun` (7.2), ohne Kontext |
+| `distKm`, `movingMin`, `elevPerKm` | `distance`/1000, `moving_time`/60, `total_elevation_gain`/km |
+| `avgHr`, `maxHr`, `rpe`, `feel`, `load` | `average_heartrate`, `max_heartrate`, `icu_rpe` (sonst `perceived_exertion`), `feel`, `sessionLoad` |
+| `tempC`, `humidity`, `windMs`, `weatherSrc` | Abschnitt 10; `weatherSrc` = `intervals` \| `openmeteo` \| `null`. Nie die Uhr; Laufband ohne Wetter |
+| `streamStatus` | `ok` \| `pending` (noch nicht berechnet) \| `none` (Zeitreihen 404 oder ohne Puls/Distanz) \| `skip` |
+| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 190): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr` |
+
+### 13.3 Kennzahlen aus den Zeitreihen (`analyzeExportStreams`, 71; Grenzwerte `EXPORT_RULES`, 23)
+
+Nur Läufe im Freien, kein Rennen, kein Intervall, mindestens 20 min mit Puls. Abgerufen werden `time`, `heartrate`, `distance`, `velocity_smooth`, `altitude`, `fixed_altitude` (Höhe: `fixed_altitude`, sonst `altitude`).
+
+```
+Zeitachse = Bewegungszeit (runMovingAxis), Distanz GPS-bereinigt (cleanRunDistance), wie 6.5
+Raster je Sekunde Bewegungszeit: Distanz linear interpoliert, Puls/Höhe von der Probe davor (Puls nur > 40)
+Unterbrechung = Probe, bei der vergangene Zeit verloren ging (Auto-Pause, Stehen)
+Fenster: 30 s, gleitend in 5-s-Schritten, ab Sekunde 300; ungültig bei Unterbrechung im Fenster,
+         Puls in weniger als 80 % der Sekunden oder ohne Distanzzuwachs
+v = Distanzzuwachs / 30 s,  HF = Ø-Puls im Fenster
+flach = |ΔHöhe / ΔDistanz| < 2 % (Höhe vorher ±15 s gemittelt)
+```
+
+| Spalte | Rechnung |
+|---|---|
+| `paceBand125_135`, `paceBand120_128` | Fenster mit HF im Band (Grenzen eingeschlossen): Pace = 1000 / Median(v) in s/km. `null`, wenn die Fenster zusammen unter 300 s abdecken |
+| `secBand125_135`, `secBand120_128` | Sekunden im Band (Vereinigung der Fenstersekunden) |
+| `paceBand125_135Flat`, `paceBand120_128Flat` | dasselbe nur aus flachen Fenstern; `null` ohne Höhendaten |
+| `effAt130`, `effSlope`, `effR2`, `effN` | lineare Regression v (m/min) gegen HF über alle gültigen Fenster mit HF 110–150; `effAt130` = Vorhersage bei HF 130 (m/min), `effSlope` in m/min je Schlag, `effN` = Zahl der Fenster. Unter 20 Fenstern oder ohne Streuung im Puls `null` (nur `effN` bleibt) |
+| `decoup` | wie 6.5, aber über den ganzen Lauf: Minute 5 bis Ende, zwei Hälften nach Zeit, Effizienz = (Distanzzuwachs / Zeit) / Ø-HF, `(Eff1 / Eff2 − 1) × 100` |
+| `hrDriftBpm` | Ø-HF letztes minus erstes Drittel (Minute 5 bis Ende in Drittel geteilt), nur wenn die Pace der beiden Drittel unter 3 % abweicht, sonst `null` |
+| `gradeShareFlat` | Anteil der gültigen Fenster mit Steigung unter 2 % (0–1); `null` ohne Höhendaten |
+| `gpsCorrectedM` | von `cleanRunDistance` entfernte Meter |
+
+Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrectedM` 326 m wie `analyzeRunStreams` (6.5, Fenster 5–65 = ganzer Lauf); Pace im Band 451–460 s/km bei Pace 5–65 von 454 s/km.
+
+### 13.4 Cache, Abrufbudget, Nachbefüllung (`resolveRunEntry` 233, `backfillRunExport` 329)
+
+- Je Lauf (außer Laufband) ein Eintrag in KV `icu:export:v<methodVersion>:<id>`: `streamStatus`, `streamSkip`, `metrics`, `weather`, `latlng`. Ändert sich die Methode, `METHOD_VERSION` (17) erhöhen: neuer Schlüssel, alles wird neu gerechnet. 404 bei Zeitreihen wird als `none` gespeichert, andere Fehler nicht (der Lauf bleibt `pending`).
+- Rechnen kostet je Lauf bis zu 3 Abrufe: Karte (`/activity/{id}/map?weather=true`: Startpunkt und Intervals-Wetter), Zeitreihen (nur ohne `streamSkip`), Open-Meteo (nur ohne Intervals-Wetter, je Punkt und Tag gecacht). Budget je Aufruf `API_FETCH_BUDGET` = 36 Abrufe (44), also etwa 12 Läufe: Cloudflare Free erlaubt 50 Subrequests je Aufruf, der Plan steht nicht in `wrangler.toml`, Wiederholungen bei 429/5xx zählen extra.
+- Fehlt das Wetter, weil das Open-Meteo-Archiv noch leer war, fragt das Lesen den Lauf in den ersten 14 Tagen erneut ab.
+- `pending` = Läufe im Zeitraum ohne fertigen Eintrag; dafür führt `icu:export:v<n>:done` die fertigen IDs.
+- **Cron** (A3.1, Ticks mit Minute ≥ 15): `backfillRunExport` mit 10 Abrufen (Aktivitätsliste + etwa 3 Läufe), älteste zuerst. `icu:export:v<n>:state.doneThrough` merkt sich, bis wohin alles fertig ist, damit spätere Ticks nur den Rest abfragen. Fehler werden geloggt und stoppen die anderen Schritte nicht. Läufe, die nachträglich vor `doneThrough` hochgeladen werden, rechnet erst ein Export-Aufruf nach.
+
+### 13.5 Zeile pro Tag (`buildDayRows`, 381)
+
+Jeder Kalendertag im Zeitraum, auch ohne Daten.
+
+| Spalte | Quelle |
+|---|---|
+| `ctl`, `atl`, `rampRate` | Intervals-Wellness |
+| `loadRun`, `loadBike`, `loadSwim`, `loadStrength` | Σ `sessionLoad` je Sportart (Schwimmen = Typ mit `swim`, Rad `isBike`, Lauf `isRun`, Kraft `isStrengthActivity`) |
+| `minRun`, `minBike`, `minSwim` | Σ `moving_time`/60; Schwimmen `swimTimeOf` (ohne nachgeladene Laps = `moving_time`) |
+| `strengthSets` | Σ `strengthSetsOf` |
+| `hrv`, `restHr`, `sleepH`, `sleepScore`, `sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation` | Wellness wie `buildWellness` (HRV, Schlaf-Score > 0; Skalen ≥ 1; `sleepH` = `sleepSecs`/3600) |
+| `sick` | `sickDaysFromEvents` (365), dieselbe Regel wie 6.2: Kategorie `SICK`/`INJURED` oder Notiz „krank“; Kalender ab 60 Tage vor der Seite |
+| `weightKg` | Yazio (`yazio:weight`, nur letzte 90 Tage), sonst `weight` aus Intervals |
+| `kcal`, `kcalGoal`, `protein`, `carbs` | Zusatzfelder `Calories`, `CalorieGoal`, `Protein`, `Carbs` der Wellness (Yazio-Sync) |
+
+Ohne Training sind Load, Minuten und Sätze 0, fehlende Wellness-Werte `null`.
 
 ---
 

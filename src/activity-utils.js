@@ -27,6 +27,23 @@ export function isRun(a) {
   );
 }
 
+// Laufband: VirtualRun, Typ mit "treadmill" oder als Trainer markiert (wie block-inputs.js). Nur fuer den Export (export.js).
+export function isTreadmill(a) {
+  const t = String(a?.type ?? "").toLowerCase();
+  return t === "virtualrun" || t.includes("treadmill") || a?.trainer === true;
+}
+
+// Renn-Signal ohne Kalender/Runalyze (Stand vor #976): Tag "race:…", Kategorie RACE/RACE_A/A_RACE, sub_type RACE, race-Flag
+// von Intervals oder das Wort race/wettkampf/competition im Namen. Nur fuer den Export (export.js), classifyRun bleibt wie er ist.
+export function isRaceActivity(a) {
+  if (!a) return false;
+  const tags = Array.isArray(a?.tags) ? a.tags : [];
+  if (tags.some((tag) => String(tag || "").trim().toLowerCase().startsWith("race:"))) return true;
+  if (["RACE", "RACE_A", "A_RACE"].includes(String(a?.category || "").trim().toUpperCase())) return true;
+  if (String(a?.sub_type ?? "").toUpperCase() === "RACE" || a?.race === true) return true;
+  return /\b(race|wettkampf|competition)\b/i.test(String(a?.name || a?.title || ""));
+}
+
 // Bike/Smarttrainer classification (doc.txt 6.1): type contains ride/bike/cycling/
 // rad/velo. VirtualRide (smart trainer) counts as a ride like an outdoor ride.
 export function isBike(a) {
