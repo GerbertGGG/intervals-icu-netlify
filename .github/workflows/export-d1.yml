@@ -3,7 +3,9 @@
 # Cloudflare-Plans sprengt.
 # Taeglich: die letzten 30 Tage (Nachtraege, Wetter, geaenderte Wellness). Von Hand ("Run workflow"): ganze Historie
 # (full) oder ein eigener Bereich.
-# Repo-Secrets: INTERVALS_API_KEY, ATHLETE_ID, CLOUDFLARE_API_TOKEN (D1 Edit + Workers KV Storage Read), CLOUDFLARE_ACCOUNT_ID.
+# Repo-Secrets: INTERVALS_API_KEY, ATHLETE_ID, CLOUDFLARE_API_TOKEN (minimal: Account > D1 > Edit, nur dieses Konto),
+# CLOUDFLARE_ACCOUNT_ID. Darf der Token zusaetzlich "Workers KV Storage: Read", kommt das Yazio-Gewicht aus dem KV dazu.
+# Das Repo ist oeffentlich, die Logs auch: das Skript gibt nur Bereich, Zaehler, HTTP-Status und Fehlercodes aus.
 name: Export nach D1
 
 on:

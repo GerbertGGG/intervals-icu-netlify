@@ -693,7 +693,8 @@ async function settle(label, fn) {
 const eventDayOf = (e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10);
 
 // Renn-Eintraege (A/B/C) des Kalenders je Tag mit Zieldistanz in km, fuer die Zuordnung "Lauf = Rennen".
-function buildRaceDays(events) {
+// Auch vom Export genutzt (export-calc.js, raceContext): Rennen ueber den Kalender wie hier im Dashboard
+export function buildRaceDays(events) {
   const map = new Map();
   for (const e of events) {
     const cat = String(e?.category ?? "").toUpperCase();

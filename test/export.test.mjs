@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, METHOD_VERSION } from "../src/export-calc.js";
+import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, raceContext, METHOD_VERSION } from "../src/export-calc.js";
 import { RUN_COLUMNS, DAY_COLUMNS, encodeRow, decodeRow } from "../src/export-schema.js";
 import { buildRunExport, buildDayExport, toCsv, toTable } from "../src/export.js";
-import { syncExport, sqlLiteral } from "../scripts/export-sync.mjs";
+import { syncExport, sqlLiteral, safeError, safeErr } from "../scripts/export-sync.mjs";
 import { pickOpenMeteoValues, averageNativeWeather, extractStartLatLng } from "../src/weather.js";
 
 // Kuenstliche Zeitreihe: 1 Probe je Sekunde, speed(t) in m/s, hr(t), alt(t) optional
@@ -116,6 +116,31 @@ assert.equal(analyzeExportStreams([{ type: "time", data: [0, 1] }, { type: "dist
   assert.equal(runRow(base, null).streamStatus, "pending");
 }
 
+// ---------- Rennen ueber Kalender-Events (RACE / RACE_A / A_RACE am selben Tag, wie das Dashboard) ----------
+{
+  const base = { id: "c1", type: "Run", start_date_local: "2026-09-13T09:30:00", moving_time: 3000, distance: 10050, has_heartrate: true, average_heartrate: 160, name: "Stadtlauf" };
+  const ev = (category, extra = {}) => ({ category, start_date_local: "2026-09-13T00:00:00", name: "Stadtlauf 10 km", ...extra });
+  assert.equal(streamSkipOf(base), null); // ohne Kalender kein Rennen
+  for (const cat of ["RACE", "RACE_A", "A_RACE"]) {
+    const ctx = raceContext([ev(cat)]);
+    assert.equal(streamSkipOf(base, ctx), "race", cat);
+    const row = runRow(base, null, ctx);
+    assert.deepEqual([row.race, row.runClass, row.streamSkip], [true, "race", "race"], cat);
+  }
+  assert.equal(streamSkipOf(base, raceContext([ev("RACE", { start_date_local: "2026-09-12T00:00:00" })])), null); // anderer Tag
+  assert.equal(streamSkipOf(base, raceContext([ev("WORKOUT")])), null); // kein Renn-Eintrag
+  assert.equal(streamSkipOf(base, raceContext([ev("RACE", { distance: 10000 })])), "race"); // Distanz passt (±15 %)
+  assert.equal(streamSkipOf(base, raceContext([ev("RACE_A", { distance: 21097 })])), null); // HM-Eintrag, 10 km gelaufen
+  assert.equal(streamSkipOf(base, raceContext(null)), null);
+}
+
+// ---------- Logs ohne Inhalt (oeffentliches Repo) ----------
+assert.equal(safeError(new Error("activity streams 500: {\"heartrate\":[120,121]}")), "activity streams HTTP 500");
+assert.equal(safeError(new Error("wellness range 401: Unauthorized for i105857")), "wellness range HTTP 401");
+assert.equal(safeError(new SyntaxError('Unexpected token \'<\', "<html>Puls 130" is not valid JSON')), "SyntaxError");
+assert.equal(safeError(safeErr("D1 HTTP 400 (Code 7500)")), "D1 HTTP 400 (Code 7500)");
+assert.equal(safeError("irgendwas"), "Error");
+
 // ---------- Wetter ----------
 {
   const day = { times: ["2026-10-30T10:00", "2026-10-30T11:00"], temps: [10, 12], humidities: [80, 70], winds: [2, 4] };
@@ -177,6 +202,7 @@ assert.equal(sqlLiteral(true), "1");
   let acts = [run("a1", D[0]), run("a2", D[1]), run("a3", D[2], { type: "VirtualRun" }), run("a4", D[3]), run("a5", D[4], { name: "5x1000" }), { id: "r1", type: "Ride", start_date_local: `${D[0]}T18:00:00`, moving_time: 3600, icu_training_load: 50 }];
   const calls = [];
   let streamsFail = false;
+  let events = [{ category: "SICK", start_date_local: `${D[2]}T00:00:00`, end_date_local: `${D[3]}T00:00:00` }];
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
@@ -185,7 +211,7 @@ assert.equal(sqlLiteral(true), "1");
     const range = () => { const q = new URL(u).searchParams; return [q.get("oldest"), q.get("newest")]; };
     if (u.includes("/activities?")) { const [lo, hi] = range(); return ok(acts.filter((a) => a.start_date_local.slice(0, 10) >= lo && a.start_date_local.slice(0, 10) <= hi)); }
     if (u.includes("/wellness?")) return ok([{ id: D[0], ctl: 21.6, atl: 27.6, restingHR: 45, sleepSecs: 30000 }]);
-    if (u.includes("/events?")) return ok([{ category: "SICK", start_date_local: `${D[2]}T00:00:00`, end_date_local: `${D[3]}T00:00:00` }]);
+    if (u.includes("/events?")) return ok(events);
     if (u.includes("/map")) return ok({ latlngs: [[52.5, 13.4]], weather: null });
     if (u.includes("open-meteo")) return ok({ hourly: { time: [`${D[0]}T08:00`], temperature_2m: [9.5], relative_humidity_2m: [88], wind_speed_10m: [2.2] } });
     if (u.includes("/activity/a4/streams")) return new Response("not found", { status: 404 });
@@ -243,11 +269,24 @@ assert.equal(sqlLiteral(true), "1");
     assert.deepEqual([a2.race, a2.streamSkip, a2.paceBand125_135], [true, "race", null]);
     assert.equal((await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[4] })).total, 4);
 
-    // Neuer Lauf, Zeitreihen nicht abrufbar -> pending, beim naechsten Lauf der Action nachgerechnet
+    // Rennen nur im Kalender (A_RACE am Tag von a1): neu gerechnet, ohne Zeitreihen-Kennzahlen
+    events = [...events, { category: "A_RACE", start_date_local: `${D[0]}T00:00:00`, name: "Herbstlauf" }];
+    const sRace = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([sRace.computed, sRace.runsWritten], [1, 1]);
+    const a1 = (await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[0] })).rows[0];
+    assert.deepEqual([a1.race, a1.runClass, a1.streamSkip, a1.streamStatus, a1.paceBand125_135], [true, "race", "race", "skip", null]);
+    events = events.filter((e) => e.category !== "A_RACE");
+    await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet }); // Eintrag weg -> wieder normaler Lauf
+    assert.equal((await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[0] })).rows[0].paceBand125_135, 400);
+
+    // Neuer Lauf, Zeitreihen nicht abrufbar -> pending, beim naechsten Lauf der Action nachgerechnet; Log ohne Inhalt
     acts.push(run("a6", D[4], { start_date_local: `${D[4]}T18:00:00` }));
     streamsFail = true;
-    const s4 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    const logged = [];
+    const s4 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: (m) => logged.push(m) });
     assert.equal(s4.pending, 1);
+    assert.equal(s4.failed, 1);
+    assert.deepEqual(logged, ["Lauf nicht abrufbar (activity streams HTTP 400), bleibt pending"]); // kein Antworttext ("boom"), keine ID
     assert.equal((await buildRunExport({ EXPORT_DB }, { from: D[0], to: D[4] })).pending, 1);
     streamsFail = false;
     const s5 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });

@@ -117,7 +117,7 @@ Rechnet den Export (Teil B 13) außerhalb des Workers und schreibt ihn in die D1
 - **Täglich** um 03:17 UTC (04:17/05:17 Berlin, vor dem Coaching-Task): die letzten 30 Tage bis gestern. So kommen neue Läufe, nachträglich geänderte Namen/Tags, Wetter aus dem nachhinkenden Open-Meteo-Archiv und geänderte Wellness-Werte nach. GitHub startet geplante Läufe oft einige Minuten später.
 - **Von Hand** (Actions → „Export nach D1“ → „Run workflow“): `full` rechnet die ganze Historie (einmalig nach dem Einrichten und nach jedem Wechsel von `METHOD_VERSION`), `from`/`to` einen eigenen Bereich.
 - Schreibt nur neue oder geänderte Zeilen (Hash je Zeile), löscht Läufe, die es im Bereich in Intervals nicht mehr gibt, und rechnet Zeitreihen nur neu, wenn nötig (Teil B 13.4).
-- Zusammenfassung je Lauf im Job (Zahlen, keine Trainingsdaten: das Repo und damit die Logs sind öffentlich).
+- Logs und Job-Zusammenfassung enthalten nur Bereich, Zähler, HTTP-Status und Fehlercodes (`safeError`): keine Datenzeilen, Gesundheitswerte, Aktivitäts-IDs oder Antworttexte, auch nicht bei Fehlern, denn das Repo und damit die Logs sind öffentlich.
 
 ### A3.2 Coaching-Task (geplanter Task bei Claude, **nicht** im Repo)
 
@@ -155,7 +155,7 @@ Der Task läuft in einer Cloud-Sitzung, die den Worker per HTTP nicht immer erre
 | `GITHUB_TOKEN` | nur bei privatem Repo (Snapshot-Branch) | optional |
 | D1-Binding `EXPORT_DB` | Export lesen (`src/export.js`) | `[[d1_databases]]` in `wrangler.toml` |
 | Repo-Secrets `INTERVALS_API_KEY`, `ATHLETE_ID` | GitHub Action „Export nach D1“: Intervals lesen | GitHub → Settings → Secrets and variables → Actions |
-| Repo-Secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | GitHub Action: D1 schreiben, Yazio-Gewicht aus KV lesen | API-Token mit „D1: Edit“ und „Workers KV Storage: Read“, nur dieses Konto |
+| Repo-Secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | GitHub Action: D1 schreiben | minimal „Account → D1 → Edit“, nur dieses Konto; optional zusätzlich „Workers KV Storage: Read“ für das Yazio-Gewicht |
 
 Optionale Variablen: `WEEKLY_TSS_GOAL`, `TRI_SPLIT_TARGET`, `EGYM_WEEKLY_GOAL_SETS`, `GITHUB_REPO`, `SNAPSHOT_BRANCH` (Beschreibung in `wrangler.toml`). Secrets werden im Cloudflare-Dashboard bzw. mit `wrangler secret put` gesetzt, nie im Repo.
 
@@ -958,7 +958,7 @@ Der Coach soll über die ganze Trainingshistorie rechnen können. Der Export lie
 - `format=table` liefert `columns` einmal und die Zeilen als Arrays, `csv` eine Kopfzeile (HTTP: `nextCursor`, `pending`, `methodVersion`, `syncedAt` in den Headern `x-next-cursor`, `x-pending`, `x-method-version`, `x-synced-at`; MCP: in einer ersten Textzeile).
 - Zahlen gerundet, fehlende Werte `null`, `tags` als Liste, Wahrheitswerte als `true`/`false`. Jede Zeile trägt ihre `methodVersion`.
 
-### 13.2 Zeile pro Lauf (`export-calc.js`: `runRow`, `baseRunRow` 174)
+### 13.2 Zeile pro Lauf (`export-calc.js`: `runRow`, `baseRunRow` 181)
 
 Alle Aktivitäten mit `isRun`, älteste zuerst.
 
@@ -966,14 +966,14 @@ Alle Aktivitäten mit `isRun`, älteste zuerst.
 |---|---|
 | `id`, `date`, `startLocal`, `type`, `name`, `tags` | Intervals (`date` = `activityDay`, `startLocal` = `start_date_local`) |
 | `treadmill` | `isTreadmill` |
-| `race` | `isRaceActivity` oder `classifyRun` = `race` (ohne Kalender-/Runalyze-Kontext, also nur über Tag `race:`, `category`, Name, `sub_type`, `race`). **Offen:** Rennerkennung über Kalender-Events `RACE`/`RACE_A`/`A_RACE` am selben Tag, wie `buildRaceDays` im Dashboard |
+| `race` | `isRaceActivity` (Tag `race:`, `category`, Name, `sub_type`, `race`) oder `classifyRun` = `race` mit Kalender-Kontext (`raceContext`): wie im Dashboard (`buildRaceDays`, `isRaceRun`) auch ein Kalender-Eintrag `RACE`/`RACE_A`/`A_RACE` (bzw. A-Rennen) am selben Tag; hat der Eintrag eine Distanz, muss die gelaufene auf 15 % passen. Ohne Runalyze-Kontext |
 | `interval` | `isIntervalActivity` oder `hasIntervalTextSignal` |
-| `runClass` | `classifyRun` (7.2), ohne Kontext |
+| `runClass` | `classifyRun` (7.2) mit Kalender-Kontext |
 | `distKm`, `movingMin`, `elevPerKm` | `distance`/1000, `moving_time`/60, `total_elevation_gain`/km |
 | `avgHr`, `maxHr`, `rpe`, `feel`, `load` | `average_heartrate`, `max_heartrate`, `icu_rpe` (sonst `perceived_exertion`), `feel`, `sessionLoad` |
 | `tempC`, `humidity`, `windMs`, `weatherSrc` | Abschnitt 10; `weatherSrc` = `intervals` \| `openmeteo` \| `null`. Nie die Uhr; Laufband ohne Wetter |
 | `streamStatus` | `ok` \| `pending` (noch nicht berechnet) \| `none` (Zeitreihen 404 oder ohne Puls/Distanz) \| `skip` |
-| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 165): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr` |
+| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 172): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr` |
 
 ### 13.3 Kennzahlen aus den Zeitreihen (`export-calc.js`: `analyzeExportStreams`, 48; Grenzwerte `EXPORT_RULES`, 16)
 
@@ -1002,7 +1002,7 @@ flach = |ΔHöhe / ΔDistanz| < 2 % (Höhe vorher ±15 s gemittelt)
 
 Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrectedM` 326 m wie `analyzeRunStreams` (6.5, Fenster 5–65 = ganzer Lauf); Pace im Band 451–460 s/km bei Pace 5–65 von 454 s/km.
 
-### 13.4 GitHub Action, D1, Upsert (`syncExport` 82, `computeRunEntry` 213)
+### 13.4 GitHub Action, D1, Upsert (`syncExport` 93, `computeRunEntry` 220)
 
 **Warum nicht im Worker.** Der Worker läuft im kostenlosen Plan (Commit `08d6aec`) mit 10 ms CPU je Aufruf, und zwar für den ganzen Aufruf samt Dashboard-Cache und Yazio-Sync. Gemessen (Node 22, V8 wie in Workers, nur Hauptthread, warm): Zeitreihen eines 60-min-Laufs parsen und auswerten 4,4 ms (im frischen Isolate ≈ 12 ms), ein ganzer Aufruf mit 2 Läufen 10–14 ms, die Aktivitätsliste der ganzen Historie (2500 Aktivitäten) allein 29 ms. Deshalb rechnet eine GitHub Action, und der Worker liest nur.
 
@@ -1019,7 +1019,7 @@ Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrect
 **Ablauf je Lauf der Action** (`syncExport`):
 
 1. Schema sicherstellen.
-2. Aktivitäten, Wellness und Kalender des Bereichs aus Intervals (in 180-Tage-Scheiben); dazu das Yazio-Gewicht aus dem KV (`yazio:weight`, über die Cloudflare-API, nur lesen).
+2. Kalender, Aktivitäten und Wellness des Bereichs aus Intervals (in 180-Tage-Scheiben); aus dem Kalender die Renntage (`raceContext`, wie `buildRaceDays` im Dashboard); dazu das Yazio-Gewicht aus dem KV (`yazio:weight`, über die Cloudflare-API, nur lesen, nur mit KV-Leserecht des Tokens).
 3. Je Lauf: die gespeicherte Zeile wiederverwenden, wenn `methodVersion` gleich ist, `streamStatus` nicht `pending`, `streamSkip` gleich (Name oder Tags können ihn ändern, z. B. „Wettkampf“) und das Wetter nicht fehlt, solange der Lauf höchstens 14 Tage alt ist. Sonst neu rechnen (`computeRunEntry`): Karte (Startpunkt, Intervals-Wetter), sonst Open-Meteo, und ohne `streamSkip` die Zeitreihen. 404 bei Zeitreihen ergibt `none`; andere Abruffehler `pending`, der nächste Lauf der Action rechnet nach.
 4. Zeile bilden und hashen; **Upsert nur für neue oder geänderte Zeilen** (`INSERT … ON CONFLICT DO UPDATE … WHERE hash IS NOT excluded.hash`, 40 Zeilen je Anweisung mit Literalen, weil D1 höchstens 100 gebundene Parameter je Anweisung erlaubt).
 5. Läufe, die es im Bereich in Intervals nicht mehr gibt, aus D1 löschen.
@@ -1031,7 +1031,7 @@ Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen) rechnet jede
 **Einrichtung** (einmalig):
 
 1. D1-Datenbank `training-export` anlegen (`npx wrangler d1 create training-export`) und die `database_id` im `[[d1_databases]]`-Block von `wrangler.toml` eintragen (erledigt am 02.11.2026; die Action liest die ID ebenfalls von dort).
-2. API-Token in Cloudflare mit „D1: Edit“ und „Workers KV Storage: Read“ für dieses Konto anlegen.
+2. API-Token in Cloudflare (My Profile → API Tokens → Create Custom Token): Berechtigung **Account → D1 → Edit**, Account Resources **Include → nur dieses Konto**, keine Zonen-Rechte. „Edit“ ist nötig, weil die Action schreibt; „Read“ reicht nicht. Optional zusätzlich „Account → Workers KV Storage → Read“: dann liest die Action das Yazio-Gewicht (`yazio:weight`) aus dem KV, sonst kommt `weightKg` nur aus Intervals und das Log meldet „HTTP 403“.
 3. Repo-Secrets `INTERVALS_API_KEY`, `ATHLETE_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 4. Nach dem Merge die Action einmal mit `full` starten.
 
@@ -1042,7 +1042,7 @@ Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen) rechnet jede
 
 Wäre das Repo privat, lägen diese ≈ 31 Minuten im Monat weit unter den 2000 Gratisminuten. GitHub schaltet geplante Läufe in öffentlichen Repos nach 60 Tagen ohne Aktivität im Repo ab; dann die Action wieder einschalten.
 
-### 13.5 Zeile pro Tag (`export-calc.js`: `buildDayRows`, 261)
+### 13.5 Zeile pro Tag (`export-calc.js`: `buildDayRows`, 268)
 
 Jeder Kalendertag im Zeitraum, auch ohne Daten.
 
@@ -1053,7 +1053,7 @@ Jeder Kalendertag im Zeitraum, auch ohne Daten.
 | `minRun`, `minBike`, `minSwim` | Σ `moving_time`/60; Schwimmen `swimTimeOf` (ohne nachgeladene Laps = `moving_time`) |
 | `strengthSets` | Σ `strengthSetsOf` |
 | `hrv`, `restHr`, `sleepH`, `sleepScore`, `sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation` | Wellness wie `buildWellness` (HRV, Schlaf-Score > 0; Skalen ≥ 1; `sleepH` = `sleepSecs`/3600) |
-| `sick` | `sickDaysFromEvents` (245), dieselbe Regel wie 6.2: Kategorie `SICK`/`INJURED` oder Notiz „krank“; Kalender ab 60 Tage vor der Seite |
+| `sick` | `sickDaysFromEvents` (252), dieselbe Regel wie 6.2: Kategorie `SICK`/`INJURED` oder Notiz „krank“; Kalender ab 60 Tage vor der Seite |
 | `weightKg` | Yazio (`yazio:weight`, nur letzte 90 Tage), sonst `weight` aus Intervals |
 | `kcal`, `kcalGoal`, `protein`, `carbs` | Zusatzfelder `Calories`, `CalorieGoal`, `Protein`, `Carbs` der Wellness (Yazio-Sync) |
 

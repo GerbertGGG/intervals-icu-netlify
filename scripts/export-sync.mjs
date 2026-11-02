@@ -9,7 +9,7 @@ import { activityDay, isRun, isTreadmill } from "../src/activity-utils.js";
 import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsWellnessRange } from "../src/intervals-client.js";
 import { isoDate } from "../src/date-utils.js";
 import { readWeights } from "../src/ernaehrung.js";
-import { runRow, computeRunEntry, entryFromRow, streamSkipOf, buildDayRows } from "../src/export-calc.js";
+import { runRow, computeRunEntry, entryFromRow, streamSkipOf, buildDayRows, raceContext } from "../src/export-calc.js";
 import { METHOD_VERSION, TABLES, schemaStatements, missingColumnStatements, encodeRow, decodeRow } from "../src/export-schema.js";
 
 const addDays = (iso, n) => isoDate(new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000));
@@ -18,6 +18,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const WEATHER_RETRY_DAYS = 14; // Open-Meteo-Archiv hinkt hinterher: Laeufe ohne Wetter so lange neu rechnen
 const SLICE_DAYS = 180; // Intervals-Abrufe in Scheiben, damit eine Antwort nicht beliebig gross wird
 const ROWS_PER_STATEMENT = 40; // Zeilen je INSERT (D1: hoechstens 100 KB je SQL-Anweisung)
+
+// Fehlermeldung fuers Log ohne Inhalt: Das Repo und damit die Action-Logs sind oeffentlich. Fehler aus intervals-client.js
+// tragen den Antworttext der API ("activity streams 500: <Body>"), D1-Fehler koennen SQL mit Datenwerten enthalten. Erlaubt
+// sind nur eigene Meldungen ohne Daten (err.safe) und "<Quelle> HTTP <Status>"; sonst nur der Fehlertyp.
+export function safeError(e) {
+  const m = String(e?.message ?? "");
+  if (e?.safe === true) return m;
+  const st = m.match(/^([A-Za-z][A-Za-z ]{0,40}?) (\d{3})\b/);
+  return st ? `${st[1]} HTTP ${st[2]}` : String(e?.name || "Error");
+}
+export const safeErr = (message) => Object.assign(new Error(message), { safe: true });
 
 // SQL-Literal (Upsert mit Literalen statt Parametern: D1 erlaubt nur 100 gebundene Parameter je Anweisung)
 export function sqlLiteral(v) {
@@ -70,9 +81,9 @@ export async function findFirstDay(env, today) {
 
 // Ob eine gespeicherte Zeile die Zeitreihen-Rechnung wiederverwenden darf: gleiche Methode, fertig gerechnet, gleicher
 // Uebersprung-Grund (Name/Tags koennen ihn aendern), und kein fehlendes Wetter in den ersten Tagen
-function reusable(prev, a, today) {
+function reusable(prev, a, today, ctx) {
   if (!prev || prev.methodVersion !== METHOD_VERSION || prev.streamStatus === "pending") return false;
-  if ((prev.streamSkip ?? null) !== streamSkipOf(a)) return false;
+  if ((prev.streamSkip ?? null) !== streamSkipOf(a, ctx)) return false;
   if (!prev.weatherSrc && !isTreadmill(a) && daysBetween(activityDay(a), today) <= WEATHER_RETRY_DAYS) return false;
   return true;
 }
@@ -82,7 +93,11 @@ function reusable(prev, a, today) {
 export async function syncExport({ env, d1, from, to, today, delayMs = 0, log = console.log, now = () => new Date().toISOString() }) {
   await ensureSchema(d1);
   const syncedAt = now();
-  const stats = { from, to, runs: 0, computed: 0, reused: 0, pending: 0, runsWritten: 0, runsDeleted: 0, days: 0, daysWritten: 0 };
+  const stats = { from, to, runs: 0, computed: 0, reused: 0, pending: 0, failed: 0, runsWritten: 0, runsDeleted: 0, days: 0, daysWritten: 0 };
+
+  // Kalender zuerst: Renntage fuer die Laeufe (raceContext), Krankheit fuer die Tage (ab 60 Tage vor dem Bereich)
+  const events = await sliced((a, b) => fetchIntervalsEvents(env, a, b), addDays(from, -60), to);
+  const ctx = raceContext(events);
 
   // Laeufe
   const acts = await sliced((a, b) => fetchIntervalsActivities(env, a, b), from, to);
@@ -93,17 +108,18 @@ export async function syncExport({ env, d1, from, to, today, delayMs = 0, log = 
     const prev = prevRows.get(String(a.id));
     const prevDecoded = prev ? { ...decodeRow(prev, TABLES.runs.columns), hash: prev.hash } : null;
     let entry = null;
-    if (reusable(prevDecoded, a, today)) { entry = entryFromRow(prevDecoded); stats.reused++; }
+    if (reusable(prevDecoded, a, today, ctx)) { entry = entryFromRow(prevDecoded); stats.reused++; }
     else {
       try {
-        entry = await computeRunEntry(env, a);
+        entry = await computeRunEntry(env, a, ctx);
         stats.computed++;
       } catch (e) {
-        log(`Lauf ${a.id}: ${String(e?.message ?? e).slice(0, 200)} (bleibt pending)`);
+        stats.failed = (stats.failed ?? 0) + 1;
+        log(`Lauf nicht abrufbar (${safeError(e)}), bleibt pending`); // ohne ID und ohne Antworttext (oeffentliches Log)
       }
       if (delayMs) await sleep(delayMs);
     }
-    const row = runRow(a, entry);
+    const row = runRow(a, entry, ctx);
     if (row.streamStatus === "pending") stats.pending++;
     const values = encodeRow(row, TABLES.runs.columns);
     const hash = rowHash(values);
@@ -118,11 +134,8 @@ export async function syncExport({ env, d1, from, to, today, delayMs = 0, log = 
   stats.runsDeleted = gone.length;
 
   // Tage
-  const [wellness, events, weights] = [
-    await sliced((a, b) => fetchIntervalsWellnessRange(env, a, b), from, to),
-    await sliced((a, b) => fetchIntervalsEvents(env, a, b), addDays(from, -60), to), // Krankheit, die vor dem Bereich begann
-    await readWeights(env).catch(() => []),
-  ];
+  const wellness = await sliced((a, b) => fetchIntervalsWellnessRange(env, a, b), from, to);
+  const weights = await readWeights(env).catch(() => []);
   const dayList = [];
   for (let d = from; d <= to; d = addDays(d, 1)) dayList.push(d);
   const prevDays = new Map((await d1(`SELECT * FROM days WHERE "date" >= ?1 AND "date" <= ?2`, [from, to])).map((r) => [r.date, r]));

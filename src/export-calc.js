@@ -4,7 +4,7 @@
 import { activityDay, sessionLoad, isRun, isBike, isTreadmill, isRaceActivity, isIntervalActivity, hasIntervalTextSignal } from "./activity-utils.js";
 import { fetchIntervalsActivityMap, fetchIntervalsActivityStreamsStatus } from "./intervals-client.js";
 import { runMovingAxis, cleanRunDistance, RUN_RULES } from "./block-inputs.js";
-import { classifyRun } from "./dashboard.js";
+import { classifyRun, buildRaceDays } from "./dashboard.js";
 import { averageNativeWeather, extractStartLatLng, openMeteoDay, pickOpenMeteoValues, activityStartHourIso } from "./weather.js";
 import { isStrengthActivity, strengthSetsOf } from "./week-totals.js";
 import { swimTimeOf } from "./swim-time.js";
@@ -161,32 +161,39 @@ export function analyzeExportStreams(streams, rules = EXPORT_RULES) {
 // Zeile pro Lauf
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Grund, warum ein Lauf keine Zeitreihen-Kennzahlen bekommt (null = wird gerechnet)
-export function streamSkipOf(a) {
+// Kontext fuer classifyRun: Renntage aus dem Intervals-Kalender, dieselbe Regel wie im Dashboard (buildRaceDays,
+// isRaceRun): Kalender-Eintrag RACE/RACE_A/A_RACE (bzw. A-Rennen) am selben Tag; hat der Eintrag eine Distanz, muss die
+// gelaufene Distanz auf 15 % passen. events: Kalender-Eintraege des Bereichs (fetchIntervalsEvents).
+export const raceContext = (events) => ({ raceDays: buildRaceDays(Array.isArray(events) ? events : []) });
+
+const isRaceRow = (a, ctx) => isRaceActivity(a) || classifyRun(a, ctx) === "race";
+
+// Grund, warum ein Lauf keine Zeitreihen-Kennzahlen bekommt (null = wird gerechnet). ctx: raceContext(events)
+export function streamSkipOf(a, ctx = null) {
   if (isTreadmill(a)) return "treadmill";
-  if (isRaceActivity(a) || classifyRun(a) === "race") return "race";
+  if (isRaceRow(a, ctx)) return "race";
   if (isIntervalActivity(a) || hasIntervalTextSignal(a)) return "interval";
   if ((num(a?.moving_time) ?? 0) < EXPORT_RULES.MIN_MOVING_S) return "short";
   if (!(a?.has_heartrate === true || num(a?.average_heartrate) != null)) return "noHr";
   return null;
 }
 
-export function baseRunRow(a) {
+export function baseRunRow(a, ctx = null) {
   const km = (num(a?.distance) ?? 0) / 1000, gain = num(a?.total_elevation_gain), load = sessionLoad(a);
   const tags = Array.isArray(a?.tags) ? a.tags.map(String) : [];
   return {
     id: a?.id ?? null, date: activityDay(a) || null, startLocal: a?.start_date_local ?? null, type: a?.type ?? null, name: a?.name ?? null,
-    tags, treadmill: isTreadmill(a), race: isRaceActivity(a) || classifyRun(a) === "race", interval: isIntervalActivity(a) || hasIntervalTextSignal(a),
-    runClass: classifyRun(a), distKm: km > 0 ? r2(km) : null, movingMin: num(a?.moving_time) != null ? r1(num(a.moving_time) / 60) : null,
+    tags, treadmill: isTreadmill(a), race: isRaceRow(a, ctx), interval: isIntervalActivity(a) || hasIntervalTextSignal(a),
+    runClass: classifyRun(a, ctx), distKm: km > 0 ? r2(km) : null, movingMin: num(a?.moving_time) != null ? r1(num(a.moving_time) / 60) : null,
     elevPerKm: km > 0 && gain != null ? r1(gain / km) : null, avgHr: num(a?.average_heartrate), maxHr: num(a?.max_heartrate),
     rpe: num(a?.icu_rpe) ?? num(a?.perceived_exertion), feel: num(a?.feel), load: load > 0 ? r1(load) : null,
   };
 }
 
-// Zeile aus Stammdaten und Cache-Eintrag; entry null = noch nicht berechnet
-export function runRow(a, entry) {
-  const row = baseRunRow(a);
-  const skip = streamSkipOf(a);
+// Zeile aus Stammdaten und Eintrag; entry null = noch nicht berechnet (pending). ctx: raceContext(events)
+export function runRow(a, entry, ctx = null) {
+  const row = baseRunRow(a, ctx);
+  const skip = streamSkipOf(a, ctx);
   const w = entry?.weather ?? null;
   Object.assign(row, { tempC: w?.tempC ?? null, humidity: w?.humidity ?? null, windMs: w?.windMs ?? null, weatherSrc: w?.src ?? null });
   if (skip === "treadmill") Object.assign(row, { streamStatus: "skip", streamSkip: skip });
@@ -210,8 +217,8 @@ const STREAM_TYPES = ["time", "heartrate", "distance", "velocity_smooth", "altit
 // Rechnet einen Lauf: Karte (Startpunkt, Intervals-Wetter), sonst Open-Meteo, und ohne streamSkip die Zeitreihen.
 // Eintrag: { streamStatus: ok|none|skip, streamSkip, metrics, weather: {tempC, humidity, windMs, src}|null }. Wirft bei
 // Abruffehlern (ausser 404); der Aufrufer schreibt den Lauf dann als pending.
-export async function computeRunEntry(env, a) {
-  const skip = streamSkipOf(a);
+export async function computeRunEntry(env, a, ctx = null) {
+  const skip = streamSkipOf(a, ctx);
   if (skip === "treadmill") return { streamStatus: "skip", streamSkip: skip, metrics: null, weather: null };
   const map = await fetchIntervalsActivityMap(env, a.id);
   const latlng = map.status === 200 ? extractStartLatLng(map.data) : null;
