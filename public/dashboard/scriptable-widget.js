@@ -1107,7 +1107,9 @@ function buildWoche(res) {
   const keys = ["swim", "bike", "run"].filter((k) => S[k]);
   const all = Object.values(S), tss = all.reduce((a, s) => a + (s.weekLoad || 0), 0);
   const hi = all.reduce((a, s) => a + (s.targetLoad || 0), 0), lo = all.reduce((a, s) => a + (s.targetLoadMin || 0), 0);
-  header(w, W, "WOCHE · JE SPORTART", `TSS ${Math.round(tss)}${hi ? ` / ${tssRange(lo, hi)}` : ""}`);
+  // Mit Korridor: nur die Sportarten mit TSS-Ziel gegen den Korridor, TSS ohne Korridor (Schwimmen) extra dahinter
+  const capTss = all.reduce((a, s) => a + (s.targetLoad > 0 ? s.weekLoad || 0 : 0), 0), extra = tss - capTss;
+  header(w, W, "WOCHE · JE SPORTART", hi ? `TSS ${Math.round(capTss)} / ${tssRange(lo, hi)}${extra >= 1 ? ` + ${Math.round(extra)}` : ""}` : `TSS ${Math.round(tss)}`);
   w.addSpacer(7);
   const NW = 92, VW = 86, BW = W - NW - VW - 8;
   keys.forEach((k, i) => {
