@@ -34,7 +34,7 @@ const PROTOCOL_VERSION = "2025-06-18";
 const EXPORT_ARGS = {
       type: "object",
       properties: {
-        from: { type: "string", description: "Startdatum YYYY-MM-DD, Standard: erster Tag mit Aktivität in Intervals." },
+        from: { type: "string", description: "Startdatum YYYY-MM-DD, Standard: erster Tag mit Aktivität in Intervals (solange der Cron ihn sucht: frühester bisher gefundener Tag, sonst vor einem Jahr; siehe firstDayKnown)." },
         to: { type: "string", description: "Enddatum YYYY-MM-DD, Standard: gestern." },
         cursor: { type: "string", description: "nextCursor der vorigen Antwort, um weiterzublättern." },
         limit: { type: "number", description: `Zeilen je Seite, Standard ${DEFAULT_LIMIT}, max. ${MAX_LIMIT}.` },
@@ -373,7 +373,7 @@ const TOOLS = [
   {
     name: "get_run_export",
     description:
-      "Export für die Langzeitanalyse: eine Zeile pro Lauf (alle Läufe, älteste zuerst), nur Rohwerte und Kennzahlen, keine Bewertung. Antwort: methodVersion, from, to, total (Läufe im Zeitraum), count, pending (Läufe, deren Zeitreihen-Kennzahlen noch nicht berechnet sind; sie kommen mit streamStatus pending, ein Cron rechnet nach, später erneut abrufen), nextCursor (null = letzte Seite), columns, rows. Je Aufruf werden höchstens ~12 Läufe neu gerechnet. " +
+      "Export für die Langzeitanalyse: eine Zeile pro Lauf (alle Läufe, älteste zuerst), nur Rohwerte und Kennzahlen, keine Bewertung. Antwort: methodVersion, from, to, count, pending (Zeilen dieser Seite, deren Zeitreihen-Kennzahlen noch nicht berechnet sind; sie kommen mit streamStatus pending), backfillDoneThrough (bis zu diesem Tag hat der Cron alles berechnet), firstDayKnown (false = Standard-from ist noch nicht der erste Tag, die Suche läuft), nextCursor (null = letzte Seite, auch bei 0 Zeilen weiterblättern, solange nextCursor gesetzt ist), columns, rows. Je Aufruf wird höchstens 1 Lauf neu aus den Zeitreihen gerechnet (CPU-Limit), den Rest rechnet ein Cron nach (etwa 4 pro Stunde); später erneut abrufen. " +
       "Spalten: id, date, startLocal (lokale Startzeit), type, name, tags, treadmill, race, interval (Intervall-Tag oder Textsignal wie 5x1000), runClass (base|long|intensity|race|unknown, Einheitsart des Dashboards), distKm, movingMin (Bewegungszeit), elevPerKm (Hm/km), avgHr, maxHr, rpe (1–10), feel (1 stark … 5 schwach), load (Intervals-Load). " +
       "Wetter: tempC, humidity (%), windMs (m/s, nur aus Open-Meteo), weatherSrc (intervals|openmeteo|null). Nie die Temperatur der Uhr; Laufband ohne Wetter. " +
       "streamStatus: ok | pending | none (keine Zeitreihen/kein Puls) | skip; streamSkip: treadmill | race | interval | short (unter 20 min) | noHr. Kennzahlen nur bei ok, sonst null: " +
@@ -386,7 +386,7 @@ const TOOLS = [
   {
     name: "get_day_export",
     description:
-      "Export für die Langzeitanalyse: eine Zeile pro Kalendertag (auch Tage ohne Daten), nur Rohwerte, keine Basislinien und Bewertungen. Antwort: methodVersion, from, to, count, pending (immer 0), nextCursor (nächster Tag, null = letzte Seite), columns, rows. " +
+      "Export für die Langzeitanalyse: eine Zeile pro Kalendertag (auch Tage ohne Daten), nur Rohwerte, keine Basislinien und Bewertungen. Antwort: methodVersion, from, to, count, pending (immer 0), firstDayKnown, nextCursor (nächster Tag, null = letzte Seite), columns, rows. " +
       "Spalten: date, ctl, atl, rampRate (Intervals), loadRun, loadBike, loadSwim, loadStrength (Summe Load je Sportart, Rad mit power_load wie im Wochenrahmen), minRun, minBike, minSwim (Bewegungszeit in min, Schwimmen ohne Pausen soweit bekannt), strengthSets (Kraftsätze aus der Beschreibung), hrv, restHr, sleepH, sleepScore, sleepQuality (1 gut … 4 schlecht), fatigue, soreness, mood, motivation (Intervals-Skalen 1–4, vor dem Training eingetragen), sick (Kalender SICK/INJURED oder Notiz „krank“), weightKg (Yazio, sonst Intervals), kcal, kcalGoal, protein, carbs (g, aus Yazio über die Intervals-Wellness). Fehlende Werte sind null, Load/Minuten/Sätze ohne Training 0.",
     inputSchema: EXPORT_ARGS,
   },

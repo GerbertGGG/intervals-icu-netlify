@@ -14,6 +14,9 @@ import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 import { loadWidgetKraft } from "./egym-widget.js";
 import { handleExportRequest, backfillRunExport } from "./export.js";
 
+// Cron-Ausdruck des Export-Triggers, muss genau so in wrangler.toml stehen
+const EXPORT_CRON = "7,22,37,52 * * * *";
+
 async function withWorkerErrorBoundary(fn) {
   try {
     return await fn();
@@ -96,6 +99,12 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
+    // Eigener Trigger fuer den Export (wrangler.toml): nur offene Laeufe nachrechnen, sonst nichts, damit dieser Aufruf seine
+    // eigene CPU-Zeit hat (kostenloser Plan: 10 ms). Fehler nur loggen.
+    if (event?.cron === EXPORT_CRON) {
+      ctx.waitUntil(backfillRunExport(env).catch((e) => console.error("run export backfill failed", String(e?.message ?? e))));
+      return;
+    }
     // Runalyze-/Studien-/Coach-Snapshots, die der Coaching-Task per GitHub-Branch liefert, danach der Tageseintrag im Zeitverlauf.
     ctx.waitUntil(
       syncSnapshotsFromGithub(env)
@@ -105,12 +114,6 @@ export default {
 
     // Dashboard-Cache warm halten, damit die Uhr sofort eine Antwort bekommt (siehe dashboardCached in widget.js)
     ctx.waitUntil(warmDashboardCache(env).catch((e) => console.error("dashboard cache failed", String(e?.message ?? e))));
-
-    // Export: offene Laeufe nachrechnen (Zeitreihen-Kennzahlen, Wetter), aelteste zuerst, in den Ticks ohne EGYM-Abgleich
-    // (Minute >= 15) und rund um die Uhr im Cron-Fenster. Fehler nur loggen.
-    if (new Date(Number(event?.scheduledTime)).getUTCMinutes() >= 15) {
-      ctx.waitUntil(backfillRunExport(env).catch((e) => console.error("run export backfill failed", String(e?.message ?? e))));
-    }
 
     // Yazio alle 15 Minuten von 07:00 bis 23:59 Berlin (der Eintrag "58 21-22" in wrangler.toml
     // liefert den Tagesabschluss um 23:58, unabhaengig von Sommer-/Winterzeit).

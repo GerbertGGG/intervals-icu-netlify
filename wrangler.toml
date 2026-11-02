@@ -9,7 +9,13 @@ workers_dev = true
 # von 07:00 bis 23:45 Berlin synct er ausserdem Yazio fuer heute (index.js).
 # Zweiter Eintrag: Minute 58 in den UTC-Stunden 21 und 22, damit einer der beiden Ticks
 # unabhaengig von Sommer-/Winterzeit auf 23:58 Berlin faellt: letzter Yazio-Sync des Tages.
-triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *"] }
+# Dritter Eintrag: eigener Aufruf nur fuer den Export (export.js, backfillRunExport), damit er seine eigenen 10 ms CPU des
+# kostenlosen Plans hat und seine CPU-Zeit in den Logs getrennt steht. Rund um die Uhr, versetzt zu den anderen Ticks.
+triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *", "7,22,37,52 * * * *"] }
+
+# Workers Logs: speichert die Logzeilen mit der CPU-Zeit je Aufruf (cpuTimeMs), z. B. fuer "run export backfill".
+[observability]
+enabled = true
 
 [[kv_namespaces]]
 binding = "KV"
@@ -29,6 +35,10 @@ directory = "./public"
 #   EGYM_USERNAME, EGYM_PASSWORD   Login der EGYM-App
 #   EGYM_BRAND (optional)          Studio-Kennung (Host <brand>.netpulse.com); ohne Wert wird der Host aus der E-Mail ermittelt
 #   EGYM_WEEKLY_GOAL_SETS (optional) Wochenziel Krafttraining in Saetzen (Kraft-Widget, Parameter "kraft", und Dashboard); ohne Wert 60
+#
+# Export (src/export.js), optional:
+#   EXPORT_RUNS_PER_TICK  Laeufe mit Zeitreihen je Cron-Tick (Standard 1, hoechstens 2; 10 ms CPU im kostenlosen Plan)
+#   EXPORT_RUNS_PER_CALL  dasselbe je Export-Abruf (Standard 1)
 #
 # Garmin-Watchface (garmin/) - als Secret setzen:
 #   WATCH_TOKEN   eigenes Token der Uhr; oeffnet nur /api/widget?view=watch (nicht das Dashboard)

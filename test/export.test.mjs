@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { analyzeExportStreams, streamSkipOf, runRow, buildRunExport, buildDayRows, sickDaysFromEvents, toCsv, RUN_COLUMNS, DAY_COLUMNS, METHOD_VERSION } from "../src/export.js";
+import { analyzeExportStreams, streamSkipOf, runRow, buildRunExport, backfillRunExport, buildDayRows, sickDaysFromEvents, toCsv, RUN_COLUMNS, DAY_COLUMNS, METHOD_VERSION } from "../src/export.js";
 import { pickOpenMeteoValues, averageNativeWeather, extractStartLatLng } from "../src/weather.js";
 
 // Kuenstliche Zeitreihe: 1 Probe je Sekunde, speed(t) in m/s, hr(t), alt(t) optional
@@ -150,49 +150,99 @@ assert.equal(analyzeExportStreams([{ type: "time", data: [0, 1] }, { type: "dist
 // ---------- CSV ----------
 assert.equal(toCsv([{ a: 'x,"y"', b: null, c: ["t1", "t2"] }], ["a", "b", "c"]), 'a,b,c\n"x,""y""",,t1|t2\n');
 
-// ---------- Lauf-Export mit Budget, Cache und 404 (Intervals und KV gestubbt) ----------
+// ---------- Lauf-Export und Cron mit Budget, Scheiben, Cache und 404 (Intervals und KV gestubbt) ----------
 {
   const kv = new Map();
   const env = { INTERVALS_API_KEY: "k", ATHLETE_ID: "i1", KV: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => { kv.set(k, v); } } };
+  const ago = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
   const run = (id, day, extra = {}) => ({ id, type: "Run", start_date_local: `${day}T08:00:00`, moving_time: 3600, distance: 9000, has_heartrate: true, average_heartrate: 130, ...extra });
-  const acts = [run("a1", "2026-10-01"), run("a2", "2026-10-02"), run("a3", "2026-10-03", { type: "VirtualRun" }), run("a4", "2026-10-04"), run("a5", "2026-10-05", { name: "5x1000" })];
+  const D = [ago(40), ago(39), ago(38), ago(37), ago(36)];
+  let acts = [run("a1", D[0]), run("a2", D[1]), run("a3", D[2], { type: "VirtualRun" }), run("a4", D[3]), run("a5", D[4], { name: "5x1000" })];
   const calls = [];
-  const realFetch = globalThis.fetch;
+  const realFetch = globalThis.fetch, realLog = console.log;
+  console.log = () => {}; // Logzeilen der Rechnung (export runs / run export backfill) im Test stumm
   globalThis.fetch = async (url) => {
     const u = String(url);
     calls.push(u);
     const ok = (body) => new Response(JSON.stringify(body), { status: 200 });
-    if (u.includes("/activities?")) return ok(acts);
+    if (u.includes("/activities?")) {
+      const q = new URL(u).searchParams, lo = q.get("oldest"), hi = q.get("newest");
+      return ok(acts.filter((a) => a.start_date_local.slice(0, 10) >= lo && a.start_date_local.slice(0, 10) <= hi));
+    }
     if (u.includes("/map")) return ok({ latlngs: [[52.5, 13.4]], weather: null });
-    if (u.includes("open-meteo")) return ok({ hourly: { time: ["2026-10-01T08:00"], temperature_2m: [9.5], relative_humidity_2m: [88], wind_speed_10m: [2.2] } });
+    if (u.includes("open-meteo")) return ok({ hourly: { time: [`${D[0]}T08:00`], temperature_2m: [9.5], relative_humidity_2m: [88], wind_speed_10m: [2.2] } });
     if (u.includes("/activity/a4/streams")) return new Response("not found", { status: 404 });
     if (u.includes("/streams")) return ok(synth(3600));
     throw new Error("unerwartet " + u);
   };
   try {
-    const r1 = await buildRunExport(env, { from: "2026-10-01", to: "2026-10-05", limit: 2 }, { budget: { left: 4 } });
+    const range = { from: D[0], to: D[4] };
+    // Standard: 1 Lauf mit Zeitreihen je Abruf (CPU), der zweite bleibt pending
+    const r1 = await buildRunExport(env, { ...range, limit: 2 });
     assert.equal(r1.methodVersion, METHOD_VERSION);
-    assert.equal(r1.total, 5);
     assert.equal(r1.count, 2);
     assert.equal(r1.rows[0].streamStatus, "ok");
     assert.equal(r1.rows[0].paceBand125_135, 400);
     assert.deepEqual([r1.rows[0].tempC, r1.rows[0].humidity, r1.rows[0].windMs, r1.rows[0].weatherSrc], [9.5, 88, 2.2, "openmeteo"]);
-    assert.equal(r1.rows[1].streamStatus, "pending"); // Budget 4 reicht fuer einen Lauf (3 Abrufe)
-    assert.equal(r1.pending, 3); // a2, a4, a5 (a3 ist Laufband)
-    assert.equal(r1.nextCursor, "2026-10-02T08:00:00|a2");
+    assert.equal(r1.rows[1].streamStatus, "pending");
+    assert.equal(r1.pending, 1);
+    assert.equal(r1.nextCursor, `${D[1]}T08:00:00|a2`);
+    assert.equal(calls.filter((u) => u.includes("/streams")).length, 1);
 
-    const r2 = await buildRunExport(env, { from: "2026-10-01", to: "2026-10-05", cursor: r1.nextCursor, limit: 10 });
+    // Folgeseite: Laufband ohne Abruf, a4 404 -> none (der eine Lauf mit Zeitreihen), Intervall ohne Zeitreihen
+    const r2 = await buildRunExport(env, { ...range, cursor: r1.nextCursor, limit: 10 });
     assert.deepEqual(r2.rows.map((r) => [r.id, r.streamStatus, r.streamSkip]), [["a3", "skip", "treadmill"], ["a4", "none", null], ["a5", "skip", "interval"]]);
     assert.equal(r2.nextCursor, null);
-    assert.equal(r2.pending, 1); // a2 nur auf der ersten Seite
+    assert.equal(r2.pending, 0);
 
+    // EXPORT_RUNS_PER_CALL hebt die Grenze; Cache-Treffer kosten nur die Aktivitaetsliste
+    const r3 = await buildRunExport({ ...env, EXPORT_RUNS_PER_CALL: "3" }, { ...range, limit: 5 });
+    assert.equal(r3.rows[1].streamStatus, "ok");
     const before = calls.length;
-    const r3 = await buildRunExport(env, { from: "2026-10-01", to: "2026-10-05", limit: 1 });
-    assert.equal(r3.rows[0].paceBand125_135, 400); // aus dem Cache
-    assert.equal(calls.length - before, 1); // nur die Aktivitaetsliste
+    const r4 = await buildRunExport(env, { ...range, limit: 1 });
+    assert.equal(r4.rows[0].paceBand125_135, 400);
+    assert.equal(calls.length - before, 1);
     assert.ok([...kv.keys()].includes(`icu:export:v${METHOD_VERSION}:a1`));
+
+    // Scheiben: ein Lauf 300 Tage vor den anderen, dazwischen leer -> beide gefunden; zu langer leerer Bereich -> nextCursor
+    acts = [run("old", ago(340)), ...acts];
+    const r5 = await buildRunExport(env, { from: ago(345), to: D[4], limit: 10 });
+    assert.deepEqual(r5.rows.map((r) => r.id), ["old", "a1", "a2", "a3", "a4", "a5"]);
+    assert.equal(r5.nextCursor, null);
+    const r6 = await buildRunExport(env, { from: ago(2000), to: ago(1000), limit: 10 });
+    assert.equal(r6.count, 0);
+    assert.match(r6.nextCursor, /^\d{4}-\d{2}-\d{2}T~\|$/); // 12 Scheiben = 720 Tage durchsucht, Rest auf der naechsten Seite
+    const r7 = await buildRunExport(env, { from: ago(2000), to: ago(1000), cursor: r6.nextCursor, limit: 10 });
+    assert.equal(r7.nextCursor, null);
+
+    // Cron Phase 1: erster Tag rueckwaerts in Scheiben, fertig nach 6 leeren Scheiben
+    kv.clear();
+    acts = acts.filter((a) => a.id !== "old");
+    let res;
+    for (let i = 0; i < 7; i++) res = await backfillRunExport(env);
+    assert.deepEqual(res, { phase: "firstDay", firstDay: D[0] });
+    // Phase 2: 1 Lauf mit Zeitreihen je Tick, Laeufe ohne Zeitreihen laufen mit; aelteste zuerst
+    res = await backfillRunExport(env);
+    assert.equal(res.phase, "runs");
+    assert.equal(res.processed, 2); // a1 (Zeitreihen) und a5 (Intervall, nur Wetter)
+    assert.equal(res.doneThrough, D[0]); // a2 ist der aelteste offene
+    res = await backfillRunExport(env);
+    assert.equal(res.processed, 1); // a2
+    res = await backfillRunExport(env);
+    assert.equal(res.processed, 1); // a4 (404)
+    assert.equal(res.pendingInSlice, 0);
+    res = await backfillRunExport(env);
+    assert.deepEqual(res, { phase: "runs", processed: 0, pending: 0 }); // alles bis gestern fertig
+    // EXPORT_RUNS_PER_TICK hoechstens 2
+    kv.set(`icu:export:v${METHOD_VERSION}:state`, JSON.stringify({}));
+    kv.delete(`icu:export:v${METHOD_VERSION}:done`);
+    for (const id of ["a1", "a2", "a4", "a5"]) kv.delete(`icu:export:v${METHOD_VERSION}:${id}`);
+    const streamsBefore = calls.filter((u) => u.includes("/streams")).length;
+    await backfillRunExport({ ...env, EXPORT_RUNS_PER_TICK: "9" }, {});
+    assert.ok(calls.filter((u) => u.includes("/streams")).length - streamsBefore <= 2);
   } finally {
     globalThis.fetch = realFetch;
+    console.log = realLog;
   }
 }
 
