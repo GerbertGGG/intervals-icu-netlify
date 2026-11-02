@@ -1250,10 +1250,13 @@ function renderEgym(k) {
     ? k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(addDays(w.start, -7 * (R - 1)), addDays(w.start, 6)), count: w.rollSets || 0, hit: (w.rollSets || 0) >= goal, tip: `Woche ab ${fmtDate(w.start)}: ${w.sets || 0} Sätze · Vorwoche: ${(w.rollSets || 0) - (w.sets || 0)} Sätze` }))
     : k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(w.start, addDays(w.start, 6)), count: w.sets || 0, hit: (w.sets || 0) >= goal, tip: [`${w.sessions} Einheiten`, w.minutes ? `${est(w.minutesSource)}${fmtHm(w.minutes)}` : "", w.volumeKg ? `${fmt(w.volumeKg)} kg` : ""].filter(Boolean).join(" · ") }));
   const vt = k.volumeTrend;
+  // Ziel des Coaches in Einheiten (strengthSets2w 0, Kraft-Zeile der Intensität): Einheiten der Woche gegen die Mindestzahl
+  const perSession = wk.goalUnit === "sessions";
+  if (perSession) past.splice(0, past.length, ...k.weeks.slice(0, -1).map((w) => ({ range: spanTxt(w.start, addDays(w.start, 6)), count: w.sessions || 0, hit: (w.sessions || 0) >= goal, tip: `${w.sets || 0} Sätze${w.minutes ? ` · ${est(w.minutesSource)}${fmtHm(w.minutes)}` : ""}` })));
   $("strength-card").hidden = false;
   $("strength").innerHTML = strengthCard({
-    goal, unit: "Sätze", goalText: `Ziel ≥ ${goal} Sätze ${P > 1 ? `je ${7 * P} Tage` : R > 1 ? `in ${R} Wochen (laufende Woche + Vorwoche)` : "pro Woche"} · ${src}`,
-    cur: { count: (P > 1 || R > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, label: `${P > 1 ? `Abschnitt ${spanTxt(wk.periodStart, wk.periodEnd)}` : R > 1 ? `${spanTxt(addDays(wk.start, -7 * (R - 1)), addDays(wk.start, 6))} · diese Woche ${fmt(wk.sets || 0)}` : `Woche ab Mo ${fmtDate(wk.start)}`} · ${leftTxt(daysLeftTo(curEnd, k.today))}` },
+    goal, unit: perSession ? "Einheiten" : "Sätze", goalText: perSession ? `${wk.goalText || `Ziel ≥ ${goal} Einheiten pro Woche`} · ${src}` : `Ziel ≥ ${goal} Sätze ${P > 1 ? `je ${7 * P} Tage` : R > 1 ? `in ${R} Wochen (laufende Woche + Vorwoche)` : "pro Woche"} · ${src}`,
+    cur: { count: (perSession ? wk.sessions : P > 1 || R > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, label: `${P > 1 ? `Abschnitt ${spanTxt(wk.periodStart, wk.periodEnd)}` : R > 1 ? `${spanTxt(addDays(wk.start, -7 * (R - 1)), addDays(wk.start, 6))} · diese Woche ${fmt(wk.sets || 0)}` : `Woche ab Mo ${fmtDate(wk.start)}`} · ${leftTxt(daysLeftTo(curEnd, k.today))}` },
     statsLabel: `Diese Woche · ab Mo ${fmtDate(wk.start)}`,
     // Sätze der Woche nur bei Abschnitten: im Wochenmodus stehen sie schon oben
     stats: [[fmt(wk.sessions), wk.sessions === 1 ? "Einheit" : "Einheiten"], P > 1 ? [fmt(wk.sets || 0), "Sätze"] : null, [wk.minutes == null ? "–" : `${est(wk.minutesSource)}${fmt(wk.minutes)} <small>min</small>`, "Dauer"], [wk.volumeKg ? vol(wk.volumeKg) : "–", "Volumen"], [since, "zuletzt"]].filter(Boolean),

@@ -220,3 +220,11 @@ test("Rahmen des Coaches (Sätze in 2 Wochen) geht dem Blocktext vor und zählt 
   assert.equal(d.streakWeeks, 2);
   assert.equal(buildWidgetKraft({ workouts: w, today: "2026-10-24", blockSets: 60 }).week.goalSource, "block");
 });
+
+test("goalOf: Coach-Ziel in Einheiten (strengthSets2w 0) schlägt das Standardziel", async () => {
+  const { goalOf } = await import("../src/egym-widget.js");
+  const g = goalOf({}, null, 0, { text: "Min. 1× Kraft pro Woche", min: 1 });
+  assert.deepEqual(g, { goal: 1, source: "coach", period: 1, unit: "sessions", text: "Min. 1× Kraft pro Woche" });
+  assert.equal(goalOf({}, null, 0, null).source, "default");
+  assert.equal(goalOf({}, null, 90, { text: "x", min: 1 }).roll, 2);
+});

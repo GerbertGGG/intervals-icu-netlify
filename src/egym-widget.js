@@ -243,8 +243,11 @@ function bioAgeOf(b) {
 }
 
 // blockSets: Zahl (Sätze pro Woche) oder { sets, weeks } aus dem Blocktext; frameSets2w: Kraftsätze in 2 Wochen aus dem Rahmen des Coaches
-export function goalOf(env, blockSets = null, frameSets2w = null) {
+// frameKraft: { text, min } aus der Kraft-Zeile der Intensität des Coaches (Mindestzahl Einheiten pro Woche, z. B. "Mindestens 1× pro Woche")
+export function goalOf(env, blockSets = null, frameSets2w = null, frameKraft = null) {
   if (Number(frameSets2w) > 0) return { goal: Math.floor(Number(frameSets2w)), source: "coach", period: 1, roll: 2 };
+  // Der Coach setzt das Kraftziel in Einheiten statt in Sätzen (strengthSets2w 0): das gilt, nicht der Standard von 60 Sätzen
+  if (Number(frameSets2w) === 0 && frameKraft?.min > 0) return { goal: frameKraft.min, source: "coach", period: 1, unit: "sessions", text: frameKraft.text };
   const bs = typeof blockSets === "number" ? { sets: blockSets, weeks: 1 } : blockSets;
   if (Number.isFinite(bs?.sets) && bs.sets > 0) return { goal: Math.floor(bs.sets), source: "block", period: bs.weeks > 1 ? Math.floor(bs.weeks) : 1, anchor: bs.start ?? null };
   const n = Math.floor(Number(env?.EGYM_WEEKLY_GOAL_SETS));
@@ -252,8 +255,8 @@ export function goalOf(env, blockSets = null, frameSets2w = null) {
 }
 
 // Reine Funktion: Rohdaten der drei Endpunkte in die Widget-Daten (je Teil kann null sein, wenn der Abruf scheiterte)
-export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, blockSets = null, frameSets2w = null, generatedAt = new Date().toISOString(), failed = [] }) {
-  const { goal, source, period, anchor, roll = 1 } = goalOf(env, blockSets, frameSets2w);
+export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, blockSets = null, frameSets2w = null, frameKraft = null, generatedAt = new Date().toISOString(), failed = [] }) {
+  const { goal, source, period, anchor, roll = 1, unit = "sets", text: goalText = null } = goalOf(env, blockSets, frameSets2w, frameKraft);
   const days = strengthDays(workouts?.workouts ?? workouts ?? []);
   const monday = mondayOnOrBefore(today);
   const sum = (arr, f) => arr.reduce((a, x) => a + (f(x) ?? 0), 0);
@@ -272,7 +275,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   const dayAt = (i) => days.find((d) => d.date === addDays(monday, i));
   const dayFlags = Array.from({ length: 7 }, (_, i) => Boolean(dayAt(i)));
   const dayMinutes = Array.from({ length: 7 }, (_, i) => dayAt(i)?.minutes ?? null);
-  const hit = (w) => (w.rollSets ?? w.sets) >= goal;
+  const hit = (w) => (unit === "sessions" ? w.sessions : w.rollSets ?? w.sets) >= goal;
   // Ziel über mehrere Wochen: feste Abschnitte ab Blockstart (davor in gleichen Schritten zurück), je mit den Sätzen der Wochen
   const span = 7 * period;
   const curStart = period > 1 ? addDays(anchor ?? monday, span * Math.floor(Math.round((Date.parse(monday) - Date.parse(anchor ?? monday)) / 86400000) / span)) : null;
@@ -300,7 +303,7 @@ export function buildWidgetKraft({ workouts, strength, bioAge, today, env = {}, 
   return {
     generatedAt,
     today,
-    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, periodWeeks: period, ...(roll > 1 ? { rollWeeks: roll, windowSets: cur.rollSets } : {}), ...(periods ? { windowSets: periods[PERIODS - 1].sets, periodStart: periods[PERIODS - 1].start, periodEnd: periods[PERIODS - 1].end } : {}), sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
+    week: { start: monday, minutes: cur.minutes, minutesSource: cur.minutesSource, goalSets: goal, goalSource: source, ...(unit === "sessions" ? { goalUnit: "sessions", goalText } : {}), periodWeeks: period, ...(roll > 1 ? { rollWeeks: roll, windowSets: cur.rollSets } : {}), ...(periods ? { windowSets: periods[PERIODS - 1].sets, periodStart: periods[PERIODS - 1].start, periodEnd: periods[PERIODS - 1].end } : {}), sessions: cur.sessions, sets: cur.sets, volumeKg: cur.volumeKg, days: dayFlags, dayMinutes },
     weeks,
     periods,
     lastDay: last,
@@ -356,7 +359,12 @@ export async function loadWidgetKraft(env, fresh = false) {
     // Satz-Ziel aus dem Blocktext (best effort; ohne Intervals gilt EGYM_WEEKLY_GOAL_SETS bzw. das Standardziel)
     settle(async () => activeBlockStrengthTarget(await fetchIntervalsEvents(env, addDays(today, -BLOCK_LOOKBACK_DAYS), today), today)),
     // Rahmen des Coaches (KV; ohne Eintrag gilt der Startwert) geht dem Blocktext vor
-    settle(async () => targetsView(await readTargets(env), today).current.strengthSets2w),
+    settle(async () => {
+      const c = targetsView(await readTargets(env), today).current;
+      const k = (c.intensity ?? []).find((i) => i.sport === "kraft");
+      const min = k ? Number(String(k.text ?? "").match(/(\d+)\s*×/)?.[1]) : NaN;
+      return { sets2w: c.strengthSets2w, kraft: k && min > 0 ? { text: k.short || k.text, min } : null };
+    }),
   ]);
   let blockSets = blk.v ?? null;
   if (blk.e) {
@@ -364,7 +372,7 @@ export async function loadWidgetKraft(env, fresh = false) {
     blockSets = g?.today && g.today >= addDays(today, -7) ? g.target ?? null : null;
   } else await writeKvJson(env, GOAL_KEY, { at: Date.now(), today, target: blockSets }).catch(() => {});
   const failed = [["egymWorkouts", w], ["egymStrength", s], ["egymBioAge", b], ["intervalsBlock", blk]].filter(([, r]) => r.e).map(([k]) => k);
-  const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, blockSets, frameSets2w: tg.v, failed }) };
+  const data = { configured: true, ...buildWidgetKraft({ workouts: w.v, strength: s.v, bioAge: b.v, today, env, blockSets, frameSets2w: tg.v?.sets2w ?? null, frameKraft: tg.v?.kraft ?? null, failed }) };
   // Nur vollstaendige Staende cachen, ein Ausfall (auch des Blocktexts) soll nicht eine Viertelstunde haengen bleiben
   if (!failed.length) await writeKvJson(env, CACHE_KEY, { at: Date.now(), data }).catch(() => {});
   return data;
