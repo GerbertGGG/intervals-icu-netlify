@@ -16,13 +16,11 @@ triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *"] }
 enabled = true
 
 # Export fuer die Langzeitanalyse (src/export.js liest, scripts/export-sync.mjs in GitHub Actions schreibt), D1 im kostenlosen
-# Plan. Einmalig anlegen: "npx wrangler d1 create training-export", die ausgegebene database_id hier eintragen und die vier
-# Zeilen einkommentieren. Das Skript liest die database_id ebenfalls von hier. Ohne Binding antworten die Export-Routen mit
-# einer Fehlermeldung, der Rest des Workers laeuft normal.
-# [[d1_databases]]
-# binding = "EXPORT_DB"
-# database_name = "training-export"
-# database_id = "<id aus wrangler d1 create>"
+# Plan. Das Skript in GitHub Actions liest die database_id ebenfalls von hier.
+[[d1_databases]]
+binding = "EXPORT_DB"
+database_name = "training-export"
+database_id = "52db358a-28a7-46be-a34c-f45944f5254b"
 
 [[kv_namespaces]]
 binding = "KV"

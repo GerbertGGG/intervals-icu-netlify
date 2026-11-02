@@ -1030,7 +1030,7 @@ Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen) rechnet jede
 
 **Einrichtung** (einmalig):
 
-1. `npx wrangler d1 create training-export`, die `database_id` in `wrangler.toml` eintragen und den `[[d1_databases]]`-Block einkommentieren (die Action liest die ID ebenfalls von dort).
+1. D1-Datenbank `training-export` anlegen (`npx wrangler d1 create training-export`) und die `database_id` im `[[d1_databases]]`-Block von `wrangler.toml` eintragen (erledigt am 02.11.2026; die Action liest die ID ebenfalls von dort).
 2. API-Token in Cloudflare mit „D1: Edit“ und „Workers KV Storage: Read“ für dieses Konto anlegen.
 3. Repo-Secrets `INTERVALS_API_KEY`, `ATHLETE_ID`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 4. Nach dem Merge die Action einmal mit `full` starten.
