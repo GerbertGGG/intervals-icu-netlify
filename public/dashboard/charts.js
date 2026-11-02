@@ -104,7 +104,13 @@
     const slot = (W - L - R) / items.length, bw = Math.min(slot * 0.55, 46);
     items.forEach((w, i) => {
       const x = L + slot * i + (slot - bw) / 2;
-      if (w.value != null) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(0) - y(w.value)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), `${w.tip ?? w.label}: ${F(w.value, max < 10 ? 1 : 0)}${UN}${w.plan != null ? ` (${w.cap ? (w.floor ? `Korridor ${F(w.floor, o.dec ?? 0)}–` : "Obergrenze ") : "Ziel "}${F(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`));
+      if (w.value != null) {
+        const tip = `${w.tip ?? w.label}: ${F(w.value, max < 10 ? 1 : 0)}${UN}${w.extra > 0 ? ` (davon ${F(w.extra, 0)} ${w.extraLabel ?? "ohne Korridor"})` : ""}${w.plan != null ? ` (${w.cap ? (w.floor ? `Korridor ${F(w.floor, o.dec ?? 0)}–` : "Obergrenze ") : "Ziel "}${F(w.plan, o.dec ?? 0)})` : ""}${w.partial ? " – laufende Woche" : ""}`;
+        // extra: Anteil ohne Korridor (z. B. Schwimmen) als eigener Block oben auf der Säule
+        const ex = w.extra > 0 ? Math.min(w.extra, w.value) : 0, base = w.value - ex;
+        s.append(title(el("rect", { x, y: y(base), width: bw, height: Math.max(0, y(0) - y(base)), fill: "var(--accent)", opacity: w.partial ? 0.55 : 1 }), tip));
+        if (ex > 0) s.append(title(el("rect", { x, y: y(w.value), width: bw, height: Math.max(0, y(base) - y(w.value)), fill: "var(--s-swim)", opacity: w.partial ? 0.55 : 1 }), tip));
+      }
       if (w.plan != null) s.append(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.plan), y2: y(w.plan), stroke: "var(--plan)", "stroke-width": 3 }));
       // floor: Untergrenze des TSS-Korridors als dünne Marke unter der Obergrenze
       if (w.floor != null) s.append(title(el("line", { x1: x - 3, x2: x + bw + 3, y1: y(w.floor), y2: y(w.floor), stroke: "var(--plan)", "stroke-width": 1.5, "stroke-dasharray": "3 2" }), `Untergrenze: ${F(w.floor, o.dec ?? 0)}${UN}`));

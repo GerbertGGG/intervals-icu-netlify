@@ -617,11 +617,11 @@ function renderHistory(d) {
   const capOf = (w) => SPORT_ORDER.reduce((a, k) => (w.bySport[k].targetLoad > 0 ? (a ?? 0) + w.bySport[k].load : a), null);
   C.bars($("chart-tss"), d.weeks.map((w) => {
     const cap = w.targetLoad > 0;
-    return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load ?? 0, plan: cap ? w.targetLoad : w.plannedLoad, cap, floor: cap && w.targetLoadMin > 0 ? w.targetLoadMin : undefined, capValue: cap ? capOf(w) ?? 0 : undefined, partial: !w.complete };
+    return { label: fmtDate(w.weekStart), tip: `Woche ab ${fmtDate(w.weekStart)}`, value: w.load ?? 0, plan: cap ? w.targetLoad : w.plannedLoad, cap, floor: cap && w.targetLoadMin > 0 ? w.targetLoadMin : undefined, capValue: cap ? capOf(w) ?? 0 : undefined, extra: cap ? Math.max(0, (w.load ?? 0) - (capOf(w) ?? 0)) : 0, extraLabel: "ohne Korridor (Schwimmen)", partial: !w.complete };
   }), { unit: "TSS", label: "TSS pro Woche", xLabel: "Woche ab (Montag) · helle Säule = laufende Woche", valueLabels: true, dec: 0 });
   const noPlan = d.weeks.every((w) => timePlan(w) == null);
   $("plan-note-km").textContent = noPlan ? "Für diesen Zeitraum gibt es weder Zeitziele noch geplante Workouts mit Dauer – deshalb keine Marke." : "Ausdauerzeit = Bewegungszeit von Laufen, Rad und Schwimmen (Kraft zählt nicht). Marke = Zeitziel des Coaches (Summe der Zeitziele dieser drei Sportarten; von dir angepasste Wochenzeiten gelten als Ziel), in älteren Wochen der Plan aus geplanten Workouts. Unter dem Datum die Abweichung: grün bis 15 %, sonst gelb.";
-  $("plan-note-tss").textContent = "Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan), dünne Marke = Summe der Untergrenzen. Die Säule enthält alle Sportarten; „drüber“ und „unter“ zählen nur die Sportarten mit Korridor (Schwimmen hat keinen).";
+  $("plan-note-tss").textContent = "Marke = Summe der TSS-Obergrenzen des Coaches (in älteren Wochen der Plan), dünne Marke = Summe der Untergrenzen. Die Säule enthält alle Sportarten, der farbige Block oben ist die TSS ohne Korridor (Schwimmen hat keinen); „drüber“ und „unter“ zählen nur die Sportarten mit Korridor.";
 
   // Formkurve bis zum Renntag (nur wenn er in den nächsten 4 Wochen liegt)
   // Zonen in % der aktuellen Fitness wie Intervals.icu: unter −30 % hohes Risiko, sonst normaler Trainingsbereich
