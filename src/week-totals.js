@@ -1,7 +1,7 @@
 import { isIsoDate, isoDate, isoDateBerlin, isoWeekNumber, mondayOnOrBefore } from "./date-utils.js";
 import { activityDay } from "./activity-utils.js";
 
-import { DEFAULT_TARGET, targetHistory, targetOn } from "./targets-snapshot.js";
+import { DEFAULT_TARGET, kraftSessionGoal, targetHistory, targetOn } from "./targets-snapshot.js";
 import { swimTimeOf } from "./swim-time.js";
 
 // Die Wochenziele setzt der Coach (save_targets, targets-snapshot.js); hier wird nur Ist gegen das Ziel der jeweiligen Woche
@@ -100,7 +100,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
   const history = targetHistory(stored);
   const thisMonday = mondayOnOrBefore(todayIso);
   const mondays = Array.from({ length: weeks + 1 }, (_, i) => addDays(thisMonday, -7 * (weeks - i))); // eine Woche mehr fuer die 2 Wochen Kraft
-  const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0, swimElapsed: 0, swims: [], parts: [] }]));
+  const acc = new Map(mondays.map((m) => [m, { sec: 0, by: { lauf: 0, rad: 0, schwimmen: 0 }, sets: 0, days: new Set(), swimElapsed: 0, swims: [], parts: [] }]));
   for (const a of activities ?? []) {
     if (a?.icu_ignore_time) continue;
     const day = activityDay(a);
@@ -118,7 +118,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
         w.swimElapsed += st.elapsedSec;
         w.swims.push({ id: a?.id ?? null, date: day, movingMin: Math.round(st.sec / 60), elapsedMin: Math.round(st.elapsedSec / 60), source: st.source, swimTimeEstimated: st.estimated });
       }
-    } else if (isStrengthActivity(a)) w.sets += strengthSetsOf(a);
+    } else if (isStrengthActivity(a)) { w.sets += strengthSetsOf(a); w.days.add(day); }
   }
   const refs = withReference(mondays.map((m) => ({ enduranceMin: Math.round(acc.get(m).sec / 60) })));
   const list = mondays.slice(1).map((week, i) => {
@@ -144,6 +144,8 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
       swimSessions: w.swims,
       strengthSets: w.sets,
       strengthSets2w: w.sets + prev.sets,
+      strengthSessions: w.days.size,
+      goalKraft: kraftSessionGoal(tg),
       goalHours: tg.enduranceHoursPerWeek,
       goalSets2w: tg.strengthSets2w,
       streakThresholdPct: pct,
@@ -156,7 +158,7 @@ export function computeWeekTotals(activities, todayIso = isoDateBerlin(), stored
   const cur = list[list.length - 1];
   if (cur.streakMet) streak++;
   // goals: das heute geltende Ziel (Form wie bisher, die Werte kommen jetzt vom Coach)
-  return { goals: { enduranceHours: cur.goalHours, strengthSets2w: cur.goalSets2w, streakThresholdPct: cur.streakThresholdPct }, weeks: list, streakWeeksAbove4_5: streak, streakCapped: streak > 0 && i < 0 };
+  return { goals: { enduranceHours: cur.goalHours, strengthSets2w: cur.goalSets2w, ...(cur.goalKraft ? { kraft: cur.goalKraft } : {}), streakThresholdPct: cur.streakThresholdPct }, weeks: list, streakWeeksAbove4_5: streak, streakCapped: streak > 0 && i < 0 };
 }
 
 // Die Form fuer get_coach (week_totals): die laufende Woche. streakWeeksAbove4_5 heisst aus Kompatibilitaet so, zaehlt aber
@@ -165,7 +167,7 @@ export function currentWeekTotals(t) {
   const c = t?.weeks?.[t.weeks.length - 1];
   if (!c) return null;
   return { week: c.week, enduranceHours: c.enduranceHours, referenceHours: c.referenceMin != null ? hours(c.referenceMin * 60) : null, byDiscipline: c.byDiscipline, swimMovingHours: c.swimMovingHours, swimElapsedHours: c.swimElapsedHours, swimRestShare: c.swimRestShare,
-    ...(c.swimSessions.some((x) => x.swimTimeEstimated) ? { swimTimeEstimated: true } : {}), strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
+    ...(c.swimSessions.some((x) => x.swimTimeEstimated) ? { swimTimeEstimated: true } : {}), strengthSets: c.strengthSets, strengthSets2w: c.strengthSets2w, ...(c.goalKraft ? { strengthSessions: c.strengthSessions } : {}), streakWeeksAbove4_5: t.streakWeeksAbove4_5, streakWeeks: t.streakWeeksAbove4_5, goals: t.goals };
 }
 
 // Aktivitaeten fuer das ganze Fenster (inkl. Vorwoche fuer die 2 Wochen Kraft)

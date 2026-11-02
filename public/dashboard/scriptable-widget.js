@@ -661,7 +661,9 @@ function goalsLine(w, W, g) {
   const hm = (m) => `${Math.floor(Math.max(0, m) / 60)}:${String(Math.round(Math.max(0, m)) % 60).padStart(2, "0")}`;
   const row = w.addStack(); row.centerAlignContent(); row.size = new Size(W, 0);
   text(row, "Ausdauer ", FS.xs, { color: COL.muted, minScale: 0.7 }); text(row, hm(g.min), FS.xs, { bold: true, minScale: 0.7 }); text(row, `/${hm(g.goalMin)}`, FS.xs, { color: COL.muted, minScale: 0.7 });
-  text(row, " · Kraft ", FS.xs, { color: COL.muted, minScale: 0.7 }); text(row, fmt(g.sets2w), FS.xs, { bold: true, minScale: 0.7 }); text(row, `/${fmt(g.goalSets2w)}`, FS.xs, { color: COL.muted, minScale: 0.7 });
+  // Ziel des Coaches in Einheiten (goalSets2w 0, kraft gesetzt): Kraft-Tage der Woche gegen die Mindestzahl, sonst Sätze in 2 Wochen
+  const kr = g.kraft;
+  text(row, " · Kraft ", FS.xs, { color: COL.muted, minScale: 0.7 }); text(row, fmt(kr ? kr.n : g.sets2w), FS.xs, { bold: true, minScale: 0.7 }); text(row, `/${fmt(kr ? kr.goal : g.goalSets2w)}`, FS.xs, { color: COL.muted, minScale: 0.7 });
   row.addSpacer();
   w.addSpacer(6);
 }
@@ -1034,7 +1036,7 @@ function buildKraft(res) {
     return w;
   }
   // Ziel über mehrere Wochen ("≥90 Sätze in 2 Wochen"): der Ring zeigt den laufenden Abschnitt ab Blockstart
-  const wk = d.week, P = wk.periodWeeks > 1 ? wk.periodWeeks : wk.rollWeeks > 1 ? wk.rollWeeks : 1, sets = (P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
+  const wk = d.week, P = wk.periodWeeks > 1 ? wk.periodWeeks : wk.rollWeeks > 1 ? wk.rollWeeks : 1, perSession = wk.goalUnit === "sessions", sets = (perSession ? wk.sessions : P > 1 ? wk.windowSets ?? wk.sets : wk.sets) || 0, goalSets = wk.goalSets || 60, hex = sportHex("strength");
   header(w, W, "KRAFT · EGYM", `Woche ab ${dateShort(wk.start)}`);
   w.addSpacer(6);
   const row = w.addStack(); row.centerAlignContent(); row.spacing = 14;
@@ -1047,7 +1049,7 @@ function buildKraft(res) {
   ring.backgroundImage = ringProgressImage(RING, sets / goalSets, hex, 1);
   const cen = (fn) => { const x = ring.addStack(); x.addSpacer(); fn(x); x.addSpacer(); };
   cen((x) => num(x, String(sets), 24, { align: "center" }));
-  cen((x) => text(x, sets >= goalSets ? "Ziel erreicht" : `von ${goalSets}${P > 1 ? ` · ${P * 7} Tage` : ""}`, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }));
+  cen((x) => text(x, sets >= goalSets ? "Ziel erreicht" : `von ${goalSets}${perSession ? " Einheiten" : ""}${P > 1 ? ` · ${P * 7} Tage` : ""}`, FS.xs, { color: COL.muted, align: "center", minScale: 0.6 }));
   rs.addSpacer();
   lc.addSpacer(5);
   const dots = lc.addStack(); dots.centerAlignContent(); dots.size = new Size(LW, 0);

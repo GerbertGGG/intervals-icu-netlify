@@ -3,7 +3,7 @@ import { isoDateBerlin, mondayOnOrBefore } from "./date-utils.js";
 import { hasEgymCredentials, fetchEgymWorkouts, fetchEgymStrength, fetchEgymBioAge } from "./egym-client.js";
 import { fetchIntervalsEvents } from "./intervals-client.js";
 import { activeBlockStrengthTarget } from "./season-block.js";
-import { readTargets, targetsView } from "./targets-snapshot.js";
+import { kraftSessionGoal, readTargets, targetsView } from "./targets-snapshot.js";
 
 // Kraft-Widget (Ansicht "kraft", mittleres Widget, und Karte im Dashboard): Trainingszeit gegen Wochenziel, Einheiten,
 // Saetze und Volumen der letzten Wochen, Fortschritt aus den EGYM-Kraft-Tests (1RM je Geraet, Veraenderung zum
@@ -361,9 +361,7 @@ export async function loadWidgetKraft(env, fresh = false) {
     // Rahmen des Coaches (KV; ohne Eintrag gilt der Startwert) geht dem Blocktext vor
     settle(async () => {
       const c = targetsView(await readTargets(env), today).current;
-      const k = (c.intensity ?? []).find((i) => i.sport === "kraft");
-      const min = k ? Number(String(k.text ?? "").match(/(\d+)\s*×/)?.[1]) : NaN;
-      return { sets2w: c.strengthSets2w, kraft: k && min > 0 ? { text: k.short || k.text, min } : null };
+      return { sets2w: c.strengthSets2w, kraft: kraftSessionGoal(c) };
     }),
   ]);
   let blockSets = blk.v ?? null;

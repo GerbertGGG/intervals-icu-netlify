@@ -155,6 +155,15 @@ const pub = (t) => ({
 
 // Fuer Dashboard und get_coach: was heute gilt, was vorher galt (anderer Wert), geplante Eintraege (validFrom in der Zukunft)
 // und die Historie, neueste zuerst
+// Kraftziel des Coaches in Einheiten statt Sätzen: strengthSets2w 0 und eine Kraft-Zeile der Intensität mit "N×" ("Mindestens 1× pro Woche").
+// Gibt { min, text } zurück (text = short, sonst der volle Text), sonst null; das Dashboard rechnet das nie selbst aus.
+export function kraftSessionGoal(t) {
+  if (Number(t?.strengthSets2w) !== 0) return null;
+  const k = (t?.intensity ?? []).find((i) => i.sport === "kraft");
+  const min = k ? Number(String(k.text ?? "").match(/(\d+)\s*×/)?.[1]) : NaN;
+  return min > 0 ? { min, text: k.short || k.text } : null;
+}
+
 export function targetsView(stored, todayIso = isoDateBerlin(), limit = null) {
   const history = targetHistory(stored);
   const current = targetOn(history, todayIso);
