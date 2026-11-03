@@ -77,6 +77,11 @@ assert.equal(gc.ernaehrung.coach.headline, null);
 assert.deepEqual(gc.ernaehrung.coach.goal, { targetKg: 80, byDate: "2026-12-31" }); // Ziel bleibt
 // bestehende get_coach-Felder bleiben
 assert.ok("week_totals" in gc && "targets" in gc && "ideas" in gc);
+// ride_trend: null ohne abgelegte Trendpunkte, sonst die Punkte, die das Dashboard abgelegt hat
+assert.equal(gc.ride_trend, null);
+kv.set("icu:ridetrend:latest:v1", JSON.stringify({ points: [{ date: "2026-11-02", ablauf: "ohne_einrollen", ef: 1.63, decoupling: 4.4 }], updatedAt: at }));
+gc = await coach();
+assert.deepEqual([gc.ride_trend.points.length, gc.ride_trend.points[0].ef, gc.ride_trend.updatedAt, gc.ride_trend.note], [1, 1.63, at, "Trend, kein Test. Bewertet wird nur am Blocktest."]);
 // kaputter Wert im KV macht get_coach nicht kaputt
 kv.set("dashboard:ernaehrung", "{kaputt"); kv.set(WEIGHT_KV_KEY, "{kaputt");
 gc = await coach();

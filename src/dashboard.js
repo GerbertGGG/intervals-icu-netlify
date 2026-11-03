@@ -8,8 +8,8 @@ import { isARaceEvent, isBRaceEvent } from "./event-utils.js";
 import { getEventDistanceFromEvent, parseTriathlonEvent } from "./block-phase.js";
 import { resolveSeasonBlock, isSeasonBlockEvent, buildBlockGoalsFull, windowOf, parseBlockTargets, intensityKindOf, intensityFromFrame, checkBlockText, TEST_RE } from "./season-block.js";
 import { buildBaseTrend } from "./base-trend.js";
-import { testConfigOf, TEST_RULES } from "./session-tests.js";
-import { loadBlockSessionInputs } from "./block-inputs.js";
+import { testConfigOf, TEST_RULES, rideTrendPoints } from "./session-tests.js";
+import { loadBlockSessionInputs, storeRideTrend } from "./block-inputs.js";
 import { readEgymStrengthDates, goalOf as egymGoalOf } from "./egym-widget.js";
 import { buildTriathlonTargets } from "./triathlon-targets.js";
 import { mustEnv } from "./kv.js";
@@ -862,6 +862,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     // Intensitaets-Leitplanke: Rad-HIIT und Huegelsprints aus Name/Beschreibung der Einheit und des gekoppelten Workouts;
     // was zaehlt, steht im Rahmen des Coaches (save_targets), sonst im Blocktext
     blockSessions = sessions;
+    // Rad-Trendpunkte fuer get_coach (ride_trend), nur bei Aenderung geschrieben
+    if (Array.isArray(sessions.rides)) await storeRideTrend(env, rideTrendPoints(sessions.rides)).catch(() => {});
     intensity = intensityFromFrame(frame, tg.intensity)
       ? blockActs.map((a) => {
           const sport = isBike(a) ? "bike" : isRun(a) ? "run" : null;

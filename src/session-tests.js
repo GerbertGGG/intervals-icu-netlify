@@ -12,6 +12,8 @@
 // Der Name wirkt nur als Override fuer Grenzfaelle (nameOverride). Jede Einheit traegt testReason.
 // baseline (nur Rad): Ausgangswert, wird angezeigt, zaehlt aber nicht ins Mittel fuers Blockziel – Fahrt ohne Einrollen
 // (z. B. 19.10.2026 nach Krankheit, "nur Orientierung") oder "Ausgangswert" im Namen.
+// trend (nur Rad, classifyRideTrend unten): lockere, gleichmaessige Rollenfahrt als Trendpunkt (Watt pro Puls, Decoupling), kein Test,
+// zaehlt nie fuers Ziel; kann zusaetzlich zu bikeCompare/baseline gelten.
 
 const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
 const addDays = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
@@ -31,9 +33,15 @@ export const TEST_RULES = {
   bikeMaxVi: 1.05,
   decTotalTolMin: 5, // Intervals-Decoupling nur bei Gesamtdauer ≈ Einrollen + Messfenster
   warmupMatchTolSec: 60, // und icu_warmup_time ≈ Einrolldauer
+  // Trendpunkt Rad (lockere, gleichmaessige Rollenfahrt, kein Test): Watt pro Puls und Decoupling, nur innerhalb desselben Ablaufs verglichen
+  trendMinMin: 45, // Bewegungszeit
+  trendWattsTol: 10, // W um die Vergleichsleistung (Ø im Messfenster)
+  trendMaxVi: 1.05, // gleichmaessig: keine HIIT
+  trendWarmupSec: 300, // icu_warmup_time ab hier: Ablauf mit_einrollen, Fenster ab Ende des Warmup-Blocks
+  trendNoWarmupStartSec: 600, // ohne Einrollen: Fenster ab Minute 10
 };
 export const TEST_FALLBACK = { testDates: ["2026-10-23", "2026-11-08", "2026-12-06", "2027-01-03"], hrCap: 128, bikeWatts: 165 };
-export const TEST_CATEGORY_DE = { runBlocktest: "Lauf-Blocktest", runTrend: "Lauf-Trend", bikeCompare: "Rad-Vergleich" };
+export const TEST_CATEGORY_DE = { runBlocktest: "Lauf-Blocktest", runTrend: "Lauf-Trend", bikeCompare: "Rad-Vergleich", trend: "Rad-Trendpunkt" };
 
 // Override ueber den Namen: "kein Test" schliesst aus, "Blocktest"/"Basistest" erzwingt den Lauf-Blocktest, "Vergleich" den
 // Rad-Vergleich, "Ausgangswert" den Rad-Vergleich als baseline. Gilt nur fuer die passende Sportart (beim Rad erzwingt auch "Blocktest" den Rad-Vergleich).
@@ -144,6 +152,7 @@ export function rideWindowStats(streams, startSec, windowSec) {
     windowMin: Math.round((Math.min(endSec, lastT + 1) - startSec) / 60),
     avgWatts: Math.round(avg), vi: avg > 0 ? Math.round((np / avg) * 100) / 100 : null,
     hr: hs.length >= 60 ? Math.round(mean(hs)) : null,
+    ef: hs.length >= 60 ? Math.round((avg / mean(hs)) * 100) / 100 : null, // Watt pro Puls: Ø-Leistung / Ø-HF (ungerundet gerechnet)
     decoupling: e1 && e2 ? Math.round((e1 / e2 - 1) * 1000) / 10 : null,
   };
 }
@@ -201,4 +210,80 @@ export function classifyRide(a, stats, cfg, rules = TEST_RULES) {
     ...base, category: "bikeCompare", baseline, mainWatts: stats.avgWatts, mainHr: stats.hr, vi: stats.vi, decoupling, decSource,
     testReason: `Ride${win.forced ? `, Name „${String(a.name).trim()}“ (Override)` : ""}: ${facts}, ${warmTxt}, ${decTxt}${baseline ? ", Ausgangswert (baseline, zählt nicht fürs Ziel)" : ""}`,
   };
+}
+
+// ---------- Rad-Trendpunkt (Kategorie trend) ----------
+// Jede lockere, gleichmaessige Rollenfahrt ist ein Trendpunkt (Watt pro Puls, Decoupling), auch ohne Einrollen und ohne
+// Testprotokoll. Verglichen wird nur innerhalb desselben Ablaufs (ablauf: mit_einrollen | ohne_einrollen). Unabhaengig von
+// classifyRide: eine Vergleichseinheit oder ein Ausgangswert kann zusaetzlich Trendpunkt sein; die Zielbewertung bleibt unberuehrt.
+// Bedingungen: Ride/VirtualRide auf der Rolle (trainer), Bewegungszeit ≥ trendMinMin, kein Blocktest/FTP-/Rampentest (Name),
+// Pulsdaten, im Messfenster VI ≤ trendMaxVi und Ø-Leistung = Vergleichsleistung ± trendWattsTol. "kein Test" im Namen schliesst aus.
+// Messfenster: mit Einrollen (icu_warmup_time ≥ trendWarmupSec) ab Ende des Warmup-Blocks bis Ende, sonst ab Minute 10 bis Ende.
+const TREND_TEST_NAME = /blocktest|basistest|\bftp\b|rampe|ramp\s*test|rampentest/i;
+const isIndoor = (a) => a?.trainer === true || /^virtualride$/i.test(String(a?.type ?? ""));
+
+// Vorpruefung ohne Zeitreihen: ob die Fahrt Trendpunkt sein kann und wo das Messfenster beginnt
+export function rideTrendWindowOf(a, rules = TEST_RULES) {
+  if (!isTestRide(a)) return null;
+  const warm = num(a?.icu_warmup_time) ?? 0, moving = num(a?.moving_time) ?? 0;
+  const ablauf = warm >= rules.trendWarmupSec ? "mit_einrollen" : "ohne_einrollen";
+  const windowStartS = ablauf === "mit_einrollen" ? Math.round(warm) : rules.trendNoWarmupStartSec;
+  const hasHr = a?.has_heartrate === true || num(a?.average_heartrate) != null;
+  const durationMin = Math.round(moving / 60);
+  let reason = null;
+  if (nameOverride(a?.name) === "exclude") reason = "Name „kein Test“: ausgeschlossen";
+  else if (!isIndoor(a)) reason = "nicht auf der Rolle (trainer)";
+  else if (moving < rules.trendMinMin * 60) reason = `${durationMin} min < ${rules.trendMinMin} min`;
+  else if (TREND_TEST_NAME.test(String(a?.name ?? ""))) reason = `Test im Namen („${String(a.name).trim()}“): kein Trendpunkt`;
+  else if (!hasHr) reason = "keine Pulsdaten";
+  return { ok: !reason, reason, ablauf, windowStartS, durationMin };
+}
+
+// Werte im Messfenster: Start windowStartS bis Ende der Zeitreihe (gleiche Rechnung wie rideWindowStats)
+export function rideTrendStats(streams, windowStartS) {
+  const get = (t) => (Array.isArray(streams) ? streams.find((s) => s?.type === t)?.data : streams?.[t]) ?? null;
+  const w = get("watts"), time = get("time");
+  if (!Array.isArray(w) || !w.length) return null;
+  const lastT = Array.isArray(time) && Number.isFinite(time[w.length - 1]) ? time[w.length - 1] : w.length - 1;
+  if (lastT + 1 <= windowStartS) return null;
+  return rideWindowStats(streams, windowStartS, lastT + 1 - windowStartS);
+}
+
+// Trendpunkt klassifizieren. stats: rideTrendStats (null = Zeitreihen fehlen). Ergebnis: null (kein Rad) oder
+// { trend: boolean, testReason, ablauf, windowStartS, … } mit den Werten, wenn trend.
+export function classifyRideTrend(a, stats, cfg, rules = TEST_RULES) {
+  const pre = rideTrendWindowOf(a, rules);
+  if (!pre) return null;
+  const head = { ablauf: pre.ablauf, windowStartS: pre.windowStartS };
+  const abl = pre.ablauf === "mit_einrollen" ? `mit Einrollen (Fenster ab Minute ${de(pre.windowStartS / 60, 1)})` : `ohne Einrollen (Fenster ab Minute ${pre.windowStartS / 60})`;
+  if (!pre.ok) return { ...head, trend: false, testReason: `Trend: ${pre.reason}` };
+  if (!stats) return { ...head, trend: false, testReason: "Trend: Zeitreihen noch nicht geladen" };
+  const wattsOk = Math.abs(stats.avgWatts - cfg.bikeWatts) <= rules.trendWattsTol, viOk = stats.vi != null && stats.vi <= rules.trendMaxVi;
+  const facts = `${pre.durationMin} min, Fenster ${stats.windowMin} min, ${stats.avgWatts} W, VI ${stats.vi != null ? de(stats.vi, 2) : "–"}`;
+  const why = [!wattsOk ? `${stats.avgWatts} W nicht ${cfg.bikeWatts} ±${rules.trendWattsTol} W` : null, !viOk ? `VI ${stats.vi != null ? de(stats.vi, 2) : "–"} > ${de(rules.trendMaxVi, 2)}` : null, stats.hr == null || stats.ef == null ? "Puls im Fenster fehlt" : null].filter(Boolean);
+  if (why.length) return { ...head, trend: false, testReason: `Trend: ${why.join(", ")} (${facts})` };
+  return {
+    ...head, trend: true, durationMin: pre.durationMin, windowMin: stats.windowMin, avgWatts: stats.avgWatts, avgHr: stats.hr, vi: stats.vi, ef: stats.ef, decoupling: stats.decoupling,
+    testReason: `Trendpunkt: Rolle, ${facts}, ${abl}, ${cfg.bikeWatts} ±${rules.trendWattsTol} W, VI ≤ ${de(rules.trendMaxVi, 2)}`,
+  };
+}
+
+// Trendpunkte fuer Anzeige und get_coach: aus den Fahrten (block-inputs.js, rec.trend), aelteste zuerst, je Ablauf getrennt.
+// Keine Bewertung, kein Mittel gegen das Ziel.
+export const RIDE_TREND_KEEP = 8;
+export const RIDE_TREND_NOTE = "Trend, kein Test. Bewertet wird nur am Blocktest.";
+const TREND_POINT_KEYS = ["date", "ablauf", "durationMin", "windowStartS", "windowMin", "avgWatts", "avgHr", "vi", "ef", "decoupling", "testReason"];
+export function rideTrendPoints(rides, keep = RIDE_TREND_KEEP) {
+  return (rides ?? []).map((r) => r?.trend).filter((t) => t && t.date)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((t) => Object.fromEntries(TREND_POINT_KEYS.map((k) => [k, t[k] ?? null])))
+    .slice(-keep);
+}
+export function rideTrendView(rides, keep = RIDE_TREND_KEEP) {
+  const all = (rides ?? []).filter((r) => r?.trend);
+  if (!all.length) return null;
+  const groups = [["ohne_einrollen", "ohne Einrollen"], ["mit_einrollen", "mit Einrollen"]]
+    .map(([ablauf, label]) => ({ ablauf, label, points: rideTrendPoints(all.filter((r) => r.trend.ablauf === ablauf), keep) }))
+    .filter((g) => g.points.length);
+  return { groups, note: RIDE_TREND_NOTE };
 }

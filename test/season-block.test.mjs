@@ -280,6 +280,19 @@ const cr = (date, dec, o = {}) => ({ date, durationMin: 70, decoupling: dec, mai
 const gbl = buildBlockGoalsFull(bR, { rides: [cr("2026-10-19", 9.8, { baseline: true, noWarmup: true }), cr("2026-10-26", 4), cr("2026-11-02", 12, { baseline: true }), cr("2026-11-09", 3)] }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
 assert.deepEqual([gbl.count, gbl.value, gbl.series.map((x) => x.date)], [2, 3.5, ["2026-10-26", "2026-11-09"]]);
 assert.deepEqual(gbl.baselines.map((x) => [x.date, x.value]), [["2026-10-19", 9.8], ["2026-11-02", 12]]);
+// Trendpunkte (Kategorie trend) aendern die Zielbewertung nicht: Snapshot vorher/nachher identisch bis auf das Feld trend
+{
+  const tp = (date, ef, dec) => ({ trend: { date, ablauf: "ohne_einrollen", durationMin: 60, windowStartS: 600, windowMin: 50, avgWatts: 165, avgHr: 101, vi: 1, ef, decoupling: dec, testReason: "Trendpunkt", category: "trend" } });
+  const before = [cr("2026-10-19", 9.8, { baseline: true, noWarmup: true }), cr("2026-10-26", 4), cr("2026-11-02", 12, { baseline: true }), cr("2026-11-09", 3), { date: "2026-10-22", durationMin: 45, hasHr: true, category: null, testReason: "Ride: Hauptteil 45 min < 60 min" }];
+  const after = before.map((r) => (r.date === "2026-10-19" ? { ...r, ...tp(r.date, 1.63, 9.8) } : r.date === "2026-10-22" ? { ...r, ...tp(r.date, 1.56, 8.3) } : r));
+  const snap = (rs) => buildBlockGoalsFull(bR, { rides: rs }, "2026-11-12").goals.find((x) => x.key === "bikeDecoupling");
+  const g0 = snap(before), g1 = snap(after);
+  assert.equal("trend" in g0, false);
+  const { trend, ...rest } = g1;
+  assert.deepEqual(rest, g0);
+  assert.deepEqual(trend.groups.map((g) => [g.label, g.points.map((p) => [p.date, p.ef, p.decoupling])]), [["ohne Einrollen", [["2026-10-19", 1.63, 9.8], ["2026-10-22", 1.56, 8.3]]]]);
+  assert.equal(trend.note, "Trend, kein Test. Bewertet wird nur am Blocktest.");
+}
 // Zeitreihen Lauf: konstante Pace, Puls ab Minute 70 steigt -> 5–60 stabil, 5–75 ok, 5–90 drüber
 {
   const n = 100 * 60, time = Array.from({ length: n }, (_, i) => i), velocity_smooth = Array(n).fill(2.5);
