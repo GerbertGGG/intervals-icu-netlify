@@ -6,9 +6,11 @@
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, isoDateBerlin } from "./date-utils.js";
 import { isAuthorized } from "./dashboard.js";
-import { METHOD_VERSION, RUN_COLUMNS, DAY_COLUMNS, decodeRow } from "./export-schema.js";
+import { METHOD_VERSION, RUN_COLUMNS, DAY_COLUMNS, RIDE_COLUMNS, SWIM_COLUMNS, decodeRow } from "./export-schema.js";
 
-export { METHOD_VERSION, RUN_COLUMNS, DAY_COLUMNS };
+export { METHOD_VERSION, RUN_COLUMNS, DAY_COLUMNS, RIDE_COLUMNS, SWIM_COLUMNS };
+// Aktivitaets-Tabellen mit gleicher Abfrage (nach Startzeit, cursor "<startLocal>|<id>")
+export const ACTIVITY_TABLES = { runs: RUN_COLUMNS, rides: RIDE_COLUMNS, swims: SWIM_COLUMNS };
 export const DEFAULT_LIMIT = 200;
 export const MAX_LIMIT = 500;
 
@@ -42,17 +44,23 @@ async function resolveArgs(db, table, args = {}) {
 
 const syncInfo = (s) => ({ syncedAt: s?.at ?? null, syncedFrom: s?.from ?? null, syncedTo: s?.to ?? null });
 
-// Laeufe nach Startzeit, cursor = "<startLocal>|<id>" der letzten Zeile
-export async function buildRunExport(env, args = {}) {
+// Aktivitaeten (runs, rides, swims) nach Startzeit, cursor = "<startLocal>|<id>" der letzten Zeile
+export const buildRunExport = (env, args = {}) => buildActivityExport(env, "runs", args);
+export const buildRideExport = (env, args = {}) => buildActivityExport(env, "rides", args);
+export const buildSwimExport = (env, args = {}) => buildActivityExport(env, "swims", args);
+export async function buildActivityExport(env, table, args = {}) {
+  const columns = ACTIVITY_TABLES[table];
+  if (!columns) throw new Error(`unbekannte Tabelle ${table}`);
   const db = dbOf(env);
-  const { from, to, limit, cursor } = await resolveArgs(db, "runs", args);
+  const { from, to, limit, cursor } = await resolveArgs(db, table, args);
   const [cStart, ...cId] = cursor ? cursor.split("|") : [];
   const after = cursor ? ` AND ("startLocal" > ?3 OR ("startLocal" = ?3 AND "id" > ?4))` : "";
   const params = cursor ? [from, to, cStart, cId.join("|"), limit + 1] : [from, to, limit + 1];
   const lim = cursor ? "?5" : "?3";
-  const rows = await all(db, `SELECT * FROM runs WHERE "date" >= ?1 AND "date" <= ?2${after} ORDER BY "startLocal", "id" LIMIT ${lim}`, ...params);
-  const page = rows.slice(0, limit).map((r) => decodeRow(r, RUN_COLUMNS));
-  const stats = await first(db, `SELECT COUNT(*) AS n, SUM(CASE WHEN "streamStatus" = 'pending' THEN 1 ELSE 0 END) AS p FROM runs WHERE "date" >= ?1 AND "date" <= ?2`, from, to);
+  const rows = await all(db, `SELECT * FROM ${table} WHERE "date" >= ?1 AND "date" <= ?2${after} ORDER BY "startLocal", "id" LIMIT ${lim}`, ...params);
+  const page = rows.slice(0, limit).map((r) => decodeRow(r, columns));
+  const pendingCol = table === "swims" ? "lapsStatus" : "streamStatus";
+  const stats = await first(db, `SELECT COUNT(*) AS n, SUM(CASE WHEN "${pendingCol}" = 'pending' THEN 1 ELSE 0 END) AS p FROM ${table} WHERE "date" >= ?1 AND "date" <= ?2`, from, to);
   const last = page[page.length - 1];
   return {
     methodVersion: METHOD_VERSION, from, to, total: stats?.n ?? 0, count: page.length, pending: stats?.p ?? 0, ...syncInfo(await lastSync(db)),
@@ -99,11 +107,11 @@ export async function handleExportRequest(req, env, kind) {
   for (const k of ["from", "to"]) if (args[k] && !isIsoDate(args[k])) return json({ ok: false, error: `${k} muss YYYY-MM-DD sein` }, 400);
   let result;
   try {
-    result = kind === "runs" ? await buildRunExport(env, args) : await buildDayExport(env, args);
+    result = ACTIVITY_TABLES[kind] ? await buildActivityExport(env, kind, args) : await buildDayExport(env, args);
   } catch (e) {
     return json({ ok: false, error: String(e?.message ?? e) }, 502);
   }
-  const columns = kind === "runs" ? RUN_COLUMNS : DAY_COLUMNS;
+  const columns = ACTIVITY_TABLES[kind] ?? DAY_COLUMNS;
   const format = p.get("format");
   if (format === "csv") {
     return new Response(toCsv(result.rows, columns), {
