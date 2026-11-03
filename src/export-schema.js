@@ -3,7 +3,9 @@
 
 // Methode der Zeitreihen-Kennzahlen. Aendert sich die Rechnung, Zahl erhoehen: das Skript rechnet dann jede Zeile mit
 // aelterer methodVersion neu.
-export const METHOD_VERSION = 1;
+// 2 (03.11.2026): Aufzeichnungsluecken bis 12 s als Bewegung (intelligente Aufzeichnung, 2022), Schutzregel GPS > 10 %,
+// Rennen ueber jeden Renn-Eintrag im Kalender am selben Tag ohne Distanzabgleich
+export const METHOD_VERSION = 2;
 
 export const METRIC_COLUMNS = [
   "paceBand125_135", "secBand125_135", "paceBand120_128", "secBand120_128", "paceBand125_135Flat", "paceBand120_128Flat",

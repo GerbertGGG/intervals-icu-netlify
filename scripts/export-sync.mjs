@@ -83,7 +83,9 @@ export async function findFirstDay(env, today) {
 // Uebersprung-Grund (Name/Tags koennen ihn aendern), und kein fehlendes Wetter in den ersten Tagen
 function reusable(prev, a, today, ctx) {
   if (!prev || prev.methodVersion !== METHOD_VERSION || prev.streamStatus === "pending") return false;
-  if ((prev.streamSkip ?? null) !== streamSkipOf(a, ctx)) return false;
+  // "gps" setzt erst die Rechnung (Schutzregel), streamSkipOf kennt es nicht: zaehlt wie "kein Uebersprung"
+  const prevSkip = prev.streamSkip === "gps" ? null : prev.streamSkip ?? null;
+  if (prevSkip !== streamSkipOf(a, ctx)) return false;
   if (!prev.weatherSrc && !isTreadmill(a) && daysBetween(activityDay(a), today) <= WEATHER_RETRY_DAYS) return false;
   return true;
 }

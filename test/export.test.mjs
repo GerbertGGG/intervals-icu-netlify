@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, raceContext, METHOD_VERSION } from "../src/export-calc.js";
+import { readFileSync } from "node:fs";
+import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, raceContext, METHOD_VERSION, EXPORT_RUN_RULES } from "../src/export-calc.js";
+import { runMovingAxis, RUN_RULES } from "../src/block-inputs.js";
 import { RUN_COLUMNS, DAY_COLUMNS, encodeRow, decodeRow } from "../src/export-schema.js";
 import { buildRunExport, buildDayExport, toCsv, toTable } from "../src/export.js";
 import { syncExport, sqlLiteral, safeError, safeErr } from "../scripts/export-sync.mjs";
@@ -116,7 +118,24 @@ assert.equal(analyzeExportStreams([{ type: "time", data: [0, 1] }, { type: "dist
   assert.equal(runRow(base, null).streamStatus, "pending");
 }
 
-// ---------- Rennen ueber Kalender-Events (RACE / RACE_A / A_RACE am selben Tag, wie das Dashboard) ----------
+// ---------- Intelligente Aufzeichnung (echter Lauf 11.11.2022, 473 Proben in 2513 s, 6,11 km) ----------
+{
+  const f = JSON.parse(readFileSync(new URL("./fixtures/run-2022-11-11-smart.json", import.meta.url)));
+  // Dashboard-Regeln (6.5) unveraendert: Luecken > 5 s zaehlen als Pause
+  assert.ok(runMovingAxis(f.time, f.distance, RUN_RULES).at(-1) < 900);
+  // Export: Luecken bis 12 s mit Bewegung zaehlen voll
+  assert.equal(runMovingAxis(f.time, f.distance, EXPORT_RUN_RULES).at(-1), 2513);
+  const m = analyzeExportStreams({ time: f.time, distance: f.distance, heartrate: f.time.map((t) => 128 + Math.round(6 * Math.sin(t / 200))) });
+  assert.ok(m.gpsCorrectedM < 50, `korrigiert ${m.gpsCorrectedM} m (vorher 4142)`);
+  assert.equal(m.movingSec, 2513);
+  assert.ok(m.effN > 300, `effN ${m.effN}`);
+  assert.ok(m.paceBand125_135 >= 400 && m.paceBand125_135 <= 420, `Pace ${m.paceBand125_135}`); // Splits 399–418 s/km
+  // echte Auto-Pause (lange Luecke ohne Strecke) bleibt eine Pause
+  const p = runMovingAxis([0, 1, 2, 62, 63], [0, 3, 6, 8, 11], EXPORT_RUN_RULES);
+  assert.equal(p.at(-1), 4);
+}
+
+// ---------- Rennen ueber Kalender-Events (RACE / RACE_A / A_RACE am selben Tag, ohne Distanzabgleich) ----------
 {
   const base = { id: "c1", type: "Run", start_date_local: "2026-09-13T09:30:00", moving_time: 3000, distance: 10050, has_heartrate: true, average_heartrate: 160, name: "Stadtlauf" };
   const ev = (category, extra = {}) => ({ category, start_date_local: "2026-09-13T00:00:00", name: "Stadtlauf 10 km", ...extra });
@@ -130,7 +149,17 @@ assert.equal(analyzeExportStreams([{ type: "time", data: [0, 1] }, { type: "dist
   assert.equal(streamSkipOf(base, raceContext([ev("RACE", { start_date_local: "2026-09-12T00:00:00" })])), null); // anderer Tag
   assert.equal(streamSkipOf(base, raceContext([ev("WORKOUT")])), null); // kein Renn-Eintrag
   assert.equal(streamSkipOf(base, raceContext([ev("RACE", { distance: 10000 })])), "race"); // Distanz passt (±15 %)
-  assert.equal(streamSkipOf(base, raceContext([ev("RACE_A", { distance: 21097 })])), null); // HM-Eintrag, 10 km gelaufen
+  assert.equal(streamSkipOf(base, raceContext([ev("RACE_A", { distance: 21097 })])), "race"); // HM-Eintrag, 10 km gelaufen: trotzdem Rennen
+  // Echter Fall 03.10.2026: Halbmarathon nach 15,2 km abgebrochen (DNF), RACE_A "Hardys Stadtlauf" 21,1 km, dazu ein WORKOUT gleichen Namens
+  const dnf = { id: "i192948098", type: "Run", start_date_local: "2026-10-03T11:51:54", name: "Halbmarathon", description: "DNF", distance: 15177.39, moving_time: 5565, has_heartrate: true, average_heartrate: 152, race: false };
+  const oct3 = [
+    { category: "WORKOUT", start_date_local: "2026-10-03T00:00:00", name: "Halbmarathon", distance: 21097 },
+    { category: "RACE_A", start_date_local: "2026-10-03T02:00:00", name: "Hardys Stadtlauf", distance: 21100 },
+  ];
+  assert.equal(streamSkipOf(dnf), null); // ohne Kalender: Name passt nicht zur Distanz, kein race-Flag
+  const dnfRow = runRow(dnf, null, raceContext(oct3));
+  assert.deepEqual([dnfRow.race, dnfRow.runClass, dnfRow.streamSkip], [true, "race", "race"]);
+  assert.equal(streamSkipOf(dnf, raceContext([oct3[0]])), null); // nur das WORKOUT: kein Rennen
   assert.equal(streamSkipOf(base, raceContext(null)), null);
 }
 
@@ -215,6 +244,7 @@ assert.equal(sqlLiteral(true), "1");
     if (u.includes("/map")) return ok({ latlngs: [[52.5, 13.4]], weather: null });
     if (u.includes("open-meteo")) return ok({ hourly: { time: [`${D[0]}T08:00`], temperature_2m: [9.5], relative_humidity_2m: [88], wind_speed_10m: [2.2] } });
     if (u.includes("/activity/a4/streams")) return new Response("not found", { status: 404 });
+    if (u.includes("/activity/g1/streams")) return ok(synth(3600, { jumps: [600, 1200, 1800, 2400, 3000].map((at) => ({ at, m: 300 })) }));
     if (u.includes("/streams")) return streamsFail ? new Response("boom", { status: 400 }) : ok(synth(3600));
     throw new Error("unerwartet " + u);
   };
@@ -291,6 +321,16 @@ assert.equal(sqlLiteral(true), "1");
     streamsFail = false;
     const s5 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
     assert.deepEqual([s5.computed, s5.pending, s5.runsWritten], [1, 0, 1]);
+
+    // Schutzregel: GPS-Bereinigung entfernt > 10 % (5 Spruenge zu 300 m bei 9 km) -> skip "gps", nur gpsCorrectedM
+    acts.push(run("g1", D[2], { start_date_local: `${D[2]}T18:00:00` }));
+    const sGps = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.equal(sGps.computed, 1);
+    const g1 = (await buildRunExport({ EXPORT_DB }, { from: D[2], to: D[2] })).rows.find((r) => r.id === "g1");
+    assert.deepEqual([g1.streamStatus, g1.streamSkip, g1.paceBand125_135, g1.effN], ["skip", "gps", null, null]);
+    assert.ok(g1.gpsCorrectedM > 1400, `gpsCorrectedM ${g1.gpsCorrectedM}`);
+    const sGps2 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
+    assert.deepEqual([sGps2.computed, sGps2.runsWritten], [0, 0]); // "gps" wird wiederverwendet, nicht jeden Tag neu gerechnet
 
     // methodVersion: aeltere Zeilen werden neu gerechnet
     db.prepare(`UPDATE runs SET "methodVersion" = 0, "hash" = 'x' WHERE "id" = 'a1'`).run();
