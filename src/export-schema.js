@@ -3,9 +3,10 @@
 
 // Methode der Zeitreihen-Kennzahlen. Aendert sich die Rechnung, Zahl erhoehen: das Skript rechnet dann jede Zeile mit
 // aelterer methodVersion neu.
+// 3 (03.11.2026): neue Tagesspalte calendar (Kalender-Eintraege), sick auch bei OP/Operation/Verletzung im Namen
 // 2 (03.11.2026): Aufzeichnungsluecken bis 12 s als Bewegung (intelligente Aufzeichnung, 2022), Schutzregel GPS > 10 %,
 // Rennen ueber jeden Renn-Eintrag im Kalender am selben Tag ohne Distanzabgleich
-export const METHOD_VERSION = 2;
+export const METHOD_VERSION = 3;
 
 export const METRIC_COLUMNS = [
   "paceBand125_135", "secBand125_135", "paceBand120_128", "secBand120_128", "paceBand125_135Flat", "paceBand120_128Flat",
@@ -21,12 +22,12 @@ export const RUN_COLUMNS = [
 
 export const DAY_COLUMNS = [
   "date", "ctl", "atl", "rampRate", "loadRun", "loadBike", "loadSwim", "loadStrength", "minRun", "minBike", "minSwim", "strengthSets",
-  "hrv", "restHr", "sleepH", "sleepScore", "sleepQuality", "fatigue", "soreness", "mood", "motivation", "sick", "weightKg",
+  "hrv", "restHr", "sleepH", "sleepScore", "sleepQuality", "fatigue", "soreness", "mood", "motivation", "sick", "calendar", "weightKg",
   "kcal", "kcalGoal", "protein", "carbs", "methodVersion",
 ];
 
 // SQLite-Typen; alles andere REAL. Wahrheitswerte als 0/1, tags als JSON-Text.
-const TEXT = new Set(["id", "date", "startLocal", "type", "name", "tags", "runClass", "weatherSrc", "streamStatus", "streamSkip"]);
+const TEXT = new Set(["id", "date", "startLocal", "type", "name", "tags", "runClass", "calendar", "weatherSrc", "streamStatus", "streamSkip"]);
 const BOOL = new Set(["treadmill", "race", "interval", "sick"]);
 const INT = new Set(["methodVersion"]);
 const typeOf = (c) => (TEXT.has(c) ? "TEXT" : BOOL.has(c) || INT.has(c) ? "INTEGER" : "REAL");

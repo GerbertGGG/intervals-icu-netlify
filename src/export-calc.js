@@ -266,16 +266,34 @@ export function entryFromRow(r) {
 // Zeile pro Tag
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Krankheitstage wie dashboard.js (6.2): Kategorie SICK/INJURED oder Notiz "krank", Ende im Kalender exklusiv
+// Nicht-Workout-Eintraege des Kalenders (Notiz, Krank, Verletzt, Urlaub, Rennen ...) je Tag. Mehrtaegige Eintraege stehen an
+// jedem Tag der Spanne (Ende im Kalender exklusiv, wie bei sick). Liefert Map date -> ["Name (KATEGORIE)", ...]
+const CAL_MAX_DAYS = 120;
+const SICK_NAME = /\b(OP|Operation|Verletzung)\b/i;
+const isWorkoutEvent = (e) => /^WORKOUT$/i.test(String(e?.category ?? "").trim());
+export function calendarByDay(events) {
+  const map = new Map();
+  for (const e of Array.isArray(events) ? events : []) {
+    if (isWorkoutEvent(e)) continue;
+    const from = String(e?.start_date_local ?? "").slice(0, 10), endRaw = String(e?.end_date_local ?? "").slice(0, 10);
+    const to = endRaw > from ? addDays(endRaw, -1) : from;
+    const name = String(e?.name ?? "").trim().slice(0, 60), cat = String(e?.category ?? "").trim().toUpperCase();
+    const label = name ? (cat ? `${name} (${cat})` : name) : cat;
+    if (!label) continue;
+    const sick = /SICK|INJURED/i.test(cat) || (/NOTE/i.test(cat) && /krank/i.test(name)) || SICK_NAME.test(name);
+    for (let d = from, k = 0; isIsoDate(d) && d <= to && k < CAL_MAX_DAYS; d = addDays(d, 1), k++) {
+      const x = map.get(d) ?? { labels: [], sick: false };
+      x.labels.push(label); x.sick = x.sick || sick;
+      map.set(d, x);
+    }
+  }
+  return map;
+}
+
+// Krankheitstage: Kategorie SICK/INJURED, Notiz "krank" oder Name mit OP/Operation/Verletzung (siehe calendarByDay)
 export function sickDaysFromEvents(events) {
   const set = new Set();
-  for (const e of Array.isArray(events) ? events : []) {
-    const cat = String(e?.category ?? "");
-    if (!(/SICK|INJURED/i.test(cat) || (/NOTE/i.test(cat) && /krank/i.test(String(e?.name ?? ""))))) continue;
-    const from = String(e.start_date_local ?? "").slice(0, 10), endRaw = String(e.end_date_local ?? "").slice(0, 10);
-    const to = endRaw > from ? addDays(endRaw, -1) : from;
-    for (let d = from, k = 0; isIsoDate(d) && d <= to && k < 60; d = addDays(d, 1), k++) set.add(d);
-  }
+  for (const [d, x] of calendarByDay(events)) if (x.sick) set.add(d);
   return set;
 }
 
@@ -286,7 +304,7 @@ const sportOfDay = (a) => (/swim/i.test(String(a?.type ?? "")) ? "swim" : isBike
 export function buildDayRows(days, { wellness = [], activities = [], events = [], weights = [] } = {}) {
   const wBy = new Map((Array.isArray(wellness) ? wellness : []).map((w) => [String(w?.id ?? w?.date ?? "").slice(0, 10), w]));
   const kgBy = new Map((weights ?? []).map((w) => [w.date, w.kg]));
-  const sick = sickDaysFromEvents(events);
+  const cal = calendarByDay(events);
   const agg = new Map();
   for (const a of Array.isArray(activities) ? activities : []) {
     const d = activityDay(a), sport = sportOfDay(a);
@@ -307,7 +325,7 @@ export function buildDayRows(days, { wellness = [], activities = [], events = []
       minRun: x ? Math.round(x.sec.run / 60) : 0, minBike: x ? Math.round(x.sec.bike / 60) : 0, minSwim: x ? Math.round(x.sec.swim / 60) : 0, strengthSets: x ? x.sets : 0,
       hrv: pos(w?.hrv), restHr: scale(w?.restingHR), sleepH: sleepSecs > 0 ? r1(sleepSecs / 3600) : null, sleepScore: pos(w?.sleepScore),
       sleepQuality: scale(w?.sleepQuality), fatigue: scale(w?.fatigue), soreness: scale(w?.soreness), mood: scale(w?.mood), motivation: scale(w?.motivation),
-      sick: sick.has(date), weightKg: kgBy.get(date) ?? pos(w?.weight),
+      sick: cal.get(date)?.sick ?? false, calendar: cal.has(date) ? cal.get(date).labels.join("; ") : null, weightKg: kgBy.get(date) ?? pos(w?.weight),
       kcal: pos(w?.Calories), kcalGoal: pos(w?.CalorieGoal), protein: pos(w?.Protein), carbs: pos(w?.Carbs),
       methodVersion: METHOD_VERSION,
     };

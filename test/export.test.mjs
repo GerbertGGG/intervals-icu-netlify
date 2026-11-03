@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
-import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, raceContext, METHOD_VERSION, EXPORT_RUN_RULES } from "../src/export-calc.js";
+import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, calendarByDay, raceContext, METHOD_VERSION, EXPORT_RUN_RULES } from "../src/export-calc.js";
 import { runMovingAxis, RUN_RULES } from "../src/block-inputs.js";
 import { RUN_COLUMNS, DAY_COLUMNS, encodeRow, decodeRow } from "../src/export-schema.js";
 import { buildRunExport, buildDayExport, toCsv, toTable } from "../src/export.js";
@@ -345,3 +345,16 @@ assert.equal(sqlLiteral(true), "1");
 }
 
 console.log("export ok");
+
+{ // calendar: Nicht-Workout-Eintraege je Tag, mehrtaegig verteilt, OP/Verletzung zaehlt als sick
+  const ev = [
+    { category: "NOTE", name: "Hüft-OP", start_date_local: "2023-10-14T00:00:00", end_date_local: "2023-10-17T00:00:00" },
+    { category: "WORKOUT", name: "Easy Run", start_date_local: "2023-10-14T00:00:00" },
+    { category: "HOLIDAY", name: "Urlaub", start_date_local: "2023-10-16T00:00:00" },
+  ];
+  const cal = calendarByDay(ev);
+  assert.deepEqual([...cal.keys()], ["2023-10-14", "2023-10-15", "2023-10-16"]);
+  const rows = buildDayRows(["2023-10-13", "2023-10-14", "2023-10-16"], { events: ev });
+  assert.deepEqual(rows.map((r) => r.calendar), [null, "Hüft-OP (NOTE)", "Hüft-OP (NOTE); Urlaub (HOLIDAY)"]);
+  assert.deepEqual(rows.map((r) => r.sick), [false, true, true]);
+}
