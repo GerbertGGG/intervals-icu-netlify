@@ -977,21 +977,27 @@ Alle Aktivitäten mit `isRun`, älteste zuerst.
 |---|---|
 | `id`, `date`, `startLocal`, `type`, `name`, `tags` | Intervals (`date` = `activityDay`, `startLocal` = `start_date_local`) |
 | `treadmill` | `isTreadmill` |
-| `race` | `isRaceActivity` (Tag `race:`, `category`, Name, `sub_type`, `race`) oder `classifyRun` = `race` mit Kalender-Kontext (`raceContext`): wie im Dashboard (`buildRaceDays`, `isRaceRun`) auch ein Kalender-Eintrag `RACE`/`RACE_A`/`A_RACE` (bzw. A-Rennen) am selben Tag; hat der Eintrag eine Distanz, muss die gelaufene auf 15 % passen. Ohne Runalyze-Kontext |
+| `race` | `isRaceActivity` (Tag `race:`, `category`, Name, `sub_type`, `race`), **oder ein Renn-Eintrag im Kalender am selben Tag** (`raceContext`: Kategorie `RACE`, `RACE_A`/`B`/`C`, `A_RACE` bzw. A-Rennen) **ohne Distanzabgleich**, damit auch ein abgebrochenes Rennen zählt (03.10.2026: Halbmarathon nach 15,2 km beendet, Eintrag 21,1 km), oder `classifyRun` = `race` (Dashboard-Regel mit Distanz ±15 %). Ohne Runalyze-Kontext |
 | `interval` | `isIntervalActivity` oder `hasIntervalTextSignal` |
-| `runClass` | `classifyRun` (7.2) mit Kalender-Kontext |
+| `runClass` | `race`, wenn `race` gilt, sonst `classifyRun` (7.2) mit Kalender-Kontext |
 | `distKm`, `movingMin`, `elevPerKm` | `distance`/1000, `moving_time`/60, `total_elevation_gain`/km |
 | `avgHr`, `maxHr`, `rpe`, `feel`, `load` | `average_heartrate`, `max_heartrate`, `icu_rpe` (sonst `perceived_exertion`), `feel`, `sessionLoad` |
 | `tempC`, `humidity`, `windMs`, `weatherSrc` | Abschnitt 10; `weatherSrc` = `intervals` \| `openmeteo` \| `null`. Nie die Uhr; Laufband ohne Wetter |
 | `streamStatus` | `ok` \| `pending` (noch nicht berechnet) \| `none` (Zeitreihen 404 oder ohne Puls/Distanz) \| `skip` |
-| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 172): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr` |
+| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 172): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr`; dazu `gps` aus der Rechnung (Schutzregel 13.3): dann `streamStatus` `skip` und nur `gpsCorrectedM` |
 
 ### 13.3 Kennzahlen aus den Zeitreihen (`export-calc.js`: `analyzeExportStreams`, 48; Grenzwerte `EXPORT_RULES`, 16)
 
 Nur Läufe im Freien, kein Rennen, kein Intervall, mindestens 20 min mit Puls. Abgerufen werden `time`, `heartrate`, `distance`, `velocity_smooth`, `altitude`, `fixed_altitude` (Höhe: `fixed_altitude`, sonst `altitude`).
 
 ```
-Zeitachse = Bewegungszeit (runMovingAxis), Distanz GPS-bereinigt (cleanRunDistance), wie 6.5
+Zeitachse = Bewegungszeit (runMovingAxis), Distanz GPS-bereinigt (cleanRunDistance), wie 6.5, mit EXPORT_RUN_RULES:
+  Lücke bis 12 s mit mindestens 0,5 m/s Fortschritt = Aufzeichnungslücke, zählt mit ihrer echten Dauer
+  (ältere Uhren mit intelligenter Aufzeichnung, z. B. 2022: Proben alle 5–10 s; als Auto-Pause gezählt landete die
+  Strecke auf 1 s Bewegungszeit und die GPS-Bereinigung entfernte 60–70 % der Distanz). Längere Lücken oder Lücken
+  ohne Fortschritt bleiben Pausen. Das Dashboard (6.5) rechnet unverändert ohne diese Regel (SPARSE_MAX_GAP_S = 0).
+Schutzregel: entfernt die GPS-Bereinigung mehr als 10 % der Rohdistanz (GPS_MAX_SHARE), keine Kennzahlen:
+  streamStatus skip, streamSkip gps, nur gpsCorrectedM
 Raster je Sekunde Bewegungszeit: Distanz linear interpoliert, Puls/Höhe von der Probe davor (Puls nur > 40)
 Unterbrechung = Probe, bei der vergangene Zeit verloren ging (Auto-Pause, Stehen)
 Fenster: 30 s, gleitend in 5-s-Schritten, ab Sekunde 300; ungültig bei Unterbrechung im Fenster,
@@ -1031,13 +1037,13 @@ Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrect
 
 1. Schema sicherstellen.
 2. Kalender, Aktivitäten und Wellness des Bereichs aus Intervals (in 180-Tage-Scheiben); aus dem Kalender die Renntage (`raceContext`, wie `buildRaceDays` im Dashboard); dazu das Yazio-Gewicht aus dem KV (`yazio:weight`, über die Cloudflare-API, nur lesen, nur mit KV-Leserecht des Tokens).
-3. Je Lauf: die gespeicherte Zeile wiederverwenden, wenn `methodVersion` gleich ist, `streamStatus` nicht `pending`, `streamSkip` gleich (Name oder Tags können ihn ändern, z. B. „Wettkampf“) und das Wetter nicht fehlt, solange der Lauf höchstens 14 Tage alt ist. Sonst neu rechnen (`computeRunEntry`): Karte (Startpunkt, Intervals-Wetter), sonst Open-Meteo, und ohne `streamSkip` die Zeitreihen. 404 bei Zeitreihen ergibt `none`; andere Abruffehler `pending`, der nächste Lauf der Action rechnet nach.
+3. Je Lauf: die gespeicherte Zeile wiederverwenden, wenn `methodVersion` gleich ist, `streamStatus` nicht `pending`, `streamSkip` gleich (ein gespeichertes `gps` zählt wie „kein Übersprung“) (Name oder Tags können ihn ändern, z. B. „Wettkampf“) und das Wetter nicht fehlt, solange der Lauf höchstens 14 Tage alt ist. Sonst neu rechnen (`computeRunEntry`): Karte (Startpunkt, Intervals-Wetter), sonst Open-Meteo, und ohne `streamSkip` die Zeitreihen. 404 bei Zeitreihen ergibt `none`; andere Abruffehler `pending`, der nächste Lauf der Action rechnet nach.
 4. Zeile bilden und hashen; **Upsert nur für neue oder geänderte Zeilen** (`INSERT … ON CONFLICT DO UPDATE … WHERE hash IS NOT excluded.hash`, 40 Zeilen je Anweisung mit Literalen, weil D1 höchstens 100 gebundene Parameter je Anweisung erlaubt).
 5. Läufe, die es im Bereich in Intervals nicht mehr gibt, aus D1 löschen.
 6. Tage ebenso. Ein früher gespeichertes Yazio-Gewicht bleibt, wenn das KV (nur 90 Tage) keinen Wert mehr liefert.
 7. `export_meta.lastSync` schreiben.
 
-Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen) rechnet jede ältere Zeile beim nächsten Lauf über ihren Bereich neu; für die ganze Historie die Action einmal mit `full` starten.
+Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen; 2 seit 03.11.2026: Aufzeichnungslücken, GPS-Schutzregel, Rennen ohne Distanzabgleich) rechnet jede ältere Zeile beim nächsten Lauf über ihren Bereich neu; für die ganze Historie die Action einmal mit `full` starten.
 
 **Einrichtung** (einmalig):
 

@@ -58,6 +58,9 @@ export const RUN_RULES = {
   GPS_REF_S: 60, // Median-Tempo aus je 60 s vor und nach dem Segment
   DECOUPLING_SKIP_START_S: 300, // Startausblendung: Basisfenster 5–65
   PAUSE_GAP_S: 5, // Luecke im Zeitstrahl darueber = Pause (Auto-Pause)
+  // Aufzeichnungsluecke statt Pause (intelligente Aufzeichnung aelterer Uhren, Proben alle 5–10 s): Luecke bis SPARSE_MAX_GAP_S,
+  // in der man mindestens STOP_SPEED vorankommt, zaehlt mit ihrer echten Dauer. 0 = aus (Dashboard, 6.5); der Export schaltet es ein.
+  SPARSE_MAX_GAP_S: 0,
   STOP_SPEED: 0.5, // m/s, darunter steht der Laeufer
   STOP_MIN_S: 5, // Stehen erst ab so vielen Sekunden am Stueck
 };
@@ -65,7 +68,8 @@ export const RUN_RULES = {
 // Bewegungszeit je Probe aus vergangener Zeit und Distanz (beides gleich lang)
 export function runMovingAxis(time, dist, rules = RUN_RULES) {
   const n = dist.length, step = new Array(n).fill(0);
-  for (let i = 1; i < n; i++) { const dt = time[i] - time[i - 1]; step[i] = dt <= 0 ? 0 : dt > rules.PAUSE_GAP_S ? 1 : dt; }
+  const sparse = (i, dt) => rules.SPARSE_MAX_GAP_S > 0 && dt <= rules.SPARSE_MAX_GAP_S && (dist[i] - dist[i - 1]) / dt >= rules.STOP_SPEED;
+  for (let i = 1; i < n; i++) { const dt = time[i] - time[i - 1]; step[i] = dt <= 0 ? 0 : dt > rules.PAUSE_GAP_S && !sparse(i, dt) ? 1 : dt; }
   // Stehen: zusammenhaengende Proben unter STOP_SPEED, zusammen mindestens STOP_MIN_S
   for (let i = 1; i < n;) {
     const slow = (k) => step[k] > 0 && (dist[k] - dist[k - 1]) / step[k] < rules.STOP_SPEED;

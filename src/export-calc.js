@@ -5,6 +5,7 @@ import { activityDay, sessionLoad, isRun, isBike, isTreadmill, isRaceActivity, i
 import { fetchIntervalsActivityMap, fetchIntervalsActivityStreamsStatus } from "./intervals-client.js";
 import { runMovingAxis, cleanRunDistance, RUN_RULES } from "./block-inputs.js";
 import { classifyRun, buildRaceDays } from "./dashboard.js";
+import { isARaceEvent } from "./event-utils.js";
 import { averageNativeWeather, extractStartLatLng, openMeteoDay, pickOpenMeteoValues, activityStartHourIso } from "./weather.js";
 import { isStrengthActivity, strengthSetsOf } from "./week-totals.js";
 import { swimTimeOf } from "./swim-time.js";
@@ -12,6 +13,8 @@ import { isIsoDate, isoDate } from "./date-utils.js";
 import { METHOD_VERSION, METRIC_COLUMNS } from "./export-schema.js";
 
 export { METHOD_VERSION, METRIC_COLUMNS };
+
+export const EXPORT_RUN_RULES = { ...RUN_RULES, SPARSE_MAX_GAP_S: 12 };
 
 export const EXPORT_RULES = {
   SKIP_S: RUN_RULES.DECOUPLING_SKIP_START_S, // 300 s Startausblendung wie 6.5
@@ -28,6 +31,7 @@ export const EXPORT_RULES = {
   DRIFT_PACE_TOL: 0.03, // HF-Drift nur bei Pace-Abweichung erstes/letztes Drittel unter 3 %
   MIN_MOVING_S: 20 * 60,
   MIN_HR: 40,
+  GPS_MAX_SHARE: 0.1, // entfernt die GPS-Bereinigung mehr als 10 % der Distanz: streamStatus skip, streamSkip "gps"
 };
 
 const num = (v) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v) : null);
@@ -60,8 +64,10 @@ export function analyzeExportStreams(streams, rules = EXPORT_RULES) {
   }
   rawDist = rawDist.slice(0, n).map((x) => Number(x) || 0);
   // 1. Bewegungszeit, 2. GPS-Bereinigung (wie 6.5)
-  const mt = runMovingAxis(elapsed, rawDist);
-  const { dist, gps } = cleanRunDistance(mt, rawDist);
+  // Regeln wie 6.5, dazu Aufzeichnungsluecken bis 12 s als Bewegung (aeltere Uhren mit intelligenter Aufzeichnung, z. B. 2022:
+  // Proben alle 5–10 s; als Auto-Pause gezaehlt landete die Strecke auf 1 s und die GPS-Bereinigung entfernte 60–70 %)
+  const mt = runMovingAxis(elapsed, rawDist, EXPORT_RUN_RULES);
+  const { dist, gps } = cleanRunDistance(mt, rawDist, EXPORT_RUN_RULES);
   const dur = Math.floor(mt[n - 1]);
 
   // Raster je Sekunde Bewegungszeit: Distanz linear, Puls und Hoehe von der letzten Probe davor.
@@ -106,7 +112,8 @@ export function analyzeExportStreams(streams, rules = EXPORT_RULES) {
     wins.push({ w, v: dd / W, hr: hrMean(w, w + W), flat });
   }
 
-  const out = { gpsCorrectedM: gps.correctedM };
+  const rawM = rawDist[n - 1] - rawDist[0];
+  const out = { gpsCorrectedM: gps.correctedM, gpsShare: rawM > 0 ? gps.correctedM / rawM : null };
   // Pace im HF-Band: Median der Fenster-Geschwindigkeiten; Zeit im Band = Vereinigung der Fenstersekunden
   // Fenster sind nach Start sortiert und gleich lang: Vereinigung = Summe der Abstaende (hoechstens W) plus W fuer das letzte
   const covered = (sel) => { let c = 0; for (let i = 0; i < sel.length; i++) c += i + 1 < sel.length ? Math.min(W, sel[i + 1].w - sel[i].w) : W; return c; };
@@ -161,12 +168,18 @@ export function analyzeExportStreams(streams, rules = EXPORT_RULES) {
 // Zeile pro Lauf
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Kontext fuer classifyRun: Renntage aus dem Intervals-Kalender, dieselbe Regel wie im Dashboard (buildRaceDays,
-// isRaceRun): Kalender-Eintrag RACE/RACE_A/A_RACE (bzw. A-Rennen) am selben Tag; hat der Eintrag eine Distanz, muss die
-// gelaufene Distanz auf 15 % passen. events: Kalender-Eintraege des Bereichs (fetchIntervalsEvents).
-export const raceContext = (events) => ({ raceDays: buildRaceDays(Array.isArray(events) ? events : []) });
+// Renntage aus dem Intervals-Kalender. raceDays: Kontext fuer classifyRun wie im Dashboard (buildRaceDays, mit Distanzabgleich
+// auf 15 %). raceDaySet: jeder Tag mit einem Renn-Eintrag (Kategorie RACE, RACE_A/B/C, A_RACE bzw. A-Rennen), OHNE
+// Distanzabgleich: ein abgebrochenes Rennen (03.10.2026, Halbmarathon nach 15,2 km beendet, Eintrag 21,1 km) ist trotzdem
+// ein Rennen. events: Kalender-Eintraege des Bereichs (fetchIntervalsEvents).
+export const isRaceEvent = (e) => isARaceEvent(e) || /^(RACE(_[A-C])?|A_RACE)$/.test(String(e?.category ?? "").trim().toUpperCase());
+export function raceContext(events) {
+  const list = Array.isArray(events) ? events : [];
+  const raceDaySet = new Set(list.filter(isRaceEvent).map((e) => String(e?.start_date_local || e?.start_date || "").slice(0, 10)).filter(Boolean));
+  return { raceDays: buildRaceDays(list), raceDaySet };
+}
 
-const isRaceRow = (a, ctx) => isRaceActivity(a) || classifyRun(a, ctx) === "race";
+const isRaceRow = (a, ctx) => isRaceActivity(a) || Boolean(ctx?.raceDaySet?.has(activityDay(a))) || classifyRun(a, ctx) === "race";
 
 // Grund, warum ein Lauf keine Zeitreihen-Kennzahlen bekommt (null = wird gerechnet). ctx: raceContext(events)
 export function streamSkipOf(a, ctx = null) {
@@ -184,7 +197,7 @@ export function baseRunRow(a, ctx = null) {
   return {
     id: a?.id ?? null, date: activityDay(a) || null, startLocal: a?.start_date_local ?? null, type: a?.type ?? null, name: a?.name ?? null,
     tags, treadmill: isTreadmill(a), race: isRaceRow(a, ctx), interval: isIntervalActivity(a) || hasIntervalTextSignal(a),
-    runClass: classifyRun(a, ctx), distKm: km > 0 ? r2(km) : null, movingMin: num(a?.moving_time) != null ? r1(num(a.moving_time) / 60) : null,
+    runClass: isRaceRow(a, ctx) ? "race" : classifyRun(a, ctx), distKm: km > 0 ? r2(km) : null, movingMin: num(a?.moving_time) != null ? r1(num(a.moving_time) / 60) : null,
     elevPerKm: km > 0 && gain != null ? r1(gain / km) : null, avgHr: num(a?.average_heartrate), maxHr: num(a?.max_heartrate),
     rpe: num(a?.icu_rpe) ?? num(a?.perceived_exertion), feel: num(a?.feel), load: load > 0 ? r1(load) : null,
   };
@@ -230,6 +243,11 @@ export async function computeRunEntry(env, a, ctx = null) {
     const st = await fetchIntervalsActivityStreamsStatus(env, a.id, STREAM_TYPES);
     metrics = st.status === 404 ? null : analyzeExportStreams(st.data);
     streamStatus = metrics ? "ok" : "none";
+    // Schutzregel: entfernt die GPS-Bereinigung mehr als GPS_MAX_SHARE der Distanz, ist die Zeitreihe nicht belastbar. Keine
+    // Kennzahlen, nur die entfernten Meter bleiben sichtbar.
+    if (metrics && metrics.gpsShare != null && metrics.gpsShare > EXPORT_RULES.GPS_MAX_SHARE) {
+      return { streamStatus: "skip", streamSkip: "gps", metrics: { gpsCorrectedM: metrics.gpsCorrectedM }, weather };
+    }
   }
   return { streamStatus, streamSkip: skip, metrics, weather };
 }
@@ -239,7 +257,7 @@ export function entryFromRow(r) {
   const metrics = {};
   for (const c of METRIC_COLUMNS) metrics[c] = r?.[c] ?? null;
   return {
-    streamStatus: r.streamStatus, streamSkip: r.streamSkip ?? null, metrics: r.streamStatus === "ok" ? metrics : null,
+    streamStatus: r.streamStatus, streamSkip: r.streamSkip ?? null, metrics,
     weather: r.weatherSrc ? { tempC: r.tempC ?? null, humidity: r.humidity ?? null, windMs: r.windMs ?? null, src: r.weatherSrc } : null,
   };
 }
