@@ -2,7 +2,7 @@ import { readKvJson, writeKvJson, hasKv } from "./kv.js";
 import { fetchIntervalsActivityIntervals, fetchIntervalsActivityStreams } from "./intervals-client.js";
 import { activityDay, isBike } from "./activity-utils.js";
 import { FLAT_M_PER_KM, HEAT_C, swimTestFromIntervals, swimTestFromText } from "./season-block.js";
-import { TEST_RULES, TEST_FALLBACK, classifyRuns, classifyRide, rideWindowOf, rideWindowStats, isTestRide } from "./session-tests.js";
+import { TEST_RULES, TEST_FALLBACK, classifyRuns, classifyRide, classifyRideTrend, rideTrendStats, rideTrendWindowOf, rideWindowOf, rideWindowStats, isTestRide } from "./session-tests.js";
 
 // Eingaben fuer die Abschlussziele des Trainingsblocks (season-block.js): lockere Laeufe und Rollen-Einheiten mit
 // Decoupling, Schwimmtests, FTP-Test. Welche Einheit vergleichbar ist, entscheidet season-block.js; hier werden nur
@@ -216,6 +216,7 @@ const heatOf = (a) => {
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
 const RUN_CACHE = "icu:runanalysis:v4:"; // v4: Fenster 5–65; v3: Bewegungszeit, GPS-Filter, Fenster ab Minute 5
 const RIDE_TEST_CACHE = "icu:ridetest:v1:"; // Messfenster der Rad-Vergleichseinheit (session-tests.js)
+const RIDE_TREND_CACHE = "icu:ridetrend:v1:"; // Messfenster des Rad-Trendpunkts (session-tests.js, classifyRideTrend): <id>:<windowStartS>
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
 // testCfg: Termine, HF-Deckel und Vergleichsleistung fuer die Test-Erkennung (testConfigOf); jede Einheit bekommt category und testReason
 export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to, swimDistM = 500, run = null, hrCap = null, testCfg = null }) {
@@ -267,10 +268,19 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
     };
     // Rad-Vergleichseinheit (nur Ride/VirtualRide): Messfenster nach dem Einrollen aus den Zeitreihen, nur wenn der Hauptteil lang genug ist
     const win = rideWindowOf(a);
-    let stats = null;
+    let stats = null, streamsP = null;
+    const streamsOf = () => (streamsP ??= fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"])); // eine Abfrage fuer Vergleich und Trend
     if (isTestRide(a) && (win.forced || win.mainSec >= TEST_RULES.bikeWindowMin * 60 - TEST_RULES.bikeMainSlackSec) && a.id != null) {
-      stats = await cached(env, `${RIDE_TEST_CACHE}${a.id}:${win.warmSec}`, budget, async () => rideWindowStats(await fetchIntervalsActivityStreams(env, a.id, ["time", "heartrate", "watts"]), win.warmSec, TEST_RULES.bikeWindowMin * 60)) ?? null;
+      stats = await cached(env, `${RIDE_TEST_CACHE}${a.id}:${win.warmSec}`, budget, async () => rideWindowStats(await streamsOf(), win.warmSec, TEST_RULES.bikeWindowMin * 60)) ?? null;
     }
+    // Trendpunkt (Kategorie trend): unabhaengig von der Vergleichseinheit, zaehlt nie fuers Ziel
+    const tw = rideTrendWindowOf(a);
+    let tstats = null;
+    if (tw?.ok && a.id != null) tstats = await cached(env, `${RIDE_TREND_CACHE}${a.id}:${tw.windowStartS}`, streamsP ? { left: 1 } : budget, // Zeitreihen schon geladen: kostet kein Budget
+      async () => rideTrendStats(await streamsOf(), tw.windowStartS)) ?? null;
+    const tc = classifyRideTrend(a, tstats, tcfg);
+    if (tc?.trend) rec.trend = { date: rec.date, ...tc, category: "trend" };
+    else if (tc) rec.trendReason = tc.testReason;
     const c = classifyRide(a, stats, tcfg);
     rec.category = c?.category ?? null; rec.testReason = c?.testReason ?? `${a.type ?? "Rad"}: keine Vergleichseinheit (nur Ride/VirtualRide)`;
     if (c?.category) Object.assign(rec, { baseline: c.baseline, decoupling: c.decoupling, decSource: c.decSource, mainWatts: c.mainWatts, mainHr: c.mainHr ?? null, vi: c.vi, noWarmup: c.noWarmup, mainMin: c.mainMin });
@@ -289,4 +299,18 @@ export async function loadBlockSessionInputs(env, { acts, runs, rzRuns, from, to
   }
 
   return { runs: runOut, rides, swimTests, ftpTest: ftpAct ? { date: activityDay(ftpAct) } : null };
+}
+
+// Letzte Rad-Trendpunkte fuer get_coach (Feld ride_trend): das Dashboard legt sie nach jeder Rechnung ab, geschrieben wird nur
+// bei Aenderung. So nutzt der Coach dieselben Zahlen wie die Rad-Vergleichskarte.
+export const RIDE_TREND_KV_KEY = "icu:ridetrend:latest:v1";
+export async function storeRideTrend(env, points, now = new Date().toISOString()) {
+  if (!hasKv(env) || !Array.isArray(points)) return;
+  const prev = await readKvJson(env, RIDE_TREND_KV_KEY).catch(() => null);
+  if (JSON.stringify(prev?.points ?? null) === JSON.stringify(points)) return;
+  await writeKvJson(env, RIDE_TREND_KV_KEY, { points, updatedAt: now }).catch(() => {});
+}
+export async function readRideTrend(env) {
+  const v = await readKvJson(env, RIDE_TREND_KV_KEY).catch(() => null);
+  return v && Array.isArray(v.points) ? v : null;
 }

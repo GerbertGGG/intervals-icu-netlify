@@ -1104,6 +1104,7 @@ function renderBlock(SB, deloads = []) {
     return `<div class="bcrs" title="Trend, keine Entscheidung${C.baseline ? " · vor dem Blockstart: Ausgangswerte" : ""}">Verlauf: ${cv(C.from, C.unit)} → ${cv(C.to, C.unit)}${C.dir ? ` (${DIR[C.dir]})` : ""}</div>${main}`;
   };
   const nextOf = (g) => (g.course?.nextText && g.value != null ? `<div class="sub muted">${esc(cap(g.course.nextText))}</div>` : "");
+  const trendRows = (T) => `<div class="sub" style="margin-top:8px"><b>Trendpunkte</b></div>${T.groups.map((G) => `<div class="sub muted">${esc(G.label)}</div><div class="scroll"><table class="mini tests"><thead><tr><th>Fahrt</th><th>min</th><th>W</th><th>W/Puls</th><th>Dec.</th></tr></thead><tbody>${G.points.map((p) => `<tr title="${esc(`${fmtDate(p.date)}: ${fmt(p.durationMin)} min, ${fmt(p.avgWatts)} W, Ø-HF ${fmt(p.avgHr)} · Fenster ab Minute ${fmt(p.windowStartS / 60, p.windowStartS % 60 ? 1 : 0)} (${fmt(p.windowMin)} min) · ${p.testReason ?? ""}`)}"><td>${esc(fmtDate(p.date))}</td><td>${fmt(p.durationMin)}</td><td>${fmt(p.avgWatts)}</td><td>${p.ef != null ? fmt(p.ef, 2) : "–"}</td><td>${p.decoupling != null ? `${fmt(p.decoupling, 1)}&nbsp;%` : "–"}</td></tr>`).join("")}</tbody></table></div>`).join("")}<div class="sub muted" style="font-size:11px">${esc(T.note)}</div>`;
   const goalCard = (g) => {
     let vis = "";
     if (g.key === "decoupling") {
@@ -1120,6 +1121,9 @@ function renderBlock(SB, deloads = []) {
       // Einzelwerte sichtbar (Tooltips gibt es am Handy nicht): Datum, Wert, Ausgangswerte gekennzeichnet
       const pts = [...(g.baselines ?? []).map((x) => ({ ...x, base: true })), ...g.series];
       if (pts.length) vis += `<div class="sub">Einzelwerte: ${pts.map((x) => `${x.base ? "<span class=\"muted\">" : ""}${esc(fmtDate(x.date))} <b>${fmt(x.value, 1)}&nbsp;%</b>${x.base ? " (Ausgang)</span>" : ""}`).join(" · ")}</div>`;
+      // Rad-Trendpunkte (session-tests.js, Kategorie trend): je Ablauf eine kleine Tabelle, Watt pro Puls und Decoupling je Fahrt.
+      // Nur Werte – keine Farbe, kein Mittel, keine Bewertung (bewertet wird nur am Blocktest)
+      if (g.key === "bikeDecoupling" && g.trend?.groups?.length) vis += trendRows(g.trend);
     } else if (g.key === "swimTest") {
       vis = g.tests.length ? bars(g.tests.map((x) => ({ v: x.slowerPer100, t: `${fmtDate(x.date)}: ${x.t1} / ${x.t2}${x.pauseSec != null ? ` · Pause ${x.pauseSec} s` : ""}` })), g.maxSlowerPer100) : "";
     } else if (g.key === "ramp") {

@@ -1,5 +1,5 @@
 import { diffDays, mondayOnOrBefore } from "./date-utils.js";
-import { TEST_RULES } from "./session-tests.js";
+import { TEST_RULES, rideTrendView } from "./session-tests.js";
 import { kraftSessionGoal } from "./targets-snapshot.js";
 
 const addDays = (iso, n) => new Date(new Date(iso + "T00:00:00Z").getTime() + n * 86400000).toISOString().slice(0, 10);
@@ -643,6 +643,9 @@ export function buildBlockGoalsFull(block, input, todayIso) {
       extra: { ftp: input.ftp ?? null, ftpTest: input.ftpTest ?? null, orientation: lastUnwarmed ? { date: lastUnwarmed.date, value: r1(lastUnwarmed.decoupling) } : null,
         baselines: unwarmed.slice(-3).map((x) => ({ date: x.date, value: r1(x.decoupling), ...(Number.isFinite(x.mainWatts) ? { watts: Math.round(x.mainWatts) } : {}), ...(x.noWarmup ? { noWarmup: true } : {}), ...(x.testReason ? { reason: x.testReason } : {}) })) },
     });
+    // Trendpunkte (session-tests.js, Kategorie trend): nur Anzeige je Ablauf, aendern Wert, Status und Mittel nicht
+    const trend = rideTrendView(input.rides);
+    if (trend) g.trend = trend;
     if (g.value == null && g.orientation) g.note = "Noch keine Vergleichseinheit mit Einrollen – bewertet wird ab der ersten.";
     const last = g.series.slice(-g.lastN);
     // Temperatur des Radcomputers bleibt draussen: der Sensor misst Koerperwaerme mit
