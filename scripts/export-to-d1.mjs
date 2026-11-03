@@ -2,7 +2,7 @@
 //   node scripts/export-to-d1.mjs
 // Umgebung (Repo-Secrets): INTERVALS_API_KEY, ATHLETE_ID, CLOUDFLARE_API_TOKEN (minimal "Account > D1 > Edit" fuer dieses
 // Konto; mit "Workers KV Storage: Read" zusaetzlich das Yazio-Gewicht aus dem KV, sonst nur Intervals), CLOUDFLARE_ACCOUNT_ID. Optional: EXPORT_FROM, EXPORT_TO (YYYY-MM-DD), EXPORT_FULL=true (ganze Historie),
-// EXPORT_DAYS (Standardbereich, 30), D1_DATABASE_ID (sonst aus wrangler.toml), EXPORT_DELAY_MS (Pause je Lauf, 150).
+// EXPORT_DAYS (Standardbereich in Tagen bis gestern, 14), D1_DATABASE_ID (sonst aus wrangler.toml), EXPORT_DELAY_MS (Pause je Lauf, 150).
 // Das Repo ist oeffentlich, die Logs auch: ausgegeben werden nur Bereich, Zaehler, HTTP-Status und Fehlercodes, nie
 // Datenzeilen, Gesundheitswerte, Aktivitaets-IDs oder Antworttexte (safeError in export-sync.mjs).
 import { readFileSync } from "node:fs";
@@ -70,7 +70,7 @@ if (!dbId) throw safeErr("Keine D1-Datenbank: [[d1_databases]] mit binding EXPOR
 const env = { INTERVALS_API_KEY: need("INTERVALS_API_KEY"), ATHLETE_ID: need("ATHLETE_ID"), KV: kvShim(account, ids.kv) };
 const today = isoDateBerlin(), yesterday = addDays(today, -1);
 const full = /^(1|true|yes)$/i.test(process.env.EXPORT_FULL ?? "");
-const from = isIsoDate(process.env.EXPORT_FROM) ? process.env.EXPORT_FROM : full ? await findFirstDay(env, today) : addDays(today, -(Number(process.env.EXPORT_DAYS) || 30));
+const from = isIsoDate(process.env.EXPORT_FROM) ? process.env.EXPORT_FROM : full ? await findFirstDay(env, today) : addDays(today, -(Number(process.env.EXPORT_DAYS) || 14));
 const to = isIsoDate(process.env.EXPORT_TO) ? process.env.EXPORT_TO : yesterday;
 if (from > to) throw safeErr(`from ${from} liegt nach to ${to}`);
 
