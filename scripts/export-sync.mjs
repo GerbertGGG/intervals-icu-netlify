@@ -10,6 +10,8 @@ import { fetchIntervalsActivities, fetchIntervalsEvents, fetchIntervalsWellnessR
 import { isoDate } from "../src/date-utils.js";
 import { readWeights } from "../src/ernaehrung.js";
 import { runRow, computeRunEntry, entryFromRow, streamSkipOf, buildDayRows, raceContext } from "../src/export-calc.js";
+import { rideRow, computeRideEntry, rideEntryFromRow, rideSkipOf, isIndoorRide, brickMap, isSwim, swimRow, computeSwimEntry, swimEntryFromRow } from "../src/export-tri.js";
+import { isBike } from "../src/activity-utils.js";
 import { METHOD_VERSION, TABLES, schemaStatements, missingColumnStatements, encodeRow, decodeRow } from "../src/export-schema.js";
 
 const addDays = (iso, n) => isoDate(new Date(Date.parse(iso + "T00:00:00Z") + n * 86400000));
@@ -90,6 +92,15 @@ function reusable(prev, a, today, ctx) {
   return true;
 }
 
+// Fahrt wiederverwenden: gleiche Methode, fertig, gleicher Uebersprung-Grund (Name/Workout koennen eine Intensitaetseinheit machen),
+// draussen kein fehlendes Wetter in den ersten Tagen
+function rideReusable(prev, a, today, eventsById) {
+  if (!prev || prev.methodVersion !== METHOD_VERSION || prev.streamStatus === "pending") return false;
+  if ((prev.streamSkip ?? null) !== rideSkipOf(a, eventsById)) return false;
+  if (!prev.weatherSrc && !isIndoorRide(a) && daysBetween(activityDay(a), today) <= WEATHER_RETRY_DAYS) return false;
+  return true;
+}
+
 // Haupteinstieg. env: { INTERVALS_API_KEY, ATHLETE_ID, KV? } (KV: Yazio-Gewicht und Zwischenspeicher fuers Wetter).
 // from/to: Bereich (Laeufe und Tage); delayMs: Pause zwischen zwei gerechneten Laeufen (Rate-Limits Intervals/Open-Meteo).
 export async function syncExport({ env, d1, from, to, today, delayMs = 0, log = console.log, now = () => new Date().toISOString() }) {
@@ -101,39 +112,57 @@ export async function syncExport({ env, d1, from, to, today, delayMs = 0, log = 
   const events = await sliced((a, b) => fetchIntervalsEvents(env, a, b), addDays(from, -60), to);
   const ctx = raceContext(events);
 
-  // Laeufe
+  // Laeufe, Radfahrten, Schwimmeinheiten: je Tabelle gleicher Ablauf (wiederverwenden oder rechnen, nur Geaendertes schreiben,
+  // in Intervals entfernte Aktivitaeten loeschen)
   const acts = await sliced((a, b) => fetchIntervalsActivities(env, a, b), from, to);
-  const runs = acts.filter((a) => isRun(a) && a?.id != null && activityDay(a) >= from && activityDay(a) <= to);
-  const prevRows = new Map((await d1(`SELECT * FROM runs WHERE "date" >= ?1 AND "date" <= ?2`, [from, to])).map((r) => [String(r.id), r]));
-  const changed = [];
-  for (const a of runs) {
-    const prev = prevRows.get(String(a.id));
-    const prevDecoded = prev ? { ...decodeRow(prev, TABLES.runs.columns), hash: prev.hash } : null;
-    let entry = null;
-    if (reusable(prevDecoded, a, today, ctx)) { entry = entryFromRow(prevDecoded); stats.reused++; }
-    else {
-      try {
-        entry = await computeRunEntry(env, a, ctx);
-        stats.computed++;
-      } catch (e) {
-        stats.failed = (stats.failed ?? 0) + 1;
-        log(`Lauf nicht abrufbar (${safeError(e)}), bleibt pending`); // ohne ID und ohne Antworttext (oeffentliches Log)
+  const inRange = (a) => a?.id != null && activityDay(a) >= from && activityDay(a) <= to;
+  const eventsById = new Map(events.map((e) => [String(e?.id), e]));
+  ctx.bricks = brickMap(acts);
+  const syncTable = async (table, items, { reuse, fromRow, compute, row, label }) => {
+    const prevRows = new Map((await d1(`SELECT * FROM ${table} WHERE "date" >= ?1 AND "date" <= ?2`, [from, to])).map((r) => [String(r.id), r]));
+    const changed = [];
+    const st = { n: items.length, computed: 0, reused: 0, pending: 0, failed: 0, written: 0, deleted: 0 };
+    for (const a of items) {
+      const prev = prevRows.get(String(a.id));
+      const prevDecoded = prev ? { ...decodeRow(prev, TABLES[table].columns), hash: prev.hash } : null;
+      let entry = null;
+      if (reuse(prevDecoded, a)) { entry = fromRow(prevDecoded); st.reused++; }
+      else {
+        try { entry = await compute(a); st.computed++; }
+        catch (e) { st.failed++; log(`${label} nicht abrufbar (${safeError(e)}), bleibt pending`); } // ohne ID und Antworttext (oeffentliches Log)
+        if (delayMs) await sleep(delayMs);
       }
-      if (delayMs) await sleep(delayMs);
+      const r = row(a, entry);
+      if (r.streamStatus === "pending" || r.lapsStatus === "pending") st.pending++;
+      const values = encodeRow(r, TABLES[table].columns);
+      const hash = rowHash(values);
+      if (prev?.hash !== hash) changed.push({ values, hash });
     }
-    const row = runRow(a, entry, ctx);
-    if (row.streamStatus === "pending") stats.pending++;
-    const values = encodeRow(row, TABLES.runs.columns);
-    const hash = rowHash(values);
-    if (prev?.hash !== hash) changed.push({ values, hash });
-  }
-  stats.runs = runs.length;
-  await upsert(d1, "runs", changed, syncedAt);
-  stats.runsWritten = changed.length;
-  const ids = new Set(runs.map((a) => String(a.id)));
-  const gone = [...prevRows.keys()].filter((id) => !ids.has(id));
-  for (let i = 0; i < gone.length; i += 100) await d1(`DELETE FROM runs WHERE "id" IN (${gone.slice(i, i + 100).map(sqlLiteral).join(", ")})`);
-  stats.runsDeleted = gone.length;
+    await upsert(d1, table, changed, syncedAt);
+    st.written = changed.length;
+    const ids = new Set(items.map((a) => String(a.id)));
+    const gone = [...prevRows.keys()].filter((id) => !ids.has(id));
+    for (let i = 0; i < gone.length; i += 100) await d1(`DELETE FROM ${table} WHERE "id" IN (${gone.slice(i, i + 100).map(sqlLiteral).join(", ")})`);
+    st.deleted = gone.length;
+    return st;
+  };
+
+  const runSt = await syncTable("runs", acts.filter((a) => isRun(a) && inRange(a)), {
+    label: "Lauf", reuse: (p, a) => reusable(p, a, today, ctx), fromRow: entryFromRow, compute: (a) => computeRunEntry(env, a, ctx), row: (a, e) => runRow(a, e, ctx),
+  });
+  Object.assign(stats, { runs: runSt.n, computed: runSt.computed, reused: runSt.reused, pending: runSt.pending, failed: runSt.failed, runsWritten: runSt.written, runsDeleted: runSt.deleted });
+
+  const rideSt = await syncTable("rides", acts.filter((a) => isBike(a) && inRange(a)), {
+    label: "Fahrt", reuse: (p, a) => rideReusable(p, a, today, eventsById), fromRow: rideEntryFromRow,
+    compute: (a) => computeRideEntry(env, a, { eventsById }), row: (a, e) => rideRow(a, e, eventsById),
+  });
+  Object.assign(stats, { rides: rideSt.n, ridesComputed: rideSt.computed, ridesPending: rideSt.pending, ridesFailed: rideSt.failed, ridesWritten: rideSt.written, ridesDeleted: rideSt.deleted });
+
+  const swimSt = await syncTable("swims", acts.filter((a) => isSwim(a) && inRange(a)), {
+    label: "Schwimmen", reuse: (p) => Boolean(p) && p.methodVersion === METHOD_VERSION && p.lapsStatus !== "pending", fromRow: swimEntryFromRow,
+    compute: (a) => computeSwimEntry(env, a), row: (a, e) => swimRow(a, e),
+  });
+  Object.assign(stats, { swims: swimSt.n, swimsComputed: swimSt.computed, swimsPending: swimSt.pending, swimsFailed: swimSt.failed, swimsWritten: swimSt.written, swimsDeleted: swimSt.deleted });
 
   // Tage
   const wellness = await sliced((a, b) => fetchIntervalsWellnessRange(env, a, b), from, to);
@@ -155,6 +184,6 @@ export async function syncExport({ env, d1, from, to, today, delayMs = 0, log = 
   stats.daysWritten = dayChanged.length;
 
   await d1(`INSERT INTO export_meta ("key", "value") VALUES ('lastSync', ?1) ON CONFLICT("key") DO UPDATE SET "value" = excluded."value"`,
-    [JSON.stringify({ at: syncedAt, from, to, methodVersion: METHOD_VERSION, runs: stats.runs, pending: stats.pending })]);
+    [JSON.stringify({ at: syncedAt, from, to, methodVersion: METHOD_VERSION, runs: stats.runs, pending: stats.pending, rides: stats.rides, ridesPending: stats.ridesPending, swims: stats.swims, swimsPending: stats.swimsPending })]);
   return stats;
 }

@@ -200,8 +200,13 @@ export function baseRunRow(a, ctx = null) {
     runClass: isRaceRow(a, ctx) ? "race" : classifyRun(a, ctx), distKm: km > 0 ? r2(km) : null, movingMin: num(a?.moving_time) != null ? r1(num(a.moving_time) / 60) : null,
     elevPerKm: km > 0 && gain != null ? r1(gain / km) : null, avgHr: num(a?.average_heartrate), maxHr: num(a?.max_heartrate),
     rpe: num(a?.icu_rpe) ?? num(a?.perceived_exertion), feel: num(a?.feel), load: load > 0 ? r1(load) : null,
+    // Koppellauf (export-tri.js, brickMap): ctx.bricks kommt aus der Action; ohne Kontext false
+    ...brickCols(ctx?.bricks?.get(String(a?.id))),
   };
 }
+const brickCols = (b) => ({
+  brick: Boolean(b), brickRideId: b?.brickRideId ?? null, brickGapMin: b?.brickGapMin ?? null, brickRideMin: b?.brickRideMin ?? null, brickRideLoad: b?.brickRideLoad ?? null,
+});
 
 // Zeile aus Stammdaten und Eintrag; entry null = noch nicht berechnet (pending). ctx: raceContext(events)
 export function runRow(a, entry, ctx = null) {
@@ -227,17 +232,22 @@ async function resolveWeather(env, a, latlng) {
 
 const STREAM_TYPES = ["time", "heartrate", "distance", "velocity_smooth", "altitude", "fixed_altitude"];
 
+// Wetter einer Aktivitaet draussen: Karte (Startpunkt, Intervals-Wetter aus den Kartenpunkten), sonst Open-Meteo am Startpunkt.
+// Auch fuer Radfahrten (export-tri.js). Intervals-Wetter hat keinen Wind in den Kartenpunkten (windMs dann null).
+export async function weatherOf(env, a) {
+  const map = await fetchIntervalsActivityMap(env, a.id);
+  const latlng = map.status === 200 ? extractStartLatLng(map.data) : null;
+  const native = map.status === 200 ? averageNativeWeather(map.data) : null;
+  return native ? { ...native, windMs: null, src: "intervals" } : latlng ? await resolveWeather(env, a, latlng) : null;
+}
+
 // Rechnet einen Lauf: Karte (Startpunkt, Intervals-Wetter), sonst Open-Meteo, und ohne streamSkip die Zeitreihen.
 // Eintrag: { streamStatus: ok|none|skip, streamSkip, metrics, weather: {tempC, humidity, windMs, src}|null }. Wirft bei
 // Abruffehlern (ausser 404); der Aufrufer schreibt den Lauf dann als pending.
 export async function computeRunEntry(env, a, ctx = null) {
   const skip = streamSkipOf(a, ctx);
   if (skip === "treadmill") return { streamStatus: "skip", streamSkip: skip, metrics: null, weather: null };
-  const map = await fetchIntervalsActivityMap(env, a.id);
-  const latlng = map.status === 200 ? extractStartLatLng(map.data) : null;
-  const native = map.status === 200 ? averageNativeWeather(map.data) : null;
-  // Intervals-Wetter hat keinen Wind in den Kartenpunkten, der Wind kommt nur aus Open-Meteo (windMs sonst null)
-  const weather = native ? { ...native, windMs: null, src: "intervals" } : latlng ? await resolveWeather(env, a, latlng) : null;
+  const weather = await weatherOf(env, a);
   let streamStatus = "skip", metrics = null;
   if (!skip) {
     const st = await fetchIntervalsActivityStreamsStatus(env, a.id, STREAM_TYPES);

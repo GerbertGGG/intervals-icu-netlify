@@ -78,7 +78,9 @@ Der Coach liest vor jedem Update mit `get_coach` den gesamten Stand zurück (let
 | MCP-Tool | HTTP | Inhalt |
 |---|---|---|
 | `get_run_export` | `GET /api/export/runs` | eine Zeile pro Lauf: Stammdaten, Wetter, Kennzahlen aus den Zeitreihen |
-| `get_day_export` | `GET /api/export/days` | eine Zeile pro Tag: CTL/ATL, Load und Minuten je Sportart, Wellness, Gewicht, Ernährung |
+| `get_ride_export` | `GET /api/export/rides` | eine Zeile pro Radfahrt: Leistung, Puls, Einordnung (Intensität, Vergleichseinheit), Kennzahlen aus den Zeitreihen |
+| `get_swim_export` | `GET /api/export/swims` | eine Zeile pro Schwimmeinheit: Distanz, Bewegungszeit, Pace/100 m, Schwimmtest 2× 500 m |
+| `get_day_export` | `GET /api/export/days` | eine Zeile pro Tag: CTL/ATL, Load und Minuten je Sportart, Wellness, Gewicht, Ernährung, Kalender (Krankheit, OP, Urlaub …) |
 
 Beide nehmen `from`, `to`, `cursor`, `limit` (Standard 200, max. 500) und `format` (MCP: `table` als Standard, `json`, `csv`; HTTP: JSON-Objekte als Standard, `table`, `csv`). Die MCP-Tools sind der Hauptweg, weil die Coaching-Sitzung den Worker per HTTP oft nicht erreicht; HTTP braucht `Authorization: Bearer <DASHBOARD_TOKEN>`. Der Worker liest dafür **nur aus D1**; gerechnet und geschrieben wird der Export täglich in GitHub Actions (A3.1a), weil die Auswertung der Zeitreihen die 10 ms CPU des kostenlosen Plans sprengt.
 
@@ -961,7 +963,7 @@ Der Coach soll über die ganze Trainingshistorie rechnen können. Der Export lie
 | Schema | `src/export-schema.js` | Spalten, D1-Tabellen, `METHOD_VERSION` (gemeinsam für Action und Worker) |
 | Lesen | `src/export.js` | Worker: MCP `get_run_export`/`get_day_export` (`mcp-server.js`), HTTP `/api/export/runs|days` (`index.js`, `handleExportRequest`, 94); nur D1, kein Abruf, keine Auswertung |
 
-### 13.1 Parameter und Antwort (`buildRunExport` 46, `buildDayExport` 64)
+### 13.1 Parameter und Antwort (`buildActivityExport` 51, `buildDayExport` 72)
 
 - `from`/`to` (ISO-Datum): Standard erster Tag in der jeweiligen D1-Tabelle bis gestern (Berlin).
 - `limit`: Standard 200, höchstens 500. `cursor`: Läufe `<startLocal>|<id>` der letzten Zeile (sortiert nach Startzeit), Tage das nächste Datum. `nextCursor = null` heißt letzte Seite.
@@ -969,7 +971,7 @@ Der Coach soll über die ganze Trainingshistorie rechnen können. Der Export lie
 - `format=table` liefert `columns` einmal und die Zeilen als Arrays, `csv` eine Kopfzeile (HTTP: `nextCursor`, `pending`, `methodVersion`, `syncedAt` in den Headern `x-next-cursor`, `x-pending`, `x-method-version`, `x-synced-at`; MCP: in einer ersten Textzeile).
 - Zahlen gerundet, fehlende Werte `null`, `tags` als Liste, Wahrheitswerte als `true`/`false`. Jede Zeile trägt ihre `methodVersion`.
 
-### 13.2 Zeile pro Lauf (`export-calc.js`: `runRow`, `baseRunRow` 181)
+### 13.2 Zeile pro Lauf (`export-calc.js`: `runRow`, `baseRunRow` 194)
 
 Alle Aktivitäten mit `isRun`, älteste zuerst.
 
@@ -986,7 +988,7 @@ Alle Aktivitäten mit `isRun`, älteste zuerst.
 | `streamStatus` | `ok` \| `pending` (noch nicht berechnet) \| `none` (Zeitreihen 404 oder ohne Puls/Distanz) \| `skip` |
 | `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 172): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr`; dazu `gps` aus der Rechnung (Schutzregel 13.3): dann `streamStatus` `skip` und nur `gpsCorrectedM` |
 
-### 13.3 Kennzahlen aus den Zeitreihen (`export-calc.js`: `analyzeExportStreams`, 48; Grenzwerte `EXPORT_RULES`, 16)
+### 13.3 Kennzahlen aus den Zeitreihen (`export-calc.js`: `analyzeExportStreams`, 52; Grenzwerte `EXPORT_RULES`, 19)
 
 Nur Läufe im Freien, kein Rennen, kein Intervall, mindestens 20 min mit Puls. Abgerufen werden `time`, `heartrate`, `distance`, `velocity_smooth`, `altitude`, `fixed_altitude` (Höhe: `fixed_altitude`, sonst `altitude`).
 
@@ -1019,7 +1021,7 @@ flach = |ΔHöhe / ΔDistanz| < 2 % (Höhe vorher ±15 s gemittelt)
 
 Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrectedM` 326 m wie `analyzeRunStreams` (6.5, Fenster 5–65 = ganzer Lauf); Pace im Band 451–460 s/km bei Pace 5–65 von 454 s/km.
 
-### 13.4 GitHub Action, D1, Upsert (`syncExport` 93, `computeRunEntry` 220)
+### 13.4 GitHub Action, D1, Upsert (`syncExport` 106, `computeRunEntry` 247)
 
 **Warum nicht im Worker.** Der Worker läuft im kostenlosen Plan (Commit `08d6aec`) mit 10 ms CPU je Aufruf, und zwar für den ganzen Aufruf samt Dashboard-Cache und Yazio-Sync. Gemessen (Node 22, V8 wie in Workers, nur Hauptthread, warm): Zeitreihen eines 60-min-Laufs parsen und auswerten 4,4 ms (im frischen Isolate ≈ 12 ms), ein ganzer Aufruf mit 2 Läufen 10–14 ms, die Aktivitätsliste der ganzen Historie (2500 Aktivitäten) allein 29 ms. Deshalb rechnet eine GitHub Action, und der Worker liest nur.
 
@@ -1029,6 +1031,7 @@ Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrect
 |---|---|---|
 | `runs` | `id` (Intervals-Aktivitäts-ID) | alle Spalten aus 13.2/13.3, `methodVersion`, dazu `hash`, `syncedAt`; Index auf `startLocal, id` und `date` |
 | `days` | `date` | alle Spalten aus 13.5, `methodVersion`, `hash`, `syncedAt` |
+| `rides`, `swims` | `id` | Spalten aus 13.6 bzw. 13.8, `methodVersion`, `hash`, `syncedAt`; Index auf `startLocal, id` und `date` |
 | `export_meta` | `key` | `lastSync`: Zeitpunkt, Bereich, `methodVersion`, Zahl der Läufe und `pending` des letzten Laufs |
 
 `tags` steht als JSON-Text, Wahrheitswerte als 0/1; der Worker wandelt beim Lesen zurück (`decodeRow`).
@@ -1059,7 +1062,7 @@ Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen; 2 seit 03.11
 
 Wäre das Repo privat, lägen diese ≈ 31 Minuten im Monat weit unter den 2000 Gratisminuten. GitHub schaltet geplante Läufe in öffentlichen Repos nach 60 Tagen ohne Aktivität im Repo ab; dann die Action wieder einschalten.
 
-### 13.5 Zeile pro Tag (`export-calc.js`: `buildDayRows`, 268)
+### 13.5 Zeile pro Tag (`export-calc.js`: `buildDayRows`, 314)
 
 Jeder Kalendertag im Zeitraum, auch ohne Daten.
 
@@ -1070,11 +1073,58 @@ Jeder Kalendertag im Zeitraum, auch ohne Daten.
 | `minRun`, `minBike`, `minSwim` | Σ `moving_time`/60; Schwimmen `swimTimeOf` (ohne nachgeladene Laps = `moving_time`) |
 | `strengthSets` | Σ `strengthSetsOf` |
 | `hrv`, `restHr`, `sleepH`, `sleepScore`, `sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation` | Wellness wie `buildWellness` (HRV, Schlaf-Score > 0; Skalen ≥ 1; `sleepH` = `sleepSecs`/3600) |
-| `sick` | `sickDaysFromEvents` (252), dieselbe Regel wie 6.2: Kategorie `SICK`/`INJURED` oder Notiz „krank“; Kalender ab 60 Tage vor der Seite |
+| `sick` | `calendarByDay` (284): Kategorie `SICK`/`INJURED`, Notiz „krank“ oder Name mit „OP“, „Operation“, „Verletzung“; mehrtägige Einträge an jedem Tag (Ende exklusiv, höchstens 120 Tage); Kalender ab 60 Tage vor dem Bereich. Beispiel: `INJURED` „Hüft-OP“ 14.10.–11.11.**2024** (nicht 2023) → `sick` vom 14.10. bis 10.11.2024 |
+| `calendar` | alle Nicht-Workout-Einträge des Tages als „Name (KATEGORIE)“, mit „; “ getrennt (Notiz, Krank, Verletzt, Urlaub, Rennen, Wochenziel …), mehrtägige an jedem Tag. Damit erkennt der Coach Phasen wie OP, Krankheit oder Urlaub |
 | `weightKg` | Yazio (`yazio:weight`, nur letzte 90 Tage), sonst `weight` aus Intervals |
 | `kcal`, `kcalGoal`, `protein`, `carbs` | Zusatzfelder `Calories`, `CalorieGoal`, `Protein`, `Carbs` der Wellness (Yazio-Sync) |
 
 Ohne Training sind Load, Minuten und Sätze 0, fehlende Wellness-Werte `null`.
+
+### 13.6 Zeile pro Radfahrt (`export-tri.js`: `rideRow` 177, `computeRideEntry` 140)
+
+Alle Fahrten mit `isBike` (auch VirtualRide). Tabelle `rides`, MCP `get_ride_export`, HTTP `/api/export/rides`; Parameter und Antwort wie 13.1.
+
+| Spalte | Quelle |
+|---|---|
+| `id`, `date`, `startLocal`, `endLocal`, `type`, `name`, `tags` | Intervals; `endLocal` = Start + `elapsed_time` |
+| `trainer` | `trainer == true` oder Typ mit „virtual“ |
+| `movingMin`, `distKm`, `elevPerKm` | wie beim Lauf |
+| `avgPower`, `np`, `if`, `vi`, `ftp` | `icu_average_watts`, `icu_weighted_avg_watts`, `icu_intensity`/100 (Intervals liefert Prozent), `icu_variability_index` (sonst NP/Ø), `icu_ftp` (FTP zum Zeitpunkt der Fahrt) |
+| `avgHr`, `maxHr`, `avgCadence`, `load`, `rpe`, `feel`, `warmupS` | `average_heartrate`, `max_heartrate`, `average_cadence`, `sessionLoad` (Rad: `power_load`), `icu_rpe`, `feel`, `icu_warmup_time` |
+| `intensity` | `intensityKindOf("bike", Name/Beschreibung der Fahrt und des gekoppelten Workouts, Z5-Zeit)`: `bikeHiit` oder `null` |
+| `testKind` | Rad-Vergleichseinheit wie im Dashboard (7.9): `rideWindowOf` → `rideWindowStats` → `classifyRide` mit der Vergleichsleistung aus `TEST_FALLBACK` (165 W; die Action kennt den Blocktext nicht). `compare`, `baseline` oder `null` |
+| Wetter | wie beim Lauf, nur draußen (`trainer` false) |
+| `streamStatus`, `streamSkip` | `rideSkipOf` (51): `noPower` (keine Ø-Leistung), `short` (unter 20 min), `interval` (`intensity`, Intervall-Tag oder -Text), `noHr` |
+
+**Kennzahlen** (`analyzeRideStreams`, 61; Grenzwerte `RIDE_RULES`): Zeitreihen `time`, `watts`, `heartrate`, `distance`, `velocity_smooth`. Zeitachse ohne Stillstand (`runMovingAxis` auf der Distanz, Stehen unter 0,5 m/s). Einrollen: bei `compare`/`baseline` das Fenster des Dashboards, sonst `icu_warmup_time`, ohne Wert die ersten 10 min. Gleichmäßige 30-s-Fenster in 5-s-Schritten: keine Unterbrechung, Puls in mindestens 80 % der Sekunden, Variationskoeffizient der Leistung in den 2 min davor unter 10 % (der Puls läuft der Leistung nach).
+
+| Spalte | Rechnung |
+|---|---|
+| `hrAt160_170`, `secAt160_170` | Median-Puls der Fenster mit Ø 160–170 W, Sekunden (Vereinigung); `null` unter 300 s. Hauptgröße für den Vergleich mit der Rad-Vergleichseinheit |
+| `powerAt120`, `powerAt130`, `pwSlope`, `pwR2`, `pwN` | Regression Leistung gegen Puls über die Fenster mit HF 100–150; unter 20 Fenstern `null`. Bei ERG-Fahrten mit fester Leistung ohne Aussage (26.10.2026: R² 0,003) |
+| `ef` | NP / Ø-Puls nach dem Einrollen |
+| `decoup` | `decouplingFromStreams` (Pw:HR, 7.9) nach dem Einrollen bis vor dem Ausrollen |
+| `decoup60` | erste 60 min nach dem Einrollen (`rideWindowStats`); bei `compare`/`baseline` genau der Wert des Dashboards (`classifyRide`: Intervals-Wert, wenn er das Messfenster deckt) |
+| `mainHr` | Ø-Puls im Messfenster, nur bei `compare`/`baseline` |
+
+Gegenprobe (echte Daten): 19.10.2026 `baseline`, Fenster 0–60 min ohne Einrollen, `decoup60` 9,8 (Intervals-Wert, deckt das Fenster), `mainHr` 101. 26.10.2026 „Blocktest“ `compare`, Einrollen 601 s aus `interval_summary`, `mainHr` 113, `decoup60` 4,7 (selbst gerechnet; Intervals 2,0 gilt für die ganze Fahrt), gleich dem Dashboard-Weg.
+
+### 13.7 Koppelläufe (`export-tri.js`: `brickMap` 210)
+
+Spalten in `runs`: `brick` (Lauf beginnt höchstens 30 min nach dem Ende einer Radfahrt; bis 5 min Überlappung der Uhren zählt als Abstand 0), `brickRideId`, `brickGapMin`, `brickRideMin`, `brickRideLoad` (bei mehreren Fahrten die zuletzt beendete). Ende einer Fahrt = Start + `elapsed_time`. Koppelläufe bekommen ihre Kennzahlen ganz normal (13.3), damit die Pace im Pulsband frisch gegen nach dem Rad vergleichbar ist.
+
+### 13.8 Zeile pro Schwimmeinheit (`export-tri.js`: `swimRow` 261, `computeSwimEntry` 243)
+
+Tabelle `swims`, MCP `get_swim_export`, HTTP `/api/export/swims`. Keine Zeitreihen-Kennzahlen; je Einheit einmal die Laps (`/activity/{id}/intervals`).
+
+| Spalte | Quelle |
+|---|---|
+| `pool`, `poolLengthM` | `open` bei Typ OpenWaterSwim, `pool` bei `pool_length` > 0, sonst `null` |
+| `distanceM`, `movingMin`, `pace100` | `distance`; Bewegungszeit `swimTimeOf` mit den Laps (Pausen am Beckenrand fallen raus); `pace100` = Bewegungszeit / (Distanz/100) |
+| `avgHr`, `load`, `rpe`, `feel` | wie beim Lauf |
+| `test500a`, `test500b`, `testPauseS` | `swimTestFromText` (Name/Beschreibung), sonst `swimTestFromIntervals` (zwei aufeinanderfolgende Intervalle mit 500 m ±10 %) |
+| `testPassed` | wie das Blockziel (7.9): Pause ≤ 60 s und zweite 500 m höchstens 5 s/100 m langsamer |
+| `lapsStatus` | `ok`, `none` (keine Laps, 404), `pending` (Abruf fehlgeschlagen) |
 
 ---
 

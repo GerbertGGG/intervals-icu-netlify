@@ -22,7 +22,7 @@ import { withSwimIntervals } from "./swim-time.js";
 import { TARGETS_KV_KEY, COACH_HISTORY, validateTargets, appendTarget, readTargets, targetsView } from "./targets-snapshot.js";
 import { ERNAEHRUNG_KV_KEY, validateErnaehrung, mergeErnaehrung, buildErnaehrung, WEIGHT_DAYS } from "./ernaehrung.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
-import { buildRunExport, buildDayExport, RUN_COLUMNS, DAY_COLUMNS, toTable, toCsv, DEFAULT_LIMIT, MAX_LIMIT } from "./export.js";
+import { buildDayExport, buildActivityExport, RUN_COLUMNS, DAY_COLUMNS, RIDE_COLUMNS, SWIM_COLUMNS, toTable, toCsv, DEFAULT_LIMIT, MAX_LIMIT } from "./export.js";
 import { readRideTrend } from "./block-inputs.js";
 import { RIDE_TREND_NOTE } from "./session-tests.js";
 
@@ -377,12 +377,33 @@ const TOOLS = [
     description:
       "Export für die Langzeitanalyse: eine Zeile pro Lauf (alle Läufe, älteste zuerst), nur Rohwerte und Kennzahlen, keine Bewertung. Liest aus der Export-Datenbank (D1), die eine GitHub Action täglich gegen 04:17/05:17 Berlin für die letzten 14 Tage nachführt; ganz neue Läufe von heute fehlen also noch. Antwort: methodVersion (aktuelle Methode), from, to, total (Läufe im Zeitraum), count, pending (Läufe im Zeitraum, deren Zeitreihen beim letzten Lauf der Action nicht abrufbar waren), syncedAt / syncedFrom / syncedTo (letzte Synchronisation), nextCursor (null = letzte Seite), columns, rows. " +
       "Spalten: id, date, startLocal (lokale Startzeit), type, name, tags, treadmill, race, interval (Intervall-Tag oder Textsignal wie 5x1000), runClass (base|long|intensity|race|unknown, Einheitsart des Dashboards), distKm, movingMin (Bewegungszeit), elevPerKm (Hm/km), avgHr, maxHr, rpe (1–10), feel (1 stark … 5 schwach), load (Intervals-Load). " +
+      "Koppellauf: brick (Start höchstens 30 min nach dem Ende einer Radfahrt), brickRideId (id in get_ride_export), brickGapMin (Minuten zwischen Radende und Laufstart), brickRideMin, brickRideLoad; Koppelläufe haben ganz normale Kennzahlen (Pace im Band frisch gegen nach dem Rad). " +
       "Wetter: tempC, humidity (%), windMs (m/s, nur aus Open-Meteo), weatherSrc (intervals|openmeteo|null). Nie die Temperatur der Uhr; Laufband ohne Wetter. " +
       "streamStatus: ok | pending | none (keine Zeitreihen/kein Puls) | skip; streamSkip: treadmill | race | interval | short (unter 20 min) | noHr | gps (GPS-Bereinigung hätte mehr als 10 % der Distanz entfernt; dann nur gpsCorrectedM). race = Name/Tag/Intervals-Flag oder ein Renn-Eintrag (RACE, RACE_A/B/C, A_RACE) im Kalender am selben Tag, auch bei abgebrochenem Rennen. Kennzahlen nur bei ok, sonst null: " +
       "Zeitachse Bewegungszeit, GPS bereinigt, erste 5 min ausgelassen, gleitende 30-s-Fenster (5-s-Schritt) ohne Pause/Stehen. " +
       "paceBand125_135 / paceBand120_128 = Median-Pace in s/km der Fenster mit Ø-HF im Band (null unter 300 s im Band), secBand125_135 / secBand120_128 = Sekunden im Band, paceBand…Flat = dasselbe nur aus flachen Fenstern (Steigung < 2 %, null ohne Höhendaten). " +
       "effAt130 = vorhergesagte Geschwindigkeit in m/min bei HF 130 aus der Regression Geschwindigkeit gegen HF (Fenster mit HF 110–150), effSlope = m/min je Schlag, effR2, effN = Zahl der Fenster (unter 20: Regression null). " +
       "decoup = Pa:HR-Decoupling in % (Minute 5 bis Ende, erste gegen zweite Hälfte, positiv = zweite Hälfte schlechter). hrDriftBpm = Ø-HF letztes minus erstes Drittel, nur wenn die Pace beider Drittel < 3 % abweicht. gradeShareFlat = Anteil der Fenster mit Steigung < 2 % (0–1). gpsCorrectedM = durch die GPS-Bereinigung entfernte Meter. methodVersion = Methode, mit der die Zeile gerechnet wurde.",
+    inputSchema: EXPORT_ARGS,
+  },
+  {
+    name: "get_ride_export",
+    description:
+      "Export für die Langzeitanalyse: eine Zeile pro Radfahrt (Ride, VirtualRide, alle Rad-Typen), älteste zuerst, nur Rohwerte und Kennzahlen, keine Bewertung. Antwort und Parameter wie get_run_export (methodVersion, total, count, pending, syncedAt, nextCursor, columns, rows). " +
+      "Spalten: id, date, startLocal, endLocal (Start + Gesamtzeit, für Koppelläufe), type, name, tags, trainer (Rolle/VirtualRide), movingMin, distKm, elevPerKm, avgPower (Ø W), np (Normalized Power), if (Intensitätsfaktor, z. B. 0,65), vi (NP/Ø), ftp (FTP in Intervals zum Zeitpunkt der Fahrt), avgHr, maxHr, avgCadence, load (Rad: power_load, wie im Wochenrahmen), rpe, feel, warmupS (icu_warmup_time). " +
+      "intensity: bikeHiit (HIIT, 30/30, VO2, 3–4× 4 min oder ≥ 4 min Z5) oder null. testKind: compare (Rad-Vergleichseinheit wie im Dashboard: Einrollen + 60-min-Messfenster bei der Vergleichsleistung 165 ±5 W, VI ≤ 1,05), baseline (Ausgangswert, z. B. ohne Einrollen) oder null. " +
+      "Wetter wie bei Läufen, nur draußen (tempC, humidity, windMs, weatherSrc). streamStatus ok | pending | none | skip; streamSkip: noPower | short (unter 20 min) | interval (Intensitätseinheit, Intervall-Tag/-Text) | noHr. " +
+      "Kennzahlen nach dem Einrollen (icu_warmup_time, sonst 10 min; bei compare/baseline das Fenster des Dashboards), Zeitachse ohne Stillstand, nur gleichmäßige 30-s-Fenster (5-s-Schritt, Variationskoeffizient der Leistung in den 2 min davor < 10 %, weil der Puls nachläuft): " +
+      "hrAt160_170 = Median-Puls der Fenster mit Ø 160–170 W (null unter 300 s), secAt160_170 = Sekunden; Hauptgröße für den Vergleich mit der Rad-Vergleichseinheit. powerAt120 / powerAt130 = vorhergesagte Watt bei HF 120/130 aus der Regression Leistung gegen Puls (Fenster mit HF 100–150), pwSlope (W je Schlag), pwR2, pwN (unter 20: Regression null). " +
+      "ef = NP / Ø-Puls nach dem Einrollen. decoup = Pw:HR-Decoupling nach dem Einrollen über die ganze Fahrt (positiv = zweite Hälfte schlechter). decoup60 = Decoupling der ersten 60 min nach dem Einrollen; bei compare/baseline genau der Wert des Dashboards (Intervals-Wert, wenn er das Messfenster deckt). mainHr = Ø-Puls im Messfenster, nur bei compare/baseline. methodVersion.",
+    inputSchema: EXPORT_ARGS,
+  },
+  {
+    name: "get_swim_export",
+    description:
+      "Export für die Langzeitanalyse: eine Zeile pro Schwimmeinheit, älteste zuerst, nur Rohwerte, keine Zeitreihen-Kennzahlen. Antwort und Parameter wie get_run_export (pending = Einheiten, deren Laps noch nicht abrufbar waren). " +
+      "Spalten: id, date, startLocal, type, name, pool (pool = Becken, open = Freiwasser, null = unbekannt), poolLengthM, distanceM, movingMin (Bewegungszeit ohne Pausen am Beckenrand, aus den Laps), pace100 (s/100 m auf die Bewegungszeit), avgHr, load, rpe, feel. " +
+      "Schwimmtest 2× 500 m (aus dem Text „2x500: 9:40 / 9:52, Pause 45 s“, sonst aus zwei aufeinanderfolgenden Intervallen mit 500 m ±10 %): test500a, test500b (s), testPauseS, testPassed (Pause ≤ 60 s und die zweiten 500 m höchstens 5 s/100 m langsamer, wie im Blockziel). lapsStatus ok | none | pending. methodVersion.",
     inputSchema: EXPORT_ARGS,
   },
   {
@@ -468,10 +489,10 @@ async function callTool(env, name, args) {
       ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
       : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };
   }
-  if (name === "get_run_export" || name === "get_day_export") {
-    const runs = name === "get_run_export";
-    const result = runs ? await buildRunExport(env, args) : await buildDayExport(env, args);
-    const columns = runs ? RUN_COLUMNS : DAY_COLUMNS;
+  const EXPORT_TOOLS = { get_run_export: ["runs", RUN_COLUMNS], get_ride_export: ["rides", RIDE_COLUMNS], get_swim_export: ["swims", SWIM_COLUMNS], get_day_export: ["days", DAY_COLUMNS] };
+  if (EXPORT_TOOLS[name]) {
+    const [table, columns] = EXPORT_TOOLS[name];
+    const result = table === "days" ? await buildDayExport(env, args) : await buildActivityExport(env, table, args);
     if (args?.format === "json") return JSON.stringify(result);
     if (args?.format === "csv") return `methodVersion=${result.methodVersion} pending=${result.pending} nextCursor=${result.nextCursor ?? ""}\n${toCsv(result.rows, columns)}`;
     // kompakt: ohne Einrueckung, Zeilen als Arrays
