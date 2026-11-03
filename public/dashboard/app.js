@@ -1452,13 +1452,16 @@ function insightCard(x, i) {
   const hist = (x.history ?? []).map((h) => `<li><span class="nw">${fmtDate(h.date)}${h.date.slice(0, 4)}</span> <span class="ins-b st-${esc(h.status)}">${INS_STATUS[h.status] ?? esc(h.status)}</span> <span class="ins-b sg-${esc(h.strength)}">${INS_STRENGTH[h.strength] ?? esc(h.strength)}</span></li>`).join("");
   return `<details class="card ins${x.status === "widerlegt" ? " refuted" : ""}" data-disc="${esc(x.discipline)}">
     <summary>
-      <div class="ins-top">${icon}<span class="muted">${INS_DISC[x.discipline] ?? esc(x.discipline)}</span><span class="ins-b st-${esc(x.status)}">${INS_STATUS[x.status] ?? esc(x.status)}</span><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span></div>
-      <h3 class="ins-t">${esc(x.title)}</h3>
-      <p class="ins-text">${esc(x.text)}</p>
-      ${x.action ? `<p class="ins-act">${esc(x.action)}</p>` : ""}
-      ${x.chart ? `<div class="ins-chart" data-i="${i}"></div>` : ""}
-      <div class="muted ins-ev">${esc(x.evidence)} · aktualisiert ${fmtDate(x.updatedAt.slice(0, 10))}<span class="ins-more"> · Verlauf</span></div>
+      <div class="ins-top">${icon}<span class="muted">${INS_DISC[x.discipline] ?? esc(x.discipline)}</span><span class="ins-b st-${esc(x.status)}">${INS_STATUS[x.status] ?? esc(x.status)}</span></div>
+      <div class="ins-k">Hypothese</div><h3 class="ins-t">${esc(x.title)}</h3>
+      ${x.action ? `<div class="ins-k">Test</div><p class="ins-act">${esc(x.action)}</p>` : ""}
+      <div class="muted ins-foot"><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span><span class="ins-more">Mehr lesen</span><span class="ins-less">Schließen</span></div>
     </summary>
+    <div class="ins-body">
+      <div class="ins-k">Beobachtung</div><p class="ins-text">${esc(x.text)}</p>
+      <div class="ins-k">Belege</div><div class="muted">${esc(x.evidence)} · aktualisiert ${fmtDate(x.updatedAt.slice(0, 10))}</div>
+      ${x.chart ? `<div class="ins-chart" data-i="${i}"></div>` : ""}
+    </div>
     <div class="ins-hist"><div class="hero-k">Verlauf</div><ul>${hist || '<li class="muted">noch kein Verlauf</li>'}</ul>
       <div class="muted">angelegt ${fmtDate(x.createdAt.slice(0, 10))}${x.createdAt.slice(0, 4)}${x.archivedAt ? ` · ausgeblendet ${fmtDate(x.archivedAt.slice(0, 10))}${x.archivedAt.slice(0, 4)}` : ""}</div></div>
   </details>`;
@@ -1477,6 +1480,11 @@ function renderInsights(d) {
     $("insights-old").hidden = !arc.length;
     $("insights-old").innerHTML = arc.length ? `<summary>Ältere Erkenntnisse (${arc.length})</summary><div class="ins-grid">${arc.map((x) => insightCard(x, list.indexOf(x))).join("")}</div>` : "";
     for (const host of document.querySelectorAll(".ins-chart")) C.insightChart(host, list[Number(host.dataset.i)].chart);
+    for (const el of document.querySelectorAll("details.ins")) el.ontoggle = () => {
+      if (!el.open) return;
+      for (const o of document.querySelectorAll("details.ins[open]")) if (o !== el) o.open = false;
+      const h = el.querySelector(".ins-chart"); if (h) C.insightChart(h, list[Number(h.dataset.i)].chart);
+    };
     for (const b of document.querySelectorAll("#insight-filter .chip")) b.onclick = () => { insFilter = b.dataset.f; try { localStorage.setItem("insight-filter", insFilter); } catch {} draw(); };
   };
   draw();

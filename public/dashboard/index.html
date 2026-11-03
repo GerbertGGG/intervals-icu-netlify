@@ -420,10 +420,17 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .ins-b.st-abgeschwächt, .ins-b.st-widerlegt, .ins-b.sg-beobachtung { color: var(--muted); }
 .ins-b.sg-beobachtung, .ins-b.sg-schwach { background: transparent; border: 1px dashed var(--line-2); }
 .ins-b.sg-stark { border: 1px solid var(--line-2); }
-.ins-t { margin: 8px 0 4px; }
+.ins-k { margin: 10px 0 2px; font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ins-t { margin: 0; }
 .ins.refuted .ins-t { text-decoration: line-through; color: var(--muted); }
 .ins-text { margin: 0; font-size: var(--fs-m); }
-.ins-act { margin: 6px 0 0; font-weight: 650; }
+.ins-act { margin: 0; font-size: var(--fs-m); }
+.ins-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.ins-foot .ins-more, .ins-foot .ins-less { margin-left: auto; font-weight: 600; }
+.ins-less { display: none; color: var(--accent); }
+.ins[open] .ins-less { display: inline; }
+.ins[open] { grid-column: 1 / -1; }
+.ins-body { margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--line); }
 .ins-chart { margin-top: 8px; }
 .ins-ev { margin-top: 6px; }
 .ins-more { color: var(--accent); }
