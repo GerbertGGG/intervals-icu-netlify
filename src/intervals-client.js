@@ -84,6 +84,24 @@ export async function fetchIntervalsActivityStreams(env, activityId, types) {
   return r.json();
 }
 
+// Kartenpunkte samt Intervals-Wetter (Export, weather.js). status 404 = keine Karte (z. B. ohne GPS).
+export async function fetchIntervalsActivityMap(env, activityId) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(activityId)}/map?weather=true`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, "activity map");
+  if (r.status === 404) return { status: 404 };
+  if (!r.ok) throw new Error(`activity map ${r.status}: ${await r.text()}`);
+  return { status: 200, data: await r.json() };
+}
+
+// Zeitreihen wie fetchIntervalsActivityStreams, aber 404 als { status: 404 } statt Fehler (Export cacht das als "none").
+export async function fetchIntervalsActivityStreamsStatus(env, activityId, types) {
+  const url = `${BASE_URL}/activity/${encodeURIComponent(activityId)}/streams.json?types=${encodeURIComponent(types.join(","))}`;
+  const r = await fetchWithRetry(url, { headers: { Authorization: authHeader(env) } }, "activity streams");
+  if (r.status === 404) return { status: 404 };
+  if (!r.ok) throw new Error(`activity streams ${r.status}: ${await r.text()}`);
+  return { status: 200, data: await r.json() };
+}
+
 export async function putWellnessDay(env, day, patch) {
   const athleteId = mustEnv(env, "ATHLETE_ID");
   const url = `${BASE_URL}/athlete/${athleteId}/wellness/${day}`;

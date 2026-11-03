@@ -12,6 +12,7 @@ import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest, handleWatchStatusRequest, warmDashboardCache } from "./widget.js";
 import { syncEgymToIntervals } from "./egym-intervals-sync.js";
 import { loadWidgetKraft } from "./egym-widget.js";
+import { handleExportRequest } from "./export.js";
 
 async function withWorkerErrorBoundary(fn) {
   try {
@@ -55,6 +56,11 @@ export default {
             return json({ ok: false, error: String(e?.message ?? e) }, 502);
           }
         });
+      // Export fuer die Langzeitanalyse (export.js): liest nur aus D1 (gefuellt von GitHub Actions), Bearer DASHBOARD_TOKEN, optional format=csv
+      case "/api/export/runs":
+        return route(() => handleExportRequest(req, env, "runs"));
+      case "/api/export/days":
+        return route(() => handleExportRequest(req, env, "days"));
       // Runalyze-Snapshot, Studien-Check und Coach-Aussage, geschrieben aus einer Coaching-Sitzung.
       case "/api/runalyze":
         return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));

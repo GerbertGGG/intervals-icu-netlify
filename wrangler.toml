@@ -11,6 +11,17 @@ workers_dev = true
 # unabhaengig von Sommer-/Winterzeit auf 23:58 Berlin faellt: letzter Yazio-Sync des Tages.
 triggers = { crons = ["*/15 3-22 * * *", "58 21-22 * * *"] }
 
+# Workers Logs: speichert die Logzeilen mit der CPU-Zeit je Aufruf (cpuTimeMs).
+[observability]
+enabled = true
+
+# Export fuer die Langzeitanalyse (src/export.js liest, scripts/export-sync.mjs in GitHub Actions schreibt), D1 im kostenlosen
+# Plan. Das Skript in GitHub Actions liest die database_id ebenfalls von hier.
+[[d1_databases]]
+binding = "EXPORT_DB"
+database_name = "training-export"
+database_id = "52db358a-28a7-46be-a34c-f45944f5254b"
+
 [[kv_namespaces]]
 binding = "KV"
 id = "95402760eee9445fa98df09aad54cdfc"
