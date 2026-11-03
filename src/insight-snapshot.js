@@ -3,7 +3,11 @@ import { readKvJson } from "./kv.js";
 // Erkenntnisse: Auffaelligkeiten, die der Coach selbst in den Daten findet und pflegt (MCP-Tools save_insight, archive_insight).
 // Das Dashboard zeigt sie als Feed, ohne eigene Bewertung; get_coach liefert die aktiven als Kurzfassung.
 //
-// save_insight (Upsert ueber id): { id: kebab-case (max 60), title (max 60), text (max 280), action?: string | null (max 160),
+// Jede Karte folgt dem Schema Beobachtung -> Hypothese -> Umstellung -> Erwartung (Gerberts Vorgabe vom 03.11.2026):
+//   text = Beobachtung (was in den Daten zu sehen war), hypothesis = was daraus vermutet wird, change = was er dafuer konkret
+//   anders macht, expectation = woran man nach welcher Zeit sieht, ob es stimmt (inkl. Widerlegt-Schwelle).
+// save_insight (Upsert ueber id): { id: kebab-case (max 60), title (max 60), text (max 280), hypothesis?, change? (je max 140),
+//   expectation? (max 160), action?: string | null (max 160, alt; nur noch fuer Karten ohne Umstellung),
 //   strength: "beobachtung" | "schwach" | "mittel" | "stark", status: "neu" | "bestätigt" | "abgeschwächt" | "widerlegt",
 //   discipline: "lauf" | "rad" | "schwimmen" | "kraft" | "erholung" | "alle", evidence (max 200),
 //   chart?: null | { type: "line" | "bar", unit (max 20), points: [{ x (max 20), y: Zahl }] (1-30), refLine?: Zahl | null,
@@ -21,6 +25,9 @@ const MAX_ID = 60;
 const MAX_TITLE = 60;
 const MAX_TEXT = 280;
 const MAX_ACTION = 160;
+const MAX_HYP = 140;
+const MAX_CHANGE = 140;
+const MAX_EXPECT = 160;
 const MAX_EVIDENCE = 200;
 const MAX_UNIT = 20;
 const MAX_X = 20;
@@ -97,8 +104,15 @@ export function validateInsight(body) {
   if (body?.action != null && typeof body.action !== "string") return { error: "action muss ein Text oder null sein" };
   const action = (body?.action ?? "").trim();
   if (action.length > MAX_ACTION) return { error: `action länger als ${MAX_ACTION} Zeichen` };
+  const opt = {};
+  for (const [k, max] of [["hypothesis", MAX_HYP], ["change", MAX_CHANGE], ["expectation", MAX_EXPECT]]) {
+    if (body?.[k] != null && typeof body[k] !== "string") return { error: `${k} muss ein Text oder null sein` };
+    const t = (body?.[k] ?? "").trim();
+    if (t.length > max) return { error: `${k} länger als ${max} Zeichen` };
+    opt[k] = t || null;
+  }
   const value = Object.fromEntries(Object.entries(checks).map(([k, r]) => [k, r.value]));
-  return { value: { ...value, action: action || null, fetchedAt: new Date(fetchedAt).toISOString() } };
+  return { value: { ...value, ...opt, action: action || null, fetchedAt: new Date(fetchedAt).toISOString() } };
 }
 
 export function validateArchive(body) {
@@ -154,6 +168,7 @@ export function insightsForCoach(stored) {
   return splitInsights(stored).active.map((x) => ({
     id: x.id, title: x.title, discipline: x.discipline, strength: x.strength, status: x.status, updatedAt: x.updatedAt,
     text: x.text.length > SHORT_TEXT ? x.text.slice(0, SHORT_TEXT - 1).trimEnd() + "…" : x.text,
+    hypothesis: x.hypothesis ?? null, change: x.change ?? null, expectation: x.expectation ?? null,
   }));
 }
 
