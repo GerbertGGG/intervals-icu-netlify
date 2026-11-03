@@ -1448,17 +1448,22 @@ const INS_STATUS = { neu: "neu", "bestätigt": "bestätigt", "abgeschwächt": "a
 let insFilter = "alle";
 try { insFilter = localStorage.getItem("insight-filter") || "alle"; } catch {}
 function insightCard(x, i) {
+  // Neues Schema (ab 03.11.2026): Beobachtung, Hypothese, Umstellung, Erwartung direkt auf der Karte; alte Karten wie bisher
+  const fourPart = !!(x.hypothesis || x.change || x.expectation);
   const icon = `<svg class="idea-ic" viewBox="0 0 20 20" aria-hidden="true">${INS_ICON[x.discipline] ?? INS_ICON.alle}</svg>`;
   const hist = (x.history ?? []).map((h) => `<li><span class="nw">${fmtDate(h.date)}${h.date.slice(0, 4)}</span> <span class="ins-b st-${esc(h.status)}">${INS_STATUS[h.status] ?? esc(h.status)}</span> <span class="ins-b sg-${esc(h.strength)}">${INS_STRENGTH[h.strength] ?? esc(h.strength)}</span></li>`).join("");
   return `<details class="card ins${x.status === "widerlegt" ? " refuted" : ""}" data-disc="${esc(x.discipline)}">
     <summary>
       <div class="ins-top">${icon}<span class="muted">${INS_DISC[x.discipline] ?? esc(x.discipline)}</span><span class="ins-b st-${esc(x.status)}">${INS_STATUS[x.status] ?? esc(x.status)}</span></div>
-      <div class="ins-k">Hypothese</div><h3 class="ins-t">${esc(x.title)}</h3>
-      ${x.action ? `<div class="ins-k">Test</div><p class="ins-act">${esc(x.action)}</p>` : ""}
+      ${fourPart ? `<h3 class="ins-t">${esc(x.title)}</h3>
+      ${[["Beobachtung", x.text], ["Hypothese", x.hypothesis], ["Umstellung", x.change], ["Erwartung", x.expectation]].filter(([, v]) => v).map(([k, v]) => `<div class="ins-k">${k}</div><p class="ins-act">${esc(v)}</p>`).join("")}`
+      : `<div class="ins-k">Hypothese</div><h3 class="ins-t">${esc(x.title)}</h3>
+      ${x.action ? `<div class="ins-k">Test</div><p class="ins-act">${esc(x.action)}</p>` : ""}`}
       <div class="muted ins-foot"><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span><span class="ins-more">Mehr lesen</span><span class="ins-less">Schließen</span></div>
     </summary>
     <div class="ins-body">
-      <div class="ins-k">Beobachtung</div><p class="ins-text">${esc(x.text)}</p>
+      ${fourPart ? "" : `<div class="ins-k">Beobachtung</div><p class="ins-text">${esc(x.text)}</p>`}
+      ${fourPart && x.action ? `<div class="ins-k">Hinweis</div><p class="ins-text">${esc(x.action)}</p>` : ""}
       <div class="ins-k">Belege</div><div class="muted">${esc(x.evidence)} · aktualisiert ${fmtDate(x.updatedAt.slice(0, 10))}</div>
       ${x.chart ? `<div class="ins-chart" data-i="${i}"></div>` : ""}
     </div>

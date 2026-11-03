@@ -40,7 +40,12 @@ assert.deepEqual(sp.active.map((x) => x.id), ["schlaf-und-hrv", "trainingstage-v
 assert.deepEqual(sp.archived.map((x) => [x.id, x.archivedAt]), [["schwimmen-am-stueck", "2026-11-21T06:00:00.000Z"]]);
 assert.equal(archiveInsight(st, "schwimmen-am-stueck").already, true);
 const coach = insightsForCoach(st);
-assert.deepEqual(Object.keys(coach[0]), ["id", "title", "discipline", "strength", "status", "updatedAt", "text"]);
+assert.deepEqual(Object.keys(coach[0]), ["id", "title", "discipline", "strength", "status", "updatedAt", "text", "hypothesis", "change", "expectation"]);
+// Vier-Teile-Schema
+const fp = validateInsight({ ...base, hypothesis: "Mehr Laufminuten machen dich schneller", change: "3 Läufe, 140 min/Woche ab 09.11.", expectation: "Blocktest Jan ≤ 7:14/km; ≥ 7:24 widerlegt" }).value;
+assert.equal(fp.change, "3 Läufe, 140 min/Woche ab 09.11."); assert.equal(v.hypothesis, null);
+for (const bad of [{ hypothesis: "h".repeat(141) }, { change: "c".repeat(141) }, { expectation: "e".repeat(161) }, { change: 5 }])
+  assert.ok(validateInsight({ ...base, ...bad }).error, JSON.stringify(bad));
 assert.ok(coach.every((x) => x.text.length <= 140));
 st = upsertInsight(st, validateInsight({ ...base, id: "schwimmen-am-stueck", discipline: "schwimmen", status: "abgeschwächt", fetchedAt: "2026-11-22T06:00:00Z" }).value);
 sp = splitInsights(st);
