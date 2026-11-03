@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { parseBlockTargets } from "../src/season-block.js";
-import { TEST_RULES, testConfigOf, nameOverride, classifyRuns, classifyRide, rideWindowOf, rideWindowStats } from "../src/session-tests.js";
+import { TEST_RULES, testConfigOf, nameOverride, classifyRuns, classifyRide, rideWindowOf, rideWindowStats, classifyRideTrend, rideTrendWindowOf, rideTrendStats, rideTrendView, rideTrendPoints } from "../src/session-tests.js";
 
 // Block-Eintrag wie im Kalender (Stand 23.10.2026), gekürzt auf die Teile, die die Test-Erkennung liest
 const block = "Block A – Grundlage (12 Wochen, ab 19.10.2026)\n\nABLAUF\nBlocktests (langer Lauf): Basistest Fr 23.10., dann So 08.11., So 06.12., So 03.01. Termine fest, unabhängig von Entlastungswochen.\nTypische Woche: 2× Rad, 2× Lauf, 1× Schwimmen (meist Mittwoch), Kraft.\n\nABSCHLUSSZIELE\nLauf: aerobe Stabilität und Haltbarkeit\na) Basis: Decoupling der ersten 60 min im Blocktest, Mittel der letzten 3 Tests: Muss ≤8 %, Ziel ≤5 %.\nJeder Grundlagenlauf ab 60 min unter HF 128 zählt als Trendindikator, nicht direkt für das Abschlussziel.\n\nRad (Rolle): aerobe Stabilität\nDecoupling (Leistung zu Puls) im 60-min-Messfenster ≤5 % im Mittel der letzten 3 Vergleichseinheiten.\nReferenz: FTP 252 W (Rampentest 12.10.). Erster Wert 19.10. (ohne Einrollen, nach Krankheit): 9,8 %, nur Orientierung.\n\nHF-DECKEL\nLauf-Grundlage unter HF 128.\n\nRAD-VERGLEICHSEINHEIT (Protokoll)\n10 min Einrollen (ca. 5 min 110–130 W, 5 min 140–160 W) als „Warmup“, danach mindestens 60 min bei 165 W als „Main Set“ = Messfenster. Danach frei.";
@@ -127,3 +127,82 @@ console.log("test rides ok");
   assert.equal(c.category, "bikeCompare"); assert.equal(c.baseline, false);
 }
 console.log("ok blocktest rolle");
+
+// ---------- Rad-Trendpunkte (Kategorie trend) ----------
+// Echte Fahrten Okt./Nov. 2026 (Kopfdaten aus Intervals), Zeitreihen nachgebaut mit denselben Mittelwerten
+{
+  const real = [
+    { id: "i195027137", start_date_local: "2026-10-08T12:22:13", type: "VirtualRide", name: "Indoor-Radfahren", trainer: true, moving_time: 1802, icu_warmup_time: 0, has_heartrate: false, w: 144, hr: null },
+    { id: "i196432644", start_date_local: "2026-10-12T11:53:31", type: "VirtualRide", name: "FTP Test", trainer: true, moving_time: 1347, icu_warmup_time: 0, has_heartrate: true, w: 201, hr: 103, ftp: true },
+    { id: "i198960592", start_date_local: "2026-10-19T11:31:41", type: "VirtualRide", name: "Vergleichstest", trainer: true, moving_time: 3600, icu_warmup_time: 0, has_heartrate: true, decoupling: 9.8, w: 165, hr: 101 },
+    { id: "i200482357", start_date_local: "2026-10-22T19:09:52", type: "VirtualRide", name: "LIT", trainer: true, moving_time: 2700, icu_warmup_time: 0, has_heartrate: true, w: 165, hr: 106 },
+    { id: "i201785523", start_date_local: "2026-10-26T07:56:19", type: "VirtualRide", name: "Blocktest", trainer: true, moving_time: 4205, icu_warmup_time: 0, has_heartrate: true, w: 160, hr: 111 },
+    { id: "i203062884", start_date_local: "2026-10-29T09:17:18", type: "VirtualRide", name: "Indoor-Radfahren", trainer: true, moving_time: 3316, icu_warmup_time: 0, has_heartrate: true, w: 165, hr: 104 },
+    { id: "i203276642", start_date_local: "2026-10-29T17:36:11", type: "VirtualRide", name: "LIT", trainer: true, moving_time: 3001, icu_warmup_time: 0, has_heartrate: true, w: 150, hr: 99 },
+    { id: "i204897557", start_date_local: "2026-11-02T18:42:54", type: "VirtualRide", name: "Indoor-Radfahren", trainer: true, moving_time: 3601, icu_warmup_time: 0, has_heartrate: true, w: 165, hr: 101 },
+  ];
+  const rides = real.map((a) => {
+    const t = secs(a.moving_time);
+    const watts = a.ftp ? t.map((x) => (Math.floor(x / 60) % 2 ? 260 : 140)) : t.map(() => a.w);
+    const st = a.hr == null ? [{ type: "time", data: t }, { type: "watts", data: watts }] : streams(watts, t.map(() => a.hr));
+    const pre = rideTrendWindowOf(a);
+    const tc = classifyRideTrend(a, pre.ok ? rideTrendStats(st, pre.windowStartS) : null, cfg);
+    return { date: a.start_date_local.slice(0, 10), name: a.name, ...(tc.trend ? { trend: { date: a.start_date_local.slice(0, 10), ...tc } } : { why: tc.testReason }) };
+  });
+  const yes = rides.filter((r) => r.trend).map((r) => r.date);
+  assert.deepEqual(yes, ["2026-10-19", "2026-10-22", "2026-10-29", "2026-11-02"]); // 29.10. nur die 165-W-Fahrt
+  assert.ok(rides.every((r) => !r.trend || r.trend.ablauf === "ohne_einrollen" && r.trend.windowStartS === 600));
+  const why = Object.fromEntries(rides.filter((r) => !r.trend).map((r) => [`${r.date} ${r.name}`, r.why]));
+  assert.match(why["2026-10-08 Indoor-Radfahren"], /30 min < 45 min/);
+  assert.match(why["2026-10-12 FTP Test"], /min < 45 min|Test im Namen/);
+  assert.match(why["2026-10-26 Blocktest"], /Test im Namen/);
+  assert.match(why["2026-10-29 LIT"], /150 W nicht 165 ±10 W/);
+  // 19.10. ist zugleich Ausgangswert der Rad-Vergleichseinheit (zählt nicht fürs Ziel) und Trendpunkt
+  const a19 = real[2];
+  assert.equal(classifyRide(a19, statsOf(a19, streams(secs(3600).map(() => 165), secs(3600).map(() => 101))), cfg).baseline, true);
+  const view = rideTrendView(rides);
+  assert.deepEqual(view.groups.map((g) => [g.ablauf, g.points.length]), [["ohne_einrollen", 4]]);
+  assert.equal(view.note, "Trend, kein Test. Bewertet wird nur am Blocktest.");
+  assert.deepEqual(Object.keys(view.groups[0].points[0]), ["date", "ablauf", "durationMin", "windowStartS", "windowMin", "avgWatts", "avgHr", "vi", "ef", "decoupling", "testReason"]);
+  assert.equal(view.groups[0].points[0].ef, 1.63); // 165 / 101
+}
+// Handrechnung: 29.10. nachgebaut, 3316 s, ohne Einrollen -> Fenster 600–3316 s (2716 Proben, Mitte bei 1958 s),
+// 165 W, HF 100 in der ersten und 105 in der zweiten Hälfte: EF = 165 / 102,5 = 1,61; Decoupling = (165/100) / (165/105) − 1 = 5,0 %
+{
+  const a = { id: "x", type: "VirtualRide", name: "Indoor-Radfahren", trainer: true, moving_time: 3316, icu_warmup_time: 0, has_heartrate: true };
+  const t = secs(3316), st = streams(t.map(() => 165), t.map((x) => (x < 1958 ? 100 : 105)));
+  const s = rideTrendStats(st, 600);
+  assert.deepEqual([s.windowMin, s.avgWatts, s.hr, s.ef, s.decoupling, s.vi], [45, 165, 103, 1.61, 5, 1]);
+  const c = classifyRideTrend(a, s, cfg);
+  assert.equal(c.trend, true); assert.equal(c.ef, 1.61); assert.equal(c.decoupling, 5); assert.equal(c.avgHr, 103);
+  assert.match(c.testReason, /Trendpunkt: Rolle, 55 min, Fenster 45 min, 165 W, VI 1.*ohne Einrollen \(Fenster ab Minute 10\)/);
+  // Proben ohne HF fallen aus Puls und Decoupling heraus
+  const hrGap = t.map((x) => (x < 1958 ? (x < 900 ? 0 : 100) : 105));
+  assert.equal(rideTrendStats(streams(t.map(() => 165), hrGap), 600).decoupling, 5);
+}
+// Mit Einrollen: Fenster ab Ende des Warmup-Blocks bis Ende; Ausschlüsse
+{
+  const base = { id: "w", type: "Ride", name: "Rolle locker", trainer: true, moving_time: 4200, icu_warmup_time: 420, has_heartrate: true };
+  const pre = rideTrendWindowOf(base);
+  assert.deepEqual([pre.ok, pre.ablauf, pre.windowStartS], [true, "mit_einrollen", 420]);
+  assert.equal(rideTrendWindowOf({ ...base, icu_warmup_time: 299 }).ablauf, "ohne_einrollen");
+  const t = secs(4200), even = streams(t.map((x) => (x < 420 ? 120 : 172)), t.map(() => 120));
+  const c = classifyRideTrend(base, rideTrendStats(even, 420), cfg);
+  assert.equal(c.trend, true); assert.equal(c.windowMin, 63); assert.equal(c.avgWatts, 172); assert.match(c.testReason, /mit Einrollen \(Fenster ab Minute 7\)/);
+  assert.equal(classifyRideTrend({ ...base, name: "Rolle kein Test" }, null, cfg).testReason, "Trend: Name „kein Test“: ausgeschlossen");
+  assert.match(classifyRideTrend({ ...base, trainer: false }, null, cfg).testReason, /nicht auf der Rolle/);
+  assert.match(classifyRideTrend({ ...base, name: "Rampentest" }, null, cfg).testReason, /Test im Namen/);
+  assert.match(classifyRideTrend({ ...base, has_heartrate: false }, null, cfg).testReason, /keine Pulsdaten/);
+  assert.match(classifyRideTrend(base, null, cfg).testReason, /Zeitreihen noch nicht geladen/);
+  // HIIT bei passendem Mittel: VI zu hoch
+  const hiit = streams(t.map((x) => (x < 420 ? 120 : Math.floor(x / 30) % 2 ? 90 : 250)), t.map(() => 130));
+  assert.match(classifyRideTrend(base, rideTrendStats(hiit, 420), cfg).testReason, /VI .* > 1,05/);
+  assert.equal(classifyRideTrend({ type: "Run" }, null, cfg), null);
+  // Gruppen getrennt, je Gruppe älteste zuerst
+  const mk = (date, ablauf) => ({ trend: { date, ablauf, ef: 1.6, decoupling: 3 } });
+  const v = rideTrendView([mk("2026-11-05", "mit_einrollen"), mk("2026-11-01", "ohne_einrollen"), mk("2026-11-03", "mit_einrollen"), {}]);
+  assert.deepEqual(v.groups.map((g) => [g.label, g.points.map((p) => p.date)]), [["ohne Einrollen", ["2026-11-01"]], ["mit Einrollen", ["2026-11-03", "2026-11-05"]]]);
+  assert.equal(rideTrendView([{}]), null);
+  assert.equal(rideTrendPoints(Array.from({ length: 12 }, (_, i) => mk(`2026-11-${String(i + 10)}`, "ohne_einrollen"))).length, 8);
+}
+console.log("ok rad trendpunkte");

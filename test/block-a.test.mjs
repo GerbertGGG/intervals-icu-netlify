@@ -45,6 +45,11 @@ assert.equal(g.bikeDecoupling.count, 1); assert.equal(g.bikeDecoupling.value, 5)
 assert.match(g.bikeDecoupling.series[0].reason, /Hauptteil 66 min, 165 W, VI 1.*Einrollen 10 min.*selbst gerechnet/);
 assert.ok(g.bikeDecoupling.hints.some((h) => /ohne Puls/.test(h))); assert.ok(g.bikeDecoupling.hints.some((h) => /FTP-Test am 21\.10\..*240 W/.test(h)));
 assert.equal(g.swimTest.status, "ok"); assert.equal(g.swimTest.value, 3);
+// Trendpunkt (Kategorie trend): b2 mit Warmup-Block, Fenster ab Minute 10 bis Ende (gleiche Zeitreihe wie das Messfenster),
+// Mitte bei Minute 43 statt 40, darum 4,5 statt 5 % wie im 60-min-Fenster; b3 ohne Puls nicht. Steht in der Rad-Karte und im KV fuer get_coach (ride_trend)
+assert.deepEqual(g.bikeDecoupling.trend.groups.map((x) => [x.ablauf, x.points.map((p) => [p.date, p.windowStartS, p.windowMin, p.avgWatts, p.decoupling])]), [["mit_einrollen", [[day(-8), 600, 66, 165, 4.5]]]]);
+assert.equal(g.bikeDecoupling.trend.groups[0].points[0].ef, 1.24); // 165 / Ø-HF (130 bis Minute 40, dann 136,5)
+assert.deepEqual(JSON.parse(kv.get("icu:ridetrend:latest:v1")).points.map((p) => p.date), [day(-8)]);
 assert.equal("decision" in sb, false); // keine Woche-12-Entscheidung: die trifft der Coach
 assert.equal(streamCalls, 7); // 4 flache Läufe + 2 Rad-Messfenster (auch ohne Puls: Leistung und VI) + Profil der letzten Einheit
 // zweiter Aufruf: alles aus dem KV-Cache
