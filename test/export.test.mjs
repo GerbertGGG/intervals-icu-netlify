@@ -346,7 +346,7 @@ assert.equal(sqlLiteral(true), "1");
 
 console.log("export ok");
 
-test("calendar: Nicht-Workout-Eintraege je Tag, mehrtaegig verteilt, OP/Verletzung zaehlt als sick", () => {
+{ // calendar: Nicht-Workout-Eintraege je Tag, mehrtaegig verteilt, OP/Verletzung zaehlt als sick
   const ev = [
     { category: "NOTE", name: "Hüft-OP", start_date_local: "2023-10-14T00:00:00", end_date_local: "2023-10-17T00:00:00" },
     { category: "WORKOUT", name: "Easy Run", start_date_local: "2023-10-14T00:00:00" },
@@ -357,4 +357,4 @@ test("calendar: Nicht-Workout-Eintraege je Tag, mehrtaegig verteilt, OP/Verletzu
   const rows = buildDayRows(["2023-10-13", "2023-10-14", "2023-10-16"], { events: ev });
   assert.deepEqual(rows.map((r) => r.calendar), [null, "Hüft-OP (NOTE)", "Hüft-OP (NOTE); Urlaub (HOLIDAY)"]);
   assert.deepEqual(rows.map((r) => r.sick), [false, true, true]);
-});
+}
