@@ -114,7 +114,7 @@ Fehler werden geloggt und stoppen die anderen Schritte nicht.
 
 Rechnet den Export (Teil B 13) außerhalb des Workers und schreibt ihn in die D1-Datenbank `training-export`; der Worker liest nur.
 
-- **Täglich** um 03:17 UTC (04:17/05:17 Berlin, vor dem Coaching-Task): die letzten 30 Tage bis gestern. So kommen neue Läufe, nachträglich geänderte Namen/Tags, Wetter aus dem nachhinkenden Open-Meteo-Archiv und geänderte Wellness-Werte nach. GitHub startet geplante Läufe oft einige Minuten später.
+- **Täglich** um 03:17 UTC (04:17/05:17 Berlin, vor dem Coaching-Task): die letzten 14 Tage bis gestern (`EXPORT_DAYS`, Standard 14). Gelesen wird der ganze Bereich, geschrieben nur, was neu ist oder sich geändert hat. So kommen neue Läufe, nachträglich geänderte Namen/Tags, Wetter aus dem nachhinkenden Open-Meteo-Archiv und geänderte Wellness-Werte nach. GitHub startet geplante Läufe oft einige Minuten später.
 - **Von Hand** (Actions → „Export nach D1“ → „Run workflow“): `full` rechnet die ganze Historie (einmalig nach dem Einrichten und nach jedem Wechsel von `METHOD_VERSION`), `from`/`to` einen eigenen Bereich.
 - Schreibt nur neue oder geänderte Zeilen (Hash je Zeile), löscht Läufe, die es im Bereich in Intervals nicht mehr gibt, und rechnet Zeitreihen nur neu, wenn nötig (Teil B 13.4).
 - Logs und Job-Zusammenfassung enthalten nur Bereich, Zähler, HTTP-Status und Fehlercodes (`safeError`): keine Datenzeilen, Gesundheitswerte, Aktivitäts-IDs oder Antworttexte, auch nicht bei Fehlern, denn das Repo und damit die Logs sind öffentlich.
@@ -134,7 +134,7 @@ Der Task läuft in einer Cloud-Sitzung, die den Worker per HTTP nicht immer erre
 ### A3.3 Ablauf eines typischen Tages
 
 ```
- 04:17/05:17  GitHub Action „Export nach D1“: letzte 30 Tage → D1
+ 04:17/05:17  GitHub Action „Export nach D1“: letzte 14 Tage → D1
  05:00–07:00  Cron: Cache neu, Snapshots von GitHub (noch Stand von gestern)
  morgens      Coaching-Task: get_coach / Daten lesen → save_coach (+ weitere)
               → Cron übernimmt ggf. den GitHub-Branch → Cache neu → Uhr/Widget zeigen Urteil
@@ -1048,7 +1048,7 @@ Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen) rechnet jede
 
 **Minutenverbrauch.** Das Repo ist öffentlich; Standard-Runner sind für öffentliche Repos kostenlos und ohne Minutenkontingent. Geschätzt (abgerechnet wird je Job auf volle Minuten aufgerundet):
 
-- täglich: Checkout und Node ≈ 10 s, Abrufe für 30 Tage, 1–2 neue Läufe mit Karte, Zeitreihen und Wetter, Upsert ≈ 20–40 s, also **1 Minute je Lauf, ≈ 31 Minuten im Monat**;
+- täglich: Checkout und Node ≈ 10 s, Abrufe für 14 Tage, 1–2 neue Läufe mit Karte, Zeitreihen und Wetter, Upsert ≈ 20–40 s, also **1 Minute je Lauf, ≈ 31 Minuten im Monat**;
 - ganze Historie einmalig: ≈ 1–1,5 s je Lauf (3 Abrufe und 150 ms Pause), bei 1000 Läufen ≈ 20–25 Minuten.
 
 Wäre das Repo privat, lägen diese ≈ 31 Minuten im Monat weit unter den 2000 Gratisminuten. GitHub schaltet geplante Läufe in öffentlichen Repos nach 60 Tagen ohne Aktivität im Repo ab; dann die Action wieder einschalten.
