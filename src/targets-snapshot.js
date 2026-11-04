@@ -150,6 +150,7 @@ const pub = (t) => ({
   enduranceHoursPerWeek: t.enduranceHoursPerWeek, strengthSets2w: t.strengthSets2w, streakThresholdPct: t.streakThresholdPct ?? DEFAULT_TARGET.streakThresholdPct,
   maxIncreasePct: t.maxIncreasePct ?? DEFAULT_TARGET.maxIncreasePct, intensity: t.intensity ?? [], guardrails: t.guardrails ?? [], notAllowed: t.notAllowed ?? [],
   ...(Array.isArray(t.changed) ? { changed: t.changed } : {}),
+  ...(kraftSessionGoal(t) ? { kraft: kraftSessionGoal(t) } : {}),
   validFrom: t.validFrom, reason: t.reason, savedAt: t.fetchedAt ?? null, ...(t.default ? { default: true } : {}),
 });
 
