@@ -5,7 +5,7 @@
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
 // get_run_export/get_day_export liefern den Export fuer die Langzeitanalyse aus D1 (export.js, gefuellt von GitHub Actions).
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
-// save_studie, save_coach, save_ernaehrung, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// save_studie, save_coach, save_decisions, save_ernaehrung, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, isoDateBerlin, listIsoDaysInclusive } from "./date-utils.js";
@@ -14,7 +14,8 @@ import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessR
 import { hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
-import { COACH_KV_KEY, validateCoach, mergeCoach, readCoach } from "./coach-snapshot.js";
+import { saveCoach, readCoach } from "./coach-snapshot.js";
+import { saveDecisions, readDecisions } from "./decisions-snapshot.js";
 import { EXPERIMENT_KV_KEY, PROFIL_KV_KEY, validateExperiment, validateProfil, readExperiment, readProfil } from "./experiment-snapshot.js";
 import { INSIGHTS_KV_KEY, validateInsight, validateArchive, upsertInsight, archiveInsight, insightsForCoach, readInsights } from "./insight-snapshot.js";
 import { computeWeekTotals, currentWeekTotals, weekTotalsOldest } from "./week-totals.js";
@@ -23,6 +24,7 @@ import { TARGETS_KV_KEY, COACH_HISTORY, validateTargets, appendTarget, readTarge
 import { ERNAEHRUNG_KV_KEY, validateErnaehrung, mergeErnaehrung, buildErnaehrung, WEIGHT_DAYS } from "./ernaehrung.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
 import { buildDayExport, buildActivityExport, RUN_COLUMNS, DAY_COLUMNS, RIDE_COLUMNS, SWIM_COLUMNS, toTable, toCsv, DEFAULT_LIMIT, MAX_LIMIT } from "./export.js";
+import { warmDashboardCache } from "./widget.js";
 import { readRideTrend } from "./block-inputs.js";
 import { RIDE_TREND_NOTE } from "./session-tests.js";
 
@@ -140,7 +142,7 @@ const TOOLS = [
   {
     name: "save_coach",
     description:
-      "Schreibt die Tagesaussage des Coaches fürs Dashboard (Karte) und Widget (Hinweiszeile). Bei jedem Update aufrufen, fetchedAt = jetzt. Das Widget zeigt sie nur 36 Stunden lang.",
+      "Schreibt die Tagesaussage des Coaches fürs Dashboard (Karte) und Widget (Hinweiszeile). Bei jedem Update aufrufen, fetchedAt = jetzt. Das Widget zeigt sie nur 36 Stunden lang. Ersetzt die Tagesaussage komplett. Felder, die du weglässt, sind danach leer (Ausnahmen: idea, week, week_plan – dort bleibt das Gespeicherte stehen, wenn du sie weglässt). Fehlt text, obwohl heute schon ein Bericht gespeichert ist, wird der Aufruf abgelehnt. Für die Entscheidungsliste save_decisions verwenden.",
     inputSchema: {
       type: "object",
       properties: {
@@ -210,25 +212,39 @@ const TOOLS = [
           },
           required: ["targets"],
         },
+      },
+      required: ["fetchedAt", "note"],
+    },
+  },
+  {
+    name: "save_decisions",
+    description:
+      "Ersetzt nur die Entscheidungsliste (Karte \"Was du entscheiden musst\"). Die Tagesaussage (save_coach) bleibt unberührt. Immer die ganze Liste schicken; fehlende Punkte werden gelöscht. Antworten bleiben per id erhalten. Höchstens 5 Punkte, [] blendet die Karte aus. Fehlt id, erzeugt der Worker sie aus dem Titel und gibt sie in der Antwort zurück.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601." },
         decisions: {
           type: "array",
-          description:
-            "Der Kasten \"Was du entscheiden musst\" aus dem Monats-Review: alle offenen Punkte, höchstens 5. Steht als Karte im Dashboard (nach Frist sortiert, das Dashboard rechnet nichts). Schick immer die ganze Liste; erledigte oder abgelehnte Punkte weglassen. Weglassen = die gespeicherte Liste bleibt stehen, [] = Karte ausblenden. Jeder Punkt muss mit Ja, Nein oder Option B beantwortbar sein.",
+          description: "Alle offenen Punkte, höchstens 5 (nach Frist sortiert der Worker). Jeder Punkt muss mit Ja, Nein oder Option B beantwortbar sein. Erledigte Punkte weglassen.",
           items: {
             type: "object",
             properties: {
+              id: { type: "string", description: "Stabile kebab-case-id (a-z, 0-9, Bindestrich, max. 60), über Updates gleich lassen. Fehlt sie, kommt sie aus dem Titel." },
               title: { type: "string", description: "Der Punkt als Entscheidungsfrage, max. 80 Zeichen." },
               recommendation: { type: "string", description: "Deine Empfehlung, max. 160 Zeichen." },
               reason: { type: "string", description: "Grund der Empfehlung, max. 200 Zeichen." },
               alternatives: { type: "array", items: { type: "string" }, description: "Alternativen (höchstens 3, je max. 80 Zeichen), z. B. \"Option B: Kraft erst ab Block C\"." },
               deadline: { type: "string", description: "Frist, YYYY-MM-DD." },
               ifNoAnswer: { type: "string", description: "Was passiert, wenn Gerbert nichts sagt, max. 160 Zeichen." },
+              answer: { type: "string", description: "Nur setzen, wenn du Gerberts Antwort ausdrücklich ändern willst (max. 200 Zeichen, \"\" entfernt sie). Weglassen = die gespeicherte Antwort bleibt." },
+              answeredAt: { type: "string", description: "Zeitpunkt der Antwort, ISO-8601 (optional, nur mit answer)." },
             },
             required: ["title", "recommendation", "reason", "deadline", "ifNoAnswer"],
           },
         },
       },
-      required: ["fetchedAt", "note"],
+      required: ["fetchedAt", "decisions"],
     },
   },
   {
@@ -436,7 +452,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die offenen Entscheidungen (decisions: title, recommendation, reason, alternatives, deadline, ifNoAnswer, answer/answeredAt = Gerberts Antwort aus dem Dashboard, sonst fehlend; nach Frist sortiert; Morgen-Update fragt sie einzeln ab, kürzeste Frist zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text = Beobachtung, hypothesis, change = Umstellung, expectation = Erwartung; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, referenceHours = Referenzwoche (Mittel der Ausdauerzeit der letzten 3 Wochen ohne leichte Wochen unter 70 %; null ohne Vorwochen), byDiscipline { lauf, rad, schwimmen } in Stunden (Schwimmen nur Bewegungszeit ohne Pausen am Beckenrand), swimMovingHours = gezählte Schwimmzeit, swimElapsedHours = Gesamtzeit inkl. Pausen (nur Info), swimRestShare = Pausenanteil in % (null ohne Schwimmen), swimTimeEstimated: true nur, wenn eine Einheit ohne Bewegungszeit und Laps mit der Gesamtzeit zählt, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und die Ernährung (ernaehrung: coach = Aussage aus save_ernaehrung mit headline, text, weekLine, goal {targetKg, byDate}; weight = Gewichtseinträge {date, kg} der letzten 90 Tage, neueste zuletzt; weightTrend7d = 7-Tage-Mittel pro Tag; weightSource = yazio oder intervals; null = nicht abrufbar) die letzten 8 Rad-Trendpunkte (ride_trend: points mit date, ablauf mit_einrollen|ohne_einrollen, durationMin, windowStartS, windowMin, avgWatts, avgHr, vi, ef = Watt pro Puls, decoupling, testReason; älteste zuerst; nur innerhalb desselben ablauf vergleichen; Trend, kein Test – zählt nicht fürs Blockziel; updatedAt = letzte Rechnung im Dashboard; null = noch keine) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die offenen Entscheidungen (decisions, eigener Speicher save_decisions: id, title, recommendation, reason, alternatives, deadline, ifNoAnswer, answer/answeredAt = Gerberts Antwort aus dem Dashboard, sonst fehlend; nach Frist sortiert; Morgen-Update fragt sie einzeln ab, kürzeste Frist zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text = Beobachtung, hypothesis, change = Umstellung, expectation = Erwartung; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, referenceHours = Referenzwoche (Mittel der Ausdauerzeit der letzten 3 Wochen ohne leichte Wochen unter 70 %; null ohne Vorwochen), byDiscipline { lauf, rad, schwimmen } in Stunden (Schwimmen nur Bewegungszeit ohne Pausen am Beckenrand), swimMovingHours = gezählte Schwimmzeit, swimElapsedHours = Gesamtzeit inkl. Pausen (nur Info), swimRestShare = Pausenanteil in % (null ohne Schwimmen), swimTimeEstimated: true nur, wenn eine Einheit ohne Bewegungszeit und Laps mit der Gesamtzeit zählt, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und die Ernährung (ernaehrung: coach = Aussage aus save_ernaehrung mit headline, text, weekLine, goal {targetKg, byDate}; weight = Gewichtseinträge {date, kg} der letzten 90 Tage, neueste zuletzt; weightTrend7d = 7-Tage-Mittel pro Tag; weightSource = yazio oder intervals; null = nicht abrufbar) die letzten 8 Rad-Trendpunkte (ride_trend: points mit date, ablauf mit_einrollen|ohne_einrollen, durationMin, windowStartS, windowMin, avgWatts, avgHr, vi, ef = Watt pro Puls, decoupling, testReason; älteste zuerst; nur innerhalb desselben ablauf vergleichen; Trend, kein Test – zählt nicht fürs Blockziel; updatedAt = letzte Rechnung im Dashboard; null = noch keine) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -458,7 +474,14 @@ async function saveSnapshot(env, args, validate, kvKey, merge) {
 async function callTool(env, name, args) {
   if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
   if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
-  if (name === "save_coach") return saveSnapshot(env, args, validateCoach, COACH_KV_KEY, mergeCoach);
+  if (name === "save_coach") {
+    if (!hasKv(env)) throw new Error("KV nicht verfügbar");
+    return saveCoach(env, args);
+  }
+  if (name === "save_decisions") {
+    if (!hasKv(env)) throw new Error("KV nicht verfügbar");
+    return saveDecisions(env, args);
+  }
   if (name === "save_ernaehrung") return saveSnapshot(env, args, validateErnaehrung, ERNAEHRUNG_KV_KEY, mergeErnaehrung);
   if (name === "save_experiment") return saveSnapshot(env, args, validateExperiment, EXPERIMENT_KV_KEY);
   if (name === "save_profil") return saveSnapshot(env, args, validateProfil, PROFIL_KV_KEY);
@@ -498,16 +521,19 @@ async function callTool(env, name, args) {
     const weekTotals = (async () => currentWeekTotals(computeWeekTotals(await withSwimIntervals(env, await fetchIntervalsActivities(env, weekTotalsOldest(today), today)), today, stored)))().catch(() => null);
     // ernaehrung: Coach-Aussage und Gewicht (Yazio, sonst Intervals-Wellness); Fehler machen daraus null, nie einen Fehler in get_coach
     const ernaehrung = buildErnaehrung(env, today, () => fetchIntervalsWellnessRange(env, isoDate(new Date(Date.parse(today) - (WEIGHT_DAYS - 1) * 86400000)), today)).catch(() => null);
-    const [coach, experiment, profil, insights, week_totals, ernaehrungView, rideTrend] = await Promise.all([readCoach(env), readExperiment(env), readProfil(env), readInsights(env), weekTotals, ernaehrung, readRideTrend(env)]);
+    const coachRaw = await readCoach(env);
+    const [decisions, experiment, profil, insights, week_totals, ernaehrungView, rideTrend] = await Promise.all([readDecisions(env, coachRaw), readExperiment(env), readProfil(env), readInsights(env), weekTotals, ernaehrung, readRideTrend(env)]);
+    const { decisions: _legacy, ...coach } = coachRaw ?? {};
+    const hasCoach = Boolean(coachRaw);
     // targets: heute geltendes Wochenziel, geplante Änderungen und die letzten Einträge (save_targets), neueste zuerst
     const { current, upcoming, history } = targetsView(stored, today, COACH_HISTORY);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    const extra = { experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals, ernaehrung: ernaehrungView, targets: { current, upcoming, history },
+    const extra = { decisions, experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals, ernaehrung: ernaehrungView, targets: { current, upcoming, history },
       // ride_trend: letzte Rad-Trendpunkte wie in der Rad-Vergleichskarte (Dashboard legt sie ab), aelteste zuerst; null = noch keine
       ride_trend: rideTrend ? { points: rideTrend.points, updatedAt: rideTrend.updatedAt ?? null, note: RIDE_TREND_NOTE } : null };
-    return coach
-      ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], decisions: coach.decisions ?? [], ...extra }
-      : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], decisions: [], ...extra };
+    return hasCoach
+      ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
+      : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };
   }
   const EXPORT_TOOLS = { get_run_export: ["runs", RUN_COLUMNS], get_ride_export: ["rides", RIDE_COLUMNS], get_swim_export: ["swims", SWIM_COLUMNS], get_day_export: ["days", DAY_COLUMNS] };
   if (EXPORT_TOOLS[name]) {
@@ -570,7 +596,7 @@ function rpcError(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-async function handleMcpRequestInner(req, url, env, info) {
+async function handleMcpRequestInner(req, url, env, info, ctx) {
   if (req.method === "GET") return new Response("MCP endpoint requires POST", { status: 405 });
 
   const authMatch = (req.headers.get("Authorization") || "").match(/^Bearer\s+(.+)$/i);
@@ -615,6 +641,8 @@ async function handleMcpRequestInner(req, url, env, info) {
     const args = params?.arguments || {};
     try {
       const data = await callTool(env, toolName, args);
+      // Dashboard-Cache nach dem Schreiben neu aufbauen, damit Karte, Widget und Uhr die Liste sofort zeigen
+      if (toolName === "save_decisions" && ctx?.waitUntil) ctx.waitUntil(warmDashboardCache(env).catch(() => {}));
       // Export-Tools liefern fertigen Text (kompakt), alle anderen ein Objekt
       return json(rpcResult(id, { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] }));
     } catch (e) {
@@ -633,11 +661,11 @@ async function handleMcpRequestInner(req, url, env, info) {
 // Diagnostic log line per MCP request (visible in Workers Logs): lets us see which
 // RPC method the client sent and which HTTP status the Worker answered with, since
 // the Cloudflare log list only shows "Ok" for the Worker outcome, not the status.
-export async function handleMcpRequest(req, url, env) {
+export async function handleMcpRequest(req, url, env, ctx = null) {
   const info = { httpMethod: req.method, hasToken: false, rpcMethod: null };
   let res;
   try {
-    res = await handleMcpRequestInner(req, url, env, info);
+    res = await handleMcpRequestInner(req, url, env, info, ctx);
     return res;
   } finally {
     console.log("mcp", JSON.stringify({ ...info, status: res?.status ?? "exception", protocol: req.headers.get("mcp-protocol-version"), ua: req.headers.get("user-agent") }));

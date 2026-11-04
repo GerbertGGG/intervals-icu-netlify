@@ -6,7 +6,8 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
-import { handleCoachRequest, handleCoachAnswerRequest, handleCoachDecisionRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
+import { handleCoachRequest, handleCoachAnswerRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
+import { handleDecisionsRequest, handleDecisionAnswerRequest } from "./decisions-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest, handleWatchStatusRequest, warmDashboardCache } from "./widget.js";
@@ -26,6 +27,13 @@ function berlinHour(event) {
   const t = Number(event?.scheduledTime);
   if (!Number.isFinite(t)) return null;
   return Number(new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: "Europe/Berlin" }).format(new Date(t)));
+}
+
+// Widgets und Uhr lesen den Cache: nach einem Schreiben sofort neu aufbauen
+async function withCacheRebuild(pending, env, ctx) {
+  const res = await pending;
+  if (res.ok && ctx) ctx.waitUntil(warmDashboardCache(env).catch(() => {}));
+  return res;
 }
 
 export default {
@@ -77,7 +85,10 @@ export default {
         return route(() => handleCoachAnswerRequest(req, env, isAuthorized));
       // Antwort auf einen Entscheidungspunkt, aus dem Dashboard
       case "/api/coach/decision":
-        return route(() => handleCoachDecisionRequest(req, env, isAuthorized));
+        return route(() => withCacheRebuild(handleDecisionAnswerRequest(req, env, isAuthorized), env, ctx));
+      // Entscheidungsliste ersetzen (wie MCP save_decisions), Tagesaussage bleibt unberührt
+      case "/api/decisions":
+        return route(() => withCacheRebuild(handleDecisionsRequest(req, env, isAuthorized), env, ctx));
       // Zeiten des Wochenvorschlags anpassen, aus dem Dashboard
       case "/api/coach/plan":
         return route(async () => {
@@ -96,7 +107,7 @@ export default {
       case "/token":
         return route(() => handleTokenRequest(req, env));
       case "/mcp":
-        return route(() => handleMcpRequest(req, url, env));
+        return route(() => handleMcpRequest(req, url, env, ctx));
       default:
         return new Response("Not found", { status: 404 });
     }
