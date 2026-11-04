@@ -163,7 +163,9 @@ export function analyzeRunStreams(streams, { capHr = null, stableMax = 5, firstM
   // Tempo in m/min je Herzschlag, ohne den Pulsanstieg aus dem Stand. Trend der Grundlage zwischen den Blocktests.
   const efEnd = Math.min(EF_WINDOW[1] * 60, durSec);
   const efRaw = efEnd >= EF_MIN_SEC ? half(EF_WINDOW[0] * 60, efEnd) : null;
+  const ef60Raw = firstEnd >= EF_MIN_SEC && firstEnd > skip ? half(skip, firstEnd) : null; // Tempo je Herzschlag im Testfenster 5–65 (Meter pro Schlag)
   return {
+    ef60: ef60Raw ? Math.round(ef60Raw * 60 * 1000) / 1000 : null,
     ef: efRaw ? Math.round(efRaw * 60 * 1000) / 1000 : null, efToMin: efRaw ? Math.round(efEnd / 60) : null,
     durationMin: Math.round(durSec / 60),
     fromMin: skip / 60, dec60, windows,
@@ -218,7 +220,7 @@ const heatOf = (a) => {
 };
 
 // runs: Laufdatensaetze (buildRunRecord) des Fensters, acts: Roh-Aktivitaeten; rzRuns: Runalyze-Laeufe (decouplingPct je Tag)
-const RUN_CACHE = "icu:runanalysis:v4:"; // v4: Fenster 5–65; v3: Bewegungszeit, GPS-Filter, Fenster ab Minute 5
+const RUN_CACHE = "icu:runanalysis:v5:"; // v5: ef60 (m/Schlag im Fenster 5–65); v4: Fenster 5–65; v3: Bewegungszeit, GPS-Filter, Fenster ab Minute 5
 const RIDE_TEST_CACHE = "icu:ridetest:v1:"; // Messfenster der Rad-Vergleichseinheit (session-tests.js)
 const RIDE_TREND_CACHE = "icu:ridetrend:v1:"; // Messfenster des Rad-Trendpunkts (session-tests.js, classifyRideTrend): <id>:<windowStartS>
 const STREAM_MIN = 20; // kuerzere Laeufe brauchen keine Zeitreihen
