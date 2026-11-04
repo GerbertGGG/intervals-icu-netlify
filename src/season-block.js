@@ -545,7 +545,7 @@ function blocktestGoals(block, runs, cfg, w, basis, todayIso, plannedTests = [])
   const marked = usable.filter((r) => r.category === "runBlocktest").sort((a, b) => a.date.localeCompare(b.date));
   const tests = marked.map((r, i) => {
     const a = r.analysis;
-    return { date: r.date, planned: r.testDate ?? r.date, testReason: r.testReason ?? null, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, stableMin: a.stableMin, windows: a.windows, gps: a.gps ?? null, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
+    return { date: r.date, planned: r.testDate ?? r.date, testReason: r.testReason ?? null, label: i === 0 ? "Basistest" : `Test ${i}`, dec60: a.dec60, pace60: a.pace60 != null ? fmtSecs(a.pace60) : null, pace60Sec: a.pace60 ?? null, ef60: a.ef60 ?? null, stableMin: a.stableMin, windows: a.windows, gps: a.gps ?? null, durationMin: r.durationMin, overCapMin: a.overCapMin ?? null, heat: Boolean(r.heat), hilly: r.elevPerKm != null && r.elevPerKm > FLAT_M_PER_KM };
   });
   const nextTest = planned.find((p) => p >= todayIso && !tests.some((t) => t.planned === p || t.date === p)) ?? null;
   const n = cfg.lastN, last = tests.slice(-n), baseT = tests[0] ?? null, lastT = tests[tests.length - 1] ?? null;
