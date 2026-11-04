@@ -683,6 +683,29 @@ details.info { margin-top: 12px; }
   .verdict.coach { font-size: 24px; }
   h2 { font-size: 20px; margin-top: 44px; }
 }
+
+/* ---------- Faltboxen: Zweitrangiges eingeklappt, nichts entfällt ---------- */
+.fold-card { padding: 0; }
+.fold-card > summary { display: flex; align-items: baseline; gap: 10px; padding: 16px 20px; cursor: pointer; list-style: none; font-size: var(--fs-m); font-weight: 600; border-radius: var(--r); min-height: 44px; }
+.fold-card > summary { flex-wrap: wrap; gap: 2px 10px; padding-right: 44px; position: relative; }
+.fold-card > summary::after { position: absolute; right: 20px; top: 50%; margin-top: -6px; }
+.fold-card > summary::-webkit-details-marker { display: none; }
+.fold-card > summary::after { content: ""; margin-left: auto; align-self: center; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s; flex: none; }
+.fold-card[open] > summary::after { transform: rotate(-135deg); }
+.fold-card > summary:hover { background: var(--inset); }
+.fold-card[open] > summary { border-bottom: 1px solid var(--line); border-radius: var(--r) var(--r) 0 0; }
+.fold-h { font-size: var(--fs-s); font-weight: 450; color: var(--muted); }
+.fold-body { padding: 16px 20px 20px; }
+.fold-card.no-h3 .fold-body { padding: 0; }
+.fold-card.no-h3 .fold-body > .tile { border: 0; box-shadow: none; border-radius: 0 0 var(--r) var(--r); }
+.fold-card.no-h3 .fold-body > .tile > h3:first-child { display: none; }
+.fold-card.grid, .fold-card .grid.fold-body { gap: var(--gap); }
+.grid.fold-body > .card { box-shadow: none; }
+/* Kennzahlen im Heute-Kasten: Bezeichnungen nicht abschneiden, zwei Spalten */
+.kpi-l { white-space: normal; overflow: visible; text-overflow: clip; }
+.hero-plan > .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Heißhunger-Diagramm nicht riesig aufziehen */
+#cravings-chart svg { max-width: 640px; margin: 0 auto; }
 </style>
 </head>
 <body>
@@ -726,11 +749,11 @@ details.info { margin-top: 12px; }
     <div class="card" id="intervals-card" hidden><h3>Intervall-Splits (4 Wochen)</h3><div id="interval-splits"></div></div>
   </div>
   <div class="grid half" style="margin-top:12px;align-items:start">
-    <div class="card"><h3>Belastung je Tag</h3><div id="calendar"></div></div>
-    <div class="card"><h3>TSS pro Woche und Sportart</h3><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div>
-    <div class="card"><h3>Intensität je Woche (Zonenzeit)</h3><div id="chart-intensity"></div><div class="legend" id="intensity-legend"></div></div>
+    <details class="card fold-card"><summary>Belastung je Tag <span class="fold-h">Kalender</span></summary><div class="fold-body"><div id="calendar"></div></div></details>
+    <details class="card fold-card"><summary>TSS pro Woche und Sportart</summary><div class="fold-body"><div id="chart-sport"></div><div class="legend" id="sport-legend"></div></div></details>
+    <details class="card fold-card"><summary>Intensität je Woche <span class="fold-h">Zonenzeit</span></summary><div class="fold-body"><div id="chart-intensity"></div><div class="legend" id="intensity-legend"></div></div></details>
   </div>
-  <div class="card scroll" id="week-report" style="margin-top:12px"></div>
+  <details class="card fold-card scroll" style="margin-top:12px"><summary>Wochenbericht <span class="fold-h">letzte volle und laufende Woche</span></summary><div class="fold-body" id="week-report"></div></details>
   <details class="info"><summary>Erklärung</summary><div>TSS = Trainingsbelastung (Load) aus Intervals.icu, je Sportart nach Aktivitätstyp gruppiert. Rad aus der Leistung (wie die Obergrenzen geplant sind), nicht aus dem Puls; die Fitness-Kurve (CTL/ATL) übernimmt die Werte von Intervals.</div></details>
 
   <h2 id="leistung">Leistung</h2>
@@ -754,9 +777,9 @@ details.info { margin-top: 12px; }
   <div class="grid wide" style="align-items:start">
     <div id="ready"></div>
   </div>
-  <div class="card" style="margin-top:12px"><h3>Ermüdung, Muskelkater, Schlafqualität</h3><div id="wellness-heat"></div>
+  <details class="card fold-card" style="margin-top:12px"><summary>Ermüdung, Muskelkater, Schlafqualität <span class="fold-h">8 Wochen</span></summary><div class="fold-body"><div id="wellness-heat"></div>
     <div class="legend"><span><i style="background:var(--accent);opacity:.14"></i>1 (bestmöglich)</span><span><i style="background:var(--accent)"></i>höchster eingetragener Wert (schlechter)</span><span><i style="background:repeating-linear-gradient(45deg,var(--muted) 0 1px,transparent 1px 5px)"></i>nicht eingetragen</span></div>
-    <details class="info"><summary>Erklärung</summary><div>Skala 1 = bestmöglich; die Stufen-Beschriftungen liefert die API nicht, deshalb neutrale Farbe statt Ampel. Schraffiert = nichts eingetragen, nie „gut".</div></details></div>
+    <details class="info"><summary>Erklärung</summary><div>Skala 1 = bestmöglich; die Stufen-Beschriftungen liefert die API nicht, deshalb neutrale Farbe statt Ampel. Schraffiert = nichts eingetragen, nie „gut".</div></details></div></div></details>
   <div class="grid" style="margin-top:12px">
     <div class="card"><h3>Ruhepuls</h3><div id="rhr"></div>
       <details class="info"><summary>Erklärung</summary><div>Nächtlicher Ruhepuls der Uhr (seit 30.09.2026 nachts getragen). Ein einzelner Tag streut; die Ampel wertet ihn gegen den 28-Tage-Median, Ausreißer bleiben aus der Basis.</div></details></div>
@@ -771,7 +794,7 @@ details.info { margin-top: 12px; }
   </div>
   <div id="nutrition"></div>
   <div class="grid half" style="margin-top:12px;align-items:start">
-    <div class="card" id="cravings-card" hidden><h3>Heißhunger nach Uhrzeit und Stärke</h3><div id="cravings-chart"></div><div id="cravings-list"></div></div>
+    <details class="card fold-card" id="cravings-card" hidden><summary>Heißhunger nach Uhrzeit und Stärke <span class="fold-h">8 Wochen</span></summary><div class="fold-body"><div id="cravings-chart"></div><div id="cravings-list"></div></div></details>
   </div>
 
   <section id="kraft" hidden>

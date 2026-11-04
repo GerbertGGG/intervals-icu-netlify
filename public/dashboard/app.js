@@ -427,7 +427,8 @@ function renderFrame(d, tile) {
     <div class="fr-two">${sec("Leitplanken", ul(c.guardrails))}${sec("Nicht erlaubt", ul(c.notAllowed))}</div>
     ${hint}
     <details class="info wg-targets"><summary>Geändert am ${when} – ${esc(c.reason)}</summary><ol class="wg-thist">${next}${rows}</ol></details></div>`;
-  return tile("Aktueller Rahmen", body, "span4");
+  const short = `${hmm(c.enduranceHoursPerWeek * 60)} h Ausdauer/Woche · ${c.kraft ? `${fmt(c.kraft.min)}× Kraft/Woche` : `${fmt(c.strengthSets2w)} Kraftsätze/2 Wo`}`;
+  return `<details class="card fold-card no-h3"><summary>Aktueller Rahmen <span class="fold-h">${short}</span></summary><div class="fold-body">${tile("Aktueller Rahmen", body, "span4")}</div></details>`;
 }
 function drawWeekGoals(d) {
   const T = d.weekTotals;
@@ -977,7 +978,7 @@ function renderNutrition(d) {
     $("nutrition").innerHTML = '<div class="notice">Noch keine Ernährungsdaten aus Yazio – die Werte erscheinen, sobald das Tagebuch geführt und synchronisiert wird. Bis dahin zeige ich bewusst nichts an, nicht 0 kcal.</div>';
   } else {
     const training = Object.fromEntries(d.daily.map((x) => [x.date, x.load > 0]));
-    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><div class="grid half"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div>';
+    $("nutrition").innerHTML = '<div class="card" id="n-today" style="margin-bottom:12px"></div><div class="card" id="n-week" style="margin-bottom:12px"></div><details class="card fold-card"><summary>Verläufe: Kalorien, Eiweiß, Kohlenhydrate, Fett <span class="fold-h">14 Tage gegen Ziel</span></summary><div class="grid half fold-body"><div class="card"><h3>Kalorien gegen Ziel</h3><div id="n-kcal"></div></div><div class="card"><h3>Eiweiß</h3><div id="n-prot"></div></div><div class="card"><h3>Kohlenhydrate</h3><div id="n-carbs"></div></div><div class="card"><h3>Fett</h3><div id="n-fat"></div></div></div></details>';
     renderNutritionToday(d, map);
     renderNutritionWeek(d, map);
     const ng = d.nutritionGoals ?? {};
