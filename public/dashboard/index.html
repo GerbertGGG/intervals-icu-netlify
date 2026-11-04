@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#eceef6" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#05070b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>Trainings-Dashboard</title>
 <style>
 /* ---------- Gestaltung: ruhig und sachlich wie ein Instrument ----------
@@ -922,6 +922,138 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 1 5; }
   .jump { margin: 12px -2px 0; }
 }
 @media print { body { background: #fff; } .hero > div, .card, .tile, .idea { animation: none; box-shadow: inset 0 0 0 1px #ccc; } }
+
+/* =====================================================================================================
+   APPLE-STIL: System-Schrift, gruppierte graue Flächen, weiße Karten ohne Rand, Systemblau, Milchglas-Leiste oben.
+   Überschreibt das Nachtcockpit (nur Darstellung, alle Inhalte bleiben).
+   ===================================================================================================== */
+:root {
+  --bg: #f5f5f7; --card: #ffffff; --inset: #f5f5f7; --text: #1d1d1f; --muted: #6e6e73; --line: #e8e8ed; --line-2: #d2d2d7;
+  --accent: #0071e3; --on-accent: #ffffff; --plan: #c7c7cc; --atl: #ff6b00;
+  --s-run: #e08600; --s-bike: #28a745; --s-swim: #0a84ff; --s-strength: #ff6b00; --race: #e0245e; --hr: #ff3b30; --s-other: #c7c7cc;
+  --i-easy: #34c759; --i-mid: #ffb340; --i-hard: #ff6259;
+  --ok: #1f8a3b; --ok-bg: #e6f6ea; --warn: #a85a00; --warn-bg: #fff3dc; --bad: #d70015; --bad-bg: #ffe8e8;
+  --coach-bg: #ffffff; --coach-line: #e8e8ed;
+  --rail: rgba(245,245,247,.8); --glass: rgba(245,245,247,.8);
+  --shadow-1: 0 1px 2px rgba(0,0,0,.04); --shadow-2: 0 2px 12px rgba(0,0,0,.06);
+  --r: 18px; --gap: 14px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Inter, system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #000000; --card: #1c1c1e; --inset: #2c2c2e; --text: #f5f5f7; --muted: #98989d; --line: #38383a; --line-2: #48484a;
+    --accent: #2f8cff; --on-accent: #ffffff; --plan: #48484a; --atl: #ff9f0a;
+    --s-run: #ffd60a; --s-bike: #30d158; --s-swim: #64d2ff; --s-strength: #ff9f0a; --race: #ff6482; --hr: #ff6961; --s-other: #48484a;
+    --i-easy: #30d158; --i-mid: #ffd60a; --i-hard: #ff6961;
+    --ok: #30d158; --ok-bg: #0e2d19; --warn: #ffd60a; --warn-bg: #33290a; --bad: #ff6961; --bad-bg: #351513;
+    --coach-bg: #1c1c1e; --coach-line: #38383a; --rail: rgba(0,0,0,.72); --glass: rgba(0,0,0,.72);
+    --shadow-1: none; --shadow-2: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #000000; --card: #1c1c1e; --inset: #2c2c2e; --text: #f5f5f7; --muted: #98989d; --line: #38383a; --line-2: #48484a;
+  --accent: #2f8cff; --on-accent: #ffffff; --plan: #48484a; --atl: #ff9f0a;
+  --s-run: #ffd60a; --s-bike: #30d158; --s-swim: #64d2ff; --s-strength: #ff9f0a; --race: #ff6482; --hr: #ff6961; --s-other: #48484a;
+  --i-easy: #30d158; --i-mid: #ffd60a; --i-hard: #ff6961;
+  --ok: #30d158; --ok-bg: #0e2d19; --warn: #ffd60a; --warn-bg: #33290a; --bad: #ff6961; --bad-bg: #351513;
+  --coach-bg: #1c1c1e; --coach-line: #38383a; --rail: rgba(0,0,0,.72); --glass: rgba(0,0,0,.72);
+  --shadow-1: none; --shadow-2: none;
+}
+body { font-family: var(--font); background-image: none; letter-spacing: -.011em; }
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; }
+main { max-width: 1120px; padding: 8px 24px 96px; }
+
+/* Überschriften: schlicht, kräftig, ohne Verlauf und Nummern */
+h1, h2 { background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
+h1 { font-size: 34px; font-weight: 700; letter-spacing: -.03em; margin-top: 22px; }
+h2 { font-size: 32px; font-weight: 700; letter-spacing: -.028em; margin: 64px 0 18px; }
+h2:not(.sr-only)::before, h2:not(.sr-only)::after { content: none; display: none; }
+h3 { font-weight: 600; letter-spacing: -.012em; }
+#stamp { background: none; box-shadow: none; padding: 0; font-size: var(--fs-s); }
+.hb-date, .hero-k, .kpi-l, .tile h3, .cockpit-group, .bgh { font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: none; color: var(--muted); }
+.cockpit-group { color: var(--text); font-size: 21px; font-weight: 700; letter-spacing: -.02em; margin: 40px 2px 14px; }
+.cockpit-group::after { content: none; display: none; }
+.hero-status.coach .hero-k, .hero-status.coach .cockpit-group { color: var(--muted); }
+th { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 600; }
+
+/* Quellen und Stempel: leise */
+.srcbar > *, .src { background: var(--card); box-shadow: none; border: 0; }
+
+/* Navigation: Milchglas-Leiste über die volle Breite */
+.jump { top: 0; margin: 14px -24px 0; padding: 0 24px; height: 48px; align-items: center; justify-content: center; gap: 2px; border-radius: 0; background: var(--rail);
+  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); box-shadow: 0 .5px 0 var(--line-2); }
+.jump a { padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.jump a:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.jump a.active { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); font-weight: 600; box-shadow: none; }
+@media (max-width: 760px) { .jump { justify-content: flex-start; } }
+
+/* Karten: weiß, ohne Rand, kaum Schatten */
+.card, .tile, .idea, .hero > div, .fold-card { background-image: none; box-shadow: var(--shadow-1); border: 0; transition: none; }
+.card:hover, .tile:hover { box-shadow: var(--shadow-1); }
+.card, .tile { padding: 22px; }
+.idea { background-image: none; padding: 18px 22px; }
+.idea-ic { stroke: var(--accent); }
+.fold-card > summary::after { border-color: var(--muted); }
+.fold-card[open] > summary { border-bottom: .5px solid var(--line); }
+.grid.fold-body > .card, .fold-card.no-h3 .fold-body > .tile { box-shadow: none; }
+
+/* Heute: Coach-Karte groß, ohne Leuchten */
+.hero > div { padding: 30px; }
+.hero > .hero-status, .hero-status.coach { background-image: none; box-shadow: var(--shadow-1); }
+.hero-status::before { width: 3px; background: var(--accent); box-shadow: none; }
+.hero-status.ok::before { background: var(--ok); box-shadow: none; } .hero-status.warn::before { background: var(--warn); box-shadow: none; } .hero-status.bad::before { background: var(--bad); box-shadow: none; }
+.verdict, .verdict.coach { font-weight: 700; letter-spacing: -.03em; }
+.verdict.coach { font-size: 32px; }
+.coach-q { background: var(--inset); border-left: 0; border-radius: 14px; }
+.coach-bl { background: var(--inset); border: 0; }
+.hero-facts { border-top-color: var(--line); }
+
+/* Kennzahlen: graue Kacheln ohne Zierleiste */
+.kpi, .hero-plan > .kpis .kpi { background: var(--inset); box-shadow: none; border-radius: 14px; }
+.kpi::before { display: none; }
+.kpi-v { font-size: 28px; font-weight: 700; letter-spacing: -.03em; }
+.ls, .bgoal, .nempty, .wt-top, .studie-fazit { background: var(--inset); box-shadow: none; }
+.studie-fazit { border-left: 0; }
+.big, .val, .num-l { font-weight: 700; letter-spacing: -.025em; }
+
+/* Status und Bedienelemente */
+.badge.ok, .badge.warn, .badge.bad, .ok.badge { box-shadow: none; }
+.badge { font-weight: 600; }
+.notice { box-shadow: none; border-radius: 14px; }
+.chip { background: var(--inset); box-shadow: none; font-weight: 500; }
+.chip:hover { box-shadow: none; background: color-mix(in srgb, var(--text) 10%, var(--inset)); }
+.chip.on { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.seg { background: var(--inset); box-shadow: none; padding: 2px; }
+.seg button { color: var(--text); font-weight: 500; }
+.seg button.on { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+button { background: var(--inset); border: 0; box-shadow: none; }
+button:hover { border-color: transparent; background: color-mix(in srgb, var(--text) 9%, var(--inset)); }
+.btn-s { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); border: 0; border-radius: 999px; padding: 5px 14px; font-weight: 600; }
+.btn-s:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); border: 0; }
+.dec-b.on { background: var(--accent); color: var(--on-accent); }
+.coach-q textarea, .wp-in, .dec-in, #login input { background: var(--inset); box-shadow: none; border-radius: 10px; }
+.coach-q textarea:focus, .wp-in:focus, .dec-in:focus, #login input:focus { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent); }
+.coach-q textarea { background: var(--card); }
+#login { box-shadow: var(--shadow-2); }
+#login button { background: var(--accent); color: var(--on-accent); box-shadow: none; border-radius: 999px; }
+details.info > summary::before { border-color: currentColor; color: inherit; }
+
+/* Balken und Diagramme */
+.nfill { box-shadow: none; }
+.cfill { background: var(--accent); }
+.btl i.now { box-shadow: none; }
+.wk-day { background: var(--inset); }
+.wk-day.now { background: var(--card); box-shadow: inset 0 0 0 2px var(--accent); }
+.tri-total .tri-time { color: var(--accent); }
+.ins-b.st-neu { box-shadow: none; }
+.ins-grid .card:hover { box-shadow: var(--shadow-2); transform: none; }
+tbody tr:hover td { background: var(--inset); }
+svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
+
+/* Bewegung: nur leises Einblenden */
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.hero > div, .card, .tile, .idea { animation-duration: .4s; }
+@media (max-width: 600px) { main { padding: 4px 16px 72px; } .jump { margin: 12px -16px 0; padding: 0 12px; } h1 { font-size: 28px; } h2 { font-size: 27px; margin-top: 52px; } .verdict.coach { font-size: 26px; } }
 </style>
 </head>
 <body>
