@@ -1,6 +1,7 @@
 import { json } from "./http-helpers.js";
 import { readKvJson, writeKvJson } from "./kv.js";
 import { isoDateBerlin, isIsoDate, mondayOnOrBefore } from "./date-utils.js";
+import { migrateDecisions } from "./decisions-snapshot.js";
 
 // Tagesaussage des Coaching-Tasks. Der Task schickt sie per PUT /api/coach (Bearer DASHBOARD_TOKEN), per MCP-Tool
 // save_coach oder als coach.json auf den GitHub-Branch; das Dashboard zeigt sie als Karte, das Widget als Hinweiszeile.
@@ -17,10 +18,11 @@ import { isoDateBerlin, isIsoDate, mondayOnOrBefore } from "./date-utils.js";
 //         week?: { light: "gruen" | "gelb" | "rot", text?: string (max 160) },
 //         week_plan?: { week?: Montag YYYY-MM-DD, basis?: string (max 160), deload?: boolean,
 //                       targets: [{ sport: "lauf" | "rad" | "schwimmen" | "kraft", time_min: Zahl, tss_max?: Zahl | null }],
-//                       days?: [{ day: string (max 12), text: string (max 120) }] },
-//         decisions?: [{ title: string (max 80, ein Satz, mit Ja/Nein/Option B beantwortbar), recommendation: string (max 160),
-//                        reason: string (max 200), alternatives?: string[] (max 3 je max 80), deadline: YYYY-MM-DD,
-//                        ifNoAnswer: string (max 160) }] (max 5) }
+//                       days?: [{ day: string (max 12), text: string (max 120) }] } }
+// save_coach ersetzt die Tagesaussage komplett; nur idea, week und week_plan bleiben stehen, wenn sie fehlen. Die Entscheidungsliste
+// gehoert nicht hierher (eigener Schluessel dashboard:decisions, Tool save_decisions): Kommt decisions mit, wird der Aufruf abgelehnt.
+// Fehlt text, obwohl der gespeicherte Stand vom selben Berliner Tag einen text hat, wird der Aufruf ebenfalls abgelehnt (Schutz vor
+// einem Teil-Aufruf, der den Bericht loescht). Erneutes Speichern mit unveraendertem text (Chat-Ablauf) bleibt erlaubt.
 // Die Antwort kommt entweder aus dem Dashboard (POST /api/coach/answer) oder aus dem Chat mit dem Coach (save_coach mit
 // answer). Der Coach liest sie am naechsten Morgen per MCP-Tool get_coach, bevor er die neue Aussage schreibt.
 //
@@ -36,11 +38,6 @@ import { isoDateBerlin, isIsoDate, mondayOnOrBefore } from "./date-utils.js";
 // zeigt ihn bis zum naechsten Montag, ohne Abhaken und ohne Abgleich mit den Einheiten. Er bleibt ueber die taeglichen Updates
 // stehen; {} entfernt ihn. deload: true markiert die Woche als Entlastung (deloadWeeks, max. 26 Montage): Nur diese Wochen
 // lassen die Leitplanken im Trainingsblock aus, einen festen Rhythmus gibt es nicht.
-//
-// Entscheidungen (decisions): der Kasten "Was du entscheiden musst" aus dem Monats-Review des Coaches. Er schickt die ganze Liste
-// (max. 5, das Dashboard sortiert nach Frist); sie bleibt ueber die taeglichen Updates stehen, [] leert sie. Das Dashboard zeigt
-// nur, es entscheidet und rechnet nichts. Beantwortet wird im Chat der Morgen-Auswertung; der Coach nimmt erledigte Punkte beim
-// naechsten Speichern aus der Liste.
 
 export const COACH_KV_KEY = "dashboard:coach";
 export const COACH_MAX_AGE_HOURS = 36;
@@ -67,14 +64,6 @@ const MAX_PLAN_DAY_TEXT = 120;
 const MAX_PLAN_MIN = 3000;
 const MAX_PLAN_TSS = 2000;
 const MAX_DELOAD_WEEKS = 26;
-const MAX_DECISIONS = 5;
-const MAX_DEC_TITLE = 80;
-const MAX_DEC_REC = 160;
-const MAX_DEC_REASON = 200;
-const MAX_DEC_ALT = 80;
-const MAX_DEC_ALTS = 3;
-const MAX_DEC_IF = 160;
-const DEC_HINT = " (ohne decisions speichern, um die Tagesaussage trotzdem zu sichern)";
 const PLAN_HINT = " (ohne week_plan speichern, um die Tagesaussage trotzdem zu sichern)";
 
 // undefined = Feld fehlt (Idee bleibt), null = leerer text (Idee entfernen), sonst die neue Idee.
@@ -148,43 +137,9 @@ function validateWeekPlan(plan, fetchedAt) {
   return { value: { week, basis: basis || null, deload: plan.deload === true, targets, days } };
 }
 
-// undefined = Feld fehlt (Liste bleibt), sonst die neue Liste (leer = entfernen), nach Frist sortiert.
-function validateDecisions(list) {
-  if (list == null) return { value: undefined };
-  if (typeof list === "string" && list.trim().startsWith("[")) {
-    try { list = JSON.parse(list); } catch { return { error: "decisions ist kein gültiges JSON" + DEC_HINT }; }
-  }
-  if (!Array.isArray(list)) return { error: "decisions muss eine Liste sein" + DEC_HINT };
-  if (list.length > MAX_DECISIONS) return { error: `höchstens ${MAX_DECISIONS} decisions` + DEC_HINT };
-  const text = (v, name, max, req = true) => {
-    if (v != null && typeof v !== "string") return { error: `decisions.${name} muss ein Text sein` + DEC_HINT };
-    const t = (v ?? "").trim();
-    if (!t && req) return { error: `decisions.${name} fehlt` + DEC_HINT };
-    if (t.length > max) return { error: `decisions.${name} länger als ${max} Zeichen` + DEC_HINT };
-    return { value: t };
-  };
-  const out = [];
-  for (const x of list) {
-    if (!x || typeof x !== "object" || Array.isArray(x)) return { error: "decisions braucht Objekte { title, recommendation, reason, deadline, ifNoAnswer }" + DEC_HINT };
-    const f = {};
-    for (const [k, max] of [["title", MAX_DEC_TITLE], ["recommendation", MAX_DEC_REC], ["reason", MAX_DEC_REASON], ["ifNoAnswer", MAX_DEC_IF]]) {
-      const r = text(x[k], k, max);
-      if (r.error) return r;
-      f[k] = r.value;
-    }
-    const deadline = typeof x.deadline === "string" ? x.deadline.trim() : "";
-    if (!isIsoDate(deadline)) return { error: "decisions.deadline muss YYYY-MM-DD sein" + DEC_HINT };
-    if (x.alternatives != null && !Array.isArray(x.alternatives)) return { error: "decisions.alternatives muss eine Liste sein" + DEC_HINT };
-    const alternatives = (x.alternatives ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
-    if (alternatives.length > MAX_DEC_ALTS) return { error: `höchstens ${MAX_DEC_ALTS} decisions.alternatives` + DEC_HINT };
-    if (alternatives.some((a) => a.length > MAX_DEC_ALT)) return { error: `decisions.alternatives länger als ${MAX_DEC_ALT} Zeichen` + DEC_HINT };
-    out.push({ ...f, alternatives, deadline });
-  }
-  out.sort((a, b) => a.deadline.localeCompare(b.deadline));
-  return { value: out };
-}
-
 export function validateCoach(body) {
+  // Entscheidungen haben ein eigenes Tool; stillschweigend ignorieren waere falsch, der Aufrufer glaubte sie gespeichert
+  if (body?.decisions != null) return { error: "Entscheidungen bitte mit save_decisions speichern" };
   const fetchedAt = Date.parse(body?.fetchedAt);
   if (!Number.isFinite(fetchedAt)) return { error: "fetchedAt (ISO-Zeitstempel) fehlt" };
   const note = typeof body?.note === "string" ? body.note.trim() : "";
@@ -213,15 +168,35 @@ export function validateCoach(body) {
   if (week.error) return { error: week.error };
   const weekPlan = validateWeekPlan(body?.week_plan, fetchedAt);
   if (weekPlan.error) return { error: weekPlan.error };
-  const decisions = validateDecisions(body?.decisions);
-  if (decisions.error) return { error: decisions.error };
   const value = { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, go, blockers, text: text || null, question: question || null, answer: answer || null, answeredAt };
   // idea nur, wenn mitgeschickt; mergeCoach unterscheidet so "fehlt" von "entfernen"
   if (idea.value !== undefined) value.idea = idea.value;
   if (week.value !== undefined) value.week = week.value;
   if (weekPlan.value !== undefined) value.week_plan = weekPlan.value;
-  if (decisions.value !== undefined) value.decisions = decisions.value;
   return { value };
+}
+
+// Schutz vor Teil-Aufrufen: save_coach ersetzt alles. Fehlt text, obwohl der gespeicherte Stand vom selben Berliner Tag (laut fetchedAt
+// des Aufrufs oder laut Uhr) einen text hat, wuerde der Bericht verloren gehen -> ablehnen.
+export function checkCoachReplace(prev, next, nowMs = Date.now()) {
+  if (next.text || !prev?.text) return null;
+  const prevDay = isoDateBerlin(new Date(prev.fetchedAt));
+  if (prevDay === isoDateBerlin(new Date(next.fetchedAt)) || prevDay === isoDateBerlin(new Date(nowMs))) {
+    return "text fehlt – save_coach ersetzt alles; bitte vollständig senden";
+  }
+  return null;
+}
+
+// Gemeinsamer Schreibweg (MCP save_coach und PUT /api/coach): ein Schreibvorgang auf dashboard:coach. Vorher wird ein altes
+// decisions-Feld migriert, sonst ginge es beim Ersetzen verloren.
+export async function saveCoach(env, args, nowMs = Date.now()) {
+  const { value, error } = validateCoach(args);
+  if (error) throw new Error(error);
+  const prev = await migrateDecisions(env);
+  const blocked = checkCoachReplace(prev, value, nowMs);
+  if (blocked) throw new Error(blocked);
+  await writeKvJson(env, COACH_KV_KEY, mergeCoach(prev, value));
+  return { ok: true, fetchedAt: value.fetchedAt };
 }
 
 // Neue Tagesaussage auf die gespeicherte legen: Idee, Historie, Wochenampel und Wochenvorschlag bleiben, solange sie nicht
@@ -229,7 +204,7 @@ export function validateCoach(body) {
 // Die Antwort bleibt, solange der Coach dieselbe question noch einmal schickt (z. B. zweites Update am Sonntag); erst eine
 // neue question (oder keine mehr) entfernt sie.
 export function mergeCoach(prev, next) {
-  const { idea, week, week_plan: weekPlan, decisions, ...rest } = next;
+  const { idea, week, week_plan: weekPlan, ...rest } = next;
   if (!rest.answer && rest.question && rest.question === prev?.question && prev?.answer) {
     rest.answer = prev.answer;
     rest.answeredAt = prev.answeredAt ?? null;
@@ -248,13 +223,7 @@ export function mergeCoach(prev, next) {
   let deloadWeeks = Array.isArray(prev?.deloadWeeks) ? prev.deloadWeeks : [];
   if (weekPlan) deloadWeeks = [...(weekPlan.deload ? [weekPlan.week] : []), ...deloadWeeks.filter((x) => x !== weekPlan.week)].slice(0, MAX_DELOAD_WEEKS);
   const plan = weekPlan === undefined ? (prev?.week_plan ?? null) : weekPlan && { ...weekPlan, createdAt: next.fetchedAt };
-  const prevDec = Array.isArray(prev?.decisions) ? prev.decisions : [];
-  // Schickt der Coach die Liste neu, behalten Punkte mit demselben Titel ihre Antwort
-  const decisionList = decisions === undefined ? prevDec : decisions.map((x) => {
-    const old = prevDec.find((o) => o.title === x.title && o.answer);
-    return old ? { ...x, answer: old.answer, answeredAt: old.answeredAt } : x;
-  });
-  return { ...rest, idea: current, ideas, week: weekLight, week_plan: plan, deloadWeeks, decisions: decisionList };
+  return { ...rest, idea: current, ideas, week: weekLight, week_plan: plan, deloadWeeks };
 }
 
 // Antwort aus dem Dashboard: haengt sie an die aktuelle Aussage, ohne Urteil und Bericht des Coaches zu veraendern.
@@ -264,21 +233,6 @@ export function applyAnswer(coach, body, nowMs = Date.now()) {
   if (!answer) return { error: "answer fehlt" };
   if (answer.length > MAX_ANSWER) return { error: `answer länger als ${MAX_ANSWER} Zeichen` };
   return { value: { ...coach, answer, answeredAt: new Date(nowMs).toISOString() } };
-}
-
-// Antwort auf einen Entscheidungspunkt aus dem Dashboard (Ja, Nein, Alternative oder eigener Text). Der Coach liest sie per
-// get_coach (decisions[].answer) und nimmt den Punkt danach aus der Liste.
-const MAX_DEC_ANSWER = 200;
-export function applyDecisionAnswer(coach, body, nowMs = Date.now()) {
-  const list = Array.isArray(coach?.decisions) ? coach.decisions : [];
-  const title = typeof body?.title === "string" ? body.title : "";
-  const idx = list.findIndex((x) => x.title === title);
-  if (idx < 0) return { error: "Entscheidung nicht (mehr) offen" };
-  const answer = typeof body?.answer === "string" ? body.answer.trim() : "";
-  if (!answer) return { error: "answer fehlt" };
-  if (answer.length > MAX_DEC_ANSWER) return { error: `answer länger als ${MAX_DEC_ANSWER} Zeichen` };
-  const decisions = list.map((x, i) => (i === idx ? { ...x, answer, answeredAt: new Date(nowMs).toISOString() } : x));
-  return { value: { ...coach, decisions } };
 }
 
 // Zeiten des Wochenvorschlags aus dem Dashboard anpassen (Minuten je Sportart). Nur vorhandene Sportarten, nur time_min; Basis,
@@ -325,26 +279,6 @@ export function applyEditedPlan(weeks, weekTotals, plan) {
     totals = { ...weekTotals, weeks: list, goals: cur.week === plan.week ? { ...weekTotals.goals, enduranceHours: cur.goalHours } : weekTotals.goals };
   }
   return { weeks: newWeeks, weekTotals: totals };
-}
-
-export async function handleCoachDecisionRequest(req, env, isAuthorized) {
-  const headers = { "cache-control": "no-store" };
-  if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
-  if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
-  if (req.method !== "POST") return json({ ok: false, error: "Nur POST erlaubt" }, 405, { ...headers, allow: "POST" });
-  if (!env?.KV) return json({ ok: false, error: "KV nicht verfügbar" }, 503, headers);
-  const text = await req.text();
-  if (text.length > MAX_BODY_BYTES) return json({ ok: false, error: "Body zu groß" }, 413, headers);
-  let body;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    return json({ ok: false, error: "Kein gültiges JSON" }, 400, headers);
-  }
-  const { value, error } = applyDecisionAnswer(await readCoach(env), body);
-  if (error) return json({ ok: false, error }, 409, headers);
-  await writeKvJson(env, COACH_KV_KEY, value);
-  return json({ ok: true }, 200, headers);
 }
 
 export async function handleCoachPlanRequest(req, env, isAuthorized) {
@@ -414,8 +348,10 @@ export async function handleCoachRequest(req, env, isAuthorized) {
   } catch {
     return json({ ok: false, error: "Kein gültiges JSON" }, 400, headers);
   }
-  const { value, error } = validateCoach(body);
-  if (error) return json({ ok: false, error }, 400, headers);
-  await writeKvJson(env, COACH_KV_KEY, mergeCoach(await readCoach(env), value));
-  return json({ ok: true, chars: value.note.length }, 200, headers);
+  try {
+    const r = await saveCoach(env, body);
+    return json({ ok: true, chars: String(body.note).trim().length, fetchedAt: r.fetchedAt }, 200, headers);
+  } catch (e) {
+    return json({ ok: false, error: String(e?.message ?? e) }, 400, headers);
+  }
 }

@@ -56,7 +56,8 @@ Diese Daten erzeugt der **Coaching-Task** (siehe 3). Sie liegen als JSON im KV (
 
 | KV-Schlüssel | Inhalt | MCP-Tool | HTTP |
 |---|---|---|---|
-| `dashboard:coach` | Tagesaussage: `note`, `headline`, `text`, `go`, `blockers`, Rückfrage/Antwort, Idee der Woche, Wochenampel `week`, Wochenvorschlag `week_plan`, offene Entscheidungen `decisions` | `save_coach` | `PUT /api/coach` |
+| `dashboard:coach` | Tagesaussage: `note`, `headline`, `text`, `go`, `blockers`, Rückfrage/Antwort, Idee der Woche, Wochenampel `week`, Wochenvorschlag `week_plan`. **`save_coach` ersetzt komplett** (nur `idea`, `week`, `week_plan` bleiben stehen, wenn sie fehlen); `decisions` wird abgelehnt („Entscheidungen bitte mit save_decisions speichern“), ebenso ein Aufruf ohne `text`, wenn heute schon ein Bericht gespeichert ist | `save_coach` | `PUT /api/coach` |
+| `dashboard:decisions` | Entscheidungsliste „Was du entscheiden musst“ (max. 5): je Punkt `id` (kebab-case, stabil), `title`, `recommendation`, `reason`, `alternatives`, `deadline`, `ifNoAnswer`, Antwortfelder `answer`/`answeredAt` (aus dem Dashboard, bleiben per `id` erhalten). Ersetzt die ganze Liste, fehlende Punkte werden gelöscht, `[]` blendet die Karte aus. Fasst die Tagesaussage nie an. Das alte Feld `dashboard:coach.decisions` wird beim ersten Zugriff einmalig übernommen und entfernt | `save_decisions` | `PUT /api/decisions` (Antwort aus dem Dashboard: `POST /api/coach/decision` mit `id`, `answer`) |
 | `dashboard:runalyze` | VDOT, Prognosen, Rennen, Läufe mit Decoupling | `save_runalyze_snapshot` | `PUT /api/runalyze` |
 | `dashboard:runalyze-history` | Zeitverlauf der Runalyze-Werte (Tageseintrag, vom Cron) | – | – |
 | `dashboard:studie` | Studien-Check der Woche | `save_studie` | `PUT /api/studie` |

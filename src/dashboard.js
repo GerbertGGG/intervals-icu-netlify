@@ -20,6 +20,7 @@ import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { buildErnaehrung } from "./ernaehrung.js";
 import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
+import { readDecisions } from "./decisions-snapshot.js";
 import { readExperiment, readProfil, computeTrainingDays } from "./experiment-snapshot.js";
 import { computeWeekTotals, enduranceSecOf, enduranceWeeks, strengthSetsOf } from "./week-totals.js";
 import { withSwimIntervals, swimTimeOf } from "./swim-time.js";
@@ -771,6 +772,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     readInsights(env),
     readTargets(env),
   ]);
+  // Entscheidungsliste: eigener Schluessel (migriert bei Bedarf das alte Feld aus dashboard:coach); Fehler lassen die Karte nur leer
+  const decisions = await readDecisions(env, coach).catch(() => []);
 
   const activities = activitiesR.ok && Array.isArray(activitiesR.value) ? activitiesR.value : [];
   const events = eventsR.ok && Array.isArray(eventsR.value) ? eventsR.value : [];
@@ -963,7 +966,8 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
-    coach: coach ?? null,
+    coach: coach ? (({ decisions: _legacy, ...c }) => c)(coach) : null,
+    decisions,
     // Experiment und Profil schreibt der Coach (save_experiment, save_profil); das Dashboard zeigt sie nicht mehr, das Widget
     // "experiment" liest sie noch. Die Trainingstage rechnet der Worker live
     experiment: experiment ?? null,
