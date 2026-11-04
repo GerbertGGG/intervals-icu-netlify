@@ -1,6 +1,6 @@
 // Testet src/coach-snapshot.js. Ausführen: node test/coach.test.mjs
 import assert from "node:assert/strict";
-import { validateCoach, mergeCoach, isFreshCoach, handleCoachRequest, handleCoachAnswerRequest, applyAnswer } from "../src/coach-snapshot.js";
+import { applyDecisionAnswer, validateCoach, mergeCoach, isFreshCoach, handleCoachRequest, handleCoachAnswerRequest, applyAnswer } from "../src/coach-snapshot.js";
 
 assert.ok(validateCoach({ fetchedAt: "kaputt", note: "x" }).error);
 assert.ok(validateCoach({ fetchedAt: "2026-10-11T05:00:00Z", note: "  " }).error);
@@ -179,3 +179,17 @@ assert.match(validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decis
 assert.match(validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decisions: [dec("A", "morgen")] }).error, /deadline/);
 assert.match(validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decisions: [{ ...dec("A", "2026-11-10"), ifNoAnswer: "" }] }).error, /ifNoAnswer/);
 console.log("decisions ok");
+
+// Antwort auf Entscheidung: Titel muss offen sein, bleibt beim erneuten Speichern derselben Liste erhalten
+let ad = mergeCoach(null, dv);
+const r1 = applyDecisionAnswer(ad, { title: "A", answer: " Ja " }, 1_800_000_000_000);
+assert.equal(r1.value.decisions[0].answer, "Ja");
+assert.ok(r1.value.decisions[0].answeredAt);
+assert.equal(r1.value.decisions[1].answer, undefined);
+assert.match(applyDecisionAnswer(ad, { title: "X", answer: "Ja" }).error, /nicht/);
+assert.match(applyDecisionAnswer(ad, { title: "A", answer: "" }).error, /answer/);
+assert.match(applyDecisionAnswer(ad, { title: "A", answer: "x".repeat(201) }).error, /länger/);
+const again = mergeCoach(r1.value, validateCoach({ fetchedAt: "2026-11-05T06:00:00Z", note: "y", decisions: [dec("B", "2026-12-01"), dec("A", "2026-11-10"), dec("C", "2026-12-05")] }).value);
+assert.equal(again.decisions.find((x) => x.title === "A").answer, "Ja");
+assert.equal(again.decisions.find((x) => x.title === "C").answer, undefined);
+console.log("decision answers ok");

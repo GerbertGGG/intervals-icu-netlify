@@ -192,6 +192,10 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .btn-s { font: inherit; font-size: var(--fs-s); padding: 3px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; }
 .dec-l { margin: 6px 0 0; padding-left: 1.3em; display: grid; gap: 10px; font-size: var(--fs-m); }
 .dec-l li > div { margin-top: 2px; }
+.dec { margin-bottom: 14px; }
+.dec-act { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px !important; }
+.dec-b.on { background: var(--accent, #2457b3); color: #fff; }
+.dec-in { flex: 1 1 10em; min-width: 8em; font: inherit; padding: 2px 6px; background: var(--card, transparent); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; }
 .wp-days { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); display: grid; gap: 2px; font-size: var(--fs-s); color: var(--muted); }
 .coach-send { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .hero-facts { display: grid; gap: 4px; font-size: var(--fs-s); padding-top: 8px; border-top: 1px solid var(--line); }
@@ -693,6 +697,7 @@ h2:not(.sr-only)::after { content: ""; flex: 1; height: 1px; background: var(--l
   <details class="info" style="margin:16px 0 8px"><summary><b>Schwellen</b> (Einstellungen aus Intervals.icu)</summary><div class="grid" id="thresholds" style="margin-top:8px"></div></details>
 
   <h2 id="erkenntnisse">Erkenntnisse</h2>
+  <div id="decisions"></div>
   <div class="ins-filter" id="insight-filter" role="group" aria-label="Filter nach Disziplin"></div>
   <div class="ins-grid" id="insights"></div>
   <details class="info ins-old" id="insights-old" hidden></details>

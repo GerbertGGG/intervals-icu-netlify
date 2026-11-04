@@ -248,7 +248,12 @@ export function mergeCoach(prev, next) {
   let deloadWeeks = Array.isArray(prev?.deloadWeeks) ? prev.deloadWeeks : [];
   if (weekPlan) deloadWeeks = [...(weekPlan.deload ? [weekPlan.week] : []), ...deloadWeeks.filter((x) => x !== weekPlan.week)].slice(0, MAX_DELOAD_WEEKS);
   const plan = weekPlan === undefined ? (prev?.week_plan ?? null) : weekPlan && { ...weekPlan, createdAt: next.fetchedAt };
-  const decisionList = decisions === undefined ? (Array.isArray(prev?.decisions) ? prev.decisions : []) : decisions;
+  const prevDec = Array.isArray(prev?.decisions) ? prev.decisions : [];
+  // Schickt der Coach die Liste neu, behalten Punkte mit demselben Titel ihre Antwort
+  const decisionList = decisions === undefined ? prevDec : decisions.map((x) => {
+    const old = prevDec.find((o) => o.title === x.title && o.answer);
+    return old ? { ...x, answer: old.answer, answeredAt: old.answeredAt } : x;
+  });
   return { ...rest, idea: current, ideas, week: weekLight, week_plan: plan, deloadWeeks, decisions: decisionList };
 }
 
@@ -259,6 +264,21 @@ export function applyAnswer(coach, body, nowMs = Date.now()) {
   if (!answer) return { error: "answer fehlt" };
   if (answer.length > MAX_ANSWER) return { error: `answer länger als ${MAX_ANSWER} Zeichen` };
   return { value: { ...coach, answer, answeredAt: new Date(nowMs).toISOString() } };
+}
+
+// Antwort auf einen Entscheidungspunkt aus dem Dashboard (Ja, Nein, Alternative oder eigener Text). Der Coach liest sie per
+// get_coach (decisions[].answer) und nimmt den Punkt danach aus der Liste.
+const MAX_DEC_ANSWER = 200;
+export function applyDecisionAnswer(coach, body, nowMs = Date.now()) {
+  const list = Array.isArray(coach?.decisions) ? coach.decisions : [];
+  const title = typeof body?.title === "string" ? body.title : "";
+  const idx = list.findIndex((x) => x.title === title);
+  if (idx < 0) return { error: "Entscheidung nicht (mehr) offen" };
+  const answer = typeof body?.answer === "string" ? body.answer.trim() : "";
+  if (!answer) return { error: "answer fehlt" };
+  if (answer.length > MAX_DEC_ANSWER) return { error: `answer länger als ${MAX_DEC_ANSWER} Zeichen` };
+  const decisions = list.map((x, i) => (i === idx ? { ...x, answer, answeredAt: new Date(nowMs).toISOString() } : x));
+  return { value: { ...coach, decisions } };
 }
 
 // Zeiten des Wochenvorschlags aus dem Dashboard anpassen (Minuten je Sportart). Nur vorhandene Sportarten, nur time_min; Basis,
@@ -305,6 +325,26 @@ export function applyEditedPlan(weeks, weekTotals, plan) {
     totals = { ...weekTotals, weeks: list, goals: cur.week === plan.week ? { ...weekTotals.goals, enduranceHours: cur.goalHours } : weekTotals.goals };
   }
   return { weeks: newWeeks, weekTotals: totals };
+}
+
+export async function handleCoachDecisionRequest(req, env, isAuthorized) {
+  const headers = { "cache-control": "no-store" };
+  if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
+  if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
+  if (req.method !== "POST") return json({ ok: false, error: "Nur POST erlaubt" }, 405, { ...headers, allow: "POST" });
+  if (!env?.KV) return json({ ok: false, error: "KV nicht verfügbar" }, 503, headers);
+  const text = await req.text();
+  if (text.length > MAX_BODY_BYTES) return json({ ok: false, error: "Body zu groß" }, 413, headers);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ ok: false, error: "Kein gültiges JSON" }, 400, headers);
+  }
+  const { value, error } = applyDecisionAnswer(await readCoach(env), body);
+  if (error) return json({ ok: false, error }, 409, headers);
+  await writeKvJson(env, COACH_KV_KEY, value);
+  return json({ ok: true }, 200, headers);
 }
 
 export async function handleCoachPlanRequest(req, env, isAuthorized) {

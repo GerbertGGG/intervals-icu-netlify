@@ -220,7 +220,7 @@ function renderCockpit(d) {
   const today = `<div class="hero-plan"><div class="hero-k">${plan.length ? "Heute geplant" : "Letzte Einheit"}</div>${planHtml}${doneHtml}
       ${shown?.description ? `<div class="sub clamp">${esc(shown.description)}</div>` : ""}${shown?.steps?.length ? '<div id="ck-workout" class="wprofile"></div>' : ""}
       ${plan.length && L ? `<div class="hero-k" style="margin-top:8px">Letzte Einheit</div>${lastHtml}` : ""}${kpis}</div>`;
-  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}${weekPlanCard(d)}${decisionsCard(d)}</div>`;
+  const heuteBand = `<div class="heute"><div class="hero">${status}${today}</div>${ideaCard(d)}${weekPlanCard(d)}</div>`;
 
   $("cockpit").innerHTML = `${heuteBand}
     <div class="cockpit-group">Training</div>
@@ -238,6 +238,8 @@ function renderCockpit(d) {
   drawWeekGoals(d);
   wireCoachAnswer();
   wireWeekPlanEdit();
+  $("decisions").innerHTML = decisionsCard(d);
+  wireDecisions(d);
   if (race) C.countdown($("ck-countdown"), { total: HISTORY_DAYS + g.daysToGo, elapsed: HISTORY_DAYS, raceLabel: `${fmtDate(g.date)} Rennen` });
   if (shown?.steps?.length && $("ck-workout")) C.workout($("ck-workout"), shown.steps);
   if (!plan.length && L?.profile && $("ck-last")) C.session($("ck-last"), L.profile, { sport: L.sport });
@@ -1375,18 +1377,44 @@ function weekPlanCard(d) {
   return `<div class="idea wp"><div><div class="hero-k">Wochenvorschlag · ab ${fmtDate(p.week)}${p.deload ? " · Entlastungswoche" : ""}${edited}</div>${p.basis ? `<p class="sub">${esc(p.basis)}</p>` : ""}<ul class="wp-t">${rows}<li class="wp-sum"><span class="wp-s">Ausdauer gesamt</span><b class="nw" id="wp-sum">${fmtMin(planEndurance(p.targets))}</b><span class="muted nw">ohne Kraft</span></li></ul>
     <div class="wp-edit"><button type="button" id="wp-edit" class="btn-s">Zeiten anpassen</button> <button type="button" id="wp-save" class="btn-s" hidden>Speichern</button> <button type="button" id="wp-cancel" class="btn-s" hidden>Abbrechen</button> <span id="wp-msg" class="muted"></span></div>${days}</div></div>`;
 }
-/* Entscheidungen: der Kasten "Was du entscheiden musst" aus dem Monats-Review (save_coach, Feld decisions). Nur seine Punkte nach Frist,
-   ohne eigene Bewertung. Beantwortet wird im Chat der Morgen-Auswertung; der Coach nimmt erledigte Punkte aus der Liste. */
+/* Entscheidungen: der Kasten "Was du entscheiden musst" aus dem Monats-Review (save_coach, Feld decisions), steht am Anfang der
+   Erkenntnisse. Nur seine Punkte nach Frist, ohne eigene Bewertung. Gerbert antwortet mit Ja, Nein, einer Alternative oder eigenem Text
+   (POST /api/coach/decision); der Coach liest die Antwort per get_coach und nimmt den Punkt danach aus der Liste. */
 function decisionsCard(d) {
   const list = d.coach?.decisions;
   if (!list?.length) return "";
-  const rows = list.map((x) => {
+  const rows = list.map((x, i) => {
     const days = Math.round((Date.parse(x.deadline) - Date.parse(d.today)) / 86400000);
     const when = days < 0 ? `Frist war ${fmtDate(x.deadline)}` : days === 0 ? "Frist heute" : `Frist ${fmtDate(x.deadline)} (in ${days} ${days === 1 ? "Tag" : "Tagen"})`;
     const alts = x.alternatives?.length ? `<div class="sub">Alternativen: ${x.alternatives.map(esc).join(" · ")}</div>` : "";
-    return `<li><b>${esc(x.title)}</b><div>Empfehlung: ${esc(x.recommendation)}</div><div class="sub">${esc(x.reason)}</div>${alts}<div class="sub">${when} · ohne Antwort: ${esc(x.ifNoAnswer)}</div></li>`;
+    const opts = ["Ja", "Nein", ...(x.alternatives ?? [])];
+    const btns = opts.map((o) => `<button type="button" class="btn-s dec-b${x.answer === o ? " on" : ""}" data-a="${esc(o)}">${esc(o.length > 40 ? o.slice(0, 38) + "…" : o)}</button>`).join(" ");
+    const done = x.answer ? `<div class="sub dec-done">Deine Antwort (${fmtDate(berlinDay(x.answeredAt))}): ${esc(x.answer)}. Der Coach liest sie morgen früh.</div>` : "";
+    return `<li data-i="${i}"><b>${esc(x.title)}</b><div>Empfehlung: ${esc(x.recommendation)}</div><div class="sub">${esc(x.reason)}</div>${alts}<div class="sub">${when} · ohne Antwort: ${esc(x.ifNoAnswer)}</div>
+      <div class="dec-act">${btns} <input class="dec-in" type="text" maxlength="200" placeholder="Eigene Antwort" aria-label="Eigene Antwort"> <button type="button" class="btn-s dec-send">Senden</button> <span class="muted dec-msg"></span></div>${done}</li>`;
   }).join("");
-  return `<div class="idea dec"><div><div class="hero-k">Was du entscheiden musst · ${list.length}</div><ol class="dec-l">${rows}</ol><p class="sub">Antworte mit Ja, Nein oder der Option im Chat der Morgen-Auswertung.</p></div></div>`;
+  return `<div class="idea dec"><div><div class="hero-k">Was du entscheiden musst · ${list.length}</div><ol class="dec-l">${rows}</ol></div></div>`;
+}
+function wireDecisions(d) {
+  const list = d.coach?.decisions ?? [];
+  for (const li of document.querySelectorAll(".dec-l li")) {
+    const x = list[Number(li.dataset.i)], msg = li.querySelector(".dec-msg");
+    const send = async (answer) => {
+      if (!answer) { msg.textContent = "Bitte erst antworten."; return; }
+      msg.textContent = "Wird gespeichert …";
+      let token = null;
+      try { token = localStorage.getItem("dashboard-token"); } catch {}
+      try {
+        const r = await fetch("/api/coach/decision", { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify({ title: x.title, answer }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
+        msg.textContent = "Gespeichert. Der Coach liest sie morgen früh.";
+        li.querySelectorAll(".dec-b").forEach((b) => b.classList.toggle("on", b.dataset.a === answer));
+      } catch (e) { msg.textContent = "Nicht gespeichert: " + e.message; }
+    };
+    li.querySelectorAll(".dec-b").forEach((b) => { b.onclick = () => send(b.dataset.a); });
+    li.querySelector(".dec-send").onclick = () => send(li.querySelector(".dec-in").value.trim());
+  }
 }
 function wireWeekPlanEdit() {
   const edit = $("wp-edit");
