@@ -409,13 +409,13 @@ function renderFrame(d, tile) {
   if (!c) return "";
   const sec = (title, body) => (body ? `<div class="fr-sec"><div class="bgh">${title}</div>${body}</div>` : "");
   const ul = (items) => (items.length ? `<ul class="fr-list">${items.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : "");
-  const goal = `<div class="fr-goal"><b>${hmm(c.enduranceHoursPerWeek * 60)} h</b> Ausdauer/Woche · <b>${fmt(c.strengthSets2w)}</b> Kraftsätze/2 Wo · Steigerung max. <b>+${fmt(c.maxIncreasePct, c.maxIncreasePct % 1 ? 1 : 0)} %</b> gegenüber Referenzwoche</div>`;
+  const goal = `<div class="fr-goal"><b>${hmm(c.enduranceHoursPerWeek * 60)} h</b> Ausdauer/Woche · ${c.kraft ? `<b>${fmt(c.kraft.min)}×</b> Kraft/Woche` : `<b>${fmt(c.strengthSets2w)}</b> Kraftsätze/2 Wo`} · Steigerung max. <b>+${fmt(c.maxIncreasePct, c.maxIncreasePct % 1 ? 1 : 0)} %</b> gegenüber Referenzwoche</div>`;
   const intensity = c.intensity.length ? `<ul class="fr-list fr-int">${c.intensity.map((x) => `<li><span class="fr-s">${PLAN_SPORT_LABEL[x.sport] ?? esc(x.sport)}</span>${esc(x.text)}</li>`).join("")}</ul>` : "";
   const H = d.loadHint;
   const hint = H ? `<div class="sub muted fr-hint">${[H.ramp != null ? `Ramp Rate zuletzt ${H.ramp > 0 ? "+" : ""}${fmt(H.ramp, 1)} CTL/Woche (über ${fmt(H.rampMax)})` : null, H.acwrDays != null ? `ACWR an ${H.acwrDays} der letzten ${H.days} Tage über ${fmt(H.acwrMax, 1)} (höchstens ${fmt(H.acwrPeak, 2)})` : null].filter(Boolean).join(" · ")}</div>` : "";
   const when = c.savedAt ? fmtDate(c.savedAt.slice(0, 10)) : `${fmtDate(c.validFrom)} (Startwert)`;
   const what = (t) => (t.changed?.length ? ` · geändert: ${t.changed.map((k) => FRAME_FIELD[k] ?? k).join(", ")}` : "");
-  const val = (t, k) => k === "enduranceHoursPerWeek" ? `${hmm(t[k] * 60)} h` : k === "strengthSets2w" ? `${fmt(t[k])} Sätze` : k === "streakThresholdPct" || k === "maxIncreasePct" ? `${fmt(t[k])} %`
+  const val = (t, k) => k === "enduranceHoursPerWeek" ? `${hmm(t[k] * 60)} h` : k === "strengthSets2w" ? (t.kraft ? `${fmt(t.kraft.min)}× pro Woche` : `${fmt(t[k])} Sätze`) : k === "streakThresholdPct" || k === "maxIncreasePct" ? `${fmt(t[k])} %`
     : k === "intensity" ? t[k].map((x) => `${PLAN_SPORT_LABEL[x.sport] ?? x.sport}: ${x.text}`).join(" | ") || "–" : t[k].join(" | ") || "–";
   const detail = (t) => (t.changed?.length ? t.changed.map((k) => `<div class="sub">${FRAME_FIELD[k] ?? esc(k)}: ${esc(val(t, k))}</div>`).join("") : "");
   const next = (d.targets.upcoming ?? []).map((t) => `<li><b>geplant ab ${fmtDate(t.validFrom)}</b>${what(t)}<div class="sub">${esc(t.reason)}</div>${detail(t)}</li>`).join("");
