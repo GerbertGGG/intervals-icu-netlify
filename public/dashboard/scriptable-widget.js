@@ -65,10 +65,10 @@ const dyn = (l, d) => Color.dynamic(new Color(l), new Color(d));
 // iOS-Systemfarben: flache Widget-Flaeche, graue Kacheln nur zum Gruppieren, Ampel nur mit Bedeutung,
 // Blau fuer Werte, Rot-Pink fuer Datum und Rennen (wie im Kalender-Widget), Indigo fuer Schlaf
 const COL = {
-  bg: dyn("#ffffff", "#1c1c1e"), card: dyn("#ffffff", "#1c1c1e"), tile: dyn("#f2f2f7", "#2c2c2e"),
-  text: dyn("#1c1c1e", "#ffffff"), muted: dyn("#6c6c70", "#8e8e93"), line: dyn("#e5e5ea", "#38383a"),
-  ok: dyn("#248a3d", "#30d158"), warn: dyn("#c93400", "#ff9f0a"), bad: dyn("#d70015", "#ff453a"), none: dyn("#6c6c70", "#8e8e93"),
-  accent: dyn("#0a63c9", "#64a8ff"), race: dyn("#d30f45", "#ff375f"), sleep: dyn("#5856d6", "#7d7aff"),
+  bg: dyn("#ffffff", "#1c1c1e"), card: dyn("#ffffff", "#1c1c1e"), tile: dyn("#f5f5f7", "#2c2c2e"),
+  text: dyn("#1d1d1f", "#f5f5f7"), muted: dyn("#6e6e73", "#98989d"), line: dyn("#e8e8ed", "#38383a"),
+  ok: dyn("#1f8a3b", "#30d158"), warn: dyn("#a85a00", "#ffd60a"), bad: dyn("#d70015", "#ff6961"), none: dyn("#6e6e73", "#98989d"),
+  accent: dyn("#0071e3", "#2f8cff"), race: dyn("#e0245e", "#ff6482"), sleep: dyn("#5856d6", "#7d7aff"),
 };
 // Gezeichnete Bilder (DrawContext) kennen keine dynamischen Farben, und im Widget meldet iOS den Dunkelmodus nicht
 // (Device.isUsingDarkAppearance liefert dort immer false). Bilder bekommen deshalb Farben, die auf hellem und dunklem
@@ -76,12 +76,12 @@ const COL = {
 const INK_HEX = "#a1a1a6";
 const MUTED_HEX = "#8e8e93";
 const NEUTRAL_HEX = "#8e8e93";
-const ACCENT_HEX = "#0a84ff";
+const ACCENT_HEX = "#0a84ff"; // wie --accent im Dashboard (Systemblau)
 const ZONE_RGB = { ok: "#30d158", warn: "#ff9f0a", bad: "#ff453a", none: NEUTRAL_HEX };
-const RACE_HEX = "#ff375f";
+const RACE_HEX = "#ff2d55";
 const SLEEP_HEX = "#7d7aff";
 // Sportfarben wie auf der Uhr und im Dashboard: Laufen gelb, Rad grün, Schwimmen blau, Kraft orange; dazu je Sport ein SF Symbol
-const SPORTS = { run: ["Laufen", "#ffd60a"], bike: ["Rad", "#30d158"], swim: ["Schwimmen", "#409cff"], strength: ["Kraft", "#ff9f45"], other: ["Sonst.", NEUTRAL_HEX] };
+const SPORTS = { run: ["Laufen", "#ffd60a"], bike: ["Rad", "#30d158"], swim: ["Schwimmen", "#0a84ff"], strength: ["Kraft", "#ff9f0a"], other: ["Sonst.", NEUTRAL_HEX] };
 const SPORT_SYMBOL = { run: "figure.run", bike: "bicycle", swim: "figure.pool.swim", strength: "dumbbell.fill", other: "figure.mixed.cardio" };
 const sportHex = (k) => (SPORTS[k] || SPORTS.other)[1];
 // Schriftgroessen: nichts unter 11 pt (auf dem Homescreen sonst kaum lesbar)
