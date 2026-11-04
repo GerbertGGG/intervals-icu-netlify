@@ -164,3 +164,18 @@ console.log("coach week_plan ok");
   assert.equal(e.weekTotals.weeks[0].goalHours, 3.92);
   assert.equal(applyEditedPlan(wk, null, { ...plan, editedAt: null }).weeks, wk);
 }
+
+// Entscheidungen: ganze Liste, nach Frist sortiert, bleibt ohne decisions stehen, [] leert sie
+const dec = (title, deadline) => ({ title, recommendation: "Ja", reason: "weil", alternatives: ["Option B"], deadline, ifNoAnswer: "bleibt wie geplant" });
+const dv = validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decisions: [dec("B", "2026-12-01"), dec("A", "2026-11-10")] }).value;
+assert.deepEqual(dv.decisions.map((x) => x.title), ["A", "B"]);
+assert.equal("decisions" in validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x" }).value, false);
+let md = mergeCoach(null, dv);
+md = mergeCoach(md, validateCoach({ fetchedAt: "2026-11-05T06:00:00Z", note: "y" }).value);
+assert.equal(md.decisions.length, 2);
+md = mergeCoach(md, validateCoach({ fetchedAt: "2026-11-06T06:00:00Z", note: "z", decisions: [] }).value);
+assert.deepEqual(md.decisions, []);
+assert.match(validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decisions: Array(6).fill(dec("A", "2026-11-10")) }).error, /höchstens 5/);
+assert.match(validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decisions: [dec("A", "morgen")] }).error, /deadline/);
+assert.match(validateCoach({ fetchedAt: "2026-11-04T06:00:00Z", note: "x", decisions: [{ ...dec("A", "2026-11-10"), ifNoAnswer: "" }] }).error, /ifNoAnswer/);
+console.log("decisions ok");
