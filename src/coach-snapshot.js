@@ -17,7 +17,10 @@ import { isoDateBerlin, isIsoDate, mondayOnOrBefore } from "./date-utils.js";
 //         week?: { light: "gruen" | "gelb" | "rot", text?: string (max 160) },
 //         week_plan?: { week?: Montag YYYY-MM-DD, basis?: string (max 160), deload?: boolean,
 //                       targets: [{ sport: "lauf" | "rad" | "schwimmen" | "kraft", time_min: Zahl, tss_max?: Zahl | null }],
-//                       days?: [{ day: string (max 12), text: string (max 120) }] } }
+//                       days?: [{ day: string (max 12), text: string (max 120) }] },
+//         decisions?: [{ title: string (max 80, ein Satz, mit Ja/Nein/Option B beantwortbar), recommendation: string (max 160),
+//                        reason: string (max 200), alternatives?: string[] (max 3 je max 80), deadline: YYYY-MM-DD,
+//                        ifNoAnswer: string (max 160) }] (max 5) }
 // Die Antwort kommt entweder aus dem Dashboard (POST /api/coach/answer) oder aus dem Chat mit dem Coach (save_coach mit
 // answer). Der Coach liest sie am naechsten Morgen per MCP-Tool get_coach, bevor er die neue Aussage schreibt.
 //
@@ -33,6 +36,11 @@ import { isoDateBerlin, isIsoDate, mondayOnOrBefore } from "./date-utils.js";
 // zeigt ihn bis zum naechsten Montag, ohne Abhaken und ohne Abgleich mit den Einheiten. Er bleibt ueber die taeglichen Updates
 // stehen; {} entfernt ihn. deload: true markiert die Woche als Entlastung (deloadWeeks, max. 26 Montage): Nur diese Wochen
 // lassen die Leitplanken im Trainingsblock aus, einen festen Rhythmus gibt es nicht.
+//
+// Entscheidungen (decisions): der Kasten "Was du entscheiden musst" aus dem Monats-Review des Coaches. Er schickt die ganze Liste
+// (max. 5, das Dashboard sortiert nach Frist); sie bleibt ueber die taeglichen Updates stehen, [] leert sie. Das Dashboard zeigt
+// nur, es entscheidet und rechnet nichts. Beantwortet wird im Chat der Morgen-Auswertung; der Coach nimmt erledigte Punkte beim
+// naechsten Speichern aus der Liste.
 
 export const COACH_KV_KEY = "dashboard:coach";
 export const COACH_MAX_AGE_HOURS = 36;
@@ -59,6 +67,14 @@ const MAX_PLAN_DAY_TEXT = 120;
 const MAX_PLAN_MIN = 3000;
 const MAX_PLAN_TSS = 2000;
 const MAX_DELOAD_WEEKS = 26;
+const MAX_DECISIONS = 5;
+const MAX_DEC_TITLE = 80;
+const MAX_DEC_REC = 160;
+const MAX_DEC_REASON = 200;
+const MAX_DEC_ALT = 80;
+const MAX_DEC_ALTS = 3;
+const MAX_DEC_IF = 160;
+const DEC_HINT = " (ohne decisions speichern, um die Tagesaussage trotzdem zu sichern)";
 const PLAN_HINT = " (ohne week_plan speichern, um die Tagesaussage trotzdem zu sichern)";
 
 // undefined = Feld fehlt (Idee bleibt), null = leerer text (Idee entfernen), sonst die neue Idee.
@@ -132,6 +148,42 @@ function validateWeekPlan(plan, fetchedAt) {
   return { value: { week, basis: basis || null, deload: plan.deload === true, targets, days } };
 }
 
+// undefined = Feld fehlt (Liste bleibt), sonst die neue Liste (leer = entfernen), nach Frist sortiert.
+function validateDecisions(list) {
+  if (list == null) return { value: undefined };
+  if (typeof list === "string" && list.trim().startsWith("[")) {
+    try { list = JSON.parse(list); } catch { return { error: "decisions ist kein gültiges JSON" + DEC_HINT }; }
+  }
+  if (!Array.isArray(list)) return { error: "decisions muss eine Liste sein" + DEC_HINT };
+  if (list.length > MAX_DECISIONS) return { error: `höchstens ${MAX_DECISIONS} decisions` + DEC_HINT };
+  const text = (v, name, max, req = true) => {
+    if (v != null && typeof v !== "string") return { error: `decisions.${name} muss ein Text sein` + DEC_HINT };
+    const t = (v ?? "").trim();
+    if (!t && req) return { error: `decisions.${name} fehlt` + DEC_HINT };
+    if (t.length > max) return { error: `decisions.${name} länger als ${max} Zeichen` + DEC_HINT };
+    return { value: t };
+  };
+  const out = [];
+  for (const x of list) {
+    if (!x || typeof x !== "object" || Array.isArray(x)) return { error: "decisions braucht Objekte { title, recommendation, reason, deadline, ifNoAnswer }" + DEC_HINT };
+    const f = {};
+    for (const [k, max] of [["title", MAX_DEC_TITLE], ["recommendation", MAX_DEC_REC], ["reason", MAX_DEC_REASON], ["ifNoAnswer", MAX_DEC_IF]]) {
+      const r = text(x[k], k, max);
+      if (r.error) return r;
+      f[k] = r.value;
+    }
+    const deadline = typeof x.deadline === "string" ? x.deadline.trim() : "";
+    if (!isIsoDate(deadline)) return { error: "decisions.deadline muss YYYY-MM-DD sein" + DEC_HINT };
+    if (x.alternatives != null && !Array.isArray(x.alternatives)) return { error: "decisions.alternatives muss eine Liste sein" + DEC_HINT };
+    const alternatives = (x.alternatives ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
+    if (alternatives.length > MAX_DEC_ALTS) return { error: `höchstens ${MAX_DEC_ALTS} decisions.alternatives` + DEC_HINT };
+    if (alternatives.some((a) => a.length > MAX_DEC_ALT)) return { error: `decisions.alternatives länger als ${MAX_DEC_ALT} Zeichen` + DEC_HINT };
+    out.push({ ...f, alternatives, deadline });
+  }
+  out.sort((a, b) => a.deadline.localeCompare(b.deadline));
+  return { value: out };
+}
+
 export function validateCoach(body) {
   const fetchedAt = Date.parse(body?.fetchedAt);
   if (!Number.isFinite(fetchedAt)) return { error: "fetchedAt (ISO-Zeitstempel) fehlt" };
@@ -161,11 +213,14 @@ export function validateCoach(body) {
   if (week.error) return { error: week.error };
   const weekPlan = validateWeekPlan(body?.week_plan, fetchedAt);
   if (weekPlan.error) return { error: weekPlan.error };
+  const decisions = validateDecisions(body?.decisions);
+  if (decisions.error) return { error: decisions.error };
   const value = { fetchedAt: new Date(fetchedAt).toISOString(), note, headline: headline || null, go, blockers, text: text || null, question: question || null, answer: answer || null, answeredAt };
   // idea nur, wenn mitgeschickt; mergeCoach unterscheidet so "fehlt" von "entfernen"
   if (idea.value !== undefined) value.idea = idea.value;
   if (week.value !== undefined) value.week = week.value;
   if (weekPlan.value !== undefined) value.week_plan = weekPlan.value;
+  if (decisions.value !== undefined) value.decisions = decisions.value;
   return { value };
 }
 
@@ -174,7 +229,7 @@ export function validateCoach(body) {
 // Die Antwort bleibt, solange der Coach dieselbe question noch einmal schickt (z. B. zweites Update am Sonntag); erst eine
 // neue question (oder keine mehr) entfernt sie.
 export function mergeCoach(prev, next) {
-  const { idea, week, week_plan: weekPlan, ...rest } = next;
+  const { idea, week, week_plan: weekPlan, decisions, ...rest } = next;
   if (!rest.answer && rest.question && rest.question === prev?.question && prev?.answer) {
     rest.answer = prev.answer;
     rest.answeredAt = prev.answeredAt ?? null;
@@ -193,7 +248,8 @@ export function mergeCoach(prev, next) {
   let deloadWeeks = Array.isArray(prev?.deloadWeeks) ? prev.deloadWeeks : [];
   if (weekPlan) deloadWeeks = [...(weekPlan.deload ? [weekPlan.week] : []), ...deloadWeeks.filter((x) => x !== weekPlan.week)].slice(0, MAX_DELOAD_WEEKS);
   const plan = weekPlan === undefined ? (prev?.week_plan ?? null) : weekPlan && { ...weekPlan, createdAt: next.fetchedAt };
-  return { ...rest, idea: current, ideas, week: weekLight, week_plan: plan, deloadWeeks };
+  const decisionList = decisions === undefined ? (Array.isArray(prev?.decisions) ? prev.decisions : []) : decisions;
+  return { ...rest, idea: current, ideas, week: weekLight, week_plan: plan, deloadWeeks, decisions: decisionList };
 }
 
 // Antwort aus dem Dashboard: haengt sie an die aktuelle Aussage, ohne Urteil und Bericht des Coaches zu veraendern.
