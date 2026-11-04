@@ -635,6 +635,54 @@ h2:not(.sr-only)::after { content: ""; flex: 1; height: 1px; background: var(--l
 .kpi { background: var(--inset); border-radius: 10px; padding: 12px 14px; }
 .hero-plan > .kpis .kpi { background: var(--inset); }
 .coach-q textarea { min-height: 44px; }
+
+/* ---------- Aufgeräumt: eine ruhige Linie wie im Entwurf (nur Darstellung, alle Inhalte bleiben) ---------- */
+:root { --r: 14px; --gap: 16px; --bg: #f4f5f7; --line: #e3e6ea; --inset: #f6f7f9; --accent: #2b5d8c; --coach-bg: #ffffff; --coach-line: #e3e6ea; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #0d0f12; --line: #272c32; --inset: #1d2126; --accent: #80acd9; --coach-bg: #16191d; --coach-line: #272c32; } }
+:root[data-theme="dark"] { --bg: #0d0f12; --line: #272c32; --inset: #1d2126; --accent: #80acd9; --coach-bg: #16191d; --coach-line: #272c32; }
+main { padding: 24px 24px 80px; }
+/* Kopf und Sprungleiste: eine feste Leiste, Unterstrich statt Kapseln */
+header { padding: 0; }
+h1 { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+.jump { top: 0; margin: 12px -24px 0; padding: 0 20px; gap: 2px; background: var(--card); border: 0; border-bottom: 1px solid var(--line); border-radius: 0; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.jump a { padding: 12px 12px 10px; border-radius: 0; border-bottom: 2px solid transparent; font-weight: 550; }
+.jump a:hover { background: none; color: var(--text); }
+.jump a.active { background: none; color: var(--text); border-bottom-color: var(--accent); }
+.srcbar { margin: 6px 0 0; }
+/* Abschnitte: Überschrift ohne Zierlinien, viel Luft dazwischen */
+h2 { display: block; font-size: 22px; font-weight: 700; letter-spacing: -.015em; margin: 56px 0 16px; padding: 0; border: 0; }
+h2:not(.sr-only)::after, h2::before { content: none; display: none; }
+.cockpit-group { display: block; margin: 40px 0 12px; }
+.cockpit-group::after { content: none; }
+/* Karten: gleiche Fläche, gleicher Rand, kein Schweben */
+.card, .tile { padding: 20px; border-radius: var(--r); box-shadow: none; }
+.ins-grid .card:hover { box-shadow: none; transform: none; }
+.hero { box-shadow: none; }
+.tile h3, .card h3 { margin-bottom: 4px; }
+.row { padding: 8px 0; }
+/* Heute: Coach links groß, Plan und Kennzahlen rechts */
+.hero { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .hero { grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); } }
+.hero > div { padding: 28px; }
+.hero > .hero-status, .hero-status.coach { background: var(--card); border-color: var(--line); }
+.hero-status.coach::before { top: 28px; bottom: 28px; }
+.verdict.coach { font-size: 30px; line-height: 1.2; letter-spacing: -.025em; font-weight: 700; max-width: 26ch; }
+.hero-plan { gap: 12px; }
+.kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.kpi { border: 0; border-radius: 10px; }
+.kpi-v { font-size: 24px; }
+.idea { border-radius: var(--r); padding: 16px 20px; }
+.heute { gap: var(--gap); }
+/* Leere und erklärende Texte leiser */
+details.info { margin-top: 12px; }
+.muted, .sub { color: var(--muted); }
+@media (max-width: 600px) {
+  main { padding: 16px 16px 64px; }
+  .jump { margin: 10px -16px 0; padding: 0 12px; }
+  .hero > div { padding: 20px; }
+  .verdict.coach { font-size: 24px; }
+  h2 { font-size: 20px; margin-top: 44px; }
+}
 </style>
 </head>
 <body>
