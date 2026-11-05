@@ -25,7 +25,7 @@ Die Garmin-Uhr steht in [../garmin/README.md](../garmin/README.md). Das Projekt 
                     (scripts/export-to-d1.mjs)
 ```
 
-\* Runalyze hat keine öffentliche API, nur ein MCP. Der Worker kann es nicht selbst abfragen; Daten kommen über den Coach (siehe 2.4).
+\* Runalyze hat keine öffentliche API, nur ein MCP. Der Worker kann es nicht selbst abfragen; Daten kommen über den Coach (siehe A2.4).
 
 **Grundsatz** (aus `CLAUDE.md`): Das Dashboard zeigt, der Coach entscheidet. Der Worker rechnet keine Tagesentscheidung. Urteile (`go`, Wochenampel) kommen vom Coach und werden nur angezeigt.
 
@@ -35,7 +35,7 @@ Die Garmin-Uhr steht in [../garmin/README.md](../garmin/README.md). Das Projekt 
 
 `src/intervals-client.js` ruft `https://intervals.icu/api/v1` ab, mit `ATHLETE_ID` und `INTERVALS_API_KEY`:
 
-- **Wellness** (HRV, Ruhepuls, Schlaf, Gefühlswerte, CTL/ATL, dazu die Yazio-Felder, siehe 2.2)
+- **Wellness** (HRV, Ruhepuls, Schlaf, Gefühlswerte, CTL/ATL, dazu die Yazio-Felder, siehe A2.2)
 - **Aktivitäten** (abgeschlossene Einheiten, `icu_training_load`)
 - **Events** (Kalender: geplante Workouts, Rennen, Wochenziele als Kategorie „Target“)
 - **Sport-Settings** (FTP, Schwellenwerte, Zonen)
@@ -52,7 +52,7 @@ Die Garmin-Uhr steht in [../garmin/README.md](../garmin/README.md). Das Projekt 
 
 ### A2.4 Coach-Aussagen und Runalyze (geschrieben, nicht abgerufen)
 
-Diese Daten erzeugt der **Coaching-Task** (siehe 3). Sie liegen als JSON im KV (`dashboard:*`) und werden validiert (`validate*`-Funktionen in `src/*-snapshot.js`):
+Diese Daten erzeugt der **Coach** (siehe A3.2). Sie liegen als JSON im KV (`dashboard:*`) und werden validiert (`validate*`-Funktionen in `src/*-snapshot.js`):
 
 | KV-Schlüssel | Inhalt | MCP-Tool | HTTP |
 |---|---|---|---|
@@ -99,7 +99,7 @@ Dazu kommt die **Entscheidung über Test-Kandidaten**: `POST /api/tests/:id/deci
 
 ## A3. Geplante Tasks
 
-Es gibt **zwei getrennte Sorten**, die man nicht verwechseln darf.
+Es gibt **zwei getrennte Sorten**, die man nicht verwechseln darf: was im Repo läuft (Cron des Workers A3.1, GitHub Action A3.1a) und was bei Claude läuft (Morgen-Update A3.2, Monats-Review A3.3).
 
 ### A3.1 Cron des Workers (im Repo, `wrangler.toml` + `src/index.js`, `scheduled`)
 
@@ -112,7 +112,7 @@ Jeder Tick macht:
 
 | Schritt | Wann | Was |
 |---|---|---|
-| Snapshots aus GitHub holen, danach Runalyze-Tageseintrag | jeder Tick | `syncSnapshotsFromGithub` → `recordRunalyzeHistory` (2.4, Weg 3) |
+| Snapshots aus GitHub holen, danach Runalyze-Tageseintrag | jeder Tick | `syncSnapshotsFromGithub` → `recordRunalyzeHistory` (A2.4, Weg 3) |
 | Dashboard-Cache warm halten | jeder Tick | `warmDashboardCache`: baut den Stand aus allen Quellen neu auf, damit die Uhr sofort antwortet |
 | Yazio → Intervals | 07:00–23:59 Berlin | `syncYazioRange` für heute; der erste Tick um 07:xx holt zusätzlich gestern nach |
 | EGYM → Intervals, danach EGYM-Cache | 1× pro Stunde (Tick mit Minute < 15) im selben Fenster | `syncEgymToIntervals`, dann `loadWidgetKraft(env, true)` |
@@ -130,28 +130,37 @@ Rechnet den Export (Teil B 13) außerhalb des Workers und schreibt ihn in die D1
 - Schreibt nur neue oder geänderte Zeilen (Hash je Zeile), löscht Läufe, die es im Bereich in Intervals nicht mehr gibt, und rechnet Zeitreihen nur neu, wenn nötig (Teil B 13.4).
 - Logs und Job-Zusammenfassung enthalten nur Bereich, Zähler, HTTP-Status und Fehlercodes (`safeError`): keine Datenzeilen, Gesundheitswerte, Aktivitäts-IDs oder Antworttexte, auch nicht bei Fehlern, denn das Repo und damit die Logs sind öffentlich.
 
-### A3.2 Coaching-Task (geplanter Task bei Claude, **nicht** im Repo)
+### A3.2 Morgen-Update (Coach bei Claude, **nicht** im Repo)
 
-Jeden Morgen läuft ein geplanter Task in Claude mit dem Skill **`triathlon-coach`**. Er:
+Das Morgen-Update läuft in Claude mit dem Skill **`triathlon-coach`**. Gerbert startet es von Hand, sobald er morgens alles eingetragen hat. Die geplante Aufgabe „Morgendliches Trainings-Update“ ist bewusst ausgeschaltet. Das Update:
 
-1. liest per MCP `get_coach` (Vortag, Antwort auf die Rückfrage, Rahmen, Wochensummen),
+1. liest per MCP `get_coach` (Vortag, Antwort auf die Rückfrage, Rahmen, Wochensummen, Tests, Wissensbasis),
 2. liest Daten aus Intervals (`get_wellness`, `get_recent_activities`, `get_planned_workouts`), Yazio (`get_nutrition`) und Runalyze (dessen eigenes MCP),
-3. bewertet und schreibt das Ergebnis zurück: `save_coach` (Tagesaussage, `go`, Rückfrage), montags zusätzlich Wochenampel und Wochenvorschlag, sonntags der Studien-Check (`save_studie`), außerdem `save_runalyze_snapshot`, `save_ernaehrung`, `save_targets`, `save_insight`.
+3. bewertet und schreibt das Ergebnis zurück: `save_coach` (Tagesaussage, `go`, Rückfrage), montags zusätzlich Wochenampel und Wochenvorschlag, außerdem nach Bedarf `save_runalyze_snapshot`, `save_ernaehrung`, `save_targets`, `save_insight`, `save_decisions`, `save_test`.
 
-Der Task läuft in einer Cloud-Sitzung, die den Worker per HTTP nicht immer erreicht (Egress-Policy), GitHub aber schon. Darum gibt es den Branch-Fallback (2.4, Weg 3).
+Läuft eine Sitzung in einer Cloud-Umgebung, die den Worker per HTTP nicht erreicht (Egress-Policy), GitHub aber schon, greift der Branch-Fallback (A2.4, Weg 3).
 
-> **Offen / bitte ergänzen:** Uhrzeit, Wochentage und der Prompt des Tasks stehen in der Task-Konfiguration bei Claude, nicht im Repo. Ich habe sie nicht gesehen und deshalb nicht geraten. Wenn sie hier stehen sollen, bitte kurz die Task-Einstellungen nennen. Gleiches gilt für den Inhalt des Skills `triathlon-coach`.
+Der Skill-Text liegt in Claude (Skill `triathlon-coach`), nicht im Repo. Die Werkzeugbeschreibungen in `src/mcp-server.js` hängen eng an ihm: Wer ein Feld in `get_coach` oder einem `save_*`-Tool ändert, muss den Skill mitziehen und umgekehrt.
 
-### A3.3 Ablauf eines typischen Tages
+### A3.3 Monatlicher Profil-Review (geplanter Task bei Claude, **nicht** im Repo)
+
+Am 1. jedes Monats läuft eine geplante Aufgabe mit dem Skill **`athletenprofil`**. Dieser Skill ergänzt `triathlon-coach`: Er hält fest, was bei Gerbert nachweislich wirkt, und vergleicht sein Training mit der Wissensbasis. Bei Widerspruch zum Coach-Skill gilt das Profil.
+
+1. Datenbasis ist der Trainings-Export in D1 (Teil B 13), gelesen über `get_run_export`, `get_ride_export`, `get_swim_export` und `get_day_export`. Die früheren Auswertungen aus Runalyze und der Ø-Puls-Regression sind überholt.
+2. Nach der Methode im Skill neu rechnen (u. a. Pace im Pulsband pro Quartal, Rad-Puls bei fester Leistung, Schwimmtest, Koppelläufe), Erkenntnis-Karten und Selbstversuche (Tests) aktualisieren und das eigene Training gegen die Wissensbasis prüfen.
+3. Ergebnis als Skill-Vorschlag zeigen. Speichert Gerbert ihn, gilt das als Zustimmung. Das Profil ändert nie Blockregeln oder Standardregeln.
+
+### A3.4 Ablauf eines typischen Tages
 
 ```
  04:17/05:17  GitHub Action „Export nach D1“: letzte 14 Tage → D1
  05:00–07:00  Cron: Cache neu, Snapshots von GitHub (noch Stand von gestern)
- morgens      Coaching-Task: get_coach / Daten lesen → save_coach (+ weitere)
-              → Cron übernimmt ggf. den GitHub-Branch → Cache neu → Uhr/Widget zeigen Urteil
+ morgens      Morgen-Update von Hand starten: get_coach / Daten lesen → save_coach (+ weitere)
+              → Cache neu → Uhr/Widget zeigen Urteil
  07:00–23:58  Cron alle 15 Min: Yazio → Intervals-Wellness; stündlich EGYM → Intervals
  tagsüber     Uhr holt alle 5 Min /api/widget?view=watch (Antwort aus dem Cache)
  abends       Rückfrage im Dashboard beantworten → Coach liest sie am nächsten Morgen
+ am 1. im Monat  zusätzlich: Profil-Review (A3.3), Ergebnis als Skill-Vorschlag
 ```
 
 ## A4. Zugriff und Geheimnisse
@@ -183,23 +192,23 @@ Optionale Variablen: `WEEKLY_TSS_GOAL`, `TRI_SPLIT_TARGET`, `EGYM_WEEKLY_GOAL_SE
 
 # Teil B: Berechnungen im Worker
 
-Stand: Code auf `main` bei Commit `8f4f1ee` (03.10.2026). Dieses Dokument beschreibt **nur, was im Code tatsächlich gerechnet wird**, mit Datei und Zeile, damit jede Formel gegen die Quelle geprüft werden kann. Wo ich beim Lesen etwas Auffälliges gefunden habe, steht ein Verweis **[P#]** und die Details stehen in Kapitel 12.
+Stand: Code auf `main` bei Commit `88d6dca` (05.11.2026). Dieses Dokument beschreibt **nur, was im Code tatsächlich gerechnet wird**, mit Datei und Funktion (Zeilenangaben gelten für diesen Commit), damit jede Formel gegen die Quelle geprüft werden kann. Offene Auffälligkeiten tragen einen Verweis **[P#]**, die Details stehen in Kapitel 12.
 
-Alle Zahlenbeispiele wurden mit dem echten Code ausgeführt (`node`), nicht von Hand gerechnet.
+Die Zahlenbeispiele wurden mit dem echten Code ausgeführt (`node`), nicht von Hand gerechnet.
 
 **Nicht hier berechnet, sondern von Intervals.icu geliefert:** `icu_training_load` (Load/TSS je Aktivität), `ctl`, `atl`, `rampRate`, `decoupling`, HF-Zonen, FTP, Schwellenpace. Der Worker rechnet damit nur weiter. Intervals.icu definiert CTL/ATL als exponentiell gewichtete Mittel der Tageslast (üblich: 42 bzw. 7 Tage); das ist dort einstellbar und im Worker nicht nachgebaut.
 
-**Nicht mehr im Code, aber noch in `doc.txt` beschrieben:** EF, „VDOT-like = EF·1200“, Drift, Motor-Index, RunFloor-TSS, GA/Key-Klassifikation, Daily-/Montags-Report. Ich habe keine dieser Berechnungen in `src/` gefunden (`grep` nach `bikeSubFactor`, `motor`, `velocity_smooth`, `runfloor` ohne Treffer). `doc.txt` ist an dieser Stelle veraltet **[P14]**.
+**Nicht mehr im Code (Stand 03.10.2026 noch beschrieben, seitdem entfernt):** eigener VDOT aus Puls und Pace mit Korrekturfaktoren, Renn-VDOT aus Intervals-Aktivitäten, Maximalpuls-Auflösung, Blockphasen-Automat und Plan-Raster (`determineBlockState`, `computeGoalRaceInfo`), Long-Run-Plan (`long-run-plan.js`), Formcheck mit Erholungs-Ampel (`form-analysis.js`), Wochenvergleich mit Urteil und Empfehlung (`weekly-progress.js`), das Kalorienziel „Diätziel + Aktivitätskalorien“ (`sync.js`). Ein Urteil über den Tag oder die Woche rechnet der Worker grundsätzlich nicht mehr; das macht der Coach (`CLAUDE.md`).
 
 ---
 
 ## Inhalt
 
 1. Grundlagen: Klassifikation, Datum, Rundung
-2. VDOT (`src/vdot.js`)
-3. Blockphasen, Zielrennen, Long-Run-Plan
-4. Formcheck / Erholungs-Ampel (`src/form-analysis.js`)
-5. Wochenvergleich (`src/weekly-progress.js`)
+2. VDOT und Paces (`src/vdot.js`)
+3. Zielrennen und Triathlon-Format
+4. Formcheck (entfallen)
+5. Wochenvergleich (entfallen)
 6. Dashboard: Belastung, Erholungswerte, Montagsbilanz
 7. Dashboard: Wochen, Longruns, Rennplan, Triathlon
 8. Ernährung (Yazio-Sync und Auswertung)
@@ -217,26 +226,25 @@ Alle Zahlenbeispiele wurden mit dem echten Code ausgeführt (`node`), nicht von 
 
 | Funktion | Regel |
 |---|---|
-| `isRun` (10) | `type` (klein geschrieben) ist `run`/`running` oder **enthält** `run`, `laufen`, `treadmill` |
+| `isRun` (19) | `type` (klein geschrieben) ist `run`/`running` oder **enthält** `run`, `laufen`, `treadmill` |
 | `isTreadmill` (31) | `type == "virtualrun"`, enthält `treadmill` oder `trainer == true`; seit dem Export wieder im Code (nur `export-calc.js`) |
-| `isBike` (28) | `type` enthält `ride`, `bike`, `cycling`, `rad`, `velo` |
-| `isRaceActivity` (38) | Tag beginnt mit `race:` **oder** `category` ∈ {`RACE`,`RACE_A`,`A_RACE`} **oder** `sub_type == "RACE"`/`race == true` **oder** Name/Titel enthält als ganzes Wort `race`, `wettkampf`, `competition` **[P9]**; nur `export-calc.js` |
-| `isIntervalActivity` (65) | irgendein Tag beginnt (ohne führendes `#`) mit `interval` |
-| `hasIntervalTextSignal` (83) | Name+Beschreibung enthält Wort `intervall`/`interval` **oder** Muster `\d+\s*[x×]\s*\d+` (z. B. „5x1000“) |
-| `isVdotExcluded` (104) | Tag ist (ohne `#`) genau `novdot` |
+| `isBike` (49) | `type` enthält `ride`, `bike`, `cycling`, `rad`, `velo` |
+| `isRaceActivity` (38) | Tag beginnt mit `race:` **oder** `category` ∈ {`RACE`,`RACE_A`,`A_RACE`} **oder** `sub_type == "RACE"`/`race == true`; Wörter im Namen zählen nicht (seit #1291); nur `export-calc.js` |
+| `isIntervalActivity` (55) | irgendein Tag beginnt (ohne führendes `#`) mit `interval` |
+| `hasIntervalTextSignal` (69) | Name+Beschreibung enthält Wort `intervall`/`interval` **oder** Muster `\d+\s*[x×]\s*\d+` (z. B. „5x1000“) |
 | `activityLoad` (5) | `icu_training_load`, sonst `training_load`, sonst `load`; nur Werte > 0, sonst 0. Nur für CTL/ATL von heute (`live-load.js`), damit sie zur Fitness-Kurve von Intervals passen |
-| `sessionLoad` (13) | Rad (`isBike`) mit `power_load` > 0 → `power_load`, sonst `activityLoad`. Für Wochen- und Tageslast, Wochenrahmen (TSS-Obergrenzen) und letzte Einheit: Intervals rechnet den Load bei Puls-Priorität als HRSS, die Obergrenzen sind aber in Leistungs-TSS geplant (19.10.2026: HRSS 26 statt 43, FTP-Test 14 statt 35) |
+| `sessionLoad` (14) | Rad (`isBike`) mit `power_load` > 0 → `power_load`, sonst `activityLoad`. Für Wochen- und Tageslast, Wochenrahmen (TSS-Obergrenzen) und letzte Einheit: Intervals rechnet den Load bei Puls-Priorität als HRSS, die Obergrenzen sind aber in Leistungs-TSS geplant (19.10.2026: HRSS 26 statt 43, FTP-Test 14 statt 35) |
 | `activityDay` (1) | erste 10 Zeichen von `start_date_local`, sonst `start_date` |
 
-`sportOf` im Dashboard (`src/dashboard.js:115`) prüft in dieser Reihenfolge: Typ enthält `swim` → Schwimmen; `isBike` → Rad; `isRun` → Laufen; Typ enthält `weight`/`strength`/`kraft` → Kraft; sonst „other“.
+`sportOf` im Dashboard (`src/dashboard.js`, 191) prüft in dieser Reihenfolge: Typ enthält `swim` → Schwimmen; `isBike` → Rad; `isRun` → Laufen; Typ enthält `weight`/`strength`/`kraft` → Kraft; sonst „other“.
 
 ### 1.2 Datum und Zeit (`src/date-utils.js`)
 
 - Alle Tagesrechnungen laufen über UTC-Mitternacht (`T00:00:00Z`). Es gibt keine Sommerzeit-Korrektur, weil nur ganze Tage addiert werden.
 - `weeksBetween(a, b) = (b − a) / (7·86400000 ms)` (Bruchteil, nicht gerundet).
 - `daysBetween(a, b) = (b − a) / 86400000` (ebenfalls Bruchteil; bei reinen Datumswerten ganzzahlig).
-- Berlin-Zeit (`isoDateBerlin`, 5) wird für „heute“ im Dashboard/Widget und für das Cron-Fenster verwendet. Der Sync (`src/index.js:163`) nimmt dagegen das UTC-Datum (`isoDate(new Date())`). Weil er nur zwischen 07:00 und 23:58 Berlin läuft (05:00–22:58 UTC), ist das UTC-Datum zu allen Sync-Zeiten identisch mit dem Berliner Datum.
-- Woche = Montag–Sonntag (`mondayOf` in `dashboard.js:48`, `lastCompletedWeek` in `weekly-progress.js:33`). Die Formcheck-Wochen (4.2) sind dagegen **gleitende 7-Tage-Blöcke ab heute rückwärts**, nicht Kalenderwochen.
+- Berlin-Zeit (`isoDateBerlin`, 5) wird für „heute“ im Dashboard/Widget und für das Cron-Fenster verwendet. Der Sync (`src/index.js`, 139) nimmt dagegen das UTC-Datum (`isoDate(new Date())`). Weil er nur zwischen 07:00 und 23:58 Berlin läuft (05:00–22:58 UTC), ist das UTC-Datum zu allen Sync-Zeiten identisch mit dem Berliner Datum.
+- Woche = Montag–Sonntag (`mondayOf`, `dashboard.js`, 75; `mondayOnOrBefore`, `date-utils.js`).
 
 ### 1.3 Zeitplan
 
@@ -244,9 +252,11 @@ Siehe Teil A, Abschnitt A3.1.
 
 ---
 
-## 2. VDOT (`src/vdot.js`)
+## 2. VDOT und Paces (`src/vdot.js`)
 
-### 2.1 Daniels-Formel (`computeVdotFromRaceTime`, Zeile 63)
+**Grundsatz:** Der maßgebliche VDOT kommt aus **Runalyze** (`snapshot.vdot`, über `save_runalyze_snapshot`). Der Worker rechnet keinen eigenen VDOT aus Training, Puls oder Intervals-Rennen. `vdot.js` enthält nur noch drei Rechnungen nach Daniels: VDOT aus einer Rennzeit, Pace-Bereiche aus einem VDOT und Rennzeiten aus einem VDOT.
+
+### 2.1 Daniels-Formel (`computeVdotFromRaceTime`, 6)
 
 Eingabe: Distanz `d` (m), Zeit `T` (s). Gültig nur bei `d ≥ 400` und `T ≥ 60`.
 
@@ -258,399 +268,99 @@ VO2 = −4,60 + 0,182258·v + 0,000104·v²
 VDOT = VO2 / %VO2max
 ```
 
-Ergebnis wird verworfen (null), wenn `VDOT < 20` oder `> 90`; sonst auf 1 Nachkommastelle gerundet. Die Konstanten entsprechen den veröffentlichten Daniels/Gilbert-Gleichungen.
-
-Beispiele (ausgeführt):
+Ergebnis wird verworfen (null), wenn `VDOT < 20` oder `> 90`; sonst auf 1 Nachkommastelle gerundet.
 
 | Leistung | VDOT |
 |---|---|
 | 10 km in 50:00 | 40,0 |
 | 5 km in 25:00 | 38,3 |
 | Halbmarathon (21 097 m) in 2:00:00 | 36,5 |
-| „Halbmarathon“ mit 21 300 m GPS-Distanz in 2:00:00 | 36,9 **[P8]** |
 
-### 2.2 Renn-VDOT (`computeRaceVdot`, 81)
+Verwendet wird sie nur für die Zusatzschätzungen „aus 5-km-/10-km-Bestzeit“ (7.4). Eingabe ist dort die **offizielle Renndistanz** aus Runalyze (`officialDistanceKm`), nicht die GPS-Distanz.
 
-- Betrachtet Läufe, die `isRun`, `isRaceActivity` und nicht `#novdot` sind.
-- Fenster: **180 Tage** bis einschließlich „heute“ (Ankertag).
-- Voraussetzung je Lauf: Distanz ≥ 800 m, Zeit ≥ 60 s. Zeit = `moving_time`, sonst `elapsed_time`; Distanz = `distance`, sonst `icu_distance` (also die vom Gerät gemessene, nicht die offizielle Distanz) **[P8]**.
-- Ergebnis: das **höchste** VDOT aller Rennen im Fenster (`best.vdot`), mit Renndatum.
+### 2.2 Pace-Bereiche (`paceTargetsFromVdot`, 51)
 
-### 2.3 Maximalpuls auflösen (`resolveMaxHrDetailed`, 497)
-
-Reihenfolge, der erste Treffer gewinnt:
-
-1. Umgebungsvariable `MAX_HR` oder `ATHLETE_MAX_HR`
-2. KV-Cache (24 h) des Intervals-Run-Werts
-3. Live-Abruf `sport-settings` → `max_hr` des Typs „Run“ (nur wenn > 100), danach 24 h gecacht
-4. `_estimateMaxHrFromActivities` (243): höchster `max_heartrate` aller geladenen Aktivitäten × 1,05, nur wenn dieser Höchstwert > 100
-5. Heuristik: höchster **Durchschnitts**puls × 1,2, nur wenn > 80
-
-Die Quelle wird in `vdotDebug.resolvedMaxHrSource` ausgegeben.
-
-### 2.4 Trainings-VDOT aus Puls und Pace (`_vdotDetailsFromTrainingActivity`, 256)
-
-Je Lauf, mit `maxHr`:
+Wie in den Runalyze-Lauftabellen: Anteil der Geschwindigkeit bei vVO2max (die Geschwindigkeit, bei der die VO2 dem VDOT entspricht). vVO2max kommt aus der umgestellten VO2-Formel (`velocityFromVo2`):
 
 ```
-hrPct     = avgHr / maxHr
-%VO2max   = 1,154 · hrPct − 0,15
-v         = dist / moving_time · 60        [m/min]
-VO2       = −4,60 + 0,182258·v + 0,000104·v²
-VDOT      = VO2 / %VO2max
+a = 0,000104;  b = 0,182258;  c = −(4,60 + VDOT)
+vVO2max = (−b + √(b² − 4ac)) / (2a)          [m/min]
+Basis   = 60000 / vVO2max                    [s/km bei 100 %]
+Pace    = Basis / (Anteil / 100)             je Grenze; Mitte = Basis / (Mittelwert der Grenzen / 100)
 ```
 
-Der Lauf wird **ausgeschlossen** (mit Grund), wenn eine dieser Bedingungen gilt (in dieser Prüfreihenfolge):
-
-| Bedingung | Grund |
+| Bereich | Anteil an vVO2max |
 |---|---|
-| Distanz < 2000 m | `distance<2000m` |
-| Zeit < 600 s | `movingTime<600s` |
-| `avgHr ≤ 0` | `avgHr<=0` |
-| `maxHr ≤ 100` | `maxHr<=100` |
-| `hrPct < 0,55` oder `> 0,87` | `hrPct<…` |
-| `%VO2max ≤ 0,3` oder `≥ 1,0` | `pctVo2max…` |
-| `VO2 ≤ 0` | `vo2<=0` |
-| VDOT außerhalb 20–90 | `vdot out of range` |
+| Easy (E) | 59–74 % |
+| Marathon (M) | 75–84 % |
+| Threshold (T) | 88–92 % |
+| Interval (I) | 95–100 % |
+| Repetition (R) | 105–110 % |
 
-Die Gerade `1,154·hrPct − 0,15` ist ein im Kommentar als „aus Daniels E/M/T-Ankerpunkten abgeleitet“ bezeichneter Näherungsansatz, keine Literaturformel. Beispiel: 65 % HFmax → 60 % VO2max; 80 % → 77,3 %; 87 % → 85,4 %. Verwendet wird **keine Ruhepuls-Reserve**, nur `avgHr/maxHr`.
-
-### 2.5 Fenster-Schätzung (`estimateTrainingVdotForWindow`, 330)
-
-- Nimmt Läufe in `[von, bis]`, die `isRun`, **nicht** Rennen, **nicht** Laufband/VirtualRun, **nicht** `#intervall*`-getaggt und nicht `#novdot` sind.
-- Je Lauf der Wert aus 2.4; **Median** der gültigen Werte (bei gerader Anzahl Mittel der beiden mittleren), auf 1 Nachkommastelle.
-- Mindestens `minCount = 2` gültige Läufe, sonst `null`.
-- Das 28-Tage-Fenster (`computeTrainingVdotFromActivities`, 345) ist „Ankertag − 28 Tage bis Ankertag“.
-
-### 2.6 Pace-Benchmarks (`computeVdotFromPaceBenchmarks`, 228; Abruf `intervals-client.js:357`)
-
-- Abruf: bestes Segment über 1000/5000/10000/21097 m der letzten **56 Tage** (`activity-pace-curves`), 7 Tage in KV gecacht, wird nur bei Montag-Sync oder Schreibzugriff geholt.
-- VDOT = **Maximum** der VDOTs über die vier Distanzen (mit 2.1 und der jeweiligen Segmentzeit) **[P7]**.
-
-### 2.7 Korrekturfaktoren (`vdot.js` 6–38, 125, 150, 201)
-
-Drei Größen, alle auf **[0,90 ; 1,10]** begrenzt (`CORRECTION_MIN/MAX_FACTOR`):
-
-**a) Rennfaktor** (`updateRaceCorrectionFactor`, nur bei Schreibzugriff, einmal je Renndatum):
-
-```
-vorhergesagt = Trainings-VDOT (2.5) aus den 14 Tagen vor dem Rennen (Tag −14 bis −1)
-roh          = clamp(Renn-VDOT / vorhergesagt, 0,9 ; 1,1)
-neu          = clamp(alt·0,5 + roh·0,5, 0,9 ; 1,1)      (alt = 1 beim ersten Rennen)
-```
-
-Gibt es keinen vorhergesagten Wert, bleibt der Faktor unverändert, das Rennen gilt aber als verarbeitet. Weicht `roh` um mehr als 0,05 von 1 ab, wird `raceCorrectionWarning` gesetzt (nur Anzeige).
-
-**b) Zerfall des Rennfaktors** (`applyCorrectionDecay`, 32), gerechnet beim Lesen:
-
-```
-Tage seit Rennen ≤ 90   → Faktor unverändert
-90 < Tage < 180         → Faktor + (1 − Faktor)·(Tage − 90)/90
-Tage ≥ 180              → 1
-```
-
-**c) Drift-Faktor** (`updatePaceBenchmarkDrift`, nur bei Schreibzugriff, einmal je Benchmark-Zeitstempel):
-
-```
-roh  = clamp(Pace-Benchmark-VDOT / HF-Trainings-VDOT, 0,9 ; 1,1)
-neu  = clamp(alt·0,95 + roh·0,05, 0,9 ; 1,1)
-```
-
-**Kombination** (`combineCorrectionFactors`, 125): `clamp(Rennfaktor_zerfallen · Driftfaktor, 0,9 ; 1,1)`.
-
-### 2.8 Aktueller VDOT (`computeAndPersistRealVdot`, 521)
-
-1. `trainVdot` = HF-Trainings-VDOT (28 Tage). Gibt es keinen, wird der Pace-Benchmark-VDOT genommen.
-2. Ist `Korrekturfaktor ≠ 1`: `trainVdot = round(trainVdot · Korrekturfaktor, 1)`. **Das gilt auch für den Pace-Benchmark-Fallback [P7].**
-3. `aktuell = min(Renn-VDOT, trainVdot)`, wenn beide vorhanden; sonst der vorhandene. Quelle = `"training"` oder `"race"`. Konservative Auslegung: gelaufene Form kann die Rennform nicht übersteigen.
-4. **Absturz-Bremse:** Fällt der Wert gegenüber dem gespeicherten um mehr als 8, wird `gespeichert − 8` verwendet. Einen Anstieg begrenzt nichts.
-5. Ohne neue Daten wird der gespeicherte Wert zurückgegeben.
-6. Rundung auf 1 Nachkommastelle; Speicherung nur bei `persistLatest` (letzter Tag eines Schreib-Syncs).
-
-### 2.9 VDOT des heutigen Laufs (`todayRunVdot`, 591–634)
-
-Median der Werte aus 2.4 für heutige Läufe (kein Rennen, kein Intervall, kein `#novdot`; Laufband ist hier **nicht** ausgeschlossen), multipliziert mit dem Korrekturfaktor, 1 Nachkommastelle. Hier genügt **ein** Lauf (im Fenster sind es zwei) **[P20]**. Der Wert wird seit Commit #948 nicht mehr in Intervals-Wellness geschrieben, bleibt aber im Sync-Ergebnis.
-
-### 2.10 Pace-Zonen (`paceTargetsFromVdot`, 398)
-
-Zielgeschwindigkeit je Zone aus `VO2_Ziel = Anteil · VDOT`, umgekehrt aus der Quadratformel:
-
-```
-a = 0,000104;  b = 0,182258;  c = −(4,60 + VO2_Ziel)
-v = (−b + √(b² − 4ac)) / (2a)                [m/min]
-Pace [s/km] = round(60000 / v)
-```
-
-| Zone | Anteil am VDOT |
-|---|---|
-| Easy (E) | 0,70 |
-| Marathon (M) | 0,84 |
-| Threshold (T) | 0,88 |
-| Interval (I) | 0,975 |
-| Repetition (R) | 1,05 |
-
-Ergebnisse (ausgeführt):
+Zwischen den Bereichen liegen bewusst Lücken, wie in der Tabelle. Ergebnisse (ausgeführt, langsam–schnell):
 
 | VDOT | E | M | T | I | R |
 |---|---|---|---|---|---|
-| 36,5 | 6:34 | 5:41 | 5:29 | 5:03 | 4:45 |
-| 45 | 5:34 | 4:49 | 4:38 | 4:16 | 4:01 |
-| 50 | 5:07 | 4:25 | 4:15 | 3:55 | 3:41 |
+| 36,5 | 8:23–6:41 | 6:36–5:53 | 5:37–5:23 | 5:12–4:57 | 4:43–4:30 |
+| 45 | 7:05–5:39 | 5:34–4:58 | 4:45–4:32 | 4:24–4:11 | 3:59–3:48 |
+| 50 | 6:30–5:11 | 5:07–4:34 | 4:21–4:10 | 4:02–3:50 | 3:39–3:29 |
 
-Zum Vergleich mit den Daniels-Tabellen (VDOT 50), aus dem Gedächtnis und bitte gegen die Originaltabelle prüfen: T ≈ 4:15/km, I ≈ 3:55/km und M ≈ 4:26/km passen; R liegt rechnerisch bei 3:41/km, die Tabelle nennt R über 400 m (etwa 1:30–1:32, also rund 3:45–3:50/km). Die Zonen sind eine gleichmäßige %VDOT-Näherung, nicht Daniels’ Tabellenwerte.
+### 2.3 Rennzeit-Prognose (`predictRaceTimesFromVdot`, 101)
 
-### 2.11 Rennzeit-Prognose (`predictRaceTimeSeconds`, 427)
-
-Weil %VO2max von der Dauer abhängt, wird iteriert (12 Schritte):
+Weil %VO2max von der Dauer abhängt, wird iteriert (`predictRaceTimeSeconds`, 12 Schritte):
 
 ```
 t₀ = Distanz_km · 4                          [min, Startschätzung 4 min/km]
 wiederhole 12×:
     %VO2max(t) = 0,8 + 0,1894393·e^(−0,012778·t) + 0,2989558·e^(−0,1932605·t)
     VO2   = VDOT · %VO2max(t)
-    v     = Geschwindigkeit(VO2)               (Quadratformel wie 2.10)
+    v     = Geschwindigkeit(VO2)               (umgestellte Formel wie 2.2)
     t     = Distanz / v
 Zeit [s] = round(t · 60)
 ```
 
-Distanzen: 5 000, 10 000, 21 097, 42 195 m. Beispiel VDOT 36,5 → 5 km 26:02, 10 km 54:04, HM 1:59:53, M 4:07:31 (ausgeführt; HM-Prognose passt zur Rückrechnung in 2.1).
-
-### 2.12 Wochen-VDOT im Formcheck (`buildWeekVdot`, `form-analysis.js:505`)
-
-Je 7-Tage-Block: bestes Renn-VDOT der Woche (Rennen, Distanz ≥ 800 m, Zeit ≥ 60 s) und Fenster-Schätzung (2.5, ohne Korrekturfaktor) → `min` beider, sonst der vorhandene **[P5]**.
+Distanzen: 3 000, 5 000, 10 000, 21 097, 42 195 m. Beispiel VDOT 36,5 → 3 km 15:11, 5 km 26:02, 10 km 54:04, HM 1:59:53, M 4:07:31 (ausgeführt; die HM-Zeit passt zur Rückrechnung in 2.1). Das ist eine Rechnung, keine Vorhersage: Sie unterstellt Ausdauer wie über die Ausgangsdistanz und ist für längere Strecken tendenziell zu optimistisch.
 
 ---
 
-## 3. Blockphasen, Zielrennen, Long-Run-Plan
+## 3. Zielrennen und Triathlon-Format
 
-### 3.1 Blocklängen je Distanz (`block-phase.js:22`, Wochen)
+### 3.1 Distanz eines Kalendereintrags (`block-phase.js`, `normalizeEventDistance`, 3)
 
-| Distanz | Base | Build | Race | Taper | Reset |
+Text mit `5k`/`5 km`, `10k`/`10 km`, `half|hm|halb`, `marathon|42` (in dieser Reihenfolge), sonst eine Zahl (< 1000 → km, sonst m) mit den Bändern 4,9–5,1 / 9,5–10,5 / 20,5–21,5 / 41–43 km. Sonst `null`.
+
+### 3.2 Triathlon-Format (`parseTriathlonEvent`, 31)
+
+Intervals kennt keinen Triathlon als Rennart. Ein Eintrag gilt als Triathlon, wenn Name oder Typ `triathlon`, `tri` (als Wort), `ironman` oder `70.3` enthält. Das Format kommt per Regex aus Name, Typ und Beschreibung, **erster Treffer** in der Reihenfolge Sprint, Olympisch, Mittel, Lang; ohne Treffer Olympisch.
+
+| Format | Muster | Schwimmen | Rad | Lauf | Lauf-Distanz |
 |---|---|---|---|---|---|
-| 5 km | 10 | 8 | 6 | 1 | 2 |
-| 10 km | 10 | 8 | 6 | 1 | 2 |
-| HM | 12 | 8 | 8 | 2 | 3 |
-| M | 16 | 10 | 8 | 2 | 4 |
-
-- `planStartWeeks = Base + Build + Race + Taper` (HM: 30)
-- `raceStartWeeks = Race + Taper` (HM: 10)
-- Blockdauer in Tagen = `max(7, round(Wochen·7))`; Min = Max (feste Dauer). RACE = Race+Taper, RESET = Reset.
-- Distanz-Erkennung `normalizeEventDistance` (29): Text mit `5k`/`10k`/`half|hm|halb`/`marathon|42`, sonst Zahl (< 1000 → km, sonst m) mit Toleranzbändern 4,9–5,1 / 9,5–10,5 / 20,5–21,5 / 41–43 km. Unbekannt → „10k“.
-
-### 3.2 Zustandsautomat (`determineBlockState`, 169)
-
-Eingabe: heute, Eventdatum, Distanz, Vorzustand (Block, Welle, Startdatum). `weeksToEvent = weeksBetween(heute, Event)`.
-
-Entscheidungen in dieser Reihenfolge:
-
-1. Kein gültiges Eventdatum → `BASE`, Welle 0.
-2. War der gespeicherte Block `RACE` und `weeksToEvent > raceStartWeeks` → Zustand ungültig; Startdatum = heute, Rückfall `BUILD` falls `weeksToEvent ≤ 12`, sonst `BASE`.
-3. `0 ≤ weeksToEvent ≤ 4` → `RACE` (Startdatum bleibt, wenn schon `RACE`).
-4. `weeksToEvent < 0` → `BASE` („Event vorbei“, Startdatum heute).
-5. `weeksToEvent > planStartWeeks` → `BASE` („freie Vorphase“).
-6. Sonst: Welle = 1, wenn `weeksToEvent > 20`; Welle 2 bleibt Welle 2; bei `weeksToEvent ≤ 8` wird Welle 1 auf 0 gesetzt. Block = Vorblock, sonst `BUILD` (wenn `≤ raceStartWeeks`) oder `BASE`.
-7. `weeksToEvent ≤ raceStartWeeks + 6` und Block `BASE` → erzwungen `BUILD` (HM: ab 16 Wochen).
-8. `weeksToEvent ≤ raceStartWeeks` und Block ≠ `RACE` → `RACE`.
-9. Ist die Mindestdauer des Blocks noch nicht erreicht → bleibt. Sonst Wechsel zu `nextSuggestedBlock`: `BASE→BUILD`, `BUILD→RACE` (wenn `weeksToEvent ≤ raceStartWeeks`, sonst `BASE`), alles andere → `BASE`. Wechselt der Block dabei zurück auf `BASE`, während Welle 1 aktiv ist, wird daraus Welle 2.
-
-`weeksToEvent`-Plausibilitätsprüfung (`computeWeeksToEvent`, 125) berechnet im Fehlerfall exakt dieselbe Zahl neu und ändert nichts **[P19]**. Der Block wird nur vom Sync (`sync.js`) fortgeschrieben und in KV gespeichert; manuelle Overrides (`applyManualBlock*`) setzen Block bzw. Startdatum fest.
-
-### 3.3 Zielrennen und Plan-Raster (`goal-race.js`, `computeGoalRaceInfo` 144)
-
-Das Raster wird **rein datumsbasiert** aus dem Renntag zurückgerechnet:
-
-```
-raceBlockWeeks = Race + Taper
-planStart  = Renntag − (Base + Build + raceBlockWeeks) Wochen
-buildStart = Renntag − (Build + raceBlockWeeks) Wochen
-raceStart  = Renntag − raceBlockWeeks Wochen
-empfohlen: Renntag vorbei → RESET; ≥ raceStart → RACE; ≥ buildStart → BUILD; ≥ planStart → BASE; sonst null (freie Vorphase)
-```
-
-HM: Plan ab 30, BUILD ab 18, RACE ab 10 Wochen vor dem Rennen. Das Raster weicht systembedingt vom Zustandsautomaten aus 3.2 ab **[P4]**.
-
-**Ziel aus dem Kalender** (`deriveAutoGoalFromRaces`, 50): nächster A-Rennen-Eintrag ab heute; Zielzeit = `time_target`, sonst `moving_time` des Eintrags (Sekunden, > 0). Hat der Eintrag keine Zielzeit, wird eine manuell gesetzte (`PUT /goal`) **nur dann** übernommen, wenn sie dasselbe Datum hat.
-
-**A-Rennen-Erkennung** (`event-utils.js`): Kategorie ∈ {`RACE_A`, `A_RACE`, `A-RACE`, `RACE A`, `A`} oder kompakt `RACEA`/`ARACE`; alternativ ein Prioritätsfeld = „A“ **und** Typ enthält „RACE“.
-
-**Prognose gegen Ziel** (in `computeGoalRaceInfo`): `predictedSecs` aus 2.11 für die Zieldistanz bei aktuellem VDOT; `gapSecs = predictedSecs − targetSecs`; `faster = gapSecs < 0`.
-
-**Triathlon** (`block-phase.js:50`, `parseTriathlonEvent`): Format aus Name+Typ+Beschreibung per Regex, **erster Treffer** in der Reihenfolge Sprint, Olympisch, Mittel, Lang; Standard Olympisch **[P10]**.
-
-| Format | Schwimmen | Rad | Lauf | Lauf-Distanz für Blocklänge |
-|---|---|---|---|---|
-| Sprint | 0,75 km | 20 km | 5 km | 5k |
-| Olympisch | 1,5 | 40 | 10 | 10k |
-| Mittel | 1,9 | 90 | 21,0975 | HM |
-| Lang | 3,8 | 180 | 42,195 | M |
+| Sprint | `sprint` | 0,75 km | 20 km | 5 km | 5k |
+| Olympisch | `olymp`, `kurzdistanz`, `standard` | 1,5 | 40 | 10 | 10k |
+| Mittel | `mittel`, `70.3`, `half iron`, `halb iron` | 1,9 | 90 | 21,0975 | HM |
+| Lang | `lang` oder `langdistanz` als ganzes Wort, `ironman`, `140.6`, `full iron` | 3,8 | 180 | 42,195 | M |
 
 Zeitziele aus der Beschreibung: Wort `lauf|run`, `schwimm|swim`, `rad|bike` direkt gefolgt von `m:ss` oder `h:mm:ss`; zwei Teile werden als **Minuten:Sekunden** gelesen, drei als Stunden:Minuten:Sekunden. Watt: `rad|bike … <2–3 Ziffern> w|watt`.
 
-### 3.4 Long-Run-Ziel (`long-run-plan.js`)
+### 3.3 Zielrennen (`goal-race.js`, `deriveAutoGoalFromRaces`, 22)
 
-**Spitzenlauf** (`getPeakLongRunKm`, 74), `D` = Renndistanz in km:
+Ziel ist das nächste **A-Rennen** im Intervals-Kalender ab heute, bis 400 Tage voraus. Zielzeit = `time_target`, sonst `moving_time` des Eintrags (Sekunden, > 0). Beim Triathlon ist `distance` die Lauf-Distanz des Formats, die Zielzeit die Gesamtzeit. Ohne Eintrag gibt es kein Ziel (`null`).
 
-| Bereich | generisch |
-|---|---|
-| `D > 35` | `min(32, 0,75·D)` |
-| `18 ≤ D ≤ 25` | `min(20, 0,90·D)` |
-| `8 ≤ D ≤ 12` | `min(16, 1,5·D)` |
-| `D < 8` | `min(12, 2,2·D)` |
-| dazwischen | `D < 18` → 10-km-Regel, sonst HM-Regel |
+**A-Rennen-Erkennung** (`event-utils.js`, `isARaceEvent`): Kategorie ∈ {`RACE_A`, `A_RACE`, `A-RACE`, `RACE A`, `A`} oder kompakt `RACEA`/`ARACE`; alternativ ein Prioritätsfeld = „A“ **und** Typ enthält „RACE“. **B-Rennen** (`isBRaceEvent`): Kategorie `B`, `RACE_B` o. ä.
 
-Ist der längste Lauf der letzten 28 Tage **länger** als der generische Wert, gilt `längster + 2 km`. Alles wird auf 0,5 km gerundet.
-Ergebnisse (ausgeführt, ohne bzw. mit 20 km Ausgangslauf): 5 km → 11 / 22; 10 km → 15 / 22; HM → 19 / 22; Marathon → 31,5 / 31,5 (bei 20 km Ausgangslauf bleibt es beim Marathon bei 31,5, weil 20 nicht über dem generischen Wert liegt).
+**Kein Ziel ohne A-Rennen** (`buildDashboard`): Steht kein A-Rennen im Kalender, ist das Ziel leer (`source: "none"`, `none: true`): keine Renn-Kacheln, Zielpaces oder Prognosen. Eine Zielzeit gibt es nur aus dem Kalendereintrag. Das „letzte Rennen“ für die Erholungsphase (`findRecentRace`) kommt ebenfalls nur aus dem Kalender (A-Rennen der letzten 30 Tage). Die frühere feste Vorgabe Landsberg 03.10.2026 ist seit #1291 entfernt.
 
-**Wochentabelle** (`buildLongRunProgressionWeeks`, 155):
-
-```
-Basis-Montag        = Montag der aktuellen Woche
-Wochen bis Rennen   = floor(weeksBetween(heute, Rennen))
-Aufbauwochen        = Wochen bis Rennen − Taperwochen    (≤ 0 → Basis halten)
-Fortschrittswochen  = Aufbauwochen − floor(Aufbauwochen / 4)
-Steigerung/Woche    = max(0, Spitze − Basis) / max(1, Fortschrittswochen)
-                      (auf 2,5 km/Woche gedeckelt → timelineAmbitious = true)
-Woche w = 1…Aufbau: w durch 4 teilbar → round½(Vorwoche · 0,75)
-                    sonst            → round½(min(Spitze, Vorwoche + Steigerung))
-Taperwoche k: round½(Spitze · Anteil[k])   Anteile: M [0,65; 0,45; 0,25], HM [0,6; 0,35], 5k/10k [0,5]
-Taperwochen: M 3, HM 2, 10k 1, 5k 1
-```
-
-**Wichtig: Der Plan erreicht die Spitze nicht [P1].** Nach jeder Rücknahmewoche geht es von dem **reduzierten** Wert aus weiter. Ausgeführt mit Basis 10 km, HM, 12 Wochen bis zum Rennen (Spitze 19, 10 Aufbau- und 2 Taperwochen): Aufbau `11, 12, 13, 10, 11, 12, 13, 10, 11, 12`, Taper `11,5` und `6,5`. Der höchste Planwert ist 13 km statt 19 km. Beim Marathon (Basis 16, Spitze 31,5, 20 Wochen bis zum Rennen, 17 Aufbauwochen) steigt der Aufbau bis 19 km (Woche 3), endet aber bei 12,5 km; die erste Taperwoche springt dann auf `0,65·31,5 = 20,5` km und ist damit länger als jede Aufbauwoche nach der dritten.
-
-Die Tabelle wird nur neu gebaut, wenn sich Renndatum oder Distanz gegenüber dem gespeicherten Plan geändert haben (`maybeRebuildLongRunPlanOnGoalChange`, 207). „Ist“-Wert = längster Lauf der Woche (`longestRunKmInActivities`/`…InRunRecords`), „Soll“ = Tabelleneintrag, der den Tag enthält (Montag bis Sonntag).
+Keine Blockphasen mehr: Den Trainingsblock gibt der Saison-Eintrag „Block …“ im Kalender vor (7.9), nicht ein Rechenmodell aus dem Renndatum.
 
 ---
 
-## 4. Formcheck / Erholungs-Ampel (`src/form-analysis.js`)
+## 4. Formcheck (entfallen)
 
-Quelle: `buildRecentFormAnalysis` (1222), Standardfenster **28 Tage** (`newest = heute`, `oldest = heute − 27`). Die tägliche Notiz (`recovery-note.js`) und `GET /api/analysis/recent-form` nutzen dieselbe Berechnung.
+`form-analysis.js` mit Flags, Schweregraden und Erholungs-Ampel (grün/gelb/rot) gibt es nicht mehr. Der Worker liefert nur Erholungswerte gegen die eigene Basis (6.2). Was „gelb“ oder „rot“ ist, legt der Coach-Skill fest (Ruhepuls, HRV, Schlaf-Score gegen die Basis).
 
-### 4.1 Trends (`computeTrend`, 725)
+## 5. Wochenvergleich (entfallen)
 
-Für Ruhepuls, HRV und Schlafstunden: Punkte `(Tag-Index, Wert)`, nur gültige Werte; mindestens **4** Punkte, sonst `null`.
-
-```
-Steigung (bpm/Tag)  = Σ(x−x̄)(y−ȳ) / Σ(x−x̄)²              (lineare Regression)
-half               = max(1, floor(n/2))
-Δ                  = Ø(letzte half gültige Punkte) − Ø(erste half gültige Punkte)
-```
-
-Die Hälften beziehen sich auf die Reihenfolge der **gültigen** Punkte, nicht auf Kalenderhälften. Bei ungerader Zahl bleibt der mittlere Punkt außen vor.
-
-### 4.2 Wochenblöcke (`buildWeekBuckets`, 637; `buildWeekSummary`, 663)
-
-7-Tage-Blöcke rückwärts ab `newest`; ein Rest (`Tage mod 7`) bildet den ältesten, kürzeren Block. Je Block:
-
-- `distanceKm`, `movingTimeMin`, `runSessionCount`: nur Läufe (`isRun`); Rad analog separat (`ride…`).
-- `loadSum`: Summe von `activityLoad` **aller Sportarten**.
-- **Easy-Pace:** nur Läufe, die kein Rennen/Laufband/Intervall/`#novdot` sind **und** `0,60 ≤ avgHr/maxHr ≤ 0,78`; Pace = Σ Zeit / Σ Distanz · 1000 (Gesamtgewichtung).
-- **Monotonie/Strain** (`computeMonotonyStrain`, 651): `tägliche Last` je Tag des Blocks (Ruhetage = 0).
-
-```
-Monotonie = Mittelwert / Standardabweichung           (Standardabweichung der Grundgesamtheit, Teiler n)
-Strain    = Wochenlast · Monotonie     mit Wochenlast = Mittelwert · Tageszahl
-```
-
-Es braucht mindestens 3 Trainingstage im Block und `Standardabweichung > 0`, sonst `null`.
-
-### 4.3 Flags: Schwelle, Deckel, Schweregrad
-
-Alle Detektoren liefern `triggered` (ja/nein) und `severity` (0–1). Zwei Hilfsfunktionen (798/805):
-
-```
-severity(v, schwelle, deckel)      = 0 wenn v ≤ schwelle, sonst min(1, (v − schwelle)/(deckel − schwelle))
-severityBelow(v, schwelle, deckel) = 0 wenn v ≥ schwelle, sonst min(1, (schwelle − v)/(schwelle − deckel))
-```
-
-| Flag | Kategorie | Auslöser (`triggered`) | Schweregrad bei Deckel |
-|---|---|---|---|
-| `sleep_debt` (906) | Erholung | ≥ 3 Nächte mit Daten in den letzten 7 Tagen **und** (Ø Schlaf < 6,5 h **oder** ≥ 2 Nächte < 5 h) | Ø: 4,5 h → 1; Kurznächte: 4 → 1; Maximum beider |
-| `resting_hr_rising` (894) | Erholung | Regressionssteigung > 0,15 bpm/Tag | 0,4 bpm/Tag → 1 |
-| `hrv_drop` (940) | Erholung | `Δ` der HRV (4.1) < −3 **oder** 3-Tage-Ø / Fenster-Ø < 0,70 | Δ −8 → 1; Verhältnis 0,5 → 1; Maximum |
-| `acute_overload` (978) | Last | ATL/CTL des letzten Tags mit beiden Werten und CTL > 0 **über 1,3** | 1,8 → 1 |
-| `load_spike` (857) | Last | letzte Woche > 80 % über Vorwoche (km) **und** Vorwoche < vorvorige Woche; ≥ 3 Wochen, beide Referenzwochen > 0 km | +150 % → 1 |
-| `load_spike_immediate` (877) | Last | letzte Woche > 1,5 × Ø der letzten 4 Wochen (inkl. der letzten, km); ≥ 4 Wochen | 2,2 × → 1 |
-| `high_monotony` (1025) | Last | Monotonie (rollierend letzte 7 Kalendertage) > 2,0 **und** Wochenlast/(CTL·7) > 0,9, mit letztem gültigen CTL > 0 | Last-Verhältnis 1,3 → 1 |
-
-Details zur HRV (`detectHrvDrop`): Fenster = alle `days` Tage; mindestens 4 gültige Werte; „rolling“ = **letzte 3 gültige** Werte (nicht 3 Kalendertage), Verhältnis = Ø(3) / Ø(alle inkl. dieser 3). Schwellen sind **absolute** HRV-Einheiten, passen also nur für das gleiche Messverfahren **[P11]**.
-
-Die Last-Flags `load_spike*` beziehen sich auf **Lauf-Kilometer**, nicht auf Load. `acute_overload` und `high_monotony` nutzen Intervals-Load/ATL/CTL.
-
-### 4.4 Gesamtbewertung (`assessRecoveryStatus`, 1131)
-
-```
-recoveryScore = max(Schweregrade von sleep_debt, resting_hr_rising, hrv_drop)
-loadScore     = max(Schweregrade von acute_overload, load_spike, load_spike_immediate, high_monotony)
-bonus         = 0,3 wenn recoveryScore > 0,3 UND loadScore > 0,3, sonst 0
-combined      = 0,6·recoveryScore + 0,6·loadScore + bonus
-Status        = grün (combined < 0,3) | gelb (< 0,7) | rot (≥ 0,7)
-```
-
-Folgerungen, die man prüfen sollte **[P17]**:
-
-- Eine einzelne Kategorie erreicht höchstens 0,6, ist also höchstens **gelb**. **Rot setzt beide Kategorien voraus**, und zwar `recoveryScore + loadScore ≥ 0,667` (bei beiden > 0,3).
-- Schon **ein** ausgelöstes Flag mit Schweregrad ≥ 0,5 macht den Status gelb (0,6·0,5 = 0,3 ist nicht `< 0,3`).
-- Maximalwert insgesamt: 0,6 + 0,6 + 0,3 = 1,5.
-
-### 4.5 Erholungskontext (`classifyRecoveryContext`, 1051)
-
-Drei Marker (nur wenn der jeweilige Trend vorhanden ist): Ruhepuls-Δ ≤ +0,5 bpm, HRV-Δ ≥ −1, Schlaf-Δ ≥ −0,2 h gelten als „stabil“. Anzahl nicht stabiler Marker: 0 → „unauffällig“, ≥ 2 → „auffällig“, sonst „gemischt“; **keine** Marker → „gemischt“. Die Notiz „Belastungssprung erkannt, aber Erholungswerte unauffällig …“ erscheint nur bei einem Last-Flag und Kontext „unauffällig“. Der Kontext verändert Score und Status nicht.
-
-### 4.6 Textbausteine
-
-`severityQualifier`: Schweregrad > 0,7 → „deutlich“, < 0,3 → „leicht“, sonst nichts. Ursache im Satz: nur Erholungs-Flags → „unzureichende Erholung“; nur Last-Flags → „zu schnell gesteigertes Volumen“; beides → „Zusammenspiel“. Zielhinweis: „kombinierter Score < 0,30“.
-
-### 4.7 Ernährungsübersicht im Formcheck (`buildNutritionSummary`, 565)
-
-- Nur Tage mit `Calories > 0`. Trainingstag = Tag mit mindestens einer Aktivität mit `moving_time ≥ 1200 s`.
-- Tagesbilanz = `Calories − CalorieGoal`; Mittelwerte gerundet.
-- Gewicht = **letztes** im Fenster geloggtes Gewicht. `Protein g/kg = Ø Protein / Gewicht`; `Kohlenhydrate g/kg (Trainingstage) = Ø Carbs an Trainingstagen / Gewicht`.
-- Hinweise: Protein < 1,4 g/kg; KH an Trainingstagen < 4 g/kg (Kommentar nennt 5–8 als Richtwert); letzte Woche Ø-Bilanz > +150 kcal („über Budget“) oder < −600 kcal („großes Defizit“); Ø-Carbs Trainingstage − Ruhetage < 20 g („keine Periodisierung“).
-
----
-
-## 5. Wochenvergleich (`src/weekly-progress.js`)
-
-### 5.1 Zeitraum
-
-`lastCompletedWeek(heute)`: letzter **abgeschlossener** Montag–Sonntag vor „heute“ (sonntags ist es die Vorwoche, nicht die laufende). Vergleich mit der Woche davor. Aktivitäten werden ab `Vorwoche − 180 Tage` geladen (nur für den Max-Puls).
-
-### 5.2 Kennzahlen je Woche (`buildWeekSnapshot`, 94)
-
-- Summen über **alle** Aktivitäten: `loadSum` (gerundet), `movingTimeMin`, `distanceKm`, `sessionCount`, `runSessionCount`. `distanceKm` addiert Schwimm-, Rad- und Laufkilometer **zusammen** und steht im Bericht trotzdem neben „Umfang“ **[P21]**.
-- `VDOT` = Fenster-Schätzung (2.5) über die 7 Tage, **ohne** Korrekturfaktor **[P5]**.
-- `CTL`, `ATL`, `rampRate` = Intervals-Wellness vom Wochenende; wenn dort kein CTL steht, bis zu 3 Tage zurück. `TSB = CTL − ATL` (1 Nachkommastelle).
-
-### 5.3 Vergleich (`compareSnapshots`, 113)
-
-`d… = round1(aktuell − Vorwoche)`; `pctLoad = round1((aktuell − vor)/|vor|·100)` (nur wenn `vor ≠ 0`).
-
-### 5.4 Urteil (`buildVerdict`, 143)
-
-```
-Signal 1: dVDOT  ≥ +0,3 → +1 | ≤ −0,3 → −1 | sonst 0
-Signal 2: dCTL   ≥ +1   → +1 | ≤ −1   → −1 | sonst 0
-Score = Summe; ohne beide Signale → UNKLAR; Score > 0 → BESSER; < 0 → SCHLECHTER; = 0 → STABIL
-```
-
-Zusätzliche Texte (ändern das Urteil nicht):
-
-| Größe | Aussage |
-|---|---|
-| ΔATL | > +5: „deutlich mehr Reize“; < −5: „Müdigkeit sinkt“ |
-| TSB | < −20 „stark negativ“; < −5 „moderat negativ“; ≤ +10 „ausgeglichen“; sonst „deutlich positiv“ **[P2]** |
-| ΔTSB | ≥ +5 „frischer“; ≤ −5 „akkumuliert Müdigkeit“ |
-| Ramp Rate | > 8/Woche „erhöhtes Verletzungsrisiko“ |
-| Einheiten, Load/Einheit | Load je Einheit = `loadSum/sessionCount`; Meldung ab ±15 % |
-
-### 5.5 Empfehlung (`buildRecommendation`, 262)
-
-`highFatigue = TSB < −20 oder rampRate > 8`. Dann je Urteil: BESSER → mit `highFatigue` „Gas rausnehmen“, sonst „+5–10 % Umfang“; SCHLECHTER → mit `highFatigue` „−20 bis −30 %“, sonst „Umfang leicht anheben“; STABIL → „gezielter Impuls“; UNKLAR → „mehr Daten“. Die Zahlen sind Textvorgaben, keine Berechnung.
-
-### 5.6 Prognose und Paces im Bericht
-
-Bericht verwendet `realVdot ?? Wochen-VDOT` für Paces (2.10) und Rennzeiten (2.11); die Vorwoche zeigt Rennzeiten aus ihrem Wochen-VDOT. Zeitdifferenzen: `c.seconds − p.seconds`, formatiert als `±m:ss`.
+`weekly-progress.js` mit Urteil (besser/schlechter), Empfehlung und TSB-Texten gibt es nicht mehr. An seine Stelle tritt die Montagsbilanz als Faktenliste (6.4); das Urteil fällt der Coach.
 
 ---
 
@@ -668,7 +378,7 @@ Zone (wie Intervals.icu, in % der CTL):
 ACWR  = ATL / CTL                (nur noch fürs Widget)
 ```
 
-Die Zonen hängen an der Fitness: Bei CTL 20 ist TSB −10 schon −50 %, bei CTL 40 nur −25 %. Feste Punktgrenzen (früher −10/−25) haben jede Belastungswoche als „belastet“ markiert, obwohl genau das der Trainingsbereich ist. Der ACWR erscheint auf der Seite nicht mehr: Er zeigt dieselbe Information wie der TSB (ATL gegen CTL) und hat bei jeder geplanten Entlastungswoche „zu niedrig“ gemeldet; das Steigerungsrisiko deckt die Leitplanke Ramp Rate (7.9) ab. `thresholds.tsb` (alte Punktgrenzen) bleibt nur für das Widget.
+Die Zonen hängen an der Fitness: Bei CTL 20 ist TSB −10 schon −50 %, bei CTL 40 nur −25 %. Feste Punktgrenzen (früher −10/−25) haben jede Belastungswoche als „belastet“ markiert, obwohl genau das der Trainingsbereich ist. Der ACWR erscheint auf der Seite nicht mehr: Er zeigt dieselbe Information wie der TSB (ATL gegen CTL) und hat bei jeder geplanten Entlastungswoche „zu niedrig“ gemeldet; das Steigerungsrisiko deckt die Leitplanke Ramp Rate (7.9) ab. Die alten Punktgrenzen sind seit #1291 entfernt. Das Widget bekommt dieselben %-Zonen (`tsbZones`, `tsbPct`, `tsbZone`), das Scriptable-Widget zeigt den TSB mit Prozentwert.
 
 ### 6.2 Erholungswerte (`computeRecovery`, `computeBody`, `computeDrift`)
 
@@ -684,7 +394,7 @@ Gefühlswerte (`sleepQuality`, `fatigue`, `soreness`, `mood`, `motivation`; 1 = 
 
 ### 6.3 Heute-Band
 
-Oben die Aussage des Coaches mit seinem Urteil (`go`: Hart erlaubt / Locker geplant (neutral, keine Warnfarbe) / Frei) und seinen Blockern (beides aus `save_coach`), dazu seine Rückfrage (ohne Aussage von heute: „Heute noch keine Coach-Auswertung“), daneben die geplante bzw. letzte Einheit. Unter der Karte die Idee der Woche und der **Wochenvorschlag** (`week_plan`, montags per `save_coach`, sichtbar bis Sonntag derselben Woche): Zeit und TSS-Rahmen je Sportart (Untergrenze 80 % der Obergrenze des Coaches, Schwimmen nur Zeit), darunter seine Tagesverteilung klein als „Vorschlag“. Kein Abhaken, kein Abgleich mit den Einheiten, keine Ampel; `{}` blendet die Karte aus. Der Kasten **Was du entscheiden musst** (`decisions` aus `save_coach`, aus dem Monats-Review) steht am Anfang des Bereichs Erkenntnisse: höchstens 5 Punkte nach Frist, je mit Empfehlung, Grund, Alternativen, Frist und „ohne Antwort“; er bleibt über die täglichen Updates stehen, `[]` blendet ihn aus, das Dashboard rechnet nichts. Gerbert antwortet je Punkt mit Ja, Nein, einer Alternative oder eigenem Text (`POST /api/coach/decision`, Feld `answer`/`answeredAt` am Punkt); der Coach liest die Antwort per `get_coach` und nimmt den Punkt beim nächsten `save_coach` aus der Liste (Punkte mit gleichem Titel behalten ihre Antwort). Die Antwort auf seine Rückfrage bleibt stehen, solange er dieselbe Frage erneut speichert. Unter den Erkenntnis-Karten steht die Karte **Wissensbasis** (`dashboard:wissensbasis`, `save_wissensbasis`, in `get_coach` unter `wissensbasis`): Stichpunkte des Coaches aus der Literatur in 1–12 einklappbaren Abschnitten (nur der erste offen), je Punkt Text, Badge „Evidenz: stark/mittel/schwach/Praxis“, Badge „passt: hoch/mittel/gering/unklar“ (nur Text, keine Ampelfarben), optional Quelle und „neu“. **Abgleich (alle Felder optional):** `consensus` (`einig`/`erklaert`/`umstritten`/`eine_seite`, Badge „Studienlage“ plus „geprüft TT.MM.“ aus `counterCheckedAt` (YYYY-MM-DD) bzw. „nicht gegengeprüft“), `practice` („Du“, max. 160), `match` (`passt`/`luecke`/`bewusst_anders`/`nicht_pruefbar`), `atYou` (`nicht_getestet`/`laeuft`/`gewirkt`/`nicht_gewirkt`/`offen`), `next` („Nächster Schritt“, max. 160, Vorschlag) und `link` (`{type: insight|experiment|targets, id (max 60)}`; bei `insight` zeigt die Karte den Titel aus den Erkenntnissen, sonst die id). Jeder Punkt ist eine Gegenüberstellung: links „Studie sagt“ (Text, Badges Evidenz/passt/Studienlage mit „geprüft TT.MM.“ bzw. „nicht gegengeprüft“, „neu“, Quelle), rechts „Du machst“ (`practice`, Badges „Abgleich: …“ und „Bei dir: …“), darunter eine Fußzeile mit „Nächster Schritt“ und dem Verweis (`link`: bei `insight` der Titel der Erkenntnis, sonst die id; bei Tests „zum Test: …“). Auf dem Handy liegen die beiden Hälften untereinander. Oben steht das Kreislauf-Band Studie → Abgleich → Selbstversuch → Ergebnis mit den Zählern Studien, Lücken, Tests laufen, Ergebnisse; Tippen filtert die Punkte, nochmal Tippen hebt auf (löst den früheren Umschalter „nur Lücken und Tests“ ab). Darunter eine Zeile mit gewirkt, nicht gewirkt und umstritten. Punkte mit Lücke oder laufendem Test haben einen Rahmen in der Akzentfarbe; keine Ampelfarben, alle Werte stehen als Text. Ungültiges wird mit Feldnamen abgelehnt, alte Stände ohne diese Felder bleiben gültig. Darunter „Noch offen“ (`open`), oben „Stand“ und ggf. „Studien-Ordner geprüft“. Ohne gespeicherten Stand ist die Karte ausgeblendet; ein älterer `fetchedAt` überschreibt nie einen neueren; das Dashboard bewertet nichts. Der Studien-Check der Woche (`save_studie`) bleibt davon getrennt. Darunter als Fakten: Schlaf-Score (sonst Schlafdauer), **Laufen 7 Tage** (Laufminuten der letzten 7 Tage gegen den Wochenschnitt der 4 Wochen davor, als Zahl), Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest (`nextTest`: erster geplanter Test ab heute) bzw. Rennen. Der TSB steht unter der Formkurve.
+Oben die Aussage des Coaches mit seinem Urteil (`go`: Hart erlaubt / Locker geplant (neutral, keine Warnfarbe) / Frei) und seinen Blockern (beides aus `save_coach`), dazu seine Rückfrage (ohne Aussage von heute: „Heute noch keine Coach-Auswertung“), daneben die geplante bzw. letzte Einheit. Unter der Karte die Idee der Woche und der **Wochenvorschlag** (`week_plan`, montags per `save_coach`, sichtbar bis Sonntag derselben Woche): Zeit und TSS-Rahmen je Sportart (Untergrenze 80 % der Obergrenze des Coaches, Schwimmen nur Zeit), darunter seine Tagesverteilung klein als „Vorschlag“. Kein Abhaken, kein Abgleich mit den Einheiten, keine Ampel; `{}` blendet die Karte aus. Der Kasten **Was du entscheiden musst** (`save_decisions`, eigener Speicher `dashboard:decisions`, A2.4) steht am Anfang des Bereichs Erkenntnisse: höchstens 5 Punkte nach Frist, je mit Empfehlung, Grund, Alternativen, Frist und „ohne Antwort“; er bleibt über die täglichen Updates stehen, `[]` blendet ihn aus, das Dashboard rechnet nichts. Gerbert antwortet je Punkt mit Ja, Nein, einer Alternative oder eigenem Text (`POST /api/coach/decision`, Feld `answer`/`answeredAt` am Punkt); der Coach liest die Antwort per `get_coach` und nimmt den Punkt beim nächsten `save_decisions` aus der Liste (Punkte mit gleichem Titel behalten ihre Antwort). Die Antwort auf seine Rückfrage bleibt stehen, solange er dieselbe Frage erneut speichert. Unter den Erkenntnis-Karten steht die Karte **Wissensbasis** (`dashboard:wissensbasis`, `save_wissensbasis`, in `get_coach` unter `wissensbasis`): Stichpunkte des Coaches aus der Literatur in 1–12 einklappbaren Abschnitten (nur der erste offen), je Punkt Text, Badge „Evidenz: stark/mittel/schwach/Praxis“, Badge „passt: hoch/mittel/gering/unklar“ (nur Text, keine Ampelfarben), optional Quelle und „neu“. **Abgleich (alle Felder optional):** `consensus` (`einig`/`erklaert`/`umstritten`/`eine_seite`, Badge „Studienlage“ plus „geprüft TT.MM.“ aus `counterCheckedAt` (YYYY-MM-DD) bzw. „nicht gegengeprüft“), `practice` („Du“, max. 160), `match` (`passt`/`luecke`/`bewusst_anders`/`nicht_pruefbar`), `atYou` (`nicht_getestet`/`laeuft`/`gewirkt`/`nicht_gewirkt`/`offen`), `next` („Nächster Schritt“, max. 160, Vorschlag) und `link` (`{type: insight|experiment|targets, id (max 60)}`; bei `insight` zeigt die Karte den Titel aus den Erkenntnissen, sonst die id). Jeder Punkt ist eine Gegenüberstellung: links „Studie sagt“ (Text, Badges Evidenz/passt/Studienlage mit „geprüft TT.MM.“ bzw. „nicht gegengeprüft“, „neu“, Quelle), rechts „Du machst“ (`practice`, Badges „Abgleich: …“ und „Bei dir: …“), darunter eine Fußzeile mit „Nächster Schritt“ und dem Verweis (`link`: bei `insight` der Titel der Erkenntnis, sonst die id; bei Tests „zum Test: …“). Auf dem Handy liegen die beiden Hälften untereinander. Oben steht das Kreislauf-Band Studie → Abgleich → Selbstversuch → Ergebnis mit den Zählern Studien, Lücken, Tests laufen, Ergebnisse; Tippen filtert die Punkte, nochmal Tippen hebt auf (löst den früheren Umschalter „nur Lücken und Tests“ ab). Darunter eine Zeile mit gewirkt, nicht gewirkt und umstritten. Punkte mit Lücke oder laufendem Test haben einen Rahmen in der Akzentfarbe; keine Ampelfarben, alle Werte stehen als Text. Ungültiges wird mit Feldnamen abgelehnt, alte Stände ohne diese Felder bleiben gültig. Darunter „Noch offen“ (`open`), oben „Stand“ und ggf. „Studien-Ordner geprüft“. Ohne gespeicherten Stand ist die Karte ausgeblendet; ein älterer `fetchedAt` überschreibt nie einen neueren; das Dashboard bewertet nichts. Der Studien-Check der Woche (`save_studie`) bleibt davon getrennt. Darunter als Fakten: Schlaf-Score (sonst Schlafdauer), **Laufen 7 Tage** (Laufminuten der letzten 7 Tage gegen den Wochenschnitt der 4 Wochen davor, als Zahl), Minuten über dem HF-Deckel in der laufenden Woche (6.5), nächster Blocktest (`nextTest`: erster geplanter Test ab heute) bzw. Rennen. Der TSB steht unter der Formkurve.
 
 ### 6.3a Tests (`src/tests-snapshot.js`, `save_test`)
 
@@ -769,32 +479,40 @@ Gehpausen bleiben drin, Stehen und Auto-Pausen nicht. Die Karte „Grundlagenlä
 - `HISTORY_DAYS = 56`; Wochen von dem Montag an, der `heute − 55` enthält, bis heute. `complete = (Montag + 6) < heute`.
 - Je Woche und Sportart: `count`, `minutes = moving_time/60` (gerundet), `km`, `load`; Laufumfang `km` zählt nur Läufe; dazu `runMin` (Bewegungszeit der Läufe) und `plannedRunMin` bzw. je Sportart `plannedMin` aus `moving_time` der geplanten Workouts. Dashboard und Widget zeigen den Umfang in Stunden (`runMin`, `minutes`), km nur noch bei Pace, Renndistanzen und langen Läufen.
 - Plan: nur Kalender-Einträge der Kategorie `WORKOUT`. `plannedKm = Σ (distance_target ?? distance)/1000`, `plannedLoad = Σ (icu_training_load ?? load_target)`.
-- Wochenziele des Coaches (`isWeekTarget`): Kalender-Einträge der Kategorie `TARGET` (in Intervals „Weekly“, jeden Montag je Sportart), außer einem Trainingsblock („Block …“). Je Woche und Sportart `targetMin = Σ time_target/60` (das **Ziel**), `targetLoad = Σ load_target` (die **Obergrenze**) und `targetLoadMin` (die **Untergrenze** des TSS-Korridors, `targetLoadFloor`): je Eintrag `TARGET_LOAD_FLOOR_SHARE` = 80 % von `load_target`, oder eine eigene Untergrenze aus der Beschreibung („min 220“, „mindestens 220“, „Untergrenze 220“; höchstens die Obergrenze; ohne `load_target` keine), dazu die Summen je Woche. Ohne Eintrag `null`. Gibt es Wochenziele, ersetzen sie überall das TSS-Soll aus den geplanten Workouts: Dashboard (Wochenkopf, Tabelle, Laufumfang-Marker), Widget (`week.targets` mit `lo`/`under` für die Untergrenze, `rings.tss` mit der Untergrenze als viertem Element, Training-Ansicht `targetMin`/`targetLoad`/`targetLoadMin`, Detail `tssWeeks[].goalMin`) und Uhr (noch ohne Untergrenze) (`rz` Minuten, `rt` TSS, je `[Sportart, erledigt, Vorgabe]` für Rad, Lauf, Schwimmen). Formprognose (`targetDailyLoad`): Wochensumme = Mitte der TSS-Korridore (`(targetLoadMin + targetLoad) / 2`, ohne Untergrenze die Obergrenze) plus Sportarten mit Zeitziel ohne Grenze (Zielminuten × TSS je Minute der Vorwochen); laufende Woche: Rest nach dem Erledigten gleichmäßig auf die Tage nach heute, danach dieselbe Woche je Tag /7. „Über der Obergrenze“ heißt `load > targetLoad` (rot), „unter der Untergrenze“ `load < targetLoadMin` (gedämpft, keine Wertung); im Wochenrückblick (`trainingFindings`) eine Warnung, wenn dabei das Zeitziel zu mindestens 90 % erreicht ist (zu intensiv gefüllt), sonst ein Hinweis; unter 75 % des Zeitziels ein Hinweis.
+- Wochenziele des Coaches (`isWeekTarget`): Kalender-Einträge der Kategorie `TARGET` (in Intervals „Weekly“, jeden Montag je Sportart), außer einem Trainingsblock („Block …“). Je Woche und Sportart `targetMin = Σ time_target/60` (das **Ziel**), `targetLoad = Σ load_target` (die **Obergrenze**) und `targetLoadMin` (die **Untergrenze** des TSS-Korridors, `targetLoadFloor`): je Eintrag `TARGET_LOAD_FLOOR_SHARE` = 80 % von `load_target`, oder eine eigene Untergrenze aus der Beschreibung („min 220“, „mindestens 220“, „Untergrenze 220“; höchstens die Obergrenze; ohne `load_target` keine), dazu die Summen je Woche. Ohne Eintrag `null`. Gibt es Wochenziele, ersetzen sie überall das TSS-Soll aus den geplanten Workouts: Dashboard (Wochenkopf, Tabelle, Laufumfang-Marker), Widget (`week.targets` mit `lo`/`under` für die Untergrenze, `rings.tss` mit der Untergrenze als viertem Element, Training-Ansicht `targetMin`/`targetLoad`/`targetLoadMin`, Detail `tssWeeks[].goalMin`) und Uhr (noch ohne Untergrenze) (`rz` Minuten, `rt` TSS, je `[Sportart, erledigt, Vorgabe]` für Rad, Lauf, Schwimmen). Formprognose (`targetDailyLoad`): Wochensumme = Mitte der TSS-Korridore (`(targetLoadMin + targetLoad) / 2`, ohne Untergrenze die Obergrenze) plus Sportarten mit Zeitziel ohne Grenze (Zielminuten × TSS je Minute der Vorwochen); laufende Woche: Rest nach dem Erledigten gleichmäßig auf die Tage nach heute, danach dieselbe Woche je Tag /7. „Über der Obergrenze“ heißt `load > targetLoad` (rot), „unter der Untergrenze“ `load < targetLoadMin` (gedämpft, keine Wertung).
 - Tages-Heatmap: Tageslast = Σ `activityLoad`; leere Tage 0.
 
-### 7.2 Einheitenart (`classifyRun`, 78) und Pulsregel
+### 7.2 Einheitenart (`classifyRun`, 138) und Pulsregel
 
-`intensity` bei Intervall-Tag/-Text oder Name mit `tempo|tdl|mit|schwelle|wettkampfspezifisch|fartlek|strides|steigerung`; `long` bei `long run|lsr|langer lauf` oder ≥ 14 km; `base` bei `grundlagen|easy|ga1|regeneration|recovery`; sonst `unknown`. **Puls und Decoupling werden nur bei `base` und `long` ausgegeben**, bei allem anderen `null`. Decoupling eines Laufs kommt nur aus Runalyze (derselbe Tag, Distanz ± 15 %), nie von Intervals.
+Reihenfolge, der erste Treffer gewinnt:
 
-### 7.3 Longrun-Tracker (`buildFitness`, 284)
+1. `race`: `sub_type` RACE oder Rennflag von Intervals, Renneintrag im Kalender am selben Tag mit passender Distanz (± 15 %) oder Runalyze-Art „Wettkampf“ (gleicher Tag, Distanz ± 15 %). Wörter im Namen („HM Race Pace 3×3 km“) zählen nicht (seit #1291).
+2. `intensity`: Intervall-Tag oder -Text (1.1), Name mit `tempo|tdl|schwelle|wettkampfspezifisch|fartlek` oder dem großgeschriebenen Kürzel `MIT`. Steigerungen/Strides machen aus einem lockeren Lauf keine Intensitätseinheit.
+3. `long`: in Runalyze als „Langer Lauf“ eingetragen (gleicher Tag, Distanz ± 15 %).
+4. `base`: Name oder Beschreibung mit `grundlagen|easy|ga1|ga 1|regeneration|recovery`.
+5. sonst `unknown`.
+
+**Puls und Decoupling werden nur bei `base` und `long` ausgegeben**, bei allem anderen `null`. Decoupling eines Laufs kommt nur aus Runalyze (derselbe Tag, Distanz ± 15 %), nie von Intervals.
+
+### 7.3 Longrun-Tracker (`buildFitness`, `dashboard.js`, 579)
 
 Wird nur noch fürs Widget und als Rückfall berechnet: Runalyze-Läufe der Art „lang“ und Intervals-Läufe ab **15 km**; `count16` = Anzahl ≥ 16 km. Die Seite zeigt stattdessen die Grundlagenläufe ab 60 min aus den Zeitreihen (6.5). Die frühere Warnung „kein Lauf ab 16 km … Zielpace“ ist entfallen.
 
 ### 7.3a Renn-Kacheln, VDOT und Prognosen
 
-Nur mit einem kommenden A-Rennen im Kalender. Ohne Rennen ist das Ziel als `none` markiert (die eingebaute Vorgabe Landsberg 03.10.2026 ist vorbei): keine Renn-Kachel, kein Rennplan, kein VDOT mit Daniels-Paces (die E-Pace widerspricht im Grundlagenblock dem HF-Deckel), keine Prognosen.
+Nur mit einem kommenden A-Rennen im Kalender. Ohne Rennen ist das Ziel als `none` markiert (3.3): keine Renn-Kachel, kein Rennplan, kein VDOT mit Daniels-Paces (die E-Pace widerspricht im Grundlagenblock dem HF-Deckel), keine Prognosen.
 
-### 7.4 Halbmarathon-Schätzungen (`buildHmEstimates`, 316)
+### 7.4 Halbmarathon-Schätzungen (`buildHmEstimates`, 632)
 
 | Schlüssel | Berechnung |
 |---|---|
 | `runalyze` | Prognose aus Runalyze (Sekunden), unverändert |
-| `vdot` | HM-Zeit (2.11) aus dem **Runalyze-VDOT** **[P6]** |
-| `best-5`, `best-10` | VDOT aus der Bestzeit (Distanz ± 5 %) nach 2.1, davon HM-Zeit nach 2.11 |
+| `vdot` | HM-Zeit (2.3) aus dem **Runalyze-VDOT** |
+| `best-5`, `best-10` | VDOT aus der Bestzeit (offizielle Distanz, ± 5 %) nach 2.1, davon HM-Zeit nach 2.3 |
 
-Bestzeit je Distanz (`bestForDistance`, `runalyze-snapshot.js:69`): schnellstes Rennen, dessen offizielle Distanz höchstens 5 % abweicht; gerechnet wird mit der **tatsächlichen offiziellen Distanz** des Rennens.
+Bestzeit je Distanz (`bestForDistance`, `runalyze-snapshot.js`, 72): schnellstes Rennen, dessen offizielle Distanz höchstens 5 % abweicht; gerechnet wird mit der **tatsächlichen offiziellen Distanz** des Rennens.
 
-### 7.5 Rennplan-Szenarien (`raceScenarios`, `app.js:168`)
+### 7.5 Rennplan-Szenarien (`raceScenarios`, `app.js`, 503)
 
 ```
 Spanne unten (lo) = min der HM-Schätzungen „vdot“ und „best-10“
@@ -817,11 +535,11 @@ Rad:       Eintrag: Watt bzw. Zeit (Speed = km / (Sekunden/3600)), %FTP = Watt /
 Lauf:      nur wenn „Lauf …“ in der Beschreibung steht: Pace/km = Zielzeit / Lauf-km
 ```
 
-Schwellen aus den Sport-Settings (`buildThresholds`, `dashboard.js:186`): `threshold_pace` in **m/s** → Lauf `round(1000 / v)` s/km, Schwimmen `round(100 / v)` s/100 m; Feldname laut Kommentar ungeprüft. Im Frontend: Summe der drei Zeitziele plus Warnung, wenn `Summe + 120 s > Gesamtziel`; Verpflegung Rad: ein Gel alle 40 min bis 10 min vor Ende.
+Schwellen aus den Sport-Settings (`buildThresholds`, `dashboard.js`, 320): `threshold_pace` in **m/s** → Lauf `round(1000 / v)` s/km, Schwimmen `round(100 / v)` s/100 m; Feldname laut Kommentar ungeprüft. Im Frontend: Summe der drei Zeitziele plus Warnung, wenn `Summe + 120 s > Gesamtziel`; Verpflegung Rad: ein Gel alle 40 min bis 10 min vor Ende.
 
-### 7.7 Wochenstunden Kraft (`app.js:523`)
+### 7.7 Kraft im Wochenrahmen
 
-Zielmarke 60 min/Woche Kraft; „erreicht“ = abgeschlossene Wochen mit ≥ 60 min.
+Die frühere Zielmarke „60 min Kraft pro Woche“ gibt es nicht mehr. Kraft zählt in Sätzen (`strengthSets2w`, 7.7a) oder, wenn der Coach `strengthSets2w` auf 0 setzt und in der Kraft-Zeile der Intensität „N×“ schreibt („Mindestens 1× pro Woche“), in Einheiten pro Woche (`kraftSessionGoal`, `targets-snapshot.js`). Kraft zählt nie zur Ausdauerzeit.
 
 ### 7.7a Wochenziele: Ausdauerstunden und Kraftsätze (`week-totals.js`)
 
@@ -836,7 +554,7 @@ Eine Rechnung für Dashboard-Karte „Woche“, Diagramm „Ausdauerzeit pro Woc
 - Kraftsätze: Zahl vor „Sätze“ in der Beschreibung, sonst je „Wdh × kg“ in den Übungszeilen ein Satz. `strengthSets2w` = laufende Woche + Vorwoche (rollierend).
 - Serie: volle Wochen in Folge mit Ausdauer ≥ `streakThresholdPct` % des Ziels der jeweiligen Woche (beim Startwert 4,5 h) bis zur letzten vollen Woche; die laufende zählt mit, sobald sie ihre Schwelle erreicht. Nur innerhalb der 8 gezeigten Wochen. Das Feld heißt aus Kompatibilität weiter `streakWeeksAbove4_5`.
 
-### 7.8 Verlauf der HM-Prognose (`runalyze-history.js`, `app.js:348`)
+### 7.8 Verlauf der HM-Prognose (`runalyze-history.js`; Anzeige `renderHmTrend`, `app.js`, 779)
 
 Je Tag ein Eintrag (VDOT-Rechnung, Runalyze-Prognosen für 5 km, 10 km, HM; Zuordnung der Prognose zur Distanz mit ≤ 1 % Abweichung), max. 400 Einträge. Veränderung = `Prognose_jetzt − Prognose_früher` (negativ = schneller). Eine Prognose „vor 7 Tagen“ = jüngster Eintrag, der ≥ 7 Tage älter ist.
 
@@ -871,7 +589,7 @@ Der Block ist ein Saison-Eintrag im Intervals-Kalender („Block …“). Welche
 - **Kraft-Karte (Bereich Kraft, Kraft-Widget):** dasselbe Ziel aus dem Rahmen des Coaches (`strengthSets2w`): oben die Sätze der laufenden Woche plus Vorwoche, darunter jede frühere Woche mit ihrer Vorwoche (`rollSets`). Nur ohne Rahmen gilt der Blocktext, dann `EGYM_WEEKLY_GOAL_SETS`, zuletzt 60 Sätze pro Woche.
 - **Ramp Rate:** CTL am Wochenende minus CTL am Vortag des Wochenstarts, je abgeschlossener Belastungswoche. Liegt ein Wert über 5, ist die Leitplanke gerissen.
 - **Pause:** längste Lücke ohne Aktivität (alle Sportarten, EGYM-Tage zählen mit), der laufende Tag zählt nicht. Eine Notiz „Pause“/„Urlaub“ oder ein Urlaubseintrag im Kalender macht die Lücke zur geplanten Pause.
-- **Verlauf** (`goalCourse`, je Abschlussziel): erster Messwert → letzter (Lauf/Rad: Ø der letzten 3) → Ziel, Richtung (besser/schlechter/gleich), nächste Messung. Nur der Trend, keine Stufe und keine Entscheidung. Hauptkurve ist die Leistung bei gleichem Puls: Lauf = Pace 5–60 im HF-Band (Basistest gegen letzten Test), Rad = mittlerer Puls im Messfenster bei fester Leistung (`mainHr` aus `rideWindowFromStreams`, Cache `icu:ridewindow:v3:`). `open` = noch kein Vergleich (unter 2 Messungen).
+- **Verlauf** (`goalCourse`, je Abschlussziel): erster Messwert → letzter (Lauf/Rad: Ø der letzten 3) → Ziel, Richtung (besser/schlechter/gleich), nächste Messung. Nur der Trend, keine Stufe und keine Entscheidung. Hauptkurve ist die Leistung bei gleichem Puls: Lauf = Pace 5–60 im HF-Band (Basistest gegen letzten Test), Rad = mittlerer Puls im Messfenster bei fester Leistung (`mainHr` aus `rideWindowStats`, `session-tests.js`). `open` = noch kein Vergleich (unter 2 Messungen).
 - **Woche 12:** Die Entscheidung zum Blockende (weiter, verlängern, Ursache klären) trifft der Coach. Das Dashboard zeigt dafür nur den Stand der Ziele (Status gegen Ziel und Muss aus dem Block-Eintrag, `pass`) und den Verlauf.
 
 
@@ -883,24 +601,24 @@ Profil (Laufen und Rad): Zeitreihen von Intervals (`watts` bzw. `velocity_smooth
 
 ## 8. Ernährung (Yazio-Sync und Dashboard)
 
-### 8.1 Tagessummen (`yazio-client.js:176`)
+### 8.1 Tagessummen (`yazio-client.js`, `fetchYazioDailyNutrition`)
 
 - Einträge vom Typ `product`: `Menge (g) · Nährwert pro g` (Kalorien, Protein, Fett, Kohlenhydrate; Nährwerte je Produkt in KV gecacht).
 - `simple_product`/Rezept-Portion mit eigenen `nutrients`: Werte direkt übernommen (nicht multipliziert).
 - Einträge ohne beides werden übersprungen und gelistet (`skippedItems`).
-- Wellness-Felder (`sync.js:112`): `Calories` gerundet auf kcal, Protein/Carbs/Fat auf 0,1 g.
+- Wellness-Felder (`yazio-sync.js`, `syncYazioRange`): `Calories` gerundet auf kcal, Protein/Carbs/Fat auf 0,1 g.
 
-### 8.2 Kalorienziel (`sync.js:129`)
+### 8.2 Kalorienziel (`yazio-sync.js`, `syncYazioRange`; `yazio-client.js`, `fetchYazioDailyGoalKcal`)
 
 ```
-CalorieGoal = round( Yazio-Diätziel_kcal + Σ Aktivitätskalorien des Tages )
+CalorieGoal = round( Yazio-Tagesziel )      (widgets/daily-summary → goals["energy.energy"])
 ```
 
-Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportarten, zu 100 %). Es gibt kein Mindest-/Höchstziel und keine Teilrückrechnung; das Diätziel ist der Boden **[P13]**.
+Der Worker rechnet nichts dazu. Yazios Tagesziel enthält schon den Sport, den Yazio importiert (Garmin-Schätzung, eher großzügig). Ob gegessen wie geplant ein Defizit ergibt, zeigt der Gewichtstrend; das bewertet der Coach. Widget und Uhr holen das Ziel live (`fetchYazioDailyGoals`, 10 Minuten in KV gecacht), weil Yazio es im Lauf des Tages mit jedem importierten Training erhöht.
 
-### 8.3 Auswertung im Dashboard (`app.js:485`)
+### 8.3 Auswertung im Dashboard (`renderNutrition`, `renderNutritionWeek`, `app.js`)
 
-- Leere Tage (Wert ≤ 0) gelten als „keine Daten“ (`positive`, `dashboard.js:217`).
+- Leere Tage (Wert ≤ 0) gelten als „keine Daten“ (`positive`, `dashboard.js`, 384).
 - Je Tag: kcal, Ziel und Differenz als Zahlen, ohne Bewertung; „kein Tagebuch“ für abgeschlossene Tage ohne Eintrag.
 - Bilanz = Σ (kcal − Ziel) über abgeschlossene Tage mit Ziel; Schnitt = Mittel über abgeschlossene Tage.
 - Makro-Balken: `Wert / Ziel`, Balken rot ab 110 %. Kalorienanteil je Makro = `Gramm · 4 (Eiweiß, Kohlenhydrate) bzw. 9 (Fett) / Summe dieser drei`. Die Summe aus 4/4/9 stimmt nicht exakt mit Yazios Kalorien überein (Ballaststoffe, Alkohol, Rundung).
@@ -909,11 +627,11 @@ Die Summe nutzt das Feld `calories` jeder Aktivität an diesem Tag (alle Sportar
 
 ## 9. Widget (`src/widget.js`)
 
-- **Rennphase** (`racePhase`, 31): `daysToGo > 7` → normal; `0…7` → Taper; `−3…−1` → Erholung; sonst normal **[P3]**.
-- **Wochenziel** (`weeklyGoal`, 41): Summe der geplanten Last der Woche aus dem Kalender; fehlt sie, der Wert `WEEKLY_TSS_GOAL`; sonst kein Ziel.
-- **Wochenlast** (`buildWidget`, 47): Summe der Last über alle Sportarten der laufenden und der Vorwoche.
-- **Fitness (CTL)** (`buildFitness`, 138): sieben Wochenpunkte bei `heute − 42, −35, …, −7, heute`; der letzte Punkt wird durch den **letzten vorhandenen CTL** ersetzt; `delta = CTL_heute − erster vorhandener Wochenpunkt` (gerundet), mit der Anzahl Wochen dazwischen.
-- **Trainingsverteilung** (`buildWidgetTraining`, 108): Anteil je Sportart (Schwimmen/Rad/Lauf) = Minuten der **letzten bis zu vier abgeschlossenen Wochen** / Gesamtminuten, gerundet auf ganze Prozent; Soll nur, wenn `TRI_SPLIT_TARGET` gesetzt ist (Normierung auf 100 %). „Tage seit letzter Einheit“ aus der jüngsten Tagesaktivität der Sportart.
+- **Rennphase** (`racePhaseFor`, `racePhase`, `phaseDaysFor`): Taper ab `taperFrom` Tagen vor dem Rennen bis zum Renntag, danach `recoveryDays` Tage Erholung; die Erholung nach dem letzten A-Rennen (`recentRace`, 3.3) hat Vorrang. Tage je Distanz: 5 km 3/3, 10 km 5/4, HM 7/7, Marathon 14/14; Triathlon Sprint 5/4, Olympisch 7/5, Mittel 14/7, Lang 14/14 **[P3]**.
+- **Wochenziel** (`weeklyGoal`, 65): Summe der geplanten Last der Woche aus dem Kalender; fehlt sie, der Wert `WEEKLY_TSS_GOAL`; sonst kein Ziel.
+- **Wochenlast** (`buildWidget`, 105): Summe der Last über alle Sportarten der laufenden und der Vorwoche.
+- **Fitness (CTL)** (`buildFitness`, `widget.js`, 299): sieben Wochenpunkte bei `heute − 42, −35, …, −7, heute`; der letzte Punkt wird durch den **letzten vorhandenen CTL** ersetzt; `delta = CTL_heute − erster vorhandener Wochenpunkt` (gerundet), mit der Anzahl Wochen dazwischen.
+- **Trainingsverteilung** (`buildWidgetTraining`, 252): Anteil je Sportart (Schwimmen/Rad/Lauf) = Minuten der **letzten bis zu vier abgeschlossenen Wochen** / Gesamtminuten, gerundet auf ganze Prozent; Soll nur, wenn `TRI_SPLIT_TARGET` gesetzt ist (Normierung auf 100 %). „Tage seit letzter Einheit“ aus der jüngsten Tagesaktivität der Sportart.
 - **Kopfzeile** (`readiness.verdict`): die Kopfzeile des Coaches von heute, Farbe aus seinem Urteil `go` (hart → ok, locker → warn, frei → bad, ohne Urteil `cls: "coach"`), sonst „Noch keine Coach-Auswertung“ (`cls: "none"`). Seine Blocker (`coach.blockers`) und Rückfrage gehen mit. Keine eigene Ampel, keine Montagsbilanz, kein Befund. Körper- und Gefühlswerte nur als Zahlen.
 - **Uhr** (`buildWidgetWatch`): `rd` = Urteil des Coaches (`go`) als ok/warn/bad, ohne Urteil `"none"`; `co = 1`, wenn er heute geschrieben hat; `bl` = Zahl seiner Blocker. Eine eigene Warnung gibt es nicht. Für die Karte nach Tageszeit: `sl` Schlaf heute (h), `hv` HRV der letzten 7 Tage (heute zuletzt), `hm` deren Basis (Median wie in der Erholung), `cl` Kopfzeile des Coaches (höchstens 90 Zeichen, nur noch für ältere Uhr-Versionen, die Uhr zeigt sie nicht mehr), `rv` Schlaf, HRV, Ruhepuls von heute je `[Wert, Basis, Vergleich]` mit dem Vergleich gegen den eigenen üblichen Bereich der Basistage (`body.band` = 10/25/75/90-%-Quantil der Basistage aus `computeBody`, ab 5 Werten): 1 = im Bereich oder besser, 2 = schlechter als der Bereich (unter 25 % bzw. beim Ruhepuls über 75 %), 3 = schlechter als 9 von 10 Basistagen, 0 = ohne Wert oder Bereich; kein Gesamturteil, `wd` Minuten je Tag Mo–So für Lauf, Rad, Schwimmen (erledigt aus den Tagesminuten, geplant ab heute aus dem Wochenplan, wenn die Sportart an dem Tag noch nicht erledigt ist), `wm` Ausdauer der Woche gegen das Ziel (wie die Wochenziele), `la` letzte Einheit nur von heute: Werte, Ende (`start_date` + Gesamtzeit) und `lw` = Wochen seit der letzten mindestens so langen Einheit derselben Sportart im geladenen Verlauf (erst ab 14 Tagen). Puls nur, wenn die letzte Einheit ihn im Dashboard zeigt.
 - **Block-Widget:** je Abschlussziel die Richtung des Verlaufs (7.9, `course.dir`), nicht bei Ausgangswerten. Keine Woche-12-Entscheidung.
@@ -936,57 +654,40 @@ Mit #976 entfernt, für den Export (13) wiederhergestellt; nur `export-calc.js` 
 
 ## 11. Freitext-Parser (`src/dashboard-parse.js`)
 
-- **Heißhunger** (`parseCravings`, 9): jeder Eintrag beginnt mit „HH“ oder „Heißhunger“/„Heisshunger“. Uhrzeit `HH h[:|.|h]mm`, optional mit „h“ oder „Uhr“ dahinter (Stunde 0–24, Minute 0–59), `Stärke n`, `Auslöser …`, `davor …`; der Rest bis zum nächsten Komma ist „was“. Nicht lesbare Teile bleiben `null`, der Eintrag wird trotzdem gezählt.
-- **Hüfte/Leiste/Knie** (`findHipFlags`, 46): Treffer auf Wörter wie `hüft*`, `leiste*`, `knie*`, `hip`, `groin`; Kniebeuge/Kniehebe-Wörter und Verneinungen in den 30 Zeichen davor (`kein`, `ohne`, `nicht`, `schmerzfrei` …) werden ausgelassen.
-- **Workout-Schritte** (`parseWorkoutSteps`, 108): bevorzugt Intervals-`workout_doc`, sonst Beschreibung im Intervals-Format. Dauer: Zahl + Einheit (`h`, `min`/`m`, `s`, `km`, `mtr`); **Distanz wird mit 6:00 min/km (360 s/km) in Zeit umgerechnet**. Intensität: Prozentwert (bei Bereich der Mittelwert) oder Zone `Z1…Z7` → 55/70/85/98/110/125/150 %. Wiederholungen max. 50, Blöcke max. 200.
+- **Heißhunger** (`parseCravings`, 12): jeder Eintrag beginnt mit „HH“ oder „Heißhunger“/„Heisshunger“. Uhrzeit `HH h[:|.|h]mm`, optional mit „h“ oder „Uhr“ dahinter (Stunde 0–24, Minute 0–59), `Stärke n`, `Auslöser …`, `davor …`; der Rest bis zum nächsten Komma ist „was“. Nicht lesbare Teile bleiben `null`, der Eintrag wird trotzdem gezählt.
+- **Hüfte/Leiste/Knie** (`findHipFlags`, 50): Treffer auf Wörter wie `hüft*`, `leiste*`, `knie*`, `hip`, `groin`; Kniebeuge/Kniehebe-Wörter und Verneinungen in den 30 Zeichen davor (`kein`, `ohne`, `nicht`, `schmerzfrei` …) werden ausgelassen.
+- **Workout-Schritte** (`parseWorkoutSteps`, 127): bevorzugt Intervals-`workout_doc`, sonst Beschreibung im Intervals-Format. Dauer: Zahl + Einheit (`h`, `min`/`m`, `s`, `km`, `mtr`); **Distanz wird mit 6:00 min/km (360 s/km) in Zeit umgerechnet**. Intensität: Prozentwert (bei Bereich der Mittelwert) oder Zone `Z1…Z7` → 55/70/85/98/110/125/150 %. Wiederholungen max. 50, Blöcke max. 200.
 
 ---
 
 ## 12. Prüfhinweise (Auffälligkeiten)
 
-Sortiert nach Gewicht. „Beleg“ nennt, wie ich es festgestellt habe.
+Neu geprüft am 05.11.2026 gegen Commit `88d6dca`. Die Liste vom 03.10.2026 (P1–P21) bezog sich zum großen Teil auf Code, der inzwischen entfernt ist; vier Punkte hat #1291 behoben. Die Nummern bleiben, damit ältere Verweise auffindbar sind.
 
-### Wahrscheinliche Fehler
+### Offen
 
-**P1 – Long-Run-Plan erreicht die Spitze nie.** Nach jeder Rücknahmewoche (alle 4 Wochen, ×0,75) setzt die Steigerung vom reduzierten Wert neu an, während die Steigerung pro Woche so berechnet wird, als gäbe es keinen Verlust. Beleg: Ausführung mit Basis 10 km, HM, Spitze 19 km, 12 Wochen → höchste Planwert 13 km. Beim Marathon (Basis 16, Spitze 31,5) endet der Aufbau bei 12,5 km und die erste Taperwoche steht bei 20,5 km, also über der letzten Aufbauwoche. (`long-run-plan.js:181–195`). Naheliegende Korrektur: die Rücknahme nur für die Anzeige verwenden und den Aufbau von der letzten *Nicht-Rücknahme*-Woche fortsetzen. Nicht geändert, weil das die Planlogik ändert.
+**P3 – Zwei Taper-Definitionen.** Dashboard: Taper = 0–14 Tage vor dem Rennen (`app.js`, `isTaper`). Widget: je Distanz bzw. Triathlon-Format (`widget.js`, `phaseDaysFor`: HM 7 Tage, Mitteldistanz 14 Tage). Für die Mitteldistanz stimmen beide überein.
 
-**P2 – Zwei verschiedene TSB-Skalen.** Wochenbericht: < −20 stark negativ, < −5 moderat, ≤ +10 ausgeglichen (`weekly-progress.js:199`). Dashboard/Widget: ≥ −10 ok, ≥ −25 warn, sonst bad (`dashboard-summary.js:5`). Ein TSB von −15 heißt im Bericht „moderat negativ, produktiv“, im Dashboard „belastet (warn)“.
+**P16 – „ACWR“ ist ATL/CTL.** Das ist das Verhältnis zweier exponentiell gewichteter Kurven, nicht das rollierende 7:28-Verhältnis, auf das die üblichen Bänder 0,8–1,3 zurückgehen. Es erscheint nur noch im Widget und im stillen `loadHint` (7.7a).
 
-**P3 – Zwei Taper-Definitionen.** Dashboard: Taper = 0–14 Tage vor dem Rennen (`app.js:10`), Widget: 0–7 Tage (`widget.js:30`).
+**Kleinigkeit zu P10:** `mittel` im Triathlon-Muster hat weiter keine Wortgrenze und trifft auch „Mittelgebirge“. Weil Mittel vor Lang geprüft wird, kann das ein Langdistanz-Rennen mit diesem Wort in der Beschreibung als Mitteldistanz lesen. Für den Kalender heute ohne Folgen.
 
-**P4 – Zwei Phasenmodelle.** Das Datumsraster (3.3) und der Zustandsautomat (3.2) können verschieden entscheiden, z. B. HM: Raster BUILD ab 18 Wochen vor dem Rennen, Automat erzwingt BUILD spätestens ab 16 Wochen, außerdem gilt für `≤ 4` Wochen ein Sonderfall. Der Wochenbericht zeigt den **Automaten** (`Block: …`) und das **Raster** („Empfohlener Block“) nebeneinander.
+### Erledigt (Code entfernt oder geändert)
 
-**P5 – VDOT mit und ohne Korrekturfaktor.** Der aktuelle VDOT (2.8) enthält den Rennfaktor, der Wochen-VDOT (2.12, 5.2) nicht. Beide stehen im Wochenbericht, die Differenz kann also teilweise vom Faktor stammen. Die Dokumentation in `doc.txt` 6.6 erklärt nur Zeitfenster und Glättung, nicht den Faktor.
-
-### Methodische Schwächen
-
-**P6 – Zwei VDOT-Quellen.** Wochenbericht, Formcheck und Ziel-Prognose nutzen den Worker-eigenen VDOT (Puls+Pace). Der Rennplan im Dashboard (7.5) nutzt den **Runalyze-VDOT** aus dem Snapshot. Beide können mehrere VDOT-Punkte auseinanderliegen.
-
-**P7 – Pace-Benchmark.** (a) Maximum über 1 km, 5 km, 10 km, HM: Die kürzeste Distanz liefert im Daniels-Modell tendenziell das höchste VDOT, das Maximum ist daher optimistisch. (b) Der Fallback (2.8 Schritt 2) multipliziert den Benchmark-VDOT mit einem Faktor, der selbst aus Benchmark/HF-VDOT gebildet wurde – das ist zirkulär, wenn der HF-VDOT fehlt.
-
-**P8 – GPS-Distanz in der Renn-VDOT.** Die Rechnung nimmt die gemessene Distanz. Bei 21,3 km statt 21,0975 km ergibt dieselbe Zeit 36,9 statt 36,5 (ausgeführt). Der Dashboard-Weg (Bestzeiten, 7.4) nimmt dagegen die *offizielle* Distanz.
-
-**P9 – Rennen-Erkennung über den Namen.** Jeder Titel mit dem ganzen Wort „race“, „wettkampf“ oder „competition“ gilt als Rennen (z. B. „Race Pace Training 3×3 km“) und geht dann als Renn-VDOT ein, wenn der Lauf `moving_time` und Distanz hat. Schutz bietet nur `#novdot`.
-
-**P10 – Triathlon-Format per Regex.** `lang` trifft auch „langsam“, „lange“, „Belang“ in der Beschreibung; getestet wird erst nach Sprint/Olympisch/Mittel, deshalb entscheidet nur das **Fehlen** früherer Treffer. Zeiten mit zwei Teilen („Rad 3:00“) werden als Minuten:Sekunden gelesen.
-
-**P11 – HRV-Schwellen absolut.** −3 bzw. −8 als HRV-Einheiten (7.4/4.3) passen zu rMSSD in einem üblichen Bereich; bei anderer Skala (SDNN, andere Uhr) verschieben sich die Auslöser. Das Verhältnis (0,7/0,5) ist skalenunabhängig.
-
-**P12 – Uneinheitliche Schlafwerte.** Formcheck: Ø < 6,5 h oder 2 Nächte < 5 h; die Körper-Ampel im Dashboard ist entfallen (Oktober 2026, das Urteil macht der Coach); Empfehlungstext: „mind. 7 h“. Das Schlafkonto (Ziel 7,5 h/Nacht) ist entfallen.
-
-**P13 – Kalorienziel addiert die volle Aktivitätskalorien.** `calories` aus Intervals enthält typischerweise den Grundumsatz-Anteil der Einheit mit; bei langen Einheiten wird das Ziel dadurch eher zu hoch.
-
-**P16 – „ACWR“ ist ATL/CTL.** Das ist das Verhältnis zweier exponentiell gewichteter Kurven, nicht das rollierende 7:28-Verhältnis, auf das die üblichen Bänder 0,8–1,3 zurückgehen. Die Bänder sind hier „eigene Standardwerte“ (`dashboard-summary.js:1`).
-
-**P17 – Formcheck-Skalierung.** Siehe 4.4: Rot nur mit beiden Kategorien; ein einzelnes Flag mit Schweregrad ≥ 0,5 macht gelb.
-
-### Kleinigkeiten
-
-**P14 – `doc.txt` veraltet** (EF, Drift, Motor, RunFloor-TSS, GA/Key, Daily-Report): nicht mehr im Code.
-**P15 – Fest eingebautes Fallback-Ziel** `CONFIGURED_GOAL` (Halbmarathon 03.10.2026, 2:00:00) in `dashboard.js:26`; gilt, wenn Intervals kein A-Rennen kennt, und bleibt auch nach dem Renntermin im Code.
-**P19 – Toter Code:** die Plausibilitätsprüfung in `computeWeeksToEvent` rechnet denselben Wert neu.
-**P20 – Heutiger Lauf braucht 1 Lauf, das Fenster 2** (2.9 vs. 2.5).
-**P21 – Wochenvergleich mischt Sportarten:** `distanceKm` im Bericht summiert Schwimmen, Rad und Laufen (`weekly-progress.js:48–70`), während `runSessionCount` nur Läufe zählt.
+| Nr. | Damals | Heute |
+|---|---|---|
+| P1 | Long-Run-Plan erreicht nach jeder Rücknahmewoche (×0,75) die Spitze nicht | `long-run-plan.js` entfernt. Die Referenzwoche (`withReference`, 7.9) lässt leichte Wochen unter 70 % weg; den langen Lauf steuert der Coach. |
+| P2 | Zwei TSB-Skalen (Punkte und %) | #1291: Punktgrenzen entfernt, Widget nutzt die %-Zonen (6.1). |
+| P4 | Zwei Phasenmodelle (Automat und Raster) | Beide entfernt; der Block kommt aus dem Kalender (7.9). |
+| P5–P8 | Eigener VDOT mit/ohne Korrekturfaktor, zwei VDOT-Quellen, Pace-Benchmark, GPS-Distanz im Renn-VDOT | Eigener VDOT entfernt; Runalyze ist die einzige Quelle (2). Bestzeit-Schätzungen nehmen die offizielle Distanz. |
+| P9 | Rennen-Erkennung über Wörter im Namen („Race Pace“) | #1291: Nur noch Intervals-Rennfelder, Kalender und Runalyze-Art „Wettkampf“ (7.2, 1.1). |
+| P10 | `lang` ohne Wortgrenze trifft „langsam“ | #1291: `\blang(distanz)?\b` (3.2). |
+| P11, P12, P17 | Formcheck: absolute HRV-Schwellen, uneinheitliche Schlafwerte, ein Flag ≥ 0,5 macht gelb | `form-analysis.js` entfernt (4). |
+| P13 | Kalorienziel = Diätziel + volle Aktivitätskalorien | Das Ziel ist Yazios eigenes Tagesziel (8.2). Dass Yazio den Sport großzügig obendrauf rechnet, behandelt der Coach-Skill (Gewichtstrend entscheidet). |
+| P14 | `doc.txt` veraltet | `doc.txt` gibt es nicht mehr. |
+| P15 | Fest eingebautes Fallback-Ziel Landsberg 03.10.2026 | #1291: entfernt; ohne A-Rennen kein Ziel (3.3). |
+| P19, P20 | Toter Code in `computeWeeksToEvent`, 1 vs. 2 Läufe beim Trainings-VDOT | Funktionen entfernt. |
+| P21 | Wochenvergleich addiert Schwimm-, Rad- und Laufkilometer | `weekly-progress.js` entfernt. Umfang über alle Sportarten nur in Zeit (7.7a), km nur je Sportart. |
 
 ---
 
@@ -1019,14 +720,14 @@ Alle Aktivitäten mit `isRun`, älteste zuerst.
 |---|---|
 | `id`, `date`, `startLocal`, `type`, `name`, `tags` | Intervals (`date` = `activityDay`, `startLocal` = `start_date_local`) |
 | `treadmill` | `isTreadmill` |
-| `race` | `isRaceActivity` (Tag `race:`, `category`, Name, `sub_type`, `race`), **oder ein Renn-Eintrag im Kalender am selben Tag** (`raceContext`: Kategorie `RACE`, `RACE_A`/`B`/`C`, `A_RACE` bzw. A-Rennen) **ohne Distanzabgleich**, damit auch ein abgebrochenes Rennen zählt (03.10.2026: Halbmarathon nach 15,2 km beendet, Eintrag 21,1 km), oder `classifyRun` = `race` (Dashboard-Regel mit Distanz ±15 %). Ohne Runalyze-Kontext |
+| `race` | `isRaceActivity` (Tag `race:`, `category`, `sub_type`, `race`; Wörter im Namen zählen seit #1291 nicht), **oder ein Renn-Eintrag im Kalender am selben Tag** (`raceContext`: Kategorie `RACE`, `RACE_A`/`B`/`C`, `A_RACE` bzw. A-Rennen) **ohne Distanzabgleich**, damit auch ein abgebrochenes Rennen zählt (03.10.2026: Halbmarathon nach 15,2 km beendet, Eintrag 21,1 km), oder `classifyRun` = `race` (Dashboard-Regel mit Distanz ±15 %). Ohne Runalyze-Kontext |
 | `interval` | `isIntervalActivity` oder `hasIntervalTextSignal` |
 | `runClass` | `race`, wenn `race` gilt, sonst `classifyRun` (7.2) mit Kalender-Kontext |
 | `distKm`, `movingMin`, `elevPerKm` | `distance`/1000, `moving_time`/60, `total_elevation_gain`/km |
 | `avgHr`, `maxHr`, `rpe`, `feel`, `load` | `average_heartrate`, `max_heartrate`, `icu_rpe` (sonst `perceived_exertion`), `feel`, `sessionLoad` |
 | `tempC`, `humidity`, `windMs`, `weatherSrc` | Abschnitt 10; `weatherSrc` = `intervals` \| `openmeteo` \| `null`. Nie die Uhr; Laufband ohne Wetter |
 | `streamStatus` | `ok` \| `pending` (noch nicht berechnet) \| `none` (Zeitreihen 404 oder ohne Puls/Distanz) \| `skip` |
-| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 172): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr`; dazu `gps` aus der Rechnung (Schutzregel 13.3): dann `streamStatus` `skip` und nur `gpsCorrectedM` |
+| `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 185): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr`; dazu `gps` aus der Rechnung (Schutzregel 13.3): dann `streamStatus` `skip` und nur `gpsCorrectedM` |
 
 ### 13.3 Kennzahlen aus den Zeitreihen (`export-calc.js`: `analyzeExportStreams`, 52; Grenzwerte `EXPORT_RULES`, 19)
 
@@ -1170,7 +871,7 @@ Tabelle `swims`, MCP `get_swim_export`, HTTP `/api/export/swims`. Keine Zeitreih
 
 ## Anhang: Wie ich die Beispiele erzeugt habe
 
-`node` mit direktem Import der Funktionen `computeVdotFromRaceTime`, `paceTargetsFromVdot`, `predictRaceTimesFromVdot` (aus `src/vdot.js`) sowie `getPeakLongRunKm` und `buildLongRunProgressionWeeks` (aus `src/long-run-plan.js`). Keine Netzwerkzugriffe, keine Änderung am Code.
+`node` mit direktem Import von `computeVdotFromRaceTime`, `paceTargetsFromVdot` und `predictRaceTimesFromVdot` aus `src/vdot.js` (Commit `88d6dca`). Keine Netzwerkzugriffe, keine Änderung am Code.
 
 ## Gewicht und Ernährung (ernaehrung.js)
 
