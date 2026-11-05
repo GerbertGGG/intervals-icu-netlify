@@ -58,3 +58,12 @@ assert.deepEqual(hist.map((e) => e.date), ["2026-09-24", "2026-10-01"]);
 assert.equal(hist[1].hmProgSecs, 8000);
 assert.equal(historyEntryFromSnapshot({ fetchedAt: "2026-10-01T00:00:00Z", races: [] }), null);
 console.log("history ok");
+
+// "lang" nur als ganzes Wort: "langsam"/"lange Wechselzone" machen keine Langdistanz
+{
+  const { parseTriathlonEvent } = await import("../src/block-phase.js");
+  const f = (description) => parseTriathlonEvent({ name: "Triathlon", description }).format;
+  assert.equal(f("langsam einschwimmen, lange Wechselzone"), "olympic");
+  assert.equal(f("Langdistanz"), "long");
+  assert.equal(f("lang"), "long");
+}

@@ -840,7 +840,7 @@ function buildFitness(res) {
   const foot = w.addStack(); foot.centerAlignContent();
   text(foot, `${f.deltaWeeks || 6} Wochen`, FS.xs, { color: COL.muted });
   foot.addSpacer();
-  if (f.tsb != null) text(foot, `TSB ${signed(f.tsb)}`, FS.xs, { bold: true, minScale: 0.7 });
+  if (f.tsb != null) text(foot, `TSB ${signed(f.tsb)}${f.tsbPct != null ? ` (${signed(f.tsbPct)} %)` : ""}`, FS.xs, { bold: true, minScale: 0.7 });
   notice(w, res, d);
   return w;
 }
@@ -1225,7 +1225,7 @@ function buildSchlafForm(res) {
   row("HRV", fmt(t.hrv), s.medianHrv != null ? `Ø ${fmt(s.medianHrv)}` : null);
   row("Ruhepuls", fmt(t.restingHR), s.medianRestingHR != null ? `Ø ${fmt(s.medianRestingHR)}` : null);
   w.addSpacer(3);
-  row("Fitness", f.ctl != null ? fmt(f.ctl) : MISSING, f.tsb != null ? `TSB ${signed(f.tsb)}` : null);
+  row("Fitness", f.ctl != null ? fmt(f.ctl) : MISSING, f.tsb != null ? `TSB ${signed(f.tsb)}${f.tsbPct != null ? ` (${signed(f.tsbPct)} %)` : ""}` : null);
   notice(w, res, d);
   return w;
 }
