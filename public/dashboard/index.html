@@ -449,6 +449,32 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .studie-fazit { border-left: 3px solid var(--accent); background: var(--inset); padding: 10px 14px; border-radius: 0 8px 8px 0; }
 .studie-fazit > div:last-child { font-size: var(--fs-m); margin-top: 2px; }
 #studie .desc p { margin: 0 0 8px; }
+#tests .tsteps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 8px; }
+#tests .tstep { display: flex; flex-direction: column; align-items: flex-start; padding: 8px 10px; border: 0; border-radius: var(--r); background: var(--inset); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); text-align: left; }
+#tests .tstep b { font-size: var(--fs-xl); line-height: 1.1; font-variant-numeric: tabular-nums; }
+#tests .tstep span { font-size: var(--fs-xs); color: var(--muted); }
+#tests .tstep[aria-pressed=true] { background: var(--accent); color: var(--on-accent); }
+#tests .tstep[aria-pressed=true] span { color: inherit; opacity: .85; }
+#tests .twarn { font-size: var(--fs-s); margin-top: 6px; padding: 6px 10px; border-radius: 8px; background: var(--inset); box-shadow: inset 3px 0 0 var(--accent); }
+#tests article.ttest { margin: 12px 0 0; padding: 14px; }
+#tests .ttop { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+#tests h4 { margin: 0; font-size: var(--fs-l); }
+#tests .tk { font-size: var(--fs-xs); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 10px 0 2px; }
+#tests .wbadges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+#tests .wb { font-size: var(--fs-xs); padding: 1px 8px; border-radius: 999px; background: var(--inset); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--muted); white-space: nowrap; }
+#tests ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; }
+#tests .tcols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#tests .tgone { color: var(--muted); font-style: italic; }
+#tests .tmet.prov { color: var(--muted); }
+#tests dl.wabg { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 2px 0 0; font-size: var(--fs-s); }
+#tests dl.wabg dt { color: var(--muted); }
+#tests dl.wabg dd { margin: 0; }
+#tests .tbar { position: relative; height: 8px; border-radius: 4px; background: var(--inset); box-shadow: inset 0 0 0 1px var(--line-2); margin: 4px 0; }
+#tests .tbar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }
+#tests .tbar u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); text-decoration: none; }
+#tests .tres { margin-top: 12px; padding: 10px 12px; border-radius: var(--r); background: var(--inset); box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
+.ins-test { font-size: var(--fs-s); margin-top: 6px; }
+@media (max-width: 520px) { #tests .tcols { grid-template-columns: 1fr; } #tests .tsteps { grid-template-columns: repeat(2, 1fr); } }
 #wissen details.wsec { border-top: 1px solid var(--line); padding: 8px 0; }
 #wissen details.wsec > summary { cursor: pointer; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
 #wissen .wcount { font-weight: 500; font-size: var(--fs-s); color: var(--muted); }
@@ -1144,6 +1170,7 @@ svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
   <div class="ins-filter" id="insight-filter" role="group" aria-label="Filter nach Disziplin"></div>
   <div class="ins-grid" id="insights"></div>
   <details class="info ins-old" id="insights-old" hidden></details>
+  <div class="card" id="tests-card" style="margin-top:16px" hidden><h3>Tests</h3><div id="tests"></div></div>
   <div class="card" id="wissen-card" style="margin-top:16px" hidden><h3>Wissensbasis</h3><div id="wissen"></div></div>
 
   <h2 id="erholung">Erholung</h2>

@@ -54,7 +54,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderErnaehrung, renderStrength, renderInsights, renderWissen, renderStudie];
+  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderErnaehrung, renderStrength, renderInsights, renderTests, renderWissen, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -1501,6 +1501,7 @@ function insightCard(x, i) {
       ${[["Beobachtung", x.text], ["Hypothese", x.hypothesis], ["Umstellung", x.change], ["Erwartung", x.expectation]].filter(([, v]) => v).map(([k, v]) => `<div class="ins-k">${k}</div><p class="ins-act">${esc(v)}</p>`).join("")}`
       : `<div class="ins-k">Hypothese</div><h3 class="ins-t">${esc(x.title)}</h3>
       ${x.action ? `<div class="ins-k">Test</div><p class="ins-act">${esc(x.action)}</p>` : ""}`}
+      ${(insightTests[x.id] ?? []).length ? `<div class="muted ins-test">Teil von Test ${(insightTests[x.id]).map((t) => `<a href="#test-${esc(t.id)}">${esc(t.title)}</a>`).join(", ")}</div>` : ""}
       <div class="muted ins-foot"><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span><span class="ins-more">Mehr lesen</span><span class="ins-less">Schließen</span></div>
     </summary>
     <div class="ins-body">
@@ -1513,7 +1514,11 @@ function insightCard(x, i) {
       <div class="muted">angelegt ${fmtDate(x.createdAt.slice(0, 10))}${x.createdAt.slice(0, 4)}${x.archivedAt ? ` · ausgeblendet ${fmtDate(x.archivedAt.slice(0, 10))}${x.archivedAt.slice(0, 4)}` : ""}</div></div>
   </details>`;
 }
+// ids der Erkenntnis-Karten -> Tests, die sich darauf stützen (insightRefs); für "Teil von Test"
+let insightTests = {};
 function renderInsights(d) {
+  insightTests = {};
+  for (const t of d.tests?.tests ?? []) for (const id of t.insightRefs ?? []) (insightTests[id] ??= []).push(t);
   const all = d.insights ?? { active: [], archived: [] };
   const list = [...all.active, ...all.archived];
   const discs = INS_DISC_ORDER.filter((k) => list.some((x) => x.discipline === k));
@@ -1538,6 +1543,80 @@ function renderInsights(d) {
 }
 const INS_DISC_ORDER = ["lauf", "rad", "schwimmen", "kraft", "erholung", "alle"];
 
+/* ---------- Tests (Coach: mehrere Tests gleichzeitig, Kandidaten, Gelerntes; nur Anzeige) ---------- */
+const T_KIND = { test: "Test", paket: "Paket", begleiter: "Begleiter" };
+const T_STATUS = { kandidat: "Kandidat", laeuft: "läuft", urteil: "Urteil", gelernt: "Gelernt" };
+const T_STATIONS = [["kandidat", "Kandidaten"], ["laeuft", "läuft"], ["urteil", "Urteil"], ["gelernt", "Gelernt"]];
+const T_DISC = { lauf: "Laufen", rad: "Rad", schwimmen: "Schwimmen", kraft: "Kraft", erholung: "Erholung", ernaehrung: "Ernährung", alle: "Alle" };
+const T_EV = { stark: "Evidenz: stark", mittel: "Evidenz: mittel", schwach: "Evidenz: schwach", praxis: "Evidenz: Praxis" };
+const T_CONS = { einig: "Studienlage: einig", erklaert: "Studienlage: erklärt unterschiedlich", umstritten: "Studienlage: umstritten", eine_seite: "Studienlage: nur eine Seite" };
+let testsFilter = "alle";
+function testResult(t) {
+  const b = t.kind === "begleiter";
+  return { bestaetigt: b ? "stört nicht" : "bestätigt", widerlegt: b ? "stört" : "widerlegt", unklar: "unklar", gestoert: "gestört", abgebrochen: "abgebrochen" }[t.result] ?? t.result;
+}
+function renderTests(d) {
+  const card = $("tests-card");
+  const all = d.tests?.tests ?? [];
+  if (!all.length) { card.hidden = true; return; }
+  card.hidden = false;
+  const todayIso = new Date().toLocaleDateString("sv-SE");
+  const daysTo = (iso) => Math.round((Date.parse(iso + "T12:00:00Z") - Date.parse(todayIso + "T12:00:00Z")) / 86400000);
+  const left = (iso) => { const n = daysTo(iso); return n < 0 ? "Prüfdatum erreicht" : n === 0 ? "heute" : n < 7 ? `noch ${n} Tag${n === 1 ? "" : "e"}` : `noch ${Math.ceil(n / 7)} Wochen`; };
+  const day = (iso) => `${fmtDate(iso)}${iso.slice(0, 4)}`;
+  const num = (v) => (v == null ? "–" : fmt(v, Number.isInteger(v) ? 0 : 1));
+  const items = (d.wissensbasis?.sections ?? []).flatMap((s) => s.items);
+  const insights = [...(d.insights?.active ?? []), ...(d.insights?.archived ?? [])];
+  const byId = Object.fromEntries(all.map((t) => [t.id, t]));
+  const cut = (x, n) => (x.length > n ? x.slice(0, n - 1).trimEnd() + "…" : x);
+  const counts = Object.fromEntries(T_STATIONS.map(([k]) => [k, all.filter((t) => t.status === k).length]));
+  const running = all.filter((t) => t.status === "laeuft");
+  const heavy = running.filter((t) => t.load === "mehr").length;
+  const warn = (d.tests?.warnings ?? []).map((w) => `<div class="twarn">${esc(w)}</div>`).join("");
+  const stations = `<div class="tsteps" role="group" aria-label="Filter nach Stand">${T_STATIONS.map(([k, label]) => `<button type="button" class="tstep" data-f="${k}" aria-pressed="${testsFilter === k}"><b>${counts[k]}</b><span>${esc(label)}</span></button>`).join("")}</div>`;
+  const head = `${stations}<div class="muted">${running.length} laufen, davon ${heavy} mit Mehrbelastung</div>${warn}`;
+
+  const study = (id) => {
+    const it = items.find((x) => x.id === id);
+    if (!it) return `<li class="tgone">Studie ${esc(id)}: nicht gefunden</li>`;
+    return `<li>${esc(cut(it.text, 110))}<div class="wbadges"><span class="wb">${esc(T_EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.consensus ? `<span class="wb">${esc(T_CONS[it.consensus])}</span>` : ""}</div></li>`;
+  };
+  const insight = (id) => {
+    const x = insights.find((i) => i.id === id);
+    return x ? `<li>${esc(x.title)}<div class="wbadges"><span class="wb">${esc(INS_STRENGTH[x.strength] ?? x.strength)}</span></div></li>` : `<li class="tgone">Erkenntnis ${esc(id)}: nicht gefunden</li>`;
+  };
+  const metric = (t, m) => {
+    const cur = m.current == null ? "noch kein aktueller Wert" : `${num(m.current)}${m.unit ? " " + esc(m.unit) : ""}${m.currentDate ? ` (${esc(fmtDate(m.currentDate))})` : ""}`;
+    // Vor dem Prüfdatum kein Urteil: nur Werte, die Veränderung erst ab Prüfdatum bzw. mit Ergebnis
+    const judged = t.status === "urteil" || t.status === "gelernt" || (t.checkDate && daysTo(t.checkDate) <= 0);
+    const delta = judged && m.current != null && m.baseline != null ? ` · Veränderung ${m.current - m.baseline > 0 ? "+" : ""}${num(Math.round((m.current - m.baseline) * 10) / 10)}${m.unit ? " " + esc(m.unit) : ""}` : "";
+    return `<div class="tmet${m.provisional ? " prov" : ""}"><span class="tk">${esc(m.label)}</span> ${num(m.baseline)}${m.unit ? " " + esc(m.unit) : ""}${m.baselineDate ? ` (${esc(fmtDate(m.baselineDate))})` : ""} → ${cur}${m.provisional ? " · vorläufig" : ""}${delta}</div>`;
+  };
+  const card1 = (t) => {
+    const ad = t.adherence;
+    const adh = ad ? `<div class="tk">Einhaltung</div><div class="tbar" title="Mindestquote ${ad.minPct} %"><i style="width:${ad.actualPct ?? 0}%"></i><u style="left:${ad.minPct}%"></u></div><div class="muted">${ad.actualPct == null ? "noch offen" : `${ad.actualPct} %`} · mindestens ${ad.minPct} % · ${esc(ad.rule)}</div>` : "";
+    const exp = t.expectation ? `<div class="tk">Erwartung</div><dl class="wabg"><dt>bestätigt</dt><dd>${esc(t.expectation.confirmed)}</dd><dt>unklar</dt><dd>${esc(t.expectation.unclear)}</dd><dt>widerlegt</dt><dd>${esc(t.expectation.refuted)}</dd></dl>` : "";
+    const refs = (t.studyRefs ?? []).length || (t.insightRefs ?? []).length
+      ? `<div class="tk">Gründe</div><div class="tcols"><div><div class="muted">Studien</div><ul>${(t.studyRefs ?? []).map(study).join("") || '<li class="tgone">keine</li>'}</ul></div><div><div class="muted">Deine Daten</div><ul>${(t.insightRefs ?? []).map(insight).join("") || '<li class="tgone">keine</li>'}</ul></div></div>` : "";
+    const when = [t.startDate ? `Start ${day(t.startDate)}` : "", t.checkDate ? `Prüfdatum ${day(t.checkDate)}${t.status === "laeuft" ? ` (${left(t.checkDate)})` : ""}` : ""].filter(Boolean).join(" · ");
+    const res = t.result ? `<div class="tres"><b>Ergebnis: ${esc(testResult(t))}</b>${t.learned ? `<div>Gelernt: ${esc(t.learned)}</div>` : ""}</div>` : "";
+    const conf = (t.confoundedWith ?? []).length ? `<div class="muted">vermischt mit ${t.confoundedWith.map((id) => esc(byId[id]?.title ?? id)).join(", ")}</div>` : "";
+    return `<article class="card ttest" id="test-${esc(t.id)}" data-s="${esc(t.status)}">
+      <div class="ttop"><h4>${esc(t.title)}</h4><span class="wb">${esc(T_STATUS[t.status] ?? t.status)}</span></div>
+      <div class="wbadges"><span class="wb">${esc(T_KIND[t.kind] ?? t.kind)}</span><span class="wb">${esc(T_DISC[t.discipline] ?? t.discipline)}</span><span class="wb">Block ${esc(t.block)}</span><span class="wb">${t.load === "mehr" ? "Mehrbelastung" : "ohne Mehrbelastung"}</span>${t.proposedBy === "gerbert" ? '<span class="wb">von dir</span>' : ""}</div>
+      <div class="tk">Frage</div><div>${esc(t.question)}</div>
+      <div class="tk">Zahlt ein auf</div><div>${esc(t.blockGoal)}</div>
+      ${refs}
+      <div class="tk">Änderung</div><div>${esc(t.change)}</div>${when ? `<div class="muted">${when}</div>` : ""}
+      <div class="tk">Messgrößen</div>${t.metrics.map((m) => metric(t, m)).join("")}
+      ${exp}${adh}${t.abort ? `<div class="tk">Abbruch</div><div>${esc(t.abort)}</div>` : ""}${res}${conf}
+    </article>`;
+  };
+  const shown = all.filter((t) => testsFilter === "alle" || t.status === testsFilter);
+  $("tests").innerHTML = `${head}${shown.map(card1).join("") || '<p class="muted">Keine Tests in diesem Stand.</p>'}`;
+  for (const b of document.querySelectorAll("#tests .tstep")) b.onclick = () => { testsFilter = testsFilter === b.dataset.f ? "alle" : b.dataset.f; renderTests(d); };
+}
+
 /* ---------- Wissensbasis (Stichpunkte des Coaches, nur Anzeige) ---------- */
 function renderWissen(d) {
   const w = d.wissensbasis;
@@ -1548,12 +1627,12 @@ function renderWissen(d) {
   const day = (s) => fmtDate(s);
   const CONS = { einig: "Studienlage: einig", erklaert: "Studienlage: erklärt unterschiedlich", umstritten: "Studienlage: umstritten", eine_seite: "Studienlage: nur eine Seite" };
   const MATCH = { passt: "passt", luecke: "Lücke", bewusst_anders: "bewusst anders", nicht_pruefbar: "nicht prüfbar" };
-  const ATYOU = { nicht_getestet: "nicht getestet", laeuft: "Test läuft", gewirkt: "gewirkt", nicht_gewirkt: "nicht gewirkt", offen: "offen" };
-  const LINKT = { insight: "Erkenntnis", experiment: "Selbstversuch", targets: "Rahmen" };
+  const ATYOU = { nicht_getestet: "nicht getestet", laeuft: "Test läuft", gewirkt: "gewirkt", nicht_gewirkt: "nicht gewirkt", offen: "offen", stoert_nicht: "stört nicht", stoert: "stört" };
+  const LINKT = { insight: "Erkenntnis", experiment: "Selbstversuch", targets: "Rahmen", test: "Test" };
   const insights = [...(d.insights?.active ?? []), ...(d.insights?.archived ?? [])];
   const short = (s) => new Date(s + "T12:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
   const linkText = (l) => {
-    const t = l.type === "insight" ? insights.find((x) => x.id === l.id)?.title : null;
+    const t = l.type === "insight" ? insights.find((x) => x.id === l.id)?.title : l.type === "test" ? (d.tests?.tests ?? []).find((x) => x.id === l.id)?.title : null;
     return `${LINKT[l.type] ?? l.type}: ${t ?? l.id}`;
   };
   const items = w.sections.flatMap((s) => s.items);
@@ -1563,9 +1642,10 @@ function renderWissen(d) {
   const onlyGaps = hasAbgleich && wissenOnlyGaps;
   const hide = (it) => onlyGaps && it.match === "passt" && it.atYou !== "laeuft";
   const item = (it) => {
-    const rows = [["Du", it.practice], ["Abgleich", it.match && MATCH[it.match]], ["Bei dir", it.atYou && ATYOU[it.atYou]], ["Nächster Schritt", it.next], ["Verknüpft", it.link && linkText(it.link)]].filter(([, v]) => v);
+    const rows = [["Du", it.practice], ["Abgleich", it.match && MATCH[it.match]], ["Bei dir", it.atYou && `${ATYOU[it.atYou]}${it.candidate ? " (Kandidat)" : ""}`], ["Nächster Schritt", it.next], ["Verknüpft", it.link && it.link.type !== "test" && linkText(it.link)]].filter(([, v]) => v);
+    const tlinks = (it.tests ?? []).map((t) => `<a href="#test-${esc(t.id)}">zum Test: ${esc(t.title)}</a>`).join(" · ");
     const hot = (it.match === "luecke" || it.atYou === "laeuft") ? " hot" : "";
-    const abgleich = rows.length ? `<dl class="wabg">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : "";
+    const abgleich = rows.length || tlinks ? `<dl class="wabg">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}${tlinks ? `<dt>Test</dt><dd>${tlinks}</dd>` : ""}</dl>` : "";
     const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
     return `<li class="witem${hot}"><div class="wtext">${esc(it.text)}${it.isNew ? ' <span class="wb wnew">neu</span>' : ""}</div>
     <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${cons}${it.source ? `<span class="wsrc">${esc(it.source)}</span>` : ""}</div>${abgleich}</li>`;

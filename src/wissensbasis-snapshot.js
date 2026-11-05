@@ -7,7 +7,7 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //
 // Body: { fetchedAt: ISO-Zeitstempel, updatedAt: "YYYY-MM-DD", folderCheckedAt?: "YYYY-MM-DD",
 //         sections: [{ title (max 60), items: [{ text (max 220), evidence, fit, source? (max 80), isNew?,
-//         consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type, id }, next? (max 160) }] }],
+//         id? (kebab-case, max 60, Ziel von studyRefs der Tests), consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type: insight|experiment|targets|test, id }, next? (max 160) }] }],
 //         open?: [string (max 160), max. 6] }
 
 export const WISSENSBASIS_KV_KEY = "dashboard:wissensbasis";
@@ -20,7 +20,8 @@ export const FIT = ["hoch", "mittel", "gering", "unklar"];
 export const CONSENSUS = ["einig", "erklaert", "umstritten", "eine_seite"];
 export const MATCH = ["passt", "luecke", "bewusst_anders", "nicht_pruefbar"];
 export const AT_YOU = ["nicht_getestet", "laeuft", "gewirkt", "nicht_gewirkt", "offen"];
-export const LINK_TYPES = ["insight", "experiment", "targets"];
+export const LINK_TYPES = ["insight", "experiment", "targets", "test"];
+const ID_RE = /^[a-z0-9äöüß]+(?:-[a-z0-9äöüß]+)*$/;
 const ENUM_FIELDS = { consensus: CONSENSUS, match: MATCH, atYou: AT_YOU };
 const DATE_RE =/^\d{4}-\d{2}-\d{2}$/;
 
@@ -39,6 +40,7 @@ export function validateWissensbasis(body) {
   if (!Array.isArray(body.sections) || body.sections.length < 1) return { error: "sections fehlt oder ist leer (1–12 Abschnitte)" };
   if (body.sections.length > MAX_SECTIONS) return { error: `sections: mehr als ${MAX_SECTIONS} Abschnitte` };
   const sections = [];
+  const seenIds = new Set();
   for (const [i, s] of body.sections.entries()) {
     const at = `sections[${i}]`;
     const title = str(s?.title);
@@ -55,6 +57,13 @@ export function validateWissensbasis(body) {
       if (!EVIDENCE.includes(it.evidence)) return { error: `${p}.evidence muss ${EVIDENCE.join(" | ")} sein` };
       if (!FIT.includes(it.fit)) return { error: `${p}.fit muss ${FIT.join(" | ")} sein` };
       const out = { text, evidence: it.evidence, fit: it.fit };
+      if (it.id != null && it.id !== "") {
+        const id = str(it.id);
+        if (typeof it.id !== "string" || !id || id.length > 60 || !ID_RE.test(id)) return { error: `${p}.id muss kebab-case sein (a-z, 0-9, Bindestriche, max. 60 Zeichen)` };
+        if (seenIds.has(id)) return { error: `${p}.id ${id} kommt doppelt vor` };
+        seenIds.add(id);
+        out.id = id;
+      }
       if (it.source != null && it.source !== "") {
         const source = str(it.source);
         if (typeof it.source !== "string" || !source) return { error: `${p}.source muss Text sein` };
@@ -106,6 +115,22 @@ export function validateWissensbasis(body) {
   }
   const value = { fetchedAt: new Date(fetchedAt).toISOString(), updatedAt: body.updatedAt, ...(folderCheckedAt ? { folderCheckedAt } : {}), sections, open };
   return { value };
+}
+
+// Hinweise beim Speichern (kein Fehler): "gewirkt" und "einig" gelten im Dashboard nur mit Test-Ergebnis bzw. Gegenprüfung
+export function wissensbasisWarnings(value, tests) {
+  const out = [];
+  const live = (tests ?? []).filter((t) => t && t.status !== "verworfen");
+  for (const s of value.sections) {
+    for (const it of s.items) {
+      const label = it.id ?? it.text.slice(0, 40);
+      const linked = live.some((t) => (it.id && (t.studyRefs ?? []).includes(it.id)) || (it.link?.type === "test" && it.link.id === t.id));
+      if (it.atYou === "gewirkt" && !linked) out.push(`${label}: atYou gewirkt gibt es nur über ein Test-Ergebnis; ohne verknüpften Test zeigt das Dashboard „offen“`);
+      if (it.consensus === "einig" && !it.counterCheckedAt) out.push(`${label}: Studienlage einig ohne counterCheckedAt; das Dashboard zeigt „nur eine Seite“`);
+      if (it.link?.type === "test" && !live.some((t) => t.id === it.link.id)) out.push(`${label}: Test ${it.link.id} nicht gefunden`);
+    }
+  }
+  return out;
 }
 
 export async function readWissensbasis(env) {
