@@ -478,26 +478,39 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 #wissen details.wsec { border-top: 1px solid var(--line); padding: 8px 0; }
 #wissen details.wsec > summary { cursor: pointer; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
 #wissen .wcount { font-weight: 500; font-size: var(--fs-s); color: var(--muted); }
-#wissen ul { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 8px; }
-#wissen li.witem { padding: 10px 12px; background: var(--inset); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--line); }
-#wissen li.witem.hot { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
+#wissen ul { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 10px; }
+#wissen .wcycle { display: grid; grid-template-columns: repeat(4, 1fr); margin: 12px 0 6px; }
+#wissen .wstep { position: relative; display: flex; flex-direction: column; align-items: flex-start; border: 0; border-radius: 0; background: var(--inset); color: var(--text); text-align: left; padding: 9px 8px 9px 16px; margin-right: -6px; font: inherit;
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 12px 50%); }
+#wissen .wstep:first-child { padding-left: 12px; clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%); }
+#wissen .wstep b { font-size: var(--fs-xl); line-height: 1.1; font-variant-numeric: tabular-nums; }
+#wissen .wstep span { font-size: var(--fs-xs); color: var(--muted); }
+#wissen .wstep[aria-pressed=true] { background: var(--accent); color: var(--on-accent); }
+#wissen .wstep[aria-pressed=true] span { color: inherit; opacity: .85; }
+#wissen .wsub { font-size: var(--fs-xs); margin: 6px 0 12px; }
+#wissen li.witem { background: var(--card); border-radius: var(--r); box-shadow: 0 0 0 1px var(--line); overflow: hidden; }
+#wissen li.witem.hot { box-shadow: 0 0 0 1px var(--accent); }
+#wissen .wcols { display: grid; grid-template-columns: 1fr 1fr; }
+#wissen .wcol { padding: 12px 14px; min-width: 0; }
+#wissen .wcol.wyou { background: var(--inset); border-left: 1px solid var(--line); }
+#wissen .wlab { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
 #wissen .wtext { line-height: 1.4; }
-#wissen .wbadges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
-#wissen .wb { font-size: var(--fs-xs); padding: 1px 8px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--muted); white-space: nowrap; }
+#wissen .wtext.wnone { color: var(--muted); font-style: italic; }
+#wissen .wbadges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; align-items: center; }
+#wissen .wb { font-size: var(--fs-xs); padding: 1px 8px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--muted); }
+#wissen .wb.wsoft { background: var(--inset); color: var(--text); }
+#wissen li.witem.hot .wb.wsoft { background: var(--accent); color: var(--on-accent); box-shadow: none; }
 #wissen .wb.wnew { background: var(--accent); color: var(--on-accent); box-shadow: none; }
 #wissen .wsrc { font-size: var(--fs-xs); color: var(--muted); }
-#wissen dl.wabg { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed var(--line-2); font-size: var(--fs-s); }
-#wissen dl.wabg dt { color: var(--muted); }
-#wissen dl.wabg dd { margin: 0; }
-#wissen .wstats { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; align-items: stretch; }
-#wissen .wstat { background: var(--inset); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--line); padding: 6px 12px; display: flex; flex-direction: column; min-width: 72px; }
-#wissen .wstat b { font-size: var(--fs-xl); line-height: 1.1; font-variant-numeric: tabular-nums; }
-#wissen .wstat span { font-size: var(--fs-xs); color: var(--muted); }
-#wissen .wstat.zero b { color: var(--muted); font-weight: 500; }
-#wissen .wstats .chip { align-self: center; margin-left: auto; }
+#wissen .wsrc-l { margin-top: 6px; }
+#wissen .wfoot { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; padding: 9px 14px; border-top: 1px solid var(--line); font-size: var(--fs-s); }
+#wissen .wmeta { color: var(--muted); font-size: var(--fs-xs); }
+@media (max-width: 520px) {
+  #wissen .wcols { grid-template-columns: 1fr; }
+  #wissen .wcol.wyou { border-left: 0; border-top: 1px solid var(--line); }
+  #wissen .wstep { padding-left: 14px; } #wissen .wstep b { font-size: var(--fs-l); }
+}
 #wissen .wopen { margin-top: 10px; }
-#wissen .wstats { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
-#wissen .wline { font-size: var(--fs-s, 12px); color: var(--muted, inherit); margin-top: 3px; }
 #wissen .wopen ul { list-style: disc; padding-left: 18px; }
 .mini { width: 100%; border-collapse: collapse; font-size: var(--fs-s); } .mini td { white-space: normal; } .mini .nw { white-space: nowrap; } .mini th { text-align: left; font-weight: 500; color: var(--muted); font-size: var(--fs-xs); padding: 2px 6px 4px 0; } .mini td { padding: 6px 6px 6px 0; border-top: 1px solid var(--line); }
 .crow, .prow { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; border-bottom: 1px solid var(--line); }
