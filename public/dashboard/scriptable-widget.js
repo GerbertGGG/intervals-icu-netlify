@@ -16,6 +16,7 @@
 //              Parameter  6wochen  (auch  zeit, form, tss) = Trainingszeit und TSS der letzten 6 Wochen, Rahmen gestrichelt.
 //              Parameter  block  (auch  rahmen, experiment) = Block Woche x von N, naechster Test, was erlaubt ist und was
 //              nicht, Messwerte des Experiments, Abschlussziele.
+//              Parameter  tests  = Tests des Coaches: laufende und im Urteil, je Test Prüfdatum, Messgröße, Einhaltung.
 //              Parameter  kraft  = Krafttraining aus EGYM.  Parameter  vdot  = VDOT und Trainingsbereiche.
 //     Klein:   Schlaf und Form (Standard, auch  schlaf, bereit). Parameter  ernaehrung  oder  fitness.
 //     Zeiten stehen in allen Widgets als h:mm.
@@ -37,6 +38,7 @@ const VIEWS = {
   block: { endpoint: "kompass", build: (r) => buildKompass(r), size: "medium", label: "Vorschau mittel: Block" },
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
+  tests: { endpoint: "tests", build: (r) => buildTests(r), size: "medium", label: "Vorschau mittel: Tests" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   schlafform: { endpoint: "small", build: (r) => buildSchlafForm(r), size: "small", label: "Vorschau klein: Schlaf und Form" },
   food: { endpoint: "small", build: (r) => buildFoodCard(r), size: "small", label: "Vorschau klein: Ernährung" },
@@ -45,7 +47,7 @@ const VIEWS = {
 // Alte Parameter fuehren auf die zusammengelegten Ansichten: form/tss -> 6 Wochen, intensitaet -> Woche,
 // rahmen/experiment -> Block, schlaf/bereit -> Schlaf und Form
 const PARAM_VIEWS = {
-  medium: { fallback: "foodmedium", rules: [[/^(zeit|time|dauer|min|form|tss|belast|hm|detail|6)/, "time"], [/^(woche|week|intens|polar|train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season|exp|versuch|rahmen|frame|leit|regel|kompass)/, "block"], [/^(ern|food|essen|kcal)/, "foodmedium"]] },
+  medium: { fallback: "foodmedium", rules: [[/^(test|probe)/, "tests"], [/^(zeit|time|dauer|min|form|tss|belast|hm|detail|6)/, "time"], [/^(woche|week|intens|polar|train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season|exp|versuch|rahmen|frame|leit|regel|kompass)/, "block"], [/^(ern|food|essen|kcal)/, "foodmedium"]] },
   small: { fallback: "schlafform", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(fit|ctl)/, "fitness"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
@@ -1203,6 +1205,50 @@ function buildKompass(res) {
 const FRAME_SPORT = { lauf: "run", rad: "bike", schwimmen: "swim", kraft: "strength" };
 const EXP_SHORT = { lauf_hf130: ["Lauf HF 130", "run"], rad_hf165w: ["Rad 165 W", "bike"], schwimm_amstueck: ["Am Stück", "swim"], schwimm_100m: ["100 m", "swim"] };
 const expVal = (m, v) => (v == null ? MISSING : m.key === "lauf_hf130" || m.key === "schwimm_100m" ? fmtPace(Math.round(v)) : fmt(v, Number.isInteger(v) ? 0 : 1));
+
+/* ---------- Mittel: Tests (Parameter "tests") ---------- */
+// Tests des Coaches (save_test): laufende zuerst, dann die im Urteil. Je Test Titel, Prüfdatum, erste Messgroesse
+// (Ausgangswert -> aktuell, Pfeil = Richtung "besser") und Einhaltung als Balken mit Mindestmarke. Keine Wertung, kein Ergebnis berechnet.
+const TEST_DISC = { lauf: "run", rad: "bike", schwimmen: "swim", kraft: "strength" };
+function testWhen(t) {
+  if (t.status === "urteil") return "im Urteil";
+  const n = t.daysToCheck;
+  if (n == null) return null;
+  return n < 0 ? "Prüfdatum erreicht" : n === 0 ? "Prüfung heute" : n < 14 ? `noch ${n} ${n === 1 ? "Tag" : "Tage"}` : `noch ${Math.ceil(n / 7)} Wo.`;
+}
+function testMetric(m) {
+  if (!m) return null;
+  const u = m.unit ? `\u00a0${m.unit}` : "";
+  const v = (x) => (x == null ? "offen" : /^(lauf_hf130|schwimm_100m)$/.test(m.key || "") ? expVal(m, x) : `${fmt(x, Number.isInteger(x) ? 0 : 1)}${u}`);
+  return `${m.label} ${v(m.baseline)} → ${v(m.current)}${m.provisional ? "*" : ""} ${m.better === "lower" ? "↓" : "↑"}`;
+}
+function buildTests(res) {
+  const d = res.data, W = widgetInnerWidth(), c = d.counts || {}, list = d.tests || [];
+  const w = baseWidget({ padV: 12 });
+  header(w, W, "TESTS", `${c.laeuft || 0} laufen`);
+  const rows = list.slice(0, 3);
+  rows.forEach((t) => {
+    w.addSpacer(6);
+    const r = w.addStack(); r.centerAlignContent(); r.spacing = 5; r.size = new Size(W, 0);
+    const k = TEST_DISC[t.discipline];
+    if (k) symbol(r, SPORT_SYMBOL[k], 11, new Color(sportHex(k)));
+    text(r, t.title, FS.sm, { bold: true, minScale: 0.8 });
+    r.addSpacer();
+    const when = testWhen(t);
+    if (when) text(r, when, FS.xs, { color: COL.muted, minScale: 0.8 });
+    const ml = testMetric(t.metric);
+    if (ml) text(w, ml, FS.xs, { color: COL.muted, minScale: 0.8 });
+    const a = t.adherence;
+    if (a && t.status === "laeuft") { w.addSpacer(2); progressBar(w, W, (a.actualPct || 0) / 100, ACCENT_HEX, 1, { mark: (a.minPct || 0) / 100 }); }
+  });
+  if (!rows.length) { w.addSpacer(6); text(w, "Kein Test läuft.", FS.sm, { color: COL.muted }); }
+  w.addSpacer();
+  const more = list.length - rows.length;
+  const foot = [c.kandidat ? `${c.kandidat} Kandidaten` : null, c.urteil && !rows.some((t) => t.status === "urteil") ? `${c.urteil} im Urteil` : null, more > 0 ? `+${more} weitere` : null].filter(Boolean).join(" · ");
+  if (foot) text(w, foot, FS.xs, { color: COL.muted, minScale: 0.8 });
+  notice(w, res, d);
+  return w;
+}
 
 /* ---------- Klein: Schlaf und Form (Standard, auch "schlaf", "bereit") ---------- */
 // Schlaf der letzten Nacht gross, HRV und Ruhepuls mit dem eigenen Median, unten Fitness (CTL) und Frische (TSB)
