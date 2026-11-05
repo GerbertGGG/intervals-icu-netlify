@@ -1546,12 +1546,37 @@ function renderWissen(d) {
   card.hidden = false;
   const EV = { stark: "Evidenz: stark", mittel: "Evidenz: mittel", schwach: "Evidenz: schwach", praxis: "Evidenz: Praxis" };
   const day = (s) => fmtDate(s);
-  const item = (it) => `<li>${esc(it.text)}${it.isNew ? ' <span class="wb">neu</span>' : ""}
-    <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.source ? `<span class="wsrc">${esc(it.source)}</span>` : ""}</div></li>`;
-  const secs = w.sections.map((s, i) => `<details class="wsec"${i === 0 ? " open" : ""}><summary>${esc(s.title)}</summary><ul>${s.items.map(item).join("")}</ul></details>`).join("");
+  const CONS = { einig: "Studienlage: einig", erklaert: "Studienlage: erklärt unterschiedlich", umstritten: "Studienlage: umstritten", eine_seite: "Studienlage: nur eine Seite" };
+  const MATCH = { passt: "passt", luecke: "Lücke", bewusst_anders: "bewusst anders", nicht_pruefbar: "nicht prüfbar" };
+  const ATYOU = { nicht_getestet: "nicht getestet", laeuft: "Test läuft", gewirkt: "gewirkt", nicht_gewirkt: "nicht gewirkt", offen: "offen" };
+  const LINKT = { insight: "Erkenntnis", experiment: "Selbstversuch", targets: "Rahmen" };
+  const insights = [...(d.insights?.active ?? []), ...(d.insights?.archived ?? [])];
+  const short = (s) => new Date(s + "T12:00:00").toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+  const linkText = (l) => {
+    const t = l.type === "insight" ? insights.find((x) => x.id === l.id)?.title : null;
+    return `${LINKT[l.type] ?? l.type}: ${t ?? l.id}`;
+  };
+  const items = w.sections.flatMap((s) => s.items);
+  const count = (f) => items.filter(f).length;
+  const stats = [["Lücken", count((i) => i.match === "luecke")], ["laufende Tests", count((i) => i.atYou === "laeuft")], ["gewirkt", count((i) => i.atYou === "gewirkt")], ["nicht gewirkt", count((i) => i.atYou === "nicht_gewirkt")], ["umstritten", count((i) => i.consensus === "umstritten")]];
+  const hasAbgleich = items.some((i) => i.match || i.atYou || i.practice || i.consensus);
+  const onlyGaps = hasAbgleich && wissenOnlyGaps;
+  const hide = (it) => onlyGaps && it.match === "passt" && it.atYou !== "laeuft";
+  const item = (it) => {
+    const line2 = [it.practice ? `<b>Du:</b> ${esc(it.practice)}` : "", it.match ? `<b>Abgleich:</b> ${esc(MATCH[it.match])}` : "", it.atYou ? `<b>Bei dir:</b> ${esc(ATYOU[it.atYou])}` : ""].filter(Boolean).join(" · ");
+    const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
+    return `<li>${esc(it.text)}${it.isNew ? ' <span class="wb">neu</span>' : ""}
+    <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${cons}${it.source ? `<span class="wsrc">${esc(it.source)}</span>` : ""}</div>
+    ${line2 ? `<div class="wline">${line2}</div>` : ""}${it.next ? `<div class="wline"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${it.link ? `<div class="wline">${esc(linkText(it.link))}</div>` : ""}</li>`;
+  };
+  const secs = w.sections.map((s, i) => { const shown = s.items.filter((it) => !hide(it)); return shown.length ? `<details class="wsec"${i === 0 ? " open" : ""}><summary>${esc(s.title)}</summary><ul>${shown.map(item).join("")}</ul></details>` : ""; }).join("");
+  const bar = hasAbgleich ? `<div class="wstats">${stats.map(([k, n]) => `<span class="wb">${esc(k)}: ${n}</span>`).join("")}<button type="button" class="chip${onlyGaps ? " on" : ""}" id="wissen-gaps" aria-pressed="${onlyGaps}">nur Lücken und Tests</button></div>` : "";
   const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
-  $("wissen").innerHTML = `<div class="muted">Stand ${esc(day(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(day(w.folderCheckedAt))}` : ""}</div>${secs}${open}`;
+  $("wissen").innerHTML = `<div class="muted">Stand ${esc(day(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(day(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}`;
+  const btn = $("wissen-gaps");
+  if (btn) btn.onclick = () => { wissenOnlyGaps = !wissenOnlyGaps; renderWissen(d); };
 }
+let wissenOnlyGaps = false;
 
 /* ---------- Studien-Check der Woche ---------- */
 function renderStudie(d) {
