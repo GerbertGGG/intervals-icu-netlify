@@ -188,7 +188,7 @@ export function buildWidgetDetail(d, env = {}) {
     today: d.today,
     goal: goalOf(d),
     load: d.summary.load,
-    tsbZones: d.summary.thresholds.tsb,
+    tsbZones: d.summary.thresholds.tsbPct,
     form,
     tssWeeks,
     hm: r ? { goalSec: d.goal.targetTimeSecs, estimates: r.hmEstimates } : null,
@@ -310,7 +310,7 @@ function buildFitness(d, byDate) {
   const tsbWeekly = Array.from({ length: 7 }, (_, i) => tsbOf(byDate[addDays(d.today, -42 + i * 7)]));
   const latest = [...d.wellness].reverse().find((w) => w.date <= d.today && tsbOf(w) != null);
   if (latest) tsbWeekly[6] = tsbOf(latest);
-  return { ctl: weekly[6], delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly, tsb: tsbWeekly[6], tsbWeekly };
+  return { ctl: weekly[6], tsbPct: d.summary.load.tsbPct != null ? Math.round(d.summary.load.tsbPct) : null, tsbZone: d.summary.load.tsbZone, delta: ok ? Math.round(weekly[6] - weekly[from]) : null, deltaWeeks: ok ? 6 - from : null, weekly, tsb: tsbWeekly[6], tsbWeekly };
 }
 
 export function buildWidgetSmall(d, goals = null, live = null) {

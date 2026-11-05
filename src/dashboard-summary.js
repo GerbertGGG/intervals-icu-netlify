@@ -2,10 +2,10 @@
 // Erholungswerte gegen die eigene Basis. Hier wird nichts entschieden: Das Urteil über den Tag fällt der Coach in der
 // Morgen-Auswertung (save_coach), das Dashboard zeigt nur die Werte, auf die er schaut.
 
-// tsb: alte Punktgrenzen, nur noch fuers Widget. tsbPct: Frische in % der Fitness (CTL) wie die Formzonen von Intervals.icu:
+// tsbPct: Frische in % der Fitness (CTL) wie die Formzonen von Intervals.icu:
 // unter −30 % hohes Risiko, −30 bis −10 % produktives Training, −10 bis +5 % neutral, +5 bis +25 % frisch, darueber Uebergang
 // (Fitness sinkt). Ein negativer TSB in Belastungswochen ist gewollt und keine Warnung.
-const THRESHOLDS = { tsb: { ok: -10, warn: -25 }, tsbPct: { risk: -30, optimal: -10, fresh: 5, transition: 25 }, acwr: { lo: 0.8, hi: 1.3 } };
+const THRESHOLDS = { tsbPct: { risk: -30, optimal: -10, fresh: 5, transition: 25 }, acwr: { lo: 0.8, hi: 1.3 } };
 
 const FEEL_METRICS = [
   { key: "sleepQuality", label: "Schlaf" },

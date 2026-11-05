@@ -101,7 +101,8 @@ assert.equal(analyzeExportStreams([{ type: "time", data: [0, 1] }, { type: "dist
   assert.equal(streamSkipOf(base), null);
   assert.equal(streamSkipOf({ ...base, name: "6x800 Bahn" }), "interval");
   assert.equal(streamSkipOf({ ...base, tags: ["#intervalle"] }), "interval");
-  assert.equal(streamSkipOf({ ...base, name: "Wettkampf Stadtlauf" }), "race");
+  assert.equal(streamSkipOf({ ...base, name: "Wettkampf Stadtlauf" }), null); // Name allein macht kein Rennen
+  assert.equal(streamSkipOf({ ...base, name: "Stadtlauf", sub_type: "RACE" }), "race");
   assert.equal(streamSkipOf({ ...base, type: "VirtualRun" }), "treadmill");
   assert.equal(streamSkipOf({ ...base, moving_time: 1100 }), "short");
   assert.equal(streamSkipOf({ ...base, has_heartrate: false, average_heartrate: null }), "noHr");
@@ -291,8 +292,8 @@ assert.equal(sqlLiteral(true), "1");
     assert.deepEqual([s2.computed, s2.reused, s2.runsWritten, s2.daysWritten], [0, 5, 0, 0]);
     assert.equal(calls.filter((u) => u.includes("/streams")).length, streams1);
 
-    // Umbenennung zum Rennen: Zeitreihen-Kennzahlen fallen weg (neu gerechnet), geloeschte Aktivitaet verschwindet aus D1
-    acts = acts.map((a) => (a.id === "a2" ? { ...a, name: "Wettkampf Stadtlauf" } : a)).filter((a) => a.id !== "a4");
+    // Markierung als Rennen (sub_type RACE): Zeitreihen-Kennzahlen fallen weg (neu gerechnet), geloeschte Aktivitaet verschwindet aus D1
+    acts = acts.map((a) => (a.id === "a2" ? { ...a, sub_type: "RACE" } : a)).filter((a) => a.id !== "a4");
     const s3 = await syncExport({ env, d1, from: D[0], to: D[4], today, log: quiet });
     assert.deepEqual([s3.computed, s3.runsWritten, s3.runsDeleted], [1, 1, 1]);
     const a2 = (await buildRunExport({ EXPORT_DB }, { from: D[1], to: D[1] })).rows[0];

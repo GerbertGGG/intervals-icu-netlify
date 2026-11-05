@@ -29,6 +29,7 @@ const activities = [
   act(12, { name: "Intervalle 5x1000", distance: 9000, moving_time: 3200, tags: ["intervals"] }),
 ];
 const events = [
+  { category: "RACE_A", start_date_local: "2026-10-03T00:00:00", name: "Halbmarathon", distance_target: 21097.5, time_target: 7200 },
   { category: "WORKOUT", start_date_local: day(0) + "T00:00:00", name: "Locker 30'", description: "Zweck: Beine lockern", moving_time: 1800 },
   { category: "WORKOUT", start_date_local: day(1) + "T00:00:00", name: "CSS-Intervalle", description: "10x100 auf CSS", tags: ["#key"], type: "Swim", moving_time: 3000, distance_target: 2000 },
 ];
@@ -290,7 +291,7 @@ assert.ok("sleep" in (await smRes.json()));
 assert.equal(d.wellness.find((w) => w.motivation === 0), undefined);
 assert.ok(d.wellness.every((w) => w.soreness === null));
 assert.equal(d.goal.daysToGo, 3);
-assert.equal(d.goal.source, "config");
+assert.equal(d.goal.source, "intervals");
 assert.ok(d.weeks.at(-1).complete === false);
 // Ohne Runalyze-Snapshot zaehlt der 16-km-Lauf aus Intervals, aber ohne Decoupling (Art unklar, Pulsregel)
 assert.equal(d.fitness.longRuns.length, 0);
@@ -407,7 +408,8 @@ console.log("live-load ok");
   assert.equal(classifyRun(mk("Dauerlauf mit Anna", { description: "locker" })), "unknown");
   assert.equal(classifyRun(mk("Easy Lauf mit Steigerungen")), "base");
   assert.equal(classifyRun(mk("MIT 4x2km")), "intensity");
-  assert.equal(classifyRun(mk("Halbmarathon Berlin", { distance: 21100 })), "race");
+  assert.equal(classifyRun(mk("Halbmarathon Berlin", { distance: 21100 })), "unknown"); // Name allein macht kein Rennen
+  assert.equal(classifyRun(mk("HM Race Pace 3x3 km", { distance: 12000 })), "intensity"); // Tempo-Einheit mit "Race" im Namen bleibt eine Einheit
   assert.equal(classifyRun(mk("Morgenlauf", { distance: 21100, sub_type: "RACE" })), "race");
   assert.equal(classifyRun(mk("Long Slow Run", { distance: 21000 })), "unknown"); // Name und Distanz allein genuegen nicht
   assert.equal(classifyRun(mk("Lauf", { distance: 16000 }), { rzRuns: [{ date: "2026-09-20", distanceKm: 16.1, type: "Langer Lauf" }] }), "long");

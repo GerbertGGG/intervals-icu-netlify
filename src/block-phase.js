@@ -25,7 +25,7 @@ const TRIATHLON_FORMATS = [
   { key: "sprint", label: "Sprint", re: /sprint/, swimKm: 0.75, bikeKm: 20, runKm: 5, run: "5k" },
   { key: "olympic", label: "Olympische Distanz", re: /olymp|kurzdistanz|standard/, swimKm: 1.5, bikeKm: 40, runKm: 10, run: "10k" },
   { key: "middle", label: "Mitteldistanz", re: /mittel|70\.3|half\s*iron|halb\s*iron/, swimKm: 1.9, bikeKm: 90, runKm: 21.0975, run: "hm" },
-  { key: "long", label: "Langdistanz", re: /lang|ironman|140\.6|full\s*iron/, swimKm: 3.8, bikeKm: 180, runKm: 42.195, run: "m" },
+  { key: "long", label: "Langdistanz", re: /\blang(?:distanz)?\b|ironman|140\.6|full\s*iron/, swimKm: 3.8, bikeKm: 180, runKm: 42.195, run: "m" },
 ];
 
 export function parseTriathlonEvent(event) {

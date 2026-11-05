@@ -51,7 +51,6 @@ const CTL_DAYS = 42, ATL_DAYS = 7; // Zeitkonstanten wie in intervals.icu
 
 // Vom Nutzer vorgegeben (Halbmarathon Samstag 03.10.2026, Ziel < 2:00:00). Wird nur
 // verwendet, wenn in Intervals.icu kein A-Rennen im Kalender steht.
-const CONFIGURED_GOAL = { date: "2026-10-03", name: "Halbmarathon", distance: "hm", distanceKm: 21.0975, targetTimeSecs: 7200 };
 
 export function timingSafeEqual(a, b) {
   const x = new TextEncoder().encode(String(a));
@@ -101,7 +100,6 @@ function formatPace(secPerKm) {
 // Steigerungen/Strides sind kurze Zusaetze zu lockeren Laeufen und machen daraus keine Intensitaetseinheit.
 const TEMPO_PATTERN = /\b(tempo|tdl|schwelle|wettkampfspezifisch|fartlek)/i;
 const MIT_PATTERN = /\bMIT\b/;
-const RACE_PATTERN = /\b(wettkampf|rennen|race)\b/i;
 const BASE_PATTERN = /\b(grundlagen|easy|ga1|ga 1|regeneration|recovery)/i;
 const RACE_DISTANCE_TOLERANCE = 0.15;
 
@@ -125,13 +123,10 @@ function runalyzeDecoupling(a, ctx) {
 
 function isRaceRun(a, ctx) {
   if (String(a?.sub_type ?? "").toUpperCase() === "RACE" || a?.race === true) return true;
-  const name = String(a?.name ?? "");
-  if (RACE_PATTERN.test(name)) return true;
+  // Ein Rennen ist nur, was Intervals als Rennen markiert (Untertyp/Flag/Kalender) oder Runalyze als "Wettkampf" fuehrt.
+  // Woerter im Namen ("HM Race Pace 3x3 km") zaehlen nicht.
   const day = activityDay(a);
   const km = (num(a?.distance) ?? 0) / 1000;
-  // Name nennt die Distanz ("Halbmarathon Berlin") und die gelaufene Strecke passt dazu; "Marathonpace"-Training bleibt aussen vor
-  const named = /halbmarathon|halb\s*marathon/i.test(name) ? DISTANCE_KM.hm : /\bmarathon\b(?![\s-]*pace)/i.test(name) ? DISTANCE_KM.m : null;
-  if (named && km > 0 && Math.abs(named - km) / named <= RACE_DISTANCE_TOLERANCE) return true;
   const close = (other) => km > 0 && other > 0 && Math.abs(other - km) / km <= RACE_DISTANCE_TOLERANCE;
   if (ctx?.raceDays?.get(day)?.some((evKm) => evKm == null || close(evKm))) return true;
   return isRunalyzeKind(a, ctx, "race");
@@ -709,7 +704,7 @@ export function buildRaceDays(events) {
   return map;
 }
 
-// Letztes A-Rennen bis heute (Kalender, sonst die konfigurierte Vorgabe), damit die Erholungsphase auch
+// Letztes A-Rennen bis heute (nur aus dem Kalender), damit die Erholungsphase auch
 // dann greift, wenn der Zielwettkampf nach dem Renntag schon aus "ab heute" herausgefallen ist.
 function findRecentRace(events, todayIso) {
   const past = events
@@ -719,7 +714,7 @@ function findRecentRace(events, todayIso) {
     const tri = parseTriathlonEvent(past);
     return { date: eventDayOf(past), name: past.name ?? null, distance: getEventDistanceFromEvent(past), triathlonFormat: tri?.format ?? null };
   }
-  return CONFIGURED_GOAL.date <= todayIso ? { date: CONFIGURED_GOAL.date, name: CONFIGURED_GOAL.name, distance: CONFIGURED_GOAL.distance, triathlonFormat: null } : null;
+  return null;
 }
 
 // Kommende B-Rennen (Vorbereitungswettkaempfe) bis ~13 Monate voraus. Das A-Ziel bestimmt weiter das ganze Dashboard,
@@ -799,9 +794,9 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const goal = tri
     ? { date: goalFromCalendar.date, name: `Triathlon ${tri.label}`, targetTimeSecs: tri.runTargetSecs, totalTargetSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: tri.runKm, triathlon: { format: tri.format, swimKm: tri.swimKm, bikeKm: tri.bikeKm, runKm: tri.runKm, targets: buildTriathlonTargets(tri, thresholds, goalFromCalendar.targetTimeSecs ?? null, { vdot: snapshot?.vdot ?? null, weightKg: [...wellness].reverse().find((w) => w.weight)?.weight ?? null }) }, source: "intervals" }
     : goalFromCalendar
-      ? { date: goalFromCalendar.date, name: DISTANCE_LABELS[goalFromCalendar.distance] ?? "Rennen", distance: goalFromCalendar.distance ?? null, targetTimeSecs: goalFromCalendar.targetTimeSecs ?? (goalFromCalendar.distance === "hm" ? CONFIGURED_GOAL.targetTimeSecs : null), runKm: DISTANCE_KM[goalFromCalendar.distance] ?? null, source: "intervals" }
-      : { ...CONFIGURED_GOAL, runKm: CONFIGURED_GOAL.distanceKm, source: "config", none: CONFIGURED_GOAL.date < todayIso };
-  // none: kein kommendes Rennen im Kalender (die Vorgabe ist vorbei). Dann zeigt die Seite keine Renn-Kacheln, Zielpaces oder Prognosen.
+      ? { date: goalFromCalendar.date, name: DISTANCE_LABELS[goalFromCalendar.distance] ?? "Rennen", distance: goalFromCalendar.distance ?? null, targetTimeSecs: goalFromCalendar.targetTimeSecs ?? null, runKm: DISTANCE_KM[goalFromCalendar.distance] ?? null, source: "intervals" }
+      : { date: null, name: null, distance: null, targetTimeSecs: null, runKm: null, source: "none", none: true };
+  // none: kein kommendes Rennen im Kalender. Dann zeigt die Seite keine Renn-Kacheln, Zielpaces oder Prognosen.
 
   // Krankheit: Kalendereintraege der Kategorie SICK/INJURED oder eine Notiz "krank" (Ende im Kalender exklusiv).
   // Zaehlt fuer die Intensitaets-Leitplanke und die Erholungswerte (Basis ohne Krankheitstage).
@@ -947,7 +942,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
       intervalsEvents: eventsR.ok ? { ok: true } : { ok: false, error: eventsR.error },
       intervalsSportSettings: settingsR.ok ? { ok: true } : { ok: false, error: settingsR.error },
     },
-    goal: { ...goal, daysToGo: diffDays(todayIso, goal.date) },
+    goal: { ...goal, daysToGo: goal.date ? diffDays(todayIso, goal.date) : null },
     seasonBlock,
     recentRace: findRecentRace(events, todayIso),
     supportRaces: buildSupportRaces(bRacesR.ok && Array.isArray(bRacesR.value) ? bRacesR.value : events, todayIso, goal.date),
