@@ -17,6 +17,7 @@
 //              Parameter  block  (auch  rahmen, experiment) = Block Woche x von N, naechster Test, was erlaubt ist und was
 //              nicht, Messwerte des Experiments, Abschlussziele.
 //              Parameter  tests  = Tests des Coaches: laufende und im Urteil, je Test Prüfdatum, Messgröße, Einhaltung.
+//     Gross:   mit Parameter  tests  die Tests in großer Schrift (bis zu 4 Tests, Messgröße in bis zu zwei Zeilen).
 //              Parameter  kraft  = Krafttraining aus EGYM.  Parameter  vdot  = VDOT und Trainingsbereiche.
 //     Klein:   Schlaf und Form (Standard, auch  schlaf, bereit). Parameter  ernaehrung  oder  fitness.
 //     Zeiten stehen in allen Widgets als h:mm.
@@ -39,6 +40,7 @@ const VIEWS = {
   foodmedium: { endpoint: "small", build: (r) => buildFoodMedium(r), size: "medium", label: "Vorschau mittel: Ernährung heute" },
   kraft: { endpoint: "kraft", build: (r) => buildKraft(r), size: "medium", label: "Vorschau mittel: Kraft (EGYM)" },
   tests: { endpoint: "tests", build: (r) => buildTests(r), size: "medium", label: "Vorschau mittel: Tests" },
+  testslarge: { endpoint: "tests", build: (r) => buildTests(r, true), size: "large", label: "Vorschau groß: Tests" },
   vdot: { endpoint: "vdot", build: (r) => buildVdot(r), size: "medium", label: "Vorschau mittel: VDOT und Trainingsbereiche" },
   schlafform: { endpoint: "small", build: (r) => buildSchlafForm(r), size: "small", label: "Vorschau klein: Schlaf und Form" },
   food: { endpoint: "small", build: (r) => buildFoodCard(r), size: "small", label: "Vorschau klein: Ernährung" },
@@ -49,6 +51,7 @@ const VIEWS = {
 const PARAM_VIEWS = {
   medium: { fallback: "foodmedium", rules: [[/^(test|probe)/, "tests"], [/^(zeit|time|dauer|min|form|tss|belast|hm|detail|6)/, "time"], [/^(woche|week|intens|polar|train|tri)/, "training"], [/^(vdot|pace|bereich|zone)/, "vdot"], [/^(kraft|egym|strength|gym)/, "kraft"], [/^(block|ziel|saison|season|exp|versuch|rahmen|frame|leit|regel|kompass)/, "block"], [/^(ern|food|essen|kcal)/, "foodmedium"]] },
   small: { fallback: "schlafform", rules: [[/^(ern|food|essen|kcal)/, "food"], [/^(fit|ctl)/, "fitness"]] },
+  large: { fallback: "main", rules: [[/^(test|probe)/, "testslarge"]] },
 };
 const WIDGET_PARAM = String((typeof args !== "undefined" && args.widgetParameter) || "").trim().toLowerCase();
 function viewFromWidget() {
@@ -1222,30 +1225,32 @@ function testMetric(m) {
   const v = (x) => (x == null ? "offen" : /^(lauf_hf130|schwimm_100m)$/.test(m.key || "") ? expVal(m, x) : `${fmt(x, Number.isInteger(x) ? 0 : 1)}${u}`);
   return `${m.label} ${v(m.baseline)} → ${v(m.current)}${m.provisional ? "*" : ""} ${m.better === "lower" ? "↓" : "↑"}`;
 }
-function buildTests(res) {
+function buildTests(res, large = false) {
   const d = res.data, W = widgetInnerWidth(), c = d.counts || {}, list = d.tests || [];
   const w = baseWidget({ padV: 12 });
+  // Gross: größere Schrift, Messgröße darf umbrechen, dickere Abstände; mittel bleibt kompakt
+  const f = large ? { title: FS.lg, when: FS.md, metric: FS.md, gap: 14, lines: 2 } : { title: FS.sm, when: FS.xs, metric: FS.xs, gap: 6, lines: 1 };
   header(w, W, "TESTS", `${c.laeuft || 0} laufen`);
-  const rows = list.slice(0, 3);
+  const rows = list.slice(0, large ? 4 : 3);
   rows.forEach((t) => {
-    w.addSpacer(6);
-    const r = w.addStack(); r.centerAlignContent(); r.spacing = 5; r.size = new Size(W, 0);
+    w.addSpacer(f.gap);
+    const r = w.addStack(); r.centerAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
     const k = TEST_DISC[t.discipline];
-    if (k) symbol(r, SPORT_SYMBOL[k], 11, new Color(sportHex(k)));
-    text(r, t.title, FS.sm, { bold: true, minScale: 0.8 });
+    if (k) symbol(r, SPORT_SYMBOL[k], large ? 15 : 11, new Color(sportHex(k)));
+    text(r, t.title, f.title, { bold: true, minScale: 0.8 });
     r.addSpacer();
     const when = testWhen(t);
-    if (when) text(r, when, FS.xs, { color: COL.muted, minScale: 0.8 });
+    if (when) text(r, when, f.when, { color: COL.muted, minScale: 0.8 });
     const ml = testMetric(t.metric);
-    if (ml) text(w, ml, FS.xs, { color: COL.muted, minScale: 0.8 });
+    if (ml) { if (large) w.addSpacer(2); text(w, ml, f.metric, { color: COL.muted, minScale: 0.8, lines: f.lines }); }
     const a = t.adherence;
-    if (a && t.status === "laeuft") { w.addSpacer(2); progressBar(w, W, (a.actualPct || 0) / 100, ACCENT_HEX, 1, { mark: (a.minPct || 0) / 100 }); }
+    if (a && t.status === "laeuft") { w.addSpacer(large ? 5 : 2); progressBar(w, W, (a.actualPct || 0) / 100, ACCENT_HEX, 1, { mark: (a.minPct || 0) / 100 }); }
   });
   if (!rows.length) { w.addSpacer(6); text(w, "Kein Test läuft.", FS.sm, { color: COL.muted }); }
   w.addSpacer();
   const more = list.length - rows.length;
   const foot = [c.kandidat ? `${c.kandidat} Kandidaten` : null, c.urteil && !rows.some((t) => t.status === "urteil") ? `${c.urteil} im Urteil` : null, more > 0 ? `+${more} weitere` : null].filter(Boolean).join(" · ");
-  if (foot) text(w, foot, FS.xs, { color: COL.muted, minScale: 0.8 });
+  if (foot) text(w, foot, large ? FS.sm : FS.xs, { color: COL.muted, minScale: 0.8 });
   notice(w, res, d);
   return w;
 }
