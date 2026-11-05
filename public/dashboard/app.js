@@ -1672,33 +1672,37 @@ function renderTests(d) {
 // Gerberts Entscheidung über Kandidaten: POST /api/tests/:id/decision; danach lädt die Seite neu, damit Kennzahlen,
 // Spalten und Wissensbasis den neuen Stand zeigen. Der Coach liest es beim nächsten get_coach.
 function wireTestDecisions(d) {
-  const post = async (id, payload, msg) => {
+  const post = async (id, payload, msg, btn) => {
+    // gedrückte Schaltfläche hervorheben, solange gespeichert wird; bei Fehler zurücknehmen
+    const card = msg.closest(".ttest"), all = [...card.querySelectorAll(".tact button, .tform button")];
+    const reset = () => { all.forEach((b) => { b.disabled = false; b.classList.remove("on"); }); };
+    all.forEach((b) => { b.disabled = true; }); btn?.classList.add("on");
     msg.textContent = "Wird gespeichert …";
     let token = null;
     try { token = localStorage.getItem("dashboard-token"); } catch {}
     try {
       const r = await fetch(`/api/tests/${encodeURIComponent(id)}/decision`, { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) { msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
+      if (!r.ok) { reset(); msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
       if (j.warnings?.length) { try { sessionStorage.setItem("test-warn", j.warnings.join(" · ")); } catch {} }
       await load();
-    } catch (e) { msg.textContent = "Nicht gespeichert: " + e.message; }
+    } catch (e) { reset(); msg.textContent = "Nicht gespeichert: " + e.message; }
   };
   for (const card of document.querySelectorAll("#tests details.ttest[data-s=kandidat]")) {
     const form = card.querySelector(".tform"), msg = card.querySelector(".tmsg"), id = form.dataset.id;
     const show = (mode) => { form.hidden = false; form.dataset.mode = mode; form.querySelector(".tform-start").hidden = mode !== "start"; for (const i of form.querySelectorAll(".tform-start input")) i.disabled = mode !== "start"; card.open = true; };
     for (const b of card.querySelectorAll(".tact [data-a]")) b.onclick = () => {
-      if (b.dataset.a === "reject") return post(id, { action: "reject" }, msg);
+      if (b.dataset.a === "reject") return post(id, { action: "reject" }, msg, b);
       show(b.dataset.a);
     };
     card.querySelector(".tcancel").onclick = () => { form.hidden = true; msg.textContent = ""; };
     form.onsubmit = (e) => {
       e.preventDefault();
       const f = new FormData(form), v = (k) => String(f.get(k) ?? "").trim();
-      if (form.dataset.mode === "later") return post(id, { action: "later", block: v("block") }, msg);
+      if (form.dataset.mode === "later") return post(id, { action: "later", block: v("block") }, msg, e.submitter);
       const payload = { action: "start", startDate: v("startDate"), checkDate: v("checkDate"), block: v("block"), expectation: { confirmed: v("confirmed"), unclear: v("unclear"), refuted: v("refuted") } };
       if (v("rule")) payload.adherence = { rule: v("rule"), minPct: v("minPct") };
-      post(id, payload, msg);
+      post(id, payload, msg, e.submitter);
     };
   }
 }

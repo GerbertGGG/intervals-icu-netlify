@@ -369,7 +369,9 @@ export function applyTestDecision(stored, id, body, todayIso = isoDateBerlin(), 
   const action = body.action;
   if (!["start", "reject", "later"].includes(action)) return { error: "action muss start, reject oder later sein", status: 400 };
   if (prev.status !== "kandidat") return { error: `Test ${id} ist kein Kandidat (status ${prev.status})`, status: 409 };
-  const base = { ...prev, fetchedAt: nowIso };
+  // Gerberts Entscheidung gewinnt immer: auch wenn der Coach den Test mit einem späteren Zeitstempel gespeichert hat
+  const at = prev.updatedAt && Date.parse(prev.updatedAt) >= Date.parse(nowIso) ? new Date(Date.parse(prev.updatedAt) + 1).toISOString() : nowIso;
+  const base = { ...prev, fetchedAt: at };
   let next;
   if (action === "reject") next = { ...base, status: "verworfen", decidedAt: todayIso };
   else if (action === "later") {
