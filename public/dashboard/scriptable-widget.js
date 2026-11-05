@@ -1233,18 +1233,27 @@ function buildTests(res, large = false) {
   header(w, W, "TESTS", `${c.laeuft || 0} laufen`);
   const rows = list.slice(0, large ? 4 : 3);
   rows.forEach((t) => {
-    w.addSpacer(f.gap);
-    const r = w.addStack(); r.centerAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
+    w.addSpacer(large ? (rows.length <= 3 ? 24 : 16) : f.gap);
     const k = TEST_DISC[t.discipline];
-    if (k) symbol(r, SPORT_SYMBOL[k], large ? 15 : 11, new Color(sportHex(k)));
-    text(r, t.title, f.title, { bold: true, minScale: 0.8 });
-    r.addSpacer();
     const when = testWhen(t);
-    if (when) text(r, when, f.when, { color: COL.muted, minScale: 0.8 });
+    if (large) {
+      // Gross: Prüfdatum über dem Titel, damit der Titel die volle Breite hat und umbrechen darf
+      const top = w.addStack(); top.centerAlignContent(); top.spacing = 6; top.size = new Size(W, 0);
+      if (k) symbol(top, SPORT_SYMBOL[k], 14, new Color(sportHex(k)));
+      if (when) text(top, when, FS.md, { color: COL.muted, minScale: 0.8 });
+      w.addSpacer(3);
+      text(w, t.title, FS.lg, { bold: true, lines: 2, minScale: 0.85 });
+    } else {
+      const r = w.addStack(); r.centerAlignContent(); r.spacing = 6; r.size = new Size(W, 0);
+      if (k) symbol(r, SPORT_SYMBOL[k], 11, new Color(sportHex(k)));
+      text(r, t.title, f.title, { bold: true, minScale: 0.8 });
+      r.addSpacer();
+      if (when) text(r, when, f.when, { color: COL.muted, minScale: 0.8 });
+    }
     const ml = testMetric(t.metric);
-    if (ml) { if (large) w.addSpacer(2); text(w, ml, f.metric, { color: COL.muted, minScale: 0.8, lines: f.lines }); }
+    if (ml) { if (large) w.addSpacer(3); text(w, ml, f.metric, { color: COL.muted, minScale: 0.8, lines: f.lines }); }
     const a = t.adherence;
-    if (a && t.status === "laeuft") { w.addSpacer(large ? 5 : 2); progressBar(w, W, (a.actualPct || 0) / 100, ACCENT_HEX, 1, { mark: (a.minPct || 0) / 100 }); }
+    if (a && t.status === "laeuft") { w.addSpacer(large ? 8 : 2); progressBar(w, W, (a.actualPct || 0) / 100, ACCENT_HEX, 1, { mark: (a.minPct || 0) / 100 }); }
   });
   if (!rows.length) { w.addSpacer(6); text(w, "Kein Test läuft.", FS.sm, { color: COL.muted }); }
   w.addSpacer();
