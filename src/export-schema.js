@@ -7,6 +7,8 @@
 // 3 (03.11.2026): neue Tagesspalte calendar (Kalender-Eintraege), sick auch bei OP/Operation/Verletzung im Namen
 // 2 (03.11.2026): Aufzeichnungsluecken bis 12 s als Bewegung (intelligente Aufzeichnung, 2022), Schutzregel GPS > 10 %,
 // Rennen ueber jeden Renn-Eintrag im Kalender am selben Tag ohne Distanzabgleich
+// Ohne Wechsel (05.11.2026): dewPointC (runs, rides) und kcalActivities, kjBike (days) kommen aus gespeicherten bzw. frisch
+// gelesenen Stammdaten, nicht aus den Zeitreihen; ein Lauf der Action mit full fuellt sie fuer die ganze Historie.
 export const METHOD_VERSION = 4;
 
 export const METRIC_COLUMNS = [
@@ -18,7 +20,7 @@ export const METRIC_COLUMNS = [
 export const RUN_COLUMNS = [
   "id", "date", "startLocal", "type", "name", "tags", "treadmill", "race", "interval", "runClass", "distKm", "movingMin",
   "elevPerKm", "avgHr", "maxHr", "rpe", "feel", "load", "brick", "brickRideId", "brickGapMin", "brickRideMin", "brickRideLoad",
-  "tempC", "humidity", "windMs", "weatherSrc", "streamStatus", "streamSkip",
+  "tempC", "humidity", "dewPointC", "windMs", "weatherSrc", "streamStatus", "streamSkip",
   ...METRIC_COLUMNS, "methodVersion",
 ];
 
@@ -27,7 +29,7 @@ export const RIDE_METRIC_COLUMNS = ["hrAt160_170", "secAt160_170", "powerAt120",
 export const RIDE_COLUMNS = [
   "id", "date", "startLocal", "endLocal", "type", "name", "tags", "trainer", "movingMin", "distKm", "elevPerKm", "avgPower", "np", "if", "vi",
   "ftp", "avgHr", "maxHr", "avgCadence", "load", "rpe", "feel", "warmupS", "intensity", "testKind",
-  "tempC", "humidity", "windMs", "weatherSrc", "streamStatus", "streamSkip", ...RIDE_METRIC_COLUMNS, "methodVersion",
+  "tempC", "humidity", "dewPointC", "windMs", "weatherSrc", "streamStatus", "streamSkip", ...RIDE_METRIC_COLUMNS, "methodVersion",
 ];
 
 // Schwimmeinheiten (export-tri.js)
@@ -39,7 +41,7 @@ export const SWIM_COLUMNS = [
 export const DAY_COLUMNS = [
   "date", "ctl", "atl", "rampRate", "loadRun", "loadBike", "loadSwim", "loadStrength", "minRun", "minBike", "minSwim", "strengthSets",
   "hrv", "restHr", "sleepH", "sleepScore", "sleepQuality", "fatigue", "soreness", "mood", "motivation", "sick", "calendar", "weightKg",
-  "kcal", "kcalGoal", "protein", "carbs", "methodVersion",
+  "kcal", "kcalGoal", "protein", "carbs", "kcalActivities", "kjBike", "methodVersion",
 ];
 
 // SQLite-Typen; alles andere REAL. Wahrheitswerte als 0/1, tags als JSON-Text.
@@ -47,6 +49,8 @@ const TEXT = new Set(["id", "date", "startLocal", "endLocal", "type", "name", "t
   "brickRideId", "intensity", "testKind", "pool", "lapsStatus"]);
 const BOOL = new Set(["treadmill", "race", "interval", "sick", "brick", "trainer", "testPassed"]);
 const INT = new Set(["methodVersion"]);
+export const isTextColumn = (c) => TEXT.has(c);
+export const isBoolColumn = (c) => BOOL.has(c);
 const typeOf = (c) => (TEXT.has(c) ? "TEXT" : BOOL.has(c) || INT.has(c) ? "INTEGER" : "REAL");
 
 // Neben den Ausgabespalten: hash (Zeileninhalt, fuer "nur geaenderte Zeilen schreiben") und syncedAt

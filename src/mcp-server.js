@@ -3,7 +3,8 @@
 // tools so a Claude chat can be added as a custom connector against this Worker,
 // reusing the existing intervals-client.js / yazio-client.js fetchers instead of
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
-// get_run_export/get_day_export liefern den Export fuer die Langzeitanalyse aus D1 (export.js, gefuellt von GitHub Actions).
+// get_run_export/get_day_export liefern den Export fuer die Langzeitanalyse aus D1 (export.js, gefuellt von GitHub Actions),
+// get_export_stats dessen Zusammenfassung je Woche/Monat/Quartal/Jahr.
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
 // save_studie, save_wissensbasis, save_coach, save_decisions, save_ernaehrung, save_experiment, save_test, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
@@ -25,7 +26,7 @@ import { withSwimIntervals } from "./swim-time.js";
 import { TARGETS_KV_KEY, COACH_HISTORY, validateTargets, appendTarget, readTargets, targetsView } from "./targets-snapshot.js";
 import { ERNAEHRUNG_KV_KEY, validateErnaehrung, mergeErnaehrung, buildErnaehrung, WEIGHT_DAYS } from "./ernaehrung.js";
 import { hasYazioCredentials, fetchYazioDailyNutrition, fetchYazioDailyGoalKcal } from "./yazio-client.js";
-import { buildDayExport, buildActivityExport, RUN_COLUMNS, DAY_COLUMNS, RIDE_COLUMNS, SWIM_COLUMNS, toTable, toCsv, DEFAULT_LIMIT, MAX_LIMIT } from "./export.js";
+import { buildDayExport, buildActivityExport, buildExportStats, STATS_GROUPS, STATS_MAX_METRICS, RUN_COLUMNS, DAY_COLUMNS, RIDE_COLUMNS, SWIM_COLUMNS, toTable, toCsv, DEFAULT_LIMIT, MAX_LIMIT } from "./export.js";
 import { warmDashboardCache } from "./widget.js";
 import { readRideTrend } from "./block-inputs.js";
 import { RIDE_TREND_NOTE } from "./session-tests.js";
@@ -536,7 +537,7 @@ const TOOLS = [
       "Export für die Langzeitanalyse: eine Zeile pro Lauf (alle Läufe, älteste zuerst), nur Rohwerte und Kennzahlen, keine Bewertung. Liest aus der Export-Datenbank (D1), die eine GitHub Action täglich gegen 04:17/05:17 Berlin für die letzten 14 Tage nachführt; ganz neue Läufe von heute fehlen also noch. Antwort: methodVersion (aktuelle Methode), from, to, total (Läufe im Zeitraum), count, pending (Läufe im Zeitraum, deren Zeitreihen beim letzten Lauf der Action nicht abrufbar waren), syncedAt / syncedFrom / syncedTo (letzte Synchronisation), nextCursor (null = letzte Seite), columns, rows. " +
       "Spalten: id, date, startLocal (lokale Startzeit), type, name, tags, treadmill, race, interval (Intervall-Tag oder Textsignal wie 5x1000), runClass (base|long|intensity|race|unknown, Einheitsart des Dashboards), distKm, movingMin (Bewegungszeit), elevPerKm (Hm/km), avgHr, maxHr, rpe (1–10), feel (1 stark … 5 schwach), load (Intervals-Load). " +
       "Koppellauf: brick (Start höchstens 30 min nach dem Ende einer Radfahrt), brickRideId (id in get_ride_export), brickGapMin (Minuten zwischen Radende und Laufstart), brickRideMin, brickRideLoad; Koppelläufe haben ganz normale Kennzahlen (Pace im Band frisch gegen nach dem Rad). " +
-      "Wetter: tempC, humidity (%), windMs (m/s, nur aus Open-Meteo), weatherSrc (intervals|openmeteo|null). Nie die Temperatur der Uhr; Laufband ohne Wetter. " +
+      "Wetter: tempC, humidity (%), dewPointC (Taupunkt in °C aus tempC und humidity nach Magnus; fasst Temperatur und Feuchte in einer Zahl zusammen), windMs (m/s, nur aus Open-Meteo), weatherSrc (intervals|openmeteo|null). Nie die Temperatur der Uhr; Laufband ohne Wetter. " +
       "streamStatus: ok | pending | none (keine Zeitreihen/kein Puls) | skip; streamSkip: treadmill | race | interval | short (unter 20 min) | noHr | gps (GPS-Bereinigung hätte mehr als 10 % der Distanz entfernt; dann nur gpsCorrectedM). race = Tag/Intervals-Flag oder ein Renn-Eintrag (RACE, RACE_A/B/C, A_RACE) im Kalender am selben Tag, auch bei abgebrochenem Rennen. Kennzahlen nur bei ok, sonst null: " +
       "Zeitachse Bewegungszeit, GPS bereinigt, erste 5 min ausgelassen, gleitende 30-s-Fenster (5-s-Schritt) ohne Pause/Stehen. " +
       "paceBand125_135 / paceBand120_128 = Median-Pace in s/km der Fenster mit Ø-HF im Band (null unter 300 s im Band), secBand125_135 / secBand120_128 = Sekunden im Band, paceBand…Flat = dasselbe nur aus flachen Fenstern (Steigung < 2 %, null ohne Höhendaten). " +
@@ -550,7 +551,7 @@ const TOOLS = [
       "Export für die Langzeitanalyse: eine Zeile pro Radfahrt (Ride, VirtualRide, alle Rad-Typen), älteste zuerst, nur Rohwerte und Kennzahlen, keine Bewertung. Antwort und Parameter wie get_run_export (methodVersion, total, count, pending, syncedAt, nextCursor, columns, rows). " +
       "Spalten: id, date, startLocal, endLocal (Start + Gesamtzeit, für Koppelläufe), type, name, tags, trainer (Rolle/VirtualRide), movingMin, distKm, elevPerKm, avgPower (Ø W), np (Normalized Power), if (Intensitätsfaktor, z. B. 0,65), vi (NP/Ø), ftp (FTP in Intervals zum Zeitpunkt der Fahrt), avgHr, maxHr, avgCadence, load (Rad: power_load, wie im Wochenrahmen), rpe, feel, warmupS (icu_warmup_time). " +
       "intensity: bikeHiit (HIIT, 30/30, VO2, 3–4× 4 min oder ≥ 4 min Z5) oder null. testKind: compare (Rad-Vergleichseinheit wie im Dashboard: Einrollen + 60-min-Messfenster bei der Vergleichsleistung 165 ±5 W, VI ≤ 1,05), baseline (Ausgangswert, z. B. ohne Einrollen) oder null. " +
-      "Wetter wie bei Läufen, nur draußen (tempC, humidity, windMs, weatherSrc). streamStatus ok | pending | none | skip; streamSkip: noPower | short (unter 20 min) | interval (Intensitätseinheit, Intervall-Tag/-Text) | noHr. " +
+      "Wetter wie bei Läufen, nur draußen (tempC, humidity, dewPointC, windMs, weatherSrc). streamStatus ok | pending | none | skip; streamSkip: noPower | short (unter 20 min) | interval (Intensitätseinheit, Intervall-Tag/-Text) | noHr. " +
       "Kennzahlen nach dem Einrollen (icu_warmup_time, sonst 10 min; bei compare/baseline das Fenster des Dashboards), Zeitachse ohne Stillstand, nur gleichmäßige 30-s-Fenster (5-s-Schritt, Variationskoeffizient der Leistung in den 2 min davor < 10 %, weil der Puls nachläuft): " +
       "hrAt160_170 = Median-Puls der Fenster mit Ø 160–170 W (null unter 300 s), secAt160_170 = Sekunden; Hauptgröße für den Vergleich mit der Rad-Vergleichseinheit. powerAt120 / powerAt130 = vorhergesagte Watt bei HF 120/130 aus der Regression Leistung gegen Puls (Fenster mit HF 100–150), pwSlope (W je Schlag), pwR2, pwN (unter 20: Regression null). " +
       "ef = NP / Ø-Puls nach dem Einrollen. decoup = Pw:HR-Decoupling nach dem Einrollen über die ganze Fahrt (positiv = zweite Hälfte schlechter). decoup60 = Decoupling der ersten 60 min nach dem Einrollen; bei compare/baseline genau der Wert des Dashboards (Intervals-Wert, wenn er das Messfenster deckt). mainHr = Ø-Puls im Messfenster, nur bei compare/baseline. methodVersion.",
@@ -568,8 +569,29 @@ const TOOLS = [
     name: "get_day_export",
     description:
       "Export für die Langzeitanalyse: eine Zeile pro Kalendertag (auch Tage ohne Daten), nur Rohwerte, keine Basislinien und Bewertungen. Liest aus der Export-Datenbank (D1), täglich von einer GitHub Action nachgeführt. Antwort: methodVersion, from, to, total, count, pending (immer 0), syncedAt / syncedFrom / syncedTo, nextCursor (nächster Tag, null = letzte Seite), columns, rows. " +
-      "Spalten: date, ctl, atl, rampRate (Intervals), loadRun, loadBike, loadSwim, loadStrength (Summe Load je Sportart, Rad mit power_load wie im Wochenrahmen), minRun, minBike, minSwim (Bewegungszeit in min, Schwimmen ohne Pausen soweit bekannt), strengthSets (Kraftsätze aus der Beschreibung), hrv, restHr, sleepH, sleepScore, sleepQuality (1 gut … 4 schlecht), fatigue, soreness, mood, motivation (Intervals-Skalen 1–4, vor dem Training eingetragen), sick (Kalender SICK/INJURED, Notiz „krank“ oder Name mit OP/Operation/Verletzung), calendar (alle Nicht-Workout-Kalendereinträge des Tages als „Name (KATEGORIE)“, mehrtägige an jedem Tag, mit „; “ getrennt, sonst null – daran Phasen wie OP, Krankheit, Urlaub erkennen), weightKg (Yazio, sonst Intervals), kcal, kcalGoal, protein, carbs (g, aus Yazio über die Intervals-Wellness), methodVersion. Fehlende Werte sind null, Load/Minuten/Sätze ohne Training 0.",
+      "Spalten: date, ctl, atl, rampRate (Intervals), loadRun, loadBike, loadSwim, loadStrength (Summe Load je Sportart, Rad mit power_load wie im Wochenrahmen), minRun, minBike, minSwim (Bewegungszeit in min, Schwimmen ohne Pausen soweit bekannt), strengthSets (Kraftsätze aus der Beschreibung), hrv, restHr, sleepH, sleepScore, sleepQuality (1 gut … 4 schlecht), fatigue, soreness, mood, motivation (Intervals-Skalen 1–4, vor dem Training eingetragen), sick (Kalender SICK/INJURED, Notiz „krank“ oder Name mit OP/Operation/Verletzung), calendar (alle Nicht-Workout-Kalendereinträge des Tages als „Name (KATEGORIE)“, mehrtägige an jedem Tag, mit „; “ getrennt, sonst null – daran Phasen wie OP, Krankheit, Urlaub erkennen), weightKg (Yazio, sonst Intervals), kcal, kcalGoal, protein, carbs (g, aus Yazio über die Intervals-Wellness; kcalGoal = Yazios Tagesziel inklusive des Sports, den Yazio von Garmin importiert), kcalActivities (Summe calories aller Aktivitäten des Tages, also die Sport-Schätzung von Uhr/Intervals, die Yazio aufschlägt; null ohne Wert), kjBike (Summe mechanische Arbeit der Radfahrten in kJ aus der Leistung, icu_joules; 1 kJ Arbeit ≈ 1 kcal Nahrungsenergie bei rund 24 % Wirkungsgrad; null ohne Leistung), methodVersion. Fehlende Werte sind null, Load/Minuten/Sätze ohne Training 0.",
     inputSchema: EXPORT_ARGS,
+  },
+  {
+    name: "get_export_stats",
+    description:
+      "Zusammenfassung des Exports statt hunderter Zeilen: rechnet je Gruppe (Woche = ISO-Montag, Monat, Quartal, Jahr oder none = alles) für bis zu " + STATS_MAX_METRICS + " Zahlenspalten n (Zeilen mit Wert), mean, median, min, max und sd (Stichproben-Standardabweichung). Liest aus derselben D1-Datenbank wie get_run_export usw., nur Rechnung, keine Bewertung. " +
+      "Für Langzeit-Trends (z. B. Pace im Pulsband je Quartal) zuerst dieses Tool nehmen; die Einzelzeilen nur holen, wenn Ausreißer, Wetter oder Kalender geprüft werden müssen – ein Mittel verdeckt Störfaktoren. " +
+      "Antwort: methodVersion, table, groupBy, from, to, filter, min, max, metrics, rows (gelesene Zeilen), syncedAt, groups [{ key, from, to (erster/letzter Tag mit Zeile), rows, stats { Spalte: { n, mean, median, min, max, sd } } }].",
+    inputSchema: {
+      type: "object",
+      properties: {
+        table: { type: "string", enum: ["runs", "rides", "swims", "days"], description: "runs = get_run_export, rides = get_ride_export, swims = get_swim_export, days = get_day_export." },
+        metrics: { type: "array", items: { type: "string" }, minItems: 1, maxItems: STATS_MAX_METRICS, description: "Zahlenspalten der Tabelle (Namen wie im jeweiligen Export), z. B. [\"paceBand120_128\", \"decoup\", \"dewPointC\"]." },
+        groupBy: { type: "string", enum: STATS_GROUPS, description: "Gruppierung nach Datum, Standard month." },
+        from: { type: "string", description: "Startdatum YYYY-MM-DD, Standard: erster Tag in der Tabelle." },
+        to: { type: "string", description: "Enddatum YYYY-MM-DD, Standard: gestern." },
+        filter: { type: "object", description: "Gleichheit auf Einordnungs-Spalten, Wert oder Liste (null = leer), z. B. { \"runClass\": [\"base\", \"long\"], \"treadmill\": false, \"brick\": false } oder { \"testKind\": \"compare\" }. Filterbar: Text- und Ja/Nein-Spalten außer id, name, tags, type, calendar, Datumswerten." },
+        min: { type: "object", description: "Untergrenzen auf Zahlenspalten (>=), z. B. { \"movingMin\": 60 }." },
+        max: { type: "object", description: "Obergrenzen auf Zahlenspalten (<=), z. B. { \"elevPerKm\": 10, \"dewPointC\": 12 }." },
+      },
+      required: ["table", "metrics"],
+    },
   },
   {
     name: "get_coach",
@@ -680,6 +702,7 @@ async function callTool(env, name, args) {
       ? { ...coach, idea: coach.idea ?? null, ideas: coach.ideas ?? [], week: coach.week ?? null, week_plan: coach.week_plan ?? null, deloadWeeks: coach.deloadWeeks ?? [], ...extra }
       : { none: true, idea: null, ideas: [], week: null, week_plan: null, deloadWeeks: [], ...extra };
   }
+  if (name === "get_export_stats") return JSON.stringify(await buildExportStats(env, args ?? {}));
   const EXPORT_TOOLS = { get_run_export: ["runs", RUN_COLUMNS], get_ride_export: ["rides", RIDE_COLUMNS], get_swim_export: ["swims", SWIM_COLUMNS], get_day_export: ["days", DAY_COLUMNS] };
   if (EXPORT_TOOLS[name]) {
     const [table, columns] = EXPORT_TOOLS[name];

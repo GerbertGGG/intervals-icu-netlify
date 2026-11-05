@@ -9,6 +9,7 @@ import { decouplingFromStreams, runMovingAxis } from "./block-inputs.js";
 import { rideWindowOf, rideWindowStats, classifyRide, isTestRide, TEST_FALLBACK, TEST_RULES } from "./session-tests.js";
 import { intensityKindOf, swimTestFromText, swimTestFromIntervals } from "./season-block.js";
 import { swimTimeOf } from "./swim-time.js";
+import { dewPointC } from "./weather.js";
 import { weatherOf, EXPORT_RUN_RULES } from "./export-calc.js";
 import { METHOD_VERSION, RIDE_METRIC_COLUMNS } from "./export-schema.js";
 
@@ -189,7 +190,7 @@ export function rideRow(a, entry, eventsById = null) {
     ftp: num(a?.icu_ftp), avgHr: num(a?.average_heartrate), maxHr: num(a?.max_heartrate), avgCadence: num(a?.average_cadence) != null ? Math.round(num(a.average_cadence)) : null,
     load: load > 0 ? r1(load) : null, rpe: num(a?.icu_rpe) ?? num(a?.perceived_exertion), feel: num(a?.feel), warmupS: num(a?.icu_warmup_time),
     intensity: rideIntensityOf(a, eventsById), testKind: entry?.testKind ?? null,
-    tempC: w?.tempC ?? null, humidity: w?.humidity ?? null, windMs: w?.windMs ?? null, weatherSrc: w?.src ?? null,
+    tempC: w?.tempC ?? null, humidity: w?.humidity ?? null, dewPointC: dewPointC(w?.tempC, w?.humidity), windMs: w?.windMs ?? null, weatherSrc: w?.src ?? null,
   };
   if (!entry) Object.assign(row, { streamStatus: "pending", streamSkip: skip });
   else Object.assign(row, { streamStatus: entry.streamStatus, streamSkip: entry.streamSkip ?? null });

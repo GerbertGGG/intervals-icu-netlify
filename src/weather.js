@@ -75,3 +75,12 @@ export async function openMeteoDay(env, lat, lng, dateIso, budget, fetchImpl = f
   if (day.temps.some((v) => v != null)) await writeKvJson(env, key, day).catch(() => {});
   return day;
 }
+
+// Taupunkt in °C aus Lufttemperatur (°C) und relativer Feuchte (%) nach Magnus (a 17,62, b 243,12; gut fuer −45 bis 60 °C).
+// Fasst Temperatur und Feuchte in einer Zahl zusammen (je hoeher, desto schlechter verdunstet Schweiss). Nur Wert, keine Grenze.
+export function dewPointC(tempC, humidity) {
+  const t = Number(tempC), rh = Number(humidity);
+  if (tempC == null || humidity == null || !Number.isFinite(t) || !Number.isFinite(rh) || rh <= 0 || rh > 100) return null;
+  const a = 17.62, b = 243.12, g = Math.log(rh / 100) + (a * t) / (b + t);
+  return Math.round(((b * g) / (a - g)) * 10) / 10;
+}
