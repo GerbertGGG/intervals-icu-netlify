@@ -1117,6 +1117,45 @@ svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .hero > div, .card, .tile, .idea { animation-duration: .4s; }
 @media (max-width: 600px) { main { padding: 4px 16px 72px; } .jump { margin: 12px -16px 0; padding: 0 12px; } h1 { font-size: 28px; } h2 { font-size: 27px; margin-top: 52px; } .verdict.coach { font-size: 26px; } }
+
+/* ---------- Aufgeräumt: Tests zuerst, kompakt; Wissensbasis mit Marke; Erkenntnisse eingeklappt ---------- */
+#tests article.ttest, #tests details.ttest { margin: 10px 0 0; padding: 12px 14px; }
+#tests details.ttest > summary { list-style: none; cursor: pointer; }
+#tests details.ttest > summary::-webkit-details-marker { display: none; }
+#tests details.ttest > summary::after { content: "mehr"; display: block; text-align: right; color: var(--accent); font-size: var(--fs-s); font-weight: 600; margin-top: 2px; }
+#tests details.ttest[open] > summary::after { content: "weniger"; }
+#tests .tline { margin-top: 5px; font-size: var(--fs-s); overflow-wrap: anywhere; }
+#tests .tline.muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#tests .tline .tk { display: inline; margin: 0; }
+#tests .tchip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#tests .tdir { color: var(--muted); font-size: var(--fs-xs); }
+#tests .thint { color: var(--text); box-shadow: inset 3px 0 0 var(--accent); padding-left: 8px; }
+#tests .tmini { display: inline-block; position: relative; width: 56px; height: 6px; border-radius: 3px; background: var(--inset); box-shadow: inset 0 0 0 1px var(--line-2); vertical-align: middle; margin-left: 8px; }
+#tests .tmini i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 3px; }
+#tests .tmini u { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); text-decoration: none; }
+#tests .tbody { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--line); }
+#tests .tsteps { margin: 8px 0 6px; }
+#tests details.ttest:target { box-shadow: 0 0 0 2px var(--accent); }
+#wissen .wcycle { margin: 8px 0 4px; }
+#wissen .wstep { padding: 4px 6px 4px 18px; } #wissen .wstep b { font-size: var(--fs-m); } #wissen .wstep span { font-size: 11px; }
+#wissen .wsub { font-size: 11px; margin: 2px 0 8px; }
+#wissen li.witem { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px; }
+#wissen li.witem > details { flex: 1; min-width: 0; }
+#wissen .wrow { list-style: none; cursor: pointer; }
+#wissen .wrow::-webkit-details-marker { display: none; }
+#wissen .wrow .wtext { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+#wissen details[open] > .wrow .wtext { display: block; }
+#wissen .wmore { margin-top: 6px; font-size: var(--fs-s); }
+#wissen .wchipcol { flex: 0 1 auto; max-width: 40%; text-align: right; }
+#wissen .wchip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+#wissen .wsumr { display: inline-flex; gap: 8px; align-items: center; }
+@media (max-width: 520px) { #wissen li.witem { flex-direction: column; gap: 6px; } #wissen .wchipcol { max-width: 100%; text-align: left; } }
+.ins-wrap > summary { cursor: pointer; font-weight: 600; }
+.ins-wrap[open] > summary { margin-bottom: 10px; }
+.ins .ins-one { color: var(--muted); font-size: var(--fs-s); margin-top: 2px; }
+.ins .ins-foot { flex-wrap: wrap; margin-top: 6px; }
+.ins-tchip { background: var(--inset); color: var(--text); font-weight: 500; white-space: normal; }
+.ins:not([open]) .ins-less, .ins[open] .ins-more { display: none; }
 </style>
 </head>
 <body>
@@ -1129,7 +1168,7 @@ svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
   <div id="sources"></div>
 
   <nav class="jump" aria-label="Sprungmarken">
-    <a href="#cockpit-top">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erkenntnisse">Erkenntnisse</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
+    <a href="#cockpit-top">Cockpit</a><a href="#rennplan">Rennplan</a><a href="#form">Form</a><a href="#leistung">Leistung</a><a href="#erkenntnisse">Tests</a><a href="#erholung">Erholung</a><a href="#ernaehrung">Ernährung</a><a href="#kraft">Kraft</a>
   </nav>
 
   <h2 id="cockpit-top" class="sr-only">Cockpit</h2>
@@ -1178,13 +1217,16 @@ svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
   <div class="grid wide" id="disciplines" hidden></div>
   <details class="info" style="margin:16px 0 8px"><summary><b>Schwellen</b> (Einstellungen aus Intervals.icu)</summary><div class="grid" id="thresholds" style="margin-top:8px"></div></details>
 
-  <h2 id="erkenntnisse">Erkenntnisse</h2>
+  <h2 id="erkenntnisse">Tests</h2>
   <div id="decisions"></div>
-  <div class="ins-filter" id="insight-filter" role="group" aria-label="Filter nach Disziplin"></div>
-  <div class="ins-grid" id="insights"></div>
-  <details class="info ins-old" id="insights-old" hidden></details>
-  <div class="card" id="tests-card" style="margin-top:16px" hidden><h3>Tests</h3><div id="tests"></div></div>
+  <div class="card" id="tests-card" hidden><h3>Tests</h3><div id="tests"></div></div>
   <div class="card" id="wissen-card" style="margin-top:16px" hidden><h3>Wissensbasis</h3><div id="wissen"></div></div>
+  <details class="card ins-wrap" id="insights-wrap" style="margin-top:16px" hidden>
+    <summary id="insights-sum">Gründe aus deinen Daten</summary>
+    <div class="ins-filter" id="insight-filter" role="group" aria-label="Filter nach Disziplin"></div>
+    <div class="ins-grid" id="insights"></div>
+    <details class="info ins-old" id="insights-old" hidden></details>
+  </details>
 
   <h2 id="erholung">Erholung</h2>
   <div class="grid wide" style="align-items:start">
