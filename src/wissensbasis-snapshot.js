@@ -6,7 +6,8 @@ import { readKvJson, writeKvJson } from "./kv.js";
 // (Bearer DASHBOARD_TOKEN); get_coach liefert ihn unter wissensbasis zurück.
 //
 // Body: { fetchedAt: ISO-Zeitstempel, updatedAt: "YYYY-MM-DD", folderCheckedAt?: "YYYY-MM-DD",
-//         sections: [{ title (max 60), items: [{ text (max 220), evidence, fit, source? (max 80), isNew? }] }],
+//         sections: [{ title (max 60), items: [{ text (max 220), evidence, fit, source? (max 80), isNew?,
+//         consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type, id }, next? (max 160) }] }],
 //         open?: [string (max 160), max. 6] }
 
 export const WISSENSBASIS_KV_KEY = "dashboard:wissensbasis";
@@ -16,7 +17,12 @@ const MAX_ITEMS = 8;
 const MAX_OPEN = 6;
 export const EVIDENCE = ["stark", "mittel", "schwach", "praxis"];
 export const FIT = ["hoch", "mittel", "gering", "unklar"];
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+export const CONSENSUS = ["einig", "erklaert", "umstritten", "eine_seite"];
+export const MATCH = ["passt", "luecke", "bewusst_anders", "nicht_pruefbar"];
+export const AT_YOU = ["nicht_getestet", "laeuft", "gewirkt", "nicht_gewirkt", "offen"];
+export const LINK_TYPES = ["insight", "experiment", "targets"];
+const ENUM_FIELDS = { consensus: CONSENSUS, match: MATCH, atYou: AT_YOU };
+const DATE_RE =/^\d{4}-\d{2}-\d{2}$/;
 
 const isDate = (s) => typeof s === "string" && DATE_RE.test(s) && Number.isFinite(Date.parse(s));
 const str = (v) => (typeof v === "string" ? v.trim() : "");
@@ -58,6 +64,30 @@ export function validateWissensbasis(body) {
       if (it.isNew != null) {
         if (typeof it.isNew !== "boolean") return { error: `${p}.isNew muss true oder false sein` };
         if (it.isNew) out.isNew = true;
+      }
+      for (const [key, allowed] of Object.entries(ENUM_FIELDS)) {
+        if (it[key] == null) continue;
+        if (!allowed.includes(it[key])) return { error: `${p}.${key} muss ${allowed.join(" | ")} sein` };
+        out[key] = it[key];
+      }
+      if (it.counterCheckedAt != null) {
+        if (!isDate(it.counterCheckedAt)) return { error: `${p}.counterCheckedAt muss YYYY-MM-DD sein` };
+        out.counterCheckedAt = it.counterCheckedAt;
+      }
+      for (const key of ["practice", "next"]) {
+        if (it[key] == null || it[key] === "") continue;
+        const v = str(it[key]);
+        if (typeof it[key] !== "string" || !v) return { error: `${p}.${key} muss Text sein` };
+        if (v.length > 160) return { error: `${p}.${key} länger als 160 Zeichen` };
+        out[key] = v;
+      }
+      if (it.link != null) {
+        if (typeof it.link !== "object" || Array.isArray(it.link)) return { error: `${p}.link muss ein Objekt { type, id } sein` };
+        if (!LINK_TYPES.includes(it.link.type)) return { error: `${p}.link.type muss ${LINK_TYPES.join(" | ")} sein` };
+        const id = str(it.link.id);
+        if (!id) return { error: `${p}.link.id fehlt` };
+        if (id.length > 60) return { error: `${p}.link.id länger als 60 Zeichen` };
+        out.link = { type: it.link.type, id };
       }
       items.push(out);
     }

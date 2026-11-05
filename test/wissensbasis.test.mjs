@@ -12,6 +12,17 @@ assert.ok(!ok.error, ok.error);
 assert.equal(ok.value.fetchedAt, "2026-11-05T07:00:00.000Z");
 assert.equal(ok.value.sections[0].items[0].isNew, true);
 
+// Abgleich-Felder: alle gesetzt gültig, alter Stand gültig, ungültige Werte abgelehnt
+const full = { ...item, consensus: "umstritten", counterCheckedAt: "2026-11-05", practice: "2x/Woche", match: "luecke", atYou: "laeuft", link: { type: "insight", id: "x-1" }, next: "Test starten" };
+const fv = validateWissensbasis({ ...good, sections: [{ title: "A", items: [full] }] });
+assert.ok(!fv.error, fv.error);
+assert.deepEqual(fv.value.sections[0].items[0].link, { type: "insight", id: "x-1" });
+assert.equal(fv.value.sections[0].items[0].atYou, "laeuft");
+assert.ok(!validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ text: "t", evidence: "stark", fit: "hoch" }] }] }).error);
+assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...full, match: "egal" }] }] }).error, /match/);
+assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...full, link: { type: "foo", id: "a" } }] }] }).error, /link\.type/);
+assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...full, practice: "x".repeat(161) }] }] }).error, /practice/);
+
 // zu viele Abschnitte / Punkte
 const sec = { title: "A", items: [item] };
 assert.match(validateWissensbasis({ ...good, sections: Array(13).fill(sec) }).error, /13|mehr als 12/);
