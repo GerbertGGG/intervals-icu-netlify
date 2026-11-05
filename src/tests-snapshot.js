@@ -1,5 +1,7 @@
 import { readKvJson, writeKvJson } from "./kv.js";
-import { isIsoDate } from "./date-utils.js";
+import { isIsoDate, isoDateBerlin } from "./date-utils.js";
+import { json } from "./http-helpers.js";
+import { gate, readBody } from "./decisions-snapshot.js";
 
 // Tests des Coaches (Ansicht "Tests" im Dashboard): mehrere Tests gleichzeitig, dazu Kandidaten und abgeschlossene Tests mit
 // "Gelernt". Der Coach schreibt je Aufruf einen Test per save_test (Upsert über id); get_coach liefert sie unter tests.
@@ -339,4 +341,66 @@ export function applyTestsToWissensbasis(w, tests) {
       }),
     })),
   };
+}
+
+// Ein freigegebener oder abgelehnter Test (decidedAt) bleibt, wie Gerbert entschieden hat: save_test mit status kandidat
+// darf ihn nicht zurücksetzen. Rückgabe: Warntext oder null.
+export function resetGuard(stored, test) {
+  if (test.status !== "kandidat") return null;
+  const prev = listOf(stored).find((t) => t?.id === test.id);
+  if (!prev?.decidedAt) return null;
+  return `${test.id}: von Gerbert am ${prev.decidedAt} entschieden (status ${prev.status}); status kandidat ignoriert, nichts gespeichert`;
+}
+
+const addDays = (iso, n) => new Date(Date.parse(iso + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+// Nächster Montag; ist heute Montag, heute
+export function nextMonday(iso) {
+  const day = new Date(iso + "T12:00:00Z").getUTCDay();
+  return addDays(iso, (8 - day) % 7);
+}
+
+// Gerberts Entscheidung über einen Kandidaten (POST /api/tests/:id/decision). Schreibt denselben Datensatz wie save_test
+// (gleiche Validierung über validateTest); decidedAt setzt der Worker. Rückgabe { value (neuer Bestand), test, warnings }
+// oder { error, status }.
+export function applyTestDecision(stored, id, body, todayIso = isoDateBerlin(), nowIso = new Date().toISOString()) {
+  const prev = listOf(stored).find((t) => t?.id === id);
+  if (!prev) return { error: `Test ${id} nicht gefunden`, status: 404 };
+  if (!isObj(body)) return { error: "Body muss ein Objekt sein", status: 400 };
+  const action = body.action;
+  if (!["start", "reject", "later"].includes(action)) return { error: "action muss start, reject oder later sein", status: 400 };
+  if (prev.status !== "kandidat") return { error: `Test ${id} ist kein Kandidat (status ${prev.status})`, status: 409 };
+  const base = { ...prev, fetchedAt: nowIso };
+  let next;
+  if (action === "reject") next = { ...base, status: "verworfen", decidedAt: todayIso };
+  else if (action === "later") {
+    if (blank(body.block)) return { error: "block fehlt (Pflicht bei later)", status: 400 };
+    next = { ...base, block: body.block };
+  } else {
+    const startDate = blank(body.startDate) ? nextMonday(todayIso) : body.startDate;
+    const checkDate = blank(body.checkDate) ? (prev.checkDate ?? (isIsoDate(startDate) ? addDays(startDate, 56) : null)) : body.checkDate;
+    if (isIsoDate(startDate) && isIsoDate(checkDate) && checkDate < startDate) return { error: "checkDate liegt vor startDate", status: 400 };
+    next = {
+      ...base, status: "laeuft", startDate, checkDate, decidedAt: todayIso,
+      expectation: body.expectation !== undefined ? body.expectation : prev.expectation,
+      adherence: body.adherence !== undefined ? body.adherence : prev.adherence,
+      ...(blank(body.block) ? {} : { block: body.block }),
+    };
+  }
+  const { value, fetchedAt, error } = validateTest(next);
+  if (error) return { error, status: 400 };
+  const up = upsertTest(stored, value, fetchedAt);
+  if (up.error) return { error: up.error, status: 409 };
+  return { value: up.value, test: value, warnings: testWarnings(up.value.tests) };
+}
+
+export async function handleTestDecisionRequest(req, env, isAuthorized, id) {
+  const headers = { "cache-control": "no-store" };
+  const denied = gate(req, env, isAuthorized, headers);
+  if (denied) return denied;
+  const { body, res } = await readBody(req, env, "POST", headers);
+  if (res) return res;
+  const r = applyTestDecision(await readTests(env), id, body);
+  if (r.error) return json({ ok: false, error: r.error }, r.status, headers);
+  await writeTests(env, r.value);
+  return json({ ok: true, test: r.test, warnings: r.warnings }, 200, headers);
 }

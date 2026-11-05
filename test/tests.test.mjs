@@ -1,7 +1,8 @@
 // Testet die Tests des Coaches (Validierung, Warnungen, Upsert, Statuszuordnung, Sperren, MCP). Ausführen: node test/tests.test.mjs
 import assert from "node:assert/strict";
-import { validateTest, upsertTest, testWarnings, refWarnings, testsForCoach, atYouFromTest, applyTestsToWissensbasis, TESTS_KV_KEY, MAX_TESTS } from "../src/tests-snapshot.js";
+import { validateTest, upsertTest, testWarnings, refWarnings, testsForCoach, atYouFromTest, applyTestsToWissensbasis, TESTS_KV_KEY, MAX_TESTS, applyTestDecision, nextMonday, handleTestDecisionRequest } from "../src/tests-snapshot.js";
 import { validateWissensbasis, wissensbasisWarnings } from "../src/wissensbasis-snapshot.js";
+import { isoDateBerlin } from "../src/date-utils.js";
 import { handleMcpRequest } from "../src/mcp-server.js";
 
 const metric = { key: "lauf_hf130", label: "Pace bei HF 130", unit: "s/km", baseline: 400, baselineDate: "2026-10-16", current: null, currentDate: null };
@@ -155,5 +156,70 @@ assert.deepEqual((await call("get_coach", {})).tests.map((t) => t.id), ["t-eins"
 // save_wissensbasis meldet Sperren als Warnung
 const w2 = await call("save_wissensbasis", { ...wbBody([{ ...wbItem, id: "studie-zwei", atYou: "gewirkt", consensus: "einig" }]), fetchedAt: "2026-11-07T08:00:00Z" });
 assert.equal(w2.ok, true); assert.equal(w2.warnings.length, 2);
+
+// Gerberts Entscheidung über Kandidaten (POST /api/tests/:id/decision)
+console.log = log;
+assert.equal(nextMonday("2026-11-05"), "2026-11-09"); assert.equal(nextMonday("2026-11-09"), "2026-11-09"); assert.equal(nextMonday("2026-11-08"), "2026-11-09");
+const exp = { confirmed: "−10 s/km", unclear: "−4 bis −9", refuted: "keine" };
+const cand1 = validateTest(kand).value;
+const store0 = { fetchedAt: cand1.updatedAt, tests: [cand1] };
+const T = "2026-11-05", NOW = "2026-11-05T09:00:00.000Z";
+// Start: Defaults (nächster Montag, +8 Wochen), decidedAt heute, proposedBy bleibt
+let d = applyTestDecision(store0, "dritter-lauf", { action: "start", expectation: exp }, T, NOW);
+assert.ok(!d.error, d.error);
+assert.equal(d.test.status, "laeuft"); assert.equal(d.test.startDate, "2026-11-09"); assert.equal(d.test.checkDate, "2027-01-04");
+assert.equal(d.test.decidedAt, T); assert.equal(d.test.proposedBy, "coach"); assert.deepEqual(d.test.expectation, exp);
+assert.equal(d.value.tests[0].status, "laeuft");
+// Eigene Daten, Block, Einhaltung
+d = applyTestDecision(store0, "dritter-lauf", { action: "start", startDate: "2026-11-16", checkDate: "2026-12-20", expectation: exp, block: "B", adherence: { rule: "2 von 3 Läufen", minPct: 66 } }, T, NOW);
+assert.equal(d.test.block, "B"); assert.equal(d.test.checkDate, "2026-12-20"); assert.equal(d.test.adherence.minPct, 66);
+// Vorgabe des Tests als Prüfdatum, Erwartung vom Coach vorgeschlagen
+const store1 = { tests: [{ ...cand1, checkDate: "2026-12-30", expectation: exp }] };
+d = applyTestDecision(store1, "dritter-lauf", { action: "start" }, T, NOW);
+assert.equal(d.test.checkDate, "2026-12-30"); assert.deepEqual(d.test.expectation, exp);
+// Pflichtfelder und Fehler
+assert.match(applyTestDecision(store0, "dritter-lauf", { action: "start" }, T, NOW).error, /expectation/);
+assert.match(applyTestDecision(store0, "dritter-lauf", { action: "start", expectation: exp, startDate: "11.11." }, T, NOW).error, /startDate/);
+assert.match(applyTestDecision(store0, "dritter-lauf", { action: "start", expectation: exp, startDate: "2026-12-01", checkDate: "2026-11-20" }, T, NOW).error, /vor startDate/);
+assert.match(applyTestDecision(store0, "dritter-lauf", { action: "start", expectation: { confirmed: "a" } }, T, NOW).error, /expectation/);
+assert.equal(applyTestDecision(store0, "weg", { action: "reject" }, T, NOW).status, 404);
+assert.equal(applyTestDecision(store0, "dritter-lauf", { action: "foo" }, T, NOW).status, 400);
+assert.equal(applyTestDecision(d.value, "dritter-lauf", { action: "reject" }, T, NOW).status, 409); // läuft schon
+// Ablehnen: verworfen, blendet aus
+d = applyTestDecision(store0, "dritter-lauf", { action: "reject" }, T, NOW);
+assert.equal(d.test.status, "verworfen"); assert.equal(d.test.decidedAt, T); assert.equal(testsForCoach(d.value).length, 0);
+// Später: bleibt Kandidat, nur block; ohne block Fehler
+d = applyTestDecision(store0, "dritter-lauf", { action: "later", block: "Block C" }, T, NOW);
+assert.equal(d.test.status, "kandidat"); assert.equal(d.test.block, "Block C"); assert.equal(d.test.decidedAt, null);
+assert.match(applyTestDecision(store0, "dritter-lauf", { action: "later" }, T, NOW).error, /block/);
+assert.match(applyTestDecision(store0, "dritter-lauf", { action: "later", block: "x".repeat(21) }, T, NOW).error, /block/);
+// Warnung: dritter laufender Test mit Mehrbelastung
+const heavy = (id) => validateTest({ ...laeuft, id, metrics: [{ ...metric, key: "k-" + id, better: "lower" }] }).value;
+d = applyTestDecision({ tests: [heavy("a"), heavy("b"), cand1] }, "dritter-lauf", { action: "start", expectation: exp }, T, NOW);
+assert.equal(d.warnings.length, 1); assert.match(d.warnings[0], /3 laufende Tests mit Mehrbelastung/);
+
+// Endpunkt: Token, Methode, Schreiben in KV, Schutz vor Zurücksetzen durch save_test
+const kv2 = new Map([[TESTS_KV_KEY, JSON.stringify(store0)]]);
+const env2 = { DASHBOARD_TOKEN: "tok", KV: { get: async (k) => kv2.get(k) ?? null, put: async (k, v) => void kv2.set(k, v) } };
+const auth = (req, e) => req.headers.get("authorization") === "Bearer " + e.DASHBOARD_TOKEN;
+const post = (body, token = "tok", method = "POST") => new Request("https://x/api/tests/dritter-lauf/decision", { method, headers: { authorization: "Bearer " + token }, body: method === "POST" ? JSON.stringify(body) : undefined });
+assert.equal((await handleTestDecisionRequest(post({ action: "reject" }, "falsch"), env2, auth, "dritter-lauf")).status, 401);
+assert.equal((await handleTestDecisionRequest(post({}, "tok", "GET"), env2, auth, "dritter-lauf")).status, 405);
+assert.equal((await handleTestDecisionRequest(post({ action: "start" }), env2, auth, "dritter-lauf")).status, 400);
+assert.equal(JSON.parse(kv2.get(TESTS_KV_KEY)).tests[0].status, "kandidat"); // Fehler schreibt nichts
+const ok = await handleTestDecisionRequest(post({ action: "start", expectation: exp }), env2, auth, "dritter-lauf");
+assert.equal(ok.status, 200); assert.equal((await ok.json()).test.status, "laeuft");
+const saved = JSON.parse(kv2.get(TESTS_KV_KEY)).tests[0];
+assert.equal(saved.status, "laeuft"); assert.equal(saved.decidedAt, isoDateBerlin());
+// save_test mit kandidat überschreibt die Freigabe nicht (auch mit neuerem fetchedAt), warnt
+for (const [k, v] of kv2) kv.set(k, v);
+console.log = () => {};
+const back = await call("save_test", { ...kand, fetchedAt: "2099-01-01T00:00:00Z" });
+console.log = log;
+assert.equal(back.ignored, true); assert.match(back.warnings[0], /entschieden/);
+assert.equal(JSON.parse(kv.get(TESTS_KV_KEY)).tests.find((t) => t.id === "dritter-lauf").status, "laeuft");
+// ein Test ohne decidedAt lässt sich weiter als Kandidat speichern
+console.log = () => {};
+assert.equal((await call("save_test", { ...kand, id: "anderer", fetchedAt: "2026-11-06T08:00:00Z" })).ok, true);
 console.log = log;
 console.log("tests ok");

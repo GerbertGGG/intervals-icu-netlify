@@ -184,7 +184,7 @@ export async function saveDecisions(env, args) {
   return { ok: true, fetchedAt: merged.fetchedAt, decisions: merged.decisions.map((x) => ({ id: x.id, title: x.title, deadline: x.deadline })) };
 }
 
-async function readBody(req, env, method, headers) {
+export async function readBody(req, env, method, headers) {
   if (req.method !== method) return { res: json({ ok: false, error: `Nur ${method} erlaubt` }, 405, { ...headers, allow: method }) };
   if (!env?.KV) return { res: json({ ok: false, error: "KV nicht verfügbar" }, 503, headers) };
   const text = await req.text();
@@ -192,7 +192,7 @@ async function readBody(req, env, method, headers) {
   try { return { body: JSON.parse(text) }; } catch { return { res: json({ ok: false, error: "Kein gültiges JSON" }, 400, headers) }; }
 }
 
-function gate(req, env, isAuthorized, headers) {
+export function gate(req, env, isAuthorized, headers) {
   if (!env?.DASHBOARD_TOKEN) return json({ ok: false, error: "DASHBOARD_TOKEN nicht gesetzt" }, 503, headers);
   if (!isAuthorized(req, env)) return json({ ok: false, error: "Nicht autorisiert" }, 401, headers);
   return null;
