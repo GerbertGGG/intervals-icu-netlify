@@ -402,6 +402,33 @@ export function buildWidgetKompass(d) {
   return { ...buildWidgetExperiment(d), ...buildWidgetRahmen(d), ...buildWidgetBlock(d) };
 }
 
+// Tests-Widget (mittel, Parameter "tests"): die Tests des Coaches (save_test, d.tests) – laufende zuerst, dann die im Urteil,
+// je Test Titel, Prüfdatum, erste Messgröße (Ausgangswert → aktuell, Richtung "besser") und Einhaltung. Dazu die Zahl je Stand.
+// Nur Anzeige: kein Ergebnis, kein Urteil, keine Vorschläge – "result" und "learned" kommen vom Coach.
+const WIDGET_TESTS_MAX = 6;
+export function buildWidgetTests(d) {
+  const all = d.tests?.tests ?? [];
+  const counts = Object.fromEntries(["laeuft", "kandidat", "urteil", "gelernt"].map((k) => [k, all.filter((t) => t.status === k).length]));
+  const shown = all.filter((t) => t.status === "laeuft" || t.status === "urteil").slice(0, WIDGET_TESTS_MAX);
+  return {
+    generatedAt: d.generatedAt,
+    today: d.today,
+    counts,
+    heavy: all.filter((t) => t.status === "laeuft" && t.load === "mehr").length,
+    tests: shown.map((t) => {
+      const m = t.metrics?.[0] ?? null;
+      return {
+        id: t.id, title: t.title, status: t.status, kind: t.kind, discipline: t.discipline, checkDate: t.checkDate ?? null,
+        daysToCheck: t.checkDate ? diffDays(d.today, t.checkDate) : null,
+        metric: m ? { key: m.key, label: m.label, unit: m.unit, baseline: m.baseline, current: m.current, better: m.better, ...(m.provisional ? { provisional: true } : {}) } : null,
+        adherence: t.adherence ? { minPct: t.adherence.minPct, actualPct: t.adherence.actualPct } : null,
+        result: t.result ?? null,
+      };
+    }),
+    sourcesFailed: failedOf(d),
+  };
+}
+
 // Experiment-Widget (mittel, Parameter "experiment"): das vom Coach gespeicherte Experiment (save_experiment), die Ausdauerstunden
 // je Woche gegen das Wochenziel und die live gerechneten Trainingstage. Nur Werte, keine Bewertung; weekNo = Woche seit startDate (1 = erste Woche).
 export function buildWidgetExperiment(d) {
@@ -748,6 +775,6 @@ async function widgetResponse(req, env, ctx) {
   // Nicht fuer die Uhr: Sie zeigt kein Essen, und die zwei Yazio-Abrufe kosten Zeit bis zum Abbruch (-300).
   const goals = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyGoals(env, dashboard.today).catch(() => null) : null;
   const live = view === "small" && hasYazioCredentials(env) ? await fetchYazioDailyNutrition(env, dashboard.today).catch(() => null) : null;
-  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "kompass" ? buildWidgetKompass(dashboard) : view === "watch" ? watchPayload(buildWidgetWatch(dashboard, env, goals, live)) : buildWidget(dashboard, env);
+  const body = view === "detail" ? buildWidgetDetail(dashboard, env) : view === "small" ? buildWidgetSmall(dashboard, goals, live) : view === "training" ? buildWidgetTraining(dashboard, env) : view === "vdot" ? buildWidgetVdot(dashboard) : view === "block" ? buildWidgetBlock(dashboard) : view === "rahmen" ? buildWidgetRahmen(dashboard) : view === "experiment" ? buildWidgetExperiment(dashboard) : view === "kompass" ? buildWidgetKompass(dashboard) : view === "tests" ? buildWidgetTests(dashboard) : view === "watch" ? watchPayload(buildWidgetWatch(dashboard, env, goals, live)) : buildWidget(dashboard, env);
   return json(body, 200, headers);
 }
