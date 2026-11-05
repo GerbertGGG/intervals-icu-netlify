@@ -6,7 +6,7 @@ import { fetchIntervalsActivityMap, fetchIntervalsActivityStreamsStatus } from "
 import { runMovingAxis, cleanRunDistance, RUN_RULES } from "./block-inputs.js";
 import { classifyRun, buildRaceDays } from "./dashboard.js";
 import { isARaceEvent } from "./event-utils.js";
-import { averageNativeWeather, extractStartLatLng, openMeteoDay, pickOpenMeteoValues, activityStartHourIso } from "./weather.js";
+import { averageNativeWeather, extractStartLatLng, openMeteoDay, pickOpenMeteoValues, activityStartHourIso, dewPointC } from "./weather.js";
 import { isStrengthActivity, strengthSetsOf } from "./week-totals.js";
 import { swimTimeOf } from "./swim-time.js";
 import { isIsoDate, isoDate } from "./date-utils.js";
@@ -213,7 +213,7 @@ export function runRow(a, entry, ctx = null) {
   const row = baseRunRow(a, ctx);
   const skip = streamSkipOf(a, ctx);
   const w = entry?.weather ?? null;
-  Object.assign(row, { tempC: w?.tempC ?? null, humidity: w?.humidity ?? null, windMs: w?.windMs ?? null, weatherSrc: w?.src ?? null });
+  Object.assign(row, { tempC: w?.tempC ?? null, humidity: w?.humidity ?? null, dewPointC: dewPointC(w?.tempC, w?.humidity), windMs: w?.windMs ?? null, weatherSrc: w?.src ?? null });
   if (skip === "treadmill") Object.assign(row, { streamStatus: "skip", streamSkip: skip });
   else if (!entry) Object.assign(row, { streamStatus: "pending", streamSkip: skip });
   else Object.assign(row, { streamStatus: entry.streamStatus, streamSkip: entry.streamSkip ?? null });
@@ -316,10 +316,20 @@ export function buildDayRows(days, { wellness = [], activities = [], events = []
   const kgBy = new Map((weights ?? []).map((w) => [w.date, w.kg]));
   const cal = calendarByDay(events);
   const agg = new Map();
+  const blank = () => ({ load: { run: 0, bike: 0, swim: 0, strength: 0 }, sec: { run: 0, bike: 0, swim: 0 }, sets: 0, kcal: 0, kcalN: 0, kj: 0, kjN: 0 });
   for (const a of Array.isArray(activities) ? activities : []) {
     const d = activityDay(a), sport = sportOfDay(a);
+    // Energie aller Aktivitaeten (auch Gehen, Yoga ...): calories = Schaetzung von Uhr/Intervals (die Zahl, die Yazio als Sport
+    // importiert); icu_joules = mechanische Arbeit am Rad aus der Leistung (1 kJ Arbeit ≈ 1 kcal Nahrungsenergie)
+    const kcal = num(a?.calories), joules = isBike(a) ? num(a?.icu_joules) : null;
+    if (d && ((kcal != null && kcal > 0) || (joules != null && joules > 0))) {
+      const x = agg.get(d) ?? blank();
+      if (kcal != null && kcal > 0) { x.kcal += kcal; x.kcalN++; }
+      if (joules != null && joules > 0) { x.kj += joules / 1000; x.kjN++; }
+      agg.set(d, x);
+    }
     if (!sport) continue;
-    const x = agg.get(d) ?? { load: { run: 0, bike: 0, swim: 0, strength: 0 }, sec: { run: 0, bike: 0, swim: 0 }, sets: 0 };
+    const x = agg.get(d) ?? blank();
     x.load[sport] += sessionLoad(a);
     if (sport === "swim") x.sec.swim += swimTimeOf(a).sec;
     else if (sport !== "strength") x.sec[sport] += num(a?.moving_time) ?? 0;
@@ -337,6 +347,7 @@ export function buildDayRows(days, { wellness = [], activities = [], events = []
       sleepQuality: scale(w?.sleepQuality), fatigue: scale(w?.fatigue), soreness: scale(w?.soreness), mood: scale(w?.mood), motivation: scale(w?.motivation),
       sick: cal.get(date)?.sick ?? false, calendar: cal.has(date) ? cal.get(date).labels.join("; ") : null, weightKg: kgBy.get(date) ?? pos(w?.weight),
       kcal: pos(w?.Calories), kcalGoal: pos(w?.CalorieGoal), protein: pos(w?.Protein), carbs: pos(w?.Carbs),
+      kcalActivities: x?.kcalN ? Math.round(x.kcal) : null, kjBike: x?.kjN ? Math.round(x.kj) : null,
       methodVersion: METHOD_VERSION,
     };
   });

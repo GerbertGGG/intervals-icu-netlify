@@ -79,6 +79,8 @@ export default {
         return route(() => handleExportRequest(req, env, "rides"));
       case "/api/export/swims":
         return route(() => handleExportRequest(req, env, "swims"));
+      case "/api/export/stats":
+        return route(() => handleExportRequest(req, env, "stats"));
       // Runalyze-Snapshot, Studien-Check und Coach-Aussage, geschrieben aus einer Coaching-Sitzung.
       case "/api/runalyze":
         return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));

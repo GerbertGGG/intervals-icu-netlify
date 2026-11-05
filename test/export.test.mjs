@@ -4,9 +4,9 @@ import { readFileSync } from "node:fs";
 import { analyzeExportStreams, streamSkipOf, runRow, buildDayRows, sickDaysFromEvents, calendarByDay, raceContext, METHOD_VERSION, EXPORT_RUN_RULES } from "../src/export-calc.js";
 import { runMovingAxis, RUN_RULES } from "../src/block-inputs.js";
 import { RUN_COLUMNS, DAY_COLUMNS, encodeRow, decodeRow } from "../src/export-schema.js";
-import { buildRunExport, buildDayExport, toCsv, toTable } from "../src/export.js";
+import { buildRunExport, buildDayExport, buildExportStats, groupKeyOf, describeValues, toCsv, toTable } from "../src/export.js";
 import { syncExport, sqlLiteral, safeError, safeErr } from "../scripts/export-sync.mjs";
-import { pickOpenMeteoValues, averageNativeWeather, extractStartLatLng } from "../src/weather.js";
+import { pickOpenMeteoValues, averageNativeWeather, extractStartLatLng, dewPointC } from "../src/weather.js";
 
 // Kuenstliche Zeitreihe: 1 Probe je Sekunde, speed(t) in m/s, hr(t), alt(t) optional
 function synth(sec, { speed = () => 2.5, hr = () => 130, alt = null, gaps = [], jumps = [] } = {}) {
@@ -229,7 +229,7 @@ assert.equal(sqlLiteral(true), "1");
   const today = ago(0);
   const run = (id, day, extra = {}) => ({ id, type: "Run", start_date_local: `${day}T08:00:00`, moving_time: 3600, distance: 9000, has_heartrate: true, average_heartrate: 130, icu_training_load: 40, ...extra });
   const D = [ago(40), ago(39), ago(38), ago(37), ago(36)];
-  let acts = [run("a1", D[0]), run("a2", D[1]), run("a3", D[2], { type: "VirtualRun" }), run("a4", D[3]), run("a5", D[4], { name: "5x1000" }), { id: "r1", type: "Ride", start_date_local: `${D[0]}T18:00:00`, moving_time: 3600, icu_training_load: 50 }];
+  let acts = [run("a1", D[0], { calories: 600 }), run("a2", D[1]), run("a3", D[2], { type: "VirtualRun" }), run("a4", D[3]), run("a5", D[4], { name: "5x1000" }), { id: "r1", type: "Ride", start_date_local: `${D[0]}T18:00:00`, moving_time: 3600, icu_training_load: 50, calories: 700, icu_joules: 650000 }];
   const calls = [];
   let streamsFail = false;
   let events = [{ category: "SICK", start_date_local: `${D[2]}T00:00:00`, end_date_local: `${D[3]}T00:00:00` }];
@@ -285,6 +285,26 @@ assert.equal(sqlLiteral(true), "1");
     assert.deepEqual(days.rows.map((r) => r.sick), [false, false, true]);
     assert.equal(days.nextCursor, D[3]);
     assert.equal((await buildDayExport({ EXPORT_DB }, { from: D[0], to: D[4], cursor: days.nextCursor })).count, 2);
+    // Sport-kcal und Rad-kJ je Tag; Taupunkt je Lauf (9,5 °C, 88 % -> 7,6 °C)
+    assert.deepEqual([days.rows[0].kcalActivities, days.rows[0].kjBike], [1300, 650]);
+    assert.deepEqual([days.rows[1].kcalActivities, days.rows[1].kjBike], [null, null]);
+    assert.equal(r1.rows[0].dewPointC, 7.6);
+
+    // Zusammenfassung: Filter, Gruppen, Kennzahlen; liest nur D1
+    const callsBefore = calls.length;
+    const st = await buildExportStats({ EXPORT_DB }, { table: "runs", metrics: ["paceBand125_135", "movingMin"], groupBy: "none", from: D[0], to: D[4], filter: { treadmill: false } });
+    assert.equal(calls.length, callsBefore);
+    assert.deepEqual([st.rows, st.groups.length, st.groups[0].key, st.groups[0].from, st.groups[0].to], [4, 1, "alle", D[0], D[4]]);
+    assert.deepEqual(st.groups[0].stats.paceBand125_135, { n: 2, mean: 400, median: 400, min: 400, max: 400, sd: 0 });
+    assert.equal(st.groups[0].stats.movingMin.n, 4);
+    const stIn = await buildExportStats({ EXPORT_DB }, { table: "runs", metrics: ["movingMin"], groupBy: "week", from: D[0], to: D[4], filter: { streamSkip: ["interval", null] }, min: { movingMin: 60 } });
+    assert.equal(stIn.groups.reduce((a, g) => a + g.rows, 0), 4); // a1, a2, a4 (ohne Grund) und a5 (interval); a3 treadmill faellt raus
+    const stDays = await buildExportStats({ EXPORT_DB }, { table: "days", metrics: ["kcalActivities", "kjBike"], groupBy: "month", from: D[0], to: D[4], filter: { sick: true } });
+    assert.equal(stDays.rows, 1); // SICK D[2] bis D[3] exklusiv
+    await assert.rejects(buildExportStats({ EXPORT_DB }, { table: "runs", metrics: ["name"] }), /keine Zahlenspalte/);
+    await assert.rejects(buildExportStats({ EXPORT_DB }, { table: "runs", metrics: ["decoup"], filter: { name: "x" } }), /nicht filterbar/);
+    await assert.rejects(buildExportStats({ EXPORT_DB }, { table: "foo", metrics: ["decoup"] }), /table muss/);
+    await assert.rejects(buildExportStats({ EXPORT_DB }, { table: "runs", metrics: ["decoup"], min: { decoup: "x" } }), /braucht eine Zahl/);
 
     // Zweiter Lauf ohne Aenderung: nichts neu gerechnet, nichts geschrieben
     const streams1 = calls.filter((u) => u.includes("/streams")).length;
@@ -358,4 +378,27 @@ console.log("export ok");
   const rows = buildDayRows(["2023-10-13", "2023-10-14", "2023-10-16"], { events: ev });
   assert.deepEqual(rows.map((r) => r.calendar), [null, "Hüft-OP (NOTE)", "Hüft-OP (NOTE); Urlaub (HOLIDAY)"]);
   assert.deepEqual(rows.map((r) => r.sick), [false, true, true]);
+}
+
+{ // Taupunkt, Gruppenschluessel, Kennzahlen
+  assert.equal(dewPointC(9.5, 88), 7.6);
+  assert.equal(dewPointC(20, 100), 20);
+  assert.equal(dewPointC(24, 40), 9.6);
+  assert.equal(dewPointC(null, 50), null);
+  assert.equal(dewPointC(20, 0), null);
+  assert.equal(groupKeyOf("2026-11-05", "week"), "2026-11-02");
+  assert.equal(groupKeyOf("2026-11-08", "week"), "2026-11-02");
+  assert.equal(groupKeyOf("2026-11-02", "week"), "2026-11-02");
+  assert.equal(groupKeyOf("2026-11-05", "quarter"), "2026-Q4");
+  assert.equal(groupKeyOf("2026-03-31", "quarter"), "2026-Q1");
+  assert.equal(groupKeyOf("2026-11-05", "month"), "2026-11");
+  assert.deepEqual(describeValues([3, 1, null, 2, 10]), { n: 4, mean: 4, median: 2.5, min: 1, max: 10, sd: 4.08 });
+  assert.deepEqual(describeValues([]), { n: 0, mean: null, median: null, min: null, max: null, sd: null });
+  // Tageszeile: Energie aller Aktivitaeten, kJ nur vom Rad
+  const rows = buildDayRows(["2026-11-01", "2026-11-02"], { activities: [
+    { id: "w", type: "Walk", start_date_local: "2026-11-01T10:00:00", calories: 200 },
+    { id: "b", type: "VirtualRide", start_date_local: "2026-11-01T18:00:00", moving_time: 3600, calories: 700, icu_joules: 650400 },
+    { id: "r", type: "Run", start_date_local: "2026-11-01T07:00:00", moving_time: 1800, icu_joules: 300000 },
+  ] });
+  assert.deepEqual(rows.map((r) => [r.kcalActivities, r.kjBike]), [[900, 650], [null, null]]);
 }

@@ -83,9 +83,10 @@ Der Coach liest vor jedem Update mit `get_coach` den gesamten Stand zurück (let
 | `get_run_export` | `GET /api/export/runs` | eine Zeile pro Lauf: Stammdaten, Wetter, Kennzahlen aus den Zeitreihen |
 | `get_ride_export` | `GET /api/export/rides` | eine Zeile pro Radfahrt: Leistung, Puls, Einordnung (Intensität, Vergleichseinheit), Kennzahlen aus den Zeitreihen |
 | `get_swim_export` | `GET /api/export/swims` | eine Zeile pro Schwimmeinheit: Distanz, Bewegungszeit, Pace/100 m, Schwimmtest 2× 500 m |
-| `get_day_export` | `GET /api/export/days` | eine Zeile pro Tag: CTL/ATL, Load und Minuten je Sportart, Wellness, Gewicht, Ernährung, Kalender (Krankheit, OP, Urlaub …) |
+| `get_day_export` | `GET /api/export/days` | eine Zeile pro Tag: CTL/ATL, Load und Minuten je Sportart, Wellness, Gewicht, Ernährung, Sport-kcal und Rad-kJ, Kalender (Krankheit, OP, Urlaub …) |
+| `get_export_stats` | `GET /api/export/stats` | Zusammenfassung statt Zeilen: je Woche, Monat, Quartal, Jahr (oder alles) n, Mittel, Median, Min, Max, Standardabweichung für bis zu 8 Zahlenspalten, mit Filtern (13.9) |
 
-Beide nehmen `from`, `to`, `cursor`, `limit` (Standard 200, max. 500) und `format` (MCP: `table` als Standard, `json`, `csv`; HTTP: JSON-Objekte als Standard, `table`, `csv`). Die MCP-Tools sind der Hauptweg, weil die Coaching-Sitzung den Worker per HTTP oft nicht erreicht; HTTP braucht `Authorization: Bearer <DASHBOARD_TOKEN>`. Der Worker liest dafür **nur aus D1**; gerechnet und geschrieben wird der Export täglich in GitHub Actions (A3.1a), weil die Auswertung der Zeitreihen die 10 ms CPU des kostenlosen Plans sprengt.
+Die vier Zeilen-Tools nehmen `from`, `to`, `cursor`, `limit` (Standard 200, max. 500) und `format` (MCP: `table` als Standard, `json`, `csv`; HTTP: JSON-Objekte als Standard, `table`, `csv`). Die MCP-Tools sind der Hauptweg, weil die Coaching-Sitzung den Worker per HTTP oft nicht erreicht; HTTP braucht `Authorization: Bearer <DASHBOARD_TOKEN>`. Der Worker liest dafür **nur aus D1**; gerechnet und geschrieben wird der Export täglich in GitHub Actions (A3.1a), weil die Auswertung der Zeitreihen die 10 ms CPU des kostenlosen Plans sprengt.
 
 ### A2.5 Antworten aus dem Dashboard
 
@@ -614,7 +615,7 @@ Profil (Laufen und Rad): Zeitreihen von Intervals (`watts` bzw. `velocity_smooth
 CalorieGoal = round( Yazio-Tagesziel )      (widgets/daily-summary → goals["energy.energy"])
 ```
 
-Der Worker rechnet nichts dazu. Yazios Tagesziel enthält schon den Sport, den Yazio importiert (Garmin-Schätzung, eher großzügig). Ob gegessen wie geplant ein Defizit ergibt, zeigt der Gewichtstrend; das bewertet der Coach. Widget und Uhr holen das Ziel live (`fetchYazioDailyGoals`, 10 Minuten in KV gecacht), weil Yazio es im Lauf des Tages mit jedem importierten Training erhöht.
+Der Worker rechnet nichts dazu. Yazios Tagesziel enthält schon den Sport, den Yazio importiert (Garmin-Schätzung, eher großzügig). Ob gegessen wie geplant ein Defizit ergibt, zeigt der Gewichtstrend; das bewertet der Coach. Damit er die Sport-Schätzung gegen den Gewichtstrend prüfen kann, liefert der Tagesexport die Summe der Aktivitätskalorien (`kcalActivities`) und die mechanische Arbeit am Rad (`kjBike`) als eigene Werte (13.5); eine Korrektur des Ziels rechnet der Worker nicht. Widget und Uhr holen das Ziel live (`fetchYazioDailyGoals`, 10 Minuten in KV gecacht), weil Yazio es im Lauf des Tages mit jedem importierten Training erhöht.
 
 ### 8.3 Auswertung im Dashboard (`renderNutrition`, `renderNutritionWeek`, `app.js`)
 
@@ -649,6 +650,7 @@ Mit #976 entfernt, für den Export (13) wiederhergestellt; nur `export-calc.js` 
 - Bevorzugt Intervals-Wetter aus den Kartenpunkten: **Mittelwert** aller Temperatur- und Feuchtewerte über alle Zeitproben, auf 0,1 gerundet; beide Größen müssen vorhanden sein.
 - Fallback Open-Meteo-Archiv am GPS-Startpunkt: Stundenwert zur lokalen Startstunde (`start_date_local`), sonst Tagesmittel aller Stunden. Koordinaten auf 3 Nachkommastellen (~111 m) gerundet.
 - Laufband: kein Wetter. Das Ergebnis steht je Lauf in D1 (13.4); Open-Meteo-Tage merkt sich die Action nur für die Dauer eines Laufs.
+- Taupunkt (`dewPointC`, `dewPointC` in `weather.js`): aus `tempC` und `humidity` nach Magnus (a = 17,62, b = 243,12), 1 Nachkommastelle, `null` ohne beide Werte oder bei Feuchte ≤ 0 %. Fasst Temperatur und Feuchte in einer Zahl zusammen (Beispiele, ausgeführt: 9,5 °C / 88 % → 7,6; 24 °C / 40 % → 9,6; 20 °C / 100 % → 20). Nur Wert, keine Grenze; die Hitzetag-Regel in 7.9 bleibt bei der Lufttemperatur.
 - Wind (`windMs`) nur aus Open-Meteo (`wind_speed_10m`, `wind_speed_unit=ms`); die Kartenpunkte von Intervals liefern keinen, dann `null`. Tageswerte im KV unter `weather:v2:<lat>:<lng>:<Datum>` (`openMeteoDay`, 61; in der Action ein Speicher nur für diesen Lauf), nur gespeichert, wenn das Archiv schon Werte hat (es hinkt einige Tage hinterher).
 
 ---
@@ -703,7 +705,7 @@ Der Coach soll über die ganze Trainingshistorie rechnen können. Der Export lie
 | Rechnung | `src/export-calc.js` | Kennzahlen aus den Zeitreihen, Wetter, Zeilen (13.2, 13.3, 13.5); wiederverwendet `runMovingAxis`, `cleanRunDistance`, `classifyRun`, `isRun`, `sessionLoad`, `weather.js` |
 | Schreiben | `scripts/export-sync.mjs`, `scripts/export-to-d1.mjs` | GitHub Action (A3.1a): Intervals abrufen, rechnen, Upsert nach D1 |
 | Schema | `src/export-schema.js` | Spalten, D1-Tabellen, `METHOD_VERSION` (gemeinsam für Action und Worker) |
-| Lesen | `src/export.js` | Worker: MCP `get_run_export`/`get_day_export` (`mcp-server.js`), HTTP `/api/export/runs|days` (`index.js`, `handleExportRequest`, 94); nur D1, kein Abruf, keine Auswertung |
+| Lesen | `src/export.js` | Worker: MCP `get_run_export`/`get_ride_export`/`get_swim_export`/`get_day_export`/`get_export_stats` (`mcp-server.js`), HTTP `/api/export/runs|rides|swims|days|stats` (`index.js`, `handleExportRequest`); nur D1, kein Abruf, keine Auswertung |
 
 ### 13.1 Parameter und Antwort (`buildActivityExport` 51, `buildDayExport` 72)
 
@@ -726,7 +728,7 @@ Alle Aktivitäten mit `isRun`, älteste zuerst.
 | `runClass` | `race`, wenn `race` gilt, sonst `classifyRun` (7.2) mit Kalender-Kontext |
 | `distKm`, `movingMin`, `elevPerKm` | `distance`/1000, `moving_time`/60, `total_elevation_gain`/km |
 | `avgHr`, `maxHr`, `rpe`, `feel`, `load` | `average_heartrate`, `max_heartrate`, `icu_rpe` (sonst `perceived_exertion`), `feel`, `sessionLoad` |
-| `tempC`, `humidity`, `windMs`, `weatherSrc` | Abschnitt 10; `weatherSrc` = `intervals` \| `openmeteo` \| `null`. Nie die Uhr; Laufband ohne Wetter |
+| `tempC`, `humidity`, `dewPointC`, `windMs`, `weatherSrc` | Abschnitt 10; `dewPointC` = Taupunkt aus `tempC` und `humidity`; `weatherSrc` = `intervals` \| `openmeteo` \| `null`. Nie die Uhr; Laufband ohne Wetter |
 | `streamStatus` | `ok` \| `pending` (noch nicht berechnet) \| `none` (Zeitreihen 404 oder ohne Puls/Distanz) \| `skip` |
 | `streamSkip` | Grund ohne Kennzahlen (`streamSkipOf`, 185): `treadmill`, `race`, `interval`, `short` (unter 20 min Bewegungszeit), `noHr`; dazu `gps` aus der Rechnung (Schutzregel 13.3): dann `streamStatus` `skip` und nur `gpsCorrectedM` |
 
@@ -788,6 +790,8 @@ Gegenprobe mit echten Daten (Fixture 23.10.2026): `decoup` 6,3 % und `gpsCorrect
 6. Tage ebenso. Ein früher gespeichertes Yazio-Gewicht bleibt, wenn das KV (nur 90 Tage) keinen Wert mehr liefert.
 7. `export_meta.lastSync` schreiben.
 
+Neue Spalten aus Stammdaten oder gespeichertem Wetter (05.11.2026: `dewPointC`, `kcalActivities`, `kjBike`) brauchen keinen Wechsel von `METHOD_VERSION`: die Action legt die Spalte per `ALTER TABLE` an, baut die Zeile aus dem gespeicherten Eintrag neu und schreibt sie wegen des geänderten Hashs. Für die Zeit vor den letzten 14 Tagen die Action einmal mit `full` starten; Zeitreihen werden dabei nicht neu geladen.
+
 Eine neue Methode (`METHOD_VERSION` in `export-schema.js` erhöhen; 2 seit 03.11.2026: Aufzeichnungslücken, GPS-Schutzregel, Rennen ohne Distanzabgleich) rechnet jede ältere Zeile beim nächsten Lauf über ihren Bereich neu; für die ganze Historie die Action einmal mit `full` starten.
 
 **Einrichtung** (einmalig):
@@ -818,7 +822,9 @@ Jeder Kalendertag im Zeitraum, auch ohne Daten.
 | `sick` | `calendarByDay` (284): Kategorie `SICK`/`INJURED`, Notiz „krank“ oder Name mit „OP“, „Operation“, „Verletzung“; mehrtägige Einträge an jedem Tag (Ende exklusiv, höchstens 120 Tage); Kalender ab 60 Tage vor dem Bereich. Beispiel: `INJURED` „Hüft-OP“ 14.10.–11.11.**2024** (nicht 2023) → `sick` vom 14.10. bis 10.11.2024 |
 | `calendar` | alle Nicht-Workout-Einträge des Tages als „Name (KATEGORIE)“, mit „; “ getrennt (Notiz, Krank, Verletzt, Urlaub, Rennen, Wochenziel …), mehrtägige an jedem Tag. Damit erkennt der Coach Phasen wie OP, Krankheit oder Urlaub |
 | `weightKg` | Yazio (`yazio:weight`, nur letzte 90 Tage), sonst `weight` aus Intervals |
-| `kcal`, `kcalGoal`, `protein`, `carbs` | Zusatzfelder `Calories`, `CalorieGoal`, `Protein`, `Carbs` der Wellness (Yazio-Sync) |
+| `kcal`, `kcalGoal`, `protein`, `carbs` | Zusatzfelder `Calories`, `CalorieGoal`, `Protein`, `Carbs` der Wellness (Yazio-Sync); `kcalGoal` enthält den von Yazio importierten Sport (8.2) |
+| `kcalActivities` | Σ `calories` aller Aktivitäten des Tages (jede Sportart, auch Gehen oder Yoga) = Sport-Schätzung von Uhr/Intervals; `null`, wenn keine Aktivität einen Wert hat |
+| `kjBike` | Σ `icu_joules`/1000 der Radfahrten (`isBike`) = mechanische Arbeit aus der Leistung; 1 kJ Arbeit ≈ 1 kcal Nahrungsenergie (Wirkungsgrad rund 24 %, 1 kcal = 4,184 kJ). `null` ohne Leistungsdaten |
 
 Ohne Training sind Load, Minuten und Sätze 0, fehlende Wellness-Werte `null`.
 
@@ -835,7 +841,7 @@ Alle Fahrten mit `isBike` (auch VirtualRide). Tabelle `rides`, MCP `get_ride_exp
 | `avgHr`, `maxHr`, `avgCadence`, `load`, `rpe`, `feel`, `warmupS` | `average_heartrate`, `max_heartrate`, `average_cadence`, `sessionLoad` (Rad: `power_load`), `icu_rpe`, `feel`, `icu_warmup_time` |
 | `intensity` | `intensityKindOf("bike", Name/Beschreibung der Fahrt und des gekoppelten Workouts, Z5-Zeit)`: `bikeHiit` oder `null` |
 | `testKind` | Rad-Vergleichseinheit wie im Dashboard (7.9): `rideWindowOf` → `rideWindowStats` → `classifyRide` mit der Vergleichsleistung aus `TEST_FALLBACK` (165 W; die Action kennt den Blocktext nicht). `compare`, `baseline` oder `null` |
-| Wetter | wie beim Lauf, nur draußen (`trainer` false) |
+| Wetter | wie beim Lauf (`tempC`, `humidity`, `dewPointC`, `windMs`, `weatherSrc`), nur draußen (`trainer` false) |
 | `streamStatus`, `streamSkip` | `rideSkipOf` (51): `noPower` (keine Ø-Leistung), `short` (unter 20 min), `interval` (`intensity`, Intervall-Tag oder -Text), `noHr` |
 
 **Kennzahlen** (`analyzeRideStreams`, 61; Grenzwerte `RIDE_RULES`): Zeitreihen `time`, `watts`, `heartrate`, `distance`, `velocity_smooth`. Zeitachse ohne Stillstand (`runMovingAxis` auf der Distanz, Stehen unter 0,5 m/s). Einrollen: bei `compare`/`baseline` das Fenster des Dashboards, sonst `icu_warmup_time`, ohne Wert die ersten 10 min. Gleichmäßige 30-s-Fenster in 5-s-Schritten: keine Unterbrechung, Puls in mindestens 80 % der Sekunden, Variationskoeffizient der Leistung in den 2 min davor unter 10 % (der Puls läuft der Leistung nach).
@@ -867,6 +873,21 @@ Tabelle `swims`, MCP `get_swim_export`, HTTP `/api/export/swims`. Keine Zeitreih
 | `test500a`, `test500b`, `testPauseS` | `swimTestFromText` (Name/Beschreibung), sonst `swimTestFromIntervals` (zwei aufeinanderfolgende Intervalle mit 500 m ±10 %) |
 | `testPassed` | wie das Blockziel (7.9): Pause ≤ 60 s und zweite 500 m höchstens 5 s/100 m langsamer |
 | `lapsStatus` | `ok`, `none` (keine Laps, 404), `pending` (Abruf fehlgeschlagen) |
+
+### 13.9 Zusammenfassung (`export.js`: `buildExportStats`, `groupKeyOf`, `describeValues`)
+
+MCP `get_export_stats`, HTTP `GET /api/export/stats` (Bearer `DASHBOARD_TOKEN`; `metrics` mit Komma, `filter`/`min`/`max` als JSON). Liest aus D1 nur `date` und die gewählten Spalten, rechnet je Gruppe im Worker. Keine Bewertung.
+
+| Parameter | Regel |
+|---|---|
+| `table` | `runs`, `rides`, `swims`, `days` (Pflicht) |
+| `metrics` | 1–8 Zahlenspalten der Tabelle (keine Text-, Ja/Nein-Spalten, kein `methodVersion`) (Pflicht) |
+| `groupBy` | `week` (ISO-Montag), `month` (`2026-11`), `quarter` (`2026-Q4`), `year`, `none` (eine Gruppe „alle“); Standard `month` |
+| `from`, `to` | wie 13.1 |
+| `filter` | Gleichheit auf Text- und Ja/Nein-Spalten außer `id`, `name`, `tags`, `type`, `calendar`, `brickRideId` und Datumswerten; Wert oder Liste mit 1–10 Werten, `null` = leer (`IS NULL`) |
+| `min`, `max` | Grenzen auf Zahlenspalten (`>=` bzw. `<=`) |
+
+Je Gruppe: `key`, `from`/`to` (erster und letzter Tag mit Zeile), `rows`, je Spalte `n` (Zeilen mit Wert), `mean`, `median`, `min`, `max`, `sd` (Stichproben-Standardabweichung, Teiler n − 1; `null` bei n < 2), auf 2 Nachkommastellen. Über 20 000 Zeilen lehnt das Tool ab. Beispiel (ausgeführt): Werte 3, 1, `null`, 2, 10 → n 4, Mittel 4, Median 2,5, Min 1, Max 10, sd 4,08. Spalten- und Filternamen prüft der Worker gegen die Spaltenliste der Tabelle, Werte gehen als gebundene Parameter an D1.
 
 ---
 
