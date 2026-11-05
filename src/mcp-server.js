@@ -5,7 +5,7 @@
 // second integrations. get_coach liest die letzte Coach-Aussage samt Rückfrage und Antwort.
 // get_run_export/get_day_export liefern den Export fuer die Langzeitanalyse aus D1 (export.js, gefuellt von GitHub Actions).
 // Die einzigen schreibenden Tools sind save_runalyze_snapshot,
-// save_studie, save_coach, save_decisions, save_ernaehrung, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
+// save_studie, save_wissensbasis, save_coach, save_decisions, save_ernaehrung, save_experiment, save_profil, save_insight, archive_insight und save_targets: Sie legen das Dashboard-Snapshot im KV ab (Weg fuer Sitzungen, die weder den
 // Worker per HTTP noch GitHub erreichen, aber diesen Connector nutzen).
 import { json } from "./http-helpers.js";
 import { isIsoDate, isoDate, isoDateBerlin, listIsoDaysInclusive } from "./date-utils.js";
@@ -14,6 +14,7 @@ import { fetchIntervalsEvents, fetchIntervalsActivities, fetchIntervalsWellnessR
 import { hasKv, readKvJson, writeKvJson } from "./kv.js";
 import { RUNALYZE_KV_KEY, validateSnapshot } from "./runalyze-snapshot.js";
 import { STUDIE_KV_KEY, validateStudie } from "./studie-snapshot.js";
+import { saveWissensbasis, readWissensbasis } from "./wissensbasis-snapshot.js";
 import { saveCoach, readCoach } from "./coach-snapshot.js";
 import { saveDecisions, readDecisions } from "./decisions-snapshot.js";
 import { EXPERIMENT_KV_KEY, PROFIL_KV_KEY, validateExperiment, validateProfil, readExperiment, readProfil } from "./experiment-snapshot.js";
@@ -137,6 +138,45 @@ const TOOLS = [
         title: { type: "string", description: "Titel (optional)." },
       },
       required: ["fetchedAt", "text", "source"],
+    },
+  },
+  {
+    name: "save_wissensbasis",
+    description: "Schreibt die Wissensbasis des Coaches als Stichpunkte fürs Dashboard (Abschnitte mit Punkten, je Evidenz und Übertragbarkeit). Ersetzt den ganzen Stand.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        fetchedAt: { type: "string", description: "Aktueller Zeitpunkt, ISO-8601. Ein älterer Wert überschreibt nie einen neueren." },
+        updatedAt: { type: "string", description: "Stand der Wissensbasis, YYYY-MM-DD." },
+        folderCheckedAt: { type: "string", description: "Letzte Prüfung des Studien-Ordners, YYYY-MM-DD (optional)." },
+        sections: {
+          type: "array",
+          description: "1–12 Abschnitte mit je 1–8 Punkten.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", description: "Abschnittstitel, max. 60 Zeichen." },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    text: { type: "string", description: "Stichpunkt, max. 220 Zeichen." },
+                    evidence: { type: "string", enum: ["stark", "mittel", "schwach", "praxis"] },
+                    fit: { type: "string", enum: ["hoch", "mittel", "gering", "unklar"], description: "Übertragbarkeit auf Gerbert." },
+                    source: { type: "string", description: "Quelle, max. 80 Zeichen (optional)." },
+                    isNew: { type: "boolean", description: "Zeigt „neu“ (optional)." },
+                  },
+                  required: ["text", "evidence", "fit"],
+                },
+              },
+            },
+            required: ["title", "items"],
+          },
+        },
+        open: { type: "array", items: { type: "string" }, description: "Offene Fragen / noch zu prüfen, max. 6 Einträge à 160 Zeichen (optional)." },
+      },
+      required: ["fetchedAt", "updatedAt", "sections"],
     },
   },
   {
@@ -452,7 +492,7 @@ const TOOLS = [
   {
     name: "get_coach",
     description:
-      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die offenen Entscheidungen (decisions, eigener Speicher save_decisions: id, title, recommendation, reason, alternatives, deadline, ifNoAnswer, answer/answeredAt = Gerberts Antwort aus dem Dashboard, sonst fehlend; nach Frist sortiert; Morgen-Update fragt sie einzeln ab, kürzeste Frist zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text = Beobachtung, hypothesis, change = Umstellung, expectation = Erwartung; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, referenceHours = Referenzwoche (Mittel der Ausdauerzeit der letzten 3 Wochen ohne leichte Wochen unter 70 %; null ohne Vorwochen), byDiscipline { lauf, rad, schwimmen } in Stunden (Schwimmen nur Bewegungszeit ohne Pausen am Beckenrand), swimMovingHours = gezählte Schwimmzeit, swimElapsedHours = Gesamtzeit inkl. Pausen (nur Info), swimRestShare = Pausenanteil in % (null ohne Schwimmen), swimTimeEstimated: true nur, wenn eine Einheit ohne Bewegungszeit und Laps mit der Gesamtzeit zählt, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und die Ernährung (ernaehrung: coach = Aussage aus save_ernaehrung mit headline, text, weekLine, goal {targetKg, byDate}; weight = Gewichtseinträge {date, kg} der letzten 90 Tage, neueste zuletzt; weightTrend7d = 7-Tage-Mittel pro Tag; weightSource = yazio oder intervals; null = nicht abrufbar) die letzten 8 Rad-Trendpunkte (ride_trend: points mit date, ablauf mit_einrollen|ohne_einrollen, durationMin, windowStartS, windowMin, avgWatts, avgHr, vi, ef = Watt pro Puls, decoupling, testReason; älteste zuerst; nur innerhalb desselben ablauf vergleichen; Trend, kein Test – zählt nicht fürs Blockziel; updatedAt = letzte Rechnung im Dashboard; null = noch keine) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
+      "Liest die letzte gespeicherte Coach-Aussage (note, headline, text) mit Rückfrage (question) und Gerberts Antwort (answer, answeredAt; null = nicht beantwortet), dazu die aktuelle Idee der Woche (idea: text, angle, sport, createdAt; null = keine), die Wochenampel (week: light, text, createdAt; null = keine), den Wochenvorschlag (week_plan: week, basis, deload, targets, days, createdAt; null = keiner), die markierten Entlastungswochen (deloadWeeks: Montage, neueste zuerst), die offenen Entscheidungen (decisions, eigener Speicher save_decisions: id, title, recommendation, reason, alternatives, deadline, ifNoAnswer, answer/answeredAt = Gerberts Antwort aus dem Dashboard, sonst fehlend; nach Frist sortiert; Morgen-Update fragt sie einzeln ab, kürzeste Frist zuerst), die bisherigen Ideen (ideas: date, text, angle, sport; max. 12, neueste zuerst), das laufende Experiment (experiment, wie bei save_experiment; null = keins), die Profil-Punkte (profil: updatedAt, highlights; null = keine), die aktiven Erkenntnisse (insights: id, title, discipline, strength, status, updatedAt, kurzer text = Beobachtung, hypothesis, change = Umstellung, expectation = Erwartung; neueste zuerst), die Wochensummen der laufenden ISO-Woche (week_totals: week, enduranceHours = Laufen+Rad+Schwimmen ohne Kraft, referenceHours = Referenzwoche (Mittel der Ausdauerzeit der letzten 3 Wochen ohne leichte Wochen unter 70 %; null ohne Vorwochen), byDiscipline { lauf, rad, schwimmen } in Stunden (Schwimmen nur Bewegungszeit ohne Pausen am Beckenrand), swimMovingHours = gezählte Schwimmzeit, swimElapsedHours = Gesamtzeit inkl. Pausen (nur Info), swimRestShare = Pausenanteil in % (null ohne Schwimmen), swimTimeEstimated: true nur, wenn eine Einheit ohne Bewegungszeit und Laps mit der Gesamtzeit zählt, strengthSets, strengthSets2w = laufende Woche plus Vorwoche, streakWeeksAbove4_5 = Wochen in Folge ab streakThresholdPct % des jeweiligen Wochenziels, goals; null = Intervals nicht erreichbar) und die Ernährung (ernaehrung: coach = Aussage aus save_ernaehrung mit headline, text, weekLine, goal {targetKg, byDate}; weight = Gewichtseinträge {date, kg} der letzten 90 Tage, neueste zuletzt; weightTrend7d = 7-Tage-Mittel pro Tag; weightSource = yazio oder intervals; null = nicht abrufbar) die letzten 8 Rad-Trendpunkte (ride_trend: points mit date, ablauf mit_einrollen|ohne_einrollen, durationMin, windowStartS, windowMin, avgWatts, avgHr, vi, ef = Watt pro Puls, decoupling, testReason; älteste zuerst; nur innerhalb desselben ablauf vergleichen; Trend, kein Test – zählt nicht fürs Blockziel; updatedAt = letzte Rechnung im Dashboard; null = noch keine) die Wissensbasis (wissensbasis: fetchedAt, updatedAt, folderCheckedAt, sections [{ title, items [{ text, evidence stark|mittel|schwach|praxis, fit hoch|mittel|gering|unklar, source, isNew }] }], open; Stand aus save_wissensbasis; null = keiner) und den aktuellen Rahmen (targets: current mit enduranceHoursPerWeek, strengthSets2w, streakThresholdPct, maxIncreasePct, intensity [{ sport, text }], guardrails, notAllowed, validFrom, reason, savedAt; upcoming = geplante mit validFrom in der Zukunft; history = letzte 10 Einträge aus save_targets mit reason und changed, neueste zuerst; ohne Eintrag der Startwert). Vor jedem Morgen-Update aufrufen.",
     inputSchema: { type: "object", properties: {} },
   },
 ];
@@ -474,6 +514,12 @@ async function saveSnapshot(env, args, validate, kvKey, merge) {
 async function callTool(env, name, args) {
   if (name === "save_runalyze_snapshot") return saveSnapshot(env, args, validateSnapshot, RUNALYZE_KV_KEY);
   if (name === "save_studie") return saveSnapshot(env, args, validateStudie, STUDIE_KV_KEY);
+  if (name === "save_wissensbasis") {
+    if (!hasKv(env)) throw new Error("KV nicht verfügbar");
+    const { value, error } = await saveWissensbasis(env, args);
+    if (error) throw new Error(error);
+    return { ok: true, fetchedAt: value.fetchedAt };
+  }
   if (name === "save_coach") {
     if (!hasKv(env)) throw new Error("KV nicht verfügbar");
     return saveCoach(env, args);
@@ -522,13 +568,13 @@ async function callTool(env, name, args) {
     // ernaehrung: Coach-Aussage und Gewicht (Yazio, sonst Intervals-Wellness); Fehler machen daraus null, nie einen Fehler in get_coach
     const ernaehrung = buildErnaehrung(env, today, () => fetchIntervalsWellnessRange(env, isoDate(new Date(Date.parse(today) - (WEIGHT_DAYS - 1) * 86400000)), today)).catch(() => null);
     const coachRaw = await readCoach(env);
-    const [decisions, experiment, profil, insights, week_totals, ernaehrungView, rideTrend] = await Promise.all([readDecisions(env, coachRaw), readExperiment(env), readProfil(env), readInsights(env), weekTotals, ernaehrung, readRideTrend(env)]);
+    const [decisions, experiment, profil, insights, week_totals, ernaehrungView, rideTrend, wissensbasis] = await Promise.all([readDecisions(env, coachRaw), readExperiment(env), readProfil(env), readInsights(env), weekTotals, ernaehrung, readRideTrend(env), readWissensbasis(env)]);
     const { decisions: _legacy, ...coach } = coachRaw ?? {};
     const hasCoach = Boolean(coachRaw);
     // targets: heute geltendes Wochenziel, geplante Änderungen und die letzten Einträge (save_targets), neueste zuerst
     const { current, upcoming, history } = targetsView(stored, today, COACH_HISTORY);
     // idea/ideas auch bei aelteren Eintraegen ohne diese Felder, damit der Coach immer dieselbe Form liest
-    const extra = { decisions, experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals, ernaehrung: ernaehrungView, targets: { current, upcoming, history },
+    const extra = { decisions, wissensbasis: wissensbasis ?? null, experiment: experiment ?? null, profil: profil ?? null, insights: insightsForCoach(insights), week_totals, ernaehrung: ernaehrungView, targets: { current, upcoming, history },
       // ride_trend: letzte Rad-Trendpunkte wie in der Rad-Vergleichskarte (Dashboard legt sie ab), aelteste zuerst; null = noch keine
       ride_trend: rideTrend ? { points: rideTrend.points, updatedAt: rideTrend.updatedAt ?? null, note: RIDE_TREND_NOTE } : null };
     return hasCoach

@@ -54,7 +54,7 @@ function render(d) {
   const bad = Object.entries(d.sources).filter(([, s]) => !s.ok);
   $("sources").innerHTML = bad.map(([k, s]) => `<div class="notice bad"><b>Nicht erreichbar: ${esc(k)}</b><br>${esc(s.error)}</div>`).join("");
   renderSources(d);
-  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderErnaehrung, renderStrength, renderInsights, renderStudie];
+  const steps = [renderCockpit, renderRennplan, renderReady, renderHistory, renderLongruns, renderIntervals, renderSport, renderFitness, renderDisciplines, renderThresholds, renderWellness, renderNutrition, renderErnaehrung, renderStrength, renderInsights, renderWissen, renderStudie];
   for (const step of steps) {
     try { step(d); } catch (e) { console.error(step.name, e); const n = document.createElement("div"); n.className = "notice bad"; n.textContent = `Bereich „${step.name.replace("render", "")}" konnte nicht gezeichnet werden: ${e.message}`; $("sources").append(n); }
   }
@@ -1537,6 +1537,21 @@ function renderInsights(d) {
   draw();
 }
 const INS_DISC_ORDER = ["lauf", "rad", "schwimmen", "kraft", "erholung", "alle"];
+
+/* ---------- Wissensbasis (Stichpunkte des Coaches, nur Anzeige) ---------- */
+function renderWissen(d) {
+  const w = d.wissensbasis;
+  const card = $("wissen-card");
+  if (!w || !Array.isArray(w.sections) || !w.sections.length) { card.hidden = true; return; }
+  card.hidden = false;
+  const EV = { stark: "Evidenz: stark", mittel: "Evidenz: mittel", schwach: "Evidenz: schwach", praxis: "Evidenz: Praxis" };
+  const day = (s) => fmtDate(s);
+  const item = (it) => `<li>${esc(it.text)}${it.isNew ? ' <span class="wb">neu</span>' : ""}
+    <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.source ? `<span class="wsrc">${esc(it.source)}</span>` : ""}</div></li>`;
+  const secs = w.sections.map((s, i) => `<details class="wsec"${i === 0 ? " open" : ""}><summary>${esc(s.title)}</summary><ul>${s.items.map(item).join("")}</ul></details>`).join("");
+  const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
+  $("wissen").innerHTML = `<div class="muted">Stand ${esc(day(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(day(w.folderCheckedAt))}` : ""}</div>${secs}${open}`;
+}
 
 /* ---------- Studien-Check der Woche ---------- */
 function renderStudie(d) {
