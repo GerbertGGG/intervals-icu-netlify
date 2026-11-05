@@ -1490,23 +1490,25 @@ const INS_STATUS = { neu: "neu", "bestätigt": "bestätigt", "abgeschwächt": "a
 let insFilter = "alle";
 try { insFilter = localStorage.getItem("insight-filter") || "alle"; } catch {}
 function insightCard(x, i) {
-  // Neues Schema (ab 03.11.2026): Beobachtung, Hypothese, Umstellung, Erwartung direkt auf der Karte; alte Karten wie bisher
+  // Kompakt: Titel, ein Satz Beobachtung, Chip zum Test. Voller Text (Beobachtung, Hypothese, Umstellung, Erwartung) auf Klick.
   const fourPart = !!(x.hypothesis || x.change || x.expectation);
   const icon = `<svg class="idea-ic" viewBox="0 0 20 20" aria-hidden="true">${INS_ICON[x.discipline] ?? INS_ICON.alle}</svg>`;
   const hist = (x.history ?? []).map((h) => `<li><span class="nw">${fmtDate(h.date)}${h.date.slice(0, 4)}</span> <span class="ins-b st-${esc(h.status)}">${INS_STATUS[h.status] ?? esc(h.status)}</span> <span class="ins-b sg-${esc(h.strength)}">${INS_STRENGTH[h.strength] ?? esc(h.strength)}</span></li>`).join("");
+  const first = String(x.text ?? "").split(/(?<=[.!?])\s+/)[0] ?? "";
+  const one = first.length > 150 ? first.slice(0, 149).trimEnd() + "…" : first;
+  const tl = insightTests[x.id] ?? [];
+  const parts = fourPart ? [["Beobachtung", x.text], ["Hypothese", x.hypothesis], ["Umstellung", x.change], ["Erwartung", x.expectation]].filter(([, v]) => v) : [["Beobachtung", x.text], ["Hypothese", x.title], ["Test", x.action]].filter(([, v]) => v);
   return `<details class="card ins${x.status === "widerlegt" ? " refuted" : ""}" data-disc="${esc(x.discipline)}">
     <summary>
       <div class="ins-top">${icon}<span class="muted">${INS_DISC[x.discipline] ?? esc(x.discipline)}</span><span class="ins-b st-${esc(x.status)}">${INS_STATUS[x.status] ?? esc(x.status)}</span></div>
-      ${fourPart ? `<h3 class="ins-t">${esc(x.title)}</h3>
-      ${[["Beobachtung", x.text], ["Hypothese", x.hypothesis], ["Umstellung", x.change], ["Erwartung", x.expectation]].filter(([, v]) => v).map(([k, v]) => `<div class="ins-k">${k}</div><p class="ins-act">${esc(v)}</p>`).join("")}`
-      : `<div class="ins-k">Hypothese</div><h3 class="ins-t">${esc(x.title)}</h3>
-      ${x.action ? `<div class="ins-k">Test</div><p class="ins-act">${esc(x.action)}</p>` : ""}`}
-      ${(insightTests[x.id] ?? []).length ? `<div class="muted ins-test">Teil von Test ${(insightTests[x.id]).map((t) => `<a href="#test-${esc(t.id)}">${esc(t.title)}</a>`).join(", ")}</div>` : ""}
-      <div class="muted ins-foot"><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span><span class="ins-more">Mehr lesen</span><span class="ins-less">Schließen</span></div>
+      <h3 class="ins-t">${esc(x.title)}</h3>
+      ${one ? `<p class="ins-act ins-one">${esc(one)}</p>` : ""}
+      <div class="muted ins-foot"><span class="ins-b sg-${esc(x.strength)}">${INS_STRENGTH[x.strength] ?? esc(x.strength)}</span>${tl.length ? `<span class="ins-b ins-tchip">Führt zu Test: ${tl.map((t) => esc(t.title)).join(", ")}</span>` : ""}<span class="ins-more">mehr</span><span class="ins-less">weniger</span></div>
     </summary>
     <div class="ins-body">
-      ${fourPart ? "" : `<div class="ins-k">Beobachtung</div><p class="ins-text">${esc(x.text)}</p>`}
+      ${parts.map(([k, v]) => `<div class="ins-k">${k}</div><p class="ins-text">${esc(v)}</p>`).join("")}
       ${fourPart && x.action ? `<div class="ins-k">Hinweis</div><p class="ins-text">${esc(x.action)}</p>` : ""}
+      ${tl.length ? `<div class="ins-k">Test</div><div>${tl.map((t) => `<a href="#test-${esc(t.id)}">${esc(t.title)}</a>`).join(", ")}</div>` : ""}
       <div class="ins-k">Belege</div><div class="muted">${esc(x.evidence)} · aktualisiert ${fmtDate(x.updatedAt.slice(0, 10))}</div>
       ${x.chart ? `<div class="ins-chart" data-i="${i}"></div>` : ""}
     </div>
@@ -1523,6 +1525,8 @@ function renderInsights(d) {
   const list = [...all.active, ...all.archived];
   const discs = INS_DISC_ORDER.filter((k) => list.some((x) => x.discipline === k));
   if (insFilter !== "alle" && !discs.includes(insFilter)) insFilter = "alle";
+  $("insights-sum").textContent = `Gründe aus deinen Daten (${all.active.length})`;
+  $("insights-wrap").hidden = !list.length;
   const draw = () => {
     const keep = (x) => insFilter === "alle" || x.discipline === insFilter || x.discipline === "alle";
     const act = all.active.filter(keep), arc = all.archived.filter(keep);
@@ -1576,15 +1580,6 @@ function renderTests(d) {
   const stations = `<div class="tsteps" role="group" aria-label="Filter nach Stand">${T_STATIONS.map(([k, label]) => `<button type="button" class="tstep" data-f="${k}" aria-pressed="${testsFilter === k}"><b>${counts[k]}</b><span>${esc(label)}</span></button>`).join("")}</div>`;
   const head = `${stations}<div class="muted">${running.length} laufen, davon ${heavy} mit Mehrbelastung</div>${warn}`;
 
-  const study = (id) => {
-    const it = items.find((x) => x.id === id);
-    if (!it) return `<li class="tgone">Studie ${esc(id)}: nicht gefunden</li>`;
-    return `<li>${esc(cut(it.text, 110))}<div class="wbadges"><span class="wb">${esc(T_EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.consensus ? `<span class="wb">${esc(T_CONS[it.consensus])}</span>` : ""}</div></li>`;
-  };
-  const insight = (id) => {
-    const x = insights.find((i) => i.id === id);
-    return x ? `<li>${esc(x.title)}<div class="wbadges"><span class="wb">${esc(INS_STRENGTH[x.strength] ?? x.strength)}</span></div></li>` : `<li class="tgone">Erkenntnis ${esc(id)}: nicht gefunden</li>`;
-  };
   const metric = (t, m) => {
     const cur = m.current == null ? "noch kein aktueller Wert" : `${num(m.current)}${m.unit ? " " + esc(m.unit) : ""}${m.currentDate ? ` (${esc(fmtDate(m.currentDate))})` : ""}`;
     // Vor dem Prüfdatum kein Urteil: nur Werte, die Veränderung erst ab Prüfdatum bzw. mit Ergebnis
@@ -1592,30 +1587,59 @@ function renderTests(d) {
     const delta = judged && m.current != null && m.baseline != null ? ` · Veränderung ${m.current - m.baseline > 0 ? "+" : ""}${num(Math.round((m.current - m.baseline) * 10) / 10)}${m.unit ? " " + esc(m.unit) : ""}` : "";
     return `<div class="tmet${m.provisional ? " prov" : ""}"><span class="tk">${esc(m.label)}</span> ${num(m.baseline)}${m.unit ? " " + esc(m.unit) : ""}${m.baselineDate ? ` (${esc(fmtDate(m.baselineDate))})` : ""} → ${cur}${m.provisional ? " · vorläufig" : ""}${delta}</div>`;
   };
+  // Kompakte Messgröße: Ausgangswert → aktuell, Pfeil zeigt, in welche Richtung "besser" liegt
+  const metricLine = (m) => {
+    const u = m.unit ? "\u00a0" + esc(m.unit) : "";
+    return `<span class="tk">${esc(m.label)}</span> ${num(m.baseline)}${u} → <b>${m.current == null ? "offen" : num(m.current) + u}</b> <span class="tdir" title="${m.better === "lower" ? "niedriger ist besser" : "höher ist besser"}">${m.better === "lower" ? "↓" : "↑"} besser</span>`;
+  };
+  const chip = (t) => `<span class="wb tchip">${esc(t)}</span>`;
+  const nextId = (() => {
+    const c = all.filter((t) => t.checkDate && (t.status === "laeuft" || t.status === "urteil")).sort((a, b) => a.checkDate.localeCompare(b.checkDate));
+    return (c.find((t) => daysTo(t.checkDate) >= 0) ?? c[0])?.id ?? null;
+  })();
   const card1 = (t) => {
     const ad = t.adherence;
     const adh = ad ? `<div class="tk">Einhaltung</div><div class="tbar" title="Mindestquote ${ad.minPct} %"><i style="width:${ad.actualPct ?? 0}%"></i><u style="left:${ad.minPct}%"></u></div><div class="muted">${ad.actualPct == null ? "noch offen" : `${ad.actualPct} %`} · mindestens ${ad.minPct} % · ${esc(ad.rule)}</div>` : "";
     const exp = t.expectation ? `<div class="tk">Erwartung</div><dl class="wabg"><dt>bestätigt</dt><dd>${esc(t.expectation.confirmed)}</dd><dt>unklar</dt><dd>${esc(t.expectation.unclear)}</dd><dt>widerlegt</dt><dd>${esc(t.expectation.refuted)}</dd></dl>` : "";
-    const refs = (t.studyRefs ?? []).length || (t.insightRefs ?? []).length
-      ? `<div class="tk">Gründe</div><div class="tcols"><div><div class="muted">Studien</div><ul>${(t.studyRefs ?? []).map(study).join("") || '<li class="tgone">keine</li>'}</ul></div><div><div class="muted">Deine Daten</div><ul>${(t.insightRefs ?? []).map(insight).join("") || '<li class="tgone">keine</li>'}</ul></div></div>` : "";
+    const studies = (t.studyRefs ?? []).map((id) => { const it = items.find((x) => x.id === id); return it ? chip("Studie: " + cut(it.text, 60)) : `<span class="wb tgone">Studie ${esc(id)}: nicht gefunden</span>`; });
+    const ins = (t.insightRefs ?? []).map((id) => { const x = insights.find((i) => i.id === id); return x ? chip("Daten: " + cut(x.title, 60)) : `<span class="wb tgone">Erkenntnis ${esc(id)}: nicht gefunden</span>`; });
+    const refs = studies.length || ins.length ? `<div class="tk">Gründe</div><div class="wbadges">${[...studies, ...ins].join("")}</div>` : "";
     const when = [t.startDate ? `Start ${day(t.startDate)}` : "", t.checkDate ? `Prüfdatum ${day(t.checkDate)}${t.status === "laeuft" ? ` (${left(t.checkDate)})` : ""}` : ""].filter(Boolean).join(" · ");
     const res = t.result ? `<div class="tres"><b>Ergebnis: ${esc(testResult(t))}</b>${t.learned ? `<div>Gelernt: ${esc(t.learned)}</div>` : ""}</div>` : "";
-    const conf = (t.confoundedWith ?? []).length ? `<div class="muted">vermischt mit ${t.confoundedWith.map((id) => esc(byId[id]?.title ?? id)).join(", ")}</div>` : "";
-    return `<article class="card ttest" id="test-${esc(t.id)}" data-s="${esc(t.status)}">
-      <div class="ttop"><h4>${esc(t.title)}</h4><span class="wb">${esc(T_STATUS[t.status] ?? t.status)}</span></div>
-      <div class="wbadges"><span class="wb">${esc(T_KIND[t.kind] ?? t.kind)}</span><span class="wb">${esc(T_DISC[t.discipline] ?? t.discipline)}</span><span class="wb">Block ${esc(t.block)}</span><span class="wb">${t.load === "mehr" ? "Mehrbelastung" : "ohne Mehrbelastung"}</span>${t.proposedBy === "gerbert" ? '<span class="wb">von dir</span>' : ""}</div>
-      <div class="tk">Frage</div><div>${esc(t.question)}</div>
-      <div class="tk">Zahlt ein auf</div><div>${esc(t.blockGoal)}</div>
-      ${refs}
-      <div class="tk">Änderung</div><div>${esc(t.change)}</div>${when ? `<div class="muted">${when}</div>` : ""}
-      <div class="tk">Messgrößen</div>${t.metrics.map((m) => metric(t, m)).join("")}
-      ${exp}${adh}${t.abort ? `<div class="tk">Abbruch</div><div>${esc(t.abort)}</div>` : ""}${res}${conf}
-    </article>`;
+    const confNames = (t.confoundedWith ?? []).map((id) => esc(byId[id]?.title ?? id)).join(", ");
+    const own = (d.tests?.warnings ?? []).filter((w) => w.includes(t.title) || w.includes(t.id));
+    const hint = [confNames ? `beeinflusst sich mit ${confNames}` : "", ...own.map(esc)].filter(Boolean).join(" · ");
+    const m0 = t.metrics[0];
+    const run = t.status === "laeuft";
+    const miniBar = run && ad ? `<span class="tmini" title="Einhaltung ${ad.actualPct ?? "offen"} % (mindestens ${ad.minPct} %)"><i style="width:${ad.actualPct ?? 0}%"></i><u style="left:${ad.minPct}%"></u></span>` : "";
+    return `<details class="card ttest" id="test-${esc(t.id)}" data-s="${esc(t.status)}"${t.id === nextId ? " open" : ""}>
+      <summary>
+        <div class="ttop"><h4>${esc(t.title)}</h4><span class="wb">${esc(T_STATUS[t.status] ?? t.status)}</span></div>
+        <div class="wbadges"><span class="wb">${esc(T_KIND[t.kind] ?? t.kind)}</span><span class="wb">${esc(T_DISC[t.discipline] ?? t.discipline)}</span></div>
+        <div class="tline muted">Zahlt ein auf: ${esc(t.blockGoal)}</div>
+        ${m0 ? `<div class="tline">${metricLine(m0)}${run && t.checkDate ? ` · bis ${esc(fmtDate(t.checkDate))}` : ""}${miniBar}</div>` : ""}
+        ${hint ? `<div class="tline thint">${hint}</div>` : ""}
+      </summary>
+      <div class="tbody">
+        <div class="wbadges"><span class="wb">Block ${esc(t.block)}</span><span class="wb">${t.load === "mehr" ? "Mehrbelastung" : "ohne Mehrbelastung"}</span>${t.proposedBy === "gerbert" ? '<span class="wb">von dir</span>' : ""}</div>
+        <div class="tk">Frage</div><div>${esc(t.question)}</div>
+        <div class="tk">Änderung</div><div>${esc(t.change)}</div>${when ? `<div class="muted">${when}</div>` : ""}
+        ${exp}
+        <div class="tk">Messgrößen</div>${t.metrics.map((m) => metric(t, m)).join("")}
+        ${adh}${refs}${t.abort ? `<div class="tk">Abbruchregel</div><div>${esc(t.abort)}</div>` : ""}${res}
+      </div>
+    </details>`;
   };
   const shown = all.filter((t) => testsFilter === "alle" || t.status === testsFilter);
   $("tests").innerHTML = `${head}${shown.map(card1).join("") || '<p class="muted">Keine Tests in diesem Stand.</p>'}`;
   for (const b of document.querySelectorAll("#tests .tstep")) b.onclick = () => { testsFilter = testsFilter === b.dataset.f ? "alle" : b.dataset.f; renderTests(d); };
 }
+// Sprung aus der Wissensbasis oder von einer Erkenntnis: Testkarte aufklappen
+function openTestFromHash() {
+  const el = location.hash.startsWith("#test-") ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+  if (el?.tagName === "DETAILS") { el.open = true; el.scrollIntoView({ block: "start" }); }
+}
+window.addEventListener("hashchange", openTestFromHash);
 
 /* ---------- Wissensbasis (Stichpunkte des Coaches, nur Anzeige) ---------- */
 function renderWissen(d) {
@@ -1649,22 +1673,30 @@ function renderWissen(d) {
   const pass = STATIONS.find(([k]) => k === filter)?.[2] ?? (() => true);
   const hot = (it) => it.match === "luecke" || it.atYou === "laeuft";
 
+  const testById = Object.fromEntries((d.tests?.tests ?? []).map((t) => [t.id, t]));
+  const CHIP = { laeuft: "Läuft", gewirkt: "gewirkt", nicht_gewirkt: "nicht gewirkt", offen: "offen", stoert_nicht: "stört nicht", stoert: "stört" };
+  // Nur eine kleine Marke mit Link zur Testkarte; Punkte ohne Test bleiben in der Spalte leer
+  const chipOf = (it) => {
+    if (!it.atYou || it.atYou === "nicht_getestet" || !CHIP[it.atYou]) return "";
+    const t = (it.tests ?? [])[0];
+    let txt = CHIP[it.atYou];
+    if (it.atYou === "laeuft" && t) { const cd = testById[t.id]?.checkDate; txt = `Läuft: ${t.title}${cd ? ` · bis ${short(cd)}.` : ""}`; }
+    return t ? `<a class="wb wsoft wchip" href="#test-${esc(t.id)}" title="${esc(t.title)}">${esc(txt)}</a>` : `<span class="wb wsoft wchip">${esc(txt)}</span>`;
+  };
   const item = (it) => {
     const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
-    const left = `<div class="wcol"><div class="wlab">Studie sagt</div><div class="wtext">${esc(it.text)}</div>
-      <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.isNew ? '<span class="wb wnew">neu</span>' : ""}</div>
-      ${cons ? `<div class="wbadges">${cons}</div>` : ""}${it.source ? `<div class="wsrc wsrc-l">${esc(it.source)}</div>` : ""}</div>`;
-    const tags = [it.match ? `Abgleich: ${MATCH[it.match]}` : "", it.atYou ? `Bei dir: ${ATYOU[it.atYou]}${it.candidate ? " (Kandidat)" : ""}` : ""].filter(Boolean);
-    const right = `<div class="wcol wyou"><div class="wlab">Du machst</div>${it.practice ? `<div class="wtext">${esc(it.practice)}</div>` : '<div class="wtext wnone">noch nichts eingetragen</div>'}
-      ${tags.length ? `<div class="wbadges">${tags.map((t, i) => `<span class="wb wsoft">${esc(t)}</span>`).join("")}</div>` : ""}</div>`;
-    const tl = (it.tests ?? []).map((t) => `<a href="#test-${esc(t.id)}">zum Test: ${esc(t.title)}</a>`);
-    const meta = [...tl, it.link && it.link.type !== "test" ? esc(linkText(it.link)) : ""].filter(Boolean).join(" · ");
-    const foot = it.next || meta ? `<div class="wfoot">${it.next ? `<span><b>Nächster Schritt:</b> ${esc(it.next)}</span>` : "<span></span>"}${meta ? `<span class="wmeta">${meta}</span>` : ""}</div>` : "";
-    return `<li class="witem${hot(it) ? " hot" : ""}"><div class="wcols">${left}${right}</div>${foot}</li>`;
+    const tags = [it.match ? `Abgleich: ${MATCH[it.match]}` : ""].filter(Boolean);
+    const meta = it.link && it.link.type !== "test" ? esc(linkText(it.link)) : "";
+    const more = `<div class="wmore"><div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.isNew ? '<span class="wb wnew">neu</span>' : ""}${tags.map((t) => `<span class="wb wsoft">${esc(t)}</span>`).join("")}</div>
+      ${cons ? `<div class="wbadges">${cons}</div>` : ""}${it.source ? `<div class="wsrc wsrc-l">${esc(it.source)}</div>` : ""}
+      ${it.practice ? `<div class="wlab" style="margin-top:8px">Du machst</div><div class="wtext">${esc(it.practice)}</div>` : ""}
+      ${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}</div>`;
+    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) ? `<div class="wchipcol">${chipOf(it)}</div>` : ""}</li>`;
   };
-  const secs = w.sections.map((s, i) => {
+  const secs = w.sections.map((s) => {
     const shown = s.items.filter(pass);
-    return shown.length ? `<details class="wsec"${i === 0 || filter !== "alle" ? " open" : ""}><summary><span>${esc(s.title)}</span><span class="wcount">${shown.length}</span></summary><ul>${shown.map(item).join("")}</ul></details>` : "";
+    const run = s.items.filter((i) => i.atYou === "laeuft").length;
+    return shown.length ? `<details class="wsec"${filter !== "alle" ? " open" : ""}><summary><span>${esc(s.title)}</span><span class="wsumr">${run ? `<span class="wb wsoft">${run === 1 ? "Test läuft" : run + " Tests laufen"}</span>` : ""}<span class="wcount">${shown.length}</span></span></summary><ul>${shown.map(item).join("")}</ul></details>` : "";
   }).join("") || '<p class="muted">Keine Punkte in dieser Station.</p>';
   const gew = count((i) => i.atYou === "gewirkt"), nicht = count((i) => i.atYou === "nicht_gewirkt"), umstr = count((i) => i.consensus === "umstritten");
   const bar = hasAbgleich ? `<div class="wcycle" role="group" aria-label="Filter nach Station im Kreislauf">${STATIONS.map(([k, label, f]) => `<button type="button" class="wstep" data-f="${k}" aria-pressed="${filter === k}"><b>${count(f)}</b><span>${esc(label)}</span></button>`).join("")}</div>
