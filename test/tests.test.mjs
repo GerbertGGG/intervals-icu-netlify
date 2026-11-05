@@ -193,6 +193,10 @@ d = applyTestDecision(store0, "dritter-lauf", { action: "later", block: "Block C
 assert.equal(d.test.status, "kandidat"); assert.equal(d.test.block, "Block C"); assert.equal(d.test.decidedAt, null);
 assert.match(applyTestDecision(store0, "dritter-lauf", { action: "later" }, T, NOW).error, /block/);
 assert.match(applyTestDecision(store0, "dritter-lauf", { action: "later", block: "x".repeat(21) }, T, NOW).error, /block/);
+// Stand des Coaches ist zeitlich später als jetzt: die Entscheidung gewinnt trotzdem
+const future = { tests: [{ ...cand1, updatedAt: "2026-11-05T14:00:00.000Z" }] };
+d = applyTestDecision(future, "dritter-lauf", { action: "reject" }, T, NOW);
+assert.ok(!d.error, d.error); assert.equal(d.test.status, "verworfen"); assert.ok(d.test.updatedAt > "2026-11-05T14:00:00.000Z");
 // Warnung: dritter laufender Test mit Mehrbelastung
 const heavy = (id) => validateTest({ ...laeuft, id, metrics: [{ ...metric, key: "k-" + id, better: "lower" }] }).value;
 d = applyTestDecision({ tests: [heavy("a"), heavy("b"), cand1] }, "dritter-lauf", { action: "start", expectation: exp }, T, NOW);
