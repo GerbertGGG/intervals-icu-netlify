@@ -449,13 +449,26 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 .studie-fazit { border-left: 3px solid var(--accent); background: var(--inset); padding: 10px 14px; border-radius: 0 8px 8px 0; }
 .studie-fazit > div:last-child { font-size: var(--fs-m); margin-top: 2px; }
 #studie .desc p { margin: 0 0 8px; }
-#wissen details.wsec { border-top: 1px solid var(--line); padding: 6px 0; }
-#wissen details.wsec > summary { cursor: pointer; font-weight: 600; }
-#wissen ul { list-style: none; margin: 8px 0 4px; padding: 0; }
-#wissen li { padding: 6px 0; }
-#wissen .wbadges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; align-items: center; }
-#wissen .wb { font-size: var(--fs-s, 12px); padding: 1px 8px; border-radius: 999px; background: var(--inset); box-shadow: inset 0 0 0 1px var(--line); color: var(--muted, inherit); white-space: nowrap; }
-#wissen .wsrc { font-size: var(--fs-s, 12px); color: var(--muted, inherit); }
+#wissen details.wsec { border-top: 1px solid var(--line); padding: 8px 0; }
+#wissen details.wsec > summary { cursor: pointer; font-weight: 600; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
+#wissen .wcount { font-weight: 500; font-size: var(--fs-s); color: var(--muted); }
+#wissen ul { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 8px; }
+#wissen li.witem { padding: 10px 12px; background: var(--inset); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--line); }
+#wissen li.witem.hot { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
+#wissen .wtext { line-height: 1.4; }
+#wissen .wbadges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center; }
+#wissen .wb { font-size: var(--fs-xs); padding: 1px 8px; border-radius: 999px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line-2); color: var(--muted); white-space: nowrap; }
+#wissen .wb.wnew { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+#wissen .wsrc { font-size: var(--fs-xs); color: var(--muted); }
+#wissen dl.wabg { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed var(--line-2); font-size: var(--fs-s); }
+#wissen dl.wabg dt { color: var(--muted); }
+#wissen dl.wabg dd { margin: 0; }
+#wissen .wstats { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; align-items: stretch; }
+#wissen .wstat { background: var(--inset); border-radius: var(--r); box-shadow: inset 0 0 0 1px var(--line); padding: 6px 12px; display: flex; flex-direction: column; min-width: 72px; }
+#wissen .wstat b { font-size: var(--fs-xl); line-height: 1.1; font-variant-numeric: tabular-nums; }
+#wissen .wstat span { font-size: var(--fs-xs); color: var(--muted); }
+#wissen .wstat.zero b { color: var(--muted); font-weight: 500; }
+#wissen .wstats .chip { align-self: center; margin-left: auto; }
 #wissen .wopen { margin-top: 10px; }
 #wissen .wstats { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
 #wissen .wline { font-size: var(--fs-s, 12px); color: var(--muted, inherit); margin-top: 3px; }

@@ -1563,14 +1563,15 @@ function renderWissen(d) {
   const onlyGaps = hasAbgleich && wissenOnlyGaps;
   const hide = (it) => onlyGaps && it.match === "passt" && it.atYou !== "laeuft";
   const item = (it) => {
-    const line2 = [it.practice ? `<b>Du:</b> ${esc(it.practice)}` : "", it.match ? `<b>Abgleich:</b> ${esc(MATCH[it.match])}` : "", it.atYou ? `<b>Bei dir:</b> ${esc(ATYOU[it.atYou])}` : ""].filter(Boolean).join(" · ");
+    const rows = [["Du", it.practice], ["Abgleich", it.match && MATCH[it.match]], ["Bei dir", it.atYou && ATYOU[it.atYou]], ["Nächster Schritt", it.next], ["Verknüpft", it.link && linkText(it.link)]].filter(([, v]) => v);
+    const hot = (it.match === "luecke" || it.atYou === "laeuft") ? " hot" : "";
+    const abgleich = rows.length ? `<dl class="wabg">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : "";
     const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
-    return `<li>${esc(it.text)}${it.isNew ? ' <span class="wb">neu</span>' : ""}
-    <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${cons}${it.source ? `<span class="wsrc">${esc(it.source)}</span>` : ""}</div>
-    ${line2 ? `<div class="wline">${line2}</div>` : ""}${it.next ? `<div class="wline"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${it.link ? `<div class="wline">${esc(linkText(it.link))}</div>` : ""}</li>`;
+    return `<li class="witem${hot}"><div class="wtext">${esc(it.text)}${it.isNew ? ' <span class="wb wnew">neu</span>' : ""}</div>
+    <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${cons}${it.source ? `<span class="wsrc">${esc(it.source)}</span>` : ""}</div>${abgleich}</li>`;
   };
-  const secs = w.sections.map((s, i) => { const shown = s.items.filter((it) => !hide(it)); return shown.length ? `<details class="wsec"${i === 0 ? " open" : ""}><summary>${esc(s.title)}</summary><ul>${shown.map(item).join("")}</ul></details>` : ""; }).join("");
-  const bar = hasAbgleich ? `<div class="wstats">${stats.map(([k, n]) => `<span class="wb">${esc(k)}: ${n}</span>`).join("")}<button type="button" class="chip${onlyGaps ? " on" : ""}" id="wissen-gaps" aria-pressed="${onlyGaps}">nur Lücken und Tests</button></div>` : "";
+  const secs = w.sections.map((s, i) => { const shown = s.items.filter((it) => !hide(it)); return shown.length ? `<details class="wsec"${i === 0 ? " open" : ""}><summary><span>${esc(s.title)}</span><span class="wcount">${shown.length}</span></summary><ul>${shown.map(item).join("")}</ul></details>` : ""; }).join("");
+  const bar = hasAbgleich ? `<div class="wstats">${stats.map(([k, n]) => `<div class="wstat${n ? "" : " zero"}"><b>${n}</b><span>${esc(k)}</span></div>`).join("")}<button type="button" class="chip${onlyGaps ? " on" : ""}" id="wissen-gaps" aria-pressed="${onlyGaps}">nur Lücken und Tests</button></div>` : "";
   const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
   $("wissen").innerHTML = `<div class="muted">Stand ${esc(day(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(day(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}`;
   const btn = $("wissen-gaps");
