@@ -6,6 +6,7 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
+import { handleWissensbasisRequest } from "./wissensbasis-snapshot.js";
 import { handleCoachRequest, handleCoachAnswerRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
 import { handleDecisionsRequest, handleDecisionAnswerRequest } from "./decisions-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
@@ -78,6 +79,8 @@ export default {
         return route(() => handleRunalyzeSnapshotRequest(req, env, isAuthorized));
       case "/api/studie":
         return route(() => handleStudieRequest(req, env, isAuthorized));
+      case "/api/wissensbasis":
+        return route(() => handleWissensbasisRequest(req, env, isAuthorized));
       case "/api/coach":
         return route(() => handleCoachRequest(req, env, isAuthorized));
       // Antwort auf die Rückfrage des Coaches, aus dem Dashboard

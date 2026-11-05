@@ -18,6 +18,7 @@ import { findHipFlags, parseCravings, parseWorkoutSteps } from "./dashboard-pars
 import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
+import { readWissensbasis } from "./wissensbasis-snapshot.js";
 import { buildErnaehrung } from "./ernaehrung.js";
 import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
 import { readDecisions } from "./decisions-snapshot.js";
@@ -751,7 +752,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil, coachInsights, storedTargets] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil, coachInsights, storedTargets, wissensbasis] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -771,6 +772,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     readProfil(env),
     readInsights(env),
     readTargets(env),
+    readWissensbasis(env),
   ]);
   // Entscheidungsliste: eigener Schluessel (migriert bei Bedarf das alte Feld aus dashboard:coach); Fehler lassen die Karte nur leer
   const decisions = await readDecisions(env, coach).catch(() => []);
@@ -966,6 +968,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     thresholds,
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
+    wissensbasis: wissensbasis ?? null,
     coach: coach ? (({ decisions: _legacy, ...c }) => c)(coach) : null,
     decisions,
     // Experiment und Profil schreibt der Coach (save_experiment, save_profil); das Dashboard zeigt sie nicht mehr, das Widget
