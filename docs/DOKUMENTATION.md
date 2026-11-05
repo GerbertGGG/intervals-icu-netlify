@@ -91,6 +91,12 @@ Beide nehmen `from`, `to`, `cursor`, `limit` (Standard 200, max. 500) und `forma
 
 Das Dashboard schreibt zwei Dinge zurück: die **Antwort auf die Rückfrage** des Coaches (`POST /api/coach/answer`) und **angepasste Zeiten im Wochenvorschlag** (`POST /api/coach/plan`, baut danach den Cache sofort neu). Der Coach liest beides am nächsten Morgen.
 
+Dazu kommt die **Entscheidung über Test-Kandidaten**: `POST /api/tests/:id/decision` (Bearer `DASHBOARD_TOKEN`) mit `{ action: "start" | "reject" | "later", startDate?, checkDate?, expectation?, adherence?, block? }`. Im Dashboard stehen auf jeder Kandidaten-Karte „Machen wir“, „Nicht jetzt“ und „Später (anderer Block)“. Der Endpunkt schreibt in `dashboard:tests` denselben Datensatz wie `save_test` (gleiche Validierung über `validateTest`, danach baut er den Cache neu) und setzt `decidedAt` selbst auf heute (Berlin). Nur Tests mit status `kandidat` lassen sich entscheiden (sonst 409).
+- `start`: status `laeuft`, `startDate` (Standard nächster Montag, heute wenn Montag), `checkDate` (Standard: die Vorgabe des Tests, sonst Start + 8 Wochen), `expectation` (Pflicht: `confirmed`, `unclear`, `refuted`; vorbelegt aus dem Kandidaten), `adherence` und `block` optional; `proposedBy` bleibt. Die Antwort enthält die `warnings` (mehr als zwei laufende Tests mit Mehrbelastung, gleiche Messgröße); sie blockieren nicht.
+- `reject`: status `verworfen`, `decidedAt` heute, der Test verschwindet aus der Ansicht.
+- `later`: bleibt Kandidat, nur `block` (Pflicht, max. 20 Zeichen) ändert sich, `decidedAt` bleibt leer.
+- Schutz: `save_test` mit status `kandidat` für einen Test mit `decidedAt` wird ignoriert (Antwort `ignored: true` mit Warnung); der Coach setzt eine Entscheidung Gerberts nicht zurück. Ein `save_test` mit älterem `fetchedAt` überschreibt die Freigabe ohnehin nicht. Der Coach liest die Entscheidung beim nächsten `get_coach` (`tests`).
+
 ## A3. Geplante Tasks
 
 Es gibt **zwei getrennte Sorten**, die man nicht verwechseln darf.

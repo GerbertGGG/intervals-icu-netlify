@@ -1578,7 +1578,9 @@ function renderTests(d) {
   const heavy = running.filter((t) => t.load === "mehr").length;
   const warn = (d.tests?.warnings ?? []).map((w) => `<div class="twarn">${esc(w)}</div>`).join("");
   const stations = `<div class="tsteps" role="group" aria-label="Filter nach Stand">${T_STATIONS.map(([k, label]) => `<button type="button" class="tstep" data-f="${k}" aria-pressed="${testsFilter === k}"><b>${counts[k]}</b><span>${esc(label)}</span></button>`).join("")}</div>`;
-  const head = `${stations}<div class="muted">${running.length} laufen, davon ${heavy} mit Mehrbelastung</div>${warn}`;
+  let after = "";
+  try { after = sessionStorage.getItem("test-warn") ?? ""; sessionStorage.removeItem("test-warn"); } catch {}
+  const head = `${after ? `<div class="twarn">Gespeichert. Hinweis: ${esc(after)}</div>` : ""}${stations}<div class="muted">${running.length} laufen, davon ${heavy} mit Mehrbelastung</div>${warn}`;
 
   const metric = (t, m) => {
     const cur = m.current == null ? "noch kein aktueller Wert" : `${num(m.current)}${m.unit ? " " + esc(m.unit) : ""}${m.currentDate ? ` (${esc(fmtDate(m.currentDate))})` : ""}`;
@@ -1597,6 +1599,36 @@ function renderTests(d) {
     const c = all.filter((t) => t.checkDate && (t.status === "laeuft" || t.status === "urteil")).sort((a, b) => a.checkDate.localeCompare(b.checkDate));
     return (c.find((t) => daysTo(t.checkDate) >= 0) ?? c[0])?.id ?? null;
   })();
+  // Bestätigung für "Machen wir" (Felder vorbelegt, änderbar) und "Später"; die Warnung blockiert nicht
+  const addDays = (iso, n) => new Date(Date.parse(iso + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+  const monday = () => addDays(todayIso, (8 - new Date(todayIso + "T12:00:00Z").getUTCDay()) % 7);
+  const startWarnings = (t) => {
+    const run = all.filter((x) => x.status === "laeuft");
+    const out = [];
+    if (t.load === "mehr" && run.filter((x) => x.load === "mehr").length + 1 > 2) out.push(`Mit diesem Test laufen ${run.filter((x) => x.load === "mehr").length + 1} Tests mit Mehrbelastung (empfohlen: höchstens 2).`);
+    if (t.kind !== "begleiter") for (const x of run.filter((y) => y.kind !== "begleiter")) {
+      const shared = t.metrics.filter((m) => x.metrics.some((n) => n.key === m.key));
+      const mutual = (t.confoundedWith ?? []).includes(x.id) && (x.confoundedWith ?? []).includes(t.id);
+      if (shared.length && !mutual) out.push(`Dieselbe Messgröße (${shared.map((m) => esc(m.label)).join(", ")}) nutzt schon der laufende Test ${esc(x.title)}.`);
+    }
+    return out;
+  };
+  const tform = (t) => {
+    const start = monday(), ex = t.expectation ?? {}, ad = t.adherence;
+    const warn = startWarnings(t).map((w) => `<div class="twarn">${w}</div>`).join("");
+    return `<form class="tform" data-id="${esc(t.id)}" hidden>
+      <div class="tform-start">${warn}
+      <label>Startdatum <input type="date" name="startDate" value="${start}"></label>
+      <label>Prüfdatum <input type="date" name="checkDate" value="${esc(t.checkDate ?? addDays(start, 56))}"></label>
+      <label>Erwartung: bestätigt <input type="text" name="confirmed" maxlength="120" value="${esc(ex.confirmed ?? "")}" required></label>
+      <label>Erwartung: unklar <input type="text" name="unclear" maxlength="120" value="${esc(ex.unclear ?? "")}" required></label>
+      <label>Erwartung: widerlegt <input type="text" name="refuted" maxlength="120" value="${esc(ex.refuted ?? "")}" required></label>
+      <label>Einhaltung, Regel (optional) <input type="text" name="rule" maxlength="120" value="${esc(ad?.rule ?? "")}"></label>
+      <label>Mindestquote % <input type="number" name="minPct" min="0" max="100" value="${ad?.minPct ?? ""}"></label></div>
+      <label>Block <input type="text" name="block" maxlength="20" value="${esc(t.block)}"></label>
+      <div class="tform-btns"><button type="submit" class="btn-s tgo">Speichern</button><button type="button" class="btn-s tcancel">Abbrechen</button></div>
+    </form>`;
+  };
   const card1 = (t) => {
     const ad = t.adherence;
     const adh = ad ? `<div class="tk">Einhaltung</div><div class="tbar" title="Mindestquote ${ad.minPct} %"><i style="width:${ad.actualPct ?? 0}%"></i><u style="left:${ad.minPct}%"></u></div><div class="muted">${ad.actualPct == null ? "noch offen" : `${ad.actualPct} %`} · mindestens ${ad.minPct} % · ${esc(ad.rule)}</div>` : "";
@@ -1619,8 +1651,10 @@ function renderTests(d) {
         <div class="tline muted">Zahlt ein auf: ${esc(t.blockGoal)}</div>
         ${m0 ? `<div class="tline">${metricLine(m0)}${run && t.checkDate ? ` · bis ${esc(fmtDate(t.checkDate))}` : ""}${miniBar}</div>` : ""}
         ${hint ? `<div class="tline thint">${hint}</div>` : ""}
+        ${t.status === "kandidat" ? `<div class="tact"><button type="button" class="btn-s tgo" data-a="start">Machen wir</button><button type="button" class="btn-s" data-a="reject">Nicht jetzt</button><button type="button" class="btn-s" data-a="later">Später (anderer Block)</button><span class="sub tmsg" role="status"></span></div>` : ""}
       </summary>
       <div class="tbody">
+        ${t.status === "kandidat" ? tform(t) : ""}
         <div class="wbadges"><span class="wb">Block ${esc(t.block)}</span><span class="wb">${t.load === "mehr" ? "Mehrbelastung" : "ohne Mehrbelastung"}</span>${t.proposedBy === "gerbert" ? '<span class="wb">von dir</span>' : ""}</div>
         <div class="tk">Frage</div><div>${esc(t.question)}</div>
         <div class="tk">Änderung</div><div>${esc(t.change)}</div>${when ? `<div class="muted">${when}</div>` : ""}
@@ -1632,7 +1666,41 @@ function renderTests(d) {
   };
   const shown = all.filter((t) => testsFilter === "alle" || t.status === testsFilter);
   $("tests").innerHTML = `${head}${shown.map(card1).join("") || '<p class="muted">Keine Tests in diesem Stand.</p>'}`;
+  wireTestDecisions(d);
   for (const b of document.querySelectorAll("#tests .tstep")) b.onclick = () => { testsFilter = testsFilter === b.dataset.f ? "alle" : b.dataset.f; renderTests(d); };
+}
+// Gerberts Entscheidung über Kandidaten: POST /api/tests/:id/decision; danach lädt die Seite neu, damit Kennzahlen,
+// Spalten und Wissensbasis den neuen Stand zeigen. Der Coach liest es beim nächsten get_coach.
+function wireTestDecisions(d) {
+  const post = async (id, payload, msg) => {
+    msg.textContent = "Wird gespeichert …";
+    let token = null;
+    try { token = localStorage.getItem("dashboard-token"); } catch {}
+    try {
+      const r = await fetch(`/api/tests/${encodeURIComponent(id)}/decision`, { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
+      if (j.warnings?.length) { try { sessionStorage.setItem("test-warn", j.warnings.join(" · ")); } catch {} }
+      await load();
+    } catch (e) { msg.textContent = "Nicht gespeichert: " + e.message; }
+  };
+  for (const card of document.querySelectorAll("#tests details.ttest[data-s=kandidat]")) {
+    const form = card.querySelector(".tform"), msg = card.querySelector(".tmsg"), id = form.dataset.id;
+    const show = (mode) => { form.hidden = false; form.dataset.mode = mode; form.querySelector(".tform-start").hidden = mode !== "start"; for (const i of form.querySelectorAll(".tform-start input")) i.disabled = mode !== "start"; card.open = true; };
+    for (const b of card.querySelectorAll(".tact [data-a]")) b.onclick = () => {
+      if (b.dataset.a === "reject") return post(id, { action: "reject" }, msg);
+      show(b.dataset.a);
+    };
+    card.querySelector(".tcancel").onclick = () => { form.hidden = true; msg.textContent = ""; };
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const f = new FormData(form), v = (k) => String(f.get(k) ?? "").trim();
+      if (form.dataset.mode === "later") return post(id, { action: "later", block: v("block") }, msg);
+      const payload = { action: "start", startDate: v("startDate"), checkDate: v("checkDate"), block: v("block"), expectation: { confirmed: v("confirmed"), unclear: v("unclear"), refuted: v("refuted") } };
+      if (v("rule")) payload.adherence = { rule: v("rule"), minPct: v("minPct") };
+      post(id, payload, msg);
+    };
+  }
 }
 // Sprung aus der Wissensbasis oder von einer Erkenntnis: Testkarte aufklappen
 function openTestFromHash() {
