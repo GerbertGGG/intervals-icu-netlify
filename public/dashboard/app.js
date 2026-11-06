@@ -1595,10 +1595,7 @@ function renderTests(d) {
     return `<span class="tk">${esc(m.label)}</span> ${num(m.baseline)}${u} → <b>${m.current == null ? "offen" : num(m.current) + u}</b> <span class="tdir" title="${m.better === "lower" ? "niedriger ist besser" : "höher ist besser"}">${m.better === "lower" ? "↓" : "↑"} besser</span>`;
   };
   const chip = (t) => `<span class="wb tchip">${esc(t)}</span>`;
-  const nextId = (() => {
-    const c = all.filter((t) => t.checkDate && (t.status === "laeuft" || t.status === "urteil")).sort((a, b) => a.checkDate.localeCompare(b.checkDate));
-    return (c.find((t) => daysTo(t.checkDate) >= 0) ?? c[0])?.id ?? null;
-  })();
+
   // Bestätigung für "Machen wir" (Felder vorbelegt, änderbar) und "Später"; die Warnung blockiert nicht
   const addDays = (iso, n) => new Date(Date.parse(iso + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
   const monday = () => addDays(todayIso, (8 - new Date(todayIso + "T12:00:00Z").getUTCDay()) % 7);
@@ -1644,7 +1641,7 @@ function renderTests(d) {
     const m0 = t.metrics[0];
     const run = t.status === "laeuft";
     const miniBar = run && ad ? `<span class="tmini" title="Einhaltung ${ad.actualPct ?? "offen"} % (mindestens ${ad.minPct} %)"><i style="width:${ad.actualPct ?? 0}%"></i><u style="left:${ad.minPct}%"></u></span>` : "";
-    return `<details class="card ttest" id="test-${esc(t.id)}" data-s="${esc(t.status)}"${t.id === nextId ? " open" : ""}>
+    return `<details class="card ttest" id="test-${esc(t.id)}" data-s="${esc(t.status)}">
       <summary>
         <div class="ttop"><h4>${esc(t.title)}</h4><span class="wb">${esc(T_STATUS[t.status] ?? t.status)}</span></div>
         <div class="wbadges"><span class="wb">${esc(T_KIND[t.kind] ?? t.kind)}</span><span class="wb">${esc(T_DISC[t.discipline] ?? t.discipline)}</span></div>
