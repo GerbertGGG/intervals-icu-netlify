@@ -2,6 +2,7 @@ import { json } from "./http-helpers.js";
 import { readKvJson, writeKvJson } from "./kv.js";
 import { slugId, readBody, gate } from "./decisions-snapshot.js";
 import { isoDateBerlin } from "./date-utils.js";
+import { itemId } from "./wissensbasis-archiv.js";
 
 // Wissensbasis des Coaches (Karte "Wissensbasis" im Dashboard): Stichpunkte aus der Literatur mit Evidenzstufe und
 // Übertragbarkeit. Der Coach schreibt den ganzen Stand per save_wissensbasis (MCP) oder PUT /api/wissensbasis
@@ -31,6 +32,7 @@ export const LINK_TYPES = ["insight", "experiment", "targets", "test"];
 // Felder des Rahmens (save_targets), auf die ein Punkt per link { type: "targets" } verweisen darf
 export const TARGET_IDS = ["enduranceHoursPerWeek", "strengthSets2w", "maxIncreasePct", "intensity", "guardrails", "notAllowed"];
 const ID_RE = /^[a-z0-9äöüß]+(?:-[a-z0-9äöüß]+)*$/;
+export const REVIEW_VERDICT = ["klar", "test", "verworfen"];
 export const WISSEN_STATE = ["offen", "uebernommen", "abgelehnt"];
 const ENUM_FIELDS = { consensus: CONSENSUS, match: MATCH, atYou: AT_YOU };
 const DATE_RE =/^\d{4}-\d{2}-\d{2}$/;
@@ -124,6 +126,15 @@ export function validateWissensbasis(body) {
         // state/decidedAt aus dem Aufruf werden ignoriert; sie kommen beim Speichern aus dem gespeicherten Stand
         out.adoption = { state: "offen", rule, conditions };
       }
+      if (it.review != null) {
+        const r = it.review;
+        if (typeof r !== "object" || Array.isArray(r)) return { error: `${p}.review muss ein Objekt { verdict, reason } sein` };
+        if (!REVIEW_VERDICT.includes(r.verdict)) return { error: `${p}.review.verdict muss ${REVIEW_VERDICT.join(" | ")} sein` };
+        const reason = str(r.reason);
+        if (reason.length > 200) return { error: `${p}.review.reason länger als 200 Zeichen` };
+        // state/requestedAt/note aus dem Aufruf werden ignoriert, die setzt nur das Dashboard
+        out.review = { verdict: r.verdict, ...(reason ? { reason } : {}) };
+      }
       items.push(out);
     }
     sections.push({ title, items });
@@ -180,6 +191,9 @@ export function mergeAdoption(prev, value) {
         used.add(id);
         out = { ...out, id };
       }
+      const pr = ((out.id && byId.get(out.id)) || byText.get(out.text))?.review;
+      if (out.review) out = { ...out, review: { ...(pr?.requestedAt ? { requestedAt: pr.requestedAt } : {}), ...(pr?.note ? { note: pr.note } : {}), state: "geprueft", ...out.review } };
+      else if (pr) out = { ...out, review: pr };
       if (!out.adoption) return out;
       const pa = ((out.id && byId.get(out.id)) || byText.get(out.text))?.adoption;
       if (!pa || !WISSEN_STATE.includes(pa.state) || pa.state === "offen") return out;
@@ -195,6 +209,43 @@ export function wissenForCoach(w) {
   return (w?.sections ?? []).flatMap((s) => (s.items ?? [])
     .filter((it) => it.adoption && (it.adoption.state === "uebernommen" || it.adoption.state === "abgelehnt"))
     .map((it) => ({ id: it.id, title: it.text, topic: s.title, state: it.adoption.state, rule: it.adoption.rule, conditions: it.adoption.conditions, decidedAt: it.adoption.decidedAt ?? null, ...(it.adoption.ruleChanged ? { ruleChanged: true } : {}) })));
+}
+
+// get_coach.wissenAnfragen: Punkte, bei denen Gerbert „Coach, prüf das“ gedrückt hat und noch kein Urteil steht
+export function wissenAnfragen(w) {
+  return (w?.sections ?? []).flatMap((s) => (s.items ?? [])
+    .filter((it) => it.review?.state === "angefragt" && !it.review.verdict)
+    .map((it) => ({ id: itemId(it), title: it.text, topic: s.title, evidence: it.evidence, fit: it.fit, source: it.source ?? null, note: it.review.note ?? null, requestedAt: it.review.requestedAt })))
+    .sort((a, b) => String(a.requestedAt).localeCompare(String(b.requestedAt)));
+}
+
+// Knopf „Coach, prüf das“: setzt nur review { state: angefragt, requestedAt, note }; { withdraw: true } nimmt die Anfrage zurück
+export function applyWissenReview(stored, id, body, nowIso = new Date().toISOString()) {
+  let found = null;
+  const note = typeof body?.note === "string" ? body.note.trim() : "";
+  if (note.length > 200) return { error: "note länger als 200 Zeichen", status: 400 };
+  const sections = (stored?.sections ?? []).map((s) => ({ ...s, items: s.items.map((it) => {
+    if (itemId(it) !== id) return it;
+    found = it;
+    if (it.review?.verdict) return it;
+    if (body?.withdraw) { const { review: _r, ...rest } = it; return rest; }
+    return { ...it, review: { state: "angefragt", requestedAt: nowIso, ...(note ? { note } : {}) } };
+  }) }));
+  if (!found) return { error: `Punkt ${id} nicht gefunden`, status: 404 };
+  if (found.review?.verdict) return { error: `Punkt ${id} hat schon ein Urteil des Coaches`, status: 409 };
+  return { value: { ...stored, sections } };
+}
+
+export async function handleWissenReviewRequest(req, env, isAuthorized, id) {
+  const headers = { "cache-control": "no-store" };
+  const denied = gate(req, env, isAuthorized, headers);
+  if (denied) return denied;
+  const { body, res } = await readBody(req, env, "POST", headers);
+  if (res) return res;
+  const r = applyWissenReview(await readWissensbasis(env), id, body);
+  if (r.error) return json({ ok: false, error: r.error }, r.status, headers);
+  await writeKvJson(env, WISSENSBASIS_KV_KEY, r.value);
+  return json({ ok: true }, 200, headers);
 }
 
 // Knopf im Dashboard: setzt nur state/decidedAt (und löscht ruleChanged) des Punkts mit dieser id

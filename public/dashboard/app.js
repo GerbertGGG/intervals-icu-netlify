@@ -1808,6 +1808,17 @@ function renderWissen(d) {
   const provenMark = (it) => (it.provenAtYou ? `<span class="wb wsoft wchip">bei dir geprüft</span>` : "");
   const ADO = { offen: "offen", uebernommen: "übernommen", abgelehnt: "abgelehnt" };
   const adoState = (it) => it.adoption?.state ?? "offen";
+  const RV = { klar: "Coach: klar", test: "Coach: Test nötig", verworfen: "Coach: verworfen" };
+  const hid = (it) => it.aid ?? it.id;
+  const canAsk = (it) => hid(it) && !it.review?.verdict && !it.tests?.length && it.link?.type !== "test" && !["uebernommen", "abgelehnt"].includes(it.adoption?.state);
+  const reviewMark = (it) => (it.review?.verdict ? `<span class="wb wsoft wchip">${esc(RV[it.review.verdict])}</span>` : it.review?.state === "angefragt" ? `<span class="wb wsoft wchip">Coach prüft</span>` : "");
+  // „Coach, prüf das“: Gerbert fragt an, der Coach antwortet beim nächsten Update; das Dashboard bewertet nichts
+  const reviewBox = (it) => {
+    if (it.review?.verdict) return `<div class="tres wrev"><b>${esc(RV[it.review.verdict])}</b>${it.review.reason ? `<div>${esc(it.review.reason)}</div>` : ""}</div>`;
+    if (it.review?.state === "angefragt") return `<div class="tres wrev" data-id="${esc(hid(it))}"><b>Coach prüft das</b>${it.review.note ? `<div class="muted">Dein Hinweis: ${esc(it.review.note)}</div>` : ""}<div class="tact"><button type="button" class="btn-s" data-w="1">Anfrage zurücknehmen</button><span class="sub tmsg" role="status"></span></div></div>`;
+    if (!canAsk(it)) return "";
+    return `<div class="tres wrev" data-id="${esc(hid(it))}"><div class="tact"><button type="button" class="btn-s tgo" data-a="1">Coach, prüf das</button><input type="text" class="wnote" maxlength="200" placeholder="Hinweis (optional)" aria-label="Hinweis an den Coach"><span class="sub tmsg" role="status"></span></div></div>`;
+  };
   const adoMark = (it) => (it.adoption ? `<span class="wb wsoft wchip">${esc(ADO[adoState(it)] ?? "offen")}</span>` : "");
   // Übernahme-Knöpfe: Regel, Bedingungen, Evidenz und Übertragbarkeit stehen direkt daneben
   const adoBox = (it) => {
@@ -1831,8 +1842,8 @@ function renderWissen(d) {
       ${cons ? `<div class="wbadges">${cons}</div>` : ""}${it.source ? `<div class="wsrc wsrc-l">${esc(it.source)}</div>` : ""}
       ${it.practice ? `<div class="wlab" style="margin-top:8px">Du machst</div><div class="wtext">${esc(it.practice)}</div>` : ""}${anchor?.ok ? `<div class="wtext wframetext">${esc(anchor.text)}</div>` : ""}
       ${it.forYou ? `<div class="wlab" style="margin-top:8px">Für dich bedeutet das</div><div class="wtext">${esc(it.forYou)}</div>` : ""}
-      ${adoBox(it)}${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}${it.aid ? `<div class="warch" data-id="${esc(it.aid)}"><button type="button" class="warch-b">Archivieren</button></div>` : ""}</div>`;
-    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) || provenMark(it) || anchorMark(it) || adoMark(it) ? `<div class="wchipcol">${chipOf(it)}${provenMark(it)}${anchorMark(it)}${adoMark(it)}</div>` : ""}</li>`;
+      ${reviewBox(it)}${adoBox(it)}${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}${it.aid ? `<div class="warch" data-id="${esc(it.aid)}"><button type="button" class="warch-b">Archivieren</button></div>` : ""}</div>`;
+    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) || provenMark(it) || anchorMark(it) || adoMark(it) || reviewMark(it) ? `<div class="wchipcol">${chipOf(it)}${provenMark(it)}${anchorMark(it)}${adoMark(it)}${reviewMark(it)}</div>` : ""}</li>`;
   };
   const secs = w.sections.map((s) => {
     const shown = s.items.filter(pass);
@@ -1846,6 +1857,22 @@ function renderWissen(d) {
   const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
   const arch = archived.length ? `<details class="warchiv"><summary>Archiviert (${archived.length})</summary><ul>${archived.map((a) => `<li data-id="${esc(a.id)}"><div class="wtext">${esc(a.title)}</div><div class="muted">archiviert ${esc(fmtDate(a.archivedAt))}${esc(a.archivedAt.slice(0, 4))}${a.source ? ` · ${esc(a.source)}` : ""}</div>${a.reason ? `<div class="muted">Grund: ${esc(a.reason)}</div>` : ""}<div class="warch-act"><button type="button" class="warch-restore">Wiederherstellen</button><span class="warch-msg" role="status"></span></div></li>`).join("")}</ul></details>` : "";
   $("wissen").innerHTML = `<div class="muted">Stand ${esc(fmtDate(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(fmtDate(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}${arch}`;
+  for (const box of document.querySelectorAll("#wissen .wrev[data-id]")) {
+    const msg = box.querySelector(".tmsg");
+    for (const b of box.querySelectorAll("button")) b.onclick = async () => {
+      const all = [...box.querySelectorAll("button")];
+      all.forEach((x) => { x.disabled = true; }); msg.textContent = "Wird gespeichert …";
+      let token = null;
+      try { token = localStorage.getItem("dashboard-token"); } catch {}
+      const payload = b.dataset.w ? { withdraw: true } : { note: box.querySelector(".wnote")?.value ?? "" };
+      try {
+        const r = await fetch(`/api/wissensbasis/${encodeURIComponent(box.dataset.id)}/review`, { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { all.forEach((x) => { x.disabled = false; }); msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
+        await load();
+      } catch (e) { all.forEach((x) => { x.disabled = false; }); msg.textContent = "Nicht gespeichert: " + e.message; }
+    };
+  }
   for (const box of document.querySelectorAll("#wissen .wado")) {
     const msg = box.querySelector(".tmsg");
     for (const b of box.querySelectorAll("[data-s]")) b.onclick = async () => {
