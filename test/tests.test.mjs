@@ -101,7 +101,7 @@ assert.ok(!validateWissensbasis(wbBody([{ ...wbItem, id: "dritter-lauf-studie", 
 assert.match(validateWissensbasis(wbBody([{ ...wbItem, id: "Gross" }])).error, /\.id/);
 assert.match(validateWissensbasis(wbBody([{ ...wbItem, id: "a" }, { ...wbItem, id: "a" }])).error, /doppelt/);
 const wb = validateWissensbasis(wbBody([
-  { ...wbItem, id: "s1", practice: "alt", atYou: "gewirkt", consensus: "einig" },          // verknüpft über studyRefs
+  { ...wbItem, id: "s1", practice: "alt", atYou: "gewirkt", consensus: "einig", forYou: "Für dich: kurz und locker" },          // verknüpft über studyRefs
   { ...wbItem, id: "s2", link: { type: "test", id: "dritter-lauf" }, atYou: "nicht_gewirkt" }, // verknüpft über link
   { ...wbItem, id: "s3", atYou: "gewirkt", consensus: "einig", counterCheckedAt: "2026-11-01" }, // ohne Test
   { ...wbItem, id: "s4", atYou: "laeuft", practice: "gespeichert" },
@@ -110,6 +110,7 @@ const tGelernt = validateTest({ ...done, studyRefs: ["s1"] }).value;
 const out = applyTestsToWissensbasis(wb, [tGelernt]).sections[0].items;
 assert.equal(out[0].atYou, "gewirkt"); assert.equal(out[0].practice, tGelernt.change); assert.deepEqual(out[0].tests, [{ id: tGelernt.id, title: tGelernt.title, status: "gelernt" }]);
 assert.equal(out[0].consensus, "eine_seite"); // einig nur mit counterCheckedAt
+assert.equal(out[0].forYou, "Für dich: kurz und locker"); // forYou bleibt trotz Test-Verknüpfung unangetastet
 assert.equal(out[1].atYou, "gewirkt"); // link type test, atYou aus dem Test, gespeichertes nicht_gewirkt ignoriert
 assert.equal(out[2].atYou, "offen"); assert.equal(out[2].consensus, "einig"); // gewirkt nie ohne Test-Ergebnis
 assert.equal(out[3].atYou, "laeuft"); assert.equal(out[3].practice, "gespeichert"); // ohne Test: gespeichert wie bisher
@@ -118,7 +119,8 @@ assert.equal(cand.atYou, "nicht_getestet"); assert.equal(cand.candidate, true);
 const verw = applyTestsToWissensbasis(wb, [{ ...tGelernt, status: "verworfen" }]).sections[0].items[0];
 assert.equal(verw.tests, undefined); // verworfene Tests verknüpfen nicht
 const ww = wissensbasisWarnings(wb, [tGelernt]);
-assert.equal(ww.length, 2);
+assert.equal(ww.length, 5); // s1 hat forYou, s2–s4 nicht (Warnung, kein Fehler)
+assert.equal(ww.filter((x) => /forYou fehlt/.test(x)).length, 3);
 assert.match(ww.join(" "), /s1: Studienlage einig ohne counterCheckedAt/);
 assert.match(ww.join(" "), /s3: atYou gewirkt gibt es nur über ein Test-Ergebnis/);
 
@@ -136,7 +138,7 @@ assert.ok(tools.some((t) => t.name === "save_test"));
 assert.match(tools.find((t) => t.name === "save_experiment").description, /Veraltet, bitte save_test nutzen/);
 assert.ok(tools.find((t) => t.name === "save_wissensbasis").inputSchema.properties.sections.items.properties.items.items.properties.id);
 kv.set("dashboard:experiment", JSON.stringify({ fetchedAt: "2026-10-22T06:00:00.000Z", title: "Alt", hypothesis: "h", status: "läuft", startDate: null, minWeeks: 6, targetDaysPerWeek: 5, metrics: [], verdict: null }));
-assert.deepEqual((await call("save_wissensbasis", wbBody([{ ...wbItem, id: "studie-eins" }]))).warnings, undefined);
+assert.deepEqual((await call("save_wissensbasis", wbBody([{ ...wbItem, id: "studie-eins", forYou: "Für dich: ok" }]))).warnings, undefined);
 let r = await call("save_test", { ...laeuft, id: "t-eins", studyRefs: ["studie-eins", "weg"], insightRefs: ["nix"] });
 assert.equal(r.ok, true); assert.equal(r.id, "t-eins");
 assert.deepEqual(r.warnings.filter((w) => /nicht gefunden/.test(w)), ["studyRefs: Wissensbasis-Punkt weg nicht gefunden", "insightRefs: Erkenntnis nix nicht gefunden"]);
@@ -155,7 +157,7 @@ await call("save_test", { ...kand, id: "t-drei", status: "verworfen", fetchedAt:
 assert.deepEqual((await call("get_coach", {})).tests.map((t) => t.id), ["t-eins", "t-zwei"]);
 // save_wissensbasis meldet Sperren als Warnung
 const w2 = await call("save_wissensbasis", { ...wbBody([{ ...wbItem, id: "studie-zwei", atYou: "gewirkt", consensus: "einig" }]), fetchedAt: "2026-11-07T08:00:00Z" });
-assert.equal(w2.ok, true); assert.equal(w2.warnings.length, 2);
+assert.equal(w2.ok, true); assert.equal(w2.warnings.length, 3);
 
 // Gerberts Entscheidung über Kandidaten (POST /api/tests/:id/decision)
 console.log = log;

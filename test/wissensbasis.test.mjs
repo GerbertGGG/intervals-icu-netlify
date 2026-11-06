@@ -1,6 +1,6 @@
 // Testet die Wissensbasis (Validierung, Speichern, get_coach). Ausführen: node test/wissensbasis.test.mjs
 import assert from "node:assert/strict";
-import { validateWissensbasis, saveWissensbasis, WISSENSBASIS_KV_KEY } from "../src/wissensbasis-snapshot.js";
+import { validateWissensbasis, wissensbasisWarnings, saveWissensbasis, WISSENSBASIS_KV_KEY } from "../src/wissensbasis-snapshot.js";
 import { handleMcpRequest } from "../src/mcp-server.js";
 
 const item = { text: "Punkt", evidence: "mittel", fit: "hoch", source: "Quelle 2025", isNew: true };
@@ -22,6 +22,18 @@ assert.ok(!validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ te
 assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...full, match: "egal" }] }] }).error, /match/);
 assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...full, link: { type: "foo", id: "a" } }] }] }).error, /link\.type/);
 assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...full, practice: "x".repeat(161) }] }] }).error, /practice/);
+
+// forYou (max. 200) und addedAt (YYYY-MM-DD) je Punkt; alter Stand ohne beides bleibt gültig, Warnung bei fehlendem forYou
+const fy = validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, forYou: "  Studie sagt X, für dich heißt das Y.  ", addedAt: "2026-11-02" }] }] });
+assert.ok(!fy.error, fy.error);
+assert.equal(fy.value.sections[0].items[0].forYou, "Studie sagt X, für dich heißt das Y.");
+assert.equal(fy.value.sections[0].items[0].addedAt, "2026-11-02");
+assert.equal(ok.value.sections[0].items[0].forYou, undefined);
+assert.ok(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, forYou: "x".repeat(200) }] }] }).value);
+assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, forYou: "x".repeat(201) }] }] }).error, /forYou.*200/);
+assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, addedAt: "gestern" }] }] }).error, /addedAt/);
+assert.deepEqual(wissensbasisWarnings(fy.value, []), []);
+assert.match(wissensbasisWarnings(ok.value, [])[0], /forYou fehlt/);
 
 // zu viele Abschnitte / Punkte
 const sec = { title: "A", items: [item] };
@@ -55,10 +67,13 @@ const list = await rpc("tools/list");
 assert.ok(list.result.tools.some((t) => t.name === "save_wissensbasis"));
 let r = await rpc("tools/call", { name: "save_wissensbasis", arguments: { ...good, fetchedAt: "2026-11-06T08:00:00Z", updatedAt: "2026-11-06" } });
 assert.ok(!r.result.isError, JSON.stringify(r));
+assert.ok(JSON.parse(r.result.content[0].text).ok === true);
+assert.match(JSON.parse(r.result.content[0].text).warnings.join(" "), /forYou fehlt/); // Warnung, kein Fehler
 r = await rpc("tools/call", { name: "save_wissensbasis", arguments: { ...good, sections: [{ title: "A", items: [{ ...item, evidence: "x" }] }] } });
 assert.equal(r.result.isError, true);
 r = await rpc("tools/call", { name: "get_coach", arguments: {} });
 console.log = log;
 const coach = JSON.parse(r.result.content[0].text);
+assert.equal(coach.wissensbasis.sections[0].items[0].isNew, true);
 assert.equal(coach.wissensbasis.updatedAt, "2026-11-06");
 console.log("wissensbasis ok");

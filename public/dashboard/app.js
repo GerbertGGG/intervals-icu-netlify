@@ -1734,11 +1734,13 @@ function renderWissen(d) {
     ["luecke", "Lücken", (i) => i.match === "luecke"],
     ["laeuft", "Tests laufen", (i) => i.atYou === "laeuft"],
     ["ergebnis", "Ergebnisse", (i) => RESULT.includes(i.atYou)],
+    ["neu", "neu", (i) => i.isNew === true],
   ];
   const items = w.sections.flatMap((s) => s.items);
   const count = (f) => items.filter(f).length;
-  const hasAbgleich = items.some((i) => i.match || i.atYou || i.practice || i.consensus);
-  const filter = hasAbgleich ? wissenFilter : "alle";
+  const hasAbgleich = items.some((i) => i.match || i.atYou || i.practice || i.consensus || i.isNew);
+  const filter = hasAbgleich && (wissenFilter !== "neu" || count((i) => i.isNew === true) > 0) ? wissenFilter : "alle";
+  const shownStations = STATIONS.filter(([k, , f]) => k !== "neu" || count(f) > 0);
   const pass = STATIONS.find(([k]) => k === filter)?.[2] ?? (() => true);
   const hot = (it) => it.match === "luecke" || it.atYou === "laeuft";
 
@@ -1756,9 +1758,10 @@ function renderWissen(d) {
     const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
     const tags = [it.match ? `Abgleich: ${MATCH[it.match]}` : ""].filter(Boolean);
     const meta = it.link && it.link.type !== "test" ? esc(linkText(it.link)) : "";
-    const more = `<div class="wmore"><div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.isNew ? '<span class="wb wnew">neu</span>' : ""}${tags.map((t) => `<span class="wb wsoft">${esc(t)}</span>`).join("")}</div>
+    const more = `<div class="wmore"><div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span>${it.isNew ? `<span class="wb wnew">neu${it.addedAt ? ` · ${esc(short(it.addedAt))}.` : ""}</span>` : ""}${tags.map((t) => `<span class="wb wsoft">${esc(t)}</span>`).join("")}</div>
       ${cons ? `<div class="wbadges">${cons}</div>` : ""}${it.source ? `<div class="wsrc wsrc-l">${esc(it.source)}</div>` : ""}
       ${it.practice ? `<div class="wlab" style="margin-top:8px">Du machst</div><div class="wtext">${esc(it.practice)}</div>` : ""}
+      ${it.forYou ? `<div class="wlab" style="margin-top:8px">Für dich bedeutet das</div><div class="wtext">${esc(it.forYou)}</div>` : ""}
       ${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}</div>`;
     return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) ? `<div class="wchipcol">${chipOf(it)}</div>` : ""}</li>`;
   };
@@ -1767,9 +1770,9 @@ function renderWissen(d) {
     const run = s.items.filter((i) => i.atYou === "laeuft").length;
     return shown.length ? `<details class="wsec"${filter !== "alle" ? " open" : ""}><summary><span>${esc(s.title)}</span><span class="wsumr">${run ? `<span class="wb wsoft">${run === 1 ? "Test läuft" : run + " Tests laufen"}</span>` : ""}<span class="wcount">${shown.length}</span></span></summary><ul>${shown.map(item).join("")}</ul></details>` : "";
   }).join("") || '<p class="muted">Keine Punkte in dieser Station.</p>';
-  const gew = count((i) => i.atYou === "gewirkt"), nicht = count((i) => i.atYou === "nicht_gewirkt"), umstr = count((i) => i.consensus === "umstritten");
-  const bar = hasAbgleich ? `<div class="wcycle" role="group" aria-label="Filter nach Station im Kreislauf">${STATIONS.map(([k, label, f]) => `<button type="button" class="wstep" data-f="${k}" aria-pressed="${filter === k}"><b>${count(f)}</b><span>${esc(label)}</span></button>`).join("")}</div>
-    <div class="muted wsub">Studie → Abgleich → Selbstversuch → Ergebnis. Ergebnisse: gewirkt ${gew}, nicht gewirkt ${nicht}. Studienlage umstritten: ${umstr}.</div>` : "";
+  const gew = count((i) => i.atYou === "gewirkt"), nicht = count((i) => i.atYou === "nicht_gewirkt"), umstr = count((i) => i.consensus === "umstritten"), noFor = count((i) => !i.forYou);
+  const bar = hasAbgleich ? `<div class="wcycle" style="--n:${shownStations.length}" role="group" aria-label="Filter nach Station im Kreislauf">${shownStations.map(([k, label, f]) => `<button type="button" class="wstep" data-f="${k}" aria-pressed="${filter === k}"><b>${count(f)}</b><span>${esc(label)}</span></button>`).join("")}</div>
+    <div class="muted wsub">Studie → Abgleich → Selbstversuch → Ergebnis. Ergebnisse: gewirkt ${gew}, nicht gewirkt ${nicht}. Studienlage umstritten: ${umstr}.${noFor ? ` Ohne Einordnung: ${noFor}.` : ""}</div>` : "";
   const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
   $("wissen").innerHTML = `<div class="muted">Stand ${esc(fmtDate(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(fmtDate(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}`;
   for (const b of document.querySelectorAll("#wissen .wstep")) b.onclick = () => { wissenFilter = wissenFilter === b.dataset.f ? "alle" : b.dataset.f; renderWissen(d); };
