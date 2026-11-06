@@ -7,7 +7,7 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //
 // Body: { fetchedAt: ISO-Zeitstempel, updatedAt: "YYYY-MM-DD", folderCheckedAt?: "YYYY-MM-DD",
 //         sections: [{ title (max 60), items: [{ text (max 220), evidence, fit, source? (max 80), isNew?,
-//         id? (kebab-case, max 60, Ziel von studyRefs der Tests), consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type: insight|experiment|targets|test, id }, next? (max 160),
+//         id? (kebab-case, max 60, Ziel von studyRefs der Tests), consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type: insight|experiment|targets|test, id; bei targets: enduranceHoursPerWeek|strengthSets2w|maxIncreasePct|intensity|guardrails|notAllowed }, next? (max 160),
 //         forYou? (max 200, Einordnung des Coaches in Alltagssprache; nie aus einem Test abgeleitet), addedAt? (YYYY-MM-DD, zu isNew) }] }],
 //         open?: [string (max 160), max. 6] }
 
@@ -22,6 +22,8 @@ export const CONSENSUS = ["einig", "erklaert", "umstritten", "eine_seite"];
 export const MATCH = ["passt", "luecke", "bewusst_anders", "nicht_pruefbar"];
 export const AT_YOU = ["nicht_getestet", "laeuft", "gewirkt", "nicht_gewirkt", "offen"];
 export const LINK_TYPES = ["insight", "experiment", "targets", "test"];
+// Felder des Rahmens (save_targets), auf die ein Punkt per link { type: "targets" } verweisen darf
+export const TARGET_IDS = ["enduranceHoursPerWeek", "strengthSets2w", "maxIncreasePct", "intensity", "guardrails", "notAllowed"];
 const ID_RE = /^[a-z0-9äöüß]+(?:-[a-z0-9äöüß]+)*$/;
 const ENUM_FIELDS = { consensus: CONSENSUS, match: MATCH, atYou: AT_YOU };
 const DATE_RE =/^\d{4}-\d{2}-\d{2}$/;
@@ -101,6 +103,7 @@ export function validateWissensbasis(body) {
         const id = str(it.link.id);
         if (!id) return { error: `${p}.link.id fehlt` };
         if (id.length > 60) return { error: `${p}.link.id länger als 60 Zeichen` };
+        if (it.link.type === "targets" && !TARGET_IDS.includes(id)) return { error: `${p}.link.id muss bei targets ${TARGET_IDS.join(" | ")} sein` };
         out.link = { type: it.link.type, id };
       }
       items.push(out);

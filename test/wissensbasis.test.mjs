@@ -77,3 +77,10 @@ const coach = JSON.parse(r.result.content[0].text);
 assert.equal(coach.wissensbasis.sections[0].items[0].isNew, true);
 assert.equal(coach.wissensbasis.updatedAt, "2026-11-06");
 console.log("wissensbasis ok");
+
+// link targets: nur bekannte Rahmenfelder
+{
+  const ok = validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, link: { type: "targets", id: "maxIncreasePct" } }] }] });
+  assert.deepEqual(ok.value.sections[0].items[0].link, { type: "targets", id: "maxIncreasePct" });
+  assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, link: { type: "targets", id: "foo" } }] }] }).error, /targets/);
+}
