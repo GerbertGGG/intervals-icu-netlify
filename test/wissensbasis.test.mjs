@@ -120,3 +120,31 @@ console.log("wissensbasis ok");
   assert.ok(mergeAdoption(null, validateWissensbasis(good).value));
   console.log("wissensbasis adoption ok");
 }
+
+// ---- Prüfauftrag „Coach, prüf das“ (review) ----
+{
+  const { applyWissenReview, wissenAnfragen } = await import("../src/wissensbasis-snapshot.js");
+  const kv = new Map();
+  const env = { KV: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => { kv.set(k, v); } } };
+  const mk = (extra = {}, at = "2026-11-05T08:00:00Z") => ({ ...good, fetchedAt: at, sections: [{ title: "Ernährung", items: [{ text: "Punkt A", evidence: "schwach", fit: "gering", ...extra }] }] });
+  let r = await saveWissensbasis(env, mk());
+  const { itemId } = await import("../src/wissensbasis-archiv.js");
+  const pid = itemId(r.value.sections[0].items[0]);
+  const ask = applyWissenReview(r.value, pid, { note: "stimmt das?" }, "2026-11-06T09:00:00Z");
+  kv.set(WISSENSBASIS_KV_KEY, JSON.stringify(ask.value));
+  assert.deepEqual(wissenAnfragen(ask.value).map((x) => [x.id, x.note]), [[pid, "stimmt das?"]]);
+  assert.equal(applyWissenReview(ask.value, "nix", {}).status, 404);
+  // ganzer Stand ohne review: Anfrage bleibt
+  r = await saveWissensbasis(env, mk({}, "2026-11-06T10:00:00Z"));
+  assert.equal(r.value.sections[0].items[0].review.state, "angefragt");
+  // Coach antwortet, versucht requestedAt/state zu fälschen: bleibt, verdict gesetzt
+  r = await saveWissensbasis(env, mk({ review: { verdict: "verworfen", reason: "Querschnitt", state: "angefragt", requestedAt: "2000-01-01", note: "x" } }, "2026-11-06T11:00:00Z"));
+  assert.deepEqual(r.value.sections[0].items[0].review, { requestedAt: "2026-11-06T09:00:00Z", note: "stimmt das?", state: "geprueft", verdict: "verworfen", reason: "Querschnitt" });
+  assert.deepEqual(wissenAnfragen(r.value), []);
+  assert.equal(applyWissenReview(r.value, pid, {}).status, 409);
+  // Rücknahme
+  const w = applyWissenReview(ask.value, pid, { withdraw: true });
+  assert.equal(w.value.sections[0].items[0].review, undefined);
+  assert.match(validateWissensbasis(mk({ review: { verdict: "egal" } })).error, /verdict/);
+  console.log("wissensbasis review ok");
+}
