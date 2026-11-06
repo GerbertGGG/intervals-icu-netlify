@@ -1,5 +1,7 @@
 import { json } from "./http-helpers.js";
 import { readKvJson, writeKvJson } from "./kv.js";
+import { slugId, readBody, gate } from "./decisions-snapshot.js";
+import { isoDateBerlin } from "./date-utils.js";
 
 // Wissensbasis des Coaches (Karte "Wissensbasis" im Dashboard): Stichpunkte aus der Literatur mit Evidenzstufe und
 // Übertragbarkeit. Der Coach schreibt den ganzen Stand per save_wissensbasis (MCP) oder PUT /api/wissensbasis
@@ -10,9 +12,13 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //         id? (kebab-case, max 60, Ziel von studyRefs der Tests), consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type: insight|experiment|targets|test, id; bei targets: enduranceHoursPerWeek|strengthSets2w|maxIncreasePct|intensity|guardrails|notAllowed }, next? (max 160),
 //         forYou? (max 200, Einordnung des Coaches in Alltagssprache; nie aus einem Test abgeleitet), addedAt? (YYYY-MM-DD, zu isNew) }] }],
 //         open?: [string (max 160), max. 6] }
+// Übernahme (adoption?, nur bei Punkten mit Handlungsbezug): { rule (max 200, Coach), conditions (max 160, Coach), state, decidedAt }.
+// state (offen|uebernommen|abgelehnt, fehlt = offen) und decidedAt setzt nur das Dashboard (POST /api/wissensbasis/:id/adoption);
+// save_wissensbasis übernimmt beide per id aus dem gespeicherten Stand, egal was der Aufruf sendet. Ändert der Coach rule/conditions
+// eines entschiedenen Punkts, bleibt state stehen und ruleChanged: true markiert „Regeltext geändert – prüfen?“.
 
 export const WISSENSBASIS_KV_KEY = "dashboard:wissensbasis";
-const MAX_BODY_BYTES = 60_000;
+const MAX_BODY_BYTES = 100_000;
 const MAX_SECTIONS = 12;
 const MAX_ITEMS = 8;
 const MAX_OPEN = 6;
@@ -25,6 +31,7 @@ export const LINK_TYPES = ["insight", "experiment", "targets", "test"];
 // Felder des Rahmens (save_targets), auf die ein Punkt per link { type: "targets" } verweisen darf
 export const TARGET_IDS = ["enduranceHoursPerWeek", "strengthSets2w", "maxIncreasePct", "intensity", "guardrails", "notAllowed"];
 const ID_RE = /^[a-z0-9äöüß]+(?:-[a-z0-9äöüß]+)*$/;
+export const WISSEN_STATE = ["offen", "uebernommen", "abgelehnt"];
 const ENUM_FIELDS = { consensus: CONSENSUS, match: MATCH, atYou: AT_YOU };
 const DATE_RE =/^\d{4}-\d{2}-\d{2}$/;
 
@@ -106,6 +113,17 @@ export function validateWissensbasis(body) {
         if (it.link.type === "targets" && !TARGET_IDS.includes(id)) return { error: `${p}.link.id muss bei targets ${TARGET_IDS.join(" | ")} sein` };
         out.link = { type: it.link.type, id };
       }
+      if (it.adoption != null) {
+        const a = it.adoption;
+        if (typeof a !== "object" || Array.isArray(a)) return { error: `${p}.adoption muss ein Objekt { rule, conditions } sein` };
+        const rule = str(a.rule), conditions = str(a.conditions);
+        if (typeof a.rule !== "string" || !rule) return { error: `${p}.adoption.rule fehlt` };
+        if (rule.length > 200) return { error: `${p}.adoption.rule länger als 200 Zeichen` };
+        if (typeof a.conditions !== "string" || !conditions) return { error: `${p}.adoption.conditions fehlt` };
+        if (conditions.length > 160) return { error: `${p}.adoption.conditions länger als 160 Zeichen` };
+        // state/decidedAt aus dem Aufruf werden ignoriert; sie kommen beim Speichern aus dem gespeicherten Stand
+        out.adoption = { state: "offen", rule, conditions };
+      }
       items.push(out);
     }
     sections.push({ title, items });
@@ -142,6 +160,72 @@ export function wissensbasisWarnings(value, tests) {
   return out;
 }
 
+// ids ergänzen (Punkte mit adoption ohne id: Zuordnung per Text zum gespeicherten Punkt, sonst aus dem Text) und state/decidedAt
+// per id aus dem gespeicherten Stand übernehmen. Neue Punkte starten mit offen.
+export function mergeAdoption(prev, value) {
+  const old = (prev?.sections ?? []).flatMap((s) => s.items ?? []);
+  const byId = new Map(old.filter((x) => x.id).map((x) => [x.id, x]));
+  const byText = new Map(old.map((x) => [x.text, x]));
+  const used = new Set(value.sections.flatMap((s) => s.items.map((i) => i.id).filter(Boolean)));
+  const sections = value.sections.map((s) => ({
+    ...s,
+    items: s.items.map((it) => {
+      let out = it;
+      const match = (it.id && byId.get(it.id)) || byText.get(it.text);
+      if (!out.id && match?.id && !used.has(match.id)) { out = { ...out, id: match.id }; used.add(match.id); }
+      if (!out.id && out.adoption) {
+        const base = slugId(out.text);
+        let id = base, n = 2;
+        while (used.has(id)) { const suf = `-${n++}`; id = base.slice(0, 60 - suf.length) + suf; }
+        used.add(id);
+        out = { ...out, id };
+      }
+      if (!out.adoption) return out;
+      const pa = ((out.id && byId.get(out.id)) || byText.get(out.text))?.adoption;
+      if (!pa || !WISSEN_STATE.includes(pa.state) || pa.state === "offen") return out;
+      const changed = pa.rule !== out.adoption.rule || pa.conditions !== out.adoption.conditions;
+      return { ...out, adoption: { ...out.adoption, state: pa.state, ...(pa.decidedAt ? { decidedAt: pa.decidedAt } : {}), ...(changed || pa.ruleChanged ? { ruleChanged: true } : {}) } };
+    }),
+  }));
+  return { ...value, sections };
+}
+
+// get_coach.wissen: entschiedene Punkte (uebernommen/abgelehnt); offene bleiben in wissensbasis
+export function wissenForCoach(w) {
+  return (w?.sections ?? []).flatMap((s) => (s.items ?? [])
+    .filter((it) => it.adoption && (it.adoption.state === "uebernommen" || it.adoption.state === "abgelehnt"))
+    .map((it) => ({ id: it.id, title: it.text, topic: s.title, state: it.adoption.state, rule: it.adoption.rule, conditions: it.adoption.conditions, decidedAt: it.adoption.decidedAt ?? null, ...(it.adoption.ruleChanged ? { ruleChanged: true } : {}) })));
+}
+
+// Knopf im Dashboard: setzt nur state/decidedAt (und löscht ruleChanged) des Punkts mit dieser id
+export function applyWissenAdoption(stored, id, body, todayIso = isoDateBerlin()) {
+  const state = body?.state;
+  if (!WISSEN_STATE.includes(state)) return { error: `state muss ${WISSEN_STATE.join(" | ")} sein`, status: 400 };
+  let found = null;
+  const sections = (stored?.sections ?? []).map((s) => ({ ...s, items: s.items.map((it) => {
+    if (it.id !== id) return it;
+    found = it;
+    if (!it.adoption) return it;
+    const { decidedAt: _d, ruleChanged: _r, ...rest } = it.adoption;
+    return { ...it, adoption: { ...rest, state, ...(state === "offen" ? {} : { decidedAt: todayIso }) } };
+  }) }));
+  if (!found) return { error: `Punkt ${id} nicht gefunden`, status: 404 };
+  if (!found.adoption) return { error: `Punkt ${id} hat keine Übernahme-Frage`, status: 409 };
+  return { value: { ...stored, sections } };
+}
+
+export async function handleWissenAdoptionRequest(req, env, isAuthorized, id) {
+  const headers = { "cache-control": "no-store" };
+  const denied = gate(req, env, isAuthorized, headers);
+  if (denied) return denied;
+  const { body, res } = await readBody(req, env, "POST", headers);
+  if (res) return res;
+  const r = applyWissenAdoption(await readWissensbasis(env), id, body);
+  if (r.error) return json({ ok: false, error: r.error }, r.status, headers);
+  await writeKvJson(env, WISSENSBASIS_KV_KEY, r.value);
+  return json({ ok: true }, 200, headers);
+}
+
 export async function readWissensbasis(env) {
   return readKvJson(env, WISSENSBASIS_KV_KEY).catch(() => null);
 }
@@ -154,8 +238,9 @@ export async function saveWissensbasis(env, body) {
   if (prev?.fetchedAt && Date.parse(prev.fetchedAt) > Date.parse(value.fetchedAt)) {
     return { error: `fetchedAt ${value.fetchedAt} ist älter als der gespeicherte Stand (${prev.fetchedAt}); nicht überschrieben` };
   }
-  await writeKvJson(env, WISSENSBASIS_KV_KEY, value);
-  return { value };
+  const merged = mergeAdoption(prev, value);
+  await writeKvJson(env, WISSENSBASIS_KV_KEY, merged);
+  return { value: merged };
 }
 
 export async function handleWissensbasisRequest(req, env, isAuthorized) {

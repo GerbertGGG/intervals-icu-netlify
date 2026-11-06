@@ -84,3 +84,39 @@ console.log("wissensbasis ok");
   assert.deepEqual(ok.value.sections[0].items[0].link, { type: "targets", id: "maxIncreasePct" });
   assert.match(validateWissensbasis({ ...good, sections: [{ title: "A", items: [{ ...item, link: { type: "targets", id: "foo" } }] }] }).error, /targets/);
 }
+
+// ---- Übernahme (adoption) ----
+{
+  const { mergeAdoption, wissenForCoach, applyWissenAdoption } = await import("../src/wissensbasis-snapshot.js");
+  const kv = new Map();
+  const env = { KV: { get: async (k) => kv.get(k) ?? null, put: async (k, v) => { kv.set(k, v); } } };
+  const ad = { rule: "Mind. 5 g KH/kg an Schlüsseltagen.", conditions: "Intervall- und Longrun-Tage" };
+  const mk = (extra = {}, at = "2026-11-05T08:00:00Z") => ({ ...good, fetchedAt: at, sections: [{ title: "Ernährung im Training", items: [{ ...item, text: "KH-Aufnahme", adoption: ad, ...extra }, { text: "Reines Wissen", evidence: "stark", fit: "hoch" }] }] });
+  // ohne id: aus dem Text; state offen; Punkt ohne adoption bleibt ohne
+  let r = await saveWissensbasis(env, mk());
+  const [a0, b0] = r.value.sections[0].items;
+  assert.equal(a0.id, "kh-aufnahme"); assert.equal(a0.adoption.state, "offen"); assert.equal(b0.adoption, undefined);
+  assert.deepEqual(wissenForCoach(r.value), []);
+  // Knopf
+  const dec = applyWissenAdoption(JSON.parse(kv.get(WISSENSBASIS_KV_KEY)), "kh-aufnahme", { state: "uebernommen" }, "2026-11-06");
+  kv.set(WISSENSBASIS_KV_KEY, JSON.stringify(dec.value));
+  assert.equal(applyWissenAdoption(dec.value, "reines", { state: "uebernommen" }).status, 404);
+  assert.equal(applyWissenAdoption(dec.value, "kh-aufnahme", { state: "x" }).status, 400);
+  // Coach speichert ganzen Stand mit absichtlich falschem state: bleibt uebernommen, decidedAt bleibt
+  r = await saveWissensbasis(env, mk({ adoption: { ...ad, state: "abgelehnt", decidedAt: "2020-01-01" } }, "2026-11-06T08:00:00Z"));
+  assert.deepEqual(r.value.sections[0].items[0].adoption, { state: "uebernommen", rule: ad.rule, conditions: ad.conditions, decidedAt: "2026-11-06" });
+  assert.deepEqual(wissenForCoach(r.value), [{ id: "kh-aufnahme", title: "KH-Aufnahme", topic: "Ernährung im Training", state: "uebernommen", rule: ad.rule, conditions: ad.conditions, decidedAt: "2026-11-06" }]);
+  // Regeltext geändert: state bleibt, ruleChanged; erneute Entscheidung löscht es
+  r = await saveWissensbasis(env, mk({ id: "kh-aufnahme", adoption: { ...ad, rule: "Neu." } }, "2026-11-07T08:00:00Z"));
+  assert.equal(r.value.sections[0].items[0].adoption.state, "uebernommen");
+  assert.equal(r.value.sections[0].items[0].adoption.ruleChanged, true);
+  const re = applyWissenAdoption(r.value, "kh-aufnahme", { state: "offen" });
+  assert.deepEqual(re.value.sections[0].items[0].adoption, { rule: "Neu.", conditions: ad.conditions, state: "offen" });
+  // Validierung
+  assert.match(validateWissensbasis(mk({ adoption: { rule: "x".repeat(201), conditions: "c" } })).error, /rule/);
+  assert.match(validateWissensbasis(mk({ adoption: { rule: "r", conditions: "x".repeat(161) } })).error, /conditions/);
+  assert.match(validateWissensbasis(mk({ adoption: { rule: "r" } })).error, /conditions/);
+  // alter Stand ohne adoption lädt und speichert
+  assert.ok(mergeAdoption(null, validateWissensbasis(good).value));
+  console.log("wissensbasis adoption ok");
+}

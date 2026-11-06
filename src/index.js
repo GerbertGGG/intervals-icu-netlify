@@ -6,7 +6,7 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
-import { handleWissensbasisRequest } from "./wissensbasis-snapshot.js";
+import { handleWissensbasisRequest, handleWissenAdoptionRequest } from "./wissensbasis-snapshot.js";
 import { handleCoachRequest, handleCoachAnswerRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
 import { handleDecisionsRequest, handleDecisionAnswerRequest } from "./decisions-snapshot.js";
 import { handleTestDecisionRequest, handleAdoptionRequest } from "./tests-snapshot.js";
@@ -49,6 +49,10 @@ export default {
 
     const ta = url.pathname.match(/^\/api\/tests\/([^/]+)\/adoption$/);
     if (ta) return route(() => withCacheRebuild(handleAdoptionRequest(req, env, isAuthorized, decodeURIComponent(ta[1])), env, ctx));
+
+    // Gerberts Knopf „Als Wissen übernehmen“ an einem Wissensbasis-Punkt, aus dem Dashboard
+    const wa = url.pathname.match(/^\/api\/wissensbasis\/([^/]+)\/adoption$/);
+    if (wa) return route(() => withCacheRebuild(handleWissenAdoptionRequest(req, env, isAuthorized, decodeURIComponent(wa[1])), env, ctx));
 
     switch (url.pathname) {
       case "/":

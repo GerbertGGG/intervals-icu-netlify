@@ -1758,6 +1758,7 @@ function renderWissen(d) {
     ["laeuft", "Tests laufen", (i) => i.atYou === "laeuft"],
     ["ergebnis", "Ergebnisse", (i) => RESULT.includes(i.atYou)],
     ["neu", "neu", (i) => i.isNew === true],
+    ["offen", "offen", (i) => i.adoption && (i.adoption.state ?? "offen") === "offen"],
     ["verankert", "verankert", (i) => i.link?.type === "targets" && anchorOf(i)?.ok === true],
   ];
   const items = w.sections.flatMap((s) => s.items);
@@ -1783,10 +1784,10 @@ function renderWissen(d) {
     const v = frameText(it.link.id);
     return v ? { ok: true, text: `Rahmen: ${v}${cur.validFrom && !cur.default ? `, gültig seit ${short(cur.validFrom)}` : ""}` } : { ok: false };
   };
-  const shownStationsOk = (k) => (k !== "neu" && k !== "verankert") || count(STATIONS.find(([x]) => x === k)[2]) > 0;
-  const hasAbgleich = items.some((i) => i.link?.type === "targets" || i.match || i.atYou || i.practice || i.consensus || i.isNew);
+  const shownStationsOk = (k) => (k !== "neu" && k !== "verankert" && k !== "offen") || count(STATIONS.find(([x]) => x === k)[2]) > 0;
+  const hasAbgleich = items.some((i) => i.link?.type === "targets" || i.match || i.atYou || i.practice || i.consensus || i.isNew || i.adoption);
   const filter = hasAbgleich && shownStationsOk(wissenFilter) ? wissenFilter : "alle";
-  const shownStations = STATIONS.filter(([k, , f]) => (k !== "neu" && k !== "verankert") || count(f) > 0);
+  const shownStations = STATIONS.filter(([k, , f]) => (k !== "neu" && k !== "verankert" && k !== "offen") || count(f) > 0);
   const pass = STATIONS.find(([k]) => k === filter)?.[2] ?? (() => true);
   const hot = (it) => it.match === "luecke" || it.atYou === "laeuft";
 
@@ -1802,6 +1803,22 @@ function renderWissen(d) {
   };
   const anchorMark = (it) => { const a = anchorOf(it); return !a ? "" : a.ok ? `<span class="wb wframe">Im Rahmen verankert</span>` : `<span class="wb wsoft wgone">Rahmenwert fehlt</span>`; };
   const provenMark = (it) => (it.provenAtYou ? `<span class="wb wsoft wchip">bei dir geprüft</span>` : "");
+  const ADO = { offen: "offen", uebernommen: "übernommen", abgelehnt: "abgelehnt" };
+  const adoState = (it) => it.adoption?.state ?? "offen";
+  const adoMark = (it) => (it.adoption ? `<span class="wb wsoft wchip">${esc(ADO[adoState(it)] ?? "offen")}</span>` : "");
+  // Übernahme-Knöpfe: Regel, Bedingungen, Evidenz und Übertragbarkeit stehen direkt daneben
+  const adoBox = (it) => {
+    const a = it.adoption;
+    if (!a || !it.id) return "";
+    const st = adoState(it);
+    const btn = (s, label, cls = "btn-s") => `<button type="button" class="${cls}${st === s ? " on" : ""}" data-s="${s}"${st === s ? " aria-pressed=\"true\"" : ""}>${label}</button>`;
+    return `<div class="tres wado" data-id="${esc(it.id)}"><b>Als Wissen für den Coach?</b>
+      <div>${esc(a.rule)}</div><div class="muted">Gilt, wenn: ${esc(a.conditions)}</div>
+      <div class="wbadges"><span class="wb">${esc(EV[it.evidence] ?? it.evidence)}</span><span class="wb">passt: ${esc(it.fit)}</span></div>
+      ${a.ruleChanged ? `<div class="wtext"><b>Regeltext geändert – prüfen?</b></div>` : ""}
+      <div class="tact">${st === "uebernommen" ? "" : btn("uebernommen", "Als Wissen übernehmen", "btn-s tgo")}${st === "abgelehnt" ? "" : btn("abgelehnt", "Bewusst nicht übernehmen")}${st === "offen" ? "" : btn("offen", "Zurück auf offen")}<span class="sub tmsg" role="status"></span></div>
+      ${a.decidedAt ? `<div class="muted">Entschieden ${esc(short(a.decidedAt))}.</div>` : ""}</div>`;
+  };
   const item = (it) => {
     const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
     const tags = [it.match ? `Abgleich: ${MATCH[it.match]}` : ""].filter(Boolean);
@@ -1811,8 +1828,8 @@ function renderWissen(d) {
       ${cons ? `<div class="wbadges">${cons}</div>` : ""}${it.source ? `<div class="wsrc wsrc-l">${esc(it.source)}</div>` : ""}
       ${it.practice ? `<div class="wlab" style="margin-top:8px">Du machst</div><div class="wtext">${esc(it.practice)}</div>` : ""}${anchor?.ok ? `<div class="wtext wframetext">${esc(anchor.text)}</div>` : ""}
       ${it.forYou ? `<div class="wlab" style="margin-top:8px">Für dich bedeutet das</div><div class="wtext">${esc(it.forYou)}</div>` : ""}
-      ${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}</div>`;
-    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) || provenMark(it) || anchorMark(it) ? `<div class="wchipcol">${chipOf(it)}${provenMark(it)}${anchorMark(it)}</div>` : ""}</li>`;
+      ${adoBox(it)}${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}</div>`;
+    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) || provenMark(it) || anchorMark(it) || adoMark(it) ? `<div class="wchipcol">${chipOf(it)}${provenMark(it)}${anchorMark(it)}${adoMark(it)}</div>` : ""}</li>`;
   };
   const secs = w.sections.map((s) => {
     const shown = s.items.filter(pass);
@@ -1825,6 +1842,21 @@ function renderWissen(d) {
     <div class="muted wsub">Studie → Abgleich → Selbstversuch → Ergebnis. Ergebnisse: gewirkt ${gew}, nicht gewirkt ${nicht}. Studienlage umstritten: ${umstr}. Im Rahmen verankert: ${anchored}.${anchorGone ? ` Verankerung prüfen: ${anchorGone}.` : ""}${noFor ? ` Ohne Einordnung: ${noFor}.` : ""}</div>` : "";
   const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
   $("wissen").innerHTML = `<div class="muted">Stand ${esc(fmtDate(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(fmtDate(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}`;
+  for (const box of document.querySelectorAll("#wissen .wado")) {
+    const msg = box.querySelector(".tmsg");
+    for (const b of box.querySelectorAll("[data-s]")) b.onclick = async () => {
+      const all = [...box.querySelectorAll("button")];
+      all.forEach((x) => { x.disabled = true; }); b.classList.add("on"); msg.textContent = "Wird gespeichert …";
+      let token = null;
+      try { token = localStorage.getItem("dashboard-token"); } catch {}
+      try {
+        const r = await fetch(`/api/wissensbasis/${encodeURIComponent(box.dataset.id)}/adoption`, { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify({ state: b.dataset.s }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { all.forEach((x) => { x.disabled = false; }); b.classList.remove("on"); msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
+        await load();
+      } catch (e) { all.forEach((x) => { x.disabled = false; }); b.classList.remove("on"); msg.textContent = "Nicht gespeichert: " + e.message; }
+    };
+  }
   for (const b of document.querySelectorAll("#wissen .wstep")) b.onclick = () => { wissenFilter = wissenFilter === b.dataset.f ? "alle" : b.dataset.f; renderWissen(d); };
 }
 let wissenFilter = "alle";
