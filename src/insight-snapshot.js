@@ -1,4 +1,6 @@
-import { readKvJson } from "./kv.js";
+import { readKvJson, writeKvJson } from "./kv.js";
+import { json } from "./http-helpers.js";
+import { gate } from "./decisions-snapshot.js";
 
 // Erkenntnisse: Auffaelligkeiten, die der Coach selbst in den Daten findet und pflegt (MCP-Tools save_insight, archive_insight).
 // Das Dashboard zeigt sie als Feed, ohne eigene Bewertung; get_coach liefert die aktiven als Kurzfassung.
@@ -174,4 +176,18 @@ export function insightsForCoach(stored) {
 
 export async function readInsights(env) {
   return readKvJson(env, INSIGHTS_KV_KEY).catch(() => null);
+}
+
+// Erkenntnis-Karte aus dem Dashboard ausblenden (POST /api/insights/:id/archive, Bearer DASHBOARD_TOKEN): dieselbe Archivierung wie archive_insight.
+// Unbekannte id: 404; schon archiviert: 200 ohne Schreiben.
+export async function handleInsightArchiveRequest(req, env, isAuthorized, id) {
+  const headers = { "cache-control": "no-store" };
+  const denied = gate(req, env, isAuthorized, headers);
+  if (denied) return denied;
+  if (req.method !== "POST") return json({ ok: false, error: "Nur POST erlaubt" }, 405, { ...headers, allow: "POST" });
+  if (!env?.KV) return json({ ok: false, error: "KV nicht verfügbar" }, 503, headers);
+  const r = archiveInsight(await readInsights(env), id);
+  if (r.error) return json({ ok: false, error: r.error }, 404, headers);
+  if (!r.already) await writeKvJson(env, INSIGHTS_KV_KEY, r.value);
+  return json({ ok: true, id, archived: true, already: Boolean(r.already) }, 200, headers);
 }

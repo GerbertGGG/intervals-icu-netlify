@@ -7,6 +7,8 @@ import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
 import { handleWissensbasisRequest, handleWissenAdoptionRequest } from "./wissensbasis-snapshot.js";
+import { handleInsightArchiveRequest } from "./insight-snapshot.js";
+import { handleWissensbasisArchivRequest } from "./wissensbasis-archiv.js";
 import { handleCoachRequest, handleCoachAnswerRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
 import { handleDecisionsRequest, handleDecisionAnswerRequest } from "./decisions-snapshot.js";
 import { handleTestDecisionRequest, handleAdoptionRequest } from "./tests-snapshot.js";
@@ -50,9 +52,17 @@ export default {
     const ta = url.pathname.match(/^\/api\/tests\/([^/]+)\/adoption$/);
     if (ta) return route(() => withCacheRebuild(handleAdoptionRequest(req, env, isAuthorized, decodeURIComponent(ta[1])), env, ctx));
 
+    // Wissensbasis-Punkt archivieren oder wiederherstellen, aus dem Dashboard
+    const wa = url.pathname.match(/^\/api\/wissensbasis\/([^/]+)\/(archive|restore)$/);
+    if (wa) return route(() => withCacheRebuild(handleWissensbasisArchivRequest(req, env, isAuthorized, decodeURIComponent(wa[1]), wa[2]), env, ctx));
+
+    // Erkenntnis-Karte ausblenden (vorhandene Archivierung, wie MCP archive_insight)
+    const ia = url.pathname.match(/^\/api\/insights\/([^/]+)\/archive$/);
+    if (ia) return route(() => withCacheRebuild(handleInsightArchiveRequest(req, env, isAuthorized, decodeURIComponent(ia[1])), env, ctx));
+
     // Gerberts Knopf „Als Wissen übernehmen“ an einem Wissensbasis-Punkt, aus dem Dashboard
-    const wa = url.pathname.match(/^\/api\/wissensbasis\/([^/]+)\/adoption$/);
-    if (wa) return route(() => withCacheRebuild(handleWissenAdoptionRequest(req, env, isAuthorized, decodeURIComponent(wa[1])), env, ctx));
+    const wad = url.pathname.match(/^\/api\/wissensbasis\/([^/]+)\/adoption$/);
+    if (wad) return route(() => withCacheRebuild(handleWissenAdoptionRequest(req, env, isAuthorized, decodeURIComponent(wad[1])), env, ctx));
 
     switch (url.pathname) {
       case "/":
