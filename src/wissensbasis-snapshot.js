@@ -7,7 +7,8 @@ import { readKvJson, writeKvJson } from "./kv.js";
 //
 // Body: { fetchedAt: ISO-Zeitstempel, updatedAt: "YYYY-MM-DD", folderCheckedAt?: "YYYY-MM-DD",
 //         sections: [{ title (max 60), items: [{ text (max 220), evidence, fit, source? (max 80), isNew?,
-//         id? (kebab-case, max 60, Ziel von studyRefs der Tests), consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type: insight|experiment|targets|test, id }, next? (max 160) }] }],
+//         id? (kebab-case, max 60, Ziel von studyRefs der Tests), consensus?, counterCheckedAt?, practice? (max 160), match?, atYou?, link? { type: insight|experiment|targets|test, id }, next? (max 160),
+//         forYou? (max 200, Einordnung des Coaches in Alltagssprache; nie aus einem Test abgeleitet), addedAt? (YYYY-MM-DD, zu isNew) }] }],
 //         open?: [string (max 160), max. 6] }
 
 export const WISSENSBASIS_KV_KEY = "dashboard:wissensbasis";
@@ -83,12 +84,16 @@ export function validateWissensbasis(body) {
         if (!isDate(it.counterCheckedAt)) return { error: `${p}.counterCheckedAt muss YYYY-MM-DD sein` };
         out.counterCheckedAt = it.counterCheckedAt;
       }
-      for (const key of ["practice", "next"]) {
+      for (const [key, max] of [["practice", 160], ["next", 160], ["forYou", 200]]) {
         if (it[key] == null || it[key] === "") continue;
         const v = str(it[key]);
         if (typeof it[key] !== "string" || !v) return { error: `${p}.${key} muss Text sein` };
-        if (v.length > 160) return { error: `${p}.${key} länger als 160 Zeichen` };
+        if (v.length > max) return { error: `${p}.${key} länger als ${max} Zeichen` };
         out[key] = v;
+      }
+      if (it.addedAt != null && it.addedAt !== "") {
+        if (!isDate(it.addedAt)) return { error: `${p}.addedAt muss YYYY-MM-DD sein` };
+        out.addedAt = it.addedAt;
       }
       if (it.link != null) {
         if (typeof it.link !== "object" || Array.isArray(it.link)) return { error: `${p}.link muss ein Objekt { type, id } sein` };
@@ -127,6 +132,7 @@ export function wissensbasisWarnings(value, tests) {
       const linked = live.some((t) => (it.id && (t.studyRefs ?? []).includes(it.id)) || (it.link?.type === "test" && it.link.id === t.id));
       if (it.atYou === "gewirkt" && !linked) out.push(`${label}: atYou gewirkt gibt es nur über ein Test-Ergebnis; ohne verknüpften Test zeigt das Dashboard „offen“`);
       if (it.consensus === "einig" && !it.counterCheckedAt) out.push(`${label}: Studienlage einig ohne counterCheckedAt; das Dashboard zeigt „nur eine Seite“`);
+      if (!it.forYou) out.push(`${label}: forYou fehlt (Einordnung „Für dich bedeutet das“)`);
       if (it.link?.type === "test" && !live.some((t) => t.id === it.link.id)) out.push(`${label}: Test ${it.link.id} nicht gefunden`);
     }
   }
