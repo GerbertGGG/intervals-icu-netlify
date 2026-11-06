@@ -19,7 +19,7 @@ import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readWissensbasis } from "./wissensbasis-snapshot.js";
-import { readTests, testsForCoach, testWarnings, applyTestsToWissensbasis } from "./tests-snapshot.js";
+import { readTests, testsForCoach, testWarnings, applyTestsToWissensbasis, provenTests } from "./tests-snapshot.js";
 import { buildErnaehrung } from "./ernaehrung.js";
 import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
 import { readDecisions } from "./decisions-snapshot.js";
@@ -968,7 +968,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     // Wissensbasis mit aus den Tests abgeleiteten Feldern (applyTestsToWissensbasis); gespeichert wird nichts davon
     wissensbasis: applyTestsToWissensbasis(wissensbasis, testsStored?.tests) ?? null,
     // Tests des Coaches (save_test): ohne verworfene, plus Warnungen über den Bestand; die Karte "Tests" erscheint, sobald es welche gibt
-    tests: (() => { const tests = testsForCoach(testsStored); return tests.length ? { tests, warnings: testWarnings(tests) } : null; })(),
+    tests: (() => { const tests = testsForCoach(testsStored); return tests.length ? { tests, proven: provenTests(testsStored), warnings: testWarnings(tests) } : null; })(),
     coach: coach ? (({ decisions: _legacy, ...c }) => c)(coach) : null,
     decisions,
     // Experiment und Profil schreibt der Coach (save_experiment, save_profil); das Dashboard zeigt sie nicht mehr, das Widget

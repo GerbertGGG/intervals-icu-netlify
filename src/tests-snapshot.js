@@ -13,6 +13,7 @@ import { gate, readBody } from "./decisions-snapshot.js";
 //         insightRefs? (max 6), change (160), startDate?, checkDate?, metrics (1-4), expectation?, load: mehr|neutral,
 //         adherence? { rule (120), minPct 0-100, actualPct|null }, abort? (140), status: kandidat|laeuft|urteil|gelernt|verworfen,
 //         result?: bestaetigt|widerlegt|unklar|gestoert|abgebrochen, confoundedWith? (Test-ids), learned? (200),
+//         adoption? { state: offen|uebernommen|abgelehnt, rule (200), conditions (200), decidedAt? } (nur urteil/gelernt),
 //         proposedBy: coach|gerbert, decidedAt?, updatedAt (Worker) }
 // Das alte dashboard:experiment bleibt unverändert lesbar (save_experiment).
 
@@ -24,6 +25,7 @@ export const TEST_LOAD = ["mehr", "neutral"];
 export const TEST_STATUS = ["kandidat", "laeuft", "urteil", "gelernt", "verworfen"];
 export const TEST_RESULT = ["bestaetigt", "widerlegt", "unklar", "gestoert", "abgebrochen"];
 export const TEST_PROPOSED_BY = ["coach", "gerbert"];
+export const ADOPTION_STATE = ["offen", "uebernommen", "abgelehnt"];
 const BETTER = ["lower", "higher"];
 // Bekannte Messgrößen mit ihrer Richtung (Standard, wenn better fehlt); eigene keys brauchen better
 const KNOWN_METRICS = { lauf_hf130: "lower", rad_hf165w: "lower", schwimm_amstueck: "higher", schwimm_100m: "lower" };
@@ -152,6 +154,22 @@ function validateAdherence(a) {
   return { value: { rule: rule.value, minPct, actualPct: actual.value } };
 }
 
+// adoption: { state: offen|uebernommen|abgelehnt, rule (200), conditions (200), decidedAt? } – fehlend bleibt erlaubt (alte Tests)
+function validateAdoption(a) {
+  a = parseJsonText(a);
+  if (a == null) return { value: null };
+  if (!isObj(a)) return { error: "adoption muss ein Objekt { state, rule, conditions, decidedAt } sein" };
+  const state = oneOf(a.state, "adoption.state", ADOPTION_STATE);
+  if (state.error) return state;
+  const rule = reqText(a.rule, "adoption.rule", 200);
+  if (rule.error) return rule;
+  const conditions = reqText(a.conditions, "adoption.conditions", 200);
+  if (conditions.error) return conditions;
+  const decidedAt = optDate(a.decidedAt, "adoption.decidedAt");
+  if (decidedAt.error) return decidedAt;
+  return { value: { state: state.value, rule: rule.value, conditions: conditions.value, decidedAt: decidedAt.value } };
+}
+
 export function validateTest(body) {
   const fetchedAt = Date.parse(body?.fetchedAt);
   if (!Number.isFinite(fetchedAt)) return { error: "fetchedAt (ISO-Zeitstempel) fehlt" };
@@ -177,6 +195,7 @@ export function validateTest(body) {
     learned: optText(body?.learned, "learned", 200),
     expectation: validateExpectation(body?.expectation),
     adherence: validateAdherence(body?.adherence),
+    adoption: validateAdoption(body?.adoption),
   };
   for (const r of Object.values(checks)) if (r.error) return { error: r.error };
   const v = Object.fromEntries(Object.entries(checks).map(([k, r]) => [k, r.value]));
@@ -218,13 +237,17 @@ export function validateTest(body) {
   if (ad && ad.actualPct != null && ad.actualPct < ad.minPct && (result === "bestaetigt" || result === "widerlegt")) {
     return { error: `result ${result} nicht möglich: Einhaltung ${ad.actualPct} % liegt unter der Mindestquote ${ad.minPct} % (höchstens unklar)` };
   }
+  if (v.adoption) {
+    if (status !== "urteil" && status !== "gelernt") return { error: `adoption nur bei status urteil oder gelernt (nicht bei ${status})` };
+    if (v.adoption.state === "uebernommen" && result !== "bestaetigt") return { error: "adoption.state uebernommen nur bei result bestaetigt" };
+  }
   if (v.confoundedWith.includes(v.id)) return { error: "confoundedWith darf den Test selbst nicht enthalten" };
 
   const iso = new Date(fetchedAt).toISOString();
   const value = {
     id: v.id, title: v.title, kind: v.kind, discipline: v.discipline, block: v.block, blockGoal: v.blockGoal, question: v.question,
     studyRefs: v.studyRefs, insightRefs: v.insightRefs, change: v.change, startDate: v.startDate, checkDate: v.checkDate,
-    metrics, expectation: v.expectation, load: v.load, adherence: ad, abort: v.abort, status, result,
+    metrics, expectation: v.expectation, load: v.load, adherence: ad, abort: v.abort, status, result, ...(v.adoption ? { adoption: v.adoption } : {}),
     confoundedWith: v.confoundedWith, learned: v.learned, proposedBy: v.proposedBy, decidedAt: v.decidedAt, updatedAt: iso,
   };
   return { value, fetchedAt: iso };
@@ -242,6 +265,8 @@ export function upsertTest(stored, test, fetchedAt) {
   if (prev?.updatedAt && Date.parse(prev.updatedAt) > Date.parse(fetchedAt)) {
     return { error: `fetchedAt ${fetchedAt} ist älter als der gespeicherte Stand dieses Tests (${prev.updatedAt}); nicht überschrieben` };
   }
+  // Gerberts Entscheidung (uebernommen/abgelehnt) überschreibt der Coach nicht mit offen oder ohne adoption
+  if (prev?.adoption && prev.adoption.state !== "offen" && (!test.adoption || test.adoption.state === "offen")) test = { ...test, adoption: prev.adoption };
   const rest = tests.filter((t) => t?.id !== test.id);
   while (rest.length >= MAX_TESTS) {
     const dropped = rest.filter((t) => t.status === "verworfen").sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt)))[0];
@@ -310,6 +335,14 @@ export function atYouFromTest(test) {
   return { atYou: "offen" };
 }
 
+// "Geprüft bei dir": Tests mit übernommener Regel, neueste Entscheidung zuerst (für get_coach.proven und das Dashboard)
+export function provenTests(stored) {
+  return listOf(stored)
+    .filter((t) => t?.adoption?.state === "uebernommen")
+    .map((t) => ({ id: t.id, title: t.title, rule: t.adoption.rule, conditions: t.adoption.conditions, decidedAt: t.adoption.decidedAt ?? null, verdict: t.result, metric: t.metrics?.[0] ?? null }))
+    .sort((a, b) => String(b.decidedAt ?? "").localeCompare(String(a.decidedAt ?? "")));
+}
+
 const LINK_PRIORITY = { laeuft: 0, urteil: 1, gelernt: 1, kandidat: 2 };
 
 // Wissensbasis fürs Dashboard: Punkte mit verknüpftem Test (link {type:test} oder studyRefs eines Tests) bekommen
@@ -334,6 +367,7 @@ export function applyTestsToWissensbasis(w, tests) {
           out.atYou = d.atYou;
           if (d.candidate) out.candidate = true;
           out.tests = linked.map((t) => ({ id: t.id, title: t.title, status: t.status }));
+          if (linked.some((t) => t.adoption?.state === "uebernommen")) out.provenAtYou = true;
         } else if (out.atYou === "gewirkt") {
           out.atYou = "offen";
         }
@@ -393,6 +427,35 @@ export function applyTestDecision(stored, id, body, todayIso = isoDateBerlin(), 
   const up = upsertTest(stored, value, fetchedAt);
   if (up.error) return { error: up.error, status: 409 };
   return { value: up.value, test: value, warnings: testWarnings(up.value.tests) };
+}
+
+// Gerberts Antwort auf „Als Standard übernehmen?“ (POST /api/tests/:id/adoption { state: uebernommen|abgelehnt }). Regel und
+// Bedingungen kommen vom Coach; decidedAt setzt der Worker.
+export function applyAdoptionDecision(stored, id, body, todayIso = isoDateBerlin(), nowIso = new Date().toISOString()) {
+  const prev = listOf(stored).find((t) => t?.id === id);
+  if (!prev) return { error: `Test ${id} nicht gefunden`, status: 404 };
+  const state = body?.state;
+  if (!["uebernommen", "abgelehnt"].includes(state)) return { error: "state muss uebernommen oder abgelehnt sein", status: 400 };
+  if (!prev.adoption) return { error: `Test ${id} hat keine Übernahme-Frage`, status: 409 };
+  const at = prev.updatedAt && Date.parse(prev.updatedAt) >= Date.parse(nowIso) ? new Date(Date.parse(prev.updatedAt) + 1).toISOString() : nowIso;
+  const next = { ...prev, fetchedAt: at, adoption: { ...prev.adoption, state, decidedAt: todayIso } };
+  const { value, fetchedAt, error } = validateTest(next);
+  if (error) return { error, status: 400 };
+  const up = upsertTest(stored, value, fetchedAt);
+  if (up.error) return { error: up.error, status: 409 };
+  return { value: up.value, test: value };
+}
+
+export async function handleAdoptionRequest(req, env, isAuthorized, id) {
+  const headers = { "cache-control": "no-store" };
+  const denied = gate(req, env, isAuthorized, headers);
+  if (denied) return denied;
+  const { body, res } = await readBody(req, env, "POST", headers);
+  if (res) return res;
+  const r = applyAdoptionDecision(await readTests(env), id, body);
+  if (r.error) return json({ ok: false, error: r.error }, r.status, headers);
+  await writeTests(env, r.value);
+  return json({ ok: true, test: r.test }, 200, headers);
 }
 
 export async function handleTestDecisionRequest(req, env, isAuthorized, id) {
