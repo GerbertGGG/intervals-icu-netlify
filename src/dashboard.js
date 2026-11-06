@@ -19,6 +19,7 @@ import { buildIntervalSessions } from "./interval-splits.js";
 import { loadSessionProfile } from "./session-profile.js";
 import { readStudie } from "./studie-snapshot.js";
 import { readWissensbasis } from "./wissensbasis-snapshot.js";
+import { readArchiv, archivForCoach, visibleWissensbasis } from "./wissensbasis-archiv.js";
 import { readTests, testsForCoach, testWarnings, applyTestsToWissensbasis, provenTests } from "./tests-snapshot.js";
 import { buildErnaehrung } from "./ernaehrung.js";
 import { readCoach, applyEditedPlan } from "./coach-snapshot.js";
@@ -748,7 +749,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
   const oldest = addDays(todayIso, -(HISTORY_DAYS - 1));
   const newestEvents = addDays(todayIso, PLAN_AHEAD_DAYS);
 
-  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil, coachInsights, storedTargets, wissensbasis, testsStored] = await Promise.all([
+  const [wellnessR, activitiesR, eventsR, formEventsR, bRacesR, goalR, settingsR, snapshot, runalyzeHistory, studie, coach, experiment, profil, coachInsights, storedTargets, wissensbasis, testsStored, wbArchiv] = await Promise.all([
     settle("wellness", () => fetchIntervalsWellnessRange(env, oldest, todayIso)),
     settle("activities", () => fetchIntervalsActivities(env, oldest, todayIso)),
     settle("events", () => fetchIntervalsEvents(env, oldest, newestEvents)),
@@ -770,6 +771,7 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     readTargets(env),
     readWissensbasis(env),
     readTests(env),
+    readArchiv(env),
   ]);
   // Entscheidungsliste: eigener Schluessel (migriert bei Bedarf das alte Feld aus dashboard:coach); Fehler lassen die Karte nur leer
   const decisions = await readDecisions(env, coach).catch(() => []);
@@ -966,7 +968,9 @@ export async function buildDashboard(env, todayIso = isoDateBerlin()) {
     runalyze: buildRunalyze(snapshot, runalyzeHistory),
     studie: studie ?? null,
     // Wissensbasis mit aus den Tests abgeleiteten Feldern (applyTestsToWissensbasis); gespeichert wird nichts davon
-    wissensbasis: applyTestsToWissensbasis(wissensbasis, testsStored?.tests) ?? null,
+    wissensbasis: applyTestsToWissensbasis(visibleWissensbasis(wissensbasis, wbArchiv, true), testsStored?.tests) ?? null,
+    // von Gerbert archivierte Punkte (Zeile "Archiviert" unter der Karte); Tests lösen studyRefs darauf weiter auf
+    wissensbasisArchiv: archivForCoach(wbArchiv),
     // Tests des Coaches (save_test): ohne verworfene, plus Warnungen über den Bestand; die Karte "Tests" erscheint, sobald es welche gibt
     tests: (() => { const tests = testsForCoach(testsStored); return tests.length ? { tests, proven: provenTests(testsStored), warnings: testWarnings(tests) } : null; })(),
     coach: coach ? (({ decisions: _legacy, ...c }) => c)(coach) : null,
