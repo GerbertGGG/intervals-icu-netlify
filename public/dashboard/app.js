@@ -1762,23 +1762,6 @@ function renderWissen(d) {
   ];
   const items = w.sections.flatMap((s) => s.items);
   const count = (f) => items.filter(f).length;
-  const hasAbgleich = items.some((i) => i.link?.type === "targets" || i.match || i.atYou || i.practice || i.consensus || i.isNew);
-  const filter = hasAbgleich && shownStationsOk(wissenFilter) ? wissenFilter : "alle";
-  const shownStations = STATIONS.filter(([k, , f]) => (k !== "neu" && k !== "verankert") || count(f) > 0);
-  const pass = STATIONS.find(([k]) => k === filter)?.[2] ?? (() => true);
-  const shownStationsOk = (k) => (k !== "neu" && k !== "verankert") || count(STATIONS.find(([x]) => x === k)[2]) > 0;
-  const hot = (it) => it.match === "luecke" || it.atYou === "laeuft";
-
-  const testById = Object.fromEntries((d.tests?.tests ?? []).map((t) => [t.id, t]));
-  const CHIP = { laeuft: "Läuft", gewirkt: "gewirkt", nicht_gewirkt: "nicht gewirkt", offen: "offen", stoert_nicht: "stört nicht", stoert: "stört" };
-  // Nur eine kleine Marke mit Link zur Testkarte; Punkte ohne Test bleiben in der Spalte leer
-  const chipOf = (it) => {
-    if (!it.atYou || it.atYou === "nicht_getestet" || !CHIP[it.atYou]) return "";
-    const t = (it.tests ?? [])[0];
-    let txt = CHIP[it.atYou];
-    if (it.atYou === "laeuft" && t) { const cd = testById[t.id]?.checkDate; txt = `Läuft: ${t.title}${cd ? ` · bis ${short(cd)}.` : ""}`; }
-    return t ? `<a class="wb wsoft wchip" href="#test-${esc(t.id)}" title="${esc(t.title)}">${esc(txt)}</a>` : `<span class="wb wsoft wchip">${esc(txt)}</span>`;
-  };
   // Rahmenwert aus d.targets.current (nie aus dem Freitext), damit er sich bei einer Rahmenänderung mitändert
   const cur = d.targets?.current ?? null;
   const frameNum = (v, unit) => (typeof v === "number" && Number.isFinite(v) ? `${String(v).replace(".", ",")} ${unit}` : "");
@@ -1799,6 +1782,23 @@ function renderWissen(d) {
     if (it.link?.type !== "targets") return null;
     const v = frameText(it.link.id);
     return v ? { ok: true, text: `Rahmen: ${v}${cur.validFrom && !cur.default ? `, gültig seit ${short(cur.validFrom)}` : ""}` } : { ok: false };
+  };
+  const shownStationsOk = (k) => (k !== "neu" && k !== "verankert") || count(STATIONS.find(([x]) => x === k)[2]) > 0;
+  const hasAbgleich = items.some((i) => i.link?.type === "targets" || i.match || i.atYou || i.practice || i.consensus || i.isNew);
+  const filter = hasAbgleich && shownStationsOk(wissenFilter) ? wissenFilter : "alle";
+  const shownStations = STATIONS.filter(([k, , f]) => (k !== "neu" && k !== "verankert") || count(f) > 0);
+  const pass = STATIONS.find(([k]) => k === filter)?.[2] ?? (() => true);
+  const hot = (it) => it.match === "luecke" || it.atYou === "laeuft";
+
+  const testById = Object.fromEntries((d.tests?.tests ?? []).map((t) => [t.id, t]));
+  const CHIP = { laeuft: "Läuft", gewirkt: "gewirkt", nicht_gewirkt: "nicht gewirkt", offen: "offen", stoert_nicht: "stört nicht", stoert: "stört" };
+  // Nur eine kleine Marke mit Link zur Testkarte; Punkte ohne Test bleiben in der Spalte leer
+  const chipOf = (it) => {
+    if (!it.atYou || it.atYou === "nicht_getestet" || !CHIP[it.atYou]) return "";
+    const t = (it.tests ?? [])[0];
+    let txt = CHIP[it.atYou];
+    if (it.atYou === "laeuft" && t) { const cd = testById[t.id]?.checkDate; txt = `Läuft: ${t.title}${cd ? ` · bis ${short(cd)}.` : ""}`; }
+    return t ? `<a class="wb wsoft wchip" href="#test-${esc(t.id)}" title="${esc(t.title)}">${esc(txt)}</a>` : `<span class="wb wsoft wchip">${esc(txt)}</span>`;
   };
   const anchorMark = (it) => { const a = anchorOf(it); return !a ? "" : a.ok ? `<span class="wb wframe">Im Rahmen verankert</span>` : `<span class="wb wsoft wgone">Rahmenwert fehlt</span>`; };
   const provenMark = (it) => (it.provenAtYou ? `<span class="wb wsoft wchip">bei dir geprüft</span>` : "");
