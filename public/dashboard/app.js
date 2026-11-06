@@ -1635,6 +1635,12 @@ function renderTests(d) {
     const refs = studies.length || ins.length ? `<div class="tk">Gründe</div><div class="wbadges">${[...studies, ...ins].join("")}</div>` : "";
     const when = [t.startDate ? `Start ${day(t.startDate)}` : "", t.checkDate ? `Prüfdatum ${day(t.checkDate)}${t.status === "laeuft" ? ` (${left(t.checkDate)})` : ""}` : ""].filter(Boolean).join(" · ");
     const res = t.result ? `<div class="tres"><b>Ergebnis: ${esc(testResult(t))}</b>${t.learned ? `<div>Gelernt: ${esc(t.learned)}</div>` : ""}</div>` : "";
+    const ado = t.adoption;
+    const adoBody = ado ? `<div class="tk">Regel</div><div>${esc(ado.rule)}</div><div class="tk">Bedingungen</div><div>${esc(ado.conditions)}</div>` : "";
+    const adoCard = !ado ? "" : ado.state === "offen" && t.result === "bestaetigt"
+      ? `<div class="tres tado" data-id="${esc(t.id)}"><b>Als Standard übernehmen?</b>${adoBody}<div class="tact"><button type="button" class="btn-s tgo" data-s="uebernommen">Ja, übernehmen</button><button type="button" class="btn-s" data-s="abgelehnt">Nein</button><span class="sub tmsg" role="status"></span></div></div>`
+      : ado.state === "uebernommen" ? `<div class="tres"><b>Geprüft bei dir${ado.decidedAt ? ` · ${esc(day(ado.decidedAt))}` : ""}</b>${adoBody}</div>`
+      : ado.state === "abgelehnt" ? `<div class="muted">Nicht als Standard übernommen${ado.decidedAt ? ` (${esc(day(ado.decidedAt))})` : ""}.</div>` : "";
     const confNames = (t.confoundedWith ?? []).map((id) => esc(byId[id]?.title ?? id)).join(", ");
     const own = (d.tests?.warnings ?? []).filter((w) => w.includes(t.title) || w.includes(t.id));
     const hint = [confNames ? `beeinflusst sich mit ${confNames}` : "", ...own.map(esc)].filter(Boolean).join(" · ");
@@ -1657,12 +1663,14 @@ function renderTests(d) {
         <div class="tk">Änderung</div><div>${esc(t.change)}</div>${when ? `<div class="muted">${when}</div>` : ""}
         ${exp}
         <div class="tk">Messgrößen</div>${t.metrics.map((m) => metric(t, m)).join("")}
-        ${adh}${refs}${t.abort ? `<div class="tk">Abbruchregel</div><div>${esc(t.abort)}</div>` : ""}${res}
+        ${adh}${refs}${t.abort ? `<div class="tk">Abbruchregel</div><div>${esc(t.abort)}</div>` : ""}${res}${adoCard}
       </div>
     </details>`;
   };
-  const shown = all.filter((t) => testsFilter === "alle" || t.status === testsFilter);
-  $("tests").innerHTML = `${head}${shown.map(card1).join("") || '<p class="muted">Keine Tests in diesem Stand.</p>'}`;
+  const proven = d.tests?.proven ?? [];
+  const provenBox = proven.length ? `<details class="card tproven"${testsFilter === "geprueft" ? " open" : ""}><summary><b>Geprüft bei dir</b> <span class="wb">${proven.length}</span></summary>${proven.map((p) => `<div class="tres"><a href="#test-${esc(p.id)}"><b>${esc(p.title)}</b></a>${p.decidedAt ? ` <span class="muted">${esc(day(p.decidedAt))}</span>` : ""}<div>${esc(p.rule)}</div><div class="muted">Galt bei: ${esc(p.conditions)}</div></div>`).join("")}<div class="muted">Hat bei dir gewirkt – unter genau diesen Bedingungen.</div></details>` : "";
+  const shown = all.filter((t) => testsFilter === "alle" || (testsFilter === "geprueft" ? t.adoption?.state === "uebernommen" : t.status === testsFilter));
+  $("tests").innerHTML = `${head}${provenBox}${shown.map(card1).join("") || '<p class="muted">Keine Tests in diesem Stand.</p>'}`;
   wireTestDecisions(d);
   for (const b of document.querySelectorAll("#tests .tstep")) b.onclick = () => { testsFilter = testsFilter === b.dataset.f ? "alle" : b.dataset.f; renderTests(d); };
 }
@@ -1685,6 +1693,21 @@ function wireTestDecisions(d) {
       await load();
     } catch (e) { reset(); msg.textContent = "Nicht gespeichert: " + e.message; }
   };
+  for (const box of document.querySelectorAll("#tests .tado")) {
+    const msg = box.querySelector(".tmsg");
+    for (const b of box.querySelectorAll("[data-s]")) b.onclick = async () => {
+      const all = [...box.querySelectorAll("button")];
+      all.forEach((x) => { x.disabled = true; }); b.classList.add("on"); msg.textContent = "Wird gespeichert …";
+      let token = null;
+      try { token = localStorage.getItem("dashboard-token"); } catch {}
+      try {
+        const r = await fetch(`/api/tests/${encodeURIComponent(box.dataset.id)}/adoption`, { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify({ state: b.dataset.s }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { all.forEach((x) => { x.disabled = false; }); b.classList.remove("on"); msg.textContent = `Nicht gespeichert: ${j.error ?? r.status}`; return; }
+        await load();
+      } catch (e) { all.forEach((x) => { x.disabled = false; }); b.classList.remove("on"); msg.textContent = "Nicht gespeichert: " + e.message; }
+    };
+  }
   for (const card of document.querySelectorAll("#tests details.ttest[data-s=kandidat]")) {
     const form = card.querySelector(".tform"), msg = card.querySelector(".tmsg"), id = form.dataset.id;
     const show = (mode) => { form.hidden = false; form.dataset.mode = mode; form.querySelector(".tform-start").hidden = mode !== "start"; for (const i of form.querySelectorAll(".tform-start input")) i.disabled = mode !== "start"; card.open = true; };
@@ -1754,6 +1777,7 @@ function renderWissen(d) {
     if (it.atYou === "laeuft" && t) { const cd = testById[t.id]?.checkDate; txt = `Läuft: ${t.title}${cd ? ` · bis ${short(cd)}.` : ""}`; }
     return t ? `<a class="wb wsoft wchip" href="#test-${esc(t.id)}" title="${esc(t.title)}">${esc(txt)}</a>` : `<span class="wb wsoft wchip">${esc(txt)}</span>`;
   };
+  const provenMark = (it) => (it.provenAtYou ? `<span class="wb wsoft wchip">bei dir geprüft</span>` : "");
   const item = (it) => {
     const cons = it.consensus ? `<span class="wb">${esc(CONS[it.consensus])}</span><span class="wsrc">${it.counterCheckedAt ? `geprüft ${esc(short(it.counterCheckedAt))}` : "nicht gegengeprüft"}</span>` : "";
     const tags = [it.match ? `Abgleich: ${MATCH[it.match]}` : ""].filter(Boolean);
@@ -1763,7 +1787,7 @@ function renderWissen(d) {
       ${it.practice ? `<div class="wlab" style="margin-top:8px">Du machst</div><div class="wtext">${esc(it.practice)}</div>` : ""}
       ${it.forYou ? `<div class="wlab" style="margin-top:8px">Für dich bedeutet das</div><div class="wtext">${esc(it.forYou)}</div>` : ""}
       ${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}</div>`;
-    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) ? `<div class="wchipcol">${chipOf(it)}</div>` : ""}</li>`;
+    return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) || provenMark(it) ? `<div class="wchipcol">${chipOf(it)}${provenMark(it)}</div>` : ""}</li>`;
   };
   const secs = w.sections.map((s) => {
     const shown = s.items.filter(pass);

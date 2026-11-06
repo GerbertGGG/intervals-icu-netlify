@@ -9,7 +9,7 @@ import { handleStudieRequest } from "./studie-snapshot.js";
 import { handleWissensbasisRequest } from "./wissensbasis-snapshot.js";
 import { handleCoachRequest, handleCoachAnswerRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
 import { handleDecisionsRequest, handleDecisionAnswerRequest } from "./decisions-snapshot.js";
-import { handleTestDecisionRequest } from "./tests-snapshot.js";
+import { handleTestDecisionRequest, handleAdoptionRequest } from "./tests-snapshot.js";
 import { syncSnapshotsFromGithub } from "./github-snapshot.js";
 import { recordRunalyzeHistory } from "./runalyze-history.js";
 import { handleWidgetRequest, handleWatchStatusRequest, warmDashboardCache } from "./widget.js";
@@ -46,6 +46,9 @@ export default {
     // Gerberts Entscheidung über einen Test-Kandidaten, aus dem Dashboard
     const td = url.pathname.match(/^\/api\/tests\/([^/]+)\/decision$/);
     if (td) return route(() => withCacheRebuild(handleTestDecisionRequest(req, env, isAuthorized, decodeURIComponent(td[1])), env, ctx));
+
+    const ta = url.pathname.match(/^\/api\/tests\/([^/]+)\/adoption$/);
+    if (ta) return route(() => withCacheRebuild(handleAdoptionRequest(req, env, isAuthorized, decodeURIComponent(ta[1])), env, ctx));
 
     switch (url.pathname) {
       case "/":
