@@ -1511,6 +1511,7 @@ function insightCard(x, i) {
       ${tl.length ? `<div class="ins-k">Test</div><div>${tl.map((t) => `<a href="#test-${esc(t.id)}">${esc(t.title)}</a>`).join(", ")}</div>` : ""}
       <div class="ins-k">Belege</div><div class="muted">${esc(x.evidence)} · aktualisiert ${fmtDate(x.updatedAt.slice(0, 10))}</div>
       ${x.chart ? `<div class="ins-chart" data-i="${i}"></div>` : ""}
+      ${x.archived || x.archivedAt ? "" : `<div class="warch" data-id="${esc(x.id)}"><button type="button" class="warch-b">Archivieren</button></div>`}
     </div>
     <div class="ins-hist"><div class="hero-k">Verlauf</div><ul>${hist || '<li class="muted">noch kein Verlauf</li>'}</ul>
       <div class="muted">angelegt ${fmtDate(x.createdAt.slice(0, 10))}${x.createdAt.slice(0, 4)}${x.archivedAt ? ` · ausgeblendet ${fmtDate(x.archivedAt.slice(0, 10))}${x.archivedAt.slice(0, 4)}` : ""}</div></div>
@@ -1541,6 +1542,7 @@ function renderInsights(d) {
       for (const o of document.querySelectorAll("details.ins[open]")) if (o !== el) o.open = false;
       const h = el.querySelector(".ins-chart"); if (h) C.insightChart(h, list[Number(h.dataset.i)].chart);
     };
+    wireArchive("#insights .warch", (id) => `/api/insights/${encodeURIComponent(id)}/archive`, false);
     for (const b of document.querySelectorAll("#insight-filter .chip")) b.onclick = () => { insFilter = b.dataset.f; try { localStorage.setItem("insight-filter", insFilter); } catch {} draw(); };
   };
   draw();
@@ -1630,7 +1632,7 @@ function renderTests(d) {
     const ad = t.adherence;
     const adh = ad ? `<div class="tk">Einhaltung</div><div class="tbar" title="Mindestquote ${ad.minPct} %"><i style="width:${ad.actualPct ?? 0}%"></i><u style="left:${ad.minPct}%"></u></div><div class="muted">${ad.actualPct == null ? "noch offen" : `${ad.actualPct} %`} · mindestens ${ad.minPct} % · ${esc(ad.rule)}</div>` : "";
     const exp = t.expectation ? `<div class="tk">Erwartung</div><dl class="wabg"><dt>bestätigt</dt><dd>${esc(t.expectation.confirmed)}</dd><dt>unklar</dt><dd>${esc(t.expectation.unclear)}</dd><dt>widerlegt</dt><dd>${esc(t.expectation.refuted)}</dd></dl>` : "";
-    const studies = (t.studyRefs ?? []).map((id) => { const it = items.find((x) => x.id === id); return it ? chip("Studie: " + cut(it.text, 60)) : `<span class="wb tgone">Studie ${esc(id)}: nicht gefunden</span>`; });
+    const studies = (t.studyRefs ?? []).map((id) => { const it = items.find((x) => x.id === id); if (it) return chip("Studie: " + cut(it.text, 60)); const ar = (d.wissensbasisArchiv ?? []).find((x) => x.id === id); return ar ? chip("Studie: " + cut(ar.title, 60) + " · archiviert") : `<span class="wb tgone">Studie ${esc(id)}: nicht gefunden</span>`; });
     const ins = (t.insightRefs ?? []).map((id) => { const x = insights.find((i) => i.id === id); return x ? chip("Daten: " + cut(x.title, 60)) : `<span class="wb tgone">Erkenntnis ${esc(id)}: nicht gefunden</span>`; });
     const refs = studies.length || ins.length ? `<div class="tk">Gründe</div><div class="wbadges">${[...studies, ...ins].join("")}</div>` : "";
     const when = [t.startDate ? `Start ${day(t.startDate)}` : "", t.checkDate ? `Prüfdatum ${day(t.checkDate)}${t.status === "laeuft" ? ` (${left(t.checkDate)})` : ""}` : ""].filter(Boolean).join(" · ");
@@ -1737,7 +1739,8 @@ window.addEventListener("hashchange", openTestFromHash);
 function renderWissen(d) {
   const w = d.wissensbasis;
   const card = $("wissen-card");
-  if (!w || !Array.isArray(w.sections) || !w.sections.length) { card.hidden = true; return; }
+  const archived = d.wissensbasisArchiv ?? [];
+  if (!w || !Array.isArray(w.sections) || (!w.sections.length && !archived.length)) { card.hidden = true; return; }
   card.hidden = false;
   const EV = { stark: "Evidenz: stark", mittel: "Evidenz: mittel", schwach: "Evidenz: schwach", praxis: "Evidenz: Praxis" };
   const CONS = { einig: "Studienlage: einig", erklaert: "Studienlage: erklärt unterschiedlich", umstritten: "Studienlage: umstritten", eine_seite: "Studienlage: nur eine Seite" };
@@ -1811,7 +1814,7 @@ function renderWissen(d) {
       ${cons ? `<div class="wbadges">${cons}</div>` : ""}${it.source ? `<div class="wsrc wsrc-l">${esc(it.source)}</div>` : ""}
       ${it.practice ? `<div class="wlab" style="margin-top:8px">Du machst</div><div class="wtext">${esc(it.practice)}</div>` : ""}${anchor?.ok ? `<div class="wtext wframetext">${esc(anchor.text)}</div>` : ""}
       ${it.forYou ? `<div class="wlab" style="margin-top:8px">Für dich bedeutet das</div><div class="wtext">${esc(it.forYou)}</div>` : ""}
-      ${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}</div>`;
+      ${it.next ? `<div style="margin-top:6px"><b>Nächster Schritt:</b> ${esc(it.next)}</div>` : ""}${meta ? `<div class="wmeta">${meta}</div>` : ""}${it.aid ? `<div class="warch" data-id="${esc(it.aid)}"><button type="button" class="warch-b">Archivieren</button></div>` : ""}</div>`;
     return `<li class="witem${hot(it) ? " hot" : ""}"><details><summary class="wrow"><span class="wtext">${esc(it.text)}</span></summary>${more}</details>${chipOf(it) || provenMark(it) || anchorMark(it) ? `<div class="wchipcol">${chipOf(it)}${provenMark(it)}${anchorMark(it)}</div>` : ""}</li>`;
   };
   const secs = w.sections.map((s) => {
@@ -1824,8 +1827,55 @@ function renderWissen(d) {
   const bar = hasAbgleich ? `<div class="wcycle" style="--n:${shownStations.length}" role="group" aria-label="Filter nach Station im Kreislauf">${shownStations.map(([k, label, f]) => `<button type="button" class="wstep" data-f="${k}" aria-pressed="${filter === k}"><b>${count(f)}</b><span>${esc(label)}</span></button>`).join("")}</div>
     <div class="muted wsub">Studie → Abgleich → Selbstversuch → Ergebnis. Ergebnisse: gewirkt ${gew}, nicht gewirkt ${nicht}. Studienlage umstritten: ${umstr}. Im Rahmen verankert: ${anchored}.${anchorGone ? ` Verankerung prüfen: ${anchorGone}.` : ""}${noFor ? ` Ohne Einordnung: ${noFor}.` : ""}</div>` : "";
   const open = Array.isArray(w.open) && w.open.length ? `<div class="wopen"><div class="muted">Noch offen</div><ul>${w.open.map((o) => `<li>${esc(o)}</li>`).join("")}</ul></div>` : "";
-  $("wissen").innerHTML = `<div class="muted">Stand ${esc(fmtDate(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(fmtDate(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}`;
+  const arch = archived.length ? `<details class="warchiv"><summary>Archiviert (${archived.length})</summary><ul>${archived.map((a) => `<li data-id="${esc(a.id)}"><div class="wtext">${esc(a.title)}</div><div class="muted">archiviert ${esc(fmtDate(a.archivedAt))}${esc(a.archivedAt.slice(0, 4))}${a.source ? ` · ${esc(a.source)}` : ""}</div>${a.reason ? `<div class="muted">Grund: ${esc(a.reason)}</div>` : ""}<div class="warch-act"><button type="button" class="warch-restore">Wiederherstellen</button><span class="warch-msg" role="status"></span></div></li>`).join("")}</ul></details>` : "";
+  $("wissen").innerHTML = `<div class="muted">Stand ${esc(fmtDate(w.updatedAt))}${w.folderCheckedAt ? ` · Studien-Ordner geprüft ${esc(fmtDate(w.folderCheckedAt))}` : ""}</div>${bar}${secs}${open}${arch}`;
   for (const b of document.querySelectorAll("#wissen .wstep")) b.onclick = () => { wissenFilter = wissenFilter === b.dataset.f ? "alle" : b.dataset.f; renderWissen(d); };
+  wireArchive("#wissen .warch", (id) => `/api/wissensbasis/${encodeURIComponent(id)}/archive`, true);
+  for (const li of document.querySelectorAll("#wissen .warchiv li")) {
+    const b = li.querySelector(".warch-restore"), msg = li.querySelector(".warch-msg");
+    b.onclick = async () => {
+      b.disabled = true; msg.textContent = "Wird gespeichert …";
+      const err = await postDashboard(`/api/wissensbasis/${encodeURIComponent(li.dataset.id)}/restore`, {});
+      if (err) { b.disabled = false; msg.textContent = `Nicht gespeichert: ${err}`; return; }
+      await load();
+    };
+  }
+}
+// POST ans Dashboard mit Token; Rückgabe null bei Erfolg, sonst die Fehlermeldung
+async function postDashboard(url, payload) {
+  let token = null;
+  try { token = localStorage.getItem("dashboard-token"); } catch {}
+  try {
+    const r = await fetch(url, { method: "POST", headers: { Authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify(payload) });
+    if (r.ok) return null;
+    const j = await r.json().catch(() => ({}));
+    return j.error ?? String(r.status);
+  } catch (e) { return e.message; }
+}
+// Archivieren-Knopf mit kleiner Rückfrage (kein alert/confirm): Tippen öffnet Feld für den Grund (optional) und "Archivieren" / "Abbrechen"
+function wireArchive(selector, urlFor, withReason) {
+  for (const box of document.querySelectorAll(selector)) {
+    const btn = box.querySelector(".warch-b");
+    btn.onclick = () => {
+      btn.hidden = true;
+      const form = document.createElement("form");
+      form.className = "warch-form";
+      form.innerHTML = `${withReason ? '<label>Grund (optional)<input name="reason" maxlength="160" autocomplete="off"></label>' : ""}<div class="warch-act"><button type="submit">Archivieren</button><button type="button" class="warch-no">Abbrechen</button><span class="warch-msg" role="status"></span></div>`;
+      box.append(form);
+      const msg = form.querySelector(".warch-msg");
+      form.querySelector(".warch-no").onclick = () => { form.remove(); btn.hidden = false; };
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        const all = [...form.querySelectorAll("button, input")];
+        all.forEach((x) => { x.disabled = true; }); msg.textContent = "Wird gespeichert …";
+        const reason = withReason ? String(new FormData(form).get("reason") ?? "").trim() : "";
+        const err = await postDashboard(urlFor(box.dataset.id), reason ? { reason } : {});
+        if (err) { all.forEach((x) => { x.disabled = false; }); msg.textContent = `Nicht gespeichert: ${err}`; return; }
+        await load();
+      };
+      form.querySelector("input")?.focus();
+    };
+  }
 }
 let wissenFilter = "alle";
 

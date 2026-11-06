@@ -1171,6 +1171,18 @@ svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
 #tests .tform input { font: inherit; font-size: var(--fs-m); padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card); color: var(--text); min-width: 0; }
 #tests .tform-btns { display: flex; gap: 8px; }
 @media (max-width: 520px) { #tests .tform-start { grid-template-columns: 1fr; } }
+
+/* ---------- Archivieren (Wissensbasis-Punkte, Erkenntnis-Karten): unauffällig, Tippfläche mind. 44 px, keine Ampelfarben ---------- */
+.warch { margin-top: 8px; }
+.warch button, .warchiv button { min-height: 44px; min-width: 44px; padding: 0 14px; font: inherit; font-size: var(--fs-xs); cursor: pointer; border-radius: var(--r); border: 1px solid var(--line); background: transparent; color: var(--muted); }
+.warch-form { display: grid; gap: 8px; margin-top: 6px; }
+.warch-form label { display: grid; gap: 2px; font-size: var(--fs-xs); color: var(--muted); }
+.warch-form input { min-height: 44px; font: inherit; padding: 0 10px; border-radius: var(--r); border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.warch-act { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.warch-msg { font-size: var(--fs-xs); color: var(--muted); }
+#wissen details.warchiv { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+#wissen details.warchiv > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--muted); }
+#wissen .warchiv ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 </style>
 </head>
 <body>
