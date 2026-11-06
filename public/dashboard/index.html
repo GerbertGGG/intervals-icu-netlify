@@ -472,7 +472,7 @@ svg .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
 #tests .tbar { position: relative; height: 8px; border-radius: 4px; background: var(--inset); box-shadow: inset 0 0 0 1px var(--line-2); margin: 4px 0; }
 #tests .tbar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); border-radius: 4px; }
 #tests .tbar u { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); text-decoration: none; }
-#tests .tres { margin-top: 12px; padding: 10px 12px; border-radius: var(--r); background: var(--inset); box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
+#tests .tres, #wissen .wado { margin-top: 12px; padding: 10px 12px; border-radius: var(--r); background: var(--inset); box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--line); }
 .ins-test { font-size: var(--fs-s); margin-top: 6px; }
 @media (max-width: 520px) { #tests .tcols { grid-template-columns: 1fr; } #tests .tsteps { grid-template-columns: repeat(2, 1fr); } }
 #wissen details.wsec { border-top: 1px solid var(--line); padding: 8px 0; }
@@ -1159,8 +1159,8 @@ svg .grid-l { stroke-dasharray: none; stroke: var(--line); }
 .ins-tchip { background: var(--inset); color: var(--text); font-weight: 500; white-space: normal; }
 .ins:not([open]) .ins-less, .ins[open] .ins-more { display: none; }
 
-#tests .tact { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
-#tests .tact button.on, #tests .tform button.on { background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 2px var(--accent); }
+#tests .tact, #wissen .tact { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+#tests .tact button.on, #wissen .tact button.on, #tests .tform button.on { background: var(--accent); color: var(--on-accent); box-shadow: 0 0 0 2px var(--accent); }
 #tests .tact button:disabled { opacity: .7; }
 #tests .tgo { background: var(--accent); color: var(--on-accent); }
 #tests .tform { display: grid; gap: 8px; margin: 0 0 10px; padding: 10px; border-radius: var(--r); background: var(--inset); box-shadow: inset 0 0 0 1px var(--line); }

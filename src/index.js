@@ -6,7 +6,7 @@ import { handleMcpRequest } from "./mcp-server.js";
 import { handleDashboardRequest, isAuthorized } from "./dashboard.js";
 import { handleRunalyzeSnapshotRequest } from "./runalyze-snapshot.js";
 import { handleStudieRequest } from "./studie-snapshot.js";
-import { handleWissensbasisRequest } from "./wissensbasis-snapshot.js";
+import { handleWissensbasisRequest, handleWissenAdoptionRequest } from "./wissensbasis-snapshot.js";
 import { handleInsightArchiveRequest } from "./insight-snapshot.js";
 import { handleWissensbasisArchivRequest } from "./wissensbasis-archiv.js";
 import { handleCoachRequest, handleCoachAnswerRequest, handleCoachPlanRequest } from "./coach-snapshot.js";
@@ -59,6 +59,10 @@ export default {
     // Erkenntnis-Karte ausblenden (vorhandene Archivierung, wie MCP archive_insight)
     const ia = url.pathname.match(/^\/api\/insights\/([^/]+)\/archive$/);
     if (ia) return route(() => withCacheRebuild(handleInsightArchiveRequest(req, env, isAuthorized, decodeURIComponent(ia[1])), env, ctx));
+
+    // Gerberts Knopf „Als Wissen übernehmen“ an einem Wissensbasis-Punkt, aus dem Dashboard
+    const wad = url.pathname.match(/^\/api\/wissensbasis\/([^/]+)\/adoption$/);
+    if (wad) return route(() => withCacheRebuild(handleWissenAdoptionRequest(req, env, isAuthorized, decodeURIComponent(wad[1])), env, ctx));
 
     switch (url.pathname) {
       case "/":
