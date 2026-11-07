@@ -196,7 +196,7 @@ class IntervalsFaceView extends WatchUi.WatchFace {
             var rd = data.get("rd");
             if ("ok".equals(rd)) { word = "HART"; color = OK; }
             else if ("warn".equals(rd)) { word = "LOCKER"; color = WARN; }
-            else if ("bad".equals(rd)) { word = "FREI"; color = BAD; }
+            else if ("free".equals(rd) || "bad".equals(rd)) { word = "FREI"; color = COACH; }
             else if (numOrNull(data.get("co")) != null && (data.get("co") as Number) == 1) { word = "COACH"; color = COACH; }
         }
         if (word == null) { return; }

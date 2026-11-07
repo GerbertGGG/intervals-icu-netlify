@@ -52,8 +52,8 @@ export function racePhaseFor(goal, recentRace, todayIso) {
   }
   return racePhase(goal?.daysToGo, phaseDaysFor(goal));
 }
-// Urteil des Coaches (go) als Farbe: hart = gruen, locker = gelb, frei = rot; ohne Urteil keine Farbe
-const GO_CLS = { hart: "ok", locker: "warn", frei: "bad" };
+// Urteil des Coaches (go) als Farbe: hart = gruen, locker = gelb, frei = neutral (Ruhetag ist keine Warnung); ohne Urteil keine Farbe
+const GO_CLS = { hart: "ok", locker: "warn", frei: "coach" };
 const freshCoach = (d) => (isFreshCoach(d.coach, Date.parse(d.generatedAt)) ? d.coach : null);
 const goalOf = (d) => ({ name: d.goal.name, date: d.goal.date, daysToGo: d.goal.daysToGo, targetTimeSecs: d.goal.targetTimeSecs, runKm: d.goal.runKm ?? null, phase: racePhaseFor(d.goal, d.recentRace, d.today) });
 const failedOf = (d) => Object.entries(d.sources).filter(([, s]) => !s.ok).map(([k]) => k);
@@ -629,7 +629,7 @@ export function buildWidgetWatch(d, env = {}, goals = null, live = null) {
     race: d.goal ? { d: d.goal.daysToGo ?? null } : null,
     block: b ? { st: b.status, d: b.daysToStart ?? null, w: b.weekNo ?? null, of: b.weeks ?? null } : null,
     // Kein eigenes Urteil: nur das des Coaches
-    rd: GO_CLS[freshCoach(d)?.go] ?? "none",
+    rd: freshCoach(d)?.go === "frei" ? "free" : (GO_CLS[freshCoach(d)?.go] ?? "none"),
     co: freshCoach(d) ? 1 : 0,
     bl: freshCoach(d)?.blockers?.length ?? 0,
     tss: total(week),

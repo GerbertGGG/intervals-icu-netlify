@@ -382,8 +382,8 @@ function ringProgressImage(size, ratio, hex, alpha = 1, center = null) {
 // Koerper und Gefuehl als Werte ohne Ampel (die Einordnung macht der Coach); Gefuehl als Zahl, 1 = bestmoeglich
 const feelWord = (it) => (it && it.v != null ? String(it.v) : MISSING);
 const FEEL = [["Muskelkater", "Muskeln"], ["Stimmung", "Stimmung"], ["Motivation", "Motiv."]];
-// Urteil des Coaches (go) als Text und Farbe; "locker" ist ein geplanter ruhiger Tag und steht neutral (graue Kapsel), nicht als Warnung
-const GO_TEXT = { hart: ["Hart erlaubt", "ok"], locker: ["Locker geplant", "text"], frei: ["Frei", "bad"] };
+// Urteil des Coaches (go) als Text und Farbe; "locker" und "frei" sind geplante ruhige Tage und stehen neutral (graue Kapsel), nicht als Warnung
+const GO_TEXT = { hart: ["Hart erlaubt", "ok"], locker: ["Locker geplant", "text"], frei: ["Frei", "none"] };
 
 // Zweck aus dem Plan nur, wenn er ein Satz ist und keine Intervall-/Zonenzeile
 function usablePurpose(s) {
