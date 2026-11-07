@@ -1322,8 +1322,8 @@ function renderEgym(k) {
    Frisch heißt: von heute (Berlin). Ältere Aussagen stehen nur als Hinweis da, nie als Urteil für heute. */
 const berlinDay = (iso) => new Date(iso).toLocaleDateString("sv-SE", { timeZone: "Europe/Berlin" });
 const clock = (iso) => new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
-/* "locker" ist ein geplanter ruhiger Tag, keine Warnung: neutral, ohne Symbol */
-const GO_LABEL = { hart: ["Hart erlaubt", "ok"], locker: ["Locker geplant", "plain"], frei: ["Frei", "bad"] };
+/* "locker" und "frei" sind geplante ruhige Tage, keine Warnung: neutral, ohne Symbol */
+const GO_LABEL = { hart: ["Hart erlaubt", "ok"], locker: ["Locker geplant", "plain"], frei: ["Frei", "plain"] };
 function coachHead(d) {
   const c = d.coach, fresh = c && berlinDay(c.fetchedAt) === d.today;
   const k = `<div class="hero-k">Coach · ${weekday(d.today)} ${fmtDate(d.today)}</div>`;
